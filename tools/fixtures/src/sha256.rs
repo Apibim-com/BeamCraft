@@ -26,13 +26,12 @@ const H0: [u32; 8] = [
 /// Computes the SHA-256 digest of `data`.
 pub fn digest(data: &[u8]) -> [u8; 32] {
     let mut state = H0;
-    let mut blocks = data.chunks_exact(64);
-    for block in &mut blocks {
+    let (blocks, rest) = data.as_chunks::<64>();
+    for block in blocks {
         compress(&mut state, block);
     }
 
     // Padding, FIPS 180-4 §5.1.1: 0x80, zeros, then the message length in bits (big-endian).
-    let rest = blocks.remainder();
     let mut tail = [0u8; 128];
     for (dst, src) in tail.iter_mut().zip(rest) {
         *dst = *src;
@@ -47,13 +46,13 @@ pub fn digest(data: &[u8]) -> [u8; 32] {
     if let Some(slot) = tail.get_mut(tail_len - 8..tail_len) {
         slot.copy_from_slice(&bit_len.to_be_bytes());
     }
-    for block in tail.chunks_exact(64).take(tail_len / 64) {
+    for block in tail.as_chunks::<64>().0.iter().take(tail_len / 64) {
         compress(&mut state, block);
     }
 
     let mut out = [0u8; 32];
-    for (bytes, word) in out.chunks_exact_mut(4).zip(state) {
-        bytes.copy_from_slice(&word.to_be_bytes());
+    for (bytes, word) in out.as_chunks_mut::<4>().0.iter_mut().zip(state) {
+        *bytes = word.to_be_bytes();
     }
     out
 }
@@ -77,12 +76,10 @@ fn word_at(w: &[u32; 64], i: usize) -> u32 {
 }
 
 /// Processes one 64-byte block, FIPS 180-4 §6.2.2.
-fn compress(state: &mut [u32; 8], block: &[u8]) {
+fn compress(state: &mut [u32; 8], block: &[u8; 64]) {
     let mut w = [0u32; 64];
-    for (word, bytes) in w.iter_mut().zip(block.chunks_exact(4)) {
-        let mut be = [0u8; 4];
-        be.copy_from_slice(bytes);
-        *word = u32::from_be_bytes(be);
+    for (word, bytes) in w.iter_mut().zip(block.as_chunks::<4>().0) {
+        *word = u32::from_be_bytes(*bytes);
     }
     for t in 16..64 {
         let w15 = word_at(&w, t - 15);
