@@ -90,3 +90,20 @@ Third-party dependencies use permissive licences only (`deny.toml`, enforced in 
 own workspace crates use `MPL-2.0` and have explicit package-specific exceptions in `deny.toml`;
 add an exception for each new project-owned crate. Prefer well-maintained pure-Rust crates.
 New outbound network access is the owner's decision, not an agent's.
+
+## 6. Implementation plan and pull requests
+
+- Each implementation-plan task (for example F01 or F03) gets its own focused pull request.
+  Do not combine independent task IDs into one PR. Split a large task into named sub-tasks when
+  needed; completing a sub-task does not complete its parent acceptance gate.
+- Start from the verified integration commit that contains the required project licence and
+  accepted dependencies. Do not silently fall back to an older default branch.
+- When prerequisite changes are not merged, stacked PRs may target their prerequisite branch.
+  Link the prerequisite PR, state the intended merge order, and retarget to `master` after the
+  prerequisite is integrated. Each PR must show only its own task's changes.
+- Write repository documentation, commit messages and PR titles/descriptions in English.
+  Agent commits must not include `Co-authored-by` trailers.
+- Fill in the PR template with the concrete result, provenance, checks actually run and remaining
+  limitations. Keep PRs as drafts while required checks, acceptance or dependency gates are open.
+  Do not claim a runtime feature is complete from a research report or mock-only tests.
+- Creating a PR does not authorize merging it. Merge and integration follow the owner's instructions.
