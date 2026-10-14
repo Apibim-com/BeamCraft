@@ -1,0 +1,19 @@
+[package]
+name = "beamcraft-cli"
+description = "Command-line interface for BeamCraft."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "beamcraft"
+path = "src/main.rs"
+
+[dependencies]
+beamcraft-model.workspace = true
+
+[lints]
+workspace = true
