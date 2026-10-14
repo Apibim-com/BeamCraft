@@ -39,6 +39,11 @@ later project; portable domain crates alone do not establish a working web appli
 
 ## Progress log
 
+- 2026-10-14: F03 pinned and statically audited three `usd-core` 26.8 CPython 3.12 wheels.
+  Added an offline inventory tool with seven passing synthetic tests. SDK admission remains open:
+  TOST/resource policy, missing native notices, runtime/native closure and platform smoke tests.
+  See [the audit](docs/audits/openusd-26.8.md); no runtime dependency or policy exception was added.
+
 - 2026-10-14: F01 aligned the roadmap, architecture and development documentation with the
   accepted USD direction. Implementation base: `c6a1e73aea9c41bf88db96281040043471b80d0a`
   (MPL-2.0); local `master` still pointed to the initial scaffold at audit time.
