@@ -40,4 +40,5 @@ library crates and `cargo deny`. A change is not done until these pass.
 - Every public item has a doc comment (`missing_docs` is on).
 - Match the surrounding code's style; keep PRs small and focused. Commit messages: imperative
   mood, explain the why.
-- Branch from `master`; open a PR using the template.
+- Branch from the verified current `origin/master`; follow `AGENTS.md` section 6 for naming
+  (`feat/`, `bug/`, `docs/`, `chore/`, `refactor/`, `test/`). Open a PR using the template.

@@ -1,0 +1,192 @@
+{
+  "artifact_version": 1,
+  "package_version": "0.1.0",
+  "status": "admitted for the first scope only; see first-scope-v0.1.md",
+  "role": "original analytic expectations for geometry implementers; not an engine, a USD fixture or evidence that anything is implemented",
+  "units": {"length": "mm", "angle": "rad", "area": "mm2 or m2 as named", "volume": "mm3 or m3 as named", "density": "kg/m3", "mass": "kg"},
+  "numeric_encoding": "Inputs are JSON numbers. Expected values are exact decimal strings (or exact rational strings such as \"22600/3\") derived with exact arithmetic; they are not f64 outputs of any implementation.",
+  "comparison": "CR-TOL-001: quantities pass when |actual - expected| <= 1e-12 * |expected|; coordinates pass when |actual - expected| <= 1e-9 mm + 1e-12 * |expected|. These are test-comparison rules, not a kernel tolerance policy.",
+  "quaternion_convention": "orientation_xyzw = (x, y, z, w), Hamilton product, active rotation of a vector v by v' = q v q^-1; world point = R(q) * local point + translation.",
+  "positive_cases": [
+    {
+      "case_id": "FS-PLATE-A",
+      "covers": ["CR-PLATE-001", "CR-PLATE-002", "CR-QTY-001"],
+      "input": {"width_mm": 1200, "length_mm": 800, "thickness_mm": 15},
+      "expected": {"volume_mm3": "14400000", "volume_m3": "0.0144", "surface_area_mm2": "1980000", "surface_area_m2": "1.98", "mass_status": "unknown"},
+      "derivation": "V = 1200*800*15 = 14,400,000 mm3 = 0.0144 m3 (1 m3 = 10^9 mm3). S = 2*(1200*800 + 1200*15 + 800*15) = 2*990,000 = 1,980,000 mm2 = 1.98 m2. No density was authored, so mass is unknown."
+    },
+    {
+      "case_id": "FS-PLATE-A-MASS",
+      "covers": ["CR-PLATE-002", "CR-QTY-001"],
+      "input": {"width_mm": 1200, "length_mm": 800, "thickness_mm": 15, "density_kg_m3": 2500},
+      "expected": {"volume_m3": "0.0144", "mass_kg": "36", "mass_status": "current"},
+      "derivation": "mass = 0.0144 m3 * 2500 kg/m3 = 36 kg. The density is explicit synthetic test data, not a material grade."
+    },
+    {
+      "case_id": "FS-PLATE-B",
+      "covers": ["CR-PLATE-001", "CR-PLATE-002", "CR-QTY-001"],
+      "input": {"width_mm": 250.5, "length_mm": 400, "thickness_mm": 12.5, "density_kg_m3": 1600},
+      "expected": {"volume_mm3": "1252500", "volume_m3": "0.0012525", "surface_area_mm2": "216662.5", "surface_area_m2": "0.2166625", "mass_kg": "2.004"},
+      "derivation": "V = 250.5*400*12.5 = 1,252,500 mm3. S = 2*(100,200 + 3,131.25 + 5,000) = 216,662.5 mm2. mass = 0.0012525*1600 = 2.004 kg. All operands are exactly representable in binary floating point."
+    },
+    {
+      "case_id": "FS-PLATE-C",
+      "covers": ["CR-PLATE-001", "CR-PLATE-002"],
+      "input": {"width_mm": 1000000, "length_mm": 1000000, "thickness_mm": 1000000},
+      "expected": {"volume_mm3": "1000000000000000000", "volume_m3": "1000000000", "surface_area_mm2": "6000000000000", "surface_area_m2": "6000000"},
+      "derivation": "Upper boundary of the draft contract (at most 1,000,000 mm) is accepted. V = (10^6)^3 mm3 = 10^18 mm3 = 10^9 m3. S = 6*(10^6)^2 = 6*10^12 mm2."
+    },
+    {
+      "case_id": "FS-MEMBER-A",
+      "covers": ["CR-MEMBER-001", "CR-MEMBER-002", "CR-QTY-001"],
+      "input": {"axis_points_mm": [[0, 0, 0], [3000, 4000, 12000]], "section_mm": {"width": 200, "height": 100}, "density_kg_m3": 2000},
+      "expected": {"axis_length_mm": "13000", "volume_mm3": "260000000", "volume_m3": "0.26", "mass_kg": "520"},
+      "derivation": "L = sqrt(3000^2 + 4000^2 + 12000^2) = sqrt(169,000,000) = 13,000 mm (a 3-4-12 triple scaled by 1000). V = 200*100*13,000 = 260,000,000 mm3 = 0.26 m3. mass = 0.26*2000 = 520 kg. The rectangular section is a synthetic test parameter, not a catalogue profile."
+    },
+    {
+      "case_id": "FS-MEMBER-B",
+      "covers": ["CR-MEMBER-001", "CR-MEMBER-002"],
+      "input": {"axis_points_mm": [[0, 0, 0], [1000000, 0, 0]], "section_mm": {"width": 200, "height": 100}},
+      "expected": {"axis_length_mm": "1000000", "volume_mm3": "20000000000", "volume_m3": "20"},
+      "derivation": "Axis length is exactly at the draft contract's upper bound and is accepted. V = 200*100*10^6 = 2*10^10 mm3 = 20 m3."
+    },
+    {
+      "case_id": "FS-POSE-A",
+      "covers": ["CR-PLACE-001", "CR-MEMBER-001"],
+      "input": {"axis_points_mm": [[0, 0, 0], [3000, 0, 0]], "translation_mm": [100, 200, 300], "orientation_xyzw": [0, 0, 0.7071067811865476, 0.7071067811865476]},
+      "expected": {"world_axis_points_mm": [["100", "200", "300"], ["100", "3200", "300"]], "axis_length_mm": "3000"},
+      "derivation": "A +90 degree rotation about +Z (counter-clockwise seen from +Z in a right-handed frame) maps local +X to world +Y. R*(3000,0,0) = (0,3000,0); adding (100,200,300) gives (100,3200,300). The q squared norm differs from 1 by about 2.2e-16 in f64, inside the draft 1e-12 limit."
+    },
+    {
+      "case_id": "FS-POSE-B",
+      "covers": ["CR-PLACE-001", "CR-MEMBER-001"],
+      "input": {"axis_points_mm": [[0, 0, 0], [0, 3000, 4000]], "translation_mm": [5, 6, 7], "orientation_xyzw": [1, 0, 0, 0]},
+      "expected": {"world_axis_points_mm": [["5", "6", "7"], ["5", "-2994", "-3993"]], "axis_length_mm": "5000"},
+      "derivation": "A half-turn about +X maps (x,y,z) to (x,-y,-z). R*(0,3000,4000) = (0,-3000,-4000); adding (5,6,7) gives (5,-2994,-3993). L = sqrt(3000^2+4000^2) = 5000 mm."
+    },
+    {
+      "case_id": "FS-POSE-C",
+      "covers": ["CR-PLACE-001"],
+      "input": {"point_mm": [1, 2, 3], "translation_mm": [0, 0, 0], "orientation_xyzw": [0.5, 0.5, 0.5, 0.5]},
+      "expected": {"world_point_mm": ["3", "1", "2"]},
+      "derivation": "q = (1/2, 1/2, 1/2, 1/2) is a 120 degree rotation about (1,1,1) that cyclically maps the axes X->Y->Z->X. A point 1*ex + 2*ey + 3*ez maps to 1*ey + 2*ez + 3*ex = (3,1,2). The components are exact in binary floating point."
+    },
+    {
+      "case_id": "FS-POSE-D",
+      "covers": ["CR-PLACE-001", "CR-MEMBER-001"],
+      "input": {"axis_points_mm": [[0, 0, 0], [3000, 4000, 12000]], "translation_mm": [1000, -2000, 3000], "orientation_ideal_xyzw": "(1, 2, 3, 4) / sqrt(30), supplied as the nearest f64 components"},
+      "expected": {"world_axis_points_mm": [["1000", "-2000", "3000"], ["22600/3", "11200/3", "38000/3"]], "axis_length_mm": "13000"},
+      "derivation": "For a quaternion with integer components the rotation matrix is rational: R = (1/N) * M with N = 30 and the standard entries of M. M applied to (3000,4000,12000) divided by 30, plus (1000,-2000,3000), gives (22600/3, 11200/3, 38000/3). The squared distance between the world points is exactly 169,000,000 mm2, so the length is unchanged at 13,000 mm (rigid motion)."
+    },
+    {
+      "case_id": "FS-POSE-E",
+      "covers": ["CR-PLACE-001", "CR-FAIL-001"],
+      "input": {"axis_points_mm": [[0, 0, 0], [3000, 0, 0]], "translation_mm": [1000000000, 0, 0], "orientation_xyzw": [0, 0, 0, 1]},
+      "expected": {"world_axis_points_mm": [["1000000000", "0", "0"], ["1000003000", "0", "0"]], "axis_length_mm": "3000"},
+      "derivation": "A translation component exactly at the draft bound (absolute value at most 1,000,000,000 mm) is accepted. The identity orientation leaves local coordinates unchanged."
+    },
+    {
+      "case_id": "FS-POSE-F",
+      "covers": ["CR-PLACE-001"],
+      "input": {"point_mm": [3000, 0, 0], "translation_mm": [0, 0, 0], "orientation_xyzw": [0, 0, 0, 0.99999999999995]},
+      "expected": {"outcome": "accepted", "orientation_squared_norm_deviation": "about 1e-13, inside the 1e-12 limit", "world_point_mm": ["3000", "0", "0"]},
+      "derivation": "w^2 = 1 - 1e-13 (approximately), so the squared norm deviates from 1 by about 1e-13. The accepted quaternion is normalized before use, so the result equals the identity rotation within CR-TOL-001."
+    },
+    {
+      "case_id": "FS-ID-VALID",
+      "covers": ["CR-ID-001"],
+      "input": {"ids": ["01923456-7abc-7def-8123-456789abcdef", "0192abcd-ef01-7234-b567-89abcdef0123"]},
+      "expected": {"outcome": "valid for every entry"},
+      "derivation": "Version nibble (first digit of the third group) is 7; variant nibble (first digit of the fourth group) is 8, 9, a or b; 8-4-4-4-12 lowercase hexadecimal."
+    }
+  ],
+  "negative_cases": [
+    {
+      "case_id": "FS-NEG-ID",
+      "covers": ["CR-ID-001", "CR-FAIL-001"],
+      "input": {"ids": [
+        "01923456-7ABC-7DEF-8123-456789ABCDEF",
+        "01923456-7abc-4def-8123-456789abcdef",
+        "01923456-7abc-7def-c123-456789abcdef",
+        "019234567abc7def8123456789abcdef",
+        "01923456-7abc-7def-8123-456789abcde",
+        "{01923456-7abc-7def-8123-456789abcdef}",
+        "01923456-7abc-7def-8123-456789abcdeg",
+        "00000000-0000-0000-0000-000000000000",
+        "",
+        " 01923456-7abc-7def-8123-456789abcdef"
+      ]},
+      "expected": {"outcome": "each entry rejected; no state change", "code": "INVALID_ID", "code_status": "draft F04 0.1.0"},
+      "derivation": "Entries in order: upper-case hex; version 4; variant nibble c; no hyphens; one digit short; braces; non-hexadecimal digit; nil UUID (version 0); empty; leading whitespace. The draft contract requires canonical lowercase 8-4-4-4-12 form with version 7 and the RFC variant."
+    },
+    {
+      "case_id": "FS-NEG-PLATE-BOUND",
+      "covers": ["CR-PLATE-001", "CR-FAIL-001"],
+      "input": {"width_mm": 1000000.001, "length_mm": 800, "thickness_mm": 15},
+      "expected": {"outcome": "rejected; no state change", "code": "LIMIT_EXCEEDED", "code_status": "draft F04 0.1.0"},
+      "derivation": "The draft bound is at most 1,000,000 mm; 1,000,000.001 exceeds it by 0.001 mm. F04-NEG-05 covers a coarser excess; this case tests the boundary."
+    },
+    {
+      "case_id": "FS-NEG-PLATE-NEGATIVE",
+      "covers": ["CR-PLATE-001", "CR-FAIL-001"],
+      "input": {"width_mm": -250.5, "length_mm": 400, "thickness_mm": 12.5},
+      "expected": {"outcome": "rejected; no state change", "code": "INVALID_ARGUMENT", "code_status": "draft F04 0.1.0"},
+      "derivation": "Plate dimensions must be greater than zero. F04-NEG-04 covers zero thickness on creation and F04-NEG-14 a negative thickness in an update; this case adds a negative width on creation."
+    },
+    {
+      "case_id": "FS-NEG-AXIS-ZERO",
+      "covers": ["CR-MEMBER-001", "CR-FAIL-001"],
+      "input": {"axis_points_mm": [[10, 20, 30], [10, 20, 30]], "section_mm": {"width": 200, "height": 100}},
+      "expected": {"outcome": "rejected; no state change", "code": "open: INVALID_ARGUMENT or UNSUPPORTED_GEOMETRY (gap G-03)", "code_status": "needs F04 decision"},
+      "derivation": "Axis length is 0, not greater than zero. The draft contract requires a nonzero supported axis but does not name the code."
+    },
+    {
+      "case_id": "FS-NEG-AXIS-BOUND",
+      "covers": ["CR-MEMBER-001", "CR-FAIL-001"],
+      "input": {"axis_points_mm": [[0, 0, 0], [1000000.5, 0, 0]], "section_mm": {"width": 200, "height": 100}},
+      "expected": {"outcome": "rejected; no state change", "code": "LIMIT_EXCEEDED", "code_status": "draft F04 0.1.0"},
+      "derivation": "Axis length 1,000,000.5 mm exceeds the draft limit of 1,000,000 mm."
+    },
+    {
+      "case_id": "FS-NEG-TRANSLATION-BOUND",
+      "covers": ["CR-PLACE-001", "CR-FAIL-001"],
+      "input": {"axis_points_mm": [[0, 0, 0], [3000, 0, 0]], "translation_mm": [1000000000.5, 0, 0], "orientation_xyzw": [0, 0, 0, 1]},
+      "expected": {"outcome": "rejected; no state change", "code": "LIMIT_EXCEEDED", "code_status": "draft F04 0.1.0"},
+      "derivation": "A translation component of absolute value 1,000,000,000.5 mm exceeds the draft limit of 1,000,000,000 mm."
+    },
+    {
+      "case_id": "FS-NEG-QUAT",
+      "covers": ["CR-PLACE-001", "CR-FAIL-001"],
+      "input": {"orientations_xyzw": [[0, 0, 0, 0.5], [0, 0, 0, 1.5], [0, 0, 0, 0], [0, 0, 0, 0.999999999]]},
+      "expected": {"outcome": "each entry rejected; no state change", "code": "INVALID_ARGUMENT", "code_status": "draft F04 0.1.0"},
+      "derivation": "Entries: squared norm 0.25; component outside [-1, 1]; zero quaternion (norm 0); squared norm deviates from 1 by about 2e-9, more than 1e-12."
+    },
+    {
+      "case_id": "FS-NEG-DENSITY",
+      "covers": ["CR-QTY-001", "CR-FAIL-001"],
+      "input": {"densities_kg_m3": [0, -7, 1000001]},
+      "expected": {"outcome": "each entry rejected; no state change", "code": "INVALID_ARGUMENT for 0 and -7; LIMIT_EXCEEDED for 1000001", "code_status": "draft F04 0.1.0"},
+      "derivation": "Density must be greater than zero and at most 1,000,000 kg/m3 when authored; absence means unknown, never zero."
+    },
+    {
+      "case_id": "FS-NEG-SECTION",
+      "covers": ["CR-MEMBER-002", "CR-FAIL-001"],
+      "input": {"axis_points_mm": [[0, 0, 0], [3000, 0, 0]], "section_mm": {"width": 0, "height": 100}},
+      "expected": {"outcome": "rejected; no state change", "code": "INVALID_ARGUMENT", "code_status": "proposed; section resource format pending (gap G-02)"},
+      "derivation": "A section dimension of zero produces no solid. The definition resource that will carry sections is not yet specified, so this case is proposed rather than admitted."
+    }
+  ],
+  "references_to_f04_cases": [
+    {"f04_case": "F04-NEG-04", "condition": "zero plate thickness on creation"},
+    {"f04_case": "F04-NEG-05", "condition": "plate width above the limit"},
+    {"f04_case": "F04-NEG-06", "condition": "numeric string where a number is required"},
+    {"f04_case": "F04-NEG-14", "condition": "partial patch with a negative thickness applies no half"},
+    {"f04_case": "F04-NEG-01", "condition": "short identifier"},
+    {"f04_case": "F04-NEG-02", "condition": "identifier with version 4"},
+    {"f04_case": "F04-RAW-01", "condition": "bare NaN literal"},
+    {"f04_case": "F04-RAW-02", "condition": "number overflowing to infinity"},
+    {"f04_case": "F04-POS-01", "condition": "plate creation volume and unknown mass without material"},
+    {"f04_case": "F04-POS-06", "condition": "width update invalidates and recomputes volume"},
+    {"f04_case": "F04-POS-07", "condition": "straight member axis length; needs a harness-supplied profile"}
+  ]
+}

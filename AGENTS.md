@@ -41,7 +41,19 @@ Anything whose licence you cannot prove from its original source is forbidden. T
 commercial database. **Profile geometry comes from public standards or manufacturer-published
 data with a licence that allows it**, entered as our own data.
 
-**One narrow exception: the BeamCraft brand.** The BeamCraft name, wordmark and logos in
+**Scoped exception: official OpenUSD.** The owner permits Tomorrow Open Source Technology
+License 1.0 (`LicenseRef-TOST-1.0`) only for official OpenUSD code, binaries and SDK resources
+(including plugin metadata and generated schemas). Verify the original publisher, pinned release
+and exact files; record their provenance, licence and use in `ATTRIBUTION.md` before inclusion.
+Preserve the upstream licence, applicable notices and required modification notices; respect its
+trademark terms. Do not relabel TOST as Apache-2.0 or MPL-2.0. Reference:
+[OpenUSD v26.08 licence](https://github.com/PixarAnimationStudios/OpenUSD/blob/ee47c679abde5b467a7b6a41f3b2285564a4222e/LICENSE.txt).
+This exception does not cover other TOST projects, separately licensed bundled components,
+unrelated assets or commercial-product materials. Audit those under their own licences.
+SDK provenance, notice completeness, native dependency closure and runtime checks still apply
+before product integration or redistribution. BeamCraft's own code remains MPL-2.0.
+
+**Separate exception: the BeamCraft brand.** The BeamCraft name, wordmark and logos in
 `docs/brand/` are trademarks of Apibim (registration pending) and are not open source (terms in
 `docs/brand/LICENSE-brand.txt`). Never modify the logos, and never add other files under that
 licence. Forks must remove them.
@@ -86,7 +98,22 @@ Every model file, IFC/DSTV import, script and keystroke is untrusted input.
 
 ## 5. Dependencies
 
-Third-party dependencies use permissive licences only (`deny.toml`, enforced in CI). BeamCraft's
-own workspace crates use `MPL-2.0` and have explicit package-specific exceptions in `deny.toml`;
+Third-party dependencies use permissive licences only (`deny.toml`, enforced in CI), with the
+scoped official OpenUSD exception in §1.2. Do not add TOST to the global Cargo licence allowlist;
+if an official OpenUSD dependency enters the Cargo graph, record an explicit package/version
+exception and its provenance. Non-Cargo SDK components require their own recorded audit.
+BeamCraft's own workspace crates use `MPL-2.0` and have explicit package-specific exceptions in
+`deny.toml`;
 add an exception for each new project-owned crate. Prefer well-maintained pure-Rust crates.
 New outbound network access is the owner's decision, not an agent's.
+
+## 6. Branch naming
+
+- Create task branches from the verified current `origin/master`.
+- Name branches `<type>/<short-description>` using lowercase words separated by hyphens.
+  Include the implementation-plan ID when applicable, for example `feat/f07-fixtures`.
+- Allowed types: `feat` for features, `bug` for bug fixes, `docs` for documentation,
+  `chore` for maintenance, `refactor` for restructuring and `test` for test-only changes.
+- Never use an agent name or provider prefix such as `codex/` for a new branch.
+- Existing PR branches and active worktrees keep their names until their owners coordinate a
+  migration. Do not rename another contributor's active branch or close a PR to change its prefix.

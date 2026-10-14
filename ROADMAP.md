@@ -24,6 +24,10 @@ F02 (requirements), F03 (OpenUSD distribution audit) and F07 (original fixtures)
 independently. F09 establishes clean-room admission after F02. F04 then fixes the model and command
 contract; F05/F06 define worker and geometry contracts before F08 changes module boundaries.
 
+The [F04 model/command draft](docs/contracts/model-and-commands-v0.1.md) and its original
+acceptance descriptions are available for review. F02 currently remains a local analysis artifact;
+F09 admission and contract freeze are still outstanding. No runtime command is implemented by F04.
+
 The first demonstration starts with a rectangular plate and a supported straight member.
 Published USD revisions include their computed geometry. Copying, editing and reopening must
 preserve the original element and produce independently verified measurements.
@@ -47,6 +51,31 @@ later project; portable domain crates alone do not establish a working web appli
   hand-derived expectations, derived in `docs/fixtures/expectations.md`, and a Python oracle
   checks them independently. CI verifies the committed bytes. This is test data only: it adds
   no geometry, USD or copy feature and does not pass K0.
+
+- 2026-10-14: F09 added the clean-room admission policy and templates and an admitted
+  first-scope package (rectangular plate, straight member, identities, units, placement,
+  declared failures) under `docs/clean-room/`. Base `ebb5b928dda3d36d6b6570549c3f745bb1883ff7`.
+  Admission covers that limited scope only; broader requirements stay pending and the F04
+  contract remains a review draft. Exposure admission is separate and no implementer is declared
+  eligible. Windows fmt, Clippy, three tests, docs and CLI checks passed; local WASM and
+  cargo-deny checks remain unverified because the target and tool are absent; K0 is not passed.
+
+- 2026-10-14: synchronized the branch-naming policy PR with master after F04 integration;
+  retained both attribution rows and all task progress entries when resolving conflicts.
+
+- 2026-10-14: recorded task-type branch prefixes in AGENTS.md and contributor instructions;
+  new branches use feat/bug/docs/chore/refactor/test rather than agent/provider names.
+
+- 2026-10-14: synchronized the F04 review branch with master after the OpenUSD policy merge;
+  resolved the progress-log conflict while retaining both F04 and licence-decision entries.
+
+- 2026-10-14: drafted F04 model/command version 0.1.0, including full identities, explicit units,
+  bounded inputs, typed mutations, revision/generation preconditions, semantic footprints and
+  atomic errors. Added original logical acceptance descriptions; F09 and freeze remain open.
+
+- 2026-10-14: owner approved TOST-1.0 only for official OpenUSD and its SDK resources.
+  Recorded the scoped exception in AGENTS.md; kept the global Cargo licence allowlist unchanged.
+  Provenance, notices, native closure and runtime checks remain prerequisites for integration.
 
 - 2026-10-14: F01 aligned the roadmap, architecture and development documentation with the
   accepted USD direction. Implementation base: `c6a1e73aea9c41bf88db96281040043471b80d0a`

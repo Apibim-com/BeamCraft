@@ -98,3 +98,7 @@ This original design summary follows the owner's local `architecture-proposal.md
 (§1–4, §5–7, §14). Detailed Russian plans and observation materials remain outside the repository.
 Those local plans describe intended acceptance, not completed features. See [the roadmap](../ROADMAP.md)
 for gates and [development](development.md) for the verified F01 baseline and remaining checks.
+
+The [F04 model and command contract](contracts/model-and-commands-v0.1.md) is a review draft
+of these logical boundaries. Its examples are proposed acceptance descriptions, not implemented
+APIs or saved models. F09 admission precedes freezing it for kernel implementers.
