@@ -4,6 +4,7 @@
 """Synthetic archive and CLI checks; no third-party fixtures or network."""
 
 import hashlib
+import os
 import struct
 import subprocess
 import sys
@@ -59,6 +60,96 @@ class InventoryTests(unittest.TestCase):
         self.make_wheel()
         with self.assertRaisesRegex(ValueError, "SHA-256 mismatch"):
             audit.inspect_wheel(self.wheel, "0" * 64)
+
+    def test_actual_directory_count_rejected_before_zipinfo_allocation(self) -> None:
+        """A forged advertised count cannot hide excessive directory records."""
+        self.make_wheel("pxr/extra.txt")
+        data = bytearray(self.wheel.read_bytes())
+        end = data.rfind(b"PK\x05\x06")
+        self.assertGreaterEqual(end, 0)
+        struct.pack_into("<HH", data, end + 8, 1, 1)
+        self.wheel.write_bytes(data)
+        digest = hashlib.sha256(data).hexdigest()
+        with (
+            patch.object(audit, "MAX_MEMBERS", 2),
+            patch.object(audit.zipfile, "ZipFile") as parser,
+        ):
+            with self.assertRaisesRegex(ValueError, "actual member count limit"):
+                audit.inspect_wheel(self.wheel, digest)
+            parser.assert_not_called()
+
+    def test_directory_byte_limit_precedes_zipinfo_allocation(self) -> None:
+        """Directory bytes are rejected before constructing the ZIP parser."""
+        digest = self.make_wheel()
+        with (
+            patch.object(audit, "MAX_CENTRAL_DIRECTORY_BYTES", 1),
+            patch.object(audit.zipfile, "ZipFile") as parser,
+        ):
+            with self.assertRaisesRegex(ValueError, "central directory byte limit"):
+                audit.inspect_wheel(self.wheel, digest)
+            parser.assert_not_called()
+
+    def test_understated_deflated_size_is_rejected_with_bounded_read(self) -> None:
+        """A hash-valid deflated member with a forged size cannot be read wholesale."""
+        payload = b"x" * 4096
+        with zipfile.ZipFile(self.wheel, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("text.txt", payload)
+        data = bytearray(self.wheel.read_bytes())
+        central = data.find(b"PK\x01\x02")
+        self.assertGreaterEqual(central, 0)
+        struct.pack_into("<I", data, 22, 1)
+        struct.pack_into("<I", data, central + 24, 1)
+        self.wheel.write_bytes(data)
+        with zipfile.ZipFile(self.wheel) as archive:
+            stream = archive.open("text.txt")
+            with (
+                patch.object(audit, "MAX_TEXT_BYTES", 32),
+                patch.object(archive, "open", return_value=stream),
+                patch.object(stream, "read", wraps=stream.read) as reader,
+            ):
+                with self.assertRaises(zipfile.BadZipFile):
+                    audit.read_text_bytes(archive, "text.txt")
+                reader.assert_called_once_with(33)
+
+    def test_bzip2_and_lzma_text_rejected_before_decompressor(self) -> None:
+        """Unsupported text methods never open a decompression stream."""
+        for compression in (zipfile.ZIP_BZIP2, zipfile.ZIP_LZMA):
+            with self.subTest(compression=compression):
+                with zipfile.ZipFile(self.wheel, "w", compression=compression) as archive:
+                    archive.writestr("text.txt", "original synthetic text")
+                with (
+                    zipfile.ZipFile(self.wheel) as archive,
+                    patch.object(archive, "open") as opener,
+                ):
+                    with self.assertRaisesRegex(ValueError, "unsupported text compression"):
+                        audit.read_text_bytes(archive, "text.txt")
+                    opener.assert_not_called()
+
+    def test_cli_rejects_input_output_aliases_without_modifying_wheel(self) -> None:
+        """Direct, hard-linked and supported symlink aliases preserve artifact bytes."""
+        digest = self.make_wheel()
+        original = self.wheel.read_bytes()
+        hard_link = self.root / "hard-link.whl"
+        os.link(self.wheel, hard_link)
+        aliases = [self.wheel, hard_link]
+        symbolic_link = self.root / "symbolic-link.whl"
+        try:
+            symbolic_link.symlink_to(self.wheel)
+        except OSError:
+            # Windows may require a privilege; direct and hard-link cases still run.
+            pass
+        else:
+            aliases.append(symbolic_link)
+        for output in aliases:
+            with self.subTest(output=output.name):
+                result = subprocess.run(
+                    [sys.executable, str(Path(audit.__file__)), str(self.wheel),
+                     "--sha256", digest, "--output", str(output)],
+                    capture_output=True, text=True, timeout=10, check=False,
+                )
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("output must not refer to the input wheel", result.stderr)
+                self.assertEqual(self.wheel.read_bytes(), original)
 
     def test_unsafe_paths_are_rejected(self) -> None:
         """Traversal, absolute and Windows drive paths cannot enter inventory."""

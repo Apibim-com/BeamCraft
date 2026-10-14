@@ -168,12 +168,21 @@ python -B tools/audit/openusd_inventory.py /absolute/path/to/wheel.whl --sha256 
 python -B -m unittest discover -s tools/audit -p "test_*.py" -v
 ```
 
-It enforces compressed/member/total size limits, rejects unsafe/duplicate paths, checks the exact
-package version and reports licence/native/schema members. It does not classify licences,
-verify every RECORD entry or resolve native imports. Its seven synthetic tests include three real
-CLI subprocess cases, digest failure, unsafe paths, archive limits, unsupported compression and
-version mismatch. All seven passed. The CLI also successfully inventoried all three real,
-hash-verified wheels.
+It hashes into a private capped snapshot and preflights central-directory bytes and actual records
+before the ZIP parser creates member objects. Classic single-disk ZIP containers are supported;
+ZIP64 containers are rejected. This layout check follows
+[PKWARE APPNOTE sections 4.3.12 and 4.3.16](https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT).
+Text reads accept only stored/deflated members with an explicit byte limit; licence hashes reuse
+the same bytes. Output paths cannot alias the input wheel, including symlinks and hard links.
+Reports publish through a temporary file without following an output symlink on write.
+
+It also enforces compressed/member/total size limits, rejects unsafe/duplicate paths, checks the
+exact package version and reports licence/native/schema members. It does not classify licences,
+verify every RECORD entry or resolve native imports. Its twelve synthetic tests cover real CLI
+subprocess cases, pre-allocation directory rejection, understated text sizes, unsupported
+compression, input/output aliases, digest/version mismatch and unsafe paths.
+All twelve passed; CI runs these tests on Windows and Linux.
+The CLI also successfully inventoried all three real, hash-verified wheels.
 Raw inventories, Windows direct-import evidence and the TBB byte comparison are local under
 `Desktop/BeamCraft/work/F03`; the source checkout contains original audit text and the pinned manifest.
 

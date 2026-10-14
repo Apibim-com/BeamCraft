@@ -39,6 +39,10 @@ later project; portable domain crates alone do not establish a working web appli
 
 ## Progress log
 
+- 2026-10-14: addressed F03 review findings with bounded ZIP directory preflight and text reads,
+  plus input/output alias protection. Twelve synthetic audit tests pass; added their Windows/Linux
+  CI execution. SDK integration remains gated separately from audit-tool correctness.
+
 - 2026-10-14: established one focused PR per implementation-plan task in AGENTS.md, including
   verified bases, explicit stacked-PR dependencies, English descriptions and no agent co-author trailers.
   Opened separate draft reviews for the MPL prerequisite, F01 and F03; no merge was performed.

@@ -10,18 +10,118 @@ import email
 import hashlib
 import json
 import lzma
+import os
 import re
 import stat
+import struct
 import sys
+import tempfile
 import zipfile
 import zlib
 from pathlib import Path, PurePosixPath
+from typing import BinaryIO
 
 MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
 MAX_MEMBER_BYTES = 256 * 1024 * 1024
 MAX_TOTAL_BYTES = 512 * 1024 * 1024
 MAX_TEXT_BYTES = 2 * 1024 * 1024
 MAX_MEMBERS = 4096
+MAX_CENTRAL_DIRECTORY_BYTES = 4 * 1024 * 1024
+END_RECORD = struct.Struct("<4s4H2IH")
+CENTRAL_HEADER_BYTES = 46
+
+
+def preflight_directory(source: BinaryIO, archive_size: int) -> None:
+    """Bound classic ZIP directory bytes and actual records before ZipInfo allocation.
+
+    Layout follows PKWARE APPNOTE sections 4.3.12 and 4.3.16. ZIP64 containers,
+    multiple disks, trailing data and prefixed archives are outside this audit's scope.
+    """
+    tail_size = min(archive_size, END_RECORD.size + 65535)
+    source.seek(archive_size - tail_size)
+    tail = source.read(tail_size)
+    end_index = tail.rfind(b"PK\x05\x06")
+    if end_index < 0 or end_index + END_RECORD.size > len(tail):
+        raise ValueError("missing or truncated ZIP end record")
+    _, disk, directory_disk, disk_entries, entries, size, offset, comment = (
+        END_RECORD.unpack_from(tail, end_index)
+    )
+    end_offset = archive_size - tail_size + end_index
+    if disk or directory_disk or disk_entries != entries:
+        raise ValueError("multiple-disk ZIP archives are unsupported")
+    if entries == 65535 or size == 0xFFFFFFFF or offset == 0xFFFFFFFF:
+        raise ValueError("ZIP64 containers are unsupported")
+    if end_offset >= 20:
+        source.seek(end_offset - 20)
+        if source.read(4) == b"PK\x06\x07":
+            raise ValueError("ZIP64 containers are unsupported")
+    if end_index + END_RECORD.size + comment != len(tail) or offset + size != end_offset:
+        raise ValueError("invalid ZIP central directory bounds")
+    if size > MAX_CENTRAL_DIRECTORY_BYTES:
+        raise ValueError("archive exceeds central directory byte limit")
+    if entries > MAX_MEMBERS:
+        raise ValueError("archive exceeds member count limit")
+    source.seek(offset)
+    consumed = 0
+    actual_entries = 0
+    while consumed < size:
+        if size - consumed < CENTRAL_HEADER_BYTES:
+            raise ValueError("truncated central directory header")
+        header = source.read(CENTRAL_HEADER_BYTES)
+        if len(header) != CENTRAL_HEADER_BYTES or not header.startswith(b"PK\x01\x02"):
+            raise ValueError("invalid central directory header")
+        name_bytes, extra_bytes, comment_bytes = struct.unpack_from("<3H", header, 28)
+        record_bytes = CENTRAL_HEADER_BYTES + name_bytes + extra_bytes + comment_bytes
+        if record_bytes > size - consumed:
+            raise ValueError("central directory record exceeds bounds")
+        actual_entries += 1
+        if actual_entries > MAX_MEMBERS:
+            raise ValueError("archive exceeds actual member count limit")
+        source.seek(record_bytes - CENTRAL_HEADER_BYTES, os.SEEK_CUR)
+        consumed += record_bytes
+    if actual_entries != entries:
+        raise ValueError("central directory member count mismatch")
+    source.seek(0)
+
+
+def read_text_bytes(archive: zipfile.ZipFile, name: str) -> bytes:
+    """Read capped stored/deflated text; other decompressors are unsupported."""
+    member = archive.getinfo(name)
+    if member.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+        raise ValueError("unsupported text compression; require stored or deflated")
+    if member.file_size > MAX_TEXT_BYTES:
+        raise ValueError("metadata or licence exceeds text size limit")
+    with archive.open(member) as stream:
+        data = stream.read(MAX_TEXT_BYTES + 1)
+    if len(data) > MAX_TEXT_BYTES:
+        raise ValueError("decompressed text exceeds text size limit")
+    if len(data) != member.file_size:
+        raise ValueError("decompressed text size mismatch")
+    return data
+
+
+def validate_output_path(wheel: Path, output: Path) -> None:
+    """Reject input aliases, including existing symlinks and hard links."""
+    if output.resolve() == wheel.resolve() or (output.exists() and output.samefile(wheel)):
+        raise ValueError("output must not refer to the input wheel")
+
+
+def write_inventory(wheel: Path, output: Path, result: dict[str, object]) -> None:
+    """Publish through a temporary file without following an output symlink on write."""
+    validate_output_path(wheel, output)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=output.parent, delete=False,
+        ) as stream:
+            temporary = Path(stream.name)
+            json.dump(result, stream, indent=2)
+            stream.write("\n")
+        validate_output_path(wheel, output)
+        os.replace(temporary, output)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def inspect_wheel(path: Path, expected_sha256: str) -> dict[str, object]:
@@ -34,15 +134,19 @@ def inspect_wheel(path: Path, expected_sha256: str) -> dict[str, object]:
         raise ValueError("expected SHA-256 must contain 64 lowercase hex digits")
     digest = hashlib.sha256()
     compressed_size = 0
-    with path.open("rb") as source:
-        while block := source.read(1024 * 1024):
+    # Parse a private snapshot so concurrent input changes cannot bypass preflight.
+    with path.open("rb") as input_stream, tempfile.SpooledTemporaryFile(
+        max_size=1024 * 1024, mode="w+b",
+    ) as source:
+        while block := input_stream.read(1024 * 1024):
             compressed_size += len(block)
             if compressed_size > MAX_ARCHIVE_BYTES:
                 raise ValueError("archive exceeds compressed size limit")
             digest.update(block)
+            source.write(block)
         if digest.hexdigest() != expected_sha256:
             raise ValueError("archive SHA-256 mismatch")
-        source.seek(0)
+        preflight_directory(source, compressed_size)
         with zipfile.ZipFile(source) as archive:
             members = archive.infolist()
             if len(members) > MAX_MEMBERS:
@@ -72,9 +176,7 @@ def inspect_wheel(path: Path, expected_sha256: str) -> dict[str, object]:
 
             def read_text(name: str) -> str:
                 """Read bounded UTF-8 evidence without executing package content."""
-                if archive.getinfo(name).file_size > MAX_TEXT_BYTES:
-                    raise ValueError("metadata or licence exceeds text size limit")
-                return archive.read(name).decode("utf-8")
+                return read_text_bytes(archive, name).decode("utf-8")
 
             metadata_names = sorted(n for n in names if n.endswith(".dist-info/METADATA"))
             if len(metadata_names) != 1:
@@ -91,10 +193,11 @@ def inspect_wheel(path: Path, expected_sha256: str) -> dict[str, object]:
             ]
             licences = []
             for name in licence_files:
-                text = read_text(name)
+                data = read_text_bytes(archive, name)
+                text = data.decode("utf-8")
                 licences.append({
                     "path": name,
-                    "sha256": hashlib.sha256(archive.read(name)).hexdigest(),
+                    "sha256": hashlib.sha256(data).hexdigest(),
                     "sections": re.findall(r"={5,}\s*\n([^\n]+)\n={5,}", text),
                 })
 
@@ -141,8 +244,9 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:
+        validate_output_path(args.wheel, args.output)
         result = inspect_wheel(args.wheel, args.sha256)
-        args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+        write_inventory(args.wheel, args.output, result)
     except (OSError, ValueError, KeyError, RuntimeError, EOFError,
             zipfile.BadZipFile, zipfile.LargeZipFile, zlib.error, lzma.LZMAError) as error:
         print(f"audit error: {error}", file=sys.stderr)
