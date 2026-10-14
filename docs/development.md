@@ -10,7 +10,54 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo run -p beamcraft-cli -- --version
 ```
 
-Optional tools: `cargo install cargo-deny` then `cargo deny check` (licences and advisories).
+## Required checks
+
+In addition to the native commands above, CI requires documentation, portable domain builds and
+dependency checks:
+
+```sh
+cargo fmt --all -- --check
+cargo doc --workspace --no-deps
+cargo check --target wasm32-unknown-unknown -p beamcraft-geom -p beamcraft-model
+cargo deny check
+```
+
+Run the documentation command with `RUSTDOCFLAGS=-D warnings`.
+For example, PowerShell uses `$env:RUSTDOCFLAGS = '-D warnings'`.
+
+The WASM check requires the `wasm32-unknown-unknown` target. Dependency checks require `cargo-deny`.
+If provisioning is authorized, install them with `rustup target add wasm32-unknown-unknown` and
+`cargo install cargo-deny --locked`. These commands download tools; an agent must follow the
+owner's network policy before running them. Missing tools leave checks unverified, not passed.
+
+Use `--offline --locked` with ordinary Cargo build, test, check, Clippy and docs commands when
+validating without dependency downloads. Do not update the lockfile as a side effect of an audit.
+
+## F01 baseline: 2026-10-14
+
+The initial implementation base is `c6a1e73aea9c41bf88db96281040043471b80d0a`, which includes
+the project's MPL-2.0 change. At audit time, local `master` was still
+`596f929e820b590b8674f2b10cdc2100ba057cbe`. Start foundation branches from the recorded MPL
+base until it is integrated; do not silently fall back to the older default branch.
+This records the initial snapshot, not a permanent base for future branches.
+
+The source tree was clean. Local tools were Rust/Cargo 1.96.0 on Windows x64
+(Windows NT 10.0.19045.0). The workspace declares Rust 1.95 as its minimum; that version was
+not separately tested. Cargo.lock contained only the three project-owned packages, each covered
+by its package-specific MPL exception in `deny.toml`.
+
+| Check | Local result |
+|-------|--------------|
+| Format and Clippy with warnings denied | passed |
+| Workspace tests | passed: two unit tests and one CLI end-to-end test |
+| Documentation with warnings denied | passed |
+| CLI `--version` | passed: `beamcraft 0.0.1` |
+| Locked offline metadata and clean diff | passed |
+| WASM domain check | unverified: target absent, E0463 |
+| cargo-deny | unverified: tool absent |
+| Rust 1.95, Linux, macOS and remote CI | not run locally |
+
+This baseline validates the scaffold. It does not establish USD feature acceptance or pass K0.
 
 ## CI
 
