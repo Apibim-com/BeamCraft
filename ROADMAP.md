@@ -43,6 +43,14 @@ later project; portable domain crates alone do not establish a working web appli
 
 ## Progress log
 
+- 2026-10-14: F09 added the clean-room admission policy and templates and an admitted
+  first-scope package (rectangular plate, straight member, identities, units, placement,
+  declared failures) under `docs/clean-room/`. Base `ebb5b928dda3d36d6b6570549c3f745bb1883ff7`.
+  Admission covers that limited scope only; broader requirements stay pending and the F04
+  contract remains a review draft. Exposure admission is separate and no implementer is declared
+  eligible. Windows fmt, Clippy, three tests, docs and CLI checks passed; local WASM and
+  cargo-deny checks remain unverified because the target and tool are absent; K0 is not passed.
+
 - 2026-10-14: synchronized the branch-naming policy PR with master after F04 integration;
   retained both attribution rows and all task progress entries when resolving conflicts.
 
