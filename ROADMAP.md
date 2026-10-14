@@ -24,6 +24,10 @@ F02 (requirements), F03 (OpenUSD distribution audit) and F07 (original fixtures)
 independently. F09 establishes clean-room admission after F02. F04 then fixes the model and command
 contract; F05/F06 define worker and geometry contracts before F08 changes module boundaries.
 
+The [F04 model/command draft](docs/contracts/model-and-commands-v0.1.md) and its original
+acceptance descriptions are available for review. F02 currently remains a local analysis artifact;
+F09 admission and contract freeze are still outstanding. No runtime command is implemented by F04.
+
 The first demonstration starts with a rectangular plate and a supported straight member.
 Published USD revisions include their computed geometry. Copying, editing and reopening must
 preserve the original element and produce independently verified measurements.
@@ -38,6 +42,10 @@ IFC import and foreign-to-native conversion require a new scope decision. Browse
 later project; portable domain crates alone do not establish a working web application.
 
 ## Progress log
+
+- 2026-10-14: drafted F04 model/command version 0.1.0, including full identities, explicit units,
+  bounded inputs, typed mutations, revision/generation preconditions, semantic footprints and
+  atomic errors. Added original logical acceptance descriptions; F09 and freeze remain open.
 
 - 2026-10-14: F01 aligned the roadmap, architecture and development documentation with the
   accepted USD direction. Implementation base: `c6a1e73aea9c41bf88db96281040043471b80d0a`
