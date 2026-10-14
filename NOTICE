@@ -1,11 +1,14 @@
 BeamCraft
 Copyright (c) 2026 Apibim
 
-This product is dual-licensed under the MIT License and the Apache License 2.0.
-See LICENSE-MIT and LICENSE-APACHE.
+BeamCraft's original source code and documentation are licensed under the Mozilla Public License,
+version 2.0. See LICENSE or https://www.mozilla.org/MPL/2.0/.
+Source code is available at https://github.com/Apibim-com/BeamCraft.
+Distributors must provide the source corresponding to their executable version, including any
+modifications, and inform recipients how to obtain it as required by MPL-2.0 section 3.2.
 
 BeamCraft(TM) and the BeamCraft logos are trademarks of Apibim (registration pending). They are not
-covered by the licences above; see docs/brand/LICENSE-brand.txt.
+covered by MPL-2.0; see docs/brand/LICENSE-brand.txt.
 
 BeamCraft is an independent project, not affiliated with or endorsed by Trimble Inc.
 Tekla and Tekla Structures are trademarks of Trimble Inc.

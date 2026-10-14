@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MPL-2.0
+// SPDX-FileCopyrightText: 2026 Apibim
+
 //! The structural model for BeamCraft.
 
 use beamcraft_geom::Point3;

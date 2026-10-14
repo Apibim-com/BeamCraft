@@ -1,4 +1,6 @@
-# cargo-deny policy. Permissive licences only: copyleft (GPL, AGPL, LGPL) is never linked.
+# cargo-deny policy. Third-party dependencies use permissive licences only.
+# MPL-2.0 is allowed only for the explicitly listed BeamCraft workspace packages.
+# Third-party copyleft (GPL, AGPL, LGPL) is never linked.
 # Copyleft tools may run only as external oracle processes. See AGENTS.md.
 
 [graph]
@@ -22,6 +24,21 @@ allow = [
 
 [licenses.private]
 ignore = true
+
+[[licenses.exceptions]]
+name = "beamcraft-geom"
+version = "0.0.1"
+allow = ["MPL-2.0"]
+
+[[licenses.exceptions]]
+name = "beamcraft-model"
+version = "0.0.1"
+allow = ["MPL-2.0"]
+
+[[licenses.exceptions]]
+name = "beamcraft-cli"
+version = "0.0.1"
+allow = ["MPL-2.0"]
 
 [bans]
 multiple-versions = "allow"

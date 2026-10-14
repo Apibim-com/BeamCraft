@@ -31,7 +31,10 @@ Every asset must be one of:
 - **Creative Commons:** CC0-1.0, CC-BY-4.0, CC-BY-SA-4.0.
 - **Public domain.**
 - **Contributor-original:** created by a contributor who owns it and licenses it under the project
-  licence (`MIT OR Apache-2.0`).
+  licence (`MPL-2.0`).
+
+Unmodified licence texts from their original sources may be included to document the project's
+licence or meet redistribution obligations. Record their source in `ATTRIBUTION.md`.
 
 Anything whose licence you cannot prove from its original source is forbidden. This includes
 "free for personal use" material, scraped vendor catalogues, and profile tables copied from a
@@ -83,5 +86,7 @@ Every model file, IFC/DSTV import, script and keystroke is untrusted input.
 
 ## 5. Dependencies
 
-Permissive licences only (`deny.toml`, enforced in CI). Prefer well-maintained pure-Rust crates.
+Third-party dependencies use permissive licences only (`deny.toml`, enforced in CI). BeamCraft's
+own workspace crates use `MPL-2.0` and have explicit package-specific exceptions in `deny.toml`;
+add an exception for each new project-owned crate. Prefer well-maintained pure-Rust crates.
 New outbound network access is the owner's decision, not an agent's.

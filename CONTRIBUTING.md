@@ -15,7 +15,9 @@ Thanks for helping. Humans and AI agents follow the same rules.
 4. Add a test for new behaviour. For a bug fix, confirm the test fails without the fix.
 5. Open a PR with the template filled in. CI must be green.
 
-By contributing you agree that your work is licensed under `MIT OR Apache-2.0`, as described in the
-README.
+Contributions to BeamCraft's original source code and documentation are licensed under `MPL-2.0`,
+as described in the README and `LICENSE`. Add `// SPDX-License-Identifier: MPL-2.0` to each new
+Rust source file. Separately licensed third-party dependencies and assets must follow `AGENTS.md`
+and preserve their original notices; do not relabel them as MPL-2.0.
 
 Found a security problem? See [`SECURITY.md`](SECURITY.md) instead of opening a public issue.

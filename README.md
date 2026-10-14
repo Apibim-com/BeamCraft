@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-12a58a">
+  <a href="LICENSE">License: MPL-2.0</a>
   <img alt="Written in Rust" src="https://img.shields.io/badge/written%20in-Rust-0a7563">
   <img alt="Status: pre-alpha" src="https://img.shields.io/badge/status-pre--alpha-d9822b">
   <img alt="No account, no telemetry" src="https://img.shields.io/badge/no%20account-no%20telemetry-0a7563">
@@ -76,20 +76,20 @@ Humans and AI agents are both welcome. Read [`CONTRIBUTING.md`](CONTRIBUTING.md)
 
 ## License
 
-Licensed under either of
+BeamCraft's original source code and documentation are licensed under the Mozilla Public License,
+version 2.0 ([`LICENSE`](LICENSE)). Contributions to that code and documentation are accepted under
+`MPL-2.0`. Separately licensed third-party dependencies and assets retain their own licences.
 
-- Apache License, Version 2.0 ([`LICENSE-APACHE`](LICENSE-APACHE))
-- MIT license ([`LICENSE-MIT`](LICENSE-MIT))
-
-at your option. Unless you explicitly state otherwise, any contribution intentionally submitted for
-inclusion in BeamCraft by you, as defined in the Apache-2.0 license, shall be dual licensed as
-above, without any additional terms or conditions.
+When distributing executable versions, make the corresponding MPL-covered source available and
+tell recipients where to obtain it, as required by MPL-2.0 section 3.2. The source repository is
+[Apibim-com/BeamCraft](https://github.com/Apibim-com/BeamCraft); source must correspond to the
+distributed version, including any modifications.
 
 Copyright © 2026 [Apibim](https://github.com/Apibim-com).
 
 ## Trademark
 
 **BeamCraft™** and the BeamCraft logos are trademarks of Apibim; registration is pending. The
-licenses above cover the source code only, not the name or logos. You may use the name to refer to
+MPL-2.0 licence does not grant rights to the name or logos. You may use the name to refer to
 the official project; forks and modified versions must not present themselves as BeamCraft and must
 remove the logos. See [`docs/brand/LICENSE-brand.txt`](docs/brand/LICENSE-brand.txt).
