@@ -2,7 +2,7 @@ BeamCraft brand and trademark policy
 
 "BeamCraft", the BeamCraft wordmark and the BeamCraft logos (when added to
 this directory) are trademarks of Apibim. Trademark registration is pending.
-They are NOT covered by the MIT / Apache-2.0 licences that apply to the source
+They are NOT covered by the MPL-2.0 licence that applies to the source
 code of this repository.
 
 You may:

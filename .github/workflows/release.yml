@@ -42,7 +42,9 @@ jobs:
           name="beamcraft-${{ github.ref_name }}-${{ matrix.target }}"
           mkdir "$name"
           cp "target/${{ matrix.target }}/release/beamcraft${{ matrix.ext }}" "$name/"
-          cp README.md LICENSE-MIT LICENSE-APACHE NOTICE "$name/"
+          cp README.md LICENSE NOTICE "$name/"
+          mkdir -p "$name/docs/brand"
+          cp docs/brand/LICENSE-brand.txt "$name/docs/brand/"
           if [ "${{ matrix.archive }}" = zip ]; then
             7z a "$name.zip" "$name"
             echo "ASSET=$name.zip" >> "$GITHUB_ENV"

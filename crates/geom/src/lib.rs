@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MPL-2.0
+// SPDX-FileCopyrightText: 2026 Apibim
+
 //! Geometry primitives for BeamCraft.
 //!
 //! Units are millimetres, right-handed, Z up.

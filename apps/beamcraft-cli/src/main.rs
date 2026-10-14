@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MPL-2.0
+// SPDX-FileCopyrightText: 2026 Apibim
+
 //! `beamcraft`: command-line entry point.
 
 fn main() {

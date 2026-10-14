@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MPL-2.0
+// SPDX-FileCopyrightText: 2026 Apibim
+
 //! End-to-end test: the binary reports its version.
 
 use std::process::Command;

@@ -19,5 +19,9 @@ This is a one-page plan. Milestones are intentionally coarse; agents break them 
 
 ## Progress log
 
+- 2026-10-14: switched the current source and documentation to MPL-2.0; updated Cargo metadata,
+  source notices, contribution rules and release packaging. Third-party licence policy remains
+  permissive, with explicit MPL-2.0 exceptions for project-owned workspace crates.
+
 - 2026-10-14: scaffold created: workspace (`geom`, `model`, `beamcraft-cli`), dual MIT/Apache-2.0
   licence, CI on Windows and Linux, release workflow, agent rules.
