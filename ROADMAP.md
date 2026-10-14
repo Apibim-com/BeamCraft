@@ -39,6 +39,10 @@ later project; portable domain crates alone do not establish a working web appli
 
 ## Progress log
 
+- 2026-10-14: established one focused PR per implementation-plan task in AGENTS.md, including
+  verified bases, explicit stacked-PR dependencies, English descriptions and no agent co-author trailers.
+  Opened separate draft reviews for the MPL prerequisite, F01 and F03; no merge was performed.
+
 - 2026-10-14: F03 pinned and statically audited three `usd-core` 26.8 CPython 3.12 wheels.
   Added an offline inventory tool with seven passing synthetic tests. SDK admission remains open:
   TOST/resource policy, missing native notices, runtime/native closure and platform smoke tests.
