@@ -39,6 +39,9 @@ later project; portable domain crates alone do not establish a working web appli
 
 ## Progress log
 
+- 2026-10-14: recorded task-type branch prefixes in AGENTS.md and contributor instructions;
+  new branches use feat/bug/docs/chore/refactor/test rather than agent/provider names.
+
 - 2026-10-14: owner approved TOST-1.0 only for official OpenUSD and its SDK resources.
   Recorded the scoped exception in AGENTS.md; kept the global Cargo licence allowlist unchanged.
   Provenance, notices, native closure and runtime checks remain prerequisites for integration.
