@@ -43,6 +43,12 @@ later project; portable domain crates alone do not establish a working web appli
 
 ## Progress log
 
+- 2026-10-14: synchronized the branch-naming policy PR with master after F04 integration;
+  retained both attribution rows and all task progress entries when resolving conflicts.
+
+- 2026-10-14: recorded task-type branch prefixes in AGENTS.md and contributor instructions;
+  new branches use feat/bug/docs/chore/refactor/test rather than agent/provider names.
+
 - 2026-10-14: synchronized the F04 review branch with master after the OpenUSD policy merge;
   resolved the progress-log conflict while retaining both F04 and licence-decision entries.
 

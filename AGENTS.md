@@ -106,3 +106,14 @@ BeamCraft's own workspace crates use `MPL-2.0` and have explicit package-specifi
 `deny.toml`;
 add an exception for each new project-owned crate. Prefer well-maintained pure-Rust crates.
 New outbound network access is the owner's decision, not an agent's.
+
+## 6. Branch naming
+
+- Create task branches from the verified current `origin/master`.
+- Name branches `<type>/<short-description>` using lowercase words separated by hyphens.
+  Include the implementation-plan ID when applicable, for example `feat/f07-fixtures`.
+- Allowed types: `feat` for features, `bug` for bug fixes, `docs` for documentation,
+  `chore` for maintenance, `refactor` for restructuring and `test` for test-only changes.
+- Never use an agent name or provider prefix such as `codex/` for a new branch.
+- Existing PR branches and active worktrees keep their names until their owners coordinate a
+  migration. Do not rename another contributor's active branch or close a PR to change its prefix.

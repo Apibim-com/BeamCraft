@@ -5,7 +5,10 @@ Thanks for helping. Humans and AI agents follow the same rules.
 1. Read [`AGENTS.md`](AGENTS.md). The clean-room and asset rules are absolute: nothing from Tekla
    Structures or any Trimble product may enter this repository, and behaviour must come from public
    standards or black-box observation of synthetic fixtures.
-2. Branch from `master`, keep the change small and focused.
+2. Branch from the verified current `origin/master`, keep the change small and focused.
+   Use `<type>/<short-description>` with lowercase hyphenated words: `feat/`, `bug/`, `docs/`,
+   `chore/`, `refactor/` or `test/`, as defined in `AGENTS.md` section 6. Include the task ID when
+   applicable (for example `feat/f07-fixtures`); do not use agent/provider prefixes.
 3. Run before you push:
    ```sh
    cargo fmt --all
