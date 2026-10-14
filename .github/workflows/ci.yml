@@ -46,6 +46,17 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+      # F07: committed fixtures must equal the generator output and their manifest digests.
+      - name: Verify original fixtures
+        run: cargo run -p beamcraft-fixtures -- verify --dir tests/fixtures/f07
+
+      # Independent oracle (Python standard library) for hashes and analytical expectations.
+      - name: Check fixture expectations independently
+        if: runner.os == 'Linux'
+        run: |
+          python3 tools/fixtures/verify_expectations.py
+          python3 tools/fixtures/test_verify_expectations.py
+
       - name: Docs
         if: runner.os == 'Linux'
         run: cargo doc --workspace --no-deps

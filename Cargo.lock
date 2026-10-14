@@ -10,6 +10,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "beamcraft-fixtures"
+version = "0.0.1"
+
+[[package]]
 name = "beamcraft-geom"
 version = "0.0.1"
 
