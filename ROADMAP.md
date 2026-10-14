@@ -43,6 +43,15 @@ later project; portable domain crates alone do not establish a working web appli
 
 ## Progress log
 
+- 2026-10-14: F07 added original synthetic fixtures on base
+  `b34205281ab8a1f95052c4dc7d84f0995633e179`. The new std-only dev tool `tools/fixtures`
+  (`beamcraft-fixtures`) provides a generator API, a CLI and E2E tests. `tests/fixtures/f07`
+  holds 33 fixtures: 10 accepted (one unverified), 2 unsupported and 21 invalid. A manifest
+  records full SHA-256 digests. Separately, `tests/fixtures/expectations/f07.json` holds
+  hand-derived expectations, derived in `docs/fixtures/expectations.md`, and a Python oracle
+  checks them independently. CI verifies the committed bytes. This is test data only: it adds
+  no geometry, USD or copy feature and does not pass K0.
+
 - 2026-10-14: F09 added the clean-room admission policy and templates and an admitted
   first-scope package (rectangular plate, straight member, identities, units, placement,
   declared failures) under `docs/clean-room/`. Base `ebb5b928dda3d36d6b6570549c3f745bb1883ff7`.
