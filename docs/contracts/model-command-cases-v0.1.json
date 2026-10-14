@@ -1,0 +1,750 @@
+{
+  "artifact_version": 1,
+  "contract_version": "0.1.0",
+  "status": "draft",
+  "role": "original logical acceptance descriptions; not an engine or USD model fixture",
+  "assembly_rule": "Copy request_template, add command and arguments, then replace keys from envelope_changes; raw JSON cases bypass this assembly. For cases with argument_bindings, the future acceptance harness must first supply the actual validated resource digest; a missing binding is not a valid request. Do not substitute placeholder hashes.",
+  "request_template": {
+    "contract_version": "0.1.0",
+    "project_id": "019a7bf0-0000-7000-8000-000000000001",
+    "workspace_id": "019a7bf0-0000-7000-8000-000000000002",
+    "op_id": "019a7bf0-0000-7000-8000-000000000004",
+    "actor_id": "synthetic-actor",
+    "base_revision": "019a7bf0-0000-7000-8000-000000000010",
+    "expected_generation": "0"
+  },
+  "cases": [
+    {
+      "case_id": "F04-POS-01",
+      "given": [
+        "Authorized actor/workspace; base and generation match; new_id unused"
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic plate",
+        "width_mm": 1000,
+        "length_mm": 500,
+        "thickness_mm": 10,
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      "envelope_changes": {},
+      "expected": {
+        "outcome": "accepted_draft",
+        "generation": "1",
+        "published_revision_unchanged": true,
+        "volume_m3_after_supported_compute": 0.005,
+        "mass_status_without_material": "unknown"
+      }
+    },
+    {
+      "case_id": "F04-POS-02",
+      "given": [
+        "Owned plate at generation 0; supported schema and current local shape"
+      ],
+      "command": "UpdateElement",
+      "arguments": {
+        "target_id": "019a7bf0-0000-7000-8000-000000000005",
+        "changes": {
+          "name": "Renamed synthetic plate"
+        }
+      },
+      "envelope_changes": {},
+      "expected": {
+        "outcome": "accepted_draft",
+        "identity_and_prim_path_unchanged": true,
+        "shape_blob_unchanged": true
+      }
+    },
+    {
+      "case_id": "F04-POS-03",
+      "given": [
+        "Owned supported plate; no uncopyable relationships; new_id unused"
+      ],
+      "command": "CopyElement",
+      "arguments": {
+        "source_id": "019a7bf0-0000-7000-8000-000000000005",
+        "new_id": "019a7bf0-0000-7000-8000-000000000006",
+        "name": "Synthetic copy"
+      },
+      "envelope_changes": {},
+      "expected": {
+        "outcome": "accepted_draft",
+        "distinct_id": true,
+        "source_unchanged": true,
+        "initial_shape_shared": true
+      }
+    },
+    {
+      "case_id": "F04-POS-04",
+      "given": [
+        "This exact canonical request/op_id was already accepted at generation 0; workspace is now generation 1; actor still authorized"
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic plate",
+        "width_mm": 1000,
+        "length_mm": 500,
+        "thickness_mm": 10,
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      "envelope_changes": {},
+      "expected": {
+        "outcome": "recorded_result_replayed",
+        "generation_not_incremented_again": true
+      }
+    },
+    {
+      "case_id": "F04-POS-05",
+      "given": [
+        "Owned supported plate; complete incoming relationship index has no blocking targets"
+      ],
+      "command": "DeleteElement",
+      "arguments": {
+        "target_id": "019a7bf0-0000-7000-8000-000000000005"
+      },
+      "envelope_changes": {},
+      "expected": {
+        "outcome": "accepted_draft",
+        "generation": "1",
+        "no_dangling_relationships": true
+      }
+    },
+    {
+      "case_id": "F04-POS-06",
+      "given": [
+        "Owned plate with explicit dimensions 1000 x 500 x 10 mm; generation 0"
+      ],
+      "command": "UpdateElement",
+      "arguments": {
+        "target_id": "019a7bf0-0000-7000-8000-000000000005",
+        "changes": {
+          "width_mm": 750
+        }
+      },
+      "envelope_changes": {},
+      "expected": {
+        "outcome": "accepted_draft",
+        "shape_invalidated": true,
+        "volume_m3_after_supported_compute": 0.00375,
+        "other_elements_unchanged": true
+      }
+    },
+    {
+      "case_id": "F04-POS-07",
+      "given": [
+        "Acceptance harness first creates and validates an original supported immutable profile fixture",
+        "Bind that fixture's actual full U05-verified SHA-256 before assembling the command",
+        "No actual profile blob or digest is supplied by this description"
+      ],
+      "command": "CreateStraightMember",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000006",
+        "element_kind": "beam",
+        "name": "Synthetic member",
+        "axis_points_mm": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            1000,
+            0,
+            0
+          ]
+        ],
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      "argument_bindings": {
+        "profile_digest": "actual_original_profile_fixture_sha256"
+      },
+      "envelope_changes": {},
+      "expected": {
+        "outcome": "accepted_draft",
+        "engineering_axis_length_mm": 1000,
+        "profile_reference_pinned": true,
+        "mass_without_density": "unknown"
+      }
+    },
+    {
+      "case_id": "F04-NEG-01",
+      "given": [
+        "Authorized context"
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf00000",
+        "name": "Synthetic plate",
+        "width_mm": 1000,
+        "length_mm": 500,
+        "thickness_mm": 10,
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      "envelope_changes": {},
+      "expected": {
+        "code": "INVALID_ID",
+        "no_state_change": true
+      }
+    },
+    {
+      "case_id": "F04-NEG-02",
+      "given": [
+        "Authorized context"
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-4000-8000-000000000005",
+        "name": "Synthetic plate",
+        "width_mm": 1000,
+        "length_mm": 500,
+        "thickness_mm": 10,
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      "envelope_changes": {},
+      "expected": {
+        "code": "INVALID_ID",
+        "no_state_change": true
+      }
+    },
+    {
+      "case_id": "F04-NEG-03",
+      "given": [
+        "new_id is already an owned element ID"
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic plate",
+        "width_mm": 1000,
+        "length_mm": 500,
+        "thickness_mm": 10,
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      "envelope_changes": {},
+      "expected": {
+        "code": "DUPLICATE_ID",
+        "no_state_change": true
+      }
+    },
+    {
+      "case_id": "F04-NEG-04",
+      "given": [
+        "New ID unused"
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic plate",
+        "width_mm": 1000,
+        "length_mm": 500,
+        "thickness_mm": 0,
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      "envelope_changes": {},
+      "expected": {
+        "code": "INVALID_ARGUMENT",
+        "no_state_change": true
+      }
+    },
+    {
+      "case_id": "F04-NEG-05",
+      "given": [
+        "New ID unused"
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic plate",
+        "width_mm": 1000001,
+        "length_mm": 500,
+        "thickness_mm": 10,
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      "envelope_changes": {},
+      "expected": {
+        "code": "LIMIT_EXCEEDED",
+        "no_state_change": true
+      }
+    },
+    {
+      "case_id": "F04-NEG-06",
+      "given": [
+        "New ID unused"
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic plate",
+        "width_mm": "NaN",
+        "length_mm": 500,
+        "thickness_mm": 10,
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      "envelope_changes": {},
+      "expected": {
+        "code": "INVALID_ARGUMENT",
+        "no_state_change": true
+      }
+    },
+    {
+      "case_id": "F04-NEG-07",
+      "given": [
+        "Authorized context"
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic plate",
+        "width_mm": 1000,
+        "length_mm": 500,
+        "thickness_mm": 10,
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      "envelope_changes": {
+        "contract_version": "99.0.0"
+      },
+      "expected": {
+        "code": "UNSUPPORTED_VERSION",
+        "no_state_change": true
+      }
+    },
+    {
+      "case_id": "F04-NEG-08",
+      "given": [
+        "Workspace base differs from request base_revision"
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic plate",
+        "width_mm": 1000,
+        "length_mm": 500,
+        "thickness_mm": 10,
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      "envelope_changes": {},
+      "expected": {
+        "code": "BASE_REVISION_MISMATCH",
+        "no_state_change": true
+      }
+    },
+    {
+      "case_id": "F04-NEG-09",
+      "given": [
+        "New op_id; workspace is generation 1"
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic plate",
+        "width_mm": 1000,
+        "length_mm": 500,
+        "thickness_mm": 10,
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      "envelope_changes": {},
+      "expected": {
+        "code": "STALE_WORKSPACE",
+        "no_state_change": true
+      }
+    },
+    {
+      "case_id": "F04-NEG-10",
+      "given": [
+        "op_id previously accepted for template request with width_mm=1000; actor still authorized"
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic plate",
+        "width_mm": 750,
+        "length_mm": 500,
+        "thickness_mm": 10,
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      "envelope_changes": {},
+      "expected": {
+        "code": "OP_ID_REUSE",
+        "no_state_change": true
+      }
+    },
+    {
+      "case_id": "F04-NEG-11",
+      "given": [
+        "Resolved target has validated foreign/read-only provenance; no owned target alias"
+      ],
+      "command": "UpdateElement",
+      "arguments": {
+        "target_id": "019a7bf0-0000-7000-8000-000000000005",
+        "changes": {
+          "width_mm": 750
+        }
+      },
+      "envelope_changes": {},
+      "expected": {
+        "code": "FOREIGN_READ_ONLY",
+        "no_foreign_override_or_state_change": true
+      }
+    },
+    {
+      "case_id": "F04-NEG-12",
+      "given": [
+        "Owned plate has an incoming relationship that forbids deletion"
+      ],
+      "command": "DeleteElement",
+      "arguments": {
+        "target_id": "019a7bf0-0000-7000-8000-000000000005"
+      },
+      "envelope_changes": {},
+      "expected": {
+        "code": "DEPENDENCY_CONFLICT",
+        "no_state_change": true
+      }
+    },
+    {
+      "case_id": "F04-NEG-13",
+      "given": [
+        "Incoming relationship index/payload cannot be completely validated"
+      ],
+      "command": "DeleteElement",
+      "arguments": {
+        "target_id": "019a7bf0-0000-7000-8000-000000000005"
+      },
+      "envelope_changes": {},
+      "expected": {
+        "code": "DEPENDENCY_UNAVAILABLE",
+        "no_state_change": true
+      }
+    },
+    {
+      "case_id": "F04-NEG-14",
+      "given": [
+        "Owned supported plate"
+      ],
+      "command": "UpdateElement",
+      "arguments": {
+        "target_id": "019a7bf0-0000-7000-8000-000000000005",
+        "changes": {
+          "name": "Valid name",
+          "thickness_mm": -1
+        }
+      },
+      "envelope_changes": {},
+      "expected": {
+        "code": "INVALID_ARGUMENT",
+        "valid_half_not_applied": true
+      }
+    },
+    {
+      "case_id": "F04-NEG-15",
+      "given": [
+        "Owned supported plate"
+      ],
+      "command": "UpdateElement",
+      "arguments": {
+        "target_id": "019a7bf0-0000-7000-8000-000000000005",
+        "changes": {
+          "quantity_mass_kg": 123
+        }
+      },
+      "envelope_changes": {},
+      "expected": {
+        "code": "UNSUPPORTED_PROPERTY",
+        "no_state_change": true
+      }
+    },
+    {
+      "case_id": "F04-NEG-16",
+      "given": [
+        "Authorized context"
+      ],
+      "command": "CreateStraightMember",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000006",
+        "element_kind": "beam",
+        "name": "Synthetic member",
+        "axis_points_mm": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            1000,
+            0,
+            0
+          ]
+        ],
+        "profile_digest": "abc",
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      "envelope_changes": {},
+      "expected": {
+        "code": "INVALID_ARGUMENT",
+        "no_state_change": true
+      }
+    },
+    {
+      "case_id": "F04-NEG-17",
+      "given": [
+        "Authenticated actor differs from actor_id claim"
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic plate",
+        "width_mm": 1000,
+        "length_mm": 500,
+        "thickness_mm": 10,
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      "envelope_changes": {},
+      "expected": {
+        "code": "PERMISSION_DENIED",
+        "no_state_change": true
+      }
+    },
+    {
+      "case_id": "F04-NEG-18",
+      "given": [
+        "Request generation has a leading zero"
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic plate",
+        "width_mm": 1000,
+        "length_mm": 500,
+        "thickness_mm": 10,
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      "envelope_changes": {
+        "expected_generation": "00"
+      },
+      "expected": {
+        "code": "MALFORMED_COMMAND",
+        "no_state_change": true
+      }
+    }
+  ],
+  "raw_json_cases": [
+    {
+      "case_id": "F04-RAW-01",
+      "raw_json": "{\"contract_version\": \"0.1.0\", \"project_id\": \"019a7bf0-0000-7000-8000-000000000001\", \"workspace_id\": \"019a7bf0-0000-7000-8000-000000000002\", \"op_id\": \"019a7bf0-0000-7000-8000-000000000004\", \"actor_id\": \"synthetic-actor\", \"base_revision\": \"019a7bf0-0000-7000-8000-000000000010\", \"expected_generation\": \"0\", \"command\": \"CreatePlate\", \"arguments\": {\"new_id\": \"019a7bf0-0000-7000-8000-000000000005\", \"name\": \"Synthetic plate\", \"width_mm\": NaN, \"length_mm\": 500, \"thickness_mm\": 10, \"placement\": {\"translation_mm\": [0, 0, 0], \"orientation_xyzw\": [0, 0, 0, 1]}}}",
+      "expected": {
+        "code": "MALFORMED_COMMAND",
+        "no_state_change": true
+      }
+    },
+    {
+      "case_id": "F04-RAW-02",
+      "raw_json": "{\"contract_version\": \"0.1.0\", \"project_id\": \"019a7bf0-0000-7000-8000-000000000001\", \"workspace_id\": \"019a7bf0-0000-7000-8000-000000000002\", \"op_id\": \"019a7bf0-0000-7000-8000-000000000004\", \"actor_id\": \"synthetic-actor\", \"base_revision\": \"019a7bf0-0000-7000-8000-000000000010\", \"expected_generation\": \"0\", \"command\": \"CreatePlate\", \"arguments\": {\"new_id\": \"019a7bf0-0000-7000-8000-000000000005\", \"name\": \"Synthetic plate\", \"width_mm\": 1e400, \"length_mm\": 500, \"thickness_mm\": 10, \"placement\": {\"translation_mm\": [0, 0, 0], \"orientation_xyzw\": [0, 0, 0, 1]}}}",
+      "expected": {
+        "code": "NON_FINITE_NUMBER",
+        "no_state_change": true
+      }
+    },
+    {
+      "case_id": "F04-RAW-03",
+      "raw_json": "{\"contract_version\": \"0.1.0\", \"project_id\": \"019a7bf0-0000-7000-8000-000000000001\", \"workspace_id\": \"019a7bf0-0000-7000-8000-000000000002\", \"op_id\": \"019a7bf0-0000-7000-8000-000000000004\", \"actor_id\": \"synthetic-actor\", \"base_revision\": \"019a7bf0-0000-7000-8000-000000000010\", \"expected_generation\": \"0\", \"command\": \"CreatePlate\", \"arguments\": {\"new_id\": \"019a7bf0-0000-7000-8000-000000000005\", \"name\": \"Synthetic plate\", \"width_mm\": 1000, \"width_mm\": 750, \"length_mm\": 500, \"thickness_mm\": 10, \"placement\": {\"translation_mm\": [0, 0, 0], \"orientation_xyzw\": [0, 0, 0, 1]}}}",
+      "expected": {
+        "code": "MALFORMED_COMMAND",
+        "no_state_change": true
+      }
+    }
+  ]
+}
