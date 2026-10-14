@@ -286,6 +286,8 @@ are proposed original BeamCraft rules, not commercial-product behavior.
 Freeze conditions: review this contract and its cases, accept the F02 analysis and complete F09's
 independent provenance/admission review. F05/F06 then fix their implementation details within
 these logical invariants; they are follow-up tasks, not circular prerequisites for F04 acceptance.
-F04 review does not permit geometry implementers to inherit source-exposed contexts, integrate a
-TOST package or declare unsupported features implemented. The owner's existing TOST restriction
-and dependency/asset/unsafe policies remain in force.
+F04 review does not permit geometry implementers to inherit source-exposed contexts or declare
+unsupported features implemented. The owner permits TOST-1.0 only for official OpenUSD and its
+SDK resources; the scoped policy is recorded in [policy PR #7](https://github.com/Apibim-com/BeamCraft/pull/7).
+SDK integration still requires provenance, complete notices, native dependency closure and runtime
+checks. The remaining dependency, asset and unsafe-code policies continue to apply.
