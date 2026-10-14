@@ -39,6 +39,10 @@ later project; portable domain crates alone do not establish a working web appli
 
 ## Progress log
 
+- 2026-10-14: owner approved TOST-1.0 only for official OpenUSD and its SDK resources.
+  Recorded the scoped exception in AGENTS.md; kept the global Cargo licence allowlist unchanged.
+  Provenance, notices, native closure and runtime checks remain prerequisites for integration.
+
 - 2026-10-14: F01 aligned the roadmap, architecture and development documentation with the
   accepted USD direction. Implementation base: `c6a1e73aea9c41bf88db96281040043471b80d0a`
   (MPL-2.0); local `master` still pointed to the initial scaffold at audit time.
