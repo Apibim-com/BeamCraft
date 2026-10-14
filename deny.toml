@@ -2,6 +2,9 @@
 # MPL-2.0 is allowed only for the explicitly listed BeamCraft workspace packages.
 # Third-party copyleft (GPL, AGPL, LGPL) is never linked.
 # Copyleft tools may run only as external oracle processes. See AGENTS.md.
+# Official OpenUSD TOST use has a scoped exception in AGENTS.md section 1.2.
+# No OpenUSD package is in this Cargo graph. Do not allow TOST globally;
+# add a verified package/version exception only if one enters the graph.
 
 [graph]
 all-features = true

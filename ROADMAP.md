@@ -43,9 +43,16 @@ later project; portable domain crates alone do not establish a working web appli
 
 ## Progress log
 
+- 2026-10-14: synchronized the F04 review branch with master after the OpenUSD policy merge;
+  resolved the progress-log conflict while retaining both F04 and licence-decision entries.
+
 - 2026-10-14: drafted F04 model/command version 0.1.0, including full identities, explicit units,
   bounded inputs, typed mutations, revision/generation preconditions, semantic footprints and
   atomic errors. Added original logical acceptance descriptions; F09 and freeze remain open.
+
+- 2026-10-14: owner approved TOST-1.0 only for official OpenUSD and its SDK resources.
+  Recorded the scoped exception in AGENTS.md; kept the global Cargo licence allowlist unchanged.
+  Provenance, notices, native closure and runtime checks remain prerequisites for integration.
 
 - 2026-10-14: F01 aligned the roadmap, architecture and development documentation with the
   accepted USD direction. Implementation base: `c6a1e73aea9c41bf88db96281040043471b80d0a`
