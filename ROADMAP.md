@@ -57,6 +57,14 @@ later project; portable domain crates alone do not establish a working web appli
   Linux/macOS and the SDK oracle are not run, so all other claims stay `not_run`. No backend, MSRV or architecture change is
   accepted; owner decisions on MSRV and maintenance remain. Report: `docs/design/layer-engine-spike-n01-report-v0.1.md`.
 
+- 2026-10-15: F04.3 applied the four F04 amendments proposed by F06 section 12 to the F04 freeze
+  candidate on base `b996c58fe850642f12b92b25b23c441fbd41ed47` (stacked on PR #20): the draft
+  minimum nonzero dimension of 0.001 mm and the section-dimension cap, the corrected near-vertical
+  P-3 roll rule, the resolved-display-reference reading of material-dependent appearance, and
+  G-06 and the profile resource format accepted by F06 under its draft policy. Cases `F04-POS-17`
+  and `F04-NEG-27` were added (44 logical, 6 raw). F04 stays a freeze candidate at 0.1.0, not
+  frozen; P-1 to P-3 still await owner confirmation; nothing is implemented and K0 is not passed.
+
 - 2026-10-15: MSRV raised from Rust 1.95 to 1.96 by owner decision. The `openusd` crate under
   evaluation needs 1.96, and the local and CI toolchains are already at least 1.96. Only the
   `rust-version` in the root `Cargo.toml` and the minimum stated in `README.md` and
