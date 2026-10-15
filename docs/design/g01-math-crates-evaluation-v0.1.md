@@ -6,9 +6,22 @@ Requested branch: `feat/g01-math-crates-spike`, based on `origin/master`. Actual
 HEAD and base are unverified: Git rejected repository ownership. No workaround, staging,
 commit, push or Git metadata write was attempted.
 
+## Owner decision (2026-10-15, after this evaluation)
+
+**Do not adopt glam or nalgebra.** A library is worth taking only for its logic; here only the
+small scalar types would be taken, and BeamCraft can write those itself. The F06 ordered
+arithmetic and certificates stay in BeamCraft's own types. The owner also fixed the scope of
+rotation: plates are never rotated (they stay as drawn), and only members roll, about their own
+local Z axis. No general orientation, and so no quaternion, is needed in the kernel, which removes
+the operations where glam and nalgebra differed from F06. The results below remain as evidence.
+The sections "Result and scope" and "Recommendation in five lines" show the original proposal
+(glam as the type provider) and are superseded by this decision. The open question that remains
+is how `sin`/`cos` for a member's roll are made reproducible (section "Risks and remaining owner
+decisions").
+
 ## Result and scope
 
-Propose **glam 0.34.1** for fixed-size f64 math types, with a BeamCraft adapter owning F04
+Original proposal (superseded, see the owner decision above): propose **glam 0.34.1** for\nfixed-size f64 math types, with a BeamCraft adapter owning F04
 admission, F06 operation order, canonicalization and frame certificates. Use **approx 0.5.1
 only in tests**. Retain **robust 1.2.0 as a test-only predicate candidate** until its numeric
 domain and permission to use auxiliary exact predicates are reviewed. Omit nalgebra from the
@@ -301,6 +314,9 @@ vendored. No production proposal relies on an unverified alternative licence.
 
 ## Recommendation in five lines
 
+Superseded by the owner decision above (no glam, no nalgebra); kept as the original proposal.
+Still valid: items 3 and 4 (approx for tests, robust as a test-only candidate).
+
 1. Pin glam =0.34.1, defaults off, features std/f64/scalar-math, behind BeamCraft types.
 2. Keep F06 ordered normalization/matrix/transform operations and certificates in the adapter.
 3. Pin approx =0.5.1 for tests only; exact decisions/signatures never use approximate equality.
@@ -312,7 +328,7 @@ error envelopes, canonical sign/zeros/encoding, FeatureId, versioned keys, mesh 
 validators, resource limits and cancellation rules. These are domain contracts, not a reason
 to duplicate general linear algebra. No kernel crate is created here.
 
-## Exact proposed edits, none applied
+## Exact proposed edits, none applied (superseded for glam; see the owner decision)
 
 Add to root Cargo.toml [workspace.dependencies], retaining all internal entries:
 
