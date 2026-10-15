@@ -1,5 +1,5 @@
 {
-  "regenerate": "cargo build --release, then python harness.py hostile",
+  "regenerate": "cargo build --release, then python harness.py hostile (the harness generates its own deterministic USDC seed with the binary's seed command)",
   "cases": 1184,
   "statuses": {
     "ACCEPTED": 36,
@@ -119,9 +119,9 @@
     "usdc-corrupt-064",
     "usdc-corrupt-065"
   ],
-  "max_seconds": 0.00651569999899948,
-  "max_peak_job_commit_bytes": 1064960,
-  "max_peak_working_set_bytes": 4616192,
+  "max_seconds": 0.008406299999478506,
+  "max_peak_job_commit_bytes": 1048576,
+  "max_peak_working_set_bytes": 4530176,
   "cap_bytes": 536870912,
   "timeout_seconds": 5
 }

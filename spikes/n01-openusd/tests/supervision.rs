@@ -1,4 +1,7 @@
 //! Bounded child-process smoke test using only Rust std and the stdlib supervisor.
+//! Windows only: the supervisor needs Job-object memory caps, and hostile inputs must never
+//! run without containment, so other platforms skip this target until equivalent caps exist.
+#![cfg(windows)]
 use beamcraft_n01_openusd_spike::{Result, failure};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};

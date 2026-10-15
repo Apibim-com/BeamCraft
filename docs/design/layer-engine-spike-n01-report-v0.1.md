@@ -43,7 +43,7 @@ Regeneration, from `spikes/n01-openusd` with the Cargo cache populated:
 ```text
 python harness.py inventory                 # writes inventory.json
 cargo build --release --offline
-python harness.py hostile                   # writes hostile-summary.json (bulk log to artifacts/)
+python harness.py hostile                   # generates its own USDC seed (binary `seed` command), writes hostile-summary.json (bulk log to artifacts/); exits nonzero on any PANIC/CRASH/TIMEOUT
 python harness.py performance               # writes performance-results.json
 python checks.py                            # runs the full check list, bulk log to artifacts/
 ```
@@ -213,8 +213,8 @@ traverses every spec and reads every field value, and reports a result line. A p
 and reported by the child.
 
 Result (`hostile-summary.json`): **1184 cases, 0 panics, 0 crashes, 0 timeouts, 0 cap
-terminations.** Maximum 0.007 s per case, maximum job commit 1 064 960 bytes, maximum working
-set 4 612 096 bytes.
+terminations.** Maximum 0.008 s per case, maximum job commit 1 048 576 bytes, maximum working
+set 4 530 176 bytes. The harness exits nonzero if any case is neither accepted nor rejected.
 
 | Class | Cases | Rejected | Accepted |
 |---|---|---|---|
@@ -414,7 +414,7 @@ head `8957c40`). All Cargo commands used `--offline`.
 | `cargo clippy --workspace --all-targets -- -D warnings` (repository) | Exit 0 |
 | `cargo test --workspace` (repository) | Exit 0 |
 | `python checks.py` (all seven above, plus lock integrity) | All exit 0; root `Cargo.lock` SHA-256 `7b15824fc67c90a837ad19af9d28e12dea2802797e90f541945ddb8e984497eb` before and after (unchanged) |
-| `python harness.py hostile` | 1184 cases; 36 accepted, 1148 rejected; max 0.007 s; max job commit 1 064 960 bytes |
+| `python harness.py hostile` | 1184 cases; 36 accepted, 1148 rejected; max 0.008 s; max job commit 1 048 576 bytes |
 | `python harness.py performance` | Figures in section 7 |
 | `git diff --check` | Exit 0 (LF endings; no CR in changed files) |
 | `cargo check --target wasm32-unknown-unknown` | **Not run** (target not installed) |

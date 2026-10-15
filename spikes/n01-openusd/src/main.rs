@@ -1,7 +1,7 @@
 //! Headless N01 experiment entry point, contributor-original MPL-2.0.
 #![forbid(unsafe_code)]
-use beamcraft_n01_openusd_spike::{Result, failure};
-use openusd::{sdf, usd};
+use beamcraft_n01_openusd_spike::{Result, author_model, failure};
+use openusd::{sdf, usd, usda, usdc};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -34,6 +34,17 @@ fn parse_case(path: &Path) -> Result<String> {
         }
     }
     Ok(format!("ACCEPTED fields={fields}"))
+}
+
+/// Writes the deterministic synthetic model as USDC, the seed for the binary mutation cases.
+/// The input is our own authored model, not untrusted bytes, so no containment gate is needed.
+fn seed(directory: &Path) -> Result<()> {
+    fs::create_dir_all(directory)?;
+    let text_path = directory.join("model.usda");
+    author_model(&text_path)?;
+    let data = usda::parse(&fs::read_to_string(&text_path)?)?;
+    usdc::CrateWriter::write_to_file(&data, directory.join("model.usdc"))?;
+    Ok(())
 }
 
 fn sanity(count: usize, directory: &Path) -> Result<()> {
@@ -103,8 +114,11 @@ fn run() -> Result<ExitCode> {
     let args: Vec<_> = std::env::args().take(6).collect();
     let command = args
         .get(1)
-        .ok_or_else(|| failure("use parse PATH or sanity COUNT DIRECTORY"))?;
-    if command == "parse" {
+        .ok_or_else(|| failure("use parse PATH, seed DIRECTORY or sanity COUNT DIRECTORY"))?;
+    if command == "seed" {
+        let directory = args.get(2).ok_or_else(|| failure("missing directory"))?;
+        seed(Path::new(directory))?;
+    } else if command == "parse" {
         // Parent assigns the memory-limited Job before sending this byte.
         let mut gate = [0_u8; 1];
         std::io::stdin().read_exact(&mut gate)?;
