@@ -17,10 +17,13 @@ publication and recovery acceptance. C-tasks still own collaboration semantics. 
 does not freeze those contracts, complete K0/K1, choose a storage mechanism or implement live sync.
 It proposes a separate N01 evidence spike before the owner considers changing the baseline.
 
-Task-card base: `20d26cfb107d51e7a2c76c25ca0191b8115ec301`, stacked on F08 PR #17, including
-the F06 corrections. Branch and base are supplied, not independently verified: read-only Git
-commands failed the repository ownership check. Intended review target is
-`refactor/f08-module-boundaries`; the orchestrator must verify the base and later retarget.
+Original task-card base: `20d26cfb107d51e7a2c76c25ca0191b8115ec301`, then stacked on F08 PR #17.
+For PR #22, the branch has since been merged with `docs/f06-geometry-contract` (PR #20).
+The current PR base branch is `docs/f06-geometry-contract` (PR #20), which carries the F06
+corrections, the merged F08 module-boundaries head and the G04 kernel design.
+Retarget PR #22 to `master` after PR #20 lands. This stack update comes from the correction card;
+the original read-only Git checks failed the repository ownership check, so no current base SHA
+is independently verified here.
 The private implementation-plan revision 1.2 was not opened. Task IDs below use only the card,
 the contracts and [roadmap](../../ROADMAP.md), not inferred private task specifications.
 
@@ -399,7 +402,10 @@ Exact owner decisions required, after reviewing this record:
 
 ## 9. Effects on the plan
 
-These are proposed impacts only. No task specification, shared contract or roadmap is edited.
+These are proposed impacts only. This decision record changes no architecture, dependency or
+runtime behavior and edits no task specification or shared contract. The only shared-file edits
+in PR #22 are the `ROADMAP.md` progress-log entry and the `ATTRIBUTION.md` row recorded by the
+orchestrator.
 The inputs do not include full private U/C/G/P task definitions; sequencing beyond the named
 contract obligations must be confirmed by their owners. N01 completion would not complete F11's
 parent architecture/implementation acceptance gates.
@@ -434,5 +440,5 @@ they do not make adjacent tasks complete.
 
 Provenance: contributor-original analysis and evidence definitions, MPL-2.0, derived from the
 listed repository inputs, task card and linked public documentation. No third-party code, test
-fixtures, commercial assets or runtime resources are included. Proposed shared-file attribution
-and progress text are delivered to the orchestrator separately.
+fixtures, commercial assets or runtime resources are included. The orchestrator has recorded
+this PR's progress-log entry in `ROADMAP.md` and attribution row in `ATTRIBUTION.md`.
