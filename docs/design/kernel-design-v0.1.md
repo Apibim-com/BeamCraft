@@ -2,13 +2,14 @@
 
 Date: 2026-10-15. Status: **draft; nothing implemented; no implementer declared eligible**.
 Contributor-original design, MPL-2.0. Task-card base:
-`29d962e790ffd21ecd9a45143f052d4b4d53d3f7`, stacked on F06 PR #16. Git ownership validation
-prevented independently verifying HEAD in this run. This is neither a contract freeze nor a K0 gate.
+`29d962e790ffd21ecd9a45143f052d4b4d53d3f7`, originally stacked on F06 PR #16. Round 4 consumes
+F06 0.1.0 after correction round 4, task-supplied head `172f4b1`, with 83 cases. Git ownership
+validation prevents independently verifying HEAD. This is neither a contract freeze nor a K0 gate.
 
 ## 1. Scope and status
 
 The inputs are [F06 0.1.0](../contracts/geometry-contract-v0.1.md), its
-[70 acceptance descriptions](../contracts/geometry-contract-cases-v0.1.json),
+[83 acceptance descriptions](../contracts/geometry-contract-cases-v0.1.json),
 [F04 0.1.0](../contracts/model-and-commands-v0.1.md), the
 [first-scope package 0.1.0](../clean-room/handoff/first-scope-v0.1.md), its
 [cases](../clean-room/handoff/first-scope-cases-v0.1.json), and the
@@ -26,8 +27,8 @@ This is **not an exact B-rep**. The proposed shell is a bounded derived represen
   predicates. Gate and exclusions: No solids; independent arithmetic tests first.
 
 - **S2: profile/extrusion/triangulation.** Adds: Rectangle, two end sections, six quads split into
-  twelve triangles, semantic roles. Gate and exclusions: Only the two boxes; frame amendment A1 must
-  be settled.
+  twelve triangles, semantic roles. Gate and exclusions: Only the two boxes; use corrected F06's
+  projected frame and certificate. Joint F04 P-3 confirmation and admission remain open.
 
 - **S3: topology/measurements.** Adds: Incidence checks, construction certificate, analytic
   quantities and mesh cross-checks, bounded box queries. Gate and exclusions: API then CLI then real
@@ -85,7 +86,9 @@ For the plate use F06's P-1 box. For the member use its P-2 centred section and 
 a certified orthonormal frame X, Y, Z and positive dimensions a, b, c, the map from the unit
 cube is `o + a*s*X + b*t*Y + c*u*Z`, with `s,t,u` in `[0,1]`. Its determinant is positive
 `a*b*c`; hence it is injective, convex and orientation preserving. This construction is the
-certificate of a single embedded solid. Rounded corners still require the checks below.
+certificate of a single embedded solid in ideal mathematics. F06's computed frame passes a
+finite residual gate, not exact orthonormality; account for its construction error using
+section 3 enclosures and W41. Rounded corners still require the checks below.
 
 Use the exact face ordering, role names, vertex enumeration and diagonal choices of F06 section
 6, with two triangles mapped to each `f.x0` through `f.z1` role. The faces carry FeatureId roles;
@@ -120,7 +123,8 @@ For each determinant use its six signed triple products, accumulate twelve deter
 fixed order with a correction term for lost low parts, and retain an enclosure from section 3.
 Compensation improves the central estimate, not its certified sign. Exact dyadic integer sums
 are reserved for discrete signs and independent tests. A possible future implementation of
-compensated checks needs F06's arithmetic-order clarification A2; analytic output order is fixed.
+compensated checks still needs explicit admission of auxiliary arithmetic under A2; corrected
+F06 section 2 fixes analytic output order and written binary64 decisions.
 
 A triangle shell cannot express analytic curves, general face intersections, persistent cut
 history or exact adjacency after arbitrary edits. Construction certification applies only to
@@ -131,8 +135,9 @@ our two primitives. An externally supplied closed shell never receives engineeri
 ### 3.1 Domain, order and elementary error model
 
 Only finite f64 inputs and outputs; internal length mm, area mm2, volume mm3. Report area by
-division by exact integer `1000000`, volume by division by `1000000000`, then multiply volume
-in m3 by density. Avoid rounded `1e-6`/`1e-9` multipliers adding another constant error.
+division by exact integer `1000000`, volume by division by `1000000000`. Corrected F06 section 2
+fixes mass order as `fl(fl(V_mm3*density)/1e9)`, not multiplication of reported volume in m3.
+Avoid rounded `1e-6`/`1e-9` multipliers adding another constant error.
 These divisors are exactly representable integers. No fast-math, reassociation, contraction to
 FMA, extended intermediates or flush-to-zero. Use F06 validation and component order, its
 norm parenthesization, quaternion normalization/matrix and canonical sign, then its vertex
@@ -182,8 +187,9 @@ Their combined factors satisfy
 Consequently the member-area bound remains **`g(10)`**. This termwise proof, rather than adding
 six total area operations to six length factors, justifies retaining that bound.
 
-Multiplication of current volume by normal density adds one rounding: mass bounds remain
-`g(4)` plate, `g(10)` member. They depend on volume, not area.
+Mass order is `(((a*b)*c)*density)/1e9`: three products and one division, so normal bounds
+remain `g(4)` plate and `g(10)` member including six length factors. These bounds depend on
+volume, not area; reported volume and mass must each follow their own F06 expression.
 
 The following conservative bounds are relative to the ideal binary-input primitive. Add the
 tiny absolute underflow terms through the recurrence in section 3.3 when they occur.
@@ -210,10 +216,13 @@ All are exact rational references, not measurements of implemented code.
 
 Density has no positive lower bound in F04. Thus normal relative mass bounds are conditional.
 W10: density `eta` with volume `1e-18 m3` gives ideal mass `eta*1e-18`, which rounds to zero.
-For subnormal mass use `|mhat-m| <= g(10)*m + eta/2` plus any propagated enclosure error.
+With F06's corrected mass order the density product and final division can each underflow.
+Their absolute contribution is at most `(eta/2)*(1+(1+u)/1e9) < eta` (W10), in addition to
+`g(10)*m` and any propagated input/length enclosure error; use section 3.3 for the actual input.
 Never present zero as the current mass of a positive-density solid. Return a numeric diagnostic
-and no sealed result if the required relative certificate is impossible. A3 must specify this
-supported-input/unsupported-result distinction; it must not reject an authored density by a new
+and no sealed result if the required relative certificate is impossible. F06 now supplies
+`GEO_NUMERIC_UNCERTAIN`; A5 still leaves the underflow certificate/accuracy requirement open.
+This design proposal must not reject an authored density by a new
 undocumented minimum. Absent density remains `unknown`, not zero and not a numeric failure.
 
 ### 3.3 Bounds, frames, dot/cross products and enclosures
@@ -279,10 +288,11 @@ rejection remains an IO responsibility and is not relaxed.
 
 An ideal member corner has norm at most `sqrt(3)*1e9 + 1e6`, using the axis endpoint norm
 and two half-section offsets; it is less than `1.734e9`. Each world component is less than
-`2.734e9`, below the `4e9` query cap (W14). W14 assumes a proper frame; it does not excuse A1.
+`2.734e9`, below the `4e9` query cap (W14). Include frame construction/certificate radii when
+bounding computed corners; the ideal-frame estimate alone is not a finite-precision certificate.
 Fixed-coordinate determinant expressions have magnitudes far below binary64 overflow, but very
-small terms require interval or dyadic treatment. Reject any nonfinite intermediate as a
-self-check failure rather than publishing infinity or NaN.
+small terms require interval or dyadic treatment. Reject any nonfinite intermediate as
+`GEO_NUMERIC_UNCERTAIN` rather than publishing infinity or NaN.
 
 For one algorithm version, build profile, rounding environment and input, sequential iteration
 and fixed operation order give repeatable bytes. Test `q` and `-q` with signed-zero normalization.
@@ -304,8 +314,9 @@ or general point-in-polyhedron routines for this scope.
   coordinates; no sign guess.
 
 - **Parallel branch.** Mathematical definition: `hh < tau*LL`, `tau` the submitted binary64 constant
-  `1e-12`. Certification: Preserve F06's written rounded comparison until A2; exact comparison only
-  diagnoses ambiguity.
+  `1e-12`. Certification: Corrected F06 section 2 requires its written binary64 comparison.
+  Inclusive limits are exact as written; no unspecified band remains. Reference arithmetic does not
+  override that decision.
 
 - **Closed shell.** Mathematical definition: Integer index range, two opposite edge occurrences, one
   connected component. Certification: Exact combinatorics; no length tolerance, no welding.
@@ -314,19 +325,32 @@ or general point-in-polyhedron routines for this scope.
   uses the other two coordinate intervals. Certification: Certified intervals; equality is boundary,
   unresolved sign is uncertain.
 
-- **Ray front/parallel.** Mathematical definition: Sign/zero of direction dot outward normal.
-  Certification: Certify before division; near-zero is not automatically parallel.
+- **Ray front/parallel.** Mathematical definition: With normalized u and outward unit n, skip a
+  face when `abs(u dot n) < 1e-12`; otherwise the sign determines front/back facing. Certification:
+  use the written comparison, then enclose the quotient; a failed certificate gives no hits.
 
-- **Pick radius.** Mathematical definition: Squared distance <= squared radius on closed feature and
-  ray interval. Certification: Certified comparison; compare squared values before sqrt.
+- **Pick radius.** Mathematical definition: Distance to the closed feature is at most
+  `fl(radius_mm + eps_pick)`, with `eps_pick=1e-6 mm`. Certification: F06's written distance
+  comparison decides; a squared-distance enclosure is an auxiliary check, not a replacement
+  operation order or a silently changed boundary decision.
 
 
-For a box face ray intersection solve the plane equation, restrict to `[0,t_max]`, and test
-the two in-face intervals. For points clamp the three box coordinates to the closed intervals.
-For edges minimize squared distance on the bounded segment and ray parameter interval; the
-interior stationary point and endpoints exhaust a convex quadratic's minima. In a parallel
-overlap take the smallest minimising t. These are mathematical query requirements, not a general
-intersection engine. Face/edge/vertex results are resolved by analytic FeatureId roles.
+For a box face ray intersection solve F06's plane equation, restrict to `[0,t_max]`, and test
+both closed in-plane intervals enlarged by eps_pick in each direction. Flag `boundary` when
+on the original boundary or in the enlargement. Report every qualifying non-parallel face;
+coplanar parallel faces never hit. Point picks use distance to the nearest point of each
+original closed face rectangle (both front and back), not distance to the solid or its enlarged
+box; interior points can have positive distance to every face. Accept point-face, edge and
+vertex distances through `radius_mm + eps_pick`. New independent cases are in section 5.4.
+For edges, squared distance is a convex quadratic over the closed feature segment and the
+ray parameter domain. Interior stationary points and relevant domain boundaries exhaust its
+minima. Applied A10 fixes the domain to the closed finite segment `[0,t_max]` for every ray
+target. For vertices, clamp `(v-o) dot u` to that interval; for edges, minimize over both
+closed segments, including endpoints. Parallel overlaps use the smallest minimizing t. The
+distance band applies at both ends without extending the parameter interval; faces keep their
+exact t interval test. W49 verifies endpoint inclusion and short-horizon rejection. These are
+mathematical query requirements, not a general intersection engine. Face/edge/vertex results
+are resolved by analytic FeatureId roles.
 
 For integer sign fallback, a finite f64 is an integer times `2^-1074`. At query coordinate
 cap `4e9 < 2^32`, its aligned numerator has fewer than 1107 bits; a difference uses at most
@@ -342,13 +366,14 @@ no epsilon sign invented from CR-TOL-001. Use no adaptive unbounded refinement: 
 pass and at most one bounded integer sign pass. No healing, best guess or perturbed inputs.
 
 F06 validation order and existing codes remain authoritative. Invalid input, cap failure and
-cancellation follow F06 sections 2, 3 and 10. A construction or numeric certificate failure uses
-`GEO_SELF_CHECK_FAILED`, `UNSUPPORTED_GEOMETRY`, and no mesh/quantities/key; previous state and
-generation stay unchanged. An uncertain query also needs a no-partial-data diagnostic, but F06
-does not currently name a suitable query numeric code. Proposed A3 adds `GEO_NUMERIC_UNCERTAIN`
-mapped to existing F04 `UNSUPPORTED_GEOMETRY`, stage `checks` (build) or `validation` (query).
-Until that is reviewed, do not ship uncertain queries under a misleading invalid-input code.
-Unknown density is a quantity status, distinct from uncertain arithmetic.
+cancellation follow F06 sections 2, 3 and 10. Numeric certificate failures now use
+`GEO_NUMERIC_UNCERTAIN`, mapped to F04 `UNSUPPORTED_GEOMETRY`, for both build and query, with no
+partial/current data and no state/generation change. Frame failures occur at `build`
+(F06-NEG-31); query intermediate faults return no hits (F06-NEG-32). Structural self-check
+failures retain `GEO_SELF_CHECK_FAILED` or the specific mesh code. F06-NEG-18 now correctly
+makes mass `unsupported` when volume is unsupported, even with absent density. Unknown density
+on supported geometry remains a separate quantity status. Auxiliary certificate proposals in
+this design do not declare that the unresolved full-domain accuracy gate A5 has passed.
 
 ## 5. Verdicts on every F06 draft constant
 
@@ -365,28 +390,26 @@ No verdict is permission to change a contract. Draft amendments are listed in se
   Preserve the minimum; do not infer that world-mesh dimensions have `1e-12` relative accuracy.
 - Coincidence `distance < 0.001 mm`, axis endpoints only: **supported** as the same declared
   minimum-length rejection, not as a merge rule. W17: `0.0009 < 0.001`, and `0.001` equals the
-  literal minimum and is accepted for the axis-aligned case. Rounded norms within their error
-  of the boundary need explicit branch semantics A2. No unrelated vertices are coincident.
+  literal minimum and is accepted for the axis-aligned case. Corrected F06 section 2 now fixes
+  the written binary64 boundary comparison; it is not an ideal-real comparison or a merge rule.
 - Section cap `1e6 mm`: **supported**; W11 bounds products/area safely. W18: at width and height
   `1e6` and L `1000`, volume is `1e15 mm3=1e6 m3`. Do not raise the cap.
-- Parallel threshold `eps_par=1e-6`, squared multiplier `1e-12`, strict inequality: **supported
-  for avoiding a tiny horizontal denominator; loose and insufficient as a rigid-frame rule**.
-  The relative uncertainty of the square-sum branch is on the scale of a few u, far below the
-  draft `1e-9` relative exclusion band; that band is **loose** (W19: `g(10)<1.111e-15<1e-9`).
-  Direct component products avoid subtracting nearly equal large numbers in the horizontal
-  formula; the threshold alone proves no blanket `1e-10` frame-relative error.
+- Parallel threshold `eps_par=1e-6`, squared multiplier `1e-12`, strict inequality: **changed
+  from insufficient as a rigid-frame rule to supported as a branch policy with certification**.
+  Corrected F06 section 4 projects +Y in the near-vertical branch, normalizes `X0=Y cross Z`,
+  then recomputes `Y=Z cross X` in both branches. Exact vertical still uses +Y. The former
+  `1e-9` relative exclusion band is removed, not retained as a loose operating constant.
+  W19: `g(10)<1.111e-15<1e-9` still explains why that old band was unnecessarily large;
+  F06-POS-46 now tests the specified rounded decision closer to the threshold.
 
-There is an exact counterexample to the column rule, not a rounding issue. W20: choose
-`d=(0,0.0005,1000)`. Its horizontal squared ratio is `1/4000000000001 < 1e-12`, so F06 selects
-`Y=(0,1,0)`. Then `Y dot Z=0.0005/L` is nonzero (about `5e-7`). `X=Y cross Z` has norm below
-one. The intended section plane is not perpendicular to the axis and the solid is not a
-rectangular prism. Its determinant relative to `w*h*L` is `1/(1+(5e-7)^2)`; relative volume
-deficit is `1/4000000000001`, about `2.5e-13`. W21: height `1e6` has an axial component about
-`0.5 mm`, enormously above rounding. A tilt arbitrarily near `1e-6` can approach a `1e-12`
-volume deficit before ordinary arithmetic error. F06-POS-09 tilts in X, where its fixed Y
-happens to be perpendicular; it does not cover this failure. Amendment A1 projects the chosen
-fallback direction onto the plane normal to Z and normalizes; exactly vertical keeps +Y.
-The threshold's roll discontinuity remains an owner decision, not a stability guarantee.
+W20 and W21 describe the **superseded fixed-Y rule only**. With `d=(0,0.0005,1000)`, its
+horizontal squared ratio is `1/4000000000001 < 1e-12`. Fixed Y would give `Y dot Z=0.0005/L`,
+nonzero, a relative determinant deficit `1/4000000000001` (about `2.5e-13`), and about `0.5 mm`
+axial projection at height `1e6`. Those are regression counterexamples, not defects remaining
+in corrected F06. The projected replacement and current certificate are derived in W40/W41.
+The roll remains discontinuous; its jump depends on signed tilt direction (applied A7), not
+universally on a quarter turn. From +Z, +Y gives 180 degrees, -Y gives 0, and +X/-X give
++90/-90 degrees. Joint F04 P-3 confirmation remains open under F06 section 12.
 
 ### 5.2 Section 6 resource caps
 
@@ -415,11 +438,12 @@ Structural validation is not permission for a primitive builder to emit larger s
   evidence: `32+98304+98304+16384=213024` (W24).
 
 
-W25: first-scope blob is `32+192+144+24=392 bytes`. Do not reduce generic caps locally: cap
-fixtures are validator tests, not newly supported geometry. Feature strings need separate
-descriptor accounting: `17408*64=1114112` payload bytes, outside the mesh cap (W26). F05 negotiated
-message limits can reject a descriptor even when its blob fits; fitting a blob alone proves
-neither a whole message nor a whole delivery fits. This design consumes no other F05 input.
+W25: first-scope blob is `32+192+144+24=392 bytes`. Corrected F06 sections 6 and 10 distinguish
+these exact primitive counts from general structural caps. W26's `17408*64=1114112` is only a
+hypothetical all-feature-string payload, not the actual six-face descriptor. F06 now bounds
+that descriptor at 32768 encoded UTF-8 bytes; the derivation and verdict are W44 below. Page
+control bytes, tokens and strings are checked separately against negotiated F05 budgets;
+fitting a blob does not establish delivery feasibility.
 
 ### 5.3 Pick constants and comparison
 
@@ -433,12 +457,15 @@ neither a whole message nor a whole delivery fits. This design consumes no other
   evidence: minimum squared norm `1e-18` is normal; scalar input scale does not set geometric
   resolution (W27).
 
-- **`t_max` default/maximum `4e9 mm`.** Verdict: supported finite segment, tight for all admitted
-  origin-to-body pairs. Numeric or resource evidence: `-4e9` to `+1e9` requires `5e9 mm`; this cap
-  is a search horizon, not universal reach (W28).
+- **`t_max` default/maximum `4e9 mm`.** Verdict: supported finite-segment horizon for every
+  ray target, tight for all admitted origin-to-body pairs. Applied A10 resolves the former
+  edge/vertex-domain qualification. Numeric or resource evidence: `-4e9` to `+1e9` requires
+  `5e9 mm`; this cap is a search horizon, not universal reach (W28). The endpoint distance band
+  never extends the parameter interval (W49); full-domain accuracy remains open under A5.
 
 - **Radius default 0.** Verdict: supported with certified boundary decisions. Numeric or resource
-  evidence: exact zero distance accepted; uncertainty is diagnostic, not a miss.
+  evidence: **changed from an exact-boundary interpretation to supported band acceptance**;
+  distances up to eps_pick qualify even when positive. W42 quantifies the band.
 
 - **Radius maximum `1e6 mm`.** Verdict: supported. Numeric or resource evidence: radius squared
   `1e12 mm2`, safely normal (W29).
@@ -467,12 +494,14 @@ W31 uses `1e-6` as exact decimal for the spacing ratio; the contract's f64 divis
 different. Bucket computation must specify `floor(fl(t / f64(1e-6)))`, not claim equality with
 mathematical real quantization. For example adjacent buckets can contain values less than a
 quantum apart. If an interval straddles a boundary, exact identity ordering is still repeatable
-for identical rounded t, but the order is not robust to small numeric changes. A4 clarifies
-this policy, preserves the quantum, and requires testing neighboring representable values.
+for identical rounded t, but the order is not robust to small numeric changes. Corrected F06
+sections 2 and 9 establish this written floating-point bucket policy; test neighboring
+representable values. The tie quantum and eps_pick have equal numeric values but different uses.
 For a nonnegative finite quotient below the integer cap, checked truncation to u64 realizes
 floor without adding a transcendental arithmetic operation. Face backface inclusion default
 `false` is **supported** as a discrete query policy; it has no accuracy implication. The inclusive
-lower pick parameter bounds `t=0` and radius `0` are **supported** with certified equality.
+lower pick parameter bounds `t=0` and radius `0` remain **supported**; zero radius now admits
+positive feature distance through the explicit eps_pick band.
 
 W32: `fl(1e9 + f64(0.001))-1e9 = 0.00100004673004150390625 mm`. For a cube whose three edges
 are rounded this way the relative volume error is
@@ -491,6 +520,9 @@ inherits that error in its small world x bounds. CR-TOL-001 near zero permits on
 A5 requests a cancellation-aware coordinate accuracy gate, keeping the existing test rule and
 input caps unchanged; no acceptance case is weakened to conceal the issue.
 
+W39: `1e-6 mm=1e-9 m` is one nanometre; `0.001 mm=1e-6 m` is one micrometre. Corrected
+F06 section 9 now uses the former unit correctly for both band and tie quantum.
+
 Other fixed constants are discrete layout/protocol policies, not geometric tolerances:
 contract 0.1.0, integer versions 1, 32-byte header, 8-byte alignment, u32/u16 indices, offsets
 and space tags, FeatureId 64-byte cap (longest current form 59), 26 primitive features,
@@ -502,9 +534,148 @@ constants add no geometric precision and are not approvals for future geometry. 
 norm tolerance `1e-12` is **loose but supported as admission**, since normalization follows;
 it is about 9007 unit roundoffs (W35). It is not a permission for a nonrigid rotation matrix.
 
+### 5.4 Corrected F06 rules and new derivations
+
+W40 (near-vertical frame): use the rational Pythagorean construction of F06-POS-41 with
+`m=4000001`. Then `dy=2*m/1e8=0.08000002`, `dz=(m*m-1)/1e8=160000.08` and
+`L=(m*m+1)/1e8=160000.08000002`. Put `s=4000001/8000004000001` and
+`c=8000004000000/8000004000001`: `s*s+c*c=1`, `s*s<1e-12`. The corrected POS-41
+squared-ratio approximation is `2.4999987500001562502e-13`; rational cross-multiplication bounds
+its relative error below `1e-19`, well inside CR-TOL-001. Projection of U=+Y gives
+`P=(0,c*c,-c*s)` of norm c, hence `X=(1,0,0)`, `Y=(0,c,-s)`, `Z=(0,s,c)`.
+All squared norms and the determinant equal 1 and all pairwise dots equal 0 exactly.
+In ideal arithmetic the general near-vertical branch has `norm(P)^2=1-Z_y^2 >= 1-1e-12`;
+rounding requires the actual certificate, not assuming that identity holds exactly for f64 Z.
+The small-offset Y-tilted case of W20 likewise now has perpendicular projected Y.
+At the same positive Y tilt the horizontal formula gives `X=(-1,0,0)` and `Y=(0,-c,s)`,
+exactly opposite to the near-vertical formula's section axes: the branch rotation is 180 degrees.
+To cover signed meridians, put `r=sqrt(Z_x^2+Z_y^2)` and `n=sqrt(1-Z_y^2)`. Independently
+projecting the two reference directions gives `cos(theta)=-Z_y*Z_z/(r*n)` and
+`sin(theta)=Z_x/(r*n)` for rotation from the near-vertical to the horizontal frame about Z.
+For `Z=(0,s,c)`, `(0,-s,c)`, `(s,0,c)`, `(-s,0,c)`, the exact (cos,sin) pairs are respectively
+`(-1,0)`, `(1,0)`, `(0,1)`, `(0,-1)`: +Y gives 180 degrees, -Y gives 0, +X gives +90, -X gives
+-90. Replacing c by -c exchanges the Y-tilt outcomes and retains the X-tilt signs. Thus the
+earlier unqualified Y-tilt half-turn wording was too broad; it applies to +Y from +Z. These
+are comparisons on one common axis and one-sided limiting roll differences at the threshold.
+Frames on distinct finite axes also differ in axis direction. Applied A7 changes the wording,
+not the frame formula, the certificate bounds or the supported branch-policy verdict.
+
+W41 (frame certificate): the new residual limit `e=1e-12` is **supported and loose as a
+roundoff/fault gate**, not an exact-rigidity or full-domain quantity accuracy promise. For
+fixed vectors with squared norms at most `1+e`, Cauchy-Schwarz and section 3 give dot evaluation
+error at most `g(3)*(1+e) < 3.331e-16`; a six-term determinant has error at most
+`6*g(7)*(1+e)^2 < 4.663e-15`. These bounds concern evaluation of the computed vectors only;
+frame construction radii are separate. Thus e is well above ordinary residual evaluation noise,
+and the injected dot magnitude `1e-9` is `1000*e`, decisively outside the certificate.
+Check squared-norm residuals, magnitudes of all three dots, and handedness. F06 requires
+GEO_NUMERIC_UNCERTAIN on failure with no mesh/quantities/key; a successful 1e-12 residual gate
+alone does not establish a 1e-12 relative error for an anisotropic mesh. A9 is now applied in
+F06 section 4 rule 2 step d; NEG-31 and NEG-35 reject both dot-error signs. W41's bounds and
+verdict are unchanged. In NEG-35's exact-decimal reference, injected Y=(-1e-9,1,0) has
+norm-squared excess 1e-18 and determinant 1, but abs(X dot Y)=1e-9=1000*e fails. The nearest
+f64 fault component also fails the dot limit while passing the norm-residual limit.
+
+W42 (band/boundary policy): `eps_pick=1e-6 mm` is **supported as explicit inclusion policy,
+tight as a universal numeric margin**. It spans `2.097152` ulps below 4e9 (W31), so it cannot
+absorb every cancellation error left open in A5. For the plate's x interval `[0,1000]`, ray
+face inclusion uses `[-0.000001,1000.000001]`, both ends included. A ray hitting x=0 has
+boundary true; at x=-0.0000005 it also has boundary true and qualifies under the band.
+Parallel neighboring faces remain skipped; all qualifying non-parallel shared faces are kept.
+For point picks and edges/vertices the ideal radius threshold is `radius+eps_pick`, followed
+by the specified f64 evaluation. At maximum radius its ideal square is
+`(1000000.000001)^2=1000000000002.000000000001 mm2`, safely finite. A point at (500,250,5)
+in the example plate has distance 5 to z0/z1, not zero merely because it is inside the solid.
+**Changed verdict:** radius zero now means band-limited positive-distance inclusion, not exact
+contact alone. The radius cap itself remains supported. Boundary semantics are now specified.
+
+W43 (ray parallel threshold): `abs(u dot n)<1e-12` is **supported as a strict classification
+policy, tight as an accuracy guarantee**. Zero and either sign below the threshold skip the
+face; equality does not. A retained denominator has reciprocal at most `1e12` in the written
+arithmetic. For exact unit operands the normal dot bound is `g(3)`; relative denominator
+uncertainty near the threshold can approach `g(3)/1e-12 < 0.0003331`. The quotient enclosure
+must therefore include denominator sensitivity, not assume the pick band absorbs it. Finite
+input does not by itself certify the entire query; failed numeric certificates discard all hits.
+This replaces the former exact-zero-only predicate, a **changed predicate/verdict**. It does
+not certify a new threshold sufficient for A5 or silently alter F06's written comparison.
+
+W44 (descriptor bytes): the new `32768` byte cap is **supported as an independent encoded-size
+budget**. A conservative six-entry face-ID JSON array with 64 ASCII characters per ID takes
+at most `6*(64+2)+5+2=403` bytes, leaving `32365` for the remaining descriptor fields. This is
+not a proof those fields fit: count the complete UTF-8 encoding before delivery. A hypothetical
+1024-entry array at that string bound takes `1024*66+1023+2=68609` bytes, beyond the descriptor
+cap. A structurally admissible generic header may therefore lack a deliverable descriptor;
+structural acceptance is not transport acceptance. The prior missing-descriptor-budget finding
+is **resolved**, and the earlier hypothetical W26 payload is not a first-scope allocation.
+
+W45 (pick work): `65536` elements, `26` features and polling every `1024` elements are
+**supported bounded-work policies**. Maximum candidates are `65536*26=1703936`; each full
+polling block has `1024*26=26624` candidates, with `65536/1024=64` full blocks at the cap.
+Preflight rejects `65537` elements before the feature scan. Keep only the ordered top 64 hits;
+never return them before the complete scan. Include cancellation/deadline tests at block
+boundaries and the final completion check. **Changed verdict:** Pick now has an explicit work
+bound; the old missing-cap finding is resolved. No milliseconds of latency are proved here.
+
+W46 (negotiated limits): **supported**, with every budget checked in its own units. The
+first-scope blob needs `392` bytes: negotiated `391` fails, while `392` fits the buffer budget.
+Passing that check alone does not pass descriptor/control/token/string/attachment/bundle,
+page-count, batch or timeout budgets. Eight maximum-size descriptors already contribute
+`8*32768=262144` bytes before page JSON overhead; eight 392-byte blobs contribute `3136` bytes.
+Whole-body delivery either satisfies every smaller applicable effective limit or fails before
+dispatch with no split/truncation. A smaller deadline remains subject to F05's deadline outcome,
+not an invented byte comparison. **Changed verdict:** the missing negotiated-page accounting
+finding is resolved by F06 sections 6 and 10; runtime budget enforcement still needs tests.
+
+W47 (corrected case numbers, applied A8): rational endpoint squaring proves
+`100.12492197250392 < sqrt(10025) < 100.12492197250394`. The former POS-45 E=`100.124921973`
+failed because `E-100.12492197250394 > 1e-12*E`. Its corrected E=`100.12492197250392864`
+satisfies the comparison throughout that enclosure; all four equal distances use this value.
+Also square `1000.00000000199999` and `1000.00000000200001` around `1000000+0.002^2`:
+they enclose the POS-42/POS-10 axis length, consistent with their corrected approximation
+`1000.0000000020000000`. Dividing 0.002 and 1000 by these positive endpoints proves the
+corrected small component `1.9999999999960000000e-6` and large component `0.999999999998`
+satisfy CR-TOL-001. POS-42's squared ratio is exactly `1/250000000001`, consistent with
+`3.9999999999840000000e-12`. W40 separately checks the corrected POS-41 squared ratio.
+The previously deficient expectations are resolved; the rational enclosures and numeric-budget
+verdicts are unchanged, and none of these examples closes A5. F06 cases remain read-only.
+
+W48 (regression for the former signed-certificate ambiguity): take `m=2000000000`, `s=2*m/(m*m+1)`
+and
+`c=(m*m-1)/(m*m+1)`. The exact vectors `X=(1,0,0)`, `Y=(-s,c,0)`, `Z=(0,0,1)` have unit
+norms and `X dot Y=-s < -1e-12`, but a literal signed test `X dot Y <= 1e-12` passes.
+The determinant residual is `1-c=2/4000000000000000001 < 1e-12`, so the other stated tests
+do not rescue that former signed interpretation. Applied A9 now rejects this frame because
+abs(X dot Y)=s>1e-12. F06 section 4 rule 2 step d and NEG-31/NEG-35 explicitly require that
+magnitude test. All W48 rational values are unchanged; the counterexample is now a regression
+for a resolved ambiguity, not an outstanding defect or a frame emitted by the normal builder.
+
+W49 (finite-segment regression, applied A10): use the plate [0,1000] x [0,500] x [0,10],
+`o=(0,-100,10)`, unit direction `u=(0,1,0)`, radius=0, targets edge and vertex.
+For vertex `v=(0,0,10)`, squared distance to r(t) is `(t-100)^2`. On the unbounded ray its
+minimum is 0 at t=100. On [0,50] it decreases to `(50-100)^2=2500 mm2`, so the minimum
+distance is 50 mm, greater than eps_pick=1e-6 mm. Edge x0.z1 has the same segment minimum.
+Every feature has y>=0, whereas this segment has y<=-50: no edge/vertex qualifies, exactly
+as F06-NEG-36 requires. On [0,100], vertex x0.y0.z1 and its three incident edges x0.y0,
+x0.z1, y0.z1 all attain distance 0 at the endpoint t=100; every other edge/vertex is at least
+10 mm away. The four hits sort with edges first in that ASCII order, then the vertex, as
+F06-POS-47 requires. The written binary64 bucket is `floor(100/1e-6)=100000000` for each.
+The inclusive distance band applies to endpoint distances: nearby features beyond an end may
+qualify, but reported t stays in [0,t_max]. A10 selects the finite segment; the old unbounded
+alternative is retained solely as a regression contrast. The exact distances and prior bounds
+are unchanged; the formerly unresolved expected outcomes are now fixed by F06 section 9.
+
+W50 (shared key inputs, applied A11): set algorithm=1 and tolerance_policy=1, as F06 section 7
+specifies for 0.1.0. Both fields occur in both shape and world preimages. Each is u16 big-endian:
+the pair is exactly `00 01 00 01` (4 bytes) in each preimage. World also encodes the 32-byte
+shape key and depends transitively on all shape inputs; the other directly encoded fields are
+disjoint. Domain tags `BCGEO-SHAPE` plus NUL and `BCGEO-WORLD` plus NUL first differ at byte
+offset 6 (`S` versus `W`), so their complete preimages differ across domains. This does not
+assert collision-free SHA-256. The previous disjoint-input wording is resolved; no numeric
+value, encoding vector, digest or dependency invalidation changes.
+
 ## 6. Failure, allocation and work bounds
 
-All proposed limits below are engineering budgets for later code review, not measured timings.
+The primitive arithmetic work/scratch budgets below are proposals for later code review;
+F06's count, byte and Pick limits are contract rules. None is a measured timing guarantee.
 Use fixed-size records for validated numbers, corners, tables and analytic results. Reject
 unsupported variants before numerical work. Never allocate from an unvalidated count.
 
@@ -526,7 +697,8 @@ unsupported variants before numerical work. Never allocate from an unvalidated c
   publication.
 
 - **S3 query.** Proposed bound per body/call: 26 feature candidates per body, retain at most 64
-  hits. Cancellation: host polls between bodies; query must pin a finite candidate count.
+  hits. F06 additionally caps the scan at 65536 elements, in ElementId order, and polls
+  cancellation/deadline every 1024 elements; no partial result on failure.
 
 - **S4 pilot.** Proposed bound per body/call: no admitted work/allocation budget. Cancellation:
   unsupported until amended.
@@ -547,10 +719,13 @@ per multiplication (W38), with checked carry and capacity. At most one fallback 
 total primitive integer work is capped at 10000000 limb-pair steps. If insufficient, fail closed.
 Actual operation instrumentation and memory accounting are acceptance work, not checked here.
 
-Generic host queries lack a candidate-count cap in F06. Output max_hits alone does not bound
-search work: N bodies imply up to `26*N` candidates. A6 requires a host admission budget or
-deadline with discard and bounded cancellation polling; no invented project element cap is
-imposed by this design. Do not advertise bounded query latency before that is specified.
+Corrected F06 sections 9 and 10 now bound Pick at 65536 elements and 26 features per element,
+with cancellation/deadline polling every 1024 elements and pre-scan rejection above the cap.
+Use a fixed bounded top-64 accumulator rather than allocating all candidate hits; compare its
+result to an independent full-sort oracle in tests. W45 derives the work/poll counts. This is
+a per-request work limit, not a project element limit. Complete the scan before exposing hits;
+expired/cancelled requests return no partial prefix. Polling bounds candidate work between
+polls, not measured wall-clock latency. Page/delivery controls bound the other logical queries.
 
 F06 allocation size arithmetic uses checked u64, then fallible conversion to platform size;
 count checks precede products, supplied blob length precedes reads, and all readers use checked
@@ -564,10 +739,13 @@ that does not yet exist. A discovered crash requires a small original regression
 
 ## 7. Independent verification plan
 
-The [validation matrix](kernel-validation-plan-v0.1.json) contains **36 planned rows**:
-S1 **8**, S2 **7**, S3 **20**, S4 **1**. Oracle kinds: **analytic 19**, **invariant 11**,
-**metamorphic 6**. It references **all 70 distinct F06 cases** (40 positive, 30 negative).
-Rows can reference several cases; this is not 70 executable tests. S4's reference is an existing
+The [validation matrix](kernel-validation-plan-v0.1.json) contains **44 planned rows**:
+S1 **10**, S2 **8**, S3 **25**, S4 **1**. Oracle kinds: **analytic 24**, **invariant 14**,
+**metamorphic 6**. It references **all 83 distinct F06 cases** (47 positive, 36 negative).
+All G04-V01..G04-V44 IDs are retained. No row is added in round 4: G04-V31 now also references
+F06-POS-47 and F06-NEG-36. G04-V31/G04-V33/G04-V37/G04-V40 reflect applied A7/A8/A10/A11;
+the resolved A7/A8/A10 validation gates are removed. W40/W47/W49/W50 give their exact checks.
+Rows can reference several cases; this is not 83 executable tests. S4's reference is an existing
 unsupported-geometry boundary case, not a cut acceptance case. All rows are `planned`.
 Rows labelled amendment-dependent cannot be marked passed until the cited amendment is resolved.
 
@@ -617,7 +795,8 @@ inputs. The exact allocation between their future cards needs the orchestrator's
   mathematics and enclosures; no general kernel or new dependency.
 
 - **G02.** Receives sections: 1, 2, 3, 5, 7. Must establish; must not infer: Rectangle/profile
-  extrusion and canonical triangulation after P-1..P-3/A1; no contours.
+  extrusion and canonical triangulation using corrected F06's frame, subject to P-1..P-3
+  confirmation/admission; no contours.
 
 - **G03.** Receives sections: 2, 4, 6, 7. Must establish; must not infer: Bounded incidence and
   topology checks for constructed boxes; no general mesh certifier.
@@ -642,37 +821,83 @@ This draft is not yet an admitted implementation handoff. No person's eligibilit
 
 ## 9. Open decisions, limitations and exposure
 
-Proposed **F06 amendments**, not applied to read-only contracts:
+### Reconciliation of A1 through A11
 
-1. **A1, frame:** in the near-vertical branch replace fixed Y by
-   `normalize(U - Z*(U dot Z))`, U=(0,1,0), then normalize `X=Y cross Z` and derive
-   `Y=Z cross X`; certify orthogonality/right-handedness with section 3 enclosures. Exact
-   vertical retains +Y. Review the operation order and update affected expectations/version
-   fields jointly with F04 P-3 and the first-scope admission package. Confirm whether to keep
-   the roll discontinuity. Do not weaken perpendicular-section or rigid-placement invariants.
-2. **A2, arithmetic:** state order for quantities/world dots and auxiliary interval, compensated
-   and bounded integer checks. Specify branch behavior at rounded thresholds: keep written f64
-   comparison or reject uncertifiable decisions; no unspecified rounding band. Require target
-   conformance evidence before cross-platform byte claims. Any changed bytes/decisions require
-   algorithm/tolerance-policy versioning and reviewed acceptance amendments.
-3. **A3, uncertainty:** add a query/build numeric-uncertainty diagnostic mapped to existing
-   `UNSUPPORTED_GEOMETRY`; define no-partial-result behavior for underflowed mass and failed
-   certificates without restricting valid authored density. Resolve F06-NEG-18's mass `unknown`
-   versus section 8's unsupported-volume precedence (which requires mass `unsupported`). Also
-   clarify its "first triangle" wording: `(0,2,3)` is the ninth triangle in F06-POS-01;
-   the specified triangle and its three boundary edges can remain. No tests are edited here.
-4. **A4, picking:** specify rounded bucket arithmetic and its units: `1e-6 mm` is one nanometre,
-   not one micrometre (`0.001 mm`, W39). Define exact face-boundary inclusion or uncertainty
-   diagnostics, point-to-face distance (used by F06-POS-33 but not fully defined in section 9),
-   and near-parallel/zero-radius behavior. Preserve the cap and query-role invariants.
-5. **A5, accuracy:** retain CR-TOL-001 for existing acceptance comparisons; add an explicit
-   full-domain accuracy decision for cancellation-heavy coordinates, subnormal mass and rounded
-   mesh cross-checks. Possible implementation work is a more accurate compensated rotation and
-   local anchoring; no method is certified here to meet the full-domain coordinate threshold.
-   Do not widen a tolerance or narrow F04 input ranges silently to make the counterexamples pass.
-6. **A6, resources:** separate primitive limits from general structural validator limits, bound
-   descriptor bytes and query candidate work/deadlines, and account for negotiated host limits.
-   Keep F06's numerical caps, at-cap header validation and atomic discard rules.
+Status is checked against F06 0.1.0 after correction round 4 (83 cases), not inferred from its log.
+"Partly" includes the still-open portion of the original G04 request; it does not imply that
+F06's adopted part is unimplemented contract text. All runtime behavior remains unimplemented.
+
+1. **A1, frame: partly applied.** F06 section 4 rule 2 adopts the projected +Y fallback,
+   normalization/re-orthogonalization and 1e-12 frame certificate; section 3 supplies its
+   diagnostic. Section 12 explicitly leaves joint F04 P-3 amendment, owner confirmation,
+   admission and the continuity decision open. Use the corrected frame now as the draft
+   requirement; do not repeat the fixed-Y defect as current. W40/W41 validate its mathematics.
+2. **A2, arithmetic: partly applied.** F06 section 2 fixes quantity, mass, dot/world-coordinate
+   order, ascending bounds scan, binary64 boundary decisions with no exclusion band, target
+   conformance evidence and algorithm bumps for changed outputs; section 7 defines affected
+   keys. This changes this design's mass order while preserving its normal error budgets.
+   Auxiliary interval, compensated-sum and bounded integer production checks are still not
+   specified/admitted by F06's f64-only rule. They remain proposals, not substituted arithmetic.
+3. **A3, uncertainty: partly applied.** F06 sections 2, 3, 4 and 9 adopt
+   GEO_NUMERIC_UNCERTAIN with UNSUPPORTED_GEOMETRY, atomic discard and no partial hits.
+   Section 8 and corrected F06-NEG-18 resolve unsupported-mass precedence and the ninth-triangle
+   wording. Section 12's A5 still leaves finite underflow-to-zero mass and its required
+   accuracy certificate open; the existence of a diagnostic alone does not define that gate.
+4. **A4, picking: applied.** F06 section 9 defines closed face enlargement, eps_pick=1e-6 mm,
+   boundary flags/shared-face inclusion, the strict parallel test abs(u dot n)<1e-12,
+   nearest-point distance to a closed face and zero-radius band acceptance. Sections 2 and 9
+   make bucket arithmetic the written binary64 evaluation; section 12 corrects nanometre units.
+   This is a deterministic policy, not proof of full-domain query accuracy. Applied A10 below
+   additionally fixes the finite-segment domain for edge/vertex candidates.
+5. **A5, accuracy: open.** F06 section 12 explicitly leaves cancellation-heavy coordinates,
+   subnormal mass and rounded-mesh cross-check accuracy unresolved. W10/W32/W33 remain relevant.
+   No input cap or CR-TOL-001 rule is weakened here, and no conformance claim is promoted.
+6. **A6, resources: applied.** F06 sections 6 and 10 separate exact primitive counts from
+   validator caps and bound descriptors to 32768 bytes. Sections 9 and 10 bound Pick work and
+   polling; section 10 applies smaller negotiated buffer, attachment, bundle, control, token,
+   string, batch, delivery and request-timeout limits. Bodies remain whole or fail with
+   GEO_BUFFER_LIMIT; cancellation/deadline behavior still follows F05. W44..W46 check the limits.
+
+7. **A7, roll-jump wording: applied with a qualification.** F06 section 4 rule 3 gives the
+   signed branch-angle formula and corrects POS-10/POS-42 prose (sections 11 and 12). From +Z,
+   +Y gives 180 degrees, -Y gives 0, +X gives +90 and -X gives -90. My proposal's unqualified
+   half turn for Y tilt was only partly right: it holds for +Y, not -Y, from +Z. W40 now
+   verifies all four signed meridians and distinguishes common-axis branch comparisons from
+   distinct-axis finite rotations. F06 adopts direction dependence without changing the roll
+   rule; the owner continuity decision and joint F04 P-3 amendment remain open in section 12.
+8. **A8, numerical expectations: applied.** F06 sections 11 and 12 and POS-45 now use
+   `100.12492197250392864` for sqrt(10025); POS-42/POS-10 use
+   `1000.0000000020000000` for L and sufficient digits for the small components and ratios.
+   The additional POS-41 squared-ratio correction is `2.4999987500001562502e-13`.
+   W40/W47 check all these against exact rational references. F06 chose more digits than the
+   minimal POS-45 decimal I proposed; both satisfy the unchanged CR-TOL-001. No comparison
+   tolerance, algorithm, key or full-domain accuracy verdict changes; A5 stays open.
+9. **A9, certificate magnitudes: applied.** F06 section 4 rule 2 step d now explicitly requires
+   abs(X dot Y), abs(X dot Z), abs(Y dot Z) at most 1e-12. NEG-31 (+1e-9) and NEG-35 (-1e-9)
+   both require GEO_NUMERIC_UNCERTAIN, stage build, with no partial geometry or state change.
+   The section 12 review-round-2 log records the change. W41 and W48 already used dot
+   magnitudes, so no worked number or frame-certificate verdict changes. W48 now documents a
+   resolved signed-test regression, and the corresponding validation gate is removed.
+
+10. **A10, finite pick domain: applied.** F06 section 9 now uses the same closed finite
+    segment 0<=t<=t_max for edge/vertex candidates as for faces, clamps the vertex parameter,
+    minimizes over both closed segments for edges and chooses the smallest minimizing t.
+    The inclusive endpoint distance band never extends that parameter interval; faces keep
+    their exact t test. Section 11 and POS-47/NEG-36 assert endpoint hits and short-horizon
+    rejection. W49 derives the outcomes. The t_max verdict now covers every ray target; its
+    inability to reach every admitted origin/body pair and the A5 accuracy gap remain.
+11. **A11, dependency-set wording: applied.** F06 section 7 now explicitly shares algorithm
+    and tolerance_policy between shape and world preimages, lists otherwise disjoint directly
+    encoded fields, transitive shape dependence and distinct domain tags. Sections 11 and 12
+    retain existing key vectors and invalidations. This matches the requested wording repair;
+    W50 verifies shared bytes and the first domain-tag difference. No encoding changes.
+
+### Final independent consistency read
+
+The final read of F06 sections 4, 7, 9, 11 and 12 and its case file made **no new finding
+(A12 or later)**. This is a bounded document review, not proof of complete consistency or
+implemented behavior. A5, the partly applied portions of A1/A2/A3 and the owner/admission gates
+remain open; applied amendments do not close them.
 
 Open gates: owner confirmation/admission of frames; independent design review; numeric-budget
 implementation proof; resource-budget instrumentation; matrix materialization as tests; real
@@ -681,7 +906,16 @@ No software dependency, network service, asset catalogue or persisted model defi
 
 ### Exposure note
 
-This run read the task card, AGENTS.md, CLAUDE.md, ROADMAP.md, docs/architecture.md, F06 draft
+Round 4 re-read F06 sections 4, 7, 9, 11 and 12 and the 83-case file, including the corrected
+POS-10/POS-41/POS-42/POS-45 and new POS-47/NEG-36. It read the existing design/matrix, local
+checker and repository rules/roadmap/architecture. No new external sources or other checkouts
+were read. Earlier rounds read their then-current F06 inputs, the same authorized design
+inputs and local scratch checker. F08 boundaries are integrated; this reconciliation does not
+select or change module paths or manually read implementation sources. The following earlier
+exposure history is retained, not attributed anew to round 4.
+
+The original design run read the task card, AGENTS.md, CLAUDE.md, ROADMAP.md, docs/architecture.md,
+F06 draft
 and its entire case file, F04's scope/limits/frames/quantities/errors/comparison sections,
 every public file under docs/clean-room (README, policy, templates, review result, first-scope
 package and cases), and docs/fixtures/README.md and expectations.md. Some initial combined
