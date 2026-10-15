@@ -3,6 +3,7 @@
 
 //! The structural model for BeamCraft.
 
+pub mod digest;
 pub mod error;
 
 pub use error::ErrorCode;
