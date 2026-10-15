@@ -58,6 +58,12 @@ later project; portable domain crates alone do not establish a working web appli
   implementation requires a protected root namespace. U04 owns the CLI; U06/U07 own revision
   publication and recovery. U05 acceptance and K1 are not complete.
 
+- 2026-10-15: MSRV raised from Rust 1.95 to 1.96 by owner decision. The `openusd` crate under
+  evaluation needs 1.96, and the local and CI toolchains are already at least 1.96. Only the
+  `rust-version` in the root `Cargo.toml` and the minimum stated in `README.md` and
+  `docs/development.md` change; there is no code change and Rust 1.95 is no longer supported. The
+  F01 baseline record keeps its 1.95 wording with a dated note.
+
 - 2026-10-15: F11 drafted the USD layer-engine decision record 0.1.0 on base
   `20d26cfb107d51e7a2c76c25ca0191b8115ec301` (stacked on F08). It compares four options (official
   SDK worker, own Rust subset, `openusd` adapter, hybrid) and recommends retaining the accepted SDK
