@@ -39,17 +39,17 @@ only says what is checked again after a merge.
 6. The discipline-module contract and enable/disable behaviour (section 7).
 
 Normative statements carry a rule ID of the form `DV-<FAMILY>-<NNN>`; section 6.5 lists all
-52 of them. Prose without an ID is explanation or policy that no case checks.
+57 of them. Prose without an ID is explanation or policy that no case checks.
 
 ### 1.3 First slice and reserved vocabulary
 
 - **Implementable in the first slice:** the kinds `plate`, `beam` and `column` (steel), the generic
   validation layer over them, the module registry, and preservation of unknown content. This is
-  the `now` slice of section 6.5: 39 rules.
+  the `now` slice of section 6.5: 42 rules.
 - **Reserved:** `wall`, `slab`, `opening`, `penetration`, `pipe`, `duct`, `support`, `assembly`,
   `connection`, `reference`. Reserved kinds have names, owners and *proposed* attribute names, and
   nothing else: no command creates them, no behaviour is attached, and authoring one is rejected
-  (`DV-KIND-004`). The 13 `reserved` rules and their cases are specification for a future
+  (`DV-KIND-004`). The 15 `reserved` rules and their cases are specification for a future
   module; they are marked `first_slice: false` in the case file and are not implemented work.
 - Content that already contains a reserved or unknown kind is **loaded, preserved and shown
   read-only** (`DV-KIND-002`, `DV-MOD-001`). It is never rejected on load and never deleted.
@@ -102,8 +102,11 @@ needs a new vocabulary version (section 4.5). An unknown kind in an authoring re
 | `reference` | any | reserved | - |
 
 **Owner** is a discipline token. `steel`, `arch` and `mep` are the discipline tokens fixed by this
-draft (open decision D-3). `any` means the discipline of the module that authors the element; it
-is stored in `bim:discipline` and is then immutable (`DV-OWN-003`). For every other kind
+draft, confirmed by the owner on 2026-10-15. An authored discipline or module token outside
+`steel`, `arch`, `mep` is rejected (`DV-KIND-006`). Loaded content with an unknown discipline is
+preserved read-only under section 7.4, not rejected on load. `any` means the discipline of the
+module that authors the element; it is stored in `bim:discipline` and is then immutable
+(`DV-OWN-003`). For every other kind
 `bim:discipline` must equal the owner (`DV-KIND-005`). A *straight member* is the family of `beam`
 and `column`; F04 treats them as one command with an explicit kind.
 
@@ -141,8 +144,9 @@ ones. "Undefined" lists what this contract deliberately does not say.
   `arch:slab:thicknessMm`. Optional: `bim:material`. Undefined: slope, edges, drops.
 - **`opening`** (arch). A void authored by the host's own discipline, with no request step.
   Required: `bim:opening:shape` (`round` or `rect`), `bim:opening:sizeAMm`, `sizeBMm` for `rect`;
-  one `hosted-in` record. Undefined: frames, reveals, ratings, whether it merges with
-  `penetration` (open decision D-2).
+  one `hosted-in` record whose host has the same discipline (`DV-REL-014`). `opening` and
+  `penetration` remain separate kinds until a module needs to merge them; merging requires a
+  vocabulary amendment. Undefined: frames, reveals, ratings.
 - **`penetration`** (any). A request by one discipline for an opening through an element of another.
   The full shape and lifecycle are fixed in section 5.4. Undefined: sleeves, firestopping, more
   than one host, cut geometry.
@@ -255,7 +259,8 @@ for anything else the mechanism is outside this version.
 The vocabulary version is `MAJOR.MINOR.PATCH`, stored per element in `bim:schemaVersion`.
 
 - **Compatibility line.** For `MAJOR >= 1` the line is `MAJOR`. While `MAJOR` is 0 the line is
-  `0.MINOR`. A version on another line is *unsupported* for editing.
+  `0.MINOR`. A version on another line is *unsupported* for editing (`DV-VER-001`); moving from
+  `0.MINOR` to `1.0` is an explicit migration step.
 - **Additive change.** A new optional attribute, a new reserved kind or a new rule severity of
   `warning` raises the PATCH (line `0.y`) or MINOR (line `>= 1`). Required attributes, units,
   meanings and rule codes of an existing name never change inside a line.
@@ -267,8 +272,8 @@ The vocabulary version is `MAJOR.MINOR.PATCH`, stored per element in `bim:schema
 A reader mutates an element only if the element's version is on the reader's line and is not newer
 than the reader's own (`DV-VER-002`). A newer element is read-only and its unknown attributes are
 preserved. Content on an unsupported line can be inspected and preserved, not mutated
-(`DV-VER-001`; F04 section 4). Forward-compatible editing of newer elements is not offered (open
-decision D-4).
+(`DV-VER-001`; F04 section 4). Editing newer-patch elements on the same compatibility line is
+forbidden until an explicit migration story exists (`DV-VER-002`).
 
 ### 4.7 Capability negotiation
 
@@ -290,9 +295,11 @@ to F05/U02; this contract fixes the content.
 A relationship is a directed record from a **source** element to a **target** element, except
 that section 5.4 permits a historical host identity instead of a live target. It is identified by
 the tuple (type, source, target, role), not by a new identity type (`DV-REL-007`).
-`role` is an optional token (`[a-z][a-z0-9_]{0,31}`); only `subject` is defined. A record always
-lives with its source. F04's `bim:profile` and `bim:material` links to immutable definitions are
-not element relationships and are not covered here.
+`role` is an optional token (`[a-z][a-z0-9_]{0,31}`); only `subject` has defined semantics.
+`references` accepts any role matching that syntax; no closed list beyond `subject` is imposed
+(`DV-REL-013`). Unknown roles acquire no implied behaviour. A record always lives with its source.
+F04's `bim:profile` and `bim:material` links to immutable definitions are not element relationships
+and are not covered here.
 
 - `hosted-in`. Source: `opening`, `support`. Target: `wall`, `slab`, `plate`, `beam`, `column`.
   Per source: an opening has exactly 1, a support 0 or 1.
@@ -327,7 +334,8 @@ the decision fields of section 5.4.
   record whose source penetration is `rejected` or `withdrawn` is historical (section 5.4) and
   does not block it. Other records from that penetration, including its subject reference, remain
   live. If the incoming index cannot be completed the answer is `DV-REL-010`, never "no links".
-  Deleting an element removes its own outgoing records with it.
+  Deleting an element removes its own outgoing records with it. Deleting an `accepted`
+  penetration is rejected; the proposer must withdraw it first (`DV-PEN-007`).
 - **Copy.** The first F04 `CopyElement` takes one source. A source that has element-to-element
   relationships is refused rather than copied incompletely (`DV-REL-011`).
 - **Deactivated targets** are reported, not rejected (`DV-REL-012`).
@@ -336,8 +344,10 @@ the decision fields of section 5.4.
 
 `penetration` is one shared type so that a pipe discipline and a structural discipline describe a
 requested hole the same way. It is `reserved`: the table below is specification and nothing in the
-first slice creates or changes one. Open decision D-1 asks the owner to confirm that it belongs to
-the common vocabulary; D-2 whether `opening` and `penetration` stay separate kinds.
+first slice creates or changes one. The opening/penetration lifecycle belongs in the common
+vocabulary; modules must use the shared states and transition rules (`DV-PEN-001` to
+`DV-PEN-007`). `opening` is a host-owned void without a request; `penetration` is a request.
+They remain separate kinds under the owner decision of 2026-10-15.
 
 **Fields** (shared namespace; case files use the short names in brackets).
 
@@ -360,7 +370,8 @@ the common vocabulary; D-2 whether `opening` and `penetration` stay separate kin
 
 **Who.** The **proposer** is the discipline in `bim:discipline`. The **host discipline** is the
 discipline of the element at the end of `penetrates`. When both are the same discipline the request
-is allowed and follows the same table; one module then holds both rights.
+is allowed and follows the same table; one module then holds both rights. Only the host discipline
+may accept a penetration (`DV-PEN-002`); being the proposer alone grants no acceptance right.
 
 **States and transitions.** Every transition carries the expected `stateSeq`
 (`DV-PEN-003`). A transition not in this table is `DV-PEN-001`; the right edge by the wrong
@@ -392,8 +403,11 @@ section 2). If both transitions arrive through a merge, the merged result is ref
 state. Deleting a host that has a `proposed` or `accepted` penetration is `DV-REL-009`; the host
 discipline first rejects the request. Its `penetrates` record then becomes historical, which
 unblocks deletion if no other live incoming records remain and the incoming index is complete.
-The retained record remains valid after host deletion. Deleting a penetration is not a transition
-and has no rule in 0.1.0 (open decision D-5).
+The retained record remains valid after host deletion. Deleting a penetration is not a transition.
+An `accepted` penetration must first become `withdrawn` through the proposer's sequence-checked
+transition before deletion (`DV-PEN-007`); deletion never withdraws it implicitly. Other F04 delete,
+ownership, enabled-module and incoming-index checks still apply, including after withdrawal.
+At M, the recorded withdrawal must precede the delete; a missing final element alone is not proof.
 
 ## 6. Validation layer
 
@@ -492,6 +506,7 @@ when its triggering content or operation is present, as defined in 6.1.
 | DV-KIND-003 | error | element | C H M | UNSUPPORTED_COMMAND | now |
 | DV-KIND-004 | error | element | C H M | UNSUPPORTED_COMMAND | now |
 | DV-KIND-005 | error | element | C H M | INVALID_ARGUMENT | now |
+| DV-KIND-006 | error | model | C H M | INVALID_ARGUMENT | now |
 | DV-BASE-001 | error | element | C H M | INVALID_ID | now |
 | DV-BASE-002 | error | model | C H M | DUPLICATE_ID | now |
 | DV-BASE-003 | error | element | C H M | INVALID_ARGUMENT | now |
@@ -523,18 +538,22 @@ when its triggering content or operation is present, as defined in 6.1.
 | DV-REL-010 | error | relationship | H M | DEPENDENCY_UNAVAILABLE | now |
 | DV-REL-011 | error | relationship | C H M | DEPENDENCY_CONFLICT | now |
 | DV-REL-012 | warning | relationship | H M | - | now |
+| DV-REL-013 | error | relationship | C H M | INVALID_ARGUMENT | now |
+| DV-REL-014 | error | relationship | C H M | FOREIGN_READ_ONLY | reserved |
 | DV-PEN-001 | error | element | C H M | INVALID_ARGUMENT | reserved |
 | DV-PEN-002 | error | element | C H M | PERMISSION_DENIED | reserved |
 | DV-PEN-003 | error | element | C H M | DEPENDENCY_CONFLICT | reserved |
 | DV-PEN-004 | error | element | C H M | DEPENDENCY_CONFLICT | reserved |
 | DV-PEN-005 | error | element | C H M | FOREIGN_READ_ONLY | reserved |
 | DV-PEN-006 | error | element | C H M | INVALID_ARGUMENT | reserved |
+| DV-PEN-007 | error | element | C H M | DEPENDENCY_CONFLICT | reserved |
 | DV-COL-001 | error | element | C H M | INVALID_ARGUMENT | reserved |
 | DV-COL-002 | error | model | C H M | INVALID_ARGUMENT | reserved |
 | DV-MOD-001 | error | element | C H M | FOREIGN_READ_ONLY | now |
 | DV-MOD-002 | error | model | H M | INTEGRITY_ERROR | now |
 | DV-MOD-003 | error | model | H M | INVALID_ARGUMENT | now |
 | DV-MOD-004 | error | model | H M | INVALID_ARGUMENT | now |
+| DV-MOD-005 | error | model | C H M | PERMISSION_DENIED | now |
 | DV-MRG-001 | error | post_merge | M | DEPENDENCY_CONFLICT | now |
 
 Rule text:
@@ -557,6 +576,8 @@ Rule text:
   kind as implemented, so the request is rejected even when the owning module is enabled.
 - **DV-KIND-005** `bim:discipline` is not the owning discipline of the kind (for kinds owned by
   `any`: the discipline of the authoring module).
+- **DV-KIND-006** An authoring request or module registration names a discipline or module token
+  outside `steel`, `arch`, `mep`. This is an authoring check, not rejection of loaded content.
 - **DV-BASE-001** `bim:id` is not a full canonical lowercase UUIDv7 with the RFC variant (F04
   section 2).
 - **DV-BASE-002** Two placed elements in one model carry the same `bim:id`.
@@ -617,8 +638,13 @@ Rule text:
   (F04 section 7).
 - **DV-REL-012** A live relationship target is `deactivated`. The record stays valid; the target is
   listed.
+- **DV-REL-013** An authored relationship role is present but does not match
+  `[a-z][a-z0-9_]{0,31}`. A syntactically valid `references` role is accepted even when unknown.
+- **DV-REL-014** An `opening` has a `hosted-in` target whose discipline differs from its own.
+  An opening is host-owned and has no penetration request or acceptance step.
 - **DV-PEN-001** A penetration state change is not an edge of the transition table of section 5.4.
 - **DV-PEN-002** The actor's discipline is not the one entitled to the requested transition.
+  Only the host discipline may accept; proposer rights alone never permit acceptance.
 - **DV-PEN-003** The transition's expected `stateSeq` differs from the stored value (a concurrent
   change), or merge provenance contains competing transitions from the same sequence. Check at
   C, H and M; a valid-looking final state does not erase a sequence conflict.
@@ -626,6 +652,9 @@ Rule text:
 - **DV-PEN-005** The host discipline edits a request field, or the proposer edits a decision
   field.
 - **DV-PEN-006** A transition to `rejected` has no reason code, or a code outside the closed list.
+- **DV-PEN-007** A delete targets a penetration while its state is `accepted`. Reject without
+  changing state; require a sequence-checked withdrawal by the proposer before deletion. At M,
+  check the recorded operation order, including the pre-delete state, rather than absence alone.
 - **DV-COL-001** An element names a collision class that no enabled module declares.
 - **DV-COL-002** A module's collision-class declaration has a severity outside `hard`, `soft`,
   `clearance`.
@@ -636,6 +665,9 @@ Rule text:
 - **DV-MOD-003** A module manifest declares a dependency on another module.
 - **DV-MOD-004** A module manifest registers the shared namespace `bim`, a reserved token, or a
   namespace that another module already registered.
+- **DV-MOD-005** A change to the project's enabled-module list lacks owner-level permission
+  from trusted context. A discipline token or module ownership does not grant that permission.
+  U02 defines storage and authoring; this rule specifies permission only, not an implementation.
 - **DV-MRG-001** A merged result or its recorded operations violate a definite error-severity
   rule. The host re-runs all applicable catalogue rules and ignores any client-reported pass.
   Unavailable inputs alone do not prove a violation; they block acceptance as `incomplete` under
@@ -689,7 +721,10 @@ engine layer; section 10 proposes the F08 edit and flags that it is not applied.
 
 A module is **enabled** for a project when the project's module list includes it and the host has
 it installed, and the selected vocabulary version is on the compatibility line of its minimum and
-at least that minimum (`DV-VER-003`). Where the list is stored is a U02 decision. A module that is
+at least that minimum (`DV-VER-003`). U02 defines the authoring design and storage location of
+the project's enabled-module list. Changing that list requires owner-level permission from trusted
+context (`DV-MOD-005`); neither a discipline token nor module ownership grants it. This is a U02
+contract pointer, not a storage design or implemented permission mechanism. A module that is
 absent, not installed or refused by negotiation is **disabled**.
 
 For a project that contains elements of a disabled module:
@@ -746,9 +781,9 @@ collision evaluation.
 [The case file](domain-vocabulary-cases-v0.1.json) holds original acceptance descriptions. They
 are proposed future tests, **not** a runnable engine, USD fixture or module mock.
 
-There are 149 logical cases: 73 positive and 76 negative. 104 are
-rule pairs: each of the 52 rules `DV-FAM-NNN` has a positive case `DVC-FAM-NNN-P` and a
-negative case `DVC-FAM-NNN-N`. The other 45 are extra cases with IDs `DVC-X-<group>-<NN>`:
+There are 161 logical cases: 79 positive and 82 negative. 114 are
+rule pairs: each of the 57 rules `DV-FAM-NNN` has a positive case `DVC-FAM-NNN-P` and a
+negative case `DVC-FAM-NNN-N`. The other 47 are extra cases with IDs `DVC-X-<group>-<NN>`:
 
 - valid steel elements (`DVC-X-STEEL-*`);
 - reserved or disabled kinds rejected, and a project with foreign-module content preserved
@@ -761,7 +796,7 @@ negative case `DVC-FAM-NNN-N`. The other 45 are extra cases with IDs `DVC-X-<gro
 - the penetration lifecycle: eight allowed and eight forbidden transitions (`DVC-X-LIFE-A1`
   to `A8`, `F1` to `F8`), two conflict cases and a conflict-free merge (`DVC-X-CONFLICT-*`).
 
-Of the cases, 93 are `first_slice: true` and 56 are `first_slice: false`, which
+Of the cases, 101 are `first_slice: true` and 60 are `first_slice: false`, which
 are specification only. A negative case lists the findings its rule raises with severity and F04
 code; `primary_code` follows the unavailable-input precedence of sections 6.3 and 6.4. The case
 file uses short logical keys (`kind`, `discipline`, `state`, `stateSeq`, `reason`, `attrs`);
@@ -774,37 +809,50 @@ F04 cases referenced:
 `F04-NEG-01`, `F04-NEG-03`, `F04-NEG-04`, `F04-NEG-07`, `F04-NEG-11`, `F04-NEG-12`, `F04-NEG-13`,
 `F04-NEG-15`, `F04-NEG-19`, `F04-NEG-22`, `F04-POS-03`, `F04-POS-05`, `F04-POS-08`, `F04-RAW-02`.
 
-## 10. Open decisions and amendments log
+## 10. Accepted decisions and amendments log
 
-### 10.1 Decisions for the owner
+### 10.1 Owner decisions accepted on 2026-10-15
 
-- **D-1.** Does the opening/penetration lifecycle belong in the common vocabulary? Recommended:
-  yes. Both disciplines must read the same state; a private copy per module would recreate the
-  dialect problem.
-- **D-2.** Are `opening` (host-owned, no request) and `penetration` (request) two kinds or one?
-  Recommended: keep two until a module needs to merge them.
-- **D-3.** Discipline tokens `steel`, `arch`, `mep`. Confirm or rename before a module registers.
-- **D-4.** Allow editing of newer-patch elements on the same line? Recommended: no, until a
-  migration story exists.
-- **D-5.** Which actor may accept, and may a penetration be deleted while `accepted`? Recommended:
-  the host discipline only, and require `withdrawn` first.
-- **D-6.** Compatibility line `0.MINOR` while `MAJOR` is 0. Recommended: keep; it makes 1.0 an
-  explicit step.
-- **D-7.** Where is the project's enabled-module list stored and who may change it? A U02
-  decision; changing it should be an owner-level permission.
-- **D-8.** Should `references` have a closed role list beyond `subject`? Recommended: not yet.
+The owner answered "OK" to the orchestrator's recommendations on 2026-10-15. All eight decisions
+below are accepted; the contract remains draft 0.1.0, not frozen. Acceptance adds no runtime work.
+
+- **D-1 - accepted on 2026-10-15.** The opening/penetration lifecycle belongs in the common
+  vocabulary (section 5.4); both disciplines use the shared state and transition rules.
+- **D-2 - accepted on 2026-10-15.** Keep two kinds, `opening` (host-owned, no request) and
+  `penetration` (request), until a module needs to merge them (sections 2.3 and 5.4).
+- **D-3 - accepted on 2026-10-15.** The discipline tokens `steel`, `arch`, `mep` are confirmed
+  (section 2.1); authoring with an unknown discipline token is rejected (`DV-KIND-006`).
+- **D-4 - accepted on 2026-10-15.** Editing elements of a newer patch version on the same
+  compatibility line is forbidden until a migration story exists (section 4.6, `DV-VER-002`).
+- **D-5 - accepted on 2026-10-15.** Only the host discipline may accept a penetration, and an
+  `accepted` penetration must be `withdrawn` before deletion (section 5.4, `DV-PEN-002/007`).
+- **D-6 - accepted on 2026-10-15.** Keep compatibility line `0.MINOR` while `MAJOR` is 0;
+  moving to `1.0` is an explicit step (section 4.6, `DV-VER-001`).
+- **D-7 - accepted on 2026-10-15.** U02 defines storage and authoring of the project's
+  enabled-module list; changing it requires owner-level permission (section 7.4, `DV-MOD-005`).
+  Its storage location remains a U02 decision; this contract does not implement it.
+- **D-8 - accepted on 2026-10-15.** Impose no closed role list for `references` beyond `subject`
+  yet; any role matching the token syntax is accepted (section 5.1, `DV-REL-013`).
 
 ### 10.2 Amendments proposed to other contracts (not applied)
 
 - **F04-A1 (section 4).** State that kind tokens other than `plate`, `beam`, `column` are reserved
   by F10 and rejected with `UNSUPPORTED_COMMAND`.
 - **F04-A2 (sections 7 and 8).** Add a `lifecycle` property to `UpdateElement`, using the existing
-  footprint group `lifecycle`, if the owner wants `deactivated` to be authorable in steel.
+  footprint group `lifecycle`, only if separately approved for steel deactivation authoring.
+  D-1/D-5 accept the penetration request lifecycle, not a general steel deactivation setter;
+  F04-A2 is unnecessary for recording these decisions and remains a separate optional proposal.
 - **F04-A3 (section 8).** Name `rule_id` as a standard field of the diagnostics.
 - **F04-A4 (section 4).** State that `bim:schemaVersion` is the vocabulary version and define the
-  compatibility line of section 4.6.
+  compatibility line of section 4.6. D-4/D-6 now require `0.MINOR` before 1.0, an explicit
+  migration across lines, and rejection of edits to newer-patch elements on the same line.
 - **F04-A5 (section 7).** Name `DEPENDENCY_CONFLICT` as the code for a refused copy of an element
   with relationships (`DV-REL-011`).
+- **F04-A6 (sections 7 and 8).** For future penetration authoring, require host-only acceptance
+  and reject deletion while `accepted` until the proposer withdraws it (`DV-PEN-002/007`), using
+  existing codes. This does not add a penetration command to the first steel slice.
+- **F04-A7 (sections 1 and 8).** Point project module-list changes to U02 and require owner-level
+  permission from trusted context (`DV-MOD-005`), with existing `PERMISSION_DENIED`.
 - **F08-A1 (sections 2 and 4).** Add planned rows: the registry and rule types in
   `beamcraft_model::{vocabulary, validation}`; the module interface in
   `beamcraft_engine::module`; and a `beamcraft-steel` domain crate (`crates/steel`) above the
@@ -815,6 +863,14 @@ F04 cases referenced:
   module-to-module edge.
 - **F08-A3 (section 2).** An `app` row would list the module crates it registers. Whether this
   conflicts with "the shell never depends on a module's internals" is for the owner to decide.
+
+D-1/D-2/D-3/D-8 require the vocabulary and validation rows proposed in F08-A1 to cover the
+shared lifecycle, separate kinds, confirmed tokens and open reference roles. No separate
+role-registry crate, new dependency rule or module-to-module call is necessary. F08-A1 remains
+necessary; F08-A2 still needs no dependency-rule change. F08-A3's shell-registration question
+remains open; D-1 to D-8 do not decide it. D-7's storage location belongs to U02, not an F08
+storage amendment. F04-A1/A3/A5 remain proposed as before. No F04 or F08 amendment is applied
+here.
 
 ### 10.3 Log
 
@@ -862,3 +918,22 @@ F04 cases referenced:
   and expected values; only assertions and input detail are added. Ten new case IDs continue the
   VERSION, REL and CONFLICT sequences and start VALIDATION. Totals are 149 cases: 73 positive,
   76 negative; 104 rule-pair cases and 45 extras; 93 first-slice and 56 reserved cases.
+
+- 2026-10-15: recorded owner acceptance of D-1 to D-8; draft 0.1.0 remains not frozen.
+  Sections 2.1/2.3, 4.6, 5.1/5.3/5.4 and 7.4 now state the accepted decisions normatively.
+  Existing rules DV-VER-001/002, DV-KIND-005, DV-PEN-001 to DV-PEN-006, DV-REL-001 to
+  DV-REL-012 and DV-MOD-001/002 remain consistent; DV-PEN-002 explicitly states host-only
+  acceptance. No existing case changes outcome, code, polarity or first-slice classification.
+  DVC-VER-002-P/N already cover D-4, and DVC-PEN-002-P/N already cover D-5 acceptance;
+  their expectations remain unchanged, as do all lifecycle, conflict and historical-host cases.
+  New paired rules/cases: DV-KIND-006 / DVC-KIND-006-P/N (confirmed discipline/module tokens),
+  DV-REL-013 / DVC-REL-013-P/N (open reference roles with syntax checks), DV-REL-014 /
+  DVC-REL-014-P/N (host-owned opening without a request), DV-PEN-007 / DVC-PEN-007-P/N
+  (delete after withdrawal versus accepted-delete rejection), and DV-MOD-005 / DVC-MOD-005-P/N
+  (owner-level module-list permission). All new rules run at C/H/M; reserved behaviour stays
+  specification only. DVC-X-VERSION-06/07 cover distinct 0.MINOR lines and compatible 1.x minors.
+  DVC-VER-003-P/N, DVC-MOD-002-P/N and DVC-X-VERSION-04/05 gain trusted owner-permission
+  context so their existing version/preservation checks remain isolated. No expected value changes.
+  Section 10.2 records necessary, unchanged and unnecessary F04/F08 proposals without applying
+  them; D-7 remains a U02 pointer. Totals: 57 rules (42 now, 15 reserved); 161 cases
+  (79 positive, 82 negative), 114 rule-pair cases and 47 extras; 101 first-slice and 60 reserved.

@@ -49,6 +49,13 @@ later project; portable domain crates alone do not establish a working web appli
 
 ## Progress log
 
+- 2026-10-15: F10 recorded owner acceptance of decisions D-1 to D-8 in the domain-vocabulary
+  contract 0.1.0. The contract now has 57 rules (42 now, 15 reserved) and 161 original acceptance
+  descriptions (79 positive, 82 negative); all existing case expectations remain unchanged.
+  F04/F08 amendments remain proposals, and module-list storage/authoring remains a U02 decision.
+  The contract is not frozen, nothing is implemented and K0 is not passed. Local WASM and
+  cargo-deny checks were not run.
+
 - 2026-10-15: MSRV raised from Rust 1.95 to 1.96 by owner decision. The `openusd` crate under
   evaluation needs 1.96, and the local and CI toolchains are already at least 1.96. Only the
   `rust-version` in the root `Cargo.toml` and the minimum stated in `README.md` and

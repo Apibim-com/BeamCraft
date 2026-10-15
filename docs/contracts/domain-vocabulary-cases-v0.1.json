@@ -33,16 +33,16 @@
   "Numbers follow CR-TOL-001 as in the F04 case file."
  ],
  "counts": {
-  "rules": 52,
-  "now_rules": 39,
-  "reserved_rules": 13,
-  "cases": 149,
-  "positive": 73,
-  "negative": 76,
-  "rule_pair_cases": 104,
-  "extra_cases": 45,
-  "first_slice_true": 93,
-  "first_slice_false": 56
+  "rules": 57,
+  "now_rules": 42,
+  "reserved_rules": 15,
+  "cases": 161,
+  "positive": 79,
+  "negative": 82,
+  "rule_pair_cases": 114,
+  "extra_cases": 47,
+  "first_slice_true": 101,
+  "first_slice_false": 60
  },
  "logical_keys": [
   "requires is the module manifest requires_vocabulary minimum; client and host advertise versions.",
@@ -50,7 +50,10 @@
   "penetrates targets are historical only when their source penetration is rejected or withdrawn.",
   "post_delete_validation checks the candidate after removal with retained source records.",
   "merge_provenance records transitions from their shared base state and sequence.",
-  "Expected status, primary_code, incomplete and truncated follow contract sections 6.3 and 6.4."
+  "Expected status, primary_code, incomplete and truncated follow contract sections 6.3 and 6.4.",
+  "trusted_context.owner_level_permission is supplied by the host, never by an action field.",
+  "prior_transitions describe ordered accepted operations before the action, checked again at M.",
+  "Rule-pair cases isolate the named rule; reserved-kind cases remain specification only."
  ],
  "cases": [
   {
@@ -255,7 +258,10 @@
     "modules": [],
     "vocabulary": "0.1.0",
     "elements": [],
-    "relationships": []
+    "relationships": [],
+    "trusted_context": {
+     "owner_level_permission": true
+    }
    },
    "action": {
     "type": "enable_module",
@@ -292,7 +298,10 @@
     "modules": [],
     "vocabulary": "0.1.0",
     "elements": [],
-    "relationships": []
+    "relationships": [],
+    "trusted_context": {
+     "owner_level_permission": true
+    }
    },
    "action": {
     "type": "enable_module",
@@ -4736,7 +4745,10 @@
       }
      }
     ],
-    "relationships": []
+    "relationships": [],
+    "trusted_context": {
+     "owner_level_permission": true
+    }
    },
    "action": {
     "type": "disable_module",
@@ -4775,7 +4787,10 @@
       }
      }
     ],
-    "relationships": []
+    "relationships": [],
+    "trusted_context": {
+     "owner_level_permission": true
+    }
    },
    "action": {
     "type": "disable_module",
@@ -7125,7 +7140,10 @@
     "modules": [],
     "vocabulary": "0.1.1",
     "elements": [],
-    "relationships": []
+    "relationships": [],
+    "trusted_context": {
+     "owner_level_permission": true
+    }
    },
    "action": {
     "type": "enable_module",
@@ -7162,7 +7180,10 @@
     "modules": [],
     "vocabulary": "0.1.0",
     "elements": [],
-    "relationships": []
+    "relationships": [],
+    "trusted_context": {
+     "owner_level_permission": true
+    }
    },
    "action": {
     "type": "enable_module",
@@ -7771,6 +7792,641 @@
     "truncated": false,
     "total_findings": 0,
     "stateSeq_after": 2
+   }
+  },
+  {
+   "case_id": "DVC-KIND-006-P",
+   "title": "Register a confirmed discipline token",
+   "rules": [
+    "DV-KIND-006"
+   ],
+   "polarity": "positive",
+   "first_slice": true,
+   "f04_refs": [],
+   "given": {
+    "modules": [],
+    "vocabulary": "0.1.0",
+    "elements": [],
+    "relationships": []
+   },
+   "action": {
+    "type": "register_module",
+    "manifest": {
+     "module": "steel",
+     "namespace": "steel",
+     "depends_on": []
+    }
+   },
+   "expected": {
+    "outcome": "accepted",
+    "findings": [],
+    "primary_code": null
+   }
+  },
+  {
+   "case_id": "DVC-KIND-006-N",
+   "title": "Reject an unknown discipline token",
+   "rules": [
+    "DV-KIND-006"
+   ],
+   "polarity": "negative",
+   "first_slice": true,
+   "f04_refs": [],
+   "given": {
+    "modules": [],
+    "vocabulary": "0.1.0",
+    "elements": [],
+    "relationships": []
+   },
+   "action": {
+    "type": "register_module",
+    "manifest": {
+     "module": "civil",
+     "namespace": "civil",
+     "depends_on": []
+    }
+   },
+   "expected": {
+    "outcome": "rejected",
+    "findings": [
+     {
+      "rule": "DV-KIND-006",
+      "severity": "error",
+      "code": "INVALID_ARGUMENT"
+     }
+    ],
+    "primary_code": "INVALID_ARGUMENT"
+   }
+  },
+  {
+   "case_id": "DVC-REL-013-P",
+   "title": "Unknown syntactically valid references role is accepted",
+   "rules": [
+    "DV-REL-013"
+   ],
+   "polarity": "positive",
+   "first_slice": true,
+   "f04_refs": [],
+   "given": {
+    "modules": [
+     "steel"
+    ],
+    "vocabulary": "0.1.0",
+    "elements": [
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200001",
+      "kind": "plate",
+      "discipline": "steel",
+      "attrs": {
+       "steel:plate:widthMm": 1000,
+       "steel:plate:lengthMm": 500,
+       "steel:plate:thicknessMm": 10
+      }
+     },
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200002",
+      "kind": "plate",
+      "discipline": "steel",
+      "attrs": {
+       "steel:plate:widthMm": 1000,
+       "steel:plate:lengthMm": 500,
+       "steel:plate:thicknessMm": 10
+      }
+     }
+    ],
+    "relationships": []
+   },
+   "action": {
+    "type": "author_relationship",
+    "module": "steel",
+    "record": {
+     "type": "references",
+     "source": "019a7bf0-0000-7000-8000-000000200001",
+     "target": "019a7bf0-0000-7000-8000-000000200002",
+     "role": "coordination"
+    }
+   },
+   "expected": {
+    "outcome": "accepted",
+    "findings": [],
+    "primary_code": null
+   }
+  },
+  {
+   "case_id": "DVC-REL-013-N",
+   "title": "Invalid references role syntax is rejected",
+   "rules": [
+    "DV-REL-013"
+   ],
+   "polarity": "negative",
+   "first_slice": true,
+   "f04_refs": [],
+   "given": {
+    "modules": [
+     "steel"
+    ],
+    "vocabulary": "0.1.0",
+    "elements": [
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200001",
+      "kind": "plate",
+      "discipline": "steel",
+      "attrs": {
+       "steel:plate:widthMm": 1000,
+       "steel:plate:lengthMm": 500,
+       "steel:plate:thicknessMm": 10
+      }
+     },
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200002",
+      "kind": "plate",
+      "discipline": "steel",
+      "attrs": {
+       "steel:plate:widthMm": 1000,
+       "steel:plate:lengthMm": 500,
+       "steel:plate:thicknessMm": 10
+      }
+     }
+    ],
+    "relationships": []
+   },
+   "action": {
+    "type": "author_relationship",
+    "module": "steel",
+    "record": {
+     "type": "references",
+     "source": "019a7bf0-0000-7000-8000-000000200001",
+     "target": "019a7bf0-0000-7000-8000-000000200002",
+     "role": "Coordination"
+    }
+   },
+   "expected": {
+    "outcome": "rejected",
+    "findings": [
+     {
+      "rule": "DV-REL-013",
+      "severity": "error",
+      "code": "INVALID_ARGUMENT"
+     }
+    ],
+    "primary_code": "INVALID_ARGUMENT"
+   }
+  },
+  {
+   "case_id": "DVC-REL-014-P",
+   "title": "Host-owned opening has no penetration request",
+   "rules": [
+    "DV-REL-014"
+   ],
+   "polarity": "positive",
+   "first_slice": false,
+   "f04_refs": [],
+   "given": {
+    "modules": [
+     "arch",
+     "steel"
+    ],
+    "vocabulary": "0.1.0",
+    "elements": [
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200001",
+      "kind": "wall",
+      "discipline": "arch"
+     },
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200003",
+      "kind": "opening",
+      "discipline": "arch",
+      "attrs": {
+       "bim:opening:shape": "round",
+       "bim:opening:sizeAMm": 100
+      }
+     }
+    ],
+    "relationships": [
+     {
+      "type": "hosted-in",
+      "source": "019a7bf0-0000-7000-8000-000000200003",
+      "target": "019a7bf0-0000-7000-8000-000000200001"
+     }
+    ]
+   },
+   "action": {
+    "type": "validate_model",
+    "stage": "host"
+   },
+   "expected": {
+    "outcome": "valid",
+    "findings": [],
+    "primary_code": null,
+    "penetration_request_required": false
+   }
+  },
+  {
+   "case_id": "DVC-REL-014-N",
+   "title": "Opening cannot belong to a different host discipline",
+   "rules": [
+    "DV-REL-014"
+   ],
+   "polarity": "negative",
+   "first_slice": false,
+   "f04_refs": [],
+   "given": {
+    "modules": [
+     "arch",
+     "steel"
+    ],
+    "vocabulary": "0.1.0",
+    "elements": [
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200001",
+      "kind": "plate",
+      "discipline": "steel",
+      "attrs": {
+       "steel:plate:widthMm": 1000,
+       "steel:plate:lengthMm": 500,
+       "steel:plate:thicknessMm": 10
+      }
+     },
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200003",
+      "kind": "opening",
+      "discipline": "arch",
+      "attrs": {
+       "bim:opening:shape": "round",
+       "bim:opening:sizeAMm": 100
+      }
+     }
+    ],
+    "relationships": [
+     {
+      "type": "hosted-in",
+      "source": "019a7bf0-0000-7000-8000-000000200003",
+      "target": "019a7bf0-0000-7000-8000-000000200001"
+     }
+    ]
+   },
+   "action": {
+    "type": "validate_model",
+    "stage": "host"
+   },
+   "expected": {
+    "outcome": "invalid",
+    "findings": [
+     {
+      "rule": "DV-REL-014",
+      "severity": "error",
+      "code": "FOREIGN_READ_ONLY"
+     }
+    ],
+    "primary_code": "FOREIGN_READ_ONLY"
+   }
+  },
+  {
+   "case_id": "DVC-PEN-007-P",
+   "title": "Delete a penetration after sequence-checked withdrawal from accepted",
+   "rules": [
+    "DV-PEN-007"
+   ],
+   "polarity": "positive",
+   "first_slice": false,
+   "f04_refs": [],
+   "given": {
+    "modules": [
+     "mep",
+     "arch"
+    ],
+    "vocabulary": "0.1.0",
+    "elements": [
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200001",
+      "kind": "wall",
+      "discipline": "arch"
+     },
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200002",
+      "kind": "pipe",
+      "discipline": "mep"
+     },
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200003",
+      "kind": "penetration",
+      "discipline": "mep",
+      "state": "withdrawn",
+      "stateSeq": 3,
+      "proposer": "mep"
+     }
+    ],
+    "relationships": [
+     {
+      "type": "penetrates",
+      "source": "019a7bf0-0000-7000-8000-000000200003",
+      "target": "019a7bf0-0000-7000-8000-000000200001"
+     },
+     {
+      "type": "references",
+      "source": "019a7bf0-0000-7000-8000-000000200003",
+      "target": "019a7bf0-0000-7000-8000-000000200002",
+      "role": "subject"
+     }
+    ],
+    "index_complete": true,
+    "prior_transitions": [
+     {
+      "target": "019a7bf0-0000-7000-8000-000000200003",
+      "from": "accepted",
+      "to": "withdrawn",
+      "actor_discipline": "mep",
+      "expected_stateSeq": 2,
+      "stateSeq_after": 3
+     }
+    ]
+   },
+   "action": {
+    "type": "delete",
+    "module": "mep",
+    "target": "019a7bf0-0000-7000-8000-000000200003"
+   },
+   "expected": {
+    "outcome": "accepted",
+    "findings": [],
+    "primary_code": null,
+    "deleted_ids": [
+     "019a7bf0-0000-7000-8000-000000200003"
+    ],
+    "relationships_after": [],
+    "retained_ids": [
+     "019a7bf0-0000-7000-8000-000000200001",
+     "019a7bf0-0000-7000-8000-000000200002"
+    ],
+    "withdrawal_precedes_delete": true
+   }
+  },
+  {
+   "case_id": "DVC-PEN-007-N",
+   "title": "Deleting an accepted penetration is rejected without implicit withdrawal",
+   "rules": [
+    "DV-PEN-007"
+   ],
+   "polarity": "negative",
+   "first_slice": false,
+   "f04_refs": [],
+   "given": {
+    "modules": [
+     "mep",
+     "arch"
+    ],
+    "vocabulary": "0.1.0",
+    "elements": [
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200001",
+      "kind": "wall",
+      "discipline": "arch"
+     },
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200002",
+      "kind": "pipe",
+      "discipline": "mep"
+     },
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200003",
+      "kind": "penetration",
+      "discipline": "mep",
+      "state": "accepted",
+      "stateSeq": 2,
+      "proposer": "mep"
+     }
+    ],
+    "relationships": [
+     {
+      "type": "penetrates",
+      "source": "019a7bf0-0000-7000-8000-000000200003",
+      "target": "019a7bf0-0000-7000-8000-000000200001"
+     },
+     {
+      "type": "references",
+      "source": "019a7bf0-0000-7000-8000-000000200003",
+      "target": "019a7bf0-0000-7000-8000-000000200002",
+      "role": "subject"
+     }
+    ],
+    "index_complete": true
+   },
+   "action": {
+    "type": "delete",
+    "module": "mep",
+    "target": "019a7bf0-0000-7000-8000-000000200003"
+   },
+   "expected": {
+    "outcome": "rejected",
+    "findings": [
+     {
+      "rule": "DV-PEN-007",
+      "severity": "error",
+      "code": "DEPENDENCY_CONFLICT"
+     }
+    ],
+    "primary_code": "DEPENDENCY_CONFLICT",
+    "no_state_change": true,
+    "state_after": "accepted",
+    "stateSeq_after": 2,
+    "relationships_preserved": true
+   }
+  },
+  {
+   "case_id": "DVC-MOD-005-P",
+   "title": "Owner-level permission allows changing the project module list",
+   "rules": [
+    "DV-MOD-005"
+   ],
+   "polarity": "positive",
+   "first_slice": true,
+   "f04_refs": [],
+   "given": {
+    "modules": [
+     "steel"
+    ],
+    "vocabulary": "0.1.0",
+    "elements": [
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200001",
+      "kind": "plate",
+      "discipline": "steel",
+      "attrs": {
+       "steel:plate:widthMm": 1000,
+       "steel:plate:lengthMm": 500,
+       "steel:plate:thicknessMm": 10
+      }
+     }
+    ],
+    "relationships": [],
+    "trusted_context": {
+     "owner_level_permission": true,
+     "actor_discipline": "steel"
+    }
+   },
+   "action": {
+    "type": "disable_module",
+    "module": "steel",
+    "stored_elements_changed": []
+   },
+   "expected": {
+    "outcome": "accepted",
+    "findings": [],
+    "primary_code": null,
+    "modules_after": [],
+    "stored_elements_preserved": true
+   }
+  },
+  {
+   "case_id": "DVC-MOD-005-N",
+   "title": "Module ownership does not permit changing the project module list",
+   "rules": [
+    "DV-MOD-005"
+   ],
+   "polarity": "negative",
+   "first_slice": true,
+   "f04_refs": [],
+   "given": {
+    "modules": [
+     "steel"
+    ],
+    "vocabulary": "0.1.0",
+    "elements": [
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200001",
+      "kind": "plate",
+      "discipline": "steel",
+      "attrs": {
+       "steel:plate:widthMm": 1000,
+       "steel:plate:lengthMm": 500,
+       "steel:plate:thicknessMm": 10
+      }
+     }
+    ],
+    "relationships": [],
+    "trusted_context": {
+     "owner_level_permission": false,
+     "actor_discipline": "steel"
+    }
+   },
+   "action": {
+    "type": "disable_module",
+    "module": "steel",
+    "stored_elements_changed": []
+   },
+   "expected": {
+    "outcome": "rejected",
+    "findings": [
+     {
+      "rule": "DV-MOD-005",
+      "severity": "error",
+      "code": "PERMISSION_DENIED"
+     }
+    ],
+    "primary_code": "PERMISSION_DENIED",
+    "modules_after": [
+     "steel"
+    ],
+    "stored_elements_preserved": true,
+    "no_state_change": true
+   }
+  },
+  {
+   "case_id": "DVC-X-VERSION-06",
+   "title": "Different zero-major minor versions are distinct compatibility lines",
+   "rules": [
+    "DV-VER-001"
+   ],
+   "polarity": "negative",
+   "first_slice": true,
+   "f04_refs": [],
+   "given": {
+    "modules": [
+     "steel"
+    ],
+    "vocabulary": "0.1.0",
+    "elements": [
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200001",
+      "kind": "plate",
+      "discipline": "steel",
+      "attrs": {
+       "steel:plate:widthMm": 1000,
+       "steel:plate:lengthMm": 500,
+       "steel:plate:thicknessMm": 10
+      },
+      "schema_version": "0.2.0"
+     }
+    ],
+    "relationships": [],
+    "reader_supports": [
+     "0.1.0"
+    ]
+   },
+   "action": {
+    "type": "validate_model",
+    "stage": "host"
+   },
+   "expected": {
+    "outcome": "invalid",
+    "findings": [
+     {
+      "rule": "DV-VER-001",
+      "severity": "error",
+      "code": "UNSUPPORTED_VERSION"
+     }
+    ],
+    "primary_code": "UNSUPPORTED_VERSION",
+    "inspect_allowed": true,
+    "mutation_allowed": false
+   }
+  },
+  {
+   "case_id": "DVC-X-VERSION-07",
+   "title": "After 1.0 a reader may edit an older minor on its supported major line",
+   "rules": [
+    "DV-VER-001",
+    "DV-VER-002"
+   ],
+   "polarity": "positive",
+   "first_slice": true,
+   "f04_refs": [],
+   "given": {
+    "modules": [
+     "steel"
+    ],
+    "vocabulary": "1.2.0",
+    "elements": [
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200001",
+      "kind": "plate",
+      "discipline": "steel",
+      "attrs": {
+       "steel:plate:widthMm": 1000,
+       "steel:plate:lengthMm": 500,
+       "steel:plate:thicknessMm": 10
+      },
+      "schema_version": "1.1.0"
+     }
+    ],
+    "relationships": [],
+    "reader_supports": [
+     "1.2.0"
+    ]
+   },
+   "action": {
+    "type": "update",
+    "module": "steel",
+    "target": "019a7bf0-0000-7000-8000-000000200001",
+    "changes": {
+     "name": "Renamed"
+    }
+   },
+   "expected": {
+    "outcome": "accepted",
+    "findings": [],
+    "primary_code": null
    }
   }
  ]
