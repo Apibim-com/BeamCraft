@@ -1,6 +1,6 @@
 # Development
 
-Requires stable Rust 1.95+ (`rustup update stable`).
+Requires stable Rust 1.96+ (`rustup update stable`).
 
 ```sh
 cargo build --workspace
@@ -65,6 +65,9 @@ by its package-specific MPL exception in `deny.toml`.
 | Rust 1.95, Linux, macOS and remote CI | not run locally |
 
 This baseline validates the scaffold. It does not establish USD feature acceptance or pass K0.
+
+Note (2026-10-15): the owner raised the workspace minimum from Rust 1.95 to 1.96. The baseline
+above records the state on 2026-10-14, when the minimum was 1.95, and is left unchanged.
 
 ## CI
 

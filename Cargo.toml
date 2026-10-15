@@ -6,7 +6,7 @@ members = ["crates/*", "apps/*", "tools/fixtures"]
 version = "0.0.1"
 edition = "2024"
 license = "MPL-2.0"
-rust-version = "1.95"
+rust-version = "1.96"
 repository = "https://github.com/Apibim-com/BeamCraft"
 authors = ["Apibim"]
 
