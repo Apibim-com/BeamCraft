@@ -49,6 +49,15 @@ later project; portable domain crates alone do not establish a working web appli
 
 ## Progress log
 
+- 2026-10-15: N02 evaluated unmodified ifc-lite-geometry/core 20.4.0 in an isolated offline spike.
+  Integer plate/member volumes match analytically, but f32 split-vertex meshes do not satisfy F06;
+  thin/large-origin and invalid-input probes expose precision and validation gaps. A rectangular
+  through-hole succeeds; plane clipping is open. The proposal is original first-slice
+  primitives/quantities and further scoped evaluation for general triangulation/booleans. No
+  production dependency, contract freeze or acceptance gate is completed. WASM and cargo-deny were
+  not run; notice completeness and owner adoption remain open. See
+  docs/design/n02-ifc-lite-evaluation-v0.1.md.
+
 - 2026-10-15: F04.3 applied the four F04 amendments proposed by F06 section 12 to the F04 freeze
   candidate on base `b996c58fe850642f12b92b25b23c441fbd41ed47` (stacked on PR #20): the draft
   minimum nonzero dimension of 0.001 mm and the section-dimension cap, the corrected near-vertical
