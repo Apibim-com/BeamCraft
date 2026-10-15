@@ -2995,6 +2995,727 @@
       "f06_refs": [
         "F06-POS-51"
       ]
+    },
+    {
+      "case_id": "F04-POS-25",
+      "title": "Large plate thickness just above the scaled floor",
+      "given": [
+        "Authorized context; unused ID; current base/generation."
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic scaled tolerance",
+        "placement": {
+          "translation_mm": [
+            0,
+            1000000000,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "contour_points_mm": [
+          [
+            999000000,
+            0,
+            0
+          ],
+          [
+            999393216,
+            0,
+            0
+          ],
+          [
+            999393216,
+            524288,
+            0
+          ],
+          [
+            999000000,
+            524288,
+            0
+          ]
+        ],
+        "thickness_mm": 0.1572265625
+      },
+      "envelope_changes": {},
+      "expected": {
+        "outcome": "accepted_draft",
+        "generation": "1",
+        "local_size_mm": "655360",
+        "eps_geom_mm": "0.15625",
+        "thickness_minus_eps_geom_mm": "1/1024"
+      },
+      "derivation": "The contour sides are 3*131072 and 4*131072, so D=5*131072=655360 exactly. D/4194304=5/32=0.15625 mm; thickness=161/1024 exceeds it by 1/1024. The element-local x origin and world y translation do not enter D. Both policies accept.",
+      "f06_refs": [
+        "F06-POS-53"
+      ]
+    },
+    {
+      "case_id": "F04-POS-26",
+      "title": "Large plate thickness exactly at the scaled floor",
+      "given": [
+        "Authorized context; unused ID; current base/generation."
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic scaled tolerance",
+        "placement": {
+          "translation_mm": [
+            0,
+            1000000000,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "contour_points_mm": [
+          [
+            999000000,
+            0,
+            0
+          ],
+          [
+            999393216,
+            0,
+            0
+          ],
+          [
+            999393216,
+            524288,
+            0
+          ],
+          [
+            999000000,
+            524288,
+            0
+          ]
+        ],
+        "thickness_mm": 0.15625
+      },
+      "envelope_changes": {},
+      "expected": {
+        "outcome": "accepted_draft",
+        "generation": "1",
+        "local_size_mm": "655360",
+        "eps_geom_mm": "0.15625",
+        "minimum_inclusive": true
+      },
+      "derivation": "The same exact 3-4-5 contour gives D=655360 and eps_geom=5/32. Thickness=5/32 is accepted by the inclusive minimum. No input is snapped or moved.",
+      "f06_refs": [
+        "F06-POS-54"
+      ]
+    },
+    {
+      "case_id": "F04-POS-27",
+      "title": "Small body retains the absolute floor at a large placement",
+      "given": [
+        "Authorized context; unused ID; current base/generation."
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic scaled tolerance",
+        "placement": {
+          "translation_mm": [
+            0,
+            1000000000,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "contour_points_mm": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            3,
+            0,
+            0
+          ],
+          [
+            3,
+            4,
+            0
+          ],
+          [
+            0,
+            4,
+            0
+          ]
+        ],
+        "thickness_mm": 0.001
+      },
+      "envelope_changes": {},
+      "expected": {
+        "outcome": "accepted_draft",
+        "generation": "1",
+        "local_size_mm": "5",
+        "scaled_term_mm": "5/4194304",
+        "eps_geom_mm": "0.001",
+        "origin_placement_same_admission": true
+      },
+      "derivation": "D=sqrt(3*3+4*4)=5 exactly; 5/4194304 < binary64(0.001), so eps_geom is the binary64 0.001 constant. Thickness uses that same literal and is accepted. Repeat with identity placement: the floor and admission are identical.",
+      "f06_refs": [
+        "F06-POS-55"
+      ]
+    },
+    {
+      "case_id": "F04-POS-28",
+      "title": "Large near-planar plate admitted under the scaled planarity band",
+      "given": [
+        "Authorized context; unused ID; current base/generation."
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic scaled tolerance",
+        "placement": {
+          "translation_mm": [
+            0,
+            1000000000,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "contour_points_mm": [
+          [
+            999000000,
+            0,
+            0
+          ],
+          [
+            999393216,
+            0,
+            0.75
+          ],
+          [
+            999393216,
+            524288,
+            0
+          ],
+          [
+            999000000,
+            524288,
+            0.75
+          ]
+        ],
+        "thickness_mm": 10
+      },
+      "envelope_changes": {},
+      "expected": {
+        "outcome": "accepted_draft",
+        "generation": "1",
+        "local_size_mm": "655360",
+        "eps_geom_mm": "0.15625",
+        "plane_distance_mm": "0.75",
+        "fixed_floor_policy_model_outcome": "rejected_invalid_argument",
+        "model_input_valid": true,
+        "geometry_status": "unsupported",
+        "geometry_code": "UNSUPPORTED_GEOMETRY",
+        "no_partial_geometry": true
+      },
+      "derivation": "Offsets (0,0,0),(a,0,s),(a,b,0),(0,b,s), a=393216, b=524288, s=3/4, give exact N=(0,0,2*a*b); the p0 plane is z=0. D=655360 exactly. Binary64 eps_plane rounds eps_geom+binary64(1e-6)*D: 0.75 is above the old 0.001+1e-6*D band and below the new band. The projected contour is a simple positive rectangle, but the authored 3D contour is not exactly planar: model input is valid, evaluation unsupported, no partial geometry or key.",
+      "f06_refs": [
+        "F06-POS-56"
+      ]
+    },
+    {
+      "case_id": "F04-POS-29",
+      "title": "Member section half-diagonal sets the scaled floor",
+      "given": [
+        "Authorized context; unused ID; current base/generation.",
+        "Bind an actual validated original rectangle profile 393216 x 524288 mm; no placeholder digest."
+      ],
+      "command": "CreateStraightMember",
+      "argument_bindings": {
+        "profile_digest": "actual_original_profile_fixture_sha256"
+      },
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic scaled tolerance",
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "element_kind": "beam",
+        "axis_points_mm": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            0.0791015625,
+            0,
+            0
+          ]
+        ]
+      },
+      "envelope_changes": {},
+      "expected": {
+        "outcome": "accepted_draft",
+        "generation": "1",
+        "section_half_diagonal_mm": "327680",
+        "local_size_mm": "327680",
+        "eps_geom_mm": "0.078125",
+        "axis_minus_eps_geom_mm": "1/1024"
+      },
+      "derivation": "Half dimensions 196608 and 262144 form a 3-4-5 triple with H=327680. H exceeds ell=81/1024; eps_geom=H/4194304=5/64. Axis length exceeds it by 1/1024 and section dimensions exceed it. Both policies accept.",
+      "f06_refs": [
+        "F06-POS-57"
+      ]
+    },
+    {
+      "case_id": "F04-POS-30",
+      "title": "Member axis sets the floor for a section dimension",
+      "given": [
+        "Authorized context; unused ID; current base/generation.",
+        "Bind an actual validated original rectangle profile 0.1259765625 x 300 mm; no placeholder digest."
+      ],
+      "command": "CreateStraightMember",
+      "argument_bindings": {
+        "profile_digest": "actual_original_profile_fixture_sha256"
+      },
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic scaled tolerance",
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "element_kind": "beam",
+        "axis_points_mm": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            524288,
+            0,
+            0
+          ]
+        ]
+      },
+      "envelope_changes": {},
+      "expected": {
+        "outcome": "accepted_draft",
+        "generation": "1",
+        "local_size_mm": "524288",
+        "eps_geom_mm": "0.125",
+        "width_minus_eps_geom_mm": "1/1024"
+      },
+      "derivation": "ell=524288=2^19; H is below ell because (129/2048)^2+150^2 < ell^2. L=ell and eps_geom=1/8; width=129/1024 is 1/1024 above it. This checks that the member-axis scale also governs section dimensions.",
+      "f06_refs": [
+        "F06-POS-58"
+      ]
+    },
+    {
+      "case_id": "F04-NEG-34",
+      "title": "Large plate thickness just below the scaled floor",
+      "given": [
+        "Authorized context; unused ID; current base/generation."
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic scaled tolerance",
+        "placement": {
+          "translation_mm": [
+            0,
+            1000000000,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "contour_points_mm": [
+          [
+            999000000,
+            0,
+            0
+          ],
+          [
+            999393216,
+            0,
+            0
+          ],
+          [
+            999393216,
+            524288,
+            0
+          ],
+          [
+            999000000,
+            524288,
+            0
+          ]
+        ],
+        "thickness_mm": 0.1552734375
+      },
+      "envelope_changes": {},
+      "expected": {
+        "code": "INVALID_ARGUMENT",
+        "no_state_change": true,
+        "local_size_mm": "655360",
+        "eps_geom_mm": "0.15625",
+        "eps_geom_minus_thickness_mm": "1/1024",
+        "fixed_floor_policy_model_outcome": "accepted_draft"
+      },
+      "derivation": "D=655360 and eps_geom=5/32 as in F06-POS-53. Thickness=159/1024 is 1/1024 below eps_geom but above 0.001 mm. The previous fixed floor accepted this large-coordinate plate; the scaled minimum rejects it without state change.",
+      "f06_refs": [
+        "F06-NEG-45"
+      ]
+    },
+    {
+      "case_id": "F04-NEG-35",
+      "title": "Contour local size exceeds the D cap before unsupported evaluation",
+      "given": [
+        "Authorized context; unused ID; current base/generation."
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic scaled tolerance",
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "contour_points_mm": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            750000,
+            0,
+            0
+          ],
+          [
+            1500000,
+            0,
+            0
+          ],
+          [
+            2250000,
+            0,
+            0
+          ],
+          [
+            2250000,
+            1000,
+            0
+          ],
+          [
+            1500000,
+            1000,
+            0
+          ],
+          [
+            750000,
+            1000,
+            0
+          ],
+          [
+            0,
+            1000,
+            0
+          ]
+        ],
+        "thickness_mm": 10
+      },
+      "envelope_changes": {},
+      "expected": {
+        "code": "LIMIT_EXCEEDED",
+        "no_state_change": true,
+        "local_size_squared_mm2": "5062501000000",
+        "cap_mm": "2000000",
+        "floor_evaluated": false
+      },
+      "derivation": "Every contour edge is either 750000 or 1000 mm, within the edge cap. D^2=2250000^2+1000^2=5062501000000 exceeds 2000000^2. All submitted coordinates are within 1e9. The D cap alone fails before the floor or polygon support decision.",
+      "f06_refs": [
+        "F06-NEG-46"
+      ]
+    },
+    {
+      "case_id": "F04-NEG-36",
+      "title": "Member axis coincident under the section-scaled floor",
+      "given": [
+        "Authorized context; unused ID; current base/generation.",
+        "Bind an actual validated original rectangle profile 393216 x 524288 mm; no placeholder digest."
+      ],
+      "command": "CreateStraightMember",
+      "argument_bindings": {
+        "profile_digest": "actual_original_profile_fixture_sha256"
+      },
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic scaled tolerance",
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "element_kind": "beam",
+        "axis_points_mm": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            0.0771484375,
+            0,
+            0
+          ]
+        ]
+      },
+      "envelope_changes": {},
+      "expected": {
+        "code": "INVALID_ARGUMENT",
+        "no_state_change": true,
+        "section_half_diagonal_mm": "327680",
+        "local_size_mm": "327680",
+        "eps_geom_mm": "0.078125",
+        "eps_geom_minus_axis_mm": "1/1024",
+        "fixed_floor_policy_model_outcome": "accepted_draft"
+      },
+      "derivation": "The section gives H=327680 and eps_geom=5/64. ell=79/1024 is 1/1024 below the floor, although it exceeds 0.001 mm. The endpoints are coincident under the strict scaled rule; reject before normalizing the axis.",
+      "f06_refs": [
+        "F06-NEG-47"
+      ]
+    },
+    {
+      "case_id": "F04-NEG-37",
+      "title": "Member section dimension below the axis-scaled floor",
+      "given": [
+        "Authorized context; unused ID; current base/generation.",
+        "Bind an actual validated original rectangle profile 0.1240234375 x 300 mm; no placeholder digest."
+      ],
+      "command": "CreateStraightMember",
+      "argument_bindings": {
+        "profile_digest": "actual_original_profile_fixture_sha256"
+      },
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic scaled tolerance",
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "element_kind": "beam",
+        "axis_points_mm": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            524288,
+            0,
+            0
+          ]
+        ]
+      },
+      "envelope_changes": {},
+      "expected": {
+        "code": "INVALID_ARGUMENT",
+        "no_state_change": true,
+        "local_size_mm": "524288",
+        "eps_geom_mm": "0.125",
+        "eps_geom_minus_width_mm": "1/1024",
+        "fixed_floor_policy_model_outcome": "accepted_draft"
+      },
+      "derivation": "ell=524288; H is below ell because (127/2048)^2+150^2 < ell^2. L=ell, eps_geom=1/8 and width=127/1024 is 1/1024 below it. The old 0.001 mm minimum accepted this width; the scaled rule rejects it.",
+      "f06_refs": [
+        "F06-NEG-48"
+      ]
+    },
+    {
+      "case_id": "F04-NEG-38",
+      "title": "Large contour outside the scaled planarity band",
+      "given": [
+        "Authorized context; unused ID; current base/generation."
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic scaled tolerance",
+        "placement": {
+          "translation_mm": [
+            0,
+            1000000000,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "contour_points_mm": [
+          [
+            999000000,
+            0,
+            0
+          ],
+          [
+            999393216,
+            0,
+            0.875
+          ],
+          [
+            999393216,
+            524288,
+            0
+          ],
+          [
+            999000000,
+            524288,
+            0.875
+          ]
+        ],
+        "thickness_mm": 10
+      },
+      "envelope_changes": {},
+      "expected": {
+        "code": "INVALID_ARGUMENT",
+        "no_state_change": true,
+        "local_size_mm": "655360",
+        "eps_geom_mm": "0.15625",
+        "plane_distance_mm": "0.875"
+      },
+      "derivation": "The same saddle contour as F06-POS-56 with s=7/8 has N=(0,0,2*a*b) and D=655360. Its maximum distance 7/8 exceeds binary64(eps_geom + binary64(1e-6)*D), so contour admission fails before rectangle support.",
+      "f06_refs": [
+        "F06-NEG-49"
+      ]
+    },
+    {
+      "case_id": "F04-NEG-39",
+      "title": "Member local size above the axis cap is never clamped",
+      "given": [
+        "Authorized context; unused ID; current base/generation.",
+        "Bind an actual validated original rectangle profile 200 x 300 mm; no placeholder digest."
+      ],
+      "command": "CreateStraightMember",
+      "argument_bindings": {
+        "profile_digest": "actual_original_profile_fixture_sha256"
+      },
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic scaled tolerance",
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "element_kind": "beam",
+        "axis_points_mm": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            1000000.5,
+            0,
+            0
+          ]
+        ]
+      },
+      "envelope_changes": {},
+      "expected": {
+        "code": "LIMIT_EXCEEDED",
+        "no_state_change": true,
+        "local_size_mm": "1000000.5",
+        "cap_mm": "1000000",
+        "floor_evaluated": false
+      },
+      "derivation": "ell=1000000.5 exceeds H and the 1000000 mm axis/L cap. The scale is rejected before epsilon calculation; the cap is not widened.",
+      "f06_refs": [
+        "F06-NEG-51"
+      ]
     }
   ],
   "raw_json_cases": [
@@ -3063,9 +3784,10 @@
     }
   ],
   "case_counts": {
-    "logical_cases": 57,
-    "positive": 24,
-    "negative": 33,
+    "logical_cases": 69,
+    "positive": 30,
+    "negative": 39,
     "raw_json_cases": 7
-  }
+  },
+  "geometric_length_policy": "Owner decision 2026-10-15: eps_geom=max(binary64(0.001 mm), 2^-22*L); plate L=D, member L=max(axis length, section half-diagonal), in the element-local frame before placement, ordered binary64 under F04 section 3/F06 section 4. Algorithm/tolerance_policy 3/3. Test comparison, absolute pick band, exact checks and dimensionless relative/certificate bounds are unchanged. A5 large-coordinate part closed; rounded-mesh cross-checks and subnormal mass remain open."
 }

@@ -10,9 +10,9 @@
   "assumptions": "P-1 replaced by contour input, P-2 confirmed unchanged and P-3 refined by the owner on 2026-10-15. The legacy assumes field identifies these decisions. Contour caps/winding/planarity and the missing angle cap are assumptions in F04 section 3. Constants are owner-confirmed first-slice draft values, to be validated by fixtures; the ifc-lite numeric comparison is recorded in docs/design/tolerance-comparison-v0.1.md.",
   "quaternion_convention": "F04 section 3: orientation_xyzw = (x, y, z, w), Hamilton, active rotation, world = R(q) * local + translation. The 90 degree turn about +Z is written with the nearest f64 0.7071067811865476 for both z and w.",
   "case_counts": {
-    "logical_cases": 96,
-    "positive": 52,
-    "negative": 44
+    "logical_cases": 110,
+    "positive": 59,
+    "negative": 51
   },
   "cases": [
     {
@@ -1953,7 +1953,7 @@
       "case_id": "F06-POS-25",
       "title": "Key values: shape key, world-measurement key and mass signature test vectors",
       "given": [
-        "Owner-amended section 7 preimages: algorithm/tolerance versions 2, feature/layout 1; ordered contour encoded, default roll zero."
+        "Owner-amended section 7 preimages: algorithm/tolerance versions 3, feature/layout 1; ordered contour encoded, default roll zero."
       ],
       "input": {
         "plate_shape": {
@@ -2012,16 +2012,16 @@
         ]
       },
       "expected": {
-        "shape_key_plate_1000_500_10": "62d48387e681a82de0add0b847d11fdcf57ae08033e86f2f82ce87d61a0aeecf",
-        "shape_key_plate_750_500_10": "4f2ab3f37e322be6e9cc9bff3b10b6bbbe810d83b457b6c7b128dd5945b597fc",
-        "world_key_identity": "a745e53c589e27d689862ae174a421cbf62162d35bb15e46b0273482c7e31356",
-        "world_key_rotated_translated": "9746392ae5acc4d530ca642fd6e08cb79bdbc4893890727de643bdc7b95b6c18",
+        "shape_key_plate_1000_500_10": "eac4b64ea09355a47d0414930384ca8cd02ebe7c41ceae4f6557dccee7985b2a",
+        "shape_key_plate_750_500_10": "68902a9bbf0a7529de95ba671d2378d2a22af71ae3adb234fedd8895f10f885b",
+        "world_key_identity": "69800d4ad52170c341a814f092b755742e58c108f95e6c640466d923898cfe5c",
+        "world_key_rotated_translated": "a3ad2cae8b99e8e91c9e8032c04c7ae4bf5bf371c94b8544b6993fcb43ff6f43",
         "world_key_with_negated_quaternion_equals_rotated_translated": true,
-        "mass_signature_no_density": "c76e168e28858208e0affb8a25386ec018185ea1318d98c632b0bd3d2e8576d4",
-        "mass_signature_density_1000": "d960b764e8162719009a1c14d64d772795641ab1c5582f1b3883b3a988ea9753",
-        "mass_signature_density_2000": "1842dd69518f7cbc68b279821f1567284dc18e84b70b3d226a3a4f5834dc1565"
+        "mass_signature_no_density": "780fbdcdf7216b2a3adc6d212cc901c786ed2f38c03aefdad4567792def4c280",
+        "mass_signature_density_1000": "0e76834b27eaa16b0893ddf3458b31ad599c3d4cc99e20d00ef26fbbf0439ac1",
+        "mass_signature_density_2000": "3ae1c9e2c12d6f5a344815523bee0ecafb32b25459cbd4dc0a1a2d5f7d528dba"
       },
-      "derivation": "Computed as SHA-256 (RFC 6234) over the exact byte strings defined in section 7 by a throwaway script. The negated quaternion normalizes to the same bytes after the canonical sign rule (w >= 0), so the world key is equal; the identity and rotated placements give different world keys over the same shape key; the three mass signatures differ. These vectors fix the draft encoding: any change of it raises a version field and regenerates the vectors. Owner amendment 2026-10-15 regenerates seven digests and the antipodal equality assertion for contour encoding and versions 2/2/1/1; no analytic expected value changes.",
+      "derivation": "Computed as SHA-256 (RFC 6234) over the exact byte strings defined in section 7 by a throwaway script. The negated quaternion normalizes to the same bytes after the canonical sign rule (w >= 0), so the world key is equal; the identity and rotated placements give different world keys over the same shape key; the three mass signatures differ. These vectors fix the draft encoding: any change of it raises a version field and regenerates the vectors. Owner amendment 2026-10-15 regenerates seven digests and the antipodal equality assertion for contour encoding and versions 2/2/1/1; no analytic expected value changes. The local-size amendment regenerates these seven digests with versions 3/3/1/1 (world 3/3, mass algorithm 3); the antipodal assertion is rechecked. No preimage field, feature/layout version or baseline mesh byte changes.",
       "assumes": [
         "P-1 (owner decision recorded 2026-10-15)"
       ]
@@ -5321,6 +5321,913 @@
       "f04_refs": [
         "F04-NEG-33"
       ]
+    },
+    {
+      "case_id": "F06-POS-53",
+      "title": "Large plate thickness just above the scaled floor",
+      "given": [
+        "Owner local-size decision 2026-10-15; F04 section 3, F06 section 4."
+      ],
+      "input": {
+        "body": {
+          "kind": "plate",
+          "contour_points_mm": [
+            [
+              999000000,
+              0,
+              0
+            ],
+            [
+              999393216,
+              0,
+              0
+            ],
+            [
+              999393216,
+              524288,
+              0
+            ],
+            [
+              999000000,
+              524288,
+              0
+            ]
+          ],
+          "thickness_mm": 0.1572265625
+        },
+        "placement": {
+          "translation_mm": [
+            0,
+            1000000000,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "outputs": [
+          "mesh",
+          "quantities"
+        ]
+      },
+      "expected": {
+        "status": "ok",
+        "local_size_mm": "655360",
+        "eps_geom_mm": "0.15625",
+        "thickness_minus_eps_geom_mm": "1/1024"
+      },
+      "derivation": "The contour sides are 3*131072 and 4*131072, so D=5*131072=655360 exactly. D/4194304=5/32=0.15625 mm; thickness=161/1024 exceeds it by 1/1024. The element-local x origin and world y translation do not enter D. Both policies accept.",
+      "f04_refs": [
+        "F04-POS-25"
+      ]
+    },
+    {
+      "case_id": "F06-POS-54",
+      "title": "Large plate thickness exactly at the scaled floor",
+      "given": [
+        "Owner local-size decision 2026-10-15; F04 section 3, F06 section 4."
+      ],
+      "input": {
+        "body": {
+          "kind": "plate",
+          "contour_points_mm": [
+            [
+              999000000,
+              0,
+              0
+            ],
+            [
+              999393216,
+              0,
+              0
+            ],
+            [
+              999393216,
+              524288,
+              0
+            ],
+            [
+              999000000,
+              524288,
+              0
+            ]
+          ],
+          "thickness_mm": 0.15625
+        },
+        "placement": {
+          "translation_mm": [
+            0,
+            1000000000,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "outputs": [
+          "mesh",
+          "quantities"
+        ]
+      },
+      "expected": {
+        "status": "ok",
+        "local_size_mm": "655360",
+        "eps_geom_mm": "0.15625",
+        "minimum_inclusive": true
+      },
+      "derivation": "The same exact 3-4-5 contour gives D=655360 and eps_geom=5/32. Thickness=5/32 is accepted by the inclusive minimum. No input is snapped or moved.",
+      "f04_refs": [
+        "F04-POS-26"
+      ]
+    },
+    {
+      "case_id": "F06-POS-55",
+      "title": "Small body retains the absolute floor at a large placement",
+      "given": [
+        "Owner local-size decision 2026-10-15; F04 section 3, F06 section 4."
+      ],
+      "input": {
+        "body": {
+          "kind": "plate",
+          "contour_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              3,
+              0,
+              0
+            ],
+            [
+              3,
+              4,
+              0
+            ],
+            [
+              0,
+              4,
+              0
+            ]
+          ],
+          "thickness_mm": 0.001
+        },
+        "placement": {
+          "translation_mm": [
+            0,
+            1000000000,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "outputs": [
+          "mesh",
+          "quantities"
+        ]
+      },
+      "expected": {
+        "status": "ok",
+        "local_size_mm": "5",
+        "scaled_term_mm": "5/4194304",
+        "eps_geom_mm": "0.001",
+        "origin_placement_same_admission": true
+      },
+      "derivation": "D=sqrt(3*3+4*4)=5 exactly; 5/4194304 < binary64(0.001), so eps_geom is the binary64 0.001 constant. Thickness uses that same literal and is accepted. Repeat with identity placement: the floor and admission are identical.",
+      "f04_refs": [
+        "F04-POS-27"
+      ]
+    },
+    {
+      "case_id": "F06-POS-56",
+      "title": "Large near-planar plate admitted under the scaled planarity band",
+      "given": [
+        "Owner local-size decision 2026-10-15; F04 section 3, F06 section 4."
+      ],
+      "input": {
+        "body": {
+          "kind": "plate",
+          "contour_points_mm": [
+            [
+              999000000,
+              0,
+              0
+            ],
+            [
+              999393216,
+              0,
+              0.75
+            ],
+            [
+              999393216,
+              524288,
+              0
+            ],
+            [
+              999000000,
+              524288,
+              0.75
+            ]
+          ],
+          "thickness_mm": 10
+        },
+        "placement": {
+          "translation_mm": [
+            0,
+            1000000000,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "outputs": [
+          "mesh",
+          "quantities"
+        ]
+      },
+      "expected": {
+        "status": "unsupported",
+        "local_size_mm": "655360",
+        "eps_geom_mm": "0.15625",
+        "plane_distance_mm": "0.75",
+        "fixed_floor_policy_model_outcome": "rejected_invalid_argument",
+        "model_input_valid": true,
+        "f04_code": "UNSUPPORTED_GEOMETRY",
+        "diagnostic_code": "GEO_UNSUPPORTED_CONTOUR",
+        "partial_geometry_returned": false,
+        "state_changed": false,
+        "stage": "ranges"
+      },
+      "derivation": "Offsets (0,0,0),(a,0,s),(a,b,0),(0,b,s), a=393216, b=524288, s=3/4, give exact N=(0,0,2*a*b); the p0 plane is z=0. D=655360 exactly. Binary64 eps_plane rounds eps_geom+binary64(1e-6)*D: 0.75 is above the old 0.001+1e-6*D band and below the new band. The projected contour is a simple positive rectangle, but the authored 3D contour is not exactly planar: model input is valid, evaluation unsupported, no partial geometry or key.",
+      "f04_refs": [
+        "F04-POS-28"
+      ]
+    },
+    {
+      "case_id": "F06-POS-57",
+      "title": "Member section half-diagonal sets the scaled floor",
+      "given": [
+        "Owner local-size decision 2026-10-15; F04 section 3, F06 section 4."
+      ],
+      "input": {
+        "body": {
+          "kind": "member",
+          "axis_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              0.0791015625,
+              0,
+              0
+            ]
+          ],
+          "profile": {
+            "kind": "rectangle",
+            "width_mm": 393216,
+            "height_mm": 524288
+          }
+        },
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "outputs": [
+          "mesh",
+          "quantities"
+        ]
+      },
+      "expected": {
+        "status": "ok",
+        "section_half_diagonal_mm": "327680",
+        "local_size_mm": "327680",
+        "eps_geom_mm": "0.078125",
+        "axis_minus_eps_geom_mm": "1/1024"
+      },
+      "derivation": "Half dimensions 196608 and 262144 form a 3-4-5 triple with H=327680. H exceeds ell=81/1024; eps_geom=H/4194304=5/64. Axis length exceeds it by 1/1024 and section dimensions exceed it. Both policies accept.",
+      "f04_refs": [
+        "F04-POS-29"
+      ]
+    },
+    {
+      "case_id": "F06-POS-58",
+      "title": "Member axis sets the floor for a section dimension",
+      "given": [
+        "Owner local-size decision 2026-10-15; F04 section 3, F06 section 4."
+      ],
+      "input": {
+        "body": {
+          "kind": "member",
+          "axis_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              524288,
+              0,
+              0
+            ]
+          ],
+          "profile": {
+            "kind": "rectangle",
+            "width_mm": 0.1259765625,
+            "height_mm": 300
+          }
+        },
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "outputs": [
+          "mesh",
+          "quantities"
+        ]
+      },
+      "expected": {
+        "status": "ok",
+        "local_size_mm": "524288",
+        "eps_geom_mm": "0.125",
+        "width_minus_eps_geom_mm": "1/1024"
+      },
+      "derivation": "ell=524288=2^19; H is below ell because (129/2048)^2+150^2 < ell^2. L=ell and eps_geom=1/8; width=129/1024 is 1/1024 above it. This checks that the member-axis scale also governs section dimensions.",
+      "f04_refs": [
+        "F04-POS-30"
+      ]
+    },
+    {
+      "case_id": "F06-NEG-45",
+      "title": "Large plate thickness just below the scaled floor",
+      "given": [
+        "Owner local-size decision 2026-10-15; F04 section 3, F06 section 4."
+      ],
+      "input": {
+        "body": {
+          "kind": "plate",
+          "contour_points_mm": [
+            [
+              999000000,
+              0,
+              0
+            ],
+            [
+              999393216,
+              0,
+              0
+            ],
+            [
+              999393216,
+              524288,
+              0
+            ],
+            [
+              999000000,
+              524288,
+              0
+            ]
+          ],
+          "thickness_mm": 0.1552734375
+        },
+        "placement": {
+          "translation_mm": [
+            0,
+            1000000000,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "outputs": [
+          "mesh",
+          "quantities"
+        ]
+      },
+      "expected": {
+        "status": "invalid_input",
+        "local_size_mm": "655360",
+        "eps_geom_mm": "0.15625",
+        "eps_geom_minus_thickness_mm": "1/1024",
+        "fixed_floor_policy_model_outcome": "accepted_draft",
+        "f04_code": "INVALID_ARGUMENT",
+        "diagnostic_code": "GEO_BELOW_MINIMUM",
+        "partial_geometry_returned": false,
+        "state_changed": false,
+        "stage": "ranges"
+      },
+      "derivation": "D=655360 and eps_geom=5/32 as in F06-POS-53. Thickness=159/1024 is 1/1024 below eps_geom but above 0.001 mm. The previous fixed floor accepted this large-coordinate plate; the scaled minimum rejects it without state change.",
+      "f04_refs": [
+        "F04-NEG-34"
+      ]
+    },
+    {
+      "case_id": "F06-NEG-46",
+      "title": "Contour local size exceeds the D cap before unsupported evaluation",
+      "given": [
+        "Owner local-size decision 2026-10-15; F04 section 3, F06 section 4."
+      ],
+      "input": {
+        "body": {
+          "kind": "plate",
+          "contour_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              750000,
+              0,
+              0
+            ],
+            [
+              1500000,
+              0,
+              0
+            ],
+            [
+              2250000,
+              0,
+              0
+            ],
+            [
+              2250000,
+              1000,
+              0
+            ],
+            [
+              1500000,
+              1000,
+              0
+            ],
+            [
+              750000,
+              1000,
+              0
+            ],
+            [
+              0,
+              1000,
+              0
+            ]
+          ],
+          "thickness_mm": 10
+        },
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "outputs": [
+          "mesh",
+          "quantities"
+        ]
+      },
+      "expected": {
+        "status": "limit_exceeded",
+        "local_size_squared_mm2": "5062501000000",
+        "cap_mm": "2000000",
+        "floor_evaluated": false,
+        "f04_code": "LIMIT_EXCEEDED",
+        "diagnostic_code": "GEO_ABOVE_LIMIT",
+        "partial_geometry_returned": false,
+        "state_changed": false,
+        "stage": "caps"
+      },
+      "derivation": "Every contour edge is either 750000 or 1000 mm, within the edge cap. D^2=2250000^2+1000^2=5062501000000 exceeds 2000000^2. All submitted coordinates are within 1e9. The D cap alone fails before the floor or polygon support decision.",
+      "f04_refs": [
+        "F04-NEG-35"
+      ]
+    },
+    {
+      "case_id": "F06-NEG-47",
+      "title": "Member axis coincident under the section-scaled floor",
+      "given": [
+        "Owner local-size decision 2026-10-15; F04 section 3, F06 section 4."
+      ],
+      "input": {
+        "body": {
+          "kind": "member",
+          "axis_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              0.0771484375,
+              0,
+              0
+            ]
+          ],
+          "profile": {
+            "kind": "rectangle",
+            "width_mm": 393216,
+            "height_mm": 524288
+          }
+        },
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "outputs": [
+          "mesh",
+          "quantities"
+        ]
+      },
+      "expected": {
+        "status": "invalid_input",
+        "section_half_diagonal_mm": "327680",
+        "local_size_mm": "327680",
+        "eps_geom_mm": "0.078125",
+        "eps_geom_minus_axis_mm": "1/1024",
+        "fixed_floor_policy_model_outcome": "accepted_draft",
+        "f04_code": "INVALID_ARGUMENT",
+        "diagnostic_code": "GEO_AXIS_TOO_SHORT",
+        "partial_geometry_returned": false,
+        "state_changed": false,
+        "stage": "ranges"
+      },
+      "derivation": "The section gives H=327680 and eps_geom=5/64. ell=79/1024 is 1/1024 below the floor, although it exceeds 0.001 mm. The endpoints are coincident under the strict scaled rule; reject before normalizing the axis.",
+      "f04_refs": [
+        "F04-NEG-36"
+      ]
+    },
+    {
+      "case_id": "F06-NEG-48",
+      "title": "Member section dimension below the axis-scaled floor",
+      "given": [
+        "Owner local-size decision 2026-10-15; F04 section 3, F06 section 4."
+      ],
+      "input": {
+        "body": {
+          "kind": "member",
+          "axis_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              524288,
+              0,
+              0
+            ]
+          ],
+          "profile": {
+            "kind": "rectangle",
+            "width_mm": 0.1240234375,
+            "height_mm": 300
+          }
+        },
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "outputs": [
+          "mesh",
+          "quantities"
+        ]
+      },
+      "expected": {
+        "status": "invalid_input",
+        "local_size_mm": "524288",
+        "eps_geom_mm": "0.125",
+        "eps_geom_minus_width_mm": "1/1024",
+        "fixed_floor_policy_model_outcome": "accepted_draft",
+        "f04_code": "INVALID_ARGUMENT",
+        "diagnostic_code": "GEO_BELOW_MINIMUM",
+        "partial_geometry_returned": false,
+        "state_changed": false,
+        "stage": "ranges"
+      },
+      "derivation": "ell=524288; H is below ell because (127/2048)^2+150^2 < ell^2. L=ell, eps_geom=1/8 and width=127/1024 is 1/1024 below it. The old 0.001 mm minimum accepted this width; the scaled rule rejects it.",
+      "f04_refs": [
+        "F04-NEG-37"
+      ]
+    },
+    {
+      "case_id": "F06-NEG-49",
+      "title": "Large contour outside the scaled planarity band",
+      "given": [
+        "Owner local-size decision 2026-10-15; F04 section 3, F06 section 4."
+      ],
+      "input": {
+        "body": {
+          "kind": "plate",
+          "contour_points_mm": [
+            [
+              999000000,
+              0,
+              0
+            ],
+            [
+              999393216,
+              0,
+              0.875
+            ],
+            [
+              999393216,
+              524288,
+              0
+            ],
+            [
+              999000000,
+              524288,
+              0.875
+            ]
+          ],
+          "thickness_mm": 10
+        },
+        "placement": {
+          "translation_mm": [
+            0,
+            1000000000,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "outputs": [
+          "mesh",
+          "quantities"
+        ]
+      },
+      "expected": {
+        "status": "invalid_input",
+        "local_size_mm": "655360",
+        "eps_geom_mm": "0.15625",
+        "plane_distance_mm": "0.875",
+        "f04_code": "INVALID_ARGUMENT",
+        "diagnostic_code": "GEO_CONTOUR_INVALID",
+        "partial_geometry_returned": false,
+        "state_changed": false,
+        "stage": "ranges"
+      },
+      "derivation": "The same saddle contour as F06-POS-56 with s=7/8 has N=(0,0,2*a*b) and D=655360. Its maximum distance 7/8 exceeds binary64(eps_geom + binary64(1e-6)*D), so contour admission fails before rectangle support.",
+      "f04_refs": [
+        "F04-NEG-38"
+      ]
+    },
+    {
+      "case_id": "F06-NEG-51",
+      "title": "Member local size above the axis cap is never clamped",
+      "given": [
+        "Owner local-size decision 2026-10-15; F04 section 3, F06 section 4."
+      ],
+      "input": {
+        "body": {
+          "kind": "member",
+          "axis_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              1000000.5,
+              0,
+              0
+            ]
+          ],
+          "profile": {
+            "kind": "rectangle",
+            "width_mm": 200,
+            "height_mm": 300
+          }
+        },
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "outputs": [
+          "mesh",
+          "quantities"
+        ]
+      },
+      "expected": {
+        "status": "limit_exceeded",
+        "local_size_mm": "1000000.5",
+        "cap_mm": "1000000",
+        "floor_evaluated": false,
+        "f04_code": "LIMIT_EXCEEDED",
+        "diagnostic_code": "GEO_ABOVE_LIMIT",
+        "partial_geometry_returned": false,
+        "state_changed": false,
+        "stage": "caps"
+      },
+      "derivation": "ell=1000000.5 exceeds H and the 1000000 mm axis/L cap. The scale is rejected before epsilon calculation; the cap is not widened.",
+      "f04_refs": [
+        "F04-NEG-39"
+      ]
+    },
+    {
+      "case_id": "F06-NEG-50",
+      "title": "Non-finite derived local size never falls back to 0.001 mm",
+      "given": [
+        "Finite capped small plate; harness injects an arithmetic fault after local-size derivation."
+      ],
+      "input": {
+        "body": {
+          "kind": "plate",
+          "contour_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              3,
+              0,
+              0
+            ],
+            [
+              3,
+              4,
+              0
+            ],
+            [
+              0,
+              4,
+              0
+            ]
+          ],
+          "thickness_mm": 10
+        },
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "fault_injection": {
+          "derived_local_size_mm": "NaN"
+        }
+      },
+      "expected": {
+        "status": "unsupported",
+        "f04_code": "UNSUPPORTED_GEOMETRY",
+        "diagnostic_code": "GEO_NUMERIC_UNCERTAIN",
+        "stage": "caps",
+        "floor_evaluated": false,
+        "partial_geometry_returned": false,
+        "state_changed": false
+      },
+      "derivation": "Non-finite derived L cannot enter max or key encoding. This fault is unreachable from finite inputs under the stated caps; the harness tests failure handling, not a valid model."
+    },
+    {
+      "case_id": "F06-POS-59",
+      "title": "Scaled body floor does not widen the absolute pick boundary band",
+      "given": [
+        "Valid large plate of F06-POS-53; one element; point-form vertex pick, radius zero."
+      ],
+      "input": {
+        "body": {
+          "kind": "plate",
+          "contour_points_mm": [
+            [
+              999000000,
+              0,
+              0
+            ],
+            [
+              999393216,
+              0,
+              0
+            ],
+            [
+              999393216,
+              524288,
+              0
+            ],
+            [
+              999000000,
+              524288,
+              0
+            ]
+          ],
+          "thickness_mm": 0.1572265625
+        },
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "pick": {
+          "point_mm": [
+            998999999.9921875,
+            0,
+            0
+          ],
+          "radius_mm": 0,
+          "targets": [
+            "vertex"
+          ]
+        }
+      },
+      "expected": {
+        "status": "ok",
+        "hit_count": 0,
+        "hits": [],
+        "truncated": false,
+        "nearest_vertex_distance_mm": "1/128",
+        "eps_geom_mm": "0.15625",
+        "eps_pick_mm": "0.001"
+      },
+      "derivation": "The point is 1/128 mm outside vertex p0 along -X, an exactly representable difference at this origin. 0.001 < 1/128 < 5/32=eps_geom. All other vertices are farther away. Section 9 still uses eps_pick=0.001 mm, so no vertex qualifies; eps_geom is not a pick band."
     }
   ],
   "cross_references": [
@@ -5414,5 +6321,6 @@
         "F04-POS-16"
       ]
     }
-  ]
+  ],
+  "geometric_length_policy": "Owner decision 2026-10-15: eps_geom=max(binary64(0.001 mm), 2^-22*L); plate L=D, member L=max(axis length, section half-diagonal), in the element-local frame before placement, ordered binary64 under F04 section 3/F06 section 4. Algorithm/tolerance_policy 3/3. Test comparison, absolute pick band, exact checks and dimensionless relative/certificate bounds are unchanged. A5 large-coordinate part closed; rounded-mesh cross-checks and subnormal mass remain open."
 }

@@ -82,9 +82,9 @@ These are original initial operating caps, not vendor tolerances or promises of 
 | Single string | At most 4096 UTF-8 bytes unless a narrower field cap applies |
 | Element label | 1–256 UTF-8 bytes; reject control characters U+0000–001F and U+007F |
 | Plate thickness/edge / supported member-axis length | Greater than zero and at most 1,000,000 mm |
-| Minimum nonzero dimension (draft, to be validated by G04 and fixtures) | Plate thickness/edge lengths, section dimensions and member-axis length are at least 0.001 mm, inclusive; a value above zero and below 0.001 mm is `INVALID_ARGUMENT` ([F06 section 4](geometry-contract-v0.1.md#4-tolerance-and-degeneracy-policy-g-06-draft)) |
+| Minimum nonzero dimension (draft, to be validated by G04 and fixtures) | Plate thickness/edge lengths, section dimensions and member-axis length are at least `eps_geom = max(0.001 mm, 2^-22 * L)`, inclusive; a value above zero and below eps_geom is `INVALID_ARGUMENT` ([F06 section 4](geometry-contract-v0.1.md#4-tolerance-and-degeneracy-policy-g-06-draft)) |
 | Section dimensions (draft, to be validated by G04 and fixtures) | At most 1,000,000 mm; above that is `LIMIT_EXCEEDED` (F06 section 2) |
-| Contour radius D (assumption) | At most 2,000,000 mm; retains the maximum old rectangle diagonal |
+| Local size L / contour radius D | Plate L = D <= 2,000,000 mm; member L = max(axis length, section half-diagonal) <= 1,000,000 mm; see definition below |
 | Plate contour count / roll angle (assumptions) | 3–1024 points; `abs(roll_rad) <= 6.283185307179586` rad |
 | Coordinates / translation components | Absolute value at most 1,000,000,000 mm |
 | Material density, when authored in a definition | Greater than zero and at most 1,000,000 kg/m3; absence is unknown |
@@ -94,8 +94,35 @@ These are original initial operating caps, not vendor tolerances or promises of 
 The owner confirmed these first-slice constants on 2026-10-15; they remain draft, to be validated by
 fixtures. The minimum and the section cap were added by the F06 amendments (section 12). They are
 the draft policy of F06 sections 2 and 4, not frozen; the existing limits and codes above are
-unchanged, and the minimum only raises the lower limit "greater than zero". It is a draft
-minimum-size rule, not a kernel accuracy claim; the tolerance policy stays with F06.
+unchanged except for the owner-directed scaled minimum. It is a draft minimum-size rule;
+fixture validation and the remaining A5 accuracy work stay open with F06.
+
+**Geometric length floor (owner decision, 2026-10-15).** `eps_geom = max(0.001 mm, 2^-22 * L)`.
+Here `L` is an element-local body size in mm, evaluated before placement: for a plate `L = D`,
+the maximum distance from contour point p0 to any contour point; for a member `L = max(ell, H)`,
+where `ell` is the axis length and `H` is the section half-diagonal. World coordinates and
+translation magnitude never enter this scale. Thickness does not enter plate D; roll and rigid
+placement do not enter member L.
+
+Use binary64 round-to-nearest-even at every written operation, without reassociation or fused
+multiply-add. Define `norm(v) = sqrt((v_x*v_x + v_y*v_y) + v_z*v_z)`. Subtract submitted
+element-local point components first, then evaluate each norm in that order. For a plate scan
+`norm(p_i - p0)` in ascending point index, starting with D = 0 and retaining the larger value
+with `>`; set L = D. For a member compute `ell = norm(p2 - p1)`, `hw = width_mm/2`,
+`hh_section = height_mm/2`, `H = sqrt(hw*hw + hh_section*hh_section)`, then L = max(ell, H).
+Finally multiply L by the exactly representable binary64 constant `2^-22 = 1/4194304`, then
+take max with binary64(0.001 mm). Thus eps_geom is never smaller than binary64(0.001 mm).
+All length operands and results are in mm; the scale factor is dimensionless.
+
+Check submitted finiteness and F04 caps before using the floor. Plate L must be at most
+2,000,000 mm (the existing D cap); member L must be at most 1,000,000 mm (the existing axis
+and section caps imply this). An excessive finite L is `LIMIT_EXCEEDED` (`GEO_ABOVE_LIMIT`
+in F06), before minima or rectangle-only contour support decisions. Non-finite submitted input is
+`NON_FINITE_NUMBER` (`GEO_NON_FINITE`). A non-finite derived L or norm intermediate from
+otherwise finite capped input is numeric uncertainty: `UNSUPPORTED_GEOMETRY`
+(`GEO_NUMERIC_UNCERTAIN`), with no floor, partial geometry or current key. Never clamp L,
+substitute the absolute floor for a failed scale, or expand any F04 cap. Under the stated
+caps these square sums cannot overflow; the diagnostic also covers arithmetic faults.
 
 F05 must enforce input byte/depth/string bounds before unsafe allocations and cannot widen these
 limits silently. F06 fixes mesh/topology bounds and tolerance policy separately. Host limits for
@@ -147,7 +174,7 @@ scaled transform); a zero-length straight axis is not a well-formed supported sh
 lacks a feature. This keeps every "dimension must be positive" rejection under one code. This is the
 only error-code choice changed by the freeze-candidate amendments; the owner adopted it on
 2026-10-15. A nonzero but very short axis is governed by the draft minimum nonzero dimension of
-0.001 mm in the limits table above: a length above zero and below that minimum is also
+`eps_geom` in the limits table above: a length above zero and below that minimum is also
 `INVALID_ARGUMENT` (G-06, F06 section 4).
 
 **Element-local frames (G-01 and G-02).** These fix where the authored dimensions sit in the
@@ -169,8 +196,8 @@ owner are assumptions below. The contract remains a freeze candidate, not frozen
 - **P-1, contour plate (replaces rectangular-only input).** `contour_points_mm` is an ordered array
   of 3 to 1024 distinct three-component points in element-local millimetres. Closure is implicit
   from the last point to the first; do not repeat the first point at the end. Each coordinate has
-  absolute value at most 1,000,000,000 mm. Thickness is in [0.001, 1,000,000] mm. Each edge length
-  is in [0.001, 1,000,000] mm, inclusive; the maximum distance `D` from the first point to another
+  absolute value at most 1,000,000,000 mm. Thickness and each edge length are in
+  [eps_geom, 1,000,000] mm, inclusive; the maximum distance `D` from the first point to another
   point is at most 2,000,000 mm. These contour bounds and the winding convention below are recorded
   assumptions, not verbatim owner words. The body-frame origin is `p0`; `X_p = unit(p1 - p0)`.
   Compute the polygon area vector `N = sum((p_i - p0) x (p_(i+1) - p0))` in ascending index order,
@@ -181,7 +208,7 @@ owner are assumptions below. The contract remains a freeze candidate, not frozen
   `INVALID_ARGUMENT`; never reorder the author's points. `Z_p = unit(N)` is the normal from which
   the contour is counter-clockwise when seen from +Z_p; `Y_p = Z_p x X_p`, so `X_p x Y_p = Z_p` for
   an exactly planar contour. This normal-sign convention is an explicit assumption. The contour
-  plane passes through p0 with normal Z_p. Every point must be within `eps_plane = 0.001 mm +
+  plane passes through p0 with normal Z_p. Every point must be within `eps_plane = eps_geom +
   1e-6*D` of that plane. Contours outside the planarity band or degenerate contours are invalid. No
   input point is silently moved. A contour within this admission band but not exactly planar is
   valid model input and unsupported for solid evaluation until A02 defines it; it has no certified
@@ -194,8 +221,9 @@ owner are assumptions below. The contract remains a freeze candidate, not frozen
   accepted authored inputs with geometry status `unsupported`, mapped to existing
   `UNSUPPORTED_GEOMETRY`; they are not invalid models. Task A02 adds contour-plate solid support.
   Within engineering validation, check types/count and caps before allocation, finiteness,
-  coordinate/dimension caps, thickness and edge minima, repeated points, zero N, planarity, winding,
-  then simplicity, in that order. For simplicity, drop the dominant coordinate of N (same tie rule),
+  coordinate/dimension/L caps, eps_geom, thickness and edge minima, repeated points, zero N,
+  planarity, winding, then simplicity, in that order. For simplicity, drop the dominant coordinate
+  of N (same tie rule),
   and test non-adjacent closed segments in ascending index-pair order; any
   intersection/touch/overlap, nonconsecutive duplicate or adjacent backtracking is invalid. Adjacent
   edges may share only their endpoint. Exact rational orientation signs distinguish touch from
@@ -440,13 +468,14 @@ first.
 descriptions. They are not a runnable model, geometry fixture, engine mock or evidence of a working
 command dispatcher. No placeholder blob is offered as an actual saved resource. Case IDs are
 proposed future tests; acceptance requires real API -> CLI -> USD -> independent reader. There are
-57 logical cases (24 positive, 33 negative) and seven malformed/non-finite raw JSON cases.
+69 logical cases (30 positive, 39 negative) and seven malformed/non-finite raw JSON cases.
 `F04-POS-01` to `F04-POS-07`, `F04-NEG-01` to `F04-NEG-18` and `F04-RAW-01` to `F04-RAW-03` are the
-original draft cases and keep their IDs and meaning; `F04-POS-08` to `F04-POS-24`, `F04-NEG-19` to
-`F04-NEG-33` and `F04-RAW-04` to `F04-RAW-07` were added by the amendments in [section
+original draft cases and keep their IDs and meaning; `F04-POS-08` to `F04-POS-30`, `F04-NEG-19` to
+`F04-NEG-39` and `F04-RAW-04` to `F04-RAW-07` were added by the amendments in [section
 12](#12-amendments-log). The member cases that need a profile (`F04-POS-07`, `F04-POS-10`,
 `F04-POS-13`, `F04-POS-15`, `F04-POS-16`, `F04-POS-21` to `F04-POS-23`, `F04-NEG-20`,
-`F04-NEG-21`, `F04-NEG-33`) require the harness to bind an
+`F04-NEG-21`, `F04-NEG-33`, `F04-POS-29`, `F04-POS-30`, `F04-NEG-36`, `F04-NEG-37`,
+`F04-NEG-39`) require the harness to bind an
 actual validated original profile digest; they do not provide a fake resource or an executable
 fixture.
 
@@ -456,15 +485,18 @@ the owner amendment to CR-TOL-001 dated 2026-10-15: quantities pass when `|actua
 Dimensionless frame values use absolute 1e-6 at zero and relative 1e-6 otherwise. Exact rational
 expected values never change; identities, strings, booleans, counts, generations and codes compare
 exactly. This is a test comparison rule only, separate from geometric decisions and numeric
-certificates. The length floor is 1e-6 m = 0.001 mm, equal to the minimum dimension. The read-only
-first-scope package 0.1.0 still states the earlier 1e-12/1e-9 mm rule; it needs a separately
-reviewed version amendment. References to its cases preserve their mathematical meanings, not an
+certificates. The test length floor remains 1e-6 m = 0.001 mm; it does not scale with body size.
+The read-only first-scope package 0.1.0 retains the earlier 1e-12/1e-9 mm rule; it needs a
+separately reviewed version amendment. References to its cases preserve mathematical meanings, not
+an
 assertion that its comparison policy has already changed. F07 has its own comparison rule, unchanged
 here. See the [tolerance comparison](../design/tolerance-comparison-v0.1.md) for classification,
 assumptions, design verdicts and the recorded 15-value ifc-lite comparison supplied by the
-orchestrator from the public repository. Accuracy gate A5 remains unresolved. The owner decided that
-tolerance must be scaled by coordinate magnitude for its large-coordinate part; applying that
-decision is a separate task. No magnitude scaling is applied here.
+orchestrator from the public repository. The 2026-10-15 owner decision applies local-size scaling
+to geometric length decisions (section 3; F06 section 4), closing only the large-coordinate part
+of A5. Rounded-mesh
+cross-checks and subnormal mass remain open. CR-TOL-001, the absolute pick band and exact
+identities do not change; relative bounds and numeric certificates retain the 1e-6 policy.
 
 **Coverage and cross-references (G-05).** New cases refer to the first-scope cases by ID through
 `first_scope_refs` (package version 0.1.0, field `first_scope_package`) where a corresponding
@@ -489,7 +521,7 @@ F04-only cases with no first-scope counterpart and carry no `first_scope_refs`.
 | Clockwise, non-planar, self-intersection, count, repetition | `F04-NEG-28` to `F04-NEG-32` | none; F06 `F06-NEG-37`, `F06-NEG-38`, `F06-NEG-40` to `F06-NEG-42` |
 | Zero, quarter-turn and near-vertical roll; shape footprint | `F04-POS-21` to `F04-POS-24` | none; F06 `F06-POS-50` to `F06-POS-52` |
 | Roll cap and non-finite input | `F04-NEG-33`, `F04-RAW-07` | none; F06 `F06-NEG-43`, `F06-NEG-44` |
-
+| Local-size scaled floor, exact boundary, small-body floor, planarity and caps | `F04-POS-25` to `F04-POS-30`, `F04-NEG-34` to `F04-NEG-39` | none; F06 `F06-POS-53` to `F06-POS-58`, `F06-NEG-45` to `F06-NEG-49`, `F06-NEG-51` |
 
 Non-finite quaternion and translation components follow the existing raw-JSON rules: a bare `NaN` is
 `MALFORMED_COMMAND` and an overflowing literal such as `1e400` is `NON_FINITE_NUMBER`.
@@ -537,7 +569,7 @@ Decided by the owner on 2026-10-15:
 | G-01 / P-1 | Contour plate; X along first edge, Z thickness/normal, Y=Z x X; rectangle-only evaluation until A02 | Replaced; winding, bounds and planarity assumptions in section 3 |
 | G-02 / P-2 | Centred member section and perpendicular ends, Y through a cross product | Confirmed unchanged |
 | P-3 | Deterministic zero-roll frame followed by optional roll about local +Z | Refined; angle-cap assumption in section 3 |
-| G-06 | Constants confirmed for the first slice; relative 1e-6 and length floor 0.001 mm | Draft, to be validated by fixtures; 15-value comparison recorded in the [tolerance report](../design/tolerance-comparison-v0.1.md); A5 remains unresolved, with magnitude scaling decided for a separate task |
+| G-06 | Constants confirmed for the first slice; relative 1e-6 and geometric floor eps_geom | Draft, to be validated by fixtures; 15-value comparison recorded in the [tolerance report](../design/tolerance-comparison-v0.1.md); A5 large-coordinate part closed by local-size scaling; rounded-mesh cross-checks and subnormal mass open |
 | Profile resource | Logical rectangle content in F06 section 2 | Accepted by F06 under draft policy; persisted encoding open |
 | Freeze | Explicit owner freeze and review/admission remain necessary | Open |
 
@@ -625,3 +657,14 @@ The `contract_version` remains `0.1.0`. K0 is not passed and nothing is implemen
     (overflow roll). Counts: 57 logical, 24 positive, 33 negative, seven raw. No existing ID or
     error-code meaning is removed. contract_version remains 0.1.0, freeze candidate, not frozen. The
     normal-sign and cap assumptions need owner review.
+
+- 2026-10-15, tolerance-magnitude amendment (intended branch
+  `docs/tolerance-magnitude-scaling`, stacked on PR #26; Git ownership blocks verification):
+  section 3 applies `eps_geom = max(0.001 mm, 2^-22 * L)` in the element-local frame, with
+  ordered binary64 evaluation and existing caps. F06 algorithm/tolerance versions become 3/3.
+  Planarity retains its relative 1e-6*D term. CR-TOL-001, pick bands, exact identities and
+  dimensionless relative/certificate bounds are unchanged. Only A5's large-coordinate part is
+  closed; rounded-mesh cross-checks and subnormal mass stay open. Added POS-25 to POS-30 and
+  NEG-34 to NEG-39: 69 logical cases (30 positive, 39 negative), seven raw. No previous case
+  outcome flips or input rewrites are needed; existing minimum cases remain below the scaling
+  crossover. F04 stays a freeze candidate 0.1.0, not frozen; no runtime change is made.
