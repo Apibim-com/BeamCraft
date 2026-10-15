@@ -45,6 +45,14 @@ later project; portable domain crates alone do not establish a working web appli
 
 ## Progress log
 
+- 2026-10-14: F05 drafted the private USD-worker protocol contract 0.1.0 on base
+  `478f330e15819b574c62227bc23009729adb4fdc`, consuming F04 0.1.0 sections 2, 3, 6, 7 and 8.
+  It fixes framing, attachments, handshake, correlation, deadlines, cancellation, restart
+  limits, transport error codes and the canonical replay profile, with 60 original acceptance
+  descriptions (19 positive, 41 negative), including review fixes for candidate discard, host
+  outcome queries, bounded diagnostics, event sequencing and timeout budgets. The contract is
+  not frozen, no worker is implemented and K0 is not passed.
+
 - 2026-10-15: F04.2 made the model/command contract a freeze candidate (base
   `478f330e15819b574c62227bc23009729adb4fdc`). The owner adopted G-03 (zero-length axis is
   `INVALID_ARGUMENT`), G-04 (quaternion convention) and G-05 (CR-TOL-001 as a test comparison
