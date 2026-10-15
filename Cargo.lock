@@ -23,3 +23,10 @@ version = "0.0.1"
 dependencies = [
  "beamcraft-geom",
 ]
+
+[[package]]
+name = "beamcraft-protocol"
+version = "0.0.1"
+dependencies = [
+ "beamcraft-model",
+]
