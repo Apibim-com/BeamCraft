@@ -1,0 +1,127 @@
+{
+  "regenerate": "cargo build --release, then python harness.py hostile",
+  "cases": 1184,
+  "statuses": {
+    "ACCEPTED": 36,
+    "REJECTED": 1148
+  },
+  "classes": {
+    "truncated": {
+      "cases": 1,
+      "statuses": {
+        "REJECTED": 1
+      }
+    },
+    "malformed": {
+      "cases": 1,
+      "statuses": {
+        "REJECTED": 1
+      }
+    },
+    "invalid-utf": {
+      "cases": 1,
+      "statuses": {
+        "REJECTED": 1
+      }
+    },
+    "huge-integer": {
+      "cases": 1,
+      "statuses": {
+        "REJECTED": 1
+      }
+    },
+    "huge-exponent": {
+      "cases": 1,
+      "statuses": {
+        "ACCEPTED": 1
+      }
+    },
+    "corrupt-usdc": {
+      "cases": 1,
+      "statuses": {
+        "REJECTED": 1
+      }
+    },
+    "depth": {
+      "cases": 3,
+      "statuses": {
+        "ACCEPTED": 3
+      }
+    },
+    "huge-face-count": {
+      "cases": 1,
+      "statuses": {
+        "ACCEPTED": 1
+      }
+    },
+    "truncate": {
+      "cases": 45,
+      "statuses": {
+        "REJECTED": 42,
+        "ACCEPTED": 3
+      }
+    },
+    "seeded": {
+      "cases": 1000,
+      "statuses": {
+        "REJECTED": 1000
+      }
+    },
+    "usdc-huge-headerword": {
+      "cases": 1,
+      "statuses": {
+        "REJECTED": 1
+      }
+    },
+    "usdc-corrupt": {
+      "cases": 128,
+      "statuses": {
+        "REJECTED": 100,
+        "ACCEPTED": 28
+      }
+    }
+  },
+  "accepted_cases": [
+    "huge-exponent",
+    "depth-32",
+    "depth-33",
+    "depth-64",
+    "huge-face-count",
+    "truncate-009",
+    "truncate-010",
+    "truncate-044",
+    "usdc-corrupt-010",
+    "usdc-corrupt-011",
+    "usdc-corrupt-012",
+    "usdc-corrupt-013",
+    "usdc-corrupt-014",
+    "usdc-corrupt-015",
+    "usdc-corrupt-024",
+    "usdc-corrupt-025",
+    "usdc-corrupt-026",
+    "usdc-corrupt-027",
+    "usdc-corrupt-028",
+    "usdc-corrupt-029",
+    "usdc-corrupt-030",
+    "usdc-corrupt-031",
+    "usdc-corrupt-032",
+    "usdc-corrupt-033",
+    "usdc-corrupt-034",
+    "usdc-corrupt-035",
+    "usdc-corrupt-036",
+    "usdc-corrupt-037",
+    "usdc-corrupt-038",
+    "usdc-corrupt-039",
+    "usdc-corrupt-060",
+    "usdc-corrupt-061",
+    "usdc-corrupt-062",
+    "usdc-corrupt-063",
+    "usdc-corrupt-064",
+    "usdc-corrupt-065"
+  ],
+  "max_seconds": 0.00651569999899948,
+  "max_peak_job_commit_bytes": 1064960,
+  "max_peak_working_set_bytes": 4616192,
+  "cap_bytes": 536870912,
+  "timeout_seconds": 5
+}

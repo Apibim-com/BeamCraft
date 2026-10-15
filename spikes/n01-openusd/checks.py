@@ -37,7 +37,7 @@ if __name__ == "__main__":
         print(item["cwd"], " ".join(command), "exit", result.returncode, flush=True)
     after = hashlib.sha256((REPOSITORY / "Cargo.lock").read_bytes()).hexdigest()
     assert before == after == EXPECTED_LOCK, "root lock integrity failure"
-    (SPIKE / "check-results.json").write_text(json.dumps({
+    (SPIKE / "artifacts" / "check-results.json").write_text(json.dumps({
         "root_lock_sha256_before": before, "root_lock_sha256_after": after,
         "results": results,
     }, indent=2) + "\n", encoding="utf-8")

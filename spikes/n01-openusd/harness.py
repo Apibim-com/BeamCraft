@@ -25,42 +25,30 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def write_json(path, value):
+    """Write JSON with LF endings on every platform."""
+    path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8", newline="\n")
+
+
 def inventory():
+    """Write a compact package/licence list; raw cargo metadata is not retained."""
     command = ["cargo", "metadata", "--offline", "--format-version", "1"]
     result = subprocess.run(command, cwd=ROOT, capture_output=True, check=True)
     metadata = json.loads(result.stdout)
     locked = tomllib.loads((ROOT / "Cargo.lock").read_text(encoding="utf-8"))
-    checksums = {(p["name"], p["version"]): p.get("checksum") for p in locked["package"]}
-    nodes = {n["id"]: n for n in metadata["resolve"]["nodes"]}
-    packages = []
-    for package in metadata["packages"]:
-        directory = Path(package["manifest_path"]).parent
-        notices = []
-        # The local spike is not a registry dependency; avoid hashing its build tree.
-        candidates = [] if package["source"] is None else directory.rglob("*")
-        for path in candidates:
-            if path.is_file() and any(term in path.name.lower() for term in ["license", "licence", "copying", "notice"]):
-                notices.append({"path": path.relative_to(directory).as_posix(), "sha256": digest(path)})
-        packages.append({
-            "name": package["name"], "version": package["version"],
-            "license": package["license"], "rust_version": package["rust_version"],
-            "source": package["source"], "repository": package["repository"],
-            "checksum": checksums[(package["name"], package["version"])],
-            "features": nodes[package["id"]]["features"], "notice_files": notices,
-        })
-    assert {(p["name"], p["version"]) for p in packages} == set(checksums)
+    checksums = {(p["name"], p["version"]) for p in locked["package"]}
+    packages = [{"name": p["name"], "version": p["version"], "license": p["license"],
+                 "rust_version": p["rust_version"]}
+                for p in sorted(metadata["packages"], key=lambda p: (p["name"], p["version"]))]
+    assert {(p["name"], p["version"]) for p in packages} == checksums
     usd = next(p for p in metadata["packages"] if p["name"] == "openusd")
-    directory = Path(usd["manifest_path"]).parent
-    files = [{"path": p.relative_to(directory).as_posix(), "sha256": digest(p), "bytes": p.stat().st_size}
-             for p in sorted(directory.rglob("*")) if p.is_file()]
-    (ROOT / "inventory.json").write_text(json.dumps({
-        "command": command, "packages": packages, "openusd_files": files,
-        "openusd_declared_features": usd["features"],
-        "finding": "README licence section assigns src/usd/core_schemas.rs to TOST-1.0; MIT manifest is incomplete for bundled files. No policy exception inferred.",
-    }, indent=2) + "\n", encoding="utf-8")
-    tree = subprocess.run(["cargo", "tree", "--offline", "--edges", "all"], cwd=ROOT, capture_output=True, check=True)
-    (ROOT / "dependency-tree.txt").write_bytes(tree.stdout)
-    print(f"inventory: {len(packages)} locked packages, all matched; {len(files)} openusd files hashed; optional mmap/serde disabled")
+    write_json(ROOT / "inventory.json", {
+        "regenerate": "python harness.py inventory (from spikes/n01-openusd, cargo cache populated)",
+        "packages": packages,
+        "openusd_declared_features": sorted(usd["features"]),
+        "finding": "openusd README: src/usd/core_schemas.rs is generated from OpenUSD schemas and covered by TOST-1.0; the MIT manifest field does not cover it. No policy exception is inferred.",
+    })
+    print(f"inventory: {len(packages)} locked packages, all matched; optional mmap/serde disabled")
 
 
 class BasicLimits(ctypes.Structure):
@@ -199,11 +187,29 @@ def hostile(binary, smoke):
         results.append(result)
         if (index + 1) % 200 == 0:
             print(f"hostile progress: {index+1}", flush=True)
-    output = ROOT / ("hostile-smoke-results.json" if smoke else "hostile-results.json")
-    output.write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
-    counts = {status: sum(r["status"] == status for r in results) for status in sorted({r["status"] for r in results})}
-    print(f"hostile: {len(results)} cases; {counts}; max seconds={max(r['elapsed_seconds'] for r in results):.3f}; max commit={max(r['peak_job_commit_bytes'] for r in results)}")
-    # Recorded parser failures are findings; supervisor failure raises and is a failed test.
+    # Bulk per-case logs stay in the ignored artifacts directory; only a summary is committed.
+    write_json(directory / "results.json", results)
+    classes = {}
+    for r in results:
+        name = r["case"].rstrip("0123456789-")
+        entry = classes.setdefault(name, {"cases": 0, "statuses": {}})
+        entry["cases"] += 1
+        entry["statuses"][r["status"]] = entry["statuses"].get(r["status"], 0) + 1
+    accepted = [r["case"] for r in results if r["status"] == "ACCEPTED"]
+    summary = {
+        "regenerate": "cargo build --release, then python harness.py hostile" + (" --smoke" if smoke else ""),
+        "cases": len(results),
+        "statuses": {s: sum(r["status"] == s for r in results) for s in sorted({r["status"] for r in results})},
+        "classes": classes,
+        "accepted_cases": accepted,
+        "max_seconds": max(r["elapsed_seconds"] for r in results),
+        "max_peak_job_commit_bytes": max(r["peak_job_commit_bytes"] for r in results),
+        "max_peak_working_set_bytes": max(r["peak_working_set_bytes"] or 0 for r in results),
+        "cap_bytes": CAP, "timeout_seconds": 5,
+    }
+    if not smoke:
+        write_json(ROOT / "hostile-summary.json", summary)
+    print(f"hostile: {summary['cases']} cases; {summary['statuses']}; max seconds={summary['max_seconds']:.3f}; max commit={summary['max_peak_job_commit_bytes']}")
 
 
 def performance(binary):
@@ -215,10 +221,10 @@ def performance(binary):
             result.update({"elements": count, "repeat": repeat})
             results.append(result)
             print(result["stdout"] or result["status"], flush=True)
-    (ROOT / "performance-results.json").write_text(json.dumps({
+    write_json(ROOT / "performance-results.json", {
         "os": platform.platform(), "machine": platform.machine(), "processor": platform.processor(),
         "method": "release build; 3 fresh child processes per size; fixture generation before timed open; warm OS cache; compose/traverse forces width reads; save separate; startup included only in supervisor elapsed", "results": results,
-    }, indent=2) + "\n", encoding="utf-8")
+    })
 
 
 if __name__ == "__main__":
