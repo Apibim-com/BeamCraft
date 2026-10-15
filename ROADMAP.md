@@ -49,6 +49,13 @@ later project; portable domain crates alone do not establish a working web appli
 
 ## Progress log
 
+- 2026-10-15: Owner decision on OpenUSD-derived TOST-1.0 material in the `openusd` crate (0.8.x,
+  file `src/usd/core_schemas.rs`): it stays under its upstream licence and copyright, BeamCraft
+  claims no rights in it, and BeamCraft's own code stays MPL-2.0. `AGENTS.md` section 1.2 gains a
+  scoped extension; `NOTICE` carries the upstream notice, `licenses/TOST-1.0-openusd.txt` the
+  unmodified upstream licence, `ATTRIBUTION.md` three rows, and `deny.toml` a comment block (no
+  allowlist change). The F11 record has a dated note. Documentation only; the crate is not adopted.
+
 - 2026-10-15: F04.3 applied the four F04 amendments proposed by F06 section 12 to the F04 freeze
   candidate on base `b996c58fe850642f12b92b25b23c441fbd41ed47` (stacked on PR #20): the draft
   minimum nonzero dimension of 0.001 mm and the section-dimension cap, the corrected near-vertical
