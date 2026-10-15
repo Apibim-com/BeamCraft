@@ -60,9 +60,11 @@ do not label it Apache-2.0 or MPL-2.0. Redistribution requires the licence and a
 modified files require change notices. Trademark permissions are limited.
 
 MPL covers our own code. Separating the SDK into a worker does not waive its obligations or
-approve its resources under the asset policy. TOST is not in AGENTS.md's explicit asset list;
-the schema resources therefore require an owner decision before product integration.
-No licence exceptions or policies were changed by this audit.
+approve its resources under the asset policy. At audit time TOST was not in AGENTS.md's explicit
+asset list, so the schema resources required an owner decision before product integration.
+No licence exceptions or policies were changed by this audit. PR #7 later recorded that decision
+as a scoped exception for official OpenUSD code, binaries and SDK resources (`AGENTS.md`
+section 1.2); the remaining gates below still apply to this candidate.
 
 Each wheel has one aggregate `LICENSE.txt`, but no separate upstream `NOTICE` or TBB licence.
 The three aggregate texts match the pinned source licence after line-ending normalization.
@@ -188,10 +190,13 @@ Raw inventories, Windows direct-import evidence and the TBB byte comparison are 
 
 ## Gate conditions
 
+Status at audit time (2026-10-14). Later changes are noted in the table without rewriting the
+audit result.
+
 | Condition | F03 result / remaining owner |
 |-----------|------------------------------|
 | Exact package, platform artifacts and hashes | Recorded and statically verified |
-| TOST and SDK schema/resource policy | Owner decision still required; no exception added |
+| TOST and SDK schema/resource policy | At audit time: owner decision still required; no exception added. Later, PR #7 added the scoped official-OpenUSD TOST exception (`AGENTS.md` section 1.2); this candidate's provenance, attribution, notices and runtime checks remain open |
 | Complete native component licences/notices | TBB/NOTICE omissions identified; compiled inclusion map still required |
 | Runtime binary and release-only native closure | Not yet delivered; platform packaging work required |
 | Real import, synthetic save/reopen and independent validation | Not run; clean-machine platform checks required |
@@ -199,5 +204,6 @@ Raw inventories, Windows direct-import evidence and the TBB byte comparison are 
 | Rust/WASM/cargo-deny | No Rust graph changes; local WASM target and cargo-deny remain absent |
 
 F03 research can be accepted with this conditional outcome. U01 and the product distribution gate
-remain waiting for policy, packaging and runtime evidence. F02 and original fixture work can
-continue independently. A code-review acceptance of this report does not approve the SDK package.
+remain waiting for packaging and runtime evidence (and, at audit time, the policy decision). F02 and
+original fixture work can continue independently. A code-review acceptance of this report does not
+approve the SDK package.
