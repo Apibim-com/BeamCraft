@@ -43,31 +43,44 @@ enforce them.
   The host depends on domain crates, not the reverse.
 - Use a thin Python/pxr worker for the first OpenUSD prototype, subject to the F03 package audit.
   Python serves USD operations; engineering rules and geometry computations remain in Rust.
-- Build an original native UI. The initial viewport candidate is wgpu with egui/eframe;
-  its dependencies, fonts and assets need an audit. Kit is excluded.
+- Use the sibling PdfCraft UI stack: Rust workspace, edition 2024, Rust 1.95; an engine independent
+  of UI; egui/eframe 0.36 with egui_extras, rfd and egui_kittest for UI tests; craft-ui, craft-quit
+  and craft-print from storytold/craft-libs pinned by git revision. PdfCraft (storytold/pdfcraft,
+  MIT OR Apache-2.0) vendors patched winit, egui-wgpu and vello_common. These are
+  orchestrator-supplied public Cargo.toml facts, not independently verified here. The patches and
+  craft-libs licence remain unverified. Adopting craft-libs requires a licence audit and a deny.toml
+  exception for its unknown git source; neither is done. Record an actual revision before
+  integration. No dependency or vendored patch is added by this documentation. Keep frontend crates
+  above the engine, in F08's planned app; F08's audited domain allowlist stays empty until an
+  explicit reviewed table amendment.
 - Add steel, export and drawing modules when their contracts require them. F08 fixed the concrete
   module paths after F04–F07 and creates no empty crates: `kernel`, `engine` and `ui` are
   planned paths in the boundary document, created by their own tasks with their first real code.
 
-Our geometry kernel will be implemented independently under the clean-room rules. IFC-lite, Manifold,
-truck and OCCT are not production backends or source donors. Start with finite, bounded inputs,
-analytic primitives and original fixtures; expand topology and operations through verified scopes.
+Prefer well-maintained permissively licensed Rust crates for math, geometry primitives and robust
+predicates, preferably pure Rust; write own algorithms only where no suitable crate exists. Each
+dependency needs the AGENTS.md section 5 audit, deny.toml checks and any F08 allowlist amendment
+before integration. Copyleft or weak-copyleft third-party crates, including MPL-2.0, need an
+explicit owner exception for each package. No code is copied from other projects; audited dependency
+use is distinct from copying implementation text. The restricted commercial-material and clean-room
+rules remain unchanged. No library or backend is selected here. Start with bounded primitives and
+original fixtures, expanding through reviewed scopes.
 
 ## Project state and revisions
 
 One `project.usda` is the project entry point. USD stores authored parameters, placements,
-operations and relationships. Derived USD layers contain computed geometry and quantities.
-Memory snapshots, indexes, caches and journals do not replace the authoritative model format.
-JSON control messages describe operations, not a second persisted native model.
+operations and relationships. Derived USD layers contain computed geometry and quantities. Memory
+snapshots, indexes, caches and journals do not replace the authoritative model format. JSON control
+messages describe operations, not a second persisted native model.
 
 A published root references complete immutable generations of authored and derived layers.
 Publishing replaces the root atomically after verifying assets and the expected base revision.
-Recovery must expose either the previous or the new complete revision. U05–U07 define and test
-the storage mechanism; a sequence of uncoordinated file replacements is insufficient.
+Recovery must expose either the previous or the new complete revision. U05–U07 define and test the
+storage mechanism; a sequence of uncoordinated file replacements is insufficient.
 
 Every placed element has a full UUIDv7. Prim names retain all 32 hexadecimal digits of the UUID;
-renaming a user label does not change identity. Immutable resources use full SHA-256 digests
-and verified bytes. Relationships are validated for duplicate identities and dangling targets.
+renaming a user label does not change identity. Immutable resources use full SHA-256 digests and
+verified bytes. Relationships are validated for duplicate identities and dangling targets.
 
 U05 stores exact bytes at `<authorized-root>/blobs/<first-two-hex>/<all-64-lowercase-hex>`.
 The root must be an existing absolute directory. Resource operations accept a `ContentDigest`,
@@ -96,15 +109,15 @@ with disposable caches.
 ## References, quantities and collaboration
 
 Foreign USD references must remain read-only. Edits and overrides of foreign prims are forbidden,
-including overrides authored in our layers. Our attachment wrapper
-may have a placement; measurements and annotations are separate owned results. Reference updates
-are explicit and preserve the original source bytes. IFC import and native conversion are outside
-the initial scope; IFC is a later export adapter for an explicitly supported subset.
+including overrides authored in our layers. Our attachment wrapper may have a placement;
+measurements and annotations are separate owned results. Reference updates are explicit and preserve
+the original source bytes. IFC import and native conversion are outside the initial scope; IFC is a
+later export adapter for an explicitly supported subset.
 
-Shape, mass, appearance and world measurements have separate dependency signatures.
-Renaming or moving the camera need not rebuild shape; changing density invalidates mass.
-Measurements carry freshness and support diagnostics. Unknown density, stale results and
-unsupported geometry must not be presented as current exact values.
+Shape, mass, appearance and world measurements have separate dependency signatures. Renaming or
+moving the camera need not rebuild shape; changing density invalidates mass. Measurements carry
+freshness and support diagnostics. Unknown density, stale results and unsupported geometry must not
+be presented as current exact values.
 
 A single worker owns the live USD stage. Independent calculations may run over immutable inputs;
 stage mutation and publication are coordinated. Command footprints include reads, writes and
@@ -112,16 +125,16 @@ relationships so rebase can detect semantic conflicts. Conflicts preserve local 
 silently accepting a server value.
 
 Worker IPC is planned as versioned, bounded, length-prefixed control frames with separate binary
-buffers over private pipes. F05 must specify limits, errors, cancellation and revision checks.
-The [F05 worker protocol draft](contracts/worker-protocol-v0.1.md) specifies this private IPC
-contract and its proposed acceptance cases.
-The [F06 geometry and viewport contract draft](contracts/geometry-contract-v0.1.md) specifies the
-kernel input, mesh, key and query contract in the same way.
-The [F10 domain vocabulary and module contract draft](contracts/domain-vocabulary-v0.1.md)
-specifies the shared element kinds, relationships, validation rules and discipline-module boundary
-in the same way; only the steel module is in scope and nothing in it is implemented.
-Coordination and control servers require explicit opt-in, loopback binding and token authentication.
-Resource paths do not authorize outbound access; local resolution and containment are validated.
+buffers over private pipes. F05 must specify limits, errors, cancellation and revision checks. The
+[F05 worker protocol draft](contracts/worker-protocol-v0.1.md) specifies this private IPC contract
+and its proposed acceptance cases. The [F06 geometry and viewport contract
+draft](contracts/geometry-contract-v0.1.md) specifies the kernel input, mesh, key and query contract
+in the same way. The [F10 domain vocabulary and module contract
+draft](contracts/domain-vocabulary-v0.1.md) specifies the shared element kinds, relationships,
+validation rules and discipline-module boundary in the same way; only the steel module is in scope
+and nothing in it is implemented. Coordination and control servers require explicit opt-in, loopback
+binding and token authentication. Resource paths do not authorize outbound access; local resolution
+and containment are validated.
 
 ## Rules
 
@@ -139,12 +152,31 @@ Resource paths do not authorize outbound access; local resolution and containmen
 
 ## Decision provenance
 
-This original design summary follows the owner's local `architecture-proposal.md` dated
-2026-10-14 (§1, §3–7, §9–17) and `implementation-plan.md` revision 1.1
-(§1–4, §5–7, §14). Detailed Russian plans and observation materials remain outside the repository.
-Those local plans describe intended acceptance, not completed features. See [the roadmap](../ROADMAP.md)
-for gates and [development](development.md) for the verified F01 baseline and remaining checks.
+This original design summary follows the owner's local `architecture-proposal.md` dated 2026-10-14
+(§1, §3–7, §9–17) and `implementation-plan.md` revision 1.1 (§1–4, §5–7, §14). Detailed Russian
+plans and observation materials remain outside the repository. Those local plans describe intended
+acceptance, not completed features. See [the roadmap](../ROADMAP.md) for gates and
+[development](development.md) for the verified F01 baseline and remaining checks.
 
-The [F04 model and command contract](contracts/model-and-commands-v0.1.md) is a review draft
-of these logical boundaries. Its examples are proposed acceptance descriptions, not implemented
-APIs or saved models. F09 admission precedes freezing it for kernel implementers.
+The [F04 model and command contract](contracts/model-and-commands-v0.1.md) is a review draft of
+these logical boundaries. Its examples are proposed acceptance descriptions, not implemented APIs or
+saved models. F09 admission precedes freezing it for kernel implementers.
+
+### Owner decisions of 2026-10-15
+
+1. Math/dependencies: prefer suitable permissive Rust crates, retaining per-package audit and
+   restricted-material rules — recorded; no dependency added.
+2. UI: adopt the PdfCraft stack above — recorded; craft-libs licence, git revision and vendor patch
+   audit remain open.
+3. Plate: contour, first-edge X, normal/thickness Z and Y=Z x X — recorded; winding, limits and
+   planarity assumptions noted in F04/F06; nonrectangle evaluation waits for A02.
+4. Member frame: P-2 confirmed unchanged, with Y derived through a cross product — recorded.
+5. Roll: optional explicit rotation about member local +Z after the default frame — recorded;
+   missing prior angle cap addressed by an explicit assumption in F04.
+6. Constants: owner-confirmed first-slice draft values, relative 1e-6 and length floor 1e-6 m=0.001
+   mm — assumption noted; fixture validation open;
+   ifc-lite comparison recorded in the tolerance report.
+
+F04 remains a freeze candidate at 0.1.0; F06 remains a draft. See the [tolerance
+comparison](design/tolerance-comparison-v0.1.md). Nothing is implemented by this record, and
+existing admission requirements remain in force.
