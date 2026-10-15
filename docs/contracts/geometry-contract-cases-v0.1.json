@@ -6,31 +6,64 @@
   "f04_contract_version": "0.1.0",
   "f05_protocol_version": "0.1.0",
   "first_scope_package": "0.1.0",
-  "comparison": "Test comparison rule (CR-TOL-001 of first-scope package 0.1.0; F04 section 10): numeric expected values pass when |actual - expected| <= 1e-12 * |expected| for quantities and |actual - expected| <= 1e-9 mm + 1e-12 * |expected| for coordinates; identifiers, strings, booleans, integers, counts, FeatureIds, digests, statuses and codes compare exactly. This rule is separate from the geometric tolerance policy of the contract (section 4), which the kernel uses and tests never use. Values written as decimal strings are exact; JSON numbers are the nearest f64.",
-  "assumptions": "Cases that list \"assumes\" depend on proposals P-1 to P-3 of F04 section 3, which are assumed pending owner confirmation. If the owner changes them, those cases change jointly with F04. Policy constants (minimum dimension 0.001 mm, parallel threshold 1e-6, caps, pick constants) are draft values to be validated by G04 and fixtures.",
+  "comparison": "Owner amendment 2026-10-15 to CR-TOL-001: quantities use relative 1e-6; lengths and coordinates use 0.001 mm + 1e-6*abs(expected); dimensionless frame values use absolute 1e-6 at zero and relative 1e-6 otherwise. Exact rational references are unchanged. IDs, codes, statuses, counts, strings and digests compare exactly. This is test comparison only, separate from geometry decisions/certificates. The read-only first-scope package 0.1.0 retains its older rule pending review. Decimal strings are exact references unless marked approximate; JSON numbers are nearest binary64 inputs.",
+  "assumptions": "P-1 replaced by contour input, P-2 confirmed unchanged and P-3 refined by the owner on 2026-10-15. The legacy assumes field identifies these decisions. Contour caps/winding/planarity and the missing angle cap are assumptions in F04 section 3. Constants are owner-confirmed first-slice draft values, to be validated by fixtures; pinned ifc-lite comparison is blocked.",
   "quaternion_convention": "F04 section 3: orientation_xyzw = (x, y, z, w), Hamilton, active rotation, world = R(q) * local + translation. The 90 degree turn about +Z is written with the nearest f64 0.7071067811865476 for both z and w.",
   "case_counts": {
-    "logical_cases": 83,
-    "positive": 47,
-    "negative": 36
+    "logical_cases": 96,
+    "positive": 52,
+    "negative": 44
   },
   "cases": [
     {
       "case_id": "F06-POS-01",
       "title": "Plate mesh: counts, Euler characteristic, closed shell, outward winding",
-      "given": ["Valid plate 1000 x 500 x 10 mm, identity placement, element-local space; P-1 frame"],
+      "given": [
+        "Valid plate 1000 x 500 x 10 mm, identity placement, element-local space; P-1 frame"
+      ],
       "input": {
         "body": {
           "kind": "plate",
-          "width_mm": 1000,
-          "length_mm": 500,
-          "thickness_mm": 10
+          "thickness_mm": 10,
+          "contour_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              1000,
+              0,
+              0
+            ],
+            [
+              1000,
+              500,
+              0
+            ],
+            [
+              0,
+              500,
+              0
+            ]
+          ]
         },
         "placement": {
-          "translation_mm": [0, 0, 0],
-          "orientation_xyzw": [0, 0, 0, 1]
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
         },
-        "outputs": ["mesh"]
+        "outputs": [
+          "mesh"
+        ]
       },
       "expected": {
         "status": "ok",
@@ -56,45 +89,173 @@
         "every_edge_in_two_triangles_opposite_directions": true,
         "orientation": "outward, counter-clockwise seen from outside",
         "vertices_mm": [
-          ["0", "0", "0"],
-          ["1000", "0", "0"],
-          ["0", "500", "0"],
-          ["1000", "500", "0"],
-          ["0", "0", "10"],
-          ["1000", "0", "10"],
-          ["0", "500", "10"],
-          ["1000", "500", "10"]
+          [
+            "0",
+            "0",
+            "0"
+          ],
+          [
+            "1000",
+            "0",
+            "0"
+          ],
+          [
+            "0",
+            "500",
+            "0"
+          ],
+          [
+            "1000",
+            "500",
+            "0"
+          ],
+          [
+            "0",
+            "0",
+            "10"
+          ],
+          [
+            "1000",
+            "0",
+            "10"
+          ],
+          [
+            "0",
+            "500",
+            "10"
+          ],
+          [
+            "1000",
+            "500",
+            "10"
+          ]
         ],
         "triangles": [
-          [0, 4, 6],
-          [0, 6, 2],
-          [1, 3, 7],
-          [1, 7, 5],
-          [0, 1, 5],
-          [0, 5, 4],
-          [2, 6, 7],
-          [2, 7, 3],
-          [0, 2, 3],
-          [0, 3, 1],
-          [4, 5, 7],
-          [4, 7, 6]
+          [
+            0,
+            4,
+            6
+          ],
+          [
+            0,
+            6,
+            2
+          ],
+          [
+            1,
+            3,
+            7
+          ],
+          [
+            1,
+            7,
+            5
+          ],
+          [
+            0,
+            1,
+            5
+          ],
+          [
+            0,
+            5,
+            4
+          ],
+          [
+            2,
+            6,
+            7
+          ],
+          [
+            2,
+            7,
+            3
+          ],
+          [
+            0,
+            2,
+            3
+          ],
+          [
+            0,
+            3,
+            1
+          ],
+          [
+            4,
+            5,
+            7
+          ],
+          [
+            4,
+            7,
+            6
+          ]
         ],
-        "triangle_face_index": [0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5],
-        "face_local_ids": ["x0", "x1", "y0", "y1", "z0", "z1"],
+        "triangle_face_index": [
+          0,
+          0,
+          1,
+          1,
+          2,
+          2,
+          3,
+          3,
+          4,
+          4,
+          5,
+          5
+        ],
+        "face_local_ids": [
+          "x0",
+          "x1",
+          "y0",
+          "y1",
+          "z0",
+          "z1"
+        ],
         "face_outward_normal_direction": {
-          "x0": ["-", "0", "0"],
-          "x1": ["+", "0", "0"],
-          "y0": ["0", "-", "0"],
-          "y1": ["0", "+", "0"],
-          "z0": ["0", "0", "-"],
-          "z1": ["0", "0", "+"]
+          "x0": [
+            "-",
+            "0",
+            "0"
+          ],
+          "x1": [
+            "+",
+            "0",
+            "0"
+          ],
+          "y0": [
+            "0",
+            "-",
+            "0"
+          ],
+          "y1": [
+            "0",
+            "+",
+            "0"
+          ],
+          "z0": [
+            "0",
+            "0",
+            "-"
+          ],
+          "z1": [
+            "0",
+            "0",
+            "+"
+          ]
         },
         "signed_volume_mm3": "5000000",
         "compare": "CR-TOL-001"
       },
       "derivation": "Vertex i = (xb, yb, zb) with i = xb + 2*yb + 4*zb sits at (1000*xb, 500*yb, 10*zb). Faces x0, x1, y0, y1, z0, z1 are the quads [0,4,6,2], [1,3,7,5], [0,1,5,4], [2,6,7,3], [0,2,3,1], [4,5,7,6]; quad [a,b,c,d] yields triangles (a,b,c) and (a,c,d). The 12 box edges each lie in two faces and the 6 face diagonals each lie in two triangles of one face, so the triangle mesh has 12 + 6 = 18 edges: V - E + F = 8 - 18 + 12 = 2, and for the 6-face topology 8 - 12 + 6 = 2. The face normal is (b - a) x (c - a) of the first triangle of the face; its sign pattern is listed (x0: -x, x1: +x, y0: -y, y1: +y, z0: -z, z1: +z), so every face points away from the body. Signed volume = (1/6) * sum over triangles of v0 . (v1 x v2) = 5,000,000 mm3 (divergence theorem) = 1000*500*10; positive means outward.",
-      "first_scope_refs": ["FS-PLATE-A"],
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "first_scope_refs": [
+        "FS-PLATE-A"
+      ],
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-02",
@@ -105,13 +266,42 @@
       "input": {
         "body": {
           "kind": "plate",
-          "width_mm": 1000,
-          "length_mm": 500,
-          "thickness_mm": 10
+          "thickness_mm": 10,
+          "contour_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              1000,
+              0,
+              0
+            ],
+            [
+              1000,
+              500,
+              0
+            ],
+            [
+              0,
+              500,
+              0
+            ]
+          ]
         },
         "placement": {
-          "translation_mm": [0, 0, 0],
-          "orientation_xyzw": [0, 0, 0, 1]
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
         },
         "space": "element_local"
       },
@@ -134,25 +324,64 @@
         "mesh_digest_sha256": "dce6476e9f58de6bfd38bef48e169972e4ddf22264b806f12f933b557a30ed86"
       },
       "derivation": "Length = 32 + 24*8 + pad8(12*12) + pad8(2*12) = 32 + 192 + 144 + 24 = 392 bytes; offsets 32, 32 + 192 = 224, 224 + 144 = 368 and 368 + 24 = 392. The digest is the SHA-256 of the 392 bytes laid out by section 6 of the contract: magic BCMESH01, then little-endian u32 layout 1, vertex count 8, triangle count 12, face count 6, space 0 and reserved 0; eight vertices as little-endian binary64 with negative zero normalized; twelve u32 index triples; twelve u16 face indices. It was computed by a throwaway script from those rules.",
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-03",
       "title": "Plate quantities and local bounds; mass unknown without density",
-      "given": ["Plate 1000 x 500 x 10 mm; no material", "Same plate with explicit density 1000 kg/m3"],
+      "given": [
+        "Plate 1000 x 500 x 10 mm; no material",
+        "Same plate with explicit density 1000 kg/m3"
+      ],
       "input": {
         "body": {
           "kind": "plate",
-          "width_mm": 1000,
-          "length_mm": 500,
-          "thickness_mm": 10
+          "thickness_mm": 10,
+          "contour_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              1000,
+              0,
+              0
+            ],
+            [
+              1000,
+              500,
+              0
+            ],
+            [
+              0,
+              500,
+              0
+            ]
+          ]
         },
         "placement": {
-          "translation_mm": [0, 0, 0],
-          "orientation_xyzw": [0, 0, 0, 1]
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
         },
-        "density_kg_m3": [null, 1000],
-        "outputs": ["quantities"]
+        "density_kg_m3": [
+          null,
+          1000
+        ],
+        "outputs": [
+          "quantities"
+        ]
       },
       "expected": {
         "status": "ok",
@@ -161,9 +390,18 @@
         "surface_area_mm2": "1030000",
         "surface_area_m2": "1.03",
         "local_bounds_mm": {
-          "x": ["0", "1000"],
-          "y": ["0", "500"],
-          "z": ["0", "10"]
+          "x": [
+            "0",
+            "1000"
+          ],
+          "y": [
+            "0",
+            "500"
+          ],
+          "z": [
+            "0",
+            "10"
+          ]
         },
         "volume_status": "current",
         "area_status": "current",
@@ -174,9 +412,17 @@
         "compare": "CR-TOL-001"
       },
       "derivation": "V = 1000*500*10 = 5,000,000 mm3 = 0.005 m3 (1 m3 = 10^9 mm3). S = 2*(1000*500 + 1000*10 + 500*10) = 2*(500,000 + 10,000 + 5,000) = 1,030,000 mm2 = 1.03 m2 (1 m2 = 10^6 mm2). m = 0.005 m3 * 1000 kg/m3 = 5 kg. Local bounds follow from P-1: [0, 1000] x [0, 500] x [0, 10]. Bounds are an axis-aligned box, not the volume.",
-      "f04_refs": ["F04-POS-01", "F04-POS-14"],
-      "first_scope_refs": ["FS-PLATE-A", "FS-PLATE-A-MASS"],
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "f04_refs": [
+        "F04-POS-01",
+        "F04-POS-14"
+      ],
+      "first_scope_refs": [
+        "FS-PLATE-A",
+        "FS-PLATE-A-MASS"
+      ],
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-04",
@@ -188,7 +434,18 @@
       "input": {
         "body": {
           "kind": "member",
-          "axis_points_mm": [[0, 0, 0], [4000, 0, 0]],
+          "axis_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              4000,
+              0,
+              0
+            ]
+          ],
           "profile": {
             "kind": "rectangle",
             "width_mm": 200,
@@ -196,32 +453,94 @@
           }
         },
         "placement": {
-          "translation_mm": [0, 0, 0],
-          "orientation_xyzw": [0, 0, 0, 1]
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
         }
       },
       "expected": {
         "status": "ok",
         "member_frame": {
-          "X_m": ["0", "1", "0"],
-          "Y_m": ["0", "0", "1"],
-          "Z_m": ["1", "0", "0"]
+          "X_m": [
+            "0",
+            "1",
+            "0"
+          ],
+          "Y_m": [
+            "0",
+            "0",
+            "1"
+          ],
+          "Z_m": [
+            "1",
+            "0",
+            "0"
+          ]
         },
         "axis_length_mm": "4000",
         "vertices_mm": [
-          ["0", "-100", "-150"],
-          ["0", "100", "-150"],
-          ["0", "-100", "150"],
-          ["0", "100", "150"],
-          ["4000", "-100", "-150"],
-          ["4000", "100", "-150"],
-          ["4000", "-100", "150"],
-          ["4000", "100", "150"]
+          [
+            "0",
+            "-100",
+            "-150"
+          ],
+          [
+            "0",
+            "100",
+            "-150"
+          ],
+          [
+            "0",
+            "-100",
+            "150"
+          ],
+          [
+            "0",
+            "100",
+            "150"
+          ],
+          [
+            "4000",
+            "-100",
+            "-150"
+          ],
+          [
+            "4000",
+            "100",
+            "-150"
+          ],
+          [
+            "4000",
+            "-100",
+            "150"
+          ],
+          [
+            "4000",
+            "100",
+            "150"
+          ]
         ],
         "local_bounds_mm": {
-          "x": ["0", "4000"],
-          "y": ["-100", "100"],
-          "z": ["-150", "150"]
+          "x": [
+            "0",
+            "4000"
+          ],
+          "y": [
+            "-100",
+            "100"
+          ],
+          "z": [
+            "-150",
+            "150"
+          ]
         },
         "volume_mm3": "240000000",
         "surface_area_mm2": "4120000",
@@ -233,9 +552,16 @@
         "compare": "CR-TOL-001"
       },
       "derivation": "d = (4000, 0, 0), L = 4000, Z_m = (1, 0, 0). Horizontal component h = 4000 and Y_m = (-dx*dz, -dy*dz, dx^2 + dy^2)/(h*L) = (0, 0, 16,000,000)/16,000,000 = (0, 0, 1); X_m = Y_m x Z_m = (0, 1, 0). Section 200 x 300: origin corner = p1 - (w/2) X_m - (h/2) Y_m, edge vectors w X_m, h Y_m and L Z_m (right-handed, X_m x Y_m = Z_m), vertex i = xb + 2*yb + 4*zb as in F06-POS-01, so its winding and Euler results apply unchanged. L = 4000; V = 200*300*4000 = 240000000 mm3 and the 12-triangle signed-volume sum equals it exactly (checked with rational arithmetic). S = 2*(w*h + w*L + h*L) = 4120000 mm2. Bounds are the minimum and maximum of the eight exact vertex coordinates.",
-      "f04_refs": ["F04-POS-15"],
-      "first_scope_refs": ["FS-MEMBER-A"],
-      "assumes": ["P-2 (assumed pending owner confirmation)", "P-3 (assumed pending owner confirmation)"]
+      "f04_refs": [
+        "F04-POS-15"
+      ],
+      "first_scope_refs": [
+        "FS-MEMBER-A"
+      ],
+      "assumes": [
+        "P-2 (owner decision recorded 2026-10-15)",
+        "P-3 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-05",
@@ -247,7 +573,18 @@
       "input": {
         "body": {
           "kind": "member",
-          "axis_points_mm": [[0, 0, 0], [0, 0, 3000]],
+          "axis_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              3000
+            ]
+          ],
           "profile": {
             "kind": "rectangle",
             "width_mm": 200,
@@ -255,32 +592,94 @@
           }
         },
         "placement": {
-          "translation_mm": [0, 0, 0],
-          "orientation_xyzw": [0, 0, 0, 1]
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
         }
       },
       "expected": {
         "status": "ok",
         "member_frame": {
-          "X_m": ["1", "0", "0"],
-          "Y_m": ["0", "1", "0"],
-          "Z_m": ["0", "0", "1"]
+          "X_m": [
+            "1",
+            "0",
+            "0"
+          ],
+          "Y_m": [
+            "0",
+            "1",
+            "0"
+          ],
+          "Z_m": [
+            "0",
+            "0",
+            "1"
+          ]
         },
         "axis_length_mm": "3000",
         "vertices_mm": [
-          ["-100", "-150", "0"],
-          ["100", "-150", "0"],
-          ["-100", "150", "0"],
-          ["100", "150", "0"],
-          ["-100", "-150", "3000"],
-          ["100", "-150", "3000"],
-          ["-100", "150", "3000"],
-          ["100", "150", "3000"]
+          [
+            "-100",
+            "-150",
+            "0"
+          ],
+          [
+            "100",
+            "-150",
+            "0"
+          ],
+          [
+            "-100",
+            "150",
+            "0"
+          ],
+          [
+            "100",
+            "150",
+            "0"
+          ],
+          [
+            "-100",
+            "-150",
+            "3000"
+          ],
+          [
+            "100",
+            "-150",
+            "3000"
+          ],
+          [
+            "-100",
+            "150",
+            "3000"
+          ],
+          [
+            "100",
+            "150",
+            "3000"
+          ]
         ],
         "local_bounds_mm": {
-          "x": ["-100", "100"],
-          "y": ["-150", "150"],
-          "z": ["0", "3000"]
+          "x": [
+            "-100",
+            "100"
+          ],
+          "y": [
+            "-150",
+            "150"
+          ],
+          "z": [
+            "0",
+            "3000"
+          ]
         },
         "volume_mm3": "180000000",
         "surface_area_mm2": "3120000",
@@ -292,8 +691,13 @@
         "compare": "CR-TOL-001"
       },
       "derivation": "d = (0, 0, 3000), L = 3000, Z_m = (0, 0, 1). dx = dy = 0, so the axis is exactly parallel to local Z: column rule Y_m = (0, 1, 0), X_m = Y_m x Z_m = (1, 0, 0). Section 200 x 300: origin corner = p1 - (w/2) X_m - (h/2) Y_m, edge vectors w X_m, h Y_m and L Z_m (right-handed, X_m x Y_m = Z_m), vertex i = xb + 2*yb + 4*zb as in F06-POS-01, so its winding and Euler results apply unchanged. L = 3000; V = 200*300*3000 = 180000000 mm3 and the 12-triangle signed-volume sum equals it exactly (checked with rational arithmetic). S = 2*(w*h + w*L + h*L) = 3120000 mm2. Bounds are the minimum and maximum of the eight exact vertex coordinates.",
-      "f04_refs": ["F04-POS-16"],
-      "assumes": ["P-2 (assumed pending owner confirmation)", "P-3 (assumed pending owner confirmation)"]
+      "f04_refs": [
+        "F04-POS-16"
+      ],
+      "assumes": [
+        "P-2 (owner decision recorded 2026-10-15)",
+        "P-3 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-06",
@@ -305,7 +709,18 @@
       "input": {
         "body": {
           "kind": "member",
-          "axis_points_mm": [[0, 0, 3000], [0, 0, 0]],
+          "axis_points_mm": [
+            [
+              0,
+              0,
+              3000
+            ],
+            [
+              0,
+              0,
+              0
+            ]
+          ],
           "profile": {
             "kind": "rectangle",
             "width_mm": 200,
@@ -313,32 +728,94 @@
           }
         },
         "placement": {
-          "translation_mm": [0, 0, 0],
-          "orientation_xyzw": [0, 0, 0, 1]
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
         }
       },
       "expected": {
         "status": "ok",
         "member_frame": {
-          "X_m": ["-1", "0", "0"],
-          "Y_m": ["0", "1", "0"],
-          "Z_m": ["0", "0", "-1"]
+          "X_m": [
+            "-1",
+            "0",
+            "0"
+          ],
+          "Y_m": [
+            "0",
+            "1",
+            "0"
+          ],
+          "Z_m": [
+            "0",
+            "0",
+            "-1"
+          ]
         },
         "axis_length_mm": "3000",
         "vertices_mm": [
-          ["100", "-150", "3000"],
-          ["-100", "-150", "3000"],
-          ["100", "150", "3000"],
-          ["-100", "150", "3000"],
-          ["100", "-150", "0"],
-          ["-100", "-150", "0"],
-          ["100", "150", "0"],
-          ["-100", "150", "0"]
+          [
+            "100",
+            "-150",
+            "3000"
+          ],
+          [
+            "-100",
+            "-150",
+            "3000"
+          ],
+          [
+            "100",
+            "150",
+            "3000"
+          ],
+          [
+            "-100",
+            "150",
+            "3000"
+          ],
+          [
+            "100",
+            "-150",
+            "0"
+          ],
+          [
+            "-100",
+            "-150",
+            "0"
+          ],
+          [
+            "100",
+            "150",
+            "0"
+          ],
+          [
+            "-100",
+            "150",
+            "0"
+          ]
         ],
         "local_bounds_mm": {
-          "x": ["-100", "100"],
-          "y": ["-150", "150"],
-          "z": ["0", "3000"]
+          "x": [
+            "-100",
+            "100"
+          ],
+          "y": [
+            "-150",
+            "150"
+          ],
+          "z": [
+            "0",
+            "3000"
+          ]
         },
         "volume_mm3": "180000000",
         "surface_area_mm2": "3120000",
@@ -350,7 +827,10 @@
         "compare": "CR-TOL-001"
       },
       "derivation": "d = (0, 0, -3000), L = 3000, Z_m = (0, 0, -1). Anti-parallel to local Z counts as parallel: column rule Y_m = (0, 1, 0) and X_m = Y_m x Z_m = (1*(-1) - 0*0, 0*0 - 0*(-1), 0*0 - 1*0) = (-1, 0, 0). The vertex set is the same box as F06-POS-05, but the FeatureIds of the x and z faces name the opposite physical faces. Section 200 x 300: origin corner = p1 - (w/2) X_m - (h/2) Y_m, edge vectors w X_m, h Y_m and L Z_m (right-handed, X_m x Y_m = Z_m), vertex i = xb + 2*yb + 4*zb as in F06-POS-01, so its winding and Euler results apply unchanged. L = 3000; V = 200*300*3000 = 180000000 mm3 and the 12-triangle signed-volume sum equals it exactly (checked with rational arithmetic). S = 2*(w*h + w*L + h*L) = 3120000 mm2. Bounds are the minimum and maximum of the eight exact vertex coordinates.",
-      "assumes": ["P-2 (assumed pending owner confirmation)", "P-3 (assumed pending owner confirmation)"]
+      "assumes": [
+        "P-2 (owner decision recorded 2026-10-15)",
+        "P-3 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-07",
@@ -362,7 +842,18 @@
       "input": {
         "body": {
           "kind": "member",
-          "axis_points_mm": [[0, 0, 0], [0, 3000, 4000]],
+          "axis_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              3000,
+              4000
+            ]
+          ],
           "profile": {
             "kind": "rectangle",
             "width_mm": 200,
@@ -370,33 +861,95 @@
           }
         },
         "placement": {
-          "translation_mm": [0, 0, 0],
-          "orientation_xyzw": [0, 0, 0, 1]
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
         },
         "density_kg_m3": 2000
       },
       "expected": {
         "status": "ok",
         "member_frame": {
-          "X_m": ["-1", "0", "0"],
-          "Y_m": ["0", "-0.8", "0.6"],
-          "Z_m": ["0", "0.6", "0.8"]
+          "X_m": [
+            "-1",
+            "0",
+            "0"
+          ],
+          "Y_m": [
+            "0",
+            "-0.8",
+            "0.6"
+          ],
+          "Z_m": [
+            "0",
+            "0.6",
+            "0.8"
+          ]
         },
         "axis_length_mm": "5000",
         "vertices_mm": [
-          ["100", "120", "-90"],
-          ["-100", "120", "-90"],
-          ["100", "-120", "90"],
-          ["-100", "-120", "90"],
-          ["100", "3120", "3910"],
-          ["-100", "3120", "3910"],
-          ["100", "2880", "4090"],
-          ["-100", "2880", "4090"]
+          [
+            "100",
+            "120",
+            "-90"
+          ],
+          [
+            "-100",
+            "120",
+            "-90"
+          ],
+          [
+            "100",
+            "-120",
+            "90"
+          ],
+          [
+            "-100",
+            "-120",
+            "90"
+          ],
+          [
+            "100",
+            "3120",
+            "3910"
+          ],
+          [
+            "-100",
+            "3120",
+            "3910"
+          ],
+          [
+            "100",
+            "2880",
+            "4090"
+          ],
+          [
+            "-100",
+            "2880",
+            "4090"
+          ]
         ],
         "local_bounds_mm": {
-          "x": ["-100", "100"],
-          "y": ["-120", "3120"],
-          "z": ["-90", "4090"]
+          "x": [
+            "-100",
+            "100"
+          ],
+          "y": [
+            "-120",
+            "3120"
+          ],
+          "z": [
+            "-90",
+            "4090"
+          ]
         },
         "volume_mm3": "300000000",
         "surface_area_mm2": "5120000",
@@ -409,7 +962,10 @@
         "mass_kg": "600"
       },
       "derivation": "d = (0, 3000, 4000), L = 5000 (3-4-5 triple), Z_m = (0, 0.6, 0.8). h = 3000; Y_m = (-dx*dz, -dy*dz, h^2)/(h*L) = (0, -12,000,000, 9,000,000)/15,000,000 = (0, -0.8, 0.6); check Y_m . Z_m = -0.48 + 0.48 = 0 and Y_m . (0,0,1) = 0.6 > 0. X_m = Y_m x Z_m = (-0.8*0.8 - 0.6*0.6, 0, 0) = (-1, 0, 0). Section 200 x 300: origin corner = p1 - (w/2) X_m - (h/2) Y_m, edge vectors w X_m, h Y_m and L Z_m (right-handed, X_m x Y_m = Z_m), vertex i = xb + 2*yb + 4*zb as in F06-POS-01, so its winding and Euler results apply unchanged. L = 5000; V = 200*300*5000 = 300000000 mm3 and the 12-triangle signed-volume sum equals it exactly (checked with rational arithmetic). S = 2*(w*h + w*L + h*L) = 5120000 mm2. Bounds are the minimum and maximum of the eight exact vertex coordinates. m = V * 1e-9 m3/mm3 * 2000 kg/m3 = 600 kg.",
-      "assumes": ["P-2 (assumed pending owner confirmation)", "P-3 (assumed pending owner confirmation)"]
+      "assumes": [
+        "P-2 (owner decision recorded 2026-10-15)",
+        "P-3 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-08",
@@ -421,7 +977,18 @@
       "input": {
         "body": {
           "kind": "member",
-          "axis_points_mm": [[0, 0, 0], [3000, 4000, 0]],
+          "axis_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              3000,
+              4000,
+              0
+            ]
+          ],
           "profile": {
             "kind": "rectangle",
             "width_mm": 100,
@@ -429,32 +996,94 @@
           }
         },
         "placement": {
-          "translation_mm": [0, 0, 0],
-          "orientation_xyzw": [0, 0, 0, 1]
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
         }
       },
       "expected": {
         "status": "ok",
         "member_frame": {
-          "X_m": ["-0.8", "0.6", "0"],
-          "Y_m": ["0", "0", "1"],
-          "Z_m": ["0.6", "0.8", "0"]
+          "X_m": [
+            "-0.8",
+            "0.6",
+            "0"
+          ],
+          "Y_m": [
+            "0",
+            "0",
+            "1"
+          ],
+          "Z_m": [
+            "0.6",
+            "0.8",
+            "0"
+          ]
         },
         "axis_length_mm": "5000",
         "vertices_mm": [
-          ["40", "-30", "-150"],
-          ["-40", "30", "-150"],
-          ["40", "-30", "150"],
-          ["-40", "30", "150"],
-          ["3040", "3970", "-150"],
-          ["2960", "4030", "-150"],
-          ["3040", "3970", "150"],
-          ["2960", "4030", "150"]
+          [
+            "40",
+            "-30",
+            "-150"
+          ],
+          [
+            "-40",
+            "30",
+            "-150"
+          ],
+          [
+            "40",
+            "-30",
+            "150"
+          ],
+          [
+            "-40",
+            "30",
+            "150"
+          ],
+          [
+            "3040",
+            "3970",
+            "-150"
+          ],
+          [
+            "2960",
+            "4030",
+            "-150"
+          ],
+          [
+            "3040",
+            "3970",
+            "150"
+          ],
+          [
+            "2960",
+            "4030",
+            "150"
+          ]
         ],
         "local_bounds_mm": {
-          "x": ["-40", "3040"],
-          "y": ["-30", "4030"],
-          "z": ["-150", "150"]
+          "x": [
+            "-40",
+            "3040"
+          ],
+          "y": [
+            "-30",
+            "4030"
+          ],
+          "z": [
+            "-150",
+            "150"
+          ]
         },
         "volume_mm3": "150000000",
         "surface_area_mm2": "4060000",
@@ -466,7 +1095,10 @@
         "compare": "CR-TOL-001"
       },
       "derivation": "d = (3000, 4000, 0), L = 5000, Z_m = (0.6, 0.8, 0). h = 5000; Y_m = (0, 0, 25,000,000)/25,000,000 = (0, 0, 1); X_m = Y_m x Z_m = (0*0 - 1*0.8, 1*0.6 - 0*0, 0) = (-0.8, 0.6, 0). Section 100 x 300: origin corner = p1 - (w/2) X_m - (h/2) Y_m, edge vectors w X_m, h Y_m and L Z_m (right-handed, X_m x Y_m = Z_m), vertex i = xb + 2*yb + 4*zb as in F06-POS-01, so its winding and Euler results apply unchanged. L = 5000; V = 100*300*5000 = 150000000 mm3 and the 12-triangle signed-volume sum equals it exactly (checked with rational arithmetic). S = 2*(w*h + w*L + h*L) = 4060000 mm2. Bounds are the minimum and maximum of the eight exact vertex coordinates.",
-      "assumes": ["P-2 (assumed pending owner confirmation)", "P-3 (assumed pending owner confirmation)"]
+      "assumes": [
+        "P-2 (owner decision recorded 2026-10-15)",
+        "P-3 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-09",
@@ -477,7 +1109,18 @@
       "input": {
         "body": {
           "kind": "member",
-          "axis_points_mm": [[0, 0, 0], [0.0005, 0, 1000]],
+          "axis_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              0.0005,
+              0,
+              1000
+            ]
+          ],
           "profile": {
             "kind": "rectangle",
             "width_mm": 200,
@@ -485,22 +1128,48 @@
           }
         },
         "placement": {
-          "translation_mm": [0, 0, 0],
-          "orientation_xyzw": [0, 0, 0, 1]
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
         }
       },
       "expected": {
         "status": "ok",
         "rule_used": "column",
-        "Y_m": ["0", "1", "0"],
+        "Y_m": [
+          "0",
+          "1",
+          "0"
+        ],
         "horizontal_ratio_approx": "5e-7",
-        "Z_m_approx": ["5e-07", "0", "1"],
-        "X_m_approx": ["1", "0", "-5e-07"],
+        "Z_m_approx": [
+          "5e-07",
+          "0",
+          "1"
+        ],
+        "X_m_approx": [
+          "1",
+          "0",
+          "-5e-07"
+        ],
         "compare": "CR-TOL-001"
       },
       "derivation": "h = 0.0005 and L = sqrt(1000^2 + 0.0005^2) ~ 1000.000000000125, so h/L ~ 5e-7 < 1e-6 with a factor-two margin: the decision does not depend on rounding. Column rule: Y_m = (0, 1, 0) exactly; Z_m is still the true axis direction (only the roll rule is switched) and X_m = Y_m x Z_m. The approximate vectors were computed in binary64 as a regression aid; only the branch and Y_m are asserted exactly.",
-      "f04_refs": ["F04-POS-16"],
-      "assumes": ["P-2 (assumed pending owner confirmation)", "P-3 (assumed pending owner confirmation)"]
+      "f04_refs": [
+        "F04-POS-16"
+      ],
+      "assumes": [
+        "P-2 (owner decision recorded 2026-10-15)",
+        "P-3 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-10",
@@ -511,7 +1180,18 @@
       "input": {
         "body": {
           "kind": "member",
-          "axis_points_mm": [[0, 0, 0], [0.002, 0, 1000]],
+          "axis_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              0.002,
+              0,
+              1000
+            ]
+          ],
           "profile": {
             "kind": "rectangle",
             "width_mm": 200,
@@ -519,21 +1199,41 @@
           }
         },
         "placement": {
-          "translation_mm": [0, 0, 0],
-          "orientation_xyzw": [0, 0, 0, 1]
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
         }
       },
       "expected": {
         "status": "ok",
         "rule_used": "horizontal",
         "horizontal_ratio_approx": "1.9999999999960000000e-6",
-        "Y_m_approx": ["-0.999999999998", "-0", "1.9999999999960000000e-6"],
-        "X_m_approx": ["-0", "1", "0"],
+        "Y_m_approx": [
+          "-0.999999999998",
+          "-0",
+          "1.9999999999960000000e-6"
+        ],
+        "X_m_approx": [
+          "-0",
+          "1",
+          "0"
+        ],
         "Y_m_dot_local_z_positive": true,
         "compare": "CR-TOL-001"
       },
       "derivation": "h = 0.002, LL = 250000000001/250000 and L = sqrt(250000000001)/500 ~ 1000.0000000020000000; h/L ~ 1.9999999999960000000e-6 > 1e-6 with a factor-two margin: the horizontal rule applies. Y_m = (-dx*dz, -dy*dz, h^2)/(h*L) = (-2, 0, 4e-6)/(0.002*L) = (-1000/L, 0, 0.002/L), with Y_m . (0,0,1) = h/L > 0, and X_m = Y_m x Z_m = (0, 1, 0). For this +X tilt from +Z, the horizontal frame is exactly +90 degrees about the same axis from the near-vertical branch frame (right-hand rule). This is also the limiting roll jump between F06-POS-09 and this case as their axes approach the threshold; their finite axes differ, so their full relative rotation is not solely about one common axis (contract section 4). The exact forms use rational decimal inputs; binary64 results are compared with CR-TOL-001.",
-      "assumes": ["P-2 (assumed pending owner confirmation)", "P-3 (assumed pending owner confirmation)"]
+      "assumes": [
+        "P-2 (owner decision recorded 2026-10-15)",
+        "P-3 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-11",
@@ -544,32 +1244,102 @@
       "input": {
         "body": {
           "kind": "plate",
-          "width_mm": 1000,
-          "length_mm": 500,
-          "thickness_mm": 10
+          "thickness_mm": 10,
+          "contour_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              1000,
+              0,
+              0
+            ],
+            [
+              1000,
+              500,
+              0
+            ],
+            [
+              0,
+              500,
+              0
+            ]
+          ]
         },
         "placement": {
-          "translation_mm": [100, 200, 300],
-          "orientation_xyzw": [0, 0, 0.7071067811865476, 0.7071067811865476]
+          "translation_mm": [
+            100,
+            200,
+            300
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0.7071067811865476,
+            0.7071067811865476
+          ]
         },
         "space": "world"
       },
       "expected": {
         "status": "ok",
         "world_vertices_mm": [
-          ["100", "200", "300"],
-          ["100", "1200", "300"],
-          ["-400", "200", "300"],
-          ["-400", "1200", "300"],
-          ["100", "200", "310"],
-          ["100", "1200", "310"],
-          ["-400", "200", "310"],
-          ["-400", "1200", "310"]
+          [
+            "100",
+            "200",
+            "300"
+          ],
+          [
+            "100",
+            "1200",
+            "300"
+          ],
+          [
+            "-400",
+            "200",
+            "300"
+          ],
+          [
+            "-400",
+            "1200",
+            "300"
+          ],
+          [
+            "100",
+            "200",
+            "310"
+          ],
+          [
+            "100",
+            "1200",
+            "310"
+          ],
+          [
+            "-400",
+            "200",
+            "310"
+          ],
+          [
+            "-400",
+            "1200",
+            "310"
+          ]
         ],
         "world_bounds_mm": {
-          "x": ["-400", "100"],
-          "y": ["200", "1200"],
-          "z": ["300", "310"]
+          "x": [
+            "-400",
+            "100"
+          ],
+          "y": [
+            "200",
+            "1200"
+          ],
+          "z": [
+            "300",
+            "310"
+          ]
         },
         "signed_volume_mm3": "5000000",
         "euler_V_minus_E_plus_F": 2,
@@ -581,18 +1351,37 @@
         "compare": "CR-TOL-001"
       },
       "derivation": "R(q) for +90 degrees about +Z maps (x, y, z) to (-y, x, z) (F04 worked example). World vertex = R*local + t = (100 - y, 200 + x, 300 + z). The local box [0,1000] x [0,500] x [0,10] gives x in [100 - 500, 100] = [-400, 100], y in [200, 200 + 1000] = [200, 1200] and z in [300, 310]. A proper rotation preserves orientation, so the signed volume stays 5,000,000 mm3 and the triangle tables are unchanged. The shape key excludes placement; the world key includes it.",
-      "f04_refs": ["F04-POS-10"],
-      "first_scope_refs": ["FS-POSE-A"],
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "f04_refs": [
+        "F04-POS-10"
+      ],
+      "first_scope_refs": [
+        "FS-POSE-A"
+      ],
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-12",
       "title": "Rotated and translated horizontal member: world bounds",
-      "given": ["Member of F06-POS-04 with placement +90 degrees about +Z and translation (-50, 70, 1000)"],
+      "given": [
+        "Member of F06-POS-04 with placement +90 degrees about +Z and translation (-50, 70, 1000)"
+      ],
       "input": {
         "body": {
           "kind": "member",
-          "axis_points_mm": [[0, 0, 0], [4000, 0, 0]],
+          "axis_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              4000,
+              0,
+              0
+            ]
+          ],
           "profile": {
             "kind": "rectangle",
             "width_mm": 200,
@@ -600,17 +1389,35 @@
           }
         },
         "placement": {
-          "translation_mm": [-50, 70, 1000],
-          "orientation_xyzw": [0, 0, 0.7071067811865476, 0.7071067811865476]
+          "translation_mm": [
+            -50,
+            70,
+            1000
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0.7071067811865476,
+            0.7071067811865476
+          ]
         },
         "space": "world"
       },
       "expected": {
         "status": "ok",
         "world_bounds_mm": {
-          "x": ["-150", "50"],
-          "y": ["70", "4070"],
-          "z": ["850", "1150"]
+          "x": [
+            "-150",
+            "50"
+          ],
+          "y": [
+            "70",
+            "4070"
+          ],
+          "z": [
+            "850",
+            "1150"
+          ]
         },
         "signed_volume_mm3": "240000000",
         "closed_shell": true,
@@ -619,9 +1426,16 @@
         "compare": "CR-TOL-001"
       },
       "derivation": "Local bounds from F06-POS-04 are x [0, 4000], y [-100, 100], z [-150, 150]. World = (-50 - y, 70 + x, 1000 + z): x in [-50 - 100, -50 + 100] = [-150, 50], y in [70, 4070], z in [850, 1150]. Volume 200*300*4000 = 240,000,000 mm3 is unchanged by the rigid transform.",
-      "f04_refs": ["F04-POS-10"],
-      "first_scope_refs": ["FS-POSE-A"],
-      "assumes": ["P-2 (assumed pending owner confirmation)", "P-3 (assumed pending owner confirmation)"]
+      "f04_refs": [
+        "F04-POS-10"
+      ],
+      "first_scope_refs": [
+        "FS-POSE-A"
+      ],
+      "assumes": [
+        "P-2 (owner decision recorded 2026-10-15)",
+        "P-3 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-13",
@@ -633,7 +1447,18 @@
       "input": {
         "body": {
           "kind": "member",
-          "axis_points_mm": [[0, 0, 0], [4000, 0, 0]],
+          "axis_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              4000,
+              0,
+              0
+            ]
+          ],
           "profile": {
             "kind": "rectangle",
             "width_mm": 200,
@@ -641,10 +1466,22 @@
           }
         },
         "placement": {
-          "translation_mm": [0, 0, 0],
-          "orientation_xyzw": [0, 0, 0, 1]
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
         },
-        "density_kg_m3": [null, 2000]
+        "density_kg_m3": [
+          null,
+          2000
+        ]
       },
       "expected": {
         "status": "ok",
@@ -658,9 +1495,16 @@
         "compare": "CR-TOL-001"
       },
       "derivation": "V = 200*300*4000 = 240,000,000 mm3 = 0.24 m3; S = 2*(60,000 + 800,000 + 1,200,000) = 4,120,000 mm2 = 4.12 m2; m = 0.24*2000 = 480 kg. For this axis-aligned member the bounding box happens to have the same volume, but a bounds volume is still never reported as volume or mass.",
-      "f04_refs": ["F04-POS-07"],
-      "first_scope_refs": ["FS-MEMBER-A"],
-      "assumes": ["P-2 (assumed pending owner confirmation)", "P-3 (assumed pending owner confirmation)"]
+      "f04_refs": [
+        "F04-POS-07"
+      ],
+      "first_scope_refs": [
+        "FS-MEMBER-A"
+      ],
+      "assumes": [
+        "P-2 (owner decision recorded 2026-10-15)",
+        "P-3 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-14",
@@ -673,13 +1517,44 @@
         "bodies": [
           {
             "kind": "plate",
-            "width_mm": 1000,
-            "length_mm": 500,
-            "thickness_mm": 0.001
+            "thickness_mm": 0.001,
+            "contour_points_mm": [
+              [
+                0,
+                0,
+                0
+              ],
+              [
+                1000,
+                0,
+                0
+              ],
+              [
+                1000,
+                500,
+                0
+              ],
+              [
+                0,
+                500,
+                0
+              ]
+            ]
           },
           {
             "kind": "member",
-            "axis_points_mm": [[0, 0, 0], [0.001, 0, 0]],
+            "axis_points_mm": [
+              [
+                0,
+                0,
+                0
+              ],
+              [
+                0.001,
+                0,
+                0
+              ]
+            ],
             "profile": {
               "kind": "rectangle",
               "width_mm": 200,
@@ -698,19 +1573,32 @@
       },
       "derivation": "sqrt(x*x) equals |x| exactly in binary64 (no overflow or underflow), so an axis along one coordinate has length exactly the submitted f64 value 0.001, which equals the minimum constant, and is accepted. Plate V = 1000*500*0.001 = 500 mm3 = 5e-7 m3; member V = 200*300*0.001 = 60 mm3. The decimal 0.001 is not exactly representable; the expected values are the exact decimal products and are compared with CR-TOL-001.",
       "assumes": [
-        "P-1 (assumed pending owner confirmation)",
-        "P-2 (assumed pending owner confirmation)",
-        "P-3 (assumed pending owner confirmation)"
+        "P-1 (owner decision recorded 2026-10-15)",
+        "P-2 (owner decision recorded 2026-10-15)",
+        "P-3 (owner decision recorded 2026-10-15)"
       ]
     },
     {
       "case_id": "F06-POS-15",
       "title": "Section dimension exactly at the 1,000,000 mm cap is accepted",
-      "given": ["Member axis (0,0,0) to (0,0,1000) with section 1000000 x 1000000"],
+      "given": [
+        "Member axis (0,0,0) to (0,0,1000) with section 1000000 x 1000000"
+      ],
       "input": {
         "body": {
           "kind": "member",
-          "axis_points_mm": [[0, 0, 0], [0, 0, 1000]],
+          "axis_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1000
+            ]
+          ],
           "profile": {
             "kind": "rectangle",
             "width_mm": 1000000,
@@ -718,8 +1606,17 @@
           }
         },
         "placement": {
-          "translation_mm": [0, 0, 0],
-          "orientation_xyzw": [0, 0, 0, 1]
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
         }
       },
       "expected": {
@@ -729,8 +1626,13 @@
         "compare": "CR-TOL-001"
       },
       "derivation": "V = 10^6 * 10^6 * 10^3 = 10^15 mm3 = 10^6 m3. The cap equals the F04 plate-dimension cap (draft proposal; F04 has no section cap).",
-      "first_scope_refs": ["FS-MEMBER-B"],
-      "assumes": ["P-2 (assumed pending owner confirmation)", "P-3 (assumed pending owner confirmation)"]
+      "first_scope_refs": [
+        "FS-MEMBER-B"
+      ],
+      "assumes": [
+        "P-2 (owner decision recorded 2026-10-15)",
+        "P-3 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-16",
@@ -741,7 +1643,11 @@
       ],
       "input": {
         "element_id": "019a7bf0-0000-7000-8000-000000000005",
-        "steps": ["rebuild", "placement_update", "width_update_750"]
+        "steps": [
+          "rebuild",
+          "placement_update",
+          "width_update_750"
+        ]
       },
       "expected": {
         "feature_id_count": 26,
@@ -780,7 +1686,9 @@
         ]
       },
       "derivation": "A FeatureId is \"fid1:\" + ElementId + \":\" + local id; the local id is built only from the body kind and the role tokens of the faces that meet at the feature (6 faces + 12 edges + 8 vertices = 26). No input of that string depends on dimensions, placement, vertex order or triangle order, so only a change of ElementId, body kind or rule version changes it. Mesh bytes are a pure function of the shape input: identical after rebuild, different after a width change.",
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-17",
@@ -803,13 +1711,19 @@
         "example_copy": "fid1:019a7bf0-0000-7000-8000-000000000006:plate:f.z1"
       },
       "derivation": "The qualified id embeds the 36-character ElementId, so the 26 ids of the source and the 26 of the copy are pairwise different (52 distinct strings). The shape key and the element-local mesh bytes depend only on the shape, so they are shared until an edit, as F04 requires.",
-      "f04_refs": ["F04-POS-03"],
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "f04_refs": [
+        "F04-POS-03"
+      ],
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-18",
       "title": "FeatureId grammar and bounded length",
-      "given": ["Longest form: member vertex with three role tokens"],
+      "given": [
+        "Longest form: member vertex with three role tokens"
+      ],
       "input": {
         "longest_example": "fid1:019a7bf0-0000-7000-8000-000000000005:member:v.x1.y1.z1"
       },
@@ -826,7 +1740,10 @@
         }
       },
       "derivation": "\"fid1:\" (5) + ElementId (36) + \":\" (1) + \"member:\" (7) + \"v.x1.y1.z1\" (10) = 59 bytes, below the 64-byte cap. Edge tokens name the two faces ordered by axis (x before y before z); vertex tokens name three faces in axis order; mesh vertex index i maps to the role bits (xb, yb, zb) with i = xb + 2*yb + 4*zb.",
-      "assumes": ["P-1 (assumed pending owner confirmation)", "P-2 (assumed pending owner confirmation)"]
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)",
+        "P-2 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-19",
@@ -848,8 +1765,12 @@
         "element_identity_and_prim_path": "unchanged"
       },
       "derivation": "Invalidation matrix of contract section 7: a key is \"unchanged\" when its input set does not contain the changed field and \"changed\" when it does.",
-      "f04_refs": ["F04-POS-02"],
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "f04_refs": [
+        "F04-POS-02"
+      ],
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-20",
@@ -870,7 +1791,9 @@
         "engineering_quantities": "unchanged"
       },
       "derivation": "Invalidation matrix of contract section 7: a key is \"unchanged\" when its input set does not contain the changed field and \"changed\" when it does.",
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-21",
@@ -896,7 +1819,9 @@
         "note": "the resolved display appearance is unchanged"
       },
       "derivation": "Invalidation matrix of contract section 7: a key is \"unchanged\" when its input set does not contain the changed field and \"changed\" when it does.",
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-22",
@@ -906,7 +1831,11 @@
       ],
       "input": {
         "change": {
-          "translation_mm": [100, 200, 300]
+          "translation_mm": [
+            100,
+            200,
+            300
+          ]
         }
       },
       "expected": {
@@ -919,8 +1848,12 @@
         "mass_status": "current"
       },
       "derivation": "Invalidation matrix of contract section 7: a key is \"unchanged\" when its input set does not contain the changed field and \"changed\" when it does.",
-      "f04_refs": ["F04-POS-10"],
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "f04_refs": [
+        "F04-POS-10"
+      ],
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-23",
@@ -930,9 +1863,51 @@
       ],
       "input": {
         "change": {
-          "width_mm": {
-            "from": 1000,
-            "to": 750
+          "contour_points_mm": {
+            "from": [
+              [
+                0,
+                0,
+                0
+              ],
+              [
+                1000,
+                0,
+                0
+              ],
+              [
+                1000,
+                500,
+                0
+              ],
+              [
+                0,
+                500,
+                0
+              ]
+            ],
+            "to": [
+              [
+                0,
+                0,
+                0
+              ],
+              [
+                750,
+                0,
+                0
+              ],
+              [
+                750,
+                500,
+                0
+              ],
+              [
+                0,
+                500,
+                0
+              ]
+            ]
           }
         }
       },
@@ -945,8 +1920,12 @@
         "mass_kg_after_density_1000": "3.75"
       },
       "derivation": "Invalidation matrix of contract section 7: a key is \"unchanged\" when its input set does not contain the changed field and \"changed\" when it does.",
-      "f04_refs": ["F04-POS-06"],
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "f04_refs": [
+        "F04-POS-06"
+      ],
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-24",
@@ -966,44 +1945,86 @@
         "mass_signature": "unchanged"
       },
       "derivation": "Invalidation matrix of contract section 7: a key is \"unchanged\" when its input set does not contain the changed field and \"changed\" when it does.",
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-25",
       "title": "Key values: shape key, world-measurement key and mass signature test vectors",
       "given": [
-        "Preimages are those of contract section 7; all version fields are 1; f64 values are big-endian binary64; the quaternion is normalized with the sign rule"
+        "Owner-amended section 7 preimages: algorithm/tolerance versions 2, feature/layout 1; ordered contour encoded, default roll zero."
       ],
       "input": {
         "plate_shape": {
           "kind": "plate",
-          "width_mm": 1000,
-          "length_mm": 500,
-          "thickness_mm": 10
+          "thickness_mm": 10,
+          "contour_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              1000,
+              0,
+              0
+            ],
+            [
+              1000,
+              500,
+              0
+            ],
+            [
+              0,
+              500,
+              0
+            ]
+          ]
         },
         "placements": [
           {
-            "translation_mm": [0, 0, 0],
-            "orientation_xyzw": [0, 0, 0, 1]
+            "translation_mm": [
+              0,
+              0,
+              0
+            ],
+            "orientation_xyzw": [
+              0,
+              0,
+              0,
+              1
+            ]
           },
           {
-            "translation_mm": [100, 200, 300],
-            "orientation_xyzw": [0, 0, 0.7071067811865476, 0.7071067811865476]
+            "translation_mm": [
+              100,
+              200,
+              300
+            ],
+            "orientation_xyzw": [
+              0,
+              0,
+              0.7071067811865476,
+              0.7071067811865476
+            ]
           }
         ]
       },
       "expected": {
-        "shape_key_plate_1000_500_10": "ee650c310c475746964f46a92f57c6a0248aaf5f0057a5f8657adc4cdd244494",
-        "shape_key_plate_750_500_10": "998c0ae8d3636244b5f3e7911576c6d0c95f40236a83717de9db4e667738a67a",
-        "world_key_identity": "93bb24c7cdb3b85785fffc88ebdb276d1386f14e089775b783de0c2554416517",
-        "world_key_rotated_translated": "aee35a9cd0ab5ee065d496497e651c5d39bbd42ce000e6e84d0632d4ee37dd40",
+        "shape_key_plate_1000_500_10": "62d48387e681a82de0add0b847d11fdcf57ae08033e86f2f82ce87d61a0aeecf",
+        "shape_key_plate_750_500_10": "4f2ab3f37e322be6e9cc9bff3b10b6bbbe810d83b457b6c7b128dd5945b597fc",
+        "world_key_identity": "a745e53c589e27d689862ae174a421cbf62162d35bb15e46b0273482c7e31356",
+        "world_key_rotated_translated": "9746392ae5acc4d530ca642fd6e08cb79bdbc4893890727de643bdc7b95b6c18",
         "world_key_with_negated_quaternion_equals_rotated_translated": true,
-        "mass_signature_no_density": "f0d2ca62ac3fcd1201a899b1f1186ca1d5745b77b2d93748515a4d6db162343e",
-        "mass_signature_density_1000": "5c9837a3d5b176dffef2a03b03edbbbccb8d914e32ba6736fb0af890bd6f1702",
-        "mass_signature_density_2000": "38cc12ed54963bf6f0bd6185d8233045059977b57d866a8190d291e88f38fbea"
+        "mass_signature_no_density": "c76e168e28858208e0affb8a25386ec018185ea1318d98c632b0bd3d2e8576d4",
+        "mass_signature_density_1000": "d960b764e8162719009a1c14d64d772795641ab1c5582f1b3883b3a988ea9753",
+        "mass_signature_density_2000": "1842dd69518f7cbc68b279821f1567284dc18e84b70b3d226a3a4f5834dc1565"
       },
-      "derivation": "Computed as SHA-256 (RFC 6234) over the exact byte strings defined in section 7 by a throwaway script. The negated quaternion normalizes to the same bytes after the canonical sign rule (w >= 0), so the world key is equal; the identity and rotated placements give different world keys over the same shape key; the three mass signatures differ. These vectors fix the draft encoding: any change of it raises a version field and regenerates the vectors.",
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "derivation": "Computed as SHA-256 (RFC 6234) over the exact byte strings defined in section 7 by a throwaway script. The negated quaternion normalizes to the same bytes after the canonical sign rule (w >= 0), so the world key is equal; the identity and rotated placements give different world keys over the same shape key; the three mass signatures differ. These vectors fix the draft encoding: any change of it raises a version field and regenerates the vectors. Owner amendment 2026-10-15 regenerates seven digests and the antipodal equality assertion for contour encoding and versions 2/2/1/1; no analytic expected value changes.",
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-26",
@@ -1022,8 +2043,12 @@
         "mesh_digest_equal": true
       },
       "derivation": "Keys hash geometry-determining inputs only and contain no ElementId, so a copy shares them and the cached geometry. FeatureIds contain the ElementId and so differ (F06-POS-17).",
-      "f04_refs": ["F04-POS-03"],
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "f04_refs": [
+        "F04-POS-03"
+      ],
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-27",
@@ -1061,7 +2086,11 @@
       },
       "expected": {
         "page_count": 3,
-        "blobs_per_page": [8, 8, 4],
+        "blobs_per_page": [
+          8,
+          8,
+          4
+        ],
         "blob_split_across_attachments": false,
         "every_blob_within_buffer_bytes": true,
         "attachment_digest_equals_mesh_digest": true
@@ -1071,13 +2100,25 @@
     {
       "case_id": "F06-POS-29",
       "title": "Ray pick: front face hit, back faces culled by default",
-      "given": ["Plate 019a7bf0-0000-7000-8000-000000000005 1000 x 500 x 10, identity placement"],
+      "given": [
+        "Plate 019a7bf0-0000-7000-8000-000000000005 1000 x 500 x 10, identity placement"
+      ],
       "input": {
         "ray": {
-          "origin_mm": [500, 250, 100],
-          "direction": [0, 0, -1]
+          "origin_mm": [
+            500,
+            250,
+            100
+          ],
+          "direction": [
+            0,
+            0,
+            -1
+          ]
         },
-        "targets": ["face"]
+        "targets": [
+          "face"
+        ]
       },
       "expected": {
         "status": "ok",
@@ -1087,8 +2128,16 @@
             "feature_id": "fid1:019a7bf0-0000-7000-8000-000000000005:plate:f.z1",
             "feature_kind": "face",
             "t_mm": "90",
-            "point_world_mm": ["500", "250", "10"],
-            "normal_world": ["0", "0", "1"],
+            "point_world_mm": [
+              "500",
+              "250",
+              "10"
+            ],
+            "normal_world": [
+              "0",
+              "0",
+              "1"
+            ],
             "distance_mm": "0"
           }
         ],
@@ -1096,18 +2145,32 @@
         "compare": "CR-TOL-001"
       },
       "derivation": "The ray enters the box through the top face z = 10 at t = 100 - 10 = 90, point (500, 250, 10), outward normal +Z; direction . normal = -1 < 0, so the face is front-facing. The bottom face z = 0 is crossed at t = 100 with outward normal (0, 0, -1); direction . normal = +1 > 0, so it is back-facing and culled by default. The omitted t_max_mm defaults to 4,000,000,000 mm; both face intersections are within the finite parameter interval.",
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-30",
       "title": "Ray pick with back faces included: both hits, ascending t",
-      "given": ["Same plate and ray as F06-POS-29, include_backfaces = true"],
+      "given": [
+        "Same plate and ray as F06-POS-29, include_backfaces = true"
+      ],
       "input": {
         "ray": {
-          "origin_mm": [500, 250, 100],
-          "direction": [0, 0, -1]
+          "origin_mm": [
+            500,
+            250,
+            100
+          ],
+          "direction": [
+            0,
+            0,
+            -1
+          ]
         },
-        "targets": ["face"],
+        "targets": [
+          "face"
+        ],
         "include_backfaces": true
       },
       "expected": {
@@ -1116,21 +2179,39 @@
           {
             "feature_id": "fid1:019a7bf0-0000-7000-8000-000000000005:plate:f.z1",
             "t_mm": "90",
-            "point_world_mm": ["500", "250", "10"],
-            "normal_world": ["0", "0", "1"],
+            "point_world_mm": [
+              "500",
+              "250",
+              "10"
+            ],
+            "normal_world": [
+              "0",
+              "0",
+              "1"
+            ],
             "back_facing": false
           },
           {
             "feature_id": "fid1:019a7bf0-0000-7000-8000-000000000005:plate:f.z0",
             "t_mm": "100",
-            "point_world_mm": ["500", "250", "0"],
-            "normal_world": ["0", "0", "-1"],
+            "point_world_mm": [
+              "500",
+              "250",
+              "0"
+            ],
+            "normal_world": [
+              "0",
+              "0",
+              "-1"
+            ],
             "back_facing": true
           }
         ]
       },
       "derivation": "Top face at t = 90 (front-facing); bottom face at t = 100 with outward normal (0, 0, -1) equal to the ray direction, so direction . normal = +1 > 0 (back-facing). Ascending t gives the order. Both parameters lie in the default finite interval [0, 4,000,000,000] mm.",
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-31",
@@ -1140,18 +2221,36 @@
       ],
       "input": {
         "ray": {
-          "origin_mm": [500, 250, 100],
-          "direction": [0, 0, -1]
+          "origin_mm": [
+            500,
+            250,
+            100
+          ],
+          "direction": [
+            0,
+            0,
+            -1
+          ]
         },
-        "targets": ["face"]
+        "targets": [
+          "face"
+        ]
       },
       "expected": {
         "status": "ok",
-        "hit_element_order": ["019a7bf0-0000-7000-8000-000000000005", "019a7bf0-0000-7000-8000-000000000006"],
-        "hit_t_mm": ["90", "90"]
+        "hit_element_order": [
+          "019a7bf0-0000-7000-8000-000000000005",
+          "019a7bf0-0000-7000-8000-000000000006"
+        ],
+        "hit_t_mm": [
+          "90",
+          "90"
+        ]
       },
-      "derivation": "Both hit at t = 90, so the quantized distance keys are equal (floor(90 / 1e-6) twice). The next key is the canonical ElementId string; ...0005 sorts before ...0006. Both hits are within the default finite interval [0, 4,000,000,000] mm.",
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "derivation": "Both hit at t = 90, so the quantized distance keys are equal (floor(90 / 0.001) twice). The next key is the canonical ElementId string; ...0005 sorts before ...0006. Both hits are within the default finite interval [0, 4,000,000,000] mm.",
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-32",
@@ -1161,10 +2260,20 @@
       ],
       "input": {
         "ray": {
-          "origin_mm": [0, -100, 10],
-          "direction": [0, 1, 0]
+          "origin_mm": [
+            0,
+            -100,
+            10
+          ],
+          "direction": [
+            0,
+            1,
+            0
+          ]
         },
-        "targets": ["edge"],
+        "targets": [
+          "edge"
+        ],
         "radius_mm": 0
       },
       "expected": {
@@ -1198,16 +2307,28 @@
         ]
       },
       "derivation": "The ray runs along x = 0, z = 10. Edge x0.z1 (x = 0, z = 10, y in [0, 500]) overlaps it: distance 0, and for an overlap the smallest t attaining the minimum is 100 (point (0, 0, 10)). Edges x0.y0 (x = 0, y = 0) and y0.z1 (y = 0, z = 10) cross it at (0, 0, 10), t = 100. Edges x0.y1 and y1.z1 cross it at (0, 500, 10), t = 600. Every other edge is at distance >= 10. At t = 100 the three FeatureIds are ordered by ASCII comparison of the local part (\"e.x0.y0\" < \"e.x0.z1\" < \"e.y0.z1\"); at t = 600 likewise (\"e.x0.y1\" < \"e.y1.z1\"). These are distances to the closed finite pick segment with default t_max_mm = 4,000,000,000, not to an unbounded ray; the zero-distance overlap is t in [100, 600], whose smallest parameter is 100. All reported parameters are inside that interval.",
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-33",
       "title": "Point pick within a radius",
-      "given": ["Plate 019a7bf0-0000-7000-8000-000000000005 1000 x 500 x 10"],
+      "given": [
+        "Plate 019a7bf0-0000-7000-8000-000000000005 1000 x 500 x 10"
+      ],
       "input": {
-        "point_mm": [500, 250, 12],
+        "point_mm": [
+          500,
+          250,
+          12
+        ],
         "radius_mm": 5,
-        "targets": ["face", "edge", "vertex"]
+        "targets": [
+          "face",
+          "edge",
+          "vertex"
+        ]
       },
       "expected": {
         "status": "ok",
@@ -1216,12 +2337,18 @@
           {
             "feature_id": "fid1:019a7bf0-0000-7000-8000-000000000005:plate:f.z1",
             "distance_mm": "2",
-            "closest_point_mm": ["500", "250", "10"]
+            "closest_point_mm": [
+              "500",
+              "250",
+              "10"
+            ]
           }
         ]
       },
       "derivation": "The distance to the plane z = 10 is 2 and the foot (500, 250, 10) lies inside the face rectangle. The bottom face is 12 away; every edge and vertex is farther than 5 (the nearest edge, y0.z1, is sqrt(250^2 + 2^2) away). This is point form: distances are to closed features and no t_max_mm or ray parameter applies.",
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-34",
@@ -1250,7 +2377,9 @@
     {
       "case_id": "F06-POS-35",
       "title": "Incremental update after a dimension edit: mesh resent",
-      "given": ["Plate 019a7bf0-0000-7000-8000-000000000005: width 1000 -> 750 after snapshot S0"],
+      "given": [
+        "Plate 019a7bf0-0000-7000-8000-000000000005: width 1000 -> 750 after snapshot S0"
+      ],
       "input": {
         "since_token": "S0"
       },
@@ -1271,7 +2400,9 @@
     {
       "case_id": "F06-POS-36",
       "title": "Incremental update with an expired token requests a full snapshot",
-      "given": ["Token older than the retained history"],
+      "given": [
+        "Token older than the retained history"
+      ],
       "input": {
         "since_token": "expired-token"
       },
@@ -1285,13 +2416,35 @@
     {
       "case_id": "F06-POS-37",
       "title": "Cancellation after the seal point is a no-op",
-      "given": ["Cancel requested after the result was sealed"],
+      "given": [
+        "Cancel requested after the result was sealed"
+      ],
       "input": {
         "body": {
           "kind": "plate",
-          "width_mm": 1000,
-          "length_mm": 500,
-          "thickness_mm": 10
+          "thickness_mm": 10,
+          "contour_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              1000,
+              0,
+              0
+            ],
+            [
+              1000,
+              500,
+              0
+            ],
+            [
+              0,
+              500,
+              0
+            ]
+          ]
         },
         "cancel_at": "after_seal"
       },
@@ -1301,7 +2454,9 @@
         "cancel_effect": "none"
       },
       "derivation": "The seal point lies after the last cancellation point. The result is complete and identical to an uncancelled run (same digest as F06-POS-02).",
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-38",
@@ -1311,7 +2466,28 @@
       ],
       "input": {
         "previous_volume_m3": "0.005",
-        "new_width_mm": 750
+        "new_contour_points_mm": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            750,
+            0,
+            0
+          ],
+          [
+            750,
+            500,
+            0
+          ],
+          [
+            0,
+            500,
+            0
+          ]
+        ]
       },
       "expected": {
         "volume_status": "stale",
@@ -1320,8 +2496,12 @@
         "status_after_rebuild": "current"
       },
       "derivation": "F04 section 5: stale may keep a clearly marked previous value; after the rebuild the value 750*500*10 = 3,750,000 mm3 = 0.00375 m3 is current again.",
-      "f04_refs": ["F04-POS-06"],
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "f04_refs": [
+        "F04-POS-06"
+      ],
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-39",
@@ -1342,13 +2522,18 @@
     {
       "case_id": "F06-POS-40",
       "title": "Element list order is canonical",
-      "given": ["Elements created in the order ...0006 then ...0005"],
+      "given": [
+        "Elements created in the order ...0006 then ...0005"
+      ],
       "input": {
         "query": "list_elements",
         "cursor": null
       },
       "expected": {
-        "element_order": ["019a7bf0-0000-7000-8000-000000000005", "019a7bf0-0000-7000-8000-000000000006"],
+        "element_order": [
+          "019a7bf0-0000-7000-8000-000000000005",
+          "019a7bf0-0000-7000-8000-000000000006"
+        ],
         "order_rule": "ascending ElementId, ASCII comparison of the canonical lowercase string"
       },
       "derivation": "Result order never depends on creation order, hash-map order or triangle order, so pages and cursors are reproducible."
@@ -1356,17 +2541,48 @@
     {
       "case_id": "F06-NEG-01",
       "title": "Non-finite plate dimension",
-      "given": ["Typed input from an API client (not JSON text): NaN width"],
+      "given": [
+        "Typed input from an API client (not JSON text): NaN width"
+      ],
       "input": {
         "body": {
           "kind": "plate",
-          "width_mm": "NaN",
-          "length_mm": 500,
-          "thickness_mm": 10
+          "thickness_mm": 10,
+          "contour_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              "NaN",
+              0,
+              0
+            ],
+            [
+              "NaN",
+              500,
+              0
+            ],
+            [
+              0,
+              500,
+              0
+            ]
+          ]
         },
         "placement": {
-          "translation_mm": [0, 0, 0],
-          "orientation_xyzw": [0, 0, 0, 1]
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
         }
       },
       "expected": {
@@ -1377,23 +2593,59 @@
         "state_changed": false
       },
       "derivation": "Every f64 is checked for finiteness before any range check. JSON NaN/Infinity literals never reach the kernel (F04-RAW-01, F04-RAW-02).",
-      "f04_refs": ["F04-RAW-01", "F04-RAW-02"],
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "f04_refs": [
+        "F04-RAW-01",
+        "F04-RAW-02"
+      ],
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-NEG-02",
       "title": "Non-finite placement component",
-      "given": ["Translation component -Infinity, valid body"],
+      "given": [
+        "Translation component -Infinity, valid body"
+      ],
       "input": {
         "body": {
           "kind": "plate",
-          "width_mm": 1000,
-          "length_mm": 500,
-          "thickness_mm": 10
+          "thickness_mm": 10,
+          "contour_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              1000,
+              0,
+              0
+            ],
+            [
+              1000,
+              500,
+              0
+            ],
+            [
+              0,
+              500,
+              0
+            ]
+          ]
         },
         "placement": {
-          "translation_mm": ["-Infinity", 0, 0],
-          "orientation_xyzw": [0, 0, 0, 1]
+          "translation_mm": [
+            "-Infinity",
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
         }
       },
       "expected": {
@@ -1404,23 +2656,60 @@
         "state_changed": false
       },
       "derivation": "The finiteness stage covers body, axis points, profile, translation and quaternion, in input order.",
-      "f04_refs": ["F04-RAW-04", "F04-RAW-05", "F04-RAW-06"],
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "f04_refs": [
+        "F04-RAW-04",
+        "F04-RAW-05",
+        "F04-RAW-06"
+      ],
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-NEG-03",
       "title": "Plate dimension below the minimum nonzero dimension",
-      "given": ["Draft policy G-06: 0 < d < 0.001 mm is rejected"],
+      "given": [
+        "Draft policy G-06: 0 < d < 0.001 mm is rejected"
+      ],
       "input": {
         "body": {
           "kind": "plate",
-          "width_mm": 1000,
-          "length_mm": 500,
-          "thickness_mm": 0.0009
+          "thickness_mm": 0.0009,
+          "contour_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              1000,
+              0,
+              0
+            ],
+            [
+              1000,
+              500,
+              0
+            ],
+            [
+              0,
+              500,
+              0
+            ]
+          ]
         },
         "placement": {
-          "translation_mm": [0, 0, 0],
-          "orientation_xyzw": [0, 0, 0, 1]
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
         }
       },
       "expected": {
@@ -1431,18 +2720,37 @@
         "state_changed": false
       },
       "derivation": "0.0009 > 0 passes the F04 range but is below 0.001 mm; zero itself is GEO_NOT_POSITIVE (F04-NEG-04).",
-      "f04_refs": ["F04-NEG-04"],
-      "first_scope_refs": ["FS-NEG-PLATE-NEGATIVE"],
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "f04_refs": [
+        "F04-NEG-04"
+      ],
+      "first_scope_refs": [
+        "FS-NEG-PLATE-NEGATIVE"
+      ],
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-NEG-04",
       "title": "Member axis shorter than the minimum",
-      "given": ["Axis (0,0,0) to (0.0009,0,0)"],
+      "given": [
+        "Axis (0,0,0) to (0.0009,0,0)"
+      ],
       "input": {
         "body": {
           "kind": "member",
-          "axis_points_mm": [[0, 0, 0], [0.0009, 0, 0]],
+          "axis_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              0.0009,
+              0,
+              0
+            ]
+          ],
           "profile": {
             "kind": "rectangle",
             "width_mm": 200,
@@ -1450,8 +2758,17 @@
           }
         },
         "placement": {
-          "translation_mm": [0, 0, 0],
-          "orientation_xyzw": [0, 0, 0, 1]
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
         }
       },
       "expected": {
@@ -1462,18 +2779,37 @@
         "state_changed": false
       },
       "derivation": "Length 0.0009 < 0.001. Exactly zero length uses the same diagnostic (F04-NEG-20, adopted G-03).",
-      "f04_refs": ["F04-NEG-20"],
-      "first_scope_refs": ["FS-NEG-AXIS-ZERO"],
-      "assumes": ["P-2 (assumed pending owner confirmation)"]
+      "f04_refs": [
+        "F04-NEG-20"
+      ],
+      "first_scope_refs": [
+        "FS-NEG-AXIS-ZERO"
+      ],
+      "assumes": [
+        "P-2 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-NEG-05",
       "title": "Degenerate (zero-length) axis at the kernel",
-      "given": ["Identical axis points"],
+      "given": [
+        "Identical axis points"
+      ],
       "input": {
         "body": {
           "kind": "member",
-          "axis_points_mm": [[10, 20, 30], [10, 20, 30]],
+          "axis_points_mm": [
+            [
+              10,
+              20,
+              30
+            ],
+            [
+              10,
+              20,
+              30
+            ]
+          ],
           "profile": {
             "kind": "rectangle",
             "width_mm": 200,
@@ -1481,8 +2817,17 @@
           }
         },
         "placement": {
-          "translation_mm": [0, 0, 0],
-          "orientation_xyzw": [0, 0, 0, 1]
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
         }
       },
       "expected": {
@@ -1493,18 +2838,37 @@
         "state_changed": false
       },
       "derivation": "Length exactly 0 is below the minimum; no direction can be formed, so no frame is attempted and no division by zero occurs.",
-      "f04_refs": ["F04-NEG-20"],
-      "first_scope_refs": ["FS-NEG-AXIS-ZERO"],
-      "assumes": ["P-2 (assumed pending owner confirmation)"]
+      "f04_refs": [
+        "F04-NEG-20"
+      ],
+      "first_scope_refs": [
+        "FS-NEG-AXIS-ZERO"
+      ],
+      "assumes": [
+        "P-2 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-NEG-06",
       "title": "Section dimension above the cap",
-      "given": ["Section width 1000000.001 mm"],
+      "given": [
+        "Section width 1000000.001 mm"
+      ],
       "input": {
         "body": {
           "kind": "member",
-          "axis_points_mm": [[0, 0, 0], [0, 0, 1000]],
+          "axis_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1000
+            ]
+          ],
           "profile": {
             "kind": "rectangle",
             "width_mm": 1000000.001,
@@ -1512,8 +2876,17 @@
           }
         },
         "placement": {
-          "translation_mm": [0, 0, 0],
-          "orientation_xyzw": [0, 0, 0, 1]
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
         }
       },
       "expected": {
@@ -1524,17 +2897,34 @@
         "state_changed": false
       },
       "derivation": "Draft proposal: the section cap equals the F04 plate-dimension cap 1,000,000 mm; F04 itself is silent on section dimensions.",
-      "f04_refs": ["F04-NEG-19"],
-      "assumes": ["P-2 (assumed pending owner confirmation)"]
+      "f04_refs": [
+        "F04-NEG-19"
+      ],
+      "assumes": [
+        "P-2 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-NEG-07",
       "title": "Section dimension zero",
-      "given": ["Section height 0"],
+      "given": [
+        "Section height 0"
+      ],
       "input": {
         "body": {
           "kind": "member",
-          "axis_points_mm": [[0, 0, 0], [0, 0, 1000]],
+          "axis_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1000
+            ]
+          ],
           "profile": {
             "kind": "rectangle",
             "width_mm": 200,
@@ -1542,8 +2932,17 @@
           }
         },
         "placement": {
-          "translation_mm": [0, 0, 0],
-          "orientation_xyzw": [0, 0, 0, 1]
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
         }
       },
       "expected": {
@@ -1554,25 +2953,51 @@
         "state_changed": false
       },
       "derivation": "A zero section dimension produces no solid.",
-      "first_scope_refs": ["FS-NEG-SECTION"],
-      "assumes": ["P-2 (assumed pending owner confirmation)"]
+      "first_scope_refs": [
+        "FS-NEG-SECTION"
+      ],
+      "assumes": [
+        "P-2 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-NEG-08",
       "title": "Curved profile is unsupported",
-      "given": ["Profile kind \"circle\" with a diameter"],
+      "given": [
+        "Profile kind \"circle\" with a diameter"
+      ],
       "input": {
         "body": {
           "kind": "member",
-          "axis_points_mm": [[0, 0, 0], [0, 0, 1000]],
+          "axis_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1000
+            ]
+          ],
           "profile": {
             "kind": "circle",
             "diameter_mm": 200
           }
         },
         "placement": {
-          "translation_mm": [0, 0, 0],
-          "orientation_xyzw": [0, 0, 0, 1]
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
         }
       },
       "expected": {
@@ -1583,22 +3008,66 @@
         "state_changed": false
       },
       "derivation": "The first scope supports only the rectangle section; a well-formed shape outside the scope is UNSUPPORTED_GEOMETRY, not INVALID_ARGUMENT.",
-      "assumes": ["P-2 (assumed pending owner confirmation)"]
+      "assumes": [
+        "P-2 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-NEG-09",
       "title": "Scaled or sheared transform is unsupported",
-      "given": ["Placement offered as a 3x3 matrix with scale 2"],
+      "given": [
+        "Placement offered as a 3x3 matrix with scale 2"
+      ],
       "input": {
         "body": {
           "kind": "plate",
-          "width_mm": 1000,
-          "length_mm": 500,
-          "thickness_mm": 10
+          "thickness_mm": 10,
+          "contour_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              1000,
+              0,
+              0
+            ],
+            [
+              1000,
+              500,
+              0
+            ],
+            [
+              0,
+              500,
+              0
+            ]
+          ]
         },
         "transform": {
-          "matrix_rows": [[2, 0, 0], [0, 1, 0], [0, 0, 1]],
-          "translation_mm": [0, 0, 0]
+          "matrix_rows": [
+            [
+              2,
+              0,
+              0
+            ],
+            [
+              0,
+              1,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "translation_mm": [
+            0,
+            0,
+            0
+          ]
         }
       },
       "expected": {
@@ -1609,12 +3078,16 @@
         "state_changed": false
       },
       "derivation": "Only a rigid pose (translation and unit quaternion) is accepted; scale, shear and reflection are unsupported in the first scope (F04 section 3).",
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-NEG-10",
       "title": "Imported mesh stage frame is unsupported",
-      "given": ["Mesh source declaring metersPerUnit = 0.01 and upAxis = Y"],
+      "given": [
+        "Mesh source declaring metersPerUnit = 0.01 and upAxis = Y"
+      ],
       "input": {
         "mesh_source": {
           "metersPerUnit": 0.01,
@@ -1633,7 +3106,9 @@
     {
       "case_id": "F06-NEG-11",
       "title": "Vertex count above the cap",
-      "given": ["Blob header declaring 4097 vertices"],
+      "given": [
+        "Blob header declaring 4097 vertices"
+      ],
       "input": {
         "header": {
           "vertex_count": 4097,
@@ -1655,7 +3130,9 @@
     {
       "case_id": "F06-NEG-12",
       "title": "Triangle count above the cap",
-      "given": ["Blob header declaring 8193 triangles"],
+      "given": [
+        "Blob header declaring 8193 triangles"
+      ],
       "input": {
         "header": {
           "vertex_count": 8,
@@ -1677,7 +3154,9 @@
     {
       "case_id": "F06-NEG-13",
       "title": "Face count above the cap",
-      "given": ["Blob header declaring 1025 faces"],
+      "given": [
+        "Blob header declaring 1025 faces"
+      ],
       "input": {
         "header": {
           "vertex_count": 8,
@@ -1699,7 +3178,9 @@
     {
       "case_id": "F06-NEG-14",
       "title": "Header counts that overflow a 32-bit size computation",
-      "given": ["All three counts 4294967295"],
+      "given": [
+        "All three counts 4294967295"
+      ],
       "input": {
         "header": {
           "vertex_count": 4294967295,
@@ -1721,7 +3202,9 @@
     {
       "case_id": "F06-NEG-15",
       "title": "Blob length disagrees with the header",
-      "given": ["Header of F06-POS-02 (392 bytes) but only 391 bytes supplied"],
+      "given": [
+        "Header of F06-POS-02 (392 bytes) but only 391 bytes supplied"
+      ],
       "input": {
         "header": {
           "vertex_count": 8,
@@ -1744,13 +3227,35 @@
     {
       "case_id": "F06-NEG-16",
       "title": "Cancelled before the build",
-      "given": ["Cancellation observed at the first cancellation point (after validation)"],
+      "given": [
+        "Cancellation observed at the first cancellation point (after validation)"
+      ],
       "input": {
         "body": {
           "kind": "plate",
-          "width_mm": 1000,
-          "length_mm": 500,
-          "thickness_mm": 10
+          "thickness_mm": 10,
+          "contour_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              1000,
+              0,
+              0
+            ],
+            [
+              1000,
+              500,
+              0
+            ],
+            [
+              0,
+              500,
+              0
+            ]
+          ]
         },
         "cancel_at": "after_validation"
       },
@@ -1763,18 +3268,42 @@
         "stage": "build"
       },
       "derivation": "No mesh, no quantities and no shape key are returned as current; the diagnostic names the stage \"build\".",
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-NEG-17",
       "title": "Cancelled before the quantities",
-      "given": ["Cancellation observed at the point before quantity evaluation"],
+      "given": [
+        "Cancellation observed at the point before quantity evaluation"
+      ],
       "input": {
         "body": {
           "kind": "plate",
-          "width_mm": 1000,
-          "length_mm": 500,
-          "thickness_mm": 10
+          "thickness_mm": 10,
+          "contour_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              1000,
+              0,
+              0
+            ],
+            [
+              1000,
+              500,
+              0
+            ],
+            [
+              0,
+              500,
+              0
+            ]
+          ]
         },
         "cancel_at": "before_quantities"
       },
@@ -1787,7 +3316,9 @@
         "stage": "quantities"
       },
       "derivation": "A built but unsealed mesh is discarded; cancellation never returns a result that has a mesh but no quantities as current.",
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-NEG-18",
@@ -1798,7 +3329,11 @@
       "input": {
         "vertices": 8,
         "triangles": 11,
-        "removed_triangle": [0, 2, 3]
+        "removed_triangle": [
+          0,
+          2,
+          3
+        ]
       },
       "expected": {
         "closed_shell": false,
@@ -1816,7 +3351,9 @@
         "mesh_may_be_displayed_flagged_not_exact": true
       },
       "derivation": "Removing triangle (0, 2, 3) leaves the edges 0-2, 2-3 and 3-0 each used by one triangle only (boundary edges), so edge-triangle incidence is not 2 everywhere. The edge count stays 18 and F = 11, so V - E + F = 8 - 18 + 11 = 1. The signed-volume sum of the remaining triangles is not a volume. No exact status and no value. Mass is unsupported, not unknown, because the volume is unsupported (contract section 8 precedence); a density could not make it current.",
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-NEG-19",
@@ -1847,7 +3384,9 @@
     {
       "case_id": "F06-NEG-20",
       "title": "Inward winding is rejected as an outward mesh",
-      "given": ["The plate mesh with every triangle reversed"],
+      "given": [
+        "The plate mesh with every triangle reversed"
+      ],
       "input": {
         "vertices": 8,
         "triangles": 12,
@@ -1863,7 +3402,9 @@
         "f04_code": "UNSUPPORTED_GEOMETRY"
       },
       "derivation": "Reversing every triangle keeps all edge pairs opposite (still closed) and flips the sign of the divergence-theorem sum to -5,000,000 mm3: the normals point into the body. The contract accepts only outward meshes, so no quantity is derived from it.",
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-NEG-21",
@@ -1886,8 +3427,12 @@
         "generation_advanced": false
       },
       "derivation": "A failed result carries no geometry, and the engine neither replaces nor stales the previous current result because of a rejected command (F04 section 8: rejection leaves derived state unchanged).",
-      "f04_refs": ["F04-NEG-14"],
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "f04_refs": [
+        "F04-NEG-14"
+      ],
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-NEG-22",
@@ -1904,12 +3449,16 @@
         "diagnostic_code": "GEO_FEATURE_NOT_FOUND"
       },
       "derivation": "The id is syntactically valid but names no feature of this element (a plate has no \"member\" features).",
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-NEG-23",
       "title": "Malformed FeatureId",
-      "given": ["Uppercase hexadecimal in the element identity"],
+      "given": [
+        "Uppercase hexadecimal in the element identity"
+      ],
       "input": {
         "feature_id": "fid1:019A7BF0-0000-7000-8000-000000000005:plate:f.z1"
       },
@@ -1919,12 +3468,16 @@
         "diagnostic_code": "GEO_FEATURE_ID_INVALID"
       },
       "derivation": "The grammar requires the canonical lowercase UUIDv7 form (F04 section 2) and the version tag fid1.",
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-NEG-24",
       "title": "A triangle index cannot address a feature",
-      "given": ["Lookup request carrying a triangle_index field"],
+      "given": [
+        "Lookup request carrying a triangle_index field"
+      ],
       "input": {
         "lookup": {
           "element_id": "019a7bf0-0000-7000-8000-000000000005",
@@ -1937,12 +3490,16 @@
         "diagnostic_code": "GEO_TRIANGLE_ADDRESS_FORBIDDEN"
       },
       "derivation": "Query and reference schemas are closed; there is no triangle-index field. Drawings and dimensions address features by FeatureId only.",
-      "f04_refs": ["F04-NEG-15"]
+      "f04_refs": [
+        "F04-NEG-15"
+      ]
     },
     {
       "case_id": "F06-NEG-25",
       "title": "Stale snapshot token on a read query",
-      "given": ["Query pinned to a token from an older generation than the retained history"],
+      "given": [
+        "Query pinned to a token from an older generation than the retained history"
+      ],
       "input": {
         "snapshot_token": "old-token",
         "query": "element_bounds"
@@ -1954,16 +3511,28 @@
         "data_returned": false
       },
       "derivation": "A query answered at one revision is never mixed with data from another; the consumer re-reads.",
-      "f04_refs": ["F04-NEG-09"]
+      "f04_refs": [
+        "F04-NEG-09"
+      ]
     },
     {
       "case_id": "F06-NEG-26",
       "title": "Pick with a zero ray direction",
-      "given": ["direction (0, 0, 0)"],
+      "given": [
+        "direction (0, 0, 0)"
+      ],
       "input": {
         "ray": {
-          "origin_mm": [0, 0, 0],
-          "direction": [0, 0, 0]
+          "origin_mm": [
+            0,
+            0,
+            0
+          ],
+          "direction": [
+            0,
+            0,
+            0
+          ]
         }
       },
       "expected": {
@@ -1977,11 +3546,21 @@
     {
       "case_id": "F06-NEG-27",
       "title": "Pick with a non-finite origin",
-      "given": ["origin x = NaN"],
+      "given": [
+        "origin x = NaN"
+      ],
       "input": {
         "ray": {
-          "origin_mm": ["NaN", 0, 0],
-          "direction": [0, 0, -1]
+          "origin_mm": [
+            "NaN",
+            0,
+            0
+          ],
+          "direction": [
+            0,
+            0,
+            -1
+          ]
         }
       },
       "expected": {
@@ -1994,11 +3573,21 @@
     {
       "case_id": "F06-NEG-28",
       "title": "Pick requests more hits than the cap",
-      "given": ["max_hits 65 with cap 64"],
+      "given": [
+        "max_hits 65 with cap 64"
+      ],
       "input": {
         "ray": {
-          "origin_mm": [0, 0, 10],
-          "direction": [0, 0, -1]
+          "origin_mm": [
+            0,
+            0,
+            10
+          ],
+          "direction": [
+            0,
+            0,
+            -1
+          ]
         },
         "max_hits": 65
       },
@@ -2012,9 +3601,15 @@
     {
       "case_id": "F06-NEG-29",
       "title": "Pick radius above the cap",
-      "given": ["radius_mm 1000000.001"],
+      "given": [
+        "radius_mm 1000000.001"
+      ],
       "input": {
-        "point_mm": [0, 0, 0],
+        "point_mm": [
+          0,
+          0,
+          0
+        ],
         "radius_mm": 1000000.001
       },
       "expected": {
@@ -2027,7 +3622,9 @@
     {
       "case_id": "F06-NEG-30",
       "title": "Empty mesh",
-      "given": ["Header with zero vertices and zero triangles"],
+      "given": [
+        "Header with zero vertices and zero triangles"
+      ],
       "input": {
         "header": {
           "vertex_count": 0,
@@ -2056,7 +3653,18 @@
       "input": {
         "body": {
           "kind": "member",
-          "axis_points_mm": [[0, 0, 0], [0, 0.08000002, 160000.08]],
+          "axis_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0.08000002,
+              160000.08
+            ]
+          ],
           "profile": {
             "kind": "rectangle",
             "width_mm": 200,
@@ -2064,8 +3672,17 @@
           }
         },
         "placement": {
-          "translation_mm": [0, 0, 0],
-          "orientation_xyzw": [0, 0, 0, 1]
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
         }
       },
       "expected": {
@@ -2074,14 +3691,38 @@
         "axis_length_mm": "160000.08000002",
         "horizontal_ratio_squared_approx": "2.4999987500001562502e-13",
         "member_frame": {
-          "X_m": ["1", "0", "0"],
-          "Y_m": ["0", "8000004000000/8000004000001", "-4000001/8000004000001"],
-          "Z_m": ["0", "4000001/8000004000001", "8000004000000/8000004000001"]
+          "X_m": [
+            "1",
+            "0",
+            "0"
+          ],
+          "Y_m": [
+            "0",
+            "8000004000000/8000004000001",
+            "-4000001/8000004000001"
+          ],
+          "Z_m": [
+            "0",
+            "4000001/8000004000001",
+            "8000004000000/8000004000001"
+          ]
         },
         "member_frame_decimal_approx": {
-          "X_m": ["1", "0", "0"],
-          "Y_m": ["0", "0.99999999999987499", "-4.9999987499999995e-07"],
-          "Z_m": ["0", "4.9999987499999995e-07", "0.99999999999987499"]
+          "X_m": [
+            "1",
+            "0",
+            "0"
+          ],
+          "Y_m": [
+            "0",
+            "0.99999999999987499",
+            "-4.9999987499999995e-07"
+          ],
+          "Z_m": [
+            "0",
+            "4.9999987499999995e-07",
+            "0.99999999999987499"
+          ]
         },
         "Y_m_dot_Z_m": "0",
         "section_perpendicular_to_axis": true,
@@ -2090,17 +3731,35 @@
         "compare": "CR-TOL-001"
       },
       "derivation": "d = (0, 0.08000002, 160000.08); with m = 4,000,001 the three numbers are 2m, m^2 - 1 and m^2 + 1 times 1e-8, so L = (m^2 + 1) * 1e-8 = 160000.08000002 exactly (a^2 + c^2 = L^2 checked with rational arithmetic) and hh/LL = (2m/(m^2 + 1))^2 ~ 2.4999987500001562502e-13 < 1e-12, so the near-vertical rule applies (margin 4). Z = (0, 2m/(m^2 + 1), (m^2 - 1)/(m^2 + 1)). U . Z = Z_y; P = U - Z*Z_y = (0, 1 - Z_y^2, -Z_z*Z_y) = Z_z * (0, Z_z, -Z_y) because 1 - Z_y^2 = Z_z^2; |P| = Z_z, so Y = (0, Z_z, -Z_y) (unit). X0 = Y x Z = (Z_z^2 + Z_y^2, 0, 0) = (1, 0, 0), so X = (1, 0, 0) and Z x X = (0, Z_z, -Z_y) = Y. Y . Z = Z_z*Z_y - Z_y*Z_z = 0. A fixed Y = (0, 1, 0) would give Y . Z = Z_y ~ 5e-7, i.e. a section off perpendicular by the tilt toward Y. The submitted decimals are not exact in binary64, so the frame is compared with CR-TOL-001.",
-      "f04_refs": ["F04-POS-16"],
-      "assumes": ["P-2 (assumed pending owner confirmation)", "P-3 (assumed pending owner confirmation)"]
+      "f04_refs": [
+        "F04-POS-16"
+      ],
+      "assumes": [
+        "P-2 (owner decision recorded 2026-10-15)",
+        "P-3 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-42",
       "title": "Boundary: Y-tilted axis just outside the threshold uses the horizontal rule",
-      "given": ["hh/LL = (0.002/L)^2 ~ 4e-12 > 1e-12, a factor-four margin"],
+      "given": [
+        "hh/LL = (0.002/L)^2 ~ 4e-12 > 1e-12, a factor-four margin"
+      ],
       "input": {
         "body": {
           "kind": "member",
-          "axis_points_mm": [[0, 0, 0], [0, 0.002, 1000]],
+          "axis_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0.002,
+              1000
+            ]
+          ],
           "profile": {
             "kind": "rectangle",
             "width_mm": 200,
@@ -2108,23 +3767,47 @@
           }
         },
         "placement": {
-          "translation_mm": [0, 0, 0],
-          "orientation_xyzw": [0, 0, 0, 1]
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
         }
       },
       "expected": {
         "status": "ok",
         "rule_used": "horizontal",
-        "X_m_approx": ["-1", "0", "0"],
-        "Y_m_approx": ["0", "-0.999999999998", "1.9999999999960000000e-6"],
-        "Z_m_approx": ["0", "1.9999999999960000000e-6", "0.999999999998"],
+        "X_m_approx": [
+          "-1",
+          "0",
+          "0"
+        ],
+        "Y_m_approx": [
+          "0",
+          "-0.999999999998",
+          "1.9999999999960000000e-6"
+        ],
+        "Z_m_approx": [
+          "0",
+          "1.9999999999960000000e-6",
+          "0.999999999998"
+        ],
         "Y_m_dot_Z_m_within": "1e-12",
         "Y_m_dot_local_z_positive": true,
         "frame_certificate": "passes",
         "compare": "CR-TOL-001"
       },
       "derivation": "h = 0.002, LL = 250000000001/250000 and L = sqrt(250000000001)/500 ~ 1000.0000000020000000; hh/LL = 1/250000000001 ~ 3.9999999999840000000e-12 > 1e-12. Y_m = (-dx*dz, -dy*dz, hh)/(h*L) = (0, -2, 4e-6)/(0.002*L) = (0, -1000/L, 0.002/L), Z_m = (0, 0.002/L, 1000/L) and X_m = Y_m x Z_m = (-1, 0, 0). For this +Y tilt from +Z, the horizontal frame is exactly 180 degrees about the same axis from the near-vertical branch frame: both X and Y reverse. F06-POS-41 uses the near-vertical rule on a different +Y-tilted axis; as the two axes approach the threshold, the limiting roll jump is a half turn (contract section 4, rule 3). At their finite tilts the axes also differ. The exact forms use rational decimal inputs; binary64 results are compared with CR-TOL-001.",
-      "assumes": ["P-2 (assumed pending owner confirmation)", "P-3 (assumed pending owner confirmation)"]
+      "assumes": [
+        "P-2 (owner decision recorded 2026-10-15)",
+        "P-3 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-43",
@@ -2134,10 +3817,20 @@
       ],
       "input": {
         "ray": {
-          "origin_mm": [0, 250, 100],
-          "direction": [0, 0, -1]
+          "origin_mm": [
+            0,
+            250,
+            100
+          ],
+          "direction": [
+            0,
+            0,
+            -1
+          ]
         },
-        "targets": ["face"]
+        "targets": [
+          "face"
+        ]
       },
       "expected": {
         "status": "ok",
@@ -2145,8 +3838,16 @@
           {
             "feature_id": "fid1:019a7bf0-0000-7000-8000-000000000005:plate:f.z1",
             "t_mm": "90",
-            "point_world_mm": ["0", "250", "10"],
-            "normal_world": ["0", "0", "1"],
+            "point_world_mm": [
+              "0",
+              "250",
+              "10"
+            ],
+            "normal_world": [
+              "0",
+              "0",
+              "1"
+            ],
             "back_facing": false,
             "boundary": true
           }
@@ -2154,8 +3855,10 @@
         "hit_count": 1,
         "compare": "CR-TOL-001"
       },
-      "derivation": "The ray runs along x = 0, z falling; it meets the plane z = 10 at t = 90, point (0, 250, 10), on the boundary x = 0 of the rectangle of z1, so boundary is true. Face x0 (plane x = 0) has outward normal (-1, 0, 0) and u . n = 0 < 1e-12: parallel, not hit. Face z0 is back-facing and culled. Exactly one hit. The hit t = 90 is within the default finite interval [0, 4,000,000,000] mm; the pick band does not extend that interval for faces.",
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "derivation": "The ray runs along x = 0, z falling; it meets the plane z = 10 at t = 90, point (0, 250, 10), on the boundary x = 0 of the rectangle of z1, so boundary is true. Face x0 (plane x = 0) has outward normal (-1, 0, 0) and u . n = 0 < 1e-6: parallel, not hit. Face z0 is back-facing and culled. Exactly one hit. The hit t = 90 is within the default finite interval [0, 4,000,000,000] mm; the pick band does not extend that interval for faces.",
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-44",
@@ -2165,10 +3868,20 @@
       ],
       "input": {
         "ray": {
-          "origin_mm": [-10, 250, 10],
-          "direction": [1, 0, 0]
+          "origin_mm": [
+            -10,
+            250,
+            10
+          ],
+          "direction": [
+            1,
+            0,
+            0
+          ]
         },
-        "targets": ["face"]
+        "targets": [
+          "face"
+        ]
       },
       "expected": {
         "status": "ok",
@@ -2176,8 +3889,16 @@
           {
             "feature_id": "fid1:019a7bf0-0000-7000-8000-000000000005:plate:f.x0",
             "t_mm": "10",
-            "point_world_mm": ["0", "250", "10"],
-            "normal_world": ["-1", "0", "0"],
+            "point_world_mm": [
+              "0",
+              "250",
+              "10"
+            ],
+            "normal_world": [
+              "-1",
+              "0",
+              "0"
+            ],
             "back_facing": false,
             "boundary": true
           }
@@ -2185,8 +3906,10 @@
         "hit_count": 1,
         "compare": "CR-TOL-001"
       },
-      "derivation": "Faces z1, z0, y0 and y1 have normals perpendicular to the direction (1, 0, 0), so |u . n| = 0 < 1e-12 and they are parallel: no hit, even though the ray lies in the plane of z1. Face x0 has normal (-1, 0, 0), u . n = -1 (front-facing), t = 10, point (0, 250, 10): z = 10 is the upper boundary of x0, so boundary is true. Face x1 at t = 1010 is back-facing and culled. Both face parameters lie in the default finite interval [0, 4,000,000,000] mm; the pick band does not extend that interval for faces.",
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "derivation": "Faces z1, z0, y0 and y1 have normals perpendicular to the direction (1, 0, 0), so |u . n| = 0 < 1e-6 and they are parallel: no hit, even though the ray lies in the plane of z1. Face x0 has normal (-1, 0, 0), u . n = -1 (front-facing), t = 10, point (0, 250, 10): z = 10 is the upper boundary of x0, so boundary is true. Face x1 at t = 1010 is back-facing and culled. Both face parameters lie in the default finite interval [0, 4,000,000,000] mm; the pick band does not extend that interval for faces.",
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-45",
@@ -2195,9 +3918,17 @@
         "Plate 019a7bf0-0000-7000-8000-000000000005 1000 x 500 x 10; point (1100, 250, 5) lies outside the box, beyond face x1"
       ],
       "input": {
-        "point_mm": [1100, 250, 5],
+        "point_mm": [
+          1100,
+          250,
+          5
+        ],
         "radius_mm": 150,
-        "targets": ["face", "edge", "vertex"]
+        "targets": [
+          "face",
+          "edge",
+          "vertex"
+        ]
       },
       "expected": {
         "status": "ok",
@@ -2206,33 +3937,55 @@
           {
             "feature_id": "fid1:019a7bf0-0000-7000-8000-000000000005:plate:f.x1",
             "distance_mm": "100",
-            "closest_point_mm": ["1000", "250", "5"]
+            "closest_point_mm": [
+              "1000",
+              "250",
+              "5"
+            ]
           },
           {
             "feature_id": "fid1:019a7bf0-0000-7000-8000-000000000005:plate:f.z0",
             "distance_mm": "100.12492197250392864",
-            "closest_point_mm": ["1000", "250", "0"]
+            "closest_point_mm": [
+              "1000",
+              "250",
+              "0"
+            ]
           },
           {
             "feature_id": "fid1:019a7bf0-0000-7000-8000-000000000005:plate:f.z1",
             "distance_mm": "100.12492197250392864",
-            "closest_point_mm": ["1000", "250", "10"]
+            "closest_point_mm": [
+              "1000",
+              "250",
+              "10"
+            ]
           },
           {
             "feature_id": "fid1:019a7bf0-0000-7000-8000-000000000005:plate:e.x1.z0",
             "distance_mm": "100.12492197250392864",
-            "closest_point_mm": ["1000", "250", "0"]
+            "closest_point_mm": [
+              "1000",
+              "250",
+              "0"
+            ]
           },
           {
             "feature_id": "fid1:019a7bf0-0000-7000-8000-000000000005:plate:e.x1.z1",
             "distance_mm": "100.12492197250392864",
-            "closest_point_mm": ["1000", "250", "10"]
+            "closest_point_mm": [
+              "1000",
+              "250",
+              "10"
+            ]
           }
         ],
         "compare": "CR-TOL-001"
       },
-      "derivation": "Face x1 (x = 1000, y in [0, 500], z in [0, 10]): the foot (1000, 250, 5) is inside, distance 100. Faces z0 and z1: the foot (1100, 250, 0 or 10) lies outside the rectangle (x > 1000), so the distance is to the nearest rectangle point (1000, 250, 0 or 10): sqrt(100^2 + 5^2) = sqrt(10025) ~ 100.12492197250392864. Edges x1.z0 and x1.z1 have the same nearest points and distance. Every other face, edge and vertex is at least sqrt(100^2 + 250^2) = sqrt(72500) ~ 269.25824035672520156 away (a brute-force check over all 26 features agrees). Order by the tuple (floor(distance / 1e-6), ElementId, kind rank, local id): x1 first (smaller distance), then the four features at sqrt(10025), faces before edges, \"plate:f.z0\" < \"plate:f.z1\", \"plate:e.x1.z0\" < \"plate:e.x1.z1\". This is point form; the finite ray horizon does not apply and these expected distances are unchanged.",
-      "assumes": ["P-1 (assumed pending owner confirmation)"]
+      "derivation": "Face x1 (x = 1000, y in [0, 500], z in [0, 10]): the foot (1000, 250, 5) is inside, distance 100. Faces z0 and z1: the foot (1100, 250, 0 or 10) lies outside the rectangle (x > 1000), so the distance is to the nearest rectangle point (1000, 250, 0 or 10): sqrt(100^2 + 5^2) = sqrt(10025) ~ 100.12492197250392864. Edges x1.z0 and x1.z1 have the same nearest points and distance. Every other face, edge and vertex is at least sqrt(100^2 + 250^2) = sqrt(72500) ~ 269.25824035672520156 away (a brute-force check over all 26 features agrees). Order by the tuple (floor(distance / 0.001), ElementId, kind rank, local id): x1 first (smaller distance), then the four features at sqrt(10025), faces before edges, \"plate:f.z0\" < \"plate:f.z1\", \"plate:e.x1.z0\" < \"plate:e.x1.z1\". This is point form; the finite ray horizon does not apply and these expected distances are unchanged.",
+      "assumes": [
+        "P-1 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-46",
@@ -2243,7 +3996,18 @@
       "input": {
         "body": {
           "kind": "member",
-          "axis_points_mm": [[0, 0, 0], [0.5, 0, 500000]],
+          "axis_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              0.5,
+              0,
+              500000
+            ]
+          ],
           "profile": {
             "kind": "rectangle",
             "width_mm": 200,
@@ -2251,8 +4015,17 @@
           }
         },
         "placement": {
-          "translation_mm": [0, 0, 0],
-          "orientation_xyzw": [0, 0, 0, 1]
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
         }
       },
       "expected": {
@@ -2262,24 +4035,46 @@
         "hh": "0.25",
         "LL": "250000000000.25",
         "relative_margin_approx": "1e-12",
-        "Y_m": ["0", "1", "0"],
-        "Z_m_approx": ["9.99999999999e-07", "0", "0.999999999999"],
+        "Y_m": [
+          "0",
+          "1",
+          "0"
+        ],
+        "Z_m_approx": [
+          "9.99999999999e-07",
+          "0",
+          "0.999999999999"
+        ],
         "frame_certificate": "passes",
         "compare": "CR-TOL-001"
       },
       "derivation": "Exact arithmetic: 0.25 < 1e-12 * 250000000000.25 = 0.25000000000025, margin 1e-12 relative, which is thousands of ulps, so the written binary64 comparison agrees with exact arithmetic here and selects the near-vertical rule. The contract does not rely on that agreement in general: the written comparison decides, and either branch gives a certified frame. Z_y = 0 gives Y = (0, 1, 0) exactly. L ~ 500000.00000025 is below the 1,000,000 mm cap.",
-      "assumes": ["P-2 (assumed pending owner confirmation)", "P-3 (assumed pending owner confirmation)"]
+      "assumes": [
+        "P-2 (owner decision recorded 2026-10-15)",
+        "P-3 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-NEG-31",
       "title": "Frame certificate failure is reported as numeric uncertainty, no partial result",
       "given": [
-        "Valid member; the test harness injects a fault so that the built frame has X . Y = 1e-9 (above the 1e-12 certificate limit)"
+        "Valid member; the test harness injects a fault so that the built frame has X . Y = 2e-6 (above the 1e-6 certificate limit)"
       ],
       "input": {
         "body": {
           "kind": "member",
-          "axis_points_mm": [[0, 0, 0], [4000, 0, 0]],
+          "axis_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              4000,
+              0,
+              0
+            ]
+          ],
           "profile": {
             "kind": "rectangle",
             "width_mm": 200,
@@ -2287,11 +4082,20 @@
           }
         },
         "placement": {
-          "translation_mm": [0, 0, 0],
-          "orientation_xyzw": [0, 0, 0, 1]
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
         },
         "fault_injection": {
-          "frame_dot_xy": 1e-09
+          "frame_dot_xy": 2e-06
         }
       },
       "expected": {
@@ -2302,8 +4106,11 @@
         "state_changed": false,
         "stage": "build"
       },
-      "derivation": "The frame certificate (section 4, rule 2, step d) requires the absolute value of every pairwise dot product to be at most 1e-12; |+1e-9| = 1e-9 fails it. The build stops, no mesh, quantities or shape key is returned, the previous current result is untouched. This case needs a fault-injection hook in the harness; it is not reachable from admitted input.",
-      "assumes": ["P-2 (assumed pending owner confirmation)", "P-3 (assumed pending owner confirmation)"]
+      "derivation": "The frame certificate (section 4, rule 2, step e) requires the absolute value of every pairwise dot product to be at most 1e-6; |+2e-6| = 2e-6 fails it. The build stops, no mesh, quantities or shape key is returned, the previous current result is untouched. This case needs a fault-injection hook in the harness; it is not reachable from admitted input.",
+      "assumes": [
+        "P-2 (owner decision recorded 2026-10-15)",
+        "P-3 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-NEG-32",
@@ -2313,10 +4120,20 @@
       ],
       "input": {
         "ray": {
-          "origin_mm": [500, 250, 100],
-          "direction": [0, 0, -1]
+          "origin_mm": [
+            500,
+            250,
+            100
+          ],
+          "direction": [
+            0,
+            0,
+            -1
+          ]
         },
-        "targets": ["face"],
+        "targets": [
+          "face"
+        ],
         "fault_injection": {
           "non_finite_t": true
         }
@@ -2332,11 +4149,21 @@
     {
       "case_id": "F06-NEG-33",
       "title": "Pick over more elements than the work cap",
-      "given": ["A model with 65,537 elements (the cap is 65,536; exactly 65,536 is accepted)"],
+      "given": [
+        "A model with 65,537 elements (the cap is 65,536; exactly 65,536 is accepted)"
+      ],
       "input": {
         "ray": {
-          "origin_mm": [0, 0, 10],
-          "direction": [0, 0, -1]
+          "origin_mm": [
+            0,
+            0,
+            10
+          ],
+          "direction": [
+            0,
+            0,
+            -1
+          ]
         },
         "element_count": 65537
       },
@@ -2372,12 +4199,23 @@
       "case_id": "F06-NEG-35",
       "title": "Frame certificate: a negative pairwise dot product beyond the limit fails (absolute value)",
       "given": [
-        "Valid member; the harness injects the frame X = (1, 0, 0), Y = (-1e-9, 1, 0), Z = (0, 0, 1), so X . Y = -1e-9"
+        "Valid member; the harness injects the frame X = (1, 0, 0), Y = (-2e-6, 1, 0), Z = (0, 0, 1), so X . Y = -2e-6"
       ],
       "input": {
         "body": {
           "kind": "member",
-          "axis_points_mm": [[0, 0, 0], [4000, 0, 0]],
+          "axis_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              4000,
+              0,
+              0
+            ]
+          ],
           "profile": {
             "kind": "rectangle",
             "width_mm": 200,
@@ -2385,14 +4223,35 @@
           }
         },
         "placement": {
-          "translation_mm": [0, 0, 0],
-          "orientation_xyzw": [0, 0, 0, 1]
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
         },
         "fault_injection": {
           "frame": {
-            "X": [1, 0, 0],
-            "Y": [-1e-09, 1, 0],
-            "Z": [0, 0, 1]
+            "X": [
+              1,
+              0,
+              0
+            ],
+            "Y": [
+              -2e-06,
+              1,
+              0
+            ],
+            "Z": [
+              0,
+              0,
+              1
+            ]
           }
         }
       },
@@ -2404,8 +4263,11 @@
         "state_changed": false,
         "stage": "build"
       },
-      "derivation": "Exact arithmetic: |X|^2 = 1 and |Z|^2 = 1; |Y|^2 - 1 = 1e-18, within 1e-12; (X x Y) . Z = 1 - 0 = 1, so the norm and handedness checks pass. X . Y = -1e-9 and |X . Y| = 1e-9 > 1e-12, so the certificate fails. A bound written without the absolute value (X . Y <= 1e-12) would accept this frame, which is why step d requires |X . Y|, |X . Z| and |Y . Z| each at most 1e-12. With F06-NEG-31 (+1e-9) the pair exercises both signs of an injected error. Fault injection is a harness hook; the frame is not reachable from admitted input.",
-      "assumes": ["P-2 (assumed pending owner confirmation)", "P-3 (assumed pending owner confirmation)"]
+      "derivation": "Exact arithmetic: |X|^2 = 1 and |Z|^2 = 1; |Y|^2 - 1 = 4e-12, within 1e-6; (X x Y) . Z = 1 - 0 = 1, so the norm and handedness checks pass. X . Y = -2e-6 and |X . Y| = 2e-6 > 1e-6, so the certificate fails. A bound written without the absolute value (X . Y <= 1e-6) would accept this frame, which is why step e requires |X . Y|, |X . Z| and |Y . Z| each at most 1e-6. With F06-NEG-31 (+2e-6) the pair exercises both signs of an injected error. Fault injection is a harness hook; the frame is not reachable from admitted input.",
+      "assumes": [
+        "P-2 (owner decision recorded 2026-10-15)",
+        "P-3 (owner decision recorded 2026-10-15)"
+      ]
     },
     {
       "case_id": "F06-POS-47",
@@ -2434,7 +4296,7 @@
         "t_max_mm": 100
       },
       "assumes": [
-        "P-1 (assumed pending owner confirmation)"
+        "P-1 (owner decision recorded 2026-10-15)"
       ],
       "expected": {
         "status": "ok",
@@ -2532,7 +4394,7 @@
         "t_max_mm": 50
       },
       "assumes": [
-        "P-1 (assumed pending owner confirmation)"
+        "P-1 (owner decision recorded 2026-10-15)"
       ],
       "expected": {
         "status": "ok",
@@ -2541,52 +4403,1016 @@
         "truncated": false
       },
       "derivation": "Exact arithmetic: the unbounded ray reaches vertex (0, 0, 10) at t = 100 with distance 0. Clamping to [0, 50] gives t = 50, segment endpoint (0, -50, 10), squared distance 2500 mm2 and distance 50 mm. The same three incident edges as F06-POS-47 have this minimum; all other edges and vertices are at least 50 mm away because every feature has y >= 0 while the segment has y <= -50. Thus every edge/vertex distance exceeds radius_mm + eps_pick = 0.000001 mm and there are no hits. This is a successful empty query, not invalid input; extending the ray would incorrectly return hits."
+    },
+    {
+      "case_id": "F06-POS-48",
+      "title": "Rectangle first edge along element-local +Y",
+      "given": [
+        "Owner decisions of 2026-10-15; F04 section 3."
+      ],
+      "input": {
+        "body": {
+          "kind": "plate",
+          "contour_points_mm": [
+            [
+              10,
+              20,
+              30
+            ],
+            [
+              10,
+              1020,
+              30
+            ],
+            [
+              -490,
+              1020,
+              30
+            ],
+            [
+              -490,
+              20,
+              30
+            ]
+          ],
+          "thickness_mm": 10
+        },
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "outputs": [
+          "mesh",
+          "quantities"
+        ]
+      },
+      "expected": {
+        "status": "ok",
+        "code": null,
+        "plate_frame": {
+          "X_p": [
+            "0",
+            "1",
+            "0"
+          ],
+          "Y_p": [
+            "-1",
+            "0",
+            "0"
+          ],
+          "Z_p": [
+            "0",
+            "0",
+            "1"
+          ]
+        },
+        "local_bounds_mm": {
+          "min": [
+            "-490",
+            "20",
+            "30"
+          ],
+          "max": [
+            "10",
+            "1020",
+            "40"
+          ]
+        },
+        "width_mm": "1000",
+        "length_mm": "500",
+        "volume_m3": "0.005",
+        "surface_area_m2": "1.03",
+        "vertex_count": 8,
+        "triangle_count": 12,
+        "feature_count": 26
+      },
+      "derivation": "Exact vectors p1-p0 and p3-p0 have lengths 1000 and 500, cross product +Z. V=1000*500*10/10^9=0.005; S=2*(1000*500+1000*10+500*10)/10^6=1.03. Add (0,0,10) for top vertices; coordinate extrema give the listed bounds. Counts remain 8,12,26.",
+      "f04_refs": [
+        "F04-POS-18"
+      ]
+    },
+    {
+      "case_id": "F06-POS-49",
+      "title": "Rectangle starts at opposite corner",
+      "given": [
+        "Owner decisions of 2026-10-15; F04 section 3."
+      ],
+      "input": {
+        "body": {
+          "kind": "plate",
+          "contour_points_mm": [
+            [
+              1000,
+              500,
+              0
+            ],
+            [
+              0,
+              500,
+              0
+            ],
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              1000,
+              0,
+              0
+            ]
+          ],
+          "thickness_mm": 10
+        },
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "outputs": [
+          "mesh",
+          "quantities"
+        ]
+      },
+      "expected": {
+        "status": "ok",
+        "code": null,
+        "plate_frame": {
+          "X_p": [
+            "-1",
+            "0",
+            "0"
+          ],
+          "Y_p": [
+            "0",
+            "-1",
+            "0"
+          ],
+          "Z_p": [
+            "0",
+            "0",
+            "1"
+          ]
+        },
+        "local_bounds_mm": {
+          "min": [
+            "0",
+            "0",
+            "0"
+          ],
+          "max": [
+            "1000",
+            "500",
+            "10"
+          ]
+        },
+        "width_mm": "1000",
+        "length_mm": "500",
+        "volume_m3": "0.005",
+        "surface_area_m2": "1.03",
+        "vertex_count": 8,
+        "triangle_count": 12,
+        "feature_count": 26
+      },
+      "derivation": "Exact vectors p1-p0 and p3-p0 have lengths 1000 and 500, cross product +Z. V=1000*500*10/10^9=0.005; S=2*(1000*500+1000*10+500*10)/10^6=1.03. Add (0,0,10) for top vertices; coordinate extrema give the listed bounds. Counts remain 8,12,26.",
+      "f04_refs": [
+        "F04-POS-19"
+      ]
+    },
+    {
+      "case_id": "F06-NEG-37",
+      "title": "Clockwise winding rejected",
+      "given": [
+        "Owner decisions of 2026-10-15; F04 section 3."
+      ],
+      "input": {
+        "body": {
+          "kind": "plate",
+          "contour_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              500,
+              0
+            ],
+            [
+              1000,
+              500,
+              0
+            ],
+            [
+              1000,
+              0,
+              0
+            ]
+          ],
+          "thickness_mm": 10
+        },
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "outputs": [
+          "mesh",
+          "quantities"
+        ]
+      },
+      "expected": {
+        "status": "invalid_input",
+        "f04_code": "INVALID_ARGUMENT",
+        "diagnostic_code": "GEO_CONTOUR_INVALID",
+        "partial_geometry_returned": false
+      },
+      "derivation": "F04 section 3 ordered contour validity checks reject this input before the rectangle support decision; no authored state or partial geometry changes.",
+      "f04_refs": [
+        "F04-NEG-28"
+      ]
+    },
+    {
+      "case_id": "F06-NEG-38",
+      "title": "Non-planar contour rejected",
+      "given": [
+        "Owner decisions of 2026-10-15; F04 section 3."
+      ],
+      "input": {
+        "body": {
+          "kind": "plate",
+          "contour_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              1000,
+              0,
+              0
+            ],
+            [
+              1000,
+              500,
+              20
+            ],
+            [
+              0,
+              500,
+              0
+            ]
+          ],
+          "thickness_mm": 10
+        },
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "outputs": [
+          "mesh",
+          "quantities"
+        ]
+      },
+      "expected": {
+        "status": "invalid_input",
+        "f04_code": "INVALID_ARGUMENT",
+        "diagnostic_code": "GEO_CONTOUR_INVALID",
+        "partial_geometry_returned": false
+      },
+      "derivation": "F04 section 3 ordered contour validity checks reject this input before the rectangle support decision; no authored state or partial geometry changes.",
+      "f04_refs": [
+        "F04-NEG-29"
+      ]
+    },
+    {
+      "case_id": "F06-NEG-40",
+      "title": "Self-intersection rejected",
+      "given": [
+        "Owner decisions of 2026-10-15; F04 section 3."
+      ],
+      "input": {
+        "body": {
+          "kind": "plate",
+          "contour_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              1000,
+              500,
+              0
+            ],
+            [
+              0,
+              500,
+              0
+            ],
+            [
+              800,
+              0,
+              0
+            ]
+          ],
+          "thickness_mm": 10
+        },
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "outputs": [
+          "mesh",
+          "quantities"
+        ]
+      },
+      "expected": {
+        "status": "invalid_input",
+        "f04_code": "INVALID_ARGUMENT",
+        "diagnostic_code": "GEO_CONTOUR_INVALID",
+        "partial_geometry_returned": false
+      },
+      "derivation": "F04 section 3 ordered contour validity checks reject this input before the rectangle support decision; no authored state or partial geometry changes.",
+      "f04_refs": [
+        "F04-NEG-30"
+      ]
+    },
+    {
+      "case_id": "F06-NEG-41",
+      "title": "Fewer than three contour points rejected",
+      "given": [
+        "Owner decisions of 2026-10-15; F04 section 3."
+      ],
+      "input": {
+        "body": {
+          "kind": "plate",
+          "contour_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              1000,
+              0,
+              0
+            ]
+          ],
+          "thickness_mm": 10
+        },
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "outputs": [
+          "mesh",
+          "quantities"
+        ]
+      },
+      "expected": {
+        "status": "invalid_input",
+        "f04_code": "INVALID_ARGUMENT",
+        "diagnostic_code": "GEO_CONTOUR_INVALID",
+        "partial_geometry_returned": false
+      },
+      "derivation": "F04 section 3 ordered contour validity checks reject this input before the rectangle support decision; no authored state or partial geometry changes.",
+      "f04_refs": [
+        "F04-NEG-31"
+      ]
+    },
+    {
+      "case_id": "F06-NEG-42",
+      "title": "Repeated consecutive contour points rejected",
+      "given": [
+        "Owner decisions of 2026-10-15; F04 section 3."
+      ],
+      "input": {
+        "body": {
+          "kind": "plate",
+          "contour_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              1000,
+              0,
+              0
+            ],
+            [
+              1000,
+              0,
+              0
+            ],
+            [
+              1000,
+              500,
+              0
+            ],
+            [
+              0,
+              500,
+              0
+            ]
+          ],
+          "thickness_mm": 10
+        },
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "outputs": [
+          "mesh",
+          "quantities"
+        ]
+      },
+      "expected": {
+        "status": "invalid_input",
+        "f04_code": "INVALID_ARGUMENT",
+        "diagnostic_code": "GEO_CONTOUR_INVALID",
+        "partial_geometry_returned": false
+      },
+      "derivation": "F04 section 3 ordered contour validity checks reject this input before the rectangle support decision; no authored state or partial geometry changes.",
+      "f04_refs": [
+        "F04-NEG-32"
+      ]
+    },
+    {
+      "case_id": "F06-NEG-39",
+      "title": "Valid pentagon is unsupported, not invalid",
+      "given": [
+        "Owner decisions of 2026-10-15; F04 section 3."
+      ],
+      "input": {
+        "body": {
+          "kind": "plate",
+          "contour_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              1000,
+              0,
+              0
+            ],
+            [
+              1200,
+              250,
+              0
+            ],
+            [
+              500,
+              600,
+              0
+            ],
+            [
+              0,
+              500,
+              0
+            ]
+          ],
+          "thickness_mm": 10
+        },
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "outputs": [
+          "mesh",
+          "quantities"
+        ]
+      },
+      "expected": {
+        "status": "unsupported",
+        "f04_code": "UNSUPPORTED_GEOMETRY",
+        "diagnostic_code": "GEO_UNSUPPORTED_CONTOUR",
+        "partial_geometry_returned": false
+      },
+      "derivation": "Contour validity succeeds. Five points cannot meet the exactly-four-point rectangle support rule. No shape key or quantities are returned; model input remains valid.",
+      "f04_refs": [
+        "F04-POS-20"
+      ]
+    },
+    {
+      "case_id": "F06-POS-50",
+      "title": "Explicit zero roll equals omitted roll",
+      "given": [
+        "Owner decisions of 2026-10-15; F04 section 3."
+      ],
+      "input": {
+        "body": {
+          "kind": "member",
+          "axis_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              4000,
+              0,
+              0
+            ]
+          ],
+          "roll_rad": 0,
+          "profile": {
+            "kind": "rectangle",
+            "width_mm": 200,
+            "height_mm": 300
+          }
+        },
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "outputs": [
+          "mesh",
+          "quantities"
+        ]
+      },
+      "expected": {
+        "status": "ok",
+        "code": null,
+        "member_frame": {
+          "X_m": [
+            "0",
+            "1",
+            "0"
+          ],
+          "Y_m": [
+            "0",
+            "0",
+            "1"
+          ],
+          "Z_m": [
+            "1",
+            "0",
+            "0"
+          ]
+        },
+        "default_rule": "horizontal",
+        "section_perpendicular_to_axis": true,
+        "omitted_roll_same_shape_key_and_bytes": true
+      },
+      "derivation": "Ideal angle reference: 0 or pi/2 is supplied as nearest f64. At zero X/Y are unchanged; at pi/2 X_r=Y_0 and Y_r=-X_0, Z unchanged. For the near-vertical Pythagorean axis use A=8000004000000, B=4000001, C=8000004000001, with A^2+B^2=C^2. The default frame has X_0=(1,0,0), Y_0=(0,A/C,-B/C), Z=(0,B/C,A/C). These exact references use CR-TOL-001, not an assertion that f64 pi/2 has exact cosine zero.",
+      "f04_refs": [
+        "F04-POS-21"
+      ]
+    },
+    {
+      "case_id": "F06-POS-51",
+      "title": "Positive pi/2 roll about member local +Z",
+      "given": [
+        "Owner decisions of 2026-10-15; F04 section 3."
+      ],
+      "input": {
+        "body": {
+          "kind": "member",
+          "axis_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              4000,
+              0,
+              0
+            ]
+          ],
+          "roll_rad": 1.5707963267948966,
+          "profile": {
+            "kind": "rectangle",
+            "width_mm": 200,
+            "height_mm": 300
+          }
+        },
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "outputs": [
+          "mesh",
+          "quantities"
+        ]
+      },
+      "expected": {
+        "status": "ok",
+        "code": null,
+        "member_frame": {
+          "X_m": [
+            "0",
+            "0",
+            "1"
+          ],
+          "Y_m": [
+            "0",
+            "-1",
+            "0"
+          ],
+          "Z_m": [
+            "1",
+            "0",
+            "0"
+          ]
+        },
+        "default_rule": "horizontal",
+        "section_perpendicular_to_axis": true,
+        "local_bounds_mm": {
+          "min": [
+            "0",
+            "-150",
+            "-100"
+          ],
+          "max": [
+            "4000",
+            "150",
+            "100"
+          ]
+        },
+        "volume_m3": "0.24",
+        "surface_area_m2": "4.12",
+        "roll_changes_shape_key": true,
+        "roll_retains_role_ids": true
+      },
+      "derivation": "Ideal angle reference: 0 or pi/2 is supplied as nearest f64. At zero X/Y are unchanged; at pi/2 X_r=Y_0 and Y_r=-X_0, Z unchanged. For the near-vertical Pythagorean axis use A=8000004000000, B=4000001, C=8000004000001, with A^2+B^2=C^2. The default frame has X_0=(1,0,0), Y_0=(0,A/C,-B/C), Z=(0,B/C,A/C). These exact references use CR-TOL-001, not an assertion that f64 pi/2 has exact cosine zero.",
+      "f04_refs": [
+        "F04-POS-22",
+        "F04-POS-24"
+      ]
+    },
+    {
+      "case_id": "F06-POS-52",
+      "title": "Roll after the near-vertical default frame",
+      "given": [
+        "Owner decisions of 2026-10-15; F04 section 3."
+      ],
+      "input": {
+        "body": {
+          "kind": "member",
+          "axis_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0.08000002,
+              160000.08
+            ]
+          ],
+          "roll_rad": 1.5707963267948966,
+          "profile": {
+            "kind": "rectangle",
+            "width_mm": 200,
+            "height_mm": 300
+          }
+        },
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "outputs": [
+          "mesh",
+          "quantities"
+        ]
+      },
+      "expected": {
+        "status": "ok",
+        "code": null,
+        "member_frame": {
+          "X_m": [
+            "0",
+            "8000004000000/8000004000001",
+            "-4000001/8000004000001"
+          ],
+          "Y_m": [
+            "-1",
+            "0",
+            "0"
+          ],
+          "Z_m": [
+            "0",
+            "4000001/8000004000001",
+            "8000004000000/8000004000001"
+          ]
+        },
+        "default_rule": "near_vertical",
+        "section_perpendicular_to_axis": true
+      },
+      "derivation": "Ideal angle reference: 0 or pi/2 is supplied as nearest f64. At zero X/Y are unchanged; at pi/2 X_r=Y_0 and Y_r=-X_0, Z unchanged. For the near-vertical Pythagorean axis use A=8000004000000, B=4000001, C=8000004000001, with A^2+B^2=C^2. The default frame has X_0=(1,0,0), Y_0=(0,A/C,-B/C), Z=(0,B/C,A/C). These exact references use CR-TOL-001, not an assertion that f64 pi/2 has exact cosine zero.",
+      "f04_refs": [
+        "F04-POS-23"
+      ]
+    },
+    {
+      "case_id": "F06-NEG-43",
+      "title": "Non-finite roll rejected",
+      "given": [
+        "Owner decisions of 2026-10-15; F04 section 3."
+      ],
+      "input": {
+        "body": {
+          "kind": "member",
+          "axis_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              4000,
+              0,
+              0
+            ]
+          ],
+          "roll_rad": "NaN",
+          "profile": {
+            "kind": "rectangle",
+            "width_mm": 200,
+            "height_mm": 300
+          }
+        },
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "outputs": [
+          "mesh",
+          "quantities"
+        ]
+      },
+      "expected": {
+        "status": "invalid_input",
+        "f04_code": "NON_FINITE_NUMBER",
+        "diagnostic_code": "GEO_NON_FINITE",
+        "partial_geometry_returned": false
+      },
+      "derivation": "NaN here denotes an in-memory f64 NaN, not a JSON numeric string; kernel finiteness fails. Wire overflow is F04-RAW-07.",
+      "f04_refs": [
+        "F04-RAW-07"
+      ]
+    },
+    {
+      "case_id": "F06-NEG-44",
+      "title": "Roll above assumed inclusive angle cap",
+      "given": [
+        "Owner decisions of 2026-10-15; F04 section 3."
+      ],
+      "input": {
+        "body": {
+          "kind": "member",
+          "axis_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              4000,
+              0,
+              0
+            ]
+          ],
+          "roll_rad": 7,
+          "profile": {
+            "kind": "rectangle",
+            "width_mm": 200,
+            "height_mm": 300
+          }
+        },
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "outputs": [
+          "mesh",
+          "quantities"
+        ]
+      },
+      "expected": {
+        "status": "limit_exceeded",
+        "f04_code": "LIMIT_EXCEEDED",
+        "diagnostic_code": "GEO_ABOVE_LIMIT",
+        "partial_geometry_returned": false
+      },
+      "derivation": "7 > 6.283185307179586 radians; the cap is an explicit assumption because no earlier cap exists.",
+      "f04_refs": [
+        "F04-NEG-33"
+      ]
     }
   ],
   "cross_references": [
     {
       "topic": "Plate dimension at the 1,000,000 mm limit accepted",
-      "cases": ["F04-POS-08", "FS-PLATE-C"]
+      "cases": [
+        "F04-POS-08",
+        "FS-PLATE-C"
+      ]
     },
     {
       "topic": "Plate dimension just above the limit rejected",
-      "cases": ["F04-NEG-19", "F04-NEG-05", "FS-NEG-PLATE-BOUND"]
+      "cases": [
+        "F04-NEG-19",
+        "F04-NEG-05",
+        "FS-NEG-PLATE-BOUND"
+      ]
     },
     {
       "topic": "Axis length at the limit accepted",
-      "cases": ["F04-POS-13", "FS-MEMBER-B"]
+      "cases": [
+        "F04-POS-13",
+        "FS-MEMBER-B"
+      ]
     },
     {
       "topic": "Axis length just above the limit rejected",
-      "cases": ["F04-NEG-21", "FS-NEG-AXIS-BOUND"]
+      "cases": [
+        "F04-NEG-21",
+        "FS-NEG-AXIS-BOUND"
+      ]
     },
     {
       "topic": "Translation at the limit accepted / just above rejected",
-      "cases": ["F04-POS-09", "F04-NEG-26", "FS-POSE-E", "FS-NEG-TRANSLATION-BOUND"]
+      "cases": [
+        "F04-POS-09",
+        "F04-NEG-26",
+        "FS-POSE-E",
+        "FS-NEG-TRANSLATION-BOUND"
+      ]
     },
     {
       "topic": "Invalid quaternion (norm, component, zero, outside tolerance)",
-      "cases": ["F04-NEG-22", "F04-NEG-23", "F04-NEG-24", "F04-NEG-25", "FS-NEG-QUAT"]
+      "cases": [
+        "F04-NEG-22",
+        "F04-NEG-23",
+        "F04-NEG-24",
+        "F04-NEG-25",
+        "FS-NEG-QUAT"
+      ]
     },
     {
       "topic": "Zero plate thickness / negative dimension",
-      "cases": ["F04-NEG-04", "F04-NEG-14", "FS-NEG-PLATE-NEGATIVE"]
+      "cases": [
+        "F04-NEG-04",
+        "F04-NEG-14",
+        "FS-NEG-PLATE-NEGATIVE"
+      ]
     },
     {
       "topic": "Invalid density",
-      "cases": ["FS-NEG-DENSITY"]
+      "cases": [
+        "FS-NEG-DENSITY"
+      ]
     },
     {
       "topic": "Non-finite JSON numbers at the wire",
-      "cases": ["F04-RAW-01", "F04-RAW-02", "F04-RAW-04", "F04-RAW-05", "F04-RAW-06"]
+      "cases": [
+        "F04-RAW-01",
+        "F04-RAW-02",
+        "F04-RAW-04",
+        "F04-RAW-05",
+        "F04-RAW-06"
+      ]
     },
     {
       "topic": "Rotation convention and quaternion norm slightly off one",
-      "cases": ["F04-POS-10", "F04-POS-11", "F04-POS-12", "FS-POSE-A", "FS-POSE-F"]
+      "cases": [
+        "F04-POS-10",
+        "F04-POS-11",
+        "F04-POS-12",
+        "FS-POSE-A",
+        "FS-POSE-F"
+      ]
     },
     {
-      "topic": "Local frames P-1 to P-3 (assumed pending owner confirmation)",
-      "cases": ["F04-POS-14", "F04-POS-15", "F04-POS-16"]
+      "topic": "Local frames P-1 to P-3 (owner decision recorded 2026-10-15)",
+      "cases": [
+        "F04-POS-14",
+        "F04-POS-15",
+        "F04-POS-16"
+      ]
     }
   ]
 }
