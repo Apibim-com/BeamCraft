@@ -113,11 +113,13 @@ decision. This contract defines no second persisted format and no catalogue.
 | Density | greater than zero, at most 1,000,000 kg/m3, when present | F04 section 3 |
 | Quaternion | components in [-1, 1]; squared norm within 1e-6 of one | F04 section 3 |
 | Section `width_mm`, `height_mm` | at most 1,000,000 mm | F06 addition (draft) |
-| Minimum nonzero dimension | at least 0.001 mm (section 4) | F06 addition (draft) |
+| Local size L | plate D <= 2,000,000 mm; member max(axis length, section half-diagonal) <= 1,000,000 mm | F04 section 3 |
+| Minimum nonzero dimension | at least eps_geom (section 4), inclusive | F06 addition (draft) |
 
 The owner confirmed these draft first-slice values on 2026-10-15; fixture validation remains open.
-Minimum 0.001 mm equals the length floor 1e-6 m. Contours contain at most 1024 points; roll has the
-F04 section 3 cap. A maximum plate call has 3081 numeric scalars (3072 coordinates, thickness, seven
+The geometric floor is eps_geom, with an absolute minimum of 0.001 mm = 1e-6 m. Contours contain
+at most 1024 points; roll has the F04 section 3 cap. A maximum plate call has 3081 numeric scalars
+(3072 coordinates, thickness, seven
 pose components and density); a member has 17 including explicit roll. Bound counts before any
 allocation and simplicity work to at most 523,776 non-adjacent/pair candidates (1024*1023/2); no
 recursion is needed. Invalid contour checks precede the rectangle-only support decision, so a
@@ -128,7 +130,9 @@ that reports a failure; it reports all failures of that stage (at most 32) in in
 
 1. **Support**: body kind, profile kind, transform form and mesh source (`unsupported`).
 2. **Finiteness**: every f64 (`NON_FINITE_NUMBER`).
-3. **Caps**: the table above (`LIMIT_EXCEEDED`).
+3. **Caps and scale**: submitted caps, derived norms and local size L, then eps_geom as in
+   section 4. A finite cap excess is `LIMIT_EXCEEDED`; a non-finite derived intermediate is
+   `GEO_NUMERIC_UNCERTAIN` (`UNSUPPORTED_GEOMETRY`), without a substituted floor.
 4. **Ranges and contour validity**: greater than zero, minimum dimensions, axis length, density,
    quaternion and F04 section 3 contour validation (`INVALID_ARGUMENT`). Then decide rectangle
    support: a valid nonrectangle is `unsupported`. The stage-1 body check admits every plate contour
@@ -147,9 +151,9 @@ claimed; no libm choice or dependency is made by this document. This is a determ
 accuracy promise; accuracy bounds are for G04 and fixtures.
 
 **Order of evaluation for quantities and dot products.** Call the three box edge lengths `a`, `b`,
-`c` (plate `width, length, thickness`; member `w, h, L`). Then `V_mm3 = (a*b)*c`, `S_mm2 = 2*((a*b +
-a*c) + b*c)`, `V_m3 = V_mm3 / 1e9`, `S_m2 = S_mm2 / 1e6` (division by constants that are exactly
-representable) and `mass = (V_mm3 * density) / 1e9`. A dot product of three terms is `(r1*v1 +
+`c` (plate `width, length, thickness`; member `w, h, ell`). Then `V_mm3 = (a*b)*c`,
+`S_mm2 = 2*((a*b + a*c) + b*c)`, `V_m3 = V_mm3 / 1e9`, `S_m2 = S_mm2 / 1e6` (division by
+exactly representable integers) and `mass = (V_mm3 * density) / 1e9`. A dot product is `(r1*v1 +
 r2*v2) + r3*v3`; world coordinate `i` of a vertex `(x, y, z)` is `(((R_i0*x + R_i1*y) + R_i2*z) +
 t_i)`. Bounds take the minimum and maximum of the eight computed vertices with `<` and `>`, scanning
 vertex indices in ascending order.
@@ -240,38 +244,87 @@ receives engineering quantities.
 ## 4. Tolerance and degeneracy policy (G-06, draft)
 
 **Confirmed by the owner on 2026-10-15 as first-slice values; draft, to be validated by fixtures,
-not frozen.** All constants carry integer `tolerance_policy` version 2. The algorithm version is 2
-because input encoding, roll and geometry admission changed; feature and mesh layout versions stay
+not frozen.** All constants carry integer `tolerance_policy` version 3. The algorithm version is 3
+because local-size scaling changes geometry admission; feature and mesh layout versions stay
 1. Changing any constant raises that version and therefore every shape key (section 7).
 
 | Constant | Value | Use |
 |----------|-------|-----|
-| Minimum nonzero dimension `eps_dim` | 0.001 mm, inclusive | Plate dimensions, section dimensions, axis length |
+| Geometric length floor `eps_geom`; minimum `eps_dim = eps_geom` | max(0.001 mm, 2^-22 * L), inclusive for minima | Plate thickness/edges, section dimensions, axis length; local L below |
 | Parallel threshold `eps_par` | 1e-6, strict | The parallel test of P-3 |
-| Planarity `eps_plane` | 0.001 mm + 1e-6*D | Contour admission; F04 section 3 |
+| Planarity `eps_plane` | eps_geom + 1e-6*D | Contour admission; F04 section 3 |
 | Frame/quaternion certificate/admission | 1e-6, dimensionless | Absolute deviations from unit identities |
-| Coincidence | Two points coincide when their distance is below `eps_dim` | Axis endpoints only |
+| Coincidence | Two points coincide when their distance is below `eps_geom` (strict) | Axis endpoints; contour edge minima reject close consecutive points without merging |
 
-**Why these values.** 0.001 mm is far above the spacing of binary64 numbers at the largest admitted
-coordinate (about 1.2e-7 mm at 1e9 mm), so a body of minimum size stays distinct from its neighbours
-at every admitted placement. Subtracting two submitted f64 values gives one rounding at most, so the
-axis direction suffers no cancellation beyond that. A threshold of 1e-6 keeps the amplification of
-rounding error in the normalized roll vector below about 1e-10 relative. These are reasons for a
-draft, not proofs; G04 validates them.
+**Geometric length floor (owner decision, 2026-10-15).** `eps_geom = max(0.001 mm, 2^-22 * L)`.
+Here `L` is an element-local body size in mm, evaluated before placement: for a plate `L = D`,
+the maximum distance from contour point p0 to any contour point; for a member `L = max(ell, H)`,
+where `ell` is the axis length and `H` is the section half-diagonal. World coordinates and
+translation magnitude never enter this scale. Thickness does not enter plate D; roll and rigid
+placement do not enter member L.
+
+Use binary64 round-to-nearest-even at every written operation, without reassociation or fused
+multiply-add. Define `norm(v) = sqrt((v_x*v_x + v_y*v_y) + v_z*v_z)`. Subtract submitted
+element-local point components first, then evaluate each norm in that order. For a plate scan
+`norm(p_i - p0)` in ascending point index, starting with D = 0 and retaining the larger value
+with `>`; set L = D. For a member compute `ell = norm(p2 - p1)`, `hw = width_mm/2`,
+`hh_section = height_mm/2`, `H = sqrt(hw*hw + hh_section*hh_section)`, then L = max(ell, H).
+Finally multiply L by the exactly representable binary64 constant `2^-22 = 1/4194304`, then
+take max with binary64(0.001 mm). Thus eps_geom is never smaller than binary64(0.001 mm).
+All length operands and results are in mm; the scale factor is dimensionless.
+
+Check submitted finiteness and F04 caps before using the floor. Plate L must be at most
+2,000,000 mm (the existing D cap); member L must be at most 1,000,000 mm (the existing axis
+and section caps imply this). An excessive finite L is `LIMIT_EXCEEDED` (`GEO_ABOVE_LIMIT`
+in F06), before minima or rectangle-only contour support decisions. Non-finite submitted input is
+`NON_FINITE_NUMBER` (`GEO_NON_FINITE`). A non-finite derived L or norm intermediate from
+otherwise finite capped input is numeric uncertainty: `UNSUPPORTED_GEOMETRY`
+(`GEO_NUMERIC_UNCERTAIN`), with no floor, partial geometry or current key. Never clamp L,
+substitute the absolute floor for a failed scale, or expand any F04 cap. Under the stated
+caps these square sums cannot overflow; the diagnostic also covers arithmetic faults.
+
+**Application and exclusions.** eps_geom replaces a fixed absolute length floor in minimum
+dimensions, close consecutive contour points, coincident member endpoints, axis degeneracy,
+planarity and geometric distance-to-boundary decisions. The planarity threshold is evaluated
+as `scaled_relative = binary64(1e-6) * D`, then `eps_plane = eps_geom + scaled_relative`.
+It is inclusive. A geometric distance to a boundary at most eps_geom is in the boundary band;
+a greater distance is outside that band. This band classifies distance only: it cannot change
+an exact sign, identity, intersection or topology, and it does not authorize snapping or healing.
+No additional boundary query or solid operation is introduced by this amendment.
+
+Parallel/orthogonality checks expressed as a length or distance use eps_geom as their absolute
+length floor. Dimensionless relative tests keep their existing bounds: in particular member
+`eps_par = 1e-6` and its written squared multiplier 1e-12 are unchanged. Frame/quaternion
+certificates and relative bounds retain 1e-6. CR-TOL-001 retains its absolute 0.001 mm term
+and relative comparison term; it never uses eps_geom. Pick inclusion, its boundary flag,
+distance buckets and the exact ray parameter interval remain governed solely by section 9:
+eps_pick and the tie quantum stay absolute 0.001 mm even on a large body. Exact winding,
+simplicity, rectangle closure/orthogonality, identities, topology, hashes and cap checks remain
+exact. A valid near-planar contour still has unsupported evaluation until A02.
+
+**Why this scale.** The owner adopted local body size rather than world-origin magnitude on
+2026-10-15. This closes only A5's large-coordinate policy item; it supplies no runtime accuracy
+proof. Rounded-mesh cross-checks and subnormal mass remain open. The absolute floor protects
+small bodies, and the relative term grows only with the body's own size inside existing caps.
 
 **Rules.**
 
-1. A dimension (plate width/length/thickness, section width/height, axis length) of zero or less is
+1. A dimension (plate thickness, section width/height, axis length) of zero or less is
    `GEO_NOT_POSITIVE`; a value above zero and below `eps_dim` is `GEO_BELOW_MINIMUM`; a value equal
    to `eps_dim` is accepted. A zero or too-short axis is `GEO_AXIS_TOO_SHORT` (`INVALID_ARGUMENT`,
-   as G-03 requires). The axis length is `L = sqrt((dx*dx + dy*dy) + dz*dz)` with `d = p2 - p1` per
-   component.
+   as G-03 requires). The axis length is `ell = sqrt((dx*dx + dy*dy) + dz*dz)`, subtracting
+   `d = p2 - p1` per component before taking the norm.
+   Contour edges below eps_geom, including zero edges, retain `GEO_CONTOUR_INVALID` under
+   F04 section 3; they are never merged or reordered. A supported rectangle's width and length
+   are its already validated contour edge lengths.
 2. **Default zero-roll frame and parallel test (P-3, owner refined).** Let `d = p2 - p1`, `hh =
-   dx*dx + dy*dy`, `LL = hh + dz*dz`, `L = sqrt(LL)`. The frame is built in this order:
-   - a. `Z = (dx/L, dy/L, dz/L)`.
+   dx*dx + dy*dy`, `LL = hh + dz*dz`, `ell = sqrt(LL)`. Here ell is axis length,
+   distinct from the tolerance scale L = max(ell, H). The frame is built in this order:
+   - a. `Z = (dx/ell, dy/ell, dz/ell)`.
    - b. The first direction `Y`, by the first branch that applies. **Horizontal rule** when `hh >=
-     1e-12 * LL`: with `h = sqrt(hh)`, `Y = ((-dx*dz)/(h*L), (-dy*dz)/(h*L), hh/(h*L))`, which is
-     local +Z projected onto the plane normal to `Z`. **Near-vertical rule** (also called the column
+     1e-12 * LL`: with `h = sqrt(hh)`, `Y = ((-dx*dz)/(h*ell), (-dy*dz)/(h*ell), hh/(h*ell))`,
+     which is local +Z projected onto the plane normal to `Z`. **Near-vertical rule** (also called
+     the column
      rule) when `hh < 1e-12 * LL` (strict; anti-parallel counts; an exactly vertical axis is
      included): with `U = (0, 1, 0)` and `c = Z_y`, the vector `P = (-Z_x*c, 1 - Z_y*c, -Z_z*c)` is
      `U - Z*(U . Z)`, and `Y = P / |P|` with `|P| = sqrt((P_x*P_x + P_y*P_y) + P_z*P_z)`. An exactly
@@ -526,8 +579,8 @@ locale and JSON formatting are never part of a preimage. Keys are SHA-256 digest
 lowercase hexadecimal digits; they are not content digests of stored bytes.
 
 **Three separate dependency keys.** The shape and world-measurement preimages share the `algorithm`
-and `tolerance_policy` fields (`00 02 00 02` for their two u16 values after the owner amendment).
-Changing either version intentionally invalidates both keys. Their remaining directly encoded fields
+and `tolerance_policy` fields (`00 03 00 03` for their two u16 values after the local-size
+amendment). Changing either version intentionally invalidates both keys. Their remaining fields
 are disjoint: shape has body kind, ordered plate contour/thickness or member axis, roll, section
 kind and dimensions, `feature_id_rule` and `mesh_layout`; world has the shape-key digest,
 translation and canonical quaternion. World therefore also depends transitively on every shape
@@ -540,14 +593,14 @@ are disjoint from the geometry inputs; V01 still owns its preimage encoding.
    plate, 2 member), then for a plate a u16 point count, each ordered point's three f64 components
    and f64 thickness; for a member the six f64 of `p1, p2`, f64 `roll_rad` (omitted means zero), a
    section kind byte (1 rectangle) and f64 width/height; then four u16 big-endian: `algorithm`,
-   `tolerance_policy`, `feature_id_rule`, `mesh_layout` (2, 2, 1, 1 after the owner amendment). It
-   excludes placement, density, material, label, appearance, camera, ElementId and the profile
+   `tolerance_policy`, `feature_id_rule`, `mesh_layout` (3, 3, 1, 1 after the local-size amendment).
+   It excludes placement, density, material, label, appearance, camera, ElementId and the profile
    resource digest (two profiles with the same dimensions give the same geometry; the digest stays
    in the F04 footprint instead).
 2. **World-measurement key**: everything measured in world space. Preimage: `BCGEO-WORLD` + `0x00`,
    the 32 raw bytes of the shape key, the three f64 of `translation_mm`, the four f64 of the
-   canonical quaternion (section 4), then u16 `algorithm` and `tolerance_policy`. It excludes
-   density, label, appearance and camera.
+   canonical quaternion (section 4), then u16 `algorithm` and `tolerance_policy`. The version pair
+   is (3, 3). It excludes density, label, appearance and camera.
 3. **Presentation key**: how an element is shown. Inputs: the resolved display appearance reference
    (digest), visibility and the camera description of the view. It contains no shape, placement or
    physical-material input. It is computed by the presentation layer (V01 fixes its preimage) and
@@ -556,7 +609,8 @@ are disjoint from the geometry inputs; V01 still owns its preimage encoding.
 
 **Mass signature.** Mass is a quantity with its own input signature (F04 section 5), not a fourth
 key: SHA-256 of `BCGEO-MASS` + `0x00`, the shape key, a presence byte (0 or 1) and the f64 density
-(0 when absent), then u16 `algorithm`.
+(0 when absent), then u16 `algorithm` (3). L and eps_geom are deterministically derived from
+shape inputs; no independent scale field is added to any preimage.
 
 **Invalidation matrix.** "Inval." marks a changed key or signature; "-" marks an unchanged one.
 
@@ -592,11 +646,11 @@ section 5). Status values are exactly F04's: `current`, `stale`, `unknown`, `uns
 
 | Quantity | Unit | Definition for the first scope | Required inputs |
 |----------|------|--------------------------------|-----------------|
-| Volume | m3 (mm3 internally) | Rectangle contour `width*length*t` with width=norm(p1-p0), length=norm(p2-p1); member `w*h*L` | Valid shape |
+| Volume | m3 (mm3 internally) | Rectangle contour `width*length*t` with width=norm(p1-p0), length=norm(p2-p1); member `w*h*ell` | Valid shape |
 | Surface area | m2 (mm2 internally) | `2*(a*b + a*c + b*c)` over the three box edge lengths | Valid shape |
 | Local bounds | mm | Minimum and maximum of the eight vertices in element-local space (plate: p0 plus the contour-derived box vectors) | Valid shape |
 | World bounds | mm | Minimum and maximum of the eight vertices after the rigid transform | Shape and placement |
-| Member length | mm | `L = sqrt((dx*dx + dy*dy) + dz*dz)` of `d = p2 - p1` (members only) | Valid shape |
+| Member length | mm | `ell = sqrt((dx*dx + dy*dy) + dz*dz)` of `d = p2 - p1` (members only); distinct from tolerance L | Valid shape |
 | Mass | kg | Volume in m3 times density in kg/m3 | Current volume and an explicit density |
 
 Bounds and vertices follow the owner decisions P-1 to P-3. Valid nonrectangular contours return
@@ -764,8 +818,9 @@ host may report: `CANCELLED` only when the discard is proven.
 
 ## 11. Acceptance cases
 
-The [case file](geometry-contract-cases-v0.1.json) holds 96 logical cases: 52 positive (`F06-POS-01`
-to `F06-POS-52`) and 44 negative (`F06-NEG-01` to `F06-NEG-44`). They are proposed future tests:
+The [case file](geometry-contract-cases-v0.1.json) holds 110 logical cases: 59 positive
+(`F06-POS-01` to `F06-POS-59`) and 51 negative (`F06-NEG-01` to `F06-NEG-51`). These are future
+tests;
 acceptance needs a real kernel, real buffers and independent readers. Numeric expectations use exact
 forms or decimal approximations checked with rational arithmetic and high-precision square roots;
 round-3 checks use a throwaway script under ignored `target/`. The derivation text is in each case.
@@ -798,7 +853,7 @@ no existing ID is changed.
 | Invalid contours and valid unsupported pentagon | `F06-NEG-37` to `F06-NEG-42` | `F04-NEG-28` to `F04-NEG-32`, `F04-POS-20` |
 | Explicit axial roll, default and near-vertical | `F06-POS-50` to `F06-POS-52` | `F04-POS-21` to `F04-POS-24` |
 | Non-finite/out-of-cap roll | `F06-NEG-43`, `F06-NEG-44` | `F04-RAW-07`, `F04-NEG-33` |
-
+| Local-size floor, small-body invariance, planarity, cap/fault and absolute pick band | `F06-POS-53` to `F06-POS-59`, `F06-NEG-45` to `F06-NEG-51` | `F04-POS-25` to `F04-POS-30`, `F04-NEG-34` to `F04-NEG-39` |
 
 The invalid-quaternion, translation-limit and density cases are already covered by `F04-NEG-22` to
 `F04-NEG-26` and `FS-NEG-QUAT`, `FS-NEG-DENSITY`, and are not repeated. The file also carries a
@@ -815,9 +870,9 @@ still needs review, fixture validation and owner action.
 | Item | Question |
 |------|----------|
 | P-1, P-2, P-3 | Recorded jointly with F04 on 2026-10-15; normal sign, bounds and angle-cap assumptions need review |
-| Policy constants | Owner confirmed first-slice values; draft, to be validated by fixtures. Compared with ifc-lite values in the tolerance report; no contract value changed |
+| Policy constants | Owner confirmed first-slice values; draft, to be validated by fixtures. Compared with supplied ifc-lite values in the tolerance report; local-size scaling adopted on 2026-10-15 |
 | Roll discontinuity | Accept the roll jump at the parallel threshold (section 4, rule 3), or choose a continuous rule. The near-vertical rule does not remove it |
-| Open item A5 | Full-domain coordinate accuracy for cancellation-heavy inputs, subnormal mass and rounded-mesh cross-checks stay **open**: no certified accuracy bound exists yet, and the explicit owner tolerance amendment does not establish accuracy or close this gate; narrowing an F04 input range to hide the gap is not allowed. G04 and fixtures must establish bounds on the full admitted domain |
+| Open item A5 | **Partly resolved, 2026-10-15:** the owner-directed eps_geom closes only the large-coordinate part. Rounded-mesh cross-checks and subnormal mass remain **open**. No runtime accuracy proof or fixture gate is passed; G04 and fixtures must establish bounds on the admitted domain without narrowing F04 caps |
 | FeatureId on axis reversal | Accept that ids follow roles, not world faces (section 5, rule 6) |
 
 **What later tasks must still decide.**
@@ -947,3 +1002,16 @@ still needs review, fixture validation and owner action.
     NEG-42 (self-intersection, fewer than three, repeated point), NEG-43/44 (non-finite/out-of-range
     roll). Counts: 96 logical, 52 positive, 44 negative. F06 stays draft 0.1.0, not frozen; no
     implementation/admission gate is closed.
+
+- 2026-10-15, tolerance-magnitude amendment (intended branch
+  `docs/tolerance-magnitude-scaling`, stacked on PR #26; Git ownership blocks verification):
+  sections 2 and 4 adopt local-size eps_geom and ordered binary64 derivation from F04 section 3.
+  Plate L is D; member L is max(axis length, section half-diagonal). Minimum dimensions,
+  coincidence, degeneracy, planarity and geometric distance bands use the scaled floor;
+  dimensionless relative/certificate bounds, CR-TOL-001, pick band and exact checks do not change.
+  Section 7 raises algorithm/tolerance versions from 2/2 to 3/3 and POS-25 regenerates all seven
+  digests plus antipodal equality. Feature/layout versions and the baseline mesh digest stay 1
+  and unchanged respectively. Added POS-53 to POS-59 and NEG-45 to NEG-51: 110 cases (59 positive,
+  51 negative). No existing outcome flips or input rewrites are necessary; small-body minimum
+  cases remain on the absolute floor. Only the large-coordinate part of A5 is closed;
+  rounded-mesh cross-checks and subnormal mass remain open. F06 stays draft 0.1.0, not frozen.

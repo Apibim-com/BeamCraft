@@ -49,6 +49,17 @@ later project; portable domain crates alone do not establish a working web appli
 
 ## Progress log
 
+- 2026-10-15: applied the owner local-size tolerance decision to F04/F06, stacked on PR #26:
+  eps_geom = max(0.001 mm, 2^-22 * L), with plate L=D and member L=max(axis length, section
+  half-diagonal), evaluated in the element-local frame under ordered binary64 arithmetic and
+  existing caps. Geometric length minima, coincidence, degeneracy, planarity and distance bands
+  use the scaled floor; CR-TOL-001, absolute pick bands, exact checks and relative 1e-6 bounds
+  remain unchanged. Algorithm/tolerance versions are 3/3 and seven dependency-key digests are
+  regenerated. F04 has 69 logical cases (30 positive, 39 negative), seven raw; F06 has 110 cases
+  (59 positive, 51 negative). Only A5's large-coordinate part is closed; rounded-mesh
+  cross-checks and subnormal mass remain open. F04 stays a freeze candidate 0.1.0, F06 a draft;
+  no runtime feature, admission, freeze or K0 gate is passed.
+
 - 2026-10-15: recorded the owner decisions of 2026-10-15 in F04, F06 and the architecture page
   (stacked on PR #23): contour plate input with rectangle-only evaluation until A02, P-2 confirmed,
   explicit axial `roll_rad`, relative 1e-6 bounds with a 0.001 mm length floor, permissive Rust
