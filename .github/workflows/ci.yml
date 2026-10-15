@@ -50,6 +50,10 @@ jobs:
       - name: Verify original fixtures
         run: cargo run -p beamcraft-fixtures -- verify --dir tests/fixtures/f07
 
+      # F08: workspace manifests must obey the module table (also run by cargo test).
+      - name: Check module boundaries
+        run: cargo run --locked -p beamcraft-boundaries -- check
+
       # Independent oracle (Python standard library) for hashes and analytical expectations.
       - name: Check fixture expectations independently
         if: runner.os == 'Linux'
@@ -82,9 +86,14 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: wasm32
-      # Library crates must stay portable to the browser.
-      - name: Check library crates for wasm32
-        run: cargo check --target wasm32-unknown-unknown -p beamcraft-geom -p beamcraft-model
+      # Domain crates must stay portable to the browser. The list comes from the module table in
+      # docs/contracts/module-boundaries-v0.1.md, so it is written in one place only.
+      - name: Check portable domain crates for wasm32
+        run: |
+          list="$(cargo run --locked --quiet -p beamcraft-boundaries -- portable)"
+          echo "portable crates: $list"
+          test -n "$list"
+          cargo check --locked --target wasm32-unknown-unknown $list
 
   deny:
     name: dependency licences and advisories
