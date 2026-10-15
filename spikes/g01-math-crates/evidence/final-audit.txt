@@ -1,0 +1,4 @@
+Root Cargo.lock SHA-256: 7b15824fc67c90a837ad19af9d28e12dea2802797e90f541945ddb8e984497eb
+Debug/release conformance: 24 identical rows, matching conformance.csv
+UTF-8 without BOM / LF / mojibake audit: 25 files, 0 failures
+Git status/branch/base: blocked by ownership check; uncommitted

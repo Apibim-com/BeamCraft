@@ -301,7 +301,16 @@ pass. A proposed policy or scope change needs the owner before a rejected option
 | G10 | Spec drift/oracle gaps | Pinned clauses/tools; coverage ledger and review of all warnings. |
 
 Licence gate G01 covers build tools, generated outputs and separately licensed bundled resources,
-not just crate metadata. No TOST global allowlist change is proposed. Maintenance gate G02 applies
+not just crate metadata. No TOST global allowlist change is proposed.
+
+> **Note, 2026-10-15 (owner decision).** The owner decided to accept the TOST-1.0 material of
+> OpenUSD origin inside the `openusd` crate (0.8.x, file `src/usd/core_schemas.rs`), under the
+> conditions in `AGENTS.md` section 1.2: the upstream licence and notice are kept (`NOTICE`,
+> `licenses/TOST-1.0-openusd.txt`), BeamCraft claims no rights in that material, trademark terms
+> are respected, and the exact package and version are recorded in `ATTRIBUTION.md`. The licence
+> blocker found by spike N01 is thereby resolved as an owner decision, not by a change of the
+> crate's declared MIT licence. The `deny.toml` allowlist is unchanged, and this note does not
+> adopt the crate or select an engine option. Maintenance gate G02 applies
 to SDK/Python maintenance as well as small Rust projects and our own subset. Stars and README
 claims do not establish bus factor. Reassess pins and open coverage whenever an engine, schema,
 toolchain or specification changes; a previous corpus pass does not admit a new release.

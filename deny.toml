@@ -5,6 +5,11 @@
 # Official OpenUSD TOST use has a scoped exception in AGENTS.md section 1.2.
 # No OpenUSD package is in this Cargo graph. Do not allow TOST globally;
 # add a verified package/version exception only if one enters the graph.
+# The `openusd` crate 0.8.x declares MIT, but its file src/usd/core_schemas.rs is covered by
+# TOST-1.0 (owner decision 2026-10-15, AGENTS.md section 1.2). cargo-deny reads only the manifest
+# and cannot see that per-file licence. If the `openusd` package enters the Cargo graph of this
+# workspace, a package/version exception and the TOST file-level notice review recorded in
+# ATTRIBUTION.md are required first. The N01 spike is outside the workspace graph.
 
 [graph]
 all-features = true
@@ -40,6 +45,11 @@ allow = ["MPL-2.0"]
 
 [[licenses.exceptions]]
 name = "beamcraft-protocol"
+version = "0.0.1"
+allow = ["MPL-2.0"]
+
+[[licenses.exceptions]]
+name = "beamcraft-host"
 version = "0.0.1"
 allow = ["MPL-2.0"]
 

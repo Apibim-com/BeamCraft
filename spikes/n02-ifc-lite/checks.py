@@ -25,3 +25,8 @@ for index, (cwd, command) in enumerate(commands, 1):
     print(json.dumps(row), flush=True)
 print("ROOT_LOCK_SHA256", hashlib.sha256((ROOT / "Cargo.lock").read_bytes()).hexdigest(), flush=True)
 (OUT / "checks.json").write_text(json.dumps(results, indent=2)+"\n", encoding="utf-8", newline="\n")
+failed = [row["log"] for row in results if row["exit"] != 0]
+if failed:
+    # All six results are recorded above; a failing check must not look like success.
+    print("FAILED checks: " + ", ".join(failed), flush=True)
+    raise SystemExit(1)
