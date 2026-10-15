@@ -1,0 +1,5 @@
+/target
+# raw cargo metadata output (about 2 MB); regenerate with cargo metadata --offline --format-version 1, see the report
+metadata-*.json
+# raw per-command outputs; the summary is in checks.json
+check-*.txt

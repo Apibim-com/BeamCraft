@@ -1,0 +1,202 @@
+[
+  {
+    "mode": "suite",
+    "exit": 0,
+    "timeout": false,
+    "seconds": 0.013167299999622628,
+    "peak_committed_bytes": 815104,
+    "stdout": "plate-mm: Metrics { vertices: 24, triangles: 12, unique_positions: 8, raw_edges: 30, raw_closed: false, raw_euler: 6, geometric_edges: 18, geometric_closed: true, geometric_euler: 2, geometric_components: 1, nonzero_triangles: 12, outward_triangles: 12, finite: true, signed_volume: 5000000.0, area: 1030000.0, crate_volume: 5000000.0, bounds: ([0.0, 0.0, 0.0], [1000.0, 500.0, 10.0]) }\nmember-mm: Metrics { vertices: 24, triangles: 12, unique_positions: 8, raw_edges: 30, raw_closed: false, raw_euler: 6, geometric_edges: 18, geometric_closed: true, geometric_euler: 2, geometric_components: 1, nonzero_triangles: 12, outward_triangles: 12, finite: true, signed_volume: 240000000.0, area: 4120000.0, crate_volume: 240000000.0, bounds: ([0.0, -100.0, -150.0], [4000.0, 100.0, 150.0]) }\nplate-metres: Metrics { vertices: 24, triangles: 12, unique_positions: 8, raw_edges: 30, raw_closed: false, raw_euler: 6, geometric_edges: 18, geometric_closed: true, geometric_euler: 2, geometric_components: 1, nonzero_triangles: 12, outward_triangles: 12, finite: true, signed_volume: 0.004999999888241291, area: 1.0299999993294477, crate_volume: 0.00499725341796875, bounds: ([0.0, 0.0, 0.0], [1.0, 0.5, 0.01]) }\nrepeat-plate=true repeat-member=true\nrectangle-triangulation=TriangulationOf { points: [[0.0, 0.0], [1000.0, 0.0], [1000.0, 500.0], [0.0, 500.0]], indices: [2, 3, 0, 0, 1, 2] }\nextruded-hole: Metrics { vertices: 48, triangles: 32, unique_positions: 16, raw_edges: 72, raw_closed: false, raw_euler: 8, geometric_edges: 48, geometric_closed: true, geometric_euler: 0, geometric_components: 1, nonzero_triangles: 32, outward_triangles: 28, finite: true, signed_volume: 4800000.0, area: 996000.0, crate_volume: 4800000.0, bounds: ([0.0, 0.0, 0.0], [1000.0, 500.0, 10.0]) }\nrepeat-hole=true\nminimum-mm: Metrics { vertices: 24, triangles: 12, unique_positions: 8, raw_edges: 30, raw_closed: false, raw_euler: 6, geometric_edges: 18, geometric_closed: true, geometric_euler: 2, geometric_components: 1, nonzero_triangles: 12, outward_triangles: 12, finite: true, signed_volume: 1.0000001424923606e-9, area: 6.000000569969429e-6, crate_volume: 1.0213909718004288e-9, bounds: ([0.0, 0.0, 0.0], [0.001, 0.001, 0.001]) }\nthin-mm: Metrics { vertices: 24, triangles: 12, unique_positions: 8, raw_edges: 30, raw_closed: false, raw_euler: 6, geometric_edges: 18, geometric_closed: true, geometric_euler: 2, geometric_components: 1, nonzero_triangles: 12, outward_triangles: 12, finite: true, signed_volume: 500.0000237487256, area: 1000003.0000001425, crate_volume: 503.5400390625, bounds: ([0.0, 0.0, 0.0], [1000.0, 500.0, 0.001]) }\nmaximum-mm: Metrics { vertices: 24, triangles: 12, unique_positions: 8, raw_edges: 30, raw_closed: false, raw_euler: 6, geometric_edges: 18, geometric_closed: true, geometric_euler: 2, geometric_components: 1, nonzero_triangles: 12, outward_triangles: 12, finite: true, signed_volume: 9.999999999999999e17, area: 6000000000000.0, crate_volume: 1e18, bounds: ([0.0, 0.0, 0.0], [1000000.0, 1000000.0, 1000000.0]) }\nfractional-mm: Metrics { vertices: 24, triangles: 12, unique_positions: 8, raw_edges: 30, raw_closed: false, raw_euler: 6, geometric_edges: 18, geometric_closed: true, geometric_euler: 2, geometric_components: 1, nonzero_triangles: 12, outward_triangles: 12, finite: true, signed_volume: 5063603.300262201, area: 1030745.761999087, crate_volume: 5063604.254289749, bounds: ([0.0, 0.0, 0.0], [1000.1235, 500.12344, 10.123457]) }\nthin-at-large-origin: Metrics { vertices: 24, triangles: 12, unique_positions: 4, raw_edges: 30, raw_closed: false, raw_euler: 6, geometric_edges: 9, geometric_closed: false, geometric_euler: 7, geometric_components: 1, nonzero_triangles: 4, outward_triangles: 0, finite: true, signed_volume: 0.0, area: 1048576.0, crate_volume: 0.0, bounds: ([1000000000.0, 1000000000.0, 1000000000.0], [1000001000.0, 1000000500.0, 1000000000.0]) }\nclip-default-epsilon=0.000001\n",
+    "stdout_sha256": "1cc0ed884bb0745900dc47d1b05f4bcb351e0060a11c3a68e3ece1e157a0cdaa",
+    "stderr": ""
+  },
+  {
+    "mode": "clip",
+    "exit": 0,
+    "timeout": false,
+    "seconds": 0.0047607999986212235,
+    "peak_committed_bytes": 798720,
+    "stdout": "plane-cut: Metrics { vertices: 42, triangles: 14, unique_positions: 12, raw_edges: 42, raw_closed: false, raw_euler: 14, geometric_edges: 25, geometric_closed: false, geometric_euler: 1, geometric_components: 1, nonzero_triangles: 14, outward_triangles: 14, finite: true, signed_volume: 3333333.3333333335, area: 515000.0, crate_volume: 2083333.3333333333, bounds: ([500.0, 0.0, 0.0], [1000.0, 500.0, 10.0]) }\nrepeat-clip=true failures=[]\n",
+    "stdout_sha256": "464849938c22f6ec0f642f54b2ede4629929f5d4d8d8ef36b27e13f9eb14564d",
+    "stderr": ""
+  },
+  {
+    "mode": "boolean",
+    "exit": 0,
+    "timeout": false,
+    "seconds": 0.015542799999821,
+    "peak_committed_bytes": 1122304,
+    "stdout": "high-level-group=Cut\nhigh-level-hole: Metrics { vertices: 48, triangles: 32, unique_positions: 16, raw_edges: 72, raw_closed: false, raw_euler: 8, geometric_edges: 48, geometric_closed: true, geometric_euler: 0, geometric_components: 1, nonzero_triangles: 32, outward_triangles: 28, finite: true, signed_volume: 4800000.0, area: 996000.0, crate_volume: 4800000.0, bounds: ([0.0, 0.0, 0.0], [1000.0, 500.0, 10.0]) }\nhigh-level-failures=[]\nkernel-hole: Metrics { vertices: 168, triangles: 56, unique_positions: 28, raw_edges: 168, raw_closed: false, raw_euler: 56, geometric_edges: 84, geometric_closed: true, geometric_euler: 0, geometric_components: 1, nonzero_triangles: 56, outward_triangles: 46, finite: true, signed_volume: 4799999.999999998, area: 996000.0, crate_volume: 4800000.0, bounds: ([0.0, 0.0, 0.0], [1000.0, 500.0, 10.0]) }\nrepeat-kernel-hole=true\n",
+    "stdout_sha256": "e8475d5a9c906ae3311a8e0c21f5be9ff28b38b65fac15b6592dd08f02d04cff",
+    "stderr": ""
+  },
+  {
+    "mode": "bench",
+    "exit": 0,
+    "timeout": false,
+    "seconds": 0.008072299999184906,
+    "peak_committed_bytes": 798720,
+    "stdout": "bench-plates: count=1000 elapsed-ns=1705800 vertices=24000 triangles=12000\nbench-members: count=1000 elapsed-ns=1741800 vertices=24000 triangles=12000\n",
+    "stdout_sha256": "0edd6608b82f2ba980a792018bf484d3613bdae5cc8e752fffc5d3ec64c1aaa2",
+    "stderr": ""
+  },
+  {
+    "mode": "zero",
+    "exit": 0,
+    "timeout": false,
+    "seconds": 0.005023499998060288,
+    "peak_committed_bytes": 749568,
+    "stdout": "zero: error=InvalidExtrusion(\"Depth must be positive\"); display=Invalid extrusion parameters: Depth must be positive\n",
+    "stdout_sha256": "2262575c394fa3ad10931e75766651758f1c21bddc6bb24c4db2c3702ccc1d59",
+    "stderr": ""
+  },
+  {
+    "mode": "negative",
+    "exit": 0,
+    "timeout": false,
+    "seconds": 0.004439899999852059,
+    "peak_committed_bytes": 782336,
+    "stdout": "negative: error=InvalidExtrusion(\"Depth must be positive\"); display=Invalid extrusion parameters: Depth must be positive\n",
+    "stdout_sha256": "dfe482b8adbc9a61fc525b3e2107e2d0b812e21dd84be43567f659805d96293f",
+    "stderr": ""
+  },
+  {
+    "mode": "zero-width",
+    "exit": 0,
+    "timeout": false,
+    "seconds": 0.004310599997552345,
+    "peak_committed_bytes": 778240,
+    "stdout": "zero-width: Metrics { vertices: 16, triangles: 4, unique_positions: 4, raw_edges: 10, raw_closed: false, raw_euler: 10, geometric_edges: 6, geometric_closed: true, geometric_euler: 2, geometric_components: 1, nonzero_triangles: 4, outward_triangles: 0, finite: true, signed_volume: 0.0, area: 10000.0, crate_volume: 0.0, bounds: ([0.0, 0.0, 0.0], [0.0, 500.0, 10.0]) }\n",
+    "stdout_sha256": "3f58c15b9367abb2db4b99ffa407be0a68f0b6f1b1305ab7b99152849a0159b8",
+    "stderr": ""
+  },
+  {
+    "mode": "negative-width",
+    "exit": 0,
+    "timeout": false,
+    "seconds": 0.005211100000451552,
+    "peak_committed_bytes": 798720,
+    "stdout": "negative-width: Metrics { vertices: 24, triangles: 12, unique_positions: 8, raw_edges: 30, raw_closed: false, raw_euler: 6, geometric_edges: 18, geometric_closed: true, geometric_euler: 2, geometric_components: 1, nonzero_triangles: 12, outward_triangles: 12, finite: true, signed_volume: 5000000.0, area: 1030000.0, crate_volume: 5000000.0, bounds: ([-1000.0, 0.0, 0.0], [0.0, 500.0, 10.0]) }\n",
+    "stdout_sha256": "d94c32ba416106cb83ae00bed454fb27c4e56366294890b9334b9d2fce2f956b",
+    "stderr": ""
+  },
+  {
+    "mode": "huge",
+    "exit": 0,
+    "timeout": false,
+    "seconds": 0.00469850000081351,
+    "peak_committed_bytes": 786432,
+    "stdout": "huge: Metrics { vertices: 24, triangles: 14, unique_positions: 8, raw_edges: 32, raw_closed: false, raw_euler: 6, geometric_edges: 20, geometric_closed: false, geometric_euler: 2, geometric_components: 1, nonzero_triangles: 0, outward_triangles: 0, finite: false, signed_volume: NaN, area: NaN, crate_volume: 0.0, bounds: ([0.0, 0.0, 0.0], [inf, inf, inf]) }\n",
+    "stdout_sha256": "c0885c72fa8cbed4b958f44708e6c773fe12affd41aa8c726a233fc95ea658ce",
+    "stderr": ""
+  },
+  {
+    "mode": "nan",
+    "exit": 0,
+    "timeout": false,
+    "seconds": 0.004375399999844376,
+    "peak_committed_bytes": 782336,
+    "stdout": "nan: Metrics { vertices: 24, triangles: 12, unique_positions: 8, raw_edges: 30, raw_closed: false, raw_euler: 6, geometric_edges: 18, geometric_closed: true, geometric_euler: 2, geometric_components: 1, nonzero_triangles: 2, outward_triangles: 0, finite: false, signed_volume: NaN, area: NaN, crate_volume: 0.0, bounds: ([0.0, 0.0, 0.0], [1000.0, 500.0, 0.0]) }\n",
+    "stdout_sha256": "2e90c5fccfc76812228e4d2ec8861dcc70f1460597a85685496df277afe64c78",
+    "stderr": ""
+  },
+  {
+    "mode": "infinity",
+    "exit": 0,
+    "timeout": false,
+    "seconds": 0.004867699997703312,
+    "peak_committed_bytes": 794624,
+    "stdout": "infinity: Metrics { vertices: 24, triangles: 12, unique_positions: 8, raw_edges: 30, raw_closed: false, raw_euler: 6, geometric_edges: 18, geometric_closed: true, geometric_euler: 2, geometric_components: 1, nonzero_triangles: 2, outward_triangles: 2, finite: false, signed_volume: NaN, area: NaN, crate_volume: 0.0, bounds: ([0.0, 0.0, 0.0], [1000.0, 500.0, inf]) }\n",
+    "stdout_sha256": "6a61f29fd921e2fccbe91037735018c99f06b12cdd05818aa61b2d9f835e2d26",
+    "stderr": ""
+  },
+  {
+    "mode": "nan-contour",
+    "exit": 0,
+    "timeout": false,
+    "seconds": 0.004800899998372188,
+    "peak_committed_bytes": 786432,
+    "stdout": "nan-contour: error=TriangulationError(\"non-finite coordinate in polygon ring\"); display=Triangulation failed: non-finite coordinate in polygon ring\n",
+    "stdout_sha256": "ddbddad5132e48a49950835d4d273839c33b810fc7628172ec9129aad62e06d3",
+    "stderr": ""
+  },
+  {
+    "mode": "infinite-contour",
+    "exit": 0,
+    "timeout": false,
+    "seconds": 0.004457800001546275,
+    "peak_committed_bytes": 774144,
+    "stdout": "infinite-contour: Metrics { vertices: 16, triangles: 8, unique_positions: 8, raw_edges: 20, raw_closed: false, raw_euler: 4, geometric_edges: 16, geometric_closed: false, geometric_euler: 0, geometric_components: 1, nonzero_triangles: 2, outward_triangles: 0, finite: false, signed_volume: NaN, area: NaN, crate_volume: 0.0, bounds: ([0.0, 0.0, 0.0], [inf, 500.0, 10.0]) }\n",
+    "stdout_sha256": "111309aee39457c67f04f47f370c7d449c6ff6c88e8094689643f70decc02128",
+    "stderr": ""
+  },
+  {
+    "mode": "collinear",
+    "exit": 0,
+    "timeout": false,
+    "seconds": 0.004293000001780456,
+    "peak_committed_bytes": 786432,
+    "stdout": "collinear: Metrics { vertices: 24, triangles: 8, unique_positions: 8, raw_edges: 20, raw_closed: false, raw_euler: 12, geometric_edges: 16, geometric_closed: false, geometric_euler: 0, geometric_components: 1, nonzero_triangles: 8, outward_triangles: 0, finite: true, signed_volume: 0.0, area: 60.0, crate_volume: 0.0, bounds: ([0.0, 0.0, 0.0], [3.0, 0.0, 10.0]) }\n",
+    "stdout_sha256": "44d9ed6706383a6240d9c112596bd2a77dfebb9cf89662b425d25c783bde013d",
+    "stderr": ""
+  },
+  {
+    "mode": "self-intersecting",
+    "exit": 0,
+    "timeout": false,
+    "seconds": 0.0049409999992349185,
+    "peak_committed_bytes": 786432,
+    "stdout": "self-intersecting: Metrics { vertices: 24, triangles: 10, unique_positions: 8, raw_edges: 26, raw_closed: false, raw_euler: 8, geometric_edges: 18, geometric_closed: false, geometric_euler: 0, geometric_components: 1, nonzero_triangles: 10, outward_triangles: 4, finite: true, signed_volume: 166.6666666666667, area: 582.842712474619, crate_volume: 166.66666666666666, bounds: ([0.0, 0.0, 0.0], [10.0, 10.0, 10.0]) }\n",
+    "stdout_sha256": "05962a8f1eb83dee05705449efc9050670c2cfc6dfb611761e6b593f70ec13b2",
+    "stderr": ""
+  },
+  {
+    "mode": "empty",
+    "exit": 0,
+    "timeout": false,
+    "seconds": 0.00444210000205203,
+    "peak_committed_bytes": 786432,
+    "stdout": "empty: error=InvalidProfile(\"Profile must have at least 3 vertices\"); display=Invalid profile: Profile must have at least 3 vertices\n",
+    "stdout_sha256": "55455eb8db4fb8a2f6f8f5a2640ec9da50101aec78481a38ca9a1761ebd2bca3",
+    "stderr": ""
+  },
+  {
+    "mode": "suite",
+    "exit": 0,
+    "timeout": false,
+    "seconds": 0.004849299999477807,
+    "peak_committed_bytes": 819200,
+    "stdout": "plate-mm: Metrics { vertices: 24, triangles: 12, unique_positions: 8, raw_edges: 30, raw_closed: false, raw_euler: 6, geometric_edges: 18, geometric_closed: true, geometric_euler: 2, geometric_components: 1, nonzero_triangles: 12, outward_triangles: 12, finite: true, signed_volume: 5000000.0, area: 1030000.0, crate_volume: 5000000.0, bounds: ([0.0, 0.0, 0.0], [1000.0, 500.0, 10.0]) }\nmember-mm: Metrics { vertices: 24, triangles: 12, unique_positions: 8, raw_edges: 30, raw_closed: false, raw_euler: 6, geometric_edges: 18, geometric_closed: true, geometric_euler: 2, geometric_components: 1, nonzero_triangles: 12, outward_triangles: 12, finite: true, signed_volume: 240000000.0, area: 4120000.0, crate_volume: 240000000.0, bounds: ([0.0, -100.0, -150.0], [4000.0, 100.0, 150.0]) }\nplate-metres: Metrics { vertices: 24, triangles: 12, unique_positions: 8, raw_edges: 30, raw_closed: false, raw_euler: 6, geometric_edges: 18, geometric_closed: true, geometric_euler: 2, geometric_components: 1, nonzero_triangles: 12, outward_triangles: 12, finite: true, signed_volume: 0.004999999888241291, area: 1.0299999993294477, crate_volume: 0.00499725341796875, bounds: ([0.0, 0.0, 0.0], [1.0, 0.5, 0.01]) }\nrepeat-plate=true repeat-member=true\nrectangle-triangulation=TriangulationOf { points: [[0.0, 0.0], [1000.0, 0.0], [1000.0, 500.0], [0.0, 500.0]], indices: [2, 3, 0, 0, 1, 2] }\nextruded-hole: Metrics { vertices: 48, triangles: 32, unique_positions: 16, raw_edges: 72, raw_closed: false, raw_euler: 8, geometric_edges: 48, geometric_closed: true, geometric_euler: 0, geometric_components: 1, nonzero_triangles: 32, outward_triangles: 28, finite: true, signed_volume: 4800000.0, area: 996000.0, crate_volume: 4800000.0, bounds: ([0.0, 0.0, 0.0], [1000.0, 500.0, 10.0]) }\nrepeat-hole=true\nminimum-mm: Metrics { vertices: 24, triangles: 12, unique_positions: 8, raw_edges: 30, raw_closed: false, raw_euler: 6, geometric_edges: 18, geometric_closed: true, geometric_euler: 2, geometric_components: 1, nonzero_triangles: 12, outward_triangles: 12, finite: true, signed_volume: 1.0000001424923606e-9, area: 6.000000569969429e-6, crate_volume: 1.0213909718004288e-9, bounds: ([0.0, 0.0, 0.0], [0.001, 0.001, 0.001]) }\nthin-mm: Metrics { vertices: 24, triangles: 12, unique_positions: 8, raw_edges: 30, raw_closed: false, raw_euler: 6, geometric_edges: 18, geometric_closed: true, geometric_euler: 2, geometric_components: 1, nonzero_triangles: 12, outward_triangles: 12, finite: true, signed_volume: 500.0000237487256, area: 1000003.0000001425, crate_volume: 503.5400390625, bounds: ([0.0, 0.0, 0.0], [1000.0, 500.0, 0.001]) }\nmaximum-mm: Metrics { vertices: 24, triangles: 12, unique_positions: 8, raw_edges: 30, raw_closed: false, raw_euler: 6, geometric_edges: 18, geometric_closed: true, geometric_euler: 2, geometric_components: 1, nonzero_triangles: 12, outward_triangles: 12, finite: true, signed_volume: 9.999999999999999e17, area: 6000000000000.0, crate_volume: 1e18, bounds: ([0.0, 0.0, 0.0], [1000000.0, 1000000.0, 1000000.0]) }\nfractional-mm: Metrics { vertices: 24, triangles: 12, unique_positions: 8, raw_edges: 30, raw_closed: false, raw_euler: 6, geometric_edges: 18, geometric_closed: true, geometric_euler: 2, geometric_components: 1, nonzero_triangles: 12, outward_triangles: 12, finite: true, signed_volume: 5063603.300262201, area: 1030745.761999087, crate_volume: 5063604.254289749, bounds: ([0.0, 0.0, 0.0], [1000.1235, 500.12344, 10.123457]) }\nthin-at-large-origin: Metrics { vertices: 24, triangles: 12, unique_positions: 4, raw_edges: 30, raw_closed: false, raw_euler: 6, geometric_edges: 9, geometric_closed: false, geometric_euler: 7, geometric_components: 1, nonzero_triangles: 4, outward_triangles: 0, finite: true, signed_volume: 0.0, area: 1048576.0, crate_volume: 0.0, bounds: ([1000000000.0, 1000000000.0, 1000000000.0], [1000001000.0, 1000000500.0, 1000000000.0]) }\nclip-default-epsilon=0.000001\n",
+    "stdout_sha256": "1cc0ed884bb0745900dc47d1b05f4bcb351e0060a11c3a68e3ece1e157a0cdaa",
+    "stderr": ""
+  },
+  {
+    "mode": "boolean",
+    "exit": 0,
+    "timeout": false,
+    "seconds": 0.015110199998161988,
+    "peak_committed_bytes": 1101824,
+    "stdout": "high-level-group=Cut\nhigh-level-hole: Metrics { vertices: 48, triangles: 32, unique_positions: 16, raw_edges: 72, raw_closed: false, raw_euler: 8, geometric_edges: 48, geometric_closed: true, geometric_euler: 0, geometric_components: 1, nonzero_triangles: 32, outward_triangles: 28, finite: true, signed_volume: 4800000.0, area: 996000.0, crate_volume: 4800000.0, bounds: ([0.0, 0.0, 0.0], [1000.0, 500.0, 10.0]) }\nhigh-level-failures=[]\nkernel-hole: Metrics { vertices: 168, triangles: 56, unique_positions: 28, raw_edges: 168, raw_closed: false, raw_euler: 56, geometric_edges: 84, geometric_closed: true, geometric_euler: 0, geometric_components: 1, nonzero_triangles: 56, outward_triangles: 46, finite: true, signed_volume: 4799999.999999998, area: 996000.0, crate_volume: 4800000.0, bounds: ([0.0, 0.0, 0.0], [1000.0, 500.0, 10.0]) }\nrepeat-kernel-hole=true\n",
+    "stdout_sha256": "e8475d5a9c906ae3311a8e0c21f5be9ff28b38b65fac15b6592dd08f02d04cff",
+    "stderr": ""
+  },
+  {
+    "mode": "dump",
+    "exit": 0,
+    "timeout": false,
+    "seconds": 0.004792300002009142,
+    "peak_committed_bytes": 794624,
+    "stdout_sha256": "5ff9188137be62976ee75186f932b74fd652363c41704479780bf7fc2b2fb647",
+    "stderr": "",
+    "stdout_bytes": 3812
+  },
+  {
+    "mode": "dump",
+    "exit": 0,
+    "timeout": false,
+    "seconds": 0.0052121000007900875,
+    "peak_committed_bytes": 790528,
+    "stdout_sha256": "5ff9188137be62976ee75186f932b74fd652363c41704479780bf7fc2b2fb647",
+    "stderr": "",
+    "stdout_bytes": 3812
+  }
+]
