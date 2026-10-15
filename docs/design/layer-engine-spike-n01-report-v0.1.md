@@ -1,318 +1,414 @@
-# N01 option C: first-slice acquisition report, version 0.1.0
+# N01 option C: first-slice spike report, version 0.2.0
 
-Task: evaluate pure-Rust `openusd` behind a BeamCraft-owned trait, executing the owner's
-2026-10-15 option C decision. Worktree: `D:\Projects\01_BeamCraft-N01`.
-Status: **uncommitted; blocked at dependency acquisition; runtime spike not implemented**.
-No capability or mandatory gate passed. This is a blocked first slice, not completion of N01,
-U01, a parent acceptance gate or an architecture change.
+Task: evaluate the pure-Rust `openusd` crate behind a BeamCraft-owned trait, executing the
+owner's 2026-10-15 option C decision ("Variant C. Keep the spike. We should ideally move away
+from Python and C++ if that helps."). Branch `feat/n01-openusd-spike`, stacked on PR #22.
+Status: first slice of the N01 plan, **not** N01 completion, not a parent acceptance gate and not
+an architecture change. This version replaces 0.1.0, which described an acquisition blocker that
+no longer applies (the crate is now in the local Cargo cache).
 
 ## Scope and method
 
 Read `AGENTS.md`, `CLAUDE.md`, `ROADMAP.md`, `docs/architecture.md`, the F11 decision and
-evidence plan, F04 model/command contract and F08 module-boundary contract. The supplied
-owner decision authorizes investigating C; the architecture and contracts remain unchanged.
-No other checkout or Desktop directory was accessed. No subagents were used.
+evidence plan, the F04 model/command contract and the F08 module-boundary contract. All
+experiment code is contributor-original. No upstream code, tests or fixtures were copied; this
+report describes observed behaviour and the public API that was used, not upstream internals.
 
-Created an isolated acquisition bootstrap with its own empty `[workspace]`, `publish=false`,
-MPL-2.0, Rust 1.96 and one exact dependency request: `openusd = "=0.8.0"` with
-`default-features=false`. This pins the version named in N01-C-G01 and avoids deliberately
-enabling optional features before their audit. It is not a resolved dependency or a tested
-feature configuration. `src/lib.rs` contains documentation and `forbid(unsafe_code)` only;
-it is not an adapter, mock backend, test suite or USD implementation.
+The spike is an isolated package in `spikes/n01-openusd/` with its own empty `[workspace]`
+table and its own `Cargo.lock`. It depends only on `openusd =0.8.0` with
+`default-features = false` (optional `mmap` and `serde` disabled). It is not a dependency of any
+repository crate and does not go through the repository `cargo deny`.
 
-The local registry lookup found neither an `openusd-0.8*` source directory nor a cached
-archive. One `cargo fetch` was attempted. Cargo reported offline mode and failed to resolve
-the package. The worker stopped dependency and runtime work under task rules 7 and 11.
-No setting, environment variable, proxy, Cargo configuration or sandbox restriction was
-changed. No alternate download, escalation, installation or manual vendoring was attempted.
-This is an offline-resolution failure, not evidence of a failed online HTTP request.
+Contents:
 
-Changed paths:
-
-- `spikes/n01-openusd/Cargo.toml`
-- `spikes/n01-openusd/src/lib.rs`
-- `spikes/n01-openusd/acquisition.txt`
-- `docs/design/layer-engine-spike-n01-report-v0.1.md`
-- `docs/design/layer-engine-evidence-plan-v0.1.json`: evidence references on G01 and G03
-  only; both statuses remain `not_run` because the gates could not execute.
-
-No `Cargo.lock` was fabricated for the spike: resolution failed before Cargo could produce
-one. An independently resolved spike lockfile is still required before implementation.
-No root manifest, root lockfile, deny configuration, CI, roadmap, attribution or contract
-was edited. Git metadata was not written.
-
-## Environment and preliminary commands
-
-Date: 2026-10-15; environment timezone: America/Santiago. Windows, PowerShell, Python
-3.11 executable found on PATH. No OS build number, CPU model or host target triple was
-measured; performance work did not start.
-
-| Command / observation | Exact result |
+| Path | Purpose |
 |---|---|
-| `Get-Location` (first command) | Exit 0; `D:\Projects\01_BeamCraft-N01` |
-| `rustc --version` | `rustc 1.96.0 (ac68faa20 2026-05-25)` |
-| `cargo --version` | `cargo 1.96.0 (30a34c682 2026-05-25)` |
-| `rustup target list --installed` | `aarch64-pc-windows-msvc`, `x86_64-pc-windows-msvc` |
-| `git status --short --branch` | Failed: `fatal: detected dubious ownership in repository at 'D:/Projects/01_BeamCraft-N01'`; no workaround |
-| `Get-FileHash Cargo.lock -Algorithm SHA256` | Command unavailable: `The term 'Get-FileHash' is not recognized as the name of a cmdlet, function, script file, or operable program.` |
-| Python `hashlib.sha256` of root `Cargo.lock` | Baseline `7b15824fc67c90a837ad19af9d28e12dea2802797e90f541945ddb8e984497eb` |
-| `Get-Command usdcat,usdchecker,python -ErrorAction SilentlyContinue` | Only `python.exe` found; no `usdcat` or `usdchecker` on PATH |
-| Registry source/cache lookup | Both `openusd-0.8*` glob lists empty |
+| `src/lib.rs` | Owned `LayerBackend` trait, `RustBackend`, UUIDv7 path validation, fixture author, structural check, `(UUID, attribute)` key extraction |
+| `src/main.rs` | Child-process entry points `parse PATH` (hostile input) and `sanity COUNT DIR` (performance) |
+| `tests/evidence.rs` | Nine tests: round trip, adapter edit, composition, foreign reference, delta, guards, unknown metadata, numeric overflow, stub backend |
+| `tests/supervision.rs` | Ten-case smoke run of the hostile supervisor under an external deadline |
+| `harness.py` | Development supervisor only (Windows Job commit cap, 5 s deadline): `inventory`, `hostile`, `performance`. USD work happens in the Rust binary |
+| `checks.py` | Runs the task's check list and verifies that the root `Cargo.lock` is unchanged |
+| `EXPECTATIONS.md` | Expected outcomes frozen before the first candidate test |
+| `inventory.json`, `hostile-summary.json`, `performance-results.json` | Compact committed results |
+| `reproducers/numeric-overflow.usda` | Minimal synthetic reproducer (finding 1) |
 
-The environment/ownership probe was one PowerShell command sequence and returned exit 1;
-the tool version and installed-target lines above were nevertheless emitted. The branch
-`feat/n01-openusd-spike` and stack on PR #22 are supplied by the task, **not independently
-verified**, because read-only Git failed. No `safe.directory` change or direct metadata
-workaround was attempted.
+Repository hygiene (changed from the first run): raw `cargo metadata` output, the full
+`cargo tree` text, per-input hostile logs and per-check logs are **not** committed. Bulk output
+goes to `spikes/n01-openusd/artifacts/` (ignored by Git). The earlier bulky files remain in Git
+history only.
+
+Regeneration, from `spikes/n01-openusd` with the Cargo cache populated:
+
+```text
+python harness.py inventory                 # writes inventory.json
+cargo build --release --offline
+python harness.py hostile                   # writes hostile-summary.json (bulk log to artifacts/)
+python harness.py performance               # writes performance-results.json
+python checks.py                            # runs the full check list, bulk log to artifacts/
+```
+
+## Environment
+
+| Item | Value |
+|---|---|
+| OS | Windows 10 Enterprise 10.0.19045 (Python `Windows-10-10.0.19045-SP0`, AMD64) |
+| CPU | Intel64 Family 6 Model 165 Stepping 5 (GenuineIntel) |
+| rustc / cargo | 1.96.0 (ac68faa20 2026-05-25) / 1.96.0 (30a34c682 2026-05-25) |
+| Installed targets | `aarch64-pc-windows-msvc`, `x86_64-pc-windows-msvc` |
+| `openusd` | 0.8.0, declared licence `MIT`, declared `rust-version` 1.96, features `mmap`, `serde` available, none enabled |
+| Official OpenUSD tooling | Not available (`usdcat`, `usdchecker` not on PATH; not installed) |
 
 ## 1. Dependency, licence inventory and MSRV
 
-Claim: **N01-C-G01**; verdict **unknown**, status `not_run` (acquisition prerequisite failed).
+Claim **N01-C-G01**: status `failed` (one unresolved policy exception), see below.
 
-Command, from `spikes/n01-openusd`: `cargo fetch`. Exit **1**, exact output:
+Commands (all offline): `cargo metadata --offline --format-version 1` (processed by
+`harness.py inventory`; raw output not committed), `cargo tree --offline --edges all` (read, not
+committed). Result: 52 locked packages, equal to the packages Cargo resolved: the spike itself,
+`openusd 0.8.0` and 50 transitive packages. Versions, declared SPDX expressions and declared
+`rust-version` for every package are in `spikes/n01-openusd/inventory.json`.
 
-```text
-error: no matching package named `openusd` found
-location searched: crates.io index
-required by package `beamcraft-n01-openusd-spike v0.0.1 (D:\Projects\01_BeamCraft-N01\spikes\n01-openusd)`
-note: offline mode (via `--offline`) can sometimes cause surprising resolution failures
-help: if this error is too confusing you may wish to retry without `--offline`
-```
+Licence findings against the task's allowed list (MIT, Apache-2.0, BSD-2/3, ISC, Zlib,
+Unicode-3.0, BSL-1.0, CC0-1.0, MIT-0):
 
-The recorded output is also in `spikes/n01-openusd/acquisition.txt`.
-`cargo tree`, `cargo metadata`, a build and a complete licence/file/notice inventory:
-**not run** after the stop condition. Full transitive list, resolved versions, checksums,
-SPDX expressions and native/generated/schema closure: **unknown, not available**.
-There is no resolved third-party package inventory to list or approve.
+| Finding | Detail | Disposition |
+|---|---|---|
+| **TOST-1.0 file inside `openusd`** | The crate README states that `src/usd/core_schemas.rs` is generated from OpenUSD schema definitions and covered by the Tomorrow Open Source Technology License 1.0; the package ships `third-party/LICENSE` and a Pixar `NOTICE.txt`. The manifest says only `MIT`. | **Outside the allowed list; unresolved.** F11 rule: MIT headline is not blanket approval. Needs an owner decision. No exception is inferred. |
+| `Unlicense OR MIT` (`aho-corasick`, `memchr`) | Alternative expression | MIT can be elected; allowed |
+| `Apache-2.0 / MIT` (`fnv`) | Non-standard SPDX spelling, both allowed | Allowed; note for `deny.toml` parsing |
+| `Apache-2.0` only (`zopfli`) | Single licence, in task list | Allowed |
+| `(MIT OR Apache-2.0) AND Unicode-3.0` (`unicode-ident`) | Both in list | Allowed |
+| All other packages | MIT, MIT OR Apache-2.0, Zlib, or Zlib/BSD-2-Clause alternatives | Allowed |
 
-| Component | Version | Licence | Evidence / disposition |
-|---|---|---|---|
-| BeamCraft acquisition bootstrap | 0.0.1 | MPL-2.0 | Contributor-original manifest and empty library; isolated, not shipped |
-| `openusd` request | =0.8.0 | MIT supplied by task; not audited | Not acquired or resolved; bundled licence exceptions remain unverified |
-| Transitive packages | Unknown | Unknown | Not resolved; no assertion of allowed closure |
+The graph contains build-time procedural-macro packages (for example `logos`, `strum`,
+`derive_more`, `thiserror`, `syn` in two major versions) and compression packages (`zip`,
+`flate2`, `zlib-rs`, `zopfli`, `lz4_flex`). Cargo resolves them although optional features are
+disabled. No native (C/C++) build step was observed; this was not independently audited file by
+file. The full file-level notice review required by the claim (every included file, reviewer
+sign-off) was **not** done.
 
-No dependency outside the task's licence list was identified, but **zero findings does not
-establish licence closure** when the graph and included files are unavailable. In particular,
-F11 warns of schema/generated exceptions: no MIT blanket approval or TOST admission is made.
-Optional `mmap` and `serde` were not explicitly enabled; their exact release definitions,
-transitive activation and portability effects remain unverified. No source or test files from
-any USD implementation were copied.
+**MSRV.** The crate declares Rust 1.96; the repository MSRV is 1.95. The spike builds,
+passes Clippy and passes its tests on the local 1.96.0 toolchain. Building on 1.95 was **not
+run** (no 1.95 toolchain installed; Cargo is expected to refuse a dependency that declares a
+newer `rust-version`). Highest declared `rust-version` among the other dependencies is 1.88.
+Adopting the crate in the workspace would therefore need an owner decision to raise the
+workspace MSRV from 1.95 to 1.96, plus toolchain and CI review. This spike changes no MSRV.
 
-The task supplies crate Rust 1.96 versus repository Rust 1.95; the root manifest independently
-confirms 1.95. Local Rust 1.96 exists, but **whether this spike builds locally is not shown**.
-A 1.96 minimum for workspace adoption would require a separate owner decision, toolchain/CI
-review and dependency/boundary audit. An isolated manifest requesting 1.96 changes no repository
-MSRV and does not prove 1.95 incompatibility from a compiler run.
+## 2. USDA and USDC round trip and unknown-field preservation
 
-## 2. USDA / USDC round trip and unknown-field preservation
+Claims **N01-C-G05**, **N01-C-G09**: partially evidenced, status `not_run`.
 
-Claims: **N01-C-G05**, **N01-C-G09**; verdict **unknown**, status `not_run`.
-Author, write, fresh read and second-write comparison: **not run**. No resolved public API
-was available to implement them honestly. USDC writing capability: **unknown**. No fixture,
-UUID, explicit units, unknown custom attribute, dictionary, relationship or metadata was
-exercised. No identity/copy/preservation or byte-determinism result is claimed.
+Test `usda_usdc_roundtrip_every_authored_field_and_second_write` (passes). Method: author a
+synthetic model with the crate (two complete UUIDv7 element prims named
+`E_<32 hex digits>`, `bim:id`, explicit-unit double attributes such as `steel:plate:widthMm`,
+a relationship, `active = false`, an unknown custom string attribute, prim `customData`, layer
+`customLayerData`, `metersPerUnit`, `upAxis`), write USDA, read it back, snapshot every
+`(path, field)` pair, write USDC, read that back and compare.
+
+Observed:
+
+- The crate writes both USDA and USDC. Every authored `(path, field)` value, including
+  bit-exact doubles, relationship targets, the unknown attribute, prim and layer dictionaries
+  and stage metadata, was equal after both round trips.
+- A second write of the re-read data is byte-identical for USDA (text equality) and for USDC
+  (byte equality). This is determinism within one build only; 20 reordered repeats and
+  cross-platform digests were not run.
+- Test `unknown_prim_metadata_survives_text_and_binary`: unregistered prim metadata
+  (`futureThing`) and a namespaced custom attribute survive USDA rewrite and USDC. This covers
+  those two kinds of unknown content, not unknown content in general.
+- Test `owned_trait_edit_preserves_unknown_content_and_identity`: one width edit through the
+  owned trait changes exactly one field; every other authored field is unchanged and the edited
+  file reopens with the new value.
+
+Not run for G05: rename, duplicate/short ID rejection beyond path validation, copy with fresh
+IDs and remapped links, digest audit.
 
 ## 3. Composition and foreign ownership
 
-Claims: **N01-C-G04**, **N01-C-G05**; verdict **unknown**, status `not_run`.
-Sublayer ordering, stronger `over`, deactivation, foreign references, source-byte checks,
-variants and payload states: **not run**. Whether the crate structurally prevents a foreign
-override is unknown; a read-only source file alone would not demonstrate that invariant.
+Claims **N01-C-G04**, **N01-C-G05**: partially evidenced, status `not_run`.
 
-Required wrapper rule, derived from F04 sections 1, 2, 7 and 8: resolve mutation destinations
-from validated full UUID identities and composition provenance; reject unknown ownership,
-foreign source edits and opinions overriding foreign prims, including beneath an owned
-attachment wrapper. Permit wrapper placement and separate owned measurement results only.
-Never expose raw prim-path/field mutation or writable foreign-layer handles. Validate the
-candidate composition before acceptance. This is a required design rule, **not tested code**.
+Test `sublayers_strong_over_and_active_false` (passes), with sublayers `[strong, middle, model]`:
+
+- Strongest sublayer opinion wins (width 1200.5 over 1100.5 over 1000.125). Muting the strong
+  layer selects the middle one (1100.5). A stronger `over` on the root layer wins (1300.5).
+- `active = false` prim is excluded from default traversal and included after reactivation.
+- Zero composition diagnostics.
+
+Test `foreign_reference_bytes_unchanged_but_raw_override_allowed_wrapper_rejects` (passes): a
+root layer references a read-only foreign layer's `/Source` into an element path. The composed
+width reads 77 and the prim stack names the foreign layer.
+
+**Key finding for the foreign-layer rule:** the crate does **not** structurally prevent a stronger
+local override of a foreign prim. A raw attribute set through the stage on the referenced prim
+succeeds (width becomes 99 in the composed view) and is authored in the local edit layer; the
+foreign file's bytes and read-only flag stay identical, because the edit goes to the edit layer,
+not to the foreign file. The repository forbids such overrides, so the rule must be enforced by
+a BeamCraft wrapper.
+
+Wrapper rule exercised by `RustBackend` (and rejecting with `FOREIGN_READ_ONLY`): derive the
+prim path only from a validated complete UUIDv7; read the prim stack of that path; require
+**every** contributing layer to be in the host-selected owned-layer set (canonicalised paths);
+require the authored `bim:id` to match the path; require the edit layer itself to be owned;
+accept only an allow-listed field with a finite, bounded value; never expose a stage, a path
+setter or a writable foreign-layer handle; export only the owned edit layer to a fresh path.
+This is a spike of the rule on a trusted synthetic fixture. It is not a contained asset
+resolver and does not cover variants, payloads, inherits or specializes, which were **not
+tested**. No SDK oracle comparison was made (G04 requires one).
 
 ## 4. Delta and merge model
 
-Claim: **N01-C-G06**; verdict **unknown**, status `not_run`.
-Change observation, diff capture, replay on a copy and same-`(UUID, attribute)` conflict
-detection: **not run**. No upstream diff API was inspected or exercised. What the exact
-release supplies remains unknown.
+Claim **N01-C-G06**: partially evidenced, status `not_run`.
 
-BeamCraft still owns command authorization, identity/provenance validation, pinned base and
-generation, typed absence/block/removal semantics, read/write/relationship footprints and
-lifecycle dependencies. F04 section 8 requires reading the complete shape-input group;
-different attribute names alone cannot prove independence. An upstream delta cannot be
-accepted or replayed as an authorized command. Idempotency, gap/stale-base handling,
-dependency-unavailable behavior and preservation of rejected local intent require later
-evidence. A key-by-field merge was not implemented or demonstrated here.
+Test `captured_deltas_replay_and_detect_same_identity_attribute_conflict` (passes). The crate
+offers a replay wrapper around a stage that records authored edits as a list of diffs, and a
+stage call that applies a diff to the current edit target. Observed:
+
+- A width edit and a label edit were captured as separate diffs of field-set edits keyed by
+  attribute path.
+- Replaying both on a fresh copy of the base gave an authored snapshot equal to the original
+  edited stage, identity unchanged.
+- BeamCraft-side normalisation to `(prim identity, attribute)` keys (function
+  `normalized_keys_for_edits`, which requires a known prim-to-UUID mapping and the `default`
+  field) detected the collision between two competing width edits (one shared key) and no
+  collision between width and label edits (zero shared keys).
+
+What the crate gives: change capture, a diff representation, replay onto another stage. What
+BeamCraft must write: command authorisation and provenance validation; the prim-to-UUID mapping;
+engine-derived read/write/relationship footprints (different attribute names do not prove
+independence: F04 section 8 requires the complete shape-input group); typed absence, block and
+removal; pinned base and generation; idempotent replay (duplicates change no generation);
+gap and stale-base handling; recoverable rejected local intent. None of these was run, nor was
+the 100-delta replay. The spike handled only field-set edits and refuses anything else.
 
 ## 5. Untrusted input
 
-Claim: **N01-C-G08**; verdict **unknown**, status `not_run`.
-Truncated, malformed, deeply nested, huge-count and invalid-UTF-8 USDA, and corrupted USDC:
-**not run**. No parser process started. There are no observed parser panics, hangs, memory
-measurements or error-quality results; this is not a zero-defect or safe-parsing result.
-No minimal parser reproducer exists because no parser was acquired.
+Claim **N01-C-G08**: partially evidenced, status `not_run`.
 
-For continuation, retain the evidence plan's 5-second / 512 MiB external backstops plus
-pre-allocation byte/count/depth/cumulative-resolution limits and cycle checks. If the host
-cannot enforce a required cap, record a gate failure rather than treating process termination
-as safe parsing. Neither those limits nor an external enforcement harness were implemented.
+Method: `harness.py hostile` generates all inputs, writes each to a file of at most 64 KiB, and
+runs the release binary on it in a fresh child process with a 5 s deadline and a 512 MiB
+Windows Job commit cap, with the parent assigning the Job before the child is released. The
+child reads the bytes, parses them with the crate (text or binary detected by the crate),
+traverses every spec and reads every field value, and reports a result line. A panic is caught
+and reported by the child.
+
+Result (`hostile-summary.json`): **1184 cases, 0 panics, 0 crashes, 0 timeouts, 0 cap
+terminations.** Maximum 0.007 s per case, maximum job commit 1 064 960 bytes, maximum working
+set 4 612 096 bytes.
+
+| Class | Cases | Rejected | Accepted |
+|---|---|---|---|
+| Single hand-written cases: truncated, malformed bracket, invalid UTF-8, huge integer, corrupt `PXR-USDC` header | 5 | 5 | 0 |
+| Huge exponent `1e999999999` | 1 | 0 | 1 |
+| Brace nesting depth 32, 33, 64 | 3 | 0 | 3 |
+| Huge `faceVertexCounts` literal | 1 | 0 | 1 |
+| Every byte-prefix truncation of a 45-byte USDA | 45 | 42 | 3 |
+| Fixed-seed random token streams | 1000 | 1000 | 0 |
+| USDC with 8 header bytes set to 0xFF | 1 | 1 | 0 |
+| USDC with one of the first 128 bytes inverted | 128 | 100 | 28 |
+
+Observations (each is a finding or a limit, not a safety proof):
+
+1. **Non-finite numbers accepted** (`reproducers/numeric-overflow.usda`): `1e999999999` is read
+   as positive infinity without error (test `hostile_nonfinite_value_is_not_engine_validity`).
+   BeamCraft must reject non-finite engineering input itself.
+2. Three truncations were accepted: two are the bare header (empty layer) and one is the
+   complete document minus its final newline. Truncation to an empty or valid-prefix layer is
+   not an error in this crate; integrity must come from BeamCraft's digest/manifest layer.
+3. 28 single-byte corruptions of a small USDC were accepted with the same spec and field count
+   (85 fields). They sit in the file header region (bytes 10-15, 24-39, 60-65). Whether these
+   bytes are ignored padding/reserved or whether values changed was not analysed. Corruption is
+   not reliably detected.
+4. Nesting up to 64 was accepted; no depth limit was found in that range and larger depths
+   were not tried. The huge-count case is a one-element literal, not an allocation test.
+5. Error text quality: rejected inputs return an error value (truncated to 350 characters in
+   the log); no panic message was produced. Quality was not graded further.
+
+Not run: each declared stage cap at maximum and maximum+1 (inputs were limited to 64 KiB by the
+harness, far below the plan's 16 MiB layer cap), cumulative resolution caps, composition
+cycle detection, network and plugin denial. Opaque parser allocation limits therefore remain
+unproved: the Job cap was never reached, which shows these inputs are cheap, not that the
+parser bounds allocation from declared counts. The harness requires Windows (Job objects) and
+refuses to run elsewhere.
 
 ## 6. Portability
 
-Claim: **N01-C-G03**; verdict **unknown**, status `not_run` (target preflight only).
-`rustup target list --installed` returned only the two Windows targets listed above.
-`cargo check --target wasm32-unknown-unknown --lib --offline`: **not run**, WASM target
-not installed, and dependency acquisition failed. No target was installed. Linux, macOS,
-Windows compilation and all domain-WASM checks: **not run**. Native target installation
-does not establish a passing build. Feature-specific `mmap` / `serde` effects are unknown.
-No repository dependency edge was added.
+Claim **N01-C-G03**: status `not_run`.
+
+`rustup target list --installed` lists only the two Windows targets, so
+`cargo check --target wasm32-unknown-unknown --lib --offline` was **not run** (target not
+installed; nothing installed). Linux and macOS builds were **not run**. Windows x64 on Rust
+1.96.0 builds and passes (section "Verification"). Rust 1.95 not run (section 1). The optional
+`mmap` feature adds a memory-mapping dependency and `serde` adds `serde` and `half/serde`;
+both are disabled in this spike and their portability effect is unknown (mapping a file is
+likely unavailable in a browser build, unverified).
 
 ## 7. Performance sanity
 
-Claim: **N01-C-G09**; verdict **unknown**, status `not_run`.
-Open/compose/traverse at 1,000 and 10,000 element prims: **not run**. No timings, working-set
-numbers, release/debug comparison or benchmark claim is available. The bootstrap is empty
-and must not be timed as a substitute. The plan's 30 cold runs, p95 target and 20 output
-repeats were not executed.
+Claim **N01-C-G09**: partially evidenced, status `not_run`. Not a benchmark.
+
+Method (`harness.py performance`): release build; fixture generated before timing (a project
+root sublayering one model layer, one `Xform` prim per element named by its full 32 hex digit
+UUID, explicit string `bim:id` and double width); three fresh child processes per size; warm OS
+file cache; open measured separately from compose-and-traverse (traversal reads every width
+and checks the sum) and from save (export of the model layer). Process start-up is excluded
+from the in-process timings.
+
+| Elements | Open (ms) | Compose + traverse (ms) | Save (ms) | Peak working set |
+|---|---|---|---|---|
+| 1 000 | 5.7 | 24 | 68-71 | about 12 MB |
+| 10 000 | 54 | 245-268 | 634-636 | about 61 MB |
+
+Values are from the three runs in `performance-results.json` (ranges, not statistics). Total
+open + compose + save at 10 000 elements is about 0.95 s on this machine, well below the
+plan's 5 s / 512 MiB ceilings, but the plan's 30 cold runs, p95 and 20 reordered repeats were
+not performed, so G09 is not evaluated.
 
 ## 8. Interoperability and structural validation
 
-Claim: **N01-C-G10**; verdict **unknown**, status `not_run`.
-**Oracle not available: not run.** PATH discovery found no official `usdcat` or `usdchecker`.
-No exhaustive installation search or Python `pxr` import probe was performed; an undiscovered
-installation is not ruled out. No official SDK was invoked or installed.
-Same-crate USDA reread and an original structural check: **not run**, no USD was written.
-A future reread would establish only self-consistency; a structural check can check its
-declared syntax/shape subset, not independent USD grammar or composition conformance.
-No specification clause, validator hash or differential result is claimed.
+Claim **N01-C-G10**: status `not_run`.
 
-## Claim table
+**Oracle not available: not run** for every differential claim; no official OpenUSD tool was
+found on PATH, none was installed, and a Python `pxr` import was not attempted. Two weaker
+checks exist: files written by the crate are re-read by the same crate (self-consistency only,
+sections 2-4), and `structural_check` is an original bounded check of the header line and
+balanced quoting/brackets/comments/asset paths with a depth cap (tests
+`identity_and_structural_guards` and the round trip). Neither can show conformance to the
+OpenUSD grammar or composition semantics: they cannot detect an error the crate shares with
+itself. Interchange in either direction with the official SDK is **not shown**.
 
-All ten option C claim IDs are retained. None passed or failed a runtime assertion.
-Only G01/G03 have evidence-plan references for the attempted acquisition and platform
-preflight; the remaining claims and all A/B/D claims are untouched. Counts and IDs stay
-40 claims, 10 per option, 10 gate groups and 12 scenario families.
+## Claim table (option C)
 
-| Claim | Status | Verdict | Recorded result / section |
-|---|---|---|---|
-| N01-C-G01 | not_run | unknown | Acquisition attempted, blocked; section 1 |
-| N01-C-G02 | not_run | unknown | No API perturbation, stub replacement or maintainer/backup exercise |
-| N01-C-G03 | not_run | unknown | Environment/target discovery only; section 6 |
-| N01-C-G04 | not_run | unknown | Composition unavailable; section 3 |
-| N01-C-G05 | not_run | unknown | Round trip/identity/copy unavailable; sections 2 and 3 |
-| N01-C-G06 | not_run | unknown | Diff/merge unavailable; section 4 |
-| N01-C-G07 | not_run | unknown | Atomic publication outside this slice; no storage runtime |
-| N01-C-G08 | not_run | unknown | Parser unavailable; section 5 |
-| N01-C-G09 | not_run | unknown | Determinism and performance unavailable; sections 2 and 7 |
-| N01-C-G10 | not_run | unknown | No independent oracle, writer or validator; section 8 |
+Statuses are limited to what was run. `not_run` is inconclusive, never passed.
 
-## Findings and proposed adapter surface
-
-1. **Acquisition blocker:** one permitted fetch failed in Cargo offline mode with no cached
-   `openusd`. Minimal reproduction: from the isolated package, run `cargo fetch` under the
-   same environment. Do not infer package absence from crates.io or a library defect.
-2. **Verification blocker:** read-only Git rejected repository ownership. Branch, stack and
-   pre-existing working-tree changes cannot be independently established with Git.
-3. **Portability gap:** no installed `wasm32-unknown-unknown` target. No WASM result.
-4. **Bootstrap limitation:** no spike lockfile, adapter, executable, fixture, test or runtime
-   evidence exists. The empty library is explicitly labelled and provides no API evidence.
-
-Proposed BeamCraft-owned trait, in logical terms only: bounded open/read with contained
-asset resolution and explicit revision context; enumerate composed identities and source
-provenance; inspect typed authored opinions and relationships; prepare supported owned edits
-in a candidate; capture normalized changes for engine-derived footprints; validate/install
-or discard that candidate; export authored layers while retaining unknown opinions.
-Expose BeamCraft IDs, values, bounded diagnostics and context tokens, never upstream handles.
-Host storage, authorization, atomic publication and durable outcome ledger remain outside
-the backend. No trait was implemented and no exact upstream API mapping is asserted.
-
-## Python/C++ avoidance verdict
-
-| First-slice need | Can avoid Python/C++ on this evidence? | Reason |
+| Claim | Status | Evidence / what is missing |
 |---|---|---|
-| Open/read | not shown | Crate not acquired |
-| Author | not shown | No API exercised |
-| Compose | not shown | No stage opened |
-| Write | not shown | No USDA or USDC output |
-| Foreign read-only references | not shown | No provenance or override test |
-| Delta/merge | not shown | No diff capture/replay or merge test |
+| N01-C-G01 licence and provenance | **failed** | Inventory done (section 1). TOST-1.0 generated file inside an MIT-declared crate is an unresolved policy exception; no file-level review or reviewer sign-off |
+| N01-C-G02 maintenance and API containment | not_run | Owned trait keeps upstream types out of its signatures and a std-only stub passes the same numeric exercise (test `adapter_contract_accepts_a_std_only_stub`), but no upgrade or perturbation exercise, no maintainers named |
+| N01-C-G03 MSRV, platform, WASM | not_run | Windows x64 + Rust 1.96.0 only (sections 1, 6) |
+| N01-C-G04 composition and ownership | not_run | Sublayer/over/active/reference observed; raw foreign override accepted by crate, rejected by wrapper; no oracle, variants or payloads (section 3) |
+| N01-C-G05 identity, copy, unknown fields | not_run | Unknown content and identity preserved on edit; copy/remap/rename not run (sections 2, 3) |
+| N01-C-G06 semantic conflicts and live deltas | not_run | Capture, replay and key collision shown; footprints, replay-once, gap/stale not run (section 4) |
+| N01-C-G07 atomic publication and outcome | not_run | Outside this slice; no storage runtime |
+| N01-C-G08 bounded untrusted input | not_run | 1184 cases, zero panics/hangs; caps at limit, allocation bounds, cycles not run (section 5) |
+| N01-C-G09 determinism and cost | not_run | Same-build second write identical; three warm runs; 30 cold / 20 repeats not run (sections 2, 7) |
+| N01-C-G10 interoperability and drift | not_run | Oracle not available (section 8) |
 
-No negative capability verdict about the crate follows from an environment failure.
-No suitability, complete conformance or replacement of the accepted worker is established.
+The evidence plan JSON carries the same statuses and per-claim `evidence` references for the
+claims that were run (G01, G03, G04, G05, G06, G08, G09, G10). G02 and G07 are untouched. IDs and
+counts (40 claims, ten per option, ten gate groups, twelve scenario families) are unchanged.
 
-## Checks and exact outcomes
+## Findings
 
-The following required commands are **not run** after the acquisition stop condition:
+1. **Licence exception:** TOST-1.0 generated file in an MIT-declared crate (section 1). Needs owner policy.
+2. **MSRV mismatch:** crate declares 1.96, repository 1.95 (section 1).
+3. **Non-finite numbers accepted** as values (`reproducers/numeric-overflow.usda`; section 5).
+4. **Truncation and header corruption can be accepted silently** (section 5).
+5. **Foreign-override prevention is not in the crate**: a raw set on a referenced prim succeeds; BeamCraft's wrapper must enforce the rule (section 3).
+6. **Parser allocation bounds unproved** from declared counts; only cheap inputs were tried (section 5).
+7. **Supervision harness is Windows-only**; Linux/macOS isolation was not built.
+8. `wasm32-unknown-unknown` target missing locally; portability unverified.
+9. No panic, hang or crash was observed in the 1184-case corpus or the nine evidence tests.
+
+Reproducer for finding 3 (`reproducers/numeric-overflow.usda`):
 
 ```text
-# spikes/n01-openusd
-cargo tree --offline
-cargo metadata --format-version 1 --offline
-cargo fmt --all -- --check
-cargo clippy --all-targets --offline -- -D warnings
-cargo test --offline
-cargo check --target wasm32-unknown-unknown --lib --offline
-# repository root
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --offline -- -D warnings
-cargo test --workspace --offline
+#usda 1.0
+def "A" { double x = 1e999999999
+}
 ```
 
-No formatting, Clippy, tests, build, dependency closure or boundary test pass is asserted.
-Only report/plan consistency and root-lock integrity were checked after recording the stop.
-The task's explicit stop takes precedence over continuing the otherwise requested build/test
-sequence. Post-recording checks actually run:
+## What BeamCraft would have to write on top (logical terms)
 
-| Command / check | Exact result |
-|---|---|
-| `python -c "import json; json.load(open('docs/design/layer-engine-evidence-plan-v0.1.json', encoding='utf-8')); print('json ok')"` | Exit 0; `json ok` |
-| Python comparison of parsed plan before/after insertion | Exit 0; `Evidence update verified: 40 IDs/counts unchanged; only G01/G03 evidence added; all statuses unchanged.` |
-| Python `hashlib.sha256(Path('Cargo.lock').read_bytes()).hexdigest()` | Exit 0; `7b15824fc67c90a837ad19af9d28e12dea2802797e90f541945ddb8e984497eb`, identical to baseline |
-| Python spike-file/lockfile check | Exit 0; lockfile absent; only `acquisition.txt`, `Cargo.toml`, `src/lib.rs` under the spike |
+A BeamCraft-owned backend trait exposing only BeamCraft identities, values and bounded
+diagnostics: bounded open/read with contained asset resolution and an explicit revision
+context; enumeration of composed identities with source provenance; typed reads of authored
+opinions and relationships; preparation of owned edits in a candidate that can be validated,
+installed or discarded; normalised change capture mapped to engine-derived footprints;
+export of owned authored layers retaining unknown content; and the ownership rule of
+section 3. Host storage, authorisation, atomic publication, a durable outcome ledger,
+input-size and count limits before parsing, non-finite rejection, integrity digests and
+cross-platform process isolation stay outside the crate. The spike's `LayerBackend` (read a
+number, write a number, export the edit layer) is a minimal slice of this surface.
 
-Root `Cargo.lock` is byte-for-byte unchanged according to matching SHA-256 digests. This does
-not replace the unrun workspace checks or independently establish a clean Git working tree.
+## Python/C++ avoidance verdict (final answer for the owner)
+
+Question: can the Python/C++ OpenUSD worker be avoided for each first-slice need? The answer
+below is limited to the synthetic fixtures run here, on Windows with one crate version, with
+no official-SDK comparison. "Shown" means the behaviour was observed; it does not mean the
+output is conformant.
+
+| First-slice need | Avoidable on this evidence? | Basis and limit |
+|---|---|---|
+| Open / read | **Yes, shown for the tested subset** | USDA and USDC read, composed values, metadata, relationships; hostile corpus survived. Limits: only self-consistency; corruption and truncation can be accepted; allocation bounds unproved |
+| Author | **Yes, shown for the tested subset** | Prims, typed attributes, relationship, metadata, `active`, `over` authored through the crate |
+| Compose | **Partly shown** | Sublayers, stronger `over`, `active`, internal reference to a foreign layer. Variants, payloads, inherits, specializes and an oracle comparison not done |
+| Write | **Yes, shown for the tested subset** | USDA and USDC both written; same-build second write byte-identical. No independent reader checked the output |
+| Foreign read-only references | **Yes, only with a BeamCraft wrapper** | The crate permits a local override of a foreign prim; the wrapper rule rejected it in the spike. Needs a contained resolver and wider cases |
+| Delta / merge | **Partly shown** | Capture, replay and `(UUID, attribute)` collision detection shown; footprints, idempotency, gap/stale handling must be written by BeamCraft and were not run |
+
+Overall: nothing observed requires Python or C++ for these needs, but the evidence does not
+yet establish that the worker can be dropped. Open blockers: the licence exception, the MSRV
+change, the lack of an oracle for interchange and composition correctness, and unproved
+parser limits. The crate is **not** shown to be suitable as the replacement backend, and no
+conclusion about the accepted SDK worker baseline follows.
 
 ## Risks, effort and next steps
 
-The unresolved risks are release licence/resources, MSRV, exact public API, upstream stability,
-composition/unknown-field correctness, parser allocation bounds, platform coverage and lack
-of an independent oracle. Two maintenance owners and an upgrade/exit exercise remain open.
+Risks: licence (TOST file), MSRV, pre-1.0 API stability and maintenance ownership, silent
+acceptance of damaged input, spec drift without an oracle, unproved allocation bounds,
+platform coverage.
 
-Order-of-magnitude planning only: completing acquisition/audit and this small runtime slice
-could take days if prerequisites become available; missing capabilities or upstream fixes
-cannot be bounded from this run. F11's existing 8–20 person-week first-slice integration
-estimate is an unvalidated prior estimate, not a measurement or commitment from N01.
+Order-of-magnitude effort only (not a measurement): a few days to extend this slice to the
+remaining option C claims that can run locally (variants/payloads, copy/remap, footprints,
+cold-run statistics, Linux/macOS/WASM when targets and machines exist); weeks for a production
+adapter. F11's 8-20 person-week first-slice integration estimate remains an unvalidated prior.
 
-Continuation requires an environment with authorized registry access or an already populated
-Cargo cache. Resolve the exact pin, generate a real independent lockfile, inventory every
-package and included resource/notice before selecting APIs, and then implement the original
-bounded fixture/harness/trait work. Revisit the SDK oracle only if an admitted tool is already
-available; do not install Python/C++ tooling as an implicit fallback.
+Next steps: obtain an official-SDK oracle in an admitted environment for differential claims;
+install the WASM target and run the Linux/macOS checks; resolve the TOST question; then decide.
 
-Owner decisions remain: any repository MSRV change, licence findings/closure after actual
-inventory, maintenance owner/backup and upstream stability policy, and eventual backend
-selection after evidence. This session changes none of those decisions or shared contracts.
+Owner decisions that remain:
 
-## Proposed shared-file text (not applied)
+1. Whether TOST-1.0 material inside a dependency is admissible (G01), and the file-level review.
+2. Raising the workspace MSRV from 1.95 to 1.96 or rejecting the crate on that basis (G03).
+3. Maintenance owner and backup, and upstream stability policy for a pre-1.0 crate (G02).
+4. Whether to continue N01 for option C (remaining gates) or stop; backend selection after evidence.
 
-Exact proposed `ROADMAP.md` progress-log entry:
+## Verification
 
-```markdown
-- 2026-10-15: N01 option C first slice attempted an isolated `openusd` 0.8.0 acquisition bootstrap in `spikes/n01-openusd`, stacked on PR #22 as supplied by the task (Git ownership prevented independent verification). Cargo offline resolution failed because the crate was not cached; no retry or bypass was attempted. Runtime, licence-closure and portability gates remain not run; the report records the blocker. No backend, MSRV or architecture change is accepted, and no N01 parent acceptance gate is completed.
-```
+Run on 2026-10-15 in `D:\Projects\01_BeamCraft-N01` on branch `feat/n01-openusd-spike` (base
+head `8957c40`). All Cargo commands used `--offline`.
 
-Exact proposed `ATTRIBUTION.md` row (third-party crates are unresolved dependencies, not
-shipped assets; no upstream code/resources are included):
-
-```markdown
-| `spikes/n01-openusd/**`, `docs/design/layer-engine-spike-n01-report-v0.1.md`, N01 evidence references in `docs/design/layer-engine-evidence-plan-v0.1.json` | BeamCraft contributors | Contributor-original N01 option C acquisition bootstrap and blocked first-slice report 0.1.0, 2026-10-15; owner task card and repository F04/F08/F11 documents; no third-party code, fixtures or runtime resources copied | `MPL-2.0` | Isolated unshipped spike bootstrap, acquisition diagnostic and evidence limitations; no USD runtime implemented |
-```
+| Command | Exact result |
+|---|---|
+| `git status -sb`, `git log --oneline -3` at start | Branch `feat/n01-openusd-spike`, clean, head `8957c40`: matched expectation |
+| `cargo fmt --all -- --check` (spike) | Exit 0 |
+| `cargo clippy --all-targets -- -D warnings` (spike) | Exit 0, no warnings |
+| `cargo test` (spike) | Exit 0: `tests/evidence.rs` 9 passed; `tests/supervision.rs` 1 passed; no unit/doc tests |
+| `python -c "import json; json.load(open('docs/design/layer-engine-evidence-plan-v0.1.json', encoding='utf-8')); print('json ok')"` | Exit 0, `json ok` |
+| `cargo fmt --all -- --check` (repository) | Exit 0 |
+| `cargo clippy --workspace --all-targets -- -D warnings` (repository) | Exit 0 |
+| `cargo test --workspace` (repository) | Exit 0 |
+| `python checks.py` (all seven above, plus lock integrity) | All exit 0; root `Cargo.lock` SHA-256 `7b15824fc67c90a837ad19af9d28e12dea2802797e90f541945ddb8e984497eb` before and after (unchanged) |
+| `python harness.py hostile` | 1184 cases; 36 accepted, 1148 rejected; max 0.007 s; max job commit 1 064 960 bytes |
+| `python harness.py performance` | Figures in section 7 |
+| `git diff --check` | Exit 0 (LF endings; no CR in changed files) |
+| `cargo check --target wasm32-unknown-unknown` | **Not run** (target not installed) |
+| Rust 1.95 build, Linux, macOS | **Not run** |
+| `cargo deny` on the spike | **Not run** (spike is outside the repository CI) |
+| Official OpenUSD tooling | **Not run** (not available) |
 
 ## Exposure note
 
-Exposure was limited to repository instructions/design/contracts, local toolchain and cache
-availability, and Cargo's acquisition diagnostic. No Tekla/Trimble/commercial detailing assets,
-installations, personal data, client projects, private observation notes or other checkouts
-were accessed. No third-party implementation source or tests were read or copied. No outbound
-connection was observed; Cargo reported offline resolution before any successful acquisition.
-No service, control channel, worker or plugin was started. All new material is
-contributor-original MPL-2.0; the attribution row is proposed for the orchestrator because
-this task forbids editing root attribution. Work remains uncommitted.
+Exposure was limited to repository instructions, design and contract documents, the local
+toolchain and Cargo cache, the `openusd 0.8.0` package manifest and README licence statement and
+bundled notice file (for the licence finding), and the dependency metadata. No Tekla/Trimble or
+other commercial detailing assets, personal data, client projects or other checkouts were
+accessed. No upstream source or tests were copied. No network access was used; no service,
+worker or plugin was started other than the spike's own child processes. All new material is
+contributor-original and MPL-2.0.
+
+## ROADMAP and ATTRIBUTION text
+
+Applied in this change: one `ROADMAP.md` progress-log entry at the top of the log and one
+`ATTRIBUTION.md` row, with LF endings. PR URL: none (the orchestrator publishes).

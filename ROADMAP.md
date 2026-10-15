@@ -49,6 +49,14 @@ later project; portable domain crates alone do not establish a working web appli
 
 ## Progress log
 
+- 2026-10-15: N01 option C first slice ran the pure-Rust `openusd` 0.8.0 spike in `spikes/n01-openusd` (isolated workspace,
+  stacked on PR #22). On Windows with Rust 1.96.0 it showed USDA/USDC round trip with unknown-field preservation, sublayer/over/active
+  composition, delta capture and replay with `(UUID, attribute)` collision detection, and 1184 hostile inputs with no panic or hang.
+  The crate does not prevent local overrides of foreign prims (a BeamCraft wrapper must); non-finite numbers and some truncated or
+  corrupted input are accepted. G01 is `failed` (TOST-1.0 generated file in an MIT-declared crate); MSRV 1.96 versus 1.95, WASM,
+  Linux/macOS and the SDK oracle are not run, so all other claims stay `not_run`. No backend, MSRV or architecture change is
+  accepted; owner decisions on licence, MSRV and maintenance remain. Report: `docs/design/layer-engine-spike-n01-report-v0.1.md`.
+
 - 2026-10-15: F11 drafted the USD layer-engine decision record 0.1.0 on base
   `20d26cfb107d51e7a2c76c25ca0191b8115ec301` (stacked on F08). It compares four options (official
   SDK worker, own Rust subset, `openusd` adapter, hybrid) and recommends retaining the accepted SDK
