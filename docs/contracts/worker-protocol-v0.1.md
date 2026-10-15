@@ -231,27 +231,48 @@ PrepareChangeBatch has logical_command and changes (an array of bounded schema-s
 A successful prepare returns candidate_token (the same representation as stage_token) and a
 bounded candidate result, without advancing generation or changing the live stage token.
 At most one candidate exists. InstallPrepared and DiscardPrepared each have body containing
-only candidate_token and op_id; no attachments. InstallPrepared is sent only after host outcome
-recording, while DiscardPrepared is sent only before that decision. Neither command creates a
-second logical acceptance. All three use the still-pinned live context; stale candidate tokens
-are IPC_STALE_STAGE. A new prepare while a candidate exists is fatal IPC_BUSY.
-QueryOutcome.body contains project_id, workspace_id and op_id and requests the host-coordinated
-recorded outcome. The host consults the durable ledger first; any worker query is only stage
-status evidence and cannot prove durability. QueryOutcome may run without an open stage;
-a missing worker record remains OUTCOME_UNKNOWN. CloseStage.body is empty; it releases the
-stage only after resolving pending mutation status.
+only candidate_token and op_id; no attachments. InstallPrepared is sent only after proven host
+acceptance recording. DiscardPrepared is allowed before the host decision or after a proven
+recorded rejection; never after acceptance or while outcome recording is uncertain. The host
+checks that gate before sending either method. Discard releases only the isolated candidate,
+leaving the live stage, generation and any recorded rejection unchanged; a new prepare may then
+proceed. Neither command creates a second logical acceptance. All three use the still-pinned live
+context; stale candidate tokens are IPC_STALE_STAGE. A new prepare while a candidate exists is
+fatal IPC_BUSY.
 
-response.outcome is one of stage_opened, snapshot_page, prepared, stage_installed, stage_discarded,
-recorded_result, stage_closed, rejected, cancelled or outcome_unknown. Success codes are null;
+The host-facing QueryOutcome path authenticates and authorizes the caller, then consults the
+durable host ledger first; it works without an open stage or a running worker. Only this host
+path returns recorded_result for a verified recorded acceptance or rejection, otherwise
+OUTCOME_UNKNOWN. A lost worker never prevents returning a proven host-ledger result.
+
+The private worker QueryOutcome method is a separate stage-status probe, not the host-ledger
+query. Its body contains only project_id, workspace_id and op_id. It may run without an open
+stage, but requires a live worker session. Its successful response has outcome stage_status and
+body containing only status, one of candidate_prepared, stage_installed or not_observed. These
+describe only the current candidate or installed stage for that op_id; they cannot certify a
+recorded outcome. not_observed also covers no stage or a later installed operation and is never
+proof of rollback or non-acceptance. Worker evidence may help recovery but cannot replace the
+host-ledger query. CloseStage.body is empty; it releases the stage only after resolving pending
+mutation status.
+
+Worker response.outcome is one of stage_opened, snapshot_page, prepared, stage_installed,
+stage_discarded, stage_status, stage_closed, rejected, cancelled or outcome_unknown.
+recorded_result is host-facing only and is forbidden in a worker response. Success codes are null;
 rejected/cancelled/outcome_unknown carry their F04 code. observed_context is null when unknown.
-Only a host-verified recorded_result may describe accepted_draft; a prepared or stage_installed
-response alone is not engineering acceptance. Error bodies contain only optional transport_code;
-success bodies are method-specific results under U02/F08 and cannot acquire arbitrary fields.
+Only the host's verified recorded_result may describe accepted_draft; a prepared, stage_installed
+or stage_status response alone is not engineering acceptance. Error bodies contain required
+diagnostics and optional transport_code, with no other fields; section 9 fixes their bounded
+schema. Success bodies are method-specific results under U02/F08 and cannot acquire arbitrary
+fields.
 
 Events are "changed" (bounded incremental change/result page) or "resnapshot_required"
 (invalidation only). Responses and events carry pinned contexts and never stream a whole model
 each frame. Event notification is ordered after the response for its causal request. At most
 one event is queued; coalesce excess changes to resnapshot_required, never silently drop them.
+Assign event_seq when an event enters the queue; replacing a queued event retains its number.
+Coalescing consumes no additional sequence number. Advance the counter only when a new event
+enters the empty queue; numbers delivered to the client therefore remain contiguous. At counter
+exhaustion, replacement may retain the queued number, but a new event requires session rotation.
 Clients stop applying deltas after invalidation until ReadSnapshot completes. At most 1024 pages
 or events form one snapshot/change delivery, and at most 4096 items appear per page/batch.
 Larger delivery fails with IPC_LIMIT before dispatch or requests a fresh bounded query.
@@ -320,12 +341,15 @@ exactly one generation increment; worker acknowledgement alone is insufficient. 
 increment for u64 overflow before acceptance; exhaustion is LIMIT_EXCEEDED.
 
 Before the host decision, cancellation uses DiscardPrepared if preparation already completed;
-otherwise cancel targets the active preparation request. After the host decision, do not discard
-or compensate automatically: resolve the recorded outcome, and reconstruct a lost projection.
+otherwise cancel targets the still-active preparation request, with no completed candidate.
+A cancel targeting a completed preparation is a no-op and cannot discard its candidate.
+After a proven recorded rejection, DiscardPrepared releases the candidate without changing that
+rejection. After acceptance or uncertain outcome recording, do not discard or compensate
+automatically: resolve the host-ledger outcome, and reconstruct a lost projection if accepted.
 U06/U07 must implement durable candidate/result validation, recording and recovery without
 exposing a half-accepted stage. No next engineering mutation or incremental event is released
-until that decision and projection are resolved. Failure discards an unaccepted candidate or
-reopens the worker projection from verified recorded workspace state.
+until that decision and projection are resolved. Failure discards a candidate only under that
+same gate, or reopens the worker projection from verified recorded workspace state.
 
 Restart invalidates all stage tokens, cursors, pending correlations and events. New pipes and
 nonce are mandatory. OpenStage reconstructs only a verified complete workspace revision/
@@ -335,13 +359,18 @@ blocked for new mutations with OUTCOME_UNKNOWN; cached geometry is never evidenc
 
 ## 8. Deadlines, liveness, cancellation and failure
 
-timeout_ms is 1..120,000, default 30,000 when supplied by the host client; the wire field is
-required. The host starts a monotonic deadline when admitting the request, covering sending,
-queue-free dispatch and receiving the response. The enclosing logical mutation also has one
-host deadline across prepare, decision and install; separate calls cannot reset or extend it. The
-worker starts its local budget at complete
-bundle validation; the earlier host deadline always controls. Partial bundle assembly has an
-independent 10,000 ms limit from first header byte to final attachment byte. There is no timeout
+The host-facing API defaults an omitted timeout to 30,000 ms; explicit values must be integer
+milliseconds in 1..120,000, otherwise INVALID_ARGUMENT. Before sending, the host sets timeout_ms
+to the smaller of that API budget and negotiated request_timeout_ms. The resulting timeout_ms
+is mandatory on the wire; neither peer applies a wire-side default. The host and worker use
+this same capped budget for the request. The host starts its monotonic deadline when admitting
+the request, covering sending, queue-free dispatch and receiving the response. The enclosing
+logical mutation also has one host deadline across prepare, decision and install; each call is
+additionally capped by the remaining logical budget and cannot reset or extend it. Round the
+remaining budget down to whole milliseconds; if none remain, expire without sending a request.
+The worker starts its local budget at complete bundle validation; the earlier host deadline
+always controls. Partial bundle assembly has an independent 10,000 ms limit from first header
+byte to final attachment byte. There is no timeout
 extension from trickled bytes. Read/write/budget waits honor these deadlines. Idle header waits
 are bounded by liveness. No timed-out bundle is dispatched.
 
@@ -353,11 +382,14 @@ A bundle must finish before another outgoing frame, so liveness handling must ac
 1000 ms for child exit, then terminates it and waits at most 1000 ms for reaping; failure to
 confirm exit blocks replacement rather than creating competing workers.
 
-A valid cancel is advisory until a terminal result. Before the serialized apply/commit decision
-point, discard candidate state and return CANCELLED with unchanged authored/derived state and
-generation. Receipt of cancel is not acknowledgement of rollback. After that point, return the
-recorded outcome if provable, otherwise OUTCOME_UNKNOWN. Never fabricate CANCELLED for work
-already applied or recorded. A late cancel cannot change a recorded result.
+A valid cancel of an active preparation is advisory until its terminal result. Before the
+serialized apply/commit decision point, stop that preparation and return CANCELLED only after
+proving its work was discarded, with unchanged authored/derived state and generation. If
+preparation already completed, cancel is a no-op; the host must use DiscardPrepared under the
+section 7 gate. Receipt of cancel is not acknowledgement of rollback. After the decision point,
+the host returns its proven recorded outcome, otherwise OUTCOME_UNKNOWN. Never fabricate
+CANCELLED for work already accepted or with uncertain recording. A late cancel cannot change
+a recorded result, including a rejection.
 
 On deadline, initiate cancel if still possible, but wait no longer than 1000 ms beyond the host
 deadline for a conclusive terminal result; then close the session and stop/reap the child.
@@ -370,9 +402,12 @@ Worker exit, broken pipe or hang produces IPC_BACKEND_LOST (or the more specific
 deadline cause). Required backend service is BACKEND_UNAVAILABLE; an uncertain in-flight
 mutation additionally remains OUTCOME_UNKNOWN until U07/QueryOutcome resolves it.
 Do not return success, decrement generation, silently resend or create a fresh op_id to hide
-uncertainty. QueryOutcome returns an actual recorded result or OUTCOME_UNKNOWN, never guessed
-not-applied. U07 may prove absence only from its verified recovery protocol. Limit automatic
-outcome queries to one after recovery; further queries require an explicit client request.
+uncertainty. The host-facing QueryOutcome returns a verified host-ledger result or OUTCOME_UNKNOWN,
+even with no stage or a lost worker; it never guesses not-applied. The worker QueryOutcome returns
+only stage_status evidence and cannot resolve durable acceptance. U07 may prove absence only
+from its verified recovery protocol. Limit automatic host outcome queries to one per recovery
+attempt, whether or not worker recovery succeeds, and automatic worker probes to one in that
+attempt; further queries require an explicit client request.
 
 ## 9. Errors and safe diagnostics
 
@@ -383,6 +418,26 @@ English descriptions and bounded field names, not echoed input, private paths, c
 client labels, file contents or raw exceptions. A message is at most 1024 UTF-8 bytes.
 Observed context is returned only when known and authorized; diagnostic target data follows F04.
 
+Every worker error body contains diagnostics (possibly empty) and optional transport_code only.
+diagnostics is an array of at most 32 closed records, each containing exactly field, target_id
+and reason_code. field is a fixed schema token, not an untrusted path: request, context or body;
+an envelope field name from F04 section 6; an argument/change-property name from F04 section 7;
+or placement, translation_mm or orientation_xyzw. For an unknown input key, use its defined
+parent token (or body), never that key. field is at most 64 UTF-8 bytes. target_id is null or
+an authorized, validated full canonical F04 UUIDv7 (36 ASCII bytes); invalid submitted IDs are
+represented by null. reason_code is one stable code from F04 section 8, at most 32 ASCII bytes.
+No other fields, dynamic indices, prim/file paths, input values or exception text are allowed.
+The encoded diagnostics array is at most 8192 bytes. Validate these bounds during the bounded
+scan before allocating records or strings. Excess counts/bytes are IPC_LIMIT; unknown tokens,
+invalid record fields or invalid IDs in a worker diagnostic are IPC_MESSAGE. Emit at most the
+first 32 diagnostics in F04 validation order without constructing an unbounded intermediate list.
+
+The host validates worker diagnostics before forwarding them and adds its own safe diagnostics
+from trusted schema/validation results when needed. Its F04 error always includes the observed
+workspace token when known and authorized, even if the worker's observed_context is null or the
+worker is unavailable. The host reports its known project/workspace/base/generation tuple without
+inventing a worker stage token. An empty worker diagnostic list never waives this F04 obligation.
+
 | Transport code | Condition | F04 mapping when a command outcome is reportable |
 |----------------|-----------|-------------------------------------------------|
 | IPC_VERSION | Unsupported header/negotiated version | UNSUPPORTED_VERSION |
@@ -391,7 +446,7 @@ Observed context is returned only when known and authorized; diagnostic target d
 | IPC_TRUNCATED | EOF within a frame/bundle | BACKEND_UNAVAILABLE |
 | IPC_BUFFER | Undeclared buffer, length/type/index/count/hash disagreement | INTEGRITY_ERROR |
 | IPC_JSON | Invalid encoding, JSON grammar or duplicate decoded keys | MALFORMED_COMMAND |
-| IPC_MESSAGE | Unknown type, method or closed control-schema field | UNSUPPORTED_COMMAND |
+| IPC_MESSAGE | Unknown type, method or closed control-schema field/value | UNSUPPORTED_COMMAND |
 | IPC_DUPLICATE_ID | Reused/decreasing correlation ID or repeated cancel | MALFORMED_COMMAND |
 | IPC_UNKNOWN_ID | Uncorrelated response/cancel/pong | MALFORMED_COMMAND |
 | IPC_BUSY | More than one outstanding normal request | LIMIT_EXCEEDED |
@@ -428,6 +483,8 @@ Fixed representation values are not negotiable. MiB = 1,048,576 bytes; KiB = 102
 | F04 logical command; nesting | At most 1 MiB; at most 16 containers including root |
 | All control nesting; tokens (keys and values/containers each count once) | At most 16; at most 65,536 |
 | Decoded string/key; cursor; safe message | At most 4096, 256, 1024 UTF-8 bytes respectively |
+| Error diagnostics count; encoded array | At most 32 records; at most 8192 bytes |
+| Diagnostic field; target_id; reason_code | At most 64 UTF-8 bytes; null or 36 ASCII bytes; at most 32 ASCII bytes |
 | F04 labels; relationship targets; footprint entries | 1..256 bytes; at most 1024; at most 4096 |
 | WorkspaceGeneration | Decimal string representing u64, 0..18,446,744,073,709,551,615 |
 | Nonce; stage token; SHA-256 | 32 bytes each, 64 lowercase hex digits in JSON |
@@ -443,19 +500,20 @@ Fixed representation values are not negotiable. MiB = 1,048,576 bytes; KiB = 102
 | Handshake offered versions; required/supported feature entries | 1; at most 16 each |
 | Negotiable limit fields | Exactly 14 keys listed in section 4; no extra fields |
 | Handshake timeout; bundle assembly timeout | 5000 ms; 10,000 ms |
-| Request timeout range/default | 1..120,000 ms / 30,000 ms |
+| Host-facing timeout range/default | Explicit integer 1..120,000 ms; omitted = 30,000 ms |
+| Required wire timeout_ms; budget used by both peers | min(API budget, negotiated request_timeout_ms, remaining logical budget if any) |
 | Ping interval; pong allowance | 5000 ms; 15,000 ms |
 | Post-deadline cancellation grace | At most 1000 ms |
 | Fatal diagnostic write; exit grace; forced reaping wait | At most 100 ms; 1000 ms; 1000 ms |
 | Automatic restarts; delays | At most 2 after initial launch; 250 ms then 1000 ms |
-| Automatic recovery outcome queries | At most 1; never automatic mutation retries |
+| Automatic recovery queries/probes per attempt | At most 1 host-ledger query and 1 worker stage probe; no mutation retries |
 | Diagnostic drain/retention | At most 64 KiB per child; 4 KiB sanitized retained |
 
 Every collection/string in a control message is also bounded by its byte/token/depth budget.
 Capability feature lists cannot trigger plugin discovery. Negotiable caps use the exact section 4
 names. Fixed timing/concurrency rules and F04 type
-representations remain unchanged. The default host request budget is the smaller of 30,000 ms
-and negotiated request_timeout_ms.
+representations remain unchanged. Apply the host-facing default before capping; the required wire
+timeout_ms carries that capped budget to the worker, with no receiver-side default (section 8).
 F04's engineering input limits still apply unchanged. Geometry mesh layout, topology and
 accuracy bounds belong to F06; opaque byte limits do not grant permission for any topology.
 All work iterates over bounded frames/items/pages or stops at a deadline. Session service may

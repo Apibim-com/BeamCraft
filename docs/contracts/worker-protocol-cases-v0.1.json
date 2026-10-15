@@ -129,12 +129,13 @@
     },
     {
       "case_id": "F05-POS-07",
-      "description": "Cancellation before the decision point proves discard.",
+      "description": "Cancellation stops a still-active preparation before a candidate exists.",
       "given": [
-        "One pending mutation; isolated candidate only; no apply/commit decision"
+        "PrepareChangeBatch is still active; no candidate_token has been issued",
+        "No apply/commit decision or outcome recording has started"
       ],
       "input": {
-        "abstract": "Host sends sole cancel targeting pending request; worker proves pre-commit discard."
+        "abstract": "Cancel the active preparation request; prove its work was discarded before returning CANCELLED."
       },
       "expected": {
         "outcome": "cancelled_without_state_change",
@@ -159,7 +160,8 @@
         "outcome": "recorded_accepted_result",
         "code": null,
         "never_reports_cancelled": true,
-        "generation_increment": 1
+        "generation_increment": 1,
+        "no_discard_prepared": true
       },
       "verified_by": [
         "U04",
@@ -192,16 +194,21 @@
       "case_id": "F05-POS-10",
       "description": "Backpressure converts excess incremental changes to invalidation.",
       "given": [
-        "One queued changed event; another bounded change arrives before delivery"
+        "A changed event entered the queue with event_seq 9 after delivery of event_seq 8",
+        "Another bounded change arrives before the queued event is sent"
       ],
       "input": {
-        "abstract": "Coalesce to one resnapshot_required notification; client stops deltas and reads a bounded snapshot."
+        "abstract": "Replace the queued event by resnapshot_required with sequence 9; the next new event uses 10."
       },
       "expected": {
         "outcome": "bounded_resnapshot_handoff",
         "code": null,
         "event_queue_maximum": 1,
-        "no_silent_delta_loss": true
+        "no_silent_delta_loss": true,
+        "replacement_event_seq": 9,
+        "next_new_event_seq": 10,
+        "coalescing_consumes_no_sequence_number": true,
+        "no_sequence_gap": true
       },
       "verified_by": [
         "U01",
@@ -241,6 +248,166 @@
         "code": null,
         "request_not_marked_complete": true,
         "deadline_not_extended": true
+      },
+      "verified_by": [
+        "U01",
+        "U04"
+      ]
+    },
+    {
+      "case_id": "F05-POS-13",
+      "description": "Discard a completed candidate before the host decision.",
+      "given": [
+        "PrepareChangeBatch completed with a candidate_token; no host decision exists"
+      ],
+      "input": {
+        "abstract": "Send DiscardPrepared with that candidate_token and op_id, rather than a late cancel."
+      },
+      "expected": {
+        "outcome": "stage_discarded",
+        "code": null,
+        "authored_derived_and_generation_unchanged": true,
+        "candidate_released": true,
+        "next_prepare_not_busy": true
+      },
+      "verified_by": [
+        "U04",
+        "U06"
+      ]
+    },
+    {
+      "case_id": "F05-POS-14",
+      "description": "Discard after a proven recorded rejection without changing the rejection.",
+      "given": [
+        "A candidate exists; the host ledger proves rejection, with no accepted or uncertain decision"
+      ],
+      "input": {
+        "abstract": "The host verifies the rejection, sends DiscardPrepared and then prepares a new operation."
+      },
+      "expected": {
+        "outcome": "stage_discarded",
+        "code": null,
+        "recorded_rejection_unchanged": true,
+        "authored_derived_and_generation_unchanged": true,
+        "candidate_released": true,
+        "next_prepare_not_busy": true
+      },
+      "verified_by": [
+        "U06",
+        "U07"
+      ]
+    },
+    {
+      "case_id": "F05-POS-15",
+      "description": "Host outcome queries return proven results even with a lost worker.",
+      "given": [
+        "Authorized caller; durable host ledger proves acceptance; no stage or running worker"
+      ],
+      "input": {
+        "abstract": "Call host-facing QueryOutcome for that operation without starting a worker."
+      },
+      "expected": {
+        "outcome": "recorded_result",
+        "code": null,
+        "recorded_acceptance_returned": true,
+        "worker_probe_not_required": true,
+        "generation_not_incremented_again": true
+      },
+      "verified_by": [
+        "U04",
+        "U07"
+      ]
+    },
+    {
+      "case_id": "F05-POS-16",
+      "description": "Worker stage status cannot certify acceptance or its absence.",
+      "given": [
+        "Live worker has a later installed operation; the queried operation is no longer observed"
+      ],
+      "input": {
+        "abstract": "Send worker QueryOutcome and receive stage_status with status not_observed."
+      },
+      "expected": {
+        "outcome": "stage_status",
+        "code": null,
+        "status": "not_observed",
+        "no_recorded_result_asserted": true,
+        "no_rollback_or_non_acceptance_inferred": true,
+        "host_ledger_proof_still_required": true
+      },
+      "verified_by": [
+        "U01",
+        "U07"
+      ]
+    },
+    {
+      "case_id": "F05-POS-17",
+      "description": "Errors preserve bounded safe diagnostics and the known workspace token.",
+      "given": [
+        "A fresh command has invalid width_mm; its target ID and observed workspace are authorized",
+        "Worker observed_context is null; host knows the authorized workspace token"
+      ],
+      "input": {
+        "abstract": "Return INVALID_ARGUMENT with one schema-token diagnostic; host returns its known workspace token."
+      },
+      "expected": {
+        "outcome": "request_rejected",
+        "code": "INVALID_ARGUMENT",
+        "diagnostics": [
+          {
+            "field": "width_mm",
+            "target_id": "019a7bf0-0000-7000-8000-000000000005",
+            "reason_code": "INVALID_ARGUMENT"
+          }
+        ],
+        "observed_workspace_token_returned": true,
+        "no_untrusted_values_or_paths_echoed": true,
+        "no_state_change": true
+      },
+      "verified_by": [
+        "F08",
+        "U04",
+        "U06"
+      ]
+    },
+    {
+      "case_id": "F05-POS-18",
+      "description": "An omitted API timeout is defaulted and then capped before transmission.",
+      "given": [
+        "API caller omits timeout; negotiated request_timeout_ms is 5000; no enclosing mutation"
+      ],
+      "input": {
+        "abstract": "Apply API default 30000 ms, cap it to 5000 ms and put timeout_ms 5000 on the wire."
+      },
+      "expected": {
+        "outcome": "shared_capped_request_budget",
+        "code": null,
+        "host_budget_ms": 5000,
+        "wire_timeout_ms": 5000,
+        "worker_budget_ms": 5000,
+        "receiver_default_not_used": true
+      },
+      "verified_by": [
+        "U01",
+        "U04"
+      ]
+    },
+    {
+      "case_id": "F05-POS-19",
+      "description": "An explicit API timeout uses the same capped wire budget on both peers.",
+      "given": [
+        "API timeout is 100000 ms; negotiated request_timeout_ms is 80000; no enclosing mutation"
+      ],
+      "input": {
+        "abstract": "Cap the explicit API budget before starting the host deadline and sending the request."
+      },
+      "expected": {
+        "outcome": "shared_capped_request_budget",
+        "code": null,
+        "host_budget_ms": 80000,
+        "wire_timeout_ms": 80000,
+        "worker_budget_ms": 80000,
+        "receiver_default_not_used": true
       },
       "verified_by": [
         "U01",
@@ -941,7 +1108,7 @@
         "Recovered worker is available; journal cannot prove acceptance or absence"
       ],
       "input": {
-        "abstract": "QueryOutcome after one automatic recovery query for a dispatched mutation."
+        "abstract": "Call host-facing QueryOutcome; worker stage evidence cannot replace the missing ledger proof."
       },
       "expected": {
         "outcome": "workspace_blocked_for_new_mutations",
@@ -988,6 +1155,89 @@
         "code": "LIMIT_EXCEEDED",
         "transport_code": "IPC_LIMIT",
         "no_duplicate_dispatch": true
+      },
+      "verified_by": [
+        "F08",
+        "U04"
+      ]
+    },
+    {
+      "case_id": "F05-NEG-38",
+      "description": "The worker cannot claim a recorded_result outcome.",
+      "given": [
+        "Only a read-only worker QueryOutcome probe is pending; no mutation uncertainty"
+      ],
+      "input": {
+        "abstract": "Worker sends response.outcome recorded_result instead of stage_status."
+      },
+      "expected": {
+        "outcome": "session_terminated",
+        "code": "UNSUPPORTED_COMMAND",
+        "transport_code": "IPC_MESSAGE",
+        "no_recorded_acceptance_inferred": true
+      },
+      "verified_by": [
+        "F08",
+        "U04"
+      ]
+    },
+    {
+      "case_id": "F05-NEG-39",
+      "description": "Uncertain outcome recording forbids candidate discard.",
+      "given": [
+        "A candidate exists; the host cannot prove acceptance, rejection or absence of recording"
+      ],
+      "input": {
+        "abstract": "Cancellation requests cleanup; host queries its ledger and cannot verify a recorded outcome."
+      },
+      "expected": {
+        "outcome": "recovery_required",
+        "code": "OUTCOME_UNKNOWN",
+        "no_discard_prepared_sent": true,
+        "no_cancelled_or_rejected_result_inferred": true,
+        "candidate_not_released": true,
+        "no_new_mutation": true
+      },
+      "verified_by": [
+        "U04",
+        "U06",
+        "U07"
+      ]
+    },
+    {
+      "case_id": "F05-NEG-40",
+      "description": "Diagnostic arrays are bounded before record allocation.",
+      "given": [
+        "Only a read-only request is pending; no mutation uncertainty"
+      ],
+      "input": {
+        "abstract": "A worker error contains 33 diagnostic records, or an encoded diagnostics array above 8192 bytes."
+      },
+      "expected": {
+        "outcome": "session_terminated",
+        "code": "LIMIT_EXCEEDED",
+        "transport_code": "IPC_LIMIT",
+        "excess_diagnostic_records_not_allocated": true
+      },
+      "verified_by": [
+        "F08",
+        "U04"
+      ]
+    },
+    {
+      "case_id": "F05-NEG-41",
+      "description": "Worker diagnostics cannot carry untrusted paths or values.",
+      "given": [
+        "Only a read-only request is pending; no mutation uncertainty"
+      ],
+      "input": {
+        "abstract": "A diagnostic has a non-vocabulary field or reason token, invalid target ID or extra value field."
+      },
+      "expected": {
+        "outcome": "session_terminated",
+        "code": "UNSUPPORTED_COMMAND",
+        "transport_code": "IPC_MESSAGE",
+        "untrusted_diagnostic_not_forwarded": true
       },
       "verified_by": [
         "F08",
