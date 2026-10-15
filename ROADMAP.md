@@ -49,6 +49,14 @@ later project; portable domain crates alone do not establish a working web appli
 
 ## Progress log
 
+- 2026-10-15: N01 option C first slice ran the pure-Rust `openusd` 0.8.0 spike in `spikes/n01-openusd` (isolated workspace,
+  stacked on PR #22). On Windows with Rust 1.96.0 it showed USDA/USDC round trip with unknown-field preservation, sublayer/over/active
+  composition, delta capture and replay with `(UUID, attribute)` collision detection, and 1184 hostile inputs with no panic or hang.
+  The crate does not prevent local overrides of foreign prims (a BeamCraft wrapper must); non-finite numbers and some truncated or
+  corrupted input are accepted. G01 is `failed` as measured (TOST-1.0 generated file in an MIT-declared crate; accepted by owner decision, PR #29); MSRV 1.96 versus 1.95, WASM,
+  Linux/macOS and the SDK oracle are not run, so all other claims stay `not_run`. No backend, MSRV or architecture change is
+  accepted; owner decisions on MSRV and maintenance remain. Report: `docs/design/layer-engine-spike-n01-report-v0.1.md`.
+
 - 2026-10-15: U05 added original incremental SHA-256 and strict full ContentDigest identities in
   `beamcraft_model::digest`, plus native `beamcraft_host::storage` with synced temporary files,
   non-replacing hard-link publication, complete existing-byte comparison and verified retrieval.
