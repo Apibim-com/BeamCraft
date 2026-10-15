@@ -1,24 +1,23 @@
 # F04: model and command contract, version 0.1.0
 
-Status: **freeze candidate, not frozen**. Date: 2026-10-14. Only the owner can freeze it
-(see [section 11](#11-freeze-status)).
-Draft base: `b34205281ab8a1f95052c4dc7d84f0995633e179`. Freeze-candidate amendments (task F04.2)
-are made on `478f330e15819b574c62227bc23009729adb4fdc`; the F06 amendments (task F04.3) are made
-on `b996c58fe850642f12b92b25b23c441fbd41ed47`; see [section 12](#12-amendments-log).
-F01 is merged. F02 is available locally: 35 source files, 160 occurrences and 156 unique IDs;
-source hashes were independently checked against its pinned manifest. F02 is not an input to this
-contract's amendments. The F09 review result 0.1.0 and the first-scope handoff package 0.1.0 are
-integrated (PR #10): see the [review result](../clean-room/review-result.md) and the
-[package](../clean-room/handoff/first-scope-v0.1.md). Requirement admission covers only that
+Status: **freeze candidate, not frozen**. Date: 2026-10-15. Only the owner can freeze it (see
+[section 11](#11-freeze-status)). Draft base: `b34205281ab8a1f95052c4dc7d84f0995633e179`.
+Freeze-candidate amendments (task F04.2) are made on `478f330e15819b574c62227bc23009729adb4fdc`; the
+F06 amendments (task F04.3) are made on `b996c58fe850642f12b92b25b23c441fbd41ed47`; see [section
+12](#12-amendments-log). F01 is merged. F02 is available locally: 35 source files, 160 occurrences
+and 156 unique IDs; source hashes were independently checked against its pinned manifest. F02 is not
+an input to this contract's amendments. The F09 review result 0.1.0 and the first-scope handoff
+package 0.1.0 are integrated (PR #10): see the [review result](../clean-room/review-result.md) and
+the [package](../clean-room/handoff/first-scope-v0.1.md). Requirement admission covers only that
 package's scope (rectangular plate, straight member, identities, units, rigid placement, declared
-failures). Source-exposure admission and eligible implementers are separate and undecided.
-K0 is not passed. This document does not close any of these. The
-[F06 geometry contract](geometry-contract-v0.1.md) is a draft, not frozen, and nothing in it is
-implemented; task F04.3 applied the amendments it proposed to this contract (section 12).
+failures). Source-exposure admission and eligible implementers are separate and undecided. K0 is not
+passed. This document does not close any of these. The [F06 geometry
+contract](geometry-contract-v0.1.md) is a draft, not frozen, and nothing in it is implemented; task
+F04.3 applied the amendments it proposed to this contract (section 12).
 
-This specifies domain semantics before F05 transport, F06 geometry and F08 module implementation.
-No command described here is implemented by this PR. The current CLI still reports its version.
-JSON examples are control messages and acceptance descriptions, never a second saved model format.
+This specifies domain semantics before F05 transport, F06 geometry and F08 module implementation. No
+command described here is implemented by this PR. The current CLI still reports its version. JSON
+examples are control messages and acceptance descriptions, never a second saved model format.
 
 ## 1. Authority and ownership
 
@@ -27,12 +26,12 @@ Published revisions also include corresponding derived geometry and quantities. 
 engineering validation, commands, rights, dependency tracking and transactions; a USD adapter
 handles composition and serialization. UI and CLI call the same engine API.
 
-An owned element, immutable definition and foreign reference are different targets.
-Mutation commands address owned elements by ID. The engine derives ownership from validated
-composition provenance, not an `owner` string submitted by a caller. Unknown ownership is not
-write permission. Edits and overrides of foreign prims are forbidden even in our own layers.
-Own reference wrappers and measurement annotations have separate identities; they never make
-their foreign source writable. R01 defines attachment commands after this contract.
+An owned element, immutable definition and foreign reference are different targets. Mutation
+commands address owned elements by ID. The engine derives ownership from validated composition
+provenance, not an `owner` string submitted by a caller. Unknown ownership is not write permission.
+Edits and overrides of foreign prims are forbidden even in our own layers. Own reference wrappers
+and measurement annotations have separate identities; they never make their foreign source writable.
+R01 defines attachment commands after this contract.
 
 ## 2. Identity, revision and paths
 
@@ -49,31 +48,31 @@ UUID layout follows [RFC 9562 section 5.7](https://www.rfc-editor.org/rfc/rfc956
 Creation checks actual uniqueness. UUID clock order gives neither authority nor conflict priority.
 Same-millisecond elements must retain different complete IDs.
 
-An owned steel element maps to `/World/Steel/E_<all 32 UUID hex digits without hyphens>`.
-`bim:id` is the full hyphenated ID; `bim:name` is a label. Rename does not change ID or prim path.
-Prim paths are adapter/index results, not caller-selected mutation destinations.
-The initial namespace does not support arbitrary element reparenting.
+An owned steel element maps to `/World/Steel/E_<all 32 UUID hex digits without hyphens>`. `bim:id`
+is the full hyphenated ID; `bim:name` is a label. Rename does not change ID or prim path. Prim paths
+are adapter/index results, not caller-selected mutation destinations. The initial namespace does not
+support arbitrary element reparenting.
 
-A revision ID and a content digest have different roles. Each immutable revision has one
-validated layer/asset manifest; reusing its ID for different content is an integrity error.
-U06 fixes the root publication/CAS mechanism, and U05 verifies complete blob bytes.
-Commands never accept shortened digests, absolute asset paths or remote resource URIs instead
-of a ContentDigest. The host resolves authorized project-relative resources with containment checks.
+A revision ID and a content digest have different roles. Each immutable revision has one validated
+layer/asset manifest; reusing its ID for different content is an integrity error. U06 fixes the root
+publication/CAS mechanism, and U05 verifies complete blob bytes. Commands never accept shortened
+digests, absolute asset paths or remote resource URIs instead of a ContentDigest. The host resolves
+authorized project-relative resources with containment checks.
 
 ## 3. Units, types and initial limits
 
-Lengths and coordinates use finite f64 millimetres, rotations use radians where expressed as
-angles, and the coordinate system is right-handed with Z up. Volume is m3, density kg/m3 and
-mass kg. The USD adapter authors `metersPerUnit=0.001` and `upAxis=Z` explicitly.
-[USD stage linear units](https://openusd.org/release/api/group___usd_geom_linear_units__group.html)
-are an IO concern; standard USD angular operations use their documented units at that boundary.
+Lengths and coordinates use finite f64 millimetres, rotations use radians where expressed as angles,
+and the coordinate system is right-handed with Z up. Volume is m3, density kg/m3 and mass kg. The
+USD adapter authors `metersPerUnit=0.001` and `upAxis=Z` explicitly. [USD stage linear
+units](https://openusd.org/release/api/group___usd_geom_linear_units__group.html) are an IO concern;
+standard USD angular operations use their documented units at that boundary.
 
 Logical messages follow [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259.html): reject duplicate
 object keys, invalid UTF-8 and non-JSON NaN/Infinity literals. Numeric fields accept numbers only,
 not booleans or numeric strings. Reject f64 overflow/underflow that changes a nonzero submitted
-number to infinity/zero. Do not silently round or clamp engineering inputs.
-Ordinary nearest-f64 conversion is the numeric representation; no extra dimension rounding is allowed.
-Positive and negative zero are equivalent for signatures; normalize only their sign for that purpose.
+number to infinity/zero. Do not silently round or clamp engineering inputs. Ordinary nearest-f64
+conversion is the numeric representation; no extra dimension rounding is allowed. Positive and
+negative zero are equivalent for signatures; normalize only their sign for that purpose.
 
 These are original initial operating caps, not vendor tolerances or promises of kernel accuracy:
 
@@ -82,72 +81,74 @@ These are original initial operating caps, not vendor tolerances or promises of 
 | Encoded logical command | At most 1 MiB before parsing; nesting depth at most 16 |
 | Single string | At most 4096 UTF-8 bytes unless a narrower field cap applies |
 | Element label | 1–256 UTF-8 bytes; reject control characters U+0000–001F and U+007F |
-| Plate dimensions / supported member-axis length | Greater than zero and at most 1,000,000 mm |
-| Minimum nonzero dimension (draft, to be validated by G04 and fixtures) | Plate dimensions, section dimensions and member-axis length are at least 0.001 mm, inclusive; a value above zero and below 0.001 mm is `INVALID_ARGUMENT` ([F06 section 4](geometry-contract-v0.1.md#4-tolerance-and-degeneracy-policy-g-06-draft)) |
+| Plate thickness/edge / supported member-axis length | Greater than zero and at most 1,000,000 mm |
+| Minimum nonzero dimension (draft, to be validated by G04 and fixtures) | Plate thickness/edge lengths, section dimensions and member-axis length are at least 0.001 mm, inclusive; a value above zero and below 0.001 mm is `INVALID_ARGUMENT` ([F06 section 4](geometry-contract-v0.1.md#4-tolerance-and-degeneracy-policy-g-06-draft)) |
 | Section dimensions (draft, to be validated by G04 and fixtures) | At most 1,000,000 mm; above that is `LIMIT_EXCEEDED` (F06 section 2) |
+| Contour radius D (assumption) | At most 2,000,000 mm; retains the maximum old rectangle diagonal |
+| Plate contour count / roll angle (assumptions) | 3–1024 points; `abs(roll_rad) <= 6.283185307179586` rad |
 | Coordinates / translation components | Absolute value at most 1,000,000,000 mm |
 | Material density, when authored in a definition | Greater than zero and at most 1,000,000 kg/m3; absence is unknown |
 | Element relationship targets | At most 1024; require valid pinned targets and reject forbidden cycles |
 | Derived command footprint entries | At most 4096; fail before publishing if the footprint cannot be bounded |
 
-The minimum and the section cap were added by the F06 amendments (section 12). They are the
-draft policy of F06 sections 2 and 4, not frozen; the existing limits and codes above are
+The owner confirmed these first-slice constants on 2026-10-15; they remain draft, to be validated by
+fixtures. The minimum and the section cap were added by the F06 amendments (section 12). They are
+the draft policy of F06 sections 2 and 4, not frozen; the existing limits and codes above are
 unchanged, and the minimum only raises the lower limit "greater than zero". It is a draft
 minimum-size rule, not a kernel accuracy claim; the tolerance policy stays with F06.
 
-F05 must enforce input byte/depth/string bounds before unsafe allocations and cannot widen
-these limits silently. F06 fixes mesh/topology bounds and tolerance policy separately.
-Host limits for stage traversal and immutable assets are additional, not replaced by this table.
+F05 must enforce input byte/depth/string bounds before unsafe allocations and cannot widen these
+limits silently. F06 fixes mesh/topology bounds and tolerance policy separately. Host limits for
+stage traversal and immutable assets are additional, not replaced by this table.
 
-Placement is a rigid pose: `translation_mm` (three numbers) and `orientation_xyzw`
-(four quaternion numbers). Components of orientation are finite in [-1, 1]; squared norm must
-be within 1e-12 of one. F06 must validate and construct a proper rigid transform, normalize that
-accepted quaternion and define deterministic antipodal/sign handling for geometry signatures.
-The F09 review integrated the rule for the first scope (CR-PLACE-001). It remains a proposed
-rule until the owner freezes this contract (section 11); F06 still owns rigid-transform
-construction, deterministic sign handling and tolerance policy (G-06, accepted by F06 under its draft policy). Scale, shear, reflection and
-commercial position presets are unsupported in the initial mutation API. Generic foreign
-transforms remain read-only and use a separate measurement-support decision.
+Placement is a rigid pose: `translation_mm` (three numbers) and `orientation_xyzw` (four quaternion
+numbers). Components of orientation are finite in [-1, 1]; squared norm must be within 1e-6 of one.
+F06 must validate and construct a proper rigid transform, normalize that accepted quaternion and
+define deterministic antipodal/sign handling for geometry signatures. The F09 review integrated the
+rule for the first scope (CR-PLACE-001). It remains a proposed rule until the owner freezes this
+contract (section 11); F06 still owns rigid-transform construction, deterministic sign handling and
+tolerance policy (G-06, accepted by F06 under its draft policy). Scale, shear, reflection and
+commercial position presets are unsupported in the initial mutation API. Generic foreign transforms
+remain read-only and use a separate measurement-support decision.
 
 **Quaternion convention (G-04, adopted; matches CR-PLACE-001 of the first-scope package).**
 
-- Component order is `(x, y, z, w)`: `q = x*i + y*j + z*k + w`, with Hamilton's rule
-  `i*j = k`. `[0, 0, 0, 1]` is the identity.
-- The rotation is **active** and acts on element-local coordinates. For the normalized
-  quaternion `q`, a local point `v` becomes `R(q) * v`, where `R(q)` is the proper rotation
-  matrix of `v' = q v q^-1`. For a unit axis `u` and angle `a` the quaternion is
-  `(u*sin(a/2), cos(a/2))`, a counter-clockwise turn seen from the tip of `u` in a
-  right-handed frame.
-- The pose maps a local point to the world as `world = R(q) * local + translation_mm`: rotate
-  first, then translate. Rotation is about the local origin. Composition with any parent
-  transform is outside this contract.
-- The accepted quaternion is normalized (`q / |q|`) before use. The authored components are
-  stored as submitted; this contract does not rewrite them.
-- `q` and `-q` denote the same rotation and are both accepted. A canonical sign for
-  signatures is not defined here; it stays with F06 (and P04).
-- The component range and the 1e-12 squared-norm rule above are unchanged. This contract does
-  not fix the f64 evaluation order of the squared norm, so no case sits exactly on that limit;
-  the cases keep a clear margin on both sides.
+- Component order is `(x, y, z, w)`: `q = x*i + y*j + z*k + w`, with Hamilton's rule `i*j = k`. `[0,
+  0, 0, 1]` is the identity.
+- The rotation is **active** and acts on element-local coordinates. For the normalized quaternion
+  `q`, a local point `v` becomes `R(q) * v`, where `R(q)` is the proper rotation matrix of `v' = q v
+  q^-1`. For a unit axis `u` and angle `a` the quaternion is `(u*sin(a/2), cos(a/2))`, a
+  counter-clockwise turn seen from the tip of `u` in a right-handed frame.
+- The pose maps a local point to the world as `world = R(q) * local + translation_mm`: rotate first,
+  then translate. Rotation is about the local origin. Composition with any parent transform is
+  outside this contract.
+- The accepted quaternion is normalized (`q / |q|`) before use. The authored components are stored
+  as submitted; this contract does not rewrite them.
+- `q` and `-q` denote the same rotation and are both accepted. A canonical sign for signatures is
+  not defined here; it stays with F06 (and P04).
+- The component range and the 1e-6 squared-norm rule above are unchanged. This contract does not fix
+  the f64 evaluation order of the squared norm, so no case sits exactly on that limit; the cases
+  keep a clear margin on both sides.
 
-Worked example (exact; checked with rational arithmetic): `q = (0, 0, 1/sqrt(2), 1/sqrt(2))`
-is a +90 degree turn about +Z and maps the local point `(3000, 0, 0)` to `(0, 3000, 0)`. With
-`translation_mm = [100, 200, 300]` the world point is `(100, 3200, 300)`. See
-`F04-POS-10` and first-scope case `FS-POSE-A`. With the f64 literal `0.7071067811865476` for both
-components, the squared norm differs from one by about 2.2e-16, inside the limit.
+Worked example (exact; checked with rational arithmetic): `q = (0, 0, 1/sqrt(2), 1/sqrt(2))` is a
++90 degree turn about +Z and maps the local point `(3000, 0, 0)` to `(0, 3000, 0)`. With
+`translation_mm = [100, 200, 300]` the world point is `(100, 3200, 300)`. See `F04-POS-10` and
+first-scope case `FS-POSE-A`. With the f64 literal `0.7071067811865476` for both components, the
+squared norm differs from one by about 2.2e-16, inside the limit.
 
 **Degenerate member axis (G-03, adopted by the owner 2026-10-15).** The two `axis_points_mm` points
 must give a length greater than zero. Identical points (distance exactly zero) are rejected with
 `INVALID_ARGUMENT`; a length above 1,000,000 mm is `LIMIT_EXCEEDED`; a non-finite coordinate is
-`NON_FINITE_NUMBER` or `MALFORMED_COMMAND` as for any number. Reasons: a zero axis is a value
-that violates the "greater than zero" range of an authored field, exactly like zero plate
-thickness (`F04-NEG-04`, `INVALID_ARGUMENT`) and a negative thickness (`F04-NEG-14`).
-`UNSUPPORTED_GEOMETRY` means a well-formed shape or transform outside the supported scope
-(for example a curved member or a scaled transform); a zero-length straight axis is not a
-well-formed supported shape that merely lacks a feature. This keeps every "dimension must be
-positive" rejection under one code. This is the only error-code choice changed by the
-freeze-candidate amendments; the owner adopted it on 2026-10-15. A nonzero but very
-short axis is governed by the draft minimum nonzero dimension of 0.001 mm in the limits table
-above: a length above zero and below that minimum is also `INVALID_ARGUMENT` (G-06, F06 section 4).
+`NON_FINITE_NUMBER` or `MALFORMED_COMMAND` as for any number. Reasons: a zero axis is a value that
+violates the "greater than zero" range of an authored field, exactly like zero plate thickness
+(`F04-NEG-04`, `INVALID_ARGUMENT`) and a negative thickness (`F04-NEG-14`). `UNSUPPORTED_GEOMETRY`
+means a well-formed shape or transform outside the supported scope (for example a curved member or a
+scaled transform); a zero-length straight axis is not a well-formed supported shape that merely
+lacks a feature. This keeps every "dimension must be positive" rejection under one code. This is the
+only error-code choice changed by the freeze-candidate amendments; the owner adopted it on
+2026-10-15. A nonzero but very short axis is governed by the draft minimum nonzero dimension of
+0.001 mm in the limits table above: a length above zero and below that minimum is also
+`INVALID_ARGUMENT` (G-06, F06 section 4).
 
 **Element-local frames (G-01 and G-02).** These fix where the authored dimensions sit in the
 element-local frame, before the placement of the previous subsection is applied. They define local
@@ -156,40 +157,83 @@ geometric tolerance are F06's draft policy (G-06 and F06/P02), not frozen.
 
 *Owner decisions, 2026-10-15 (verbatim intent):*
 
-- **G-01, plate.** The plate's local X runs along its first edge, from its first corner point to
-  its second. Thickness runs along local Z.
-- **G-02, member.** The profile section lies in the member's local XY plane. Local Z runs along
-  the member length (the axis). The section height is in that XY plane.
+- **G-01, plate.** The plate's local X runs along its first edge, from its first corner point to its
+  second. Thickness runs along local Z.
+- **G-02, member.** The profile section lies in the member's local XY plane. Local Z runs along the
+  member length (the axis). The section height is in that XY plane.
 
-*Proposed for owner adoption.* The owner did not state the following details. They are the
-orchestrator's interpretation, recorded here so the owner can confirm or replace them. Until
-confirmed they are not decisions, and implementers must not treat them as admitted requirements.
+*Owner decisions recorded on 2026-10-15.* P-1 is replaced, P-2 is confirmed unchanged, and P-3
+retains the deterministic zero-roll frame and adds explicit axial roll. Details not stated by the
+owner are assumptions below. The contract remains a freeze candidate, not frozen.
 
-- **P-1, plate.** The first corner is the plate's local origin. `width_mm` runs along local +X
-  (the first edge), `length_mm` along local +Y and `thickness_mm` along local +Z. The local solid
-  is `[0, width] x [0, length] x [0, thickness]`. This follows the argument order and the
-  convention of the F07 fixtures (local box from the origin corner).
-- **P-2, member frame.** For axis points `p1 -> p2` in element-local coordinates, the member's
-  local `Z_m = unit(p2 - p1)`. The section is a `w x h` rectangle centred on the axis, with the
-  width `w` along `X_m` and the height `h` along `Y_m`. The end faces are perpendicular to the
-  axis through `p1` and `p2`; there are no end extensions.
-- **P-3, roll about the axis.** The command carries no "up" vector. The first direction `Y_m` is
-  the element-local +Z direction projected onto the plane normal to `Z_m` and normalized, which
-  makes the height of a horizontal member point up. If the axis is parallel to element-local Z
-  (a column, including an anti-parallel axis), `Y_m` is instead the element-local +Y direction
-  projected onto the plane normal to `Z_m` and normalized; an exactly vertical axis keeps
-  `Y_m = +Y`. Then `X_m = normalize(Y_m x Z_m)` and `Y_m = Z_m x X_m`, which is right-handed
-  (`X_m x Y_m = Z_m`) and keeps the section perpendicular to the axis. Any other roll is
-  expressed through the element placement. The tolerance for "parallel" is F06's draft policy
-  ([F06 section 4](geometry-contract-v0.1.md#4-tolerance-and-degeneracy-policy-g-06-draft),
-  rule 2); an exactly vertical axis always uses the column rule. The roll is discontinuous at
-  that threshold, which F06 records as an open owner decision.
+- **P-1, contour plate (replaces rectangular-only input).** `contour_points_mm` is an ordered array
+  of 3 to 1024 distinct three-component points in element-local millimetres. Closure is implicit
+  from the last point to the first; do not repeat the first point at the end. Each coordinate has
+  absolute value at most 1,000,000,000 mm. Thickness is in [0.001, 1,000,000] mm. Each edge length
+  is in [0.001, 1,000,000] mm, inclusive; the maximum distance `D` from the first point to another
+  point is at most 2,000,000 mm. These contour bounds and the winding convention below are recorded
+  assumptions, not verbatim owner words. The body-frame origin is `p0`; `X_p = unit(p1 - p0)`.
+  Compute the polygon area vector `N = sum((p_i - p0) x (p_(i+1) - p0))` in ascending index order,
+  including the closing edge. Exact signs and zero tests use the rational values of the submitted
+  binary64 coordinates; only normalization rounds to binary64. A zero area vector is degenerate and
+  invalid. To make clockwise rejection unambiguous in 3D, choose the largest absolute component of N
+  (ties: Z, then Y, then X) and require it to be positive. Otherwise reject clockwise winding with
+  `INVALID_ARGUMENT`; never reorder the author's points. `Z_p = unit(N)` is the normal from which
+  the contour is counter-clockwise when seen from +Z_p; `Y_p = Z_p x X_p`, so `X_p x Y_p = Z_p` for
+  an exactly planar contour. This normal-sign convention is an explicit assumption. The contour
+  plane passes through p0 with normal Z_p. Every point must be within `eps_plane = 0.001 mm +
+  1e-6*D` of that plane. Contours outside the planarity band or degenerate contours are invalid. No
+  input point is silently moved. A contour within this admission band but not exactly planar is
+  valid model input and unsupported for solid evaluation until A02 defines it; it has no certified
+  orthonormal body frame or evaluated solid in the first slice. A solid is the planar contour
+  extruded `thickness_mm` along +Z_p; the contour is its bottom face, body z = 0, and the top face
+  is body z = thickness. Element-local z need not be zero. First-slice solid evaluation supports
+  exactly four points with e0=p1-p0, e1=p2-p1, p3=p0+e1 and e0 dot e1=0, all in the contour plane.
+  Thus its edges are parallel to the derived plate X/Y axes, width=|p1-p0| and length=|p2-p1|. The
+  old origin rectangle produces exactly the old box. Other valid polygons (including a pentagon) are
+  accepted authored inputs with geometry status `unsupported`, mapped to existing
+  `UNSUPPORTED_GEOMETRY`; they are not invalid models. Task A02 adds contour-plate solid support.
+  Within engineering validation, check types/count and caps before allocation, finiteness,
+  coordinate/dimension caps, thickness and edge minima, repeated points, zero N, planarity, winding,
+  then simplicity, in that order. For simplicity, drop the dominant coordinate of N (same tie rule),
+  and test non-adjacent closed segments in ascending index-pair order; any
+  intersection/touch/overlap, nonconsecutive duplicate or adjacent backtracking is invalid. Adjacent
+  edges may share only their endpoint. Exact rational orientation signs distinguish touch from
+  separation without loosening topology. Any ambiguous numeric certificate fails evaluation as
+  unsupported, never as a guessed valid solid. Fewer than three points, repeated consecutive points
+  (including repeated closure), subminimum edges, degeneracy, non-planarity, clockwise winding or
+  self-intersection map to `INVALID_ARGUMENT`; non-finite numbers map to `NON_FINITE_NUMBER` (bare
+  NaN remains malformed JSON), and caps map to `LIMIT_EXCEEDED`. Structural field/type errors follow
+  F04 section 8. No new F04 error code is needed.
+- **P-2, member frame.** For axis points `p1 -> p2` in element-local coordinates, the member's local
+  `Z_m = unit(p2 - p1)`. The section is a `w x h` rectangle centred on the axis, with the width `w`
+  along `X_m` and the height `h` along `Y_m`. The end faces are perpendicular to the axis through
+  `p1` and `p2`; there are no end extensions.
+- **P-3, roll about the axis.** The command carries no "up" vector. The first direction `Y_m` is the
+  element-local +Z direction projected onto the plane normal to `Z_m` and normalized, which makes
+  the height of a horizontal member point up. If the axis is parallel to element-local Z (a column,
+  including an anti-parallel axis), `Y_m` is instead the element-local +Y direction projected onto
+  the plane normal to `Z_m` and normalized; an exactly vertical axis keeps `Y_m = +Y`. Then `X_m =
+  normalize(Y_m x Z_m)` and `Y_m = Z_m x X_m`, which is right-handed (`X_m x Y_m = Z_m`) and keeps
+  the section perpendicular to the axis. After that default frame is built, optional `roll_rad`
+  (finite, default 0) rotates the section about local +Z_m by the right-hand rule: `X_r = cos(r)*X_m
+  + sin(r)*Y_m`, `Y_r = -sin(r)*X_m + cos(r)*Y_m`; Z_m is unchanged. No other roll mechanism exists;
+  other orientation is element placement. Roll belongs to `shape_inputs`, never placement. No
+  existing numeric angle cap was found in F04/F06; assumed cap: `abs(roll_rad) <= 2*pi` radians,
+  inclusive (binary64 cap 6.283185307179586). Above it is `LIMIT_EXCEEDED`; non-finite is
+  `NON_FINITE_NUMBER`. Updates may set roll only on members; a plate roll patch is
+  `UNSUPPORTED_PROPERTY`. An omitted create roll means zero; an omitted patch roll leaves the old
+  value unchanged. Authored roll is preserved, without modulo reduction or hidden orientation
+  presets. The tolerance for "parallel" is F06's draft policy ([F06 section
+  4](geometry-contract-v0.1.md#4-tolerance-and-degeneracy-policy-g-06-draft), rule 2); an exactly
+  vertical axis always uses the column rule. The roll is discontinuous at that threshold, which is
+  retained as the default-frame rule; continuity remains open in F06.
 
 Worked examples (exact; each vector and bound was checked with rational arithmetic, and the case
-file carries them as `F04-POS-14` to `F04-POS-16`). The corrected near-vertical rule leaves
-all three unchanged: the horizontal member projects +Z onto the plane normal to its axis, and the
-exactly vertical column keeps +Y. A tilted near-vertical axis is a case of F06, not of F04
-(`F06-POS-41`, `F06-POS-42`).
+file carries them as `F04-POS-14` to `F04-POS-16`). The corrected near-vertical rule leaves all
+three unchanged: the horizontal member projects +Z onto the plane normal to its axis, and the
+exactly vertical column keeps +Y. Tilted near-vertical zero-roll axes are F06 cases (`F06-POS-41`,
+`F06-POS-42`); the new rolled case is F04-POS-23 / F06-POS-52.
 
 | Example | Frame | Local bounds (mm) |
 |---------|-------|-------------------|
@@ -201,8 +245,8 @@ For the horizontal member the width 200 lies along `X_m = (0, 1, 0)`, hence the 
 height 300 along `Y_m = (0, 0, 1)`, hence the z extent. The F07 fixture format orients members with
 an explicit `up` vector; that is a different input and is not an input of this command.
 
-The [first-scope package 0.1.0](../clean-room/handoff/first-scope-v0.1.md) still lists G-01 and
-G-02 as open gaps and admits only frame-independent quantities. Updating that package is a separate
+The [first-scope package 0.1.0](../clean-room/handoff/first-scope-v0.1.md) still lists G-01 and G-02
+as open gaps and admits only frame-independent quantities. Updating that package is a separate
 admission step; this contract does not edit it, and the frames above are not part of the admitted
 first-scope requirements until that step is done.
 
@@ -217,7 +261,8 @@ first-scope requirements until that step is done.
 | `bim:schemaVersion` | Explicit `0.1.0` on owned elements; project/schema package also declare compatibility |
 | `bim:createdBy` | Creation actor from trusted context; does not authorize future edits |
 | `bim:revision` | Last accepted authored revision, absent on a never-published draft element; workspace generation tracks draft edits separately |
-| Plate width / length / thickness | Explicit double `steel:plate:widthMm`, `lengthMm`, `thicknessMm`; no schema fallback can supply missing input |
+| Plate contour / thickness | Explicit `steel:plate:contourPointsMm` array and double `steel:plate:thicknessMm`; no schema fallback supplies missing input |
+| Member roll | Optional double `steel:member:rollRad`, radians, default zero; section 3 |
 | Straight member axis | Explicit two `bim:axisPointsMm` points in element-local coordinates |
 | Profile / material | `bim:profile` / `bim:material` relationships resolve to pinned immutable definitions |
 | Placement | Standard USD Xform operations on the owned element root, in authored content layers |
@@ -228,26 +273,26 @@ version. A member's profile is required; material is optional. Plate shape does 
 profile definition. Missing material/density never selects a guessed catalogue grade or density.
 Physical material and display shader are separate references and signatures.
 
-Profile lookup by commercial catalogue name, inferred environment defaults, position presets,
-curved members, direct-shape authoring and fabrication operations are outside this first slice.
-Do not implement their behavior from unapproved source notes. Preserve unknown USD namespaces,
-attributes and relationships when editing supported fields. Unsupported schema versions may be
+Profile lookup by commercial catalogue name, inferred environment defaults, position presets, curved
+members, direct-shape authoring and fabrication operations are outside this first slice. Do not
+implement their behavior from unapproved source notes. Preserve unknown USD namespaces, attributes
+and relationships when editing supported fields. Unsupported schema versions may be
 inspected/preserved, but cannot be mutated without an explicit reviewed migration.
 
 ## 5. Derived results and signatures
 
 Each quantity has its own record: value (if any), unit, status, input signature and algorithm
-version. Status is `current`, `stale`, `unknown` or `unsupported`.
-`current` requires a supported computation over matching authored inputs and dependencies.
-`stale` may retain a clearly marked previous value; consumers cannot treat it as current.
-`unknown`/`unsupported` have no calculated value. A declared external value is a separate record.
-No bounding-box volume, approximate mesh or missing density is promoted to exact mass/volume.
+version. Status is `current`, `stale`, `unknown` or `unsupported`. `current` requires a supported
+computation over matching authored inputs and dependencies. `stale` may retain a clearly marked
+previous value; consumers cannot treat it as current. `unknown`/`unsupported` have no calculated
+value. A declared external value is a separate record. No bounding-box volume, approximate mesh or
+missing density is promoted to exact mass/volume.
 
 | Change | Dependencies and invalidation |
 |--------|-------------------------------|
 | Rename | Label only; retain shape and engineering quantities |
 | Placement | Retain local immutable shape; invalidate world bounds/measurements |
-| Plate dimension, axis, profile or supported operation | Invalidate shape and its dependent quantities/features |
+| Plate contour/thickness, member axis/roll, profile or supported operation | Invalidate shape and its dependent quantities/features |
 | Material/density | Retain shape; invalidate mass; the resolved display reference changes only if a different display reference is selected |
 | Camera / selection | No authored element or engineering-signature mutation |
 
@@ -256,15 +301,14 @@ the physical material: a change of density value alone invalidates mass only, an
 presentation input. Display references and physical-material references stay separate (section 4).
 
 F06 defines the canonical numeric encoding and the key preimages ([F06 section
-7](geometry-contract-v0.1.md#7-transforms-and-measurement-keys), draft, not frozen); P04 still
-owns signature storage. A blob digest
-identifies saved bytes; it is not the signature of normalized engineering inputs.
-No arbitrary dimension rounding is allowed to manufacture shared hashes.
+7](geometry-contract-v0.1.md#7-transforms-and-measurement-keys), draft, not frozen); P04 still owns
+signature storage. A blob digest identifies saved bytes; it is not the signature of normalized
+engineering inputs. No arbitrary dimension rounding is allowed to manufacture shared hashes.
 
-For the original synthetic example, 1000 x 500 x 10 mm gives volume 0.005 m3.
-If an explicitly authored synthetic material has density 1000 kg/m3, mass is 5 kg.
-These are analytic project examples, not catalogue records or a shipped USD fixture.
-F07/U02 must provide complete original fixtures and real resources before runtime acceptance.
+For the original synthetic example, 1000 x 500 x 10 mm gives volume 0.005 m3. If an explicitly
+authored synthetic material has density 1000 kg/m3, mass is 5 kg. These are analytic project
+examples, not catalogue records or a shipped USD fixture. F07/U02 must provide complete original
+fixtures and real resources before runtime acceptance.
 
 ## 6. Logical mutation envelope
 
@@ -281,76 +325,78 @@ The envelope is shared by the future engine API, CLI and host. It does not fix F
 | `command` | Closed command name from the table below |
 | `arguments` | Typed command-specific object; unknown envelope/argument fields are rejected |
 
-Draft execution compares `base_revision` with the workspace base, not automatically with the
-latest published head. This permits offline drafts. Publication additionally checks the current
-accepted head. A changed head requires explicit rebase/conflict handling, never silent draft loss.
+Draft execution compares `base_revision` with the workspace base, not automatically with the latest
+published head. This permits offline drafts. Publication additionally checks the current accepted
+head. A changed head requires explicit rebase/conflict handling, never silent draft loss.
 
-Within a workspace, retrying an accepted op_id with identical canonical request content returns
-the recorded result without another generation increment. Different content under that op_id
-is `OP_ID_REUSE`. Authentication/authorization still apply to a replay. Canonical request content
+Within a workspace, retrying an accepted op_id with identical canonical request content returns the
+recorded result without another generation increment. Different content under that op_id is
+`OP_ID_REUSE`. Authentication/authorization still apply to a replay. Canonical request content
 includes project/workspace/actor/base/generation, command and all arguments; exclude transport
-metadata. The byte/number canonicalization profile must be fixed in F05 before implementation.
-C01 additionally defines project-wide publication idempotency; this draft rule is not its proof.
+metadata. The byte/number canonicalization profile must be fixed in F05 before implementation. C01
+additionally defines project-wide publication idempotency; this draft rule is not its proof.
 
 ## 7. Command surface
 
 | Command / arguments | Atomic behavior | Planned feature owner |
 |---------------------|-----------------|-----------------------|
-| `CreatePlate`: new_id, name, width_mm, length_mm, thickness_mm, placement, optional material_digest | Validate explicit dimensions and unused ID; author one parametric owned plate | P01 |
-| `CreateStraightMember`: new_id, element_kind, name, axis_points_mm, profile_digest, placement, optional material_digest | Validate nonzero supported local axis and pinned profile; beam/column is an explicit kind | P03 |
-| `UpdateElement`: target_id, changes | Typed patch of supported name/dimensions/axis/profile_digest/material_digest/placement; no raw USD attribute/path setter | P04/P08 |
+| `CreatePlate`: new_id, name, contour_points_mm, thickness_mm, placement, optional material_digest | Validate contour/thickness and unused ID; author one parametric owned plate; valid nonrectangles evaluate as unsupported | P01 |
+| `CreateStraightMember`: new_id, element_kind, name, axis_points_mm, profile_digest, placement, optional roll_rad, optional material_digest | Validate nonzero supported local axis and pinned profile; beam/column is an explicit kind | P03 |
+| `UpdateElement`: target_id, changes | Typed patch of supported name/contour_points_mm/thickness_mm/axis_points_mm/roll_rad/profile_digest/material_digest/placement; no raw USD attribute/path setter | P04/P08 |
 | `CopyElement`: source_id, new_id, name | Create an independent owned root with a fresh ID; share immutable definitions/shape until an edit | P05 |
 | `DeleteElement`: target_id | Reject unresolved incoming dependencies; no implicit cascade or foreign-source mutation | P08 |
 
-`changes` must be nonempty, every property must be supported by that kind, and all requested
-changes form one transaction. `material_digest=null` explicitly clears a material reference;
-absence from a patch leaves the material unchanged. Clearing a required profile is invalid.
-No caller-supplied `bim:id`, generated path, derived mesh, quantity, actor, revision or numbering
-approval can be patched through this API. A diagnostic never applies the valid half of a patch.
+Plate `width_mm` and `length_mm` are no longer command or patch fields; derive them only for a
+supported rectangle. No compatibility alias or silent persisted-schema migration is defined.
+
+`changes` must be nonempty, every property must be supported by that kind, and all requested changes
+form one transaction. `material_digest=null` explicitly clears a material reference; absence from a
+patch leaves the material unchanged. Clearing a required profile is invalid. No caller-supplied
+`bim:id`, generated path, derived mesh, quantity, actor, revision or numbering approval can be
+patched through this API. A diagnostic never applies the valid half of a patch.
 
 The first `CopyElement` takes one source. Internal self/owned operation-record relationships remap
-to fresh destination entity IDs; shared external immutable references remain shared. Local
-geometry FeatureIds remain scoped to their immutable result and are addressed through the new
-ElementId. Relationships
-outside its supported copy set cause a diagnostic rather than an incomplete copy. Copying a
-foreign source, inventing a density or retaining a live reference to the mutable source is forbidden.
-Multi-element/assembly copy and feature-ID remap rules need later reviewed extensions.
+to fresh destination entity IDs; shared external immutable references remain shared. Local geometry
+FeatureIds remain scoped to their immutable result and are addressed through the new ElementId.
+Relationships outside its supported copy set cause a diagnostic rather than an incomplete copy.
+Copying a foreign source, inventing a density or retaining a live reference to the mutable source is
+forbidden. Multi-element/assembly copy and feature-ID remap rules need later reviewed extensions.
 
 Read API `InspectElement` returns a revision/generation-stamped view, ownership, explicit inputs,
 relationships and per-quantity status. It never reconstructs missing engineering input silently.
 Preview validates/calculates without publishing or advancing a draft generation; it is not an
-accepted op_id journal entry. `CommitWorkspace` is a separate host operation under U06/U07;
-it publishes a complete USD revision and does not turn one command into a separate saved model.
+accepted op_id journal entry. `CommitWorkspace` is a separate host operation under U06/U07; it
+publishes a complete USD revision and does not turn one command into a separate saved model.
 
 ## 8. Footprints, transactions and errors
 
-The engine derives read/write sets from command semantics and validated dependencies. Caller
-claims cannot narrow them. Each entry identifies an owned ID or immutable digest plus a semantic
-group: label, shape_inputs, placement, material_ref, relationship, lifecycle or derived signature.
+The engine derives read/write sets from command semantics and validated dependencies. Caller claims
+cannot narrow them. Each entry identifies an owned ID or immutable digest plus a semantic group:
+label, shape_inputs, placement, material_ref, relationship, lifecycle or derived signature.
 
 | Operation | Minimum semantic footprint |
 |-----------|----------------------------|
 | Create | Read ID absence and pinned definitions; write new lifecycle, complete authored fields and relationships |
-| Update dimensions/axis/profile | Read complete shape-input group and relevant immutable definitions; write that group and invalidate dependent results |
+| Update contour/thickness/axis/roll/profile | Read complete shape-input group and relevant immutable definitions; write that group and invalidate dependent results |
 | Update material | Read geometry-result signature and new material definition; write material_ref and mass/appearance invalidation |
 | Update placement | Read local shape and placement; write placement and world-measurement invalidation |
 | Copy | Read source lifecycle, full supported authored state, copy-set relationships and definitions; write new lifecycle and remapped owned state |
 | Delete | Read lifecycle and complete incoming-relationship index at the expected generation; write lifecycle only if all dependencies permit deletion |
 
-Different property names alone do not prove independence. A later cut/bolt command must declare
-its dependencies on related element shape/profile/placement. If an index or required payload is
+Different property names alone do not prove independence. A later cut/bolt command must declare its
+dependencies on related element shape/profile/placement. If an index or required payload is
 unavailable, return `DEPENDENCY_UNAVAILABLE`; do not assume no incoming links or a current result.
 
 Validation order: bounded decode/version/types -> trusted context and authorized workspace ->
-existing op_id replay -> for new operations, workspace/base/generation -> ownership/ID/relationships ->
-complete semantic footprint -> engineering
-validation -> apply to isolated draft -> validate resulting composition -> record draft/journal.
-All state checks and commit occur under the host's workspace transaction serialization mechanism.
-U06 also serializes publication with expected-head verification; plain read-then-rename is not CAS.
+existing op_id replay -> for new operations, workspace/base/generation -> ownership/ID/relationships
+-> complete semantic footprint -> engineering validation -> apply to isolated draft -> validate
+resulting composition -> record draft/journal. All state checks and commit occur under the host's
+workspace transaction serialization mechanism. U06 also serializes publication with expected-head
+verification; plain read-then-rename is not CAS.
 
-An accepted mutation advances generation once and constitutes one future undo unit, regardless
-of changed-property count. Rejection leaves authored state, derived state and generation unchanged.
-P07 defines durable undo/redo and restored identity/relationships; no fake undo is introduced here.
+An accepted mutation advances generation once and constitutes one future undo unit, regardless of
+changed-property count. Rejection leaves authored state, derived state and generation unchanged. P07
+defines durable undo/redo and restored identity/relationships; no fake undo is introduced here.
 Cancellation before the apply/commit point discards work. After that point, report the recorded
 outcome or `OUTCOME_UNKNOWN`; a timeout is not proof of rollback. U07/F05 define recovery/query.
 
@@ -371,48 +417,54 @@ A zero-length member axis returns `INVALID_ARGUMENT` (G-03, adopted by the owner
 
 Errors return code, safe message, field/target diagnostics and the observed workspace token when
 known. Never include credentials, private paths or client data. Multiple failures follow this
-validation order; runtime tests must not rely on whichever untrusted collection entry is visited first.
+validation order; runtime tests must not rely on whichever untrusted collection entry is visited
+first.
 
 ## 9. F02 gaps resolved for this contract
 
 - No automatic environment/default/catalogue resolution in the first slice. Explicit pinned
   definitions are required; environment resolver scope belongs to later packages.
-- Initial member placement is explicit rigid pose plus local axis. Commercial position presets
-  and unverified position cells are unsupported, not inferred.
+- Initial member placement is explicit rigid pose plus local axis. Commercial position presets and
+  unverified position cells are unsupported, not inferred.
 - Quantities use geometric volume and explicit density; vendor gross/net tables and rounding are
   outside this contract. Unknown density remains unknown.
 - Foreign-source annotations are separate owned result objects, never edited foreign UDAs.
-- One accepted command is one atomic local undo unit; cancellation/rollback do not leave half a patch.
+- One accepted command is one atomic local undo unit; cancellation/rollback do not leave half a
+  patch.
 - Numbering/equivalence is not specified by F04. Placement-sensitive fabrication cases, tolerance
   and approved-number invalidation must be resolved by A08/A09 before numbering implementation.
 
 ## 10. Acceptance handoff and provenance
 
 [Original command cases](model-command-cases-v0.1.json) define positive and negative acceptance
-descriptions. They are not a runnable model, geometry fixture, engine mock or evidence of a
-working command dispatcher. No placeholder blob is offered as an actual saved resource.
-Case IDs are proposed future tests; acceptance requires real API -> CLI -> USD -> independent reader.
-There are 44 logical cases (seventeen positive, twenty-seven negative) and six malformed/non-finite
-raw JSON cases. `F04-POS-01` to `F04-POS-07`, `F04-NEG-01` to `F04-NEG-18` and `F04-RAW-01` to
-`F04-RAW-03` are the original draft cases and keep their IDs and meaning; `F04-POS-08` to
-`F04-POS-17`, `F04-NEG-19` to `F04-NEG-27` and `F04-RAW-04` to `F04-RAW-06` were added by the
-amendments in [section 12](#12-amendments-log). The member cases that need a profile
-(`F04-POS-07`, `F04-POS-10`, `F04-POS-13`, `F04-POS-15`, `F04-POS-16`, `F04-NEG-20`,
-`F04-NEG-21`) require the harness to bind an
-actual validated original profile digest; they do not provide a fake resource or an executable fixture.
+descriptions. They are not a runnable model, geometry fixture, engine mock or evidence of a working
+command dispatcher. No placeholder blob is offered as an actual saved resource. Case IDs are
+proposed future tests; acceptance requires real API -> CLI -> USD -> independent reader. There are
+57 logical cases (24 positive, 33 negative) and seven malformed/non-finite raw JSON cases.
+`F04-POS-01` to `F04-POS-07`, `F04-NEG-01` to `F04-NEG-18` and `F04-RAW-01` to `F04-RAW-03` are the
+original draft cases and keep their IDs and meaning; `F04-POS-08` to `F04-POS-24`, `F04-NEG-19` to
+`F04-NEG-33` and `F04-RAW-04` to `F04-RAW-07` were added by the amendments in [section
+12](#12-amendments-log). The member cases that need a profile (`F04-POS-07`, `F04-POS-10`,
+`F04-POS-13`, `F04-POS-15`, `F04-POS-16`, `F04-POS-21` to `F04-POS-23`, `F04-NEG-20`,
+`F04-NEG-21`, `F04-NEG-33`) require the harness to bind an
+actual validated original profile digest; they do not provide a fake resource or an executable
+fixture.
 
-**Test comparison rule (G-05, adopted).** Expected numeric values in the case file are compared
-with the rule CR-TOL-001 of [first-scope package 0.1.0](../clean-room/handoff/first-scope-v0.1.md):
-a quantity passes when `|actual - expected| <= 1e-12 * |expected|`; a coordinate passes when
-`|actual - expected| <= 1e-9 mm + 1e-12 * |expected|`. Identifiers, strings, booleans, integers,
-generations and error codes compare exactly. The basis is the binary64 unit roundoff 2^-53
-(IEEE Std 754-2019, binary64) with a margin of over three orders
-of magnitude, derived in the package. **This is a rule for comparing test results only. It is not a
-geometric tolerance policy**: it does not decide whether two points coincide, how short an axis
-may be or how a kernel snaps geometry; that is F06's draft policy (G-06). The rule is also stated in
-the `comparison` field of the case file. The [F07 expectations](../fixtures/expectations.md) use
-their own, separate analytical-comparison tolerances for the F07 fixture format; they do not
-replace this rule.
+**Test comparison rule (G-05, adopted).** Expected numeric values in the case file are compared with
+the owner amendment to CR-TOL-001 dated 2026-10-15: quantities pass when `|actual - expected| <=
+1e-6*|expected|`; lengths and coordinates use `|actual - expected| <= 0.001 mm + 1e-6*|expected|`.
+Dimensionless frame values use absolute 1e-6 at zero and relative 1e-6 otherwise. Exact rational
+expected values never change; identities, strings, booleans, counts, generations and codes compare
+exactly. This is a test comparison rule only, separate from geometric decisions and numeric
+certificates. The length floor is 1e-6 m = 0.001 mm, equal to the minimum dimension. The read-only
+first-scope package 0.1.0 still states the earlier 1e-12/1e-9 mm rule; it needs a separately
+reviewed version amendment. References to its cases preserve their mathematical meanings, not an
+assertion that its comparison policy has already changed. F07 has its own comparison rule, unchanged
+here. See the [tolerance comparison](../design/tolerance-comparison-v0.1.md) for classification,
+assumptions, design verdicts and the recorded 15-value ifc-lite comparison supplied by the
+orchestrator from the public repository. Accuracy gate A5 remains unresolved. The owner decided that
+tolerance must be scaled by coordinate magnitude for its large-coordinate part; applying that
+decision is a separate task. No magnitude scaling is applied here.
 
 **Coverage and cross-references (G-05).** New cases refer to the first-scope cases by ID through
 `first_scope_refs` (package version 0.1.0, field `first_scope_package`) where a corresponding
@@ -433,35 +485,42 @@ F04-only cases with no first-scope counterpart and carry no `first_scope_refs`.
 | `q` and `-q` | `F04-POS-12` | none (F04-only case) |
 | Plate and member local frames (P-1 to P-3) | `F04-POS-14`, `F04-POS-15`, `F04-POS-16` | none (F04-only cases; the package lists G-01 and G-02 as open). Tilted near-vertical axes: F06 `F06-POS-41`, `F06-POS-42` |
 | Minimum nonzero dimension (draft): exactly 0.001 mm accepted / just below, rejected | `F04-POS-17` / `F04-NEG-27` (zero: `F04-NEG-04`) | none (F04-only cases). F06: `F06-POS-14` / `F06-NEG-03`; member axis `F06-NEG-04`, `F04-NEG-20` |
+| Contour rectangle rotation/start and valid pentagon | `F04-POS-18` to `F04-POS-20` | none; F06 `F06-POS-48`, `F06-POS-49`, `F06-NEG-39` |
+| Clockwise, non-planar, self-intersection, count, repetition | `F04-NEG-28` to `F04-NEG-32` | none; F06 `F06-NEG-37`, `F06-NEG-38`, `F06-NEG-40` to `F06-NEG-42` |
+| Zero, quarter-turn and near-vertical roll; shape footprint | `F04-POS-21` to `F04-POS-24` | none; F06 `F06-POS-50` to `F06-POS-52` |
+| Roll cap and non-finite input | `F04-NEG-33`, `F04-RAW-07` | none; F06 `F06-NEG-43`, `F06-NEG-44` |
 
-Non-finite quaternion and translation components follow the existing raw-JSON rules: a bare
-`NaN` is `MALFORMED_COMMAND` and an overflowing literal such as `1e400` is `NON_FINITE_NUMBER`.
+
+Non-finite quaternion and translation components follow the existing raw-JSON rules: a bare `NaN` is
+`MALFORMED_COMMAND` and an overflowing literal such as `1e400` is `NON_FINITE_NUMBER`.
 
 U03 must reject duplicate/short IDs and preserve identity through rename. P01/P03 must round-trip
-explicit dimensions/local axis/placement. P04 must distinguish shape/mass/world invalidation and
-unknown density. P05 must preserve the source through copy/edit/reopen. P08 must reject dangling
-delete and partial patches. U06/U07 must prove complete publication, retries and crash recovery.
-F05/F06 must add transport/geometry negative cases under these invariants, not weaken them.
+explicit contour/thickness, local axis/roll and placement. P04 must distinguish shape/mass/world
+invalidation and unknown density. P05 must preserve the source through copy/edit/reopen. P08 must
+reject dangling delete and partial patches. U06/U07 must prove complete publication, retries and
+crash recovery. F05/F06 must add transport/geometry negative cases under these invariants, not
+weaken them.
 
-Sources: original owner decisions in local architecture-proposal.md sections 1, 3–7, 9–14 and 17;
-implementation-plan.md revision 1.1 sections 1–4, 7.1 and 12; local F02 gap analysis; public RFC/IO
-references linked above. No private source specification, manual, catalogue, UI label, screenshot
-or third-party implementation is published by this document. Constants and command choices above
-are proposed original BeamCraft rules, not commercial-product behavior.
+Sources: original owner decisions in local architecture-proposal.md sections 1, 3–7, 9–14 and
+17; implementation-plan.md revision 1.1 sections 1–4, 7.1 and 12; local F02 gap analysis; public
+RFC/IO references linked above. No private source specification, manual, catalogue, UI label,
+screenshot or third-party implementation is published by this document. Constants and command
+choices above are proposed original BeamCraft rules, not commercial-product behavior.
 
 Freeze conditions are listed in [section 11](#11-freeze-status). F05/F06 fix their implementation
 details within these logical invariants; they are follow-up tasks, not circular prerequisites for
-F04 acceptance. F04 review does not permit geometry implementers to inherit source-exposed
-contexts or declare unsupported features implemented. The owner permits TOST-1.0 only for official OpenUSD and its
-SDK resources; the scoped policy is recorded in [policy PR #7](https://github.com/Apibim-com/BeamCraft/pull/7).
-SDK integration still requires provenance, complete notices, native dependency closure and runtime
-checks. The remaining dependency, asset and unsafe-code policies continue to apply.
+F04 acceptance. F04 review does not permit geometry implementers to inherit source-exposed contexts
+or declare unsupported features implemented. The owner permits TOST-1.0 only for official OpenUSD
+and its SDK resources; the scoped policy is recorded in [policy PR
+#7](https://github.com/Apibim-com/BeamCraft/pull/7). SDK integration still requires provenance,
+complete notices, native dependency closure and runtime checks. The remaining dependency, asset and
+unsafe-code policies continue to apply.
 
 ## 11. Freeze status
 
-This contract is a **freeze candidate, not frozen**. Nothing in it is implemented, K0 is not
-passed, and no geometry implementer is declared eligible. Freezing requires the owner's explicit
-acceptance; no review, task or merge freezes it implicitly. The owner has not frozen it.
+This contract is a **freeze candidate, not frozen**. Nothing in it is implemented, K0 is not passed,
+and no geometry implementer is declared eligible. Freezing requires the owner's explicit acceptance;
+no review, task or merge freezes it implicitly. The owner has not frozen it.
 
 Adopted by the owner on 2026-10-15 (F09 review findings G-03 to G-05):
 
@@ -471,34 +530,20 @@ Adopted by the owner on 2026-10-15 (F09 review findings G-03 to G-05):
 | G-04 quaternion convention | `(x, y, z, w)`, Hamilton, active rotation, `world = R*local + translation`, normalized before use, `q` and `-q` equal | [section 3](#3-units-types-and-initial-limits) |
 | G-05 comparison rule and cases | CR-TOL-001 as a test comparison rule only; 17 logical and three raw cases added | [section 10](#10-acceptance-handoff-and-provenance) |
 
-Decided by the owner on 2026-10-15, with details pending confirmation:
+Decided by the owner on 2026-10-15:
 
-| Gap | Owner decision | Pending confirmation |
-|-----|----------------|----------------------|
-| G-01 | Plate local X runs along the first edge, from its first corner point to its second; thickness runs along local Z | P-1: first corner is the local origin; width along +X, length along +Y, thickness along +Z; solid `[0, width] x [0, length] x [0, thickness]` |
-| G-02 | The profile section lies in the member's local XY plane; local Z runs along the axis; section height is in that XY plane | P-2 and P-3: section centred on the axis, width along `X_m`, height along `Y_m`, no end extensions; `Y_m` is local +Z made orthogonal to the axis (column: +Y), `X_m = Y_m x Z_m` |
+| Item | Recorded resolution | Status |
+|------|---------------------|--------|
+| G-01 / P-1 | Contour plate; X along first edge, Z thickness/normal, Y=Z x X; rectangle-only evaluation until A02 | Replaced; winding, bounds and planarity assumptions in section 3 |
+| G-02 / P-2 | Centred member section and perpendicular ends, Y through a cross product | Confirmed unchanged |
+| P-3 | Deterministic zero-roll frame followed by optional roll about local +Z | Refined; angle-cap assumption in section 3 |
+| G-06 | Constants confirmed for the first slice; relative 1e-6 and length floor 0.001 mm | Draft, to be validated by fixtures; 15-value comparison recorded in the [tolerance report](../design/tolerance-comparison-v0.1.md); A5 remains unresolved, with magnitude scaling decided for a separate task |
+| Profile resource | Logical rectangle content in F06 section 2 | Accepted by F06 under draft policy; persisted encoding open |
+| Freeze | Explicit owner freeze and review/admission remain necessary | Open |
 
-P-1 to P-3 are proposals by the orchestrator, written in
-[section 3](#3-units-types-and-initial-limits) as "proposed for owner adoption"; the owner has not
-confirmed them and they remain awaiting owner confirmation. The F06 amendment of the P-3 near-vertical
-rule (section 12) did not confirm them. Local bounds are
-defined by this contract only as far as those proposals are confirmed (`F04-POS-14` to
-`F04-POS-16`). The first-scope package 0.1.0 still lists G-01 and G-02 as open; updating it is a
-separate admission step.
-
-Still open or not frozen (not resolved by this document):
-
-| Item | Question | Owner |
-|------|----------|-------|
-| G-06 | Minimum nonzero dimension, geometric tolerance and the "parallel" test of P-3. **Accepted by F06** under its draft policy (F06 sections 2 and 4: 0.001 mm minimum, parallel threshold); the constants are draft, to be validated by G04 and fixtures, and are not frozen | F06 |
-| Profile resource format | The profile-definition resource that carries the section. **Accepted by F06** under its draft policy (F06 section 2: logical content only, persisted encoding left to U02/P02); not frozen | F06/P02 |
-| P-1 to P-3 | Awaiting owner confirmation or replacement | Owner |
-| Freeze | Whether and when to freeze this contract | Owner |
-
-G-01 and G-02 stay as the owner decided them above. Freeze conditions: the owner confirms or
-replaces P-1 to P-3; F06 accepts ownership of G-06 and the profile resource format (done, under its
-draft policy, not frozen); the case file and these amendments pass review; the owner decides to
-freeze. The `contract_version` stays `0.1.0` until the owner freezes it.
+The first-scope package 0.1.0 still has the old input and gaps; its update is a separate admission
+step. Owner confirmation of decisions does not freeze a contract or declare an implementer eligible.
+The `contract_version` remains `0.1.0`. K0 is not passed and nothing is implemented.
 
 ## 12. Amendments log
 
@@ -507,26 +552,25 @@ freeze. The `contract_version` stays `0.1.0` until the owner freezes it.
 - 2026-10-14, F04.2: G-04 quaternion convention stated in section 3, consistent with CR-PLACE-001.
 - 2026-10-14, F04.2: G-03 zero-length axis mapped to `INVALID_ARGUMENT` (proposed for owner
   adoption); recorded in sections 3 and 8. No new error code was added.
-- 2026-10-14, F04.2: G-05 comparison rule adopted (section 10); cases `F04-POS-08` to
-  `F04-POS-13`, `F04-NEG-19` to `F04-NEG-26` and `F04-RAW-04` to `F04-RAW-06` added with
-  first-scope cross-references. Existing case IDs and meanings are unchanged.
-- 2026-10-14, F04.2: sections 11 and 12 added. Caps, identity rules, envelope, command surface
-  and the other error-code semantics are unchanged. `contract_version` remains `0.1.0`.
+- 2026-10-14, F04.2: G-05 comparison rule adopted (section 10); cases `F04-POS-08` to `F04-POS-13`,
+  `F04-NEG-19` to `F04-NEG-26` and `F04-RAW-04` to `F04-RAW-06` added with first-scope
+  cross-references. Existing case IDs and meanings are unchanged.
+- 2026-10-14, F04.2: sections 11 and 12 added. Caps, identity rules, envelope, command surface and
+  the other error-code semantics are unchanged. `contract_version` remains `0.1.0`.
 - 2026-10-15, F04.2: the owner adopted G-03 (`INVALID_ARGUMENT` for a zero-length axis), G-04 (the
-  quaternion convention) and G-05 (the test comparison rule and added cases) as written.
-  "Proposed for owner adoption" was removed from sections 3, 8 and 11.
+  quaternion convention) and G-05 (the test comparison rule and added cases) as written. "Proposed
+  for owner adoption" was removed from sections 3, 8 and 11.
 - 2026-10-15, F04.2: the owner decided G-01 (plate local X along the first edge, thickness along
   local Z) and G-02 (section in the local XY plane, local Z along the axis, height in that plane).
   Recorded in sections 3 and 11.
-- 2026-10-15, F04.2: added proposals P-1 to P-3 (plate local box, member section frame, roll
-  about the axis), marked "proposed for owner adoption", with worked examples and cases
-  `F04-POS-14` to `F04-POS-16`. G-06 and the profile resource format remain open; the freeze
-  decision remains with the owner.
-- 2026-10-15, F04.3, on base `b996c58fe850642f12b92b25b23c441fbd41ed47`: amendments proposed by
-  F06 section 12 are applied; the document stays a freeze candidate, not frozen, with
-  `contract_version` `0.1.0`. K0 is not passed and no runtime command is implemented. Caps,
-  identity rules, the envelope, the command surface and every existing error-code meaning are
-  unchanged.
+- 2026-10-15, F04.2: added proposals P-1 to P-3 (plate local box, member section frame, roll about
+  the axis), marked "proposed for owner adoption", with worked examples and cases `F04-POS-14` to
+  `F04-POS-16`. G-06 and the profile resource format remain open; the freeze decision remains with
+  the owner.
+- 2026-10-15, F04.3, on base `b996c58fe850642f12b92b25b23c441fbd41ed47`: amendments proposed by F06
+  section 12 are applied; the document stays a freeze candidate, not frozen, with `contract_version`
+  `0.1.0`. K0 is not passed and no runtime command is implemented. Caps, identity rules, the
+  envelope, the command surface and every existing error-code meaning are unchanged.
   - Section 3 limits (F06 proposed amendment 1; F06 sections 2 and 4): added the draft minimum
     nonzero dimension of 0.001 mm (plate dimensions, section dimensions, member-axis length;
     `INVALID_ARGUMENT` between zero and the minimum) and the draft section-dimension cap of
@@ -535,15 +579,49 @@ freeze. The `contract_version` stays `0.1.0` until the owner freezes it.
     `F04-NEG-27`; the counts in section 10 are now 44 logical cases (seventeen positive,
     twenty-seven negative) and six raw cases.
   - Section 3, P-3 (F06 proposed amendment 4; F06 section 4, rule 2): the fixed +Y fallback is
-    replaced by the projection of +Y onto the plane normal to the axis, then
-    `X_m = normalize(Y_m x Z_m)` and `Y_m = Z_m x X_m`; an exactly vertical axis keeps +Y. The
-    worked examples and `F04-POS-14` to `F04-POS-16` are unchanged (their frames are the same);
-    P-1 to P-3 remain "proposed for owner adoption" and the owner has not confirmed them.
+    replaced by the projection of +Y onto the plane normal to the axis, then `X_m = normalize(Y_m x
+    Z_m)` and `Y_m = Z_m x X_m`; an exactly vertical axis keeps +Y. The worked examples and
+    `F04-POS-14` to `F04-POS-16` are unchanged (their frames are the same); P-1 to P-3 remain
+    "proposed for owner adoption" and the owner has not confirmed them.
   - Section 5 (F06 proposed amendment 2; F06 section 7): "material-dependent appearance" is the
     resolved display reference, so a density change alone invalidates mass only; F06 defines the
     canonical numeric encoding and the key preimages.
   - Section 11 (F06 proposed amendment 3): G-06 and the profile-resource-format question are
-    accepted by F06 under its draft policy (F06 sections 2 and 4), still not frozen; G-01 and
-    G-02 stay as the owner decided; P-1 to P-3 await owner confirmation.
-  - Status text updated: F06 is a draft contract that exists, not frozen and not implemented.
-    F06 proposed amendment 5 concerns F05 only and is not applied here.
+    accepted by F06 under its draft policy (F06 sections 2 and 4), still not frozen; G-01 and G-02
+    stay as the owner decided; P-1 to P-3 await owner confirmation.
+  - Status text updated: F06 is a draft contract that exists, not frozen and not implemented. F06
+    proposed amendment 5 concerns F05 only and is not applied here.
+
+- 2026-10-15, owner-decision record (stack intended on PR #23; Git ownership prevented branch
+  verification). P-1 replaced by contour input; P-2 confirmed unchanged; P-3 retains the default
+  frame and adds finite, bounded axial roll. Clockwise rejection against the positive dominant
+  normal, 1024-point cap, 2,000,000 mm contour radius, planarity band and 2*pi roll cap are explicit
+  assumptions. Nonrectangles are valid authored input with unsupported evaluation until A02.
+  Relative comparison/certificate bounds become 1e-6; length comparison/pick floor becomes 0.001
+  mm=1e-6 m, equal to the unchanged minimum dimension. Member parallel threshold remains 1e-6
+  (squared multiplier 1e-12); exact topology/identities and rational references are unchanged. The
+  ray/face angular parallel threshold becomes 1e-6; direction minimum becomes 1e-6 (dimensionless).
+  Draft constants are confirmed by the owner for the first slice, still to be validated by fixtures.
+  The numeric comparison with the public ifc-lite kernel is in the [tolerance
+  report](../design/tolerance-comparison-v0.1.md). No runtime feature is implemented.
+
+  - Old rectangular input cases retain their IDs, meanings and exact volume/area/bounds.
+    Width/length fields become four contour points; the width-only patch becomes a whole-contour
+    patch. Raw malformed/non-finite tests now use contour coordinates; RAW-03 duplicates the contour
+    field. Changed existing descriptions: `F04-POS-01`, `F04-POS-04`, `F04-POS-06`, `F04-NEG-01`,
+    `F04-NEG-02`, `F04-NEG-03`, `F04-NEG-04`, `F04-NEG-05`, `F04-NEG-06`, `F04-NEG-07`,
+    `F04-NEG-08`, `F04-NEG-09`, `F04-NEG-10`, `F04-NEG-11`, `F04-NEG-17`, `F04-NEG-18`,
+    `F04-POS-08`, `F04-POS-09`, `F04-POS-11`, `F04-POS-12`, `F04-NEG-19`, `F04-NEG-22`,
+    `F04-NEG-23`, `F04-NEG-24`, `F04-NEG-25`, `F04-NEG-26`, `F04-POS-14`, `F04-POS-17`,
+    `F04-NEG-27`, `F04-RAW-01`, `F04-RAW-02`, `F04-RAW-03`, `F04-RAW-04`, `F04-RAW-05`,
+    `F04-RAW-06`.
+  - Boundary preservation: F04-NEG-25 changes w=0.999999999 (would now pass) to 0.999999 (deviation
+    0.000001999999, still rejected). F04-POS-11 moves the accepted-near-boundary example to
+    w=0.99999995 (deviation 0.0000000999999975); its identity rotation is unchanged. First-scope
+    references remain thematic; that read-only package retains its original inputs.
+  - Added POS-18/19 (rectangle frame/start), POS-20 (valid unsupported pentagon), POS-21 to POS-23
+    (zero, pi/2 and near-vertical roll), POS-24 (roll update footprint), NEG-28 to NEG-32
+    (clockwise, non-planar, self-intersection, too few/repeated points), NEG-33 (roll cap), RAW-07
+    (overflow roll). Counts: 57 logical, 24 positive, 33 negative, seven raw. No existing ID or
+    error-code meaning is removed. contract_version remains 0.1.0, freeze candidate, not frozen. The
+    normal-sign and cap assumptions need owner review.

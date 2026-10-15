@@ -49,6 +49,17 @@ later project; portable domain crates alone do not establish a working web appli
 
 ## Progress log
 
+- 2026-10-15: recorded the owner decisions of 2026-10-15 in F04, F06 and the architecture page
+  (stacked on PR #23): contour plate input with rectangle-only evaluation until A02, P-2 confirmed,
+  explicit axial `roll_rad`, relative 1e-6 bounds with a 0.001 mm length floor, permissive Rust
+  crates preferred subject to audit, and the PdfCraft UI stack pending dependency audits. Added
+  `docs/design/tolerance-comparison-v0.1.md`, which maps every constant to the public ifc-lite
+  values supplied at pinned commit `a3148f11f644bf3d0237a34eadce0f665ff2d104` (numbers only): the
+  0.001 mm floor equals their 1e-6 m clipping floor, no contract value changed, and the metre
+  reading of the floor and magnitude scaling for accuracy gate A5 are open for the owner. F04 has 57
+  logical plus seven raw cases; F06 has 96 logical cases (52 positive, 44 negative). F04 stays a
+  freeze candidate 0.1.0, F06 a draft; nothing is implemented and K0 is not passed.
+
 - 2026-10-15: F04.3 applied the four F04 amendments proposed by F06 section 12 to the F04 freeze
   candidate on base `b996c58fe850642f12b92b25b23c441fbd41ed47` (stacked on PR #20): the draft
   minimum nonzero dimension of 0.001 mm and the section-dimension cap, the corrected near-vertical
