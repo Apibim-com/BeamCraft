@@ -24,9 +24,11 @@ F02 (requirements), F03 (OpenUSD distribution audit) and F07 (original fixtures)
 independently. F09 establishes clean-room admission after F02. F04 then fixes the model and command
 contract; F05/F06 define worker and geometry contracts before F08 changes module boundaries.
 
-The [F04 model/command draft](docs/contracts/model-and-commands-v0.1.md) and its original
-acceptance descriptions are available for review. F02 currently remains a local analysis artifact;
-F09 admission and contract freeze are still outstanding. No runtime command is implemented by F04.
+The [F04 model/command contract](docs/contracts/model-and-commands-v0.1.md) and its original
+acceptance descriptions are a freeze candidate, not frozen. The owner adopted G-03 to G-05 and
+decided the G-01/G-02 local frames; details P-1 to P-3 await confirmation, G-06 and the profile
+resource format stay open with F06, and the freeze is the owner's decision. F02 remains a local
+analysis artifact. No runtime command is implemented by F04.
 
 The first demonstration starts with a rectangular plate and a supported straight member.
 Published USD revisions include their computed geometry. Copying, editing and reopening must
@@ -42,6 +44,14 @@ IFC import and foreign-to-native conversion require a new scope decision. Browse
 later project; portable domain crates alone do not establish a working web application.
 
 ## Progress log
+
+- 2026-10-15: F04.2 made the model/command contract a freeze candidate (base
+  `478f330e15819b574c62227bc23009729adb4fdc`). The owner adopted G-03 (zero-length axis is
+  `INVALID_ARGUMENT`), G-04 (quaternion convention) and G-05 (CR-TOL-001 as a test comparison
+  rule, with added cases) and decided G-01 and G-02 (plate and member local frames). The detail
+  rules P-1 to P-3 await owner confirmation. G-06 and the profile resource format stay open with
+  F06. The case file has 42 logical and 6 raw cases. The contract is not frozen, K0 is not passed
+  and no command is implemented.
 
 - 2026-10-14: integrated F03 and the PR-workflow policy into `master`. PRs #4 and #5 had merged
   into the F01 branch after F01 itself reached `master`, so their commits were not on `master`.
