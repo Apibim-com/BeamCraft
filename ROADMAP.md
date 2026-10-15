@@ -25,10 +25,10 @@ independently. F09 establishes clean-room admission after F02. F04 then fixes th
 contract; F05/F06 define worker and geometry contracts before F08 changes module boundaries.
 
 The [F04 model/command contract](docs/contracts/model-and-commands-v0.1.md) and its original
-acceptance descriptions are a freeze candidate: F09 review 0.1.0 and its first-scope package are
-integrated, and F04 adopts the proposed resolutions of review findings G-03 to G-05. The owner
-still decides G-01/G-02 and the freeze itself; F02 remains a local analysis artifact.
-No runtime command is implemented by F04.
+acceptance descriptions are a freeze candidate, not frozen. The owner adopted G-03 to G-05 and
+decided the G-01/G-02 local frames; details P-1 to P-3 await confirmation, G-06 and the profile
+resource format stay open with F06, and the freeze is the owner's decision. F02 remains a local
+analysis artifact. No runtime command is implemented by F04.
 
 The first demonstration starts with a rectangular plate and a supported straight member.
 Published USD revisions include their computed geometry. Copying, editing and reopening must
@@ -45,12 +45,20 @@ later project; portable domain crates alone do not establish a working web appli
 
 ## Progress log
 
-- 2026-10-14: F04.2 turned the model/command contract into a freeze candidate on base
-  `478f330e15819b574c62227bc23009729adb4fdc`. It adopts the F09 amendments G-03 (zero-length
-  axis maps to `INVALID_ARGUMENT`, proposed for owner adoption), G-04 (quaternion convention)
-  and G-05 (CR-TOL-001 as a test comparison rule; 14 logical and 3 raw cases added with
-  first-scope cross-references). G-01, G-02 and G-06 stay open. The contract is not frozen, K0
-  is not passed and no command is implemented.
+- 2026-10-15: F04.2 made the model/command contract a freeze candidate (base
+  `478f330e15819b574c62227bc23009729adb4fdc`). The owner adopted G-03 (zero-length axis is
+  `INVALID_ARGUMENT`), G-04 (quaternion convention) and G-05 (CR-TOL-001 as a test comparison
+  rule, with added cases) and decided G-01 and G-02 (plate and member local frames). The detail
+  rules P-1 to P-3 await owner confirmation. G-06 and the profile resource format stay open with
+  F06. The case file has 42 logical and 6 raw cases. The contract is not frozen, K0 is not passed
+  and no command is implemented.
+
+- 2026-10-14: integrated F03 and the PR-workflow policy into `master`. PRs #4 and #5 had merged
+  into the F01 branch after F01 itself reached `master`, so their commits were not on `master`.
+  Kept both F07 and F03 CI steps, all attribution rows and progress entries; the PR-workflow
+  rules became `AGENTS.md` section 7 after the branch-naming section 6. The F03 entries below
+  are historical: the TOST question was later decided by PR #7, while notices, native closure
+  and runtime checks remain open.
 
 - 2026-10-14: F07 added original synthetic fixtures on base
   `b34205281ab8a1f95052c4dc7d84f0995633e179`. The new std-only dev tool `tools/fixtures`
@@ -85,6 +93,19 @@ later project; portable domain crates alone do not establish a working web appli
 - 2026-10-14: owner approved TOST-1.0 only for official OpenUSD and its SDK resources.
   Recorded the scoped exception in AGENTS.md; kept the global Cargo licence allowlist unchanged.
   Provenance, notices, native closure and runtime checks remain prerequisites for integration.
+
+- 2026-10-14: addressed F03 review findings with bounded ZIP directory preflight and text reads,
+  plus input/output alias protection. Twelve synthetic audit tests pass; added their Windows/Linux
+  CI execution. SDK integration remains gated separately from audit-tool correctness.
+
+- 2026-10-14: established one focused PR per implementation-plan task in AGENTS.md, including
+  verified bases, explicit stacked-PR dependencies, English descriptions and no agent co-author trailers.
+  Opened separate draft reviews for the MPL prerequisite, F01 and F03; no merge was performed.
+
+- 2026-10-14: F03 pinned and statically audited three `usd-core` 26.8 CPython 3.12 wheels.
+  Added an offline inventory tool with seven passing synthetic tests. SDK admission remains open:
+  TOST/resource policy, missing native notices, runtime/native closure and platform smoke tests.
+  See [the audit](docs/audits/openusd-26.8.md); no runtime dependency or policy exception was added.
 
 - 2026-10-14: F01 aligned the roadmap, architecture and development documentation with the
   accepted USD direction. Implementation base: `c6a1e73aea9c41bf88db96281040043471b80d0a`
