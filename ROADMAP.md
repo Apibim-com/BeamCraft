@@ -49,27 +49,29 @@ later project; portable domain crates alone do not establish a working web appli
 
 ## Progress log
 
-- 2026-10-15: applied the owner local-size tolerance decision to F04/F06, stacked on PR #26:
-  eps_geom = max(0.001 mm, 2^-22 * L), with plate L=D and member L=max(axis length, section
-  half-diagonal), evaluated in the element-local frame under ordered binary64 arithmetic and
-  existing caps. Geometric length minima, coincidence, degeneracy, planarity and distance bands
-  use the scaled floor; CR-TOL-001, absolute pick bands, exact checks and relative 1e-6 bounds
-  remain unchanged. Algorithm/tolerance versions are 3/3 and seven dependency-key digests are
-  regenerated. F04 has 69 logical cases (30 positive, 39 negative), seven raw; F06 has 110 cases
-  (59 positive, 51 negative). Only A5's large-coordinate part is closed; rounded-mesh
-  cross-checks and subnormal mass remain open. F04 stays a freeze candidate 0.1.0, F06 a draft;
-  no runtime feature, admission, freeze or K0 gate is passed.
+- 2026-10-15: N01 option C first slice ran the pure-Rust `openusd` 0.8.0 spike in `spikes/n01-openusd` (isolated workspace,
+  stacked on PR #22). On Windows with Rust 1.96.0 it showed USDA/USDC round trip with unknown-field preservation, sublayer/over/active
+  composition, delta capture and replay with `(UUID, attribute)` collision detection, and 1184 hostile inputs with no panic or hang.
+  The crate does not prevent local overrides of foreign prims (a BeamCraft wrapper must); non-finite numbers and some truncated or
+  corrupted input are accepted. G01 is `failed` as measured (TOST-1.0 generated file in an MIT-declared crate; accepted by owner decision, PR #29); MSRV 1.96 versus 1.95, WASM,
+  Linux/macOS and the SDK oracle are not run, so all other claims stay `not_run`. No backend, MSRV or architecture change is
+  accepted; owner decisions on MSRV and maintenance remain. Report: `docs/design/layer-engine-spike-n01-report-v0.1.md`.
 
-- 2026-10-15: recorded the owner decisions of 2026-10-15 in F04, F06 and the architecture page
-  (stacked on PR #23): contour plate input with rectangle-only evaluation until A02, P-2 confirmed,
-  explicit axial `roll_rad`, relative 1e-6 bounds with a 0.001 mm length floor, permissive Rust
-  crates preferred subject to audit, and the PdfCraft UI stack pending dependency audits. Added
-  `docs/design/tolerance-comparison-v0.1.md`, which maps every constant to the public ifc-lite
-  values supplied at pinned commit `a3148f11f644bf3d0237a34eadce0f665ff2d104` (numbers only): the
-  0.001 mm floor equals their 1e-6 m clipping floor, no contract value changed, and the metre
-  reading of the floor and magnitude scaling for accuracy gate A5 are open for the owner. F04 has 57
-  logical plus seven raw cases; F06 has 96 logical cases (52 positive, 44 negative). F04 stays a
-  freeze candidate 0.1.0, F06 a draft; nothing is implemented and K0 is not passed.
+- 2026-10-15: U05 added original incremental SHA-256 and strict full ContentDigest identities in
+  `beamcraft_model::digest`, plus native `beamcraft_host::storage` with synced temporary files,
+  non-replacing hard-link publication, complete existing-byte comparison and verified retrieval.
+  Base `501e9d476dc187b63e6fd61e2908d1c51ea280d9`, stacked on F08 PR #17. All seven required
+  local commands passed; 112 workspace tests passed. WASM and cargo-deny were not run.
+  Strict containment against hostile concurrent directory replacement remains open; the current
+  implementation requires a protected root namespace. U04 owns the CLI; U06/U07 own revision
+  publication and recovery. U05 acceptance and K1 are not complete.
+
+- 2026-10-15: Owner decision on OpenUSD-derived TOST-1.0 material in the `openusd` crate (0.8.x,
+  file `src/usd/core_schemas.rs`): it stays under its upstream licence and copyright, BeamCraft
+  claims no rights in it, and BeamCraft's own code stays MPL-2.0. `AGENTS.md` section 1.2 gains a
+  scoped extension; `NOTICE` carries the upstream notice, `licenses/TOST-1.0-openusd.txt` the
+  unmodified upstream licence, `ATTRIBUTION.md` three rows, and `deny.toml` a comment block (no
+  allowlist change). The F11 record has a dated note. Documentation only; the crate is not adopted.
 
 - 2026-10-15: F04.3 applied the four F04 amendments proposed by F06 section 12 to the F04 freeze
   candidate on base `b996c58fe850642f12b92b25b23c441fbd41ed47` (stacked on PR #20): the draft
