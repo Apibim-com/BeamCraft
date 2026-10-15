@@ -146,10 +146,23 @@ unreachable stub is added.
 4. a `domain` crate depends on no `host`, `app` or `tool` crate, and on no third-party crate that
    is not in section 3;
 5. no package depends on an `app` or a `tool`, and `tool` packages set `publish = false`;
-6. non-test source of a `domain` crate does not mention `std::fs`, `std::process`, `std::net`,
-   `std::thread`, `std::env` or `std::os`;
-7. the CI wasm job takes its crate list from `cargo run -p beamcraft-boundaries -- portable`
-   (all `now` `domain` rows), not from a hand-written `-p` list.
+6. source of a `domain` crate does not mention `std::fs`, `std::process`, `std::net`,
+   `std::thread`, `std::env` or `std::os` (also inside a `use std::{...}` group). Comments and
+   string literals are ignored, and only items annotated `#[cfg(test)]` (or a file with
+   `#![cfg(test)]`) are exempt, wherever they are declared, so code placed after a test module is
+   still scanned;
+7. every CI job that mentions `wasm32-unknown-unknown` calls
+   `cargo run -p beamcraft-boundaries -- portable` (all `now` `domain` rows) and selects no
+   package by hand: continuation lines are joined, and any `-p`, `-pNAME` or `--package`
+   argument other than the tool's own `cargo run -p beamcraft-boundaries` is rejected, whether
+   in a variable assignment, a continuation or a separate run line;
+8. the loader fails closed: a symbolic link or Windows reparse point at a member, along its path,
+   at its manifest or inside its `src`, a manifest that is not a regular file, and a source
+   directory nested deeper than eight levels are errors, never silently skipped.
+
+Known limits: the scan is lexical, so a `#[cfg_attr(...)]`-generated or macro-generated path is
+not seen, and an alias such as `use std as s;` is not followed. The wasm check and code review
+cover what a lexical scan cannot.
 
 The failing paths are proved by tests on an in-memory model (a synthetic manifest set), so no
 broken manifest is committed. The wasm check is therefore as strict as before: today it lists

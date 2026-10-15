@@ -5,7 +5,9 @@
 //!
 //! Every read is bounded: manifests and sources are at most 1 MiB, at most 256 members and 512
 //! source files per member are read and directories are walked at most eight levels deep.
-//! Symbolic links are not followed.
+//! The loader fails closed: a symbolic link or Windows reparse point anywhere in a member path, a
+//! manifest or a source tree, a source directory deeper than the cap and a non-regular manifest
+//! are errors, never silently skipped.
 
 use std::fmt;
 use std::fs;
@@ -77,6 +79,10 @@ pub enum LoadError {
     BadMember(String),
     /// More members or source files than the limits allow.
     TooMany(String),
+    /// A member, manifest or source entry is a symbolic link or reparse point.
+    Link(String),
+    /// A source directory is nested deeper than [`MAX_DEPTH`]; unscanned files would pass.
+    TooDeep(String),
 }
 
 impl fmt::Display for LoadError {
@@ -88,17 +94,81 @@ impl fmt::Display for LoadError {
             Self::NoName(path) => write!(f, "`{path}` has no [package] name"),
             Self::BadMember(pattern) => write!(f, "unsupported workspace member `{pattern}`"),
             Self::TooMany(what) => write!(f, "too many {what}"),
+            Self::Link(path) => write!(
+                f,
+                "`{path}` is a symbolic link or reparse point; links are not followed"
+            ),
+            Self::TooDeep(path) => write!(
+                f,
+                "`{path}` is nested deeper than {MAX_DEPTH} levels and would not be scanned"
+            ),
         }
     }
 }
 
 impl std::error::Error for LoadError {}
 
+/// True for a symbolic link, and on Windows for any reparse point (junctions, mount points).
+fn is_link(metadata: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt as _;
+        const REPARSE_POINT: u32 = 0x400;
+        if metadata.file_attributes() & REPARSE_POINT != 0 {
+            return true;
+        }
+    }
+    metadata.file_type().is_symlink()
+}
+
+/// What a path is on disk, without following a link.
+#[derive(Debug, PartialEq, Eq)]
+enum Kind {
+    Missing,
+    Dir,
+    File,
+    Other,
+}
+
+/// Classifies `rel` below `root`. A link at any component of `rel` is an error.
+fn classify(root: &Path, rel: &str) -> Result<Kind, LoadError> {
+    let mut current = PathBuf::from(root);
+    let mut walked = String::new();
+    let mut kind = Kind::Dir;
+    for segment in rel.split('/') {
+        if !walked.is_empty() {
+            walked.push('/');
+        }
+        walked.push_str(segment);
+        current.push(segment);
+        kind = match fs::symlink_metadata(&current) {
+            Ok(metadata) if is_link(&metadata) => return Err(LoadError::Link(walked)),
+            Ok(metadata) if metadata.is_dir() => Kind::Dir,
+            Ok(metadata) if metadata.is_file() => Kind::File,
+            Ok(_) => Kind::Other,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Kind::Missing),
+            Err(source) => {
+                return Err(LoadError::Io {
+                    path: walked,
+                    source,
+                });
+            }
+        };
+    }
+    Ok(kind)
+}
+
 fn read_bounded(root: &Path, rel: &str) -> Result<String, LoadError> {
     let io = |source| LoadError::Io {
         path: rel.to_owned(),
         source,
     };
+    if classify(root, rel)? != Kind::File {
+        return Err(io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "not a regular file",
+        )));
+    }
     let file = fs::File::open(root.join(rel)).map_err(io)?;
     let mut text = String::new();
     let limit = u64::try_from(MAX_MANIFEST_BYTES)
@@ -129,17 +199,28 @@ fn expand(root: &Path, pattern: &str) -> Result<Vec<String>, LoadError> {
             path: dir.to_owned(),
             source,
         };
+        if classify(root, dir)? != Kind::Dir {
+            return Err(bad());
+        }
         let mut found = Vec::new();
-        for entry in fs::read_dir(root.join(dir)).map_err(io)? {
-            let entry = entry.map_err(io)?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if valid_segment(&name) && entry.path().join("Cargo.toml").is_file() {
-                found.push(format!("{dir}/{name}"));
+        for item in fs::read_dir(root.join(dir)).map_err(io)? {
+            let item = item.map_err(io)?;
+            let name = item.file_name().to_string_lossy().into_owned();
+            if !valid_segment(&name) {
+                continue;
+            }
+            // `classify` fails on a link at the entry itself or at its manifest.
+            let member = format!("{dir}/{name}");
+            if classify(root, &member)? == Kind::Dir
+                && classify(root, &format!("{member}/Cargo.toml"))? == Kind::File
+            {
+                found.push(member);
             }
         }
         found.sort();
         Ok(found)
     } else if pattern.split('/').all(valid_segment) {
+        // A literal member is checked for links when its manifest is read.
         Ok(vec![pattern.to_owned()])
     } else {
         Err(bad())
@@ -160,16 +241,20 @@ fn collect_sources(
     for entry in fs::read_dir(root.join(rel)).map_err(io)? {
         let entry = entry.map_err(io)?;
         let kind = entry.file_type().map_err(io)?;
-        entries.push((
-            entry.file_name().to_string_lossy().into_owned(),
-            kind.is_dir(),
-            kind.is_file(),
-        ));
+        let name = entry.file_name().to_string_lossy().into_owned();
+        // Any link is an error, whatever it points to: nothing is skipped silently.
+        if kind.is_symlink() || is_link(&entry.metadata().map_err(io)?) {
+            return Err(LoadError::Link(format!("{rel}/{name}")));
+        }
+        entries.push((name, kind.is_dir(), kind.is_file()));
     }
     entries.sort();
     for (name, is_dir, is_file) in entries {
         let child = format!("{rel}/{name}");
-        if is_dir && depth < MAX_DEPTH {
+        if is_dir {
+            if depth >= MAX_DEPTH {
+                return Err(LoadError::TooDeep(child));
+            }
             collect_sources(root, &child, depth.saturating_add(1), out)?;
         } else if is_file && name.ends_with(".rs") {
             if out.len() >= MAX_SOURCE_FILES {
@@ -213,7 +298,7 @@ pub fn load(root: &Path) -> Result<Workspace, LoadError> {
         let name = manifest.name.ok_or(LoadError::NoName(manifest_path))?;
         let mut sources = Vec::new();
         let src = format!("{path}/src");
-        if PathBuf::from(root).join(&src).is_dir() {
+        if classify(root, &src)? == Kind::Dir {
             collect_sources(root, &src, 0, &mut sources)?;
         }
         packages.push(Package {
@@ -250,5 +335,207 @@ mod tests {
             expand(Path::new("."), "tools/fixtures").unwrap(),
             ["tools/fixtures"]
         );
+    }
+
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A scratch directory below the system temp directory, removed on drop.
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new() -> Self {
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            let dir = std::env::temp_dir().join(format!(
+                "beamcraft-boundaries-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+
+        fn write(&self, rel: &str, text: &str) {
+            let path = self.0.join(rel);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    const MANIFEST: &str = "[package]
+name = \"x\"
+";
+
+    /// Creates a directory link (symlink, or a junction on Windows). False if not permitted.
+    fn dir_link(link: &Path, target: &Path) -> bool {
+        #[cfg(unix)]
+        let ok = std::os::unix::fs::symlink(target, link).is_ok();
+        #[cfg(windows)]
+        let ok = std::os::windows::fs::symlink_dir(target, link).is_ok()
+            || std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+        #[cfg(not(any(unix, windows)))]
+        let ok = false;
+        if !ok {
+            eprintln!("skipped: this environment does not permit creating directory links");
+        }
+        ok
+    }
+
+    #[test]
+    fn a_member_that_is_a_link_to_a_directory_outside_the_root_is_rejected() {
+        let outside = Scratch::new();
+        outside.write("Cargo.toml", MANIFEST);
+        outside.write(
+            "src/lib.rs",
+            "pub fn f() {}
+",
+        );
+        let root = Scratch::new();
+        root.write(
+            "Cargo.toml",
+            "[workspace]
+members = [\"crates/*\"]
+",
+        );
+        fs::create_dir_all(root.0.join("crates")).unwrap();
+        if !dir_link(&root.0.join("crates/evil"), &outside.0) {
+            return;
+        }
+        let err = load(&root.0).unwrap_err();
+        assert!(
+            matches!(&err, LoadError::Link(p) if p == "crates/evil"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_literal_member_below_a_link_is_rejected() {
+        let outside = Scratch::new();
+        outside.write("m/Cargo.toml", MANIFEST);
+        let root = Scratch::new();
+        root.write(
+            "Cargo.toml",
+            "[workspace]
+members = [\"linked/m\"]
+",
+        );
+        if !dir_link(&root.0.join("linked"), &outside.0) {
+            return;
+        }
+        let err = load(&root.0).unwrap_err();
+        assert!(matches!(&err, LoadError::Link(p) if p == "linked"), "{err}");
+    }
+
+    #[test]
+    fn a_link_inside_src_is_rejected_not_skipped() {
+        let outside = Scratch::new();
+        outside.write(
+            "lib.rs",
+            "use std::fs;
+",
+        );
+        let root = Scratch::new();
+        root.write(
+            "Cargo.toml",
+            "[workspace]
+members = [\"crates/a\"]
+",
+        );
+        root.write("crates/a/Cargo.toml", MANIFEST);
+        root.write(
+            "crates/a/src/lib.rs",
+            "
+",
+        );
+        if !dir_link(&root.0.join("crates/a/src/hidden"), &outside.0) {
+            return;
+        }
+        let err = load(&root.0).unwrap_err();
+        assert!(matches!(err, LoadError::Link(_)), "{err}");
+    }
+
+    #[test]
+    fn an_ordinary_tree_loads() {
+        let root = Scratch::new();
+        root.write(
+            "Cargo.toml",
+            "[workspace]
+members = [\"crates/*\"]
+",
+        );
+        root.write("crates/a/Cargo.toml", MANIFEST);
+        root.write(
+            "crates/a/src/lib.rs",
+            "fn a() {}
+",
+        );
+        root.write(
+            "crates/a/src/deep/mod.rs",
+            "fn b() {}
+",
+        );
+        let ws = load(&root.0).unwrap();
+        assert_eq!(ws.packages.len(), 1);
+        assert_eq!(ws.packages.first().map(|p| p.sources.len()), Some(2));
+    }
+
+    #[test]
+    fn a_source_tree_exactly_at_the_depth_cap_loads_and_one_deeper_fails() {
+        let nested = |levels: usize| {
+            let root = Scratch::new();
+            root.write(
+                "Cargo.toml",
+                "[workspace]
+members = [\"crates/a\"]
+",
+            );
+            root.write("crates/a/Cargo.toml", MANIFEST);
+            let dirs = vec!["d"; levels].join("/");
+            let rel = if dirs.is_empty() {
+                "crates/a/src/lib.rs".to_owned()
+            } else {
+                format!("crates/a/src/{dirs}/lib.rs")
+            };
+            root.write(
+                &rel,
+                "use std::fs;
+",
+            );
+            let result = load(&root.0);
+            (root, result)
+        };
+        let (_keep, ok) = nested(MAX_DEPTH);
+        let ws = ok.unwrap();
+        assert_eq!(ws.packages.first().map(|p| p.sources.len()), Some(1));
+        let (_keep, deep) = nested(MAX_DEPTH + 1);
+        let err = deep.unwrap_err();
+        assert!(
+            matches!(&err, LoadError::TooDeep(p) if p.ends_with("/d")),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_manifest_that_is_not_a_regular_file_is_rejected() {
+        let root = Scratch::new();
+        root.write(
+            "Cargo.toml",
+            "[workspace]
+members = [\"crates/a\"]
+",
+        );
+        fs::create_dir_all(root.0.join("crates/a/Cargo.toml")).unwrap();
+        assert!(matches!(load(&root.0), Err(LoadError::Io { .. })));
     }
 }
