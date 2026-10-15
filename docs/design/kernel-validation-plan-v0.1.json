@@ -19,7 +19,7 @@
       "invariant": 14,
       "metamorphic": 6
     },
-    "distinct_f06_cases": 81
+    "distinct_f06_cases": 83
   },
   "rows": [
     {
@@ -482,16 +482,17 @@
       "id": "G04-V31",
       "stage": "S3",
       "property": "Point/edge/vertex picking uses closed-feature minimum distance",
-      "method": "Minimize rational squared distance over closed features; point faces use nearest original rectangle, even for interior points. Check the written distance <= radius+1e-6 comparison without substituting squared rounding decisions. W49 contrasts finite [0,t_max] and unbounded-ray minima; do not freeze an expectation for that unresolved domain before A10 is decided.",
-      "inputs_class": "Exact zero-radius edge overlap, point above face, radius boundary and 1e6 cap. t_max=50 versus a closest point at t=100, with radius zero and a 1e-6 band.",
+      "method": "Minimize rational squared distance over closed features and the finite pick segment [0,t_max]. Clamp vertex parameters and include edge/segment endpoints; parallel overlaps use the smallest minimizing t. W49 independently checks POS-47 endpoint inclusion, NEG-36 short-horizon rejection and the inclusive endpoint distance band. Point faces use the nearest original rectangle. Retain the written distance <= radius+1e-6 decision.",
+      "inputs_class": "Zero-radius overlap, point above face, radius/band boundary and 1e6 cap; t_max 0/50/100, closest unbounded t=100, features beyond either end within/at/outside the endpoint band and parallel closed-segment overlap.",
       "expected_oracle_kind": "analytic",
       "f06_case_refs": [
         "F06-POS-32",
         "F06-POS-33",
-        "F06-NEG-29"
+        "F06-NEG-29",
+        "F06-POS-47",
+        "F06-NEG-36"
       ],
-      "status": "planned",
-      "amendment_gate": "A10 ray-domain decision for horizon-limited edge/vertex cases"
+      "status": "planned"
     },
     {
       "id": "G04-V32",
@@ -512,7 +513,7 @@
       "id": "G04-V33",
       "stage": "S3",
       "property": "Dependency keys respect their declared input dependencies",
-      "method": "Mutate exactly one input at a time and compare affected/unchanged keys, signatures, roles and mesh delivery. W50 verifies shared algorithm/tolerance fields and world dependence on the shape key; do not assert disjoint input sets (A11 wording clarification).",
+      "method": "Mutate exactly one input at a time and compare affected/unchanged keys, signatures, roles and mesh delivery. W50 verifies the shared algorithm/tolerance fields, otherwise disjoint directly encoded fields, transitive shape dependency and distinct domain tags; applied A11 changes no encoding or digest.",
       "inputs_class": "Rename, camera, density, placement, dimensions, display/visibility, copy and canonical quaternion sign.",
       "expected_oracle_kind": "metamorphic",
       "f06_case_refs": [
@@ -583,7 +584,7 @@
       "id": "G04-V37",
       "stage": "S2",
       "property": "Projected near-vertical Y-tilted frame and roll limits",
-      "method": "Use exact Pythagorean rational frames from W40; verify perpendicular section and endpoint centroids, compare both sides of the threshold, and distinguish the Y-tilt half-turn limit from the X-tilt quarter turn.",
+      "method": "Use W40 exact Pythagorean frames; verify perpendicular sections and endpoint centroids. On the same axis compare branch frames from near-vertical to horizontal about Z: from +Z, +Y gives 180 degrees, -Y gives 0, +X gives +90, -X gives -90; from -Z exchange Y outcomes. Distinguish common-axis branch angles from distinct finite-axis rotations; A7 is applied.",
       "inputs_class": "F06-POS-41 rational Y tilt, POS-42 horizontal-side Y tilt, historical (0,0.0005,1000) counterexample and signed variants.",
       "expected_oracle_kind": "analytic",
       "f06_case_refs": [
@@ -592,8 +593,7 @@
         "F06-POS-09",
         "F06-POS-10"
       ],
-      "status": "planned",
-      "amendment_gate": "A7 open, being corrected in F06; confirmed counterexample not yet applied"
+      "status": "planned"
     },
     {
       "id": "G04-V38",
@@ -628,7 +628,7 @@
       "id": "G04-V40",
       "stage": "S3",
       "property": "Pick band, closed boundaries and nearest face points",
-      "method": "Derive rational ray intersections and original-face closest points; test inclusion at and around each 1e-6 enlargement endpoint, boundary flags, shared faces and positive-distance zero-radius hits. Derive sqrt(10025) by rational squaring rather than copying the coarse POS-45 distance.",
+      "method": "Derive rational ray intersections and original-face closest points; test inclusion around each 1e-6 enlargement endpoint, boundary flags, shared faces and positive-distance zero-radius hits. Verify the corrected POS-45 distance 100.12492197250392864 by rational squaring (W47), independently of the case decimal; A8 is applied.",
       "inputs_class": "POS-43 shared edge with parallel neighbor, POS-44 coplanar ray, POS-45 outside point, point inside solid, zero radius at band and neighboring representable values.",
       "expected_oracle_kind": "analytic",
       "f06_case_refs": [
@@ -638,8 +638,7 @@
         "F06-POS-32",
         "F06-POS-33"
       ],
-      "status": "planned",
-      "amendment_gate": "A8 open, being corrected in F06; confirmed counterexamples not yet applied"
+      "status": "planned"
     },
     {
       "id": "G04-V41",
@@ -702,12 +701,12 @@
       "status": "planned"
     }
   ],
-  "f06_correction_round": 2,
-  "f06_input_head": "ebf4ce5",
-  "revision_note": "Round 3 reconciles F06 0.1.0 review round 2 (81 cases); A9 applied, A7/A8 open and being corrected in F06; all 44 row IDs retained.",
+  "f06_correction_round": 4,
+  "f06_input_head": "172f4b1",
+  "revision_note": "Round 4 reconciles F06 0.1.0 correction round 4 (83 cases); A7/A8/A9/A10/A11 applied with the signed-tilt qualification for A7; A5 remains open; all 44 row IDs retained.",
   "f06_case_counts": {
-    "positive": 46,
-    "negative": 35,
-    "total": 81
+    "positive": 47,
+    "negative": 36,
+    "total": 83
   }
 }

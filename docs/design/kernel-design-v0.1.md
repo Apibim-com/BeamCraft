@@ -2,14 +2,14 @@
 
 Date: 2026-10-15. Status: **draft; nothing implemented; no implementer declared eligible**.
 Contributor-original design, MPL-2.0. Task-card base:
-`29d962e790ffd21ecd9a45143f052d4b4d53d3f7`, originally stacked on F06 PR #16. Round 3 consumes
-F06 0.1.0 after review round 2, task-supplied head `ebf4ce5`, with 81 cases. Git ownership
+`29d962e790ffd21ecd9a45143f052d4b4d53d3f7`, originally stacked on F06 PR #16. Round 4 consumes
+F06 0.1.0 after correction round 4, task-supplied head `172f4b1`, with 83 cases. Git ownership
 validation prevents independently verifying HEAD. This is neither a contract freeze nor a K0 gate.
 
 ## 1. Scope and status
 
 The inputs are [F06 0.1.0](../contracts/geometry-contract-v0.1.md), its
-[81 acceptance descriptions](../contracts/geometry-contract-cases-v0.1.json),
+[83 acceptance descriptions](../contracts/geometry-contract-cases-v0.1.json),
 [F04 0.1.0](../contracts/model-and-commands-v0.1.md), the
 [first-scope package 0.1.0](../clean-room/handoff/first-scope-v0.1.md), its
 [cases](../clean-room/handoff/first-scope-cases-v0.1.json), and the
@@ -344,11 +344,13 @@ box; interior points can have positive distance to every face. Accept point-face
 vertex distances through `radius_mm + eps_pick`. New independent cases are in section 5.4.
 For edges, squared distance is a convex quadratic over the closed feature segment and the
 ray parameter domain. Interior stationary points and relevant domain boundaries exhaust its
-minima. F06's t_max restriction for edge/vertex minimization is ambiguous (A10/W49): finite
-[0,t_max] and unbounded [0,infinity) domains must not be conflated. Once the domain is decided,
-parallel overlaps use the smallest minimizing t in that domain. These are mathematical query
-requirements, not a general
-intersection engine. Face/edge/vertex results are resolved by analytic FeatureId roles.
+minima. Applied A10 fixes the domain to the closed finite segment `[0,t_max]` for every ray
+target. For vertices, clamp `(v-o) dot u` to that interval; for edges, minimize over both
+closed segments, including endpoints. Parallel overlaps use the smallest minimizing t. The
+distance band applies at both ends without extending the parameter interval; faces keep their
+exact t interval test. W49 verifies endpoint inclusion and short-horizon rejection. These are
+mathematical query requirements, not a general intersection engine. Face/edge/vertex results
+are resolved by analytic FeatureId roles.
 
 For integer sign fallback, a finite f64 is an integer times `2^-1074`. At query coordinate
 cap `4e9 < 2^32`, its aligned numerator has fewer than 1107 bits; a difference uses at most
@@ -405,8 +407,9 @@ horizontal squared ratio is `1/4000000000001 < 1e-12`. Fixed Y would give `Y dot
 nonzero, a relative determinant deficit `1/4000000000001` (about `2.5e-13`), and about `0.5 mm`
 axial projection at height `1e6`. Those are regression counterexamples, not defects remaining
 in corrected F06. The projected replacement and current certificate are derived in W40/W41.
-The roll remains discontinuous; its jump depends on tilt direction (new A7), not universally
-on a quarter turn. Joint F04 P-3 confirmation remains open under F06 section 12.
+The roll remains discontinuous; its jump depends on signed tilt direction (applied A7), not
+universally on a quarter turn. From +Z, +Y gives 180 degrees, -Y gives 0, and +X/-X give
++90/-90 degrees. Joint F04 P-3 confirmation remains open under F06 section 12.
 
 ### 5.2 Section 6 resource caps
 
@@ -454,10 +457,11 @@ fitting a blob does not establish delivery feasibility.
   evidence: minimum squared norm `1e-18` is normal; scalar input scale does not set geometric
   resolution (W27).
 
-- **`t_max` default/maximum `4e9 mm`.** Verdict: supported face-hit horizon, tight for all
-  admitted origin-to-body pairs; edge/vertex domain remains open under A10. Numeric or resource
-  evidence: `-4e9` to `+1e9` requires `5e9 mm`; this cap
-  is a search horizon, not universal reach (W28).
+- **`t_max` default/maximum `4e9 mm`.** Verdict: supported finite-segment horizon for every
+  ray target, tight for all admitted origin-to-body pairs. Applied A10 resolves the former
+  edge/vertex-domain qualification. Numeric or resource evidence: `-4e9` to `+1e9` requires
+  `5e9 mm`; this cap is a search horizon, not universal reach (W28). The endpoint distance band
+  never extends the parameter interval (W49); full-domain accuracy remains open under A5.
 
 - **Radius default 0.** Verdict: supported with certified boundary decisions. Numeric or resource
   evidence: **changed from an exact-boundary interpretation to supported band acceptance**;
@@ -535,16 +539,26 @@ it is about 9007 unit roundoffs (W35). It is not a permission for a nonrigid rot
 W40 (near-vertical frame): use the rational Pythagorean construction of F06-POS-41 with
 `m=4000001`. Then `dy=2*m/1e8=0.08000002`, `dz=(m*m-1)/1e8=160000.08` and
 `L=(m*m+1)/1e8=160000.08000002`. Put `s=4000001/8000004000001` and
-`c=8000004000000/8000004000001`: `s*s+c*c=1`, `s*s<1e-12`. Projection of U=+Y gives
+`c=8000004000000/8000004000001`: `s*s+c*c=1`, `s*s<1e-12`. The corrected POS-41
+squared-ratio approximation is `2.4999987500001562502e-13`; rational cross-multiplication bounds
+its relative error below `1e-19`, well inside CR-TOL-001. Projection of U=+Y gives
 `P=(0,c*c,-c*s)` of norm c, hence `X=(1,0,0)`, `Y=(0,c,-s)`, `Z=(0,s,c)`.
 All squared norms and the determinant equal 1 and all pairwise dots equal 0 exactly.
 In ideal arithmetic the general near-vertical branch has `norm(P)^2=1-Z_y^2 >= 1-1e-12`;
 rounding requires the actual certificate, not assuming that identity holds exactly for f64 Z.
 The small-offset Y-tilted case of W20 likewise now has perpendicular projected Y.
 At the same positive Y tilt the horizontal formula gives `X=(-1,0,0)` and `Y=(0,-c,s)`,
-exactly opposite to the near-vertical formula's section axes. Approaching the threshold from
-either side therefore gives a half turn, not a quarter turn. For X tilt the limiting section
-frames differ by a quarter turn. These exact branch comparisons establish A7.
+exactly opposite to the near-vertical formula's section axes: the branch rotation is 180 degrees.
+To cover signed meridians, put `r=sqrt(Z_x^2+Z_y^2)` and `n=sqrt(1-Z_y^2)`. Independently
+projecting the two reference directions gives `cos(theta)=-Z_y*Z_z/(r*n)` and
+`sin(theta)=Z_x/(r*n)` for rotation from the near-vertical to the horizontal frame about Z.
+For `Z=(0,s,c)`, `(0,-s,c)`, `(s,0,c)`, `(-s,0,c)`, the exact (cos,sin) pairs are respectively
+`(-1,0)`, `(1,0)`, `(0,1)`, `(0,-1)`: +Y gives 180 degrees, -Y gives 0, +X gives +90, -X gives
+-90. Replacing c by -c exchanges the Y-tilt outcomes and retains the X-tilt signs. Thus the
+earlier unqualified Y-tilt half-turn wording was too broad; it applies to +Y from +Z. These
+are comparisons on one common axis and one-sided limiting roll differences at the threshold.
+Frames on distinct finite axes also differ in axis direction. Applied A7 changes the wording,
+not the frame formula, the certificate bounds or the supported branch-policy verdict.
 
 W41 (frame certificate): the new residual limit `e=1e-12` is **supported and loose as a
 roundoff/fault gate**, not an exact-rigidity or full-domain quantity accuracy promise. For
@@ -611,13 +625,18 @@ dispatch with no split/truncation. A smaller deadline remains subject to F05's d
 not an invented byte comparison. **Changed verdict:** the missing negotiated-page accounting
 finding is resolved by F06 sections 6 and 10; runtime budget enforcement still needs tests.
 
-W47 (remaining case-number defects): rational endpoint squaring proves
-`100.12492197250392 < sqrt(10025) < 100.12492197250394`. With F06-POS-45's E=`100.124921973`,
-`E-100.12492197250394 > 1e-12*E`; thus the exact distance cannot satisfy its stated comparison.
-The proposed `100.124921972504` is within that rule throughout the enclosure. Also square
-`1000.00000000199999` and `1000.00000000200001` around `1000000+0.002^2`: they enclose the
-axis length for POS-42/POS-10 and justify correcting the stated approximation to
-`1000.000000002`. A8 requests reviewed expectation/derivation amendments; no case is changed.
+W47 (corrected case numbers, applied A8): rational endpoint squaring proves
+`100.12492197250392 < sqrt(10025) < 100.12492197250394`. The former POS-45 E=`100.124921973`
+failed because `E-100.12492197250394 > 1e-12*E`. Its corrected E=`100.12492197250392864`
+satisfies the comparison throughout that enclosure; all four equal distances use this value.
+Also square `1000.00000000199999` and `1000.00000000200001` around `1000000+0.002^2`:
+they enclose the POS-42/POS-10 axis length, consistent with their corrected approximation
+`1000.0000000020000000`. Dividing 0.002 and 1000 by these positive endpoints proves the
+corrected small component `1.9999999999960000000e-6` and large component `0.999999999998`
+satisfy CR-TOL-001. POS-42's squared ratio is exactly `1/250000000001`, consistent with
+`3.9999999999840000000e-12`. W40 separately checks the corrected POS-41 squared ratio.
+The previously deficient expectations are resolved; the rational enclosures and numeric-budget
+verdicts are unchanged, and none of these examples closes A5. F06 cases remain read-only.
 
 W48 (regression for the former signed-certificate ambiguity): take `m=2000000000`, `s=2*m/(m*m+1)`
 and
@@ -629,22 +648,29 @@ abs(X dot Y)=s>1e-12. F06 section 4 rule 2 step d and NEG-31/NEG-35 explicitly r
 magnitude test. All W48 rational values are unchanged; the counterexample is now a regression
 for a resolved ambiguity, not an outstanding defect or a frame emitted by the normal builder.
 
-W49 (ray-domain counterexample): use the plate [0,1000] x [0,500] x [0,10], origin
-`o=(0,-100,10)`, unit direction `u=(0,1,0)`, t_max=50, radius=0, targets edge and vertex.
+W49 (finite-segment regression, applied A10): use the plate [0,1000] x [0,500] x [0,10],
+`o=(0,-100,10)`, unit direction `u=(0,1,0)`, radius=0, targets edge and vertex.
 For vertex `v=(0,0,10)`, squared distance to r(t) is `(t-100)^2`. On the unbounded ray its
 minimum is 0 at t=100. On [0,50] it decreases to `(50-100)^2=2500 mm2`, so the minimum
-distance is 50 mm, greater than eps_pick=1e-6 mm. The edge x0.z1 likewise has smallest
-unbounded zero-distance t=100; its finite-segment distance is 50. Every feature has y>=0,
-whereas that finite ray segment has y<=-50: no edge/vertex hit qualifies in the bounded
-interpretation. These are exact rational alternatives; A10 requests which one is authoritative.
-The literal unbounded wording permits hits beyond t_max; the face rule explicitly forbids them.
+distance is 50 mm, greater than eps_pick=1e-6 mm. Edge x0.z1 has the same segment minimum.
+Every feature has y>=0, whereas this segment has y<=-50: no edge/vertex qualifies, exactly
+as F06-NEG-36 requires. On [0,100], vertex x0.y0.z1 and its three incident edges x0.y0,
+x0.z1, y0.z1 all attain distance 0 at the endpoint t=100; every other edge/vertex is at least
+10 mm away. The four hits sort with edges first in that ASCII order, then the vertex, as
+F06-POS-47 requires. The written binary64 bucket is `floor(100/1e-6)=100000000` for each.
+The inclusive distance band applies to endpoint distances: nearby features beyond an end may
+qualify, but reported t stays in [0,t_max]. A10 selects the finite segment; the old unbounded
+alternative is retained solely as a regression contrast. The exact distances and prior bounds
+are unchanged; the formerly unresolved expected outcomes are now fixed by F06 section 9.
 
-W50 (shared key inputs): set algorithm=1 and tolerance_policy=1, as F06 section 7 specifies
-for 0.1.0. Both fields occur in both shape and world preimages. Each is u16 big-endian:
-the pair is exactly `00 01 00 01` (4 bytes) in each preimage. Thus the intersection contains
-at least those two named inputs; in addition, the world preimage contains the 32-byte shape
-key. The identities are distinct, but the input sets are not disjoint. A11 requests a wording
-clarification only; existing encoding vectors and dependency invalidations stay unchanged.
+W50 (shared key inputs, applied A11): set algorithm=1 and tolerance_policy=1, as F06 section 7
+specifies for 0.1.0. Both fields occur in both shape and world preimages. Each is u16 big-endian:
+the pair is exactly `00 01 00 01` (4 bytes) in each preimage. World also encodes the 32-byte
+shape key and depends transitively on all shape inputs; the other directly encoded fields are
+disjoint. Domain tags `BCGEO-SHAPE` plus NUL and `BCGEO-WORLD` plus NUL first differ at byte
+offset 6 (`S` versus `W`), so their complete preimages differ across domains. This does not
+assert collision-free SHA-256. The previous disjoint-input wording is resolved; no numeric
+value, encoding vector, digest or dependency invalidation changes.
 
 ## 6. Failure, allocation and work bounds
 
@@ -715,10 +741,11 @@ that does not yet exist. A discovered crash requires a small original regression
 
 The [validation matrix](kernel-validation-plan-v0.1.json) contains **44 planned rows**:
 S1 **10**, S2 **8**, S3 **25**, S4 **1**. Oracle kinds: **analytic 24**, **invariant 14**,
-**metamorphic 6**. It references **all 81 distinct F06 cases** (46 positive, 35 negative).
-All G04-V01..G04-V44 IDs are retained. No row is added in round 3: G04-V38 and G04-V39 now
-also reference F06-NEG-35. W49/W50 extend existing G04-V31/G04-V33 for the new review findings.
-Rows can reference several cases; this is not 81 executable tests. S4's reference is an existing
+**metamorphic 6**. It references **all 83 distinct F06 cases** (47 positive, 36 negative).
+All G04-V01..G04-V44 IDs are retained. No row is added in round 4: G04-V31 now also references
+F06-POS-47 and F06-NEG-36. G04-V31/G04-V33/G04-V37/G04-V40 reflect applied A7/A8/A10/A11;
+the resolved A7/A8/A10 validation gates are removed. W40/W47/W49/W50 give their exact checks.
+Rows can reference several cases; this is not 83 executable tests. S4's reference is an existing
 unsupported-geometry boundary case, not a cut acceptance case. All rows are `planned`.
 Rows labelled amendment-dependent cannot be marked passed until the cited amendment is resolved.
 
@@ -794,9 +821,9 @@ This draft is not yet an admitted implementation handoff. No person's eligibilit
 
 ## 9. Open decisions, limitations and exposure
 
-### Reconciliation of A1 through A9
+### Reconciliation of A1 through A11
 
-Status is checked against F06 0.1.0 after review round 2 (81 cases), not inferred from its log.
+Status is checked against F06 0.1.0 after correction round 4 (83 cases), not inferred from its log.
 "Partly" includes the still-open portion of the original G04 request; it does not imply that
 F06's adopted part is unimplemented contract text. All runtime behavior remains unimplemented.
 
@@ -820,8 +847,8 @@ F06's adopted part is unimplemented contract text. All runtime behavior remains 
    boundary flags/shared-face inclusion, the strict parallel test abs(u dot n)<1e-12,
    nearest-point distance to a closed face and zero-radius band acceptance. Sections 2 and 9
    make bucket arithmetic the written binary64 evaluation; section 12 corrects nanometre units.
-   This is a deterministic policy, not proof of full-domain query accuracy. New A7/A8 below
-   concern remaining wording/expectation defects, not permission to ignore these rules.
+   This is a deterministic policy, not proof of full-domain query accuracy. Applied A10 below
+   additionally fixes the finite-segment domain for edge/vertex candidates.
 5. **A5, accuracy: open.** F06 section 12 explicitly leaves cancellation-heavy coordinates,
    subnormal mass and rounded-mesh cross-check accuracy unresolved. W10/W32/W33 remain relevant.
    No input cap or CR-TOL-001 rule is weakened here, and no conformance claim is promoted.
@@ -831,18 +858,20 @@ F06's adopted part is unimplemented contract text. All runtime behavior remains 
    string, batch, delivery and request-timeout limits. Bodies remain whole or fail with
    GEO_BUFFER_LIMIT; cancellation/deadline behavior still follows F05. W44..W46 check the limits.
 
-7. **A7, roll-jump wording: open, being corrected in F06.** This is a confirmed counterexample,
-   not yet applied to the consumed F06. Section 4 rule 3 and F06-POS-42 claim a roughly
-   quarter-turn jump regardless of tilt. W40 proves a half turn (180 degrees) for Y tilt and
-   a quarter turn (90 degrees) for X tilt. State dependence on tilt azimuth; keep section 12's
-   owner continuity decision open. Do not wait for or presume another checkout's correction.
-8. **A8, numerical expectations: open, being corrected in F06.** These are confirmed
-   counterexamples, not yet applied to the consumed case file. F06-POS-45's distance string
-   `100.124921973` exceeds CR-TOL-001 for sqrt(10025); W47 proves it by rational endpoint
-   squaring. An exact sqrt reference or reviewed `100.124921972504` would fit the existing
-   tolerance; its five-hit geometry/order remains sound. POS-42/POS-10's L approximation
-   should be `1000.000000002`, not `1000.000000000002`. F06 section 11's comparison stays
-   unchanged; no case is edited here and no concurrent correction is presumed integrated.
+7. **A7, roll-jump wording: applied with a qualification.** F06 section 4 rule 3 gives the
+   signed branch-angle formula and corrects POS-10/POS-42 prose (sections 11 and 12). From +Z,
+   +Y gives 180 degrees, -Y gives 0, +X gives +90 and -X gives -90. My proposal's unqualified
+   half turn for Y tilt was only partly right: it holds for +Y, not -Y, from +Z. W40 now
+   verifies all four signed meridians and distinguishes common-axis branch comparisons from
+   distinct-axis finite rotations. F06 adopts direction dependence without changing the roll
+   rule; the owner continuity decision and joint F04 P-3 amendment remain open in section 12.
+8. **A8, numerical expectations: applied.** F06 sections 11 and 12 and POS-45 now use
+   `100.12492197250392864` for sqrt(10025); POS-42/POS-10 use
+   `1000.0000000020000000` for L and sufficient digits for the small components and ratios.
+   The additional POS-41 squared-ratio correction is `2.4999987500001562502e-13`.
+   W40/W47 check all these against exact rational references. F06 chose more digits than the
+   minimal POS-45 decimal I proposed; both satisfy the unchanged CR-TOL-001. No comparison
+   tolerance, algorithm, key or full-domain accuracy verdict changes; A5 stays open.
 9. **A9, certificate magnitudes: applied.** F06 section 4 rule 2 step d now explicitly requires
    abs(X dot Y), abs(X dot Z), abs(Y dot Z) at most 1e-12. NEG-31 (+1e-9) and NEG-35 (-1e-9)
    both require GEO_NUMERIC_UNCERTAIN, stage build, with no partial geometry or state change.
@@ -850,20 +879,25 @@ F06's adopted part is unimplemented contract text. All runtime behavior remains 
    magnitudes, so no worked number or frame-certificate verdict changes. W48 now documents a
    resolved signed-test regression, and the corresponding validation gate is removed.
 
-### New proposed F06 amendments (contracts remain unchanged)
+10. **A10, finite pick domain: applied.** F06 section 9 now uses the same closed finite
+    segment 0<=t<=t_max for edge/vertex candidates as for faces, clamps the vertex parameter,
+    minimizes over both closed segments for edges and chooses the smallest minimizing t.
+    The inclusive endpoint distance band never extends that parameter interval; faces keep
+    their exact t test. Section 11 and POS-47/NEG-36 assert endpoint hits and short-horizon
+    rejection. W49 derives the outcomes. The t_max verdict now covers every ray target; its
+    inability to reach every admitted origin/body pair and the A5 accuracy gap remain.
+11. **A11, dependency-set wording: applied.** F06 section 7 now explicitly shares algorithm
+    and tolerance_policy between shape and world preimages, lists otherwise disjoint directly
+    encoded fields, transitive shape dependence and distinct domain tags. Sections 11 and 12
+    retain existing key vectors and invalidations. This matches the requested wording repair;
+    W50 verifies shared bytes and the first domain-tag difference. No encoding changes.
 
-- **A10, ray-domain ambiguity (section 9):** face hits explicitly require 0<=t<=t_max, but
-  edge/vertex hits minimize distance to "the ray" without a t_max restriction. W49 gives the
-  exact differing outcomes: a finite segment yields no hits, while an unbounded ray yields
-  distance-zero edge/vertex hits at t=100 despite t_max=50. Specify whether t_max applies
-  uniformly to all ray targets, and the minimization domain/returned t for each. Do not
-  silently assume either outcome; finite-horizon edge/vertex expectations need that decision.
-- **A11, dependency-set wording (section 7):** the assertion that the three keys' input sets
-  "do not overlap" contradicts the preimages. W50 exhibits shared algorithm=1 and
-  tolerance_policy=1 fields in shape and world preimages; the world key also embeds the shape
-  key. Describe distinct key responsibilities with overlapping dependencies. Preserve the
-  written preimages and invalidation matrix; do not remove version fields or shape dependence
-  to satisfy the disjoint-set sentence. This is a wording inconsistency, not a hash failure.
+### Final independent consistency read
+
+The final read of F06 sections 4, 7, 9, 11 and 12 and its case file made **no new finding
+(A12 or later)**. This is a bounded document review, not proof of complete consistency or
+implemented behavior. A5, the partly applied portions of A1/A2/A3 and the owner/admission gates
+remain open; applied amendments do not close them.
 
 Open gates: owner confirmation/admission of frames; independent design review; numeric-budget
 implementation proof; resource-budget instrumentation; matrix materialization as tests; real
@@ -872,13 +906,13 @@ No software dependency, network service, asset catalogue or persisted model defi
 
 ### Exposure note
 
-Round 3 re-read F06 sections 4, 7, 9, 11 and 12, checked the 81-case inventory and the
-NEG-31/NEG-35 pair, and read the existing design/matrix, local checker and repository
-rules/roadmap/architecture. No new external sources or other checkouts were read. Round 2
-previously read its then-current F06 contract/cases and the same authorized design inputs.
-It consulted no additional external material or other checkout. The task reports F08 boundaries
-as integrated; this reconciliation does not select or change module paths or read implementation
-sources. The following earlier exposure history is retained, not attributed anew to round 3.
+Round 4 re-read F06 sections 4, 7, 9, 11 and 12 and the 83-case file, including the corrected
+POS-10/POS-41/POS-42/POS-45 and new POS-47/NEG-36. It read the existing design/matrix, local
+checker and repository rules/roadmap/architecture. No new external sources or other checkouts
+were read. Earlier rounds read their then-current F06 inputs, the same authorized design
+inputs and local scratch checker. F08 boundaries are integrated; this reconciliation does not
+select or change module paths or manually read implementation sources. The following earlier
+exposure history is retained, not attributed anew to round 4.
 
 The original design run read the task card, AGENTS.md, CLAUDE.md, ROADMAP.md, docs/architecture.md,
 F06 draft
