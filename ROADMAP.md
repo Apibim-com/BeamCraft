@@ -84,7 +84,7 @@ later project; portable domain crates alone do not establish a working web appli
   only) and the first-scope package 0.1.0. It fixes the kernel input and evaluation order, the
   result envelope and diagnostics, a draft G-06 tolerance policy, FeatureId, the mesh blob and
   caps, three separate dependency keys with an invalidation matrix, quantity statuses and the
-  logical query and pick API, with 81 original acceptance descriptions (46 positive, 35
+  logical query and pick API, with 83 original acceptance descriptions (47 positive, 36
   negative). A kernel-design review (G04) led to a first correction round (near-vertical frame,
   numeric-uncertainty diagnostic, pick rules, resource bounds) and a review round that bounded
   the absolute value of each frame dot product. P-1 to P-3 are assumed pending
