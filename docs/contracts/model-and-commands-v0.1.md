@@ -80,12 +80,12 @@ These are original initial operating caps, not vendor tolerances or promises of 
 |-------|--------------------|
 | Encoded logical command | At most 1 MiB before parsing; nesting depth at most 16 |
 | Single string | At most 4096 UTF-8 bytes unless a narrower field cap applies |
-| Element label | 1вЂ“256 UTF-8 bytes; reject control characters U+0000вЂ“001F and U+007F |
+| Element label | 1–256 UTF-8 bytes; reject control characters U+0000–001F and U+007F |
 | Plate thickness/edge / supported member-axis length | Greater than zero and at most 1,000,000 mm |
 | Minimum nonzero dimension (draft, to be validated by G04 and fixtures) | Plate thickness/edge lengths, section dimensions and member-axis length are at least 0.001 mm, inclusive; a value above zero and below 0.001 mm is `INVALID_ARGUMENT` ([F06 section 4](geometry-contract-v0.1.md#4-tolerance-and-degeneracy-policy-g-06-draft)) |
 | Section dimensions (draft, to be validated by G04 and fixtures) | At most 1,000,000 mm; above that is `LIMIT_EXCEEDED` (F06 section 2) |
 | Contour radius D (assumption) | At most 2,000,000 mm; retains the maximum old rectangle diagonal |
-| Plate contour count / roll angle (assumptions) | 3вЂ“1024 points; `abs(roll_rad) <= 6.283185307179586` rad |
+| Plate contour count / roll angle (assumptions) | 3–1024 points; `abs(roll_rad) <= 6.283185307179586` rad |
 | Coordinates / translation components | Absolute value at most 1,000,000,000 mm |
 | Material density, when authored in a definition | Greater than zero and at most 1,000,000 kg/m3; absence is unknown |
 | Element relationship targets | At most 1024; require valid pinned targets and reject forbidden cycles |
@@ -461,7 +461,10 @@ first-scope package 0.1.0 still states the earlier 1e-12/1e-9 mm rule; it needs 
 reviewed version amendment. References to its cases preserve their mathematical meanings, not an
 assertion that its comparison policy has already changed. F07 has its own comparison rule, unchanged
 here. See the [tolerance comparison](../design/tolerance-comparison-v0.1.md) for classification,
-assumptions, design verdicts and the blocked external comparison.
+assumptions, design verdicts and the recorded 15-value ifc-lite comparison supplied by the
+orchestrator from the public repository. Accuracy gate A5 remains unresolved. The owner decided that
+tolerance must be scaled by coordinate magnitude for its large-coordinate part; applying that
+decision is a separate task. No magnitude scaling is applied here.
 
 **Coverage and cross-references (G-05).** New cases refer to the first-scope cases by ID through
 `first_scope_refs` (package version 0.1.0, field `first_scope_package`) where a corresponding
@@ -498,8 +501,8 @@ reject dangling delete and partial patches. U06/U07 must prove complete publicat
 crash recovery. F05/F06 must add transport/geometry negative cases under these invariants, not
 weaken them.
 
-Sources: original owner decisions in local architecture-proposal.md sections 1, 3вЂ“7, 9вЂ“14 and
-17; implementation-plan.md revision 1.1 sections 1вЂ“4, 7.1 and 12; local F02 gap analysis; public
+Sources: original owner decisions in local architecture-proposal.md sections 1, 3–7, 9–14 and
+17; implementation-plan.md revision 1.1 sections 1–4, 7.1 and 12; local F02 gap analysis; public
 RFC/IO references linked above. No private source specification, manual, catalogue, UI label,
 screenshot or third-party implementation is published by this document. Constants and command
 choices above are proposed original BeamCraft rules, not commercial-product behavior.
@@ -534,7 +537,7 @@ Decided by the owner on 2026-10-15:
 | G-01 / P-1 | Contour plate; X along first edge, Z thickness/normal, Y=Z x X; rectangle-only evaluation until A02 | Replaced; winding, bounds and planarity assumptions in section 3 |
 | G-02 / P-2 | Centred member section and perpendicular ends, Y through a cross product | Confirmed unchanged |
 | P-3 | Deterministic zero-roll frame followed by optional roll about local +Z | Refined; angle-cap assumption in section 3 |
-| G-06 | Constants confirmed for the first slice; relative 1e-6 and length floor 0.001 mm | Draft, to be validated by fixtures; external comparison blocked |
+| G-06 | Constants confirmed for the first slice; relative 1e-6 and length floor 0.001 mm | Draft, to be validated by fixtures; 15-value comparison recorded in the [tolerance report](../design/tolerance-comparison-v0.1.md); A5 remains unresolved, with magnitude scaling decided for a separate task |
 | Profile resource | Logical rectangle content in F06 section 2 | Accepted by F06 under draft policy; persisted encoding open |
 | Freeze | Explicit owner freeze and review/admission remain necessary | Open |
 

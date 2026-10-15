@@ -318,7 +318,7 @@ implementation text or restricted commercial-product material.
 
 **module-boundaries-v0.1.md section 3, after the empty-list statement:**
 
-> The owner decision of 2026-10-15 prefers suitable audited permissive Rust math and geometry >
+> The owner decision of 2026-10-15 prefers suitable audited permissive Rust math and geometry
 crates. It does not populate this allowlist. Add each approved domain dependency here and update
 its manifest and dependency audit together. Keep the PdfCraft frontend stack in the planned
 beamcraft-ui app; craft-libs requires a pinned revision, licence verification and a deny.toml
@@ -345,10 +345,10 @@ its policy requires before admitting this field replacement.
 
 **kernel-design-v0.1.md sections 2–9 reconciliation notice:**
 
-> F04/F06 owner amendments of 2026-10-15 supersede the rectangular input and roll assumptions: >
+> F04/F06 owner amendments of 2026-10-15 supersede the rectangular input and roll assumptions:
 exact rectangle contours keep the canonical box mesh; P-2 is confirmed; optional roll is shape
-input about local +Z. Algorithm/tolerance versions are 2. Adopt the revised 1e-6 >
-comparison/admission/certificate bounds and 0.001 mm length floor without changing exact >
+input about local +Z. Algorithm/tolerance versions are 2. Adopt the revised 1e-6
+comparison/admission/certificate bounds and 0.001 mm length floor without changing exact
 references, eps_dim, eps_par or mathematical error bounds. Prefer suitable audited permissive Rust
 crates, including for bounded robust arithmetic; handwritten integer/sign algorithms are justified
 only when no suitable crate exists. Reconcile the matrix with 96 F06 cases. Keep full-domain
