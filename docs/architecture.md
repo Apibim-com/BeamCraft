@@ -3,7 +3,8 @@
 BeamCraft is a Cargo workspace with an original Rust engineering and geometry core.
 USD is the planned authoritative project state. The official OpenUSD SDK will handle scene
 composition in an isolated local worker. These boundaries are accepted design decisions;
-the worker, storage, commands and UI are not implemented yet.
+the worker, revision publication, commands and UI are not implemented yet. U05 implements
+immutable byte storage only.
 
 ## Current implementation
 
@@ -13,14 +14,17 @@ apps/
   boundaries        module-boundary checker (development tool, not shipped)
 crates/
   geom              points, vectors, coordinate systems   (no deps)
-  model             parts, profiles, assemblies, F04 error codes  (-> geom)
+  model             beam axis, F04 error codes, SHA-256 digest  (-> geom)
   protocol          F05 frame header, limits, IPC codes   (-> model)
+  host              native immutable blob storage        (-> model)
 tools/
   fixtures          F07 fixture generator and verifier
 ```
 
 `geom` currently provides points and distance. `model` provides a beam axis and its length and the
-23 stable F04 error codes. `protocol` provides the F05 frame header and binary prefix, the
+23 stable F04 error codes plus `digest::ContentDigest` and incremental `digest::Sha256`.
+`host::storage::BlobStore` provides publish-if-absent and verified retrieval of immutable bytes.
+`protocol` provides the F05 frame header and binary prefix, the
 negotiable limits, a bundle budget and the transport codes; it does no I/O. The CLI reports its
 version. These types are a scaffold, not a USD engine or profile catalogue.
 
@@ -42,7 +46,7 @@ enforce them.
 - Build an original native UI. The initial viewport candidate is wgpu with egui/eframe;
   its dependencies, fonts and assets need an audit. Kit is excluded.
 - Add steel, export and drawing modules when their contracts require them. F08 fixed the concrete
-  module paths after F04–F07 and creates no empty crates: `kernel`, `engine`, `host` and `ui` are
+  module paths after F04–F07 and creates no empty crates: `kernel`, `engine` and `ui` are
   planned paths in the boundary document, created by their own tasks with their first real code.
 
 Our geometry kernel will be implemented independently under the clean-room rules. IFC-lite, Manifold,
@@ -64,6 +68,25 @@ the storage mechanism; a sequence of uncoordinated file replacements is insuffic
 Every placed element has a full UUIDv7. Prim names retain all 32 hexadecimal digits of the UUID;
 renaming a user label does not change identity. Immutable resources use full SHA-256 digests
 and verified bytes. Relationships are validated for duplicate identities and dangling targets.
+
+U05 stores exact bytes at `<authorized-root>/blobs/<first-two-hex>/<all-64-lowercase-hex>`.
+The root must be an existing absolute directory. Resource operations accept a `ContentDigest`,
+never an asset path or URI. Publication flushes and syncs a temporary file within the store,
+then installs it with a non-replacing hard link; unsupported filesystems fail without a rename
+fallback. Concurrent identical publishers return one `Created` and otherwise `AlreadyPresent`.
+Existing bytes are compared in full; differences return `IntegrityConflict` without overwriting.
+Retrieval, presence and verification check the complete SHA-256. A digest is not a mathematical
+proof that collisions are impossible. The 32 MiB F05 sections 3/4 bundle budget is the upper
+bound for each blob and in-memory read; a store may choose a lower cap.
+
+Every existing path component is checked for symbolic links/reparse points, and non-regular
+blob entries and canonical containment violations are rejected. The host must protect the root
+namespace from hostile concurrent local writers: portable safe std checks cannot prevent a
+directory replacement between validation and opening. Windows additionally opens blob reparse
+points without following them. These checks are not an OS sandbox. U05 promises neither
+directory-entry crash durability nor crash-atomic multi-file publication; crashes may leave
+temporary files. U06/U07 own revision publication and recovery. Garbage collection is deferred
+until retained revisions and drafts are accounted for. The asset CLI belongs to U04.
 
 Copies receive independent identities and share immutable geometry until a shape edit.
 Personal workspaces preserve unpublished authored edits, derived results and journals across

@@ -49,6 +49,15 @@ later project; portable domain crates alone do not establish a working web appli
 
 ## Progress log
 
+- 2026-10-15: U05 added original incremental SHA-256 and strict full ContentDigest identities in
+  `beamcraft_model::digest`, plus native `beamcraft_host::storage` with synced temporary files,
+  non-replacing hard-link publication, complete existing-byte comparison and verified retrieval.
+  Base `501e9d476dc187b63e6fd61e2908d1c51ea280d9`, stacked on F08 PR #17. All seven required
+  local commands passed; 112 workspace tests passed. WASM and cargo-deny were not run.
+  Strict containment against hostile concurrent directory replacement remains open; the current
+  implementation requires a protected root namespace. U04 owns the CLI; U06/U07 own revision
+  publication and recovery. U05 acceptance and K1 are not complete.
+
 - 2026-10-15: F08 fixed the module boundaries on base `29d962e790ffd21ecd9a45143f052d4b4d53d3f7`
   (stacked on F06). `docs/contracts/module-boundaries-v0.1.md` gives the exact crate/module path,
   allowed dependencies and now/planned status of every F04/F05/F06 area. New code: the pure

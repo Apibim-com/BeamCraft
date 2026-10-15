@@ -26,6 +26,7 @@ fn the_portable_list_is_derived_from_the_table() {
         assert!(args.contains(&format!("-p {name}")), "{args}");
     }
     for name in [
+        "beamcraft-host",
         "beamcraft-cli",
         "beamcraft-fixtures",
         "beamcraft-boundaries",
