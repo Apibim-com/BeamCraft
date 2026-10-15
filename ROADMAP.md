@@ -55,8 +55,8 @@ later project; portable domain crates alone do not establish a working web appli
   ten kinds reserved with no behaviour), the common base, shared and per-discipline namespaces
   with unknown-content preservation and versioning, a shared relationship vocabulary with a
   penetration request lifecycle, a 52-rule validation catalogue mapped to the existing F04 codes
-  (client, host and post-merge stages) and the discipline-module contract, with 139 original
-  acceptance descriptions (69 positive, 70 negative). Nothing is implemented, the contract is not
+  (client, host and post-merge stages) and the discipline-module contract, with 149 original
+  acceptance descriptions (73 positive, 76 negative). Nothing is implemented, the contract is not
   frozen and K0 is not passed. Local WASM and cargo-deny checks were not run.
 
 - 2026-10-15: G04 drafted the first-scope kernel design 0.1.0 on base

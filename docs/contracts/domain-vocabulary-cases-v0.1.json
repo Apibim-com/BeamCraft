@@ -32,6 +32,26 @@
   "Identifiers, strings, booleans, integers and codes compare exactly.",
   "Numbers follow CR-TOL-001 as in the F04 case file."
  ],
+ "counts": {
+  "rules": 52,
+  "now_rules": 39,
+  "reserved_rules": 13,
+  "cases": 149,
+  "positive": 73,
+  "negative": 76,
+  "rule_pair_cases": 104,
+  "extra_cases": 45,
+  "first_slice_true": 93,
+  "first_slice_false": 56
+ },
+ "logical_keys": [
+  "requires is the module manifest requires_vocabulary minimum; client and host advertise versions.",
+  "supported in enable_module cases is the common advertised set; expected.negotiated is selected.",
+  "penetrates targets are historical only when their source penetration is rejected or withdrawn.",
+  "post_delete_validation checks the candidate after removal with retained source records.",
+  "merge_provenance records transitions from their shared base state and sequence.",
+  "Expected status, primary_code, incomplete and truncated follow contract sections 6.3 and 6.4."
+ ],
  "cases": [
   {
    "case_id": "DVC-VER-001-P",
@@ -243,12 +263,20 @@
     "requires": "0.1.0",
     "supported": [
      "0.1.0"
+    ],
+    "client": [
+     "0.1.0"
+    ],
+    "host": [
+     "0.1.0"
     ]
    },
    "expected": {
     "outcome": "accepted",
     "findings": [],
-    "primary_code": null
+    "primary_code": null,
+    "negotiated": "0.1.0",
+    "module_enabled": true
    }
   },
   {
@@ -272,6 +300,12 @@
     "requires": "0.2.0",
     "supported": [
      "0.1.0"
+    ],
+    "client": [
+     "0.1.0"
+    ],
+    "host": [
+     "0.1.0"
     ]
    },
    "expected": {
@@ -284,7 +318,8 @@
      }
     ],
     "primary_code": "UNSUPPORTED_VERSION",
-    "module_enabled": false
+    "module_enabled": false,
+    "negotiated": "0.1.0"
    }
   },
   {
@@ -3340,7 +3375,11 @@
    "expected": {
     "outcome": "accepted",
     "findings": [],
-    "primary_code": null
+    "primary_code": null,
+    "status": "pass",
+    "incomplete": false,
+    "truncated": false,
+    "total_findings": 0
    }
   },
   {
@@ -3388,7 +3427,11 @@
       "code": "DEPENDENCY_UNAVAILABLE"
      }
     ],
-    "primary_code": "DEPENDENCY_UNAVAILABLE"
+    "primary_code": "DEPENDENCY_UNAVAILABLE",
+    "status": "incomplete",
+    "incomplete": true,
+    "truncated": false,
+    "total_findings": 1
    }
   },
   {
@@ -5689,6 +5732,7 @@
    "case_id": "DVC-X-REL-04",
    "title": "Delete a host whose penetration is withdrawn",
    "rules": [
+    "DV-REL-001",
     "DV-REL-009"
    ],
    "polarity": "positive",
@@ -5732,7 +5776,8 @@
       "target": "019a7bf0-0000-7000-8000-000000200002",
       "role": "subject"
      }
-    ]
+    ],
+    "index_complete": true
    },
    "action": {
     "type": "delete",
@@ -5742,7 +5787,32 @@
    "expected": {
     "outcome": "accepted",
     "findings": [],
-    "primary_code": null
+    "primary_code": null,
+    "deleted_ids": [
+     "019a7bf0-0000-7000-8000-000000200001"
+    ],
+    "relationships_after": [
+     {
+      "type": "penetrates",
+      "source": "019a7bf0-0000-7000-8000-000000200003",
+      "target": "019a7bf0-0000-7000-8000-000000200001"
+     },
+     {
+      "type": "references",
+      "source": "019a7bf0-0000-7000-8000-000000200003",
+      "target": "019a7bf0-0000-7000-8000-000000200002",
+      "role": "subject"
+     }
+    ],
+    "penetration_preserved": true,
+    "post_delete_validation": {
+     "status": "pass",
+     "primary_code": null,
+     "incomplete": false,
+     "truncated": false,
+     "findings": [],
+     "total_findings": 0
+    }
    }
   },
   {
@@ -6999,7 +7069,23 @@
       "role": "subject"
      }
     ],
-    "client_reported_valid": true
+    "client_reported_valid": true,
+    "merge_provenance": {
+     "base_state": "proposed",
+     "base_stateSeq": 1,
+     "transitions": [
+      {
+       "expected_stateSeq": 1,
+       "to": "accepted",
+       "actor_discipline": "arch"
+      },
+      {
+       "expected_stateSeq": 1,
+       "to": "withdrawn",
+       "actor_discipline": "mep"
+      }
+     ]
+    }
    },
    "action": {
     "type": "revalidate_merge",
@@ -7024,6 +7110,667 @@
     ],
     "primary_code": "DEPENDENCY_CONFLICT",
     "local_drafts_preserved": true
+   }
+  },
+  {
+   "case_id": "DVC-X-VERSION-04",
+   "title": "Peers advertising only a higher compatible version enable the module",
+   "rules": [
+    "DV-VER-003"
+   ],
+   "polarity": "positive",
+   "first_slice": true,
+   "f04_refs": [],
+   "given": {
+    "modules": [],
+    "vocabulary": "0.1.1",
+    "elements": [],
+    "relationships": []
+   },
+   "action": {
+    "type": "enable_module",
+    "module": "steel",
+    "requires": "0.1.0",
+    "supported": [
+     "0.1.1"
+    ],
+    "client": [
+     "0.1.1"
+    ],
+    "host": [
+     "0.1.1"
+    ]
+   },
+   "expected": {
+    "outcome": "accepted",
+    "findings": [],
+    "primary_code": null,
+    "negotiated": "0.1.1",
+    "module_enabled": true
+   }
+  },
+  {
+   "case_id": "DVC-X-VERSION-05",
+   "title": "Selected version on the same line is below the module minimum",
+   "rules": [
+    "DV-VER-003"
+   ],
+   "polarity": "negative",
+   "first_slice": true,
+   "f04_refs": [],
+   "given": {
+    "modules": [],
+    "vocabulary": "0.1.0",
+    "elements": [],
+    "relationships": []
+   },
+   "action": {
+    "type": "enable_module",
+    "module": "steel",
+    "requires": "0.1.1",
+    "supported": [
+     "0.1.0"
+    ],
+    "client": [
+     "0.1.0"
+    ],
+    "host": [
+     "0.1.0"
+    ]
+   },
+   "expected": {
+    "outcome": "rejected",
+    "findings": [
+     {
+      "rule": "DV-VER-003",
+      "severity": "error",
+      "code": "UNSUPPORTED_VERSION"
+     }
+    ],
+    "primary_code": "UNSUPPORTED_VERSION",
+    "module_enabled": false,
+    "negotiated": "0.1.0"
+   }
+  },
+  {
+   "case_id": "DVC-X-REL-06",
+   "title": "Rejected penetration retains a historical host ID after host deletion",
+   "rules": [
+    "DV-REL-001",
+    "DV-REL-003",
+    "DV-REL-004"
+   ],
+   "polarity": "positive",
+   "first_slice": false,
+   "f04_refs": [],
+   "given": {
+    "modules": [
+     "mep",
+     "arch"
+    ],
+    "vocabulary": "0.1.0",
+    "elements": [
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200002",
+      "kind": "pipe",
+      "discipline": "mep"
+     },
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200003",
+      "kind": "penetration",
+      "discipline": "mep",
+      "state": "rejected",
+      "stateSeq": 2,
+      "proposer": "mep",
+      "reason": "size"
+     }
+    ],
+    "relationships": [
+     {
+      "type": "penetrates",
+      "source": "019a7bf0-0000-7000-8000-000000200003",
+      "target": "019a7bf0-0000-7000-8000-000000200001"
+     },
+     {
+      "type": "references",
+      "source": "019a7bf0-0000-7000-8000-000000200003",
+      "target": "019a7bf0-0000-7000-8000-000000200002",
+      "role": "subject"
+     }
+    ],
+    "index_complete": true
+   },
+   "action": {
+    "type": "validate_model",
+    "stage": "host"
+   },
+   "expected": {
+    "outcome": "valid",
+    "findings": [],
+    "primary_code": null,
+    "status": "pass",
+    "incomplete": false,
+    "truncated": false,
+    "total_findings": 0,
+    "historical_target": "019a7bf0-0000-7000-8000-000000200001",
+    "relationships_after": [
+     {
+      "type": "penetrates",
+      "source": "019a7bf0-0000-7000-8000-000000200003",
+      "target": "019a7bf0-0000-7000-8000-000000200001"
+     },
+     {
+      "type": "references",
+      "source": "019a7bf0-0000-7000-8000-000000200003",
+      "target": "019a7bf0-0000-7000-8000-000000200002",
+      "role": "subject"
+     }
+    ]
+   }
+  },
+  {
+   "case_id": "DVC-X-REL-07",
+   "title": "Proposed penetration cannot treat a missing host as historical",
+   "rules": [
+    "DV-REL-001"
+   ],
+   "polarity": "negative",
+   "first_slice": false,
+   "f04_refs": [],
+   "given": {
+    "modules": [
+     "mep",
+     "arch"
+    ],
+    "vocabulary": "0.1.0",
+    "elements": [
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200002",
+      "kind": "pipe",
+      "discipline": "mep"
+     },
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200003",
+      "kind": "penetration",
+      "discipline": "mep",
+      "state": "proposed",
+      "stateSeq": 1,
+      "proposer": "mep"
+     }
+    ],
+    "relationships": [
+     {
+      "type": "penetrates",
+      "source": "019a7bf0-0000-7000-8000-000000200003",
+      "target": "019a7bf0-0000-7000-8000-000000200001"
+     },
+     {
+      "type": "references",
+      "source": "019a7bf0-0000-7000-8000-000000200003",
+      "target": "019a7bf0-0000-7000-8000-000000200002",
+      "role": "subject"
+     }
+    ],
+    "index_complete": true
+   },
+   "action": {
+    "type": "validate_model",
+    "stage": "host"
+   },
+   "expected": {
+    "outcome": "invalid",
+    "findings": [
+     {
+      "rule": "DV-REL-001",
+      "severity": "error",
+      "code": "DANGLING_RELATIONSHIP"
+     }
+    ],
+    "primary_code": "DANGLING_RELATIONSHIP",
+    "status": "fail",
+    "incomplete": false,
+    "truncated": false,
+    "total_findings": 1
+   }
+  },
+  {
+   "case_id": "DVC-X-REL-08",
+   "title": "Withdrawn penetration still blocks deletion of its live subject",
+   "rules": [
+    "DV-REL-009"
+   ],
+   "polarity": "negative",
+   "first_slice": false,
+   "f04_refs": [],
+   "given": {
+    "modules": [
+     "mep",
+     "arch"
+    ],
+    "vocabulary": "0.1.0",
+    "elements": [
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200001",
+      "kind": "wall",
+      "discipline": "arch"
+     },
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200002",
+      "kind": "pipe",
+      "discipline": "mep"
+     },
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200003",
+      "kind": "penetration",
+      "discipline": "mep",
+      "state": "withdrawn",
+      "stateSeq": 1,
+      "proposer": "mep"
+     }
+    ],
+    "relationships": [
+     {
+      "type": "penetrates",
+      "source": "019a7bf0-0000-7000-8000-000000200003",
+      "target": "019a7bf0-0000-7000-8000-000000200001"
+     },
+     {
+      "type": "references",
+      "source": "019a7bf0-0000-7000-8000-000000200003",
+      "target": "019a7bf0-0000-7000-8000-000000200002",
+      "role": "subject"
+     }
+    ],
+    "index_complete": true
+   },
+   "action": {
+    "type": "delete",
+    "module": "mep",
+    "target": "019a7bf0-0000-7000-8000-000000200002"
+   },
+   "expected": {
+    "outcome": "rejected",
+    "findings": [
+     {
+      "rule": "DV-REL-009",
+      "severity": "error",
+      "code": "DEPENDENCY_CONFLICT"
+     }
+    ],
+    "primary_code": "DEPENDENCY_CONFLICT",
+    "status": "fail",
+    "incomplete": false,
+    "truncated": false,
+    "total_findings": 1,
+    "no_state_change": true
+   }
+  },
+  {
+   "case_id": "DVC-X-REL-09",
+   "title": "Re-proposing after host deletion cannot reactivate a dangling host link",
+   "rules": [
+    "DV-REL-001",
+    "DV-PEN-001",
+    "DV-PEN-003"
+   ],
+   "polarity": "negative",
+   "first_slice": false,
+   "f04_refs": [],
+   "given": {
+    "modules": [
+     "mep",
+     "arch"
+    ],
+    "vocabulary": "0.1.0",
+    "elements": [
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200002",
+      "kind": "pipe",
+      "discipline": "mep"
+     },
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200003",
+      "kind": "penetration",
+      "discipline": "mep",
+      "state": "rejected",
+      "stateSeq": 2,
+      "proposer": "mep",
+      "reason": "size"
+     }
+    ],
+    "relationships": [
+     {
+      "type": "penetrates",
+      "source": "019a7bf0-0000-7000-8000-000000200003",
+      "target": "019a7bf0-0000-7000-8000-000000200001"
+     },
+     {
+      "type": "references",
+      "source": "019a7bf0-0000-7000-8000-000000200003",
+      "target": "019a7bf0-0000-7000-8000-000000200002",
+      "role": "subject"
+     }
+    ],
+    "index_complete": true
+   },
+   "action": {
+    "type": "transition",
+    "target": "019a7bf0-0000-7000-8000-000000200003",
+    "to": "proposed",
+    "actor_discipline": "mep",
+    "expected_stateSeq": 2
+   },
+   "expected": {
+    "outcome": "rejected",
+    "findings": [
+     {
+      "rule": "DV-REL-001",
+      "severity": "error",
+      "code": "DANGLING_RELATIONSHIP"
+     }
+    ],
+    "primary_code": "DANGLING_RELATIONSHIP",
+    "status": "fail",
+    "incomplete": false,
+    "truncated": false,
+    "total_findings": 1,
+    "state_after": "rejected",
+    "stateSeq_after": 2,
+    "no_state_change": true
+   }
+  },
+  {
+   "case_id": "DVC-X-REL-10",
+   "title": "Rejecting a penetration unblocks host deletion and preserves its host ID",
+   "rules": [
+    "DV-REL-001",
+    "DV-REL-009"
+   ],
+   "polarity": "positive",
+   "first_slice": false,
+   "f04_refs": [],
+   "given": {
+    "modules": [
+     "mep",
+     "arch"
+    ],
+    "vocabulary": "0.1.0",
+    "elements": [
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200001",
+      "kind": "wall",
+      "discipline": "arch"
+     },
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200002",
+      "kind": "pipe",
+      "discipline": "mep"
+     },
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200003",
+      "kind": "penetration",
+      "discipline": "mep",
+      "state": "rejected",
+      "stateSeq": 2,
+      "proposer": "mep",
+      "reason": "size"
+     }
+    ],
+    "relationships": [
+     {
+      "type": "penetrates",
+      "source": "019a7bf0-0000-7000-8000-000000200003",
+      "target": "019a7bf0-0000-7000-8000-000000200001"
+     },
+     {
+      "type": "references",
+      "source": "019a7bf0-0000-7000-8000-000000200003",
+      "target": "019a7bf0-0000-7000-8000-000000200002",
+      "role": "subject"
+     }
+    ],
+    "index_complete": true
+   },
+   "action": {
+    "type": "delete",
+    "module": "arch",
+    "target": "019a7bf0-0000-7000-8000-000000200001"
+   },
+   "expected": {
+    "outcome": "accepted",
+    "findings": [],
+    "primary_code": null,
+    "deleted_ids": [
+     "019a7bf0-0000-7000-8000-000000200001"
+    ],
+    "relationships_after": [
+     {
+      "type": "penetrates",
+      "source": "019a7bf0-0000-7000-8000-000000200003",
+      "target": "019a7bf0-0000-7000-8000-000000200001"
+     },
+     {
+      "type": "references",
+      "source": "019a7bf0-0000-7000-8000-000000200003",
+      "target": "019a7bf0-0000-7000-8000-000000200002",
+      "role": "subject"
+     }
+    ],
+    "penetration_preserved": true,
+    "post_delete_validation": {
+     "status": "pass",
+     "primary_code": null,
+     "incomplete": false,
+     "truncated": false,
+     "findings": [],
+     "total_findings": 0
+    }
+   }
+  },
+  {
+   "case_id": "DVC-X-VALIDATION-01",
+   "title": "Unavailable incoming index alone makes the report incomplete",
+   "rules": [
+    "DV-REL-010"
+   ],
+   "polarity": "negative",
+   "first_slice": true,
+   "f04_refs": [],
+   "given": {
+    "modules": [
+     "steel"
+    ],
+    "vocabulary": "0.1.0",
+    "elements": [
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200001",
+      "kind": "plate",
+      "discipline": "steel",
+      "attrs": {
+       "steel:plate:widthMm": 1000,
+       "steel:plate:lengthMm": 500,
+       "steel:plate:thicknessMm": 10
+      }
+     }
+    ],
+    "relationships": [],
+    "index_complete": false
+   },
+   "action": {
+    "type": "delete",
+    "module": "steel",
+    "target": "019a7bf0-0000-7000-8000-000000200001",
+    "stage": "H"
+   },
+   "expected": {
+    "outcome": "rejected",
+    "findings": [
+     {
+      "rule": "DV-REL-010",
+      "severity": "error",
+      "code": "DEPENDENCY_UNAVAILABLE"
+     }
+    ],
+    "primary_code": "DEPENDENCY_UNAVAILABLE",
+    "status": "incomplete",
+    "incomplete": true,
+    "truncated": false,
+    "total_findings": 1,
+    "no_state_change": true
+   }
+  },
+  {
+   "case_id": "DVC-X-VALIDATION-02",
+   "title": "Unavailable index takes precedence over a definite incoming dependency error",
+   "rules": [
+    "DV-REL-009",
+    "DV-REL-010"
+   ],
+   "polarity": "negative",
+   "first_slice": true,
+   "f04_refs": [],
+   "given": {
+    "modules": [
+     "steel"
+    ],
+    "vocabulary": "0.1.0",
+    "elements": [
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200001",
+      "kind": "plate",
+      "discipline": "steel",
+      "attrs": {
+       "steel:plate:widthMm": 1000,
+       "steel:plate:lengthMm": 500,
+       "steel:plate:thicknessMm": 10
+      }
+     },
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200002",
+      "kind": "plate",
+      "discipline": "steel",
+      "attrs": {
+       "steel:plate:widthMm": 1000,
+       "steel:plate:lengthMm": 500,
+       "steel:plate:thicknessMm": 10
+      }
+     }
+    ],
+    "relationships": [
+     {
+      "type": "references",
+      "source": "019a7bf0-0000-7000-8000-000000200002",
+      "target": "019a7bf0-0000-7000-8000-000000200001"
+     }
+    ],
+    "index_complete": false
+   },
+   "action": {
+    "type": "delete",
+    "module": "steel",
+    "target": "019a7bf0-0000-7000-8000-000000200001",
+    "stage": "H"
+   },
+   "expected": {
+    "outcome": "rejected",
+    "findings": [
+     {
+      "rule": "DV-REL-009",
+      "severity": "error",
+      "code": "DEPENDENCY_CONFLICT"
+     },
+     {
+      "rule": "DV-REL-010",
+      "severity": "error",
+      "code": "DEPENDENCY_UNAVAILABLE"
+     }
+    ],
+    "primary_code": "DEPENDENCY_UNAVAILABLE",
+    "status": "incomplete",
+    "incomplete": true,
+    "truncated": false,
+    "total_findings": 2,
+    "no_state_change": true
+   }
+  },
+  {
+   "case_id": "DVC-X-CONFLICT-03",
+   "title": "Post-merge sequence check accepts one noncompeting transition",
+   "rules": [
+    "DV-PEN-003",
+    "DV-MRG-001"
+   ],
+   "polarity": "positive",
+   "first_slice": false,
+   "f04_refs": [],
+   "given": {
+    "modules": [
+     "mep",
+     "arch"
+    ],
+    "vocabulary": "0.1.0",
+    "elements": [
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200001",
+      "kind": "wall",
+      "discipline": "arch"
+     },
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200002",
+      "kind": "pipe",
+      "discipline": "mep"
+     },
+     {
+      "id": "019a7bf0-0000-7000-8000-000000200003",
+      "kind": "penetration",
+      "discipline": "mep",
+      "state": "accepted",
+      "stateSeq": 2,
+      "proposer": "mep"
+     }
+    ],
+    "relationships": [
+     {
+      "type": "penetrates",
+      "source": "019a7bf0-0000-7000-8000-000000200003",
+      "target": "019a7bf0-0000-7000-8000-000000200001"
+     },
+     {
+      "type": "references",
+      "source": "019a7bf0-0000-7000-8000-000000200003",
+      "target": "019a7bf0-0000-7000-8000-000000200002",
+      "role": "subject"
+     }
+    ],
+    "client_reported_valid": true,
+    "merge_provenance": {
+     "base_state": "proposed",
+     "base_stateSeq": 1,
+     "transitions": [
+      {
+       "expected_stateSeq": 1,
+       "to": "accepted",
+       "actor_discipline": "arch"
+      }
+     ]
+    }
+   },
+   "action": {
+    "type": "revalidate_merge",
+    "sources": [
+     "client_a",
+     "client_b"
+    ]
+   },
+   "expected": {
+    "outcome": "accepted",
+    "findings": [],
+    "primary_code": null,
+    "status": "pass",
+    "incomplete": false,
+    "truncated": false,
+    "total_findings": 0,
+    "stateSeq_after": 2
    }
   }
  ]

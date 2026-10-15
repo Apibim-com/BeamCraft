@@ -274,8 +274,12 @@ decision D-4).
 
 Both sides state the vocabulary versions they support and each module states the version it
 requires (section 7.1). The negotiated vocabulary version is the highest version present on both
-sides within one compatibility line. If no line is shared, or a module requires a version outside
-the negotiated set, the module is not enabled (`DV-VER-003`). The host's answer is authoritative.
+sides within one compatibility line. A module is enabled only if a version is selected, that
+version is on the compatibility line of its `requires_vocabulary`, and that version is at least
+that minimum (`DV-VER-003`). Compare versions numerically by (MAJOR, MINOR, PATCH), not as text.
+The minimum need not appear in either peer's advertised set: peers advertising only `0.1.1` can
+enable a module requiring `0.1.0`. No common selected version, a different line, or a selected
+version below the minimum leaves the module disabled. The host's answer is authoritative.
 The client validates before sending with the negotiated version only. The carrying message belongs
 to F05/U02; this contract fixes the content.
 
@@ -283,8 +287,9 @@ to F05/U02; this contract fixes the content.
 
 ### 5.1 The vocabulary
 
-A relationship is a directed record from a **source** element to a **target** element. It is
-identified by the tuple (type, source, target, role), not by a new identity type (`DV-REL-007`).
+A relationship is a directed record from a **source** element to a **target** element, except
+that section 5.4 permits a historical host identity instead of a live target. It is identified by
+the tuple (type, source, target, role), not by a new identity type (`DV-REL-007`).
 `role` is an optional token (`[a-z][a-z0-9_]{0,31}`); only `subject` is defined. A record always
 lives with its source. F04's `bim:profile` and `bim:material` links to immutable definitions are
 not element relationships and are not covered here.
@@ -318,9 +323,11 @@ the decision fields of section 5.4.
 ### 5.3 Delete and copy
 
 - **Delete.** F04 forbids deleting an element that has unresolved incoming dependencies, with no
-  implicit cascade. An incoming record blocks the delete (`DV-REL-009`), except records from a
-  penetration in `rejected` or `withdrawn`. If the incoming index cannot be completed the answer
-  is `DV-REL-010`, never "no links". Deleting an element removes its own outgoing records with it.
+  implicit cascade. An incoming live record blocks the delete (`DV-REL-009`). Only a `penetrates`
+  record whose source penetration is `rejected` or `withdrawn` is historical (section 5.4) and
+  does not block it. Other records from that penetration, including its subject reference, remain
+  live. If the incoming index cannot be completed the answer is `DV-REL-010`, never "no links".
+  Deleting an element removes its own outgoing records with it.
 - **Copy.** The first F04 `CopyElement` takes one source. A source that has element-to-element
   relationships is refused rather than copied incompletely (`DV-REL-011`).
 - **Deactivated targets** are reported, not rejected (`DV-REL-012`).
@@ -341,8 +348,14 @@ the common vocabulary; D-2 whether `opening` and `penetration` stay separate kin
 - State fields, written only through a transition: `bim:penetration:state` [`state`] and
   `bim:penetration:stateSeq` [`stateSeq`], an unsigned integer that is 1 at creation and rises by
   exactly 1 on each accepted transition or request edit.
-- Records: one `penetrates` to the host, one `references` with role `subject` to the passing
-  element.
+- Records: one `penetrates` naming the host, one live `references` with role `subject` to the
+  passing element. The `penetrates` record is live in `proposed` or `accepted`; in `rejected` or
+  `withdrawn` its target is a stable historical ElementId, not a live link. The record and target
+  ID stay unchanged with the source; no party edits the other discipline's record on deletion.
+  A historical target need not resolve (`DV-REL-001`); target-kind and deactivation checks
+  (`DV-REL-003`, `DV-REL-012`) apply only while it is live. It still counts for cardinality and
+  duplicate checks. Returning to `proposed` makes it live again and requires the same host to
+  resolve; a missing host rejects the transition with `DV-REL-001`. No retargeting is implicit.
 - Closed reason codes: `position`, `size`, `structural`, `other`.
 
 **Who.** The **proposer** is the discipline in `bim:discipline`. The **host discipline** is the
@@ -377,8 +390,10 @@ host accepts) the first applied wins and the second is rejected with `DV-PEN-003
 section 2). If both transitions arrive through a merge, the merged result is refused by
 `DV-MRG-001` together with `DV-PEN-003`, and a person re-issues the transition against the new
 state. Deleting a host that has a `proposed` or `accepted` penetration is `DV-REL-009`; the host
-discipline first rejects the request, which unblocks the delete. Deleting a penetration is not a
-transition and has no rule in 0.1.0 (open decision D-5).
+discipline first rejects the request. Its `penetrates` record then becomes historical, which
+unblocks deletion if no other live incoming records remain and the incoming index is complete.
+The retained record remains valid after host deletion. Deleting a penetration is not a transition
+and has no rule in 0.1.0 (open decision D-5).
 
 ## 6. Validation layer
 
@@ -392,7 +407,11 @@ The same rule catalogue runs at three points. The letter is used in the catalogu
   transaction after F04's checks of version, context, op_id replay, workspace and base.
 - **M, post-merge re-check.** After a merge or rebase the host re-runs every model and
   relationship rule on the merged result and ignores any client-reported pass (`DV-MRG-001`).
-  Ownership rules (`DV-OWN-*`) are checked against the recorded operation provenance.
+  All element and module rules also run when applicable. Checks use the merged state and recorded
+  operation provenance: authoring, ownership, transition, delete, copy and module-operation rules
+  re-check the relevant operations against the merged inputs. Authoring-only checks apply to
+  those writes, not to untouched loaded content; unknown and reserved content stays preserved.
+  A valid final state alone cannot prove that competing transitions were valid.
 
 A failing H or M run changes nothing: authored state, derived state and generation stay as they
 were (F04 section 8), and local drafts are kept.
@@ -412,7 +431,8 @@ A validation result is a logical message, not a stored file.
 | `vocabulary_version` | Negotiated version used |
 | `stage` | `C`, `H` or `M` |
 | `status` | `pass`, `fail` or `incomplete` |
-| `primary_code` | F04 code of the first error finding, else `null` |
+| `primary_code` | `DEPENDENCY_UNAVAILABLE` if incomplete; else first error code or `null` |
+| `incomplete` | True if any required input was unavailable or a traversal limit prevented checking |
 | `total_findings` | Count of findings found, saturating at 1,000,000 |
 | `truncated` | True if `findings` is shorter than `total_findings` |
 | `findings` | At most 256 entries, ordered as in 6.4 |
@@ -420,85 +440,101 @@ A validation result is a logical message, not a stored file.
 A finding has `rule_id`, `severity` (`error`, `warning`, `info`), `code` (an F04 code for an
 error, `null` otherwise), and as needed `element_id`, `relationship` (`type`, `source`, `target`,
 `role`), `attribute` and `message`. The message is a fixed text of at most 256 bytes per rule; it
-never contains a credential, a private path or client data. `status` is `fail` if any error is
-present, `incomplete` if a needed input was unavailable (`DV-REL-010`), otherwise `pass`;
-warnings alone give `pass`.
+never contains a credential, a private path or client data. Every C, H and M report uses this exact
+precedence, independently of finding order:
+
+1. Required input unavailable (`DV-REL-010`) or traversal stopped at a host limit: `status` is
+   `incomplete`, `primary_code` is `DEPENDENCY_UNAVAILABLE`, and `incomplete` is `true`, even if
+   definite error findings are also present. Retain all definite findings that were found.
+2. Otherwise, any error: `status` is `fail`, `primary_code` is the first ordered error's code,
+   and `incomplete` is `false`.
+3. Otherwise: `status` is `pass`, `primary_code` is `null`, and `incomplete` is `false`.
+   Warnings alone give `pass`.
+
+In every branch, `truncated` is exactly `len(findings) < total_findings`: unavailable input alone
+does not set it. `total_findings` counts findings actually found, not unvisited possibilities.
+Unavailable-only and unavailable-plus-one-definite-error reports have `truncated: false` when
+their one or two findings fit. Neither `fail` nor `incomplete` permits H or M to accept a change.
 
 ### 6.4 Bounds and determinism
 
 1. Findings are ordered by severity (`error`, `warning`, `info`), then by family in this order:
    VER, MOD, KIND, BASE, NS, OWN, REL, PEN, COL, ATTR, LIM, MRG, then by rule ID, `element_id`,
    `attribute`, and the relationship tuple. Comparison is bytewise on UTF-8.
-2. The report keeps the first 256 findings in that order. Errors sort first, so truncation cannot
-   hide the primary code; `truncated` is set.
-3. `primary_code` is the code of the first error, matching the F04 section 8 rule that multiple
-   failures follow a fixed validation order and tests must not depend on collection order.
+2. The report keeps the first 256 findings in that order. `truncated` is true only when findings
+   are omitted by this cap; it is independent of `incomplete`.
+3. Select `primary_code` by the precedence in 6.3 before truncation: unavailable inputs override
+   the first ordered error, even if the unavailable finding falls beyond the report cap.
+   Otherwise errors sort first, so the first error is retained. This is a fixed validation order
+   under F04 section 8; tests must not depend on collection order.
 4. The checker visits each element and each record a bounded number of times: duplicate and cycle
    detection are linear in the number of elements plus records. The input is bounded by the F04
    caps and the host's stage-traversal limits; an input that exceeds a host limit gives
    `incomplete` with `DEPENDENCY_UNAVAILABLE`, not a partial pass.
-5. The result depends only on the content, the negotiated version and the enabled modules. It does
-   not depend on a clock, a random source, map iteration order or the platform.
+5. The result depends only on the content, recorded operations, available validation inputs,
+   configured limits, negotiated version and enabled modules. It does not depend on a clock,
+   a random source, map iteration order or the platform.
 
 ### 6.5 Rule catalogue
 
 Run points: C client, H host, M post-merge. `now`: implementable in the first slice. `reserved`:
 specification only. An F04 code of `-` means the rule is a warning and never rejects. No new F04
-code is introduced: every error maps to one of the existing 23 codes.
+code is introduced: every error maps to one of the existing 23 codes. A run point checks a rule
+when its triggering content or operation is present, as defined in 6.1.
 
 | Rule | Severity | Scope | Run | F04 code | Slice |
 |------|----------|-------|-----|----------|-------|
 | DV-VER-001 | error | model | C H M | UNSUPPORTED_VERSION | now |
-| DV-VER-002 | error | element | C H | UNSUPPORTED_VERSION | now |
-| DV-VER-003 | error | model | C H | UNSUPPORTED_VERSION | now |
-| DV-KIND-001 | error | element | C H | INVALID_ARGUMENT | now |
+| DV-VER-002 | error | element | C H M | UNSUPPORTED_VERSION | now |
+| DV-VER-003 | error | model | C H M | UNSUPPORTED_VERSION | now |
+| DV-KIND-001 | error | element | C H M | INVALID_ARGUMENT | now |
 | DV-KIND-002 | warning | model | H M | - | now |
-| DV-KIND-003 | error | element | C H | UNSUPPORTED_COMMAND | now |
-| DV-KIND-004 | error | element | C H | UNSUPPORTED_COMMAND | now |
-| DV-KIND-005 | error | element | C H | INVALID_ARGUMENT | now |
+| DV-KIND-003 | error | element | C H M | UNSUPPORTED_COMMAND | now |
+| DV-KIND-004 | error | element | C H M | UNSUPPORTED_COMMAND | now |
+| DV-KIND-005 | error | element | C H M | INVALID_ARGUMENT | now |
 | DV-BASE-001 | error | element | C H M | INVALID_ID | now |
 | DV-BASE-002 | error | model | C H M | DUPLICATE_ID | now |
-| DV-BASE-003 | error | element | C H | INVALID_ARGUMENT | now |
+| DV-BASE-003 | error | element | C H M | INVALID_ARGUMENT | now |
 | DV-BASE-004 | error | element | C H M | INVALID_ARGUMENT | now |
-| DV-BASE-005 | error | element | C H | INVALID_ARGUMENT | now |
+| DV-BASE-005 | error | element | C H M | INVALID_ARGUMENT | now |
 | DV-BASE-006 | error | element | H M | NOT_FOUND | now |
 | DV-ATTR-001 | error | element | C H M | INVALID_ARGUMENT | now |
 | DV-ATTR-002 | error | element | C H M | INVALID_ARGUMENT | now |
 | DV-ATTR-003 | error | element | C H M | NON_FINITE_NUMBER | now |
-| DV-ATTR-004 | error | element | C H | UNSUPPORTED_PROPERTY | now |
-| DV-ATTR-005 | error | element | C H | UNSUPPORTED_PROPERTY | now |
+| DV-ATTR-004 | error | element | C H M | UNSUPPORTED_PROPERTY | now |
+| DV-ATTR-005 | error | element | C H M | UNSUPPORTED_PROPERTY | now |
 | DV-LIM-001 | error | element | C H M | LIMIT_EXCEEDED | now |
 | DV-LIM-002 | error | element | C H M | INVALID_ARGUMENT | now |
 | DV-LIM-003 | error | element | C H M | INVALID_ARGUMENT | now |
 | DV-OWN-001 | error | element | C H M | FOREIGN_READ_ONLY | reserved |
 | DV-OWN-002 | error | element | C H M | PERMISSION_DENIED | now |
-| DV-OWN-003 | error | element | C H | UNSUPPORTED_PROPERTY | now |
-| DV-NS-001 | error | element | C H | INVALID_ARGUMENT | now |
+| DV-OWN-003 | error | element | C H M | UNSUPPORTED_PROPERTY | now |
+| DV-NS-001 | error | element | C H M | INVALID_ARGUMENT | now |
 | DV-NS-002 | error | element | H M | INTEGRITY_ERROR | now |
 | DV-REL-001 | error | relationship | C H M | DANGLING_RELATIONSHIP | now |
-| DV-REL-002 | error | relationship | C H | INVALID_ARGUMENT | now |
+| DV-REL-002 | error | relationship | C H M | INVALID_ARGUMENT | now |
 | DV-REL-003 | error | relationship | C H M | INVALID_ARGUMENT | reserved |
 | DV-REL-004 | error | relationship | C H M | DEPENDENCY_CONFLICT | reserved |
 | DV-REL-005 | error | model | C H M | DEPENDENCY_CONFLICT | reserved |
 | DV-REL-006 | error | relationship | C H M | INVALID_ARGUMENT | now |
 | DV-REL-007 | error | relationship | C H M | INVALID_ARGUMENT | now |
 | DV-REL-008 | error | relationship | C H M | FOREIGN_READ_ONLY | reserved |
-| DV-REL-009 | error | relationship | H | DEPENDENCY_CONFLICT | now |
-| DV-REL-010 | error | relationship | H | DEPENDENCY_UNAVAILABLE | now |
-| DV-REL-011 | error | relationship | C H | DEPENDENCY_CONFLICT | now |
+| DV-REL-009 | error | relationship | H M | DEPENDENCY_CONFLICT | now |
+| DV-REL-010 | error | relationship | H M | DEPENDENCY_UNAVAILABLE | now |
+| DV-REL-011 | error | relationship | C H M | DEPENDENCY_CONFLICT | now |
 | DV-REL-012 | warning | relationship | H M | - | now |
 | DV-PEN-001 | error | element | C H M | INVALID_ARGUMENT | reserved |
-| DV-PEN-002 | error | element | C H | PERMISSION_DENIED | reserved |
-| DV-PEN-003 | error | element | C H | DEPENDENCY_CONFLICT | reserved |
-| DV-PEN-004 | error | element | C H | DEPENDENCY_CONFLICT | reserved |
-| DV-PEN-005 | error | element | C H | FOREIGN_READ_ONLY | reserved |
-| DV-PEN-006 | error | element | C H | INVALID_ARGUMENT | reserved |
-| DV-COL-001 | error | element | C H | INVALID_ARGUMENT | reserved |
-| DV-COL-002 | error | model | C H | INVALID_ARGUMENT | reserved |
+| DV-PEN-002 | error | element | C H M | PERMISSION_DENIED | reserved |
+| DV-PEN-003 | error | element | C H M | DEPENDENCY_CONFLICT | reserved |
+| DV-PEN-004 | error | element | C H M | DEPENDENCY_CONFLICT | reserved |
+| DV-PEN-005 | error | element | C H M | FOREIGN_READ_ONLY | reserved |
+| DV-PEN-006 | error | element | C H M | INVALID_ARGUMENT | reserved |
+| DV-COL-001 | error | element | C H M | INVALID_ARGUMENT | reserved |
+| DV-COL-002 | error | model | C H M | INVALID_ARGUMENT | reserved |
 | DV-MOD-001 | error | element | C H M | FOREIGN_READ_ONLY | now |
-| DV-MOD-002 | error | model | H | INTEGRITY_ERROR | now |
-| DV-MOD-003 | error | model | H | INVALID_ARGUMENT | now |
-| DV-MOD-004 | error | model | H | INVALID_ARGUMENT | now |
+| DV-MOD-002 | error | model | H M | INTEGRITY_ERROR | now |
+| DV-MOD-003 | error | model | H M | INVALID_ARGUMENT | now |
+| DV-MOD-004 | error | model | H M | INVALID_ARGUMENT | now |
 | DV-MRG-001 | error | post_merge | M | DEPENDENCY_CONFLICT | now |
 
 Rule text:
@@ -507,8 +543,10 @@ Rule text:
   line the reader does not support. The content may be inspected and preserved, never mutated.
 - **DV-VER-002** A mutation targets an element written by a newer version on the reader's own
   compatibility line. The element is read-only and every unknown attribute on it is preserved.
-- **DV-VER-003** Capability negotiation: a module requires a vocabulary version outside the
-  negotiated set. The module is not enabled; its elements follow DV-MOD-001.
+- **DV-VER-003** Capability negotiation has no selected version, or the selected version is not
+  on the module minimum's compatibility line or is below its `requires_vocabulary` minimum.
+  The module is enabled only when the selected version is on that line and at least that minimum;
+  otherwise it is not enabled and its elements follow DV-MOD-001.
 - **DV-KIND-001** An authoring request names an element kind that is not in the registry of
   section 2.
 - **DV-KIND-002** Loaded content has an element whose kind is not in the registry. It is preserved
@@ -556,10 +594,12 @@ Rule text:
   matching the token syntax of section 4.
 - **DV-NS-002** A rewrite of an element dropped or altered an attribute or relationship that the
   writer does not understand. Unknown content must survive byte-for-byte in meaning.
-- **DV-REL-001** A relationship target does not resolve to an element of the model.
+- **DV-REL-001** A live relationship target does not resolve to an element of the model.
+  Only `penetrates` from a `rejected` or `withdrawn` penetration is historical: its unchanged
+  target ElementId may outlive the host (section 5.4). Every other target must resolve.
 - **DV-REL-002** An authoring request uses a relationship type outside the five of section 5.
 - **DV-REL-003** The source or target kind is not allowed for the relationship type (section 5
-  table).
+  table). Historical `penetrates` targets are exempt from target-kind checks (section 5.4).
 - **DV-REL-004** A cardinality bound of the relationship type is violated for a source or a
   target.
 - **DV-REL-005** `part-of` or `hosted-in` records form a cycle of any length.
@@ -567,18 +607,21 @@ Rule text:
 - **DV-REL-007** Two records have the same type, source, target and role.
 - **DV-REL-008** A relationship record is authored or edited by a discipline other than the owner
   of its source element.
-- **DV-REL-009** A delete targets an element that has an incoming record, unless every such record
-  comes from a penetration in `rejected` or `withdrawn`. No cascade.
+- **DV-REL-009** A delete targets an element that has an incoming live record. Only historical
+  `penetrates` records from `rejected` or `withdrawn` penetrations are nonblocking; they remain
+  with their sources and keep the host ID after deletion. Other incoming records still block.
+  No cascade or cross-discipline record edit is implicit.
 - **DV-REL-010** The incoming-relationship index needed to decide a delete is incomplete or
   unavailable.
 - **DV-REL-011** A copy source has element-to-element relationships. The first copy supports none
   (F04 section 7).
-- **DV-REL-012** A relationship target is `deactivated`. The record stays valid; the target is
+- **DV-REL-012** A live relationship target is `deactivated`. The record stays valid; the target is
   listed.
 - **DV-PEN-001** A penetration state change is not an edge of the transition table of section 5.4.
 - **DV-PEN-002** The actor's discipline is not the one entitled to the requested transition.
 - **DV-PEN-003** The transition's expected `stateSeq` differs from the stored value (a concurrent
-  change).
+  change), or merge provenance contains competing transitions from the same sequence. Check at
+  C, H and M; a valid-looking final state does not erase a sequence conflict.
 - **DV-PEN-004** `accepted` is requested while the host element is missing or `deactivated`.
 - **DV-PEN-005** The host discipline edits a request field, or the proposer edits a decision
   field.
@@ -593,8 +636,10 @@ Rule text:
 - **DV-MOD-003** A module manifest declares a dependency on another module.
 - **DV-MOD-004** A module manifest registers the shared namespace `bim`, a reserved token, or a
   namespace that another module already registered.
-- **DV-MRG-001** A merged result violates an error-severity rule. The host re-runs every model and
-  relationship rule on the merged result and ignores any client-reported pass.
+- **DV-MRG-001** A merged result or its recorded operations violate a definite error-severity
+  rule. The host re-runs all applicable catalogue rules and ignores any client-reported pass.
+  Unavailable inputs alone do not prove a violation; they block acceptance as `incomplete` under
+  section 6.3, including when a definite violation also raises DV-MRG-001.
 
 ### 6.6 Collision classes (declared only)
 
@@ -611,7 +656,8 @@ A module is a unit of one application, not a separate program. It provides a **m
 
 1. `module`: its token, equal to its discipline and namespace token (section 4.2).
 2. `version` of the module, and `requires_vocabulary`: the lowest vocabulary version it needs
-   (section 4.7).
+   (section 4.7). The selected version must be on this minimum's compatibility line and at least
+   this minimum; an exact match in the advertised sets is not required (`DV-VER-003`).
 3. `kinds_implemented`: kinds from the registry whose owner is its discipline (or `any`).
    Reserved kinds appear here only in a later vocabulary version (`DV-KIND-004`).
 4. `commands`: the logical names of the commands it adds to the engine. Each follows F04: typed
@@ -642,8 +688,9 @@ engine layer; section 10 proposes the F08 edit and flags that it is not applied.
 ### 7.4 Enabled and disabled
 
 A module is **enabled** for a project when the project's module list includes it and the host has
-it installed and its required version negotiated (`DV-VER-003`). Where the list is stored is a U02
-decision. A module that is absent, not installed or refused by negotiation is **disabled**.
+it installed, and the selected vocabulary version is on the compatibility line of its minimum and
+at least that minimum (`DV-VER-003`). Where the list is stored is a U02 decision. A module that is
+absent, not installed or refused by negotiation is **disabled**.
 
 For a project that contains elements of a disabled module:
 
@@ -654,7 +701,8 @@ For a project that contains elements of a disabled module:
 3. Any mutation, including `DeleteElement`, is rejected with `FOREIGN_READ_ONLY` (`DV-MOD-001`).
 4. The module's commands, panels, tools and discipline rules are absent. The shared `DV-` rules
    still run on those elements, structurally.
-5. Enabling the module again restores editing without migration if the versions still match.
+5. Enabling the module again restores editing without migration if the versions remain compatible
+   under sections 4.6 and 4.7.
 6. Authoring a kind through a disabled module is `DV-KIND-003` (`UNSUPPORTED_COMMAND`).
 
 ### 7.5 Multiple modules at once
@@ -698,9 +746,9 @@ collision evaluation.
 [The case file](domain-vocabulary-cases-v0.1.json) holds original acceptance descriptions. They
 are proposed future tests, **not** a runnable engine, USD fixture or module mock.
 
-There are 139 logical cases: 69 positive and 70 negative. 104 are
+There are 149 logical cases: 73 positive and 76 negative. 104 are
 rule pairs: each of the 52 rules `DV-FAM-NNN` has a positive case `DVC-FAM-NNN-P` and a
-negative case `DVC-FAM-NNN-N`. The other 35 are extra cases with IDs `DVC-X-<group>-<NN>`:
+negative case `DVC-FAM-NNN-N`. The other 45 are extra cases with IDs `DVC-X-<group>-<NN>`:
 
 - valid steel elements (`DVC-X-STEEL-*`);
 - reserved or disabled kinds rejected, and a project with foreign-module content preserved
@@ -709,14 +757,16 @@ negative case `DVC-FAM-NNN-N`. The other 35 are extra cases with IDs `DVC-X-<gro
 - vocabulary version negotiation (`DVC-X-VERSION-*`);
 - read-only foreign discipline (`DVC-X-READ-01`, and `DV-OWN-001`, `DV-MOD-001` pairs);
 - cardinality, cycle, delete and copy for penetrations (`DVC-X-REL-*`);
+- unavailable-only and mixed-error validation precedence (`DVC-X-VALIDATION-*`);
 - the penetration lifecycle: eight allowed and eight forbidden transitions (`DVC-X-LIFE-A1`
-  to `A8`, `F1` to `F8`) and two conflict cases (`DVC-X-CONFLICT-*`).
+  to `A8`, `F1` to `F8`), two conflict cases and a conflict-free merge (`DVC-X-CONFLICT-*`).
 
-Of the cases, 89 are `first_slice: true` and 50 are `first_slice: false`, which
+Of the cases, 93 are `first_slice: true` and 56 are `first_slice: false`, which
 are specification only. A negative case lists the findings its rule raises with severity and F04
-code; `primary_code` is the first error in the order of section 6.4. The case file uses short
-logical keys (`kind`, `discipline`, `state`, `stateSeq`, `reason`, `attrs`); they stand for the
-attributes named in sections 2 to 5 and are not USD names. Cases that name an `f04_refs` entry
+code; `primary_code` follows the unavailable-input precedence of sections 6.3 and 6.4. The case
+file uses short logical keys (`kind`, `discipline`, `state`, `stateSeq`, `reason`, `attrs`);
+they stand for the attributes named in sections 2 to 5 and are not USD names. Cases that name an
+`f04_refs` entry
 refer to the [F04 case file](model-command-cases-v0.1.json) and agree with its code.
 
 F04 cases referenced:
@@ -769,3 +819,46 @@ F04 cases referenced:
 ### 10.3 Log
 
 - 2026-10-15: initial draft 0.1.0 (F10).
+
+- 2026-10-15: F10 review fixes, round 1; draft 0.1.0 remains not frozen.
+  1. Finding 1 confirmed: `requires_vocabulary` is a minimum, not set membership. Sections 4.7,
+     7.1 and 7.4 and DV-VER-003 now require the selected version to share the minimum's line and
+     be at least the minimum. DVC-X-VERSION-04 accepts `0.1.1` for a `0.1.0` minimum;
+     DVC-X-VERSION-05 rejects a same-line version below the minimum. The original pair retains
+     its exact-version positive and off-line negative meanings.
+  2. Finding 2 confirmed: retained live host records contradicted dangling-target validation.
+     Sections 5.3 and 5.4 and DV-REL-001/009 now classify only `penetrates` from `rejected` or
+     `withdrawn` sources as historical; their unchanged host IDs need not resolve. Cardinality
+     is retained, DV-REL-003/012 target checks apply only to live links, other records stay live,
+     and re-proposing requires the host again.
+     DVC-X-REL-04 now asserts retained records and valid post-delete state; DVC-X-REL-06 to
+     DVC-X-REL-10 cover missing historical/live hosts, live subject deletion, reactivation and
+     rejected-host deletion. DVC-X-REL-04 keeps its accepted outcome.
+  3. Finding 3 confirmed: error-first aggregation hid incomplete validation. Sections 6.3/6.4
+     now specify `incomplete` before `fail` before `pass`, an explicit `incomplete` flag and
+     `DEPENDENCY_UNAVAILABLE` primary precedence even with definite errors. `truncated` records
+     omitted findings only. DVC-REL-010-P/N gain explicit envelope expectations;
+     DVC-X-VALIDATION-01/02 cover unavailable-only and mixed-error reports. The original
+     outcomes and primary codes are unchanged. DV-MRG-001 distinguishes definite violations
+     from unavailable inputs without overriding the incomplete aggregate status.
+  4. Finding 4 confirmed: DV-PEN-003 omitted M despite section 5.4. It now checks competing
+     transitions in merge provenance at M even when the final state is valid.
+     DVC-X-CONFLICT-02 retains its conflict result with explicit provenance; new
+     DVC-X-CONFLICT-03 supplies the conflict-free M counterpart. The complete run-list audit
+     adds M to every other omitted rule, applying operation checks to recorded writes and
+     shared structural checks to disabled-module content (sections 6.1 and 7.4):
+     - DV-VER-002, DV-VER-003: version mutation and module minimum checks.
+     - DV-KIND-001, DV-KIND-003, DV-KIND-004, DV-KIND-005: authored kind and owner checks.
+     - DV-BASE-003, DV-BASE-005: label and material-digest checks.
+     - DV-ATTR-004, DV-ATTR-005: authored attribute and kind checks.
+     - DV-OWN-003, DV-NS-001: immutable fields and authored name syntax.
+     - DV-REL-002, DV-REL-009, DV-REL-010, DV-REL-011: relationship authoring, delete inputs
+       and copy checks.
+     - DV-PEN-002, DV-PEN-004, DV-PEN-005, DV-PEN-006: transition rights, host state, field
+       ownership and rejection reasons.
+     - DV-COL-001, DV-COL-002: collision declarations and their use.
+     - DV-MOD-002, DV-MOD-003, DV-MOD-004: preservation, dependencies and namespace registration.
+  All 52 rule IDs and 139 existing case IDs are retained. Existing cases keep their meanings
+  and expected values; only assertions and input detail are added. Ten new case IDs continue the
+  VERSION, REL and CONFLICT sequences and start VALIDATION. Totals are 149 cases: 73 positive,
+  76 negative; 104 rule-pair cases and 45 extras; 93 first-slice and 56 reserved cases.
