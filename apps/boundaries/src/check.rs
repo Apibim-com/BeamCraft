@@ -386,57 +386,108 @@ fn attribute(code: &[char], from: usize) -> Option<(String, usize)> {
     None
 }
 
+/// Index just after the `}` that closes the `{` at `start` (the end of `code` if unclosed).
+fn block_end(code: &[char], start: usize) -> usize {
+    let mut depth = 0usize;
+    let mut j = start;
+    while let Some(&c) = code.get(j) {
+        j += 1;
+        if c == '{' {
+            depth += 1;
+        } else if c == '}' {
+            depth = depth.saturating_sub(1);
+            if depth == 0 {
+                break;
+            }
+        }
+    }
+    j
+}
+
+/// Replaces every character in `from..to` except newlines by a space.
+fn blank(code: &mut [char], from: usize, to: usize) {
+    for c in code.iter_mut().take(to).skip(from) {
+        if *c != '\n' {
+            *c = ' ';
+        }
+    }
+}
+
 /// Blanks every item annotated `#[cfg(test)]` (a `mod`, `fn`, `use`, ... with its body), wherever
-/// it appears. An inner `#![cfg(test)]` makes the whole file test code. Production code before,
-/// between and after test items stays visible, so ordering cannot hide a forbidden API.
+/// it appears. An inner `#![cfg(test)]` exempts only the scope that contains it: the whole file
+/// when it appears at file level before any item, otherwise just the enclosing `{ ... }` block
+/// (an inline `mod tests`). A misplaced file-level inner attribute after an item is ignored, so
+/// the code stays scanned. Production code before, between and after test items stays visible,
+/// so ordering cannot hide a forbidden API.
 fn without_test_items(code: &mut [char]) {
     let mut i = 0;
-    while i < code.len() {
-        if code.get(i) != Some(&'#') {
-            i += 1;
-            continue;
-        }
-        let Some((text, after)) = attribute(code, i) else {
-            break;
-        };
-        if text == "#![cfg(test)]" {
-            code.iter_mut().for_each(|c| *c = ' ');
-            return;
-        }
-        if text != "#[cfg(test)]" {
-            i = after;
-            continue;
-        }
-        // Consume the annotated item: up to a `;` or the end of its first brace block.
-        let mut j = after;
-        let (mut brace, mut other) = (0usize, 0usize);
-        let mut opened = false;
-        while let Some(&c) = code.get(j) {
-            j += 1;
-            match c {
-                '{' => {
-                    brace += 1;
-                    opened = true;
+    let mut open: Vec<usize> = Vec::new();
+    let mut item_seen = false;
+    while let Some(&c) = code.get(i) {
+        match c {
+            '{' => {
+                open.push(i);
+                item_seen = true;
+                i += 1;
+            }
+            '}' => {
+                open.pop();
+                i += 1;
+            }
+            '#' => {
+                let Some((text, after)) = attribute(code, i) else {
+                    break;
+                };
+                if text == "#![cfg(test)]" {
+                    if let Some(start) = open.pop() {
+                        let end = block_end(code, start);
+                        blank(code, start, end);
+                        i = end;
+                    } else if item_seen {
+                        i = after;
+                    } else {
+                        blank(code, 0, code.len());
+                        return;
+                    }
+                    continue;
                 }
-                '}' => {
-                    brace = brace.saturating_sub(1);
-                    if opened && brace == 0 && other == 0 {
-                        break;
+                if text != "#[cfg(test)]" {
+                    i = after;
+                    continue;
+                }
+                item_seen = true;
+                // Consume the annotated item: up to a `;` or the end of its first brace block.
+                let mut j = after;
+                let (mut brace, mut other) = (0usize, 0usize);
+                let mut opened = false;
+                while let Some(&c) = code.get(j) {
+                    j += 1;
+                    match c {
+                        '{' => {
+                            brace += 1;
+                            opened = true;
+                        }
+                        '}' => {
+                            brace = brace.saturating_sub(1);
+                            if opened && brace == 0 && other == 0 {
+                                break;
+                            }
+                        }
+                        '(' | '[' => other += 1,
+                        ')' | ']' => other = other.saturating_sub(1),
+                        ';' if brace == 0 && other == 0 => break,
+                        _ => {}
                     }
                 }
-                '(' | '[' => other += 1,
-                ')' | ']' => other = other.saturating_sub(1),
-                ';' if brace == 0 && other == 0 => break,
-                _ => {}
+                let end = j.min(code.len());
+                blank(code, i, end);
+                i = end;
+            }
+            c => {
+                item_seen |= !c.is_whitespace();
+                i += 1;
             }
         }
-        let end = j.min(code.len());
-        for c in code.iter_mut().take(end).skip(i) {
-            if *c != '\n' {
-                *c = ' ';
-            }
-        }
-        i = end;
     }
 }
 
@@ -460,6 +511,8 @@ fn std_group_heads(code: &str) -> Vec<String> {
                     fresh = true;
                 }
                 c if depth == 1 && fresh && (c.is_alphanumeric() || c == '_') => head.push(c),
+                // Whitespace after a non-empty head ends it, so `fs as f` is `fs`, not `fsasf`.
+                c if depth == 1 && c.is_whitespace() && !head.is_empty() => fresh = false,
                 c if depth == 1 && !c.is_whitespace() => fresh = false,
                 _ => {}
             }
@@ -884,6 +937,58 @@ mod tests {
     }
 
     #[test]
+    fn a_dotted_alias_is_checked_by_its_real_package() {
+        use crate::manifest::{parse_manifest, parse_manifest_in};
+        // `geom.package = "tokio"` hides an unlisted package behind an allowed internal name.
+        let hidden =
+            parse_manifest("[dependencies]\ngeom.package = \"tokio\"\ngeom.version = \"1\"\n")
+                .unwrap();
+        let v = with(good(), |ws| {
+            pkg_mut(ws, "model").dependencies = hidden.dependencies;
+        });
+        assert_eq!(
+            v,
+            [Violation::ForbiddenThirdParty {
+                package: "model".into(),
+                dependency: "tokio".into(),
+                section: "dependencies".into()
+            }]
+        );
+        // The same through an inherited root alias.
+        let root = parse_manifest(
+            "[workspace.dependencies]\ngeom = { package = \"tokio\", version = \"1\" }\n\
+             g = { package = \"geom\", path = \"crates/geom\" }\n",
+        )
+        .unwrap();
+        let member = parse_manifest_in(
+            "[dependencies]\ngeom.workspace = true\n",
+            &root.workspace_dependencies,
+        )
+        .unwrap();
+        let v = with(good(), |ws| {
+            pkg_mut(ws, "model").dependencies = member.dependencies;
+        });
+        assert_eq!(
+            v,
+            [Violation::ForbiddenThirdParty {
+                package: "model".into(),
+                dependency: "tokio".into(),
+                section: "dependencies".into()
+            }]
+        );
+        // A harmless alias of an allowed internal package is not a third-party dependency.
+        let harmless = parse_manifest_in(
+            "[dependencies]\ng.workspace = true\n",
+            &root.workspace_dependencies,
+        )
+        .unwrap();
+        let v = with(good(), |ws| {
+            pkg_mut(ws, "model").dependencies = harmless.dependencies;
+        });
+        assert_eq!(v, []);
+    }
+
+    #[test]
     fn apps_may_use_third_party_crates() {
         let v = with(good(), |ws| {
             pkg_mut(ws, "cli").dependencies.push(Dependency {
@@ -1093,6 +1198,55 @@ use std::environment;
             apis("#[cfg(test)]\nmod tests;\nuse std::fs;\n"),
             ["std::fs"]
         );
+    }
+
+    #[test]
+    fn an_inner_test_attribute_exempts_only_its_own_module() {
+        // The inner attribute belongs to the inline module, not to the file.
+        assert_eq!(
+            apis(
+                "mod tests {\n    #![cfg(test)]\n    use std::process::Command;\n}\nuse std::fs;\n"
+            ),
+            ["std::fs"]
+        );
+        assert_eq!(
+            apis("mod a { #![cfg(test)] use std::net::X; }\nmod b { use std::env; }\n"),
+            ["std::env"]
+        );
+        assert_eq!(
+            apis("mod outer { mod tests { #![cfg(test)] use std::fs; } use std::env; }\n"),
+            ["std::env"]
+        );
+        // A file-level inner attribute before any item still exempts the whole file.
+        assert_eq!(
+            apis(
+                "//! doc\n#![allow(dead_code)]\n#![cfg(test)]\nuse std::fs;\nmod m { use std::net::X; }\n"
+            ),
+            Vec::<&str>::new()
+        );
+        // After an item it is misplaced and exempts nothing.
+        assert_eq!(
+            apis("use std::fs;\n#![cfg(test)]\nuse std::env;\n"),
+            ["std::fs", "std::env"]
+        );
+    }
+
+    #[test]
+    fn grouped_imports_with_aliases_are_forbidden() {
+        assert_eq!(apis("use std::{fs as filesystem};\n"), ["std::fs"]);
+        assert_eq!(apis("use std::{fs as f, io};\n"), ["std::fs"]);
+        assert_eq!(apis("use std::{ io , net as n };\n"), ["std::net"]);
+        assert_eq!(
+            apis("use std::{\n    io,\n    process as p,\n};\n"),
+            ["std::process"]
+        );
+        assert_eq!(apis("use std::{io, fs::{self as x}};\n"), ["std::fs"]);
+        assert_eq!(
+            apis("use std::{io::{self as i}, thread};\n"),
+            ["std::thread"]
+        );
+        // An alias that merely looks like a forbidden name is harmless.
+        assert_eq!(apis("use std::{io as fs};\n"), Vec::<&str>::new());
     }
 
     #[test]

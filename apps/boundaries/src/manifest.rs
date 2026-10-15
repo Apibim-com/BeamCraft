@@ -5,8 +5,12 @@
 //!
 //! It understands `[package]` (`name`, `publish`), `[workspace]` (`members`) and every dependency
 //! table form: `[dependencies]`, `[dev-dependencies]`, `[build-dependencies]`, their
-//! `[target.<cfg>.*]` variants and the `[dependencies.<name>]` sub-table form. It is not a general
-//! TOML parser; anything else is ignored.
+//! `[target.<cfg>.*]` variants and the `[dependencies.<name>]` sub-table form. A dependency's
+//! fields are accumulated by its key, whether they are written inline (`x = { package = "p" }`),
+//! dotted (`x.package = "p"`, `x.version = "1"`) or in a sub-table, and the checked name is the
+//! real package (`package = "..."`). An inherited entry (`workspace = true`) is resolved against
+//! `[workspace.dependencies]` of the workspace root. It is not a general TOML parser; anything
+//! else is ignored.
 
 use std::fmt;
 
@@ -33,8 +37,10 @@ pub struct Manifest {
     pub publish_false: bool,
     /// `[workspace] members` patterns.
     pub members: Vec<String>,
-    /// Declared dependencies of every table, in file order.
+    /// Declared dependencies of every table, in file order, by real package name.
     pub dependencies: Vec<Dependency>,
+    /// `[workspace.dependencies]` as `(key, real package name)` pairs, in file order.
+    pub workspace_dependencies: Vec<(String, String)>,
 }
 
 /// Why a manifest was not read.
@@ -132,6 +138,14 @@ fn is_dependency_table(token: &str) -> bool {
     )
 }
 
+/// One dependency key with the fields collected so far.
+struct Entry {
+    key: String,
+    section: String,
+    package: Option<String>,
+    inherited: bool,
+}
+
 /// How the current section relates to dependencies.
 enum Section {
     Other,
@@ -139,8 +153,79 @@ enum Section {
     Workspace,
     /// A table of `name = value` lines.
     Deps(String),
-    /// A `[dependencies.name]` sub-table for one dependency.
+    /// A `[dependencies.name]` sub-table for one dependency (index into the entries).
     Dep(usize),
+    /// `[workspace.dependencies]`.
+    WorkspaceDeps,
+    /// A `[workspace.dependencies.name]` sub-table (index into the workspace entries).
+    WorkspaceDep(usize),
+}
+
+/// True if an inline table `value` sets `key = true`.
+fn inline_flag(value: &str, key: &str) -> bool {
+    value.match_indices(key).any(|(at, _)| {
+        let before = value.get(..at).and_then(|s| s.chars().next_back());
+        let word_start = before.is_none_or(|c| c.is_whitespace() || c == '{' || c == ',');
+        let after = value.get(at.saturating_add(key.len())..).unwrap_or("");
+        word_start
+            && after
+                .trim_start()
+                .strip_prefix('=')
+                .is_some_and(|rest| rest.trim_start().starts_with("true"))
+    })
+}
+
+/// Index of the entry for `key` in `section`, created if absent.
+fn entry_index(entries: &mut Vec<Entry>, section: &str, key: &str) -> usize {
+    if let Some(at) = entries
+        .iter()
+        .position(|e| e.key == key && e.section == section)
+    {
+        return at;
+    }
+    entries.push(Entry {
+        key: key.to_owned(),
+        section: section.to_owned(),
+        package: None,
+        inherited: false,
+    });
+    entries.len().saturating_sub(1)
+}
+
+/// Applies one field (`package` or `workspace`) to an entry.
+fn set_field(entry: Option<&mut Entry>, field: &str, value: &str) {
+    let Some(entry) = entry else { return };
+    match field {
+        "package" => {
+            if let Some(real) = string_value(value) {
+                entry.package = Some(real);
+            }
+        }
+        "workspace" => entry.inherited |= value == "true",
+        _ => {}
+    }
+}
+
+/// Records one `key = value` line of a dependency table: inline (`x = { ... }`) or dotted
+/// (`x.package = "p"`). The first dotted token is the dependency key.
+fn record(entries: &mut Vec<Entry>, section: &str, key: &str, value: &str) {
+    let tokens = header_tokens(key);
+    let Some(dep) = tokens.first().filter(|t| !t.is_empty()) else {
+        return;
+    };
+    let at = entry_index(entries, section, dep);
+    match tokens.as_slice() {
+        [_] => {
+            if let Some(entry) = entries.get_mut(at) {
+                if let Some(real) = inline_package(value) {
+                    entry.package = Some(real);
+                }
+                entry.inherited |= inline_flag(value, "workspace");
+            }
+        }
+        [_, field] => set_field(entries.get_mut(at), field, value),
+        _ => {}
+    }
 }
 
 /// Reads the facts the boundary rules need from `text`.
@@ -149,6 +234,18 @@ enum Section {
 ///
 /// [`ManifestError`] if the text exceeds the size or line limits.
 pub fn parse_manifest(text: &str) -> Result<Manifest, ManifestError> {
+    parse_manifest_in(text, &[])
+}
+
+/// Like [`parse_manifest`], resolving inherited dependencies (`workspace = true`) against
+/// `root`, the `[workspace.dependencies]` pairs of the workspace root manifest, and then against
+/// the manifest's own `[workspace.dependencies]`. An inherited key defined nowhere keeps its key
+/// as the name (Cargo itself rejects such a manifest).
+///
+/// # Errors
+///
+/// [`ManifestError`] if the text exceeds the size or line limits.
+pub fn parse_manifest_in(text: &str, root: &[(String, String)]) -> Result<Manifest, ManifestError> {
     if text.len() > MAX_MANIFEST_BYTES {
         return Err(ManifestError::TooLarge);
     }
@@ -157,6 +254,8 @@ pub fn parse_manifest(text: &str) -> Result<Manifest, ManifestError> {
     }
     let mut manifest = Manifest::default();
     let mut section = Section::Other;
+    let mut entries: Vec<Entry> = Vec::new();
+    let mut workspace_entries: Vec<Entry> = Vec::new();
     let mut lines = text.lines();
     while let Some(raw) = lines.next() {
         let line = strip_comment(raw).trim();
@@ -168,7 +267,7 @@ pub fn parse_manifest(text: &str) -> Result<Manifest, ManifestError> {
                 .trim_start_matches('[')
                 .trim_end()
                 .trim_end_matches(']');
-            section = classify(header, &mut manifest);
+            section = classify(header, &mut entries, &mut workspace_entries);
             continue;
         }
         let Some((key, value)) = line.split_once('=') else {
@@ -190,21 +289,33 @@ pub fn parse_manifest(text: &str) -> Result<Manifest, ManifestError> {
                 }
                 manifest.members = quoted_strings(&array);
             }
-            Section::Deps(name) => {
-                let declared = key.split('.').next().unwrap_or(key).trim();
-                let declared = declared.trim_matches(|c| c == '"' || c == '\'');
-                let real = inline_package(value).unwrap_or_else(|| declared.to_owned());
-                push_unique(&mut manifest, real, name);
-            }
-            Section::Dep(at) if key == "package" => {
-                if let (Some(real), Some(dep)) =
-                    (string_value(value), manifest.dependencies.get_mut(*at))
-                {
-                    dep.name = real;
-                }
-            }
+            Section::Deps(name) => record(&mut entries, name, key, value),
+            Section::WorkspaceDeps => record(&mut workspace_entries, "", key, value),
+            Section::Dep(at) => set_field(entries.get_mut(*at), key, value),
+            Section::WorkspaceDep(at) => set_field(workspace_entries.get_mut(*at), key, value),
             _ => {}
         }
+    }
+    manifest.workspace_dependencies = workspace_entries
+        .iter()
+        .map(|e| {
+            (
+                e.key.clone(),
+                e.package.clone().unwrap_or_else(|| e.key.clone()),
+            )
+        })
+        .collect();
+    for entry in entries {
+        let name = match (entry.package, entry.inherited) {
+            (Some(real), _) => real,
+            (None, true) => root
+                .iter()
+                .chain(manifest.workspace_dependencies.iter())
+                .find(|(key, _)| *key == entry.key)
+                .map_or(entry.key, |(_, real)| real.clone()),
+            (None, false) => entry.key,
+        };
+        push_unique(&mut manifest, name, &entry.section);
     }
     Ok(manifest)
 }
@@ -222,12 +333,16 @@ fn push_unique(manifest: &mut Manifest, name: String, section: &str) {
     }
 }
 
-fn classify(header: &str, manifest: &mut Manifest) -> Section {
+fn classify(header: &str, entries: &mut Vec<Entry>, workspace_entries: &mut Vec<Entry>) -> Section {
     let tokens = header_tokens(header);
     let strs: Vec<&str> = tokens.iter().map(String::as_str).collect();
     match strs.as_slice() {
         ["package"] => Section::Package,
         ["workspace"] => Section::Workspace,
+        ["workspace", "dependencies"] => Section::WorkspaceDeps,
+        ["workspace", "dependencies", name] => {
+            Section::WorkspaceDep(entry_index(workspace_entries, "", name))
+        }
         ["workspace", ..] => Section::Other,
         [.., last] if is_dependency_table(last) => Section::Deps(header.to_owned()),
         [.., table, name] if is_dependency_table(table) => {
@@ -237,11 +352,7 @@ fn classify(header: &str, manifest: &mut Manifest) -> Section {
                 .cloned()
                 .collect::<Vec<_>>()
                 .join(".");
-            manifest.dependencies.push(Dependency {
-                name: (*name).to_owned(),
-                section,
-            });
-            Section::Dep(manifest.dependencies.len().saturating_sub(1))
+            Section::Dep(entry_index(entries, &section, name))
         }
         _ => Section::Other,
     }
@@ -327,6 +438,79 @@ mod tests {
     fn repeated_keys_of_one_dependency_count_once() {
         let m = parse_manifest("[dependencies]\nx.workspace = true\nx.optional = true\n").unwrap();
         assert_eq!(m.dependencies.len(), 1);
+    }
+
+    #[test]
+    fn dotted_package_is_resolved_before_the_edge_check() {
+        let m = parse_manifest(
+            "[dependencies]\nbeamcraft-geom.package = \"tokio\"\nbeamcraft-geom.version = \"1\"\n\
+             \"quoted\".package = \"serde\"\nplain.version = \"2\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            deps(&m),
+            [
+                ("tokio", "dependencies"),
+                ("serde", "dependencies"),
+                ("plain", "dependencies")
+            ]
+        );
+    }
+
+    #[test]
+    fn dotted_package_after_other_fields_and_in_a_subtable() {
+        let m = parse_manifest(
+            "[dependencies]\nx.version = \"1\"\nx.package = \"real-x\"\n\
+             [dependencies.y]\nversion = \"1\"\npackage = \"real-y\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            deps(&m),
+            [("real-x", "dependencies"), ("real-y", "dependencies")]
+        );
+    }
+
+    #[test]
+    fn inherited_dependency_resolves_against_the_root_alias() {
+        let root = parse_manifest(
+            "[workspace.dependencies]\nbeamcraft-geom = { package = \"tokio\", version = \"1\" }\n\
+             harmless = { package = \"beamcraft-geom\", path = \"crates/geom\" }\n\
+             [workspace.dependencies.dotted]\npackage = \"serde\"\n\
+             [workspace.dependencies.flat]\nversion = \"1\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            root.workspace_dependencies,
+            [
+                ("beamcraft-geom".to_owned(), "tokio".to_owned()),
+                ("harmless".to_owned(), "beamcraft-geom".to_owned()),
+                ("dotted".to_owned(), "serde".to_owned()),
+                ("flat".to_owned(), "flat".to_owned())
+            ]
+        );
+        assert!(root.dependencies.is_empty());
+        let member = parse_manifest_in(
+            "[dependencies]\nbeamcraft-geom.workspace = true\nharmless = { workspace = true }\n\
+             dotted.workspace = true\nflat.workspace = true\nunknown.workspace = true\n",
+            &root.workspace_dependencies,
+        )
+        .unwrap();
+        assert_eq!(
+            deps(&member),
+            [
+                ("tokio", "dependencies"),
+                ("beamcraft-geom", "dependencies"),
+                ("serde", "dependencies"),
+                ("flat", "dependencies"),
+                ("unknown", "dependencies")
+            ]
+        );
+        let sub = parse_manifest_in(
+            "[dependencies.beamcraft-geom]\nworkspace = true\n",
+            &root.workspace_dependencies,
+        )
+        .unwrap();
+        assert_eq!(deps(&sub), [("tokio", "dependencies")]);
     }
 
     #[test]
