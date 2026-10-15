@@ -18,9 +18,16 @@ dependency checks:
 ```sh
 cargo fmt --all -- --check
 cargo doc --workspace --no-deps
-cargo check --target wasm32-unknown-unknown -p beamcraft-geom -p beamcraft-model
+cargo run -p beamcraft-boundaries -- check
+cargo check --target wasm32-unknown-unknown $(cargo run -q -p beamcraft-boundaries -- portable)
 cargo deny check
 ```
+
+The boundary check compares the workspace manifests with the module table in
+`docs/contracts/module-boundaries-v0.1.md` (it also runs inside `cargo test --workspace`). The
+`portable` command prints the `-p <crate>` list of every `now` domain crate from that table, so the
+wasm crate list is written in one place. In PowerShell, run it first and pass the output to
+`cargo check --target wasm32-unknown-unknown`.
 
 Run the documentation command with `RUSTDOCFLAGS=-D warnings`.
 For example, PowerShell uses `$env:RUSTDOCFLAGS = '-D warnings'`.
@@ -62,7 +69,8 @@ This baseline validates the scaffold. It does not establish USD feature acceptan
 ## CI
 
 `.github/workflows/ci.yml` runs on every PR and push to `master`: fmt, clippy (`-D warnings`), tests
-on Windows and Linux, docs, a wasm32 check of the library crates, and `cargo deny`.
+on Windows and Linux, the module-boundary check, docs, a wasm32 check of the portable domain crates
+(listed by the boundary tool, not by hand), and `cargo deny`.
 
 ## Releases
 

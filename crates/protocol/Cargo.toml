@@ -1,0 +1,15 @@
+[package]
+name = "beamcraft-protocol"
+description = "Pure framing, limits and transport error codes of the BeamCraft private worker protocol (F05)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+beamcraft-model.workspace = true
+
+[lints]
+workspace = true

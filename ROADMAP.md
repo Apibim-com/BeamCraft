@@ -49,6 +49,16 @@ later project; portable domain crates alone do not establish a working web appli
 
 ## Progress log
 
+- 2026-10-15: F08 fixed the module boundaries on base `29d962e790ffd21ecd9a45143f052d4b4d53d3f7`
+  (stacked on F06). `docs/contracts/module-boundaries-v0.1.md` gives the exact crate/module path,
+  allowed dependencies and now/planned status of every F04/F05/F06 area. New code: the pure
+  `beamcraft-protocol` crate (F05 frame header, binary prefix, limits, bundle budget, IPC codes),
+  `model::ErrorCode` (F04 section 8) and the std-only `beamcraft-boundaries` checker, whose test
+  and CI step enforce the module table; the CI wasm crate list is now derived from that table.
+  `kernel`, `engine`, `host` and `ui` are planned paths only. No kernel, worker or command is
+  implemented; the contracts are not frozen and K0 is not passed. Local WASM and cargo-deny
+  checks were not run.
+
 - 2026-10-15: F06 drafted the geometry and viewport contract 0.1.0 on base
   `9d40abc34b8a5686358b78adee5f9c52b9c830bd`, consuming F04 0.1.0, F05 0.1.0 (host boundary
   only) and the first-scope package 0.1.0. It fixes the kernel input and evaluation order, the

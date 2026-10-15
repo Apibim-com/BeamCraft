@@ -3,6 +3,10 @@
 
 //! The structural model for BeamCraft.
 
+pub mod error;
+
+pub use error::ErrorCode;
+
 use beamcraft_geom::Point3;
 
 /// A straight steel beam defined by its axis and a profile name.
