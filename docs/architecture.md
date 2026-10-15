@@ -151,7 +151,8 @@ saved models. F09 admission precedes freezing it for kernel implementers.
 5. Roll: optional explicit rotation about member local +Z after the default frame — recorded;
    missing prior angle cap addressed by an explicit assumption in F04.
 6. Constants: owner-confirmed first-slice draft values, relative 1e-6 and length floor 1e-6 m=0.001
-   mm — assumption noted; fixture validation and pinned ifc-lite comparison open.
+   mm — assumption noted; fixture validation open;
+   ifc-lite comparison recorded in the tolerance report.
 
 F04 remains a freeze candidate at 0.1.0; F06 remains a draft. See the [tolerance
 comparison](design/tolerance-comparison-v0.1.md). Nothing is implemented by this record, and

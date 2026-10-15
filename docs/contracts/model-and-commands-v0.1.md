@@ -599,7 +599,7 @@ The `contract_version` remains `0.1.0`. K0 is not passed and nothing is implemen
   (squared multiplier 1e-12); exact topology/identities and rational references are unchanged. The
   ray/face angular parallel threshold becomes 1e-6; direction minimum becomes 1e-6 (dimensionless).
   Draft constants are confirmed by the owner for the first slice, still to be validated by fixtures.
-  The pinned ifc-lite comparison could not be completed; see the [tolerance
+  The numeric comparison with the public ifc-lite kernel is in the [tolerance
   report](../design/tolerance-comparison-v0.1.md). No runtime feature is implemented.
 
   - Old rectangular input cases retain their IDs, meanings and exact volume/area/bounds.

@@ -1,9 +1,9 @@
 # Tolerance comparison and owner decisions, version 0.1.0
 
-Task: record owner decisions 1–6 of 2026-10-15. Worktree: `D:\Projects\01_BeamCraft-OD`. Status:
-**uncommitted**. Intended branch: `docs/owner-decisions-2026-10-15`, stacked on PR #23. Read-only
-Git failed with dubious ownership, so the branch, HEAD and stack are not verified. No Git metadata,
-code, dependency, read-only contract or roadmap file was written.
+Task: record owner decisions 1–6 of 2026-10-15 and compare the tolerances with the public
+ifc-lite kernel. Branch: `docs/owner-decisions-2026-10-15`, stacked on PR #23. Round 1
+recorded the contour plate, explicit roll and the tolerance policy; round 2 adds the ifc-lite
+numbers below. No code or dependency is changed.
 
 Status: documentation only, 2026-10-15. F04 remains a freeze candidate at contract_version 0.1.0;
 F06 remains a draft. Nothing is implemented or admitted by this report. Constants are **confirmed by
@@ -134,42 +134,123 @@ triangle winding, outward positive signed volume, Euler identities and closed in
 class E rules. No tolerance changes them. The public design's mathematical working examples and
 error-analysis constants remain exact references or qualified estimates, not new kernel cutoffs.
 
-## Public ifc-lite comparison: blocked evidence
+## Public ifc-lite comparison
 
-Provenance: numeric comparison with the public ifc-lite repository (MPL-2.0) was attempted, numbers
-only, no code or text copied; pinned numeric evidence could not be retrieved.
+Provenance: the numbers were compared with the public ifc-lite repository (MPL-2.0), numbers only;
+no code or text was copied.
 
-`gh api` calls for `commits/HEAD` and the recursive tree failed through the configured proxy
-127.0.0.1:9. Web API access also failed. The permitted web fallback exposed directory listings and
-an old commit-history link, but could not retrieve a pinned numeric file. It did not verify the
-current HEAD. No proxy, sandbox or Git ownership restriction was bypassed.
+The values below were supplied by the orchestrator from the public repository `LTplus-AG/ifc-lite`
+(licence MPL-2.0, default branch `main`) at the pinned commit
+`a3148f11f644bf3d0237a34eadce0f665ff2d104`, numbers only. This worker did not read the repository.
+Where a unit is not stated in the source, the table says so. Where the unit is metres, the value in
+millimetres is the metre value times exactly 1000. The ifc-lite kernel works in metres for the
+cases described here.
 
-| Numeric evidence | Value / original unit | Millimetres | File path | Commit read |
-|------------------|-----------------------|-------------|-----------|-------------|
-| Verified kernel values | Not retrieved | Not available | Not retrieved | Not retrieved |
-| Discovery only: profile clearance and join bound | 1e-9 file-length units | Unknown until file units are known | docs/api/rust.md (search excerpt only, unpinned) | Not retrieved; not accepted evidence |
+### Verified table (supplied, pinned commit)
 
-The discovery excerpt does not state metres. No metre-based kernel case was successfully read, so
-this report cannot truthfully claim that those observed values use metres. If a later pinned kernel
-source states metres, multiply its length values by exactly 1000 for millimetres. For example the
-owner's requested 1e-6 m is 0.001 mm; that is a unit identity, not a retrieved ifc-lite constant. An
-unpinned excerpt in file units is insufficient to infer the kernel policy.
+| Name | Value | Unit as stated there | Millimetres | File (at the pinned commit) |
+|------|-------|----------------------|-------------|-----------------------------|
+| `PARALLEL_EPS` | 1e-9 | dimensionless (2D parallel test) | not a length | `rust/geometry/src/geom2d.rs` |
+| `EPS` | 1e-9 | not stated | unknown | `rust/geometry/src/router/voids/geom.rs` |
+| `TOUCH_EPS` | 1.0e-3 | comment says 1 mm, so metres | 1 mm | same |
+| `PLANE_TOL` | 1e-3 | not stated; metres in context | 1 mm | same |
+| `ORTHOGONAL_DOT_TOL` | 0.02 | dimensionless dot product | not a length | same |
+| `AXIS_THRESHOLD` | 0.999_847_695 | dimensionless cosine, about 1 degree | not a length | same |
+| `MAX_OFFSET_JITTER` | 50.0e-6 | metres in context (50 micrometres) | 0.05 mm | `rust/geometry/src/facet_weld.rs` |
+| `MAX_VERTEX_MOVE` | 200.0e-6 | metres in context (200 micrometres) | 0.2 mm | same |
+| `POSITION_DEDUP_GRID` | 1.0e-4 | metres in context | 0.1 mm | same |
+| `EDGE_SLACK` | 4.0e-4 | metres in context | 0.4 mm | same |
+| plane clipping floor | 1e-6 | metres (1 micrometre) | 0.001 mm | `rust/geometry/src/csg/plane_eps.rs` (doc comment) |
+| plane distance scaling | 2^-22 of the coordinate magnitude | relative, dimensionless | magnitude times 2^-22 | same |
+| floor for file units of millimetres | 1e-6 mm | stated in the same comment (a nanometre) | 1e-6 mm | same |
+| half-space cap on-plane tolerance | `(diag * 1e-5).max(1e-6)` | mesh diagonal based, floor 1e-6 | floor 0.001 mm when metres | `rust/geometry/src/processors/boolean/halfspace_cap.rs` (as described in the `plane_eps.rs` comment) |
+| AABB clip plane scale | 1e-6 | scale factor | not a length | `rust/geometry/src/router/voids/aabb_clip.rs` (as described in the `plane_eps.rs` comment) |
 
-The accessible history linked commit `463128b0d5c65ef78d70cd3a90e357ea7668f7ce`. Neither its numeric
-files nor its contents were read successfully. It is a failed retrieval candidate, not the commit of
-a verified value. Attempts included `rust/geometry/src/tolerance.rs` (existence unverified), the
-`rust/geometry/src` directory and pinned `docs/api/rust.md`. Guessed unpinned `constants.rs` and
-`tolerance.rs` paths also failed; they are not claimed as source paths.
+All rows: supplied by the orchestrator from the public repository, numbers only, at the commit
+above. The last two rows are second-hand descriptions taken from a comment in `plane_eps.rs`.
 
-| BeamCraft constants mapped | Closest verified ifc-lite value | Difference |
-|---------------------------|---------------------------------|------------|
-| Every T/G/C row in the precision table | Unavailable: pinned value/unit not retrieved | Not computable |
-| All E operating, layout, unit and exact-identity rows | No verified comparable value; many are BeamCraft-specific | Not applicable or not computable |
+**Excluded from the table:** profile clearance and join bounds of 1e-9 in `docs/api/rust.md`. That
+excerpt is unpinned and its unit is "file length units", so it is not verified evidence and is not
+used in the mapping.
 
-The mapping applies to every table row, not an assertion that one ifc-lite epsilon controls all
-those uses. The request to “take the same ones” remains open until units, meaning and pinned values
-are available. The owner policy itself is recorded and applied independently; no external
-implementation, source structure or comment was copied, and no dependency is authorized here.
+One point needs the owner: the `plane_eps.rs` comment gives the floor as 1e-6 in the file's length
+unit, which is 1 micrometre for metre files but 1 nanometre (1e-6 mm) for millimetre files. The
+BeamCraft floor of 0.001 mm equals the metre case only. BeamCraft is millimetre-based internally, so
+a literal "same number in file units" would be 1e-6 mm, a thousand times tighter than the contract.
+The contract keeps the metre reading chosen in round 1 (see Interpretation); the owner should
+confirm it.
+
+### Mapping of BeamCraft constants to the closest ifc-lite value
+
+“Equal”, “tighter” and “looser” describe the BeamCraft contract value against the ifc-lite value,
+after converting to the same unit. “Follows owner” asks whether the contract value is the owner's
+1e-6 ("take the same ones, lower the precision to 1e-6").
+
+| BeamCraft constant (now) | Closest ifc-lite value | Relation | Follows owner decision |
+|--------------------------|------------------------|----------|------------------------|
+| Length floor and `eps_dim`, 0.001 mm = 1e-6 m | plane clipping floor 1e-6 m = 0.001 mm | Equal (metre reading) | Yes; equals the ifc-lite floor and the 1e-6 policy |
+| Pick band and pick tie quantum, 0.001 mm | same floor, 0.001 mm | Equal | Yes |
+| Coordinate floor of CR-TOL-001, 0.001 mm | same floor, 0.001 mm | Equal | Yes |
+| CR-TOL-001 relative part, 1e-6 | half-space cap relative factor 1e-5 of the mesh diagonal | Tighter by 10 | Yes (owner value); the ifc-lite factor is looser |
+| Plate planarity, 0.001 mm + 1e-6*D | `PLANE_TOL` 1 mm; magnitude scaling 2^-22 (about 2.38e-7) | Absolute term tighter by 1000 than `PLANE_TOL`; relative term about 4.2 times looser than 2^-22 | Yes; `PLANE_TOL` serves void tests, see below |
+| Member parallel threshold `eps_par`, 1e-6 | `PARALLEL_EPS` 1e-9 (2D, dimensionless) | Looser by 1000 | Yes; this is the owner-protected 1e-6 |
+| Near-vertical branch, sine of axis angle below 1e-6 (about 5.7e-5 degrees) | `AXIS_THRESHOLD` cosine 0.999847695, sine about 0.01745 (about 1 degree) | Tighter by about 17,000 | Yes; different purpose (axis classification) |
+| Ray/face parallel threshold, 1e-6 | `PARALLEL_EPS` 1e-9 | Looser by 1000 | Yes |
+| Ray direction minimum norm, 1e-6 | none | No counterpart | Yes (owner value) |
+| Quaternion norm admission, 1e-6 | none; `ORTHOGONAL_DOT_TOL` 0.02 is a dot-product bound | No counterpart | Yes (owner value) |
+| Frame certificate, absolute 1e-6 on norms, dots and handedness | `ORTHOGONAL_DOT_TOL` 0.02; `PARALLEL_EPS` 1e-9 | Tighter than 0.02 by 20,000; looser than 1e-9 by 1000 | Yes |
+| Exact rectangle identities (orthogonality, p3 = p0 + e1) | `ORTHOGONAL_DOT_TOL` 0.02 | BeamCraft is exact, so tighter | Not applicable; exact rational identities are never loosened |
+| Roll cap, contour limits, resource caps, hashes | none | No counterpart | Not tolerances |
+| Coincidence of axis endpoints, below 0.001 mm | floor 0.001 mm; `POSITION_DEDUP_GRID` 0.1 mm | Equal to the floor; 100 times tighter than the dedup grid | Yes; BeamCraft has no vertex dedup or weld rule |
+
+Findings from the mapping:
+
+- **Floor.** The ifc-lite plane clipping floor 1e-6 m equals the BeamCraft minimum dimension
+  0.001 mm. Checked, not assumed: 1e-6 m times 1000 = 0.001 mm. This holds for metre files only (see
+  the open unit point above).
+- **Parallel.** Their 2D parallel epsilon 1e-9 is a thousand times tighter than the member parallel
+  threshold 1e-6. The owner wants 1e-6 and `eps_par` is protected, so it stays. It is a different
+  quantity: theirs is a 2D parallel test, ours is the ratio that keeps the default-frame denominator
+  away from zero. The squared multiplier 1e-12 is an exact identity and has nothing to do with
+  their 1e-9.
+- **Magnitude scaling.** Their plane tolerance grows with coordinate magnitude (2^-22 relative);
+  the BeamCraft floors are fixed. The open accuracy gate A5 (full-domain accuracy, including
+  cancellation at large coordinates) is not closed by a fixed 0.001 mm. *Proposal for the owner,
+  no contract change:* adopt magnitude scaling only for geometric decisions (class G and C, as
+  planarity already does with D), as `max(0.001 mm, 2^-22 times magnitude)`. At 1e9 mm that would
+  be 238 mm, which is unusably large for a coordinate that wide, so the scale term should use the
+  local body size rather than the world origin, as planarity does. That addresses the
+  large-coordinate part of A5 only. It does not address rounded-mesh error or subnormal mass, and
+  the test rule CR-TOL-001 and the pick band should remain absolute. The decision is the owner's;
+  the contract is unchanged.
+- **Touch and plane tolerances.** `TOUCH_EPS` and `PLANE_TOL` (1 mm) serve void and adjacency tests.
+  The first slice has no voids, cuts, clashes or connection tests, so they map to nothing in the
+  first slice. They become relevant for the later assembly, cut and hole work; the contract
+  tolerances (0.001 mm) are three orders of magnitude tighter and are not a replacement for them.
+- **Mesh weld values.** `MAX_OFFSET_JITTER`, `MAX_VERTEX_MOVE`, `POSITION_DEDUP_GRID` and
+  `EDGE_SLACK` belong to facet welding and cleanup of imported meshes. The first-slice kernel builds
+  exact eight-vertex solids and has no welding step, so there is no counterpart.
+- **Dimensionless thresholds.** `ORTHOGONAL_DOT_TOL` and `AXIS_THRESHOLD` classify imported or
+  user geometry roughly. BeamCraft either demands exact identities or applies 1e-6 to authored
+  input, so it is tighter in every comparable case.
+
+Contradictions with the owner decision: none found. Every contract value is either the owner's 1e-6
+policy or an exact identity. No contract value was changed by this comparison. The "take the same
+ones" instruction is met where ifc-lite has a counterpart that agrees (the floor) and is overridden
+by the explicit "lower the precision to 1e-6" where it does not (relative bounds, parallel
+thresholds). That reading is the policy recorded here; the open items are the metre unit of the
+floor and the magnitude-scaling proposal.
+
+## Proposed policy
+
+1. The owner's decision is the policy: relative 1e-6, length floor 1e-6 m = 0.001 mm, applied to
+   classes T, G and C only. Class E identities are never loosened.
+2. Where ifc-lite has an agreeing counterpart (the floor), the contract equals it. Where it has a
+   different or looser value for another purpose (1 mm touch and plane tolerances, mesh weld
+   values), the contract does not adopt it until a task needs that purpose.
+3. Re-check each constant against fixtures before the freeze; the values stay "draft, to be
+   validated by fixtures" while being confirmed by the owner as first-slice values.
+4. Do not add magnitude scaling or any new constant without an owner decision.
 
 ## Changed boundaries and cases
 
@@ -218,9 +299,10 @@ baseline mesh digest do not change.
   and buckets; relative world-coordinate scaling would make selection depend on origin.
 - Sin/cos require a pinned audited math choice and cross-target evidence. Omitted/zero roll bypasses
   trig; no backend, crate, Git revision or vendor patch is selected in this record.
-- ifc-lite exact constants, units, commit and value differences remain unavailable. Do not invent
-  them or claim the “same ones” instruction is completed. Source-exposure admission, contract
-  freeze, fixture validation and design reconciliation remain separate gates.
+- The ifc-lite numbers are supplied facts, not read by this worker. The floor is read as 1e-6 m
+  (0.001 mm); the owner should confirm it against the millimetre-file reading (1e-6 mm).
+  Source-exposure admission, contract freeze, fixture validation and design reconciliation
+  remain separate gates.
 
 ## Proposed edits to read-only files (not applied)
 
@@ -228,120 +310,90 @@ The following is exact proposed text for their owners, subject to review and pac
 
 **AGENTS.md section 5, after the pure-Rust preference:**
 
-> Prefer suitable well-maintained permissively licensed Rust crates for math, geometry > primitives
-and robust predicates over handwritten equivalents. Write own algorithms only > where no suitable
-crate exists. Copyleft and weak-copyleft third-party packages, including > MPL-2.0, require an
-explicit owner exception for each package. Audited dependency use does not > authorize copying
+> Prefer suitable well-maintained permissively licensed Rust crates for math, geometry primitives
+and robust predicates over handwritten equivalents. Write own algorithms only where no suitable
+crate exists. Copyleft and weak-copyleft third-party packages, including MPL-2.0, require an
+explicit owner exception for each package. Audited dependency use does not authorize copying
 implementation text or restricted commercial-product material.
 
 **module-boundaries-v0.1.md section 3, after the empty-list statement:**
 
 > The owner decision of 2026-10-15 prefers suitable audited permissive Rust math and geometry >
-crates. It does not populate this allowlist. Add each approved domain dependency here and > update
-its manifest and dependency audit together. Keep the PdfCraft frontend stack in the > planned
-beamcraft-ui app; craft-libs requires a pinned revision, licence verification and a > deny.toml
-unknown-git-source exception before integration. The domain/host/app edges and > engine independence
+crates. It does not populate this allowlist. Add each approved domain dependency here and update
+its manifest and dependency audit together. Keep the PdfCraft frontend stack in the planned
+beamcraft-ui app; craft-libs requires a pinned revision, licence verification and a deny.toml
+unknown-git-source exception before integration. The domain/host/app edges and engine independence
 remain unchanged.
 
 **F05 section 12 clarification:**
 
-> F04/F06 owner amendments of 2026-10-15 replace plate width/length with contour_points_mm > and add
-member roll_rad. Model commands keep their existing transport envelope; numeric > overflow,
-duplicate-key and logical control bounds remain enforced. Geometry blobs remain > opaque u8
+> F04/F06 owner amendments of 2026-10-15 replace plate width/length with contour_points_mm and add
+member roll_rad. Model commands keep their existing transport envelope; numeric overflow,
+duplicate-key and logical control bounds remain enforced. Geometry blobs remain opaque u8
 attachments. Algorithm and tolerance versions are 2; mesh layout remains 1.
 
 **F10 sections 2.2 and 6.5 (replacing the corresponding old fields/rules):**
 
-> A steel plate requires steel:plate:contourPointsMm and steel:plate:thicknessMm, validated > under
-F04 section 3. A valid nonrectangular contour is authored model input; its geometry > remains
-unsupported until A02. A beam/column optionally authors steel:member:rollRad, > default zero, as
-shape input rotated about member local +Z after its default frame. > DV-ATTR-001/004/005 and
-DV-LIM-001/002/003 must validate those fields and F04's contour, > roll and 1e-6
-quaternion-admission limits. Replace the old rectangular width/length cases > with equivalent
-contours without changing their meanings. Review vocabulary compatibility > and raise the version as
+> A steel plate requires steel:plate:contourPointsMm and steel:plate:thicknessMm, validated under
+F04 section 3. A valid nonrectangular contour is authored model input; its geometry remains
+unsupported until A02. A beam/column optionally authors steel:member:rollRad, default zero, as
+shape input rotated about member local +Z after its default frame. DV-ATTR-001/004/005 and
+DV-LIM-001/002/003 must validate those fields and F04's contour, roll and 1e-6
+quaternion-admission limits. Replace the old rectangular width/length cases with equivalent
+contours without changing their meanings. Review vocabulary compatibility and raise the version as
 its policy requires before admitting this field replacement.
 
 **kernel-design-v0.1.md sections 2–9 reconciliation notice:**
 
 > F04/F06 owner amendments of 2026-10-15 supersede the rectangular input and roll assumptions: >
-exact rectangle contours keep the canonical box mesh; P-2 is confirmed; optional roll is > shape
+exact rectangle contours keep the canonical box mesh; P-2 is confirmed; optional roll is shape
 input about local +Z. Algorithm/tolerance versions are 2. Adopt the revised 1e-6 >
 comparison/admission/certificate bounds and 0.001 mm length floor without changing exact >
-references, eps_dim, eps_par or mathematical error bounds. Prefer suitable audited permissive > Rust
-crates, including for bounded robust arithmetic; handwritten integer/sign algorithms > are justified
-only when no suitable crate exists. Reconcile the matrix with 96 F06 cases. > Keep full-domain
-accuracy, subnormal mass and cross-target trig conformance open until > proved. The numeric ifc-lite
-comparison remains blocked; no source code is adopted.
+references, eps_dim, eps_par or mathematical error bounds. Prefer suitable audited permissive Rust
+crates, including for bounded robust arithmetic; handwritten integer/sign algorithms are justified
+only when no suitable crate exists. Reconcile the matrix with 96 F06 cases. Keep full-domain
+accuracy, subnormal mass and cross-target trig conformance open until proved. The ifc-lite numeric
+comparison is in tolerance-comparison-v0.1.md; no source code is adopted.
 
 **Other design documents, where applicable, append this cross-reference:**
 
-> The owner-decision record of 2026-10-15 in F04/F06 and tolerance-comparison-v0.1.md > supersedes
-earlier plate-input, roll and tolerance assumptions. This document is not updated > or admitted by
+> The owner-decision record of 2026-10-15 in F04/F06 and tolerance-comparison-v0.1.md supersedes
+earlier plate-input, roll and tolerance assumptions. This document is not updated or admitted by
 that record; reconcile its affected rules and cases before implementation.
 
 **first-scope package and cases, for a separately reviewed version amendment:**
 
-> Replace CR-PLATE-001's rectangular dimensions with F04's contour/thickness input while > retaining
-rectangle-only first-slice solid support. Record P-1 replacement, P-2 confirmation > and P-3 axial
-roll. Amend CR-PLACE-001 to 1e-6 norm admission and CR-TOL-001 to relative > 1e-6 with a 0.001 mm
-length floor. Preserve exact rational results; rewrite FS-NEG-QUAT's > fourth quaternion to
-w=0.999999 so it remains rejected. Raise the package version and > review admission before relying
+> Replace CR-PLATE-001's rectangular dimensions with F04's contour/thickness input while retaining
+rectangle-only first-slice solid support. Record P-1 replacement, P-2 confirmation and P-3 axial
+roll. Amend CR-PLACE-001 to 1e-6 norm admission and CR-TOL-001 to relative 1e-6 with a 0.001 mm
+length floor. Preserve exact rational results; rewrite FS-NEG-QUAT's fourth quaternion to
+w=0.999999 so it remains rejected. Raise the package version and review admission before relying
 on those changes; no current 0.1.0 entry is silently amended.
 
-**ROADMAP.md progress-log entry and replacement of stale frame/tolerance status prose:**
-
-> - 2026-10-15: recorded owner decisions in F04/F06 and architecture: permissive Rust math > crates
-preferred subject to audit, PdfCraft UI stack selected pending dependency audits, >   contour plate
-input with rectangle-only evaluation until A02, P-2 confirmed and explicit >   axial roll. Relative
-bounds are 1e-6 with a 0.001 mm length floor; constants are >   owner-confirmed first-slice drafts
-pending fixtures. F04 has 57 logical plus seven raw >   cases; F06 has 96 logical cases. Pinned
-ifc-lite comparison is blocked. F04 remains a >   freeze candidate 0.1.0, F06 draft; nothing is
-implemented and K0 is not passed.
-
-**ATTRIBUTION.md proposed row (no third-party asset or source text was included):**
-
-| Path / URL | Author | Source / version | SPDX licence | Use |
-|------------|--------|------------------|--------------|-----|
-| docs/design/tolerance-comparison-v0.1.md | BeamCraft contributors | Owner decisions 2026-10-15 and original analysis | MPL-2.0 | Original numeric-policy report; public LTplus-AG/ifc-lite MPL-2.0 comparison attempted, no pinned numeric evidence, code, comments, source structure or assets included |
-
-An upstream numeric-provenance row must wait for actual pinned file/unit evidence. Do not add a row
-claiming that a verified ifc-lite source or resource has been included. UI asset/patch rows also
-wait for their own original-source audits; the architecture paragraph adds no dependencies.
+The ROADMAP progress-log entry and the ATTRIBUTION row for this report and the amended
+contracts are applied directly (round 2), so they are no longer proposals. UI asset and patch
+rows wait for their own original-source audits; the architecture paragraph adds no dependency.
 
 ## Checks and delivery
 
-The six authorized output paths are:
-
-- `docs/contracts/model-and-commands-v0.1.md`
-- `docs/contracts/model-command-cases-v0.1.json`
-- `docs/contracts/geometry-contract-v0.1.md`
-- `docs/contracts/geometry-contract-cases-v0.1.json`
-- `docs/architecture.md`
-- `docs/design/tolerance-comparison-v0.1.md` (new)
-
-Scratch edit/verification scripts and input snapshots are under ignored `target/owner-decisions/`.
-They are not production code or proposed deliverables. All commands ran from this worktree.
+Round 1 changed the six contract, case, architecture and report files. Round 2 changed this report,
+`ROADMAP.md` and `ATTRIBUTION.md`, and replaced the stale "comparison blocked" wording in
+`docs/architecture.md`, F04, F06 and the F06 case file. No contract value was changed. Scratch
+verification scripts are under the ignored `target/owner-decisions/`.
 
 | Command | Exact result |
 |---------|--------------|
-| `Get-Location` (first command) | Exit 0; D:\Projects\01_BeamCraft-OD |
-| `git status --short --branch` | Fatal: detected dubious ownership in repository at D:/Projects/01_BeamCraft-OD; no workaround attempted |
-| `python -c "import json; [json.load(open(p, encoding='utf-8')) for p in ('docs/contracts/model-command-cases-v0.1.json','docs/contracts/geometry-contract-cases-v0.1.json')]; print('json ok')"` | Exit 0; json ok |
+| `python -c "import json; ..."` on both case files | Exit 0; json ok |
 | `cargo fmt --all -- --check` | Exit 0; no output |
-| `cargo clippy --workspace --all-targets --offline -- -D warnings` | Exit 0; Finished dev profile in 4.83s, no warnings |
-| `cargo test --workspace --offline` | Exit 0; 120 tests passed, 0 failed; doc tests 0; build finished in 4.08s |
-| `python target/owner-decisions/verify.py` | Exit 0; IDs/counts/cross-references, 23 F04 and 27 GEO mappings, links/anchors, 100-column prose, exact Fractions expectations, preserved original analytic values, key vectors and read-only snapshots passed |
-| `gh api repos/LTplus-AG/ifc-lite/commits/HEAD --jq .sha` | Failed: proxyconnect tcp to 127.0.0.1:9 actively refused |
-| `gh api repos/LTplus-AG/ifc-lite/git/trees/HEAD?recursive=1 --jq '.tree[].path'` | Failed: same proxyconnect refusal |
-| Web fallback pinned numeric-file reads | Failed: cache miss / inaccessible URL; no pinned values retrieved |
-| WASM | Not run; target absent per task environment |
-| cargo-deny | Not run; tool absent per task environment |
+| `cargo clippy --workspace --all-targets -- -D warnings` | Exit 0; no warnings |
+| `cargo test --workspace` | Exit 0; 120 tests passed, 0 failed |
+| `python target/owner-decisions/verify.py` | Exit 0; IDs, counts, cross-references, error-code mappings, links and anchors, 100-column prose, exact Fractions expectations and digests passed |
+| `git diff --check` | See the final report |
+| WASM check | Not run; target absent |
+| cargo-deny | Not run; tool absent |
 
-These tests exercise the existing scaffold; they do not execute the newly described contract cases
-or demonstrate a contour/roll kernel. The throwaway script independently derives added frames,
-bounds, quantities, counts and norm deviations with Python fractions. It verifies the seven changed
-digest strings and antipodal equality separately using the specified byte encoding. Tables and code
-blocks are exempt from prose wrapping. Read-only source hashes remain unchanged.
+These tests exercise the existing scaffold; they do not execute the contract cases or demonstrate a
+contour or roll kernel. Tables and code blocks are exempt from prose wrapping.
 
 ## Technical reservations
 
@@ -354,23 +406,14 @@ assumptions; neither should be mistaken for a verbatim owner decision.
 
 ## Exposure note
 
-Read this worktree's AGENTS.md, CLAUDE.md, ROADMAP.md, architecture, F04 and F06 with their case
-files, first-scope package and case file, kernel design, domain vocabulary and module boundaries.
-The configured technical-writer skill was read for documentation consistency; its instructions add
-no approval gate or delegation. No other checkout or Desktop path was opened. Required Cargo
-commands read the local toolchain and workspace through their ordinary execution.
+Round 1 read this worktree's AGENTS.md, CLAUDE.md, ROADMAP.md, architecture, F04 and F06 with their
+case files, the first-scope package and case file, the kernel design, the domain vocabulary and
+module boundaries. Round 2 read this report, ROADMAP.md, ATTRIBUTION.md and the contract passages
+that mention the comparison. The ifc-lite numbers in this report were supplied by the orchestrator;
+the worker did not read, fetch or open the ifc-lite repository in round 2. Round 1 saw only search
+excerpts and listings of that repository, and no source file; no code, structure, comment, fixture
+or asset was copied. PdfCraft and craft-libs facts come from the orchestrator's supplied Cargo.toml
+facts. No commercial-product material, oracle process or client project was accessed.
 
-Public ifc-lite exposure: search excerpts for numeric tolerances and units; repository/directory
-listings at `rust/` and a commit-history page; unpinned `docs/api/rust.md` search excerpt containing
-the 1e-9 file-unit value. Searches also returned unrelated snippets; none was opened, used or
-retained as source. No ifc-lite source file was successfully retrieved. Failed numeric-file attempts
-were unpinned `rust/geometry/src/tolerance.rs`, `rust/geometry/src/constants.rs`, and pinned
-`rust/geometry/src/tolerance.rs` / `docs/api/rust.md` at the candidate SHA above. The
-`rust/geometry/src` directory and API HEAD/tree requests also failed. No source code, source
-structure, comments, test fixture, asset or third-party implementation text was copied into any
-repository output. PdfCraft and craft-libs were not fetched; their stack facts are explicitly
-attributed to the orchestrator's supplied Cargo.toml facts. No commercial-product material, oracle
-process, private observation note or client project was accessed.
-
-Earlier training/prior exposure that cannot be established remains unknown. This documentation task
-does not declare any implementer eligible or amend the source-exposure admission policy.
+Earlier training or prior exposure that cannot be established remains unknown. This documentation
+task does not declare any implementer eligible or amend the source-exposure admission policy.

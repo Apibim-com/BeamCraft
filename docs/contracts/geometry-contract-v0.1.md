@@ -815,7 +815,7 @@ still needs review, fixture validation and owner action.
 | Item | Question |
 |------|----------|
 | P-1, P-2, P-3 | Recorded jointly with F04 on 2026-10-15; normal sign, bounds and angle-cap assumptions need review |
-| Policy constants | Owner confirmed first-slice values; draft, to be validated by fixtures. Comparison with pinned ifc-lite kernel values remains blocked |
+| Policy constants | Owner confirmed first-slice values; draft, to be validated by fixtures. Compared with ifc-lite values in the tolerance report; no contract value changed |
 | Roll discontinuity | Accept the roll jump at the parallel threshold (section 4, rule 3), or choose a continuous rule. The near-vertical rule does not remove it |
 | Open item A5 | Full-domain coordinate accuracy for cancellation-heavy inputs, subnormal mass and rounded-mesh cross-checks stay **open**: no certified accuracy bound exists yet, and the explicit owner tolerance amendment does not establish accuracy or close this gate; narrowing an F04 input range to hide the gap is not allowed. G04 and fixtures must establish bounds on the full admitted domain |
 | FeatureId on axis reversal | Accept that ids follow roles, not world faces (section 5, rule 6) |
@@ -925,7 +925,7 @@ still needs review, fixture validation and owner action.
   (squared multiplier 1e-12); exact topology/identities and rational references are unchanged. The
   ray/face angular parallel threshold becomes 1e-6; direction minimum becomes 1e-6 (dimensionless).
   Draft constants are confirmed by the owner for the first slice, still to be validated by fixtures.
-  The pinned ifc-lite comparison could not be completed; see the [tolerance
+  The numeric comparison with the public ifc-lite kernel is in the [tolerance
   report](../design/tolerance-comparison-v0.1.md). No runtime feature is implemented.
 
   - Rectangular width/length inputs become ordered four-point contours throughout; width edits
