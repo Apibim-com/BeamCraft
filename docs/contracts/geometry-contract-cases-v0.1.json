@@ -10,9 +10,9 @@
   "assumptions": "Cases that list \"assumes\" depend on proposals P-1 to P-3 of F04 section 3, which are assumed pending owner confirmation. If the owner changes them, those cases change jointly with F04. Policy constants (minimum dimension 0.001 mm, parallel threshold 1e-6, caps, pick constants) are draft values to be validated by G04 and fixtures.",
   "quaternion_convention": "F04 section 3: orientation_xyzw = (x, y, z, w), Hamilton, active rotation, world = R(q) * local + translation. The 90 degree turn about +Z is written with the nearest f64 0.7071067811865476 for both z and w.",
   "case_counts": {
-    "logical_cases": 70,
-    "positive": 40,
-    "negative": 30
+    "logical_cases": 80,
+    "positive": 46,
+    "negative": 34
   },
   "cases": [
     {
@@ -1792,7 +1792,9 @@
     {
       "case_id": "F06-NEG-18",
       "title": "Open mesh never receives exact status",
-      "given": ["A blob equal to the plate mesh with its first triangle (0, 2, 3) removed (11 triangles)"],
+      "given": [
+        "A blob equal to the plate mesh with its ninth triangle (0, 2, 3), the first triangle of face z0, removed (11 triangles)"
+      ],
       "input": {
         "vertices": 8,
         "triangles": 11,
@@ -1807,13 +1809,13 @@
         "V_minus_E_plus_F": 1,
         "volume_status": "unsupported",
         "area_status": "unsupported",
-        "mass_status": "unknown",
+        "mass_status": "unsupported",
         "diagnostic_code": "GEO_MESH_NOT_CLOSED",
         "f04_code": "UNSUPPORTED_GEOMETRY",
         "volume_value_returned": false,
         "mesh_may_be_displayed_flagged_not_exact": true
       },
-      "derivation": "Removing triangle (0, 2, 3) leaves the edges 0-2, 2-3 and 3-0 each used by one triangle only (boundary edges), so edge-triangle incidence is not 2 everywhere. The edge count stays 18 and F = 11, so V - E + F = 8 - 18 + 11 = 1. The signed-volume sum of the remaining triangles is not a volume. No exact status and no value.",
+      "derivation": "Removing triangle (0, 2, 3) leaves the edges 0-2, 2-3 and 3-0 each used by one triangle only (boundary edges), so edge-triangle incidence is not 2 everywhere. The edge count stays 18 and F = 11, so V - E + F = 8 - 18 + 11 = 1. The signed-volume sum of the remaining triangles is not a volume. No exact status and no value. Mass is unsupported, not unknown, because the volume is unsupported (contract section 8 precedence); a density could not make it current.",
       "assumes": ["P-1 (assumed pending owner confirmation)"]
     },
     {
@@ -2043,6 +2045,328 @@
         "state_changed": false
       },
       "derivation": "A body has at least four vertices and four triangles; zero counts are structurally invalid, never an \"empty success\"."
+    },
+    {
+      "case_id": "F06-POS-41",
+      "title": "Near-vertical axis tilted toward +Y: section stays perpendicular to the axis",
+      "given": [
+        "Draft policy G-06: near-vertical rule when hh < 1e-12 * LL; Y = normalize(U - Z*(U . Z)), U = (0, 1, 0)",
+        "Axis (0,0,0) to (0, 0.08000002, 160000.08) is the Pythagorean triple (2m, m^2 - 1, m^2 + 1) * 1e-8 with m = 4000001"
+      ],
+      "input": {
+        "body": {
+          "kind": "member",
+          "axis_points_mm": [[0, 0, 0], [0, 0.08000002, 160000.08]],
+          "profile": {
+            "kind": "rectangle",
+            "width_mm": 200,
+            "height_mm": 300
+          }
+        },
+        "placement": {
+          "translation_mm": [0, 0, 0],
+          "orientation_xyzw": [0, 0, 0, 1]
+        }
+      },
+      "expected": {
+        "status": "ok",
+        "rule_used": "near_vertical",
+        "axis_length_mm": "160000.08000002",
+        "horizontal_ratio_squared_approx": "2.5e-13",
+        "member_frame": {
+          "X_m": ["1", "0", "0"],
+          "Y_m": ["0", "8000004000000/8000004000001", "-4000001/8000004000001"],
+          "Z_m": ["0", "4000001/8000004000001", "8000004000000/8000004000001"]
+        },
+        "member_frame_decimal_approx": {
+          "X_m": ["1", "0", "0"],
+          "Y_m": ["0", "0.99999999999987499", "-4.9999987499999995e-07"],
+          "Z_m": ["0", "4.9999987499999995e-07", "0.99999999999987499"]
+        },
+        "Y_m_dot_Z_m": "0",
+        "section_perpendicular_to_axis": true,
+        "fixed_plus_Y_fallback_would_give_Y_dot_Z": "4000001/8000004000001",
+        "frame_certificate": "passes",
+        "compare": "CR-TOL-001"
+      },
+      "derivation": "d = (0, 0.08000002, 160000.08); with m = 4,000,001 the three numbers are 2m, m^2 - 1 and m^2 + 1 times 1e-8, so L = (m^2 + 1) * 1e-8 = 160000.08000002 exactly (a^2 + c^2 = L^2 checked with rational arithmetic) and hh/LL = 4m^2/(m^2 + 1)^2 * ... = (2m/(m^2 + 1))^2 ~ 2.5e-13 < 1e-12, so the near-vertical rule applies (margin 4). Z = (0, 2m/(m^2 + 1), (m^2 - 1)/(m^2 + 1)). U . Z = Z_y; P = U - Z*Z_y = (0, 1 - Z_y^2, -Z_z*Z_y) = Z_z * (0, Z_z, -Z_y) because 1 - Z_y^2 = Z_z^2; |P| = Z_z, so Y = (0, Z_z, -Z_y) (unit). X0 = Y x Z = (Z_z^2 + Z_y^2, 0, 0) = (1, 0, 0), so X = (1, 0, 0) and Z x X = (0, Z_z, -Z_y) = Y. Y . Z = Z_z*Z_y - Z_y*Z_z = 0. A fixed Y = (0, 1, 0) would give Y . Z = Z_y ~ 5e-7, i.e. a section off perpendicular by the tilt toward Y. The submitted decimals are not exact in binary64, so the frame is compared with CR-TOL-001.",
+      "f04_refs": ["F04-POS-16"],
+      "assumes": ["P-2 (assumed pending owner confirmation)", "P-3 (assumed pending owner confirmation)"]
+    },
+    {
+      "case_id": "F06-POS-42",
+      "title": "Boundary: Y-tilted axis just outside the threshold uses the horizontal rule",
+      "given": ["hh/LL = (0.002/L)^2 ~ 4e-12 > 1e-12, a factor-four margin"],
+      "input": {
+        "body": {
+          "kind": "member",
+          "axis_points_mm": [[0, 0, 0], [0, 0.002, 1000]],
+          "profile": {
+            "kind": "rectangle",
+            "width_mm": 200,
+            "height_mm": 300
+          }
+        },
+        "placement": {
+          "translation_mm": [0, 0, 0],
+          "orientation_xyzw": [0, 0, 0, 1]
+        }
+      },
+      "expected": {
+        "status": "ok",
+        "rule_used": "horizontal",
+        "X_m_approx": ["-1", "0", "0"],
+        "Y_m_approx": ["0", "-0.999999999998", "2e-06"],
+        "Z_m_approx": ["0", "2e-06", "0.999999999998"],
+        "Y_m_dot_Z_m_within": "1e-12",
+        "Y_m_dot_local_z_positive": true,
+        "frame_certificate": "passes",
+        "compare": "CR-TOL-001"
+      },
+      "derivation": "h = 0.002, L ~ 1000.000000000002; Y = (-dx*dz, -dy*dz, hh)/(h*L) = (0, -2, 4e-6)/(0.002*L) ~ (0, -1, 2e-6); X0 = Y x Z ~ (-1, 0, 0). The tilt toward Y is what makes the near-vertical neighbour (F06-POS-41) differ: both frames are perpendicular to their axis, and the roll jumps by about a quarter turn at the threshold (contract section 4, rule 3). Values are binary64 approximations.",
+      "assumes": ["P-2 (assumed pending owner confirmation)", "P-3 (assumed pending owner confirmation)"]
+    },
+    {
+      "case_id": "F06-POS-43",
+      "title": "Ray pick on a face boundary: reported once, flagged, parallel neighbour skipped",
+      "given": [
+        "Plate 019a7bf0-0000-7000-8000-000000000005 1000 x 500 x 10, identity placement; the ray hits the shared edge of faces z1 and x0"
+      ],
+      "input": {
+        "ray": {
+          "origin_mm": [0, 250, 100],
+          "direction": [0, 0, -1]
+        },
+        "targets": ["face"]
+      },
+      "expected": {
+        "status": "ok",
+        "hits": [
+          {
+            "feature_id": "fid1:019a7bf0-0000-7000-8000-000000000005:plate:f.z1",
+            "t_mm": "90",
+            "point_world_mm": ["0", "250", "10"],
+            "normal_world": ["0", "0", "1"],
+            "back_facing": false,
+            "boundary": true
+          }
+        ],
+        "hit_count": 1,
+        "compare": "CR-TOL-001"
+      },
+      "derivation": "The ray runs along x = 0, z falling; it meets the plane z = 10 at t = 90, point (0, 250, 10), on the boundary x = 0 of the rectangle of z1, so boundary is true. Face x0 (plane x = 0) has outward normal (-1, 0, 0) and u . n = 0 < 1e-12: parallel, not hit. Face z0 is back-facing and culled. Exactly one hit.",
+      "assumes": ["P-1 (assumed pending owner confirmation)"]
+    },
+    {
+      "case_id": "F06-POS-44",
+      "title": "Ray pick parallel to faces: parallel faces are never hit, boundary hit flagged",
+      "given": [
+        "Plate 019a7bf0-0000-7000-8000-000000000005; ray in the plane z = 10 travelling along +X from outside"
+      ],
+      "input": {
+        "ray": {
+          "origin_mm": [-10, 250, 10],
+          "direction": [1, 0, 0]
+        },
+        "targets": ["face"]
+      },
+      "expected": {
+        "status": "ok",
+        "hits": [
+          {
+            "feature_id": "fid1:019a7bf0-0000-7000-8000-000000000005:plate:f.x0",
+            "t_mm": "10",
+            "point_world_mm": ["0", "250", "10"],
+            "normal_world": ["-1", "0", "0"],
+            "back_facing": false,
+            "boundary": true
+          }
+        ],
+        "hit_count": 1,
+        "compare": "CR-TOL-001"
+      },
+      "derivation": "Faces z1, z0, y0 and y1 have normals perpendicular to the direction (1, 0, 0), so |u . n| = 0 < 1e-12 and they are parallel: no hit, even though the ray lies in the plane of z1. Face x0 has normal (-1, 0, 0), u . n = -1 (front-facing), t = 10, point (0, 250, 10): z = 10 is the upper boundary of x0, so boundary is true. Face x1 at t = 1010 is back-facing and culled.",
+      "assumes": ["P-1 (assumed pending owner confirmation)"]
+    },
+    {
+      "case_id": "F06-POS-45",
+      "title": "Point pick: distance to the nearest point of a closed face rectangle, ordering by quantized distance",
+      "given": [
+        "Plate 019a7bf0-0000-7000-8000-000000000005 1000 x 500 x 10; point (1100, 250, 5) lies outside the box, beyond face x1"
+      ],
+      "input": {
+        "point_mm": [1100, 250, 5],
+        "radius_mm": 150,
+        "targets": ["face", "edge", "vertex"]
+      },
+      "expected": {
+        "status": "ok",
+        "hit_count": 5,
+        "hits": [
+          {
+            "feature_id": "fid1:019a7bf0-0000-7000-8000-000000000005:plate:f.x1",
+            "distance_mm": "100",
+            "closest_point_mm": ["1000", "250", "5"]
+          },
+          {
+            "feature_id": "fid1:019a7bf0-0000-7000-8000-000000000005:plate:f.z0",
+            "distance_mm": "100.124921973",
+            "closest_point_mm": ["1000", "250", "0"]
+          },
+          {
+            "feature_id": "fid1:019a7bf0-0000-7000-8000-000000000005:plate:f.z1",
+            "distance_mm": "100.124921973",
+            "closest_point_mm": ["1000", "250", "10"]
+          },
+          {
+            "feature_id": "fid1:019a7bf0-0000-7000-8000-000000000005:plate:e.x1.z0",
+            "distance_mm": "100.124921973",
+            "closest_point_mm": ["1000", "250", "0"]
+          },
+          {
+            "feature_id": "fid1:019a7bf0-0000-7000-8000-000000000005:plate:e.x1.z1",
+            "distance_mm": "100.124921973",
+            "closest_point_mm": ["1000", "250", "10"]
+          }
+        ],
+        "compare": "CR-TOL-001"
+      },
+      "derivation": "Face x1 (x = 1000, y in [0, 500], z in [0, 10]): the foot (1000, 250, 5) is inside, distance 100. Faces z0 and z1: the foot (1100, 250, 0 or 10) lies outside the rectangle (x > 1000), so the distance is to the nearest rectangle point (1000, 250, 0 or 10): sqrt(100^2 + 5^2) = sqrt(10025) ~ 100.1249. Edges x1.z0 and x1.z1 have the same nearest points and distance. Every other face, edge and vertex is at least sqrt(100^2 + 250^2) ~ 269 away (a brute-force check over all 26 features agrees). Order by the tuple (floor(distance / 1e-6), ElementId, kind rank, local id): x1 first (smaller distance), then the four features at sqrt(10025), faces before edges, \"plate:f.z0\" < \"plate:f.z1\", \"plate:e.x1.z0\" < \"plate:e.x1.z1\".",
+      "assumes": ["P-1 (assumed pending owner confirmation)"]
+    },
+    {
+      "case_id": "F06-POS-46",
+      "title": "Parallel decision very close to the threshold follows the written binary64 comparison",
+      "given": [
+        "Axis (0,0,0) to (0.5, 0, 500000): hh = 0.25 and LL = 250000000000.25, both exactly representable"
+      ],
+      "input": {
+        "body": {
+          "kind": "member",
+          "axis_points_mm": [[0, 0, 0], [0.5, 0, 500000]],
+          "profile": {
+            "kind": "rectangle",
+            "width_mm": 200,
+            "height_mm": 300
+          }
+        },
+        "placement": {
+          "translation_mm": [0, 0, 0],
+          "orientation_xyzw": [0, 0, 0, 1]
+        }
+      },
+      "expected": {
+        "status": "ok",
+        "rule_used": "near_vertical",
+        "comparison_written": "hh < 1e-12 * LL",
+        "hh": "0.25",
+        "LL": "250000000000.25",
+        "relative_margin_approx": "1e-12",
+        "Y_m": ["0", "1", "0"],
+        "Z_m_approx": ["9.99999999999e-07", "0", "0.999999999999"],
+        "frame_certificate": "passes",
+        "compare": "CR-TOL-001"
+      },
+      "derivation": "Exact arithmetic: 0.25 < 1e-12 * 250000000000.25 = 0.25000000000025, margin 1e-12 relative, which is thousands of ulps, so the written binary64 comparison agrees with exact arithmetic here and selects the near-vertical rule. The contract does not rely on that agreement in general: the written comparison decides, and either branch gives a certified frame. Z_y = 0 gives Y = (0, 1, 0) exactly. L ~ 500000.00000025 is below the 1,000,000 mm cap.",
+      "assumes": ["P-2 (assumed pending owner confirmation)", "P-3 (assumed pending owner confirmation)"]
+    },
+    {
+      "case_id": "F06-NEG-31",
+      "title": "Frame certificate failure is reported as numeric uncertainty, no partial result",
+      "given": [
+        "Valid member; the test harness injects a fault so that the built frame has X . Y = 1e-9 (above the 1e-12 certificate limit)"
+      ],
+      "input": {
+        "body": {
+          "kind": "member",
+          "axis_points_mm": [[0, 0, 0], [4000, 0, 0]],
+          "profile": {
+            "kind": "rectangle",
+            "width_mm": 200,
+            "height_mm": 300
+          }
+        },
+        "placement": {
+          "translation_mm": [0, 0, 0],
+          "orientation_xyzw": [0, 0, 0, 1]
+        },
+        "fault_injection": {
+          "frame_dot_xy": 1e-09
+        }
+      },
+      "expected": {
+        "status": "unsupported",
+        "f04_code": "UNSUPPORTED_GEOMETRY",
+        "diagnostic_code": "GEO_NUMERIC_UNCERTAIN",
+        "partial_geometry_returned": false,
+        "state_changed": false,
+        "stage": "build"
+      },
+      "derivation": "The frame certificate (section 4, rule 2, step d) requires every pairwise dot product at most 1e-12; 1e-9 fails it. The build stops, no mesh, quantities or shape key is returned, the previous current result is untouched. This case needs a fault-injection hook in the harness; it is not reachable from admitted input.",
+      "assumes": ["P-2 (assumed pending owner confirmation)", "P-3 (assumed pending owner confirmation)"]
+    },
+    {
+      "case_id": "F06-NEG-32",
+      "title": "Pick result with a failed numeric certificate returns no partial hits",
+      "given": [
+        "Valid pick; the test harness injects a non-finite intermediate value into the face-hit computation"
+      ],
+      "input": {
+        "ray": {
+          "origin_mm": [500, 250, 100],
+          "direction": [0, 0, -1]
+        },
+        "targets": ["face"],
+        "fault_injection": {
+          "non_finite_t": true
+        }
+      },
+      "expected": {
+        "status": "error",
+        "f04_code": "UNSUPPORTED_GEOMETRY",
+        "diagnostic_code": "GEO_NUMERIC_UNCERTAIN",
+        "partial_hits_returned": false
+      },
+      "derivation": "A query whose certificate fails returns the diagnostic and no hits, never a list that omits the affected candidate."
+    },
+    {
+      "case_id": "F06-NEG-33",
+      "title": "Pick over more elements than the work cap",
+      "given": ["A model with 65,537 elements (the cap is 65,536; exactly 65,536 is accepted)"],
+      "input": {
+        "ray": {
+          "origin_mm": [0, 0, 10],
+          "direction": [0, 0, -1]
+        },
+        "element_count": 65537
+      },
+      "expected": {
+        "status": "error",
+        "f04_code": "LIMIT_EXCEEDED",
+        "diagnostic_code": "GEO_PICK_LIMIT",
+        "partial_hits_returned": false,
+        "accepted_at_element_count": 65536
+      },
+      "derivation": "The element count is compared with the cap before the scan starts; one above is rejected without work and without hits."
+    },
+    {
+      "case_id": "F06-NEG-34",
+      "title": "Negotiated buffer limit smaller than the blob: no splitting",
+      "given": [
+        "F05 effective_limits.buffer_bytes negotiated as 391; the plate blob of F06-POS-02 is 392 bytes"
+      ],
+      "input": {
+        "blob_bytes": 392,
+        "negotiated_buffer_bytes": 391
+      },
+      "expected": {
+        "status": "error",
+        "f04_code": "LIMIT_EXCEEDED",
+        "diagnostic_code": "GEO_BUFFER_LIMIT",
+        "blob_split": false,
+        "accepted_when_buffer_bytes_is": 392
+      },
+      "derivation": "A blob is one attachment and is never fragmented; 392 > 391 fails, 392 <= 392 fits. The contract cap (213,024) is a maximum, the negotiated limit applies when smaller."
     }
   ],
   "cross_references": [

@@ -107,8 +107,10 @@ pub enum Violation {
     },
     /// The CI wasm check names crates by hand.
     CiHardCodedList(String),
-    /// The CI file never asks the tool for the portable list.
+    /// A CI job that checks wasm32 never asks the tool for the portable list.
     CiMissingPortableCall,
+    /// No CI job mentions the wasm32 target.
+    CiNoWasmJob,
 }
 
 impl fmt::Display for Violation {
@@ -188,12 +190,13 @@ impl fmt::Display for Violation {
             }
             Self::CiHardCodedList(line) => write!(
                 f,
-                "CI wasm check lists crates by hand (`{}`); derive them with `beamcraft-boundaries portable`",
+                "CI wasm job selects a package by hand (`{}`); derive the list with `beamcraft-boundaries portable`",
                 line.trim()
             ),
             Self::CiMissingPortableCall => f.write_str(
-                "CI never runs `beamcraft-boundaries -- portable` to derive the wasm crate list",
+                "the CI wasm job never runs `beamcraft-boundaries -- portable` to derive its crate list",
             ),
+            Self::CiNoWasmJob => f.write_str("no CI job checks the wasm32-unknown-unknown target"),
         }
     }
 }
@@ -252,25 +255,244 @@ fn kind_rules(from: &str, from_kind: Kind, to: &str, to_kind: Kind) -> Vec<Viola
     out
 }
 
-/// The first forbidden API each line of non-test source mentions.
-///
-/// Everything from the first `#[cfg(test)]` line on is test code and is not scanned; whole-line
-/// `//` comments are skipped.
-pub fn forbidden_apis(source: &str) -> Vec<&'static str> {
-    let mut found = Vec::new();
-    for line in source.lines().map(str::trim_start) {
-        if line.starts_with("#[cfg(test)]") {
-            break;
+/// Source with comments and string/char literals blanked (newlines kept), so that braces and
+/// paths inside them cannot confuse the item scan.
+fn blank_literals(source: &str) -> Vec<char> {
+    let chars: Vec<char> = source.chars().collect();
+    let at = |i: usize| chars.get(i).copied().unwrap_or('\0');
+    let blank = |c: char| if c == '\n' { '\n' } else { ' ' };
+    let mut out = Vec::with_capacity(chars.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = at(i);
+        if c == '/' && at(i + 1) == '/' {
+            while i < chars.len() && at(i) != '\n' {
+                out.push(' ');
+                i += 1;
+            }
+        } else if c == '/' && at(i + 1) == '*' {
+            let mut depth = 0usize;
+            while i < chars.len() {
+                if at(i) == '/' && at(i + 1) == '*' {
+                    depth += 1;
+                    out.extend([' ', ' ']);
+                    i += 2;
+                } else if at(i) == '*' && at(i + 1) == '/' {
+                    depth = depth.saturating_sub(1);
+                    out.extend([' ', ' ']);
+                    i += 2;
+                    if depth == 0 {
+                        break;
+                    }
+                } else {
+                    out.push(blank(at(i)));
+                    i += 1;
+                }
+            }
+        } else if c == '"' || (c == 'r' && raw_start(&chars, i)) {
+            // Ordinary string or raw string with any number of hashes.
+            let raw = c == 'r';
+            let mut hashes = 0usize;
+            let mut j = i;
+            if raw {
+                j += 1;
+                while at(j) == '#' {
+                    hashes += 1;
+                    j += 1;
+                }
+            }
+            // `j` is at the opening quote.
+            j += 1;
+            while j < chars.len() {
+                let d = at(j);
+                if !raw && d == '\\' {
+                    j += 2;
+                    continue;
+                }
+                if d == '"' && (0..hashes).all(|k| at(j + 1 + k) == '#') {
+                    j += 1 + hashes;
+                    break;
+                }
+                j += 1;
+            }
+            let end = j.min(chars.len());
+            while i < end {
+                out.push(blank(at(i)));
+                i += 1;
+            }
+        } else if c == '\'' {
+            // A char literal is a quote, one character or an escape, and a quote; anything
+            // else is a lifetime.
+            let len = if at(i + 1) == '\\' {
+                (i + 3..chars.len().min(i + 12))
+                    .find(|j| at(*j) == '\'')
+                    .map(|j| j - i + 1)
+            } else if at(i + 2) == '\'' && at(i + 1) != '\'' {
+                Some(3)
+            } else {
+                None
+            };
+            match len {
+                Some(n) => {
+                    out.extend(std::iter::repeat_n(' ', n));
+                    i += n;
+                }
+                None => {
+                    out.push(c);
+                    i += 1;
+                }
+            }
+        } else {
+            out.push(c);
+            i += 1;
         }
-        if line.starts_with("//") {
+    }
+    out
+}
+
+/// True if the `r` at `i` starts a raw string (`r"` or `r#"`), not an identifier ending in `r`.
+fn raw_start(chars: &[char], i: usize) -> bool {
+    let at = |k: usize| chars.get(k).copied().unwrap_or('\0');
+    if i > 0 && (at(i - 1).is_alphanumeric() || at(i - 1) == '_') {
+        return false;
+    }
+    let mut j = i + 1;
+    while at(j) == '#' {
+        j += 1;
+    }
+    at(j) == '"'
+}
+
+/// The attribute that starts at `from` (a `#`), without whitespace, and the index after it.
+fn attribute(code: &[char], from: usize) -> Option<(String, usize)> {
+    let mut text = String::new();
+    let mut depth = 0usize;
+    let mut j = from;
+    while let Some(&c) = code.get(j) {
+        if c == '[' {
+            depth += 1;
+        } else if c == ']' {
+            depth = depth.saturating_sub(1);
+            if depth == 0 {
+                text.push(c);
+                return Some((text, j + 1));
+            }
+        }
+        if !c.is_whitespace() {
+            text.push(c);
+        }
+        j += 1;
+    }
+    None
+}
+
+/// Blanks every item annotated `#[cfg(test)]` (a `mod`, `fn`, `use`, ... with its body), wherever
+/// it appears. An inner `#![cfg(test)]` makes the whole file test code. Production code before,
+/// between and after test items stays visible, so ordering cannot hide a forbidden API.
+fn without_test_items(code: &mut [char]) {
+    let mut i = 0;
+    while i < code.len() {
+        if code.get(i) != Some(&'#') {
+            i += 1;
             continue;
         }
+        let Some((text, after)) = attribute(code, i) else {
+            break;
+        };
+        if text == "#![cfg(test)]" {
+            code.iter_mut().for_each(|c| *c = ' ');
+            return;
+        }
+        if text != "#[cfg(test)]" {
+            i = after;
+            continue;
+        }
+        // Consume the annotated item: up to a `;` or the end of its first brace block.
+        let mut j = after;
+        let (mut brace, mut other) = (0usize, 0usize);
+        let mut opened = false;
+        while let Some(&c) = code.get(j) {
+            j += 1;
+            match c {
+                '{' => {
+                    brace += 1;
+                    opened = true;
+                }
+                '}' => {
+                    brace = brace.saturating_sub(1);
+                    if opened && brace == 0 && other == 0 {
+                        break;
+                    }
+                }
+                '(' | '[' => other += 1,
+                ')' | ']' => other = other.saturating_sub(1),
+                ';' if brace == 0 && other == 0 => break,
+                _ => {}
+            }
+        }
+        let end = j.min(code.len());
+        for c in code.iter_mut().take(end).skip(i) {
+            if *c != '\n' {
+                *c = ' ';
+            }
+        }
+        i = end;
+    }
+}
+
+/// Identifiers that open each top-level entry of every `std::{ ... }` group in `code`.
+fn std_group_heads(code: &str) -> Vec<String> {
+    let mut heads = Vec::new();
+    for (at, _) in code.match_indices("std::{") {
+        let rest = code.get(at + "std::{".len()..).unwrap_or("");
+        let (mut depth, mut head, mut fresh) = (1usize, String::new(), true);
+        for c in rest.chars() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                ',' if depth == 1 => {
+                    heads.push(std::mem::take(&mut head));
+                    fresh = true;
+                }
+                c if depth == 1 && fresh && (c.is_alphanumeric() || c == '_') => head.push(c),
+                c if depth == 1 && !c.is_whitespace() => fresh = false,
+                _ => {}
+            }
+        }
+        heads.push(head);
+    }
+    heads
+}
+
+/// The forbidden APIs that non-test source mentions, in order of first appearance.
+///
+/// Comments and string literals are ignored. Every item annotated `#[cfg(test)]` is excluded
+/// wherever it is declared, and only that item: production code after a test module is still
+/// scanned. A `use std::{fs, io}` group is read as `std::fs` and `std::io`.
+pub fn forbidden_apis(source: &str) -> Vec<&'static str> {
+    let mut code = blank_literals(source);
+    without_test_items(&mut code);
+    let code: String = code.into_iter().collect();
+    let mut found = Vec::new();
+    for line in code.lines() {
         for api in FORBIDDEN_APIS {
             let mentioned = line.match_indices(api).any(|(at, _)| {
                 let after = line.get(at.saturating_add(api.len())..).unwrap_or("");
                 !after.starts_with(|c: char| c.is_alphanumeric() || c == '_')
             });
             if mentioned && !found.contains(&api) {
+                found.push(api);
+            }
+        }
+    }
+    for head in std_group_heads(&code) {
+        for api in FORBIDDEN_APIS {
+            if api.strip_prefix("std::") == Some(head.as_str()) && !found.contains(&api) {
                 found.push(api);
             }
         }
@@ -354,16 +576,113 @@ pub fn check_workspace(workspace: &Workspace, table: &ModuleTable) -> Vec<Violat
     out
 }
 
-/// Checks that the CI file derives its wasm crate list instead of repeating it.
-pub fn check_ci(ci: &str) -> Vec<Violation> {
-    let mut out = Vec::new();
+/// Leading spaces of a line.
+fn indent(line: &str) -> usize {
+    line.len() - line.trim_start_matches(' ').len()
+}
+
+/// Logical lines of each job under `jobs:` whose text mentions the wasm32 target.
+///
+/// Comment lines are dropped and lines ending in `\` are joined with the next line, so a
+/// continuation cannot hide an argument from the scan.
+fn wasm_job_lines(ci: &str) -> Vec<Vec<String>> {
+    let mut jobs: Vec<Vec<&str>> = Vec::new();
+    let mut job_indent: Option<usize> = None;
+    let mut in_jobs = false;
     for line in ci.lines() {
-        if line.contains("wasm32-unknown-unknown") && line.contains("-p beamcraft-") {
-            out.push(Violation::CiHardCodedList(line.to_owned()));
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if indent(line) == 0 {
+            in_jobs = trimmed == "jobs:";
+            job_indent = None;
+            continue;
+        }
+        if !in_jobs {
+            continue;
+        }
+        let first = *job_indent.get_or_insert(indent(line));
+        if indent(line) == first {
+            jobs.push(Vec::new());
+        }
+        if let Some(job) = jobs.last_mut() {
+            job.push(line);
         }
     }
-    if !ci.contains("beamcraft-boundaries -- portable") {
-        out.push(Violation::CiMissingPortableCall);
+    jobs.into_iter()
+        .filter(|job| job.iter().any(|l| l.contains("wasm32-unknown-unknown")))
+        .map(|job| {
+            let mut logical = Vec::new();
+            let mut pending = String::new();
+            for line in job {
+                let trimmed = line.trim();
+                match trimmed.strip_suffix('\\') {
+                    Some(head) => {
+                        pending.push_str(head);
+                        pending.push(' ');
+                    }
+                    None => {
+                        pending.push_str(trimmed);
+                        logical.push(std::mem::take(&mut pending));
+                    }
+                }
+            }
+            if !pending.is_empty() {
+                logical.push(pending);
+            }
+            logical
+        })
+        .collect()
+}
+
+/// True if a logical line passes a package selection (`-p`, `-pNAME`, `--package`) to cargo that
+/// is not the tool's own `cargo run -p beamcraft-boundaries`.
+fn hand_written_package_arg(line: &str) -> bool {
+    let spaced: String = line
+        .chars()
+        .map(|c| if "\"'()=;`".contains(c) { ' ' } else { c })
+        .collect();
+    let tokens: Vec<&str> = spaced.split_whitespace().collect();
+    let runs_tool = line.contains("cargo run");
+    tokens.iter().enumerate().any(|(i, token)| {
+        let argument = if *token == "-p" || *token == "--package" {
+            tokens.get(i + 1).copied().unwrap_or("")
+        } else if let Some(rest) = token
+            .strip_prefix("-p")
+            .filter(|_| !token.starts_with("--"))
+        {
+            rest
+        } else {
+            return false;
+        };
+        !(runs_tool && argument == "beamcraft-boundaries")
+    })
+}
+
+/// Checks that the CI wasm job derives its crate list from the tool instead of repeating it.
+///
+/// Every job that mentions `wasm32-unknown-unknown` is read as a whole, with continuation lines
+/// joined: it must call `beamcraft-boundaries -- portable`, and no line of it may select a
+/// package by hand (`-p`, `-pNAME`, `--package`) except the tool's own `cargo run -p`.
+pub fn check_ci(ci: &str) -> Vec<Violation> {
+    let jobs = wasm_job_lines(ci);
+    if jobs.is_empty() {
+        return vec![Violation::CiNoWasmJob];
+    }
+    let mut out = Vec::new();
+    for lines in jobs {
+        for line in &lines {
+            if hand_written_package_arg(line) {
+                out.push(Violation::CiHardCodedList(line.clone()));
+            }
+        }
+        if !lines
+            .iter()
+            .any(|l| l.contains("beamcraft-boundaries -- portable"))
+        {
+            out.push(Violation::CiMissingPortableCall);
+        }
     }
     out
 }
@@ -637,20 +956,6 @@ mod tests {
     }
 
     #[test]
-    fn api_names_must_match_whole_paths() {
-        assert_eq!(
-            forbidden_apis("use std::fsx::Y;\nuse std::environment;\n"),
-            Vec::<&str>::new()
-        );
-        assert_eq!(forbidden_apis("use std::{fs, io};\n"), Vec::<&str>::new());
-        assert_eq!(forbidden_apis("use std::net::TcpStream;\n"), ["std::net"]);
-        assert_eq!(
-            forbidden_apis("let t = std::thread::spawn(f);\n"),
-            ["std::thread"]
-        );
-    }
-
-    #[test]
     fn table_rules_catch_bad_layers_unknown_names_and_duplicates() {
         let mut t = table();
         t.rows.push(row(
@@ -720,14 +1025,201 @@ mod tests {
     }
 
     #[test]
-    fn ci_must_derive_the_wasm_list() {
-        let ok = "run: |\n  list=\"$(cargo run -p beamcraft-boundaries -- portable)\"\n  cargo check --target wasm32-unknown-unknown $list\n";
-        assert_eq!(check_ci(ok), []);
-        let by_hand = "run: cargo check --target wasm32-unknown-unknown -p beamcraft-geom\n";
-        let v = check_ci(by_hand);
-        assert_eq!(v.len(), 2);
-        assert!(matches!(v.first(), Some(Violation::CiHardCodedList(_))));
-        assert!(v.contains(&Violation::CiMissingPortableCall));
+    fn api_names_must_match_whole_paths() {
+        assert_eq!(
+            forbidden_apis(
+                "use std::fsx::Y;
+use std::environment;
+"
+            ),
+            Vec::<&str>::new()
+        );
+        assert_eq!(
+            forbidden_apis(
+                "use std::net::TcpStream;
+"
+            ),
+            ["std::net"]
+        );
+        assert_eq!(
+            forbidden_apis(
+                "let t = std::thread::spawn(f);
+"
+            ),
+            ["std::thread"]
+        );
+    }
+
+    fn apis(source: &str) -> Vec<&'static str> {
+        forbidden_apis(source)
+    }
+
+    #[test]
+    fn a_forbidden_api_before_a_test_module_is_found() {
+        assert_eq!(
+            apis("use std::fs;\n#[cfg(test)]\nmod tests {\n    use std::process::Command;\n}\n"),
+            ["std::fs"]
+        );
+    }
+
+    #[test]
+    fn a_forbidden_api_inside_a_test_item_is_allowed() {
+        assert_eq!(
+            apis(
+                "#[cfg(test)]\nmod tests {\n    use std::fs;\n    fn f() { let _ = \"}\"; let _ = '}'; }\n    use std::net::X;\n}\n"
+            ),
+            Vec::<&str>::new()
+        );
+        assert_eq!(apis("#[cfg(test)]\nuse std::fs;\n"), Vec::<&str>::new());
+        assert_eq!(
+            apis(
+                "#[cfg(test)]\n#[allow(dead_code)]\nfn helper(x: [u8; 2]) -> u8 { let _ = std::env::args(); 0 }\n"
+            ),
+            Vec::<&str>::new()
+        );
+        assert_eq!(apis("#![cfg(test)]\nuse std::fs;\n"), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn a_forbidden_api_after_a_test_module_is_found_and_cannot_hide_behind_ordering() {
+        let source = "#[cfg(test)]\nmod tests {\n    fn t() { if true { } }\n}\n\nuse std::fs;\n";
+        assert_eq!(apis(source), ["std::fs"]);
+        let two = "#[cfg(test)] mod a { use std::net::X; }\nfn p() { std::thread::spawn(f); }\n#[cfg(test)] mod b {}\nuse std::env;\n";
+        assert_eq!(apis(two), ["std::thread", "std::env"]);
+        // `cfg(not(test))` is production code.
+        assert_eq!(apis("#[cfg(not(test))]\nuse std::os::raw;\n"), ["std::os"]);
+        // A test attribute on a body-less item does not swallow the code after it.
+        assert_eq!(
+            apis("#[cfg(test)]\nmod tests;\nuse std::fs;\n"),
+            ["std::fs"]
+        );
+    }
+
+    #[test]
+    fn comments_and_strings_do_not_count_but_groups_do() {
+        assert_eq!(
+            apis(
+                "// std::fs\n/* std::net /* nested */ std::env */\nlet s = \"std::process\";\nlet r = r#\"std::os \"quoted\"\"#;\n"
+            ),
+            Vec::<&str>::new()
+        );
+        assert_eq!(apis("use std::{fs, io};\n"), ["std::fs"]);
+        assert_eq!(
+            apis("use std::{io::{self, Read}, thread};\n"),
+            ["std::thread"]
+        );
+        assert_eq!(
+            apis("use std::{io, collections::HashMap};\n"),
+            Vec::<&str>::new()
+        );
+        assert_eq!(apis("fn f<'a>(x: &'a str) { use std::fs; }\n"), ["std::fs"]);
+    }
+
+    const CI_OK: &str = "\
+jobs:
+  test:
+    steps:
+      - run: cargo test
+  wasm:
+    steps:
+      - uses: setup
+        with:
+          targets: wasm32-unknown-unknown
+      - run: |
+          list=\"$(cargo run --locked --quiet -p beamcraft-boundaries -- portable)\"
+          cargo check --target wasm32-unknown-unknown $list
+";
+
+    fn ci_with(extra: &str) -> String {
+        format!("{CI_OK}{extra}")
+    }
+
+    #[test]
+    fn ci_deriving_the_list_from_the_tool_passes() {
+        assert_eq!(check_ci(CI_OK), []);
+    }
+
+    #[test]
+    fn ci_without_a_wasm_job_or_portable_call_fails() {
+        assert_eq!(
+            check_ci("jobs:\n  test:\n    steps:\n      - run: cargo test -p beamcraft-geom\n"),
+            [Violation::CiNoWasmJob]
+        );
+        let no_call = CI_OK.replace(
+            "beamcraft-boundaries -- portable",
+            "beamcraft-boundaries -- check",
+        );
+        assert_eq!(check_ci(&no_call), [Violation::CiMissingPortableCall]);
+    }
+
+    #[test]
+    fn ci_rejects_a_hand_written_list_on_the_same_line() {
+        let v = check_ci(&ci_with(
+            "      - run: cargo check --target wasm32-unknown-unknown -p beamcraft-geom\n",
+        ));
+        assert!(
+            matches!(v.as_slice(), [Violation::CiHardCodedList(l)] if l.contains("beamcraft-geom")),
+            "{v:?}"
+        );
+    }
+
+    #[test]
+    fn ci_rejects_a_hand_written_list_in_a_continuation_line() {
+        let v = check_ci(&ci_with(
+            "      - run: |\n          cargo check --target wasm32-unknown-unknown \\\n            -p beamcraft-geom\n",
+        ));
+        assert!(
+            matches!(v.as_slice(), [Violation::CiHardCodedList(l)] if l.contains("-p beamcraft-geom")),
+            "{v:?}"
+        );
+    }
+
+    #[test]
+    fn ci_rejects_a_hand_written_list_in_a_variable_assignment() {
+        for assignment in [
+            "PKGS=\"-p beamcraft-geom\"",
+            "PKGS='--package beamcraft-model'",
+            "PKGS=-pbeamcraft-geom",
+            "PKGS=--package=beamcraft-geom",
+        ] {
+            let v = check_ci(&ci_with(&format!(
+                "      - run: {assignment}\n      - run: cargo check --target wasm32-unknown-unknown $PKGS\n"
+            )));
+            assert!(
+                matches!(v.as_slice(), [Violation::CiHardCodedList(_)]),
+                "{assignment}: {v:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ci_rejects_a_hand_written_list_in_a_separate_run_line_without_the_target() {
+        let v = check_ci(&ci_with("      - run: cargo check -p beamcraft-model\n"));
+        assert!(
+            matches!(v.as_slice(), [Violation::CiHardCodedList(_)]),
+            "{v:?}"
+        );
+        // The tool's own `-p` is allowed only on a `cargo run` line.
+        let v = check_ci(&ci_with(
+            "      - run: cargo check -p beamcraft-boundaries\n",
+        ));
+        assert!(
+            matches!(v.as_slice(), [Violation::CiHardCodedList(_)]),
+            "{v:?}"
+        );
+    }
+
+    #[test]
+    fn ci_ignores_package_arguments_of_other_jobs_and_comments() {
+        let other = CI_OK.replace(
+            "      - run: cargo test\n",
+            "      - run: cargo test -p beamcraft-geom\n",
+        );
+        assert_eq!(check_ci(&other), []);
+        assert_eq!(
+            check_ci(&ci_with("      # cargo check -p beamcraft-geom\n")),
+            []
+        );
     }
 
     #[test]
