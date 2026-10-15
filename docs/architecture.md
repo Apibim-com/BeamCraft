@@ -117,6 +117,9 @@ The [F05 worker protocol draft](contracts/worker-protocol-v0.1.md) specifies thi
 contract and its proposed acceptance cases.
 The [F06 geometry and viewport contract draft](contracts/geometry-contract-v0.1.md) specifies the
 kernel input, mesh, key and query contract in the same way.
+The [F10 domain vocabulary and module contract draft](contracts/domain-vocabulary-v0.1.md)
+specifies the shared element kinds, relationships, validation rules and discipline-module boundary
+in the same way; only the steel module is in scope and nothing in it is implemented.
 Coordination and control servers require explicit opt-in, loopback binding and token authentication.
 Resource paths do not authorize outbound access; local resolution and containment are validated.
 

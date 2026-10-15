@@ -58,6 +58,16 @@ later project; portable domain crates alone do not establish a working web appli
   implementation requires a protected root namespace. U04 owns the CLI; U06/U07 own revision
   publication and recovery. U05 acceptance and K1 are not complete.
 
+- 2026-10-15: F10 drafted the domain vocabulary and discipline-module contract 0.1.0 on base
+  `20d26cfb107d51e7a2c76c25ca0191b8115ec301` (stacked on F08), consuming F04 0.1.0, F06 0.1.0
+  and F08. It fixes a closed element-kind registry (steel `plate`, `beam`, `column` implementable;
+  ten kinds reserved with no behaviour), the common base, shared and per-discipline namespaces
+  with unknown-content preservation and versioning, a shared relationship vocabulary with a
+  penetration request lifecycle, a 52-rule validation catalogue mapped to the existing F04 codes
+  (client, host and post-merge stages) and the discipline-module contract, with 149 original
+  acceptance descriptions (73 positive, 76 negative). Nothing is implemented, the contract is not
+  frozen and K0 is not passed. Local WASM and cargo-deny checks were not run.
+
 - 2026-10-15: G04 drafted the first-scope kernel design 0.1.0 on base
   `29d962e790ffd21ecd9a45143f052d4b4d53d3f7` (stacked on F06), consuming F06/F04 0.1.0 and the
   first-scope package 0.1.0. It covers representation, numeric derivations, predicates, verdicts
