@@ -93,7 +93,9 @@ Placement is a rigid pose: `translation_mm` (three numbers) and `orientation_xyz
 (four quaternion numbers). Components of orientation are finite in [-1, 1]; squared norm must
 be within 1e-12 of one. F06 must validate and construct a proper rigid transform, normalize that
 accepted quaternion and define deterministic antipodal/sign handling for geometry signatures.
-This is a proposed math admission rule, pending F06/F09 review. Scale, shear, reflection and
+The F09 review integrated the rule for the first scope (CR-PLACE-001). It remains a proposed
+rule until the owner freezes this contract (section 11); F06 still owns rigid-transform
+construction, deterministic sign handling and tolerance policy (G-06). Scale, shear, reflection and
 commercial position presets are unsupported in the initial mutation API. Generic foreign
 transforms remain read-only and use a separate measurement-support decision.
 
@@ -338,8 +340,10 @@ their own, separate analytical-comparison tolerances for the F07 fixture format;
 replace this rule.
 
 **Coverage and cross-references (G-05).** New cases refer to the first-scope cases by ID through
-`first_scope_refs` (package version 0.1.0, field `first_scope_package`); the expected codes agree
-with those cases except for the one G-03 choice.
+`first_scope_refs` (package version 0.1.0, field `first_scope_package`) where a corresponding
+first-scope case exists; the expected codes agree with those cases except for the one G-03 choice.
+`F04-POS-12` and `F04-RAW-04` to `F04-RAW-06` are F04-only cases with no first-scope
+counterpart and carry no `first_scope_refs`.
 
 | Topic | F04 cases | First-scope cases |
 |-------|-----------|-------------------|
@@ -348,7 +352,7 @@ with those cases except for the one G-03 choice.
 | Axis and plate dimension just above the limit, rejected | `F04-NEG-19`, `F04-NEG-21` (coarser: `F04-NEG-05`) | `FS-NEG-PLATE-BOUND`, `FS-NEG-AXIS-BOUND` |
 | Translation at the limit, accepted / just above, rejected | `F04-POS-09` / `F04-NEG-26` | `FS-POSE-E` / `FS-NEG-TRANSLATION-BOUND` |
 | Invalid quaternion: norm, component range, zero, just outside tolerance | `F04-NEG-22` to `F04-NEG-25` | `FS-NEG-QUAT` |
-| Non-finite quaternion or translation component | `F04-RAW-04`, `F04-RAW-05`, `F04-RAW-06` | `F04-RAW-01`, `F04-RAW-02` pattern |
+| Non-finite quaternion or translation component | `F04-RAW-04`, `F04-RAW-05`, `F04-RAW-06` | none (F04-only cases; they follow the parsing pattern of `F04-RAW-01` and `F04-RAW-02`) |
 | Rotation convention and rotate-then-translate | `F04-POS-10` | `FS-POSE-A` |
 | Quaternion norm slightly off one, accepted and normalized | `F04-POS-11` | `FS-POSE-F` |
 | `q` and `-q` | `F04-POS-12` | none (F04-only case) |
