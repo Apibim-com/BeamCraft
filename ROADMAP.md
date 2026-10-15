@@ -24,9 +24,11 @@ F02 (requirements), F03 (OpenUSD distribution audit) and F07 (original fixtures)
 independently. F09 establishes clean-room admission after F02. F04 then fixes the model and command
 contract; F05/F06 define worker and geometry contracts before F08 changes module boundaries.
 
-The [F04 model/command draft](docs/contracts/model-and-commands-v0.1.md) and its original
-acceptance descriptions are available for review. F02 currently remains a local analysis artifact;
-F09 admission and contract freeze are still outstanding. No runtime command is implemented by F04.
+The [F04 model/command contract](docs/contracts/model-and-commands-v0.1.md) and its original
+acceptance descriptions are a freeze candidate: F09 review 0.1.0 and its first-scope package are
+integrated, and F04 adopts the proposed resolutions of review findings G-03 to G-05. The owner
+still decides G-01/G-02 and the freeze itself; F02 remains a local analysis artifact.
+No runtime command is implemented by F04.
 
 The first demonstration starts with a rectangular plate and a supported straight member.
 Published USD revisions include their computed geometry. Copying, editing and reopening must
@@ -42,6 +44,13 @@ IFC import and foreign-to-native conversion require a new scope decision. Browse
 later project; portable domain crates alone do not establish a working web application.
 
 ## Progress log
+
+- 2026-10-14: F04.2 turned the model/command contract into a freeze candidate on base
+  `478f330e15819b574c62227bc23009729adb4fdc`. It adopts the F09 amendments G-03 (zero-length
+  axis maps to `INVALID_ARGUMENT`, proposed for owner adoption), G-04 (quaternion convention)
+  and G-05 (CR-TOL-001 as a test comparison rule; 14 logical and 3 raw cases added with
+  first-scope cross-references). G-01, G-02 and G-06 stay open. The contract is not frozen, K0
+  is not passed and no command is implemented.
 
 - 2026-10-14: F07 added original synthetic fixtures on base
   `b34205281ab8a1f95052c4dc7d84f0995633e179`. The new std-only dev tool `tools/fixtures`
