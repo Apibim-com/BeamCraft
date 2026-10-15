@@ -262,11 +262,13 @@ relative. These are reasons for a draft, not proofs; G04 validates them.
    - c. `X0 = Y x Z`, `X = X0 / |X0|`, then `Y = Z x X`. The cross product is
      `(a2*b3 - a3*b2, a3*b1 - a1*b3, a1*b2 - a2*b1)`. This applies to both rules and gives a
      right-handed frame (`X x Y = Z`).
-   - d. **Frame certificate.** `| |X|*|X| - 1 |`, the same for `Y` and `Z`, the three pairwise
-     dot products and `| (X x Y) . Z - 1 |` must each be at most 1e-12; otherwise the build fails
-     with `GEO_NUMERIC_UNCERTAIN` (`UNSUPPORTED_GEOMETRY`) and no partial result
-     (`F06-NEG-31`). In the near-vertical rule `|P|^2 = 1 - c^2 >= 1 - 1e-12`, so the
-     normalization does not amplify rounding error.
+   - d. **Frame certificate.** `| |X|*|X| - 1 |`, the same for `Y` and `Z`, the absolute values
+     `|X . Y|`, `|X . Z|` and `|Y . Z|` of the three pairwise dot products, and
+     `| (X x Y) . Z - 1 |` must each be at most 1e-12 (every bound is on an absolute value, so a
+     negative error is rejected like a positive one); otherwise the build fails with
+     `GEO_NUMERIC_UNCERTAIN` (`UNSUPPORTED_GEOMETRY`) and no partial result (`F06-NEG-31` injects
+     `X . Y = +1e-9`, `F06-NEG-35` injects `X . Y = -1e-9`). In the near-vertical rule
+     `|P|^2 = 1 - c^2 >= 1 - 1e-12`, so the normalization does not amplify rounding error.
 
    The decision `hh < 1e-12 * LL` is the written binary64 comparison (section 2). Cases keep a
    margin on both sides, and one case sits at a relative margin of 1e-12 (`F06-POS-09`,
@@ -715,8 +717,8 @@ still decides what the host may report: `CANCELLED` only when the discard is pro
 
 ## 11. Acceptance cases
 
-The [case file](geometry-contract-cases-v0.1.json) holds 80 logical cases: 46 positive
-(`F06-POS-01` to `F06-POS-46`) and 34 negative (`F06-NEG-01` to `F06-NEG-34`). They are
+The [case file](geometry-contract-cases-v0.1.json) holds 81 logical cases: 46 positive
+(`F06-POS-01` to `F06-POS-46`) and 35 negative (`F06-NEG-01` to `F06-NEG-35`). They are
 proposed future tests: acceptance needs a real kernel, real buffers and independent readers.
 Numeric expectations are exact values derived by hand with rational arithmetic and re-derived by
 a throwaway computation outside the repository; the derivation text is in each case. Numeric
@@ -735,7 +737,7 @@ Existing F04 and first-scope IDs are referenced, not duplicated, and no existing
 | Cap boundaries, exactly at limit accepted | `F06-POS-14`, `F06-POS-15`, `F06-POS-27` | `F04-POS-08`, `F04-POS-13`, `FS-PLATE-C`, `FS-MEMBER-B` |
 | Cap boundaries, just above rejected | `F06-NEG-06`, `F06-NEG-11` to `F06-NEG-14` | `F04-NEG-19`, `F04-NEG-21`, `FS-NEG-PLATE-BOUND`, `FS-NEG-AXIS-BOUND` |
 | Degenerate axis, minimum dimension | `F06-NEG-03` to `F06-NEG-05` | `F04-NEG-20`, `FS-NEG-AXIS-ZERO` |
-| Parallel-up boundary, near-vertical frame, frame certificate | `F06-POS-05`, `F06-POS-06`, `F06-POS-09`, `F06-POS-10`, `F06-POS-41`, `F06-POS-42`, `F06-POS-46`, `F06-NEG-31` | `F04-POS-16` |
+| Parallel-up boundary, near-vertical frame, frame certificate | `F06-POS-05`, `F06-POS-06`, `F06-POS-09`, `F06-POS-10`, `F06-POS-41`, `F06-POS-42`, `F06-POS-46`, `F06-NEG-31`, `F06-NEG-35` | `F04-POS-16` |
 | Non-finite input | `F06-NEG-01`, `F06-NEG-02`, `F06-NEG-27` | `F04-RAW-01`, `F04-RAW-02`, `F04-RAW-04` to `F04-RAW-06` |
 | Buffer cap exceeded, invalid blob | `F06-NEG-11` to `F06-NEG-15`, `F06-NEG-30` | none |
 | Cancellation | `F06-POS-37`, `F06-NEG-16`, `F06-NEG-17` | none |
@@ -823,3 +825,7 @@ depend on them.
     rounded-mesh cross-checks; see the open owner decisions above.
   - A6 (clarified): primitive limits versus validator caps, descriptor byte bound, pick work
     and deadline bounds, negotiated limits (sections 6 and 10; `F06-NEG-33`, `F06-NEG-34`).
+- 2026-10-15, F06 0.1.0 correction round 2, after the Copilot review of PR #20. The frame
+  certificate of section 4, rule 2, step d bounds the absolute value of each pairwise dot product
+  (a signed bound accepted `X . Y = -1e-9`); `F06-NEG-35` is added beside `F06-NEG-31` so both
+  signs of an injected error fail. The case count rises from 80 to 81 (46 positive, 35 negative).
