@@ -121,8 +121,8 @@ order:
 3. **Caps**: the table above (`LIMIT_EXCEEDED`).
 4. **Ranges**: greater than zero, minimum dimension, axis length, density, quaternion
    (`INVALID_ARGUMENT`).
-5. **Build** (derive frame, vertices, tables), **checks** (section 6 self-checks) and
-   **quantities** (section 8), with cancellation points between them (section 10).
+5. **Build** (derive frame, certify it, derive vertices, tables), **checks** (section 6
+   self-checks) and **quantities** (section 8), with cancellation points between them (section 10).
 
 Arithmetic uses binary64 with round-to-nearest-even, only `+ - * /` and `sqrt` (no
 trigonometric or other library functions), no fused multiply-add contraction, and the operand
@@ -131,6 +131,27 @@ every key. No clock, random source, thread count, locale, hash-map iteration ord
 environment variable influences a result. The same input and algorithm version give the same
 bytes on every platform that follows IEEE 754 for these operations. This is a determinism rule,
 not an accuracy promise; accuracy bounds are for G04 and fixtures.
+
+**Order of evaluation for quantities and dot products.** Call the three box edge lengths `a`,
+`b`, `c` (plate `width, length, thickness`; member `w, h, L`). Then `V_mm3 = (a*b)*c`,
+`S_mm2 = 2*((a*b + a*c) + b*c)`, `V_m3 = V_mm3 / 1e9`, `S_m2 = S_mm2 / 1e6` (division by
+constants that are exactly representable) and `mass = (V_mm3 * density) / 1e9`. A dot product
+of three terms is `(r1*v1 + r2*v2) + r3*v3`; world coordinate `i` of a vertex `(x, y, z)` is
+`(((R_i0*x + R_i1*y) + R_i2*z) + t_i)`. Bounds take the minimum and maximum of the eight computed
+vertices with `<` and `>`, scanning vertex indices in ascending order.
+
+**Thresholds, certification and conformance.** Every decision of this contract (caps, minimum
+dimension, parallel test, status) is the written binary64 comparison on the binary64 values
+defined above; there is no unspecified rounding band, and a value exactly at an inclusive limit
+is accepted. Where a wrong decision would yield an invalid result rather than a different valid
+one, the result carries a numeric certificate (for example the frame certificate of section 4,
+rule 2): a build, mesh or query result whose certificate fails is `GEO_NUMERIC_UNCERTAIN`
+(`UNSUPPORTED_GEOMETRY`) and is never returned as a partial or current result. The parallel test
+needs no band because both of its branches give a certified frame on either side of the
+threshold. The claim of identical bytes and decisions on every platform is a rule to be
+demonstrated, not a verified property: G04 and the fixtures must supply conformance evidence on
+each target, including `wasm32`. Any change that alters output bytes or a decision for some
+admitted input raises `algorithm` and, with it, every key (section 7).
 
 ## 3. Result and diagnostics
 
@@ -177,6 +198,7 @@ The overall status is the status of the first diagnostic.
 | `GEO_MESH_INWARD` | `UNSUPPORTED_GEOMETRY` | Closed but wound inward |
 | `GEO_MESH_NOT_CERTIFIED` | `UNSUPPORTED_GEOMETRY` | No certificate of freedom from self-intersection |
 | `GEO_SELF_CHECK_FAILED` | `UNSUPPORTED_GEOMETRY` | The kernel's own result failed section 6 checks |
+| `GEO_NUMERIC_UNCERTAIN` | `UNSUPPORTED_GEOMETRY` | A numeric certificate failed (frame orthonormality, non-finite intermediate) in a build or query |
 | `GEO_CANCELLED` | `CANCELLED` | Cancellation observed before the seal point |
 | `GEO_FEATURE_NOT_FOUND` | `NOT_FOUND` | Well-formed FeatureId naming no feature |
 | `GEO_FEATURE_ID_INVALID` | `INVALID_ARGUMENT` | Malformed FeatureId |
@@ -185,13 +207,15 @@ The overall status is the status of the first diagnostic.
 | `GEO_PICK_INPUT_INVALID` | `INVALID_ARGUMENT` | Bad ray or point query input |
 | `GEO_PICK_LIMIT` | `LIMIT_EXCEEDED` | Hit count or radius above its cap |
 
-The first 18 codes belong to the kernel and blob stages; the last six to queries (section 9).
+The first 19 codes belong to the kernel and blob stages (`GEO_NON_FINITE` and
+`GEO_NUMERIC_UNCERTAIN` also occur in queries); the last six to queries (section 9).
 Every F04 code used here exists in F04 section 8.
 
 **Failure never returns partial geometry as current.** A result whose status is not `ok` has no
 `mesh`, `quantities` or `shape_key`. A failed or cancelled call changes nothing: the previous
 current result of an element stays current and its generation does not advance (F04 section 8).
-A mesh that fails self-checks is discarded, never displayed as current. A mesh that is not an
+A mesh that fails self-checks or a numeric certificate is discarded, never displayed as
+current. A mesh that is not an
 analytic first-scope result may be shown by a viewport only if the host flags it
 "not exact"; it never receives engineering quantities.
 
@@ -221,19 +245,56 @@ relative. These are reasons for a draft, not proofs; G04 validates them.
    equal to `eps_dim` is accepted. A zero or too-short axis is `GEO_AXIS_TOO_SHORT`
    (`INVALID_ARGUMENT`, as G-03 requires). The axis length is
    `L = sqrt((dx*dx + dy*dy) + dz*dz)` with `d = p2 - p1` per component.
-2. **Parallel test for P-3 (assumed pending owner confirmation: P-3).** With
-   `hh = dx*dx + dy*dy` and `LL = hh + dz*dz`, the axis is parallel to element-local Z when
-   `hh < 1e-12 * LL` (strict: the horizontal component is below `eps_par` times the length;
-   anti-parallel also counts). Then the **column rule** applies: `Y_m = (0, 1, 0)`. Otherwise
-   the **horizontal rule** applies, with `h = sqrt(hh)`:
-   `Y_m = ((-dx*dz)/(h*L), (-dy*dz)/(h*L), hh/(h*L))`. In both cases `Z_m = (dx/L, dy/L, dz/L)`
-   and `X_m = Y_m x Z_m`, with the cross product `(a2*b3 - a3*b2, a3*b1 - a1*b3, a1*b2 - a2*b1)`.
-   Exactly parallel uses the column rule, as P-3 states. The decision at a ratio within a relative
-   1e-9 of the threshold is not specified, because it depends on rounding; cases keep a
-   margin of at least two on both sides (`F06-POS-09`, `F06-POS-10`).
-3. The roll is discontinuous at the threshold by construction: a member just inside and one just
-   outside get frames about a quarter turn apart. Anyone who needs another roll expresses it
-   through the element placement (P-3).
+2. **Roll rule and parallel test (P-3, assumed pending owner confirmation: P-3).** Let
+   `d = p2 - p1`, `hh = dx*dx + dy*dy`, `LL = hh + dz*dz`, `L = sqrt(LL)`. The frame is built in
+   this order:
+   - a. `Z = (dx/L, dy/L, dz/L)`.
+   - b. The first direction `Y`, by the first branch that applies. **Horizontal rule** when
+     `hh >= 1e-12 * LL`: with `h = sqrt(hh)`,
+     `Y = ((-dx*dz)/(h*L), (-dy*dz)/(h*L), hh/(h*L))`, which is local +Z projected onto the plane
+     normal to `Z`. **Near-vertical rule** (also called the column rule) when `hh < 1e-12 * LL`
+     (strict; anti-parallel counts; an exactly vertical axis is included): with `U = (0, 1, 0)`
+     and `c = Z_y`, the vector `P = (-Z_x*c, 1 - Z_y*c, -Z_z*c)` is `U - Z*(U . Z)`, and
+     `Y = P / |P|` with `|P| = sqrt((P_x*P_x + P_y*P_y) + P_z*P_z)`. An exactly vertical axis
+     gives `c = 0` and `Y = (0, 1, 0)`, as P-3 states. For a tilted near-vertical axis `Y` stays
+     perpendicular to `Z`; a fixed `(0, 1, 0)` would not be (it would leave the section off
+     perpendicular by the tilt toward Y).
+   - c. `X0 = Y x Z`, `X = X0 / |X0|`, then `Y = Z x X`. The cross product is
+     `(a2*b3 - a3*b2, a3*b1 - a1*b3, a1*b2 - a2*b1)`. This applies to both rules and gives a
+     right-handed frame (`X x Y = Z`).
+   - d. **Frame certificate.** `| |X|*|X| - 1 |`, the same for `Y` and `Z`, the absolute values
+     `|X . Y|`, `|X . Z|` and `|Y . Z|` of the three pairwise dot products, and
+     `| (X x Y) . Z - 1 |` must each be at most 1e-12 (every bound is on an absolute value, so a
+     negative error is rejected like a positive one); otherwise the build fails with
+     `GEO_NUMERIC_UNCERTAIN` (`UNSUPPORTED_GEOMETRY`) and no partial result (`F06-NEG-31` injects
+     `X . Y = +1e-9`, `F06-NEG-35` injects `X . Y = -1e-9`). In the near-vertical rule
+     `|P|^2 = 1 - c^2 >= 1 - 1e-12`, so the normalization does not amplify rounding error.
+
+   The decision `hh < 1e-12 * LL` is the written binary64 comparison (section 2). Cases keep a
+   margin on both sides, and one case sits at a relative margin of 1e-12 (`F06-POS-09`,
+   `F06-POS-10`, `F06-POS-46`). Y-tilted near-vertical axes are `F06-POS-41` and `F06-POS-42`.
+3. The roll is generally discontinuous at the threshold by construction; the jump depends on the
+   tilt direction. Compare the two branch frames on the **same nonvertical unit axis** `Z`
+   near the threshold, rotating from the near-vertical frame to the horizontal frame by the
+   right-hand rule about `Z`. In exact arithmetic, let `r = sqrt(Z_x^2 + Z_y^2)` and
+   `n = sqrt(1 - Z_y^2)`. Then
+   `cos(theta) = -Z_y*Z_z/(r*n)` and `sin(theta) = Z_x/(r*n)`. For tilts from local +Z:
+
+   | Tilt toward | Exact branch rotation |
+   |-------------|-----------------------|
+   | +Y | 180 degrees (half turn) |
+   | -Y | 0 degrees (no roll jump on this meridian) |
+   | +X | +90 degrees (quarter turn) |
+   | -X | -90 degrees (quarter turn) |
+
+   These angles hold on either side of the threshold and give the one-sided limiting roll
+   differences there. Frames on distinct finite axes also differ in axis direction, so their
+   relative three-dimensional rotation is not solely a roll. For tilts from local -Z, the +Y
+   and -Y entries exchange; the +X and -X entries keep their signs. Other tilt directions follow
+   the formula above. Continuity stays an open owner decision (section 12).
+   Anyone who needs another roll expresses it through the element placement (P-3). F04's text
+   of P-3 names a fixed `+Y` for the column case; for a tilted near-vertical axis that is not
+   perpendicular to the axis, so F04 P-3 needs a joint amendment (section 12).
 4. The kernel never snaps, welds or merges vertices, and never heals geometry. Vertices are
    distinct by construction, not by a tolerance test, and every box edge is at least `eps_dim`
    long after the range checks.
@@ -370,7 +431,17 @@ big-endian; they are transport, and this blob is the opaque payload.)
 the first-scope body is 392 bytes (`F06-POS-02`). Section starts are multiples of 8 relative to
 the blob start, but an attachment's start in memory is not aligned (F05 prefixes 44 bytes), so
 consumers read with unaligned loads or copy. The face table (an ordered array of at most `K`
-local ids) travels in the JSON descriptor, not in the blob.
+local ids) travels in the JSON descriptor, not in the blob. The encoded descriptor of one body
+(face table and fields) is at most 32,768 bytes of UTF-8; a page's control object also obeys
+the negotiated F05 `control_bytes`, `json_tokens` and `string_bytes`, and a page ends when any
+of its budgets would be exceeded (section 10).
+
+**Primitive limits and general validator limits.** The first-scope builders (plate and member)
+always produce exactly 8 vertices, 12 triangles, 6 faces, 12 topological edges, 18
+triangle-mesh edges, 1 shell and 26 features. These **primitive limits** are constants of the
+builders, not caps. The **hard caps** below are the general structural-validator limits for any
+blob (including a future body or a blob received from outside); a blob inside them is
+structurally valid, not thereby an engineering result (section 8).
 
 **Hard caps (draft).**
 
@@ -424,7 +495,7 @@ world bounds, measurements and picks come from the engine.
 | Body | The box frame of section 6 where the body is axis-aligned from `o` |
 | Element-local | F04 element-local coordinates; kernel meshes are in this space. Plate: identical to the body frame. Member: `p_local = o + B * p_body`, with `B = [X_m Y_m Z_m]` |
 | World | `p_world = R(q) * p_local + translation_mm` (rotate, then translate; F04 section 3) |
-| Unit | Lengths in mm, areas mm2, volumes mm3 internally; reports use m2 and m3 by factors 1e-6 and 1e-9 |
+| Unit | Lengths in mm, areas mm2, volumes mm3 internally; reports use m2 and m3 by division by 1e6 and 1e9 (section 2) |
 
 The transform is a rigid pose and nothing else: a unit quaternion and a translation, with
 determinant +1. Any matrix, scale, shear or reflection is `GEO_UNSUPPORTED_TRANSFORM`. A parent
@@ -440,8 +511,16 @@ binary64 after normalizing negative zero. NaN and infinity never occur (rejected
 Decimal text, locale and JSON formatting are never part of a preimage. Keys are SHA-256 digests
 shown as 64 lowercase hexadecimal digits; they are not content digests of stored bytes.
 
-**Three separate dependency keys.** Each has its own input set; the sets of the shape key, the
-world-measurement key and the presentation key do not overlap.
+**Three separate dependency keys.** The shape and world-measurement preimages share the
+`algorithm` and `tolerance_policy` fields (`00 01 00 01` for their two u16 values in 0.1.0).
+Changing either version intentionally invalidates both keys. Their remaining directly encoded
+fields are disjoint: shape has body kind, plate dimensions or member axis and section kind and
+dimensions, `feature_id_rule` and `mesh_layout`; world has the shape-key digest, translation and
+canonical quaternion. World therefore also depends transitively on every shape input. Their
+existing domain tags, `BCGEO-SHAPE` + `0x00` and `BCGEO-WORLD` + `0x00`, make the complete
+preimage byte strings distinct across these two domains; this does not promise that SHA-256
+itself is collision-free. Presentation inputs (resolved appearance digest, visibility and camera)
+are disjoint from the geometry inputs; V01 still owns its preimage encoding.
 
 1. **Shape key**: the element-local geometry. Preimage: `BCGEO-SHAPE` + `0x00`, a body kind
    byte (1 plate, 2 member), then for a plate the three f64 `width, length, thickness`; for a
@@ -521,7 +600,11 @@ owner confirmation; the plate bounds follow P-1 likewise.
 - `unsupported`: geometry outside the scope (a curved profile) or a mesh that is open, wound
   inward or not certified free of self-intersection (`F06-NEG-18` to `F06-NEG-20`). No value.
 - Precedence for mass: `unsupported` if volume is unsupported; else `unknown` if density is
-  absent; else `stale` if volume or density is stale; else `current`.
+  absent; else `stale` if volume or density is stale; else `current`. Mass of an unsupported
+  body is `unsupported` even when density is absent, because `unsupported` describes the
+  geometry and supplying a density could never make the mass current; this keeps F04's
+  statuses unchanged and is why `F06-NEG-18` expects mass `unsupported` (corrected in the
+  2026-10-15 amendment).
 
 **Bounds are not volume.** A bounding box is never reported as volume, mass or any exact
 quantity, even when it happens to have the same size as an axis-aligned body.
@@ -562,32 +645,61 @@ with no partial data. Request schemas are closed (unknown field: `UNSUPPORTED_PR
   coordinate of an admitted body: a local point has magnitude at most about 1.8e9 and the
   translation components are at most 1e9, so each world component stays below 3.5e9.
 - *Point form:* `point_mm` (as `origin_mm`), `radius_mm`, `targets`, `max_hits`.
-- *Face hits (ray):* the first intersection of the ray with each planar face, for `0 <= t <=
-  t_max`. A face is front-facing when `direction . outward normal < 0`; back-facing faces are
-  skipped unless `include_backfaces` is true. A ray parallel to a face plane does not hit it.
-- *Edge and vertex hits:* the minimum distance between the ray (or point) and the feature,
-  accepted when at most `radius_mm`; for a ray, `t` is the ray parameter of the closest point,
-  and if the minimum is attained on an interval the smallest such `t`. A feature touching the ray
-  has distance 0 and is accepted even with radius 0.
+- *Face hits (ray):* faces are closed rectangles in their planes, enlarged by the pick band
+  `eps_pick = 1e-6 mm` (one nanometre, draft) in each in-plane direction. With the unit ray
+  direction `u` and the outward unit normal `n`, a face is **parallel** to the ray, and not
+  hit, when `|u . n| < 1e-12`. Otherwise `t = ((p0 - o) . n) / (u . n)` for a point `p0` of the
+  face and the ray origin `o`; the face is hit when `0 <= t <= t_max` and the in-plane
+  coordinates of the hit point lie in the enlarged rectangle. A face is front-facing when
+  `u . n < 0`; back-facing faces are skipped unless `include_backfaces` is true. A hit that lies
+  on the exact rectangle's boundary or in its enlargement has `boundary` true, and a hit on a
+  shared edge is reported for every non-parallel face that qualifies (`F06-POS-43`,
+  `F06-POS-44`). A non-finite intermediate value is `GEO_NUMERIC_UNCERTAIN`, with no partial hits.
+- *Edge and vertex hits:* ray candidates use the same closed finite segment as faces:
+  `S = {o + t*u : 0 <= t <= t_max}` with normalized direction `u`. The distance is the minimum
+  Euclidean distance between a point of `S` and a point of the closed feature (an edge segment
+  or a vertex), never the distance to the unbounded ray. For a vertex `v`, the closest segment
+  parameter is `t = min(t_max, max(0, (v - o) . u))`; for an edge, minimize over both closed
+  segments, including their endpoints. Report the minimizing segment parameter `t`; if several
+  minimizing pairs exist, use the smallest such `t`. Accept exactly when the minimum distance
+  is at most `radius_mm + eps_pick`. This closed distance band also applies at both segment
+  ends: a nearby feature beyond an end may qualify by distance to that endpoint, but `t` is
+  clamped to the endpoint and the parameter interval is never extended. Face hits keep their
+  exact parameter test `0 <= t <= t_max` above. With radius 0 the edge/vertex endpoint band is
+  inclusive at `eps_pick = 1e-6 mm`; a farther feature is rejected (`F06-POS-47`, `F06-NEG-36`).
+  In point form, use the minimum distance from the query point to the closed edge or vertex,
+  with the same inclusive distance threshold and no ray parameter. Zero radius accepts a
+  touching feature up to the band (`F06-POS-32`).
+- *Point form distances:* the distance to a face is the Euclidean distance to the nearest point
+  of the closed face rectangle (the foot of the perpendicular when it lies inside, otherwise a
+  point of the rectangle's boundary); a point inside the solid still measures to surfaces, never
+  zero. A face is accepted when that distance is at most `radius_mm + eps_pick`, front or back
+  (`F06-POS-33`, `F06-POS-45`).
 - *Hit record:* `element_id`, `feature_id`, `feature_kind`, `t_mm` (ray form), `distance_mm`
-  (distance to the feature; 0 for a face hit), `point_world_mm` (the hit or closest point),
-  `normal_world` (outward unit normal for a face, null otherwise) and `back_facing`. A hit never
-  contains a triangle, vertex or buffer index.
+  (distance to the feature; 0 for a ray hit on a face), `point_world_mm` (the hit or closest
+  point), `normal_world` (outward unit normal for a face, null otherwise), `back_facing` and
+  `boundary` (faces; false otherwise). A hit never contains a triangle, vertex or buffer
+  index.
 - *Ordering and tie-breaking (draft, to be validated by G04):* sort ascending by the tuple
   (`k`, ElementId, kind rank, local id, `t_mm`), where `k = floor(t_mm / 1e-6)` for the ray form
   (`floor(distance_mm / 1e-6)` for the point form), the ElementId and local id compare as ASCII
   strings and the kind ranks are face 0, edge 1, vertex 2. Quantizing first makes the order a pure
-  function of the inputs; hits whose `t` differs by less than one micrometre may therefore be
-  ordered by identity instead of by `t`. At most `max_hits` records are returned; if more
-  qualify, the first `max_hits` of this order are returned and a `truncated` flag is true.
+  function of the inputs; hits whose `t` differs by less than one nanometre (`1e-6 mm`, the same
+  quantum as `eps_pick`) may therefore be ordered by identity instead of by `t`. At most
+  `max_hits` records are returned; if more qualify, the first `max_hits` of this order are
+  returned and a `truncated` flag is true.
 - *Tolerance:* `radius_mm` is the caller's query parameter. It is not the geometric tolerance of
   section 4 and not the test comparison rule CR-TOL-001. A viewport that converts pixels to a
   radius does so before calling; the engine uses the number it receives.
 - *Limits:* `max_hits` above 64 or `radius_mm` above 1,000,000 is `GEO_PICK_LIMIT`; a zero or
   too-short direction, an empty or duplicated `targets`, a negative radius or `t_max_mm` is
-  `GEO_PICK_INPUT_INVALID`; a non-finite number is `GEO_NON_FINITE`. Hits exactly on a face
-  boundary may be included for both neighbouring faces or for neither, depending on rounding; the
-  cases avoid boundary-exact face hits.
+  `GEO_PICK_INPUT_INVALID`; a non-finite number is `GEO_NON_FINITE`.
+- *Work and deadline (draft):* a `Pick` considers at most 65,536 elements and at most 26
+  features per element; a model with more elements fails before the scan with `GEO_PICK_LIMIT`
+  and no partial hits (`F06-NEG-33`). The scan visits elements in ascending ElementId order and
+  polls the cancellation token and the F05 request deadline every 1,024 elements. A cancelled
+  query returns `CANCELLED` and a missed deadline follows F05 section 8; neither returns partial
+  hits. Only a completed scan returns hits.
 
 **Incremental update.** `GetChanges` answers from a bounded retained history. It lists at most
 the F05 `batch_items` entries per page and at most `delivery_pages` pages; an entry reports the
@@ -620,7 +732,10 @@ is an I/O-edge decision of the CLI task; it does not alter the logical result.
 | Allocation | Sized only by validated input: the first-scope builders allocate for exactly 8 vertices, 12 triangles and 6 faces; a blob validator allocates only after the length check |
 | Recursion | None in the first scope. A later traversal must state its own depth bound, at most 16 (the depth used elsewhere in F04 and F05), in an amendment |
 | Input size | At most 16 numbers per kernel call (section 2) |
-| Query output | At most 64 hits per pick; page and delivery bounds from F05 |
+| Primitive versus validator limits | Primitive counts are exact constants (section 6); the hard caps bound any blob a validator accepts |
+| Descriptor bytes | At most 32,768 encoded bytes per body descriptor; the page budget also obeys F05 `control_bytes`, `json_tokens` and `string_bytes` |
+| Query output and work | At most 64 hits per pick; at most 65,536 elements and 26 features per element considered; cancellation and deadline polled every 1,024 elements; page and delivery bounds from F05 |
+| Negotiated limits | Each cap is a maximum; where F05 `effective_limits` (`buffer_bytes`, `attachments`, `bundle_bytes`, `control_bytes`, `json_tokens`, `string_bytes`, `batch_items`, `delivery_pages`, `request_timeout_ms`) is smaller, the smaller value applies. A body that cannot be delivered whole under it fails with `GEO_BUFFER_LIMIT`; it is never split or truncated (`F06-NEG-34`). F06 never widens a negotiated or F04 limit |
 
 **Cancellation points and deterministic result.** The kernel polls a host-supplied cancellation
 token at these points only: P0 on entry, P1 before the build, P2 before the checks and P3 before
@@ -636,13 +751,14 @@ still decides what the host may report: `CANCELLED` only when the discard is pro
 
 ## 11. Acceptance cases
 
-The [case file](geometry-contract-cases-v0.1.json) holds 70 logical cases: 40 positive
-(`F06-POS-01` to `F06-POS-40`) and 30 negative (`F06-NEG-01` to `F06-NEG-30`). They are
+The [case file](geometry-contract-cases-v0.1.json) holds 83 logical cases: 47 positive
+(`F06-POS-01` to `F06-POS-47`) and 36 negative (`F06-NEG-01` to `F06-NEG-36`). They are
 proposed future tests: acceptance needs a real kernel, real buffers and independent readers.
-Numeric expectations are exact values derived by hand with rational arithmetic and re-derived by
-a throwaway computation outside the repository; the derivation text is in each case. Numeric
-comparison in tests follows CR-TOL-001 (F04 section 10); statuses, codes, counts, FeatureIds and
-digests compare exactly. Cases that depend on P-1 to P-3 list those proposals in `assumes`.
+Numeric expectations use exact forms or decimal approximations checked with rational arithmetic
+and high-precision square roots; round-3 checks use a throwaway script under ignored `target/`.
+The derivation text is in each case. Numeric comparison in tests follows CR-TOL-001 (F04 section
+10); statuses, codes, counts, FeatureIds and digests compare exactly. Cases that depend on P-1 to
+P-3 list those proposals in `assumes`.
 Existing F04 and first-scope IDs are referenced, not duplicated, and no existing ID is changed.
 
 | Topic | F06 cases | Existing cases referenced |
@@ -656,14 +772,15 @@ Existing F04 and first-scope IDs are referenced, not duplicated, and no existing
 | Cap boundaries, exactly at limit accepted | `F06-POS-14`, `F06-POS-15`, `F06-POS-27` | `F04-POS-08`, `F04-POS-13`, `FS-PLATE-C`, `FS-MEMBER-B` |
 | Cap boundaries, just above rejected | `F06-NEG-06`, `F06-NEG-11` to `F06-NEG-14` | `F04-NEG-19`, `F04-NEG-21`, `FS-NEG-PLATE-BOUND`, `FS-NEG-AXIS-BOUND` |
 | Degenerate axis, minimum dimension | `F06-NEG-03` to `F06-NEG-05` | `F04-NEG-20`, `FS-NEG-AXIS-ZERO` |
-| Parallel-up boundary | `F06-POS-05`, `F06-POS-06`, `F06-POS-09`, `F06-POS-10` | `F04-POS-16` |
+| Parallel-up boundary, near-vertical frame, frame certificate | `F06-POS-05`, `F06-POS-06`, `F06-POS-09`, `F06-POS-10`, `F06-POS-41`, `F06-POS-42`, `F06-POS-46`, `F06-NEG-31`, `F06-NEG-35` | `F04-POS-16` |
 | Non-finite input | `F06-NEG-01`, `F06-NEG-02`, `F06-NEG-27` | `F04-RAW-01`, `F04-RAW-02`, `F04-RAW-04` to `F04-RAW-06` |
 | Buffer cap exceeded, invalid blob | `F06-NEG-11` to `F06-NEG-15`, `F06-NEG-30` | none |
 | Cancellation | `F06-POS-37`, `F06-NEG-16`, `F06-NEG-17` | none |
 | Unsupported profile, transform, stage frame | `F06-NEG-08` to `F06-NEG-10` | `FS-NEG-SECTION` |
 | Open, self-intersecting, inward mesh not exact | `F06-NEG-18` to `F06-NEG-20` | none |
 | Failure keeps previous result | `F06-NEG-21` | `F04-NEG-14` |
-| Queries: pick, lookup, incremental, chunking | `F06-POS-28` to `F06-POS-36`, `F06-POS-39`, `F06-POS-40`, `F06-NEG-22` to `F06-NEG-29` | `F04-NEG-09`, `F04-NEG-15` |
+| Queries: pick, lookup, incremental, chunking | `F06-POS-28` to `F06-POS-36`, `F06-POS-39`, `F06-POS-40`, `F06-POS-43` to `F06-POS-45`, `F06-NEG-22` to `F06-NEG-29`, `F06-NEG-32` to `F06-NEG-34` | `F04-NEG-09`, `F04-NEG-15` |
+| Finite pick segment: endpoint hit and short-horizon rejection | `F06-POS-47`, `F06-NEG-36` | none |
 
 The invalid-quaternion, translation-limit and density cases are already covered by
 `F04-NEG-22` to `F04-NEG-26` and `FS-NEG-QUAT`, `FS-NEG-DENSITY`, and are not repeated. The file
@@ -682,7 +799,8 @@ depend on them.
 |------|----------|
 | P-1, P-2, P-3 | Confirm or replace the plate local box, the member section frame and the roll rule. F06 changes jointly with F04 |
 | Policy constants | Accept, or replace after G04, the minimum dimension 0.001 mm, the parallel threshold 1e-6, the caps of section 6 and the pick constants of section 9 |
-| Roll discontinuity | Accept the roll jump at the parallel threshold (section 4, rule 3), or choose a continuous rule |
+| Roll discontinuity | Accept the roll jump at the parallel threshold (section 4, rule 3), or choose a continuous rule. The near-vertical rule does not remove it |
+| Open item A5 | Full-domain coordinate accuracy for cancellation-heavy inputs, subnormal mass and rounded-mesh cross-checks stay **open**: no certified accuracy bound exists yet, and widening a tolerance or narrowing an F04 input range to hide the gap is not allowed. G04 and fixtures must establish bounds on the full admitted domain |
 | FeatureId on axis reversal | Accept that ids follow roles, not world faces (section 5, rule 6) |
 
 **What later tasks must still decide.**
@@ -710,7 +828,11 @@ depend on them.
    F06 defines the canonical numeric encoding and the key preimages (section 7).
 3. F04 section 11: mark G-06 and the profile-resource-format question as accepted by F06 with
    the draft policy of sections 2 and 4.
-4. F05 section 12: record that F06 keeps the transport element type `u8` with a self-describing
+4. F04 section 3, P-3 (joint amendment; the owner decides): replace the fixed `+Y` fallback of
+   the near-vertical case by the projection of `(0, 1, 0)` onto the plane normal to the axis,
+   normalized, followed by the re-orthogonalization of section 4, rule 2. An exactly vertical
+   axis keeps `+Y`; `F04-POS-16` and the other exact examples are unchanged.
+5. F05 section 12: record that F06 keeps the transport element type `u8` with a self-describing
    blob, so no element-type negotiation is required. F05 itself needs no change.
 
 **Amendments log.**
@@ -718,3 +840,63 @@ depend on them.
 - 2026-10-15, F06 0.1.0: first draft on base `9d40abc34b8a5686358b78adee5f9c52b9c830bd`
   (F04 0.1.0 freeze candidate, F05 0.1.0 draft, first-scope package 0.1.0). No existing F04, F05
   or first-scope ID, code, limit or case was changed.
+- 2026-10-15, F06 0.1.0 correction round 1, after the independent kernel-design review (G04).
+  Existing case IDs keep their meaning; the case count rises from 70 to 80 (46 positive, 34
+  negative).
+  - A1 (defect, resolved): the near-vertical roll fallback is now the normalized projection of
+    `(0, 1, 0)` onto the plane normal to the axis, re-orthogonalized and certified (section 4,
+    rule 2; `F06-POS-41`, `F06-POS-42`, `F06-NEG-31`). F04 P-3 needs a joint amendment
+    (proposed amendment 4). The roll discontinuity stays an open owner decision.
+  - A2 (clarified): evaluation order for quantities and dot products, written binary64
+    decisions with no rounding band, conformance evidence and version bumps (section 2;
+    `F06-POS-46`).
+  - A3 (inconsistency, resolved): mass of an unsupported body is `unsupported` (section 8
+    precedence kept); `F06-NEG-18` changed from mass `unknown` to `unsupported` and now removes
+    the ninth triangle `(0, 2, 3)` of `F06-POS-01`, as its text says. New diagnostic
+    `GEO_NUMERIC_UNCERTAIN` (`UNSUPPORTED_GEOMETRY`) for failed numeric certificates.
+  - A4 (clarified): the tie quantum `1e-6 mm` is one nanometre; closed faces enlarged by the
+    pick band, parallel threshold `1e-12`, point-to-face distance and zero-radius behaviour are
+    defined (section 9; `F06-POS-43` to `F06-POS-45`).
+  - A5 (open, not fixed): full-domain accuracy for cancellation-heavy inputs, subnormal mass and
+    rounded-mesh cross-checks; see the open owner decisions above.
+  - A6 (clarified): primitive limits versus validator caps, descriptor byte bound, pick work
+    and deadline bounds, negotiated limits (sections 6 and 10; `F06-NEG-33`, `F06-NEG-34`).
+- 2026-10-15, F06 0.1.0 correction round 2, after the Copilot review of PR #20. The frame
+  certificate of section 4, rule 2, step d bounds the absolute value of each pairwise dot product
+  (a signed bound accepted `X . Y = -1e-9`); `F06-NEG-35` is added beside `F06-NEG-31` so both
+  signs of an injected error fail. The case count rises from 80 to 81 (46 positive, 35 negative).
+- 2026-10-15, F06 0.1.0 correction round 3, after an independent exact-arithmetic review of A7
+  and A8. The contract stays a draft; all 81 IDs and meanings remain (46 positive, 35 negative).
+  - A7 (defect, resolved with a qualification): the branch rotation depends on tilt direction.
+    From +Z, +Y gives 180 degrees, -Y gives 0 degrees, and +X/-X give +90/-90 degrees from the
+    near-vertical to the horizontal frame. Section 4, rule 3 now gives the exact formula and
+    distinguishes a branch comparison on one axis from frames on distinct axes. `F06-POS-10`
+    and `F06-POS-42` prose is corrected; `F06-POS-41` frame mathematics is unchanged. The roll
+    rule is unchanged and continuity stays an open owner decision. A half turn for every
+    Y-directed tilt is not confirmed: -Y from +Z has no roll jump.
+  - A8 (defect, resolved): `F06-POS-10` and `F06-POS-42` now use
+    `L = sqrt(250000000001)/500 ~ 1000.0000000020000000`; their small normalized components
+    and the `F06-POS-10` horizontal ratio have sufficient digits for CR-TOL-001.
+    `F06-POS-45` uses `sqrt(10025) ~ 100.12492197250392864` for all four equal distances.
+    The numeric scan also corrects the `F06-POS-41` squared horizontal ratio to
+    `2.4999987500001562502e-13`; its exact rational frame and adequate decimals are retained.
+    Other square-root, rotation and division expectations were checked; no other insufficient
+    precision was found. These example corrections establish no full-domain accuracy bound
+    and do not close A5.
+- 2026-10-15, F06 0.1.0 correction round 4, after independent exact-arithmetic checks of A10
+  and A11. Still draft, not frozen; 83 cases (47 positive, 36 negative).
+  - A10 (omission, resolved): edge and vertex distances use the closed finite pick segment,
+    with the inclusive distance band at both ends and no extension of the parameter interval
+    (section 9). For origin `(0, -100, 10)`, direction `(0, 1, 0)` and vertex `(0, 0, 10)`, the
+    unbounded closest parameter is 100. At `t_max = 50` the closest segment point is
+    `(0, -50, 10)`, distance 50 mm; radius 0 rejects it. At `t_max = 100` it is an endpoint
+    hit, distance 0. New `F06-POS-47` and `F06-NEG-36` cover edges and vertices. Descriptions
+    of `F06-POS-29` to `F06-POS-33`, `F06-POS-43` to `F06-POS-45` clarify dependence;
+    `F06-POS-34` to `F06-POS-40` do not depend on the pick horizon. All existing IDs, meanings
+    and expected values are retained.
+  - A11 (wording defect, resolved): section 7 now lists the shared algorithm/tolerance-policy
+    versions, the otherwise disjoint directly encoded fields and the transitive shape
+    dependency of world measurements. Both version fields equal 1, encoded `00 01 00 01`.
+    Existing domain tags differ at byte offset 6 (`S` versus `W`); complete preimages cannot
+    be identical across these domains, without a claim of impossible SHA-256 collisions.
+    No encoding, version, test vector or digest changes.
