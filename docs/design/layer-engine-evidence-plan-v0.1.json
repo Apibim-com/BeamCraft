@@ -806,7 +806,8 @@
       ],
       "scenario_ids": [],
       "status": "failed",
-      "evidence": "docs/design/layer-engine-spike-n01-report-v0.1.md#1-dependency-licence-inventory-and-msrv: 52-package closure inventoried (spikes/n01-openusd/inventory.json). openusd 0.8.0 declares MIT but its README assigns generated src/usd/core_schemas.rs to TOST-1.0 with a bundled Pixar notice: unresolved policy exception, no reviewer sign-off."
+      "evidence": "docs/design/layer-engine-spike-n01-report-v0.1.md#1-dependency-licence-inventory-and-msrv: 52-package closure inventoried (spikes/n01-openusd/inventory.json). openusd 0.8.0 declares MIT but its README assigns generated src/usd/core_schemas.rs to TOST-1.0 with a bundled Pixar notice: unresolved policy exception, no reviewer sign-off.",
+      "resolution": "Resolved by owner decision 2026-10-15 (recorded in PR #29): the TOST-1.0 file `src/usd/core_schemas.rs` of `openusd` 0.8.x, generated from OpenUSD's own schema definitions, is accepted. Conditions: (1) only the exact package and version recorded in ATTRIBUTION.md are covered; (2) the upstream licence text and notice are kept; (3) BeamCraft claims no rights in the material and trademark terms are respected; (4) the global licence allowlist in deny.toml is unchanged; (5) if the package enters the workspace graph, a package/version exception and the file-level notice review are required first."
     },
     {
       "id": "N01-C-G02",

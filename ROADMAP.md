@@ -53,9 +53,9 @@ later project; portable domain crates alone do not establish a working web appli
   stacked on PR #22). On Windows with Rust 1.96.0 it showed USDA/USDC round trip with unknown-field preservation, sublayer/over/active
   composition, delta capture and replay with `(UUID, attribute)` collision detection, and 1184 hostile inputs with no panic or hang.
   The crate does not prevent local overrides of foreign prims (a BeamCraft wrapper must); non-finite numbers and some truncated or
-  corrupted input are accepted. G01 is `failed` (TOST-1.0 generated file in an MIT-declared crate); MSRV 1.96 versus 1.95, WASM,
+  corrupted input are accepted. G01 is `failed` as measured (TOST-1.0 generated file in an MIT-declared crate; accepted by owner decision, PR #29); MSRV 1.96 versus 1.95, WASM,
   Linux/macOS and the SDK oracle are not run, so all other claims stay `not_run`. No backend, MSRV or architecture change is
-  accepted; owner decisions on licence, MSRV and maintenance remain. Report: `docs/design/layer-engine-spike-n01-report-v0.1.md`.
+  accepted; owner decisions on MSRV and maintenance remain. Report: `docs/design/layer-engine-spike-n01-report-v0.1.md`.
 
 - 2026-10-15: MSRV raised from Rust 1.95 to 1.96 by owner decision. The `openusd` crate under
   evaluation needs 1.96, and the local and CI toolchains are already at least 1.96. Only the

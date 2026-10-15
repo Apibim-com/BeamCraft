@@ -61,7 +61,9 @@ python checks.py                            # runs the full check list, bulk log
 
 ## 1. Dependency, licence inventory and MSRV
 
-Claim **N01-C-G01**: status `failed` (one unresolved policy exception), see below.
+Claim **N01-C-G01**: evidence result `failed` (one policy exception outside the allowed list at
+measurement time), see below. The owner has since resolved the exception by a licence decision;
+the measured result is unchanged (see "Owner licence decision").
 
 Commands (all offline): `cargo metadata --offline --format-version 1` (processed by
 `harness.py inventory`; raw output not committed), `cargo tree --offline --edges all` (read, not
@@ -74,12 +76,30 @@ Unicode-3.0, BSL-1.0, CC0-1.0, MIT-0):
 
 | Finding | Detail | Disposition |
 |---|---|---|
-| **TOST-1.0 file inside `openusd`** | The crate README states that `src/usd/core_schemas.rs` is generated from OpenUSD schema definitions and covered by the Tomorrow Open Source Technology License 1.0; the package ships `third-party/LICENSE` and a Pixar `NOTICE.txt`. The manifest says only `MIT`. | **Outside the allowed list; unresolved.** F11 rule: MIT headline is not blanket approval. Needs an owner decision. No exception is inferred. |
+| **TOST-1.0 file inside `openusd`** | The crate README states that `src/usd/core_schemas.rs` is generated from OpenUSD schema definitions and covered by the Tomorrow Open Source Technology License 1.0; the package ships `third-party/LICENSE` and a Pixar `NOTICE.txt`. The manifest says only `MIT`. | **Outside the allowed list as measured.** F11 rule: MIT headline is not blanket approval. Resolved afterwards by the owner decision below; the measurement itself is unchanged. |
 | `Unlicense OR MIT` (`aho-corasick`, `memchr`) | Alternative expression | MIT can be elected; allowed |
 | `Apache-2.0 / MIT` (`fnv`) | Non-standard SPDX spelling, both allowed | Allowed; note for `deny.toml` parsing |
 | `Apache-2.0` only (`zopfli`) | Single licence, in task list | Allowed |
 | `(MIT OR Apache-2.0) AND Unicode-3.0` (`unicode-ident`) | Both in list | Allowed |
 | All other packages | MIT, MIT OR Apache-2.0, Zlib, or Zlib/BSD-2-Clause alternatives | Allowed |
+
+**Owner licence decision, 2026-10-15** (recorded in PR #29, not merged at the time of writing;
+`AGENTS.md` section 1.2 scoped extension, `NOTICE`, `licenses/TOST-1.0-openusd.txt`,
+`ATTRIBUTION.md`): "Everything under TOST belongs to OpenUSD; I do not need their rights. We
+adopt all of OpenUSD and all of OpenUSD's rights remain with them; put the notices where they
+are needed." The TOST-1.0 file `src/usd/core_schemas.rs` of `openusd` 0.8.x, generated from
+OpenUSD's own schema definitions, is accepted. Conditions:
+
+1. Only the exact package and version recorded in `ATTRIBUTION.md` are covered.
+2. The upstream licence text and notice are kept.
+3. BeamCraft claims no rights in the material and trademark terms are respected.
+4. The global licence allowlist in `deny.toml` is unchanged.
+5. If the package enters the workspace graph, a package/version exception and the file-level
+   notice review are required first.
+
+The decision resolves the policy question only. The crate is still **not adopted**, it is not in
+the workspace graph, no file-level review or reviewer sign-off was done here, and no option is
+selected.
 
 The graph contains build-time procedural-macro packages (for example `logos`, `strum`,
 `derive_more`, `thiserror`, `syn` in two major versions) and compression packages (`zip`,
@@ -283,7 +303,7 @@ Statuses are limited to what was run. `not_run` is inconclusive, never passed.
 
 | Claim | Status | Evidence / what is missing |
 |---|---|---|
-| N01-C-G01 licence and provenance | **failed** | Inventory done (section 1). TOST-1.0 generated file inside an MIT-declared crate is an unresolved policy exception; no file-level review or reviewer sign-off |
+| N01-C-G01 licence and provenance | **failed** (as measured); resolved by owner decision | Inventory done (section 1). TOST-1.0 generated file inside an MIT-declared crate was outside the allowed list; owner decision 2026-10-15 accepts it under five conditions (PR #29). No file-level review or reviewer sign-off; crate not adopted |
 | N01-C-G02 maintenance and API containment | not_run | Owned trait keeps upstream types out of its signatures and a std-only stub passes the same numeric exercise (test `adapter_contract_accepts_a_std_only_stub`), but no upgrade or perturbation exercise, no maintainers named |
 | N01-C-G03 MSRV, platform, WASM | not_run | Windows x64 + Rust 1.96.0 only (sections 1, 6) |
 | N01-C-G04 composition and ownership | not_run | Sublayer/over/active/reference observed; raw foreign override accepted by crate, rejected by wrapper; no oracle, variants or payloads (section 3) |
@@ -300,7 +320,8 @@ counts (40 claims, ten per option, ten gate groups, twelve scenario families) ar
 
 ## Findings
 
-1. **Licence exception:** TOST-1.0 generated file in an MIT-declared crate (section 1). Needs owner policy.
+1. **Licence exception:** TOST-1.0 generated file in an MIT-declared crate (section 1). Resolved by
+   owner decision 2026-10-15 (PR #29) under five conditions; the measured result is unchanged.
 2. **MSRV mismatch:** crate declares 1.96, repository 1.95 (section 1).
 3. **Non-finite numbers accepted** as values (`reproducers/numeric-overflow.usda`; section 5).
 4. **Truncation and header corruption can be accepted silently** (section 5).
@@ -348,16 +369,17 @@ output is conformant.
 | Delta / merge | **Partly shown** | Capture, replay and `(UUID, attribute)` collision detection shown; footprints, idempotency, gap/stale handling must be written by BeamCraft and were not run |
 
 Overall: nothing observed requires Python or C++ for these needs, but the evidence does not
-yet establish that the worker can be dropped. Open blockers: the licence exception, the MSRV
-change, the lack of an oracle for interchange and composition correctness, and unproved
-parser limits. The crate is **not** shown to be suitable as the replacement backend, and no
-conclusion about the accepted SDK worker baseline follows.
+yet establish that the worker can be dropped. Open blockers: the MSRV change (the licence
+exception is resolved by owner decision, with conditions), the lack of an oracle for
+interchange and composition correctness, and unproved parser limits. The crate is **not**
+shown to be suitable as the replacement backend, is **not adopted**, no option is selected,
+and no conclusion about the accepted SDK worker baseline follows.
 
 ## Risks, effort and next steps
 
-Risks: licence (TOST file), MSRV, pre-1.0 API stability and maintenance ownership, silent
-acceptance of damaged input, spec drift without an oracle, unproved allocation bounds,
-platform coverage.
+Risks: licence conditions (TOST file; accepted by owner decision), MSRV, pre-1.0 API
+stability and maintenance ownership, silent acceptance of damaged input, spec drift without
+an oracle, unproved allocation bounds, platform coverage.
 
 Order-of-magnitude effort only (not a measurement): a few days to extend this slice to the
 remaining option C claims that can run locally (variants/payloads, copy/remap, footprints,
@@ -365,11 +387,13 @@ cold-run statistics, Linux/macOS/WASM when targets and machines exist); weeks fo
 adapter. F11's 8-20 person-week first-slice integration estimate remains an unvalidated prior.
 
 Next steps: obtain an official-SDK oracle in an admitted environment for differential claims;
-install the WASM target and run the Linux/macOS checks; resolve the TOST question; then decide.
+install the WASM target and run the Linux/macOS checks; then decide (the TOST question is
+resolved by owner decision).
 
 Owner decisions that remain:
 
-1. Whether TOST-1.0 material inside a dependency is admissible (G01), and the file-level review.
+1. G01: admissibility is decided (2026-10-15, PR #29); the package/version exception and file-level
+   notice review remain required before the crate enters the workspace graph.
 2. Raising the workspace MSRV from 1.95 to 1.96 or rejecting the crate on that basis (G03).
 3. Maintenance owner and backup, and upstream stability policy for a pre-1.0 crate (G02).
 4. Whether to continue N01 for option C (remaining gates) or stop; backend selection after evidence.
