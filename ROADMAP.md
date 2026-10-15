@@ -64,9 +64,10 @@ later project; portable domain crates alone do not establish a working web appli
   only) and the first-scope package 0.1.0. It fixes the kernel input and evaluation order, the
   result envelope and diagnostics, a draft G-06 tolerance policy, FeatureId, the mesh blob and
   caps, three separate dependency keys with an invalidation matrix, quantity statuses and the
-  logical query and pick API, with 70 original acceptance descriptions (40 positive, 30
-  negative). P-1 to P-3 are assumed pending owner confirmation. The contract is not frozen, no
-  kernel is implemented and K0 is not passed.
+  logical query and pick API, with 80 original acceptance descriptions (46 positive, 34
+  negative). A kernel-design review (G04) led to a first correction round (near-vertical frame,
+  numeric-uncertainty diagnostic, pick rules, resource bounds). P-1 to P-3 are assumed pending
+  owner confirmation. The contract is not frozen, no kernel is implemented and K0 is not passed.
 
 - 2026-10-14: F05 drafted the private USD-worker protocol contract 0.1.0 on base
   `478f330e15819b574c62227bc23009729adb4fdc`, consuming F04 0.1.0 sections 2, 3, 6, 7 and 8.
