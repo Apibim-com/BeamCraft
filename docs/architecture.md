@@ -80,6 +80,8 @@ Worker IPC is planned as versioned, bounded, length-prefixed control frames with
 buffers over private pipes. F05 must specify limits, errors, cancellation and revision checks.
 The [F05 worker protocol draft](contracts/worker-protocol-v0.1.md) specifies this private IPC
 contract and its proposed acceptance cases.
+The [F06 geometry and viewport contract draft](contracts/geometry-contract-v0.1.md) specifies the
+kernel input, mesh, key and query contract in the same way.
 Coordination and control servers require explicit opt-in, loopback binding and token authentication.
 Resource paths do not authorize outbound access; local resolution and containment are validated.
 
