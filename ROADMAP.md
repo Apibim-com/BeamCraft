@@ -57,6 +57,16 @@ later project; portable domain crates alone do not establish a working web appli
   and `F04-NEG-27` were added (44 logical, 6 raw). F04 stays a freeze candidate at 0.1.0, not
   frozen; P-1 to P-3 still await owner confirmation; nothing is implemented and K0 is not passed.
 
+- 2026-10-15: G04 drafted the first-scope kernel design 0.1.0 on base
+  `29d962e790ffd21ecd9a45143f052d4b4d53d3f7` (stacked on F06), consuming F06/F04 0.1.0 and the
+  first-scope package 0.1.0. It covers representation, numeric derivations, predicates, verdicts
+  for every F06 draft constant, failure/work bounds and staged implementation guidance. The
+  validation plan has 36 planned rows referencing the 70 cases of F06 0.1.0 as merged; F06 was
+  corrected afterwards (80 cases, PR #20) and the six proposed amendments were largely applied
+  there, so a reconciliation of this design with the corrected F06 is still pending. Nothing is
+  implemented, no implementer is declared eligible and K0 is not passed.
+  Local WASM and cargo-deny checks were not run.
+
 - 2026-10-15: F08 fixed the module boundaries on base `29d962e790ffd21ecd9a45143f052d4b4d53d3f7`
   (stacked on F06). `docs/contracts/module-boundaries-v0.1.md` gives the exact crate/module path,
   allowed dependencies and now/planned status of every F04/F05/F06 area. New code: the pure
@@ -72,9 +82,10 @@ later project; portable domain crates alone do not establish a working web appli
   only) and the first-scope package 0.1.0. It fixes the kernel input and evaluation order, the
   result envelope and diagnostics, a draft G-06 tolerance policy, FeatureId, the mesh blob and
   caps, three separate dependency keys with an invalidation matrix, quantity statuses and the
-  logical query and pick API, with 80 original acceptance descriptions (46 positive, 34
+  logical query and pick API, with 81 original acceptance descriptions (46 positive, 35
   negative). A kernel-design review (G04) led to a first correction round (near-vertical frame,
-  numeric-uncertainty diagnostic, pick rules, resource bounds). P-1 to P-3 are assumed pending
+  numeric-uncertainty diagnostic, pick rules, resource bounds) and a review round that bounded
+  the absolute value of each frame dot product. P-1 to P-3 are assumed pending
   owner confirmation. The contract is not frozen, no kernel is implemented and K0 is not passed.
 
 - 2026-10-14: F05 drafted the private USD-worker protocol contract 0.1.0 on base
