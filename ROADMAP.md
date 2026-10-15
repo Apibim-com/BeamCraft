@@ -49,6 +49,14 @@ later project; portable domain crates alone do not establish a working web appli
 
 ## Progress log
 
+- 2026-10-15: F04.3 applied the four F04 amendments proposed by F06 section 12 to the F04 freeze
+  candidate on base `b996c58fe850642f12b92b25b23c441fbd41ed47` (stacked on PR #20): the draft
+  minimum nonzero dimension of 0.001 mm and the section-dimension cap, the corrected near-vertical
+  P-3 roll rule, the resolved-display-reference reading of material-dependent appearance, and
+  G-06 and the profile resource format accepted by F06 under its draft policy. Cases `F04-POS-17`
+  and `F04-NEG-27` were added (44 logical, 6 raw). F04 stays a freeze candidate at 0.1.0, not
+  frozen; P-1 to P-3 still await owner confirmation; nothing is implemented and K0 is not passed.
+
 - 2026-10-15: F08 fixed the module boundaries on base `29d962e790ffd21ecd9a45143f052d4b4d53d3f7`
   (stacked on F06). `docs/contracts/module-boundaries-v0.1.md` gives the exact crate/module path,
   allowed dependencies and now/planned status of every F04/F05/F06 area. New code: the pure
