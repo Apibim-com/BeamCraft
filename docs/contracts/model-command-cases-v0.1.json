@@ -1,8 +1,11 @@
 {
   "artifact_version": 1,
   "contract_version": "0.1.0",
-  "status": "draft",
+  "status": "freeze candidate, not frozen",
   "role": "original logical acceptance descriptions; not an engine or USD model fixture",
+  "first_scope_package": "0.1.0",
+  "comparison": "Test comparison rule (CR-TOL-001 of first-scope package 0.1.0): numeric expected values pass when |actual - expected| <= 1e-12 * |expected| for quantities, and |actual - expected| <= 1e-9 mm + 1e-12 * |expected| for coordinates. Identifiers, strings, booleans, integers, generations and error codes compare exactly. This is a test comparison rule only, not a geometric tolerance policy (owned by F06, gap G-06). Expected values written as decimal strings are exact; JSON numbers are the nearest f64.",
+  "quaternion_convention": "orientation_xyzw = (x, y, z, w), Hamilton product, active rotation of element-local coordinates v' = q v q^-1 on the normalized accepted quaternion; world point = R(q) * local point + translation. q and -q denote the same rotation.",
   "assembly_rule": "Copy request_template, add command and arguments, then replace keys from envelope_changes; raw JSON cases bypass this assembly. For cases with argument_bindings, the future acceptance harness must first supply the actual validated resource digest; a missing binding is not a valid request. Do not substitute placeholder hashes.",
   "request_template": {
     "contract_version": "0.1.0",
@@ -719,6 +722,581 @@
         "code": "MALFORMED_COMMAND",
         "no_state_change": true
       }
+    },
+    {
+      "case_id": "F04-POS-08",
+      "given": [
+        "Authorized context; base and generation match; new_id unused"
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic plate",
+        "width_mm": 1000000,
+        "length_mm": 1000000,
+        "thickness_mm": 1000000,
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      "envelope_changes": {},
+      "expected": {
+        "outcome": "accepted_draft",
+        "generation": "1",
+        "volume_m3_after_supported_compute": 1000000000
+      },
+      "first_scope_refs": [
+        "FS-PLATE-C"
+      ],
+      "note": "Every plate dimension exactly at the 1,000,000 mm limit is accepted."
+    },
+    {
+      "case_id": "F04-POS-09",
+      "given": [
+        "Authorized context; base and generation match; new_id unused"
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic plate",
+        "width_mm": 1000,
+        "length_mm": 500,
+        "thickness_mm": 10,
+        "placement": {
+          "translation_mm": [
+            1000000000,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      "envelope_changes": {},
+      "expected": {
+        "outcome": "accepted_draft",
+        "generation": "1"
+      },
+      "first_scope_refs": [
+        "FS-POSE-E"
+      ],
+      "note": "A translation component exactly at the 1,000,000,000 mm limit is accepted."
+    },
+    {
+      "case_id": "F04-POS-10",
+      "given": [
+        "Acceptance harness binds the actual validated original profile fixture digest first; no placeholder hash"
+      ],
+      "command": "CreateStraightMember",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000006",
+        "element_kind": "beam",
+        "name": "Synthetic member",
+        "axis_points_mm": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            3000,
+            0,
+            0
+          ]
+        ],
+        "placement": {
+          "translation_mm": [
+            100,
+            200,
+            300
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0.7071067811865476,
+            0.7071067811865476
+          ]
+        }
+      },
+      "argument_bindings": {
+        "profile_digest": "actual_original_profile_fixture_sha256"
+      },
+      "envelope_changes": {},
+      "expected": {
+        "outcome": "accepted_draft",
+        "generation": "1",
+        "world_axis_points_mm": [
+          [
+            "100",
+            "200",
+            "300"
+          ],
+          [
+            "100",
+            "3200",
+            "300"
+          ]
+        ],
+        "engineering_axis_length_mm": "3000",
+        "compare": "CR-TOL-001"
+      },
+      "first_scope_refs": [
+        "FS-POSE-A"
+      ],
+      "note": "Active +90 degree rotation about +Z maps local +X to world +Y; world = R * local + translation."
+    },
+    {
+      "case_id": "F04-POS-11",
+      "given": [
+        "Authorized context; base and generation match; new_id unused"
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic plate",
+        "width_mm": 1000,
+        "length_mm": 500,
+        "thickness_mm": 10,
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            0.99999999999995
+          ]
+        }
+      },
+      "envelope_changes": {},
+      "expected": {
+        "outcome": "accepted_draft",
+        "generation": "1",
+        "orientation_squared_norm_deviation": "about 1e-13, inside the 1e-12 limit",
+        "rotation_used": "identity (accepted quaternion is normalized before use)",
+        "compare": "CR-TOL-001"
+      },
+      "first_scope_refs": [
+        "FS-POSE-F"
+      ],
+      "note": "A squared norm that differs from one by about 1e-13 is accepted and normalized."
+    },
+    {
+      "case_id": "F04-POS-12",
+      "given": [
+        "Authorized context; base and generation match; new_id unused"
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic plate",
+        "width_mm": 1000,
+        "length_mm": 500,
+        "thickness_mm": 10,
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            -1
+          ]
+        }
+      },
+      "envelope_changes": {},
+      "expected": {
+        "outcome": "accepted_draft",
+        "generation": "1",
+        "rotation_used": "identity; the same rotation as orientation_xyzw [0, 0, 0, 1]",
+        "authored_components_preserved_as_submitted": true
+      },
+      "note": "q and -q denote the same rotation. No first-scope case covers the antipodal pair. Canonical sign for signatures stays with F06."
+    },
+    {
+      "case_id": "F04-POS-13",
+      "given": [
+        "Acceptance harness binds the actual validated original profile fixture digest first; no placeholder hash"
+      ],
+      "command": "CreateStraightMember",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000006",
+        "element_kind": "beam",
+        "name": "Synthetic member",
+        "axis_points_mm": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            1000000,
+            0,
+            0
+          ]
+        ],
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      "argument_bindings": {
+        "profile_digest": "actual_original_profile_fixture_sha256"
+      },
+      "envelope_changes": {},
+      "expected": {
+        "outcome": "accepted_draft",
+        "generation": "1",
+        "engineering_axis_length_mm": "1000000",
+        "compare": "CR-TOL-001"
+      },
+      "first_scope_refs": [
+        "FS-MEMBER-B"
+      ],
+      "note": "Axis length exactly at the 1,000,000 mm limit is accepted."
+    },
+    {
+      "case_id": "F04-NEG-19",
+      "given": [
+        "Authorized context; base and generation match; new_id unused"
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic plate",
+        "width_mm": 1000000.001,
+        "length_mm": 500,
+        "thickness_mm": 10,
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      "envelope_changes": {},
+      "expected": {
+        "code": "LIMIT_EXCEEDED",
+        "no_state_change": true
+      },
+      "first_scope_refs": [
+        "FS-NEG-PLATE-BOUND"
+      ],
+      "note": "Just above the 1,000,000 mm limit; F04-NEG-05 covers a coarser excess."
+    },
+    {
+      "case_id": "F04-NEG-20",
+      "given": [
+        "Acceptance harness binds the actual validated original profile fixture digest first; no placeholder hash"
+      ],
+      "command": "CreateStraightMember",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000006",
+        "element_kind": "beam",
+        "name": "Synthetic member",
+        "axis_points_mm": [
+          [
+            10,
+            20,
+            30
+          ],
+          [
+            10,
+            20,
+            30
+          ]
+        ],
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      "argument_bindings": {
+        "profile_digest": "actual_original_profile_fixture_sha256"
+      },
+      "envelope_changes": {},
+      "expected": {
+        "code": "INVALID_ARGUMENT",
+        "no_state_change": true
+      },
+      "first_scope_refs": [
+        "FS-NEG-AXIS-ZERO"
+      ],
+      "note": "G-03 resolution (proposed for owner adoption): a zero-length axis is a value that violates 'greater than zero', as with F04-NEG-04."
+    },
+    {
+      "case_id": "F04-NEG-21",
+      "given": [
+        "Acceptance harness binds the actual validated original profile fixture digest first; no placeholder hash"
+      ],
+      "command": "CreateStraightMember",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000006",
+        "element_kind": "beam",
+        "name": "Synthetic member",
+        "axis_points_mm": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            1000000.5,
+            0,
+            0
+          ]
+        ],
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      "argument_bindings": {
+        "profile_digest": "actual_original_profile_fixture_sha256"
+      },
+      "envelope_changes": {},
+      "expected": {
+        "code": "LIMIT_EXCEEDED",
+        "no_state_change": true
+      },
+      "first_scope_refs": [
+        "FS-NEG-AXIS-BOUND"
+      ],
+      "note": "Axis length above the 1,000,000 mm limit."
+    },
+    {
+      "case_id": "F04-NEG-22",
+      "given": [
+        "Authorized context; base and generation match; new_id unused"
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic plate",
+        "width_mm": 1000,
+        "length_mm": 500,
+        "thickness_mm": 10,
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            0.5
+          ]
+        }
+      },
+      "envelope_changes": {},
+      "expected": {
+        "code": "INVALID_ARGUMENT",
+        "no_state_change": true
+      },
+      "first_scope_refs": [
+        "FS-NEG-QUAT"
+      ],
+      "note": "Squared norm 0.25 is outside the 1e-12 tolerance (entry 1 of 4 in the first-scope case)."
+    },
+    {
+      "case_id": "F04-NEG-23",
+      "given": [
+        "Authorized context; base and generation match; new_id unused"
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic plate",
+        "width_mm": 1000,
+        "length_mm": 500,
+        "thickness_mm": 10,
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1.5
+          ]
+        }
+      },
+      "envelope_changes": {},
+      "expected": {
+        "code": "INVALID_ARGUMENT",
+        "no_state_change": true
+      },
+      "first_scope_refs": [
+        "FS-NEG-QUAT"
+      ],
+      "note": "Component outside [-1, 1] (entry 2 of 4 in the first-scope case)."
+    },
+    {
+      "case_id": "F04-NEG-24",
+      "given": [
+        "Authorized context; base and generation match; new_id unused"
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic plate",
+        "width_mm": 1000,
+        "length_mm": 500,
+        "thickness_mm": 10,
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "envelope_changes": {},
+      "expected": {
+        "code": "INVALID_ARGUMENT",
+        "no_state_change": true
+      },
+      "first_scope_refs": [
+        "FS-NEG-QUAT"
+      ],
+      "note": "Zero quaternion cannot be normalized (entry 3 of 4 in the first-scope case)."
+    },
+    {
+      "case_id": "F04-NEG-25",
+      "given": [
+        "Authorized context; base and generation match; new_id unused"
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic plate",
+        "width_mm": 1000,
+        "length_mm": 500,
+        "thickness_mm": 10,
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            0.999999999
+          ]
+        }
+      },
+      "envelope_changes": {},
+      "expected": {
+        "code": "INVALID_ARGUMENT",
+        "no_state_change": true
+      },
+      "first_scope_refs": [
+        "FS-NEG-QUAT"
+      ],
+      "note": "Squared norm deviates from one by about 2e-9, more than 1e-12 (entry 4 of 4 in the first-scope case)."
+    },
+    {
+      "case_id": "F04-NEG-26",
+      "given": [
+        "Authorized context; base and generation match; new_id unused"
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic plate",
+        "width_mm": 1000,
+        "length_mm": 500,
+        "thickness_mm": 10,
+        "placement": {
+          "translation_mm": [
+            1000000000.5,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      "envelope_changes": {},
+      "expected": {
+        "code": "LIMIT_EXCEEDED",
+        "no_state_change": true
+      },
+      "first_scope_refs": [
+        "FS-NEG-TRANSLATION-BOUND"
+      ],
+      "note": "Translation component just above the 1,000,000,000 mm limit."
     }
   ],
   "raw_json_cases": [
@@ -745,6 +1323,33 @@
         "code": "MALFORMED_COMMAND",
         "no_state_change": true
       }
+    },
+    {
+      "case_id": "F04-RAW-04",
+      "raw_json": "{\"contract_version\": \"0.1.0\", \"project_id\": \"019a7bf0-0000-7000-8000-000000000001\", \"workspace_id\": \"019a7bf0-0000-7000-8000-000000000002\", \"op_id\": \"019a7bf0-0000-7000-8000-000000000004\", \"actor_id\": \"synthetic-actor\", \"base_revision\": \"019a7bf0-0000-7000-8000-000000000010\", \"expected_generation\": \"0\", \"command\": \"CreatePlate\", \"arguments\": {\"new_id\": \"019a7bf0-0000-7000-8000-000000000005\", \"name\": \"Synthetic plate\", \"width_mm\": 1000, \"length_mm\": 500, \"thickness_mm\": 10, \"placement\": {\"translation_mm\": [0, 0, 0], \"orientation_xyzw\": [0, 0, 0, NaN]}}}",
+      "expected": {
+        "code": "MALFORMED_COMMAND",
+        "no_state_change": true
+      },
+      "note": "Non-JSON NaN literal in a quaternion component."
+    },
+    {
+      "case_id": "F04-RAW-05",
+      "raw_json": "{\"contract_version\": \"0.1.0\", \"project_id\": \"019a7bf0-0000-7000-8000-000000000001\", \"workspace_id\": \"019a7bf0-0000-7000-8000-000000000002\", \"op_id\": \"019a7bf0-0000-7000-8000-000000000004\", \"actor_id\": \"synthetic-actor\", \"base_revision\": \"019a7bf0-0000-7000-8000-000000000010\", \"expected_generation\": \"0\", \"command\": \"CreatePlate\", \"arguments\": {\"new_id\": \"019a7bf0-0000-7000-8000-000000000005\", \"name\": \"Synthetic plate\", \"width_mm\": 1000, \"length_mm\": 500, \"thickness_mm\": 10, \"placement\": {\"translation_mm\": [0, 0, 0], \"orientation_xyzw\": [0, 0, 0, 1e400]}}}",
+      "expected": {
+        "code": "NON_FINITE_NUMBER",
+        "no_state_change": true
+      },
+      "note": "Quaternion component overflows f64."
+    },
+    {
+      "case_id": "F04-RAW-06",
+      "raw_json": "{\"contract_version\": \"0.1.0\", \"project_id\": \"019a7bf0-0000-7000-8000-000000000001\", \"workspace_id\": \"019a7bf0-0000-7000-8000-000000000002\", \"op_id\": \"019a7bf0-0000-7000-8000-000000000004\", \"actor_id\": \"synthetic-actor\", \"base_revision\": \"019a7bf0-0000-7000-8000-000000000010\", \"expected_generation\": \"0\", \"command\": \"CreatePlate\", \"arguments\": {\"new_id\": \"019a7bf0-0000-7000-8000-000000000005\", \"name\": \"Synthetic plate\", \"width_mm\": 1000, \"length_mm\": 500, \"thickness_mm\": 10, \"placement\": {\"translation_mm\": [-1e400, 0, 0], \"orientation_xyzw\": [0, 0, 0, 1]}}}",
+      "expected": {
+        "code": "NON_FINITE_NUMBER",
+        "no_state_change": true
+      },
+      "note": "Translation component overflows f64."
     }
   ]
 }
