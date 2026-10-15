@@ -19,7 +19,7 @@
       "invariant": 14,
       "metamorphic": 6
     },
-    "distinct_f06_cases": 80
+    "distinct_f06_cases": 81
   },
   "rows": [
     {
@@ -482,15 +482,16 @@
       "id": "G04-V31",
       "stage": "S3",
       "property": "Point/edge/vertex picking uses closed-feature minimum distance",
-      "method": "Minimize rational squared distance over closed features; point faces use nearest original rectangle, even for interior points. Check the written distance <= radius+1e-6 comparison without substituting squared rounding decisions.",
-      "inputs_class": "Exact zero-radius edge overlap, point above face, radius boundary and 1e6 cap.",
+      "method": "Minimize rational squared distance over closed features; point faces use nearest original rectangle, even for interior points. Check the written distance <= radius+1e-6 comparison without substituting squared rounding decisions. W49 contrasts finite [0,t_max] and unbounded-ray minima; do not freeze an expectation for that unresolved domain before A10 is decided.",
+      "inputs_class": "Exact zero-radius edge overlap, point above face, radius boundary and 1e6 cap. t_max=50 versus a closest point at t=100, with radius zero and a 1e-6 band.",
       "expected_oracle_kind": "analytic",
       "f06_case_refs": [
         "F06-POS-32",
         "F06-POS-33",
         "F06-NEG-29"
       ],
-      "status": "planned"
+      "status": "planned",
+      "amendment_gate": "A10 ray-domain decision for horizon-limited edge/vertex cases"
     },
     {
       "id": "G04-V32",
@@ -510,8 +511,8 @@
     {
       "id": "G04-V33",
       "stage": "S3",
-      "property": "Dependency keys respect independent input sets",
-      "method": "Mutate exactly one input at a time and compare affected/unchanged keys, signatures, roles and mesh delivery.",
+      "property": "Dependency keys respect their declared input dependencies",
+      "method": "Mutate exactly one input at a time and compare affected/unchanged keys, signatures, roles and mesh delivery. W50 verifies shared algorithm/tolerance fields and world dependence on the shape key; do not assert disjoint input sets (A11 wording clarification).",
       "inputs_class": "Rename, camera, density, placement, dimensions, display/visibility, copy and canonical quaternion sign.",
       "expected_oracle_kind": "metamorphic",
       "f06_case_refs": [
@@ -592,22 +593,22 @@
         "F06-POS-10"
       ],
       "status": "planned",
-      "amendment_gate": "A7 roll-jump wording"
+      "amendment_gate": "A7 open, being corrected in F06; confirmed counterexample not yet applied"
     },
     {
       "id": "G04-V38",
       "stage": "S1",
       "property": "Frame residual certificate rejects either-sign orthogonality faults",
-      "method": "Independently evaluate norm/dot/determinant residuals around the inclusive 1e-12 cap, with both signs; check the W48 rational counterexample and GEO_NUMERIC_UNCERTAIN at build stage without state changes.",
+      "method": "Evaluate the absolute value of every pairwise dot and the norm/handedness residuals around the inclusive 1e-12 cap. NEG-31 and NEG-35 inject opposite signs; W41/W48 bounds remain unchanged. Applied A9 requires GEO_NUMERIC_UNCERTAIN at build stage, no partial data or state change.",
       "inputs_class": "Residual below/equal/above 1e-12, signed dot faults +/-1e-9, exact vertical and rational projected frames; fault injection is harness-only.",
       "expected_oracle_kind": "invariant",
       "f06_case_refs": [
         "F06-NEG-31",
+        "F06-NEG-35",
         "F06-POS-41",
         "F06-POS-42"
       ],
-      "status": "planned",
-      "amendment_gate": "A9 explicit dot magnitudes"
+      "status": "planned"
     },
     {
       "id": "G04-V39",
@@ -618,6 +619,7 @@
       "expected_oracle_kind": "invariant",
       "f06_case_refs": [
         "F06-NEG-31",
+        "F06-NEG-35",
         "F06-NEG-32"
       ],
       "status": "planned"
@@ -637,7 +639,7 @@
         "F06-POS-33"
       ],
       "status": "planned",
-      "amendment_gate": "A8 numerical expectations"
+      "amendment_gate": "A8 open, being corrected in F06; confirmed counterexamples not yet applied"
     },
     {
       "id": "G04-V41",
@@ -700,7 +702,12 @@
       "status": "planned"
     }
   ],
-  "f06_correction_round": 1,
-  "f06_input_head": "a43007f",
-  "revision_note": "Round 2 reconciles corrected F06 0.1.0 (80 cases); original base_sha and existing G04-V01..G04-V36 IDs are retained."
+  "f06_correction_round": 2,
+  "f06_input_head": "ebf4ce5",
+  "revision_note": "Round 3 reconciles F06 0.1.0 review round 2 (81 cases); A9 applied, A7/A8 open and being corrected in F06; all 44 row IDs retained.",
+  "f06_case_counts": {
+    "positive": 46,
+    "negative": 35,
+    "total": 81
+  }
 }
