@@ -9,7 +9,9 @@ their code or assets. Runs natively on Windows, Linux and macOS, and later on th
 1. Read `AGENTS.md` (it wins over this file) and `ROADMAP.md` (current stage and next tasks).
 2. Read `docs/architecture.md` and the README of the crate you are touching.
 3. Work in small steps: orient → plan → implement + test → verify → record → commit.
-4. At the end of a session, add a line to the progress log in `ROADMAP.md`.
+4. Do not edit the progress log in `ROADMAP.md` in a feature PR. Put the proposed dated
+   one-line entry (existing log format) under "Roadmap entry" in the PR description. Entries
+   are appended in a separate docs-only change after merges.
 
 ## Non-negotiables
 

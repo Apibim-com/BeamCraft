@@ -57,6 +57,22 @@ later project; portable domain crates alone do not establish a working web appli
   Linux/macOS and the SDK oracle are not run, so all other claims stay `not_run`. No backend, MSRV or architecture change is
   accepted; owner decisions on MSRV and maintenance remain. Report: `docs/design/layer-engine-spike-n01-report-v0.1.md`.
 
+- 2026-10-15: U05 added original incremental SHA-256 and strict full ContentDigest identities in
+  `beamcraft_model::digest`, plus native `beamcraft_host::storage` with synced temporary files,
+  non-replacing hard-link publication, complete existing-byte comparison and verified retrieval.
+  Base `501e9d476dc187b63e6fd61e2908d1c51ea280d9`, stacked on F08 PR #17. All seven required
+  local commands passed; 112 workspace tests passed. WASM and cargo-deny were not run.
+  Strict containment against hostile concurrent directory replacement remains open; the current
+  implementation requires a protected root namespace. U04 owns the CLI; U06/U07 own revision
+  publication and recovery. U05 acceptance and K1 are not complete.
+
+- 2026-10-15: Owner decision on OpenUSD-derived TOST-1.0 material in the `openusd` crate (0.8.x,
+  file `src/usd/core_schemas.rs`): it stays under its upstream licence and copyright, BeamCraft
+  claims no rights in it, and BeamCraft's own code stays MPL-2.0. `AGENTS.md` section 1.2 gains a
+  scoped extension; `NOTICE` carries the upstream notice, `licenses/TOST-1.0-openusd.txt` the
+  unmodified upstream licence, `ATTRIBUTION.md` three rows, and `deny.toml` a comment block (no
+  allowlist change). The F11 record has a dated note. Documentation only; the crate is not adopted.
+
 - 2026-10-15: F04.3 applied the four F04 amendments proposed by F06 section 12 to the F04 freeze
   candidate on base `b996c58fe850642f12b92b25b23c441fbd41ed47` (stacked on PR #20): the draft
   minimum nonzero dimension of 0.001 mm and the section-dimension cap, the corrected near-vertical
