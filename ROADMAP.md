@@ -49,6 +49,15 @@ later project; portable domain crates alone do not establish a working web appli
 
 ## Progress log
 
+- 2026-10-15: G01 evaluated cached nalgebra 0.35.0, glam 0.34.1, robust 1.2.0 and approx 0.5.1 in
+  an isolated offline spike. It proposes pinned scalar glam types with an F06 ordered adapter,
+  approx for tests and robust as a test-only predicate candidate pending numeric-domain and
+  contract review. Each compared operation used 100,098 samples in debug and release; native
+  quaternion normalization/rotation differ from F06, while the adapter matched the written scalar
+  reference. Spike and workspace format, Clippy and tests passed; the root lockfile is unchanged.
+  WASM and cross-target conformance were not run. No production dependency or kernel feature is
+  integrated and K0 is not passed.
+
 - 2026-10-15: F04.3 applied the four F04 amendments proposed by F06 section 12 to the F04 freeze
   candidate on base `b996c58fe850642f12b92b25b23c441fbd41ed47` (stacked on PR #20): the draft
   minimum nonzero dimension of 0.001 mm and the section-dimension cap, the corrected near-vertical

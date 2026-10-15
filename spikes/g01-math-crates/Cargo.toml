@@ -1,0 +1,27 @@
+[package]
+name = "beamcraft-g01-math-crates-spike"
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.96"
+license = "MPL-2.0"
+publish = false
+
+[workspace]
+
+[dependencies]
+nalgebra = { version = "0.35", default-features = false, features = ["std"] }
+glam = { version = "0.34", default-features = false, features = ["std", "f64", "scalar-math"] }
+robust = "1.2"
+approx = "0.5"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unreachable = "deny"
+indexing_slicing = "deny"
