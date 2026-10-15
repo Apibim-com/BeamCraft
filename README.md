@@ -56,7 +56,7 @@ which workflows BeamCraft is comparable to.
 
 ## Get started
 
-You need a recent stable [Rust toolchain](https://rustup.rs) (1.95 or newer).
+You need a recent stable [Rust toolchain](https://rustup.rs) (1.96 or newer).
 
 ```sh
 git clone https://github.com/Apibim-com/BeamCraft
