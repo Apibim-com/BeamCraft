@@ -10,9 +10,9 @@
   "assumptions": "Cases that list \"assumes\" depend on proposals P-1 to P-3 of F04 section 3, which are assumed pending owner confirmation. If the owner changes them, those cases change jointly with F04. Policy constants (minimum dimension 0.001 mm, parallel threshold 1e-6, caps, pick constants) are draft values to be validated by G04 and fixtures.",
   "quaternion_convention": "F04 section 3: orientation_xyzw = (x, y, z, w), Hamilton, active rotation, world = R(q) * local + translation. The 90 degree turn about +Z is written with the nearest f64 0.7071067811865476 for both z and w.",
   "case_counts": {
-    "logical_cases": 80,
+    "logical_cases": 81,
     "positive": 46,
-    "negative": 34
+    "negative": 35
   },
   "cases": [
     {
@@ -2302,7 +2302,7 @@
         "state_changed": false,
         "stage": "build"
       },
-      "derivation": "The frame certificate (section 4, rule 2, step d) requires every pairwise dot product at most 1e-12; 1e-9 fails it. The build stops, no mesh, quantities or shape key is returned, the previous current result is untouched. This case needs a fault-injection hook in the harness; it is not reachable from admitted input.",
+      "derivation": "The frame certificate (section 4, rule 2, step d) requires the absolute value of every pairwise dot product to be at most 1e-12; |+1e-9| = 1e-9 fails it. The build stops, no mesh, quantities or shape key is returned, the previous current result is untouched. This case needs a fault-injection hook in the harness; it is not reachable from admitted input.",
       "assumes": ["P-2 (assumed pending owner confirmation)", "P-3 (assumed pending owner confirmation)"]
     },
     {
@@ -2367,6 +2367,45 @@
         "accepted_when_buffer_bytes_is": 392
       },
       "derivation": "A blob is one attachment and is never fragmented; 392 > 391 fails, 392 <= 392 fits. The contract cap (213,024) is a maximum, the negotiated limit applies when smaller."
+    },
+    {
+      "case_id": "F06-NEG-35",
+      "title": "Frame certificate: a negative pairwise dot product beyond the limit fails (absolute value)",
+      "given": [
+        "Valid member; the harness injects the frame X = (1, 0, 0), Y = (-1e-9, 1, 0), Z = (0, 0, 1), so X . Y = -1e-9"
+      ],
+      "input": {
+        "body": {
+          "kind": "member",
+          "axis_points_mm": [[0, 0, 0], [4000, 0, 0]],
+          "profile": {
+            "kind": "rectangle",
+            "width_mm": 200,
+            "height_mm": 300
+          }
+        },
+        "placement": {
+          "translation_mm": [0, 0, 0],
+          "orientation_xyzw": [0, 0, 0, 1]
+        },
+        "fault_injection": {
+          "frame": {
+            "X": [1, 0, 0],
+            "Y": [-1e-09, 1, 0],
+            "Z": [0, 0, 1]
+          }
+        }
+      },
+      "expected": {
+        "status": "unsupported",
+        "f04_code": "UNSUPPORTED_GEOMETRY",
+        "diagnostic_code": "GEO_NUMERIC_UNCERTAIN",
+        "partial_geometry_returned": false,
+        "state_changed": false,
+        "stage": "build"
+      },
+      "derivation": "Exact arithmetic: |X|^2 = 1 and |Z|^2 = 1; |Y|^2 - 1 = 1e-18, within 1e-12; (X x Y) . Z = 1 - 0 = 1, so the norm and handedness checks pass. X . Y = -1e-9 and |X . Y| = 1e-9 > 1e-12, so the certificate fails. A bound written without the absolute value (X . Y <= 1e-12) would accept this frame, which is why step d requires |X . Y|, |X . Z| and |Y . Z| each at most 1e-12. With F06-NEG-31 (+1e-9) the pair exercises both signs of an injected error. Fault injection is a harness hook; the frame is not reachable from admitted input.",
+      "assumes": ["P-2 (assumed pending owner confirmation)", "P-3 (assumed pending owner confirmation)"]
     }
   ],
   "cross_references": [
