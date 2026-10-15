@@ -8,8 +8,8 @@ which crates exist now and which are created later by their own tasks. It consum
 [F04 model and command contract](model-and-commands-v0.1.md) (freeze candidate), the
 [F05 worker protocol](worker-protocol-v0.1.md) and the
 [F06 geometry and viewport contract](geometry-contract-v0.1.md) (both drafts) and the F07
-fixtures. It changes none of their semantics. It implements no feature: the planned paths below
-are reservations, not code, and a path marked `planned` is created only by the task named for it.
+fixtures. It changes none of their semantics. U05 now adds immutable byte storage and its pure
+digest module; paths marked `planned` remain reservations created by their named tasks.
 
 The module table in section 2 is **machine-read**. The `beamcraft-boundaries` tool and its test
 (section 6) check the real workspace manifests against it, and CI derives its list of portable
@@ -55,7 +55,7 @@ planned crate or owns a present one. Dependencies are checked in `[dependencies]
 | beamcraft-protocol | crates/protocol | domain | 2 | beamcraft-model | now | U01 |
 | beamcraft-kernel | crates/kernel | domain | 2 | beamcraft-geom, beamcraft-model | planned | G01 |
 | beamcraft-engine | crates/engine | domain | 3 | beamcraft-geom, beamcraft-model, beamcraft-kernel | planned | P01 |
-| beamcraft-host | crates/host | host | 4 | beamcraft-model, beamcraft-protocol, beamcraft-engine | planned | U01 |
+| beamcraft-host | crates/host | host | 4 | beamcraft-model, beamcraft-protocol, beamcraft-engine | now | U05 |
 | beamcraft-cli | apps/beamcraft-cli | app | 5 | beamcraft-model, beamcraft-engine, beamcraft-host | now | U04 |
 | beamcraft-ui | apps/beamcraft-ui | app | 5 | beamcraft-model, beamcraft-engine, beamcraft-host | planned | V01 |
 | beamcraft-fixtures | tools/fixtures | tool | 9 | - | now | F07 |
@@ -94,7 +94,7 @@ by the named task with real code. Allowed dependencies are those of the owning r
 | Pinned queries (`ListElements`, `GetMeshSnapshot`, `LookupFeature`, `GetChanges`, `QueryBounds`), snapshot tokens | F06 s.9 | `beamcraft_engine::query` | planned, P01 |
 | Presentation key preimage | F06 s.7 | `beamcraft_engine::presentation` (V01 may move it to the UI if it needs no engine state; never into the kernel) | planned, V01 |
 | Identity (UUIDv7 `ElementId`), units, input limits | F04 s.2, 3 | `beamcraft_model::{id, limits}` | planned, P01 |
-| SHA-256 digest type and hasher, for F04 resources, F06 keys and F05 buffers | F04 s.2, F06 s.6, 7, F05 s.3 | `beamcraft_model::digest` | planned, first task that needs it |
+| SHA-256 digest type and hasher, for F04 resources, F06 keys and F05 buffers | F04 s.2, F06 s.6, 7, F05 s.3 | `beamcraft_model::digest` | **now**, U05 (full digest, incremental FIPS 180-4 SHA-256) |
 | F04 command and envelope types | F04 s.6, 7 | `beamcraft_model::command` | planned, P01 |
 | F04 stable error codes | F04 s.8 | `beamcraft_model::error::ErrorCode` | **now** (23 codes, tested) |
 | Bounded JSON decoder and RFC 8785 canonical bytes of the validated envelope | F04 s.3, F05 s.6 | `beamcraft_model::{json, canonical}` | planned, P01 |
@@ -104,7 +104,7 @@ by the named task with real code. Allowed dependencies are those of the owning r
 | Transport `IPC_` codes and their F04 mapping | F05 s.9 | `beamcraft_protocol::code::TransportCode` | **now** |
 | Control-message schemas, handshake, correlation and event state machines (pure, no I/O) | F05 s.4, 5, 7 | `beamcraft_protocol::{message, session}` | planned, U01 |
 | Worker supervision, pipes, deadlines, restart limits, diagnostic drain | F05 s.2, 8 | `beamcraft_host::worker` | planned, U01 |
-| Filesystem, storage, atomic publish, personal workspace | F04 s.2, U05-U07 | `beamcraft_host::storage` | planned, U05-U07 |
+| Immutable byte storage, publish-if-absent and verified retrieval | F04 s.2, U05 | `beamcraft_host::storage` | **now**, U05; root publication and personal workspace remain planned, U06-U07 |
 | Durable outcome ledger and recovery | F05 s.7, 8 | `beamcraft_host::ledger` | planned, U07 |
 | USD worker (thin Python/pxr) | F05 s.1 | `workers/usd/`, not a Cargo package | planned, U01 |
 | CLI | AGENTS s.3, F06 s.9 | `apps/beamcraft-cli` | **now** (`--version` only) |
@@ -112,7 +112,7 @@ by the named task with real code. Allowed dependencies are those of the owning r
 
 The F05 sections 3 and 10 also require SHA-256 verification of attachments. The protocol crate
 checks the declared lengths, counts, indices and prefix fields and exposes the claimed digest; the
-streaming digest comparison needs a hasher and waits for `model::digest`.
+streaming digest comparison can now use `model::digest`; protocol session integration remains U01.
 
 ## 5. Crates created now, and why
 
@@ -125,11 +125,19 @@ streaming digest comparison needs a hasher and waits for `model::digest`.
   regression test for each rejected input class.
 - **`beamcraft_model::error::ErrorCode`** (a module in the existing crate, not a new crate): the
   23 stable codes of F04 section 8, shared by F05 and, later, F06.
+- **`beamcraft_model::digest`**, added by U05: dependency-free, incremental SHA-256 with
+  a bounded length counter, full lowercase `ContentDigest` and independent vector tests.
+- **`beamcraft-host` (`crates/host`, native host)**, created by U05 with real storage code:
+  `BlobStore` publishes full digest filenames without replacement, compares complete existing
+  bytes and verifies every read. Only `model` is used today; allowed edges are unchanged.
+  The F05 32 MiB bundle budget bounds each blob and returned buffer. The root namespace must
+  be protected from hostile concurrent filesystem mutation: safe portable std containment checks
+  cannot close directory replacement races. See the storage module's documented platform limits.
 - **`beamcraft-boundaries` (`apps/boundaries`, tool).** Created because it holds the real, tested
   checker of section 6. It is a development tool with no dependencies; it is not part of the
   product.
 
-**Not created, on purpose:** `kernel`, `engine`, `host` and `ui`. Each would be empty today; the
+**Not created, on purpose:** `kernel`, `engine` and `ui`. Each would be empty today; the
 tasks named in section 2 create them with their first real code. No placeholder crate, `todo!` or
 unreachable stub is added.
 
@@ -172,4 +180,8 @@ shared contract is edited here:
 Contributor-original BeamCraft text, MPL-2.0, derived from F04, F05, F06 and the repository
 [architecture](../architecture.md) and [development guide](../development.md). No third-party
 material is used. The code it describes is original and implements only byte layouts, numbers and
-code tables stated in F04 section 8 and F05 sections 3, 4, 9 and 10.
+code tables stated in F04 section 8 and F05 sections 3, 4, 9 and 10, plus U05 byte storage.
+The original SHA-256 implementation follows public FIPS PUB 180-4 (August 2015), sections
+4.1.2, 4.2.2, 5 and 6.2 (https://doi.org/10.6028/NIST.FIPS.180-4); no implementation was copied.
+Padding-boundary expected digests were independently computed with Windows .NET SHA256.
+The separate fixture-tool SHA-256 remains untouched; consolidating it is outside U05.

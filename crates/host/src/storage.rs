@@ -1,0 +1,430 @@
+// SPDX-License-Identifier: MPL-2.0
+// SPDX-FileCopyrightText: 2026 Apibim
+
+//! Immutable full-SHA-256 byte resources (U05; F04 sections 2 and 8).
+//!
+//! The authorized root must already exist. Only the host may mutate its namespace while
+//! operations run: safe portable `std` has no directory-handle-relative, no-follow traversal.
+//! Every existing component is checked for links/reparse points, and canonical containment is
+//! checked before opening. These checks reject static hostile entries, but cannot exclude a
+//! hostile concurrent directory replacement between a check and a filesystem call. Restrict
+//! filesystem permissions accordingly; this API is not a sandbox against a hostile local writer.
+//!
+//! Installation uses a same-filesystem hard link, which fails if a destination already exists.
+//! Filesystems without hard-link support return an error; there is no replacing fallback.
+//! Temp bytes are flushed and synced before installation. No directory-sync durability,
+//! crash-atomic multi-file commit, garbage collection or collision impossibility is claimed.
+//! A crash can leave a temporary file; cleanup/recovery belongs to U06/U07.
+
+use std::fmt;
+use std::fs::{self, File, Metadata, OpenOptions};
+use std::io::{self, Read, Write};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use beamcraft_model::ErrorCode;
+use beamcraft_model::digest::{ContentDigest, Sha256};
+
+/// Maximum blob and returned byte-buffer length: F05 0.1.0 sections 3/4, bundle_bytes
+/// budget of 33,554,432 bytes. This storage cap does not widen attachment wire limits.
+pub const MAX_BLOB_BYTES: usize = 33_554_432;
+
+static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+
+/// Successful publish-if-absent outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Published {
+    /// A complete new file was installed.
+    Created,
+    /// All existing bytes equal the requested bytes; the blob was not rewritten.
+    AlreadyPresent,
+}
+
+/// Stable storage failure names with safe messages (no absolute paths or raw OS errors).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StorageError {
+    /// Root is not an existing absolute directory, or the requested cap is invalid.
+    InvalidArgument,
+    /// A link, reparse point, non-regular entry or containment violation was found.
+    UnsafeEntry,
+    /// Blob is absent.
+    NotFound,
+    /// Stored bytes do not hash to their filename.
+    DigestMismatch,
+    /// Existing bytes differ from the full proposed bytes; nothing was overwritten.
+    IntegrityConflict,
+    /// Blob/read cap or checked arithmetic was exceeded.
+    LimitExceeded,
+    /// Native I/O failed; only its safe category is retained.
+    Io(io::ErrorKind),
+}
+
+impl StorageError {
+    /// Maps stable storage failures to the existing F04 section 8 vocabulary.
+    pub const fn code(self) -> ErrorCode {
+        match self {
+            Self::InvalidArgument => ErrorCode::InvalidArgument,
+            Self::UnsafeEntry | Self::DigestMismatch | Self::IntegrityConflict => {
+                ErrorCode::IntegrityError
+            }
+            Self::NotFound => ErrorCode::NotFound,
+            Self::LimitExceeded => ErrorCode::LimitExceeded,
+            Self::Io(io::ErrorKind::PermissionDenied) => ErrorCode::PermissionDenied,
+            Self::Io(_) => ErrorCode::BackendUnavailable,
+        }
+    }
+}
+
+impl fmt::Display for StorageError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::InvalidArgument => "invalid storage root or size cap",
+            Self::UnsafeEntry => "unsafe storage entry or containment violation",
+            Self::NotFound => "blob not found",
+            Self::DigestMismatch => "blob bytes do not match the content digest",
+            Self::IntegrityConflict => "existing blob differs from proposed bytes",
+            Self::LimitExceeded => "blob or memory size cap exceeded",
+            Self::Io(_) => "storage I/O failed",
+        })
+    }
+}
+
+impl std::error::Error for StorageError {}
+
+fn io_error(error: io::Error) -> StorageError {
+    if error.kind() == io::ErrorKind::NotFound {
+        StorageError::NotFound
+    } else {
+        StorageError::Io(error.kind())
+    }
+}
+
+fn is_link(metadata: &Metadata) -> bool {
+    if metadata.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        // FILE_ATTRIBUTE_REPARSE_POINT, including junctions and non-symlink reparse types.
+        metadata.file_attributes() & 0x400 != 0
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+fn directory(path: &Path) -> Result<(), StorageError> {
+    let metadata = fs::symlink_metadata(path).map_err(io_error)?;
+    if is_link(&metadata) || !metadata.is_dir() {
+        return Err(StorageError::UnsafeEntry);
+    }
+    Ok(())
+}
+
+fn absolute_directory(path: &Path) -> Result<(), StorageError> {
+    // Walk from the filesystem root down so an ancestor link is rejected before a child
+    // lookup can follow it. The root argument is host configuration, never an asset path.
+    let mut prefix = PathBuf::new();
+    for component in path.components() {
+        prefix.push(component);
+        if prefix.is_absolute() {
+            directory(&prefix)?;
+        }
+    }
+    Ok(())
+}
+
+/// A store bound to one authorized root; resource methods accept only [`ContentDigest`].
+/// Clones and independent instances may publish concurrently under the namespace ownership
+/// requirement in the module documentation.
+#[derive(Debug, Clone)]
+pub struct BlobStore {
+    root: PathBuf,
+    canonical_root: PathBuf,
+    cap: usize,
+}
+
+impl BlobStore {
+    /// Opens an existing absolute directory with the F05-derived maximum byte cap.
+    /// Does not create the root or accept an asset path/URI.
+    pub fn new(root: impl AsRef<Path>) -> Result<Self, StorageError> {
+        Self::with_limit(root, MAX_BLOB_BYTES)
+    }
+
+    /// Opens a store with a smaller blob/read memory cap (zero permits only empty blobs).
+    /// Caps above [`MAX_BLOB_BYTES`] are invalid; errors never include the root path.
+    pub fn with_limit(root: impl AsRef<Path>, cap: usize) -> Result<Self, StorageError> {
+        let root = root.as_ref();
+        if !root.is_absolute() || cap > MAX_BLOB_BYTES {
+            return Err(StorageError::InvalidArgument);
+        }
+        #[cfg(windows)]
+        {
+            // Reject UNC/network and device namespaces before any filesystem operation.
+            // Only ordinary local drive roots (including canonical verbatim disks) qualify.
+            use std::path::{Component, Prefix};
+            if !matches!(root.components().next(), Some(Component::Prefix(p))
+                if matches!(p.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_)))
+            {
+                return Err(StorageError::InvalidArgument);
+            }
+        }
+        // Reject all links in the supplied root, including ancestors. Do not canonicalize
+        // first: that would erase evidence of a symlink. Parent components are ambiguous.
+        if root
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(StorageError::InvalidArgument);
+        }
+        match absolute_directory(root) {
+            Err(StorageError::NotFound) => return Err(StorageError::InvalidArgument),
+            result => result?,
+        }
+        let canonical_root = fs::canonicalize(root).map_err(io_error)?;
+        Ok(Self {
+            root: root.to_owned(),
+            canonical_root,
+            cap,
+        })
+    }
+
+    fn check_root(&self) -> Result<(), StorageError> {
+        absolute_directory(&self.root)?;
+        if fs::canonicalize(&self.root).map_err(io_error)? != self.canonical_root {
+            return Err(StorageError::UnsafeEntry);
+        }
+        Ok(())
+    }
+
+    fn check_directory(&self, path: &Path, create: bool) -> Result<(), StorageError> {
+        if create {
+            match fs::create_dir(path) {
+                Ok(()) => (),
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => (),
+                Err(e) => return Err(io_error(e)),
+            }
+        }
+        directory(path)?;
+        let canonical = fs::canonicalize(path).map_err(io_error)?;
+        if !canonical.starts_with(&self.canonical_root) {
+            return Err(StorageError::UnsafeEntry);
+        }
+        Ok(())
+    }
+
+    fn location(&self, digest: &ContentDigest, create: bool) -> Result<PathBuf, StorageError> {
+        self.check_root()?;
+        let blobs = self.root.join("blobs");
+        self.check_directory(&blobs, create)?;
+        // Both components are generated from a validated digest, never caller path text.
+        let name = digest.to_string();
+        let prefix: String = name.chars().take(2).collect();
+        let shard = blobs.join(prefix);
+        self.check_directory(&shard, create)?;
+        Ok(shard.join(name))
+    }
+
+    fn read_file(&self, path: &Path, digest: &ContentDigest) -> Result<Vec<u8>, StorageError> {
+        let metadata = fs::symlink_metadata(path).map_err(io_error)?;
+        if is_link(&metadata) || !metadata.is_file() {
+            return Err(StorageError::UnsafeEntry);
+        }
+        if !fs::canonicalize(path)
+            .map_err(io_error)?
+            .starts_with(&self.canonical_root)
+        {
+            return Err(StorageError::UnsafeEntry);
+        }
+        let length = usize::try_from(metadata.len()).map_err(|_| StorageError::LimitExceeded)?;
+        if length > self.cap {
+            return Err(StorageError::LimitExceeded);
+        }
+        let mut options = OpenOptions::new();
+        options.read(true);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            // Open the reparse point itself if the last component changes after preflight.
+            options.custom_flags(0x0020_0000); // FILE_FLAG_OPEN_REPARSE_POINT
+        }
+        let mut file = options.open(path).map_err(io_error)?;
+        let opened = file.metadata().map_err(io_error)?;
+        if is_link(&opened) || !opened.is_file() {
+            return Err(StorageError::UnsafeEntry);
+        }
+        let mut bytes = Vec::new();
+        // The metadata length was converted and capped above; reserve it once. A changing
+        // file is still bounded on every read below, including growth after this metadata.
+        bytes
+            .try_reserve_exact(length)
+            .map_err(|_| StorageError::Io(io::ErrorKind::OutOfMemory))?;
+        let mut buffer = [0u8; 8192];
+        loop {
+            let count = file.read(&mut buffer).map_err(io_error)?;
+            if count == 0 {
+                break;
+            }
+            let next = bytes
+                .len()
+                .checked_add(count)
+                .filter(|n| *n <= self.cap)
+                .ok_or(StorageError::LimitExceeded)?;
+            bytes
+                .try_reserve_exact(next - bytes.len())
+                .map_err(|_| StorageError::Io(io::ErrorKind::OutOfMemory))?;
+            let chunk = buffer.get(..count).ok_or(StorageError::LimitExceeded)?;
+            bytes.extend_from_slice(chunk);
+        }
+        let actual = Sha256::digest(&bytes).map_err(|_| StorageError::LimitExceeded)?;
+        if actual != *digest {
+            return Err(StorageError::DigestMismatch);
+        }
+        Ok(bytes)
+    }
+
+    fn compare(
+        &self,
+        path: &Path,
+        digest: &ContentDigest,
+        bytes: &[u8],
+    ) -> Result<(), StorageError> {
+        let existing = self.read_file(path, digest).map_err(|error| match error {
+            // Proposed bytes already fit the cap: an oversized existing file necessarily
+            // differs, so publication reports the conflict without reading beyond the cap.
+            StorageError::DigestMismatch | StorageError::LimitExceeded => {
+                StorageError::IntegrityConflict
+            }
+            other => other,
+        })?;
+        if existing != bytes {
+            return Err(StorageError::IntegrityConflict);
+        }
+        Ok(())
+    }
+
+    /// Publishes exact bytes using a synced temporary file and non-replacing hard link.
+    /// Existing bytes are compared in full even if their digest matches. A failed cleanup
+    /// or post-install verification can return an error after installation; retry is safe.
+    pub fn publish(&self, bytes: &[u8]) -> Result<(ContentDigest, Published), StorageError> {
+        if bytes.len() > self.cap {
+            return Err(StorageError::LimitExceeded);
+        }
+        let digest = Sha256::digest(bytes).map_err(|_| StorageError::LimitExceeded)?;
+        let destination = self.location(&digest, true)?;
+        match fs::symlink_metadata(&destination) {
+            Ok(_) => {
+                self.compare(&destination, &digest, bytes)?;
+                return Ok((digest, Published::AlreadyPresent));
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => (),
+            Err(e) => return Err(io_error(e)),
+        }
+        let (mut file, temp) = self.temporary()?;
+        file.write_all(bytes).map_err(io_error)?;
+        file.flush().map_err(io_error)?;
+        file.sync_all().map_err(io_error)?;
+        drop(file);
+        // Repeat containment preflight immediately before installation.
+        let destination = self.location(&digest, false)?;
+        let outcome = match fs::hard_link(&temp.0, &destination) {
+            Ok(()) => Published::Created,
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Published::AlreadyPresent,
+            Err(e) => return Err(io_error(e)),
+        };
+        self.compare(&destination, &digest, bytes)?;
+        fs::remove_file(&temp.0).map_err(io_error)?;
+        Ok((digest, outcome))
+    }
+
+    fn temporary(&self) -> Result<(File, Temporary), StorageError> {
+        self.check_root()?;
+        let blobs = self.root.join("blobs");
+        self.check_directory(&blobs, false)?;
+        for _ in 0..1024 {
+            let id = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
+            let path = blobs.join(format!(".publish-{id:016x}"));
+            match OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(file) => return Ok((file, Temporary(path))),
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(io_error(e)),
+            }
+        }
+        Err(StorageError::Io(io::ErrorKind::AlreadyExists))
+    }
+
+    /// Returns complete bytes only after size, entry, containment and SHA-256 verification.
+    pub fn read(&self, digest: &ContentDigest) -> Result<Vec<u8>, StorageError> {
+        let path = self.location(digest, false)?;
+        self.read_file(&path, digest)
+    }
+
+    /// Checks presence with complete verification; corrupt/unsafe entries are errors, not false.
+    pub fn contains(&self, digest: &ContentDigest) -> Result<bool, StorageError> {
+        match self.verify(digest) {
+            Ok(()) => Ok(true),
+            Err(StorageError::NotFound) => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Verifies all stored bytes, discarding the capped returned buffer.
+    pub fn verify(&self, digest: &ContentDigest) -> Result<(), StorageError> {
+        self.read(digest).map(|_| ())
+    }
+}
+
+struct Temporary(PathBuf);
+
+impl Drop for Temporary {
+    fn drop(&mut self) {
+        // Best-effort cleanup on every error path; explicit successful cleanup is checked above.
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // This module contains only synthetic test setup and assertions.
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    #[test]
+    fn matching_digest_still_requires_full_byte_equality() {
+        // Synthetic collision injection at the private comparison boundary: the existing
+        // file verifies under this digest, but the proposed bytes are deliberately different.
+        // This exercises collision handling without claiming a real SHA-256 collision.
+        let base = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("u05-tests");
+        fs::create_dir_all(&base).unwrap();
+        let time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = base.join(format!("collision-{time}"));
+        fs::create_dir(&root).unwrap();
+        struct Cleanup(PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let base = Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("target")
+                    .join("u05-tests");
+                assert!(self.0.is_absolute() && self.0.starts_with(&base) && self.0 != base);
+                fs::remove_dir_all(&self.0).unwrap();
+            }
+        }
+        let cleanup = Cleanup(root);
+        let store = BlobStore::new(&cleanup.0).unwrap();
+        let (digest, _) = store.publish(b"verified existing bytes").unwrap();
+        let path = store.location(&digest, false).unwrap();
+        assert_eq!(
+            store.compare(&path, &digest, b"synthetic collision bytes"),
+            Err(StorageError::IntegrityConflict)
+        );
+        assert_eq!(store.read(&digest).unwrap(), b"verified existing bytes");
+    }
+}
