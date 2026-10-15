@@ -68,6 +68,13 @@ later project; portable domain crates alone do not establish a working web appli
   and `F04-NEG-27` were added (44 logical, 6 raw). F04 stays a freeze candidate at 0.1.0, not
   frozen; P-1 to P-3 still await owner confirmation; nothing is implemented and K0 is not passed.
 
+- 2026-10-15: F11 drafted the USD layer-engine decision record 0.1.0 on base
+  `20d26cfb107d51e7a2c76c25ca0191b8115ec301` (stacked on F08). It compares four options (official
+  SDK worker, own Rust subset, `openusd` adapter, hybrid) and recommends retaining the accepted SDK
+  worker baseline pending owner-approved spike N01 evidence. The JSON plan defines 40 unexecuted
+  claims, ten gates and 12 original scenario families. No architecture, dependency or runtime
+  change is made; the recommendation is not a decision. Local WASM and cargo-deny checks were not run.
+
 - 2026-10-15: F10 drafted the domain vocabulary and discipline-module contract 0.1.0 on base
   `20d26cfb107d51e7a2c76c25ca0191b8115ec301` (stacked on F08), consuming F04 0.1.0, F06 0.1.0
   and F08. It fixes a closed element-kind registry (steel `plate`, `beam`, `column` implementable;
@@ -82,10 +89,11 @@ later project; portable domain crates alone do not establish a working web appli
   `29d962e790ffd21ecd9a45143f052d4b4d53d3f7` (stacked on F06), consuming F06/F04 0.1.0 and the
   first-scope package 0.1.0. It covers representation, numeric derivations, predicates, verdicts
   for every F06 draft constant, failure/work bounds and staged implementation guidance. The
-  validation plan has 36 planned rows referencing the 70 cases of F06 0.1.0 as merged; F06 was
-  corrected afterwards (80 cases, PR #20) and the six proposed amendments were largely applied
-  there, so a reconciliation of this design with the corrected F06 is still pending. Nothing is
-  implemented, no implementer is declared eligible and K0 is not passed.
+  validation plan was first written against the 70 cases of F06 0.1.0 as merged. Review rounds
+  against the corrected F06 (PR #20) then reconciled it: 44 rows now cover all 83 F06 cases (47
+  positive, 36 negative), amendments A1-A11 are tracked as applied, partly applied or open, and
+  its own findings A7-A11 led to F06 corrections. Nothing is implemented, no implementer is
+  declared eligible and K0 is not passed.
   Local WASM and cargo-deny checks were not run.
 
 - 2026-10-15: F08 fixed the module boundaries on base `29d962e790ffd21ecd9a45143f052d4b4d53d3f7`
