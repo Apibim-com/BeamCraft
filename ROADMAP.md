@@ -49,6 +49,14 @@ later project; portable domain crates alone do not establish a working web appli
 
 ## Progress log
 
+- 2026-10-15: G04 drafted the first-scope kernel design 0.1.0 on base
+  `29d962e790ffd21ecd9a45143f052d4b4d53d3f7` (stacked on F06), consuming F06/F04 0.1.0 and the
+  first-scope package 0.1.0. It covers representation, numeric derivations, predicates, verdicts
+  for every F06 draft constant, failure/work bounds and staged implementation guidance. The
+  validation plan has 36 planned rows referencing all 70 F06 cases. Six proposed F06 amendments
+  remain open. Nothing is implemented, no implementer is declared eligible and K0 is not passed.
+  Local WASM and cargo-deny checks were not run.
+
 - 2026-10-15: F06 drafted the geometry and viewport contract 0.1.0 on base
   `9d40abc34b8a5686358b78adee5f9c52b9c830bd`, consuming F04 0.1.0, F05 0.1.0 (host boundary
   only) and the first-scope package 0.1.0. It fixes the kernel input and evaluation order, the

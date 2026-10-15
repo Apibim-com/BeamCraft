@@ -1,0 +1,583 @@
+{
+  "schema_version": "0.1.0",
+  "task": "G04",
+  "status": "draft; nothing implemented",
+  "base_sha": "29d962e790ffd21ecd9a45143f052d4b4d53d3f7",
+  "scope": "Rectangular plate and straight rectangular-section member; rigid placement; no implemented kernel or tests.",
+  "f06_cases_path": "../contracts/geometry-contract-cases-v0.1.json",
+  "design_path": "kernel-design-v0.1.md",
+  "counts": {
+    "rows": 36,
+    "by_stage": {
+      "S1": 8,
+      "S2": 7,
+      "S3": 20,
+      "S4": 1
+    },
+    "by_oracle_kind": {
+      "analytic": 19,
+      "invariant": 11,
+      "metamorphic": 6
+    },
+    "distinct_f06_cases": 70
+  },
+  "rows": [
+    {
+      "id": "G04-V01",
+      "stage": "S1",
+      "property": "Euclidean member length and analytic error enclosure",
+      "method": "Use integer Pythagorean triples and rational squared endpoints around irrational lengths; verify the section 3 bound.",
+      "inputs_class": "Axis-aligned, 3-4-5 and 3-4-12 triples, minimum and maximum lengths, endpoints near coordinate caps.",
+      "expected_oracle_kind": "analytic",
+      "f06_case_refs": [
+        "F06-POS-04",
+        "F06-POS-07",
+        "F06-POS-08",
+        "F06-POS-14"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "G04-V02",
+      "stage": "S1",
+      "property": "Input minima, caps and quaternion admission order",
+      "method": "Compare exact binary rationals at below/equal/above boundaries; verify codes and no frame division before admission.",
+      "inputs_class": "Zero/subminimum axes, subminimum and over-cap dimensions, zero section, norm and translation boundaries.",
+      "expected_oracle_kind": "analytic",
+      "f06_case_refs": [
+        "F06-POS-14",
+        "F06-POS-15",
+        "F06-NEG-03",
+        "F06-NEG-04",
+        "F06-NEG-05",
+        "F06-NEG-06",
+        "F06-NEG-07"
+      ],
+      "status": "planned",
+      "amendment_gate": "A2"
+    },
+    {
+      "id": "G04-V03",
+      "stage": "S1",
+      "property": "Normalized active rigid rotation matches rational reference",
+      "method": "Derive a rational matrix from an integer quaternion independently; enclose input conversion and compare transformed points.",
+      "inputs_class": "Identity, half-turn, cyclic exact quaternion, quarter-turn and cancellation-heavy large-origin member.",
+      "expected_oracle_kind": "analytic",
+      "f06_case_refs": [
+        "F06-POS-11",
+        "F06-POS-12",
+        "F06-POS-25"
+      ],
+      "status": "planned",
+      "amendment_gate": "A5"
+    },
+    {
+      "id": "G04-V04",
+      "stage": "S1",
+      "property": "Orientation, dot and cross signs never guessed",
+      "method": "Check sign enclosure contains exact dyadic determinant; exact zero and uncertain are distinct; enforce fixed fallback capacity.",
+      "inputs_class": "Positive/negative/zero determinant, near collinear corners, subnormal components, maximally separated exponents.",
+      "expected_oracle_kind": "invariant",
+      "f06_case_refs": [
+        "F06-POS-01",
+        "F06-NEG-20"
+      ],
+      "status": "planned",
+      "amendment_gate": "A2 A3"
+    },
+    {
+      "id": "G04-V05",
+      "stage": "S1",
+      "property": "Parallel branch and orthogonal member frame",
+      "method": "Independently project the selected public reference direction; certify unit norms, orthogonality and positive determinant.",
+      "inputs_class": "Positive/negative vertical, tilt toward X and toward Y on both sides of threshold, neighboring f64 ratios.",
+      "expected_oracle_kind": "analytic",
+      "f06_case_refs": [
+        "F06-POS-05",
+        "F06-POS-06",
+        "F06-POS-09",
+        "F06-POS-10"
+      ],
+      "status": "planned",
+      "amendment_gate": "A1 A2"
+    },
+    {
+      "id": "G04-V06",
+      "stage": "S1",
+      "property": "Gradual underflow and positive mass representability",
+      "method": "Enclose exact positive rational mass including eta/2; unrepresentable or uncertifiable relative mass yields no current zero.",
+      "inputs_class": "Smallest positive density, normal-to-subnormal mass boundary, tiny quaternion/axis components and normal minimum solids.",
+      "expected_oracle_kind": "analytic",
+      "f06_case_refs": [
+        "F06-POS-03",
+        "F06-POS-13",
+        "F06-POS-14"
+      ],
+      "status": "planned",
+      "amendment_gate": "A3 A5"
+    },
+    {
+      "id": "G04-V07",
+      "stage": "S1",
+      "property": "Finiteness and unsupported stage precede numerical work",
+      "method": "Inject nonfinite values and unsupported tags; assert bounded diagnostics, prescribed precedence and no published candidate.",
+      "inputs_class": "NaN/infinity, unsupported profile, scaled/sheared/reflected matrix and unsupported source frame.",
+      "expected_oracle_kind": "invariant",
+      "f06_case_refs": [
+        "F06-NEG-01",
+        "F06-NEG-02",
+        "F06-NEG-08",
+        "F06-NEG-09",
+        "F06-NEG-10"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "G04-V08",
+      "stage": "S1",
+      "property": "Antipodal quaternion canonical equivalence",
+      "method": "Evaluate identical admitted inputs with q and -q; compare normalized matrix, canonical key and bytes exactly.",
+      "inputs_class": "Nonzero w, w=0, signed zero components and rational ideal rotations.",
+      "expected_oracle_kind": "metamorphic",
+      "f06_case_refs": [
+        "F06-POS-25"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "G04-V09",
+      "stage": "S2",
+      "property": "Plate construction matches analytic corners",
+      "method": "Compute independent rational corner set from inequalities, then associate semantic face roles; do not reuse builder tables.",
+      "inputs_class": "Origin, minimum thickness, maximum dimensions and anisotropic plates.",
+      "expected_oracle_kind": "analytic",
+      "f06_case_refs": [
+        "F06-POS-01",
+        "F06-POS-14"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "G04-V10",
+      "stage": "S2",
+      "property": "Straight rectangle extrusion matches endpoint sections",
+      "method": "Construct exact rational section corners for rational frames; verify endpoint centroids and perpendicular end sections.",
+      "inputs_class": "Horizontal, vertical, downwards, sloped and diagonal axes with explicit rectangle dimensions.",
+      "expected_oracle_kind": "analytic",
+      "f06_case_refs": [
+        "F06-POS-04",
+        "F06-POS-05",
+        "F06-POS-06",
+        "F06-POS-07",
+        "F06-POS-08"
+      ],
+      "status": "planned",
+      "amendment_gate": "A1"
+    },
+    {
+      "id": "G04-V11",
+      "stage": "S2",
+      "property": "Near-column construction remains a rectangular prism",
+      "method": "Use the Y-tilt counterexample and independent projected fallback; compare corner intervals and section axial extent.",
+      "inputs_class": "d=(0,0.0005,1000), large height, signed variants, exact vertical and X-tilt controls.",
+      "expected_oracle_kind": "analytic",
+      "f06_case_refs": [
+        "F06-POS-09",
+        "F06-POS-10"
+      ],
+      "status": "planned",
+      "amendment_gate": "A1"
+    },
+    {
+      "id": "G04-V12",
+      "stage": "S2",
+      "property": "Quad diagonal preserves oriented boundary",
+      "method": "Cancel directed diagonal edges of paired triangles and compare the resulting boundary to each analytic role quad.",
+      "inputs_class": "All six roles of both primitives; deliberately reversed and duplicated triangles.",
+      "expected_oracle_kind": "invariant",
+      "f06_case_refs": [
+        "F06-POS-01",
+        "F06-NEG-18",
+        "F06-NEG-20"
+      ],
+      "status": "planned",
+      "amendment_gate": "A3"
+    },
+    {
+      "id": "G04-V13",
+      "stage": "S2",
+      "property": "Feature roles, uniqueness and grammar",
+      "method": "Independently enumerate role intersections; compare 6+12+8 identifiers, 59-byte longest form and copy disjointness.",
+      "inputs_class": "Dimension edits, rigid moves, axis reversal, copies and malformed/wrong-body identifiers.",
+      "expected_oracle_kind": "invariant",
+      "f06_case_refs": [
+        "F06-POS-16",
+        "F06-POS-17",
+        "F06-POS-18",
+        "F06-POS-26",
+        "F06-NEG-22",
+        "F06-NEG-23",
+        "F06-NEG-24"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "G04-V14",
+      "stage": "S2",
+      "property": "Rounded corners retain certified embedding or fail closed",
+      "method": "Check intervals, nonzero faces, outward role signs and nonadjacent-face separation; reject a lost certificate.",
+      "inputs_class": "Thin boxes near large origins, oblique rotation, near-column frame, perturbed/collapsed corner mutations.",
+      "expected_oracle_kind": "invariant",
+      "f06_case_refs": [
+        "F06-POS-01",
+        "F06-POS-11",
+        "F06-NEG-19"
+      ],
+      "status": "planned",
+      "amendment_gate": "A1 A3 A5"
+    },
+    {
+      "id": "G04-V15",
+      "stage": "S2",
+      "property": "Repeatable build and semantic identity under edits",
+      "method": "Repeat under one build profile and fixed cancellation observation; compare exact bytes and role names.",
+      "inputs_class": "Same input repeatedly, dimension and placement edits, input negative zeros.",
+      "expected_oracle_kind": "metamorphic",
+      "f06_case_refs": [
+        "F06-POS-02",
+        "F06-POS-16",
+        "F06-POS-37"
+      ],
+      "status": "planned",
+      "amendment_gate": "A2"
+    },
+    {
+      "id": "G04-V16",
+      "stage": "S3",
+      "property": "Analytic volume with correct units",
+      "method": "Multiply exact rational dimensions and independently enclose sqrt for member length; divide by exact 10^9.",
+      "inputs_class": "Normal, minimum, maximum and anisotropic boxes; no density required.",
+      "expected_oracle_kind": "analytic",
+      "f06_case_refs": [
+        "F06-POS-03",
+        "F06-POS-04",
+        "F06-POS-07",
+        "F06-POS-13",
+        "F06-POS-14",
+        "F06-POS-15"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "G04-V17",
+      "stage": "S3",
+      "property": "Analytic surface area with correct units",
+      "method": "Sum six exact rectangle areas independently; compare the section 3 normal and absolute enclosures.",
+      "inputs_class": "Plate/member, minimum and maximum sides, large aspect ratio, sloped member.",
+      "expected_oracle_kind": "analytic",
+      "f06_case_refs": [
+        "F06-POS-03",
+        "F06-POS-04",
+        "F06-POS-07",
+        "F06-POS-13"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "G04-V18",
+      "stage": "S3",
+      "property": "Mass requires explicit current density and volume",
+      "method": "Derive rational mass and separately apply the F06 status precedence; absence cannot produce zero/default density.",
+      "inputs_class": "Absent/null, explicit normal density, stale density/shape and unsupported/open geometry.",
+      "expected_oracle_kind": "analytic",
+      "f06_case_refs": [
+        "F06-POS-03",
+        "F06-POS-13",
+        "F06-POS-21",
+        "F06-POS-38",
+        "F06-NEG-18"
+      ],
+      "status": "planned",
+      "amendment_gate": "A3"
+    },
+    {
+      "id": "G04-V19",
+      "stage": "S3",
+      "property": "Local and world bounds enclose ideal corners",
+      "method": "Derive centre plus absolute matrix times half-extents using independent exact/rational-interval arithmetic.",
+      "inputs_class": "Identity, quarter-turn, oblique rational quaternion, near-limit origins and cancellation near zero.",
+      "expected_oracle_kind": "analytic",
+      "f06_case_refs": [
+        "F06-POS-03",
+        "F06-POS-11",
+        "F06-POS-12"
+      ],
+      "status": "planned",
+      "amendment_gate": "A1 A5"
+    },
+    {
+      "id": "G04-V20",
+      "stage": "S3",
+      "property": "Closedness, Euler, outward winding and two volume methods agree",
+      "method": "Independently enumerate incidence, verify one shell and Euler 2, then exact anchored tetrahedra versus analytic product; also sum triangle areas.",
+      "inputs_class": "Generated boxes plus deleted/reversed triangle and overlapping closed-shell mutations.",
+      "expected_oracle_kind": "invariant",
+      "f06_case_refs": [
+        "F06-POS-01",
+        "F06-POS-04",
+        "F06-POS-08",
+        "F06-NEG-18",
+        "F06-NEG-19",
+        "F06-NEG-20"
+      ],
+      "status": "planned",
+      "amendment_gate": "A3"
+    },
+    {
+      "id": "G04-V21",
+      "stage": "S3",
+      "property": "Rigid motion leaves scalar quantities invariant",
+      "method": "Translate and apply rational ideal rotations; compare analytic quantities and enclose rounded mesh differences.",
+      "inputs_class": "Origin/large-origin boxes, signed axis directions, q/-q placements.",
+      "expected_oracle_kind": "metamorphic",
+      "f06_case_refs": [
+        "F06-POS-11",
+        "F06-POS-12",
+        "F06-POS-22"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "G04-V22",
+      "stage": "S3",
+      "property": "Dimension scaling preserves dimensionless ratios",
+      "method": "Scale all authored lengths by powers of two within caps; verify V/L^3 and S/L^2 with rational references.",
+      "inputs_class": "Uniform parameter changes only, plate reference edge or member length; no runtime scale transform.",
+      "expected_oracle_kind": "metamorphic",
+      "f06_case_refs": [
+        "F06-POS-03",
+        "F06-POS-04",
+        "F06-POS-23"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "G04-V23",
+      "stage": "S3",
+      "property": "Density changes mass alone",
+      "method": "Change only explicit density; compare the rational mass ratio and unchanged volume/mesh/shape and world keys.",
+      "inputs_class": "Two positive densities, absent-to-present, unchanged display appearance.",
+      "expected_oracle_kind": "metamorphic",
+      "f06_case_refs": [
+        "F06-POS-13",
+        "F06-POS-21"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "G04-V24",
+      "stage": "S3",
+      "property": "Blob byte accounting and canonical layout",
+      "method": "Use independent integer size arithmetic and byte reader; compare fixed digest vector without using a production serializer.",
+      "inputs_class": "392-byte primitive, generic structural counts at simultaneous caps, whole-blob page delivery.",
+      "expected_oracle_kind": "analytic",
+      "f06_case_refs": [
+        "F06-POS-02",
+        "F06-POS-27",
+        "F06-POS-28"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "G04-V25",
+      "stage": "S3",
+      "property": "Every resource cap is checked before work/allocation",
+      "method": "Derive exact integer capacities; instrument allocation and work counters for equal/above/overflowing counts and negotiated limits.",
+      "inputs_class": "All mesh/topology/feature/byte caps, u32 maximum counts, query output and radius caps.",
+      "expected_oracle_kind": "analytic",
+      "f06_case_refs": [
+        "F06-POS-27",
+        "F06-NEG-11",
+        "F06-NEG-12",
+        "F06-NEG-13",
+        "F06-NEG-14",
+        "F06-NEG-28",
+        "F06-NEG-29"
+      ],
+      "status": "planned",
+      "amendment_gate": "A6"
+    },
+    {
+      "id": "G04-V26",
+      "stage": "S3",
+      "property": "Malformed blobs yield no current result",
+      "method": "Mutate length, reserved fields, finite encoding, zero counts, index/face addresses and alignment; assert bounded rejection.",
+      "inputs_class": "Truncated/extra bytes, unknown layout, negative zero, empty mesh and invalid indices.",
+      "expected_oracle_kind": "invariant",
+      "f06_case_refs": [
+        "F06-NEG-15",
+        "F06-NEG-30"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "G04-V27",
+      "stage": "S3",
+      "property": "Nonanalytic/open/inward/overlapping meshes never certify engineering values",
+      "method": "Treat structural acceptance separately; verify no analytic construction certificate and no promoted bounds or divergence volume.",
+      "inputs_class": "One missing actual triangle, reversed shell, two overlapping boxes and arbitrary imported blobs.",
+      "expected_oracle_kind": "invariant",
+      "f06_case_refs": [
+        "F06-NEG-10",
+        "F06-NEG-18",
+        "F06-NEG-19",
+        "F06-NEG-20"
+      ],
+      "status": "planned",
+      "amendment_gate": "A3"
+    },
+    {
+      "id": "G04-V28",
+      "stage": "S3",
+      "property": "Cancellation discards before seal only",
+      "method": "Inject cancellation at P0/P1/P2/P3 and after seal; inspect complete result envelope and unchanged engine revision.",
+      "inputs_class": "Every declared observation point, repeated runs with identical observation point.",
+      "expected_oracle_kind": "invariant",
+      "f06_case_refs": [
+        "F06-POS-37",
+        "F06-NEG-16",
+        "F06-NEG-17"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "G04-V29",
+      "stage": "S3",
+      "property": "Rejected edits preserve current state; accepted edits mark stale correctly",
+      "method": "Compare full pre/post revision and derived signatures around invalid edit and valid pending rebuild.",
+      "inputs_class": "Subminimum thickness update, shape-key change, stale/unknown/unsupported quantity states.",
+      "expected_oracle_kind": "invariant",
+      "f06_case_refs": [
+        "F06-POS-38",
+        "F06-NEG-21"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "G04-V30",
+      "stage": "S3",
+      "property": "Analytic ray-to-face picking and front/back classification",
+      "method": "Solve exact rational plane equations, t segment and in-face inequalities independently; exact parallel and uncertain differ.",
+      "inputs_class": "Front/back hit, ray origin inside, endpoint t, exact face edges and near-parallel rays.",
+      "expected_oracle_kind": "analytic",
+      "f06_case_refs": [
+        "F06-POS-29",
+        "F06-POS-30"
+      ],
+      "status": "planned",
+      "amendment_gate": "A3 A4"
+    },
+    {
+      "id": "G04-V31",
+      "stage": "S3",
+      "property": "Point/edge/vertex picking uses closed-feature minimum distance",
+      "method": "Minimize rational squared distance on finite segment/ray intervals; compare endpoint and interior minima, then radius.",
+      "inputs_class": "Exact zero-radius edge overlap, point above face, radius boundary and 1e6 cap.",
+      "expected_oracle_kind": "analytic",
+      "f06_case_refs": [
+        "F06-POS-32",
+        "F06-POS-33",
+        "F06-NEG-29"
+      ],
+      "status": "planned",
+      "amendment_gate": "A3 A4"
+    },
+    {
+      "id": "G04-V32",
+      "stage": "S3",
+      "property": "Quantized tie ordering and truncated prefix",
+      "method": "Derive rounded bucket quotient and ASCII/rank order independently; compare neighboring buckets and exact identity ties.",
+      "inputs_class": "Equal distances across copies/features, adjacent f64 t at 4e9, all kind ranks, max_hits 1/16/64 and excess candidates.",
+      "expected_oracle_kind": "analytic",
+      "f06_case_refs": [
+        "F06-POS-31",
+        "F06-POS-32",
+        "F06-POS-40",
+        "F06-NEG-28"
+      ],
+      "status": "planned",
+      "amendment_gate": "A4 A6"
+    },
+    {
+      "id": "G04-V33",
+      "stage": "S3",
+      "property": "Dependency keys respect independent input sets",
+      "method": "Mutate exactly one input at a time and compare affected/unchanged keys, signatures, roles and mesh delivery.",
+      "inputs_class": "Rename, camera, density, placement, dimensions, display/visibility, copy and canonical quaternion sign.",
+      "expected_oracle_kind": "metamorphic",
+      "f06_case_refs": [
+        "F06-POS-19",
+        "F06-POS-20",
+        "F06-POS-21",
+        "F06-POS-22",
+        "F06-POS-23",
+        "F06-POS-24",
+        "F06-POS-25",
+        "F06-POS-26",
+        "F06-POS-34",
+        "F06-POS-35"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "G04-V34",
+      "stage": "S3",
+      "property": "Query validation, stale tokens and list ordering",
+      "method": "Derive expected codes/discrete ordering from closed schemas; no partial hits or mixed snapshots on any failure.",
+      "inputs_class": "Zero/too-short direction, nonfinite pick, malformed/missing FeatureId, forbidden indices, stale/expired tokens.",
+      "expected_oracle_kind": "analytic",
+      "f06_case_refs": [
+        "F06-POS-36",
+        "F06-POS-40",
+        "F06-NEG-22",
+        "F06-NEG-23",
+        "F06-NEG-24",
+        "F06-NEG-25",
+        "F06-NEG-26",
+        "F06-NEG-27",
+        "F06-NEG-28",
+        "F06-NEG-29"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "G04-V35",
+      "stage": "S3",
+      "property": "Real engine API and CLI have identical logical outcomes",
+      "method": "Run future implemented builders/queries through both entry points on a pinned revision; independent reader checks buffers and statuses.",
+      "inputs_class": "All supported primitives, queries, failure/cancellation and snapshot delivery; no mocked geometry.",
+      "expected_oracle_kind": "invariant",
+      "f06_case_refs": [
+        "F06-POS-39",
+        "F06-POS-28",
+        "F06-POS-34",
+        "F06-POS-35",
+        "F06-POS-36"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "G04-V36",
+      "stage": "S4",
+      "property": "Pilot cuts remain unsupported before a new admission/contract",
+      "method": "Check the current supported-operation set excludes every cut; later issue new original plane-clip cases with conservation references.",
+      "inputs_class": "Plane cut, tangent/coplanar/empty clip, arbitrary boolean operation; all outside this draft.",
+      "expected_oracle_kind": "analytic",
+      "f06_case_refs": [
+        "F06-NEG-08"
+      ],
+      "status": "planned",
+      "amendment_gate": "New admitted cut scope; A1-A6 do not authorize S4"
+    }
+  ]
+}
