@@ -805,7 +805,9 @@
         "F08"
       ],
       "scenario_ids": [],
-      "status": "not_run"
+      "status": "failed",
+      "evidence": "docs/design/layer-engine-spike-n01-report-v0.1.md#1-dependency-licence-inventory-and-msrv: 52-package closure inventoried (spikes/n01-openusd/inventory.json). openusd 0.8.0 declares MIT but its README assigns generated src/usd/core_schemas.rs to TOST-1.0 with a bundled Pixar notice: unresolved policy exception, no reviewer sign-off.",
+      "resolution": "Resolved by owner decision 2026-10-15 (recorded in PR #29): the TOST-1.0 file `src/usd/core_schemas.rs` of `openusd` 0.8.x, generated from OpenUSD's own schema definitions, is accepted. Conditions: (1) only the exact package and version recorded in ATTRIBUTION.md are covered; (2) the upstream licence text and notice are kept; (3) BeamCraft claims no rights in the material and trademark terms are respected; (4) the global licence allowlist in deny.toml is unchanged; (5) if the package enters the workspace graph, a package/version exception and the file-level notice review are required first."
     },
     {
       "id": "N01-C-G02",
@@ -866,7 +868,8 @@
       "scenario_ids": [
         "N01-S01"
       ],
-      "status": "not_run"
+      "status": "not_run",
+      "evidence": "docs/design/layer-engine-spike-n01-report-v0.1.md#6-portability: Builds, tests and Clippy pass on Windows x64 with Rust 1.96.0 only. Rust 1.95, Linux, macOS and wasm32-unknown-unknown not run (target not installed)."
     },
     {
       "id": "N01-C-G04",
@@ -903,7 +906,8 @@
         "N01-S05",
         "N01-S06"
       ],
-      "status": "not_run"
+      "status": "not_run",
+      "evidence": "docs/design/layer-engine-spike-n01-report-v0.1.md#3-composition-and-foreign-ownership: Sublayer order, stronger over, active=false and foreign reference observed on the crate; raw foreign override is accepted by the crate and rejected only by the BeamCraft wrapper. No SDK oracle, no variants or payloads."
     },
     {
       "id": "N01-C-G05",
@@ -941,7 +945,8 @@
         "N01-S02",
         "N01-S07"
       ],
-      "status": "not_run"
+      "status": "not_run",
+      "evidence": "docs/design/layer-engine-spike-n01-report-v0.1.md#2-usda-and-usdc-round-trip-and-unknown-field-preservation: USDA and USDC round trip, unknown field/metadata/dictionary preservation and foreign bytes verified for the synthetic fixture. Rename, duplicate-ID, copy and remap not run."
     },
     {
       "id": "N01-C-G06",
@@ -974,7 +979,8 @@
       "scenario_ids": [
         "N01-S08"
       ],
-      "status": "not_run"
+      "status": "not_run",
+      "evidence": "docs/design/layer-engine-spike-n01-report-v0.1.md#4-delta-and-merge-model: Diff capture, replay on a copy and same-(UUID, attribute) collision detection shown for field edits. Footprints, truth table, 100-delta replay, gap and stale-base not run."
     },
     {
       "id": "N01-C-G07",
@@ -1044,7 +1050,8 @@
       "scenario_ids": [
         "N01-S10"
       ],
-      "status": "not_run"
+      "status": "not_run",
+      "evidence": "docs/design/layer-engine-spike-n01-report-v0.1.md#5-untrusted-input: 1184 bounded cases: zero panics, hangs or cap hits (max 0.008 s, about 1 MiB job commit). Declared stage caps at max and max+1, cumulative caps, cycle detection and network/plugin denial not run; nonfinite and unbounded-depth input are accepted."
     },
     {
       "id": "N01-C-G09",
@@ -1077,7 +1084,8 @@
       "scenario_ids": [
         "N01-S11"
       ],
-      "status": "not_run"
+      "status": "not_run",
+      "evidence": "docs/design/layer-engine-spike-n01-report-v0.1.md#7-performance-sanity: Same-build second write is byte-identical (USDA, USDC); 3 warm-cache release runs per size recorded. 30 cold runs and 20 reordered repeats not run."
     },
     {
       "id": "N01-C-G10",
@@ -1112,7 +1120,8 @@
       "scenario_ids": [
         "N01-S12"
       ],
-      "status": "not_run"
+      "status": "not_run",
+      "evidence": "docs/design/layer-engine-spike-n01-report-v0.1.md#8-interoperability-and-structural-validation: Oracle not available: not run. Only same-crate reread and an original structural check were done."
     },
     {
       "id": "N01-D-G01",

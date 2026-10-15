@@ -7,6 +7,10 @@ Delete any section that does not apply.
 
 <!-- What behaviour is different afterwards, and why. If it fixes an issue, say `Fixes #123`. -->
 
+## Roadmap entry
+
+<!-- Proposed dated progress-log line in the existing format; do not edit `ROADMAP.md` in this PR. -->
+
 ## How you verified it
 
 - [ ] `cargo fmt --all -- --check`
