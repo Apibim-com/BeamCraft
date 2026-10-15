@@ -14,7 +14,9 @@ use std::fs;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
-use crate::manifest::{Dependency, MAX_MANIFEST_BYTES, ManifestError, parse_manifest};
+use crate::manifest::{
+    Dependency, MAX_MANIFEST_BYTES, ManifestError, parse_manifest, parse_manifest_in,
+};
 
 /// Most workspace members read.
 pub const MAX_MEMBERS: usize = 256;
@@ -291,10 +293,13 @@ pub fn load(root: &Path) -> Result<Workspace, LoadError> {
     for path in paths {
         let manifest_path = format!("{path}/Cargo.toml");
         let text = read_bounded(root, &manifest_path)?;
-        let manifest = parse_manifest(&text).map_err(|error| LoadError::Manifest {
-            path: manifest_path.clone(),
-            error,
-        })?;
+        let manifest =
+            parse_manifest_in(&text, &root_manifest.workspace_dependencies).map_err(|error| {
+                LoadError::Manifest {
+                    path: manifest_path.clone(),
+                    error,
+                }
+            })?;
         let name = manifest.name.ok_or(LoadError::NoName(manifest_path))?;
         let mut sources = Vec::new();
         let src = format!("{path}/src");
