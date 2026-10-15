@@ -30,6 +30,10 @@ decided the G-01/G-02 local frames; details P-1 to P-3 await confirmation, G-06 
 resource format stay open with F06, and the freeze is the owner's decision. F02 remains a local
 analysis artifact. No runtime command is implemented by F04.
 
+The [F06 geometry and viewport contract](docs/contracts/geometry-contract-v0.1.md) is a draft.
+It assumes P-1 to P-3 pending owner confirmation and carries a draft G-06 tolerance policy.
+No kernel, mesh or query API is implemented.
+
 The first demonstration starts with a rectangular plate and a supported straight member.
 Published USD revisions include their computed geometry. Copying, editing and reopening must
 preserve the original element and produce independently verified measurements.
@@ -44,6 +48,15 @@ IFC import and foreign-to-native conversion require a new scope decision. Browse
 later project; portable domain crates alone do not establish a working web application.
 
 ## Progress log
+
+- 2026-10-15: F06 drafted the geometry and viewport contract 0.1.0 on base
+  `9d40abc34b8a5686358b78adee5f9c52b9c830bd`, consuming F04 0.1.0, F05 0.1.0 (host boundary
+  only) and the first-scope package 0.1.0. It fixes the kernel input and evaluation order, the
+  result envelope and diagnostics, a draft G-06 tolerance policy, FeatureId, the mesh blob and
+  caps, three separate dependency keys with an invalidation matrix, quantity statuses and the
+  logical query and pick API, with 70 original acceptance descriptions (40 positive, 30
+  negative). P-1 to P-3 are assumed pending owner confirmation. The contract is not frozen, no
+  kernel is implemented and K0 is not passed.
 
 - 2026-10-14: F05 drafted the private USD-worker protocol contract 0.1.0 on base
   `478f330e15819b574c62227bc23009729adb4fdc`, consuming F04 0.1.0 sections 2, 3, 6, 7 and 8.
