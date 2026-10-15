@@ -10,9 +10,9 @@
   "assumptions": "P-1 replaced by contour input, P-2 confirmed unchanged and P-3 refined by the owner on 2026-10-15. The legacy assumes field identifies these decisions. Contour caps/winding/planarity and the missing angle cap are assumptions in F04 section 3. Constants are owner-confirmed first-slice draft values, to be validated by fixtures; the ifc-lite numeric comparison is recorded in docs/design/tolerance-comparison-v0.1.md.",
   "quaternion_convention": "F04 section 3: orientation_xyzw = (x, y, z, w), Hamilton, active rotation, world = R(q) * local + translation. The 90 degree turn about +Z is written with the nearest f64 0.7071067811865476 for both z and w.",
   "case_counts": {
-    "logical_cases": 110,
+    "logical_cases": 112,
     "positive": 59,
-    "negative": 51
+    "negative": 53
   },
   "cases": [
     {
@@ -6228,6 +6228,116 @@
         "eps_pick_mm": "0.001"
       },
       "derivation": "The point is 1/128 mm outside vertex p0 along -X, an exactly representable difference at this origin. 0.001 < 1/128 < 5/32=eps_geom. All other vertices are farther away. Section 9 still uses eps_pick=0.001 mm, so no vertex qualifies; eps_geom is not a pick band."
+    },
+    {
+      "case_id": "F06-NEG-52",
+      "title": "Large negative section width is not positive, never above-limit",
+      "given": [
+        "Review fix 2026-10-15; F04 section 3, F06 sections 2 and 4. Valid 1000 mm axis, height 300 mm."
+      ],
+      "input": {
+        "body": {
+          "kind": "member",
+          "axis_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              1000,
+              0,
+              0
+            ]
+          ],
+          "profile": {
+            "kind": "rectangle",
+            "width_mm": -3000000,
+            "height_mm": 300
+          }
+        },
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "outputs": [
+          "mesh",
+          "quantities"
+        ]
+      },
+      "expected": {
+        "status": "invalid_input",
+        "f04_code": "INVALID_ARGUMENT",
+        "diagnostic_code": "GEO_NOT_POSITIVE",
+        "partial_geometry_returned": false,
+        "state_changed": false,
+        "stage": "ranges"
+      },
+      "derivation": "The width passes the upper cap by value. It contributes 0 to H, so L=max(1000,150)=1000 and the call does not become an above-limit result; the range stage reports the nonpositive width."
+    },
+    {
+      "case_id": "F06-NEG-53",
+      "title": "Huge negative section width does not overflow the scale derivation",
+      "given": [
+        "Review fix 2026-10-15; F04 section 3, F06 sections 2 and 4. Valid 1000 mm axis, height 300 mm."
+      ],
+      "input": {
+        "body": {
+          "kind": "member",
+          "axis_points_mm": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              1000,
+              0,
+              0
+            ]
+          ],
+          "profile": {
+            "kind": "rectangle",
+            "width_mm": -1e+308,
+            "height_mm": 300
+          }
+        },
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "outputs": [
+          "mesh",
+          "quantities"
+        ]
+      },
+      "expected": {
+        "status": "invalid_input",
+        "f04_code": "INVALID_ARGUMENT",
+        "diagnostic_code": "GEO_NOT_POSITIVE",
+        "partial_geometry_returned": false,
+        "state_changed": false,
+        "stage": "ranges"
+      },
+      "derivation": "hw would overflow if squared. A nonpositive width contributes 0 to H, so no overflow occurs and the range stage reports GEO_NOT_POSITIVE, not GEO_NUMERIC_UNCERTAIN."
     }
   ],
   "cross_references": [

@@ -131,7 +131,8 @@ that reports a failure; it reports all failures of that stage (at most 32) in in
 1. **Support**: body kind, profile kind, transform form and mesh source (`unsupported`).
 2. **Finiteness**: every f64 (`NON_FINITE_NUMBER`).
 3. **Caps and scale**: submitted caps, derived norms and local size L, then eps_geom as in
-   section 4. A finite cap excess is `LIMIT_EXCEEDED`; a non-finite derived intermediate is
+   section 4. A nonpositive section dimension contributes 0 to L (stage 4 reports it). A finite
+   cap excess is `LIMIT_EXCEEDED`; a non-finite derived intermediate is
    `GEO_NUMERIC_UNCERTAIN` (`UNSUPPORTED_GEOMETRY`), without a substituted floor.
 4. **Ranges and contour validity**: greater than zero, minimum dimensions, axis length, density,
    quaternion and F04 section 3 contour validation (`INVALID_ARGUMENT`). Then decide rectangle
@@ -268,7 +269,10 @@ multiply-add. Define `norm(v) = sqrt((v_x*v_x + v_y*v_y) + v_z*v_z)`. Subtract s
 element-local point components first, then evaluate each norm in that order. For a plate scan
 `norm(p_i - p0)` in ascending point index, starting with D = 0 and retaining the larger value
 with `>`; set L = D. For a member compute `ell = norm(p2 - p1)`, `hw = width_mm/2`,
-`hh_section = height_mm/2`, `H = sqrt(hw*hw + hh_section*hh_section)`, then L = max(ell, H).
+`hh_section = height_mm/2`, `H = sqrt(hw*hw + hh_section*hh_section)`, then L = max(ell, H). A
+section dimension that is not greater than zero contributes 0 to H (`hw = 0` or
+`hh_section = 0`): it is rejected in the range stage as `INVALID_ARGUMENT`
+(`GEO_NOT_POSITIVE`), never as an above-limit or numeric-uncertainty result of this derivation.
 Finally multiply L by the exactly representable binary64 constant `2^-22 = 1/4194304`, then
 take max with binary64(0.001 mm). Thus eps_geom is never smaller than binary64(0.001 mm).
 All length operands and results are in mm; the scale factor is dimensionless.
@@ -281,7 +285,8 @@ in F06), before minima or rectangle-only contour support decisions. Non-finite s
 otherwise finite capped input is numeric uncertainty: `UNSUPPORTED_GEOMETRY`
 (`GEO_NUMERIC_UNCERTAIN`), with no floor, partial geometry or current key. Never clamp L,
 substitute the absolute floor for a failed scale, or expand any F04 cap. Under the stated
-caps these square sums cannot overflow; the diagnostic also covers arithmetic faults.
+caps, with nonpositive dimensions contributing 0, these square sums cannot overflow; the
+diagnostic also covers arithmetic faults.
 
 **Application and exclusions.** eps_geom replaces a fixed absolute length floor in minimum
 dimensions, close consecutive contour points, coincident member endpoints, axis degeneracy,
@@ -818,8 +823,8 @@ host may report: `CANCELLED` only when the discard is proven.
 
 ## 11. Acceptance cases
 
-The [case file](geometry-contract-cases-v0.1.json) holds 110 logical cases: 59 positive
-(`F06-POS-01` to `F06-POS-59`) and 51 negative (`F06-NEG-01` to `F06-NEG-51`). These are future
+The [case file](geometry-contract-cases-v0.1.json) holds 112 logical cases: 59 positive
+(`F06-POS-01` to `F06-POS-59`) and 53 negative (`F06-NEG-01` to `F06-NEG-53`). These are future
 tests;
 acceptance needs a real kernel, real buffers and independent readers. Numeric expectations use exact
 forms or decimal approximations checked with rational arithmetic and high-precision square roots;
@@ -853,7 +858,7 @@ no existing ID is changed.
 | Invalid contours and valid unsupported pentagon | `F06-NEG-37` to `F06-NEG-42` | `F04-NEG-28` to `F04-NEG-32`, `F04-POS-20` |
 | Explicit axial roll, default and near-vertical | `F06-POS-50` to `F06-POS-52` | `F04-POS-21` to `F04-POS-24` |
 | Non-finite/out-of-cap roll | `F06-NEG-43`, `F06-NEG-44` | `F04-RAW-07`, `F04-NEG-33` |
-| Local-size floor, small-body invariance, planarity, cap/fault and absolute pick band | `F06-POS-53` to `F06-POS-59`, `F06-NEG-45` to `F06-NEG-51` | `F04-POS-25` to `F04-POS-30`, `F04-NEG-34` to `F04-NEG-39` |
+| Local-size floor, small-body invariance, planarity, cap/fault and absolute pick band | `F06-POS-53` to `F06-POS-59`, `F06-NEG-45` to `F06-NEG-53` | `F04-POS-25` to `F04-POS-30`, `F04-NEG-34` to `F04-NEG-39` |
 
 The invalid-quaternion, translation-limit and density cases are already covered by `F04-NEG-22` to
 `F04-NEG-26` and `FS-NEG-QUAT`, `FS-NEG-DENSITY`, and are not repeated. The file also carries a
@@ -1015,3 +1020,7 @@ still needs review, fixture validation and owner action.
   51 negative). No existing outcome flips or input rewrites are necessary; small-body minimum
   cases remain on the absolute floor. Only the large-coordinate part of A5 is closed;
   rounded-mesh cross-checks and subnormal mass remain open. F06 stays draft 0.1.0, not frozen.
+- 2026-10-15, review fix (Copilot thread on the tolerance amendment): sections 2 and 4 and F04
+  section 3 state that a nonpositive section dimension contributes 0 to H, so negative widths or
+  heights always report `GEO_NOT_POSITIVE`/`INVALID_ARGUMENT` and never `GEO_ABOVE_LIMIT` or
+  `GEO_NUMERIC_UNCERTAIN`. Added NEG-52 and NEG-53: 112 cases (59 positive, 53 negative).

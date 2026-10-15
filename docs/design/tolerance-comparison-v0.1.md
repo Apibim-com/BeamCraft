@@ -286,7 +286,7 @@ The read-only design's existing counterexamples retain their exact values.
 
 All existing case IDs are retained. After the local-size amendment F04 has 69 logical cases (30
 positive, 39 negative) and
-seven raw cases. F06 has 110 cases (59 positive, 51 negative). Amendments and coverage tables in the
+seven raw cases. F06 has 112 cases (59 positive, 53 negative). Amendments and coverage tables in the
 contracts enumerate new contour/roll cases. Every origin rectangle is rewritten from width/ length
 to four points, preserving width=|p1-p0| and length=|p2-p1| and all exact quantities. F06-POS-25's
 seven digests and the antipodal equality assertion change because contour encoding and
@@ -364,7 +364,7 @@ comparison/admission/certificate bounds and the local-size eps_geom of F04 secti
 section 4. eps_dim equals eps_geom; retain eps_par=1e-6, exact references and mathematical
 error bounds. Prefer suitable audited permissive Rust
 crates, including for bounded robust arithmetic; handwritten integer/sign algorithms are justified
-only when no suitable crate exists. Reconcile the matrix with 110 F06 cases. Mark only A5's
+only when no suitable crate exists. Reconcile the matrix with 112 F06 cases. Mark only A5's
 large-coordinate part resolved by
 the policy; keep rounded-mesh cross-checks, subnormal mass and cross-target trig conformance
 open until proved. The ifc-lite numeric
@@ -448,8 +448,8 @@ remain unchanged. Pick boundary flags still use section 9's own band. No new run
 | Non-finite derived L (fault injection) | none | NEG-50 |
 | Pick band stays absolute on a large body | none | POS-59 |
 
-New totals are 69 F04 logical cases (30 positive, 39 negative), seven raw; 110 F06 cases
-(59 positive, 51 negative). All existing IDs and meanings remain. The existing-input scan finds
+New totals are 69 F04 logical cases (30 positive, 39 negative), seven raw; 112 F06 cases
+(59 positive, 53 negative). All existing IDs and meanings remain. The existing-input scan finds
 no new outcome flip: no input rewrite is needed. In particular F04-POS-17 and F06-POS-14 retain
 their minimum-floor intent because their local sizes keep 2^-22*L below 0.001 mm. The new negative
 scaled-minimum cases would pass under the fixed floor; POS-28/POS-56 instead changes old rejection
@@ -474,7 +474,7 @@ lists exact digests and actual check results; scratch verification is in ignored
   rules keep the earlier-amended absolute 0.001 mm band and quantum, not eps_geom.
 - Section 5.4 W50 and version references: shared version bytes become `00 03 00 03`; shape
   versions are 3/3/1/1, world 3/3 and mass algorithm 3. Reconcile POS-25's seven digests.
-- Sections 7 and 9: reconcile coverage with all 110 F06 cases; A5 is partly resolved, with only
+- Sections 7 and 9: reconcile coverage with all 112 F06 cases; A5 is partly resolved, with only
   the large-coordinate policy part closed. Rounded-mesh cross-checks (W32) and subnormal mass
   (W10) remain open. Keep original counterexample arithmetic and conformance/admission gates.
   Update the read-only validation matrix in its own reviewed task, not by this amendment.
@@ -488,8 +488,8 @@ lists exact digests and actual check results; scratch verification is in ignored
   existing caps. Geometric length minima, coincidence, degeneracy, planarity and distance bands
   use the scaled floor; CR-TOL-001, absolute pick bands, exact checks and relative 1e-6 bounds
   remain unchanged. Algorithm/tolerance versions are 3/3 and seven dependency-key digests are
-  regenerated. F04 has 69 logical cases (30 positive, 39 negative), seven raw; F06 has 110 cases
-  (59 positive, 51 negative). Only A5's large-coordinate part is closed; rounded-mesh
+  regenerated. F04 has 69 logical cases (30 positive, 39 negative), seven raw; F06 has 112 cases
+  (59 positive, 53 negative). Only A5's large-coordinate part is closed; rounded-mesh
   cross-checks and subnormal mass remain open. F04 stays a freeze candidate 0.1.0, F06 a draft;
   no runtime feature, admission, freeze or K0 gate is passed.
 ```

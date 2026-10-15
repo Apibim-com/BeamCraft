@@ -109,7 +109,10 @@ multiply-add. Define `norm(v) = sqrt((v_x*v_x + v_y*v_y) + v_z*v_z)`. Subtract s
 element-local point components first, then evaluate each norm in that order. For a plate scan
 `norm(p_i - p0)` in ascending point index, starting with D = 0 and retaining the larger value
 with `>`; set L = D. For a member compute `ell = norm(p2 - p1)`, `hw = width_mm/2`,
-`hh_section = height_mm/2`, `H = sqrt(hw*hw + hh_section*hh_section)`, then L = max(ell, H).
+`hh_section = height_mm/2`, `H = sqrt(hw*hw + hh_section*hh_section)`, then L = max(ell, H). A
+section dimension that is not greater than zero contributes 0 to H (`hw = 0` or
+`hh_section = 0`): it is rejected in the range stage as `INVALID_ARGUMENT`
+(`GEO_NOT_POSITIVE`), never as an above-limit or numeric-uncertainty result of this derivation.
 Finally multiply L by the exactly representable binary64 constant `2^-22 = 1/4194304`, then
 take max with binary64(0.001 mm). Thus eps_geom is never smaller than binary64(0.001 mm).
 All length operands and results are in mm; the scale factor is dimensionless.
@@ -122,7 +125,8 @@ in F06), before minima or rectangle-only contour support decisions. Non-finite s
 otherwise finite capped input is numeric uncertainty: `UNSUPPORTED_GEOMETRY`
 (`GEO_NUMERIC_UNCERTAIN`), with no floor, partial geometry or current key. Never clamp L,
 substitute the absolute floor for a failed scale, or expand any F04 cap. Under the stated
-caps these square sums cannot overflow; the diagnostic also covers arithmetic faults.
+caps, with nonpositive dimensions contributing 0, these square sums cannot overflow; the
+diagnostic also covers arithmetic faults.
 
 F05 must enforce input byte/depth/string bounds before unsafe allocations and cannot widen these
 limits silently. F06 fixes mesh/topology bounds and tolerance policy separately. Host limits for
