@@ -49,6 +49,13 @@ later project; portable domain crates alone do not establish a working web appli
 
 ## Progress log
 
+- 2026-10-15: Owner decision on OpenUSD-derived TOST-1.0 material in the `openusd` crate (0.8.x,
+  file `src/usd/core_schemas.rs`): it stays under its upstream licence and copyright, BeamCraft
+  claims no rights in it, and BeamCraft's own code stays MPL-2.0. `AGENTS.md` section 1.2 gains a
+  scoped extension; `NOTICE` carries the upstream notice, `licenses/TOST-1.0-openusd.txt` the
+  unmodified upstream licence, `ATTRIBUTION.md` three rows, and `deny.toml` a comment block (no
+  allowlist change). The F11 record has a dated note. Documentation only; the crate is not adopted.
+
 - 2026-10-15: MSRV raised from Rust 1.95 to 1.96 by owner decision. The `openusd` crate under
   evaluation needs 1.96, and the local and CI toolchains are already at least 1.96. Only the
   `rust-version` in the root `Cargo.toml` and the minimum stated in `README.md` and

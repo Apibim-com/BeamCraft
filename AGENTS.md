@@ -49,9 +49,21 @@ Preserve the upstream licence, applicable notices and required modification noti
 trademark terms. Do not relabel TOST as Apache-2.0 or MPL-2.0. Reference:
 [OpenUSD v26.08 licence](https://github.com/PixarAnimationStudios/OpenUSD/blob/ee47c679abde5b467a7b6a41f3b2285564a4222e/LICENSE.txt).
 This exception does not cover other TOST projects, separately licensed bundled components,
-unrelated assets or commercial-product materials. Audit those under their own licences.
-SDK provenance, notice completeness, native dependency closure and runtime checks still apply
-before product integration or redistribution. BeamCraft's own code remains MPL-2.0.
+unrelated assets or commercial-product materials, except the case below. Audit those under their
+own licences. SDK provenance, notice completeness, native dependency closure and runtime checks
+still apply before product integration or redistribution. BeamCraft's own code remains MPL-2.0.
+
+**Scoped extension: OpenUSD-derived material in a Rust crate.** By the owner's decision of
+2026-10-15, TOST-1.0 is also permitted for OpenUSD-derived material (for example schema
+definitions) that a third-party Rust crate redistributes under TOST-1.0 together with its upstream
+licence and notice. It applies only to the exact package and version recorded in `ATTRIBUTION.md`
+(initially `openusd` 0.8.x, the file `src/usd/core_schemas.rs`), and only while the upstream
+licence text and notice are kept (`licenses/TOST-1.0-openusd.txt` and `NOTICE`). BeamCraft claims
+no rights in that material: all rights remain with their owners, and it is included only under
+its upstream licence. Respect the trademark terms: never use OpenUSD, Pixar or related names or
+marks in a way that implies endorsement; naming the project factually is fine. Do not relabel
+TOST as Apache-2.0 or MPL-2.0. No other TOST project, file or crate is covered, and BeamCraft's
+own code remains MPL-2.0.
 
 **Separate exception: the BeamCraft brand.** The BeamCraft name, wordmark and logos in
 `docs/brand/` are trademarks of Apibim (registration pending) and are not open source (terms in
