@@ -1,0 +1,106 @@
+{
+  "root_lock_sha256_before": "7b15824fc67c90a837ad19af9d28e12dea2802797e90f541945ddb8e984497eb",
+  "root_lock_sha256_after": "7b15824fc67c90a837ad19af9d28e12dea2802797e90f541945ddb8e984497eb",
+  "results": [
+    {
+      "cwd": "spike",
+      "command": [
+        "cargo",
+        "--offline",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "exit": 0,
+      "seconds": 0.10862759999872651,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "cwd": "spike",
+      "command": [
+        "cargo",
+        "clippy",
+        "--offline",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit": 0,
+      "seconds": 0.2017515999978059,
+      "stdout": "",
+      "stderr": "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.11s\n"
+    },
+    {
+      "cwd": "spike",
+      "command": [
+        "cargo",
+        "test",
+        "--offline"
+      ],
+      "exit": 0,
+      "seconds": 0.4391815000017232,
+      "stdout": "\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 9 tests\ntest identity_and_structural_guards ... ok\ntest hostile_nonfinite_value_is_not_engine_validity ... ok\ntest unknown_prim_metadata_survives_text_and_binary ... ok\ntest foreign_reference_bytes_unchanged_but_raw_override_allowed_wrapper_rejects ... ok\ntest adapter_contract_accepts_a_std_only_stub ... ok\ntest owned_trait_edit_preserves_unknown_content_and_identity ... ok\ntest captured_deltas_replay_and_detect_same_identity_attribute_conflict ... ok\ntest sublayers_strong_over_and_active_false ... ok\ntest usda_usdc_roundtrip_every_authored_field_and_second_write ... ok\n\ntest result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s\n\n\nrunning 1 test\nhostile: 10 cases; {'ACCEPTED': 5, 'REJECTED': 5}; max seconds=0.007; max commit=1245184\r\ntest hostile_child_smoke_finishes_under_external_deadline ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+      "stderr": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s\n     Running unittests src\\lib.rs (target\\debug\\deps\\beamcraft_n01_openusd_spike-6c5f0c05b3e00a38.exe)\n     Running unittests src\\main.rs (target\\debug\\deps\\beamcraft_n01_openusd_spike-40f10eba6921ccb6.exe)\n     Running tests\\evidence.rs (target\\debug\\deps\\evidence-98052be5b512eac6.exe)\n     Running tests\\supervision.rs (target\\debug\\deps\\supervision-2a9b8b77f13f2f38.exe)\n   Doc-tests beamcraft_n01_openusd_spike\n"
+    },
+    {
+      "cwd": "repository",
+      "command": [
+        "python",
+        "-c",
+        "import json; json.load(open('docs/design/layer-engine-evidence-plan-v0.1.json', encoding='utf-8')); print('json ok')"
+      ],
+      "exit": 0,
+      "seconds": 0.031817099999898346,
+      "stdout": "json ok\r\n",
+      "stderr": ""
+    },
+    {
+      "cwd": "repository",
+      "command": [
+        "cargo",
+        "--offline",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "exit": 0,
+      "seconds": 0.18838660000255913,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "cwd": "repository",
+      "command": [
+        "cargo",
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--offline",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit": 0,
+      "seconds": 0.8548273999986122,
+      "stdout": "",
+      "stderr": "    Checking beamcraft-geom v0.0.1 (D:\\Projects\\01_BeamCraft-N01\\crates\\geom)\n    Checking beamcraft-fixtures v0.0.1 (D:\\Projects\\01_BeamCraft-N01\\tools\\fixtures)\n    Checking beamcraft-boundaries v0.0.1 (D:\\Projects\\01_BeamCraft-N01\\apps\\boundaries)\n    Checking beamcraft-model v0.0.1 (D:\\Projects\\01_BeamCraft-N01\\crates\\model)\n    Checking beamcraft-protocol v0.0.1 (D:\\Projects\\01_BeamCraft-N01\\crates\\protocol)\n    Checking beamcraft-cli v0.0.1 (D:\\Projects\\01_BeamCraft-N01\\apps\\beamcraft-cli)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.77s\n"
+    },
+    {
+      "cwd": "repository",
+      "command": [
+        "cargo",
+        "test",
+        "--workspace",
+        "--offline"
+      ],
+      "exit": 0,
+      "seconds": 4.716712600002211,
+      "stdout": "\nrunning 54 tests\ntest check::tests::a_forbidden_api_before_a_test_module_is_found ... ok\ntest check::tests::a_consistent_workspace_passes ... ok\ntest check::tests::api_names_must_match_whole_paths ... ok\ntest check::tests::apps_may_use_third_party_crates ... ok\ntest check::tests::an_inner_test_attribute_exempts_only_its_own_module ... ok\ntest check::tests::ci_rejects_a_hand_written_list_in_a_continuation_line ... ok\ntest check::tests::ci_deriving_the_list_from_the_tool_passes ... ok\ntest check::tests::ci_ignores_package_arguments_of_other_jobs_and_comments ... ok\ntest check::tests::a_dotted_alias_is_checked_by_its_real_package ... ok\ntest check::tests::a_forbidden_api_inside_a_test_item_is_allowed ... ok\ntest check::tests::ci_rejects_a_hand_written_list_in_a_separate_run_line_without_the_target ... ok\ntest check::tests::a_forbidden_api_after_a_test_module_is_found_and_cannot_hide_behind_ordering ... ok\ntest check::tests::ci_rejects_a_hand_written_list_on_the_same_line ... ok\ntest check::tests::ci_without_a_wasm_job_or_portable_call_fails ... ok\ntest check::tests::ci_rejects_a_hand_written_list_in_a_variable_assignment ... ok\ntest check::tests::comments_and_strings_do_not_count_but_groups_do ... ok\ntest check::tests::domain_crates_may_use_only_allowlisted_third_party_crates ... ok\ntest check::tests::every_violation_has_a_readable_message ... ok\ntest check::tests::rejects_a_back_edge ... ok\ntest check::tests::grouped_imports_with_aliases_are_forbidden ... ok\ntest check::tests::rejects_a_domain_crate_depending_on_the_host ... ok\ntest check::tests::rejects_a_member_missing_from_the_table ... ok\ntest check::tests::rejects_a_now_row_without_a_member ... ok\ntest check::tests::rejects_a_planned_row_that_already_exists_and_a_moved_path ... ok\ntest check::tests::rejects_a_publishable_tool ... ok\ntest check::tests::rejects_a_self_dependency ... ok\ntest check::tests::rejects_an_edge_in_a_dev_dependency_table_too ... ok\ntest check::tests::rejects_an_unlisted_forward_edge ... ok\ntest check::tests::rejects_forbidden_apis_in_domain_sources_only_outside_tests ... ok\ntest manifest::tests::comments_and_hashes_inside_strings ... ok\ntest check::tests::table_rules_catch_bad_layers_unknown_names_and_duplicates ... ok\ntest manifest::tests::dotted_package_after_other_fields_and_in_a_subtable ... ok\ntest manifest::tests::dotted_package_is_resolved_before_the_edge_check ... ok\ntest manifest::tests::garbage_does_not_panic ... ok\ntest manifest::tests::inherited_dependency_resolves_against_the_root_alias ... ok\ntest manifest::tests::reads_every_dependency_table_form ... ok\ntest manifest::tests::reads_package_and_inherited_dependencies ... ok\ntest manifest::tests::renamed_dependency_uses_the_real_package_name ... ok\ntest manifest::tests::repeated_keys_of_one_dependency_count_once ... ok\ntest manifest::tests::workspace_tables_are_not_dependencies ... ok\ntest table::tests::an_empty_allowlist_is_valid ... ok\ntest table::tests::reads_rows_and_the_allowlist ... ok\ntest table::tests::rejects_missing_or_repeated_markers ... ok\ntest table::tests::rejects_bad_cells_and_values ... ok\ntest workspace::tests::a_literal_member_is_returned_as_is ... ok\ntest workspace::tests::members_must_stay_inside_the_workspace ... ok\ntest table::tests::rejects_oversized_documents_and_too_many_rows ... ok\ntest workspace::tests::a_manifest_that_is_not_a_regular_file_is_rejected ... ok\ntest workspace::tests::a_literal_member_below_a_link_is_rejected ... ok\ntest manifest::tests::rejects_oversized_input ... ok\ntest workspace::tests::a_member_that_is_a_link_to_a_directory_outside_the_root_is_rejected ... ok\ntest workspace::tests::a_link_inside_src_is_rejected_not_skipped ... ok\ntest workspace::tests::an_ordinary_tree_loads ... ok\ntest workspace::tests::a_source_tree_exactly_at_the_depth_cap_loads_and_one_deeper_fails ... ok\n\ntest result: ok. 54 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 4 tests\ntest the_portable_list_is_derived_from_the_table ... ok\ntest the_real_workspace_obeys_the_module_table ... ok\ntest the_binary_rejects_bad_usage_and_a_foreign_root ... ok\ntest the_binary_reports_success_and_the_portable_list ... ok\n\ntest result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 1 test\ntest prints_version ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n\n\nrunning 21 tests\ntest fixture::tests::error_codes_round_trip ... ok\ntest fixture::tests::maps_parser_failures ... ok\ntest fixture::tests::accepts_minimal_bodies ... ok\ntest json::tests::rejects_duplicate_member_names ... ok\ntest json::tests::enforces_limits ... ok\ntest fixture::tests::detects_degenerate_members ... ok\ntest json::tests::parses_a_document ... ok\ntest fixture::tests::reports_the_first_violation_in_documented_field_order ... ok\ntest fixture::tests::classifies_dimension_violations_in_order ... ok\ntest json::tests::rejects_invalid_utf8 ... ok\ntest json::tests::rejects_malformed_syntax ... ok\ntest json::tests::writer_is_deterministic_and_round_trips ... ok\ntest json::tests::reports_non_finite_numbers ... ok\ntest sha256::tests::handles_every_padding_boundary ... ok\ntest tests::rejects_unsafe_relative_paths ... ok\ntest catalog::tests::ids_and_paths_are_unique_and_safe ... ok\ntest catalog::tests::every_case_has_its_intended_outcome ... ok\ntest catalog::tests::catalog_is_deterministic ... ok\ntest tests::generation_is_deterministic ... ok\ntest tests::manifest_lists_every_case_with_a_full_digest ... ok\ntest sha256::tests::matches_published_examples ... ok\n\ntest result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 8 tests\ntest generate_refuses_a_directory_with_foreign_entries ... ok\ntest list_and_version_work ... ok\ntest verify_accepts_the_committed_set ... ok\ntest check_bounds_its_input_and_reports_io_and_usage_errors ... ok\ntest verify_detects_tampering_missing_and_foreign_files ... ok\ntest verify_detects_a_manifest_digest_that_does_not_match_the_bytes ... ok\ntest generation_is_deterministic_and_matches_the_committed_set ... ok\ntest every_committed_fixture_has_its_independently_expected_outcome ... ok\n\ntest result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s\n\n\nrunning 1 test\ntest tests::distance_is_euclidean ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 4 tests\ntest error::tests::names_are_unique_and_fit_the_reason_code_bound ... ok\ntest error::tests::names_round_trip ... ok\ntest tests::length_follows_the_axis ... ok\ntest error::tests::rejects_unknown_cased_and_padded_names ... ok\n\ntest result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 27 tests\ntest code::tests::f04_mapping_matches_the_contract_table ... ok\ntest frame::tests::bad_magic_is_a_frame_error_not_a_version_probe ... ok\ntest frame::tests::attachment_count_is_zero_to_eight_on_control_and_zero_on_binary ... ok\ntest code::tests::names_round_trip_and_are_unique ... ok\ntest code::tests::rejects_unknown_cased_and_f04_names ... ok\ntest frame::tests::binary_prefix_has_the_documented_layout_and_round_trips ... ok\ntest frame::tests::binary_payload_bounds_are_prefix_plus_one_to_sixteen_mib ... ok\ntest frame::tests::control_header_has_the_documented_bytes ... ok\ntest frame::tests::control_payload_bounds_are_one_to_one_mib ... ok\ntest frame::tests::display_does_not_echo_more_than_numbers ... ok\ntest frame::tests::bundle_budget_allows_exactly_thirty_two_mib ... ok\ntest frame::tests::every_prefix_of_a_valid_header_is_truncated ... ok\ntest frame::tests::every_short_prefix_is_truncated ... ok\ntest frame::tests::exact_version_is_required_including_patch ... ok\ntest frame::tests::negotiated_limits_tighten_but_unvalidated_limits_never_widen ... ok\ntest frame::tests::extra_bytes_after_the_header_are_not_examined ... ok\ntest frame::tests::prefix_error_codes_follow_the_contract ... ok\ntest frame::tests::prefix_rejects_each_malformed_field ... ok\ntest frame::tests::prefix_must_agree_with_header_and_position ... ok\ntest frame::tests::version_is_judged_before_the_payload_rules ... ok\ntest limits::tests::any_field_one_above_its_maximum_is_incompatible ... ok\ntest frame::tests::unknown_kind_and_flags_are_frame_errors ... ok\ntest limits::tests::effective_rejects_an_out_of_range_side ... ok\ntest limits::tests::effective_is_the_per_field_minimum ... ok\ntest limits::tests::maxima_are_valid_and_match_the_contract_table ... ok\ntest limits::tests::zero_is_valid_only_for_attachments ... ok\ntest frame::tests::decoding_never_panics_on_arbitrary_bytes ... ok\n\ntest result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+      "stderr": "   Compiling beamcraft-geom v0.0.1 (D:\\Projects\\01_BeamCraft-N01\\crates\\geom)\n   Compiling beamcraft-boundaries v0.0.1 (D:\\Projects\\01_BeamCraft-N01\\apps\\boundaries)\n   Compiling beamcraft-fixtures v0.0.1 (D:\\Projects\\01_BeamCraft-N01\\tools\\fixtures)\n   Compiling beamcraft-model v0.0.1 (D:\\Projects\\01_BeamCraft-N01\\crates\\model)\n   Compiling beamcraft-protocol v0.0.1 (D:\\Projects\\01_BeamCraft-N01\\crates\\protocol)\n   Compiling beamcraft-cli v0.0.1 (D:\\Projects\\01_BeamCraft-N01\\apps\\beamcraft-cli)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.10s\n     Running unittests src\\lib.rs (spikes\\n01-openusd\\target\\repository\\debug\\deps\\beamcraft_boundaries-643f481f20530b6a.exe)\n     Running unittests src\\main.rs (spikes\\n01-openusd\\target\\repository\\debug\\deps\\beamcraft_boundaries-173d8f1c2bdfe27f.exe)\n     Running tests\\workspace.rs (spikes\\n01-openusd\\target\\repository\\debug\\deps\\workspace-469dae95315f3717.exe)\n     Running unittests src\\main.rs (spikes\\n01-openusd\\target\\repository\\debug\\deps\\beamcraft-a3fe219a8a97fe53.exe)\n     Running tests\\version.rs (spikes\\n01-openusd\\target\\repository\\debug\\deps\\version-0d4acca07231ae53.exe)\n     Running unittests src\\lib.rs (spikes\\n01-openusd\\target\\repository\\debug\\deps\\beamcraft_fixtures-7d6dc8c5918b27ff.exe)\n     Running unittests src\\main.rs (spikes\\n01-openusd\\target\\repository\\debug\\deps\\beamcraft_fixtures-d8819b41c58e20c7.exe)\n     Running tests\\cli.rs (spikes\\n01-openusd\\target\\repository\\debug\\deps\\cli-e05fa69adf7800df.exe)\n     Running unittests src\\lib.rs (spikes\\n01-openusd\\target\\repository\\debug\\deps\\beamcraft_geom-38d1de7aaa1b7c71.exe)\n     Running unittests src\\lib.rs (spikes\\n01-openusd\\target\\repository\\debug\\deps\\beamcraft_model-e8239b23afcd62be.exe)\n     Running unittests src\\lib.rs (spikes\\n01-openusd\\target\\repository\\debug\\deps\\beamcraft_protocol-24d81eae199782b9.exe)\n   Doc-tests beamcraft_boundaries\n   Doc-tests beamcraft_fixtures\n   Doc-tests beamcraft_geom\n   Doc-tests beamcraft_model\n   Doc-tests beamcraft_protocol\n"
+    }
+  ]
+}

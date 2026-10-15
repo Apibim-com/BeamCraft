@@ -805,7 +805,8 @@
         "F08"
       ],
       "scenario_ids": [],
-      "status": "not_run"
+      "status": "not_run",
+      "evidence": "docs/design/layer-engine-spike-n01-report-v0.1.md#1-dependency-licence-inventory-and-msrv: Acquisition prerequisite attempted: cargo fetch failed in offline mode; no cached openusd. Gate not run."
     },
     {
       "id": "N01-C-G02",
@@ -866,7 +867,8 @@
       "scenario_ids": [
         "N01-S01"
       ],
-      "status": "not_run"
+      "status": "not_run",
+      "evidence": "docs/design/layer-engine-spike-n01-report-v0.1.md#6-portability: Toolchain and installed-target preflight only: Rust 1.96.0; WASM target absent; build and portability gate not run."
     },
     {
       "id": "N01-C-G04",

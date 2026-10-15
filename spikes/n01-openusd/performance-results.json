@@ -1,0 +1,80 @@
+{
+  "os": "Windows-10-10.0.19045-SP0",
+  "machine": "AMD64",
+  "processor": "Intel64 Family 6 Model 165 Stepping 5, GenuineIntel",
+  "method": "release build; 3 fresh child processes per size; fixture generation before timed open; warm OS cache; compose/traverse forces width reads; save separate; startup included only in supervisor elapsed",
+  "results": [
+    {
+      "status": "ACCEPTED",
+      "exit": 0,
+      "elapsed_seconds": 0.10995769999863114,
+      "peak_working_set_bytes": 11972608,
+      "peak_job_commit_bytes": 7159808,
+      "stdout": "SANITY elements=1000 open_ms=6.418 compose_traverse_ms=24.293 save_ms=68.866 sum=1000125",
+      "stderr": "",
+      "cap_bytes": 536870912,
+      "elements": 1000,
+      "repeat": 0
+    },
+    {
+      "status": "ACCEPTED",
+      "exit": 0,
+      "elapsed_seconds": 0.10643920000075013,
+      "peak_working_set_bytes": 11776000,
+      "peak_job_commit_bytes": 7151616,
+      "stdout": "SANITY elements=1000 open_ms=5.613 compose_traverse_ms=24.339 save_ms=67.232 sum=1000125",
+      "stderr": "",
+      "cap_bytes": 536870912,
+      "elements": 1000,
+      "repeat": 1
+    },
+    {
+      "status": "ACCEPTED",
+      "exit": 0,
+      "elapsed_seconds": 0.11433970000143745,
+      "peak_working_set_bytes": 11964416,
+      "peak_job_commit_bytes": 7143424,
+      "stdout": "SANITY elements=1000 open_ms=5.859 compose_traverse_ms=24.154 save_ms=74.734 sum=1000125",
+      "stderr": "",
+      "cap_bytes": 536870912,
+      "elements": 1000,
+      "repeat": 2
+    },
+    {
+      "status": "ACCEPTED",
+      "exit": 0,
+      "elapsed_seconds": 0.9895259000004444,
+      "peak_working_set_bytes": 60612608,
+      "peak_job_commit_bytes": 57389056,
+      "stdout": "SANITY elements=10000 open_ms=53.686 compose_traverse_ms=249.621 save_ms=639.612 sum=10001250",
+      "stderr": "",
+      "cap_bytes": 536870912,
+      "elements": 10000,
+      "repeat": 0
+    },
+    {
+      "status": "ACCEPTED",
+      "exit": 0,
+      "elapsed_seconds": 0.9849705999986327,
+      "peak_working_set_bytes": 60698624,
+      "peak_job_commit_bytes": 57516032,
+      "stdout": "SANITY elements=10000 open_ms=53.741 compose_traverse_ms=246.483 save_ms=639.765 sum=10001250",
+      "stderr": "",
+      "cap_bytes": 536870912,
+      "elements": 10000,
+      "repeat": 1
+    },
+    {
+      "status": "ACCEPTED",
+      "exit": 0,
+      "elapsed_seconds": 0.9834623999995529,
+      "peak_working_set_bytes": 60690432,
+      "peak_job_commit_bytes": 57528320,
+      "stdout": "SANITY elements=10000 open_ms=53.690 compose_traverse_ms=246.678 save_ms=636.269 sum=10001250",
+      "stderr": "",
+      "cap_bytes": 536870912,
+      "elements": 10000,
+      "repeat": 2
+    }
+  ]
+}
