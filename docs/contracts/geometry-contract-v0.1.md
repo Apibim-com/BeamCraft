@@ -273,12 +273,28 @@ relative. These are reasons for a draft, not proofs; G04 validates them.
    The decision `hh < 1e-12 * LL` is the written binary64 comparison (section 2). Cases keep a
    margin on both sides, and one case sits at a relative margin of 1e-12 (`F06-POS-09`,
    `F06-POS-10`, `F06-POS-46`). Y-tilted near-vertical axes are `F06-POS-41` and `F06-POS-42`.
-3. The roll is discontinuous at the threshold by construction: a member just inside and one just
-   outside get frames about a quarter turn apart, whichever way they tilt. Continuity is an open
-   owner decision (section 12). Anyone who needs another roll expresses it through the element
-   placement (P-3). F04's text of P-3 names a fixed `+Y` for the column case; for a tilted
-   near-vertical axis that is not perpendicular to the axis, so F04 P-3 needs a joint
-   amendment (section 12).
+3. The roll is generally discontinuous at the threshold by construction; the jump depends on the
+   tilt direction. Compare the two branch frames on the **same nonvertical unit axis** `Z`
+   near the threshold, rotating from the near-vertical frame to the horizontal frame by the
+   right-hand rule about `Z`. In exact arithmetic, let `r = sqrt(Z_x^2 + Z_y^2)` and
+   `n = sqrt(1 - Z_y^2)`. Then
+   `cos(theta) = -Z_y*Z_z/(r*n)` and `sin(theta) = Z_x/(r*n)`. For tilts from local +Z:
+
+   | Tilt toward | Exact branch rotation |
+   |-------------|-----------------------|
+   | +Y | 180 degrees (half turn) |
+   | -Y | 0 degrees (no roll jump on this meridian) |
+   | +X | +90 degrees (quarter turn) |
+   | -X | -90 degrees (quarter turn) |
+
+   These angles hold on either side of the threshold and give the one-sided limiting roll
+   differences there. Frames on distinct finite axes also differ in axis direction, so their
+   relative three-dimensional rotation is not solely a roll. For tilts from local -Z, the +Y
+   and -Y entries exchange; the +X and -X entries keep their signs. Other tilt directions follow
+   the formula above. Continuity stays an open owner decision (section 12).
+   Anyone who needs another roll expresses it through the element placement (P-3). F04's text
+   of P-3 names a fixed `+Y` for the column case; for a tilted near-vertical axis that is not
+   perpendicular to the axis, so F04 P-3 needs a joint amendment (section 12).
 4. The kernel never snaps, welds or merges vertices, and never heals geometry. Vertices are
    distinct by construction, not by a tolerance test, and every box edge is at least `eps_dim`
    long after the range checks.
@@ -720,10 +736,11 @@ still decides what the host may report: `CANCELLED` only when the discard is pro
 The [case file](geometry-contract-cases-v0.1.json) holds 81 logical cases: 46 positive
 (`F06-POS-01` to `F06-POS-46`) and 35 negative (`F06-NEG-01` to `F06-NEG-35`). They are
 proposed future tests: acceptance needs a real kernel, real buffers and independent readers.
-Numeric expectations are exact values derived by hand with rational arithmetic and re-derived by
-a throwaway computation outside the repository; the derivation text is in each case. Numeric
-comparison in tests follows CR-TOL-001 (F04 section 10); statuses, codes, counts, FeatureIds and
-digests compare exactly. Cases that depend on P-1 to P-3 list those proposals in `assumes`.
+Numeric expectations use exact forms or decimal approximations checked with rational arithmetic
+and high-precision square roots; round-3 checks use a throwaway script under ignored `target/`.
+The derivation text is in each case. Numeric comparison in tests follows CR-TOL-001 (F04 section
+10); statuses, codes, counts, FeatureIds and digests compare exactly. Cases that depend on P-1 to
+P-3 list those proposals in `assumes`.
 Existing F04 and first-scope IDs are referenced, not duplicated, and no existing ID is changed.
 
 | Topic | F06 cases | Existing cases referenced |
@@ -829,3 +846,21 @@ depend on them.
   certificate of section 4, rule 2, step d bounds the absolute value of each pairwise dot product
   (a signed bound accepted `X . Y = -1e-9`); `F06-NEG-35` is added beside `F06-NEG-31` so both
   signs of an injected error fail. The case count rises from 80 to 81 (46 positive, 35 negative).
+- 2026-10-15, F06 0.1.0 correction round 3, after an independent exact-arithmetic review of A7
+  and A8. The contract stays a draft; all 81 IDs and meanings remain (46 positive, 35 negative).
+  - A7 (defect, resolved with a qualification): the branch rotation depends on tilt direction.
+    From +Z, +Y gives 180 degrees, -Y gives 0 degrees, and +X/-X give +90/-90 degrees from the
+    near-vertical to the horizontal frame. Section 4, rule 3 now gives the exact formula and
+    distinguishes a branch comparison on one axis from frames on distinct axes. `F06-POS-10`
+    and `F06-POS-42` prose is corrected; `F06-POS-41` frame mathematics is unchanged. The roll
+    rule is unchanged and continuity stays an open owner decision. A half turn for every
+    Y-directed tilt is not confirmed: -Y from +Z has no roll jump.
+  - A8 (defect, resolved): `F06-POS-10` and `F06-POS-42` now use
+    `L = sqrt(250000000001)/500 ~ 1000.0000000020000000`; their small normalized components
+    and the `F06-POS-10` horizontal ratio have sufficient digits for CR-TOL-001.
+    `F06-POS-45` uses `sqrt(10025) ~ 100.12492197250392864` for all four equal distances.
+    The numeric scan also corrects the `F06-POS-41` squared horizontal ratio to
+    `2.4999987500001562502e-13`; its exact rational frame and adequate decimals are retained.
+    Other square-root, rotation and division expectations were checked; no other insufficient
+    precision was found. These example corrections establish no full-domain accuracy bound
+    and do not close A5.

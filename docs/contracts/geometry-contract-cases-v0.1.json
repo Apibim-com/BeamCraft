@@ -526,13 +526,13 @@
       "expected": {
         "status": "ok",
         "rule_used": "horizontal",
-        "horizontal_ratio_approx": "2e-6",
-        "Y_m_approx": ["-0.999999999998", "-0", "2e-06"],
+        "horizontal_ratio_approx": "1.9999999999960000000e-6",
+        "Y_m_approx": ["-0.999999999998", "-0", "1.9999999999960000000e-6"],
         "X_m_approx": ["-0", "1", "0"],
         "Y_m_dot_local_z_positive": true,
         "compare": "CR-TOL-001"
       },
-      "derivation": "h = 0.002 and L ~ 1000.000000000002, so h/L ~ 2e-6 > 1e-6 with a factor-two margin: the horizontal rule applies, Y_m = (-dx*dz, -dy*dz, h^2)/(h*L) = (-2, 0, 4e-6)/(0.002*L) ~ (-1, 0, 2e-6), with Y_m . (0,0,1) = h/L > 0, and X_m = Y_m x Z_m. This frame differs from that of F06-POS-09 by about a quarter turn about the axis: the roll is discontinuous at the threshold by construction (contract section 4).",
+      "derivation": "h = 0.002, LL = 250000000001/250000 and L = sqrt(250000000001)/500 ~ 1000.0000000020000000; h/L ~ 1.9999999999960000000e-6 > 1e-6 with a factor-two margin: the horizontal rule applies. Y_m = (-dx*dz, -dy*dz, h^2)/(h*L) = (-2, 0, 4e-6)/(0.002*L) = (-1000/L, 0, 0.002/L), with Y_m . (0,0,1) = h/L > 0, and X_m = Y_m x Z_m = (0, 1, 0). For this +X tilt from +Z, the horizontal frame is exactly +90 degrees about the same axis from the near-vertical branch frame (right-hand rule). This is also the limiting roll jump between F06-POS-09 and this case as their axes approach the threshold; their finite axes differ, so their full relative rotation is not solely about one common axis (contract section 4). The exact forms use rational decimal inputs; binary64 results are compared with CR-TOL-001.",
       "assumes": ["P-2 (assumed pending owner confirmation)", "P-3 (assumed pending owner confirmation)"]
     },
     {
@@ -2072,7 +2072,7 @@
         "status": "ok",
         "rule_used": "near_vertical",
         "axis_length_mm": "160000.08000002",
-        "horizontal_ratio_squared_approx": "2.5e-13",
+        "horizontal_ratio_squared_approx": "2.4999987500001562502e-13",
         "member_frame": {
           "X_m": ["1", "0", "0"],
           "Y_m": ["0", "8000004000000/8000004000001", "-4000001/8000004000001"],
@@ -2089,7 +2089,7 @@
         "frame_certificate": "passes",
         "compare": "CR-TOL-001"
       },
-      "derivation": "d = (0, 0.08000002, 160000.08); with m = 4,000,001 the three numbers are 2m, m^2 - 1 and m^2 + 1 times 1e-8, so L = (m^2 + 1) * 1e-8 = 160000.08000002 exactly (a^2 + c^2 = L^2 checked with rational arithmetic) and hh/LL = 4m^2/(m^2 + 1)^2 * ... = (2m/(m^2 + 1))^2 ~ 2.5e-13 < 1e-12, so the near-vertical rule applies (margin 4). Z = (0, 2m/(m^2 + 1), (m^2 - 1)/(m^2 + 1)). U . Z = Z_y; P = U - Z*Z_y = (0, 1 - Z_y^2, -Z_z*Z_y) = Z_z * (0, Z_z, -Z_y) because 1 - Z_y^2 = Z_z^2; |P| = Z_z, so Y = (0, Z_z, -Z_y) (unit). X0 = Y x Z = (Z_z^2 + Z_y^2, 0, 0) = (1, 0, 0), so X = (1, 0, 0) and Z x X = (0, Z_z, -Z_y) = Y. Y . Z = Z_z*Z_y - Z_y*Z_z = 0. A fixed Y = (0, 1, 0) would give Y . Z = Z_y ~ 5e-7, i.e. a section off perpendicular by the tilt toward Y. The submitted decimals are not exact in binary64, so the frame is compared with CR-TOL-001.",
+      "derivation": "d = (0, 0.08000002, 160000.08); with m = 4,000,001 the three numbers are 2m, m^2 - 1 and m^2 + 1 times 1e-8, so L = (m^2 + 1) * 1e-8 = 160000.08000002 exactly (a^2 + c^2 = L^2 checked with rational arithmetic) and hh/LL = (2m/(m^2 + 1))^2 ~ 2.4999987500001562502e-13 < 1e-12, so the near-vertical rule applies (margin 4). Z = (0, 2m/(m^2 + 1), (m^2 - 1)/(m^2 + 1)). U . Z = Z_y; P = U - Z*Z_y = (0, 1 - Z_y^2, -Z_z*Z_y) = Z_z * (0, Z_z, -Z_y) because 1 - Z_y^2 = Z_z^2; |P| = Z_z, so Y = (0, Z_z, -Z_y) (unit). X0 = Y x Z = (Z_z^2 + Z_y^2, 0, 0) = (1, 0, 0), so X = (1, 0, 0) and Z x X = (0, Z_z, -Z_y) = Y. Y . Z = Z_z*Z_y - Z_y*Z_z = 0. A fixed Y = (0, 1, 0) would give Y . Z = Z_y ~ 5e-7, i.e. a section off perpendicular by the tilt toward Y. The submitted decimals are not exact in binary64, so the frame is compared with CR-TOL-001.",
       "f04_refs": ["F04-POS-16"],
       "assumes": ["P-2 (assumed pending owner confirmation)", "P-3 (assumed pending owner confirmation)"]
     },
@@ -2116,14 +2116,14 @@
         "status": "ok",
         "rule_used": "horizontal",
         "X_m_approx": ["-1", "0", "0"],
-        "Y_m_approx": ["0", "-0.999999999998", "2e-06"],
-        "Z_m_approx": ["0", "2e-06", "0.999999999998"],
+        "Y_m_approx": ["0", "-0.999999999998", "1.9999999999960000000e-6"],
+        "Z_m_approx": ["0", "1.9999999999960000000e-6", "0.999999999998"],
         "Y_m_dot_Z_m_within": "1e-12",
         "Y_m_dot_local_z_positive": true,
         "frame_certificate": "passes",
         "compare": "CR-TOL-001"
       },
-      "derivation": "h = 0.002, L ~ 1000.000000000002; Y = (-dx*dz, -dy*dz, hh)/(h*L) = (0, -2, 4e-6)/(0.002*L) ~ (0, -1, 2e-6); X0 = Y x Z ~ (-1, 0, 0). The tilt toward Y is what makes the near-vertical neighbour (F06-POS-41) differ: both frames are perpendicular to their axis, and the roll jumps by about a quarter turn at the threshold (contract section 4, rule 3). Values are binary64 approximations.",
+      "derivation": "h = 0.002, LL = 250000000001/250000 and L = sqrt(250000000001)/500 ~ 1000.0000000020000000; hh/LL = 1/250000000001 ~ 3.9999999999840000000e-12 > 1e-12. Y_m = (-dx*dz, -dy*dz, hh)/(h*L) = (0, -2, 4e-6)/(0.002*L) = (0, -1000/L, 0.002/L), Z_m = (0, 0.002/L, 1000/L) and X_m = Y_m x Z_m = (-1, 0, 0). For this +Y tilt from +Z, the horizontal frame is exactly 180 degrees about the same axis from the near-vertical branch frame: both X and Y reverse. F06-POS-41 uses the near-vertical rule on a different +Y-tilted axis; as the two axes approach the threshold, the limiting roll jump is a half turn (contract section 4, rule 3). At their finite tilts the axes also differ. The exact forms use rational decimal inputs; binary64 results are compared with CR-TOL-001.",
       "assumes": ["P-2 (assumed pending owner confirmation)", "P-3 (assumed pending owner confirmation)"]
     },
     {
@@ -2210,28 +2210,28 @@
           },
           {
             "feature_id": "fid1:019a7bf0-0000-7000-8000-000000000005:plate:f.z0",
-            "distance_mm": "100.124921973",
+            "distance_mm": "100.12492197250392864",
             "closest_point_mm": ["1000", "250", "0"]
           },
           {
             "feature_id": "fid1:019a7bf0-0000-7000-8000-000000000005:plate:f.z1",
-            "distance_mm": "100.124921973",
+            "distance_mm": "100.12492197250392864",
             "closest_point_mm": ["1000", "250", "10"]
           },
           {
             "feature_id": "fid1:019a7bf0-0000-7000-8000-000000000005:plate:e.x1.z0",
-            "distance_mm": "100.124921973",
+            "distance_mm": "100.12492197250392864",
             "closest_point_mm": ["1000", "250", "0"]
           },
           {
             "feature_id": "fid1:019a7bf0-0000-7000-8000-000000000005:plate:e.x1.z1",
-            "distance_mm": "100.124921973",
+            "distance_mm": "100.12492197250392864",
             "closest_point_mm": ["1000", "250", "10"]
           }
         ],
         "compare": "CR-TOL-001"
       },
-      "derivation": "Face x1 (x = 1000, y in [0, 500], z in [0, 10]): the foot (1000, 250, 5) is inside, distance 100. Faces z0 and z1: the foot (1100, 250, 0 or 10) lies outside the rectangle (x > 1000), so the distance is to the nearest rectangle point (1000, 250, 0 or 10): sqrt(100^2 + 5^2) = sqrt(10025) ~ 100.1249. Edges x1.z0 and x1.z1 have the same nearest points and distance. Every other face, edge and vertex is at least sqrt(100^2 + 250^2) ~ 269 away (a brute-force check over all 26 features agrees). Order by the tuple (floor(distance / 1e-6), ElementId, kind rank, local id): x1 first (smaller distance), then the four features at sqrt(10025), faces before edges, \"plate:f.z0\" < \"plate:f.z1\", \"plate:e.x1.z0\" < \"plate:e.x1.z1\".",
+      "derivation": "Face x1 (x = 1000, y in [0, 500], z in [0, 10]): the foot (1000, 250, 5) is inside, distance 100. Faces z0 and z1: the foot (1100, 250, 0 or 10) lies outside the rectangle (x > 1000), so the distance is to the nearest rectangle point (1000, 250, 0 or 10): sqrt(100^2 + 5^2) = sqrt(10025) ~ 100.12492197250392864. Edges x1.z0 and x1.z1 have the same nearest points and distance. Every other face, edge and vertex is at least sqrt(100^2 + 250^2) = sqrt(72500) ~ 269.25824035672520156 away (a brute-force check over all 26 features agrees). Order by the tuple (floor(distance / 1e-6), ElementId, kind rank, local id): x1 first (smaller distance), then the four features at sqrt(10025), faces before edges, \"plate:f.z0\" < \"plate:f.z1\", \"plate:e.x1.z0\" < \"plate:e.x1.z1\".",
       "assumes": ["P-1 (assumed pending owner confirmation)"]
     },
     {
