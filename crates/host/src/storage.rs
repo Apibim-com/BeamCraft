@@ -322,20 +322,20 @@ impl BlobStore {
             Err(e) if e.kind() == io::ErrorKind::NotFound => (),
             Err(e) => return Err(io_error(e)),
         }
-        let (mut file, temp) = self.temporary()?;
+        let (mut file, mut temp) = self.temporary()?;
         file.write_all(bytes).map_err(io_error)?;
         file.flush().map_err(io_error)?;
         file.sync_all().map_err(io_error)?;
         drop(file);
         // Repeat containment preflight immediately before installation.
         let destination = self.location(&digest, false)?;
-        let outcome = match fs::hard_link(&temp.0, &destination) {
+        let outcome = match fs::hard_link(&temp.path, &destination) {
             Ok(()) => Published::Created,
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Published::AlreadyPresent,
             Err(e) => return Err(io_error(e)),
         };
         self.compare(&destination, &digest, bytes)?;
-        fs::remove_file(&temp.0).map_err(io_error)?;
+        temp.remove().map_err(io_error)?;
         Ok((digest, outcome))
     }
 
@@ -347,7 +347,7 @@ impl BlobStore {
             let id = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
             let path = blobs.join(format!(".publish-{id:016x}"));
             match OpenOptions::new().write(true).create_new(true).open(&path) {
-                Ok(file) => return Ok((file, Temporary(path))),
+                Ok(file) => return Ok((file, Temporary::new(path))),
                 Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
                 Err(e) => return Err(io_error(e)),
             }
@@ -376,12 +376,40 @@ impl BlobStore {
     }
 }
 
-struct Temporary(PathBuf);
+/// A temporary file name owned by one publisher until it is removed.
+struct Temporary {
+    path: PathBuf,
+    armed: bool,
+}
+
+impl Temporary {
+    fn new(path: PathBuf) -> Self {
+        Self { path, armed: true }
+    }
+
+    /// Removes the file and disarms the guard, so the name is never removed a second time. Another
+    /// publisher process may create the same name as soon as it is free, and its file must survive.
+    fn remove(&mut self) -> io::Result<()> {
+        match fs::remove_file(&self.path) {
+            Ok(()) => {
+                self.armed = false;
+                Ok(())
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                self.armed = false;
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
+    }
+}
 
 impl Drop for Temporary {
     fn drop(&mut self) {
-        // Best-effort cleanup on every error path; explicit successful cleanup is checked above.
-        let _ = fs::remove_file(&self.0);
+        // Best-effort cleanup on error paths only; a successful `remove` disarms the guard.
+        if self.armed {
+            let _ = fs::remove_file(&self.path);
+        }
     }
 }
 
@@ -426,5 +454,33 @@ mod tests {
             Err(StorageError::IntegrityConflict)
         );
         assert_eq!(store.read(&digest).unwrap(), b"verified existing bytes");
+    }
+
+    #[test]
+    fn a_removed_temporary_name_taken_by_another_publisher_survives_the_guard() {
+        // Interleaving: this publisher removes its temporary name; before the guard is dropped
+        // another publisher process creates the same (now free) name. The guard must not delete it.
+        let base = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("u05-tests");
+        fs::create_dir_all(&base).unwrap();
+        let time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = base.join(format!("temporary-guard-{time}"));
+        fs::write(&path, b"mine").unwrap();
+        let mut guard = Temporary::new(path.clone());
+        guard.remove().unwrap();
+        assert!(!path.exists());
+        fs::write(&path, b"other publisher").unwrap();
+        drop(guard);
+        assert_eq!(fs::read(&path).unwrap(), b"other publisher");
+        fs::remove_file(&path).unwrap();
+
+        // An armed guard (an error path) still cleans up its own file.
+        fs::write(&path, b"abandoned").unwrap();
+        drop(Temporary::new(path.clone()));
+        assert!(!path.exists());
     }
 }

@@ -52,7 +52,7 @@ impl FromStr for ContentDigest {
             return Err(InvalidDigest);
         }
         let mut bytes = [0; 32];
-        for (slot, pair) in bytes.iter_mut().zip(text.as_bytes().chunks_exact(2)) {
+        for (slot, pair) in bytes.iter_mut().zip(text.as_bytes().as_chunks::<2>().0) {
             let mut value = 0;
             for c in pair {
                 let digit = match c {
@@ -150,8 +150,8 @@ impl Sha256 {
             self.push(byte);
         }
         let mut bytes = [0; 32];
-        for (out, word) in bytes.chunks_exact_mut(4).zip(self.state) {
-            out.copy_from_slice(&word.to_be_bytes());
+        for (out, word) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(self.state) {
+            *out = word.to_be_bytes();
         }
         ContentDigest(bytes)
     }
@@ -178,8 +178,8 @@ const K: [u32; 64] = [
 
 fn compress(state: &mut [u32; 8], block: &[u8; 64]) {
     let mut words = [0u32; 64];
-    for (out, bytes) in words.iter_mut().zip(block.chunks_exact(4)) {
-        *out = bytes.iter().fold(0u32, |n, b| (n << 8) | u32::from(*b));
+    for (out, bytes) in words.iter_mut().zip(block.as_chunks::<4>().0) {
+        *out = u32::from_be_bytes(*bytes);
     }
     // All positions below derive solely from the fixed SHA-256 schedule, not input.
     for t in 16usize..64 {
