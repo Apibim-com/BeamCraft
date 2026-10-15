@@ -1,0 +1,567 @@
+[
+  {
+    "name": "approx",
+    "version": "0.5.1",
+    "license": "Apache-2.0",
+    "rust_version": null,
+    "repository": "https://github.com/brendanzab/approx",
+    "default_features": [
+      "std"
+    ],
+    "resolved_features": [
+      "default",
+      "std"
+    ],
+    "dependencies": [
+      "registry+https://github.com/rust-lang/crates.io-index#num-traits@0.2.19"
+    ],
+    "licence_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "3ddf9be5c28fe27dad143a5dc76eea25222ad1dd68934a047064e56ed2fa40c5"
+      }
+    ],
+    "manifest_sha256": "78766a0a5bf02b991509fcd5423e2b845f526f28ea6b670f8b77bcbe531ac3d1"
+  },
+  {
+    "name": "autocfg",
+    "version": "1.5.1",
+    "license": "Apache-2.0 OR MIT",
+    "rust_version": "1.0",
+    "repository": "https://github.com/cuviper/autocfg",
+    "default_features": [],
+    "resolved_features": [],
+    "dependencies": [],
+    "licence_files": [
+      {
+        "file": "LICENSE-APACHE",
+        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+      },
+      {
+        "file": "LICENSE-MIT",
+        "sha256": "27995d58ad5c1145c1a8cd86244ce844886958a35eb2b78c6b772748669999ac"
+      }
+    ],
+    "manifest_sha256": "ed7c832b4250c3be736e040d68688c2b83a5b164a93ef533e61532cbe0d44e99"
+  },
+  {
+    "name": "bytemuck",
+    "version": "1.25.2",
+    "license": "Zlib OR Apache-2.0 OR MIT",
+    "rust_version": null,
+    "repository": "https://github.com/Lokathor/bytemuck",
+    "default_features": [],
+    "resolved_features": [],
+    "dependencies": [],
+    "licence_files": [
+      {
+        "file": "LICENSE-APACHE",
+        "sha256": "e3ba223bb1423f0aad8c3dfce0fe3148db48926d41e6fbc3afbbf5ff9e1c89cb"
+      },
+      {
+        "file": "LICENSE-MIT",
+        "sha256": "9df9ba60a11af705f2e451b53762686e615d86f76b169cf075c3237730dbd7e2"
+      },
+      {
+        "file": "LICENSE-ZLIB",
+        "sha256": "84b34dd7608f7fb9b17bd588a6bf392bf7de504e2716f024a77d89f1b145a151"
+      }
+    ],
+    "manifest_sha256": "7b99bce6fd19ac16efd0fa94051b95f6cee7945f9d76842e072e4176a152794c"
+  },
+  {
+    "name": "glam",
+    "version": "0.30.10",
+    "license": "MIT OR Apache-2.0",
+    "rust_version": "1.68.2",
+    "repository": "https://github.com/bitshifter/glam-rs",
+    "default_features": [
+      "std"
+    ],
+    "resolved_features": [
+      "std"
+    ],
+    "dependencies": [],
+    "licence_files": [
+      {
+        "file": "LICENSE-APACHE",
+        "sha256": "be33ddb87a30fd321ab100e2d922cba512e50ec7a63d8e62e5bfc0798dd4b585"
+      },
+      {
+        "file": "LICENSE-MIT",
+        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+      }
+    ],
+    "manifest_sha256": "82bfce378b32579c5cff4e154af4f200fc4dc21cb04d532d387d6335e7f1497b"
+  },
+  {
+    "name": "glam",
+    "version": "0.31.1",
+    "license": "MIT OR Apache-2.0",
+    "rust_version": "1.68.2",
+    "repository": "https://github.com/bitshifter/glam-rs",
+    "default_features": [
+      "std"
+    ],
+    "resolved_features": [
+      "std"
+    ],
+    "dependencies": [],
+    "licence_files": [
+      {
+        "file": "LICENSE-APACHE",
+        "sha256": "be33ddb87a30fd321ab100e2d922cba512e50ec7a63d8e62e5bfc0798dd4b585"
+      },
+      {
+        "file": "LICENSE-MIT",
+        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+      }
+    ],
+    "manifest_sha256": "7616a2ce35f52f8fc8ddc938b7a7a49843f5a246cacd844236300f6844f66ec6"
+  },
+  {
+    "name": "glam",
+    "version": "0.32.1",
+    "license": "MIT OR Apache-2.0",
+    "rust_version": "1.68.2",
+    "repository": "https://github.com/bitshifter/glam-rs",
+    "default_features": [
+      "std"
+    ],
+    "resolved_features": [
+      "std"
+    ],
+    "dependencies": [],
+    "licence_files": [
+      {
+        "file": "LICENSE-APACHE",
+        "sha256": "be33ddb87a30fd321ab100e2d922cba512e50ec7a63d8e62e5bfc0798dd4b585"
+      },
+      {
+        "file": "LICENSE-MIT",
+        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+      }
+    ],
+    "manifest_sha256": "e57856f3ed1eb256314b92735c4edf840887f4fbd743633a59554e500ba1b557"
+  },
+  {
+    "name": "glam",
+    "version": "0.33.12",
+    "license": "MIT OR Apache-2.0",
+    "rust_version": "1.68.2",
+    "repository": "https://github.com/bitshifter/glam-rs",
+    "default_features": [
+      "std",
+      "all-types"
+    ],
+    "resolved_features": [
+      "f64",
+      "i32",
+      "std",
+      "u32"
+    ],
+    "dependencies": [],
+    "licence_files": [
+      {
+        "file": "LICENSE-APACHE",
+        "sha256": "be33ddb87a30fd321ab100e2d922cba512e50ec7a63d8e62e5bfc0798dd4b585"
+      },
+      {
+        "file": "LICENSE-MIT",
+        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+      }
+    ],
+    "manifest_sha256": "08a35c14efa4b083210613451d339b9c9921b3b6fd7464a998b246a1980e0690"
+  },
+  {
+    "name": "glam",
+    "version": "0.34.1",
+    "license": "MIT OR Apache-2.0",
+    "rust_version": "1.85.0",
+    "repository": "https://github.com/bitshifter/glam-rs",
+    "default_features": [
+      "std",
+      "all-types"
+    ],
+    "resolved_features": [
+      "f64",
+      "scalar-math",
+      "std"
+    ],
+    "dependencies": [],
+    "licence_files": [
+      {
+        "file": "LICENSE-APACHE",
+        "sha256": "be33ddb87a30fd321ab100e2d922cba512e50ec7a63d8e62e5bfc0798dd4b585"
+      },
+      {
+        "file": "LICENSE-MIT",
+        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+      }
+    ],
+    "manifest_sha256": "fc37b9e4b22479b3090c49607f3b160804a5457f47268033482fac132a9d17db"
+  },
+  {
+    "name": "matrixmultiply",
+    "version": "0.3.11",
+    "license": "MIT/Apache-2.0",
+    "rust_version": "1.75.0",
+    "repository": "https://github.com/bluss/matrixmultiply/",
+    "default_features": [
+      "std",
+      "avx512"
+    ],
+    "resolved_features": [
+      "avx512",
+      "default",
+      "std"
+    ],
+    "dependencies": [
+      "registry+https://github.com/rust-lang/crates.io-index#autocfg@1.5.1",
+      "registry+https://github.com/rust-lang/crates.io-index#rawpointer@0.2.1"
+    ],
+    "licence_files": [
+      {
+        "file": "LICENSE-APACHE",
+        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+      },
+      {
+        "file": "LICENSE-MIT",
+        "sha256": "792d075c7bad6dac258a44e799eb64cbf465e24d9932d27669be08c5ec957e27"
+      }
+    ],
+    "manifest_sha256": "7a812761b8f7e50532e5c2dd0eb59c69fd4c714632dcc7a46a9b35cc3e1b4ebd"
+  },
+  {
+    "name": "nalgebra",
+    "version": "0.35.0",
+    "license": "Apache-2.0",
+    "rust_version": "1.89.0",
+    "repository": "https://github.com/dimforge/nalgebra",
+    "default_features": [
+      "std",
+      "macros"
+    ],
+    "resolved_features": [
+      "matrixmultiply",
+      "std"
+    ],
+    "dependencies": [
+      "registry+https://github.com/rust-lang/crates.io-index#approx@0.5.1",
+      "registry+https://github.com/rust-lang/crates.io-index#glam@0.30.10",
+      "registry+https://github.com/rust-lang/crates.io-index#glam@0.31.1",
+      "registry+https://github.com/rust-lang/crates.io-index#glam@0.32.1",
+      "registry+https://github.com/rust-lang/crates.io-index#glam@0.33.12",
+      "registry+https://github.com/rust-lang/crates.io-index#matrixmultiply@0.3.11",
+      "registry+https://github.com/rust-lang/crates.io-index#num-complex@0.4.6",
+      "registry+https://github.com/rust-lang/crates.io-index#num-rational@0.4.2",
+      "registry+https://github.com/rust-lang/crates.io-index#num-traits@0.2.19",
+      "registry+https://github.com/rust-lang/crates.io-index#simba@0.10.2",
+      "registry+https://github.com/rust-lang/crates.io-index#typenum@1.20.1"
+    ],
+    "licence_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "ceacfa4d7fa67df64ab09a56fe248c50a3bfc9bc00374d69bd74ad763b14b89c"
+      }
+    ],
+    "manifest_sha256": "1158414cc69b0c60c5a08d1817941a5e78c40bfcf29dc0fbb7952694275193c4"
+  },
+  {
+    "name": "num-bigint",
+    "version": "0.4.8",
+    "license": "MIT OR Apache-2.0",
+    "rust_version": "1.60",
+    "repository": "https://github.com/rust-num/num-bigint",
+    "default_features": [
+      "std"
+    ],
+    "resolved_features": [
+      "std"
+    ],
+    "dependencies": [
+      "registry+https://github.com/rust-lang/crates.io-index#num-integer@0.1.47",
+      "registry+https://github.com/rust-lang/crates.io-index#num-traits@0.2.19"
+    ],
+    "licence_files": [
+      {
+        "file": "LICENSE-APACHE",
+        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+      },
+      {
+        "file": "LICENSE-MIT",
+        "sha256": "6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb"
+      }
+    ],
+    "manifest_sha256": "fcb19e142df64dc58a459ba33e1e22c1551497962f8037ed98df124d749f28f1"
+  },
+  {
+    "name": "num-complex",
+    "version": "0.4.6",
+    "license": "MIT OR Apache-2.0",
+    "rust_version": "1.60",
+    "repository": "https://github.com/rust-num/num-complex",
+    "default_features": [
+      "std"
+    ],
+    "resolved_features": [
+      "std"
+    ],
+    "dependencies": [
+      "registry+https://github.com/rust-lang/crates.io-index#num-traits@0.2.19"
+    ],
+    "licence_files": [
+      {
+        "file": "LICENSE-APACHE",
+        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+      },
+      {
+        "file": "LICENSE-MIT",
+        "sha256": "6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb"
+      }
+    ],
+    "manifest_sha256": "c3eb0628759922920b1ad0c233f2977ac6fd609876e27d88f6088400887aa937"
+  },
+  {
+    "name": "num-integer",
+    "version": "0.1.47",
+    "license": "MIT OR Apache-2.0",
+    "rust_version": "1.31",
+    "repository": "https://github.com/rust-num/num-integer",
+    "default_features": [
+      "std"
+    ],
+    "resolved_features": [
+      "i128",
+      "std"
+    ],
+    "dependencies": [
+      "registry+https://github.com/rust-lang/crates.io-index#num-traits@0.2.19"
+    ],
+    "licence_files": [
+      {
+        "file": "LICENSE-APACHE",
+        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+      },
+      {
+        "file": "LICENSE-MIT",
+        "sha256": "6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb"
+      }
+    ],
+    "manifest_sha256": "a0fc4aee99b0663bb80ce2fc8052491b7e28872765711266faddb2ed0474cb96"
+  },
+  {
+    "name": "num-rational",
+    "version": "0.4.2",
+    "license": "MIT OR Apache-2.0",
+    "rust_version": "1.60",
+    "repository": "https://github.com/rust-num/num-rational",
+    "default_features": [
+      "num-bigint",
+      "std"
+    ],
+    "resolved_features": [
+      "std"
+    ],
+    "dependencies": [
+      "registry+https://github.com/rust-lang/crates.io-index#num-bigint@0.4.8",
+      "registry+https://github.com/rust-lang/crates.io-index#num-integer@0.1.47",
+      "registry+https://github.com/rust-lang/crates.io-index#num-traits@0.2.19"
+    ],
+    "licence_files": [
+      {
+        "file": "LICENSE-APACHE",
+        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+      },
+      {
+        "file": "LICENSE-MIT",
+        "sha256": "6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb"
+      }
+    ],
+    "manifest_sha256": "5d0e183e1c4b1ad6fe8a288f51ee840ae06c72be900608ea4c3ccc0380e62d01"
+  },
+  {
+    "name": "num-traits",
+    "version": "0.2.19",
+    "license": "MIT OR Apache-2.0",
+    "rust_version": "1.60",
+    "repository": "https://github.com/rust-num/num-traits",
+    "default_features": [
+      "std"
+    ],
+    "resolved_features": [
+      "i128",
+      "std"
+    ],
+    "dependencies": [
+      "registry+https://github.com/rust-lang/crates.io-index#autocfg@1.5.1"
+    ],
+    "licence_files": [
+      {
+        "file": "LICENSE-APACHE",
+        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+      },
+      {
+        "file": "LICENSE-MIT",
+        "sha256": "6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb"
+      }
+    ],
+    "manifest_sha256": "dd701a0da6cce7e6e047cc944b2330f3c5e48cd64329e10942ea7d9299d435be"
+  },
+  {
+    "name": "rawpointer",
+    "version": "0.2.1",
+    "license": "MIT/Apache-2.0",
+    "rust_version": null,
+    "repository": "https://github.com/bluss/rawpointer/",
+    "default_features": [],
+    "resolved_features": [],
+    "dependencies": [],
+    "licence_files": [
+      {
+        "file": "LICENSE-APACHE",
+        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+      },
+      {
+        "file": "LICENSE-MIT",
+        "sha256": "7576269ea71f767b99297934c0b2367532690f8c4badc695edf8e04ab6a1e545"
+      }
+    ],
+    "manifest_sha256": "1e819807b4bb3f1b8e234da6867a1b8ac68cab22972476e4d98646c7502b921e"
+  },
+  {
+    "name": "robust",
+    "version": "1.2.0",
+    "license": "MIT OR Apache-2.0",
+    "rust_version": null,
+    "repository": "https://github.com/georust/robust",
+    "default_features": [],
+    "resolved_features": [],
+    "dependencies": [],
+    "licence_files": [
+      {
+        "file": "LICENSE-APACHE",
+        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+      },
+      {
+        "file": "LICENSE-MIT",
+        "sha256": "ddb606a4226673241b8dedb155a25b271178d028a2bf74c90ee47fe495f4d9bc"
+      }
+    ],
+    "manifest_sha256": "e29238aac5b2c1c9c133b6aeff22481c59c2eaa7b85badbd864549ff2c53f320"
+  },
+  {
+    "name": "safe_arch",
+    "version": "1.2.0",
+    "license": "Zlib OR Apache-2.0 OR MIT",
+    "rust_version": "1.89",
+    "repository": "https://github.com/Lokathor/safe_arch",
+    "default_features": [],
+    "resolved_features": [
+      "bytemuck",
+      "default"
+    ],
+    "dependencies": [
+      "registry+https://github.com/rust-lang/crates.io-index#bytemuck@1.25.2"
+    ],
+    "licence_files": [
+      {
+        "file": "LICENSE-APACHE.md",
+        "sha256": "e3ba223bb1423f0aad8c3dfce0fe3148db48926d41e6fbc3afbbf5ff9e1c89cb"
+      },
+      {
+        "file": "LICENSE-MIT.md",
+        "sha256": "e57011537d230b14e790f6666dc00816f7b371ebbd7da8a12491e51086fec278"
+      },
+      {
+        "file": "LICENSE-ZLIB.md",
+        "sha256": "c43b9a9b1387ed53d2c49263838261129a010e280e3a174a792242c3e2c98db9"
+      }
+    ],
+    "manifest_sha256": "2b6d8bb3d10aaf57629b49332915b50f768c7ad7f329ff04526261e25a1d6c6f"
+  },
+  {
+    "name": "simba",
+    "version": "0.10.2",
+    "license": "Apache-2.0",
+    "rust_version": null,
+    "repository": "https://github.com/dimforge/simba",
+    "default_features": [
+      "std"
+    ],
+    "resolved_features": [
+      "std",
+      "wide"
+    ],
+    "dependencies": [
+      "registry+https://github.com/rust-lang/crates.io-index#approx@0.5.1",
+      "registry+https://github.com/rust-lang/crates.io-index#num-complex@0.4.6",
+      "registry+https://github.com/rust-lang/crates.io-index#num-traits@0.2.19",
+      "registry+https://github.com/rust-lang/crates.io-index#wide@1.7.1"
+    ],
+    "licence_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "ceacfa4d7fa67df64ab09a56fe248c50a3bfc9bc00374d69bd74ad763b14b89c"
+      }
+    ],
+    "manifest_sha256": "0770f19ec7af5df8ea21e60b1cca05c6c777ec6012e69a4df78b57777400ca9f"
+  },
+  {
+    "name": "typenum",
+    "version": "1.20.1",
+    "license": "MIT OR Apache-2.0",
+    "rust_version": "1.41.0",
+    "repository": "https://github.com/paholg/typenum",
+    "default_features": [],
+    "resolved_features": [],
+    "dependencies": [],
+    "licence_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "db11fec9946737df39ca3898d9cd8c10ec6f6c3a884a6802b0ad0b81b4e8f23a"
+      },
+      {
+        "file": "LICENSE-APACHE",
+        "sha256": "516b24e051bf5630880ebbd55c40a25ce9552ebaf8970a53e8976eb70e522406"
+      },
+      {
+        "file": "LICENSE-MIT",
+        "sha256": "a825bd853ab71619a4923d7b4311221427848070ff44d990da39b0b274c1683f"
+      }
+    ],
+    "manifest_sha256": "00785a81eae34b3298dfdde78a6bd96fe3ec000de46edd509bd13b7cab7a9870"
+  },
+  {
+    "name": "wide",
+    "version": "1.7.1",
+    "license": "Zlib OR Apache-2.0 OR MIT",
+    "rust_version": "1.89",
+    "repository": "https://github.com/Lokathor/wide",
+    "default_features": [
+      "std"
+    ],
+    "resolved_features": [
+      "std"
+    ],
+    "dependencies": [
+      "registry+https://github.com/rust-lang/crates.io-index#bytemuck@1.25.2",
+      "registry+https://github.com/rust-lang/crates.io-index#safe_arch@1.2.0"
+    ],
+    "licence_files": [
+      {
+        "file": "LICENSE-APACHE.txt",
+        "sha256": "d64ac6ba60c7352115244dcfcb46c24f934603dd92e64835beafe7631c485abc"
+      },
+      {
+        "file": "LICENSE-MIT.txt",
+        "sha256": "69c62cda6938d510467c134dc0b5c83fb9c8ca847b9cd9d9d2fe9ab427c82100"
+      },
+      {
+        "file": "LICENSE-ZLIB.txt",
+        "sha256": "3c6921f3dfec0bed0cfa2d632616edd7380a875c8ad76c7b23dc59892259f62c"
+      }
+    ],
+    "manifest_sha256": "8b39f6e7126bbfbda260a50438fc4c20ba4d579aa0560a7b11368fdac75ed6b1"
+  }
+]

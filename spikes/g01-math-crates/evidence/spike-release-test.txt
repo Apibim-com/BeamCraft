@@ -1,0 +1,59 @@
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 4 tests
+test api_fit_and_policy ... ok
+test frames_and_exploratory_roll ... ok
+test native_frame_primitives_and_random_certificates ... ok
+crate/operation,samples,mismatch_samples,mismatch_components,max_ulp,signed_zero_components,nonfinite_components,max_absolute_error
+nalgebra/dot,100098,0,0,0,0,0,0.00000000000000000e0
+nalgebra/cross,100098,0,0,0,0,0,0.00000000000000000e0
+nalgebra/norm,100098,0,0,0,0,0,0.00000000000000000e0
+nalgebra/quat_normalize,100098,12411,46799,2,0,0,2.22044604925031308e-16
+nalgebra/quat_matrix,100098,95937,242729,4372995238176751617,0,0,6.66133814775093924e-16
+nalgebra/quat_rotate,100098,96048,193711,2093470139285504,1,0,4.67300415038854333e-8
+nalgebra/matrix_vector,100098,0,0,0,0,0,0.00000000000000000e0
+nalgebra/world,100098,0,0,0,0,0,0.00000000000000000e0
+glam/dot,100098,0,0,0,0,0,0.00000000000000000e0
+glam/cross,100098,0,0,0,0,0,0.00000000000000000e0
+glam/norm,100098,0,0,0,0,0,0.00000000000000000e0
+glam/quat_normalize,100098,25317,45762,1,0,0,1.11022302462515654e-16
+glam/quat_matrix,100098,0,0,0,0,0,0.00000000000000000e0
+glam/quat_rotate,100098,97976,215686,4424628304217112577,1,0,1.28746032715051917e-8
+glam/matrix_vector,100098,0,0,0,0,0,0.00000000000000000e0
+glam/world,100098,0,0,0,0,0,0.00000000000000000e0
+adapter/dot,100098,0,0,0,0,0,0.00000000000000000e0
+adapter/cross,100098,0,0,0,0,0,0.00000000000000000e0
+adapter/norm,100098,0,0,0,0,0,0.00000000000000000e0
+adapter/quat_normalize,100098,0,0,0,0,0,0.00000000000000000e0
+adapter/quat_matrix,100098,0,0,0,0,0,0.00000000000000000e0
+adapter/quat_rotate,100098,0,0,0,0,0,0.00000000000000000e0
+adapter/matrix_vector,100098,0,0,0,0,0,0.00000000000000000e0
+adapter/world,100098,0,0,0,0,0,0.00000000000000000e0
+test deterministic_conformance ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 1 test
+orient2d naive=0.0 robust=1.0 exact_integer_determinant=1
+orient3d naive=-0.0 robust=-1.0 exact_integer_determinant=-1
+incircle naive=0.0 robust=-3.602879701896397e16 exact_integer_determinant=-3.602879701896397e16
+underflow orient2d=0.0, exact sign positive
+test exact_signs_and_limits ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `release` profile [optimized] target(s) in 0.08s
+     Running unittests src\lib.rs (target\release\deps\beamcraft_g01_math_crates_spike-5041493ae0f8ab29.exe)
+     Running tests\conformance.rs (target\release\deps\conformance-f2c5c21a6aac537f.exe)
+     Running tests\predicates.rs (target\release\deps\predicates-f4ab08e48be2f0e4.exe)
+   Doc-tests beamcraft_g01_math_crates_spike

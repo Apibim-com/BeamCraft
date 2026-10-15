@@ -1,0 +1,121 @@
+[
+  {
+    "name": "spike-fmt",
+    "cwd": "spikes\\g01-math-crates",
+    "command": [
+      "cargo",
+      "--offline",
+      "fmt",
+      "--all",
+      "--",
+      "--check"
+    ],
+    "exit": 0,
+    "seconds": 0.234,
+    "output": "evidence/spike-fmt.txt"
+  },
+  {
+    "name": "spike-clippy",
+    "cwd": "spikes\\g01-math-crates",
+    "command": [
+      "cargo",
+      "clippy",
+      "--offline",
+      "--all-targets",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "exit": 0,
+    "seconds": 0.312,
+    "output": "evidence/spike-clippy.txt"
+  },
+  {
+    "name": "spike-test",
+    "cwd": "spikes\\g01-math-crates",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "seconds": 2.688,
+    "output": "evidence/spike-test.txt"
+  },
+  {
+    "name": "spike-release-test",
+    "cwd": "spikes\\g01-math-crates",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "--release",
+      "--",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "seconds": 0.516,
+    "output": "evidence/spike-release-test.txt"
+  },
+  {
+    "name": "robust-no-std",
+    "cwd": "spikes\\g01-math-crates",
+    "command": [
+      "cargo",
+      "check",
+      "--offline",
+      "--features",
+      "robust/no_std"
+    ],
+    "exit": 0,
+    "seconds": 0.234,
+    "output": "evidence/robust-no-std.txt"
+  },
+  {
+    "name": "root-fmt",
+    "cwd": ".",
+    "command": [
+      "cargo",
+      "--offline",
+      "fmt",
+      "--all",
+      "--",
+      "--check"
+    ],
+    "exit": 0,
+    "seconds": 0.281,
+    "output": "evidence/root-fmt.txt"
+  },
+  {
+    "name": "root-clippy",
+    "cwd": ".",
+    "command": [
+      "cargo",
+      "clippy",
+      "--workspace",
+      "--all-targets",
+      "--offline",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "exit": 0,
+    "seconds": 0.219,
+    "output": "evidence/root-clippy.txt"
+  },
+  {
+    "name": "root-test",
+    "cwd": ".",
+    "command": [
+      "cargo",
+      "test",
+      "--workspace",
+      "--offline"
+    ],
+    "exit": 0,
+    "seconds": 1.359,
+    "output": "evidence/root-test.txt"
+  }
+]

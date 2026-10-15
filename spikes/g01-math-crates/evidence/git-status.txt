@@ -1,0 +1,9 @@
+exit 128
+fatal: detected dubious ownership in repository at 'D:/Projects/01_BeamCraft-G01'
+'D:/Projects/01_BeamCraft-G01/.git' is owned by:
+	BUILTIN/�������������� (S-1-5-32-544)
+but the current user is:
+	MYADMIN/Yura (S-1-5-21-338343608-83032263-1234166658-1001)
+To add an exception for this directory, call:
+
+	git config --global --add safe.directory D:/Projects/01_BeamCraft-G01
