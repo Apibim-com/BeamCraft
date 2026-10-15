@@ -49,6 +49,13 @@ later project; portable domain crates alone do not establish a working web appli
 
 ## Progress log
 
+- 2026-10-15: F11 drafted the USD layer-engine decision record 0.1.0 on base
+  `20d26cfb107d51e7a2c76c25ca0191b8115ec301` (stacked on F08). It compares four options (official
+  SDK worker, own Rust subset, `openusd` adapter, hybrid) and recommends retaining the accepted SDK
+  worker baseline pending owner-approved spike N01 evidence. The JSON plan defines 40 unexecuted
+  claims, ten gates and 12 original scenario families. No architecture, dependency or runtime
+  change is made; the recommendation is not a decision. Local WASM and cargo-deny checks were not run.
+
 - 2026-10-15: F10 drafted the domain vocabulary and discipline-module contract 0.1.0 on base
   `20d26cfb107d51e7a2c76c25ca0191b8115ec301` (stacked on F08), consuming F04 0.1.0, F06 0.1.0
   and F08. It fixes a closed element-kind registry (steel `plate`, `beam`, `column` implementable;
