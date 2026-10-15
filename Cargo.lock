@@ -22,6 +22,13 @@ name = "beamcraft-geom"
 version = "0.0.1"
 
 [[package]]
+name = "beamcraft-host"
+version = "0.0.1"
+dependencies = [
+ "beamcraft-model",
+]
+
+[[package]]
 name = "beamcraft-model"
 version = "0.0.1"
 dependencies = [

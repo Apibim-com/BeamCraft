@@ -49,6 +49,15 @@ later project; portable domain crates alone do not establish a working web appli
 
 ## Progress log
 
+- 2026-10-15: U05 added original incremental SHA-256 and strict full ContentDigest identities in
+  `beamcraft_model::digest`, plus native `beamcraft_host::storage` with synced temporary files,
+  non-replacing hard-link publication, complete existing-byte comparison and verified retrieval.
+  Base `501e9d476dc187b63e6fd61e2908d1c51ea280d9`, stacked on F08 PR #17. All seven required
+  local commands passed; 112 workspace tests passed. WASM and cargo-deny were not run.
+  Strict containment against hostile concurrent directory replacement remains open; the current
+  implementation requires a protected root namespace. U04 owns the CLI; U06/U07 own revision
+  publication and recovery. U05 acceptance and K1 are not complete.
+
 - 2026-10-15: Owner decision on OpenUSD-derived TOST-1.0 material in the `openusd` crate (0.8.x,
   file `src/usd/core_schemas.rs`): it stays under its upstream licence and copyright, BeamCraft
   claims no rights in it, and BeamCraft's own code stays MPL-2.0. `AGENTS.md` section 1.2 gains a
