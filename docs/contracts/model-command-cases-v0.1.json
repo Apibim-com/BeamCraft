@@ -1504,6 +1504,76 @@
         "compare": "CR-TOL-001"
       },
       "note": "Column (axis exactly parallel to local Z) uses the column rule of P-3."
+    },
+    {
+      "case_id": "F04-POS-17",
+      "given": [
+        "Authorized context; base and generation match; new_id unused",
+        "Draft minimum nonzero dimension 0.001 mm (F04 section 3, F06 section 4; draft, to be validated by G04 and fixtures)"
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic plate",
+        "width_mm": 1000,
+        "length_mm": 500,
+        "thickness_mm": 0.001,
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      "envelope_changes": {},
+      "expected": {
+        "outcome": "accepted_draft",
+        "generation": "1",
+        "volume_m3_after_supported_compute": 5e-7,
+        "compare": "CR-TOL-001"
+      },
+      "note": "Thickness exactly at the minimum nonzero dimension is accepted (inclusive); 1000 x 500 x 0.001 mm = 500 mm3 = 5e-7 m3. Same boundary as F06-POS-14."
+    },
+    {
+      "case_id": "F04-NEG-27",
+      "given": [
+        "Authorized context; base and generation match; new_id unused",
+        "Draft minimum nonzero dimension 0.001 mm (F04 section 3, F06 section 4; draft, to be validated by G04 and fixtures)"
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic plate",
+        "width_mm": 1000,
+        "length_mm": 500,
+        "thickness_mm": 0.0009,
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      "envelope_changes": {},
+      "expected": {
+        "code": "INVALID_ARGUMENT",
+        "no_state_change": true
+      },
+      "note": "Thickness above zero but below the minimum nonzero dimension is rejected; zero is F04-NEG-04. Same boundary as F06-NEG-03; the member-axis counterpart is F06-NEG-04 (F04-NEG-20 covers the zero-length axis)."
     }
   ],
   "raw_json_cases": [
