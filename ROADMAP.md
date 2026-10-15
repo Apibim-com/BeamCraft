@@ -43,6 +43,13 @@ later project; portable domain crates alone do not establish a working web appli
 
 ## Progress log
 
+- 2026-10-14: F05 drafted the private USD-worker protocol contract 0.1.0 on base
+  `478f330e15819b574c62227bc23009729adb4fdc`, consuming F04 0.1.0 sections 2, 3, 6, 7 and 8.
+  It fixes framing, attachments, handshake, correlation, deadlines, cancellation, restart
+  limits, transport error codes and the canonical replay profile, with 49 original acceptance
+  descriptions (12 positive, 37 negative). The contract is not frozen, no worker is
+  implemented and K0 is not passed.
+
 - 2026-10-14: F07 added original synthetic fixtures on base
   `b34205281ab8a1f95052c4dc7d84f0995633e179`. The new std-only dev tool `tools/fixtures`
   (`beamcraft-fixtures`) provides a generator API, a CLI and E2E tests. `tests/fixtures/f07`
