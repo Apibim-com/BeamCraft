@@ -150,15 +150,19 @@ unreachable stub is added.
 1. every workspace member has a `now` row with the same path, and every `now` row is a member;
 2. package names and paths in the table are unique, every dependency named in a row exists in the
    table and has a lower layer;
-3. every internal dependency of a member (in any dependency table) is listed in its row;
+3. every internal dependency of a member (in any dependency table) is listed in its row. A
+   dependency is checked by its real package name: `package = "..."` is resolved whether written
+   inline, dotted (`x.package = "p"`, `x.version = "1"`) or in a sub-table, and an inherited
+   `workspace = true` entry is resolved against the root `[workspace.dependencies]`;
 4. a `domain` crate depends on no `host`, `app` or `tool` crate, and on no third-party crate that
    is not in section 3;
 5. no package depends on an `app` or a `tool`, and `tool` packages set `publish = false`;
 6. source of a `domain` crate does not mention `std::fs`, `std::process`, `std::net`,
-   `std::thread`, `std::env` or `std::os` (also inside a `use std::{...}` group). Comments and
-   string literals are ignored, and only items annotated `#[cfg(test)]` (or a file with
-   `#![cfg(test)]`) are exempt, wherever they are declared, so code placed after a test module is
-   still scanned;
+   `std::thread`, `std::env` or `std::os` (also inside a `use std::{...}` group, including
+   `use std::{fs as f}`). Comments and string literals are ignored, and only items annotated
+   `#[cfg(test)]` are exempt, wherever they are declared. An inner `#![cfg(test)]` exempts the
+   whole file only at file level before any item; inside `mod tests { ... }` it exempts only that
+   module. Code placed after a test module is still scanned;
 7. every CI job that mentions `wasm32-unknown-unknown` calls
    `cargo run -p beamcraft-boundaries -- portable` (all `now` `domain` rows) and selects no
    package by hand: continuation lines are joined, and any `-p`, `-pNAME` or `--package`
@@ -169,7 +173,9 @@ unreachable stub is added.
    directory nested deeper than eight levels are errors, never silently skipped.
 
 Known limits: the scan is lexical, so a `#[cfg_attr(...)]`-generated or macro-generated path is
-not seen, and an alias such as `use std as s;` is not followed. The wasm check and code review
+not seen, and an alias such as `use std as s;` is not followed. The manifest reader is line
+based: a multi-line inline table is not read, and an inherited key that the root does not define
+keeps its key as the name (Cargo itself rejects such a manifest). The wasm check and code review
 cover what a lexical scan cannot.
 
 The failing paths are proved by tests on an in-memory model (a synthetic manifest set), so no
