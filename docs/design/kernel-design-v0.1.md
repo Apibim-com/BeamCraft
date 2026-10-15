@@ -162,11 +162,28 @@ the minimum admitted L keeps the norm itself normal. No relative bound is assert
 individual zero/tiny component. Their additive contribution is retained in the enclosure.
 
 For volume `((a*b)*c)/1e9` has three roundings: plate bound `g(3)`. For a member include the
-length bound to obtain `g(9)` (six length factors plus three). For area evaluate
-`(2*((a*b + a*c) + b*c))/1e6`: each term has one product, at most two additions and one
-division, so the plate bound is `g(4)`. Multiplication by 2 is exact here. Member terms involving
-L add six factors: `g(10)` safely bounds the whole positive sum. Multiplication of current
-volume by normal density adds one rounding: mass bounds `g(4)` plate, `g(10)` member.
+length bound to obtain `g(9)` (six length factors plus three).
+
+For area evaluate `p=fl(a*b)`, `q=fl(a*c)`, `r=fl(b*c)`, `s=fl(p+q)`, `t=fl(s+r)`, then
+`Shat=fl((2*t)/1e6)`. This is **three rounded products, two rounded additions and one rounded
+division: six rounded operations**. Multiplication by 2 is exact in this range; it removes
+none of those six roundings. Use the conservative plate-area bound **`g(6)`**. To see its
+sufficiency, expand the positive sum: each exact area term acquires only a subset of the six
+rounding factors. Each coefficient therefore lies within `1 +/- g(6)`, and positive weighting
+preserves that enclosure. Underflow contributions still require section 3.3's absolute terms.
+
+For a member take `c=Lhat`, with `Lhat/L` in `1 +/- g(6)`. The area expression still executes
+six rounded operations, but a term's coefficient follows at most four: its product, two
+additions and division. Specifically `a*b` and `a*Lhat` each traverse four roundings, while
+`b*Lhat` traverses three. Thus each coefficient is in `1 +/- g(4)`. Only the latter two terms
+also carry the length error; it is not squared or counted twice by adding positive terms.
+Their combined factors satisfy
+`(1-g(6))*(1-g(4)) >= 1-g(10)` and `(1+g(6))*(1+g(4)) <= 1+g(10)`.
+Consequently the member-area bound remains **`g(10)`**. This termwise proof, rather than adding
+six total area operations to six length factors, justifies retaining that bound.
+
+Multiplication of current volume by normal density adds one rounding: mass bounds remain
+`g(4)` plate, `g(10)` member. They depend on volume, not area.
 
 The following conservative bounds are relative to the ideal binary-input primitive. Add the
 tiny absolute underflow terms through the recurrence in section 3.3 when they occur.
@@ -176,9 +193,14 @@ tiny absolute underflow terms through the recurrence in section 3.3 when they oc
 | Member length | `g(6) < 6.662e-16` | less than `6.662e-10 mm` at `1e6 mm` (W02) |
 | Plate volume | `g(3) < 3.331e-16` | less than `3.331e-7 m3` at `1e9 m3` (W03) |
 | Member volume | `g(9) < 9.993e-16` | less than `9.993e-7 m3` at `1e9 m3` (W04) |
-| Plate area | `g(4) < 4.441e-16` | less than `2.6646e-9 m2` at `6e6 m2` (W05) |
+| Plate area | `g(6) < 6.662e-16` | less than `3.9972e-9 m2` at `6e6 m2` (W05) |
 | Member area | `g(10) < 1.111e-15` | less than `6.666e-9 m2` at `6e6 m2` (W06) |
 | Plate/member mass | `g(4)` / `g(10)` | less than `0.4441` / `1.111 kg` at `1e15 kg` (W07) |
+
+W05 exactly gives `g(6)=3/4503599627370493`; multiplying by the maximum `6000000 m2` gives
+`18000000/4503599627370493 m2`, below the tabulated `3.9972e-9 m2`. W06 retains its `g(10)`
+bound after the coefficient-factor derivation above. Neither reference area in W08 or W09
+changes: this correction changes the error budget, not the analytic formulas or exact areas.
 
 W08: a `1000*500*10` plate has `V=5000000 mm3=0.005 m3`,
 `S=2*(500000+10000+5000)=1030000 mm2=1.03 m2`; at density `1000`, mass is `5 kg`.
@@ -229,9 +251,15 @@ recurrence when differences/underflow occur. Near cancellation, an absolute encl
 zero cannot decide a sign. Compensation does not remove coordinate construction error.
 
 For mesh cross-checks apply the recurrence to the triangle area and tetrahedron expressions
-using corner radii, then sum enclosures. The analytic and mesh intervals must overlap, their
-centres must differ by at most the sum of their radii, and the independent topology/embedding
-tests must pass. Overlap alone is not a certificate of correctness: a broad interval is a
+using corner radii, then sum enclosures. When using the table's normal analytic area bound,
+set `k=6` for a plate and `k=10` for a member. Because that bound is relative to ideal area S,
+`abs(Shat-S) <= g(k)*S` implies `S <= abs(Shat)/(1-g(k))`; the analytic radius must therefore
+be at least `g(k)/(1-g(k))*abs(Shat)`, evaluated with upward rounding. Add any applicable
+input-conversion and underflow contributions. A computed-centre radius `g(k)*abs(Shat)` alone
+does not follow from the ideal-relative bound. The plate certificate must use `g(6)`, never
+the former plate-area `g(4)` budget. The analytic and mesh intervals must overlap, their centres
+must differ by at most the sum of their radii, and the independent topology/embedding tests
+must pass. Overlap alone is not a certificate of correctness: a broad interval is a
 diagnostic if it cannot establish positivity or preserve the construction's disjoint faces.
 A rounded face can be slightly nonplanar; picking uses the ideal analytic face, never an
 arbitrary plane fitted to rounded triangles.
@@ -426,8 +454,9 @@ neither a whole message nor a whole delivery fits. This design consumes no other
   evidence: 3 distinct integer ranks; independent of floating point.
 
 - **CR-TOL-001 quantity relative `1e-12`.** Verdict: loose for normal analytic values, tight for
-  subnormal mass or rounded mesh quantities. Numeric or resource evidence: `g(10)<1.111e-15`, but
-  W10 underflows and W32 loses about `1.4e-4` relative.
+  subnormal mass or rounded mesh quantities. Numeric or resource evidence: the corrected plate
+  area `g(6)<6.662e-16` and member area `g(10)<1.111e-15` both remain below `1e-12`, so this
+  verdict is unchanged. W10 underflows and W32 loses about `1.4e-4` relative.
 
 - **Coordinate absolute `1e-9 mm` plus relative `1e-12`.** Verdict: supported for listed small
   examples, tight across the full admitted domain. Numeric or resource evidence: W33 gives about

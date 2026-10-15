@@ -272,7 +272,7 @@
       "id": "G04-V17",
       "stage": "S3",
       "property": "Analytic surface area with correct units",
-      "method": "Sum six exact rectangle areas independently; compare the section 3 normal and absolute enclosures.",
+      "method": "Sum six exact rectangle areas independently; count three rounded products, two additions and one division (scaling by two is exact). Verify g(6) for plate area and the termwise g(6)-length plus g(4)-coefficient proof of g(10) for member area; compare computed-centre radii g(k)/(1-g(k))*abs(area_hat), k=6 or 10, including absolute contributions.",
       "inputs_class": "Plate/member, minimum and maximum sides, large aspect ratio, sloped member.",
       "expected_oracle_kind": "analytic",
       "f06_case_refs": [
@@ -281,7 +281,19 @@
         "F06-POS-07",
         "F06-POS-13"
       ],
-      "status": "planned"
+      "status": "planned",
+      "area_error_budget": {
+        "rounded_products": 3,
+        "rounded_additions": 2,
+        "rounded_divisions": 1,
+        "total_rounded_operations": 6,
+        "exact_scale_factor": 2,
+        "plate_relative_bound": "g(6)",
+        "member_relative_bound": "g(10)",
+        "member_length_relative_bound": "g(6)",
+        "maximum_area_coefficient_roundings": 4,
+        "computed_centre_radius": "g(k)/(1-g(k))*abs(area_hat), rounded upward; add applicable input-conversion and underflow contributions"
+      }
     },
     {
       "id": "G04-V18",
@@ -319,7 +331,7 @@
       "id": "G04-V20",
       "stage": "S3",
       "property": "Closedness, Euler, outward winding and two volume methods agree",
-      "method": "Independently enumerate incidence, verify one shell and Euler 2, then exact anchored tetrahedra versus analytic product; also sum triangle areas.",
+      "method": "Independently enumerate incidence, verify one shell and Euler 2, then exact anchored tetrahedra versus analytic product; sum triangle areas and compare to analytic area using the corrected G04-V17 budget and the sum of certified radii.",
       "inputs_class": "Generated boxes plus deleted/reversed triangle and overlapping closed-shell mutations.",
       "expected_oracle_kind": "invariant",
       "f06_case_refs": [
