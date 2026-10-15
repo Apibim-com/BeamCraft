@@ -10,28 +10,40 @@ the worker, storage, commands and UI are not implemented yet.
 ```
 apps/
   beamcraft-cli     command-line entry point (binary: beamcraft)
+  boundaries        module-boundary checker (development tool, not shipped)
 crates/
   geom              points, vectors, coordinate systems   (no deps)
-  model             parts, profiles, assemblies           (-> geom)
+  model             parts, profiles, assemblies, F04 error codes  (-> geom)
+  protocol          F05 frame header, limits, IPC codes   (-> model)
+tools/
+  fixtures          F07 fixture generator and verifier
 ```
 
-`geom` currently provides points and distance. `model` provides a beam axis and its length.
-The CLI reports its version. These types are a scaffold, not a USD engine or profile catalogue.
+`geom` currently provides points and distance. `model` provides a beam axis and its length and the
+23 stable F04 error codes. `protocol` provides the F05 frame header and binary prefix, the
+negotiable limits, a bundle budget and the transport codes; it does no I/O. The CLI reports its
+version. These types are a scaffold, not a USD engine or profile catalogue.
+
+[Module boundaries (F08)](contracts/module-boundaries-v0.1.md) give the exact crate and module path
+of every contract area, the allowed dependency edges and which crates are planned. A test and CI
+enforce them.
 
 ## Planned boundaries
 
 - Extend the existing `geom` and `model` crates. Do not create duplicate geometry or domain cores.
 - Keep domain mathematics, BIM identities, commands and invariants independent of UI, filesystem,
   scheduling runtimes and the C++ ABI. Pure domain crates must build for `wasm32-unknown-unknown`.
-- Introduce a pure protocol crate only if the worker contract requires it.
+- The pure `protocol` crate holds the F05 wire rules (framing, limits, transport codes). Process
+  supervision, pipes and deadlines stay in the native host.
 - Place filesystem access, process supervision, storage and coordination in a native engine host.
   The host depends on domain crates, not the reverse.
 - Use a thin Python/pxr worker for the first OpenUSD prototype, subject to the F03 package audit.
   Python serves USD operations; engineering rules and geometry computations remain in Rust.
 - Build an original native UI. The initial viewport candidate is wgpu with egui/eframe;
   its dependencies, fonts and assets need an audit. Kit is excluded.
-- Add steel, export and drawing modules when their contracts require them. F08 fixes concrete
-  module paths after F04–F07, rather than creating empty crates in advance.
+- Add steel, export and drawing modules when their contracts require them. F08 fixed the concrete
+  module paths after F04–F07 and creates no empty crates: `kernel`, `engine`, `host` and `ui` are
+  planned paths in the boundary document, created by their own tasks with their first real code.
 
 Our geometry kernel will be implemented independently under the clean-room rules. IFC-lite, Manifold,
 truck and OCCT are not production backends or source donors. Start with finite, bounded inputs,
@@ -88,6 +100,10 @@ Resource paths do not authorize outbound access; local resolution and containmen
 ## Rules
 
 - Dependencies point one way, from higher-level crates down to `model` and `geom`. No back-edges.
+  The allowed edges are the module table of the boundary document; `cargo test --workspace` checks
+  the manifests against it. Domain crates (`kind = domain`) have no UI, OS, filesystem, process or
+  async-runtime dependency and build for `wasm32-unknown-unknown`; CI derives that crate list from
+  the same table.
 - Units: millimetres, radians internally, right-handed, Z up. Convert only at the IO/UI edge.
 - Every feature is reachable headlessly: engine API → CLI command → end-to-end test.
 - Input is untrusted; see `AGENTS.md` §4.
