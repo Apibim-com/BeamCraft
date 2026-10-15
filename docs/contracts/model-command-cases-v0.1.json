@@ -1297,6 +1297,213 @@
         "FS-NEG-TRANSLATION-BOUND"
       ],
       "note": "Translation component just above the 1,000,000,000 mm limit."
+    },
+    {
+      "case_id": "F04-POS-14",
+      "given": [
+        "Authorized context; base and generation match; new_id unused",
+        "Local frame per G-01 (owner decision) and P-1 (proposed for owner adoption)"
+      ],
+      "command": "CreatePlate",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000005",
+        "name": "Synthetic plate",
+        "width_mm": 1000,
+        "length_mm": 500,
+        "thickness_mm": 10,
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      "envelope_changes": {},
+      "expected": {
+        "outcome": "accepted_draft",
+        "generation": "1",
+        "local_bounds_mm": {
+          "x": [
+            "0",
+            "1000"
+          ],
+          "y": [
+            "0",
+            "500"
+          ],
+          "z": [
+            "0",
+            "10"
+          ]
+        },
+        "compare": "CR-TOL-001"
+      },
+      "note": "Plate local box [0, width] x [0, length] x [0, thickness] from the origin corner; depends on proposal P-1."
+    },
+    {
+      "case_id": "F04-POS-15",
+      "given": [
+        "Acceptance harness binds the actual validated original profile fixture digest first; the fixture is a rectangular section with width 200 mm and height 300 mm; no placeholder hash",
+        "Local frame per G-02 (owner decision), P-2 and P-3 (proposed for owner adoption)"
+      ],
+      "command": "CreateStraightMember",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000006",
+        "element_kind": "beam",
+        "name": "Synthetic member",
+        "axis_points_mm": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            4000,
+            0,
+            0
+          ]
+        ],
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      "argument_bindings": {
+        "profile_digest": "actual_original_profile_fixture_sha256"
+      },
+      "envelope_changes": {},
+      "expected": {
+        "outcome": "accepted_draft",
+        "generation": "1",
+        "member_frame": {
+          "Z_m": [
+            "1",
+            "0",
+            "0"
+          ],
+          "Y_m": [
+            "0",
+            "0",
+            "1"
+          ],
+          "X_m": [
+            "0",
+            "1",
+            "0"
+          ]
+        },
+        "local_bounds_mm": {
+          "x": [
+            "0",
+            "4000"
+          ],
+          "y": [
+            "-100",
+            "100"
+          ],
+          "z": [
+            "-150",
+            "150"
+          ]
+        },
+        "compare": "CR-TOL-001"
+      },
+      "note": "Horizontal member: height points up, width lies along local Y; depends on proposals P-2 and P-3."
+    },
+    {
+      "case_id": "F04-POS-16",
+      "given": [
+        "Acceptance harness binds the actual validated original profile fixture digest first; the fixture is a rectangular section with width 200 mm and height 300 mm; no placeholder hash",
+        "Local frame per G-02 (owner decision), P-2 and P-3 (proposed for owner adoption)"
+      ],
+      "command": "CreateStraightMember",
+      "arguments": {
+        "new_id": "019a7bf0-0000-7000-8000-000000000006",
+        "element_kind": "column",
+        "name": "Synthetic member",
+        "axis_points_mm": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            3000
+          ]
+        ],
+        "placement": {
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "orientation_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      "argument_bindings": {
+        "profile_digest": "actual_original_profile_fixture_sha256"
+      },
+      "envelope_changes": {},
+      "expected": {
+        "outcome": "accepted_draft",
+        "generation": "1",
+        "member_frame": {
+          "Z_m": [
+            "0",
+            "0",
+            "1"
+          ],
+          "Y_m": [
+            "0",
+            "1",
+            "0"
+          ],
+          "X_m": [
+            "1",
+            "0",
+            "0"
+          ]
+        },
+        "local_bounds_mm": {
+          "x": [
+            "-100",
+            "100"
+          ],
+          "y": [
+            "-150",
+            "150"
+          ],
+          "z": [
+            "0",
+            "3000"
+          ]
+        },
+        "compare": "CR-TOL-001"
+      },
+      "note": "Column (axis exactly parallel to local Z) uses the column rule of P-3."
     }
   ],
   "raw_json_cases": [
