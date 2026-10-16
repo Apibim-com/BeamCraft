@@ -66,7 +66,7 @@ Dependencies are checked in `[dependencies]`,
 | beamcraft-geom | crates/geom | domain | 0 | - | now | G01 |
 | beamcraft-model | crates/model | domain | 1 | beamcraft-geom | now | P01 |
 | beamcraft-protocol | crates/protocol | native | 2 | beamcraft-model | now | U01 |
-| beamcraft-layer-engine | crates/layer-engine | host | 2 | beamcraft-model | now | U01/U02; separate process, owner decision 2026-10-16 |
+| beamcraft-layer-engine | crates/layer-engine | host | 2 | beamcraft-model | now | U01/U02/U03; separate process, owner decision 2026-10-16 |
 | beamcraft-kernel | crates/kernel | domain | 2 | beamcraft-geom, beamcraft-model | now | G02 |
 | beamcraft-engine | crates/engine | native | 3 | beamcraft-geom, beamcraft-model, beamcraft-kernel | planned | P01 |
 | beamcraft-host | crates/host | host | 4 | beamcraft-model, beamcraft-protocol, beamcraft-engine | now | U05 |
