@@ -28,20 +28,24 @@ fn run() -> Result<(), Error> {
     let mut output = None;
     let mut only_count = None;
     let mut only_strategy = None;
-    let mut args = std::env::args().skip(1);
+    let mut args = std::env::args_os().skip(1);
     while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--output" => output = Some(args.next().ok_or(Error::Input("missing output path"))?),
-            "--count" => {
+        match arg.to_str() {
+            Some("--output") => {
+                output = Some(args.next().ok_or(Error::Input("missing output path"))?)
+            }
+            Some("--count") => {
                 only_count = Some(
                     args.next()
                         .ok_or(Error::Input("missing count"))?
+                        .to_str()
+                        .ok_or(Error::Input("count"))?
                         .parse::<u32>()
                         .map_err(|_| Error::Input("count"))?,
                 )
             }
-            "--strategy" => {
-                only_strategy = Some(match args.next().as_deref() {
+            Some("--strategy") => {
+                only_strategy = Some(match args.next().as_deref().and_then(|a| a.to_str()) {
                     Some("instanced") => Strategy::Instanced,
                     Some("merged") => Strategy::Merged,
                     _ => return Err(Error::Input("strategy: instanced or merged")),

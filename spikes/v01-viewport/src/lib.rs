@@ -29,6 +29,13 @@ impl std::fmt::Display for Error {
 }
 impl std::error::Error for Error {}
 
+/// Fallibly parses face 0 with the parser epaint uses at font init, which panics on failure.
+pub fn check_font(bytes: &[u8]) -> Result<(), Error> {
+    skrifa::FontRef::from_index(bytes, 0)
+        .map(|_| ())
+        .map_err(|_| Error::Input("font file does not parse"))
+}
+
 /// JSON string escaping without adding a serialization dependency.
 pub fn json_string(s: &str) -> String {
     let mut out = String::from("\"");

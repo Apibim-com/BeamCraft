@@ -4,6 +4,7 @@
 use beamcraft_v01_viewport_spike::{
     Error,
     camera::Camera,
+    check_font,
     render::{Renderer, Strategy, Uploaded},
     scene,
 };
@@ -40,6 +41,7 @@ fn inter(ctx: &egui::Context) -> bool {
         if bytes.is_empty() || bytes.len() > 4 * 1024 * 1024 {
             return Err(std::io::Error::other("Inter size limit"));
         }
+        check_font(&bytes).map_err(std::io::Error::other)?;
         Ok(bytes)
     })();
     match bytes {

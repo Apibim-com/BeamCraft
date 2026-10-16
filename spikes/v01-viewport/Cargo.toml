@@ -16,6 +16,8 @@ egui = { version = "=0.36.2", default-features = false }
 eframe = { version = "=0.36.2", default-features = false, features = ["wgpu_no_default_features", "accesskit", "links", "wayland", "x11"] }
 wgpu = { version = "=30.0.1", default-features = false, features = ["std", "wgsl", "dx12", "vulkan", "metal"] }
 pollster = "1"
+# Same parser and version epaint 0.36.2 uses at font init; validates Inter before egui can panic on it.
+skrifa = "=0.44.0"
 beamcraft-geom = { path = "../../crates/geom" }
 beamcraft-kernel = { path = "../../crates/kernel" }
 craft-ui = { git = "https://github.com/storytold/craft-libs", rev = "83bf4cb25c01ed46e7645c4172974239868aaf06" }
