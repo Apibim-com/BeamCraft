@@ -369,6 +369,7 @@ pub(crate) fn open(request: OpenRequest, control: &Control) -> Result<Candidate,
             ));
         }
         let mut properties = Vec::new();
+        let mut relationships = Vec::new();
         for property in prim.property_names().map_err(|_| corrupt())? {
             control.check()?;
             charge(&mut output_values, 1, b.values)?;
@@ -381,9 +382,39 @@ pub(crate) fn open(request: OpenRequest, control: &Control) -> Result<Candidate,
                     sdf::Value::Token(s) => Some(s.to_string()),
                     _ => None,
                 });
-            // Relationship delivery is deferred rather than guessed from an absent attribute.
             let Some(type_name) = ty else {
-                return Err(unsupported());
+                let relationship = stage.relationship(full.as_str()).map_err(|_| corrupt())?;
+                if !relationship.is_defined().map_err(|_| corrupt())? {
+                    return Err(unsupported());
+                }
+                let targets = relationship.targets().map_err(|_| corrupt())?;
+                if targets.len() > b.array_items {
+                    return Err(limit());
+                }
+                let targets = targets
+                    .into_iter()
+                    .map(|p| p.to_string())
+                    .collect::<Vec<_>>();
+                charge(
+                    &mut output_bytes,
+                    property.len().saturating_add(128),
+                    b.snapshot_bytes,
+                )?;
+                for target in &targets {
+                    if target.len() > 1024 {
+                        return Err(limit());
+                    }
+                    charge(
+                        &mut output_bytes,
+                        target.len().saturating_add(32),
+                        b.snapshot_bytes,
+                    )?;
+                }
+                relationships.push(Relationship {
+                    name: property.to_string(),
+                    targets,
+                });
+                continue;
             };
             let value = if attr
                 .resolve_info()
@@ -415,6 +446,7 @@ pub(crate) fn open(request: OpenRequest, control: &Control) -> Result<Candidate,
             });
         }
         properties.sort_by(|a, b| a.name.cmp(&b.name));
+        relationships.sort_by(|a, b| a.name.cmp(&b.name));
         let element_id = properties
             .iter()
             .find(|p| p.name == "bim:id")
@@ -451,6 +483,7 @@ pub(crate) fn open(request: OpenRequest, control: &Control) -> Result<Candidate,
                 .map(|s| s.to_string()),
             active: prim.is_active().map_err(|_| corrupt())?,
             properties,
+            relationships,
             sources,
         });
     }
@@ -524,7 +557,33 @@ fn validate(value: &sdf::Value, b: Budgets, depth: usize) -> Result<(), Diagnost
             }
             Ok(())
         }
-        sdf::Value::PathListOp(_) => Err(unsupported()),
+        sdf::Value::PathListOp(list) => {
+            let count = list
+                .explicit_items
+                .len()
+                .saturating_add(list.added_items.len())
+                .saturating_add(list.prepended_items.len())
+                .saturating_add(list.appended_items.len())
+                .saturating_add(list.deleted_items.len())
+                .saturating_add(list.ordered_items.len());
+            if count > b.array_items {
+                return Err(limit());
+            }
+            for path in list
+                .explicit_items
+                .iter()
+                .chain(&list.added_items)
+                .chain(&list.prepended_items)
+                .chain(&list.appended_items)
+                .chain(&list.deleted_items)
+                .chain(&list.ordered_items)
+            {
+                if path.to_string().len() > 1024 {
+                    return Err(limit());
+                }
+            }
+            Ok(())
+        }
         _ => {
             typed(value, b)?;
             Ok(())
@@ -541,7 +600,7 @@ fn number(n: f64) -> Result<Value, Diagnostic> {
     }
     Ok(Value::Number(n))
 }
-fn typed(value: &sdf::Value, b: Budgets) -> Result<Value, Diagnostic> {
+pub(crate) fn typed(value: &sdf::Value, b: Budgets) -> Result<Value, Diagnostic> {
     typed_depth(value, b, 0)
 }
 fn typed_depth(value: &sdf::Value, b: Budgets, depth: usize) -> Result<Value, Diagnostic> {
@@ -628,6 +687,28 @@ fn typed_depth(value: &sdf::Value, b: Budgets, depth: usize) -> Result<Value, Di
                 .map(number)
                 .collect::<Result<_, _>>()?,
         ),
+        V::Quatd(v) => array(
+            [v.w, v.x, v.y, v.z]
+                .into_iter()
+                .map(number)
+                .collect::<Result<_, _>>()?,
+        ),
+        V::Vec3f(v) => array(
+            [v.x, v.y, v.z]
+                .into_iter()
+                .map(|n| number(n.into()))
+                .collect::<Result<_, _>>()?,
+        ),
+        V::Vec3fVec(v) => {
+            if v.len().saturating_mul(3) > b.array_items {
+                return Err(limit());
+            }
+            array(
+                v.iter()
+                    .map(|v| typed(&V::Vec3f(*v), b))
+                    .collect::<Result<_, _>>()?,
+            )
+        }
         V::Vec3dVec(v) => {
             if v.len() > b.array_items {
                 return Err(limit());

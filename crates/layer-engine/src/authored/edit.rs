@@ -1,0 +1,804 @@
+// SPDX-License-Identifier: MPL-2.0
+// SPDX-FileCopyrightText: 2026 Apibim
+
+use super::*;
+use openusd::{
+    sdf::{self, AbstractData},
+    usda::TextWriter,
+};
+use std::io::{self, Write};
+
+fn path(text: &str) -> Result<sdf::Path, Diagnostic> {
+    sdf::Path::new(text).map_err(|_| corrupt())
+}
+fn data(asset: &Asset) -> Result<sdf::Data, Diagnostic> {
+    if !asset.name.ends_with(".usda") {
+        return Err(unsupported());
+    }
+    openusd::usda::parse(std::str::from_utf8(&asset.bytes).map_err(|_| corrupt())?)
+        .map_err(|_| corrupt())
+}
+pub(super) fn targets(request: &OpenRequest, targets: &EditTargets) -> Result<(), Diagnostic> {
+    if targets.authored == targets.derived
+        || targets.authored == request.root
+        || targets.derived == request.root
+    {
+        return Err(invalid());
+    }
+    for name in [&request.root, &targets.authored, &targets.derived] {
+        if !request.owned_layers.contains(name) {
+            return Err(fail(ErrorCode::ForeignReadOnly, "edit layer is not owned"));
+        }
+        if !name.ends_with(".usda") {
+            return Err(unsupported());
+        }
+        let layer = data(
+            request
+                .assets
+                .iter()
+                .find(|a| a.name == *name)
+                .ok_or_else(corrupt)?,
+        )?;
+        if let Some(value) = layer
+            .try_field(&sdf::Path::abs_root(), "customLayerData")
+            .map_err(|_| corrupt())?
+            && let sdf::Value::Dictionary(fields) = value.as_ref()
+            && let Some(pin) = fields.get("bimSchemaDigest")
+            && pin != &sdf::Value::String(schema_identity()?.digest.to_string())
+        {
+            return Err(fail(
+                ErrorCode::UnsupportedVersion,
+                "layer schema digest mismatch",
+            ));
+        }
+    }
+    let root = data(
+        request
+            .assets
+            .iter()
+            .find(|a| a.name == request.root)
+            .ok_or_else(corrupt)?,
+    )?;
+    let value = root
+        .get_field(&sdf::Path::abs_root(), "subLayers")
+        .map_err(|_| invalid())?;
+    let sdf::Value::StringVec(layers) = value.as_ref() else {
+        return Err(invalid());
+    };
+    let names = layers
+        .iter()
+        .map(|n| preflight::anchored(n, &request.root))
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    if !names.contains(&targets.authored) || !names.contains(&targets.derived) {
+        return Err(fail(
+            ErrorCode::DependencyUnavailable,
+            "edit layers must participate in root stack",
+        ));
+    }
+    Ok(())
+}
+fn field(data: &mut sdf::Data, p: &str, key: &str, value: sdf::Value) -> Result<(), Diagnostic> {
+    let p = path(p)?;
+    if !data.has_spec(&p) {
+        return Err(corrupt());
+    }
+    data.set_field(&p, key, value);
+    Ok(())
+}
+fn child(
+    data: &mut sdf::Data,
+    parent: &str,
+    key: &str,
+    name: &str,
+    remove: bool,
+) -> Result<(), Diagnostic> {
+    let p = path(parent)?;
+    let mut names = match data.try_field(&p, key).map_err(|_| corrupt())? {
+        Some(v) => match v.as_ref() {
+            sdf::Value::TokenVec(v) => v.clone(),
+            _ => return Err(unsupported()),
+        },
+        None => Vec::new(),
+    };
+    if remove {
+        names.retain(|n| n.as_str() != name);
+    } else if !names.iter().any(|n| n.as_str() == name) {
+        names.push(name.into());
+    }
+    field(data, parent, key, sdf::Value::TokenVec(names))
+}
+fn prim(data: &mut sdf::Data, p: &str, ty: Option<&str>, defining: bool) -> Result<(), Diagnostic> {
+    if p == "/" {
+        if !data.has_spec(&sdf::Path::abs_root()) {
+            data.create_spec(sdf::Path::abs_root(), sdf::SpecType::PseudoRoot);
+        }
+        return Ok(());
+    }
+    if p.split('/').count() > 17 {
+        return Err(limit());
+    }
+    let (parent, name) = p.rsplit_once('/').ok_or_else(corrupt)?;
+    let parent = if parent.is_empty() { "/" } else { parent };
+    let parsed = path(p)?;
+    if !data.has_spec(&parsed) {
+        prim(data, parent, None, false)?;
+        data.create_spec(parsed, sdf::SpecType::Prim);
+        field(
+            data,
+            p,
+            "specifier",
+            sdf::Value::Specifier(if defining {
+                sdf::Specifier::Def
+            } else {
+                sdf::Specifier::Over
+            }),
+        )?;
+        child(data, parent, "primChildren", name, false)?;
+    }
+    if let Some(ty) = ty {
+        field(data, p, "typeName", sdf::Value::token(ty))?;
+    }
+    Ok(())
+}
+fn container(data: &mut sdf::Data, p: &str, ty: &str) -> Result<(), Diagnostic> {
+    if !data.has_spec(&path(p)?) {
+        prim(data, p, Some(ty), true)?;
+    }
+    Ok(())
+}
+fn attribute(
+    data: &mut sdf::Data,
+    p: &str,
+    name: &str,
+    ty: &str,
+    opinion: Opinion<sdf::Value>,
+    custom: bool,
+) -> Result<(), Diagnostic> {
+    prim(data, p, None, false)?;
+    let full = path(&format!("{p}.{name}"))?;
+    if matches!(opinion, Opinion::Remove) {
+        data.erase_spec(&full);
+        child(data, p, "propertyChildren", name, true)?;
+        return Ok(());
+    }
+    if !data.has_spec(&full) {
+        data.create_spec(full.clone(), sdf::SpecType::Attribute);
+        child(data, p, "propertyChildren", name, false)?;
+    } else if data.spec_type(&full) != Some(sdf::SpecType::Attribute) {
+        return Err(unsupported());
+    }
+    data.set_field(&full, "typeName", sdf::Value::token(ty));
+    data.set_field(&full, "custom", sdf::Value::Bool(custom));
+    data.set_field(
+        &full,
+        "variability",
+        sdf::Value::Variability(sdf::Variability::Varying),
+    );
+    match opinion {
+        Opinion::Value(v) => data.set_field(&full, "default", v),
+        Opinion::Block => data.set_field(&full, "default", sdf::Value::ValueBlock),
+        Opinion::Absent => data.erase_field(&full, "default"),
+        Opinion::Remove => (),
+    }
+    Ok(())
+}
+fn attr(
+    data: &mut sdf::Data,
+    p: &str,
+    name: &str,
+    ty: &str,
+    v: sdf::Value,
+) -> Result<(), Diagnostic> {
+    attribute(data, p, name, ty, Opinion::Value(v), true)
+}
+fn relationship(
+    data: &mut sdf::Data,
+    p: &str,
+    name: &str,
+    opinion: MaterialOpinion,
+) -> Result<(), Diagnostic> {
+    prim(data, p, None, false)?;
+    let full = path(&format!("{p}.{name}"))?;
+    if opinion == MaterialOpinion::Remove {
+        // Refuse erasing unknown relationship-target specs/metadata that this profile cannot model.
+        if data
+            .spec_paths()
+            .iter()
+            .any(|s| s.to_string().starts_with(&format!("{p}.{name}[")))
+        {
+            return Err(unsupported());
+        }
+        data.erase_spec(&full);
+        child(data, p, "propertyChildren", name, true)?;
+        return Ok(());
+    }
+    if !data.has_spec(&full) {
+        data.create_spec(full.clone(), sdf::SpecType::Relationship);
+        child(data, p, "propertyChildren", name, false)?;
+    } else if data.spec_type(&full) != Some(sdf::SpecType::Relationship) {
+        return Err(unsupported());
+    }
+    data.set_field(&full, "custom", sdf::Value::Bool(true));
+    data.set_field(
+        &full,
+        "variability",
+        sdf::Value::Variability(sdf::Variability::Uniform),
+    );
+    let targets = match opinion {
+        MaterialOpinion::Target(d) => vec![path(&definition_path(d))?],
+        _ => Vec::new(),
+    };
+    data.set_field(
+        &full,
+        "targetPaths",
+        sdf::Value::PathListOp(sdf::ListOp::explicit(targets)),
+    );
+    Ok(())
+}
+fn points(values: &[[f64; 3]]) -> sdf::Value {
+    sdf::Value::Vec3dVec(values.iter().map(|p| (*p).into()).collect())
+}
+fn pose(data: &mut sdf::Data, p: &str, value: &Placement) -> Result<(), Diagnostic> {
+    let [x, y, z] = value.translation_mm;
+    let [qx, qy, qz, qw] = value.orientation_xyzw;
+    for (name, ty, v) in [
+        ("xformOp:translate", "double3", sdf::Value::vec3d(x, y, z)),
+        ("xformOp:orient", "quatd", sdf::Value::quatd(qw, qx, qy, qz)),
+        (
+            "xformOpOrder",
+            "token[]",
+            sdf::Value::token_vec(["xformOp:translate", "xformOp:orient"]),
+        ),
+    ] {
+        attribute(data, p, name, ty, Opinion::Value(v), false)?;
+    }
+    Ok(())
+}
+fn units(data: &mut sdf::Data, schema: Option<SchemaIdentity>) -> Result<(), Diagnostic> {
+    prim(data, "/", None, false)?;
+    field(data, "/", "metersPerUnit", sdf::Value::Double(0.001))?;
+    field(data, "/", "upAxis", sdf::Value::token("Z"))?;
+    if let Some(schema) = schema {
+        let root = sdf::Path::abs_root();
+        let mut dictionary = match data
+            .try_field(&root, "customLayerData")
+            .map_err(|_| corrupt())?
+        {
+            Some(v) => match v.as_ref() {
+                sdf::Value::Dictionary(v) => v.clone(),
+                _ => return Err(corrupt()),
+            },
+            None => Default::default(),
+        };
+        dictionary.insert(
+            "bimSchemaDigest".into(),
+            sdf::Value::String(schema.digest.to_string()),
+        );
+        field(
+            data,
+            "/",
+            "customLayerData",
+            sdf::Value::Dictionary(dictionary),
+        )?;
+    }
+    Ok(())
+}
+fn definition(data: &mut sdf::Data, p: &str, value: &Definition) -> Result<(), Diagnostic> {
+    prim(data, p, Some("Scope"), true)?;
+    attr(
+        data,
+        p,
+        "bim:schemaVersion",
+        "string",
+        sdf::Value::String("0.1.0".into()),
+    )?;
+    attr(data, p, "bim:units", "token", sdf::Value::token("mm"))?;
+    match value {
+        Definition::RectangleProfile {
+            width_mm,
+            height_mm,
+        } => {
+            attr(
+                data,
+                p,
+                "bim:definitionKind",
+                "token",
+                sdf::Value::token("rectangle"),
+            )?;
+            attr(
+                data,
+                p,
+                "steel:profile:widthMm",
+                "double",
+                sdf::Value::Double(*width_mm),
+            )?;
+            attr(
+                data,
+                p,
+                "steel:profile:heightMm",
+                "double",
+                sdf::Value::Double(*height_mm),
+            )?;
+        }
+        Definition::Material { density_kg_m3 } => {
+            attr(
+                data,
+                p,
+                "bim:definitionKind",
+                "token",
+                sdf::Value::token("material"),
+            )?;
+            if let Some(d) = density_kg_m3 {
+                attr(data, p, "bim:densityKgM3", "double", sdf::Value::Double(*d))?;
+            }
+        }
+    }
+    Ok(())
+}
+pub(super) fn definition_bytes(d: &Definition) -> Result<Vec<u8>, Diagnostic> {
+    validate::definition(d)?;
+    let mut data = sdf::Data::new();
+    units(&mut data, None)?;
+    definition(&mut data, "/Definition", d)?;
+    serialize(&data, Budgets::default().layer_bytes)
+}
+struct BoundedOutput {
+    bytes: Vec<u8>,
+    max: usize,
+}
+impl Write for BoundedOutput {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if self.bytes.len().saturating_add(bytes.len()) > self.max {
+            return Err(io::ErrorKind::FileTooLarge.into());
+        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+fn serialize(data: &sdf::Data, max: usize) -> Result<Vec<u8>, Diagnostic> {
+    let mut output = BoundedOutput {
+        bytes: Vec::new(),
+        max,
+    };
+    TextWriter::write(data, &mut output).map_err(|_| limit())?;
+    Ok(output.bytes)
+}
+fn create(data: &mut sdf::Data, e: &Element, actor: &str) -> Result<(), Diagnostic> {
+    let p = element_path(&e.id)?;
+    container(data, "/World", "Xform")?;
+    container(data, "/World/Steel", "Scope")?;
+    prim(data, &p, Some("Xform"), true)?;
+    let kind = match e.shape {
+        Shape::Plate { .. } => "plate",
+        Shape::Member {
+            kind: MemberKind::Beam,
+            ..
+        } => "beam",
+        Shape::Member {
+            kind: MemberKind::Column,
+            ..
+        } => "column",
+    };
+    for (name, ty, v) in [
+        ("bim:id", "string", sdf::Value::String(e.id.clone())),
+        ("bim:name", "string", sdf::Value::String(e.name.clone())),
+        ("bim:elementKind", "token", sdf::Value::token(kind)),
+        ("bim:geometryMode", "token", sdf::Value::token("parametric")),
+        (
+            "bim:schemaVersion",
+            "string",
+            sdf::Value::String("0.1.0".into()),
+        ),
+        ("bim:createdBy", "string", sdf::Value::String(actor.into())),
+    ] {
+        attr(data, &p, name, ty, v)?;
+    }
+    match &e.shape {
+        Shape::Plate {
+            contour_mm,
+            thickness_mm,
+        } => {
+            attr(
+                data,
+                &p,
+                "steel:plate:contourPointsMm",
+                "double3[]",
+                points(contour_mm),
+            )?;
+            attr(
+                data,
+                &p,
+                "steel:plate:thicknessMm",
+                "double",
+                sdf::Value::Double(*thickness_mm),
+            )?;
+        }
+        Shape::Member {
+            axis_mm,
+            profile,
+            roll_rad,
+            ..
+        } => {
+            attr(data, &p, "bim:axisPointsMm", "double3[]", points(axis_mm))?;
+            relationship(data, &p, "bim:profile", MaterialOpinion::Target(*profile))?;
+            if let Some(n) = roll_rad {
+                attr(
+                    data,
+                    &p,
+                    "steel:member:rollRad",
+                    "double",
+                    sdf::Value::Double(*n),
+                )?;
+            }
+        }
+    }
+    if let Some(d) = e.material {
+        relationship(data, &p, "bim:material", MaterialOpinion::Target(d))?;
+    }
+    pose(data, &p, &e.placement)
+}
+fn mesh(data: &mut sdf::Data, m: &Mesh) -> Result<(), Diagnostic> {
+    let p = format!("{}/Geometry", element_path(&m.id)?);
+    prim(data, &p, Some("Mesh"), true)?;
+    for (name, ty, v) in [
+        (
+            "points",
+            "point3f[]",
+            sdf::Value::Vec3fVec(m.points_mm.iter().map(|p| (*p).into()).collect()),
+        ),
+        (
+            "faceVertexCounts",
+            "int[]",
+            sdf::Value::IntVec(m.face_counts.clone()),
+        ),
+        (
+            "faceVertexIndices",
+            "int[]",
+            sdf::Value::IntVec(m.indices.clone()),
+        ),
+        ("subdivisionScheme", "token", sdf::Value::token("none")),
+        ("orientation", "token", sdf::Value::token("rightHanded")),
+    ] {
+        attribute(data, &p, name, ty, Opinion::Value(v), false)?;
+    }
+    attr(
+        data,
+        &p,
+        "bim:shapeKey",
+        "string",
+        sdf::Value::String(m.shape_key.to_string()),
+    )
+}
+fn erase_mesh(data: &mut sdf::Data, id: &str) -> Result<(), Diagnostic> {
+    let parent = element_path(id)?;
+    let p = format!("{parent}/Geometry");
+    let paths = data.spec_paths();
+    for path in paths {
+        let s = path.to_string();
+        if s == p || s.starts_with(&format!("{p}.")) || s.starts_with(&format!("{p}/")) {
+            data.erase_spec(&path);
+        }
+    }
+    if data.has_spec(&path(&parent)?) {
+        child(data, &parent, "primChildren", "Geometry", true)?;
+    }
+    Ok(())
+}
+
+pub(super) fn apply(
+    original: &OpenRequest,
+    targets: &EditTargets,
+    input: &Prepare,
+    prims: &[Prim],
+    control: &Control,
+) -> Result<(OpenRequest, Vec<AuthoredItem>), Diagnostic> {
+    self::targets(original, targets)?;
+    let mut request = original.clone();
+    let mut authored = data(
+        original
+            .assets
+            .iter()
+            .find(|a| a.name == targets.authored)
+            .ok_or_else(corrupt)?,
+    )?;
+    let mut derived = data(
+        original
+            .assets
+            .iter()
+            .find(|a| a.name == targets.derived)
+            .ok_or_else(corrupt)?,
+    )?;
+    let mut root = data(
+        original
+            .assets
+            .iter()
+            .find(|a| a.name == original.root)
+            .ok_or_else(corrupt)?,
+    )?;
+    units(&mut root, Some(input.schema))?;
+    units(&mut authored, Some(input.schema))?;
+    units(&mut derived, Some(input.schema))?;
+    let mut resources = input.resources.iter().collect::<Vec<_>>();
+    resources.sort_by_key(|r| r.digest.to_string());
+    let mut seen = BTreeSet::new();
+    for r in resources {
+        control.check()?;
+        if !seen.insert(r.digest) {
+            return Err(fail(
+                ErrorCode::MalformedCommand,
+                "duplicate resource identity",
+            ));
+        }
+        let p = definition_path(r.digest);
+        validate::owned(prims, &p, true)?;
+        if prims.iter().any(|v| v.path == p) {
+            continue;
+        } // Existing immutable bytes are never rewritten.
+        container(&mut authored, "/World", "Xform")?;
+        container(&mut authored, "/World/Definitions", "Scope")?;
+        definition(&mut authored, &p, &r.definition)?;
+        attr(
+            &mut authored,
+            &p,
+            "bim:contentDigest",
+            "string",
+            sdf::Value::String(r.digest.to_string()),
+        )?;
+    }
+    // Lifecycle first, then all scalar/relationship opinions, then engine results.
+    for c in &input.changes {
+        if let Change::Create(e) = c {
+            control.check()?;
+            create(&mut authored, e, &input.actor)?;
+        }
+    }
+    for c in &input.changes {
+        control.check()?;
+        let (id, _) = c.key();
+        let p = element_path(id)?;
+        match c {
+            Change::Label { name, .. } => attr(
+                &mut authored,
+                &p,
+                "bim:name",
+                "string",
+                sdf::Value::String(name.clone()),
+            )?,
+            Change::Contour { points_mm, .. } => attr(
+                &mut authored,
+                &p,
+                "steel:plate:contourPointsMm",
+                "double3[]",
+                points(points_mm),
+            )?,
+            Change::Thickness { mm, .. } => attr(
+                &mut authored,
+                &p,
+                "steel:plate:thicknessMm",
+                "double",
+                sdf::Value::Double(*mm),
+            )?,
+            Change::Axis { points_mm, .. } => attr(
+                &mut authored,
+                &p,
+                "bim:axisPointsMm",
+                "double3[]",
+                points(points_mm),
+            )?,
+            Change::Roll { opinion, .. } => {
+                let opinion = match opinion {
+                    Opinion::Value(n) => Opinion::Value(sdf::Value::Double(*n)),
+                    Opinion::Absent => Opinion::Absent,
+                    Opinion::Block => Opinion::Block,
+                    Opinion::Remove => Opinion::Remove,
+                };
+                attribute(
+                    &mut authored,
+                    &p,
+                    "steel:member:rollRad",
+                    "double",
+                    opinion,
+                    true,
+                )?;
+            }
+            Change::Material { opinion, .. } => {
+                relationship(&mut authored, &p, "bim:material", opinion.clone())?
+            }
+            Change::Profile { digest, .. } => relationship(
+                &mut authored,
+                &p,
+                "bim:profile",
+                MaterialOpinion::Target(*digest),
+            )?,
+            Change::Placement { placement, .. } => pose(&mut authored, &p, placement)?,
+            _ => (),
+        }
+        if matches!(
+            c,
+            Change::Contour { .. }
+                | Change::Thickness { .. }
+                | Change::Axis { .. }
+                | Change::Roll { .. }
+                | Change::Profile { .. }
+        ) {
+            // Never reveal a weaker stale result after removing the derived opinion.
+            let mesh_path = format!("{p}/Geometry");
+            if prims
+                .iter()
+                .filter(|v| v.path == mesh_path)
+                .flat_map(|v| &v.sources)
+                .any(|s| s.layer != targets.derived)
+            {
+                return Err(fail(
+                    ErrorCode::DependencyUnavailable,
+                    "derived invalidation requires exclusive result layer",
+                ));
+            }
+            erase_mesh(&mut derived, id)?;
+        }
+    }
+    for c in &input.changes {
+        if let Change::Mesh(m) = c {
+            control.check()?;
+            let mesh_path = format!("{}/Geometry", element_path(&m.id)?);
+            if prims
+                .iter()
+                .filter(|v| v.path == mesh_path || v.path.starts_with(&format!("{mesh_path}/")))
+                .flat_map(|v| &v.sources)
+                .any(|s| s.layer != targets.derived)
+            {
+                return Err(fail(
+                    ErrorCode::DependencyUnavailable,
+                    "mesh writes require exclusive derived layer",
+                ));
+            }
+            mesh(&mut derived, m)?;
+        }
+    }
+    let opinions = capture(input, &authored, &derived, original.budgets)?;
+    for (name, data) in [
+        (&original.root, root),
+        (&targets.authored, authored),
+        (&targets.derived, derived),
+    ] {
+        let a = request
+            .assets
+            .iter_mut()
+            .find(|a| a.name == *name)
+            .ok_or_else(corrupt)?;
+        a.bytes = serialize(&data, request.budgets.layer_bytes)?;
+        a.digest = Sha256::digest(&a.bytes).map_err(|_| limit())?;
+    }
+    Ok((request, opinions))
+}
+
+fn capture(
+    input: &Prepare,
+    authored: &sdf::Data,
+    derived: &sdf::Data,
+    b: Budgets,
+) -> Result<Vec<AuthoredItem>, Diagnostic> {
+    const POSE: &[(&str, &str)] = &[
+        ("xformOp:translate", "double3"),
+        ("xformOp:orient", "quatd"),
+        ("xformOpOrder", "token[]"),
+    ];
+    const MESH: &[(&str, &str)] = &[
+        ("points", "point3f[]"),
+        ("faceVertexCounts", "int[]"),
+        ("faceVertexIndices", "int[]"),
+        ("orientation", "token"),
+        ("subdivisionScheme", "token"),
+        ("bim:shapeKey", "string"),
+    ];
+    let mut fields = BTreeMap::new();
+    for change in &input.changes {
+        let (id, _) = change.key();
+        let mut add = |name: &'static str, ty: &'static str, mesh: bool| {
+            fields.insert((id.to_owned(), name), (ty, mesh));
+        };
+        match change {
+            Change::Create(e) => {
+                for (name, ty) in [
+                    ("bim:id", "string"),
+                    ("bim:name", "string"),
+                    ("bim:elementKind", "token"),
+                    ("bim:geometryMode", "token"),
+                    ("bim:schemaVersion", "string"),
+                    ("bim:createdBy", "string"),
+                    ("bim:material", "rel"),
+                ] {
+                    add(name, ty, false);
+                }
+                for &(name, ty) in POSE {
+                    add(name, ty, false);
+                }
+                match e.shape {
+                    Shape::Plate { .. } => {
+                        add("steel:plate:contourPointsMm", "double3[]", false);
+                        add("steel:plate:thicknessMm", "double", false);
+                    }
+                    Shape::Member { .. } => {
+                        add("bim:axisPointsMm", "double3[]", false);
+                        add("steel:member:rollRad", "double", false);
+                        add("bim:profile", "rel", false);
+                    }
+                }
+            }
+            Change::Label { .. } => add("bim:name", "string", false),
+            Change::Contour { .. } => add("steel:plate:contourPointsMm", "double3[]", false),
+            Change::Thickness { .. } => add("steel:plate:thicknessMm", "double", false),
+            Change::Axis { .. } => add("bim:axisPointsMm", "double3[]", false),
+            Change::Roll { .. } => add("steel:member:rollRad", "double", false),
+            Change::Profile { .. } => add("bim:profile", "rel", false),
+            Change::Material { .. } => add("bim:material", "rel", false),
+            Change::Placement { .. } => {
+                for &(name, ty) in POSE {
+                    add(name, ty, false);
+                }
+            }
+            Change::Mesh(_) => {
+                for &(name, ty) in MESH {
+                    add(name, ty, true);
+                }
+            }
+        }
+        if matches!(
+            change,
+            Change::Contour { .. }
+                | Change::Thickness { .. }
+                | Change::Axis { .. }
+                | Change::Roll { .. }
+                | Change::Profile { .. }
+        ) {
+            for &(name, ty) in MESH {
+                add(name, ty, true);
+            }
+        }
+        if fields.len() > b.values {
+            return Err(limit());
+        }
+    }
+    let mut result = Vec::new();
+    for ((id, name), (ty, is_mesh)) in fields {
+        let p = element_path(&id)?;
+        let p = if is_mesh { format!("{p}/Geometry") } else { p };
+        let spec = path(&format!("{p}.{name}"))?;
+        let data = if is_mesh { derived } else { authored };
+        let opinion = if !data.has_spec(&spec) {
+            Opinion::Remove
+        } else if ty == "rel" {
+            match data
+                .try_field(&spec, "targetPaths")
+                .map_err(|_| corrupt())?
+            {
+                None => Opinion::Absent,
+                Some(v) => match v.as_ref() {
+                    sdf::Value::PathListOp(list) if list.explicit => Opinion::Value(Value::Array(
+                        list.explicit_items
+                            .iter()
+                            .map(|p| Value::Text(p.to_string()))
+                            .collect(),
+                    )),
+                    _ => return Err(unsupported()),
+                },
+            }
+        } else {
+            match data.try_field(&spec, "default").map_err(|_| corrupt())? {
+                None => Opinion::Absent,
+                Some(v) if matches!(v.as_ref(), sdf::Value::ValueBlock) => Opinion::Block,
+                Some(v) => Opinion::Value(backend::typed(v.as_ref(), b)?),
+            }
+        };
+        result.push(AuthoredItem {
+            element_id: id,
+            attribute: name,
+            type_name: ty,
+            opinion,
+        });
+    }
+    Ok(result)
+}
