@@ -1,10 +1,12 @@
 # Architecture
 
 BeamCraft is a Cargo workspace with an original Rust engineering and geometry core.
-USD is the planned authoritative project state. The official OpenUSD SDK will handle scene
-composition in an isolated local worker. These boundaries are accepted design decisions;
-the worker, revision publication, commands and UI are not implemented yet. U05 implements
-immutable byte storage only.
+USD is the planned authoritative project state. By the owner decision of 2026-10-16, the
+pure-Rust `openusd` crate (0.8.x) is the primary layer engine behind a thin BeamCraft wrapper,
+with the aim of no Python/C++ in the product path. The official SDK worker remains only an
+explicit fallback and an external test oracle where available, subject to F03 admission.
+[F11](design/layer-engine-decision-v0.1.md) records the evidence and open integration gates;
+no production USD backend is integrated. U05 implements immutable byte storage only.
 
 ## Current implementation
 
@@ -41,8 +43,13 @@ enforce them.
   supervision, pipes and deadlines stay in the native host.
 - Place filesystem access, process supervision, storage and coordination in a native engine host.
   The host depends on domain crates, not the reverse.
-- Use a thin Python/pxr worker for the first OpenUSD prototype, subject to the F03 package audit.
-  Python serves USD operations; engineering rules and geometry computations remain in Rust.
+- Use the thin BeamCraft wrapper around the pinned Rust layer engine for primary USD operations;
+  engineering rules and geometry computations remain in the independent Rust core. In-process
+  module versus separate Rust process remains open under F11/U01. F05 continues to govern the
+  SDK fallback and any reviewed separate-process route; in-process semantics need explicit review.
+  [Wrapper requirements](design/layer-engine-wrapper-requirements-v0.1.md) cover foreign writes,
+  numeric/input validation, deterministic saves and deltas. F08 dependency/placement review and
+  package/file-level licence admission precede integration; this record adds no dependency.
 - Use the sibling PdfCraft UI stack: Rust workspace, edition 2024, Rust 1.95; an engine independent
   of UI; egui/eframe 0.36 with egui_extras, rfd and egui_kittest for UI tests; craft-ui, craft-quit
   and craft-print from storytold/craft-libs pinned by git revision. PdfCraft (storytold/pdfcraft,
@@ -63,8 +70,9 @@ dependency needs the AGENTS.md section 5 audit, deny.toml checks and any F08 all
 before integration. Copyleft or weak-copyleft third-party crates, including MPL-2.0, need an
 explicit owner exception for each package. No code is copied from other projects; audited dependency
 use is distinct from copying implementation text. The restricted commercial-material and clean-room
-rules remain unchanged. No library or backend is selected here. Start with bounded primitives and
-original fixtures, expanding through reviewed scopes.
+rules remain unchanged. The layer-engine choice is recorded in F11; this paragraph admits no
+additional math dependency. Start with bounded primitives and original fixtures, expanding through
+reviewed scopes.
 
 ## Project state and revisions
 
@@ -119,13 +127,15 @@ moving the camera need not rebuild shape; changing density invalidates mass. Mea
 freshness and support diagnostics. Unknown density, stale results and unsupported geometry must not
 be presented as current exact values.
 
-A single worker owns the live USD stage. Independent calculations may run over immutable inputs;
-stage mutation and publication are coordinated. Command footprints include reads, writes and
-relationships so rebase can detect semantic conflicts. Conflicts preserve local edits rather than
+A single backend owner behind the BeamCraft wrapper owns the live USD stage; its execution
+topology remains open under F11. Independent calculations may run over immutable inputs;
+stage mutation and publication are coordinated by the host. Command footprints include reads, writes
+and relationships so rebase can detect semantic conflicts. Conflicts preserve local edits rather than
 silently accepting a server value.
 
-Worker IPC is planned as versioned, bounded, length-prefixed control frames with separate binary
-buffers over private pipes. F05 must specify limits, errors, cancellation and revision checks. The
+For a separate-process backend, worker IPC follows the reviewed F05 profile: versioned, bounded,
+length-prefixed control frames with separate binary buffers over private pipes. An in-process
+route still needs F11's reviewed semantic mapping of limits, cancellation and revision checks. The
 [F05 worker protocol draft](contracts/worker-protocol-v0.1.md) specifies this private IPC contract
 and its proposed acceptance cases. The [F06 geometry and viewport contract
 draft](contracts/geometry-contract-v0.1.md) specifies the kernel input, mesh, key and query contract
