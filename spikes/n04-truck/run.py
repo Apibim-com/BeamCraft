@@ -4,8 +4,8 @@ Each invocation has a 30 second wall deadline. No truck object survives a failed
 Raw meshes stay under ignored target; reviewed evidence contains hashes and numbers.
 """
 
+import argparse
 from collections import Counter, defaultdict
-from fractions import Fraction
 import hashlib
 import json
 import math
@@ -20,10 +20,8 @@ from oracle import expected
 
 ROOT = Path(__file__).resolve().parent
 sys.stdout.reconfigure(encoding="utf-8")
-OUT = ROOT / "evidence"
-OUT.mkdir(exist_ok=True)
+OUT = ROOT / "target/evidence"
 TMP = ROOT / "target/probes"
-TMP.mkdir(exist_ok=True)
 source = (ROOT / "src/lib.rs").read_text(encoding="utf-8")
 names = re.findall(r'"([a-z0-9-]+)"', source.split("pub const CASES:", 1)[1].split("];", 1)[0])
 header = re.search(r'pub const HEADER: &str = "(.*)";', source)[1].replace("\\t", "\t").split("\t")
@@ -114,25 +112,42 @@ def one(profile, mode, threads, repeat, name, deadline_seconds=30):
     return record
 
 
-def main():
-    quick = "--quick" in sys.argv
-    selected = [x for x in sys.argv[1:] if not x.startswith("--")]
-    cases = selected or names
-    quick_profile = "release" if "--release" in sys.argv else "debug"
-    profiles = ("debug",) if "--debug-only" in sys.argv else ("release",) if "--release-only" in sys.argv else ("debug","release")
-    schedule = [(quick_profile,"caught",1,0)] if quick else [
+def main() -> None:
+    """Run a bounded schedule and checkpoint each profile to its own file."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--debug-only", action="store_true")
+    group.add_argument("--release-only", action="store_true")
+    parser.add_argument("--quick", action="store_true")
+    parser.add_argument("--release", action="store_true", help="release quick pass")
+    parser.add_argument("cases", nargs="*")
+    args = parser.parse_args()
+    if any(case not in names for case in args.cases):
+        parser.error("unknown case; select a fixed name from src/lib.rs CASES")
+    cases = args.cases or names
+    quick_profile = "release" if args.release else "debug"
+    profiles = ("debug",) if args.debug_only else ("release",) if args.release_only else ("debug", "release")
+    schedule = [(quick_profile,"caught",1,0)] if args.quick else [
         (profile,mode,threads,repeat)
         for profile in profiles
         for mode,threads,repeat in [("caught",1,0),("caught",1,1),("caught",1,2),("caught",4,0),("direct",1,0)]
     ]
+    TMP.mkdir(parents=True, exist_ok=True)
+    OUT.mkdir(parents=True, exist_ok=True)
     records = []
-    suffix = "-"+profiles[0] if len(profiles) == 1 else ""
-    path = TMP / f"quick-{quick_profile}.json" if quick else OUT / f"results{suffix}.json"
+    paths = {profile: TMP / f"quick-{profile}.json" if args.quick
+             else OUT / f"results-{profile}.json"
+             for profile in ((quick_profile,) if args.quick else profiles)}
+    # Clear every selected profile before starting so interruption cannot reuse old runs.
+    for path in paths.values():
+        path.write_text("[]\n", encoding="utf-8", newline="\n")
     for profile,mode,threads,repeat in schedule:
         for case in cases:
             record = one(profile,mode,threads,repeat,case)
             records.append(record)
-            path.write_text(json.dumps(records,indent=2)+"\n",encoding="utf-8",newline="\n")
+            paths[profile].write_text(
+                json.dumps([r for r in records if r["profile"] == profile], indent=2)+"\n",
+                encoding="utf-8", newline="\n")
             print(profile,mode,threads,repeat,case,record["status"],record["seconds"],flush=True)
     print(dict(Counter(r["status"] for r in records)))
 

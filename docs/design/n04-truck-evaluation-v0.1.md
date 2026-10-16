@@ -1,360 +1,308 @@
 # N04: truck B-rep evaluation, version 0.1
 
-Date: 2026-10-16. Isolated offline research spike, task N04.
-Worktree: `D:\Projects\01_BeamCraft-N04`; branch `feat/n04-truck-spike`.
-Verified HEAD and local `origin/master` at entry: `adbc407e09476a803de07c31f3a5adcaabad1304`.
-The owner supplied this as the verified integration base; no remote refresh was attempted offline.
-Publication state: committed on the branch; not pushed. The orchestrator pushes and opens the PR.
-`spikes/n04-truck/PR.md` contains the concrete draft description.
+2026-10-16. N04T trims PR #46 at `5a154b95758284f9854860f074766979e290462c`.
+Original integration base: `adbc407e09476a803de07c31f3a5adcaabad1304`; existing branch
+`feat/n04-truck-spike`, target `master`. Contributor-original report and probes,
+BeamCraft contributors, MPL-2.0. This revision summarizes existing measurements;
+no evaluation matrix or supplementary geometry run was added.
 
-## Scope and recommendation
+## Conclusion and proposal
 
-**Proposal for the owner: reject the pinned, default-feature stack as BeamCraft's holes-and-cuts
-backend for now.** Rectangular and concave extrusion work in this bounded sample, and ordinary
-plane intersections often have correct volume. Degenerate cuts, cylinder subtraction, mesh
-conformance, stable bytes, provenance and bounded execution leave substantial work. This is a
-proposal, not an adoption decision, a proof that every truck configuration fails, or permission
-to replace BeamCraft's kernel. A narrower future contour-only evaluation could still be useful.
+Reject the evaluated default-feature truck stack as BeamCraft's holes/cuts backend.
+The owner decided on 2026-10-16 that holes and cuts use our own implementation,
+with circular and oval holes only. This is the record of a rejected route, not an
+integration, a general verdict on truck, or completion of A02/A03/A04/G09 or K0.
+Oval holes were not evaluated. Rectangular/concave extrusion and several ordinary
+plane cuts worked in the sample; singular cuts, inaccurate/incomplete cylinder
+meshes, raw indexing, unstable bytes, execution limits and provenance remain gaps.
+F06 0.1.0 excludes operations and nonrectangular evaluation; future support needs
+its own acceptance amendment.
 
-The evaluated crates are exactly `truck-modeling =0.6.0`, `truck-shapeops =0.4.0` and
-`truck-meshalgo =0.4.0`, using the prepared manifest's defaults. No dependency, patch, foreign
-source, catalogue or fixture was added. No BeamCraft workspace crate, root manifest/lockfile,
-deny policy, attribution, CI or roadmap was edited. The isolated manifest remains a private
-MPL-2.0 package. BeamCraft retains its own small math types under the G01 owner decision;
-any future adapter would use truck for algorithms behind those types.
+Pins remain `truck-modeling =0.6.0`, `truck-shapeops =0.4.0`,
+`truck-meshalgo =0.4.0`, with the original default features and lockfile.
+The [minimal harness README](../../spikes/n04-truck/README.md) gives exact offline
+build/test commands and optional reproduction commands. Original runs used Windows
+x86_64 MSVC, Rust/Cargo 1.96.0 and Python 3.11.9. No production dependency or
+workspace crate, CI, deny policy, attribution or roadmap file changes here.
 
-F06 0.1.0 sections 3, 4, 6 and 10 are the comparison boundary. They currently exclude operations
-and nonrectangular evaluation. A02/A03/A04/G09 need amended acceptance, topology and FeatureId
-rules before integration. Successful spike measurements do not widen that scope, pass K0,
-complete those tasks, certify arbitrary solids or implement an engine/CLI feature.
+## Method and result meanings
 
-## Environment and evidence
-
-Windows x86_64-pc-windows-msvc, Rust/Cargo 1.96.0; rustc
-`1.96.0 (ac68faa20 2026-05-25)`. Debug and optimized release use the same lockfile.
-Only x86_64-pc-windows-msvc and aarch64-pc-windows-msvc targets are installed; ARM was not run.
-All Cargo resolution/builds/checks use offline mode or `CARGO_NET_OFFLINE=true`.
-No browser, network, subagent, external geometry oracle or other checkout was used.
-
-Evidence paths are relative to `spikes/n04-truck/`:
-
-| Evidence | Meaning |
-|---|---|
-| `src/lib.rs`, `src/main.rs`, `tests/probes.rs` | Original public-API experiment, one-case CLI and actual extrusion/recovery tests |
-| `oracle.py`, `run.py` | Independent mathematical references, process deadlines and scalar triangle/topology audit |
-| `evidence/expectations.json` | Analytic dimensions, volumes, genus expectations, local floors and formula labels |
-| `evidence/results-debug.json`, `evidence/results-release.json` | Every final invocation, status, numeric measurements, hashes, stderr stage and elapsed time |
-| `evidence/supplement.json` | Two separate longer-budget calls, release pattern and debug hole, with 120-second deadlines |
-| `evidence/case-results.md`, `evidence/determinism.md`, `evidence/summary.json` | Derived complete case and reproducibility tables; reproducible with `summarize.py` |
-| `evidence/inventory.md`, `evidence/inventory.json` | Complete metadata package/version/SPDX/checksum table and licence-file hashes |
-| `evidence/resolution.json`, `evidence/tree.txt`, `evidence/features.txt` | Cargo metadata resolve graph and native dependency/feature trees |
-| `evidence/checks.json`, `evidence/check-*.txt` | Exact required commands and actual results, including missing-target diagnostics |
-| `evidence/root-lock-sha256.txt` | Root lockfile digest, identical before/after verification |
-| `PR.md` | Review-ready draft PR description and proposed dated roadmap/attribution entries |
-
-Raw numeric triangle/mesh bytes remain under ignored `target/probes`; final evidence retains their
-SHA-256 digests. No screenshot, third-party geometry asset, upstream source/test or licence text
-is copied into deliverables. All authored data/documents are contributor-original, MPL-2.0;
-dependency licence declarations do not relabel upstream material.
-
-## Public API and methodology
-
-Local `cargo doc --offline` generated public documentation from the cached packages. Only rendered
-API documentation, manifests, Cargo VCS packaging metadata, checksums and licence/notice files
-were inspected; source links, upstream implementation bodies and tests were not opened. Compiler
-diagnostics and panic backtraces necessarily name upstream functions/locations. Those observations
-are runtime evidence, not source inspection.
-
-Relevant public documentation references, available locally at these exact versions:
-
-- [truck-modeling builder](https://docs.rs/truck-modeling/0.6.0/truck_modeling/builder/index.html):
-  vertex/line, translational and rotational sweep, planar-face construction.
-- [truck-shapeops `and`](https://docs.rs/truck-shapeops/0.4.0/truck_shapeops/fn.and.html):
-  intersection of two solids with caller tolerance, returning `Option<Solid>`.
-- [MeshableShape](https://docs.rs/truck-meshalgo/0.4.0/truck_meshalgo/tessellation/trait.MeshableShape.html)
-  and [RobustMeshableShape](https://docs.rs/truck-meshalgo/0.4.0/truck_meshalgo/tessellation/trait.RobustMeshableShape.html):
-  tessellation can leave a solid's mesh open; robust tessellation projects boundary vertices and
-  does not promise closure even after the documented optimization filter.
-- [truck-base tolerance](https://docs.rs/truck-base/0.5.0/truck_base/tolerance/constant.TOLERANCE.html):
-  the documented general constant is `1e-6`, independent of body size.
-- [Solid](https://docs.rs/truck-topology/0.6.0/truck_topology/struct.Solid.html) and
-  [Face](https://docs.rs/truck-topology/0.6.0/truck_topology/struct.Face.html):
-  fallible constructors coexist with panicking/debug-only constructors and runtime face identities.
-
-The hyperlinks identify public references; no online freshness or upstream maintenance claim is
-made. Public formulas below and the frozen F06/G03 references are the only sources of expected
-behaviour. Truck output never supplies an expected quantity or topology.
-
-The primary plate is `[0,100] × [0,80] × [0,10]` mm. Boxes are built by three translational
-sweeps. The cylinder has radius 5, base z=-10, height 30; therefore its end caps are outside the
-plate. A rotational sweep constructs the circular wire, a plane closes it, and extrusion makes
-the tool. Subtraction uses intersection with the reversed tool (`tool.not()`), the oriented-solid
-complement convention being explicitly exercised. A failed result is not retried after silently
-perturbing coordinates. Pattern subtraction is four sequential cylinders at `(25,20)`, `(75,20)`,
-`(25,60)`, `(75,60)`; this is not a batch-operation benchmark.
-
-The plane experiment uses an oversized finite prism as a half-space adapter: its base is the
-target plane and it extends in `-normal`. Every specimen corner is less than 150 mm from the
-plane's chosen centre, whereas the four side planes and far plane are at least 1000 mm away.
-Those other planes cannot clip these specimens. This tests solid intersection with a half-space
-equivalent on the specimen, not a claimed dedicated infinite-half-space API.
-
-Measurements enumerate actual B-rep vertices/edges/faces, oriented edge incidence and shell
-conditions. For a genus-zero trimmed face with b boundary loops, its contribution is `2-b`;
-the shell Euler value is `V-E+sum(2-b)`. Counting every multiply trimmed cap as one disk would
-give a misleading Euler result for holes. Integer topology expectations are exact. Euler plus
-closed incidence is not a generic proof of freedom from self-intersection.
-
-Tessellation returns a solid whose face surfaces are `Option<PolygonMesh>`. The probe explicitly
-counts missing surfaces **before** converting to one mesh; `to_polygon()` returning triangles is
-not treated as complete success. The independent volume uses signed tetrahedra about a local
-anchor and compensated accumulation. Python repeats the measurement with explicit scalar
-determinants and `math.fsum`, checks indices, directed incidence, unused vertices and bounds, and
-checks its answer against the Rust measurement. The library's volume computation is not used.
-For an open or partially omitted shell this signed integral is only a diagnostic scalar: it can
-depend on the chosen anchor and is not the volume of a valid solid. A reordered partial mesh can
-therefore change that scalar even if the surviving sorted triangles are identical. Such output is
-never an engineering quantity; completeness and closure must be checked first in any adapter.
-
-Raw indexed topology and exact-position alias topology are reported separately. Alias enumeration
-normalizes signed zero only for comparison and never changes or returns a welded/healed mesh.
-Small coordinate discrepancies can still leave exact-position seams. There is no generic
-self-intersection certification, analytic B-rep integration or manufacturing-accuracy claim.
-
-## Analytic references and formulas
-
-The derivations are original applications of public mathematics. Bibliographic sources already
-identified in F06/G04/G03 are cited here without downloading text or code:
-[OpenStax, Calculus Volume 3, triple integrals](https://openstax.org/books/calculus-volume-3/pages/5-4-triple-integrals),
-[OpenStax, divergence theorem, section 6.8](https://openstax.org/books/calculus-volume-3/pages/6-8-the-divergence-theorem),
+Expected behaviour comes from public mathematics: OpenStax Calculus Volume 3
+[5.4, triple integrals](https://openstax.org/books/calculus-volume-3/pages/5-4-triple-integrals),
+[6.8, divergence theorem](https://openstax.org/books/calculus-volume-3/pages/6-8-the-divergence-theorem),
 and [Euler characteristic](https://mathworld.wolfram.com/EulerCharacteristic.html).
-F06 sections 4/6/10 supply policies, not new mathematical algorithms. G03's original rational
-references are in `docs/fixtures/g03/expectations.tsv`; six are independently checked by the
-Python oracle. No values are copied from another kernel or commercial product.
+[F06 sections 3, 4, 6 and 10](../contracts/geometry-contract-v0.1.md) supply result,
+tolerance, mesh and resource policies. Original G03 rational references are only
+cross-checks of the same box formulas. Public truck API documentation was used to
+call the library, never as a source of expected geometry. No third-party source,
+test, fixture, catalogue or commercial-product material was copied.
 
-| Case family | Derivation of the expectation |
+The plate is 100 x 80 x 10 mm. Expected volume is `abc`; a radius-5 through hole
+subtracts `pi*25*c`, four holes subtract four such cylinders, and a crossing edge
+removes half a cylinder. Near-edge ligaments are 0.0005 and 0.002 mm; touching
+contact is singular. Plane cuts use an oversized 1000-mm prism equivalent to a
+half-space on these specimens: central inversion proves half volume; a vertex cut
+retains a tetrahedron `10^3/6`. Coincident-face cuts should keep the whole box.
+The L contour has area `100*30+30*50`, extruded 10 mm. The ring wall reference is
+`(100*80-99.998*79.998)*10`. Large offsets add 1e6 mm on each axis.
+
+Independent volume sums signed tetrahedra about a local anchor; Python repeats it
+with scalar determinants and `math.fsum`. B-rep chi is `V-E+sum(2-boundary_loops)`;
+expected regular boundary chi is `2-2*genus`. A closed B-rep does not certify a mesh.
+The raw indexed and exact-position-alias audits are separate; no mesh is healed.
+Volume comparison uses relative 1e-6; bounds use `0.001+1e-6*abs(expected)` mm.
+Topology and byte equality are exact. The admission floor is separately
+`max(0.001, D/4194304)` mm, excluding thickness and translation. `scaled-below`
+passes the numerical probe while violating that floor; it is not BeamCraft admission.
+
+PASS means the volume/B-rep probe passes, **not F06 mesh conformance**. WRONG means
+returned geometry fails quantities, expected B-rep counts/topology, bounds, complete
+surface tessellation or nondegeneracy. FAIL means returned error/None or timeout
+(the historical set contains no audit-cap failures). PANIC means unwinding.
+Open/partial mesh signed volume is only a diagnostic scalar, never an engineering
+quantity. Missing face counts are checked before flattening a mesh.
+
+## Observed per-case results (partial experiment)
+
+The planned schedule was five calls per case/profile: caught one-thread repeats
+0/1/2, caught four-thread repeat 0, then direct one-thread repeat 0.
+**366/440 calls exist: debug 146/220, release 220/220.** All 44 debug direct calls
+and 30 debug four-thread calls are absent. There is no `supplement.json`; the
+proposed 120-second pattern/hole probes have no recorded results. The former
+343-record summary was stale; the tables below use all 366 raw records.
+Numbers are the first release caught one-thread call; no mesh means no quantity.
+
+| Case | Expected mm3 | Debug observed / 5 | Release observed / 5 | Release volume / relative error | B-rep V/E/F; chi | Mesh V/T; missing faces |
+|---|---:|---|---|---|---|---|
+| plate | 80000 | PASS x 4 | PASS x 5 | 80000 / 0 | 8/12/6; 2 | 24/12; 0 |
+| g03-unit | 1 | PASS x 4 | PASS x 5 | 1 / 0 | 8/12/6; 2 | 24/12; 0 |
+| g03-unequal | 3243 | PASS x 4 | PASS x 5 | 3243 / 0 | 8/12/6; 2 | 24/12; 0 |
+| g03-dyadic | 0.001953125 | PASS x 4 | PASS x 5 | 0.001953125 / 0 | 8/12/6; 2 | 24/12; 0 |
+| g03-decimal | 0.006 | PASS x 4 | PASS x 5 | 0.006 / 1.4456e-16 | 8/12/6; 2 | 24/12; 0 |
+| thin-slab | 8 | PASS x 4 | PASS x 5 | 8 / 0 | 8/12/6; 2 | 24/12; 0 |
+| minimum-cube | 1e-09 | PASS x 4 | PASS x 5 | 1e-09 / 4.1359e-16 | 8/12/6; 2 | 24/12; 0 |
+| scaled-minimum | 15360 | PASS x 4 | PASS x 5 | 15360 / 0 | 8/12/6; 2 | 24/12; 0 |
+| scaled-below | 12582.912 | PASS x 4 | PASS x 5 | 12582.912 / 0 | 8/12/6; 2 | 24/12; 0 |
+| large-scale | 14305114746.1 | PASS x 4 | PASS x 5 | 14305114746.1 / 0 | 8/12/6; 2 | 24/12; 0 |
+| large-offset | 80000 | PASS x 4 | PASS x 5 | 80000 / 0 | 8/12/6; 2 | 24/12; 0 |
+| large-offset-thin | 8 | PASS x 4 | PASS x 5 | 8.00000037998 / 4.7497e-08 | 8/12/6; 2 | 24/12; 0 |
+| hole | 79214.6018366 | FAIL x 4 | WRONG x 5 | 79215.4372725 / 1.0546e-05 | 14/21/9; 0 | 3121/5618; 0 |
+| pattern | 76858.4073464 | FAIL x 4 | FAIL x 5 | no mesh | - | - |
+| touching-hole | 79214.6018366 | FAIL x 3 | PANIC x 5 | no mesh | - | - |
+| near-hole | 79214.6018366 | FAIL x 3 | WRONG x 5 | 79215.4378422 / 1.0554e-05 | 14/21/9; 0 | 3071/5568; 0 |
+| near-hole-outside-band | 79214.6018366 | FAIL x 3 | WRONG x 5 | 79215.4381972 / 1.0558e-05 | 14/21/9; 0 | 3059/5556; 0 |
+| crossing-hole | 79607.3009183 | FAIL x 3 | WRONG x 5 | 79607.9147683 / 7.711e-06 | 14/21/9; 2 | 1132/1564; 0 |
+| thin-wall | 3.59996 | WRONG x 3 | WRONG x 5 | 3.62495936277 / 0.0069443 | 16/24/10; 0 | 228/200; 0 |
+| contour | 45000 | PASS x 3 | PASS x 5 | 45000 / 0 | 12/18/8; 2 | 36/20; 0 |
+| plate-cut-0 | 40000 | PASS x 3 | PASS x 5 | 40000 / 0 | 8/12/6; 2 | 108/96; 0 |
+| plate-cut-30 | 40000 | PASS x 3 | PASS x 5 | 40000 / 1.6371e-15 | 8/12/6; 2 | 114/102; 0 |
+| plate-cut-45 | 40000 | PASS x 3 | PASS x 5 | 40000 / 5.457e-16 | 8/12/6; 2 | 120/108; 0 |
+| plate-cut-60 | 40000 | PASS x 3 | PASS x 5 | 40000 / 2.9104e-15 | 8/12/6; 2 | 120/108; 0 |
+| plate-cut-vertex | 166.666666667 | PASS x 3 | PASS x 5 | 166.666666667 / 5.6275e-15 | 4/6/4; 2 | 18/10; 0 |
+| plate-cut-coincident | 80000 | FAIL x 3 | FAIL x 5 | no mesh | - | - |
+| box-cut-0 | 500 | PASS x 3 | PASS x 5 | 500 / 0 | 8/12/6; 2 | 24/12; 0 |
+| box-cut-30 | 500 | PASS x 3 | PASS x 5 | 500 / 4.5475e-16 | 8/12/6; 2 | 80/68; 0 |
+| box-cut-45 | 500 | FAIL x 3 | FAIL x 5 | no mesh | - | - |
+| box-cut-60 | 500 | PASS x 3 | PASS x 5 | 500 / 1.5689e-14 | 8/12/6; 2 | 80/68; 0 |
+| box-cut-vertex | 166.666666667 | PANIC x 3 | PANIC x 5 | no mesh | - | - |
+| box-cut-coincident | 1000 | FAIL x 3 | FAIL x 5 | no mesh | - | - |
+| hole-tol-small | 79214.6018366 | FAIL x 3 | FAIL x 5 | no mesh | - | - |
+| hole-tol-large | 79214.6018366 | FAIL x 3 | WRONG x 5 | 79215.4310149 / 1.0467e-05 | 14/21/9; 0 | 3819/6316; 0 |
+| hole-tol-scaled | 79214.6018366 | FAIL x 3 | WRONG x 5 | 79215.4372725 / 1.0546e-05 | 14/21/9; 0 | 3121/5618; 0 |
+| hole-fine-mesh | 79214.6018366 | FAIL x 3 | WRONG x 5 | 81110.8291191 / 0.023938 | 14/21/9; 0 | 139660/269300; 1 |
+| tess-tol-below | 80000 | PANIC x 3 | PANIC x 5 | no mesh | - | - |
+| tess-tol-equal | 80000 | PASS x 3 | PASS x 5 | 80000 / 0 | 8/12/6; 2 | 24/12; 0 |
+| nonunit-axis | 79214.6018366 | PANIC x 3 | FAIL x 5 | no mesh | - | - |
+| plate-cut-consistency | 40000 | PANIC x 3 | PANIC x 5 | no mesh | - | - |
+| hole-consistency | 79214.6018366 | PANIC x 3 | PANIC x 5 | no mesh | - | - |
+| hole-coarse | 79214.6018366 | WRONG x 3 | WRONG x 5 | 79215.4420061 / 1.0606e-05 | 14/21/9; 0 | 3309/5806; 0 |
+| hole-medium-mesh | 79214.6018366 | FAIL x 3 | WRONG x 5 | 79214.7425902 / 1.7769e-06 | 14/21/9; 0 | 17473/29362; 0 |
+| hole-robust-mesh | 79214.6018366 | FAIL x 3 | WRONG x 5 | 79214.7425907 / 1.7769e-06 | 14/21/9; 0 | 17473/29362; 0 |
+
+
+## Robustness and reproducibility
+
+| Profile | Calls | PASS | FAIL | PANIC | WRONG | 30-second timeouts (within FAIL) |
+|---|---:|---:|---:|---:|---:|---:|
+| Debug | 146 | 78 | 47 | 15 | 6 | 38 |
+| Release | 220 | 110 | 30 | 25 | 55 | 10 |
+| Total | 366 | 188 | 77 | 40 | 61 | 48 |
+
+The remaining 29 FAIL calls are 24 boolean-None outcomes (coincident-face and cube
+45-degree cuts) and five release invalid-axis plane-construction failures.
+The `(0,0,2)` rotational-axis control violates the documented normalized-axis
+precondition: its debug panic/release error difference does not describe valid input.
+The below-tessellation-floor control panics in both profiles. Optional consistency
+checks can panic after boolean construction returns; these are separate cases.
+
+Every call runs in a fresh child process. Caught calls construct/discard all state
+inside `catch_unwind`; direct panics terminate the child. The 30-second supervisor
+kills/reaps timed-out children. This does not bound upstream peak memory, prove
+termination without a supervisor, catch aborts or implement cooperative cancellation.
+No additional robustness/fuzzing or cross-platform guarantee is established.
+
+Byte comparisons require every scheduled run and its hash. Missing runs, timeout
+outputs or absent hashes are **unmeasured**, excluded from measured denominators;
+FAIL in a byte comparison is reserved for observed mismatches. SHA-256 compares
+raw indexed mesh bytes and emitted triangle coordinates; no tolerance is applied.
+
+| Profile | Comparison | Identical / measured | Mismatched | Unmeasured |
+|---|---|---:|---:|---:|
+| debug | repeat mesh | 14/24 | 10 | 20 |
+| debug | repeat triangles | 14/24 | 10 | 20 |
+| debug | thread triangles | 12/12 | 0 | 32 |
+| release | repeat mesh | 14/33 | 19 | 11 |
+| release | repeat triangles | 14/33 | 19 | 11 |
+| release | thread triangles | 15/33 | 18 | 11 |
+
+Three identical runs on one compiler/host do not prove general determinism. A
+partial mesh's anchor-dependent scalar may vary even with equivalent surviving
+triangles. Report numbers can be regenerated without geometry by
+`python spikes/n04-truck/summarize.py --input-dir <archive-evidence-directory>`.
+For a fresh matrix, run `python run.py` then `python summarize.py` from the spike
+as documented in the README. Outputs stay under ignored `target/`; elapsed times
+and nondeterministic hashes will differ. These commands were not used to add runs
+for N04T.
+
+## Mapping to BeamCraft needs
+
+| Need | Observed fit and remaining gap |
 |---|---|
-| Rectangular plate / G03 boxes | Triple integral of 1 over Cartesian intervals: `V=(a*b)*c`. Bounds are interval endpoints. Eight endpoint combinations, twelve axis edges, six faces; `8-12+6=2`. Canonical F06 triangulation is 8 vertices / 12 triangles / 18 mesh edges. |
-| One through hole | Integrate disk area in z: `A=∫0^(2π)∫0^r ρ dρ dθ=πr²`; `V=abc-πr²c=79214.60183660255 mm3`. A regular through hole adds one handle, so boundary chi=`2-2g=0`. |
-| 2×2 pattern | Four disjoint disk cylinders: `V=abc-4πr²c=76858.40734641021 mm3`, genus 4, chi=-6. |
-| Near edge | Centres x=5.0005 and 5.002 leave positive ligaments 0.0005 and 0.002 mm. Ideal volume and chi equal the ordinary hole; the first ligament is inside the 0.001 mm geometric band. No snapping/merging is authorized by F06. |
-| Touching edge | Centre x=5 makes the cylinder tangent to x=0. Removed volume is still `πr²c`; the boundary has singular tangential contact, so ordinary closed-manifold success is not assumed. Explicit failure is acceptable; a panic is still recorded. The ordinary-hole chi in the parameter record is not a certificate for this singular solid. |
-| Crossing edge | Centre on x=0, y=40: half the disk is inside the plate. `V=abc-πr²c/2=79607.30091830128 mm3`; a regular open notch leaves genus 0, chi=2. |
-| Ordinary plane cuts | Normals `(cos θ,sin θ,0)` at θ=0°,30°,45°,60° through the body centre. Central inversion `x→2*centre-x` exchanges the two sides and preserves volume, proving `V=abc/2`: 40000 for the plate and 500 for the 10 mm cube. Axis bounds follow the positive half-space inequality by setting the other coordinate to zero. |
-| Through a vertex | `x+y+z<=10` on nonnegative coordinates, with all extents >=10: `∫0^10∫0^(10-x)∫0^(10-x-y) dz dy dx=1000/6`. The retained tetrahedron has 4 vertices, 6 edges, 4 faces, chi=2; the plane passes through existing cube vertices. |
-| Coincident face | Closed half-space `x<=a` contains the whole box, so expected volume and bounds are unchanged. No empty intersection is expected. |
-| Concave L contour | Original polygon `(0,0),(100,0),(100,30),(30,30),(30,80),(0,80)`. Disjoint rectangles have area `100*30+30*50=4500`; extrude 10 gives 45000 mm3. Six vertices per cap: B-rep V/E/F=12/18/8, chi=2. |
-| Thin slab / wall | Slab `100*80*0.001=8 mm3`. Ring wall: `(100*80-99.998*79.998)*10=3.59996 mm3`, ideal ligament 0.001 mm, genus 1. The wall uses box subtraction, not a copied sample model. |
-| Large translation | Translate every construction coordinate by 1e6 mm on each axis. Ideal volume/topology are translation invariant; bounds add 1e6. The independent tetrahedron anchor limits cancellation during measurement without changing returned vertices. |
-| Local scale | For 3072×4096, `D=5120`, hence `eps_geom=5/4096=0.001220703125` mm. A 0.001 mm thickness is below that floor. For 300000×400000, `D=500000`, floor=0.11920928955078125 mm. |
+| Quantities and supported holes/cuts | Boxes and many ordinary cuts match analytic volume. Ordinary holes miss relative 1e-6; refinement can omit a face and exceed caps. No certified generic boolean quantity path. |
+| Mesh, F06 section 6 | A box returns 24 positions/12 triangles, raw chi 6 and 24 boundary edges; exact-position aliases give 8 vertices/chi 2. Needs shared indexing, BCMESH01 encoding, canonical ordering, roles, face mapping and keys. Sorting or tolerance welding cannot establish conformance. |
+| FeatureId/history | Boolean API returns a Solid without generated/modified/deleted history. Runtime IDs can retain four plate faces for a hole but give no stable split-parent or semantic names. |
+| Tolerances, finite values and bounds | Approximation parameters do not implement the F06 admission floor, staged input validation or exact curved bounds. Need typed conversion, local construction, caps and explicit unsupported/uncertain diagnostics. |
+| Limits, F06 section 10 | Synchronous calls have no tested budget/cancellation interface; output caps cannot bound prior allocation. Process discard is only a research safeguard. |
+| Portability | Native default graph includes C compression. Host success does not establish WASM, Linux/macOS or alternate-feature support. |
 
-Test volumes use CR-TOL-001, `abs(actual-expected)<=1e-6*abs(expected)`; coordinates use
-`0.001 mm+1e-6*abs(expected)`. Topology, ids and byte equality have no tolerance. The distinct
-geometric admission floor is `max(0.001 mm,D/4194304)` and excludes world translation and thickness.
-This probe deliberately passes some below-floor dimensions to truck to identify wrapper work;
-their numeric PASS is not valid BeamCraft admission. Operations themselves remain outside F06 0.1.0.
+## Licence and supply-chain findings
 
-## Case results
+These are recorded findings from the original offline audit, not a new licence
+admission. All three direct manifests declare Apache-2.0 and identify
+`https://github.com/ricosjp/truck`; the cached archive pins are:
 
-PASS means the analytic-volume/B-rep probe met its checks, not F06 buffer compliance. WRONG means
-the API returned geometry but the volume, expected B-rep topology/counts, bounds, complete face
-tessellation or nondegeneracy check failed. FAIL means explicit error/`None`, post-output audit
-cap, or 30-second process timeout; these are distinguished in raw records. PANIC distinguishes
-unwinding from a returned error. Singular tangency and invalid-axis controls are labelled above.
-The table reports five invocations per case/profile: caught runs 1/1/1/4 threads, then direct/1.
-Baseline values are the first release caught invocation; all variations remain in the raw evidence.
-
-<!-- N04-CASES-BEGIN -->
-Pending final supervised runs.
-<!-- N04-CASES-END -->
-
-<!-- N04-SUPPLEMENT-BEGIN -->
-Longer-budget probes pending.
-<!-- N04-SUPPLEMENT-END -->
-
-Every rectangular case agrees with the G03-style B-rep reference V/E/F=8/12/6, chi=2 and closed
-incidence. A translated 0.001 mm slab measures about `8.00000037997961 mm3` (relative error
-`4.749745e-8`), within the 1e-6 test rule. This does not prove every F06 placement or magnitude.
-The below-scaled-floor case is accepted numerically by truck: a future guard must reject it.
-
-Ordinary successful cut volumes do not establish robust cuts: coincident faces return `None`,
-the cube's 45° case returns `None`, and a cube cut through vertices panics in the sampled calls.
-A consistency-check probe is separate: the public `is_geometric_consistent` path can panic in
-`Surface::include` after boolean construction has returned an intersection curve. That is a
-checker limitation, not evidence that the preceding boolean never returned. Source locations and
-exact diagnostics are retained only as observations; no vendor patch was designed from source.
-
-## Panic isolation, debug/release and determinism
-
-Each case runs in a fresh child process, both directly and inside `std::panic::catch_unwind`.
-The closure constructs and drops all truck state; no interior-mutable solid is reused after an
-unwind and no `AssertUnwindSafe` or unsafe code is needed. Direct panics terminate only their child.
-`catch_unwind` cannot catch aborts, stop a nonterminating call, recover allocation failure, prove
-absence of dependency undefined behaviour, or implement cancellation. The supervisor kills and
-reaps a timed-out child. Its 30-second limit is an experimental budget, not a proved F06 latency.
-Profiles may run concurrently; elapsed times are observations under load, not comparative benchmarks.
-
-The invalid rotational-axis control deliberately passes `(0,0,2)` where public docs require a
-normalized axis and warn of a debug-only panic. Its profile difference must not be generalized to
-valid input. The below-tessellation-tolerance control exercises the documented 1e-6 lower bound;
-the equal case records actual inclusive behaviour without rewriting the documentation's wording.
-
-Raw mesh bytes contain f64 positions and emitted position indices; raw triangle bytes contain nine
-f64 coordinates per triangle in emitted order. Three caught runs at one thread and a changed
-`RAYON_NUM_THREADS=4` process compare exact bytes using SHA-256 and retained per-run digests.
-Environment changes request the Rayon pool size; no additional Rayon dependency or affinity API is
-introduced to instrument every upstream scheduling choice. A diagnostic sorted-triangle hash
-ignores triangle order and cyclic starting corner but preserves winding; it is not a canonical
-BeamCraft encoding. Different hashes may represent different order, diagonals or constructed points.
-
-<!-- N04-DETERMINISM-BEGIN -->
-Pending final supervised runs.
-<!-- N04-DETERMINISM-END -->
-
-No triangle result means byte determinism is **not measured**, even if errors/panics repeat.
-Aggregate counters include the explicitly invalid precondition controls, singular tangency and
-optional consistency-check probes; the per-case rows separate them from ordinary valid operations.
-One host, compiler, dependency graph and finite set do not prove cross-platform determinism.
-The default graph contains randomized/hash-based machinery; byte comparisons, rather than that
-dependency fact, are the evidence. No universal explanation of upstream nondeterminism is inferred.
-
-## Mapping to BeamCraft
-
-| Need | Observed fit and missing work |
-|---|---|
-| FeatureId and face provenance | `and` returns only a Solid, no generated/modified/deleted input-face history. Runtime face ids can recognize some unchanged faces (the ordinary hole retains four original plate faces), but split faces receive new ids with no reported parent. New constructions also receive new identities. These are not fid1 semantic names or persistent history. Surface matching alone is ambiguous for coincident/repeated faces. Need original operation/face history, stable split naming, deletion rules, and remeshing maps. |
-| Mesh output, F06 section 6 | f64 positions are useful, but polygon meshes have separate position/normal/UV indices and platform-sized indices; conversion returns no BCMESH01 blob, u32/u16 tables, canonical roles or digest/key. A box returns 24 positions / 12 triangles and raw chi=6, with 24 boundary mesh edges; exact-position aliases give 8 vertices / chi=2. Raw indexing fails F06 closure. The probe never welds it into a claimed conforming result. |
-| Mesh completeness and quantities | Meshed surfaces can be None; flattening can still return a partial mesh. Holes can exceed both the 1e-6 quantity comparison and the vertex/triangle caps, especially on refinement. Analytic boxes can keep analytic quantities; arbitrary boolean volumes need a new validated/certified quantity path. A closed B-rep is insufficient to certify the emitted mesh. |
-| Bounds and finite input | No supplied F06 result/diagnostic envelope, staged finiteness/cap checks, local-size policy or numeric certificates. Need typed numeric conversion, local construction before placement, input/output budgets and explicit uncertain/unsupported errors. Returned sampled bounds are not automatically exact bounds of every curved face. |
-| Work limits and cancellation, F06 section 10 | Tested synchronous calls take solids/tolerance and have no token, deadline, allocation budget or progress callback. Checking outputs after allocation cannot bound peak upstream work. Guarded inputs and caught panics alone are insufficient. A separately reviewed worker could be killed with discard proven; in-process use needs cooperative limits/patches with measured latency. No control server is added here. |
-| WASM | **Not run:** wasm32-unknown-unknown is absent. The prescribed command was attempted and fails E0463. Host compilation and target-filtered manifests cannot establish browser compatibility. Threading, randomness and optional native dependencies need a separately compiled configuration audit. |
-| Fillets | Outside current A02/A03/A04/G09 need; zero implementation allocation proposed now. No claim that generic fillets are easy, available or needed to adopt this scope. |
-
-The public robust tessellation alternative is probed explicitly, without claiming it guarantees
-closure or exact engineering quantities. A production mesh adapter cannot merely sort triangles:
-F06 first-scope boxes fix vertex order, face order, exact roles and diagonals; future operations
-need newly reviewed rules. A topology-aware shared-vertex construction is preferable to silently
-welding by distance, which F06 forbids.
-
-## Supply chain and licence evidence
-
-The complete cargo-metadata list is [inventory.md](../../spikes/n04-truck/evidence/inventory.md),
-with all declared expressions and **each Cargo.lock checksum**, not just direct dependencies.
-There are **135 registry package versions plus the private spike**. All 135 cached `.crate`
-archive SHA-256 hashes match Cargo.lock. Native and target-specific package differences are
-visible in the resolve/feature trees; the list is not falsely labelled 135 host-linked libraries.
-No downloaded code or crate archive is committed.
-The three candidates declare no rust-version in metadata; compilation on 1.96.0 does not establish
-an older minimum supported Rust version. Cargo emits future-incompatibility warnings for
-nom 3.2.1 and quick-xml 0.22.0; passing today's harness Clippy does not promise future-toolchain acceptance.
-
-| Candidate | Version | Declared SPDX | Cargo.lock archive SHA-256 |
-|---|---|---|---|
-| truck-modeling | 0.6.0 | Apache-2.0 | `8082c2dfac8c2732a014d81807fb5d24dbac0d72ee4de2a705b7fbc05fa05b18` |
-| truck-shapeops | 0.4.0 | Apache-2.0 | `fd6e83ea4d36d00229d38ab985a991e32f58c3ed2971083011ac66fb57e26d5c` |
-| truck-meshalgo | 0.4.0 | Apache-2.0 | `e18f325738e822c79bb1a48897ec789cbf50cbeeb0841105295f9da85bdf3613` |
-
-Original publisher URL in all three cached manifests is `https://github.com/ricosjp/truck`.
-Per-package `.cargo_vcs_info.json` revisions and manifest hashes are in inventory.json. These
-are archive packaging claims, not a fresh verification of GitHub ownership or release tags.
-**No LICENSE* file is packaged in any of these three crate roots.** No licence was inferred from
-a README. Their Apache declarations are recorded, but original repository licence/NOTICE retrieval
-and exact package/file attribution remain admission gates. This report does not invent missing
-licence texts or consider the task's Apache label a complete redistribution audit.
-
-Every declared expression was screened against the current deny.toml allowlist, retaining the
-original string. Legacy `MIT/Apache-2.0` is interpreted as a dual choice for this metadata screen
-only; a future actual cargo-deny run must verify its treatment. `AND` obligations must all be
-satisfied, including unicode-ident's Unicode-3.0; `WITH LLVM-exception` is compared as the full
-allowed expression. Every registry package has a selectable allowed declaration. The out-of-list
-identifiers, including those avoidable by choosing an allowed alternative, are:
-
-| Package | Identifier outside allowlist | Declared available treatment |
+| Package | Version | Cargo.lock archive SHA-256 |
 |---|---|---|
-| adler2 2.0.1 | 0BSD | Select MIT or Apache-2.0 from its OR expression |
-| aho-corasick 1.1.5 | Unlicense | Select MIT |
-| byteorder 1.5.0 | Unlicense | Select MIT |
-| memchr 1.0.2 and 2.8.3 | Unlicense | Select MIT |
-| beamcraft-n04-truck-spike 0.0.1 | MPL-2.0 | Private `publish=false` package; deny policy ignores private packages; no production exception added |
+| truck-modeling | 0.6.0 | `8082c2dfac8c2732a014d81807fb5d24dbac0d72ee4de2a705b7fbc05fa05b18` |
+| truck-shapeops | 0.4.0 | `fd6e83ea4d36d00229d38ab985a991e32f58c3ed2971083011ac66fb57e26d5c` |
+| truck-meshalgo | 0.4.0 | `e18f325738e822c79bb1a48897ec789cbf50cbeeb0841105295f9da85bdf3613` |
 
-Available dependency licence files were read and hashed; missing packaged texts are explicit
-`none packaged` entries. This is a declaration-and-file-presence audit, not a complete file-level
-licence proof of the transitive graph. `cargo deny` is **not run**, because cargo-deny is absent;
-there is consequently no advisory/yanked/security clean bill and no network DB fetch.
+The original inventory lists 135 registry versions plus the private spike, including
+target-specific packages; it records matching cached archive checksums for all 135.
+Each declared expression has an allowed selection, including MIT/Apache alternatives
+to 0BSD/Unlicense. This metadata screen is not a file-level licence proof or cargo-deny.
+The candidate crate roots package no LICENSE files; original publisher licence/NOTICE
+retrieval and exact attribution remain unresolved. No text is invented or relicensed.
 
-The default feature graph is broader than the geometry need: truck-meshalgo enables VTK output
-and truck-shapeops enables step-test, pulling STEP parsing and compression. In particular
-`vtkio -> xz2 -> lzma-sys 0.1.20` builds a native C dependency, so this **default configuration is
-not a pure-Rust closure**. The packaged `xz-5.2/COPYING` summary says liblzma is public domain,
-while scripts/build material include GPL and a conditional getopt route can involve LGPL.
-Those are per-file/usage distinctions, not a GPL declaration in Cargo metadata. No GPL source
-was read or copied into BeamCraft. The exact native build/link/file closure was not audited and
-is not admitted for redistribution. Its licence-summary hash is recorded in inventory.json.
-Disabling unused features is a candidate mitigation; feature unification and the resulting graph
-must be checked before claiming native code disappears. No minimal-feature build is claimed here.
+Default VTK/STEP features broaden the graph. `vtkio -> xz2 -> lzma-sys 0.1.20`
+introduces C code: the XZ summary distinguishes public-domain liblzma from GPL build
+material and conditional LGPL getopt. No GPL source was read/copied; exact native
+file/link/notice closure remains unaudited and unapproved for redistribution.
+Minimal features were not tested. Original inventory/graph files are identified by
+hash below; `cargo metadata --offline --locked --format-version 1` and
+`cargo tree --offline --locked -e features` in the spike reproduce graph declarations.
+Original audit/environment/document-generation scripts were removed; only the small
+Python supervisor, scalar oracle, table calculator and their tests are necessary
+for the retained numerical report. No runtime backend or redistribution is admitted.
 
-## What adoption would require; estimated effort
+ATTRIBUTION.md is outside this task's write allowance. Proposed original-material
+entry: BeamCraft contributors; retained `spikes/n04-truck/**` source/docs and this
+report; original public-math/F06 probes, 2026-10-16; MPL-2.0; research record only.
+Exact upstream notice/attribution admission is separate and remains open.
 
-These are rough engineering estimates in person-hours, not measured effort, commitments or
-promises. Tasks overlap; adding every upper bound is not a schedule. A maintainer would need to
-refine them after public-API reproductions and an authorized source review.
+## Copilot review disposition (head 5a154b9)
 
-| Missing piece | Work proposal | Estimate |
-|---|---|---:|
-| Numeric/input guard and BeamCraft type boundary | Preserve original small types, F06 staged validation, units/local origin, caps, panic-to-diagnostic policy and atomic discard | 16–32 h |
-| F06 mesh/result adapter | Shared indexing by construction, semantic triangle/face table, encoding/keys, checks, limits and conformance cases | 32–64 h |
-| Face provenance / stable operation features | Original parent-face lineage, split naming, generated-cut/hole identities, deletion/remesh/edit stability tests; likely upstream hooks or maintained patches | 64–120 h |
-| Reliable degenerate cuts | Reproduce None/panic cases, define boundary policy without snapping, patch or replace missing paths and prove volume/topology invariants | 40–100 h |
-| Cylinder booleans / certified quantities | Fix/reject incomplete surfaces and numeric failures, check refinement and cap interaction, bound quantities for supported analytic families | 80–160 h |
-| Bounded execution/cancellation | Reviewed worker discard or cooperative upstream budgets, memory/latency measurements, cancellation tests | 24–48 h |
-| Licence/features/targets | Retrieve missing original notices, select/verify optional features, native closure audit or elimination, WASM and cross-target runs | 16–40 h |
-| Fillets | No current scope requirement | 0 h now |
+| Thread | Disposition for the orchestrator to post |
+|---|---|
+| 1, PR.md:31 | moot: file removed under the evidence policy. The underlying report defect is fixed: experiment explicitly partial, 366 observed calls, missing 74 schedules and absent supplementary file stated. Completion claims and stale 343-record counts removed; no new evaluation authorized. |
+| 2, checks.py:35 | moot: file removed under the evidence policy. finalize.py was also removed. Current verification records actual status/diagnostics below; E0463 alone is not proof that a target is absent. |
+| 3, run.py:135 | Fixed. The default schedule checkpoints separate debug/release files, clears selected files before starting, and keeps partial runs visible. Synthetic tests exercise both profile files and interruption without geometry calls. |
+| 4, summarize.py:49 | Fixed. Missing schedule/hash returns unmeasured; only complete observed byte comparisons can pass/fail. Aggregate denominators exclude unmeasured. Tables recomputed from all 366 records; missing four-thread contour and timed-out repeats have regression coverage. finalize.py consumer is moot: file removed under the evidence policy. |
 
-A practical truck integration investigation is estimated at **200–400 person-hours** before a
-credible scoped acceptance review, with substantial uncertainty and no guarantee the current
-geometry paths become suitable. A smaller original implementation of restricted contour extrusion,
-analytic through holes and plane cuts is estimated at **100–200 person-hours**, also uncertain;
-this is not a general CAD B-rep kernel or an independently measured comparison. Re-evaluate these
-ranges against concrete later contracts rather than treating spike wall time as development cost.
+## N04T verification and handoff
 
-No vendored patch is delivered or approved. A guard wrapper is necessary but cannot repair a
-missing face, supply lineage, guarantee generic geometry, bound an already-running synchronous
-call or make output deterministic. If the owner authorizes another trial, define one small
-operation family with numeric/topology/cancellation gates and resolve its licence/feature graph
-first. Do not adopt all three default-feature crates solely because rectangular extrusion passes.
+All commands ran offline on Rust/Clippy 1.96.0. Root Cargo build outputs were redirected
+to `spikes/n04-truck/target/root-checks`; spike outputs used its `target/` directory.
 
-Potential future repository edits, **none applied**: exact dependency pins and selected features;
-per-package F08 domain allowlist entries and production lockfile audit; a package/version MPL
-exception for any new BeamCraft-owned crate if needed; ATTRIBUTION rows for exact upstream packages,
-notices, any authorized vendored patch and the original N04 outputs; and acceptance amendments for
-new topology/FeatureIds/quantity certification. Apache-2.0 is already globally allowed, so an
-unnecessary broad deny exception is not proposed. Any newly discovered non-allowed file needs
-its own owner disposition; a package's manifest cannot override its bundled file licences.
+| Directory | Command | Actual result |
+|---|---|---|
+| Root | `cargo fmt --all -- --check` | PASS |
+| Root | `cargo clippy --workspace --all-targets -- -D warnings` | PASS |
+| Root | `cargo test --workspace` | PASS |
+| Spike | `cargo fmt --all -- --check` | PASS |
+| Spike | `cargo clippy --workspace --all-targets -- -D warnings` | PASS |
+| Spike | `cargo test --offline --locked` | PASS, six probe tests |
+| Spike | `cargo test --offline --locked --release` | PASS, six probe tests |
+| Root | `python spikes/n04-truck/test_harness.py` | PASS, four tests; synthetic review controls and scalar corruption checks |
+| Spike | `cargo check -p beamcraft-n04-truck-spike --target wasm32-unknown-unknown` | FAIL, E0463: cannot find crate for core; WASM compilation not run |
+| Root | `git diff --check` | PASS |
 
-## Verification and limitations
+The WASM diagnosis is supported independently by `rustup target list --installed`,
+which lists only aarch64-pc-windows-msvc and x86_64-pc-windows-msvc. E0463 by itself
+would not prove the target absent. This process/filesystem supervisor is native;
+no portability acceptance is claimed. No target/tool installation was attempted.
+Cargo also warns of future incompatibilities in nom 3.2.1 and quick-xml 0.22.0;
+current local Clippy passes, while current-stable CI has not been run here.
+The original supervisor was reproduced with synthetic calls: it wrote 440 records
+to results.json and neither per-profile file. The corrected regression passes.
+No full matrix or supplementary geometry was rerun; only existing probe tests ran.
 
-<!-- N04-CHECKS-BEGIN -->
-Pending final verification.
-<!-- N04-CHECKS-END -->
+Publication: **uncommitted**. Git staging cannot create the external worktree
+index.lock (Permission denied); no alternate metadata access was attempted.
+GitHub PR lookup also fails through the configured proxy (connection refused),
+so push, PR-body publication and draft-state verification were not possible.
+The existing PR is [#46](https://github.com/Apibim-com/BeamCraft/pull/46); no duplicate
+was opened. A full proposed body is prepared locally at ignored
+`spikes/n04-truck/target/n04t-pr-body.md` for the orchestrator to publish after
+committing/pushing. Copilot replies are left to the orchestrator.
+Entry HEAD remains `5a154b95758284f9854860f074766979e290462c`.
+The local origin/master ref is now `64655c353371cab8c8b7ac3944cd00543c18ab21`;
+no remote refresh, rebase or change to the existing PR branch was attempted.
 
-Root checks exercise the existing workspace, not an integrated truck adapter. Spike tests and
-the supervised actual calls exercise the new experiment. The WASM command was attempted but
-compilation is **not run** without the target; no target/tool/dependency installation is attempted.
-All build outputs are inside the writable spike's ignored target directory, including root checks.
+Proposed roadmap entry (unapplied): 2026-10-16: N04T reduced the rejected truck
+route to its report and offline harness, corrected partial-run and byte-comparison
+claims, and removed generated evidence with SHA-256/size references. Circular/oval
+holes and cuts remain our own implementation; no production feature is adopted.
 
-Not established: arbitrary input robustness or fuzzing; generic self-intersection and mathematical
-exactness; stable persistent operation names; hostile allocation/recursion bounds; reliable native
-dependency closure; older MSRV; minimal features; WASM/ARM/Linux/macOS/cross-compiler execution;
-advisory status or upstream maintenance; production engine/CLI/USD integration; complete licence
-notice redistribution; clean-room eligibility for later replacement-kernel implementation.
+## Archived locally, not in the repository
 
-Read-only input documents include AGENTS, CLAUDE, architecture, ROADMAP, F06, the kernel design,
-G01's superseding owner decision, N02's evaluation format, G03 originals, deny.toml and ATTRIBUTION.
-No other project source/tests or private commercial material was read. Rendered public truck API
-examples were visible but no upstream example/algorithm was copied. Compiler tools necessarily
-compile cached dependencies. Exposure to the public APIs and runtime results must be considered
-in any later clean-room admission. Prior model-training exposure is unknown; fresh context is
-not an admission certificate. All findings remain owner-decision evidence only.
+The orchestrator archived the original tree outside this repository; N04T neither
+accessed nor verified that archive. Sizes and SHA-256 below were computed from each
+worktree file **before deletion**. Paths are relative to `spikes/n04-truck/` and
+identify archived material, not live repository links. Earlier summary/check files
+can contain stale claims; the corrected report takes precedence. Binary build
+products and per-run meshes remain ignored, never repository evidence.
 
-The proposed dated roadmap entry and original-output/upstream attribution text are in PR.md.
-ATTRIBUTION.md and ROADMAP.md remain untouched under the task's explicit write restriction.
+| Removed file | Bytes | SHA-256 |
+|---|---:|---|
+| `PR.md` | 8779 | `12d78b35bd4b14545135b96c6e1a930c2fd3f23938725614be1897def676bd3e` |
+| `audit.py` | 5921 | `8c6da7c13de4325f79bb25c3d5f18a76f99baf98c8c4af23bcc6814163a7c426` |
+| `checks.py` | 2104 | `7dd2c0b6ebe3b130bec2035de83d853d5a28ec7a522239f15c41ecf15e7a45aa` |
+| `doc_text.py` | 957 | `e7d4792b55ff2fac38b341790f6a9ce5b179551959b6486298e1467d1ef915f6` |
+| `environment.py` | 1304 | `838760c0ad7a14a9e58d41a1bce1ab4af9b72db60be554e0ad435cecc07bc88f` |
+| `evidence/case-results.md` | 4307 | `d11cf289e1a4ff21a90e3b3b689fc5475f03c6fb86fe92685b48ecaae09cb104` |
+| `evidence/check-1.txt` | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `evidence/check-2.txt` | 72 | `59639588a6f1826f129cbcd121edc07279dab94786f5fa5bde6b3439b2e845cc` |
+| `evidence/check-3.txt` | 17081 | `ae02538ac67c112a4ff72f8a291a241d446d922f5816719bd19d353a6419a32e` |
+| `evidence/check-4.txt` | 957 | `a65f12d7d87e468913d139d19ee2f7aa01cc639768a9070fb15231446f4a200c` |
+| `evidence/check-5.txt` | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `evidence/check-6.txt` | 426 | `982006bfce98eeb394820b601f62a82eb1e4db75e1a5c5bdabefe7fe62b4f01b` |
+| `evidence/check-7.txt` | 1619 | `7695ad909009c84c576ff710e313e6fe7bf2da349bb920ed1684c160315684a6` |
+| `evidence/check-8.txt` | 1614 | `0582737b7ffaa6224195cbc04f8fe1f31b4cbecd0a7cc041b7b00d1ff21893fc` |
+| `evidence/checks.json` | 1344 | `f36715de7e4940772ac19af8e0bb215d6448457e38bc1982e6f95c086edc19cc` |
+| `evidence/determinism.md` | 3013 | `99b2a140f7719953e72c1fb5ea26b2849cc3d7327a0ed619d8d3bb51aa128f2e` |
+| `evidence/environment.json` | 1447 | `79b3b27c3f58a1011807bb1eee72930cefa0feca0d21be9c41271869e32ac2de` |
+| `evidence/expectations.json` | 15508 | `6030bdd8cc8df94af3e30e6a3de134f167dae6b5eaf2b6470d2f9118fa90e35b` |
+| `evidence/features.txt` | 61113 | `8336318eed9d1c0c72bb1cb428964b1cf654e3fa3e4168044c2bb512af389d28` |
+| `evidence/inventory.json` | 130525 | `c92e9721d4660a1f54c2e1a5582586711325925c92e719b256b210ab3b471bcf` |
+| `evidence/inventory.md` | 21263 | `423230e0fd943861c5fef32121668da86e8690dc4d9a81a887b3573973051df7` |
+| `evidence/resolution.json` | 129545 | `0e07c67e0acaf70c220559ea424304ee2c121b51305c3cce4f84c057848d3fc9` |
+| `evidence/results-debug.json` | 201920 | `8d591d2ef834552da616d008944d85edb8252e5c4d178c5bf15d26ccf2487d8d` |
+| `evidence/results-release.json` | 382703 | `6a55954dde5b8b0efe7cc99ada2b7788493523ce0780f95654392e5905470d51` |
+| `evidence/root-lock-sha256.txt` | 65 | `14fc0ae41cf112da199086b9edbd01ee5771b379fa06c45a8af4a9dda9d2e4bd` |
+| `evidence/summary.json` | 208832 | `9bd56bbc9767afa2a844fded1ec2f471a0912f2235bfc122d0cbcb9a1762d122` |
+| `evidence/tree.txt` | 10885 | `1ee557f5b6a647afdaf3875b1b59769dfa9349a74beb8f15263b000cd05c5a40` |
+| `finalize.py` | 6309 | `35100427399977f4901bceb1c701690aef889dbcdb71d8afb2341da04d034f1a` |
+| `supplement.py` | 593 | `f4a7d68bf9bdcb12df0547bad04be32c29eeedce21fe29a100bb444ea98d8fd3` |
+
+Removed 29 files, 1,220,206 bytes in total.

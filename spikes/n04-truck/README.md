@@ -1,52 +1,55 @@
-# N04 truck B-rep spike
+# N04 truck reproducible harness
 
-Contributor-original code and synthetic numeric probes, BeamCraft contributors, 2026-10-16,
-MPL-2.0. Isolated workspace; no production dependency or feature is adopted.
+Contributor-original probes, BeamCraft contributors, 2026-10-16, MPL-2.0.
+Isolated workspace; the pinned default-feature stack is a rejected route for
+BeamCraft holes/cuts. See [the report](../../docs/design/n04-truck-evaluation-v0.1.md).
 
-The pinned default-feature graph is the prepared graph, unchanged. Run offline from the repository:
+From the repository root in PowerShell, with the locked Cargo packages already
+cached, Rust 1.96, native MSVC tools and Python 3.11 (standard library only):
 
 ```powershell
-cargo build --offline --manifest-path spikes/n04-truck/Cargo.toml
-cargo build --offline --release --manifest-path spikes/n04-truck/Cargo.toml
-python spikes/n04-truck/audit.py
-python spikes/n04-truck/run.py --debug-only
-python spikes/n04-truck/run.py --release-only
-python spikes/n04-truck/supplement.py
-python spikes/n04-truck/summarize.py
-python spikes/n04-truck/checks.py
+Set-Location spikes/n04-truck
+$env:CARGO_NET_OFFLINE = 'true'
+$env:CARGO_TARGET_DIR = Join-Path (Get-Location) 'target'
+cargo build --offline --locked
+cargo build --offline --locked --release
+cargo fmt --all -- --check
+cargo clippy --offline --workspace --all-targets -- -D warnings
+cargo test --offline --locked
+cargo test --offline --locked --release
+python test_harness.py
 ```
 
-Run the two supervisors sequentially for isolated timing; concurrent execution is supported but
-timings are observational, not benchmarks. Each case runs caught three times with
-`RAYON_NUM_THREADS=1`, once caught with 4, and once directly with 1, in **each** build profile.
-Every process has a 30-second deadline. A killed process is FAIL/timeout, never inferred WRONG or
-PANIC. A caught panic exits zero with PANIC; a direct panic exits nonzero. No library object crosses
-the catch boundary. Repeated timeouts have no triangle bytes, so their determinism is unmeasured.
-Two separate 120-second supplementary probes (release pattern and debug hole) test whether the
-matrix's shorter budget hid a completed result. They are stored separately and do not alter the
-440-call matrix or its determinism comparisons.
-`target/probes` contains raw f64 mesh/triangle bytes and exploratory runs; only compact final evidence
-is intended for review. `run.py --quick [case ...]` is an exploratory debug pass; add `--release` for
-release. The case list is fixed and bounded. No random input generator or third-party fixture is used.
+Optional full reproduction (not run during N04T):
 
-`src/lib.rs` builds through truck public APIs. `src/main.rs` is a one-case CLI, not an engine control
-server. `oracle.py` independently derives expectations and checks six G03 rational references.
-`run.py` measures the actual emitted triangles again using Python scalar arithmetic and directed
-incidence. Exact-position alias enumeration is diagnostic only: no welding, snapping or healed mesh
-is returned. `tests/probes.rs` exercises actual extrusion, G03 quantities, minimum/translated
-dimensions and panic recovery. All authored Rust forbids unsafe.
+```powershell
+python run.py
+python summarize.py
+```
 
-PASS in case tables means the analytic-volume/B-rep probe passed. It **does not mean F06 mesh
-conformance**: raw indexed closure, canonical ordering, face mapping, caps and stable bytes are
-reported separately. Missing meshed surfaces make a returned mesh WRONG. F06 topology equality is
-exact, never relaxed by a numeric epsilon. Invalid-axis and singular-touch cases are separate from
-ordinary supported geometry. See [the evaluation](../../docs/design/n04-truck-evaluation-v0.1.md)
-for formulas, provenance, results and adoption gates.
+`run.py` writes separate `target/evidence/results-debug.json` and
+`results-release.json`, including for the default two-profile schedule. Each of
+44 cases has three caught one-thread calls, one caught four-thread call and one
+direct one-thread call per profile (440 planned calls), each with a 30-second
+process deadline. `--debug-only` or `--release-only` selects one profile.
+`python run.py --quick plate` is a one-call debug check; add `--release` for release.
+Each selected profile file is cleared before starting; interrupted schedules stay
+partial. `src/main.rs` also accepts `<case> <caught|direct> <output-prefix>`.
 
-`audit.py` stores the complete cargo-metadata package inventory, Cargo.lock checksums verified against
-cached archives, feature/resolve trees and hashes of available licence files. It does not read
-upstream source or tests. Declared-SPDX screening is not legal admission or cargo-deny. Metadata
-contains target-specific packages not built on the host. `doc_text.py` reads generated public API
-documentation under ignored `target/doc`; it does not follow source links. No upstream code, licence
-text, artwork, catalogue or test fixture is copied into deliverables. The N04 report includes the
-proposed attribution row because the task forbids editing ATTRIBUTION.md.
+Raw mesh/triangle bytes stay in ignored `target/probes`; all generated JSON stays
+in ignored `target/evidence`. Do not commit outputs or logs. Re-execution reproduces
+measurements and classifications, not elapsed times or nondeterministic byte hashes.
+The historical run was partial: 366 calls, with no supplementary result file.
+
+The small Python files are needed for report numbers: `run.py` supplies deadlines,
+hashes and an independent scalar mesh audit; `oracle.py` supplies analytic references
+and six G03 checks; `summarize.py` prints observed case counts and measured-only
+byte-comparison denominators. To summarize archived records without executing geometry:
+`python summarize.py --input-dir <archive-evidence-directory>`.
+`test_harness.py` checks corruption handling and review regressions with synthetic data.
+Audit, environment capture, supplementary-run and document-generation scripts were
+removed under the evidence policy. The report records removed-file sizes and hashes.
+
+PASS is the analytic-volume/B-rep probe result, not F06 mesh conformance. Missing
+runs/hashes mean unmeasured; only observed byte mismatches mean comparison failure.
+No healing, production API, control server or dependency admission is delivered.
