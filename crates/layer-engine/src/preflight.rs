@@ -55,10 +55,20 @@ pub(crate) fn text(bytes: &[u8], b: Budgets, control: &Control) -> Result<(), Di
             i += 1;
             continue;
         }
+        // Comment boundaries mirror the pinned lexer: `#` ends at CR or LF, `/* */` is skipped.
         if ch == b'#' {
-            while bytes.get(i).is_some_and(|c| *c != b'\n') {
+            while bytes.get(i).is_some_and(|c| !matches!(c, b'\r' | b'\n')) {
                 i += 1;
             }
+            continue;
+        }
+        if bytes.get(i..i.saturating_add(2)) == Some(b"/*") {
+            let body = bytes.get(i + 2..).ok_or_else(corrupt)?;
+            let end = body
+                .windows(2)
+                .position(|w| w == b"*/")
+                .ok_or_else(corrupt)?;
+            i += 2 + end + 2;
             continue;
         }
         tokens += 1;
@@ -100,6 +110,14 @@ pub(crate) fn text(bytes: &[u8], b: Budgets, control: &Control) -> Result<(), Di
                         return Err(limit());
                     }
                 }
+                // The backend converts quoted text in numeric positions, so numeric-looking
+                // strings get the same checks; ordinary strings are untouched.
+                if ch == b'"' {
+                    let quoted = text.get(start..i).ok_or_else(corrupt)?;
+                    if quoted.parse::<f64>().is_ok() {
+                        numeric(quoted)?;
+                    }
+                }
                 if ch == b'@' && !name(text.get(start..i).ok_or_else(corrupt)?) {
                     return Err(fail(
                         ErrorCode::PermissionDenied,
@@ -136,6 +154,7 @@ pub(crate) fn text(bytes: &[u8], b: Budgets, control: &Control) -> Result<(), Di
                 while bytes
                     .get(i)
                     .is_some_and(|c| !c.is_ascii_whitespace() && !b"{}[]()=,;\"@<>#".contains(c))
+                    && bytes.get(i..i.saturating_add(2)) != Some(b"/*")
                 {
                     i += 1;
                 }
@@ -163,27 +182,32 @@ pub(crate) fn text(bytes: &[u8], b: Budgets, control: &Control) -> Result<(), Di
                     .next()
                     .is_some_and(|c| c.is_ascii_digit() || matches!(c, b'+' | b'-' | b'.'))
                 {
-                    let n: f64 = token.parse().map_err(|_| corrupt())?;
-                    if !n.is_finite() {
-                        return Err(fail(ErrorCode::NonFiniteNumber, "non-finite numeric value"));
-                    }
-                    if n == 0.0
-                        && token
-                            .split(['e', 'E'])
-                            .next()
-                            .is_some_and(|m| m.bytes().any(|c| matches!(c, b'1'..=b'9')))
-                    {
-                        return Err(fail(
-                            ErrorCode::NonFiniteNumber,
-                            "nonzero numeric value underflows binary64",
-                        ));
-                    }
+                    numeric(token)?;
                 }
             }
         }
     }
     if !delimiters.is_empty() {
         return Err(corrupt());
+    }
+    Ok(())
+}
+
+fn numeric(token: &str) -> Result<(), Diagnostic> {
+    let n: f64 = token.parse().map_err(|_| corrupt())?;
+    if !n.is_finite() {
+        return Err(fail(ErrorCode::NonFiniteNumber, "non-finite numeric value"));
+    }
+    if n == 0.0
+        && token
+            .split(['e', 'E'])
+            .next()
+            .is_some_and(|m| m.bytes().any(|c| matches!(c, b'1'..=b'9')))
+    {
+        return Err(fail(
+            ErrorCode::NonFiniteNumber,
+            "nonzero numeric value underflows binary64",
+        ));
     }
     Ok(())
 }
@@ -342,12 +366,24 @@ pub(crate) fn binary_values(
             } else {
                 cursor.u64()?
             };
-            if count > b.array_items {
+            // Vector-array counts measure tuples; the budget counts scalars like USDA does.
+            let width = match ty {
+                19..=22 => 2usize,
+                23..=26 => 3,
+                27..=30 => 4,
+                _ => 1,
+            };
+            let scalars = if rep.is_array() {
+                count.checked_mul(width).ok_or_else(limit)?
+            } else {
+                count
+            };
+            if scalars > b.array_items {
                 return Err(limit());
             }
             charge(
                 decoded,
-                count.checked_mul(1024).ok_or_else(limit)?,
+                scalars.checked_mul(1024).ok_or_else(limit)?,
                 b.decoded_bytes,
             )?;
         } else if !matches!(ty, 1..=30 | 42..=44 | 51) {

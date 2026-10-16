@@ -650,3 +650,55 @@ fn layer_total_byte_and_authored_value_limits_are_inclusive() {
         assert_eq!(Reader::default().open(req, &control()).is_ok(), n >= 5);
     }
 }
+
+#[test]
+fn comment_forms_and_quoted_numbers_cannot_hide_underflow() {
+    for literal in [
+        "# note\r1e-99999\n",
+        "/* # */ 1e-99999",
+        "/* x */1e-99999",
+        "\"1e-99999\"",
+    ] {
+        let invalid = model().replace("77.25", literal);
+        let result = Reader::default().open(request(vec![asset("root.usda", invalid)]), &control());
+        assert_eq!(
+            result.map(|_| ()).unwrap_err().code,
+            ErrorCode::NonFiniteNumber,
+            "{literal:?}"
+        );
+    }
+    // Ordinary strings, including numeric-looking ones that are finite, still open.
+    let text = model().replace("\"Original\"", "\"12\"");
+    assert!(
+        Reader::default()
+            .open(request(vec![asset("root.usda", text)]), &control())
+            .is_ok()
+    );
+}
+
+#[test]
+fn usda_and_usdc_array_budgets_count_tuple_scalars_alike() {
+    let body = "#usda 1.0
+(metersPerUnit=0.001
+upAxis=\"Z\")
+def Xform \"A\" { custom double3[] v = [(1,2,3),(4,5,6)] }
+";
+    let data = openusd::usda::parse(body).unwrap();
+    let mut bin = IoCursor::new(Vec::new());
+    openusd::usdc::CrateWriter::write(&data, &mut bin).unwrap();
+    for (name, bytes) in [
+        ("root.usda", body.as_bytes().to_vec()),
+        ("root.usdc", bin.into_inner()),
+    ] {
+        for (items, ok) in [(5, false), (6, true)] {
+            let mut req = request(vec![asset(name, bytes.clone())]);
+            req.budgets.array_items = items;
+            let result = Reader::default().open(req, &control());
+            if ok {
+                assert!(result.is_ok(), "{name} {items}");
+            } else {
+                assert_eq!(result.unwrap_err().code, ErrorCode::LimitExceeded, "{name}");
+            }
+        }
+    }
+}
