@@ -196,7 +196,7 @@ fn hash_executable(
 /// This is not a cryptographic entropy API; exact F05 random-byte admission remains open.
 pub fn fresh_token() -> ContentDigest {
     let mut token = [0u8; 32];
-    for slot in token.chunks_exact_mut(8) {
+    for slot in token.as_chunks_mut::<8>().0 {
         let mut h = RandomState::new().build_hasher();
         h.write(b"BeamCraft/U04/incarnation");
         slot.copy_from_slice(&h.finish().to_be_bytes());

@@ -25,12 +25,18 @@ use std::{
     io::Write,
     path::PathBuf,
     process::{Child, Command, Stdio},
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
 const ID: &str = "0199e7a0-0000-7000-8000-000000000001";
 static NEXT: AtomicU64 = AtomicU64::new(0);
+// Cargo builds one immutable worker artifact for this test executable. Compute the expected
+// package identity once; Session::spawn still verifies the actual executable on every launch.
+static WORKER_DIGEST: OnceLock<ContentDigest> = OnceLock::new();
 struct Fixture {
     root: PathBuf,
     store: BlobStore,
@@ -81,7 +87,8 @@ impl Fixture {
     fn config(&self) -> WorkerConfig {
         let executable = PathBuf::from(env!("CARGO_BIN_EXE_beamcraft-usd-worker"));
         WorkerConfig {
-            executable_digest: executable_digest(&executable).unwrap(),
+            executable_digest: *WORKER_DIGEST
+                .get_or_init(|| executable_digest(&executable).unwrap()),
             executable,
             store_root: self.root.clone(),
         }
@@ -138,7 +145,9 @@ fn isolated(command: &mut Command) {
     }
 }
 fn control() -> Control {
-    Control::new(Some(10000), Cancellation::default()).unwrap()
+    // Functional assertions use the public API default, matching the CLI. Explicit deadline
+    // tests below keep their independent short/expired budgets.
+    Control::new(None, Cancellation::default()).unwrap()
 }
 fn model() -> Vec<u8> {
     format!("#usda 1.0\n(metersPerUnit=0.001\nupAxis=\"Z\")\ndef Xform \"E_0199e7a0000070008000000000000001\" {{\ncustom string bim:id = \"{ID}\"\ncustom double demo:value = 77.25\ncustom string description = \"inert unknown original metadata\"\n}}\n").into_bytes()
@@ -207,7 +216,8 @@ fn corrupt_numeric_plugin_and_digest_faults_are_safe_machine_errors() {
     ] {
         let fixture=Fixture::new(&bytes);
         let mut host=Dispatcher::new(fixture.config());
-        assert_eq!(host.execute(HostCommand::Open(fixture.grant()),&control()).unwrap_err().code,expected);
+        let error=host.execute(HostCommand::Open(fixture.grant()),&control()).unwrap_err();
+        assert_eq!(error.code,expected,"{error:?}");
         let output=fixture.cli("open").output().unwrap();
         assert_eq!(output.status.code(),Some(2));
         let json=json::decode(&output.stdout,&message::read_limits()).unwrap();
