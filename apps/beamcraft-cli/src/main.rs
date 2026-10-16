@@ -249,8 +249,76 @@ fn run(args: Vec<std::ffi::OsString>) -> Result<Json, (HostError, Json)> {
     })
 }
 fn read_file(path: &str, cap: usize) -> Result<Vec<u8>, HostError> {
-    let file = std::fs::File::open(path).map_err(|_| HostError::logical(ErrorCode::NotFound))?;
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    // Check the opened handle below; a path metadata check cannot close a replacement race.
+    // O_NONBLOCK prevents a FIFO replacement from blocking the open itself.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        const O_NONBLOCK: i32 = 0x800;
+        #[cfg(any(
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "netbsd",
+            target_os = "dragonfly"
+        ))]
+        const O_NONBLOCK: i32 = 0x4;
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "netbsd",
+            target_os = "dragonfly"
+        )))]
+        return Err(invalid());
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "netbsd",
+            target_os = "dragonfly"
+        ))]
+        options.custom_flags(O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::{
+            os::windows::fs::{MetadataExt, OpenOptionsExt},
+            path::{Component, Prefix},
+        };
+        if matches!(std::path::Path::new(path).components().next(), Some(Component::Prefix(p)) if !matches!(p.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_)))
+        {
+            return Err(invalid());
+        }
+        let metadata =
+            std::fs::symlink_metadata(path).map_err(|_| HostError::logical(ErrorCode::NotFound))?;
+        if !metadata.is_file() || metadata.file_attributes() & 0x400 != 0 {
+            return Err(invalid());
+        }
+        // Open a concurrently substituted reparse point itself rather than its target.
+        options.custom_flags(0x0020_0000); // FILE_FLAG_OPEN_REPARSE_POINT
+    }
+    let file = options
+        .open(path)
+        .map_err(|_| HostError::logical(ErrorCode::NotFound))?;
     let metadata = file.metadata().map_err(|_| invalid())?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if metadata.file_attributes() & 0x400 != 0 {
+            return Err(invalid());
+        }
+    }
     if !metadata.is_file() || metadata.len() > cap as u64 {
         return Err(HostError::logical(ErrorCode::LimitExceeded));
     }

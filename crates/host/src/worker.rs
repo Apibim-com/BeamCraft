@@ -204,6 +204,55 @@ pub fn fresh_token() -> ContentDigest {
     ContentDigest::from_bytes(token)
 }
 
+/// A failed launch, including ownership of a child whose cleanup is not yet confirmed.
+/// The dispatcher must retain this child and confirm cleanup before any replacement launch.
+pub struct LaunchFailure {
+    /// Original safe handshake/launch failure.
+    pub error: HostError,
+    pub(crate) retained: Option<Box<Session>>,
+}
+impl LaunchFailure {
+    /// Whether a child or its pipe tasks still require confirmed cleanup.
+    pub fn cleanup_pending(&self) -> bool {
+        self.retained.is_some()
+    }
+    fn cleanup(error: HostError, mut session: Session) -> Self {
+        let retained = if session.stop().is_err() {
+            Some(Box::new(session))
+        } else {
+            None
+        };
+        Self { error, retained }
+    }
+}
+impl From<HostError> for LaunchFailure {
+    fn from(error: HostError) -> Self {
+        Self {
+            error,
+            retained: None,
+        }
+    }
+}
+impl From<T> for LaunchFailure {
+    fn from(error: T) -> Self {
+        HostError::from(error).into()
+    }
+}
+impl std::fmt::Debug for LaunchFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LaunchFailure")
+            .field("error", &self.error)
+            .field("cleanup_pending", &self.cleanup_pending())
+            .finish()
+    }
+}
+impl std::fmt::Display for LaunchFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.error.fmt(f)
+    }
+}
+impl std::error::Error for LaunchFailure {}
+
 /// One live child session. Exclusive mutable calls enforce a single request owner.
 pub struct Session {
     child: Child,
@@ -211,8 +260,7 @@ pub struct Session {
     incoming: Option<Receiver<Result<Json, T>>>,
     threads: Vec<JoinHandle<()>>,
     failed: Arc<AtomicU8>,
-    starts: Receiver<Instant>,
-    assembly: Option<Instant>,
+    assembly: wire::Assembly,
     termination: Termination,
     nonce: String,
     limits: Limits,
@@ -220,16 +268,17 @@ pub struct Session {
     stopped: bool,
     last_ping: Instant,
     ping_id: u32,
+    pending_ping: Option<(u32, Instant)>,
 }
 impl Session {
     /// Verifies the package, spawns with anonymous pipes and a cleared environment, then
     /// performs all four handshake messages before stage access.
-    pub fn spawn(config: &WorkerConfig, control: &Control) -> Result<Self, HostError> {
+    pub fn spawn(config: &WorkerConfig, control: &Control) -> Result<Self, LaunchFailure> {
         control.remaining()?;
         if hash_executable(&config.executable, || control.remaining().map(|_| ()))?
             != config.executable_digest
         {
-            return Err(HostError::logical(ErrorCode::IntegrityError));
+            return Err(HostError::logical(ErrorCode::IntegrityError).into());
         }
         crate::storage::BlobStore::new(&config.store_root)
             .map_err(|e| HostError::logical(e.code()))?;
@@ -256,14 +305,16 @@ impl Session {
             .map_err(|_| HostError::from(T::BackendLost))?;
         let pipes = (child.stdin.take(), child.stdout.take(), child.stderr.take());
         let (Some(mut input), Some(mut output), Some(mut diagnostics)) = pipes else {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(T::BackendLost.into());
+            return Err(LaunchFailure::cleanup(
+                T::BackendLost.into(),
+                Self::bare(child),
+            ));
         };
         let (tx, writer_rx) = mpsc::sync_channel::<Json>(1);
         let (reader_tx, rx) = mpsc::sync_channel(0);
         let failed = Arc::new(AtomicU8::new(0));
-        let (start_tx, starts) = mpsc::sync_channel(1);
+        let assembly = wire::Assembly::default();
+        let reader_assembly = assembly.clone();
         let wf = failed.clone();
         let writer = thread::spawn(move || {
             while let Ok(j) = writer_rx.recv() {
@@ -275,9 +326,7 @@ impl Session {
         });
         let reader = thread::spawn(move || {
             loop {
-                let j = wire::read_tracked(&mut output, &message::read_limits(), || {
-                    let _ = start_tx.try_send(Instant::now());
-                });
+                let j = wire::read_timed(&mut output, &message::read_limits(), &reader_assembly);
                 let end = j.is_err();
                 if reader_tx.send(j).is_err() || end {
                     break;
@@ -302,22 +351,12 @@ impl Session {
                 }
             }
         });
-        let mut s = Self {
-            child,
-            outgoing: Some(tx),
-            incoming: Some(rx),
-            threads: vec![writer, reader, diagnostic],
-            failed,
-            starts,
-            assembly: None,
-            termination: Termination::default(),
-            nonce: fresh_token().to_string(),
-            limits: message::read_limits(),
-            next_id: 1,
-            stopped: false,
-            last_ping: Instant::now(),
-            ping_id: 0,
-        };
+        let mut s = Self::bare(child);
+        s.outgoing = Some(tx);
+        s.incoming = Some(rx);
+        s.threads = vec![writer, reader, diagnostic];
+        s.failed = failed;
+        s.assembly = assembly;
         let deadline = control
             .deadline
             .min(Instant::now() + Duration::from_secs(5));
@@ -326,10 +365,27 @@ impl Session {
             cancellation: control.cancellation.clone(),
         };
         if let Err(error) = s.handshake(&handshake) {
-            let _ = s.stop();
-            return Err(error);
+            return Err(LaunchFailure::cleanup(error, s));
         }
         Ok(s)
+    }
+    fn bare(child: Child) -> Self {
+        Self {
+            child,
+            outgoing: None,
+            incoming: None,
+            threads: Vec::new(),
+            failed: Arc::new(AtomicU8::new(0)),
+            assembly: wire::Assembly::default(),
+            termination: Termination::default(),
+            nonce: fresh_token().to_string(),
+            limits: message::read_limits(),
+            next_id: 1,
+            stopped: false,
+            last_ping: Instant::now(),
+            ping_id: 0,
+            pending_ping: None,
+        }
     }
     fn send(&self, j: Json) -> Result<(), HostError> {
         self.outgoing
@@ -339,6 +395,15 @@ impl Session {
             .map_err(|_| T::BackendLost.into())
     }
     fn receive(&mut self, control: &Control) -> Result<Json, HostError> {
+        loop {
+            if let Some(j) = self.poll(control, control.deadline)? {
+                return Ok(j);
+            }
+        }
+    }
+    // None denotes an ordinary poll interval only. Assembly, request and liveness expiry
+    // are terminal errors and can never be mistaken for a reason to poll again.
+    fn poll(&mut self, control: &Control, until: Instant) -> Result<Option<Json>, HostError> {
         loop {
             if self.termination.0.load(Ordering::Acquire) {
                 self.child
@@ -352,30 +417,85 @@ impl Session {
                 1 => return Err(T::BackendLost.into()),
                 _ => return Err(T::Limit.into()),
             }
-            if let Ok(start) = self.starts.try_recv() {
-                self.assembly = Some(start);
-            }
-            if self
-                .assembly
-                .is_some_and(|s| s.elapsed() >= Duration::from_secs(10))
+            let now = Instant::now();
+            if self.assembly.expired(now)?
+                || self.pending_ping.is_some_and(|(_, at)| {
+                    now.saturating_duration_since(at) >= Duration::from_secs(15)
+                })
             {
                 return Err(T::Deadline.into());
             }
-            let wait = Duration::from_millis(control.remaining()?.min(10));
+            if now >= until {
+                return Ok(None);
+            }
+            let wait = Duration::from_millis(control.remaining()?.min(10))
+                .min(until.saturating_duration_since(now));
             match self
                 .incoming
                 .as_ref()
                 .ok_or(T::BackendLost)?
                 .recv_timeout(wait)
             {
-                Ok(j) => {
-                    self.assembly = None;
-                    return j.map_err(HostError::from);
-                }
+                Ok(j) => return j.map(Some).map_err(HostError::from),
                 Err(mpsc::RecvTimeoutError::Disconnected) => return Err(T::BackendLost.into()),
                 Err(mpsc::RecvTimeoutError::Timeout) => (),
             }
         }
+    }
+    fn pong(&mut self, j: &Json) -> Result<(), HostError> {
+        j.closed(&["type", "buffers", "session_nonce", "ping_id"])?;
+        message::common(j, "pong", &self.nonce)?;
+        let (id, at) = self.pending_ping.ok_or(T::UnknownId)?;
+        if j.get("ping_id")?.unsigned()? != u64::from(id) {
+            return Err(T::UnknownId.into());
+        }
+        if at.elapsed() >= Duration::from_secs(15) {
+            return Err(T::Deadline.into());
+        }
+        self.pending_ping = None;
+        Ok(())
+    }
+    fn before_request(&mut self, c: &Control) -> Result<(), HostError> {
+        // At most one legitimate queued pong can precede a new request. Any other complete
+        // unsolicited frame is a correlation failure; a queued transport error keeps its cause.
+        for _ in 0..2 {
+            let queued = match self.incoming.as_ref().ok_or(T::BackendLost)?.try_recv() {
+                Ok(j) => Some(j?),
+                Err(mpsc::TryRecvError::Disconnected) => return Err(T::BackendLost.into()),
+                Err(mpsc::TryRecvError::Empty) => None,
+            };
+            let Some(j) = queued else {
+                break;
+            };
+            if j.get("type")?.string()? != "pong" {
+                return Err(T::UnknownId.into());
+            }
+            self.pong(&j)?;
+        }
+        // A response may legitimately precede its pending pong. Resolve that correlation
+        // with the original ping allowance and the new call's deadline before dispatch.
+        if self.pending_ping.is_some() {
+            let j = self.receive(c)?;
+            self.pong(&j)?;
+        }
+        Ok(())
+    }
+    fn heartbeat(&mut self) -> Result<(), HostError> {
+        if self.last_ping.elapsed() >= Duration::from_secs(5) && self.pending_ping.is_none() {
+            self.ping_id = self
+                .ping_id
+                .checked_add(1)
+                .filter(|id| *id <= 65535)
+                .ok_or(T::Limit)?;
+            self.send(envelope(
+                "ping",
+                &self.nonce,
+                [("ping_id", Json::uint(u64::from(self.ping_id)))],
+            ))?;
+            self.last_ping = Instant::now();
+            self.pending_ping = Some((self.ping_id, self.last_ping));
+        }
+        Ok(())
     }
     fn handshake(&mut self, c: &Control) -> Result<(), HostError> {
         let features = Json::Array(message::FEATURES.into_iter().map(Json::text).collect());
@@ -495,13 +615,7 @@ impl Session {
         if self.next_id > 65535 {
             return Err(T::Limit.into());
         }
-        if let Some(rx) = &self.incoming {
-            match rx.try_recv() {
-                Ok(_) => return Err(T::UnknownId.into()),
-                Err(mpsc::TryRecvError::Disconnected) => return Err(T::BackendLost.into()),
-                Err(mpsc::TryRecvError::Empty) => (),
-            }
-        }
+        self.before_request(c)?;
         let id = self.next_id;
         self.next_id += 1;
         self.send(envelope(
@@ -515,32 +629,11 @@ impl Session {
                 ("body", body),
             ],
         ))?;
-        let mut pending_ping = None;
         loop {
-            let response = match self.receive(&Control {
-                deadline: c.deadline.min(Instant::now() + Duration::from_millis(25)),
-                cancellation: c.cancellation.clone(),
-            }) {
-                Ok(j) => j,
-                Err(e) if e.transport == Some(T::Deadline) && Instant::now() < c.deadline => {
-                    if self.last_ping.elapsed() >= Duration::from_secs(5) && pending_ping.is_none()
-                    {
-                        self.ping_id += 1;
-                        if self.ping_id > 65535 {
-                            return Err(T::Limit.into());
-                        }
-                        self.send(envelope(
-                            "ping",
-                            &self.nonce,
-                            [("ping_id", Json::uint(u64::from(self.ping_id)))],
-                        ))?;
-                        self.last_ping = Instant::now();
-                        pending_ping = Some(self.last_ping);
-                    }
-                    if pending_ping.is_some_and(|p: Instant| p.elapsed() > Duration::from_secs(15))
-                    {
-                        return Err(T::Deadline.into());
-                    }
+            let response = match self.poll(c, Instant::now() + Duration::from_millis(25)) {
+                Ok(Some(j)) => j,
+                Ok(None) => {
+                    self.heartbeat()?;
                     continue;
                 }
                 Err(e) => {
@@ -550,21 +643,12 @@ impl Session {
                             &self.nonce,
                             [("target_request_id", Json::uint(u64::from(id)))],
                         ));
-                        // Read-only: termination discards the projection; no mutation is admitted.
                     }
                     return Err(e);
                 }
             };
             match response.get("type")?.string()? {
-                "pong" => {
-                    response.closed(&["type", "buffers", "session_nonce", "ping_id"])?;
-                    message::common(&response, "pong", &self.nonce)?;
-                    if pending_ping.take().is_none()
-                        || response.get("ping_id")?.unsigned()? != u64::from(self.ping_id)
-                    {
-                        return Err(T::UnknownId.into());
-                    }
-                }
+                "pong" => self.pong(&response)?,
                 "response" => {
                     response.closed(&[
                         "type",
@@ -615,14 +699,16 @@ impl Session {
             }
             thread::sleep(Duration::from_millis(5));
         }
-        for t in self.threads.drain(..) {
+        while let Some(t) = self.threads.last() {
             while !t.is_finished() && Instant::now() < until {
                 thread::sleep(Duration::from_millis(5));
             }
             if !t.is_finished() {
                 return Err(T::BackendLost.into());
             }
-            let _ = t.join();
+            if let Some(t) = self.threads.pop() {
+                let _ = t.join();
+            }
         }
         self.stopped = true;
         Ok(())
@@ -631,5 +717,150 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         let _ = self.stop();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn control() -> Control {
+        Control::new(None, Cancellation::default()).unwrap()
+    }
+    pub(super) fn session() -> (Session, SyncSender<Result<Json, T>>, Receiver<Json>) {
+        let child = Command::new(std::env::current_exe().unwrap())
+            .arg("--list")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut session = Session::bare(child);
+        let (tx, rx) = mpsc::sync_channel(1);
+        session.incoming = Some(rx);
+        let (out, requests) = mpsc::sync_channel(1);
+        session.outgoing = Some(out);
+        (session, tx, requests)
+    }
+    #[test]
+    fn queued_loss_keeps_its_transport_code_and_unsolicited_success_is_unknown() {
+        let (mut session, tx, _requests) = session();
+        tx.send(Err(T::BackendLost)).unwrap();
+        assert_eq!(
+            session.before_request(&control()).unwrap_err().transport,
+            Some(T::BackendLost)
+        );
+        tx.send(Ok(envelope("response", &session.nonce, [])))
+            .unwrap();
+        assert_eq!(
+            session.before_request(&control()).unwrap_err().transport,
+            Some(T::UnknownId)
+        );
+    }
+    #[test]
+    fn assembly_expiry_is_terminal_not_a_poll_tick() {
+        let (mut session, _tx, _requests) = session();
+        session
+            .assembly
+            .begin(Instant::now() - Duration::from_secs(11))
+            .unwrap();
+        let start = Instant::now();
+        let id = "0199e7a0-0000-7000-8000-000000000001";
+        let result = session.call_inner(
+            "QueryOutcome",
+            Json::Null,
+            Json::object([
+                ("project_id", Json::text(id)),
+                ("workspace_id", Json::text(id)),
+                ("op_id", Json::text(id)),
+            ]),
+            &control(),
+        );
+        assert_eq!(result.unwrap_err().transport, Some(T::Deadline));
+        assert!(start.elapsed() < Duration::from_secs(1));
+    }
+    #[test]
+    fn response_before_pong_preserves_correlation_into_the_next_call() {
+        let (mut session, tx, requests) = session();
+        session.last_ping = Instant::now() - Duration::from_secs(6);
+        let nonce = session.nonce.clone();
+        let (release, wait) = mpsc::channel();
+        let peer = thread::spawn(move || {
+            let request = requests.recv_timeout(Duration::from_secs(2)).unwrap();
+            let ping = requests.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert_eq!(ping.get("type").unwrap().string().unwrap(), "ping");
+            let response = |id| {
+                envelope(
+                    "response",
+                    &nonce,
+                    [
+                        ("request_id", Json::uint(id)),
+                        ("outcome", Json::text("stage_status")),
+                        ("code", Json::Null),
+                        ("message", Json::text("read operation completed")),
+                        ("observed_context", Json::Null),
+                        (
+                            "body",
+                            Json::object([("status", Json::text("not_observed"))]),
+                        ),
+                    ],
+                )
+            };
+            tx.send(Ok(response(
+                request.get("request_id").unwrap().unsigned().unwrap(),
+            )))
+            .unwrap();
+            wait.recv_timeout(Duration::from_secs(2)).unwrap();
+            tx.send(Ok(envelope(
+                "pong",
+                &nonce,
+                [("ping_id", ping.get("ping_id").unwrap().clone())],
+            )))
+            .unwrap();
+            let request = requests.recv_timeout(Duration::from_secs(2)).unwrap();
+            tx.send(Ok(response(
+                request.get("request_id").unwrap().unsigned().unwrap(),
+            )))
+            .unwrap();
+        });
+        let id = "0199e7a0-0000-7000-8000-000000000001";
+        let body = Json::object([
+            ("project_id", Json::text(id)),
+            ("workspace_id", Json::text(id)),
+            ("op_id", Json::text(id)),
+        ]);
+        session
+            .call_inner("QueryOutcome", Json::Null, body.clone(), &control())
+            .unwrap();
+        assert!(session.pending_ping.is_some());
+        release.send(()).unwrap();
+        session
+            .call_inner("QueryOutcome", Json::Null, body, &control())
+            .unwrap();
+        assert!(session.pending_ping.is_none());
+        peer.join().unwrap();
+    }
+    fn held_cleanup() -> (LaunchFailure, std::sync::mpsc::Sender<()>) {
+        // A real owned child plus a held pipe-task analogue exercises cleanup uncertainty without
+        // relying on an OS kill/reap failure. The release sender also unblocks on test unwinding.
+        let mut session = session().0;
+        let (release, wait) = mpsc::channel();
+        session.threads.push(thread::spawn(move || {
+            let _ = wait.recv();
+        }));
+        (
+            LaunchFailure::cleanup(T::BackendLost.into(), session),
+            release,
+        )
+    }
+
+    #[test]
+    fn unconfirmed_launch_cleanup_is_retained_until_released() {
+        let (mut failure, release) = held_cleanup();
+        assert!(failure.cleanup_pending());
+        release.send(()).unwrap();
+        let mut session = failure.retained.take().unwrap();
+        let until = Instant::now() + Duration::from_secs(5);
+        while session.stop().is_err() && Instant::now() < until {}
+        assert!(session.stopped);
     }
 }

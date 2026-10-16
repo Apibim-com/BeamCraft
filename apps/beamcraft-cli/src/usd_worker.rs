@@ -26,13 +26,12 @@ pub fn run() -> Result<(), T> {
     }
     let store = BlobStore::new(path).map_err(|_| T::ModelExecution)?;
     let (tx, rx) = mpsc::sync_channel(0);
-    let (start_tx, start_rx) = mpsc::sync_channel(1);
+    let assembly = wire::Assembly::default();
+    let reader_assembly = assembly.clone();
     std::thread::spawn(move || {
         let mut input = std::io::stdin().lock();
         loop {
-            let j = wire::read_tracked(&mut input, &message::read_limits(), || {
-                let _ = start_tx.try_send(Instant::now());
-            });
+            let j = wire::read_timed(&mut input, &message::read_limits(), &reader_assembly);
             let end = j.is_err();
             if tx.send(j).is_err() || end {
                 break;
@@ -114,7 +113,6 @@ pub fn run() -> Result<(), T> {
         &envelope("ready_ack", &nonce, fields),
         &message::read_limits(),
     )?;
-    while start_rx.try_recv().is_ok() {}
     let (jobs_tx, jobs_rx) = mpsc::sync_channel::<Job>(0);
     let (done_tx, done_rx) = mpsc::sync_channel(0);
     // This is the sole stage owner; the IPC loop can process ping/cancel while it composes.
@@ -137,15 +135,9 @@ pub fn run() -> Result<(), T> {
     let mut last = 0u64;
     let mut pending: Option<(u64, engine::Cancellation, bool)> = None;
     let mut ping = 0u64;
-    let mut assembly = None;
     let mut last_input = Instant::now();
     loop {
-        if let Ok(start) = start_rx.try_recv() {
-            assembly = Some(start);
-        }
-        if assembly.is_some_and(|s: Instant| s.elapsed() > Duration::from_secs(10))
-            || last_input.elapsed() > Duration::from_secs(20)
-        {
+        if assembly.expired(Instant::now())? || last_input.elapsed() > Duration::from_secs(20) {
             return Err(T::Deadline);
         }
         if let Ok((id, result)) = done_rx.try_recv() {
@@ -176,7 +168,6 @@ pub fn run() -> Result<(), T> {
             Err(mpsc::RecvTimeoutError::Timeout) => continue,
             Err(_) => return Err(T::BackendLost),
         };
-        assembly = None;
         last_input = Instant::now();
         match j.get("type")?.string()? {
             "request" => {
@@ -407,7 +398,10 @@ impl State {
                 return Err(ErrorCode::LimitExceeded);
             }
             let cursor = match cursor {
-                None => None,
+                None => {
+                    self.pages = 0;
+                    None
+                }
                 Some(c) => Some(self.cursors.get(c).ok_or(ErrorCode::StaleWorkspace)?),
             };
             if self.pages >= 1024 {
