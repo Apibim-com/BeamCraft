@@ -30,12 +30,35 @@ races. Windows blob opens additionally use `FILE_FLAG_OPEN_REPARSE_POINT`. A wri
 change stored bytes can still change them after a verified read; readers receive their verified
 snapshot. Neither this API nor SHA-256 authenticates a hostile writer.
 
-No root revision transaction, directory crash durability, garbage collection or worker is
-implemented here. U06/U07 own revision publication and recovery; the CLI command is U04.
+No directory crash durability, garbage collection or worker is implemented in `storage`;
+revision publication is the separate `revision` module below and recovery is U07; the CLI
+byte commands are U04.
 
 SHA-256 is original code implementing FIPS PUB 180-4 (August 2015), sections 4.1.2, 4.2.2,
 5 and 6.2: https://doi.org/10.6028/NIST.FIPS.180-4. NIST examples and .NET-derived boundary
 vectors test it independently. The older fixture-tool hasher remains separate and untouched.
+
+## U06 revision commit
+
+`beamcraft_host::revision` commits and reads one complete revision; see the
+[design record](../../docs/design/u06-revision-commit.md). A revision is a canonical
+`Manifest` blob (identities, base, schema digest, optional verified U03 index record, sorted
+layer entries with full digests and sizes) stored through `BlobStore`. The root is an
+append-only head log `revisions/<20-digit sequence>`: each record is a complete synced file
+installed by a non-replacing hard link, so the root switches in one step and the link is also
+the compare-and-swap for the expected base.
+
+- `RevisionStore::commit(&draft, &expected)` / `commit_with(.., verifier, hook)`.
+- `RevisionStore::open()` verifies record, manifest, base link and every layer blob and
+  refuses missing, corrupt, resized or torn state with `RevisionError` (`code()` maps to F04).
+- `ContentVerifier` is the injected content gate (layer engine, U03 evidence); `CommitHook`
+  marks `Checked`, `BlobsVerified`, `ManifestStored`, `RecordStaged`, `Switched`: abort before
+  `Switched` leaves the root unchanged, a failure at `Switched` is `OutcomeUnknown`. U07 uses it.
+- `beamcraft revision-commit` / `revision-open` are the headless commands.
+
+Not promised: directory-entry crash durability, cleanup of `.tmp-*` files or unreferenced blobs
+after a crash, garbage collection, protection from a hostile writer to the store directory.
+Not implemented: U07 journal/recovery, personal workspaces, collaboration, a CLI verifier.
 
 ## U04 experimental process client
 

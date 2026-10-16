@@ -3,7 +3,8 @@
 U04 adds two native binaries in this existing package: `beamcraft` and
 `beamcraft-usd-worker`. The CLI calls `beamcraft_host::dispatch::Dispatcher`;
 only the worker constructs a `beamcraft_layer_engine::Reader`. Neither starts
-a socket or a service. The SDK fallback, mutations, saves and publication are unavailable.
+a socket or a service. The SDK fallback and mutations are unavailable; `revision-commit` and
+`revision-open` (below) are the only publication path, and they do not parse USD.
 This is an experimental read path, not complete LEW-03/F05 admission.
 
 Build offline with `cargo build --offline -p beamcraft-cli --bins`.
@@ -40,6 +41,30 @@ An explicitly selected unavailable backend returns 3; there is no automatic SDK 
 use U05 byte storage. They do not publish a project revision. `query-outcome` requires the
 selected identity and `--op-id UUIDV7`, works without a worker, and returns OUTCOME_UNKNOWN
 until U07 can provide durable proof. It does not report an assumed rejection on replay.
+
+## U06 revision commands
+
+```text
+beamcraft revision-commit --store ROOT --project-id UUIDV7 --workspace-id UUIDV7
+  --revision-id UUIDV7 --op-id UUIDV7 --generation U64 --base none|REVISION_UUIDV7
+  --schema SHA256 --root-layer NAME --layers ROLE:NAME:SHA256,...
+beamcraft revision-open --store ROOT
+```
+
+`ROLE` is `authored`, `derived` or `external`; every layer blob must already be in the store
+(`blob-put`), and each size is taken from the verified stored bytes. The commit verifies the
+expected base, every blob and the op id, then switches the root in one step; a retry of the
+same op returns `revision_replayed`. `revision-open` verifies the root, its manifest and every
+layer blob and prints the revision (`revision_verified`). Output is JSON with decimal strings
+for `sequence`, `workspace_generation` and sizes. Errors use the existing exit codes
+(`BASE_REVISION_MISMATCH`, `OP_ID_REUSE`, `INTEGRITY_ERROR`, ... exit 2). No deadline is
+checked after the root switch, because a timeout would hide a committed revision.
+
+These commands check blob integrity, not USD content: the layer engine runs in its own process
+and the frozen U04 profile has no verify/index message, so duplicate-ID, dangling-link and
+U03-index checks run only through the host API's injected `ContentVerifier` (exercised in the
+tests with the real layer engine). A CLI commit records `index: null`. U07 recovery is not
+implemented. See the [U06 record](../../docs/design/u06-revision-commit.md).
 
 The worker accepts only `--store ROOT`; unknown plugin/runtime options fail before reading
 model data. It has no plugin/script loader. Two explicit unquoted USDA directive names,
