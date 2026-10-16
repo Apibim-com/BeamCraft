@@ -138,10 +138,16 @@ modelled.
 
 ### Admission (F06 stage order, all failures of the first failing stage, at most 32)
 
+Steps 4 to 6 are one F06 stage (ranges and contour validity): their failures are reported together in
+input order (thickness; each contour's edges, area/winding and simplicity; contour pairs; containment).
+A check is skipped only when its prerequisite failed (simplicity needs usable edges and a non-zero
+area; a pair check needs both contours simple; containment needs no crossing between the pair), and the
+nested-island support decision is made only when nothing invalid was found.
+
 1. Counts, before any traversal: at least 3 points per contour, at most 1024 points per
    contour, at most 256 cavities and 2048 points in total (twice that is the F06 vertex cap).
 2. Finiteness of every coordinate and the thickness.
-3. Caps: coordinates at most 1e9 mm, thickness at most 1e6 mm, local size D (G01
+3. Caps: coordinates at most 1e9 mm, thickness at most 1e6 mm, every contour edge (closing and cavity edges included) at most 1e6 mm, local size D (G01
    `Tolerance::for_plate`, from the first outer point) at most 2e6 mm.
 4. Ranges: thickness `> 0` and `>= eps_geom`; every edge (including repeated points and the
    closing edge) at least `eps_geom`; exact non-zero area; exact winding; area at least
@@ -157,8 +163,9 @@ modelled.
 All signs (orientation, winding, intersection, containment) are exact decisions about the
 rational values of the submitted binary64 numbers: a rounding-error filter decides clear cases,
 a fixed-capacity integer evaluation decides the rest, and nothing is ever decided by an epsilon.
-Distances are written binary64 evaluations used only for the floor comparisons and never change
-a topology decision (F06 section 4). Diagnostics use F06 `GEO_` codes with the F04 mapping, a
+Distances are written binary64 evaluations from local coordinate differences (so a lossless translation
+near the 1e9 cap cannot move a clearance across the floor), used only for the floor comparisons and never change
+a topology decision (F06 section 4). Public vertices and the blob both carry positive zero. Diagnostics use F06 `GEO_` codes with the F04 mapping, a
 fixed schema field, the F06 stage and a fixed defect class, never user text or values.
 
 ### Curve cavities (explicit approximation, no contract change)

@@ -324,8 +324,15 @@ fn polygonal_cavity_walls_are_one_face_per_edge_and_findable() {
 #[test]
 fn cavities_at_the_exact_minimum_distance_and_dimension_are_accepted() {
     // D = 2^20 exactly, so eps_geom = 2^-22 * D = 0.25 exactly (a dyadic boundary).
-    let big = 1_048_576.0;
-    let outer = vec![p(0.0, 0.0), p(big, 0.0), p(0.0, big)];
+    // Every edge stays within the 1e6 mm edge cap; the far vertex (2^20, 0) sets D.
+    let (half, big) = (524_288.0, 1_048_576.0);
+    let outer = vec![
+        p(0.0, 0.0),
+        p(half, 0.0),
+        p(big, 0.0),
+        p(half, half),
+        p(0.0, half),
+    ];
     let eps = 0.25;
     let at_min = [hole_rect(eps, 1000.0, 2000.0, 3000.0)];
     let ex = extrude(&outer, &at_min, eps).unwrap();
@@ -774,4 +781,28 @@ fn flat_vertices_and_aligned_holes_triangulate_without_degenerate_triangles() {
     assert_valid_extrusion(&ex, &outer, &with_flat, 4.0);
     let (o, c) = map_profile(&outer, &with_flat, |q| p(-q.y, q.x));
     assert_valid_extrusion(&extrude(&o, &c, 4.0).unwrap(), &o, &c, 4.0);
+}
+
+#[test]
+fn public_vertices_and_blob_both_carry_positive_zero() {
+    let outer = vec![p(-0.0, -0.0), p(30.0, -0.0), p(30.0, 20.0), p(-0.0, 20.0)];
+    let hole = [Cavity::polygon(vec![
+        p(-0.0 + 5.0, 5.0),
+        p(5.0, 10.0),
+        p(10.0, 10.0),
+        p(10.0, 5.0),
+    ])];
+    let ex = extrude(&outer, &hole, 2.0).unwrap();
+    let blob = parse_blob(ex.mesh().blob());
+    for (public, encoded) in ex.mesh().vertices().iter().zip(&blob.vertices) {
+        for (a, b) in [public.x, public.y, public.z].into_iter().zip(*encoded) {
+            assert_eq!(
+                a.to_bits(),
+                b.to_bits(),
+                "public vertex and blob differ bitwise"
+            );
+            assert!(a != 0.0 || a.is_sign_positive());
+        }
+    }
+    assert_eq!(ex.mesh().vertices()[0].x.to_bits(), 0.0f64.to_bits());
 }

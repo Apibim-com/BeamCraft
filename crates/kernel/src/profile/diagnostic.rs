@@ -248,6 +248,10 @@ impl Collector {
         }
     }
 
+    pub(crate) fn has_any(&self) -> bool {
+        !self.items.is_empty()
+    }
+
     pub(crate) fn into_result(self) -> Result<(), ProfileFailure> {
         if self.items.is_empty() {
             Ok(())

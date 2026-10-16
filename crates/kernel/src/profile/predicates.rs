@@ -109,7 +109,10 @@ pub(crate) fn point_segment_distance(p: Point2, a: Point2, b: Point2) -> f64 {
     } else {
         0.0
     };
-    let (dx, dy) = (p.x - (a.x + t * abx), p.y - (a.y + t * aby));
+    // The residual is formed from the local differences, not from absolute coordinates:
+    // rebuilding the foot point at ~1e9 would round at the 1e-7 mm grid and move a clearance
+    // across the floor under a lossless translation.
+    let (dx, dy) = (apx - t * abx, apy - t * aby);
     (dx * dx + dy * dy).sqrt()
 }
 
@@ -179,6 +182,42 @@ mod tests {
         assert_eq!(winding_contains(p(1.0, -1e-300), &square), Ok(false));
         let clockwise = [square[3], square[2], square[1], square[0]];
         assert_eq!(winding_contains(p(1.0, 1.0), &clockwise), Ok(true));
+    }
+
+    #[test]
+    fn clearance_is_translation_invariant_near_the_coordinate_cap() {
+        // Reported regression: the untranslated clearance is 0.0009999462 mm (below the 0.001 floor),
+        // and a lossless translation by ~1e9 must not move it across the floor.
+        let shift = 999_999_800.0;
+        let pairs = [(
+            (0.0, 0.0),
+            (12.0, 7.0),
+            (3.0, 1.7511576414108276),
+            (6.0, 3.5011576414108276),
+        )];
+        for (a, b, c, d) in pairs {
+            let at = |q: (f64, f64), s: f64| p(q.0 + s, q.1 + s);
+            let local = segment_distance(at(a, 0.0), at(b, 0.0), at(c, 0.0), at(d, 0.0));
+            let moved = segment_distance(at(a, shift), at(b, shift), at(c, shift), at(d, shift));
+            // Only translate when the translation is lossless for every coordinate.
+            let lossless = [a, b, c, d]
+                .iter()
+                .all(|q| (q.0 + shift) - shift == q.0 && (q.1 + shift) - shift == q.1);
+            if lossless {
+                assert!((local - moved).abs() < 1e-12, "{local} vs {moved}");
+                assert_eq!(local < 0.001, moved < 0.001);
+            }
+        }
+        // A grid-aligned pair so the translation is certainly lossless.
+        let g = 1.0 / 8_388_608.0;
+        let y0 = (1.7511576414108276f64 / g).round() * g;
+        let y1 = y0 + 1.75;
+        let (a, b) = ((0.0, 0.0), (12.0, 7.0));
+        let (c, d) = ((3.0, y0), (6.0, y1));
+        let at = |q: (f64, f64), s: f64| p(q.0 + s, q.1 + s);
+        let local = segment_distance(at(a, 0.0), at(b, 0.0), at(c, 0.0), at(d, 0.0));
+        let moved = segment_distance(at(a, shift), at(b, shift), at(c, shift), at(d, shift));
+        assert!((local - moved).abs() < 1e-12, "{local} vs {moved}");
     }
 
     #[test]

@@ -412,8 +412,12 @@ fn build(
         flat.extend_from_slice(cavity.points());
     }
     let mut vertices: Vec<Point3> = Vec::with_capacity(2 * n);
-    vertices.extend(flat.iter().map(|p| Point3::new(p.x, p.y, 0.0)));
-    vertices.extend(flat.iter().map(|p| Point3::new(p.x, p.y, thickness)));
+    // + 0.0 turns -0.0 into +0.0: every public position is canonical, as in the blob (F06 section 2).
+    vertices.extend(flat.iter().map(|p| Point3::new(p.x + 0.0, p.y + 0.0, 0.0)));
+    vertices.extend(
+        flat.iter()
+            .map(|p| Point3::new(p.x + 0.0, p.y + 0.0, thickness)),
+    );
 
     let mut triangles: Vec<[u32; 3]> = Vec::with_capacity(cap_triangles.len() * 2 + 2 * n);
     let mut triangle_faces: Vec<u16> = Vec::with_capacity(triangles.capacity());
