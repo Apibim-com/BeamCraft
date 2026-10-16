@@ -163,7 +163,10 @@ fn div_pair(a: f64, b: f64) -> Option<(f64, f64)> {
     if !q.is_finite() {
         return None;
     }
-    let trusted = a == 0.0 || q.abs() >= EXACT_FLOOR;
+    // The fused residual of an inexact quotient can itself underflow to zero, so a
+    // zero residual proves exactness only when numerator and quotient are well above
+    // the underflow range (the residual is then at least about |a| * 2^-104).
+    let trusted = a == 0.0 || (a.abs() >= EXACT_FLOOR && q.abs() >= EXACT_FLOOR);
     Some(if trusted && q.mul_add(b, -a) == 0.0 {
         (q, q)
     } else {
@@ -207,6 +210,27 @@ mod tests {
         assert!(back.contains(1.0));
         let root2 = Enclosure::point(2.0).sqrt().unwrap();
         assert!(root2.lo * root2.lo <= 2.0 && 2.0 <= root2.hi * root2.hi);
+    }
+
+    #[test]
+    fn a_zero_residual_near_underflow_is_not_proof_of_an_exact_quotient() {
+        // 1/3 of MIN_POSITIVE: the fused residual underflows to zero, yet q is inexact.
+        let a = f64::MIN_POSITIVE;
+        let q = Enclosure::point(a).div(Enclosure::point(3.0 * a)).unwrap();
+        assert!(q.lo < q.hi, "{q:?}");
+        // The exact 1/3 lies between the neighbours of the rounded quotient.
+        let rounded = a / (3.0 * a);
+        assert!(q.lo < rounded && rounded < q.hi);
+        // Tiny numerators are widened too, even when the rounded quotient is large.
+        let tiny = Enclosure::point(1e-300)
+            .div(Enclosure::point(3.0e-300))
+            .unwrap();
+        assert!(tiny.lo < tiny.hi);
+        // A large exactly divisible case is still a point.
+        assert_eq!(
+            Enclosure::point(6.0).div(Enclosure::point(3.0)),
+            Some(Enclosure::point(2.0))
+        );
     }
 
     #[test]

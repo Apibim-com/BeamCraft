@@ -498,6 +498,31 @@ fn exhausted_budgets_are_uncertain_never_exact() {
         nodes.status(),
         ShellStatus::Uncertain(Uncertainty::IndexBudget)
     );
+    // A zero node budget cannot certify even a mesh whose index is a single leaf.
+    let tetra = Buf {
+        v: vec![
+            [0.0, 0.0, 0.0],
+            [10.0, 0.0, 0.0],
+            [0.0, 10.0, 0.0],
+            [0.0, 0.0, 10.0],
+        ],
+        t: vec![[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]],
+    };
+    let tm = mesh(&tetra);
+    assert_eq!(analyze(&tm).unwrap().status(), ShellStatus::Certified);
+    let zero = analyze_with(
+        &tm,
+        Limits {
+            max_index_nodes: 0,
+            ..Limits::DEFAULT
+        },
+        |_| false,
+    )
+    .unwrap();
+    assert_eq!(
+        zero.status(),
+        ShellStatus::Uncertain(Uncertainty::IndexBudget)
+    );
     // Coplanar neighbours need the exact path, which a zero budget refuses.
     let exact = analyze_with(
         &m,
