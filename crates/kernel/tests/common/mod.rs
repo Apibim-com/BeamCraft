@@ -1,354 +1,347 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! Shared synthetic-mesh generators and independent scalar oracles for G06 tests.
+//! Independent readers and oracles for the G05 tests.
 //!
-//! Nothing here calls production geometry code: expected values come from voxel
-//! counting, closed-form box/prism formulas, plain f64 loops and `std` collections.
+//! Nothing here calls production math: areas, volumes, topology and the blob layout are
+//! recomputed from the public buffers by separate scalar code and closed-form formulas.
 
 #![allow(
     dead_code,
-    clippy::unwrap_used,
     clippy::indexing_slicing,
-    clippy::panic,
+    clippy::unwrap_used,
     clippy::expect_used
 )]
 
+use beamcraft_kernel::profile::{Cavity, Extrusion, Point2};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub type Verts = Vec<[f64; 3]>;
-pub type Tris = Vec<[u32; 3]>;
-
-/// A mesh as plain buffers.
-#[derive(Clone, Debug)]
-pub struct Buf {
-    pub v: Verts,
-    pub t: Tris,
+pub fn p(x: f64, y: f64) -> Point2 {
+    Point2 { x, y }
 }
 
-/// Face corner offsets per outward direction, counter-clockwise seen from outside.
-const FACES: [([i32; 3], [[i32; 3]; 4]); 6] = [
-    ([1, 0, 0], [[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 1]]),
-    ([-1, 0, 0], [[0, 0, 0], [0, 0, 1], [0, 1, 1], [0, 1, 0]]),
-    ([0, 1, 0], [[0, 1, 0], [0, 1, 1], [1, 1, 1], [1, 1, 0]]),
-    ([0, -1, 0], [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]]),
-    ([0, 0, 1], [[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]]),
-    ([0, 0, -1], [[0, 0, 0], [0, 1, 0], [1, 1, 0], [1, 0, 0]]),
-];
+/// Counter-clockwise axis-aligned rectangle.
+pub fn rect(x0: f64, y0: f64, x1: f64, y1: f64) -> Vec<Point2> {
+    vec![p(x0, y0), p(x1, y0), p(x1, y1), p(x0, y1)]
+}
 
-/// Surface of a set of unit voxels, scaled and offset; shared corners share indices.
-pub fn voxels(cells: &[[i32; 3]], scale: f64, offset: [f64; 3]) -> Buf {
-    let set: BTreeSet<[i32; 3]> = cells.iter().copied().collect();
-    let mut index: BTreeMap<[i32; 3], u32> = BTreeMap::new();
-    let mut v: Verts = Vec::new();
-    let mut t: Tris = Vec::new();
-    for c in &set {
-        for (dir, quad) in FACES {
-            let n = [c[0] + dir[0], c[1] + dir[1], c[2] + dir[2]];
-            if set.contains(&n) {
-                continue;
-            }
-            let ids: Vec<u32> = quad
-                .iter()
-                .map(|o| {
-                    let key = [c[0] + o[0], c[1] + o[1], c[2] + o[2]];
-                    *index.entry(key).or_insert_with(|| {
-                        v.push([
-                            f64::from(key[0]) * scale + offset[0],
-                            f64::from(key[1]) * scale + offset[1],
-                            f64::from(key[2]) * scale + offset[2],
-                        ]);
-                        (v.len() - 1) as u32
-                    })
-                })
-                .collect();
-            t.push([ids[0], ids[1], ids[2]]);
-            t.push([ids[0], ids[2], ids[3]]);
+/// Clockwise axis-aligned rectangle (a cavity).
+pub fn hole_rect(x0: f64, y0: f64, x1: f64, y1: f64) -> Cavity {
+    Cavity::polygon(vec![p(x0, y0), p(x0, y1), p(x1, y1), p(x1, y0)])
+}
+
+pub fn shoelace(points: &[Point2]) -> f64 {
+    // Relative to the first point: absolute coordinates near 1e9 would cancel catastrophically.
+    let o = points[0];
+    let n = points.len();
+    let mut sum = 0.0;
+    for i in 0..n {
+        let (a, b) = (points[i], points[(i + 1) % n]);
+        sum += (a.x - o.x) * (b.y - o.y) - (b.x - o.x) * (a.y - o.y);
+    }
+    0.5 * sum
+}
+
+/// Net area (outer minus cavity areas), from signed areas.
+pub fn net_area(outer: &[Point2], cavities: &[Cavity]) -> f64 {
+    shoelace(outer) + cavities.iter().map(|c| shoelace(c.points())).sum::<f64>()
+}
+
+/// Area of a regular n-gon with vertices on a circle of radius r (closed form).
+pub fn regular_polygon_area(n: u32, r: f64) -> f64 {
+    0.5 * f64::from(n) * r * r * (std::f64::consts::TAU / f64::from(n)).sin()
+}
+
+pub struct Blob {
+    pub vertices: Vec<[f64; 3]>,
+    pub triangles: Vec<[u32; 3]>,
+    pub faces: Vec<u16>,
+    pub face_count: u32,
+    pub space: u32,
+}
+
+fn u32_at(bytes: &[u8], at: usize) -> u32 {
+    u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap())
+}
+
+/// Reads a BCMESH01 blob by the F06 section 6 table only, checking every structural rule.
+pub fn parse_blob(bytes: &[u8]) -> Blob {
+    assert_eq!(&bytes[0..8], b"BCMESH01");
+    assert_eq!(u32_at(bytes, 8), 1, "layout version");
+    let v = u32_at(bytes, 12) as usize;
+    let t = u32_at(bytes, 16) as usize;
+    let k = u32_at(bytes, 20);
+    let space = u32_at(bytes, 24);
+    assert_eq!(u32_at(bytes, 28), 0, "reserved");
+    let pad8 = |n: usize| n.div_ceil(8) * 8;
+    assert_eq!(
+        bytes.len(),
+        32 + 24 * v + pad8(12 * t) + pad8(2 * t),
+        "total length"
+    );
+    let mut at = 32;
+    let mut vertices = Vec::new();
+    for _ in 0..v {
+        let mut c = [0.0f64; 3];
+        for slot in &mut c {
+            let raw = bytes[at..at + 8].try_into().unwrap();
+            *slot = f64::from_le_bytes(raw);
+            assert!(slot.is_finite());
+            assert!(
+                !(*slot == 0.0 && slot.is_sign_negative()),
+                "negative zero in blob"
+            );
+            at += 8;
+        }
+        vertices.push(c);
+    }
+    let mut triangles = Vec::new();
+    for _ in 0..t {
+        triangles.push([
+            u32_at(bytes, at),
+            u32_at(bytes, at + 4),
+            u32_at(bytes, at + 8),
+        ]);
+        at += 12;
+    }
+    let pad = pad8(12 * t) - 12 * t;
+    assert!(bytes[at..at + pad].iter().all(|b| *b == 0), "index padding");
+    at += pad;
+    let mut faces = Vec::new();
+    for _ in 0..t {
+        faces.push(u16::from_le_bytes(bytes[at..at + 2].try_into().unwrap()));
+        at += 2;
+    }
+    assert!(bytes[at..].iter().all(|b| *b == 0), "face padding");
+    for tri in &triangles {
+        assert!(tri.iter().all(|i| (*i as usize) < v));
+    }
+    assert!(faces.iter().all(|f| u32::from(*f) < k));
+    Blob {
+        vertices,
+        triangles,
+        faces,
+        face_count: k,
+        space,
+    }
+}
+
+pub struct Topology {
+    pub vertices_used: usize,
+    pub undirected_edges: usize,
+    pub closed: bool,
+    pub components: usize,
+}
+
+/// Independent closed 2-manifold and connectivity check from the index table only.
+pub fn topology(triangles: &[[u32; 3]], vertex_count: usize) -> Topology {
+    let mut directed: BTreeMap<(u32, u32), usize> = BTreeMap::new();
+    for [a, b, c] in triangles {
+        for e in [(*a, *b), (*b, *c), (*c, *a)] {
+            *directed.entry(e).or_default() += 1;
         }
     }
-    Buf { v, t }
-}
-
-/// Exposed unit faces of a voxel set (surface area in unit squares).
-pub fn exposed_faces(cells: &[[i32; 3]]) -> usize {
-    let set: BTreeSet<[i32; 3]> = cells.iter().copied().collect();
-    set.iter()
-        .map(|c| {
-            FACES
-                .iter()
-                .filter(|(d, _)| !set.contains(&[c[0] + d[0], c[1] + d[1], c[2] + d[2]]))
-                .count()
-        })
-        .sum()
-}
-
-/// An axis-aligned box as the F06 12-triangle mesh (vertex `i` = bits x, y, z).
-pub fn cuboid(lo: [f64; 3], hi: [f64; 3]) -> Buf {
-    let v: Verts = (0..8)
-        .map(|i| {
-            [
-                if i & 1 == 0 { lo[0] } else { hi[0] },
-                if i & 2 == 0 { lo[1] } else { hi[1] },
-                if i & 4 == 0 { lo[2] } else { hi[2] },
-            ]
-        })
+    let closed = directed
+        .iter()
+        .all(|(&(a, b), &n)| n == 1 && directed.get(&(b, a)) == Some(&1));
+    let undirected: BTreeSet<(u32, u32)> = directed
+        .keys()
+        .map(|&(a, b)| (a.min(b), a.max(b)))
         .collect();
-    let t: Tris = [
-        [0, 4, 6],
-        [0, 6, 2],
-        [1, 3, 7],
-        [1, 7, 5],
-        [0, 1, 5],
-        [0, 5, 4],
-        [2, 6, 7],
-        [2, 7, 3],
-        [0, 2, 3],
-        [0, 3, 1],
-        [4, 5, 7],
-        [4, 7, 6],
-    ]
-    .to_vec();
-    Buf { v, t }
-}
-
-/// Right triangular prism: legs `a`, `b` in the XY plane, height `h` in Z.
-pub fn prism(a: f64, b: f64, h: f64) -> Buf {
-    let v = vec![
-        [0.0, 0.0, 0.0],
-        [a, 0.0, 0.0],
-        [0.0, b, 0.0],
-        [0.0, 0.0, h],
-        [a, 0.0, h],
-        [0.0, b, h],
-    ];
-    let t = vec![
-        [0, 2, 1],
-        [3, 4, 5],
-        [0, 1, 4],
-        [0, 4, 3],
-        [0, 3, 5],
-        [0, 5, 2],
-        [1, 2, 5],
-        [1, 5, 4],
-    ];
-    Buf { v, t }
-}
-
-/// Appends `other` to `base` (disjoint index ranges).
-pub fn merge(base: &Buf, other: &Buf) -> Buf {
-    let shift = base.v.len() as u32;
-    let mut v = base.v.clone();
-    v.extend(other.v.iter().copied());
-    let mut t = base.t.clone();
-    t.extend(
-        other
-            .t
-            .iter()
-            .map(|[a, b, c]| [a + shift, b + shift, c + shift]),
-    );
-    Buf { v, t }
-}
-
-/// Reverses every triangle's winding.
-pub fn inverted(m: &Buf) -> Buf {
-    Buf {
-        v: m.v.clone(),
-        t: m.t.iter().map(|[a, b, c]| [*a, *c, *b]).collect(),
+    let mut adjacent: Vec<Vec<usize>> = vec![Vec::new(); vertex_count];
+    for &(a, b) in &undirected {
+        adjacent[a as usize].push(b as usize);
+        adjacent[b as usize].push(a as usize);
+    }
+    let used: BTreeSet<u32> = triangles.iter().flatten().copied().collect();
+    let mut seen = vec![false; vertex_count];
+    let mut components = 0;
+    for start in &used {
+        if seen[*start as usize] {
+            continue;
+        }
+        components += 1;
+        let mut stack = vec![*start as usize];
+        seen[*start as usize] = true;
+        while let Some(v) = stack.pop() {
+            for &w in &adjacent[v] {
+                if !seen[w] {
+                    seen[w] = true;
+                    stack.push(w);
+                }
+            }
+        }
+    }
+    Topology {
+        vertices_used: used.len(),
+        undirected_edges: undirected.len(),
+        closed,
+        components,
     }
 }
 
-/// Independent signed volume: sum of tetrahedra against the first vertex, in f64.
-pub fn signed_volume(v: &Verts, t: &Tris) -> f64 {
-    let o = v[0];
+/// Divergence-theorem volume about the first vertex, `(1/6) * sum(det)`.
+pub fn mesh_volume(vertices: &[[f64; 3]], triangles: &[[u32; 3]]) -> f64 {
+    let r = vertices[0];
     let mut sum = 0.0;
-    for [a, b, c] in t {
-        let p = |i: u32| {
-            let q = v[i as usize];
-            [q[0] - o[0], q[1] - o[1], q[2] - o[2]]
-        };
-        let (a, b, c) = (p(*a), p(*b), p(*c));
-        sum += a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
-            + a[2] * (b[0] * c[1] - b[1] * c[0]);
+    for t in triangles {
+        let [a, b, c] = t.map(|i| {
+            let v = vertices[i as usize];
+            [v[0] - r[0], v[1] - r[1], v[2] - r[2]]
+        });
+        let cross = [
+            b[1] * c[2] - b[2] * c[1],
+            b[2] * c[0] - b[0] * c[2],
+            b[0] * c[1] - b[1] * c[0],
+        ];
+        sum += a[0] * cross[0] + a[1] * cross[1] + a[2] * cross[2];
     }
     sum / 6.0
 }
 
-/// Independent surface area in f64.
-pub fn area(v: &Verts, t: &Tris) -> f64 {
-    t.iter()
-        .map(|[a, b, c]| {
-            let (a, b, c) = (v[*a as usize], v[*b as usize], v[*c as usize]);
-            let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-            let w = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
-            let x = [
-                u[1] * w[2] - u[2] * w[1],
-                u[2] * w[0] - u[0] * w[2],
-                u[0] * w[1] - u[1] * w[0],
-            ];
-            0.5 * (x[0] * x[0] + x[1] * x[1] + x[2] * x[2]).sqrt()
-        })
-        .sum()
+/// CR-TOL-001-style relative comparison used only by tests (never by the kernel).
+pub fn close(a: f64, b: f64, rel: f64) -> bool {
+    (a - b).abs() <= rel * a.abs().max(b.abs()) + 1e-12
 }
 
-/// Edge census: undirected edge -> (forward uses, backward uses).
-pub fn census(t: &Tris) -> BTreeMap<(u32, u32), (u32, u32)> {
-    let mut map: BTreeMap<(u32, u32), (u32, u32)> = BTreeMap::new();
-    for [a, b, c] in t {
-        for (u, w) in [(*a, *b), (*b, *c), (*c, *a)] {
-            let e = map.entry((u.min(w), u.max(w))).or_insert((0, 0));
-            if u < w {
-                e.0 += 1;
-            } else {
-                e.1 += 1;
+/// Checks every structural promise of a successful extrusion against independent oracles.
+pub fn assert_valid_extrusion(ex: &Extrusion, outer: &[Point2], cavities: &[Cavity], t: f64) {
+    let mesh = ex.mesh();
+    let n = outer.len() + cavities.iter().map(|c| c.points().len()).sum::<usize>();
+    let blob = parse_blob(mesh.blob());
+    assert_eq!(blob.space, 0);
+    assert_eq!(blob.vertices.len(), 2 * n);
+    assert_eq!(blob.vertices.len(), mesh.vertices().len());
+    assert_eq!(blob.triangles.as_slice(), mesh.triangles());
+    assert_eq!(blob.faces.as_slice(), mesh.triangle_faces());
+    assert_eq!(blob.face_count as usize, mesh.face_table().len());
+    assert_eq!(mesh.subdivision_scheme(), "none");
+    assert_eq!(mesh.orientation(), "rightHanded");
+    // Vertex layout: bottom copies, then top copies at z = t (negative zero normalized).
+    let mut points: Vec<Point2> = outer.to_vec();
+    for c in cavities {
+        points.extend_from_slice(c.points());
+    }
+    for (i, q) in points.iter().enumerate() {
+        assert_eq!(blob.vertices[i], [q.x + 0.0, q.y + 0.0, 0.0]);
+        assert_eq!(blob.vertices[n + i], [q.x + 0.0, q.y + 0.0, t]);
+    }
+    let h = cavities.len();
+    let topo = topology(&blob.triangles, blob.vertices.len());
+    assert!(topo.closed, "directed edges are not paired");
+    assert_eq!(topo.vertices_used, 2 * n);
+    assert_eq!(topo.components, 1);
+    let (v, e, f) = (2 * n, topo.undirected_edges, blob.triangles.len());
+    assert_eq!(
+        v as i64 - e as i64 + f as i64,
+        2 - 2 * h as i64,
+        "Euler for genus = cavities"
+    );
+    assert_eq!(f, 4 * n + 4 * h - 4, "triangle count");
+    let area = net_area(outer, cavities);
+    let expect = area * t;
+    assert!(
+        close(ex.volume_mm3(), expect, 1e-9),
+        "analytic {} vs {}",
+        ex.volume_mm3(),
+        expect
+    );
+    assert!(close(ex.net_area_mm2(), area, 1e-9));
+    assert!(close(ex.volume_m3(), expect / 1e9, 1e-9));
+    let vm = mesh_volume(&blob.vertices, &blob.triangles);
+    assert!(
+        vm > 0.0 && close(vm, expect, 1e-6),
+        "mesh volume {vm} vs {expect}"
+    );
+    // Outward winding of every cap and wall triangle.
+    for (tri, face) in blob.triangles.iter().zip(&blob.faces) {
+        let [a, b, c] = tri.map(|i| blob.vertices[i as usize]);
+        let cross = [
+            (b[1] - a[1]) * (c[2] - a[2]) - (b[2] - a[2]) * (c[1] - a[1]),
+            (b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2]),
+            (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]),
+        ];
+        match (*face, mesh.face_normals()[*face as usize]) {
+            (0, Some(nm)) => {
+                assert_eq!((nm.x(), nm.y(), nm.z()), (0.0, 0.0, -1.0));
+                assert!(cross[2] < 0.0 && a[2] == 0.0 && b[2] == 0.0 && c[2] == 0.0);
             }
-        }
-    }
-    map
-}
-
-/// Independent combinatorial verdict for a buffer without degenerate triangles.
-///
-/// Returns `"closed_manifold"`, `"open"`, `"non_manifold"` or `"inconsistent"`
-/// following the documented precedence (non-manifold, open, inconsistent).
-pub fn topology_verdict(t: &Tris) -> &'static str {
-    let c = census(t);
-    if c.values().any(|(f, b)| f + b >= 3) {
-        return "non_manifold";
-    }
-    let mut around: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
-    for (i, tri) in t.iter().enumerate() {
-        for v in tri {
-            around.entry(*v).or_default().push(i);
-        }
-    }
-    for tris in around.values() {
-        let share = |x: usize, y: usize| t[x].iter().filter(|a| t[y].contains(a)).count() >= 2;
-        let mut seen = vec![false; tris.len()];
-        let mut stack = vec![0usize];
-        seen[0] = true;
-        while let Some(i) = stack.pop() {
-            for j in 0..tris.len() {
-                if !seen[j] && share(tris[i], tris[j]) {
-                    seen[j] = true;
-                    stack.push(j);
-                }
+            (1, Some(nm)) => {
+                assert_eq!((nm.x(), nm.y(), nm.z()), (0.0, 0.0, 1.0));
+                assert!(cross[2] > 0.0 && a[2] == t && b[2] == t && c[2] == t);
             }
+            (_, Some(nm)) => {
+                let dot = cross[0] * nm.x() + cross[1] * nm.y() + cross[2] * nm.z();
+                assert!(dot > 0.0, "wall triangle faces inward");
+                assert!((nm.x() * nm.x() + nm.y() * nm.y() + nm.z() * nm.z() - 1.0).abs() < 1e-12);
+            }
+            (_, None) => {}
         }
-        if seen.iter().any(|s| !s) {
-            return "non_manifold";
-        }
     }
-    if c.values().any(|(f, b)| f + b == 1) {
-        return "open";
+    // Feature ids: charset, length, uniqueness, table sizes.
+    let mut all = BTreeSet::new();
+    for id in mesh
+        .face_table()
+        .iter()
+        .chain(mesh.edge_table())
+        .chain(mesh.vertex_table())
+    {
+        assert!(id.len() <= 64, "id too long");
+        assert!(
+            id.bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b":.-".contains(&b)),
+            "bad id {id}"
+        );
+        assert!(id.starts_with("extrusion:"));
+        assert!(all.insert(id.clone()), "duplicate id {id}");
     }
-    if c.values().any(|(f, b)| *f != 1 || *b != 1) {
-        return "inconsistent";
+    assert_eq!(mesh.vertex_table().len(), 2 * n);
+    assert_eq!(mesh.edge_table().len(), 3 * n);
+    assert_eq!(mesh.edge_vertices().len(), 3 * n);
+    assert_eq!(mesh.face_roles().len(), mesh.face_table().len());
+    assert_eq!(mesh.face_normals().len(), mesh.face_table().len());
+    for face in 0..mesh.face_table().len() {
+        assert!(
+            blob.faces.iter().any(|f| *f as usize == face),
+            "face {face} has no triangle"
+        );
     }
-    "closed_manifold"
-}
-
-/// Connected components by shared vertices, as lists of triangle indices.
-pub fn components(t: &Tris) -> Vec<Vec<usize>> {
-    fn find(p: &mut BTreeMap<u32, u32>, x: u32) -> u32 {
-        let q = *p.entry(x).or_insert(x);
-        if q == x {
-            x
+    // An edge starts at the vertex named like it: `e.z0.o3` starts at `v.z0.o3`, `e.v.o3`
+    // joins `v.z0.o3` to `v.z1.o3`.
+    for (id, [a, b]) in mesh.edge_table().iter().zip(mesh.edge_vertices()) {
+        let (va, vb) = (
+            &mesh.vertex_table()[*a as usize],
+            &mesh.vertex_table()[*b as usize],
+        );
+        let tail = id.strip_prefix("extrusion:e.").unwrap();
+        if let Some(rest) = tail.strip_prefix("v.") {
+            assert_eq!(va, &format!("extrusion:v.z0.{rest}"));
+            assert_eq!(vb, &format!("extrusion:v.z1.{rest}"));
         } else {
-            let r = find(p, q);
-            p.insert(x, r);
-            r
+            assert_eq!(va, &format!("extrusion:v.{tail}"));
+            let level = &tail[..2];
+            assert!(vb.starts_with(&format!("extrusion:v.{level}.")));
         }
     }
-    let mut parent: BTreeMap<u32, u32> = BTreeMap::new();
-    for [a, b, c] in t {
-        for (x, y) in [(*a, *b), (*b, *c)] {
-            let (rx, ry) = (find(&mut parent, x), find(&mut parent, y));
-            parent.insert(rx, ry);
-        }
-    }
-    let mut groups: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
-    for (i, tri) in t.iter().enumerate() {
-        let r = find(&mut parent, tri[0]);
-        groups.entry(r).or_default().push(i);
-    }
-    let mut out: Vec<Vec<usize>> = groups.into_values().collect();
-    out.sort_by_key(|g| g[0]);
-    out
 }
 
-/// Tiny deterministic xorshift generator for seeded tests.
 pub struct Rng(pub u64);
 
 impl Rng {
-    pub fn next(&mut self) -> u64 {
-        let mut x = self.0;
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        self.0 = x;
-        x
+    pub fn next_u64(&mut self) -> u64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        self.0
+    }
+    /// Uniform in [0, 1).
+    pub fn unit(&mut self) -> f64 {
+        (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64
+    }
+    pub fn range(&mut self, lo: f64, hi: f64) -> f64 {
+        lo + (hi - lo) * self.unit()
     }
     pub fn below(&mut self, n: u64) -> u64 {
-        self.next() % n
+        self.next_u64() % n
     }
-    pub fn chance(&mut self, num: u64, den: u64) -> bool {
-        self.below(den) < num
-    }
-}
-
-/// Permutes triangles, relabels vertices and rotates each triangle's start corner.
-pub fn shuffled(m: &Buf, rng: &mut Rng) -> Buf {
-    let n = m.v.len();
-    let mut perm: Vec<usize> = (0..n).collect();
-    for i in (1..n).rev() {
-        perm.swap(i, rng.below(i as u64 + 1) as usize);
-    }
-    let mut v = vec![[0.0; 3]; n];
-    for (old, &new) in perm.iter().enumerate() {
-        v[new] = m.v[old];
-    }
-    let mut t: Tris =
-        m.t.iter()
-            .map(|[a, b, c]| {
-                let mut tri = [
-                    perm[*a as usize] as u32,
-                    perm[*b as usize] as u32,
-                    perm[*c as usize] as u32,
-                ];
-                tri.rotate_left(rng.below(3) as usize);
-                tri
-            })
-            .collect();
-    for i in (1..t.len()).rev() {
-        t.swap(i, rng.below(i as u64 + 1) as usize);
-    }
-    Buf { v, t }
-}
-
-/// Little-endian BCMESH01 blob written independently of the production encoder.
-pub fn blob(v: &Verts, t: &Tris, faces: &[u16], k: u32, space: u32) -> Vec<u8> {
-    let pad8 = |n: usize| n.div_ceil(8) * 8;
-    let mut out = b"BCMESH01".to_vec();
-    for word in [1u32, v.len() as u32, t.len() as u32, k, space, 0] {
-        out.extend(word.to_le_bytes());
-    }
-    for p in v {
-        for x in p {
-            out.extend(x.to_le_bytes());
-        }
-    }
-    for tri in t {
-        for i in tri {
-            out.extend(i.to_le_bytes());
-        }
-    }
-    out.resize(32 + 24 * v.len() + pad8(12 * t.len()), 0);
-    for f in faces {
-        out.extend(f.to_le_bytes());
-    }
-    out.resize(
-        32 + 24 * v.len() + pad8(12 * t.len()) + pad8(2 * t.len()),
-        0,
-    );
-    out
 }

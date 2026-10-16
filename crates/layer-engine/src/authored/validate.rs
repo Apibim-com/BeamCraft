@@ -71,7 +71,7 @@ fn label(s: &str) -> Result<(), Diagnostic> {
     if s.len() > 256 {
         return Err(limit());
     }
-    if s.is_empty() || s.chars().any(|c| c <= '\u{1f}' || c == '\u{7f}') {
+    if s.is_empty() || s.chars().any(label_char_forbidden) {
         return Err(invalid());
     }
     Ok(())

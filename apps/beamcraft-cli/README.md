@@ -48,3 +48,29 @@ comments and inert strings mentioning these names remain inert. No execution sem
 are assigned to unknown binary metadata. Environment clearing removes Python, SDK, plugin
 and library discovery overrides. See [U04 review](../../docs/design/u04-cli-host.md) for
 the precise profile, production gates and tests.
+
+## V02 view snapshot commands
+
+`view-snapshot` and `view-changes` need no store, worker or backend. They call
+`beamcraft-engine` and print one JSON object (same shape for errors as above, plus a
+`diagnostics` entry with the view code such as `GEO_STALE_TOKEN`; exit 2 on rejection).
+P01 does not exist, so the scene is **synthetic**, built with the real kernel
+(`--plates 1..500`): every fifth element is labelled `support` and, with
+`--stand-in-simplified true`, every third carries a distinct stand-in simplified mesh. The
+output marks both under `stand_ins`.
+
+```text
+beamcraft view-snapshot --plates 20 [--hide plate,support] [--representation full|simplified]
+  [--stand-in-simplified true|false] [--select ID,ID] [--revision SHA256] [--generation U64]
+beamcraft view-changes --plates 20 --edit move-first,resize-first,add-one,remove-last
+  [--since TOKEN] [--stand-in-simplified true|false] [--revision SHA256] [--generation U64]
+```
+
+`view-snapshot` reports the pin, the snapshot token (unchanged by `--hide` and
+`--representation`), the projected elements with instance slot, triangle range, mesh digest,
+exactness and world bounds, the display and engineering bounds, the meshes the view must load
+(digest, bytes, counts) and, for `--select`, the ids and their instance slots. `view-changes`
+snapshots the scene, applies the scripted edits as the next generation and prints the
+`GetChanges` delta, with `new_meshes` empty for a placement-only edit. An unknown `--since`
+token is `GEO_STALE_TOKEN`. No mesh bytes are exported; a consumer reads blobs by digest through
+the engine API. Defaults: revision is the SHA-256 of `beamcraft-synthetic-scene`, generation 1.

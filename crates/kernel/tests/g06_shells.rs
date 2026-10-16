@@ -8,6 +8,7 @@
 
 #![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 
+#[path = "common_mesh/mod.rs"]
 mod common;
 
 use beamcraft_kernel::diagnostic::Stage;

@@ -1,0 +1,15 @@
+// SPDX-License-Identifier: MPL-2.0
+// SPDX-FileCopyrightText: 2026 Apibim
+
+//! Pinned read queries (F06 section 9): snapshot, bounds, mesh blobs, deltas and selection.
+//!
+//! Implemented: `ListElements`, `GetMeshSnapshot` (blobs by digest), `QueryBounds` (element and
+//! all, world space), `GetChanges` and the selection API. Not implemented: `LookupFeature` and
+//! `Pick`, which need kernel feature geometry (G04), and local-space bounds and keys, which need
+//! the P01 dependency keys. Nothing here is a mock of those.
+
+pub mod bounds;
+pub mod changes;
+pub mod mesh;
+pub mod selection;
+pub mod snapshot;

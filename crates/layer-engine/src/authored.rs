@@ -5,7 +5,10 @@
 //! This is a worker-library boundary, not an F04 command validator or acceptance ledger.
 
 mod edit;
+mod guard;
 mod validate;
+
+pub use guard::WriteGrant;
 
 use crate::*;
 use std::collections::BTreeMap;

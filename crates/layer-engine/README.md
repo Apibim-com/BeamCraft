@@ -1,6 +1,6 @@
 # BeamCraft layer engine
 
-Native, experimental U01/U02 layer adapter for exactly `openusd =0.8.0`, without optional
+Native, experimental U01/U02/U03 layer adapter for exactly `openusd =0.8.0`, without optional
 features. This library performs no file or network I/O, starts no process, and exposes
 no upstream handles. This is a desktop-native library, not a domain/WASM crate.
 
@@ -91,3 +91,35 @@ from external `usdchecker` (**not run**, no offline executable found), the F10 m
 catalogue and the F06 engineering validator. It does not certify contour topology,
 planarity, support, mesh solidness, exact quantities, F06 result freshness or signatures.
 Those remain engine prerequisites. See [the U02 validation report](U02-VALIDATION.md).
+
+## UUID and relationship index (U03)
+
+`index::ElementIndex` is a reconstructible lookup built only from the complete pinned snapshot
+of one context: `Reader::element_index` / `Author::element_index` page the frozen result through
+`IndexBuilder`, which also accepts caller-held pages and rejects mixed contexts, gaps, replays,
+cap-plus-one pages and any item whose identity, path or provenance fails re-validation. The key
+is the full 128-bit UUIDv7 (`ElementId`); same-millisecond IDs are never shortened or merged and
+prefix, upper-case, unhyphenated, wrong-version/variant text is `INVALID_ID`. Element prims must
+be exactly `/World/Steel/E_<32 hex>` with agreeing snapshot identity and `bim:id`; duplicates are
+`DUPLICATE_ID`. Labels are never identity: rename keeps ID, path and the label-free
+`structure_digest`. Entries carry lifecycle (`bim:lifecycle`, absent means active), the USD
+`active` flag, composition provenance and an ownership verdict that includes foreign ancestors
+and descendants. Every relationship target is resolved to an element, an immutable definition, a
+plain prim or (foreign sources and partial indexes only) an `Unresolved` entry; an owned dangling
+target is `DANGLING_RELATIONSHIP`, a short/malformed element or definition target `INVALID_ID`.
+Outgoing and incoming queries, `delete_blockers`, `dependents`, deactivated-target reporting and
+`copy_plan` (fresh ID, self-link remap, shared definitions, refusal of everything else including
+descendant-carried links) are pure reads of the index. Links to a descendant prim count as
+dependencies of the containing element.
+
+The index is not authority. A partial index answers `DEPENDENCY_UNAVAILABLE` for every
+relationship query and cannot prove absence. `Author::authorize_write`, `check_delete` and
+`certify_dependent_reads` first call `verify_index`, which requires the index's own context to
+be live (`STALE_WORKSPACE` after any install/reopen), complete, and equal to a fresh rebuild
+(`INTEGRITY_ERROR` for a forged or tampered page set). The grant names the owned authored layer
+but is not host authorization or F04/F06 validation. Not implemented: a CLI/host command (the U04
+read profile advertises `relationships=false`, omits relationships from its closed page body and
+has no index method; carrying them changes the frozen profile and F05 schema), a persisted
+index, copy/delete commands (P05/P08), typed element-to-element relationship records and their
+vocabulary rules (F10/vocabulary section 5), and USDC relationship evidence (the restricted binary
+profile refuses relationship specs and U02 element layers). See [the U03 report](U03-INDEX.md).
