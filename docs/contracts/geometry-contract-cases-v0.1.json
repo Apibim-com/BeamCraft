@@ -1,7 +1,7 @@
 {
   "artifact_version": 1,
   "contract_version": "0.1.0",
-  "status": "draft, not frozen; nothing implemented",
+  "status": "frozen 0.1.0 (2026-10-16); nothing implemented",
   "role": "original logical acceptance descriptions for the F06 geometry contract; not an engine, mesh or USD fixture",
   "f04_contract_version": "0.1.0",
   "f05_protocol_version": "0.1.0",

@@ -20,7 +20,7 @@ national material tables, or from observation notes such as F02.
 
 They are **test inputs** for future engine work: G02 plates, P02–P08 members and copies, and
 U02 full assets. `beamcraft.fixture/1` is a test-description format, not the BeamCraft model or
-command contract. F04 is still a draft and is not frozen. Future tasks will map these
+command contract. F04 is frozen at 0.1.0 (2026-10-16). Future tasks will map these
 descriptions onto that contract with their own adapters.
 
 They do not show that BeamCraft creates, meshes, copies or saves anything. Nor do they show that
