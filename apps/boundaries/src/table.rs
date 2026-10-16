@@ -21,12 +21,23 @@ pub const MAX_ROWS: usize = 256;
 pub enum Kind {
     /// Pure, portable domain crate.
     Domain,
+    /// Desktop-native library with no WASM requirement (WS amendment to F08).
+    Native,
     /// Native engine host.
     Host,
     /// Binary entry point.
     App,
     /// Development tool.
     Tool,
+}
+
+impl Kind {
+    /// Whether this kind requires WASM-clean source and dependencies.
+    ///
+    /// F08 reserves `Domain` for geom, model and kernel; all other crates are desktop-native.
+    pub const fn requires_wasm(self) -> bool {
+        matches!(self, Self::Domain)
+    }
 }
 
 /// Whether a row is a workspace member today.
@@ -72,11 +83,11 @@ impl ModuleTable {
         self.rows.iter().find(|r| r.package == package)
     }
 
-    /// Names of the `now` domain packages: the crates the wasm check must cover.
+    /// Names of the three `now` domain packages required by the WS amendment to F08.
     pub fn portable(&self) -> Vec<&str> {
         self.rows
             .iter()
-            .filter(|r| r.kind == Kind::Domain && r.status == Status::Now)
+            .filter(|r| r.kind.requires_wasm() && r.status == Status::Now)
             .map(|r| r.package.as_str())
             .collect()
     }
@@ -163,6 +174,7 @@ fn data_rows(text: &str, columns: usize) -> Result<Vec<Vec<String>>, TableError>
 fn kind(value: &str) -> Option<Kind> {
     match value {
         "domain" => Some(Kind::Domain),
+        "native" => Some(Kind::Native),
         "host" => Some(Kind::Host),
         "app" => Some(Kind::App),
         "tool" => Some(Kind::Tool),
@@ -261,6 +273,18 @@ mod tests {
         assert_eq!(t.row("c").map(|r| r.status), Some(Status::Planned));
         assert_eq!(t.third_party, ["foo"]);
         assert_eq!(t.portable(), ["a", "b"]);
+    }
+
+    #[test]
+    fn native_libraries_are_not_wasm_required() {
+        let doc = DOC.replace("| b | crates/b | domain |", "| b | crates/b | native |");
+        let table = parse_document(&doc).unwrap();
+        assert_eq!(table.row("b").map(|r| r.kind), Some(Kind::Native));
+        assert_eq!(table.portable(), ["a"]);
+        for kind in [Kind::Native, Kind::Host, Kind::App, Kind::Tool] {
+            assert!(!kind.requires_wasm());
+        }
+        assert!(Kind::Domain.requires_wasm());
     }
 
     #[test]

@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "status": "proposed_not_executed",
   "authority": [
-    "Recommendation only; accepted architecture and contracts are unchanged."
+    "Original N01 recommendation; later owner decisions and the WS amendment below supersede its portability criteria. No runtime acceptance is established.",
+    "WS amendment, owner decision 2026-10-16: desktop-only (Windows, Linux, macOS); only beamcraft-geom, beamcraft-model and beamcraft-kernel require WASM compatibility as a layering discipline. U01-U04 and N03 are desktop-native; N03 retains Linux builds and available SDK-oracle verification without a WASM build."
   ],
   "timebox": {
     "working_days": 10,
@@ -172,18 +173,16 @@
       "option": "A",
       "gate": "G03",
       "claim": [
-        "MSRV, platform and domain portability: Native SDK is host-only; no browser SDK",
-        "claim is required or implied."
+        "MSRV and desktop platforms: adapter, wrapper and SDK operations are desktop-native; no WASM build is required."
       ],
       "method": [
         "Check exact-feature adapter and fixture round trip on Windows x64, Linux x64 and",
-        "macOS x64/ARM64; check all F08 domain crates for wasm32-unknown-unknown on",
-        "workspace MSRV."
+        "macOS x64/ARM64 on the owner-approved workspace MSRV."
       ],
       "pass_criterion": [
-        "All four native target checks and all domain WASM checks pass on Rust 1.95, or on",
-        "an explicitly owner-approved replacement MSRV; zero forbidden domain dependency",
-        "edges. An unavailable target is not run, preventing promotion."
+        "All four native target checks pass on owner-approved Rust 1.96; zero forbidden",
+        "dependency edges under the WS-amended F08 contract. An unavailable desktop target is",
+        "not_run, preventing promotion."
       ],
       "fail_criterion": [
         "Fail on any unmet pass condition. Missing prerequisites or timebox expiry are",
@@ -507,18 +506,16 @@
       "option": "B",
       "gate": "G03",
       "claim": [
-        "MSRV, platform and domain portability: Check pure subset logic on WASM if",
-        "advertised; host IO never enters domain crates."
+        "MSRV and desktop platforms: adapter, wrapper and SDK operations are desktop-native; no WASM build is required."
       ],
       "method": [
         "Check exact-feature adapter and fixture round trip on Windows x64, Linux x64 and",
-        "macOS x64/ARM64; check all F08 domain crates for wasm32-unknown-unknown on",
-        "workspace MSRV."
+        "macOS x64/ARM64 on the owner-approved workspace MSRV."
       ],
       "pass_criterion": [
-        "All four native target checks and all domain WASM checks pass on Rust 1.95, or on",
-        "an explicitly owner-approved replacement MSRV; zero forbidden domain dependency",
-        "edges. An unavailable target is not run, preventing promotion."
+        "All four native target checks pass on owner-approved Rust 1.96; zero forbidden",
+        "dependency edges under the WS-amended F08 contract. An unavailable desktop target is",
+        "not_run, preventing promotion."
       ],
       "fail_criterion": [
         "Fail on any unmet pass condition. Missing prerequisites or timebox expiry are",
@@ -844,18 +841,16 @@
       "option": "C",
       "gate": "G03",
       "claim": [
-        "MSRV, platform and domain portability: Supplied 1.96 versus workspace 1.95",
-        "requires release evidence and an owner resolution."
+        "MSRV and desktop platforms: adapter, wrapper and SDK operations are desktop-native; no WASM build is required."
       ],
       "method": [
         "Check exact-feature adapter and fixture round trip on Windows x64, Linux x64 and",
-        "macOS x64/ARM64; check all F08 domain crates for wasm32-unknown-unknown on",
-        "workspace MSRV."
+        "macOS x64/ARM64 on the owner-approved workspace MSRV."
       ],
       "pass_criterion": [
-        "All four native target checks and all domain WASM checks pass on Rust 1.95, or on",
-        "an explicitly owner-approved replacement MSRV; zero forbidden domain dependency",
-        "edges. An unavailable target is not run, preventing promotion."
+        "All four native target checks pass on owner-approved Rust 1.96; zero forbidden",
+        "dependency edges under the WS-amended F08 contract. An unavailable desktop target is",
+        "not_run, preventing promotion."
       ],
       "fail_criterion": [
         "Fail on any unmet pass condition. Missing prerequisites or timebox expiry are",
@@ -1186,18 +1181,16 @@
       "option": "D",
       "gate": "G03",
       "claim": [
-        "MSRV, platform and domain portability: Full-fidelity SDK operations remain native;",
-        "portable owned slice is separately tested."
+        "MSRV and desktop platforms: adapter, wrapper and SDK operations are desktop-native; no WASM build is required."
       ],
       "method": [
         "Check exact-feature adapter and fixture round trip on Windows x64, Linux x64 and",
-        "macOS x64/ARM64; check all F08 domain crates for wasm32-unknown-unknown on",
-        "workspace MSRV."
+        "macOS x64/ARM64 on the owner-approved workspace MSRV."
       ],
       "pass_criterion": [
-        "All four native target checks and all domain WASM checks pass on Rust 1.95, or on",
-        "an explicitly owner-approved replacement MSRV; zero forbidden domain dependency",
-        "edges. An unavailable target is not run, preventing promotion."
+        "All four native target checks pass on owner-approved Rust 1.96; zero forbidden",
+        "dependency edges under the WS-amended F08 contract. An unavailable desktop target is",
+        "not_run, preventing promotion."
       ],
       "fail_criterion": [
         "Fail on any unmet pass condition. Missing prerequisites or timebox expiry are",

@@ -2,6 +2,11 @@
 
 ## 1. Status and scope
 
+**WS amendment, owner decision of 2026-10-16:** desktop-only on Windows, Linux and macOS.
+Only geom, model and kernel retain WASM compatibility as a layering discipline under amended
+F08. The USD layer engine, wrapper, protocol, host, IO, CLI, UI and later crates are native-only
+with no WASM requirement. U01-U04 and N03 have desktop build/verification criteria.
+
 **Decision 0.1.1, 2026-10-16: variant C selected by the owner.** The pure-Rust
 `openusd` crate (0.8.x) is the primary USD layer engine behind a thin BeamCraft-owned wrapper.
 The product-path aim is no Python and no C++. Variant A, the official SDK worker, remains only
@@ -95,7 +100,7 @@ F08 sections 1-4 and the architecture provide the local provenance.
 | Whole revision | Validate complete candidate; serialize expected-head check and atomic publish. |
 | Unknown content | Keep unknown namespaces, attributes and links; reject unsupported mutation. |
 | Bounded input | Cap bytes, arrays, traversal, recursion and allocations before trusting lengths. |
-| Domain portability | Keep geom/model/protocol/kernel/engine pure and portable to `wasm32`. |
+| Core layering | Keep only geom/model/kernel WASM-compatible; the layer engine and other crates are desktop-native. |
 | Offline | Resolve only authorized contained local assets; no model-triggered network or plugins. |
 | Headless | Engine API, CLI and E2E evidence remain mandatory for every eventual feature. |
 
@@ -117,7 +122,6 @@ geometry development. Estimates have at least factor-two uncertainty and are not
 | Broad composition | SDK candidate | Unsupported | Claimed | SDK boundary |
 | New Cargo graph | None required | None assumed | Audited closure | None assumed |
 | SDK obligations | Runtime | Test oracle | Test oracle | Runtime and oracle |
-| WASM engine | No | Possible | Unproven | Owned slice possible |
 | First-slice effort | 6-12 weeks | 16-40 weeks | 8-20 weeks | 20-52 weeks |
 | Principal risk | Packaging | Semantic gaps | Upstream fit | Two authorities |
 | Architecture review | Retain baseline | Required | Required | Required |
@@ -129,9 +133,8 @@ geometry development. Estimates have at least factor-two uncertainty and are not
 - **Licence/graph:** official TOST exception only, with exact provenance, file inventory and
   notices; F03 native/runtime closure is still open. Python/native packages are outside Cargo,
   not outside dependency policy. No cxx/autocxx or unsafe FFI is needed for Python/pxr.
-- **Platforms/WASM:** audit candidates exist for three desktop platforms, not tested support.
-  Native SDK stays in the host worker; pure domain crates retain their WASM requirement.
-  This does not deliver browser USD composition or a web application.
+- **Platforms:** audit candidates exist for three desktop platforms, not tested support.
+  Native SDK stays in the host worker.
 - **Effort:** 6-12 person-weeks for first-slice worker, packaging and adapter evidence.
 - **Risk:** native distribution, parser exposure, plugins and runtime maintenance; isolation
   limits failure propagation but does not make malicious files safe.
@@ -144,11 +147,11 @@ geometry development. Estimates have at least factor-two uncertainty and are not
 ### B. Own Rust USD subset
 
 - **Gives:** a deliberately restricted USDA authoring/composition profile; explicit field deltas
-  and potentially small portable code. No promise of USDC/USDZ or arbitrary foreign composition.
+  and potentially small native code. No promise of USDC/USDZ or arbitrary foreign composition.
 - **Licence/graph:** original BeamCraft MPL-2.0 code; no assumed new dependencies. Any parser
   helper or hashing crate still needs admission. External SDK oracle use retains F03 conditions.
-- **Platforms/WASM:** a pure in-memory portion could be portable. Filesystem, publication and
-  process operations remain host-only. All targets need tests; Rust alone does not prove WASM.
+- **Platforms:** the subset is desktop-native. Filesystem, publication and process operations
+  remain host responsibilities. Each desktop target needs tests.
 - **Effort:** 16-40 person-weeks for a bounded first slice; general composition is outside that
   estimate and would be a separate potentially multi-year project.
 - **Risk:** apparently simple values conceal USD type, namespace, list and preservation semantics.
@@ -169,8 +172,8 @@ geometry development. Estimates have at least factor-two uncertainty and are not
   `openusd-build` or schema features without a separate resource licence/provenance decision.
   The recorded `src/usd/core_schemas.rs` exception is already in AGENTS.md section 1.2;
   all other files/versions still require their own admission.
-- **Platforms/WASM:** desktop CI is upstream evidence only. Verify exact features on native
-  targets and WASM; reject filesystem/mmap/process edges from domain crates. Initial placement
+- **Platforms:** desktop CI is upstream evidence only. Verify exact features on native
+  targets; reject filesystem/mmap/process edges from the three pure crates. Initial placement
   would be a native adapter or Rust worker, not a new domain dependency under F08's empty list.
 - **Effort:** 8-20 person-weeks for audit, adapter and first-slice gaps, excluding upstream fixes
   of unknown size. An unpatchable required gap rejects the option within the spike.
@@ -192,8 +195,8 @@ geometry development. Estimates have at least factor-two uncertainty and are not
 - **Licence/graph:** BeamCraft model code is MPL-2.0; official SDK and resources keep F03's scoped
   exception and notice requirements. This can retain both maintenance costs; it saves no licence
   audit automatically. No new Cargo dependency is presumed.
-- **Platforms/WASM:** owned in-memory logic could be portable; full-fidelity operations still
-  require the native SDK. A browser would need an explicitly limited mode or later approved path.
+- **Platforms:** owned logic is desktop-native; full-fidelity operations still require the
+  native SDK. Verify each supported desktop target.
 - **Effort:** 20-52 person-weeks for the first slice and reconciliation boundary, excluding general
   import/conversion. Foreign-to-native conversion remains out of initial scope.
 - **Risk:** divergent authorities and round-trip information loss. To remain eligible, the own
@@ -300,7 +303,7 @@ pass. A proposed policy or scope change needs the owner before a rejected option
 |------|------|------------------------------------|
 | G01 | Licence/provenance | Exact inventory and graph; zero unresolved terms or notices. |
 | G02 | Bus factor/API churn | Named maintainer and backup; bounded upgrade/exit exercise. |
-| G03 | MSRV/platform/WASM | Owner-approved MSRV 1.96; exact-feature target checks. |
+| G03 | MSRV/desktop platforms | Owner-approved MSRV 1.96; exact-feature target checks. |
 | G04 | Composition gaps | Zero mismatches in declared scope; no silent foreign omissions. |
 | G05 | Identity/preservation | Full IDs, independent copy, unknown opinions and source hashes. |
 | G06 | False merge/live safety | Expected conflicts and dependencies; ordered idempotent replay. |
@@ -432,7 +435,7 @@ from the product workspace; this task adds no dependency or executable behaviour
 - Parser allocations, cumulative resolution, cycles and maximum-plus-one limits remain unproved;
   the cheap 64 KiB corpus and Windows process cap establish no production safety bound.
 - Linux, macOS and WASM builds were not run. SDK-oracle comparison was not run; same-crate
-  round trips establish self-consistency only. N03 addresses Linux/WASM and available oracles;
+  round trips establish self-consistency only. N03 addresses Linux and available oracles;
   macOS runtime evidence remains open.
 - Pre-1.0 API churn, maintenance owner/backup, broader unknown-content preservation, copy/remap,
   deterministic serialization, semantic replay and publication/recovery still need evidence.
@@ -462,6 +465,8 @@ F04/F06's unchanged authority and numeric rules, F08 boundaries, and the N01 evi
 They do not authorize edits to frozen contracts or new dependency edges. The wrapper exposes
 BeamCraft-owned IDs, typed values, contexts and bounded errors; upstream handles never escape.
 Its precise package/module placement requires F08 review, with no new domain dependency assumed.
+U01-U04 are desktop-native; their criteria impose no WASM build. N03 retains Linux builds and
+the available SDK oracle; the three pure crates have a separate CI portability check.
 
 ### Execution question and F05 applicability
 
@@ -571,7 +576,7 @@ Use existing U05 byte storage without claiming U06/U07 publication/recovery comp
 those capabilities only with their implementation; test safe unavailable/uncertain outcomes now.
 Run primary-path tests with Python and SDK absent. Process-specific claims require real processes.
 
-### N03: Linux/WASM wrapper builds and available SDK oracle
+### N03: Linux wrapper builds and available SDK oracle
 
 **Status: planned, not run by F11D.** This is a separate verification task/PR, not a completed N01
 gate. Inputs are the reviewed U01/U02 wrapper slice, exact git pin/features/lock inventory,
@@ -584,12 +589,11 @@ and explicit unsupported constructs. No SDK or Python becomes a product dependen
 
 **Acceptance:**
 
-1. Build/check the actual wrapper and its selected dependency closure on Linux and
-   `wasm32-unknown-unknown`; run the wrapper suite on Linux. Name the wrapper package and exact
-   commands after placement is reviewed. A geom-only WASM check or stub does not pass this gate.
+1. Build/check the actual wrapper and its selected dependency closure on Linux; run the
+   wrapper suite on Linux. Name the wrapper package and exact commands after placement is
+   reviewed. A pure-crate check or stub does not pass this gate.
 2. Compare deterministic exports and semantic snapshots from fixed/reordered fixtures on Windows
    and Linux. Preserve full IDs, unknown opinions, relationships and foreign source bytes.
-   Record WASM compilation separately from any WASM execution/determinism claim.
 3. Where admitted `pxr` is available, run candidate-write -> fresh oracle-read, oracle-write of
    our fixtures -> candidate-read, and candidate-edit/save -> fresh oracle-read. Compare authored
    and composed state separately: fields/types, values/blocks, target ordering, units, transforms,

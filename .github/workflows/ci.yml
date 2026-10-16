@@ -86,9 +86,9 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: wasm32
-      # Domain crates must stay portable to the browser. The list comes from the module table in
-      # docs/contracts/module-boundaries-v0.1.md, so it is written in one place only.
-      - name: Check portable domain crates for wasm32
+      # WS / owner decision 2026-10-16: only geom, model and kernel require WASM compatibility.
+      # The three domain rows in docs/contracts/module-boundaries-v0.1.md define the list.
+      - name: Check geom, model and kernel for wasm32
         run: |
           list="$(cargo run --locked --quiet -p beamcraft-boundaries -- portable)"
           echo "portable crates: $list"
