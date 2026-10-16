@@ -1,5 +1,6 @@
 [package]
 name = "beamcraft-cli"
+default-run = "beamcraft"
 description = "Command-line interface for BeamCraft."
 version.workspace = true
 edition.workspace = true

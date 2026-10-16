@@ -239,20 +239,31 @@ impl Dispatcher {
         self.live.as_ref()
     }
     fn stop(&mut self) -> Result<(), HostError> {
-        if let Some(mut s) = self.session.take()
+        if let Some(s) = self.session.as_mut()
             && let Err(e) = s.stop()
         {
             self.blocked_reap = true;
             return Err(e);
         }
+        self.session.take();
+        self.blocked_reap = false;
         Ok(())
     }
     fn start(&mut self, c: &Control) -> Result<(), HostError> {
         if self.blocked_reap {
-            return Err(T::BackendLost.into());
+            self.stop()?;
         }
         if self.session.is_none() {
-            self.session = Some(Session::spawn(&self.config, c)?);
+            match Session::spawn(&self.config, c) {
+                Ok(session) => self.session = Some(session),
+                Err(mut failure) => {
+                    if let Some(session) = failure.retained.take() {
+                        self.session = Some(*session);
+                        self.blocked_reap = true;
+                    }
+                    return Err(failure.error);
+                }
+            }
         }
         Ok(())
     }
