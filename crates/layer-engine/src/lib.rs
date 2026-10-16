@@ -5,6 +5,7 @@
 
 pub mod authored;
 mod backend;
+pub mod index;
 mod preflight;
 
 use std::collections::BTreeSet;
@@ -320,7 +321,8 @@ pub struct Prim {
     pub active: bool,
     /// Static attributes, ordered by full name.
     pub properties: Vec<Property>,
-    /// Static composed relationships, ordered by full name; no UUID index is implied.
+    /// Static composed relationships, ordered by full name; the UUID/link index is built
+    /// separately by [`index`].
     pub relationships: Vec<Relationship>,
     /// All contributing prim sites (strongest first).
     pub sources: Vec<Provenance>,
@@ -376,6 +378,8 @@ pub struct Page {
     pub items: Vec<Prim>,
     /// Continuation, or complete delivery when absent.
     pub next: Option<Cursor>,
+    // Position of the first item in the frozen snapshot; lets the U03 builder detect gaps and replays.
+    offset: usize,
 }
 /// Open result; metadata never comes from a partially validated stage.
 #[derive(Debug, Clone)]
@@ -503,6 +507,7 @@ impl Reader {
                 context: context.clone(),
                 offset: end,
             }),
+            offset,
         })
     }
     /// Releases only the matching live read view, invalidating all its contexts and cursors.
