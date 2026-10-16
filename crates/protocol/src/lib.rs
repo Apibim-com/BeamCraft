@@ -9,10 +9,15 @@
 //! process or pipe, parses no JSON and spawns nothing; the native host does that (see
 //! `docs/contracts/module-boundaries-v0.1.md`). Every decoder validates before it trusts a length,
 //! uses checked arithmetic and never indexes or slices by an input-derived position.
+//!
+//! U04 addition: the original framing-only description above predates `json` and `message`,
+//! which now decode bounded experimental read-profile control values without performing I/O.
 
 pub mod code;
 pub mod frame;
+pub mod json;
 pub mod limits;
+pub mod message;
 
 pub use code::TransportCode;
 pub use frame::{BinaryPrefix, BundleBudget, FrameError, FrameHeader, FrameKind};

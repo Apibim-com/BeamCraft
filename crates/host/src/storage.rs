@@ -361,6 +361,16 @@ impl BlobStore {
         self.read_file(&path, digest)
     }
 
+    /// Reads a verified resource with an operation-specific cap checked before reservation.
+    /// The cap can only tighten this store's bound; this adds no new storage mechanism.
+    pub fn read_capped(&self, digest: &ContentDigest, cap: usize) -> Result<Vec<u8>, StorageError> {
+        let scoped = Self {
+            cap: self.cap.min(cap),
+            ..self.clone()
+        };
+        scoped.read(digest)
+    }
+
     /// Checks presence with complete verification; corrupt/unsafe entries are errors, not false.
     pub fn contains(&self, digest: &ContentDigest) -> Result<bool, StorageError> {
         match self.verify(digest) {

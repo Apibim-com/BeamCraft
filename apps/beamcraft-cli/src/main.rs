@@ -1,12 +1,265 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! `beamcraft`: command-line entry point.
+//! Headless CLI using the same native dispatcher as application callers.
 
-fn main() {
-    let arg = std::env::args().nth(1);
-    match arg.as_deref() {
-        Some("--version" | "-V") => println!("beamcraft {}", env!("CARGO_PKG_VERSION")),
-        _ => println!("BeamCraft by Apibim. Run `beamcraft --version`."),
+use beamcraft_host::{
+    dispatch::{self, AuthorizedRead, Command, Dispatcher},
+    storage::BlobStore,
+    worker::{Cancellation, Control, HostError, WorkerConfig},
+};
+use beamcraft_model::{ErrorCode, digest::ContentDigest};
+use beamcraft_protocol::{
+    json::Json,
+    message::{self, Identity},
+};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    io::Read,
+    path::PathBuf,
+};
+
+fn invalid() -> HostError {
+    HostError::logical(ErrorCode::InvalidArgument)
+}
+fn main() -> std::process::ExitCode {
+    let args = std::env::args_os().skip(1).take(50).collect::<Vec<_>>();
+    if args.len() == 1 && (args.first().is_some_and(|s| s == "--version" || s == "-V")) {
+        println!("beamcraft {}", env!("CARGO_PKG_VERSION"));
+        return std::process::ExitCode::SUCCESS;
     }
+    if args.is_empty()
+        || (args.len() == 1 && args.first().is_some_and(|s| s == "--help" || s == "-h"))
+    {
+        println!(
+            "BeamCraft: open | read | query-outcome | blob-put | blob-verify\nRead: --backend rust --store ROOT --worker EXE --worker-digest SHA256 --project-id UUID --workspace-id UUID --revision SHA256 --generation U64\nInput: --manifest SHA256 [--owned NAME,...] or --file FILE --digest SHA256 [--owned root.usda]\nControl: [--timeout-ms 1..120000] [--cancel-after-ms 0..120000]\nOnly the experimental static read profile is available; save/publication/mutation/SDK fallback are unavailable."
+        );
+        return std::process::ExitCode::SUCCESS;
+    }
+    let result = run(args);
+    let (json, exit) = match result {
+        Ok(j) => (j, 0),
+        Err((e, observed)) => (
+            Json::object([
+                (
+                    "outcome",
+                    Json::text(if e.code == ErrorCode::OutcomeUnknown {
+                        "outcome_unknown"
+                    } else if e.code == ErrorCode::Cancelled {
+                        "cancelled"
+                    } else {
+                        "rejected"
+                    }),
+                ),
+                ("code", Json::text(e.code.as_str())),
+                ("message", Json::text(e.message())),
+                (
+                    "transport_code",
+                    e.transport.map_or(Json::Null, |t| Json::text(t.as_str())),
+                ),
+                ("observed_context", observed),
+                ("diagnostics", Json::Array(vec![])),
+            ]),
+            e.exit_code(),
+        ),
+    };
+    match json.encode(&message::read_limits()) {
+        Ok(bytes) => {
+            use std::io::Write;
+            if std::io::stdout().lock().write_all(&bytes).is_err() {
+                return std::process::ExitCode::from(3);
+            }
+        }
+        Err(_) => {
+            println!("{{\"outcome\":\"rejected\",\"code\":\"LIMIT_EXCEEDED\"}}");
+            return std::process::ExitCode::from(2);
+        }
+    }
+    std::process::ExitCode::from(exit)
+}
+fn run(args: Vec<std::ffi::OsString>) -> Result<Json, (HostError, Json)> {
+    let mut dispatcher = None;
+    let mut known_workspace = Json::Null;
+    let result = (|| -> Result<Json, HostError> {
+        if args.len() > 49 {
+            return Err(invalid());
+        }
+        let args = args
+            .into_iter()
+            .map(|s| s.into_string().map_err(|_| invalid()))
+            .collect::<Result<Vec<_>, _>>()?;
+        if args.iter().any(|s| s.len() > 4096) {
+            return Err(invalid());
+        }
+        let command = args.first().ok_or_else(invalid)?;
+        let tail = args.get(1..).ok_or_else(invalid)?;
+        if !tail.len().is_multiple_of(2) {
+            return Err(invalid());
+        }
+        let mut options = BTreeMap::new();
+        for pair in tail.as_chunks::<2>().0 {
+            let [key, value] = pair;
+            if !matches!(
+                key.as_str(),
+                "--backend"
+                    | "--store"
+                    | "--worker"
+                    | "--worker-digest"
+                    | "--project-id"
+                    | "--workspace-id"
+                    | "--revision"
+                    | "--generation"
+                    | "--manifest"
+                    | "--owned"
+                    | "--file"
+                    | "--digest"
+                    | "--timeout-ms"
+                    | "--cancel-after-ms"
+                    | "--op-id"
+            ) || options.insert(key.as_str(), value.as_str()).is_some()
+            {
+                return Err(invalid());
+            }
+        }
+        let get = |k: &str| options.get(k).copied().ok_or_else(invalid);
+        let timeout = options
+            .get("--timeout-ms")
+            .map(|s| s.parse::<u64>().map_err(|_| invalid()))
+            .transpose()?;
+        let cancellation = Cancellation::default();
+        if let Some(ms) = options.get("--cancel-after-ms") {
+            let ms = ms.parse::<u64>().map_err(|_| invalid())?;
+            if ms > 120000 {
+                return Err(invalid());
+            }
+            if ms == 0 {
+                cancellation.cancel();
+            } else {
+                let token = cancellation.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(ms));
+                    token.cancel();
+                });
+            }
+        }
+        let control = Control::new(timeout, cancellation)?;
+        control.remaining()?;
+        let store = BlobStore::new(get("--store")?).map_err(|e| HostError::logical(e.code()))?;
+        let parse_digest = |s: &str| s.parse::<ContentDigest>().map_err(|_| invalid());
+        if command == "blob-put" {
+            let bytes = read_file(get("--file")?, 32 * 1024 * 1024)?;
+            let (digest, _) = store
+                .publish(&bytes)
+                .map_err(|e| HostError::logical(e.code()))?;
+            control.remaining()?;
+            return Ok(Json::object([
+                ("outcome", Json::text("blob_stored")),
+                ("digest", Json::text(digest.to_string())),
+            ]));
+        }
+        if command == "blob-verify" {
+            let digest = parse_digest(get("--digest")?)?;
+            store
+                .verify(&digest)
+                .map_err(|e| HostError::logical(e.code()))?;
+            control.remaining()?;
+            return Ok(Json::object([
+                ("outcome", Json::text("blob_verified")),
+                ("digest", Json::text(digest.to_string())),
+            ]));
+        }
+        if !matches!(command.as_str(), "open" | "read" | "query-outcome") {
+            return Err(HostError::logical(ErrorCode::UnsupportedCommand));
+        }
+        if get("--backend")? != "rust" {
+            return Err(HostError::logical(ErrorCode::BackendUnavailable));
+        }
+        let identity = Identity {
+            project_id: get("--project-id")?.into(),
+            workspace_id: get("--workspace-id")?.into(),
+            base_revision: parse_digest(get("--revision")?)?,
+            workspace_generation: message::generation(&Json::text(get("--generation")?))?,
+        };
+        identity.validate()?;
+        // QueryOutcome is available without a worker or a claimed durable ledger result.
+        if command == "query-outcome" {
+            if !message::uuid(get("--op-id")?) {
+                return Err(HostError::logical(ErrorCode::InvalidId));
+            }
+            known_workspace = identity.json();
+            return Err(HostError::logical(ErrorCode::OutcomeUnknown));
+        }
+        let manifest = if let Some(m) = options.get("--manifest") {
+            if options.contains_key("--file") || options.contains_key("--digest") {
+                return Err(invalid());
+            }
+            parse_digest(m)?
+        } else {
+            let bytes = read_file(get("--file")?, 65536)?;
+            let expected = parse_digest(get("--digest")?)?;
+            let (digest, _) = store
+                .publish(&bytes)
+                .map_err(|e| HostError::logical(e.code()))?;
+            if digest != expected {
+                return Err(HostError::logical(ErrorCode::IntegrityError));
+            }
+            let manifest = dispatch::read_manifest(
+                &identity,
+                "root.usda",
+                &[("root.usda".into(), digest, bytes.len() as u64)],
+            );
+            store
+                .publish(&manifest.encode(&message::read_limits())?)
+                .map_err(|e| HostError::logical(e.code()))?
+                .0
+        };
+        let owned = options.get("--owned").map_or_else(BTreeSet::new, |s| {
+            s.split(',').map(str::to_string).collect()
+        });
+        let grant = AuthorizedRead::authorize(&store, manifest, identity, owned)?;
+        known_workspace = grant.identity().json();
+        let host = dispatcher.insert(Dispatcher::new(WorkerConfig {
+            executable: PathBuf::from(get("--worker")?),
+            executable_digest: parse_digest(get("--worker-digest")?)?,
+            store_root: PathBuf::from(get("--store")?),
+        }));
+        let opened = host.execute(Command::Open(grant), &control)?;
+        if command == "open" {
+            return Ok(opened.json());
+        }
+        let context = opened.context.ok_or_else(invalid)?;
+        host.execute(
+            Command::Read {
+                context,
+                cursor: None,
+            },
+            &control,
+        )
+        .map(|r| r.json())
+        .map_err(HostError::from)
+    })();
+    result.map_err(|e| {
+        (
+            e,
+            dispatcher
+                .as_ref()
+                .and_then(Dispatcher::observed_context)
+                .map_or(known_workspace, |context| context.identity.json()),
+        )
+    })
+}
+fn read_file(path: &str, cap: usize) -> Result<Vec<u8>, HostError> {
+    let file = std::fs::File::open(path).map_err(|_| HostError::logical(ErrorCode::NotFound))?;
+    let metadata = file.metadata().map_err(|_| invalid())?;
+    if !metadata.is_file() || metadata.len() > cap as u64 {
+        return Err(HostError::logical(ErrorCode::LimitExceeded));
+    }
+    let mut data = Vec::new();
+    file.take(cap as u64 + 1)
+        .read_to_end(&mut data)
+        .map_err(|_| invalid())?;
+    if data.len() > cap {
+        return Err(HostError::logical(ErrorCode::LimitExceeded));
+    }
+    Ok(data)
 }
