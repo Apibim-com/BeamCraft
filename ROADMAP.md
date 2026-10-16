@@ -46,7 +46,7 @@ its F03 admission stays separate. [F11](docs/design/layer-engine-decision-v0.1.m
 re-scopes U01 (bounded Rust open/read), U02 (codeless schemas and authored layers), U03 (UUID and
 relationship index) and U04 (shared CLI/host API), with inputs, outputs and acceptance.
 [Wrapper requirements](docs/design/layer-engine-wrapper-requirements-v0.1.md) define the N01 gaps
-to close. N03 is planned Linux/WASM wrapper-build and available-SDK-oracle verification, not done.
+to close. N03 is planned Linux wrapper-build and available-SDK-oracle verification, not done.
 In-process versus separate Rust process and the corresponding F05 mapping remain open.
 Crate/graph/notice admission and wrapper safety evidence precede integration. No production USD
 backend is integrated; the decision does not complete U01-U04, N01 or K1. These gates do not block
@@ -54,8 +54,9 @@ independent mathematical requirements or fixtures. Full alpha readiness requires
 coverage; the first demonstration covers only a subset.
 
 Later work expands supported operations, licensed data packs, drawings and DSTV NC export.
-IFC import and foreign-to-native conversion require a new scope decision. Browser hosting is a
-later project; portable domain crates alone do not establish a working web application.
+IFC import and foreign-to-native conversion require a new scope decision. BeamCraft is
+desktop-only on Windows, Linux and macOS. Only `beamcraft-geom`, `beamcraft-model` and
+`beamcraft-kernel` retain the WASM compatibility requirement as a layering discipline.
 
 ## Progress log
 
