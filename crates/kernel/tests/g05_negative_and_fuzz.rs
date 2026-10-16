@@ -73,14 +73,31 @@ fn valid_baseline_and_caps_are_inclusive() {
         f64::from_bits(1.0e9f64.to_bits() + 1),
     );
     assert_eq!(first(&reject(&over, &[], 1.0)).0, ProfileCode::AboveLimit);
-    // D = 2,000,000 exactly is accepted, one step above is not.
-    let wide = vec![p(0.0, 0.0), p(2.0e6, 0.0), p(2.0e6, 1000.0), p(0.0, 1000.0)];
-    let wide_d = (2.0e6f64 * 2.0e6 + 1.0e6).sqrt();
-    assert!(wide_d > 2.0e6);
-    let f = reject(&wide, &[], 1.0);
+    // D = 2,000,000 exactly is accepted (every edge is at most 1e6); D above it is a limit.
+    let at_d_cap = vec![
+        p(0.0, 0.0),
+        p(1.0e6, 0.0),
+        p(2.0e6, 0.0),
+        p(1.5e6, 1000.0),
+        p(0.5e6, 1000.0),
+    ];
+    assert!(extrude(&at_d_cap, &[], 1.0).is_ok());
+    let past_d_cap = vec![
+        p(0.0, 0.0),
+        p(1.0e6, 0.0),
+        p(2.0e6, 0.0),
+        p(2.1e6, 0.0),
+        p(2.1e6, 1000.0),
+        p(1.1e6, 1000.0),
+        p(0.1e6, 1000.0),
+        p(0.0, 1000.0),
+    ];
+    let f = reject(&past_d_cap, &[], 1.0);
+    assert_eq!(
+        first(&f),
+        (ProfileCode::AboveLimit, Stage::Caps, Defect::None)
+    );
     assert_eq!(f.diagnostics()[0].field, ProfileField::LocalSize);
-    let on_axis = vec![p(0.0, 0.0), p(2.0e6, 0.0), p(0.0, 1000.0)];
-    assert!(extrude(&on_axis, &[], 1.0).is_ok());
 }
 
 #[test]
@@ -854,4 +871,164 @@ fn maximum_size_hostile_and_valid_contours_finish() {
         .collect();
     let ex = extrude(&zig, &[], 12.0).unwrap();
     assert_valid_extrusion(&ex, &zig, &[], 12.0);
+}
+
+#[test]
+fn clearance_decision_is_the_same_before_and_after_a_lossless_translation() {
+    // Regression: the clearance (0.0009999462 mm) between a slanted outer edge and a cavity edge
+    // is below the 0.001 mm floor, and must stay below it when both are translated by ~1e9.
+    let g = 1.0 / 8_388_608.0;
+    let on_grid = |v: f64| (v / g).round() * g;
+    for shift in [0.0, 999_999_800.0] {
+        for (y0, too_close) in [
+            (1.7511576414108276, true),
+            (on_grid(1.7511576414108276) + 8.0 * g, false),
+        ] {
+            assert_eq!(
+                y0,
+                on_grid(y0),
+                "the cavity heights are exactly representable at the cap"
+            );
+            let at = |x: f64, y: f64| p(x + shift, y + shift);
+            let outer = vec![at(0.0, 0.0), at(12.0, 7.0), at(0.0, 40.0)];
+            let cavity = Cavity::polygon(vec![at(3.0, y0), at(3.0, 10.0), at(6.0, y0 + 1.75)]);
+            let result = extrude(&outer, &[cavity], 2.0);
+            if too_close {
+                let f = result.unwrap_err();
+                assert_eq!(
+                    first(&f).2,
+                    Defect::ContoursTooClose,
+                    "shift {shift}: {:?}",
+                    f.diagnostics()
+                );
+            } else {
+                assert!(
+                    result.is_ok(),
+                    "shift {shift}: {:?}",
+                    result.err().map(|f| f.diagnostics().to_vec())
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn every_contour_edge_is_capped_at_one_million_millimetres() {
+    // F04 section 3 / F06 section 2: each edge, closure and cavity edges included, is at most 1e6 mm.
+    let at_cap = rect(0.0, 0.0, 1.0e6, 10.0);
+    assert!(extrude(&at_cap, &[], 1.0).is_ok());
+    let over = f64::from_bits(1.0e6f64.to_bits() + 1);
+    let f = reject(&rect(0.0, 0.0, over, 10.0), &[], 1.0);
+    assert_eq!(
+        first(&f),
+        (ProfileCode::AboveLimit, Stage::Caps, Defect::None)
+    );
+    assert_eq!(f.diagnostics()[0].field, ProfileField::OuterContour);
+    // Both long edges are reported, bottom (0) and top (2), in input order.
+    let indices: Vec<_> = f.diagnostics().iter().map(|d| d.index).collect();
+    assert_eq!(indices, [Some(0), Some(2)]);
+    assert_eq!(f.status(), "limit_exceeded");
+    // The closing edge counts: the last point back to the first.
+    let closing = vec![p(0.0, 0.0), p(0.0, over), p(-10.0, over)];
+    let f = reject(&closing, &[], 1.0);
+    assert!(
+        f.diagnostics()
+            .iter()
+            .any(|d| d.code == ProfileCode::AboveLimit && d.index == Some(0))
+    );
+    // Cavity edges, including the closing edge, inside a large 16-gon (every outer edge < 1e6).
+    let big: Vec<Point2> = (0..16)
+        .map(|k| {
+            let a = std::f64::consts::TAU * f64::from(k) / 16.0;
+            p(0.99e6 * a.cos(), 0.99e6 * a.sin())
+        })
+        .collect();
+    let long_cavity =
+        |half: f64| Cavity::polygon(vec![p(-half, 0.0), p(0.0, 50_000.0), p(half, 0.0)]);
+    assert!(extrude(&big, &[long_cavity(5.0e5)], 1.0).is_ok());
+    let f = reject(&big, &[long_cavity(500_000.5)], 1.0);
+    let d = f.diagnostics()[0];
+    assert_eq!(
+        (d.code, d.stage, d.field, d.cavity, d.index),
+        (
+            ProfileCode::AboveLimit,
+            Stage::Caps,
+            ProfileField::CavityContour,
+            Some(0),
+            Some(2)
+        )
+    );
+}
+
+#[test]
+fn every_failure_of_the_ranges_and_contour_stage_is_reported_together() {
+    // Reported regression: a thickness failure used to hide the figure-eight's self-intersection.
+    let eight = ccw(vec![p(0.0, 0.0), p(80.0, 80.0), p(80.0, 0.0), p(0.0, 50.0)]);
+    let f = reject(&eight, &[], -1.0);
+    let found: Vec<_> = f
+        .diagnostics()
+        .iter()
+        .map(|d| (d.field, d.defect))
+        .collect();
+    assert_eq!(found[0], (ProfileField::Thickness, Defect::None));
+    assert!(
+        found.contains(&(ProfileField::OuterContour, Defect::SelfIntersection)),
+        "{found:?}"
+    );
+    assert!(f.diagnostics().iter().all(|d| d.stage == Stage::Ranges));
+    // Independent defects of different contours, in input order: outer figure-eight, a clockwise
+    // outer is not involved; cavity 0 is a short-edge contour, cavity 1 is counter-clockwise.
+    let short = Cavity::polygon(vec![
+        p(10.0, 10.0),
+        p(10.0, 10.0005),
+        p(20.0, 20.0),
+        p(20.0, 10.0),
+    ]);
+    let wrong = Cavity::polygon(rect(30.0, 30.0, 40.0, 40.0));
+    let outer = ccw(vec![
+        p(0.0, 0.0),
+        p(100.0, 100.0),
+        p(100.0, 0.0),
+        p(0.0, 60.0),
+    ]);
+    let f = reject(&outer, &[short, wrong], 2.0);
+    let found: Vec<_> = f
+        .diagnostics()
+        .iter()
+        .map(|d| (d.cavity, d.defect))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            (None, Defect::SelfIntersection),
+            (Some(0), Defect::EdgeTooShort),
+            (Some(1), Defect::WrongWinding)
+        ],
+        "{found:?}"
+    );
+    // A pair check runs once both contours are simple even if another contour is not.
+    let eight_cavity = Cavity::polygon(vec![
+        p(40.0, 40.0),
+        p(60.0, 60.0),
+        p(60.0, 40.0),
+        p(40.0, 60.0),
+    ]);
+    let f = reject(
+        &base_outer(),
+        &[eight_cavity, hole_rect(90.0, 40.0, 110.0, 60.0)],
+        2.0,
+    );
+    let found: Vec<_> = f
+        .diagnostics()
+        .iter()
+        .map(|d| (d.cavity, d.defect))
+        .collect();
+    assert!(
+        found.contains(&(Some(1), Defect::ContoursIntersect)),
+        "{found:?}"
+    );
+    // Containment is skipped for a crossing pair (no spurious "outside"), and the island
+    // support decision only appears when nothing invalid was found.
+    assert!(!found.contains(&(Some(1), Defect::CavityOutside)));
+    assert!(!found.iter().any(|(_, d)| *d == Defect::CavityNested));
 }
