@@ -13,8 +13,8 @@ The inputs are [F06 0.1.0](../contracts/geometry-contract-v0.1.md), its
 [F04 0.1.0](../contracts/model-and-commands-v0.1.md), the
 [first-scope package 0.1.0](../clean-room/handoff/first-scope-v0.1.md), its
 [cases](../clean-room/handoff/first-scope-cases-v0.1.json), and the
-[admission policy](../clean-room/admission-policy.md). F04 is a freeze candidate, F06 is a draft,
-and P-1, P-2 and P-3 remain assumptions pending owner confirmation and renewed admission.
+[admission policy](../clean-room/admission-policy.md). F04 and F06 were frozen at 0.1.0 on 2026-10-16 (P-1, P-2 and P-3 confirmed by the owner;
+P-3c is erratum E-2); renewed admission is still pending.
 This design identifies contradictions; it does not silently repair those contracts.
 
 The only solids considered are a rectangular plate and a straight rectangular prism member,

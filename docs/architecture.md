@@ -177,6 +177,6 @@ saved models. F09 admission precedes freezing it for kernel implementers.
    mm — assumption noted; fixture validation open;
    ifc-lite comparison recorded in the tolerance report.
 
-F04 remains a freeze candidate at 0.1.0; F06 remains a draft. See the [tolerance
+F04 and F06 were frozen at 0.1.0 by the owner on 2026-10-16. See the [tolerance
 comparison](design/tolerance-comparison-v0.1.md). Nothing is implemented by this record, and
 existing admission requirements remain in force.

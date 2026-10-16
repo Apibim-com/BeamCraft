@@ -20,5 +20,5 @@ Key rules in one place:
   and vendor numerical results are never inputs; vendor numbers are oracle-only.
 - A new chat does not erase earlier exposure. Unknown exposure stays unknown.
 - The package refers to the [F04 contract](../contracts/model-and-commands-v0.1.md) by case ID.
-  That contract is a review draft, not frozen.
+  That contract is frozen at 0.1.0 (owner, 2026-10-16).
 - Admitted today: the first-scope package only. K0 is not passed and no kernel exists yet.

@@ -1,6 +1,7 @@
 # F06: geometry and viewport contract, version 0.1.0
 
-Status: **draft 0.1.0, not frozen; nothing implemented; K0 not passed**. Date: 2026-10-15. Base:
+Status: **frozen 0.1.0** by the owner on 2026-10-16; nothing implemented; K0 not passed. Date:
+2026-10-15. Base:
 `9d40abc34b8a5686358b78adee5f9c52b9c830bd`.
 
 This original contract fixes the logical interface between the engine and any geometry kernel, and
@@ -12,13 +13,13 @@ here is verified by a test.
 
 ## 1. Scope and status
 
-**What this is.** A draft logical contract for the tasks G01-G09, P03, V01-V03 and D01. They can
+**What this is.** A frozen logical contract for the tasks G01-G09, P03, V01-V03 and D01. They can
 work against the interfaces below without choosing an implementation. A change that conflicts with
 it needs a reviewed amendment (section 12), not a local workaround.
 
 **Relation to other documents.**
 
-- [F04 model and command contract 0.1.0](model-and-commands-v0.1.md) (freeze candidate) owns
+- [F04 model and command contract 0.1.0](model-and-commands-v0.1.md) (frozen) owns
   identities, units, input caps, error codes (its section 8), quantity statuses (its section 5) and
   the open items this contract takes over (section 4 here). F06 never weakens an F04 invariant and
   never widens an F04 cap.
@@ -39,7 +40,8 @@ it needs a reviewed amendment (section 12), not a local workaround.
   missing angle cap. A02 remains necessary for nonrectangular solid evaluation.
 - F06 accepts ownership of G-06 (minimum nonzero dimension, geometric tolerance, the "parallel" test
   of P-3) and of the profile-resource-format question (F06/P02). Their policies in section 4 are
-  marked **draft, to be validated by G04 and fixtures**, and are not frozen.
+  marked draft until G04 and fixture validation; the owner froze them with this contract on
+  2026-10-16, so validation outcomes are errata (section 12).
 
 **Excluded from 0.1.0:** boolean operations and any cut, hole, fit or weld geometry; curved or
 multi-segment members; nonrectangular solid evaluation until A02, bent plates; imported meshes;
@@ -116,7 +118,8 @@ decision. This contract defines no second persisted format and no catalogue.
 | Local size L | plate D <= 2,000,000 mm; member max(axis length, section half-diagonal) <= 1,000,000 mm | F04 section 3 |
 | Minimum nonzero dimension | at least eps_geom (section 4), inclusive | F06 addition (draft) |
 
-The owner confirmed these draft first-slice values on 2026-10-15; fixture validation remains open.
+The owner confirmed these first-slice values on 2026-10-15 and froze them on 2026-10-16; fixture
+validation yields errata only.
 The geometric floor is eps_geom, with an absolute minimum of 0.001 mm = 1e-6 m. Contours contain
 at most 1024 points; roll has the F04 section 3 cap. A maximum plate call has 3081 numeric scalars
 (3072 coordinates, thickness, seven
@@ -244,8 +247,8 @@ receives engineering quantities.
 
 ## 4. Tolerance and degeneracy policy (G-06, draft)
 
-**Confirmed by the owner on 2026-10-15 as first-slice values; draft, to be validated by fixtures,
-not frozen.** All constants carry integer `tolerance_policy` version 3. The algorithm version is 3
+**Confirmed by the owner on 2026-10-15 as first-slice values and frozen on 2026-10-16; validation by
+fixtures yields errata only.** All constants carry integer `tolerance_policy` version 3. The algorithm version is 3
 because local-size scaling changes geometry admission; feature and mesh layout versions stay
 1. Changing any constant raises that version and therefore every shape key (section 7).
 
@@ -866,19 +869,26 @@ The invalid-quaternion, translation-limit and density cases are already covered 
 
 ## 12. Freeze status and open questions
 
-**Status.** Draft 0.1.0, not frozen. Nothing is implemented, K0 is not passed and no geometry
-implementer is declared eligible. Only the owner freezes F04; P-1 to P-3 are now recorded; freeze
-still needs review, fixture validation and owner action.
+**Status.** Frozen 0.1.0 (owner, 2026-10-16). Nothing is implemented, K0 is not passed and no geometry
+implementer is declared eligible. The owner froze F04 and F06 together on 2026-10-16. Changes
+need an owner-approved erratum or a new version.
 
-**Open owner decisions.**
+**Owner decisions of 2026-10-16.**
 
-| Item | Question |
+| Item | Decision |
 |------|----------|
-| P-1, P-2, P-3 | Recorded jointly with F04 on 2026-10-15; normal sign, bounds and angle-cap assumptions need review |
-| Policy constants | Owner confirmed first-slice values; draft, to be validated by fixtures. Compared with supplied ifc-lite values in the tolerance report; local-size scaling adopted on 2026-10-15 |
-| Roll discontinuity | Accept the roll jump at the parallel threshold (section 4, rule 3), or choose a continuous rule. The near-vertical rule does not remove it |
-| Open item A5 | **Partly resolved, 2026-10-15:** the owner-directed eps_geom closes only the large-coordinate part. Rounded-mesh cross-checks and subnormal mass remain **open**. No runtime accuracy proof or fixture gate is passed; G04 and fixtures must establish bounds on the admitted domain without narrowing F04 caps |
-| FeatureId on axis reversal | Accept that ids follow roles, not world faces (section 5, rule 6) |
+| P-1, P-2, P-3 | P-1a to P-1d, P-2, P-3a, P-3b confirmed; P-3c accepted (E-2). `section_anchor` reserved in F04 section 3 |
+| Policy constants | Frozen as first-slice values; fixture validation (G03/G04) yields errata only |
+| Roll discontinuity | Accepted for 0.1.0; black-box observation requested; change = E-2 with an algorithm version bump |
+| FeatureId on axis reversal | Accepted: ids follow roles, not world faces (section 5, rule 6) |
+| Open item A5 | Large-coordinate part closed; rounded-mesh cross-checks and subnormal mass move to erratum E-1, not a freeze blocker |
+
+**Errata register.**
+
+| ID | Subject | State |
+|----|---------|-------|
+| E-1 | A5 residual: rounded-mesh cross-checks, subnormal mass, full-domain accuracy for cancellation-heavy inputs | Open; G04 and fixtures |
+| E-2 | Roll jump at the parallel threshold; owner requested black-box observation of reference behaviour (synthetic columns, tilt toward each axis, axis reversal; numeric notes only) | Open; observation pending |
 
 **What later tasks must still decide.**
 
@@ -1024,3 +1034,6 @@ still needs review, fixture validation and owner action.
   section 3 state that a nonpositive section dimension contributes 0 to H, so negative widths or
   heights always report `GEO_NOT_POSITIVE`/`INVALID_ARGUMENT` and never `GEO_ABOVE_LIMIT` or
   `GEO_NUMERIC_UNCERTAIN`. Added NEG-52 and NEG-53: 112 cases (59 positive, 53 negative).
+- 2026-10-16, F06 freeze: frozen at 0.1.0 together with F04 (owner decision). Status lines and section 12
+  updated; errata E-1 and E-2 registered; `section_anchor` reserved in F04 section 3 (F06 kernel input
+  stays centred, no new input). No case ID, code, limit or meaning changed.

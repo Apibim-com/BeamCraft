@@ -1,7 +1,7 @@
 # F04: model and command contract, version 0.1.0
 
-Status: **freeze candidate, not frozen**. Date: 2026-10-15. Only the owner can freeze it (see
-[section 11](#11-freeze-status)). Draft base: `b34205281ab8a1f95052c4dc7d84f0995633e179`.
+Status: **frozen 0.1.0** by the owner on 2026-10-16 (see [section 11](#11-freeze-status)). Nothing in it
+is implemented. Draft base: `b34205281ab8a1f95052c4dc7d84f0995633e179`.
 Freeze-candidate amendments (task F04.2) are made on `478f330e15819b574c62227bc23009729adb4fdc`; the
 F06 amendments (task F04.3) are made on `b996c58fe850642f12b92b25b23c441fbd41ed47`; see [section
 12](#12-amendments-log). F01 is merged. F02 is available locally: 35 source files, 160 occurrences
@@ -12,7 +12,7 @@ the [package](../clean-room/handoff/first-scope-v0.1.md). Requirement admission 
 package's scope (rectangular plate, straight member, identities, units, rigid placement, declared
 failures). Source-exposure admission and eligible implementers are separate and undecided. K0 is not
 passed. This document does not close any of these. The [F06 geometry
-contract](geometry-contract-v0.1.md) is a draft, not frozen, and nothing in it is implemented; task
+contract](geometry-contract-v0.1.md) is frozen 0.1.0 and nothing in it is implemented; task
 F04.3 applied the amendments it proposed to this contract (section 12).
 
 This specifies domain semantics before F05 transport, F06 geometry and F08 module implementation. No
@@ -91,11 +91,11 @@ These are original initial operating caps, not vendor tolerances or promises of 
 | Element relationship targets | At most 1024; require valid pinned targets and reject forbidden cycles |
 | Derived command footprint entries | At most 4096; fail before publishing if the footprint cannot be bounded |
 
-The owner confirmed these first-slice constants on 2026-10-15; they remain draft, to be validated by
-fixtures. The minimum and the section cap were added by the F06 amendments (section 12). They are
-the draft policy of F06 sections 2 and 4, not frozen; the existing limits and codes above are
-unchanged except for the owner-directed scaled minimum. It is a draft minimum-size rule;
-fixture validation and the remaining A5 accuracy work stay open with F06.
+The owner confirmed these first-slice constants on 2026-10-15 and froze them with this contract on
+2026-10-16; fixture validation (G03/G04) may only produce a versioned erratum. The minimum and the section cap were added by the F06 amendments (section 12). They are
+the policy of F06 sections 2 and 4 (frozen 0.1.0); the existing limits and codes above are
+unchanged except for the owner-directed scaled minimum. Fixture validation and the remaining A5
+accuracy work stay open as errata E-1 (F06 section 12).
 
 **Geometric length floor (owner decision, 2026-10-15).** `eps_geom = max(0.001 mm, 2^-22 * L)`.
 Here `L` is an element-local body size in mm, evaluated before placement: for a plate `L = D`,
@@ -184,7 +184,7 @@ only error-code choice changed by the freeze-candidate amendments; the owner ado
 **Element-local frames (G-01 and G-02).** These fix where the authored dimensions sit in the
 element-local frame, before the placement of the previous subsection is applied. They define local
 bounds for the first scope. The profile-definition resource format, minimum dimensions and any
-geometric tolerance are F06's draft policy (G-06 and F06/P02), not frozen.
+geometric tolerance are F06's policy (G-06 and F06/P02), frozen with it.
 
 *Owner decisions, 2026-10-15 (verbatim intent):*
 
@@ -195,7 +195,8 @@ geometric tolerance are F06's draft policy (G-06 and F06/P02), not frozen.
 
 *Owner decisions recorded on 2026-10-15.* P-1 is replaced, P-2 is confirmed unchanged, and P-3
 retains the deterministic zero-roll frame and adds explicit axial roll. Details not stated by the
-owner are assumptions below. The contract remains a freeze candidate, not frozen.
+owner are assumptions below. On 2026-10-16 the owner confirmed P-1a to P-1d, P-2 (with the reserved
+section anchor below), P-3a and P-3b, and froze the contract; P-3c is recorded as erratum E-2.
 
 - **P-1, contour plate (replaces rectangular-only input).** `contour_points_mm` is an ordered array
   of 3 to 1024 distinct three-component points in element-local millimetres. Closure is implicit
@@ -260,6 +261,19 @@ owner are assumptions below. The contract remains a freeze candidate, not frozen
   4](geometry-contract-v0.1.md#4-tolerance-and-degeneracy-policy-g-06-draft), rule 2); an exactly
   vertical axis always uses the column rule. The roll is discontinuous at that threshold, which is
   retained as the default-frame rule; continuity remains open in F06.
+- **Owner confirmation, 2026-10-16.** P-1a to P-1d (contour limits, winding rejection without
+  reordering, planarity band, rectangle-only first-slice evaluation), P-2, P-3a (default frame:
+  horizontal axis gives height up, vertical axis gives height along +Y) and P-3b (roll cap 2*pi) are
+  confirmed as written. P-3c (the roll jump at the parallel threshold) is accepted for 0.1.0 as the
+  default-frame rule; the owner asked for a black-box observation of the reference behaviour. Any
+  change to the rule is erratum E-2 and raises the F06 algorithm version, so stored shape keys
+  change visibly and no 0.1.0 ID or case is rewritten.
+- **Reserved section anchor (owner, 2026-10-16).** P-2 "centred on the axis" is the default anchor. A
+  future optional `section_anchor` places the section by one of nine points (top, middle, bottom by
+  left, centre, right) plus optional offsets `dx`, `dy` in millimetres along `X_m`, `Y_m`. The name
+  and shape are reserved only: 0.1.0 has no such command argument, patch field or USD attribute, and
+  a request carrying it is `UNSUPPORTED_PROPERTY`. Adding it later needs a new contract version and
+  a new F06 algorithm version, not a rewrite of P-2.
 
 Worked examples (exact; each vector and bound was checked with rational arithmetic, and the case
 file carries them as `F04-POS-14` to `F04-POS-16`). The corrected near-vertical rule leaves all
@@ -333,7 +347,7 @@ the physical material: a change of density value alone invalidates mass only, an
 presentation input. Display references and physical-material references stay separate (section 4).
 
 F06 defines the canonical numeric encoding and the key preimages ([F06 section
-7](geometry-contract-v0.1.md#7-transforms-and-measurement-keys), draft, not frozen); P04 still owns
+7](geometry-contract-v0.1.md#7-transforms-and-measurement-keys), frozen 0.1.0); P04 still owns
 signature storage. A blob digest identifies saved bytes; it is not the signature of normalized
 engineering inputs. No arbitrary dimension rounding is allowed to manufacture shared hashes.
 
@@ -554,9 +568,12 @@ unsafe-code policies continue to apply.
 
 ## 11. Freeze status
 
-This contract is a **freeze candidate, not frozen**. Nothing in it is implemented, K0 is not passed,
-and no geometry implementer is declared eligible. Freezing requires the owner's explicit acceptance;
-no review, task or merge freezes it implicitly. The owner has not frozen it.
+This contract is **frozen at 0.1.0**, by the owner's explicit decision of 2026-10-16. Nothing in it is
+implemented, K0 is not passed and no geometry implementer is declared eligible. A frozen contract
+changes only by an erratum (0.1.x, owner-approved, listed in section 12 and in F06 section 12) or a
+new contract version; no review, task or merge changes it implicitly. Freezing does not admit an
+implementer: the first-scope package still needs its update to the contour plate (separate F09
+admission step).
 
 Adopted by the owner on 2026-10-15 (F09 review findings G-03 to G-05):
 
@@ -570,16 +587,16 @@ Decided by the owner on 2026-10-15:
 
 | Item | Recorded resolution | Status |
 |------|---------------------|--------|
-| G-01 / P-1 | Contour plate; X along first edge, Z thickness/normal, Y=Z x X; rectangle-only evaluation until A02 | Replaced; winding, bounds and planarity assumptions in section 3 |
-| G-02 / P-2 | Centred member section and perpendicular ends, Y through a cross product | Confirmed unchanged |
-| P-3 | Deterministic zero-roll frame followed by optional roll about local +Z | Refined; angle-cap assumption in section 3 |
-| G-06 | Constants confirmed for the first slice; relative 1e-6 and geometric floor eps_geom | Draft, to be validated by fixtures; 15-value comparison recorded in the [tolerance report](../design/tolerance-comparison-v0.1.md); A5 large-coordinate part closed by local-size scaling; rounded-mesh cross-checks and subnormal mass open |
+| G-01 / P-1 | Contour plate; X along first edge, Z thickness/normal, Y=Z x X; rectangle-only evaluation until A02 | Replaced; confirmed 2026-10-16 (P-1a to P-1d) |
+| G-02 / P-2 | Centred member section and perpendicular ends, Y through a cross product | Confirmed unchanged; `section_anchor` reserved (section 3) |
+| P-3 | Deterministic zero-roll frame followed by optional roll about local +Z | P-3a and P-3b confirmed 2026-10-16; P-3c accepted, erratum E-2 |
+| G-06 | Constants confirmed for the first slice; relative 1e-6 and geometric floor eps_geom | Frozen 2026-10-16; fixture validation yields errata only; 15-value comparison recorded in the [tolerance report](../design/tolerance-comparison-v0.1.md); A5 large-coordinate part closed by local-size scaling; rounded-mesh cross-checks and subnormal mass open |
 | Profile resource | Logical rectangle content in F06 section 2 | Accepted by F06 under draft policy; persisted encoding open |
-| Freeze | Explicit owner freeze and review/admission remain necessary | Open |
+| Freeze | Explicit owner freeze | **Done 2026-10-16** (F04 and F06 0.1.0); implementer admission remains separate |
 
 The first-scope package 0.1.0 still has the old input and gaps; its update is a separate admission
-step. Owner confirmation of decisions does not freeze a contract or declare an implementer eligible.
-The `contract_version` remains `0.1.0`. K0 is not passed and nothing is implemented.
+step. Freezing does not declare an implementer eligible. The `contract_version` remains `0.1.0`. K0
+is not passed and nothing is implemented.
 
 ## 12. Amendments log
 
@@ -672,3 +689,9 @@ The `contract_version` remains `0.1.0`. K0 is not passed and nothing is implemen
   NEG-34 to NEG-39: 69 logical cases (30 positive, 39 negative), seven raw. No previous case
   outcome flips or input rewrites are needed; existing minimum cases remain below the scaling
   crossover. F04 stays a freeze candidate 0.1.0, not frozen; no runtime change is made.
+
+- 2026-10-16, F04 freeze: the owner confirmed P-1a to P-1d, P-2, P-3a and P-3b, accepted P-3c as
+  erratum E-2 (black-box observation requested), reserved `section_anchor` (section 3) and froze F04
+  and F06 at 0.1.0. Status lines, section 11 and the cases file status were updated; no case ID, error
+  code, limit or meaning changed. The first-scope package update and implementer admission are not
+  part of this change.
