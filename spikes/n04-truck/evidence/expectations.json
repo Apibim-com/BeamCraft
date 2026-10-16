@@ -1,0 +1,662 @@
+[
+  {
+    "case": "plate",
+    "dimensions_mm": [
+      100.0,
+      80.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 80000.0,
+    "expected_chi": 2,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "box-product;cartesian-bounds;euler",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "g03-unit",
+    "dimensions_mm": [
+      1.0,
+      1.0,
+      1.0
+    ],
+    "analytic_volume_mm3": 1.0,
+    "expected_chi": 2,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "box-product;cartesian-bounds;euler",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "g03-unequal",
+    "dimensions_mm": [
+      23.0,
+      47.0,
+      3.0
+    ],
+    "analytic_volume_mm3": 3243.0,
+    "expected_chi": 2,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "box-product;cartesian-bounds;euler",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "g03-dyadic",
+    "dimensions_mm": [
+      0.125,
+      0.25,
+      0.0625
+    ],
+    "analytic_volume_mm3": 0.001953125,
+    "expected_chi": 2,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "box-product;cartesian-bounds;euler",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "g03-decimal",
+    "dimensions_mm": [
+      0.1,
+      0.2,
+      0.3
+    ],
+    "analytic_volume_mm3": 0.006,
+    "expected_chi": 2,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "box-product;cartesian-bounds;euler",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "thin-slab",
+    "dimensions_mm": [
+      100.0,
+      80.0,
+      0.001
+    ],
+    "analytic_volume_mm3": 8.0,
+    "expected_chi": 2,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "box-product;cartesian-bounds;euler",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "minimum-cube",
+    "dimensions_mm": [
+      0.001,
+      0.001,
+      0.001
+    ],
+    "analytic_volume_mm3": 1e-09,
+    "expected_chi": 2,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "box-product;cartesian-bounds;euler",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "scaled-minimum",
+    "dimensions_mm": [
+      3072.0,
+      4096.0,
+      0.001220703125
+    ],
+    "analytic_volume_mm3": 15360.0,
+    "expected_chi": 2,
+    "eps_geom_mm": 0.001220703125,
+    "f06_dimension_admissible": true,
+    "formula": "box-product;cartesian-bounds;euler",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "scaled-below",
+    "dimensions_mm": [
+      3072.0,
+      4096.0,
+      0.001
+    ],
+    "analytic_volume_mm3": 12582.912,
+    "expected_chi": 2,
+    "eps_geom_mm": 0.001220703125,
+    "f06_dimension_admissible": false,
+    "formula": "box-product;cartesian-bounds;euler",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "large-scale",
+    "dimensions_mm": [
+      300000.0,
+      400000.0,
+      0.11920928955078125
+    ],
+    "analytic_volume_mm3": 14305114746.09375,
+    "expected_chi": 2,
+    "eps_geom_mm": 0.11920928955078125,
+    "f06_dimension_admissible": true,
+    "formula": "box-product;cartesian-bounds;euler",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "large-offset",
+    "dimensions_mm": [
+      100.0,
+      80.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 80000.0,
+    "expected_chi": 2,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "box-product;cartesian-bounds;euler",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "large-offset-thin",
+    "dimensions_mm": [
+      100.0,
+      80.0,
+      0.001
+    ],
+    "analytic_volume_mm3": 8.0,
+    "expected_chi": 2,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "box-product;cartesian-bounds;euler",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "hole",
+    "dimensions_mm": [
+      100.0,
+      80.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 79214.60183660255,
+    "expected_chi": 0,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "cylinder-integral;genus",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "pattern",
+    "dimensions_mm": [
+      100.0,
+      80.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 76858.40734641021,
+    "expected_chi": -6,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "cylinder-integral;genus",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "touching-hole",
+    "dimensions_mm": [
+      100.0,
+      80.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 79214.60183660255,
+    "expected_chi": 0,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "cylinder-integral;genus",
+    "singular_contact": true,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "near-hole",
+    "dimensions_mm": [
+      100.0,
+      80.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 79214.60183660255,
+    "expected_chi": 0,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "cylinder-integral;genus",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "near-hole-outside-band",
+    "dimensions_mm": [
+      100.0,
+      80.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 79214.60183660255,
+    "expected_chi": 0,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "cylinder-integral;genus",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "crossing-hole",
+    "dimensions_mm": [
+      100.0,
+      80.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 79607.30091830128,
+    "expected_chi": 2,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "cylinder-integral;genus",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "thin-wall",
+    "dimensions_mm": [
+      100.0,
+      80.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 3.59996,
+    "expected_chi": 0,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "difference-of-box-products;genus",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "contour",
+    "dimensions_mm": [
+      100.0,
+      80.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 45000.0,
+    "expected_chi": 2,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "disjoint-rectangle-area-times-height;euler",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "plate-cut-0",
+    "dimensions_mm": [
+      100.0,
+      80.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 40000.0,
+    "expected_chi": 2,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "central-inversion-symmetry",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "plate-cut-30",
+    "dimensions_mm": [
+      100.0,
+      80.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 40000.0,
+    "expected_chi": 2,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "central-inversion-symmetry",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "plate-cut-45",
+    "dimensions_mm": [
+      100.0,
+      80.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 40000.0,
+    "expected_chi": 2,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "central-inversion-symmetry",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "plate-cut-60",
+    "dimensions_mm": [
+      100.0,
+      80.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 40000.0,
+    "expected_chi": 2,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "central-inversion-symmetry",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "plate-cut-vertex",
+    "dimensions_mm": [
+      100.0,
+      80.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 166.66666666666666,
+    "expected_chi": 2,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "tetrahedron-determinant",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "plate-cut-coincident",
+    "dimensions_mm": [
+      100.0,
+      80.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 80000.0,
+    "expected_chi": 2,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "closed-halfspace-inclusion",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "box-cut-0",
+    "dimensions_mm": [
+      10.0,
+      10.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 500.0,
+    "expected_chi": 2,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "central-inversion-symmetry",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "box-cut-30",
+    "dimensions_mm": [
+      10.0,
+      10.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 500.0,
+    "expected_chi": 2,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "central-inversion-symmetry",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "box-cut-45",
+    "dimensions_mm": [
+      10.0,
+      10.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 500.0,
+    "expected_chi": 2,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "central-inversion-symmetry",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "box-cut-60",
+    "dimensions_mm": [
+      10.0,
+      10.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 500.0,
+    "expected_chi": 2,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "central-inversion-symmetry",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "box-cut-vertex",
+    "dimensions_mm": [
+      10.0,
+      10.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 166.66666666666666,
+    "expected_chi": 2,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "tetrahedron-determinant",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "box-cut-coincident",
+    "dimensions_mm": [
+      10.0,
+      10.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 1000.0,
+    "expected_chi": 2,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "closed-halfspace-inclusion",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "hole-tol-small",
+    "dimensions_mm": [
+      100.0,
+      80.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 79214.60183660255,
+    "expected_chi": 0,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "cylinder-integral;genus",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "hole-tol-large",
+    "dimensions_mm": [
+      100.0,
+      80.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 79214.60183660255,
+    "expected_chi": 0,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "cylinder-integral;genus",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "hole-tol-scaled",
+    "dimensions_mm": [
+      100.0,
+      80.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 79214.60183660255,
+    "expected_chi": 0,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "cylinder-integral;genus",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "hole-fine-mesh",
+    "dimensions_mm": [
+      100.0,
+      80.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 79214.60183660255,
+    "expected_chi": 0,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "cylinder-integral;genus",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "tess-tol-below",
+    "dimensions_mm": [
+      100.0,
+      80.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 80000.0,
+    "expected_chi": 2,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "box-product;cartesian-bounds;euler",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "tess-tol-equal",
+    "dimensions_mm": [
+      100.0,
+      80.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 80000.0,
+    "expected_chi": 2,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "box-product;cartesian-bounds;euler",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "nonunit-axis",
+    "dimensions_mm": [
+      100.0,
+      80.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 79214.60183660255,
+    "expected_chi": 0,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "cylinder-integral;genus",
+    "singular_contact": false,
+    "invalid_upstream_precondition": true
+  },
+  {
+    "case": "plate-cut-consistency",
+    "dimensions_mm": [
+      100.0,
+      80.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 40000.0,
+    "expected_chi": 2,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "central-inversion-symmetry",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "hole-consistency",
+    "dimensions_mm": [
+      100.0,
+      80.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 79214.60183660255,
+    "expected_chi": 0,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "cylinder-integral;genus",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "hole-coarse",
+    "dimensions_mm": [
+      100.0,
+      80.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 79214.60183660255,
+    "expected_chi": 0,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "cylinder-integral;genus",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "hole-medium-mesh",
+    "dimensions_mm": [
+      100.0,
+      80.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 79214.60183660255,
+    "expected_chi": 0,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "cylinder-integral;genus",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  },
+  {
+    "case": "hole-robust-mesh",
+    "dimensions_mm": [
+      100.0,
+      80.0,
+      10.0
+    ],
+    "analytic_volume_mm3": 79214.60183660255,
+    "expected_chi": 0,
+    "eps_geom_mm": 0.001,
+    "f06_dimension_admissible": true,
+    "formula": "cylinder-integral;genus",
+    "singular_contact": false,
+    "invalid_upstream_precondition": false
+  }
+]

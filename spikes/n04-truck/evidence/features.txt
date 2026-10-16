@@ -1,0 +1,837 @@
+beamcraft-n04-truck-spike v0.0.1 (D:\Projects\01_BeamCraft-N04\spikes\n04-truck)
+├── truck-meshalgo feature "default"
+│   ├── truck-meshalgo v0.4.0
+│   │   ├── array-macro feature "default"
+│   │   │   └── array-macro v2.1.8
+│   │   ├── derive_more feature "default"
+│   │   │   ├── derive_more v0.99.20 (proc-macro)
+│   │   │   │   ├── convert_case feature "default"
+│   │   │   │   │   └── convert_case v0.4.0
+│   │   │   │   ├── proc-macro2 feature "default"
+│   │   │   │   │   ├── proc-macro2 v1.0.107
+│   │   │   │   │   │   └── unicode-ident feature "default"
+│   │   │   │   │   │       └── unicode-ident v1.0.27
+│   │   │   │   │   └── proc-macro2 feature "proc-macro"
+│   │   │   │   │       └── proc-macro2 v1.0.107 (*)
+│   │   │   │   ├── quote feature "default"
+│   │   │   │   │   ├── quote v1.0.47
+│   │   │   │   │   │   └── proc-macro2 v1.0.107 (*)
+│   │   │   │   │   └── quote feature "proc-macro"
+│   │   │   │   │       ├── quote v1.0.47 (*)
+│   │   │   │   │       └── proc-macro2 feature "proc-macro" (*)
+│   │   │   │   └── syn feature "default"
+│   │   │   │       ├── syn v2.0.119
+│   │   │   │       │   ├── proc-macro2 v1.0.107 (*)
+│   │   │   │       │   ├── quote v1.0.47 (*)
+│   │   │   │       │   └── unicode-ident feature "default" (*)
+│   │   │   │       ├── syn feature "clone-impls"
+│   │   │   │       │   └── syn v2.0.119 (*)
+│   │   │   │       ├── syn feature "derive"
+│   │   │   │       │   └── syn v2.0.119 (*)
+│   │   │   │       ├── syn feature "parsing"
+│   │   │   │       │   └── syn v2.0.119 (*)
+│   │   │   │       ├── syn feature "printing"
+│   │   │   │       │   └── syn v2.0.119 (*)
+│   │   │   │       └── syn feature "proc-macro"
+│   │   │   │           ├── syn v2.0.119 (*)
+│   │   │   │           ├── proc-macro2 feature "proc-macro" (*)
+│   │   │   │           └── quote feature "proc-macro" (*)
+│   │   │   │   [build-dependencies]
+│   │   │   │   └── rustc_version feature "default"
+│   │   │   │       └── rustc_version v0.4.1
+│   │   │   │           └── semver feature "default"
+│   │   │   │               ├── semver v1.0.28
+│   │   │   │               └── semver feature "std"
+│   │   │   │                   └── semver v1.0.28
+│   │   │   ├── derive_more feature "add"
+│   │   │   │   └── derive_more v0.99.20 (proc-macro) (*)
+│   │   │   ├── derive_more feature "add_assign"
+│   │   │   │   └── derive_more v0.99.20 (proc-macro) (*)
+│   │   │   ├── derive_more feature "as_mut"
+│   │   │   │   └── derive_more v0.99.20 (proc-macro) (*)
+│   │   │   ├── derive_more feature "as_ref"
+│   │   │   │   └── derive_more v0.99.20 (proc-macro) (*)
+│   │   │   ├── derive_more feature "constructor"
+│   │   │   │   └── derive_more v0.99.20 (proc-macro) (*)
+│   │   │   ├── derive_more feature "deref"
+│   │   │   │   └── derive_more v0.99.20 (proc-macro) (*)
+│   │   │   ├── derive_more feature "deref_mut"
+│   │   │   │   └── derive_more v0.99.20 (proc-macro) (*)
+│   │   │   ├── derive_more feature "display"
+│   │   │   │   ├── derive_more v0.99.20 (proc-macro) (*)
+│   │   │   │   └── syn feature "extra-traits"
+│   │   │   │       └── syn v2.0.119 (*)
+│   │   │   ├── derive_more feature "error"
+│   │   │   │   ├── derive_more v0.99.20 (proc-macro) (*)
+│   │   │   │   └── syn feature "extra-traits" (*)
+│   │   │   ├── derive_more feature "from"
+│   │   │   │   ├── derive_more v0.99.20 (proc-macro) (*)
+│   │   │   │   └── syn feature "extra-traits" (*)
+│   │   │   ├── derive_more feature "from_str"
+│   │   │   │   └── derive_more v0.99.20 (proc-macro) (*)
+│   │   │   ├── derive_more feature "index"
+│   │   │   │   └── derive_more v0.99.20 (proc-macro) (*)
+│   │   │   ├── derive_more feature "index_mut"
+│   │   │   │   └── derive_more v0.99.20 (proc-macro) (*)
+│   │   │   ├── derive_more feature "into"
+│   │   │   │   ├── derive_more v0.99.20 (proc-macro) (*)
+│   │   │   │   └── syn feature "extra-traits" (*)
+│   │   │   ├── derive_more feature "into_iterator"
+│   │   │   │   └── derive_more v0.99.20 (proc-macro) (*)
+│   │   │   ├── derive_more feature "is_variant"
+│   │   │   │   ├── derive_more v0.99.20 (proc-macro) (*)
+│   │   │   │   └── derive_more feature "convert_case"
+│   │   │   │       └── derive_more v0.99.20 (proc-macro) (*)
+│   │   │   ├── derive_more feature "iterator"
+│   │   │   │   └── derive_more v0.99.20 (proc-macro) (*)
+│   │   │   ├── derive_more feature "mul"
+│   │   │   │   ├── derive_more v0.99.20 (proc-macro) (*)
+│   │   │   │   └── syn feature "extra-traits" (*)
+│   │   │   ├── derive_more feature "mul_assign"
+│   │   │   │   ├── derive_more v0.99.20 (proc-macro) (*)
+│   │   │   │   └── syn feature "extra-traits" (*)
+│   │   │   ├── derive_more feature "not"
+│   │   │   │   ├── derive_more v0.99.20 (proc-macro) (*)
+│   │   │   │   └── syn feature "extra-traits" (*)
+│   │   │   ├── derive_more feature "sum"
+│   │   │   │   └── derive_more v0.99.20 (proc-macro) (*)
+│   │   │   ├── derive_more feature "try_into"
+│   │   │   │   ├── derive_more v0.99.20 (proc-macro) (*)
+│   │   │   │   └── syn feature "extra-traits" (*)
+│   │   │   └── derive_more feature "unwrap"
+│   │   │       ├── derive_more v0.99.20 (proc-macro) (*)
+│   │   │       ├── derive_more feature "convert_case" (*)
+│   │   │       └── derive_more feature "rustc_version"
+│   │   │           └── derive_more v0.99.20 (proc-macro) (*)
+│   │   ├── itertools feature "default"
+│   │   │   ├── itertools v0.13.0
+│   │   │   │   └── either v1.19.0
+│   │   │   └── itertools feature "use_std"
+│   │   │       ├── itertools v0.13.0 (*)
+│   │   │       ├── itertools feature "use_alloc"
+│   │   │       │   └── itertools v0.13.0 (*)
+│   │   │       └── either feature "use_std"
+│   │   │           ├── either v1.19.0
+│   │   │           └── either feature "std"
+│   │   │               └── either v1.19.0
+│   │   ├── rayon feature "default"
+│   │   │   └── rayon v1.12.0
+│   │   │       ├── either v1.19.0
+│   │   │       └── rayon-core feature "default"
+│   │   │           └── rayon-core v1.13.0
+│   │   │               ├── crossbeam-deque feature "default"
+│   │   │               │   ├── crossbeam-deque v0.8.8
+│   │   │               │   │   ├── crossbeam-epoch v0.9.21
+│   │   │               │   │   │   └── crossbeam-utils v0.8.23
+│   │   │               │   │   └── crossbeam-utils v0.8.23
+│   │   │               │   └── crossbeam-deque feature "std"
+│   │   │               │       ├── crossbeam-deque v0.8.8 (*)
+│   │   │               │       ├── crossbeam-epoch feature "std"
+│   │   │               │       │   ├── crossbeam-epoch v0.9.21 (*)
+│   │   │               │       │   ├── crossbeam-epoch feature "alloc"
+│   │   │               │       │   │   └── crossbeam-epoch v0.9.21 (*)
+│   │   │               │       │   └── crossbeam-utils feature "std"
+│   │   │               │       │       └── crossbeam-utils v0.8.23
+│   │   │               │       └── crossbeam-utils feature "std" (*)
+│   │   │               └── crossbeam-utils feature "default"
+│   │   │                   ├── crossbeam-utils v0.8.23
+│   │   │                   └── crossbeam-utils feature "std" (*)
+│   │   ├── rustc-hash feature "default"
+│   │   │   ├── rustc-hash v2.1.3
+│   │   │   └── rustc-hash feature "std"
+│   │   │       └── rustc-hash v2.1.3
+│   │   ├── spade feature "default"
+│   │   │   ├── spade v2.15.1
+│   │   │   │   ├── hashbrown feature "default"
+│   │   │   │   │   ├── hashbrown v0.16.1
+│   │   │   │   │   │   ├── equivalent v1.0.3
+│   │   │   │   │   │   ├── foldhash v0.2.0
+│   │   │   │   │   │   └── allocator-api2 feature "alloc"
+│   │   │   │   │   │       └── allocator-api2 v0.2.21
+│   │   │   │   │   ├── hashbrown feature "allocator-api2"
+│   │   │   │   │   │   └── hashbrown v0.16.1 (*)
+│   │   │   │   │   ├── hashbrown feature "default-hasher"
+│   │   │   │   │   │   └── hashbrown v0.16.1 (*)
+│   │   │   │   │   ├── hashbrown feature "equivalent"
+│   │   │   │   │   │   └── hashbrown v0.16.1 (*)
+│   │   │   │   │   ├── hashbrown feature "inline-more"
+│   │   │   │   │   │   └── hashbrown v0.16.1 (*)
+│   │   │   │   │   └── hashbrown feature "raw-entry"
+│   │   │   │   │       └── hashbrown v0.16.1 (*)
+│   │   │   │   ├── num-traits feature "default"
+│   │   │   │   │   ├── num-traits v0.2.19
+│   │   │   │   │   │   [build-dependencies]
+│   │   │   │   │   │   └── autocfg feature "default"
+│   │   │   │   │   │       └── autocfg v1.5.1
+│   │   │   │   │   └── num-traits feature "std"
+│   │   │   │   │       └── num-traits v0.2.19 (*)
+│   │   │   │   ├── robust feature "default"
+│   │   │   │   │   └── robust v1.2.0
+│   │   │   │   └── smallvec feature "default"
+│   │   │   │       └── smallvec v1.16.3
+│   │   │   └── spade feature "std"
+│   │   │       └── spade v2.15.1 (*)
+│   │   ├── truck-base feature "default"
+│   │   │   └── truck-base v0.5.0
+│   │   │       ├── rustc-hash feature "default" (*)
+│   │   │       ├── cgmath feature "default"
+│   │   │       │   └── cgmath v0.18.0
+│   │   │       │       ├── num-traits feature "default" (*)
+│   │   │       │       ├── approx feature "default"
+│   │   │       │       │   ├── approx v0.4.0
+│   │   │       │       │   │   └── num-traits v0.2.19 (*)
+│   │   │       │       │   └── approx feature "std"
+│   │   │       │       │       └── approx v0.4.0 (*)
+│   │   │       │       ├── serde feature "default"
+│   │   │       │       │   ├── serde v1.0.229
+│   │   │       │       │   │   ├── serde_core feature "result"
+│   │   │       │       │   │   │   └── serde_core v1.0.229
+│   │   │       │       │   │   └── serde_derive feature "default"
+│   │   │       │       │   │       └── serde_derive v1.0.229 (proc-macro)
+│   │   │       │       │   │           ├── proc-macro2 feature "proc-macro" (*)
+│   │   │       │       │   │           ├── quote feature "proc-macro" (*)
+│   │   │       │       │   │           ├── syn feature "clone-impls"
+│   │   │       │       │   │           │   └── syn v3.0.9
+│   │   │       │       │   │           │       ├── proc-macro2 v1.0.107 (*)
+│   │   │       │       │   │           │       ├── quote v1.0.47 (*)
+│   │   │       │       │   │           │       └── unicode-ident feature "default" (*)
+│   │   │       │       │   │           ├── syn feature "derive"
+│   │   │       │       │   │           │   └── syn v3.0.9 (*)
+│   │   │       │       │   │           ├── syn feature "parsing"
+│   │   │       │       │   │           │   └── syn v3.0.9 (*)
+│   │   │       │       │   │           ├── syn feature "printing"
+│   │   │       │       │   │           │   └── syn v3.0.9 (*)
+│   │   │       │       │   │           └── syn feature "proc-macro"
+│   │   │       │       │   │               ├── syn v3.0.9 (*)
+│   │   │       │       │   │               ├── proc-macro2 feature "proc-macro" (*)
+│   │   │       │       │   │               └── quote feature "proc-macro" (*)
+│   │   │       │       │   └── serde feature "std"
+│   │   │       │       │       ├── serde v1.0.229 (*)
+│   │   │       │       │       └── serde_core feature "std"
+│   │   │       │       │           └── serde_core v1.0.229
+│   │   │       │       └── serde feature "serde_derive"
+│   │   │       │           └── serde v1.0.229 (*)
+│   │   │       ├── cgmath feature "serde"
+│   │   │       │   └── cgmath v0.18.0 (*)
+│   │   │       ├── serde feature "default" (*)
+│   │   │       ├── serde feature "derive"
+│   │   │       │   ├── serde v1.0.229 (*)
+│   │   │       │   └── serde feature "serde_derive" (*)
+│   │   │       └── matext4cgmath feature "default"
+│   │   │           └── matext4cgmath v0.1.0
+│   │   │               ├── cgmath feature "default" (*)
+│   │   │               ├── katexit feature "default"
+│   │   │               │   └── katexit v0.1.5 (proc-macro)
+│   │   │               │       ├── proc-macro2 feature "default" (*)
+│   │   │               │       ├── quote feature "default" (*)
+│   │   │               │       ├── syn feature "default" (*)
+│   │   │               │       ├── syn feature "extra-traits" (*)
+│   │   │               │       └── syn feature "full"
+│   │   │               │           └── syn v2.0.119 (*)
+│   │   │               └── num-complex feature "default"
+│   │   │                   ├── num-complex v0.4.6
+│   │   │                   │   └── num-traits feature "i128"
+│   │   │                   │       └── num-traits v0.2.19 (*)
+│   │   │                   └── num-complex feature "std"
+│   │   │                       ├── num-complex v0.4.6 (*)
+│   │   │                       └── num-traits feature "std" (*)
+│   │   ├── truck-geometry feature "default"
+│   │   │   └── truck-geometry v0.5.0
+│   │   │       ├── truck-base feature "default" (*)
+│   │   │       ├── serde feature "default" (*)
+│   │   │       ├── serde feature "derive" (*)
+│   │   │       ├── thiserror feature "default"
+│   │   │       │   └── thiserror v1.0.69
+│   │   │       │       └── thiserror-impl feature "default"
+│   │   │       │           └── thiserror-impl v1.0.69 (proc-macro)
+│   │   │       │               ├── proc-macro2 feature "default" (*)
+│   │   │       │               ├── quote feature "default" (*)
+│   │   │       │               └── syn feature "default" (*)
+│   │   │       └── truck-geotrait feature "default"
+│   │   │           └── truck-geotrait v0.4.0
+│   │   │               ├── truck-base feature "default" (*)
+│   │   │               ├── thiserror feature "default" (*)
+│   │   │               ├── rand feature "default"
+│   │   │               │   ├── rand v0.8.8
+│   │   │               │   │   ├── rand_chacha v0.3.1
+│   │   │               │   │   │   ├── ppv-lite86 feature "simd"
+│   │   │               │   │   │   │   └── ppv-lite86 v0.2.21
+│   │   │               │   │   │   │       ├── zerocopy feature "default"
+│   │   │               │   │   │   │       │   └── zerocopy v0.8.63
+│   │   │               │   │   │   │       └── zerocopy feature "simd"
+│   │   │               │   │   │   │           └── zerocopy v0.8.63
+│   │   │               │   │   │   └── rand_core feature "default"
+│   │   │               │   │   │       └── rand_core v0.6.4
+│   │   │               │   │   │           └── getrandom feature "default"
+│   │   │               │   │   │               └── getrandom v0.2.17
+│   │   │               │   │   │                   └── cfg-if feature "default"
+│   │   │               │   │   │                       └── cfg-if v1.0.5
+│   │   │               │   │   └── rand_core feature "default" (*)
+│   │   │               │   ├── rand feature "std"
+│   │   │               │   │   ├── rand v0.8.8 (*)
+│   │   │               │   │   ├── rand feature "alloc"
+│   │   │               │   │   │   ├── rand v0.8.8 (*)
+│   │   │               │   │   │   └── rand_core feature "alloc"
+│   │   │               │   │   │       └── rand_core v0.6.4 (*)
+│   │   │               │   │   ├── rand feature "getrandom"
+│   │   │               │   │   │   ├── rand v0.8.8 (*)
+│   │   │               │   │   │   └── rand_core feature "getrandom"
+│   │   │               │   │   │       └── rand_core v0.6.4 (*)
+│   │   │               │   │   ├── rand feature "libc"
+│   │   │               │   │   │   └── rand v0.8.8 (*)
+│   │   │               │   │   ├── rand feature "rand_chacha"
+│   │   │               │   │   │   └── rand v0.8.8 (*)
+│   │   │               │   │   ├── rand_chacha feature "std"
+│   │   │               │   │   │   ├── rand_chacha v0.3.1 (*)
+│   │   │               │   │   │   └── ppv-lite86 feature "std"
+│   │   │               │   │   │       └── ppv-lite86 v0.2.21 (*)
+│   │   │               │   │   └── rand_core feature "std"
+│   │   │               │   │       ├── rand_core v0.6.4 (*)
+│   │   │               │   │       ├── rand_core feature "alloc" (*)
+│   │   │               │   │       ├── rand_core feature "getrandom" (*)
+│   │   │               │   │       └── getrandom feature "std"
+│   │   │               │   │           └── getrandom v0.2.17 (*)
+│   │   │               │   └── rand feature "std_rng"
+│   │   │               │       ├── rand v0.8.8 (*)
+│   │   │               │       └── rand feature "rand_chacha" (*)
+│   │   │               └── truck-derivers feature "default"
+│   │   │                   └── truck-derivers v0.1.0 (proc-macro)
+│   │   │                       ├── proc-macro2 feature "default" (*)
+│   │   │                       ├── quote feature "default" (*)
+│   │   │                       ├── syn feature "default" (*)
+│   │   │                       ├── syn feature "derive" (*)
+│   │   │                       ├── syn feature "printing" (*)
+│   │   │                       └── proc-macro-error feature "default"
+│   │   │                           ├── proc-macro-error v1.0.4
+│   │   │                           │   ├── syn v1.0.109
+│   │   │                           │   │   ├── proc-macro2 v1.0.107 (*)
+│   │   │                           │   │   ├── quote v1.0.47 (*)
+│   │   │                           │   │   └── unicode-ident feature "default" (*)
+│   │   │                           │   ├── proc-macro2 feature "default" (*)
+│   │   │                           │   ├── quote feature "default" (*)
+│   │   │                           │   └── proc-macro-error-attr feature "default"
+│   │   │                           │       └── proc-macro-error-attr v1.0.4 (proc-macro)
+│   │   │                           │           ├── proc-macro2 feature "default" (*)
+│   │   │                           │           └── quote feature "default" (*)
+│   │   │                           │           [build-dependencies]
+│   │   │                           │           └── version_check feature "default"
+│   │   │                           │               └── version_check v0.9.5
+│   │   │                           │   [build-dependencies]
+│   │   │                           │   └── version_check feature "default" (*)
+│   │   │                           └── proc-macro-error feature "syn-error"
+│   │   │                               ├── proc-macro-error v1.0.4 (*)
+│   │   │                               └── proc-macro-error feature "syn"
+│   │   │                                   └── proc-macro-error v1.0.4 (*)
+│   │   ├── truck-polymesh feature "default"
+│   │   │   └── truck-polymesh v0.6.0
+│   │   │       ├── array-macro feature "default" (*)
+│   │   │       ├── itertools feature "default" (*)
+│   │   │       ├── rustc-hash feature "default" (*)
+│   │   │       ├── truck-base feature "default" (*)
+│   │   │       ├── serde feature "default" (*)
+│   │   │       ├── serde feature "derive" (*)
+│   │   │       ├── thiserror feature "default" (*)
+│   │   │       ├── truck-geotrait feature "default" (*)
+│   │   │       ├── bytemuck feature "default"
+│   │   │       │   └── bytemuck v1.25.2
+│   │   │       │       └── bytemuck_derive feature "default"
+│   │   │       │           └── bytemuck_derive v1.12.1 (proc-macro)
+│   │   │       │               ├── proc-macro2 feature "default" (*)
+│   │   │       │               ├── quote feature "default" (*)
+│   │   │       │               └── syn feature "default"
+│   │   │       │                   ├── syn v3.0.9 (*)
+│   │   │       │                   ├── syn feature "clone-impls" (*)
+│   │   │       │                   ├── syn feature "derive" (*)
+│   │   │       │                   ├── syn feature "parsing" (*)
+│   │   │       │                   ├── syn feature "printing" (*)
+│   │   │       │                   └── syn feature "proc-macro" (*)
+│   │   │       └── bytemuck feature "derive"
+│   │   │           ├── bytemuck v1.25.2 (*)
+│   │   │           └── bytemuck feature "bytemuck_derive"
+│   │   │               └── bytemuck v1.25.2 (*)
+│   │   ├── truck-topology feature "default"
+│   │   │   ├── truck-topology v0.6.0
+│   │   │   │   ├── rayon feature "default" (*)
+│   │   │   │   ├── rustc-hash feature "default" (*)
+│   │   │   │   ├── truck-base feature "default" (*)
+│   │   │   │   ├── serde feature "default" (*)
+│   │   │   │   ├── serde feature "derive" (*)
+│   │   │   │   ├── thiserror feature "default" (*)
+│   │   │   │   ├── truck-geotrait feature "default" (*)
+│   │   │   │   ├── parking_lot feature "default"
+│   │   │   │   │   └── parking_lot v0.12.5
+│   │   │   │   │       ├── lock_api feature "default"
+│   │   │   │   │       │   ├── lock_api v0.4.14
+│   │   │   │   │       │   │   └── scopeguard v1.2.0
+│   │   │   │   │       │   └── lock_api feature "atomic_usize"
+│   │   │   │   │       │       └── lock_api v0.4.14 (*)
+│   │   │   │   │       └── parking_lot_core feature "default"
+│   │   │   │   │           └── parking_lot_core v0.9.12
+│   │   │   │   │               ├── smallvec feature "default" (*)
+│   │   │   │   │               ├── cfg-if feature "default" (*)
+│   │   │   │   │               └── windows-link feature "default"
+│   │   │   │   │                   └── windows-link v0.2.1
+│   │   │   │   └── rclite feature "default"
+│   │   │   │       ├── rclite v0.2.8
+│   │   │   │       │   └── branches v0.3.0
+│   │   │   │       │       [build-dependencies]
+│   │   │   │       │       └── rustc_version feature "default" (*)
+│   │   │   │       └── rclite feature "usize-for-small-platforms"
+│   │   │   │           └── rclite v0.2.8 (*)
+│   │   │   └── truck-topology feature "rclite"
+│   │   │       └── truck-topology v0.6.0 (*)
+│   │   └── vtkio feature "default"
+│   │       ├── vtkio v0.6.3
+│   │       │   ├── num-traits feature "default" (*)
+│   │       │   ├── serde feature "default" (*)
+│   │       │   ├── serde feature "derive" (*)
+│   │       │   ├── bytemuck feature "default" (*)
+│   │       │   ├── bytemuck feature "extern_crate_alloc"
+│   │       │   │   └── bytemuck v1.25.2 (*)
+│   │       │   ├── base64 feature "default"
+│   │       │   │   ├── base64 v0.13.1
+│   │       │   │   └── base64 feature "std"
+│   │       │   │       └── base64 v0.13.1
+│   │       │   ├── byteorder feature "default"
+│   │       │   │   ├── byteorder v1.5.0
+│   │       │   │   └── byteorder feature "std"
+│   │       │   │       └── byteorder v1.5.0
+│   │       │   ├── flate2 feature "default"
+│   │       │   │   ├── flate2 v1.1.10
+│   │       │   │   │   ├── crc32fast v1.5.2
+│   │       │   │   │   │   └── cfg-if feature "default" (*)
+│   │       │   │   │   ├── miniz_oxide feature "default"
+│   │       │   │   │   │   ├── miniz_oxide v0.9.1
+│   │       │   │   │   │   │   ├── adler2 v2.0.1
+│   │       │   │   │   │   │   └── simd-adler32 v0.3.10
+│   │       │   │   │   │   └── miniz_oxide feature "with-alloc"
+│   │       │   │   │   │       └── miniz_oxide v0.9.1 (*)
+│   │       │   │   │   └── miniz_oxide feature "simd"
+│   │       │   │   │       ├── miniz_oxide v0.9.1 (*)
+│   │       │   │   │       └── miniz_oxide feature "simd-adler32"
+│   │       │   │   │           └── miniz_oxide v0.9.1 (*)
+│   │       │   │   ├── flate2 feature "runtime_detection"
+│   │       │   │   │   ├── flate2 v1.1.10 (*)
+│   │       │   │   │   └── crc32fast feature "std"
+│   │       │   │   │       └── crc32fast v1.5.2 (*)
+│   │       │   │   └── flate2 feature "rust_backend"
+│   │       │   │       ├── flate2 v1.1.10 (*)
+│   │       │   │       ├── flate2 feature "any_impl"
+│   │       │   │       │   └── flate2 v1.1.10 (*)
+│   │       │   │       └── flate2 feature "miniz_oxide"
+│   │       │   │           ├── flate2 v1.1.10 (*)
+│   │       │   │           └── flate2 feature "any_impl" (*)
+│   │       │   ├── lz4_flex feature "default"
+│   │       │   │   ├── lz4_flex v0.7.5
+│   │       │   │   ├── lz4_flex feature "safe-decode"
+│   │       │   │   │   └── lz4_flex v0.7.5
+│   │       │   │   ├── lz4_flex feature "safe-encode"
+│   │       │   │   │   └── lz4_flex v0.7.5
+│   │       │   │   └── lz4_flex feature "std"
+│   │       │   │       └── lz4_flex v0.7.5
+│   │       │   ├── nom feature "default"
+│   │       │   │   ├── nom v3.2.1
+│   │       │   │   │   └── memchr v1.0.2
+│   │       │   │   │       └── libc v0.2.190
+│   │       │   │   ├── nom feature "std"
+│   │       │   │   │   ├── nom v3.2.1 (*)
+│   │       │   │   │   └── memchr feature "use_std"
+│   │       │   │   │       ├── memchr v1.0.2 (*)
+│   │       │   │   │       ├── memchr feature "libc"
+│   │       │   │   │       │   └── memchr v1.0.2 (*)
+│   │       │   │   │       └── libc feature "use_std"
+│   │       │   │   │           ├── libc v0.2.190
+│   │       │   │   │           └── libc feature "std"
+│   │       │   │   │               └── libc v0.2.190
+│   │       │   │   └── nom feature "stream"
+│   │       │   │       └── nom v3.2.1 (*)
+│   │       │   ├── nom feature "verbose-errors"
+│   │       │   │   └── nom v3.2.1 (*)
+│   │       │   ├── num-derive feature "default"
+│   │       │   │   └── num-derive v0.3.3 (proc-macro)
+│   │       │   │       ├── proc-macro2 feature "default" (*)
+│   │       │   │       ├── quote feature "default" (*)
+│   │       │   │       └── syn feature "default"
+│   │       │   │           ├── syn v1.0.109 (*)
+│   │       │   │           ├── syn feature "clone-impls"
+│   │       │   │           │   └── syn v1.0.109 (*)
+│   │       │   │           ├── syn feature "derive"
+│   │       │   │           │   └── syn v1.0.109 (*)
+│   │       │   │           ├── syn feature "parsing"
+│   │       │   │           │   └── syn v1.0.109 (*)
+│   │       │   │           ├── syn feature "printing"
+│   │       │   │           │   ├── syn v1.0.109 (*)
+│   │       │   │           │   └── syn feature "quote"
+│   │       │   │           │       └── syn v1.0.109 (*)
+│   │       │   │           └── syn feature "proc-macro"
+│   │       │   │               ├── syn v1.0.109 (*)
+│   │       │   │               ├── proc-macro2 feature "proc-macro" (*)
+│   │       │   │               ├── quote feature "proc-macro" (*)
+│   │       │   │               └── syn feature "quote" (*)
+│   │       │   ├── quick-xml feature "default"
+│   │       │   │   └── quick-xml v0.22.0
+│   │       │   │       ├── serde feature "default" (*)
+│   │       │   │       └── memchr feature "default"
+│   │       │   │           ├── memchr v2.8.3
+│   │       │   │           └── memchr feature "std"
+│   │       │   │               ├── memchr v2.8.3
+│   │       │   │               └── memchr feature "alloc"
+│   │       │   │                   └── memchr v2.8.3
+│   │       │   ├── quick-xml feature "serialize"
+│   │       │   │   ├── quick-xml v0.22.0 (*)
+│   │       │   │   └── quick-xml feature "serde"
+│   │       │   │       └── quick-xml v0.22.0 (*)
+│   │       │   └── xz2 feature "default"
+│   │       │       └── xz2 v0.1.7
+│   │       │           └── lzma-sys feature "default"
+│   │       │               └── lzma-sys v0.1.20
+│   │       │                   └── libc feature "default"
+│   │       │                       ├── libc v0.2.190
+│   │       │                       └── libc feature "std" (*)
+│   │       │                   [build-dependencies]
+│   │       │                   ├── cc feature "default"
+│   │       │                   │   └── cc v1.8.0
+│   │       │                   │       ├── find-msvc-tools feature "default"
+│   │       │                   │       │   └── find-msvc-tools v0.1.14
+│   │       │                   │       └── shlex feature "default"
+│   │       │                   │           ├── shlex v2.0.1
+│   │       │                   │           └── shlex feature "std"
+│   │       │                   │               └── shlex v2.0.1
+│   │       │                   └── pkg-config feature "default"
+│   │       │                       └── pkg-config v0.3.34
+│   │       ├── vtkio feature "compression"
+│   │       │   ├── vtkio v0.6.3 (*)
+│   │       │   ├── vtkio feature "flate2"
+│   │       │   │   └── vtkio v0.6.3 (*)
+│   │       │   ├── vtkio feature "lz4"
+│   │       │   │   └── vtkio v0.6.3 (*)
+│   │       │   └── vtkio feature "xz2"
+│   │       │       └── vtkio v0.6.3 (*)
+│   │       └── vtkio feature "xml"
+│   │           ├── vtkio v0.6.3 (*)
+│   │           ├── vtkio feature "quick-xml"
+│   │           │   └── vtkio v0.6.3 (*)
+│   │           └── vtkio feature "serde"
+│   │               └── vtkio v0.6.3 (*)
+│   ├── truck-meshalgo feature "analyzers"
+│   │   └── truck-meshalgo v0.4.0 (*)
+│   ├── truck-meshalgo feature "filters"
+│   │   └── truck-meshalgo v0.4.0 (*)
+│   ├── truck-meshalgo feature "tessellation"
+│   │   ├── truck-meshalgo v0.4.0 (*)
+│   │   ├── truck-meshalgo feature "filters" (*)
+│   │   └── truck-meshalgo feature "spade"
+│   │       └── truck-meshalgo v0.4.0 (*)
+│   └── truck-meshalgo feature "vtk"
+│       ├── truck-meshalgo v0.4.0 (*)
+│       └── truck-meshalgo feature "vtkio"
+│           └── truck-meshalgo v0.4.0 (*)
+├── truck-modeling feature "default"
+│   └── truck-modeling v0.6.0
+│       ├── derive_more feature "default" (*)
+│       ├── rustc-hash feature "default" (*)
+│       ├── truck-base feature "default" (*)
+│       ├── serde feature "default" (*)
+│       ├── serde feature "derive" (*)
+│       ├── truck-geometry feature "default" (*)
+│       ├── thiserror feature "default" (*)
+│       ├── truck-geotrait feature "default" (*)
+│       ├── truck-geotrait feature "derive"
+│       │   ├── truck-geotrait v0.4.0 (*)
+│       │   └── truck-geotrait feature "truck-derivers"
+│       │       └── truck-geotrait v0.4.0 (*)
+│       ├── truck-polymesh feature "default" (*)
+│       └── truck-topology feature "default" (*)
+└── truck-shapeops feature "default"
+    ├── truck-shapeops v0.4.0
+    │   ├── truck-meshalgo feature "default" (*)
+    │   ├── derive_more feature "default" (*)
+    │   ├── itertools feature "default" (*)
+    │   ├── rustc-hash feature "default" (*)
+    │   ├── truck-base feature "default" (*)
+    │   ├── truck-geometry feature "default" (*)
+    │   ├── truck-geotrait feature "default" (*)
+    │   ├── truck-topology feature "default" (*)
+    │   └── truck-stepio feature "default"
+    │       ├── truck-stepio v0.3.0
+    │       │   ├── derive_more feature "default" (*)
+    │       │   ├── serde feature "default" (*)
+    │       │   ├── serde feature "derive" (*)
+    │       │   ├── truck-geometry feature "default" (*)
+    │       │   ├── truck-geotrait feature "default" (*)
+    │       │   ├── truck-derivers feature "default" (*)
+    │       │   ├── truck-polymesh feature "default" (*)
+    │       │   ├── truck-topology feature "default" (*)
+    │       │   ├── truck-modeling feature "default" (*)
+    │       │   ├── chrono feature "default"
+    │       │   │   ├── chrono v0.4.45
+    │       │   │   │   ├── num-traits v0.2.19 (*)
+    │       │   │   │   └── windows-link feature "default" (*)
+    │       │   │   ├── chrono feature "clock"
+    │       │   │   │   ├── chrono v0.4.45 (*)
+    │       │   │   │   ├── chrono feature "iana-time-zone"
+    │       │   │   │   │   └── chrono v0.4.45 (*)
+    │       │   │   │   ├── chrono feature "now"
+    │       │   │   │   │   ├── chrono v0.4.45 (*)
+    │       │   │   │   │   └── chrono feature "std"
+    │       │   │   │   │       ├── chrono v0.4.45 (*)
+    │       │   │   │   │       └── chrono feature "alloc"
+    │       │   │   │   │           └── chrono v0.4.45 (*)
+    │       │   │   │   └── chrono feature "winapi"
+    │       │   │   │       ├── chrono v0.4.45 (*)
+    │       │   │   │       └── chrono feature "windows-link"
+    │       │   │   │           └── chrono v0.4.45 (*)
+    │       │   │   ├── chrono feature "oldtime"
+    │       │   │   │   └── chrono v0.4.45 (*)
+    │       │   │   ├── chrono feature "std" (*)
+    │       │   │   └── chrono feature "wasmbind"
+    │       │   │       ├── chrono v0.4.45 (*)
+    │       │   │       ├── chrono feature "js-sys"
+    │       │   │       │   └── chrono v0.4.45 (*)
+    │       │   │       └── chrono feature "wasm-bindgen"
+    │       │   │           └── chrono v0.4.45 (*)
+    │       │   ├── chrono feature "wasmbind" (*)
+    │       │   └── ruststep feature "default"
+    │       │       └── ruststep v0.4.0
+    │       │           ├── derive_more feature "default" (*)
+    │       │           ├── serde feature "default" (*)
+    │       │           ├── serde feature "derive" (*)
+    │       │           ├── thiserror feature "default" (*)
+    │       │           ├── Inflector feature "default"
+    │       │           │   ├── Inflector v0.11.4
+    │       │           │   │   ├── lazy_static feature "default"
+    │       │           │   │   │   └── lazy_static v1.5.1
+    │       │           │   │   └── regex feature "default"
+    │       │           │   │       ├── regex v1.13.1
+    │       │           │   │       │   ├── aho-corasick v1.1.5
+    │       │           │   │       │   │   └── memchr v2.8.3
+    │       │           │   │       │   ├── memchr v2.8.3
+    │       │           │   │       │   ├── regex-syntax v0.8.11
+    │       │           │   │       │   ├── regex-automata feature "alloc"
+    │       │           │   │       │   │   └── regex-automata v0.4.18
+    │       │           │   │       │   │       ├── aho-corasick v1.1.5 (*)
+    │       │           │   │       │   │       ├── memchr v2.8.3
+    │       │           │   │       │   │       └── regex-syntax v0.8.11
+    │       │           │   │       │   ├── regex-automata feature "meta"
+    │       │           │   │       │   │   ├── regex-automata v0.4.18 (*)
+    │       │           │   │       │   │   ├── regex-automata feature "nfa-pikevm"
+    │       │           │   │       │   │   │   ├── regex-automata v0.4.18 (*)
+    │       │           │   │       │   │   │   └── regex-automata feature "nfa-thompson"
+    │       │           │   │       │   │   │       ├── regex-automata v0.4.18 (*)
+    │       │           │   │       │   │   │       └── regex-automata feature "alloc" (*)
+    │       │           │   │       │   │   └── regex-automata feature "syntax"
+    │       │           │   │       │   │       ├── regex-automata v0.4.18 (*)
+    │       │           │   │       │   │       └── regex-automata feature "alloc" (*)
+    │       │           │   │       │   ├── regex-automata feature "nfa-pikevm" (*)
+    │       │           │   │       │   └── regex-automata feature "syntax" (*)
+    │       │           │   │       ├── regex feature "perf"
+    │       │           │   │       │   ├── regex v1.13.1 (*)
+    │       │           │   │       │   ├── regex feature "perf-backtrack"
+    │       │           │   │       │   │   ├── regex v1.13.1 (*)
+    │       │           │   │       │   │   └── regex-automata feature "nfa-backtrack"
+    │       │           │   │       │   │       ├── regex-automata v0.4.18 (*)
+    │       │           │   │       │   │       └── regex-automata feature "nfa-thompson" (*)
+    │       │           │   │       │   ├── regex feature "perf-cache"
+    │       │           │   │       │   │   └── regex v1.13.1 (*)
+    │       │           │   │       │   ├── regex feature "perf-dfa"
+    │       │           │   │       │   │   ├── regex v1.13.1 (*)
+    │       │           │   │       │   │   └── regex-automata feature "hybrid"
+    │       │           │   │       │   │       ├── regex-automata v0.4.18 (*)
+    │       │           │   │       │   │       ├── regex-automata feature "alloc" (*)
+    │       │           │   │       │   │       └── regex-automata feature "nfa-thompson" (*)
+    │       │           │   │       │   ├── regex feature "perf-inline"
+    │       │           │   │       │   │   ├── regex v1.13.1 (*)
+    │       │           │   │       │   │   └── regex-automata feature "perf-inline"
+    │       │           │   │       │   │       └── regex-automata v0.4.18 (*)
+    │       │           │   │       │   ├── regex feature "perf-literal"
+    │       │           │   │       │   │   ├── regex v1.13.1 (*)
+    │       │           │   │       │   │   └── regex-automata feature "perf-literal"
+    │       │           │   │       │   │       ├── regex-automata v0.4.18 (*)
+    │       │           │   │       │   │       ├── regex-automata feature "perf-literal-multisubstring"
+    │       │           │   │       │   │       │   └── regex-automata v0.4.18 (*)
+    │       │           │   │       │   │       └── regex-automata feature "perf-literal-substring"
+    │       │           │   │       │   │           ├── regex-automata v0.4.18 (*)
+    │       │           │   │       │   │           └── aho-corasick feature "perf-literal"
+    │       │           │   │       │   │               └── aho-corasick v1.1.5 (*)
+    │       │           │   │       │   └── regex feature "perf-onepass"
+    │       │           │   │       │       ├── regex v1.13.1 (*)
+    │       │           │   │       │       └── regex-automata feature "dfa-onepass"
+    │       │           │   │       │           ├── regex-automata v0.4.18 (*)
+    │       │           │   │       │           └── regex-automata feature "nfa-thompson" (*)
+    │       │           │   │       ├── regex feature "std"
+    │       │           │   │       │   ├── regex v1.13.1 (*)
+    │       │           │   │       │   ├── memchr feature "std" (*)
+    │       │           │   │       │   ├── aho-corasick feature "std"
+    │       │           │   │       │   │   ├── aho-corasick v1.1.5 (*)
+    │       │           │   │       │   │   └── memchr feature "std" (*)
+    │       │           │   │       │   ├── regex-automata feature "std"
+    │       │           │   │       │   │   ├── regex-automata v0.4.18 (*)
+    │       │           │   │       │   │   ├── memchr feature "std" (*)
+    │       │           │   │       │   │   ├── aho-corasick feature "std" (*)
+    │       │           │   │       │   │   ├── regex-automata feature "alloc" (*)
+    │       │           │   │       │   │   └── regex-syntax feature "std"
+    │       │           │   │       │   │       └── regex-syntax v0.8.11
+    │       │           │   │       │   └── regex-syntax feature "std" (*)
+    │       │           │   │       ├── regex feature "unicode"
+    │       │           │   │       │   ├── regex v1.13.1 (*)
+    │       │           │   │       │   ├── regex feature "unicode-age"
+    │       │           │   │       │   │   ├── regex v1.13.1 (*)
+    │       │           │   │       │   │   ├── regex-automata feature "unicode-age"
+    │       │           │   │       │   │   │   ├── regex-automata v0.4.18 (*)
+    │       │           │   │       │   │   │   └── regex-syntax feature "unicode-age"
+    │       │           │   │       │   │   │       └── regex-syntax v0.8.11
+    │       │           │   │       │   │   └── regex-syntax feature "unicode-age" (*)
+    │       │           │   │       │   ├── regex feature "unicode-bool"
+    │       │           │   │       │   │   ├── regex v1.13.1 (*)
+    │       │           │   │       │   │   ├── regex-automata feature "unicode-bool"
+    │       │           │   │       │   │   │   ├── regex-automata v0.4.18 (*)
+    │       │           │   │       │   │   │   └── regex-syntax feature "unicode-bool"
+    │       │           │   │       │   │   │       └── regex-syntax v0.8.11
+    │       │           │   │       │   │   └── regex-syntax feature "unicode-bool" (*)
+    │       │           │   │       │   ├── regex feature "unicode-case"
+    │       │           │   │       │   │   ├── regex v1.13.1 (*)
+    │       │           │   │       │   │   ├── regex-automata feature "unicode-case"
+    │       │           │   │       │   │   │   ├── regex-automata v0.4.18 (*)
+    │       │           │   │       │   │   │   └── regex-syntax feature "unicode-case"
+    │       │           │   │       │   │   │       └── regex-syntax v0.8.11
+    │       │           │   │       │   │   └── regex-syntax feature "unicode-case" (*)
+    │       │           │   │       │   ├── regex feature "unicode-gencat"
+    │       │           │   │       │   │   ├── regex v1.13.1 (*)
+    │       │           │   │       │   │   ├── regex-automata feature "unicode-gencat"
+    │       │           │   │       │   │   │   ├── regex-automata v0.4.18 (*)
+    │       │           │   │       │   │   │   └── regex-syntax feature "unicode-gencat"
+    │       │           │   │       │   │   │       └── regex-syntax v0.8.11
+    │       │           │   │       │   │   └── regex-syntax feature "unicode-gencat" (*)
+    │       │           │   │       │   ├── regex feature "unicode-perl"
+    │       │           │   │       │   │   ├── regex v1.13.1 (*)
+    │       │           │   │       │   │   ├── regex-automata feature "unicode-perl"
+    │       │           │   │       │   │   │   ├── regex-automata v0.4.18 (*)
+    │       │           │   │       │   │   │   └── regex-syntax feature "unicode-perl"
+    │       │           │   │       │   │   │       └── regex-syntax v0.8.11
+    │       │           │   │       │   │   ├── regex-automata feature "unicode-word-boundary"
+    │       │           │   │       │   │   │   └── regex-automata v0.4.18 (*)
+    │       │           │   │       │   │   └── regex-syntax feature "unicode-perl" (*)
+    │       │           │   │       │   ├── regex feature "unicode-script"
+    │       │           │   │       │   │   ├── regex v1.13.1 (*)
+    │       │           │   │       │   │   ├── regex-automata feature "unicode-script"
+    │       │           │   │       │   │   │   ├── regex-automata v0.4.18 (*)
+    │       │           │   │       │   │   │   └── regex-syntax feature "unicode-script"
+    │       │           │   │       │   │   │       └── regex-syntax v0.8.11
+    │       │           │   │       │   │   └── regex-syntax feature "unicode-script" (*)
+    │       │           │   │       │   ├── regex feature "unicode-segment"
+    │       │           │   │       │   │   ├── regex v1.13.1 (*)
+    │       │           │   │       │   │   ├── regex-automata feature "unicode-segment"
+    │       │           │   │       │   │   │   ├── regex-automata v0.4.18 (*)
+    │       │           │   │       │   │   │   └── regex-syntax feature "unicode-segment"
+    │       │           │   │       │   │   │       └── regex-syntax v0.8.11
+    │       │           │   │       │   │   └── regex-syntax feature "unicode-segment" (*)
+    │       │           │   │       │   ├── regex-automata feature "unicode"
+    │       │           │   │       │   │   ├── regex-automata v0.4.18 (*)
+    │       │           │   │       │   │   ├── regex-automata feature "unicode-age" (*)
+    │       │           │   │       │   │   ├── regex-automata feature "unicode-bool" (*)
+    │       │           │   │       │   │   ├── regex-automata feature "unicode-case" (*)
+    │       │           │   │       │   │   ├── regex-automata feature "unicode-gencat" (*)
+    │       │           │   │       │   │   ├── regex-automata feature "unicode-perl" (*)
+    │       │           │   │       │   │   ├── regex-automata feature "unicode-script" (*)
+    │       │           │   │       │   │   ├── regex-automata feature "unicode-segment" (*)
+    │       │           │   │       │   │   ├── regex-automata feature "unicode-word-boundary" (*)
+    │       │           │   │       │   │   └── regex-syntax feature "unicode"
+    │       │           │   │       │   │       ├── regex-syntax v0.8.11
+    │       │           │   │       │   │       ├── regex-syntax feature "unicode-age" (*)
+    │       │           │   │       │   │       ├── regex-syntax feature "unicode-bool" (*)
+    │       │           │   │       │   │       ├── regex-syntax feature "unicode-case" (*)
+    │       │           │   │       │   │       ├── regex-syntax feature "unicode-gencat" (*)
+    │       │           │   │       │   │       ├── regex-syntax feature "unicode-perl" (*)
+    │       │           │   │       │   │       ├── regex-syntax feature "unicode-script" (*)
+    │       │           │   │       │   │       └── regex-syntax feature "unicode-segment" (*)
+    │       │           │   │       │   └── regex-syntax feature "unicode" (*)
+    │       │           │   │       └── regex-syntax feature "default"
+    │       │           │   │           ├── regex-syntax v0.8.11
+    │       │           │   │           ├── regex-syntax feature "std" (*)
+    │       │           │   │           └── regex-syntax feature "unicode" (*)
+    │       │           │   └── Inflector feature "heavyweight"
+    │       │           │       ├── Inflector v0.11.4 (*)
+    │       │           │       ├── Inflector feature "lazy_static"
+    │       │           │       │   └── Inflector v0.11.4 (*)
+    │       │           │       └── Inflector feature "regex"
+    │       │           │           └── Inflector v0.11.4 (*)
+    │       │           ├── derive-new feature "default"
+    │       │           │   ├── derive-new v0.5.9 (proc-macro)
+    │       │           │   │   ├── proc-macro2 feature "default" (*)
+    │       │           │   │   ├── quote feature "default" (*)
+    │       │           │   │   └── syn feature "default" (*)
+    │       │           │   └── derive-new feature "std"
+    │       │           │       └── derive-new v0.5.9 (proc-macro) (*)
+    │       │           ├── itertools feature "default"
+    │       │           │   ├── itertools v0.10.5
+    │       │           │   │   └── either v1.19.0
+    │       │           │   └── itertools feature "use_std"
+    │       │           │       ├── itertools v0.10.5 (*)
+    │       │           │       ├── either feature "use_std" (*)
+    │       │           │       └── itertools feature "use_alloc"
+    │       │           │           └── itertools v0.10.5 (*)
+    │       │           ├── nom feature "default"
+    │       │           │   ├── nom v7.1.3
+    │       │           │   │   ├── memchr v2.8.3
+    │       │           │   │   └── minimal-lexical v0.2.1
+    │       │           │   └── nom feature "std"
+    │       │           │       ├── nom v7.1.3 (*)
+    │       │           │       ├── memchr feature "std" (*)
+    │       │           │       ├── nom feature "alloc"
+    │       │           │       │   └── nom v7.1.3 (*)
+    │       │           │       └── minimal-lexical feature "std"
+    │       │           │           └── minimal-lexical v0.2.1
+    │       │           └── ruststep-derive feature "default"
+    │       │               └── ruststep-derive v0.4.0 (proc-macro)
+    │       │                   ├── proc-macro2 feature "default" (*)
+    │       │                   ├── quote feature "default" (*)
+    │       │                   ├── syn feature "default" (*)
+    │       │                   ├── syn feature "extra-traits" (*)
+    │       │                   ├── syn feature "full" (*)
+    │       │                   ├── proc-macro-error feature "default" (*)
+    │       │                   ├── Inflector feature "default" (*)
+    │       │                   └── proc-macro-crate feature "default"
+    │       │                       └── proc-macro-crate v1.3.1
+    │       │                           ├── once_cell feature "default"
+    │       │                           │   ├── once_cell v1.21.4
+    │       │                           │   └── once_cell feature "std"
+    │       │                           │       ├── once_cell v1.21.4
+    │       │                           │       └── once_cell feature "alloc"
+    │       │                           │           ├── once_cell v1.21.4
+    │       │                           │           └── once_cell feature "race"
+    │       │                           │               └── once_cell v1.21.4
+    │       │                           └── toml_edit feature "default"
+    │       │                               └── toml_edit v0.19.15
+    │       │                                   ├── indexmap feature "default"
+    │       │                                   │   ├── indexmap v2.14.2
+    │       │                                   │   │   ├── equivalent v1.0.3
+    │       │                                   │   │   └── hashbrown v0.17.1
+    │       │                                   │   └── indexmap feature "std"
+    │       │                                   │       └── indexmap v2.14.2 (*)
+    │       │                                   ├── indexmap feature "std" (*)
+    │       │                                   ├── toml_datetime feature "default"
+    │       │                                   │   └── toml_datetime v0.6.11
+    │       │                                   └── winnow feature "default"
+    │       │                                       ├── winnow v0.5.40
+    │       │                                       └── winnow feature "std"
+    │       │                                           ├── winnow v0.5.40
+    │       │                                           └── winnow feature "alloc"
+    │       │                                               └── winnow v0.5.40
+    │       ├── truck-stepio feature "derive"
+    │       │   ├── truck-stepio v0.3.0 (*)
+    │       │   └── truck-stepio feature "truck-derivers"
+    │       │       └── truck-stepio v0.3.0 (*)
+    │       └── truck-stepio feature "in"
+    │           ├── truck-stepio v0.3.0 (*)
+    │           ├── truck-stepio feature "derive_more"
+    │           │   └── truck-stepio v0.3.0 (*)
+    │           ├── truck-stepio feature "ruststep"
+    │           │   └── truck-stepio v0.3.0 (*)
+    │           ├── truck-stepio feature "serde"
+    │           │   └── truck-stepio v0.3.0 (*)
+    │           └── truck-stepio feature "truck-geotrait"
+    │               └── truck-stepio v0.3.0 (*)
+    └── truck-shapeops feature "step-test"
+        ├── truck-shapeops v0.4.0 (*)
+        └── truck-shapeops feature "truck-stepio"
+            └── truck-shapeops v0.4.0 (*)
