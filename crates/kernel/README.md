@@ -407,3 +407,169 @@ two-closed-triangles-meet-iff-an-edge-meets-the-other fact, IEEE 754 rounding
 (correctly rounded operations bound each widening by one representable step), and
 F06 sections 4, 6, 8 and 10 with G04 sections 2-4. No third-party geometry crate,
 source, test or data, and no commercial-product material, was used.
+
+## G09: pilot plane cut and through hole (`ops` module)
+
+G09 adds two **bounded** operations over solids that the G06 certification already accepted: a
+plane cut that keeps one half-space and caps the section, and a through hole that subtracts a
+straight prism from a Z-prism body. It is a pilot for A03 (plane cut) and A04 (hole), **not a
+general boolean kernel**: general robust CSG (curved or oblique cutters, several outer section
+loops, boundary-crossing or oblique holes, coplanar or tangent contact, non-manifold results)
+remains separate work, and every such request is refused with a typed failure and no partial
+result. It adds no dependency (no boolean, clipping or triangulation crate), no asset and no I/O
+and stays pure and WASM-compatible; the exact predicates, enclosures and G05 triangulation are
+reused, not rewritten. The kernel call is the headless API; the CLI commands and the engine/CLI
+end-to-end gate are owned by P01, A03 and A04 (as for G02, G05 and G06), and this task adds no
+engine or CLI command.
+
+Owner row (wins): G09 / M, pilot of cuts and boolean operations, depends on G05 and G06; own
+bounded operations over agreed solids; independent fixtures verify volume, bounds, topology and
+failure; not a port of foreign functions. The kernel design section 8 lists G09 as "numeric
+robustness, query/E2E validation and determinism evidence". Here: numeric robustness (exact side
+predicate, bounded budgets, hostile fuzz) and determinism evidence (repeat identity and
+input-order invariance of the bytes, native only) are done; **query/E2E validation is not**
+(queries are P01; no mock result is claimed) and cross-target byte conformance is not shown
+(`wasm32-unknown-unknown` and `cargo deny` are not installed in the authoring environment, so
+neither was run).
+
+### API
+
+| Item | Purpose |
+|------|---------|
+| `Body` | Immutable certified solid: BCMESH01 mesh, local face ids, outward unit normals (`None` for a curved face), the body's own `Tolerance`, its G06 `Analysis` and volume enclosure. `Body::from_plate`, `from_extrusion`, `from_mesh` admit a G02 plate, a G05 extrusion or any mesh with a face table; only a certified single shell is admitted |
+| `plane_cut`, `plane_cut_with` | Cut by `CutPlane { point, normal }`, `Keep::{Positive, Negative}`, an ordinal naming the cap, `OpLimits` and a cancellation callback |
+| `through_hole`, `through_hole_with` | Subtract `HoleCutter { cavity, z_from_mm, z_to_mm, ordinal }` (a G05 `Cavity`: circle, slot, ellipse or polygon, clockwise) |
+| `OpResult` | Sealed result: `body()` (feed it to the next operation), `blob()` and `mesh_digest()` (SHA-256), face table and normals, `removed_faces()`, volume enclosure (mm3 and m3), analytic volume (holes), bounds, Euler characteristic, genus, `plane_deviation_mm()` (cuts), `OpStats` |
+| `OpFailure` | `OpCode` (F06 `GEO_` tokens plus two proposed), `OpField`, `OpDefect` (fixed tokens), stage, and the first G05 admission diagnostic when a cap was refused; never geometry or user text |
+| `OpLimits` | `max_triangles` 8192, `max_loops` 64, `max_cap_points` 2048, `max_exact_predicates` 2^18 and the G06 `Limits` of the certification |
+
+### Method
+
+* **Side of the plane.** For every vertex `normal . (v - point)` has an exact sign: a binary64
+  evaluation decides it when its error bound (`8u` times the permanent) allows, otherwise
+  fixed-capacity integers over the scaled binary64 values (the G06 `bigint` and `scaled`) decide
+  it, charged against `max_exact_predicates`. Nothing is decided by an epsilon; `0` is an exact
+  zero. A scaled normal is the same plane.
+* **Clip.** Every triangle is clipped against the closed half-space (one-plane
+  Sutherland-Hodgman): vertices on the plane are used as they are, a strictly crossing edge gets
+  one new vertex, the binary64 rounding of the exact intersection, interpolated from the
+  lexicographically smaller endpoint and clamped to the edge, so it does not depend on numbering;
+  quads are split along the diagonal at the smallest vertex.
+* **Cap.** The boundary of the clipped surface is the section. Its loops are chained, rotated to
+  their smallest vertex, split into the single outer loop (exact positive area) and holes, admitted
+  and ear-clipped by G05 in a frame fixed by the plane alone (dominant normal axis), so both halves
+  of a plane and the spellings `(n, d)` and `(-n, -d)` share one triangulation and the two halves'
+  volumes add up exactly. The cap is planar **only up to the rounding of the new vertices**; the
+  largest distance of a new vertex from the plane is certified (exact value, enclosed) and
+  returned as `plane_deviation_mm`.
+* **Hole.** The body must be a straight prism: its extreme heights `z0 < z1`, one outward horizontal
+  cap face at each and every other triangle exactly vertical (exact zero projected area; extra
+  vertices at intermediate heights on walls are fine). The caps are re-triangulated with the cavity
+  added to their boundary loops (existing loops are kept vertex for vertex, so the walls stay
+  valid), the cutter's walls are added over `[z0, z1]`, and the cavity must lie strictly inside the
+  outline and clear of other holes by the G05 admission (exact signs, `eps_geom` floors,
+  inclusive minimum). The cutter must reach past both caps by at least `eps_geom` of the body.
+* **Seal.** Every candidate is canonicalised (unused vertices and faces dropped, vertices sorted by
+  coordinates, triangles rotated and sorted by face), encoded, parsed back by the G06 blob gate and
+  certified by the G06 analysis (closed, 2-manifold, outward, non-degenerate, free of
+  self-intersection, one shell). Holes also require Euler characteristic exactly 2 less (genus +1)
+  and a mesh volume that overlaps the analytic enclosure `V_body - |area| * thickness` (both exact
+  integers, enclosed once). Anything else is refused; there is no healing.
+
+### Refusals (all typed, none partial)
+
+| Situation | Failure |
+|-----------|---------|
+| Body not a certified single shell | `GEO_MESH_*` code of the verdict; several shells `GEO_OP_UNSUPPORTED` / `body.shells` |
+| Plane with NaN/inf, component above 4e9, zero normal, normal below 1e-100 | `GEO_NON_FINITE`, `GEO_ABOVE_LIMIT`, `GEO_NOT_POSITIVE`, `GEO_NUMERIC_UNCERTAIN` (`numeric.range`) |
+| Whole body strictly on the kept / removed side | `GEO_OP_NO_EFFECT` `plane.outside` / `plane.empty` |
+| Plane touches the body only (vertex, edge, face) | `GEO_OP_UNSUPPORTED` `plane.tangent` |
+| A face of the body in the plane while the plane crosses | `GEO_OP_UNSUPPORTED` `plane.coplanar_face` |
+| Section with several outer loops, a self-touching section, or a kept body pinched at an edge | `section.multiple`, `section.pinched` or `result.overlapping` |
+| Section or cap not admissible (edge below `eps_geom`, island in a hole, ...) | `section.not_admissible` / the G05 diagnostic |
+| Hole body not a Z-prism, caps not one face each | `body.not_prism`, `body.cap_faces`, `body.loops` |
+| Hole touching or crossing the outline or another hole, wrong winding, self-intersecting | `GEO_CONTOUR_INVALID` with the G05 diagnostic (`cavity` = number of existing holes) |
+| Hole inside another hole, or enclosing one | `GEO_UNSUPPORTED_CONTOUR` |
+| Cutter not through, flush with a face (tangent), margin below the floor, empty range | `cutter.not_through`, `cutter.tangent`, `cutter.margin`, `cutter.range` |
+| Triangle, loop, cap-point or exact-predicate budget exceeded | `GEO_ABOVE_LIMIT` (`budget.*`) or `GEO_NUMERIC_UNCERTAIN` (`budget.exact_predicates`) |
+| Candidate not certified (degenerate sliver, overlap, uncertain, several shells) | `result.degenerate`, `result.overlapping`, `result.uncertain`, `result.shells`; any other failed self-check `GEO_SELF_CHECK_FAILED` |
+| Cancellation | `GEO_CANCELLED`, no result; polls `Validation`, `Build`, `Checks` (then the G06 polls), `Quantities`; none after sealing |
+
+One cutter per call. Several holes are several calls on the result body (`OpResult::into_body`);
+a second cutter that overlaps, touches or nests with an earlier hole is refused by the same
+admission. The pilot refuses a plate whose plane cut leaves kept pieces touching along an edge
+(`result.overlapping`) rather than sealing a pinched solid.
+
+### Local feature ids (provisional, contract amendment required)
+
+Input faces keep their ids, including a clipped face, and keep their relative order; a face whose
+triangles all disappear leaves the table and is reported in `OpResult::removed_faces()` (the id is
+lost, not renamed). New faces use the local kind `cut`, ordinal 0 to 999 supplied by the caller (the
+engine owns the mapping from its authored feature and must keep it stable), appended after the
+surviving faces: the plane-cut cap `cut:f.p<ordinal>`; hole walls `cut:f.h<ordinal>.s<k>` (edge `k` of
+a polygonal cavity, authored order, as G05's `f.c<j>.s<k>`) or `cut:f.h<ordinal>` (the one curved wall
+of an approximated curve cavity). All ids are at most 22 bytes (F06 allows 64 bytes in total with
+`fid1:`, the 36-byte ElementId and the colon), use `a-z0-9:.-`, are unique, and a reused
+ordinal is refused. Edges and vertices are not named. F06 0.1.0 (frozen) defines only the plate
+and member boxes; before an engine may qualify and persist the `extrusion` and `cut` kinds, an
+amendment must adopt this grammar. Needed amendments, none made here: operation results and the
+`cut` kind; the proposed tokens `GEO_OP_UNSUPPORTED` and `GEO_OP_NO_EFFECT`; the curved-wall and
+approximated-volume statuses already noted for G05; the BCMESH01 face-table meaning of a face lost by
+an operation.
+
+### Numbers and bounds
+
+Volumes are enclosures of the exact signed volume of the binary64 mesh (G06); they are mesh values,
+never engineering quantities (F06 section 8: `unsupported`). A hole's analytic volume is exact for
+the polygon the cavity really is; for an approximated curve it is the polygon's, and the G05
+`CurveApproximation` carries the bound to the true curve. A plane cut has no closed form
+independent of its own section, so `analytic_volume_mm3` is `None`; the closed forms live in the
+tests. The result keeps the body's `Tolerance`. Work is bounded by the budgets above and the F06
+mesh caps (4096 vertices, 8192 triangles); no recursion, no `unsafe`, no panicking path, and every
+allocation is sized by a validated count. Certification of large bodies is bounded by the G06
+pair budget: a 16-hole body of 7,756 triangles is refused at admission as not certified (tested).
+
+### Verification and case coverage
+
+Tests call the public API and reread the actual buffers with independent code in `tests/common`,
+`tests/common_mesh` and `tests/common_ops` (blob reader and re-encoder, edge-incidence map, Euler,
+divergence volume, per-face area vectors, independent canonical-order check; no production math).
+
+| File | Content |
+|------|---------|
+| `tests/g09_cut.rs` (17) | Corner, hexagon and general planes of boxes against the inclusion-exclusion closed form `sum (-1)^k max(0, d - n.s)^3 / (6 n1 n2 n3)` and voxel counting; both halves add up; vertex-on-plane, edge-on-plane and reflex-vertex planes; horizontal cut of a plate with a hole (section with a cavity, genus kept); cut of an L prism against an independent polygon clip; translation, quarter-turn and mirror; repeat identity and 12 renumberings per body with identical bytes; cut of a cut; tangent, coplanar, outside, empty, non-finite, zero and tiny normals, ordinals, id collision, several section loops, pinched kept side, and the whole face-table gate |
+| `tests/g09_hole.rs` (14) | Round, slot, ellipse and polygon holes against closed-form areas (`n/2 r^2 sin(2 pi/n)`, obround, ellipse), the same vertex set, volume and surface area as the G05 extrusion of the same profile, genus and Euler change (+1 per hole, `2 - 2g`), one to three holes in any order, offset and L prisms with existing holes, quarter turns and mirrors, voxel counting, canonical bytes under renumbering, G02 plate and box and triangular prism bodies, shear and pyramid refusals, every contact, range, winding, non-finite and ordinal refusal |
+| `tests/g09_budget_fuzz.rs` (6) | Every budget at its value and one below (triangles, loops, cap points, exact predicates, certification pairs) with identical bytes at the limit; cancellation at every poll of a hole, a cut and a cut through vertices (poll order fixed, no poll after the cancelled one, none after sealing); seeded hostile planes (vertices, midpoints, three-vertex planes, special values such as `1e-300`, `5e-324`, `1e9`; 192 cuts of which 65 seal and 32 give both halves, each success re-verified and the halves summing to the body); seeded hostile cutters (240 attempts over four sequential holes, each success checked against the shoelace area); 600 mutated cube blobs |
+| `src/ops` unit tests (12) | Exact side sign against a rounded-sum cancellation and an integer reference, distance bound, validation order, loop chaining, canonical loops, exact area sign against an `i128` reference, cap tiling and budgets, loop splitting, corrupt candidates that never seal, canonical bytes |
+
+G03 fixtures, run by `tests/g09_hole.rs` on the real G02 plate and operation: `g03.plate.through-hole`
+(23 x 47 x 3, round hole of diameter 8 at the centre), `g03.plate.cavity` (rectangular void
+`11 x 23`, exact volume `2484`) and `g03.plate.thin-wall` (a void leaving the minimum wall of
+0.001 mm on every side, accepted at exactly `eps_geom` and refused one representable step
+tighter). Their rows in `docs/fixtures/g03/expectations.tsv` stay `not_run` (G03 is not edited and
+its harness reads no operation results); this is a mapping, not a changed record.
+`g03.plate.nonrectangular` is an outline (A02/G05), not a cut, and is **not run**. The large and
+dimension fixtures remain with G02 and G05.
+
+### Not implemented
+
+Oblique, curved or multiple simultaneous cutters; holes that touch or cross the outline; blind or
+partial holes; non-prism bodies for holes (a tilted cut result is refused as `body.not_prism`);
+several outer section loops; sections that touch themselves; coplanar and tangent planes; edge and
+vertex names; a general boolean, offset or fillet; placement and rotation of the body (the caller
+supplies the body-frame plane and cutter; exact quarter turns and mirrors are tested by transforming
+both); persistent topological naming across operations beyond the rules above; engine and CLI
+commands, keys and queries (P01, A03, A04); cross-target byte evidence; `cargo deny` and
+`wasm32` checks (not installed here). The two design-section-8 G09 items "query/E2E validation" and
+"no claim from mock-only checks" are respected by leaving the first undone.
+
+### Provenance
+
+Original scalar code from public mathematics only: half-space clipping of a convex polygon (the
+Sutherland-Hodgman idea for one plane), exact signs of integer-scaled binary64 values with a
+static rounding-error filter derived in the code, the shoelace area, the divergence theorem for
+signed volume, the Euler-Poincare relation `V - E + F = 2 - 2g`, inclusion-exclusion for the
+volume of a box cut by a half-space (tests only), and the G05/G06 mathematics of this crate. No
+third-party code, crate, test or data and no commercial-product material was consulted; there is
+no copied asset. The clean-room input list of this task is the repository's own kernel code and
+documents named in the task, and the public mathematics above.
