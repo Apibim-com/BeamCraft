@@ -29,6 +29,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "beamcraft-kernel"
+version = "0.0.1"
+dependencies = [
+ "beamcraft-geom",
+ "beamcraft-model",
+]
+
+[[package]]
 name = "beamcraft-model"
 version = "0.0.1"
 dependencies = [

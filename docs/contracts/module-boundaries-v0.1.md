@@ -53,7 +53,7 @@ planned crate or owns a present one. Dependencies are checked in `[dependencies]
 | beamcraft-geom | crates/geom | domain | 0 | - | now | G01 |
 | beamcraft-model | crates/model | domain | 1 | beamcraft-geom | now | P01 |
 | beamcraft-protocol | crates/protocol | domain | 2 | beamcraft-model | now | U01 |
-| beamcraft-kernel | crates/kernel | domain | 2 | beamcraft-geom, beamcraft-model | planned | G01 |
+| beamcraft-kernel | crates/kernel | domain | 2 | beamcraft-geom, beamcraft-model | now | G02 |
 | beamcraft-engine | crates/engine | domain | 3 | beamcraft-geom, beamcraft-model, beamcraft-kernel | planned | P01 |
 | beamcraft-host | crates/host | host | 4 | beamcraft-model, beamcraft-protocol, beamcraft-engine | now | U05 |
 | beamcraft-cli | apps/beamcraft-cli | app | 5 | beamcraft-model, beamcraft-engine, beamcraft-host | now | U04 |
@@ -137,8 +137,14 @@ streaming digest comparison can now use `model::digest`; protocol session integr
   checker of section 6. It is a development tool with no dependencies; it is not part of the
   product.
 
-**Not created, on purpose:** `kernel`, `engine` and `ui`. Each would be empty today; the
-tasks named in section 2 create them with their first real code. No placeholder crate, `todo!` or
+**`beamcraft-kernel` (`crates/kernel`, domain)** is created by G02 with the tested
+dimension-based rectangular plate builder, bounded staged diagnostics, local feature roles,
+self-checks and fixed BCMESH01 encoding. It depends only on `geom` and `model`.
+The full contour/placement request adapter, generic blob validator, keys, quantities
+status integration and queries remain planned under the section 4 paths.
+
+**Not created, on purpose:** `engine` and `ui`. The tasks named in section 2
+create them with their first real code. No placeholder crate, `todo!` or
 unreachable stub is added.
 
 ## 6. Mechanical enforcement
