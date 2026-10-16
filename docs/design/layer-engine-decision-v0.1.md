@@ -2,35 +2,38 @@
 
 ## 1. Status and scope
 
-**Draft 0.1.0, 2026-10-15. Recommendation, not a decision.** No option has been runtime-verified
-by F11. This record asks which engine should author, preserve and compose BeamCraft USD layers.
-It adds no implementation, dependency, architecture amendment or permission to acquire an SDK.
+**Decision 0.1.1, 2026-10-16: variant C selected by the owner.** The pure-Rust
+`openusd` crate (0.8.x) is the primary USD layer engine behind a thin BeamCraft-owned wrapper.
+The product-path aim is no Python and no C++. Variant A, the official SDK worker, remains only
+an explicitly selected fallback and an external test oracle where available. Selection does not
+admit a production dependency or establish runtime readiness.
 
-The accepted [architecture](../architecture.md) remains authoritative: official OpenUSD in an
-isolated worker, initially Python/pxr. The [F03 audit](../audits/openusd-26.8.md) is conditional;
-its package is not production-approved. The [F05 protocol](../contracts/worker-protocol-v0.1.md)
-is a draft. The [F04 contract](../contracts/model-and-commands-v0.1.md) is a freeze candidate;
-[F08 boundaries](../contracts/module-boundaries-v0.1.md) do not implement a worker or engine.
+The [architecture](../architecture.md) records this direction. The [F03 SDK
+audit](../audits/openusd-26.8.md) stays conditional for fallback/oracle use; its package is not
+production-approved. F04 and F06 were frozen at 0.1.0 on 2026-10-16. The [F05
+protocol](../contracts/worker-protocol-v0.1.md) and [F08
+boundaries](../contracts/module-boundaries-v0.1.md) need reviewed alignment before integration;
+this documentation task changes neither contract. In-process module versus separate Rust process
+remains an open execution question (section 9), not a consequence of choosing Rust.
 
-F11 depends on F03/F05/F08. U01-U07 still own runtime, schema, identity, client, resources,
-publication and recovery acceptance. C-tasks still own collaboration semantics. This document
-does not freeze those contracts, complete K0/K1, choose a storage mechanism or implement live sync.
-It proposes a separate N01 evidence spike before the owner considers changing the baseline.
+F11 depends on F03/F05/F08. U01-U07 retain runtime, schema, identity, client, resources,
+publication and recovery acceptance. C-tasks retain collaboration semantics. This record does
+not complete N01, K0/K1 or any U-task, choose storage or implement live synchronization.
+[Wrapper requirements](layer-engine-wrapper-requirements-v0.1.md) and section 9 define the next
+implementation gates; N03 is planned verification, not completed work.
 
-Original task-card base: `20d26cfb107d51e7a2c76c25ca0191b8115ec301`, then stacked on F08 PR #17.
-For PR #22, the branch has since been merged with `docs/f06-geometry-contract` (PR #20).
-The current PR base branch is `docs/f06-geometry-contract` (PR #20), which carries the F06
-corrections, the merged F08 module-boundaries head and the G04 kernel design.
-Retarget PR #22 to `master` after PR #20 lands. This stack update comes from the correction card;
-the original read-only Git checks failed the repository ownership check, so no current base SHA
-is independently verified here.
-The private implementation-plan revision 1.2 was not opened. Task IDs below use only the card,
-the contracts and [roadmap](../../ROADMAP.md), not inferred private task specifications.
+F11D documentation base: `381930cabb00c76f428a5ad49bb4336e1be7eacd`, verified against local
+`origin/master`; branch `docs/f11-variant-c-decision`, targeting `master`. The original F11
+comparison was prepared on 2026-10-15 for PR #22, initially stacked on F08/F06. Its recommendation
+to retain A is superseded by the owner decision below. The private implementation plan was not
+opened; the task scope here comes from the owner card and repository contracts/roadmap.
 
 ### Public evidence and limits
 
-Public pages were read on 2026-10-15. Documentation claims establish investigation candidates,
-not BeamCraft suitability. No third-party source, test corpus or library was acquired.
+The following public-source notes are historical F11 research from 2026-10-15, not new
+verification by F11D. The later [N01 report](layer-engine-spike-n01-report-v0.1.md), version
+0.2.0, supplies the measured first-slice evidence used by this decision. No upstream source,
+test corpus or runtime resource is added by F11D.
 
 - [OpenUSD introduction](https://openusd.org/release/intro.html): layers and composition are
   interchange mechanisms; USD does not supply BeamCraft's persistent UUID identity policy.
@@ -45,7 +48,8 @@ not BeamCraft suitability. No third-party source, test corpus or library was acq
   The README explicitly describes development, not necessarily release 0.8.0.
 - That README advertises MIT **with exceptions** for vendored schemas and generated code under
   TOST. This is not an audit of the release or its dependency closure. An MIT headline cannot
-  admit those resources. The official-SDK exception does not automatically cover this project.
+  admit those resources. AGENTS.md section 1.2 now separately covers the recorded OpenUSD-derived
+  file under the owner decision of 2026-10-15; it is not blanket crate/graph admission.
 - Supplied, not re-verified: crates.io `openusd` 0.8.0, release date 2026-10-11, Rust 1.96,
   edition 2024 and roughly 80,000 Rust lines. The [release metadata][crate-meta] and
   [docs.rs release page][crate-docs] were inaccessible through the public browsing tool.
@@ -59,7 +63,8 @@ not BeamCraft suitability. No third-party source, test corpus or library was acq
   search found no usable official result. Specification 1.0.1 testing is supplied/upstream-claimed,
   not re-verified conformance. A README-linked PDF wrapper was visible; its contents were not
   read or used. N01 must pin the publisher's specification before mapping clauses to tests.
-- Workspace `Cargo.toml` states Rust 1.95, edition 2024. `deny.toml` has permissive licences and
+- At original research time, workspace `Cargo.toml` stated Rust 1.95, edition 2024.
+  The owner raised the workspace MSRV to 1.96 on 2026-10-15 (recorded in the roadmap). `deny.toml` has permissive licences and
   project-specific MPL exceptions; no global TOST admission. These local facts were checked.
   Supplied C++ cxx/autocxx bindings offer SDK access with native builds and no WASM route;
   no particular binding crate, dependency graph or capability was investigated.
@@ -98,8 +103,9 @@ F05's wire budgets are not stage-memory limits. N01 proposes explicit stage limi
 they cannot widen F04/F05 limits. The host remains responsible for validation, replay decisions,
 outcome recording and publication under every option. A backend cannot declare acceptance.
 
-## 3. Options
+## 3. Options (original comparison, updated selection labels)
 
+Section 8 records the current decision; the effort estimates below are unvalidated priors.
 The following comparison uses the same criteria. Effort is an analyst's planning estimate in
 person-weeks after prerequisites, with one experienced implementer, existing audited tools and
 only the first supported slice. It excludes broad USD conformance, UI, full collaboration and
@@ -116,7 +122,7 @@ geometry development. Estimates have at least factor-two uncertainty and are not
 | Principal risk | Packaging | Semantic gaps | Upstream fit | Two authorities |
 | Architecture review | Retain baseline | Required | Required | Required |
 
-### A. Official SDK in an isolated worker: accepted baseline
+### A. Official SDK in an isolated worker: fallback and oracle
 
 - **Gives:** general USD composition and serialization through the established SDK interface.
   A delta layer is authored through it; engineering and merge rules remain BeamCraft's work.
@@ -131,8 +137,9 @@ geometry development. Estimates have at least factor-two uncertainty and are not
   limits failure propagation but does not make malicious files safe.
 - **Must prove:** F03 gates, bounded local resolution, F05 recovery, identity/unknown preservation
   and independent saved-file validation; SDK use alone proves none of those project invariants.
-- **F03/F05/U01:** keep F03 integration gates and F05 draft behavior; U01 implements the accepted
-  verified worker launch/handshake/read path. Oracle validation needs a separately admitted tool.
+- **F03/F05/U01:** retain F03 admission and the F05 process contract for any SDK fallback.
+  U01 now implements C as primary (section 9). Oracle validation needs an admitted tool;
+  fallback is explicit, never a silent change of backend or composition context.
 
 ### B. Own Rust USD subset
 
@@ -153,23 +160,25 @@ geometry development. Estimates have at least factor-two uncertainty and are not
   if execution moves in-process; keeping a Rust worker can retain isolation. U01 changes backend
   construction and capabilities, not the host's acceptance/recovery responsibilities.
 
-### C. Adopt `openusd` behind a BeamCraft-owned trait
+### C. `openusd` behind a BeamCraft-owned wrapper: selected 2026-10-16
 
 - **Gives:** a candidate implementation of authoring and composition with a narrower adapter
   maintenance burden than B. Advertised diff/undo mechanisms need domain-level validation.
 - **Licence/graph:** claimed MIT core is promising, but pin release/checksum/features and audit
   normal, build, target and optional dependencies plus generated/schema resources. Do not enable
   `openusd-build` or schema features without a separate resource licence/provenance decision.
-  TOST material outside official-SDK scope is blocked unless the owner changes policy explicitly.
+  The recorded `src/usd/core_schemas.rs` exception is already in AGENTS.md section 1.2;
+  all other files/versions still require their own admission.
 - **Platforms/WASM:** desktop CI is upstream evidence only. Verify exact features on native
   targets and WASM; reject filesystem/mmap/process edges from domain crates. Initial placement
   would be a native adapter or Rust worker, not a new domain dependency under F08's empty list.
 - **Effort:** 8-20 person-weeks for audit, adapter and first-slice gaps, excluding upstream fixes
   of unknown size. An unpatchable required gap rejects the option within the spike.
 - **Risk:** release/development mismatch, API churn, maintainer concentration and parser limits.
-  The supplied 1.96 MSRV exceeds workspace 1.95; a newer local compiler does not resolve policy.
-- **Must prove:** exact-release behavior, permitted complete graph, 1.95 compatibility or an
-  explicit MSRV decision, bounded parsing and upgrade containment. A proposed BeamCraft-owned
+  The original 1.96-versus-1.95 MSRV mismatch was resolved by the owner raising the workspace
+  minimum to 1.96; exact-feature builds and dependency review still remain.
+- **Must prove:** exact-revision behavior, permitted complete graph, declared-MSRV compatibility,
+  bounded parsing and upgrade containment. A proposed BeamCraft-owned
   trait would expose bounded prepare/read/install/export capabilities with BeamCraft IDs,
   values, errors and contexts; no upstream handles escape. It is not designed or added here.
 - **F03/F05/U01:** retain an audited SDK oracle and independent reader. F05 needs explicit backend
@@ -244,8 +253,8 @@ Specialized engineering behavior is not promised by generic readers. Omniverse, 
 Houdini compatibility requires named versions and separate smoke evidence; no such tool was
 opened and no compatibility claim is made here.
 
-N01 uses an audited official SDK as an **external oracle process** over original synthetic
-fixtures. Candidate and oracle run separately with contained local assets and pinned versions.
+The N01 differential plan requires an audited official SDK as an **external oracle process**
+over original synthetic fixtures; this comparison was not run in the first slice. Candidate and oracle run separately with contained local assets and pinned versions.
 For A, validate in a fresh independent reader process, not through the authoring stage's cache.
 No upstream test file, baseline or code is copied. Reuse the [F07 style](../fixtures/README.md):
 original inputs, provenance/hash manifest, independent expected results and explicit support
@@ -291,7 +300,7 @@ pass. A proposed policy or scope change needs the owner before a rejected option
 |------|------|------------------------------------|
 | G01 | Licence/provenance | Exact inventory and graph; zero unresolved terms or notices. |
 | G02 | Bus factor/API churn | Named maintainer and backup; bounded upgrade/exit exercise. |
-| G03 | MSRV/platform/WASM | 1.95 or owner-approved change; exact-feature target checks. |
+| G03 | MSRV/platform/WASM | Owner-approved MSRV 1.96; exact-feature target checks. |
 | G04 | Composition gaps | Zero mismatches in declared scope; no silent foreign omissions. |
 | G05 | Identity/preservation | Full IDs, independent copy, unknown opinions and source hashes. |
 | G06 | False merge/live safety | Expected conflicts and dependencies; ordered idempotent replay. |
@@ -310,14 +319,19 @@ not just crate metadata. No TOST global allowlist change is proposed.
 > are respected, and the exact package and version are recorded in `ATTRIBUTION.md`. The licence
 > blocker found by spike N01 is thereby resolved as an owner decision, not by a change of the
 > crate's declared MIT licence. The `deny.toml` allowlist is unchanged, and this note does not
-> adopt the crate or select an engine option. Maintenance gate G02 applies
-to SDK/Python maintenance as well as small Rust projects and our own subset. Stars and README
-claims do not establish bus factor. Reassess pins and open coverage whenever an engine, schema,
+> select an engine option at that date. Section 8 records the later 2026-10-16 selection.
+
+Maintenance gate G02 applies to SDK/Python maintenance as well as small Rust projects and our
+own subset. Stars and README claims do not establish bus factor. Reassess pins and open coverage whenever an engine, schema,
 toolchain or specification changes; a previous corpus pass does not admit a new release.
 
 ## 7. Evidence plan: spike N01
 
-**Proposed, not authorized or executed here:** timebox N01 to ten working days, at most 80
+The following is the original proposed plan, retained for its gate IDs, budgets and scenarios.
+N01 option C has since run a first slice; the report and section 8 record its limits.
+The original plan is not a claim that all four options ran or that N01 is complete.
+
+**Original proposal:** timebox N01 to ten working days, at most 80
 person-hours. This is feasibility evidence, not delivery of U01 or the engines. Day 1 pins the
 profile, sources, tools and licences (8 h); days 2-3 prepare original fixtures and the oracle
 (16 h); days 4-7 exercise thin candidates without production integration (32 h); days 8-9 cover
@@ -327,7 +341,9 @@ If SDK admission or crate acquisition is unavailable, finish documentary gates a
 runtime-dependent claims as not run. Any later downloads/builds require their own authorization.
 
 The [machine-readable evidence plan](layer-engine-evidence-plan-v0.1.json) contains **40 claims:
-10 for each of A, B, C and D**, grouped by G01-G10. All have status `not_run`. It defines
+10 for each of A, B, C and D**, grouped by G01-G10. The JSON now carries N01 first-slice
+evidence: C-G01 remains `failed` as measured (policy subsequently resolved); all other claim
+statuses remain `not_run`, including partially evidenced claims. It defines
 12 original scenario families, N01-S01 through N01-S12, not 12 implemented fixtures. Each family
 may generate boundary variants under a versioned manifest; actual fixture counts must be reported
 separately. Claims can depend on future tasks; that dependency never implies their completion.
@@ -375,79 +391,232 @@ ledger, dependency/provenance report, maintenance owner/backup, measured effort/
 comparison for the owner. Promotion requires all ten gates for the selected scope and explicit
 owner approval. One hard licence, safety, authority, preservation, conflict or atomicity failure
 rejects promotion; unsupported required arcs reject B without a scope decision. API changes
-that leak upstream types, unresolved 1.95 policy, missing target checks or timebox overruns also
+that leak upstream types, missing declared-MSRV/target checks or timebox overruns also
 prevent promotion. No arbitrary weighted score can cancel a mandatory failure.
 
-## 8. Recommendation for the owner
+## 8. Owner decision, evidence and maintenance policy
 
-**Recommendation, not a decision: retain A for the first deliverable and commission N01 before
-any replacement decision.** Keep the official SDK worker as the accepted integration direction,
-subject to F03 admission. Evaluate C as the first replacement candidate inside N01 because it
-could avoid owning a new parser/compositor, while B and D remain bounded comparison prototypes.
-Do not adopt C, change MSRV or introduce a second authority on the strength of its README.
+### Decision and reasons (2026-10-16)
 
-This path preserves F04/F05/F08 responsibilities and keeps U01's evidence useful. It tests the
-owner's map-of-fields hypothesis against both owned editing and foreign composition. A future
-BeamCraft-owned adapter boundary can contain upstream changes, but cannot establish semantic
-equivalence or exempt dependencies from audit. A baseline choice is not a claim that F03 passed.
+The owner chooses **variant C**, the pure-Rust `openusd` 0.8.x crate behind a thin BeamCraft
+wrapper, as the primary USD layer engine. The aim is to remove Python and C++ from the product
+path while avoiding a new BeamCraft parser/compositor. The wrapper contains upstream API changes
+and retains BeamCraft ownership, validation and transaction rules. Variant A remains only a
+fallback and an external test oracle where available; its F03 gates still apply. No automatic
+fallback, acquisition or production dependency is authorized by this record.
 
-Unknowns include exact 0.8.0 licence/features/graph, release versus development capabilities,
-maintainer/backup capacity, MSRV resolution, WASM behavior, hostile-parser limits, unknown-data
-round trips, differential results, performance and actual first-slice effort. B's required
-foreign coverage and D's single-authority reconciliation are also unproven. All remain open.
+The reason is directional plus measured feasibility, not a claim of full USD conformance.
+[N01 report 0.2.0](layer-engine-spike-n01-report-v0.1.md) tested `openusd =0.8.0` with default
+features disabled on Windows x64, Rust 1.96.0:
 
-Exact owner decisions required, after reviewing this record:
+| N01 evidence | Decision relevance and limit |
+|--------------|------------------------------|
+| Sections 2-3, C-G04/G05 | USDA/USDC round trips preserved tested authored fields, IDs, relationships and unknown data; sublayers, stronger `over`, `active` and a foreign reference composed. No independent SDK comparison or general arc coverage. |
+| Section 3, finding 5 | A raw local override of a foreign prim succeeds. The spike wrapper refused it with `FOREIGN_READ_ONLY`; production protection is BeamCraft's duty. |
+| Section 4, C-G06 | Captured field-set deltas replayed; `(UUID, attribute)` detected same-field collisions. Semantic footprints, idempotency, lifecycle and stale/gap handling remain unproved. |
+| Section 5, C-G08 | 1184 synthetic hostile inputs caused no observed panic, crash or timeout. Non-finite values and some corrupt/truncated inputs were accepted; allocation bounds were not proved. |
+| Sections 2/7, C-G09 | Second writes were byte-identical within one build; three warm 1000/10000-element runs were feasible. Reordered repeats, cold-run statistics and cross-platform determinism were not run. |
 
-1. Approve or decline the proposed 80-hour N01 scope, mandatory gates and experiment budgets.
-2. Assign an evidence owner and backup, and authorize exact tool/package acquisition separately;
-   decide the F03 notice/native/runtime admission route before an SDK oracle is used.
-3. Keep Rust 1.95, or separately approve an MSRV change after pinned-release evidence. Until
-   then, the supplied 1.96 candidate is blocked for workspace adoption.
-4. Confirm whether full read-only foreign composition remains mandatory. If it does, B cannot
-   be selected with a field-stack-only evaluator. Any scope reduction needs revised acceptance.
-5. After N01, explicitly select A/B/C/D or continue evidence; approve any resulting F05/F08/U01
-   and architecture amendments before implementation. Decide any out-of-scope TOST admission
-   separately; this record requests no policy exception or contract freeze.
+The N01 report is a historical measurement: its then-current "not adopted/no option selected"
+and MSRV-blocker statements are superseded by the owner decisions, not rewritten as passing
+results. The 2026-10-15 licence exception and MSRV raise resolve policy questions only.
+File-level notices, dependency closure and runtime acceptance remain open. The spike is isolated
+from the product workspace; this task adds no dependency or executable behaviour.
 
-## 9. Effects on the plan
+### Explicit remaining risks
 
-These are proposed impacts only. This decision record changes no architecture, dependency or
-runtime behavior and edits no task specification or shared contract. The only shared-file edits
-in PR #22 are the `ROADMAP.md` progress-log entry and the `ATTRIBUTION.md` row recorded by the
-orchestrator.
-The inputs do not include full private U/C/G/P task definitions; sequencing beyond the named
-contract obligations must be confirmed by their owners. N01 completion would not complete F11's
-parent architecture/implementation acceptance gates.
+- Foreign-prim write refusal must cover every mutation route and contributing composition source,
+  including variants/payloads/inherits/specializes absent from the N01 tests.
+- Non-finite values can parse successfully. Some truncations and USDC header corruptions are
+  accepted. Engineering validation and verified manifests/digests must establish validity/integrity.
+- Parser allocations, cumulative resolution, cycles and maximum-plus-one limits remain unproved;
+  the cheap 64 KiB corpus and Windows process cap establish no production safety bound.
+- Linux, macOS and WASM builds were not run. SDK-oracle comparison was not run; same-crate
+  round trips establish self-consistency only. N03 addresses Linux/WASM and available oracles;
+  macOS runtime evidence remains open.
+- Pre-1.0 API churn, maintenance owner/backup, broader unknown-content preservation, copy/remap,
+  deterministic serialization, semantic replay and publication/recovery still need evidence.
 
-| Area | A | B | C | D |
-|------|---|---|---|---|
-| F03 | Close runtime gates | Oracle audit | Oracle plus crate audit | Runtime plus oracle audit |
-| F05 | Retain draft | Review execution | Review backend | Review dual-path context |
-| F08 | Retain boundaries | Review adapter | Review graph/trait | Review model/adapter |
-| U01 | SDK worker | Subset runtime | Rust adapter/worker | Own engine plus SDK |
-| U02 | SDK schema authoring | Subset schema mapping | Verify schema features | Reconcile schemas |
-| U04 | F05 client | Review local calls | Prove same CLI results | Expose boundary failures |
-| U06 | Host CAS/publish | Same; own writer | Same; crate writer | Same; cross-view check |
-| C01-C05 | Domain merge | Plus subset gaps | Plus diff mapping | Plus reconciliation |
-| G/P | Stable domain rules | New round-trip checks | New adapter checks | New boundary checks |
+### Fork and upgrade policy
 
-U03 identity and U05 resource hashes stay mandatory for all options. U07 must retain draft
-recovery, durable outcomes and complete revision recovery; changing engines cannot remove it.
-U02's ordinary-reader/validator gate survives every choice, including A.
+Yes: MIT permits a fork of the MIT-covered crate code, including if upstream maintenance stops
+or a required feature is missing. Preserve the MIT copyright and licence. The OpenUSD-derived
+`src/usd/core_schemas.rs` keeps its own TOST-1.0 licence, upstream notices and required
+modification notices. Retain `licenses/TOST-1.0-openusd.txt` and `NOTICE`; do not relabel that
+material MIT or MPL-2.0, claim ownership, or imply endorsement through upstream trademarks.
 
-C01-C05 retain publication idempotency, semantic rebase/conflict checks, retries and preservation
-of local intent as applicable to their owners' detailed cards; upstream diffs are not a
-substitute. This record does not invent a per-ID allocation absent those cards. Later live work
-needs a separate reviewed transport/coordination scope; no server is enabled by F11 or N01.
+AGENTS.md section 1.2 covers only the exact recorded package/version. A fork or another version
+requires its own ATTRIBUTION entry and an owner decision before use; the current exception does
+not transfer automatically. Keep both upstream and any fork behind the same BeamCraft wrapper.
+Pin adoption by **exact git revision**, record the corresponding package/version, source,
+checksum and feature/dependency inventory, and upstream fixes where possible. N01's crates.io
+0.8.0 measurement is evidence, not the future git pin; no exact adoption revision is invented here.
+Every pin change repeats affected licence, safety, serialization and oracle checks. A maintainer
+and backup must be assigned before integration; permission to fork does not supply staffing.
 
-G-tasks keep the independent Rust kernel, derived geometry and signature contracts. P01/P03
-creation, P04 invalidation, P05 independent copy, P07 undo, P08 edits/deletion and personal
-workspaces need backend-independent API -> CLI -> USD -> independent-reader evidence. P02's profile
-resource format remains an existing open decision. Geometry/frame/tolerance gaps and F04 freeze
-conditions are unaffected. Options B-D add validation work and may delay U/G/P integration;
-they do not make adjacent tasks complete.
+## 9. Re-scoped implementation and verification tasks
 
-Provenance: contributor-original analysis and evidence definitions, MPL-2.0, derived from the
-listed repository inputs, task card and linked public documentation. No third-party code, test
-fixtures, commercial assets or runtime resources are included. The orchestrator has recorded
-this PR's progress-log entry in `ROADMAP.md` and attribution row in `ATTRIBUTION.md`.
+These cards replace the SDK-primary allocation for U01-U04. All are **planned, not complete**.
+They consume the [wrapper requirements](layer-engine-wrapper-requirements-v0.1.md) (LEW IDs),
+F04/F06's unchanged authority and numeric rules, F08 boundaries, and the N01 evidence above.
+They do not authorize edits to frozen contracts or new dependency edges. The wrapper exposes
+BeamCraft-owned IDs, typed values, contexts and bounded errors; upstream handles never escape.
+Its precise package/module placement requires F08 review, with no new domain dependency assumed.
+
+### Execution question and F05 applicability
+
+**Open question:** should C run as an in-process module or a separate Rust process? F11's earlier
+comparison left this open, and the owner selected the engine, not its execution topology.
+U01 must present the placement, parser containment and cancellation evidence for review before
+integration. Choosing a pure-Rust engine alone does not justify removing failure isolation.
+
+For a separate Rust process, F05 private pipes, framing, attachments, handshake/capabilities,
+correlation, liveness, deadlines, cancellation, restart and diagnostics remain the transport
+baseline, with reviewed backend/runtime identity alignment. For an in-process module, pipes,
+wire framing, process handshakes/restarts and OS child caps are not function-call requirements;
+review an explicit semantic mapping rather than silently treating them as satisfied or deleted.
+In either case retain bounded inputs/results, pinned contexts and invalidation, one stage owner,
+isolated prepare/install/discard, host authorization/validation, canonical op_id replay,
+serialized acceptance, durable outcome queries and uncertainty handling. F05 remains unchanged;
+its SDK wording continues to describe fallback pending the proposed review in the PR body.
+
+### U01: bounded open/read through the Rust wrapper
+
+**Change from SDK plan:** construct the pinned Rust backend and contained resolver instead of
+making Python/pxr startup a primary-path prerequisite. Keep any SDK launcher confined to the
+explicit fallback/oracle route and its F03 admission. Do not expose raw stage setters or paths.
+
+**Inputs:** verified project/workspace manifest and local asset bytes/digests; project/workspace
+IDs, base revision and generation; owned-layer set; declared composition/load profile; exact
+backend pin/features/schema identity; explicit stage budgets and cancellation/deadline context.
+**Outputs:** opaque pinned stage context, supported-capability/profile record, bounded typed
+snapshot pages with composition provenance, or safe F04-mapped diagnostics with no partial view.
+
+**F05:** apply the execution mapping above to OpenStage/ReadSnapshot, capabilities, limits and
+context invalidation. Actual separate-process transport still needs real-pipe failure tests.
+In-process execution needs equivalent limits/context tests and a proved parser containment plan.
+
+**Acceptance:** LEW-01/02/03/04/07; open original USDA/USDC fixtures without Python/C++; verify
+full identities, metadata and reference provenance; reject digest/path escapes, numeric faults,
+cycles and cap-plus-one before exposing state. Unsupported arcs produce explicit diagnostics.
+Reopen and page over one pinned context; reject stale cursors. Test cancellation/backend failure
+without state change or inferred rollback. Provide engine API -> CLI open/read E2E via U04 and
+N03 platform/oracle evidence; mocks and same-crate reads alone cannot close acceptance.
+
+### U02: codeless schemas and authored/derived layers
+
+**Change from SDK plan:** define BeamCraft codeless schema/property mappings and write layers
+through C, without requiring Python schema generation or a C++ plugin in the product path.
+Do not enable `openusd-build`, import generated resources or choose their licences implicitly.
+Keep USD as authority and preserve authored layering rather than replacing it with flattening.
+
+**Inputs:** reviewed schema mapping/digest and closed change/snapshot field definitions; validated
+F04 commands, owned candidate context and engine-derived changes; F06 geometry/results; unknown
+inert content and resource digests. **Outputs:** isolated candidate, typed authored opinions,
+owned authored/derived layer bytes and digests, schema identity and bounded validation results.
+
+**F05:** U02 still owns closed change/snapshot item schemas and schema mismatch checks. Apply
+prepare/install/discard and schema identity in either topology; wire bodies/attachment budgets
+apply on separate-process and SDK routes, while the in-process mapping needs reviewed bounds.
+
+**Acceptance:** LEW-01/02/05/06/07; author/reopen a supported plate/member and relationships,
+units `metersPerUnit=0.001`, `upAxis=Z`, unknown fields and explicit absence/block/removal.
+Foreign overrides fail atomically. Run 20 reordered deterministic saves and independent-reader
+checks, including N03's available SDK directions and an admitted validator with recorded rules.
+Ordinary readers inspect standard geometry/custom data without a BeamCraft plugin. Validate
+schema/pin mismatch and invalid-number rejection. No U06 atomic publication claim follows from save.
+
+### U03: full UUID and relationship index
+
+**Change from SDK plan:** build the reconstructible index from wrapper-owned typed snapshots and
+composition provenance instead of pxr objects. Index authority remains the pinned USD state;
+upstream diff paths or a persisted index cannot become element identity or engineering authority.
+
+**Inputs:** complete pinned U01/U02 snapshot pages, full UUIDv7 `bim:id`/32-digit paths, typed
+relationship opinions/list edits, lifecycle state and source ownership/dependency coverage.
+**Outputs:** UUID-to-element/provenance lookup, outgoing/incoming relationship index and explicit
+completeness/context token, plus bounded duplicate/dangling/foreign or missing-dependency errors.
+
+**F05:** context/generation and invalidation rules apply in either topology. Separate-process
+pages/cursors/events retain F05 delivery limits; in-process snapshots must preserve equivalent
+bounded delivery and reject incomplete or mixed-context indexing.
+
+**Acceptance:** LEW-01/06/07; reject short, malformed, duplicate and mismatched IDs; labels do
+not change IDs. Rebuild an identical index after save/reopen. Test copy with fresh IDs and
+remapped owned links, unchanged source, deactivate/reactivate, delete/dependent-read collisions,
+and missing payload/incoming-link evidence as `DEPENDENCY_UNAVAILABLE`. Stale or partial indexes
+cannot authorize writes or certify conflict freedom. Integrate real API/CLI E2E with U04;
+copy and broader collaboration behaviour remain owned by their P/C tasks.
+
+### U04: shared CLI and native host API
+
+**Change from SDK plan:** route CLI/host operations through the same BeamCraft wrapper API with
+C as primary. An ordinary operation has no Python/C++ runtime prerequisite. Backend fallback
+must be explicit, report its verified identity and capabilities, and retain F03/F05 admission.
+
+**Inputs:** bounded CLI/API requests, authorized project/workspace/resource handles, pinned
+revision/generation, op_id, deadline/cancel context and explicit backend selection.
+**Outputs:** the same typed logical result/context, bounded snapshots/events, verified saved-layer
+or resource digests and safe diagnostics; proven host-recorded outcomes or `OUTCOME_UNKNOWN`.
+
+**F05:** native process client/supervision remains for separate-process C and SDK fallback.
+In-process calls keep the reviewed bounded semantic adapter. Both preserve host deadlines,
+canonical replay, snapshot invalidation, host-ledger QueryOutcome and prepare/install ordering;
+never fabricate cancellation/acceptance from a backend acknowledgement.
+
+**Acceptance:** LEW-01 through LEW-07 at the host boundary; API -> CLI -> save -> fresh-reader
+E2E parity for U01-U03, including foreign refusal, corrupt/non-finite input, stale contexts,
+replay/collision and cancellation/loss. No service or network access starts by default.
+Use existing U05 byte storage without claiming U06/U07 publication/recovery complete. Expose
+those capabilities only with their implementation; test safe unavailable/uncertain outcomes now.
+Run primary-path tests with Python and SDK absent. Process-specific claims require real processes.
+
+### N03: Linux/WASM wrapper builds and available SDK oracle
+
+**Status: planned, not run by F11D.** This is a separate verification task/PR, not a completed N01
+gate. Inputs are the reviewed U01/U02 wrapper slice, exact git pin/features/lock inventory,
+LEW requirement tests, original fixtures with prewritten expectations/hash manifest, and an
+admitted pinned `pxr` environment where available. Filesystem/process adapters remain host-only.
+
+**Outputs:** reproducible commands, compiler/target/feature inventory, build results, per-case
+semantic snapshots/digests and a differential coverage ledger with pass/fail/not_run, diagnostics
+and explicit unsupported constructs. No SDK or Python becomes a product dependency.
+
+**Acceptance:**
+
+1. Build/check the actual wrapper and its selected dependency closure on Linux and
+   `wasm32-unknown-unknown`; run the wrapper suite on Linux. Name the wrapper package and exact
+   commands after placement is reviewed. A geom-only WASM check or stub does not pass this gate.
+2. Compare deterministic exports and semantic snapshots from fixed/reordered fixtures on Windows
+   and Linux. Preserve full IDs, unknown opinions, relationships and foreign source bytes.
+   Record WASM compilation separately from any WASM execution/determinism claim.
+3. Where admitted `pxr` is available, run candidate-write -> fresh oracle-read, oracle-write of
+   our fixtures -> candidate-read, and candidate-edit/save -> fresh oracle-read. Compare authored
+   and composed state separately: fields/types, values/blocks, target ordering, units, transforms,
+   geometry and source provenance for the declared supported arcs. Require zero unexplained
+   mismatches against independent expectations; preserve/reject unsupported constructs explicitly.
+4. If a target, runner or admitted oracle is unavailable, record **not_run** and the reason;
+   missing oracle evidence leaves G04/G10 and independent-reader acceptance open. Do not turn
+   a missing prerequisite into a pass. N03 does not establish macOS support, general USD
+   conformance, hostile-parser safety or completion of U01-U04/K1 by itself.
+
+### Unchanged downstream ownership and provenance
+
+U05 resource hashes, U06 expected-head/atomic complete publication and U07 preserved drafts,
+durable outcomes and recovery remain mandatory. C-tasks own semantic rebase/live coordination;
+upstream capture/replay is not their acceptance. G/P tasks retain the independent Rust kernel,
+F06 operation order, tolerance policy and API -> CLI -> independent-reader gates.
+
+No glam/nalgebra is selected: small fixed-size f64 types stay original in `geom` under F08.
+Plates stay as drawn; members roll only about their local Z; no general orientation or quaternion
+is introduced into the kernel. This decision changes no numeric rule: finite f64, the 0.001 mm
+absolute minimum, local-size `eps_geom`, absolute test/pick rules and F06 operation order remain
+binding. Integration must resolve the recorded contract alignment before implementing affected
+surfaces; frozen contracts and their cases are untouched here.
+
+Provenance: contributor-original F11D documentation, MPL-2.0, based on the owner's 2026-10-16
+card, the repository contracts/designs and N01's original synthetic observations. Public-source
+links above retain the original research provenance; no new upstream code, fixture or runtime
+resource is included. Proposed attribution rows, frozen-contract amendments and the dated roadmap
+progress entry belong only in the F11D PR body. This task leaves ATTRIBUTION and the progress log
+unchanged.
