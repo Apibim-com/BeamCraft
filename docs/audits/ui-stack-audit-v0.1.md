@@ -5,6 +5,13 @@ Disposition: **conditional admission of a narrowed stack. V01 viewport work is n
 
 This audit is the V01.0 prerequisite from issue #37. Implementation-plan section 7.7 is not in this checkout (`docs/architecture.md` keeps the owner's plan outside the repository). Scope is the issue plus the PdfCraft stack note in `docs/architecture.md`. Nothing here is a Tekla, Trimble, or other commercial-product asset. No PdfCraft application icon, screenshot, or sample document was copied.
 
+FONT status, 2026-10-16: the replacement font prerequisite is satisfied by the admission
+of unmodified Inter 4.1 Regular and Bold under `OFL-1.1`. Provenance, hashes and
+redistribution requirements are recorded in [the font admission](../../assets/fonts/inter/README.md),
+`ATTRIBUTION.md` and `NOTICE`, with the upstream licence in `licenses/OFL-1.1-Inter.txt`.
+This is asset admission only; V01 UI integration and rendering checks remain pending,
+and the audit's verdicts and prohibition on `default_fonts` remain in force.
+
 ## Method
 
 Evidence is from the original publishers, not from recollection.
