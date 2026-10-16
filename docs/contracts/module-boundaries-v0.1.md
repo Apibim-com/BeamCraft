@@ -68,7 +68,7 @@ Dependencies are checked in `[dependencies]`,
 | beamcraft-protocol | crates/protocol | native | 2 | beamcraft-model | now | U01 |
 | beamcraft-layer-engine | crates/layer-engine | host | 2 | beamcraft-model | now | U01/U02/U03; separate process, owner decision 2026-10-16 |
 | beamcraft-kernel | crates/kernel | domain | 2 | beamcraft-geom, beamcraft-model | now | G02 |
-| beamcraft-engine | crates/engine | native | 3 | beamcraft-geom, beamcraft-model, beamcraft-kernel | planned | P01 |
+| beamcraft-engine | crates/engine | native | 3 | beamcraft-geom, beamcraft-model, beamcraft-kernel | now | V02 (view snapshot and query slice); P01 extends it with commands |
 | beamcraft-host | crates/host | host | 4 | beamcraft-model, beamcraft-protocol, beamcraft-engine | now | U05 |
 | beamcraft-cli | apps/beamcraft-cli | app | 5 | beamcraft-model, beamcraft-engine, beamcraft-host, beamcraft-protocol, beamcraft-layer-engine | now | U04 amendment: CLI and thin Rust worker binaries |
 | beamcraft-ui | apps/beamcraft-ui | app | 5 | beamcraft-model, beamcraft-engine, beamcraft-host | planned | V01 |
@@ -105,7 +105,8 @@ by the named task with real code. Allowed dependencies are those of the owning r
 | Three dependency keys, mass signature, invalidation | F06 s.7 | `beamcraft_kernel::keys` | planned, G01 |
 | Quantities and statuses | F06 s.8, F04 s.5 | `beamcraft_kernel::quantity` | planned, G01 |
 | Pick and feature geometry for one body | F06 s.9 | `beamcraft_kernel::pick` | planned, G01 |
-| Pinned queries (`ListElements`, `GetMeshSnapshot`, `LookupFeature`, `GetChanges`, `QueryBounds`), snapshot tokens | F06 s.9 | `beamcraft_engine::query` | planned, P01 |
+| Pinned queries (`ListElements`, `GetMeshSnapshot`, `LookupFeature`, `GetChanges`, `QueryBounds`), snapshot tokens | F06 s.9 | `beamcraft_engine::query` | **now, partial**, V02: `ListElements`, mesh blobs by digest, world `QueryBounds`, `GetChanges` over a bounded history, snapshot tokens, selection. `LookupFeature` and `Pick` planned (G04); dependency keys and statuses planned (P01) |
+| View settings (element-kind filter, representation selector), read-time projection, instance/triangle id tables | architecture "Part representations and view filters", F06 s.9 | `beamcraft_engine::presentation` | **now**, V02 |
 | Presentation key preimage | F06 s.7 | `beamcraft_engine::presentation` (V01 may move it to the UI if it needs no engine state; never into the kernel) | planned, V01 |
 | Identity (UUIDv7 `ElementId`), units, input limits | F04 s.2, 3 | `beamcraft_model::{id, limits}` | planned, P01 |
 | SHA-256 digest type and hasher, for F04 resources, F06 keys and F05 buffers | F04 s.2, F06 s.6, 7, F05 s.3 | `beamcraft_model::digest` | **now**, U05 (full digest, incremental FIPS 180-4 SHA-256) |
@@ -123,7 +124,7 @@ by the named task with real code. Allowed dependencies are those of the owning r
 | Rust USD read wrapper (no host edge; separate process, owner decision 2026-10-16; process containment still requires implementation) | F11 s.9, LEW-01/02/03/04/07 | `beamcraft_layer_engine` | experimental native read slice, U01 |
 | USD worker (thin Python/pxr) | F05 s.1 | `workers/usd/`, not a Cargo package | planned, U01 |
 | USD worker (thin Rust wrapper, separate process; no new package) | F11 s.9, U04 owner topology decision | `apps/beamcraft-cli/src/bin/beamcraft-usd-worker.rs` | U04 amendment: experimental read worker; SDK fallback remains unavailable |
-| CLI | AGENTS s.3, F06 s.9 | `apps/beamcraft-cli` | U04 amendment: version, experimental open/read and byte-storage commands |
+| CLI | AGENTS s.3, F06 s.9 | `apps/beamcraft-cli` | U04 amendment: version, experimental open/read and byte-storage commands; V02: `view-snapshot` and `view-changes` over a synthetic kernel plate scene |
 | Native UI and viewport | F06 s.9, V-tasks | `apps/beamcraft-ui` | planned, V01 |
 
 The F05 sections 3 and 10 also require SHA-256 verification of attachments. The protocol crate
@@ -149,6 +150,14 @@ streaming digest comparison can now use `model::digest`; protocol session integr
   The F05 32 MiB bundle budget bounds each blob and returned buffer. The root namespace must
   be protected from hostile concurrent filesystem mutation: safe portable std containment checks
   cannot close directory replacement races. See the storage module's documented platform limits.
+- **`beamcraft-engine` (`crates/engine`, native library)**, created by V02 with the real, tested
+  view snapshot and query contract: a pinned `ViewSnapshot` built from sealed kernel plate
+  results, snapshot tokens, `GetChanges` deltas, view settings (kind filter and representation
+  selector) applied as a read-time projection, ids/instances/triangles tables and a selection API.
+  It depends on `geom`, `model` and `kernel`, adds no third-party dependency and has no UI,
+  renderer or I/O code. Command application, authored elements, dependency keys, `LookupFeature`
+  and `Pick` remain planned (P01, G04). `ElementId` lives in `beamcraft_engine::element` until
+  P01 provides `beamcraft_model::id`.
 - **`beamcraft-boundaries` (`apps/boundaries`, tool).** Created because it holds the real, tested
   checker of section 6. It is a development tool with no dependencies; it is not part of the
   product.
@@ -157,11 +166,11 @@ streaming digest comparison can now use `model::digest`; protocol session integr
 dimension-based rectangular plate builder, bounded staged diagnostics, local feature roles,
 self-checks and fixed BCMESH01 encoding. It depends only on `geom` and `model`.
 The full contour/placement request adapter, generic blob validator, keys, quantities
-status integration and queries remain planned under the section 4 paths.
+status integration and the `LookupFeature`/`Pick` queries remain planned under the section 4
+paths.
 
-**Not created, on purpose:** `engine` and `ui`. The tasks named in section 2
-create them with their first real code. No placeholder crate, `todo!` or
-unreachable stub is added.
+**Not created, on purpose:** `ui`. The task named in section 2 creates it with its first real
+code. No placeholder crate, `todo!` or unreachable stub is added.
 
 ## 6. Mechanical enforcement
 
