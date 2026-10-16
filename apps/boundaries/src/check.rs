@@ -927,10 +927,12 @@ mod tests {
                 name: "native".into(),
                 section: section.into(),
             });
-            assert!(
-                check_workspace(&ws, &table).contains(&expected),
-                "{section}"
-            );
+            // One violation comes from the table itself, one from the manifest edge.
+            let matching = check_workspace(&ws, &table)
+                .iter()
+                .filter(|v| **v == expected)
+                .count();
+            assert_eq!(matching, 2, "{section}");
         }
     }
 
