@@ -39,6 +39,11 @@ version = "0.0.1"
 allow = ["MPL-2.0"]
 
 [[licenses.exceptions]]
+name = "beamcraft-kernel"
+version = "0.0.1"
+allow = ["MPL-2.0"]
+
+[[licenses.exceptions]]
 name = "beamcraft-model"
 version = "0.0.1"
 allow = ["MPL-2.0"]

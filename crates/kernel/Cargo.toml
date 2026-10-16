@@ -1,0 +1,16 @@
+[package]
+name = "beamcraft-kernel"
+description = "Bounded analytic geometry builders for BeamCraft."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+beamcraft-geom.workspace = true
+beamcraft-model.workspace = true
+
+[lints]
+workspace = true
