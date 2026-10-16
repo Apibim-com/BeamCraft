@@ -18,8 +18,9 @@ audit](../audits/openusd-26.8.md) stays conditional for fallback/oracle use; its
 production-approved. F04 and F06 were frozen at 0.1.0 on 2026-10-16. The [F05
 protocol](../contracts/worker-protocol-v0.1.md) and [F08
 boundaries](../contracts/module-boundaries-v0.1.md) need reviewed alignment before integration;
-this documentation task changes neither contract. In-process module versus separate Rust process
-remains an open execution question (section 9), not a consequence of choosing Rust.
+this documentation task changes neither contract. **Topology decided by the owner on 2026-10-16:**
+the layer engine runs in a separate Rust process under F05 (section 9; integration rules in the
+[USD process integration addendum](usd-process-integration-v0.1.md)).
 
 F11 depends on F03/F05/F08. U01-U07 retain runtime, schema, identity, client, resources,
 publication and recovery acceptance. C-tasks retain collaboration semantics. This record does
@@ -470,10 +471,12 @@ the available SDK oracle; the three pure crates have a separate CI portability c
 
 ### Execution question and F05 applicability
 
-**Open question:** should C run as an in-process module or a separate Rust process? F11's earlier
-comparison left this open, and the owner selected the engine, not its execution topology.
-U01 must present the placement, parser containment and cancellation evidence for review before
-integration. Choosing a pure-Rust engine alone does not justify removing failure isolation.
+**Decided (owner, 2026-10-16):** C runs in a **separate Rust process**, and the F05 transport
+applies. Parsing untrusted USD is the isolated part; the application keeps the session model and
+the in-process kernel builds meshes. Large derived data are shared as immutable content-addressed
+files read by digest, not streamed through IPC. This replaces the earlier open question; U01
+still presents parser containment and cancellation evidence. The in-process mapping below and in
+the cards is retained as history and is not selected.
 
 For a separate Rust process, F05 private pipes, framing, attachments, handshake/capabilities,
 correlation, liveness, deadlines, cancellation, restart and diagnostics remain the transport
