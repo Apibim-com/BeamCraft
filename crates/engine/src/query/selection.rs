@@ -123,21 +123,22 @@ impl Selection {
     }
 
     /// Carries the selection to a newer snapshot, dropping ids that no longer exist. Returns the
-    /// new selection and how many ids were dropped.
-    pub fn rebased(&self, snapshot: &ViewSnapshot) -> (Self, usize) {
-        let kept: BTreeSet<ElementId> = self
-            .ids
-            .iter()
-            .filter(|id| snapshot.element(id).is_some())
-            .copied()
-            .collect();
+    /// new selection and how many ids were dropped. The survivors must fit the destination
+    /// snapshot's selection cap, exactly as [`Self::from_ids`] enforces it; otherwise
+    /// `VIEW_SELECTION_LIMIT` and no selection is built.
+    pub fn rebased(&self, snapshot: &ViewSnapshot) -> Result<(Self, usize), ViewError> {
+        let survivors = || self.ids.iter().filter(|id| snapshot.element(id).is_some());
+        if survivors().count() > snapshot.limits().max_selection() {
+            return Err(ViewError::new(ViewCode::SelectionLimit));
+        }
+        let kept: BTreeSet<ElementId> = survivors().copied().collect();
         let dropped = self.ids.len().saturating_sub(kept.len());
-        (
+        Ok((
             Self {
                 token: snapshot.token().clone(),
                 ids: kept,
             },
             dropped,
-        )
+        ))
     }
 }

@@ -425,11 +425,55 @@ fn selection_resolves_ids_hints_and_survives_view_changes() {
     let newer_view = newer.project(&ViewSettings::default()).unwrap();
     assert_eq!(code(sel.instances(&newer_view)), ViewCode::StaleToken);
     let tail = Selection::from_ids(&s, &[id(1), id(9)]).unwrap();
-    let (rebased, dropped) = tail.rebased(&newer);
+    let (rebased, dropped) = tail.rebased(&newer).unwrap();
     assert_eq!(dropped, 1);
     assert_eq!(rebased.ids().copied().collect::<Vec<_>>(), vec![id(1)]);
     assert_eq!(rebased.token(), newer.token());
     assert_eq!(rebased.instances(&newer_view).unwrap(), vec![1]);
+}
+
+#[test]
+fn repeated_resizes_each_thicken_the_first_plate_by_two_millimetres() {
+    let mut scene = plate_scene(3, false).unwrap();
+    let mut previous = snap(scene.clone(), 1);
+    // The first plate is 65 x 70 x 6; width and length stay, thickness grows by 2 each time.
+    for (step, thickness) in [8.0, 10.0, 12.0].into_iter().enumerate() {
+        apply_edit(&mut scene, SyntheticEdit::ResizeFirst, false).unwrap();
+        let next = snap(scene.clone(), 2 + step as u64);
+        let bounds = next.element_bounds(&id(0)).unwrap();
+        assert_eq!(bounds.min, [0.0, 0.0, 0.0]);
+        assert_eq!(bounds.max, [65.0, 70.0, thickness], "step {step}");
+        let delta = beamcraft_engine::diff(&previous, &next);
+        assert_eq!(delta.changes.len(), 1, "step {step} must be a shape change");
+        assert!(delta.changes[0].fields.shape);
+        assert_eq!(delta.new_meshes.len(), 1);
+        previous = next;
+    }
+}
+
+#[test]
+fn rebasing_respects_the_destination_selection_cap() {
+    let scene = plate_scene(4, false).unwrap();
+    let roomy = snap(scene.clone(), 1);
+    let tight_limits = Limits::new(usize::MAX, usize::MAX, u32::MAX, 1);
+    let tight = ViewSnapshot::build(pin(2), scene, &tight_limits).unwrap();
+    let two = Selection::from_ids(&roomy, &[id(0), id(1)]).unwrap();
+    assert_eq!(
+        Selection::from_ids(&tight, &[id(0), id(1)])
+            .unwrap_err()
+            .code(),
+        ViewCode::SelectionLimit
+    );
+    assert_eq!(code(two.rebased(&tight)), ViewCode::SelectionLimit);
+    // Survivors at the cap are accepted; dropped ids do not count against it.
+    let one = Selection::from_ids(&roomy, &[id(0)]).unwrap();
+    let (kept, dropped) = one.rebased(&tight).unwrap();
+    assert_eq!((kept.len(), dropped), (1, 0));
+    let mut smaller = plate_scene(4, false).unwrap();
+    smaller.retain(|e| e.id() != id(1));
+    let smaller = ViewSnapshot::build(pin(3), smaller, &tight_limits).unwrap();
+    let (kept, dropped) = two.rebased(&smaller).unwrap();
+    assert_eq!((kept.len(), dropped), (1, 1));
 }
 
 #[test]

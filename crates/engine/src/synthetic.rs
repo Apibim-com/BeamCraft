@@ -22,7 +22,8 @@ use beamcraft_kernel::{PlateResult, RectangularPlate, rectangular_plate};
 pub enum SyntheticEdit {
     /// Moves the first element by +1000 mm along X: a placement-only change.
     MoveFirst,
-    /// Rebuilds the first element 2 mm thicker: a shape change.
+    /// Makes the first element's plate 2 mm thicker, keeping width and length: a shape change
+    /// that can be repeated.
     ResizeFirst,
     /// Appends one new element.
     AddOne,
@@ -124,7 +125,14 @@ pub fn apply_edit(
         }
         SyntheticEdit::ResizeFirst => {
             let first = scene.first_mut().ok_or_else(empty)?;
-            first.full = plate(100.0, 100.0, 12.0)?;
+            // Vertex bits are i = xb + 2*yb + 4*zb from the origin, so vertices 1, 2 and 4 give
+            // the current width, length and thickness exactly as the kernel built them.
+            let v = first.full.mesh().vertices();
+            let (w, l, t) = match (v.first(), v.get(1), v.get(2), v.get(4)) {
+                (Some(o), Some(x), Some(y), Some(z)) => (x.x - o.x, y.y - o.y, z.z - o.z),
+                _ => return Err(unsupported()),
+            };
+            first.full = plate(w, l, t + 2.0)?;
         }
         SyntheticEdit::AddOne => {
             if scene.len() >= MAX_ELEMENTS {

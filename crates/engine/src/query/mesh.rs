@@ -4,8 +4,8 @@
 //! Mesh blobs as the snapshot stores them: exact BCMESH01 bytes identified by SHA-256.
 //!
 //! The engine does not trust a blob because the kernel produced it: every blob is re-inspected
-//! (F06 section 6 header, caps, sizes, index ranges) and its digest recomputed before it is
-//! admitted. Coordinates are not re-certified; the closed-shell checks stay with the kernel.
+//! (F06 section 6 header, caps, sizes, zero padding, finite coordinates, index ranges) and its
+//! digest recomputed before it is admitted. Closed-shell certification stays with the kernel.
 
 use crate::error::{ViewCode, ViewError};
 use crate::limits::{MAX_BLOB_FACES, MAX_BLOB_TRIANGLES, MAX_BLOB_VERTICES, MAX_MESH_BLOB_BYTES};
@@ -67,6 +67,13 @@ fn read_u16(bytes: &[u8], offset: usize) -> Option<u16> {
     Some(u16::from_le_bytes(bytes.get(offset..end)?.try_into().ok()?))
 }
 
+fn read_u64(bytes: &[u8], offset: usize) -> Option<u64> {
+    let end = offset.checked_add(8)?;
+    Some(u64::from_le_bytes(bytes.get(offset..end)?.try_into().ok()?))
+}
+
+const NEGATIVE_ZERO_BITS: u64 = 0x8000_0000_0000_0000;
+
 fn pad8(n: u64) -> Option<u64> {
     Some(n.checked_add(7)? & !7)
 }
@@ -114,6 +121,21 @@ pub(crate) fn inspect_blob(bytes: &[u8]) -> Result<(u32, u32), ViewError> {
         .map_err(|_| bad())?
         .checked_mul(3)
         .ok_or_else(bad)?;
+    for i in 0..usize::try_from(v)
+        .map_err(|_| bad())?
+        .checked_mul(3)
+        .ok_or_else(bad)?
+    {
+        let offset = i
+            .checked_mul(8)
+            .and_then(|o| o.checked_add(32))
+            .ok_or_else(bad)?;
+        let bits = read_u64(bytes, offset).ok_or_else(bad)?;
+        // F06 section 6: non-finite and negative-zero coordinates are not admitted.
+        if !f64::from_bits(bits).is_finite() || bits == NEGATIVE_ZERO_BITS {
+            return Err(bad());
+        }
+    }
     for i in 0..index_count {
         let offset = i
             .checked_mul(4)
@@ -131,6 +153,25 @@ pub(crate) fn inspect_blob(bytes: &[u8]) -> Result<(u32, u32), ViewError> {
         if u32::from(read_u16(bytes, offset).ok_or_else(bad)?) >= k {
             return Err(bad());
         }
+    }
+    let zero = |from: usize, to: usize| {
+        bytes
+            .get(from..to)
+            .is_some_and(|padding| padding.iter().all(|b| *b == 0))
+    };
+    let indices_end = index_start
+        .checked_add(index_count.checked_mul(4).ok_or_else(bad)?)
+        .ok_or_else(bad)?;
+    let faces_end = face_start
+        .checked_add(
+            usize::try_from(t)
+                .map_err(|_| bad())?
+                .checked_mul(2)
+                .ok_or_else(bad)?,
+        )
+        .ok_or_else(bad)?;
+    if !zero(indices_end, face_start) || !zero(faces_end, bytes.len()) {
+        return Err(bad());
     }
     Ok((v, t))
 }
@@ -210,6 +251,73 @@ mod tests {
         let first_face = 32 + 24 * 8 + 144;
         b[first_face] = 6;
         assert_eq!(code(&b), ViewCode::BlobInvalid, "face index out of table");
+    }
+
+    /// One triangle on three vertices: positions 72 bytes, indices 12 + 4 padding,
+    /// face indices 2 + 6 padding, 128 bytes in total.
+    fn tiny_blob() -> Vec<u8> {
+        let mut b = vec![0u8; 128];
+        b[..8].copy_from_slice(b"BCMESH01");
+        put(&mut b, 8, 1);
+        put(&mut b, 12, 3);
+        put(&mut b, 16, 1);
+        put(&mut b, 20, 1);
+        for (i, c) in [0.0f64, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]
+            .iter()
+            .enumerate()
+        {
+            b[32 + 8 * i..40 + 8 * i].copy_from_slice(&c.to_le_bytes());
+        }
+        put(&mut b, 104, 0);
+        put(&mut b, 108, 1);
+        put(&mut b, 112, 2);
+        b
+    }
+
+    #[test]
+    fn rejects_forbidden_coordinates() {
+        // F06 section 6: non-finite and negative-zero coordinates are GEO_BLOB_INVALID.
+        assert_eq!(inspect_blob(&tiny_blob()), Ok((3, 1)));
+        for (name, value) in [
+            ("nan", f64::NAN),
+            ("inf", f64::INFINITY),
+            ("-inf", f64::NEG_INFINITY),
+            ("-0.0", -0.0),
+        ] {
+            for coordinate in [0usize, 4, 8] {
+                let mut b = tiny_blob();
+                let at = 32 + 8 * coordinate;
+                b[at..at + 8].copy_from_slice(&value.to_le_bytes());
+                assert_eq!(code(&b), ViewCode::BlobInvalid, "{name} at {coordinate}");
+                // A matching digest does not rescue it.
+                let digest = Sha256::digest(&b).unwrap();
+                assert_eq!(
+                    MeshEntry::from_blob(&b, &digest).unwrap_err().code(),
+                    ViewCode::BlobInvalid
+                );
+            }
+        }
+        let mut b = plate_blob();
+        b[32..40].copy_from_slice(&f64::NAN.to_le_bytes());
+        assert_eq!(code(&b), ViewCode::BlobInvalid);
+        let mut b = tiny_blob();
+        b[32..40].copy_from_slice(&1.0e300f64.to_le_bytes());
+        assert_eq!(inspect_blob(&b), Ok((3, 1)), "large finite values are fine");
+    }
+
+    #[test]
+    fn rejects_nonzero_padding_in_both_sections() {
+        // Indices end at 116 and the section ends at 120; faces end at 122 and the section at 128.
+        for offset in [116, 119, 122, 127] {
+            let mut b = tiny_blob();
+            b[offset] = 1;
+            assert_eq!(code(&b), ViewCode::BlobInvalid, "padding byte {offset}");
+            let digest = Sha256::digest(&b).unwrap();
+            assert_eq!(
+                MeshEntry::from_blob(&b, &digest).unwrap_err().code(),
+                ViewCode::BlobInvalid
+            );
+        }
     }
 
     #[test]
