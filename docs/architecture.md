@@ -52,16 +52,13 @@ enforce them.
   [Wrapper requirements](design/layer-engine-wrapper-requirements-v0.1.md) cover foreign writes,
   numeric/input validation, deterministic saves and deltas. F08 dependency/placement review and
   package/file-level licence admission precede integration; this record adds no dependency.
-- Use the sibling PdfCraft UI stack: Rust workspace, edition 2024, Rust 1.95; an engine independent
-  of UI; egui/eframe 0.36 with egui_extras, rfd and egui_kittest for UI tests; craft-ui, craft-quit
-  and craft-print from storytold/craft-libs pinned by git revision. PdfCraft (storytold/pdfcraft,
-  MIT OR Apache-2.0) vendors patched winit, egui-wgpu and vello_common. These are
-  orchestrator-supplied public Cargo.toml facts, not independently verified here. The patches and
-  craft-libs licence remain unverified. Adopting craft-libs requires a licence audit and a deny.toml
-  exception for its unknown git source; neither is done. Record an actual revision before
-  integration. No dependency or vendored patch is added by this documentation. Keep frontend crates
-  above the engine, in F08's planned app; F08's audited domain allowlist stays empty until an
-  explicit reviewed table amendment.
+- Use the sibling PdfCraft UI stack only under the
+  [V01.0 audit](audits/ui-stack-audit-v0.1.md). That audit admits eframe/egui 0.36.2, wgpu 30.0.1,
+  the PdfCraft-patched winit 0.30.13, egui-wgpu 0.36.2 and vello_common 0.0.8, plus craft-ui and
+  craft-quit from storytold/craft-libs at rev `83bf4cb25c01ed46e7645c4172974239868aaf06`, all with
+  conditions. `default_fonts` and craft-print are rejected. No UI crate, vendored patch or PdfCraft
+  asset is added by that audit. Keep frontend crates above the engine, in F08's planned app; F08's
+  audited domain allowlist stays empty until an explicit reviewed table amendment.
 - Add steel, export and drawing modules when their contracts require them. F08 fixed the concrete
   module paths after F04–F07 and creates no empty crates: `kernel`, `engine` and `ui` are
   planned paths in the boundary document, created by their own tasks with their first real code.

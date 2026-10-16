@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! Experimental bounded, read-only USD adapter. See the crate README for containment limits.
+//! Experimental bounded USD adapter. See the crate README for containment limits.
 
+pub mod authored;
 mod backend;
 mod preflight;
 
@@ -202,6 +203,7 @@ pub enum Profile {
 }
 
 /// Complete request. Host authorization is a prerequisite, never inferred from bytes.
+#[derive(Clone)]
 pub struct OpenRequest {
     /// Complete workspace identity.
     pub identity: Identity,
@@ -318,8 +320,18 @@ pub struct Prim {
     pub active: bool,
     /// Static attributes, ordered by full name.
     pub properties: Vec<Property>,
+    /// Static composed relationships, ordered by full name; no UUID index is implied.
+    pub relationships: Vec<Relationship>,
     /// All contributing prim sites (strongest first).
     pub sources: Vec<Provenance>,
+}
+/// A composed relationship with ordered targets. Unknown names remain inert.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Relationship {
+    /// Full property name.
+    pub name: String,
+    /// Composed prim targets, without forwarding or implicit resolution.
+    pub targets: Vec<String>,
 }
 /// Declared capabilities, including limitations that must not be inferred as passes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -330,11 +342,11 @@ pub struct Capabilities {
     pub profile: Profile,
     /// Whether parser execution has hard allocation/deadline containment (currently false).
     pub parser_contained: bool,
-    /// Mutation support (currently false).
+    /// Whether this owner exposes the separate isolated authoring API.
     pub mutations: bool,
     /// External references in USDA are supported; binary reference encodings are unavailable.
     pub usda_references: bool,
-    /// Relationship delivery is unavailable in this slice; it fails rather than omitting targets.
+    /// Static composed relationships are delivered, including inert unknown names.
     pub relationships: bool,
 }
 /// Opaque in-process incarnation handle; cannot be manufactured or serialized as F05 wire tokens.
@@ -422,6 +434,10 @@ impl Reader {
         control: &Control,
     ) -> Result<Opened, Diagnostic> {
         control.check()?;
+        Ok(self.install_checked(candidate))
+    }
+    // The caller has completed validation and its last cancellation/decision check.
+    fn install_checked(&mut self, candidate: backend::Candidate) -> Opened {
         let context = Context {
             marker: Arc::new(()),
             identity: candidate.identity,
@@ -434,7 +450,7 @@ impl Reader {
                 parser_contained: false,
                 mutations: false,
                 usda_references: true,
-                relationships: false,
+                relationships: true,
             },
             budgets: candidate.budgets,
             meters_per_unit: candidate.meters_per_unit,
@@ -448,7 +464,7 @@ impl Reader {
             prims: candidate.prims,
             budgets: candidate.budgets,
         });
-        Ok(result)
+        result
     }
     fn pinned(&self, context: &Context) -> Result<&Installed, Diagnostic> {
         self.live

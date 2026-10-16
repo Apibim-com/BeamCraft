@@ -66,7 +66,7 @@ Dependencies are checked in `[dependencies]`,
 | beamcraft-geom | crates/geom | domain | 0 | - | now | G01 |
 | beamcraft-model | crates/model | domain | 1 | beamcraft-geom | now | P01 |
 | beamcraft-protocol | crates/protocol | native | 2 | beamcraft-model | now | U01 |
-| beamcraft-layer-engine | crates/layer-engine | host | 2 | beamcraft-model | now | U01; topology decided 2026-10-16: separate process |
+| beamcraft-layer-engine | crates/layer-engine | host | 2 | beamcraft-model | now | U01/U02; separate process, owner decision 2026-10-16 |
 | beamcraft-kernel | crates/kernel | domain | 2 | beamcraft-geom, beamcraft-model | now | G02 |
 | beamcraft-engine | crates/engine | native | 3 | beamcraft-geom, beamcraft-model, beamcraft-kernel | planned | P01 |
 | beamcraft-host | crates/host | host | 4 | beamcraft-model, beamcraft-protocol, beamcraft-engine | now | U05 |
@@ -120,7 +120,7 @@ by the named task with real code. Allowed dependencies are those of the owning r
 | Worker supervision, pipes, deadlines, restart limits, diagnostic drain | F05 s.2, 8 | `beamcraft_host::worker` | planned, U01 |
 | Immutable byte storage, publish-if-absent and verified retrieval | F04 s.2, U05 | `beamcraft_host::storage` | **now**, U05; root publication and personal workspace remain planned, U06-U07 |
 | Durable outcome ledger and recovery | F05 s.7, 8 | `beamcraft_host::ledger` | planned, U07 |
-| Rust USD read wrapper (U01; no host edge; topology decided 2026-10-16: separate process under F05, executable placement still needs F08 review) | F11 s.9, LEW-01/02/03/04/07 | `beamcraft_layer_engine` | experimental native read slice, U01 |
+| Rust USD read wrapper (no host edge; separate process, owner decision 2026-10-16; process containment still requires implementation) | F11 s.9, LEW-01/02/03/04/07 | `beamcraft_layer_engine` | experimental native read slice, U01 |
 | USD worker (thin Python/pxr) | F05 s.1 | `workers/usd/`, not a Cargo package | planned, U01 |
 | CLI | AGENTS s.3, F06 s.9 | `apps/beamcraft-cli` | **now** (`--version` only) |
 | Native UI and viewport | F06 s.9, V-tasks | `apps/beamcraft-ui` | planned, V01 |
