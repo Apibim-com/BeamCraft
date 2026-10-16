@@ -3,13 +3,13 @@
 # Third-party copyleft (GPL, AGPL, LGPL) is never linked.
 # Copyleft tools may run only as external oracle processes. See AGENTS.md.
 # Official OpenUSD TOST use has a scoped exception in AGENTS.md section 1.2.
-# No OpenUSD package is in this Cargo graph. Do not allow TOST globally;
-# add a verified package/version exception only if one enters the graph.
+# U01 adds exactly openusd 0.8.0 to this Cargo graph. TOST is not allowed globally;
+# its exact package exception and file-level provenance are recorded below and in ATTRIBUTION.md.
 # The `openusd` crate 0.8.x declares MIT, but its file src/usd/core_schemas.rs is covered by
 # TOST-1.0 (owner decision 2026-10-15, AGENTS.md section 1.2). cargo-deny reads only the manifest
-# and cannot see that per-file licence. If the `openusd` package enters the Cargo graph of this
-# workspace, a package/version exception and the TOST file-level notice review recorded in
-# ATTRIBUTION.md are required first. The N01 spike is outside the workspace graph.
+# and cannot see that per-file licence. U01 records the exact package/version exception and
+# preserves the existing TOST licence and notice; full redistribution notice review remains open.
+# The N01 spike remains outside the workspace graph.
 
 [graph]
 all-features = true
@@ -62,6 +62,19 @@ allow = ["MPL-2.0"]
 name = "beamcraft-cli"
 version = "0.0.1"
 allow = ["MPL-2.0"]
+
+# U01 native adapter; exact per-package exceptions, no global allowlist change.
+[[licenses.exceptions]]
+name = "beamcraft-layer-engine"
+version = "0.0.1"
+allow = ["MPL-2.0"]
+
+# MIT manifest plus the exact core_schemas.rs TOST file admitted by AGENTS section 1.2.
+# File-level TOST provenance and retained licence/NOTICE are recorded in ATTRIBUTION.md.
+[[licenses.exceptions]]
+name = "openusd"
+version = "0.8.0"
+allow = ["MIT", "LicenseRef-TOST-1.0"]
 
 [bans]
 multiple-versions = "allow"

@@ -71,7 +71,7 @@ pub enum Violation {
         /// Manifest table that declares it.
         section: String,
     },
-    /// A domain crate depends on a host, app or tool.
+    /// A WASM-required domain crate depends on a native library, host, app or tool.
     DomainDependsOnNative {
         /// Domain package.
         from: String,
@@ -240,7 +240,7 @@ pub fn check_table(table: &ModuleTable) -> Vec<Violation> {
 
 fn kind_rules(from: &str, from_kind: Kind, to: &str, to_kind: Kind) -> Vec<Violation> {
     let mut out = Vec::new();
-    if from_kind == Kind::Domain && to_kind != Kind::Domain {
+    if from_kind.requires_wasm() && !to_kind.requires_wasm() {
         out.push(Violation::DomainDependsOnNative {
             from: from.to_owned(),
             to: to.to_owned(),
@@ -599,7 +599,7 @@ pub fn check_workspace(workspace: &Workspace, table: &ModuleTable) -> Vec<Violat
                     to: dep.name.clone(),
                     section: dep.section.clone(),
                 }),
-                None if row.kind == Kind::Domain && !table.third_party.contains(&dep.name) => {
+                None if row.kind.requires_wasm() && !table.third_party.contains(&dep.name) => {
                     out.push(Violation::ForbiddenThirdParty {
                         package: package.name.clone(),
                         dependency: dep.name.clone(),
@@ -609,7 +609,7 @@ pub fn check_workspace(workspace: &Workspace, table: &ModuleTable) -> Vec<Violat
                 None => {}
             }
         }
-        if row.kind == Kind::Domain {
+        if row.kind.requires_wasm() {
             for source in &package.sources {
                 for api in forbidden_apis(&source.text) {
                     out.push(Violation::ForbiddenApi {
@@ -887,6 +887,78 @@ mod tests {
             from: "model".into(),
             to: "host".into()
         }));
+    }
+
+    #[test]
+    fn wasm_required_crates_reject_native_only_dependencies_in_every_manifest_section() {
+        let mut table = table();
+        table.rows.push(row(
+            "native",
+            "crates/native",
+            Kind::Native,
+            0,
+            &[],
+            Status::Now,
+        ));
+        table
+            .rows
+            .iter_mut()
+            .find(|r| r.package == "model")
+            .unwrap()
+            .allowed
+            .push("native".into());
+        let expected = Violation::DomainDependsOnNative {
+            from: "model".into(),
+            to: "native".into(),
+        };
+        assert_eq!(
+            check_table(&table).as_slice(),
+            std::slice::from_ref(&expected)
+        );
+        for section in [
+            "dependencies",
+            "dev-dependencies",
+            "build-dependencies",
+            "target.'cfg(windows)'.dependencies",
+        ] {
+            let mut ws = good();
+            ws.packages.push(pkg("native", "crates/native", &[]));
+            pkg_mut(&mut ws, "model").dependencies.push(Dependency {
+                name: "native".into(),
+                section: section.into(),
+            });
+            // One violation comes from the table itself, one from the manifest edge.
+            let matching = check_workspace(&ws, &table)
+                .iter()
+                .filter(|v| **v == expected)
+                .count();
+            assert_eq!(matching, 2, "{section}");
+        }
+    }
+
+    #[test]
+    fn desktop_crates_need_not_have_wasm_clean_source_or_dependencies() {
+        for kind in [Kind::Native, Kind::Host, Kind::App, Kind::Tool] {
+            let mut table = table();
+            table.rows.push(row(
+                "desktop",
+                "crates/desktop",
+                kind,
+                3,
+                &["model"],
+                Status::Now,
+            ));
+            let mut ws = good();
+            let mut desktop = pkg("desktop", "crates/desktop", &["model", "native-only-lib"]);
+            desktop.publish_false = true;
+            desktop.sources.push(Source {
+                path: "src/lib.rs".into(),
+                text: "use std::{fs, process, net, thread, env, os};".into(),
+            });
+            ws.packages.push(desktop);
+            assert_eq!(check_workspace(&ws, &table), [], "{kind:?}");
+            assert!(!table.portable().contains(&"desktop"));
+        }
     }
 
     #[test]

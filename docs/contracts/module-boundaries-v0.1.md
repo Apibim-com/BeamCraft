@@ -3,6 +3,12 @@
 Status: **draft 0.1.0, not frozen; K0 not passed**. Date: 2026-10-15.
 Base: `29d962e790ffd21ecd9a45143f052d4b4d53d3f7` (stacked on the F06 draft).
 
+**WS amendment, owner decision of 2026-10-16:** BeamCraft is desktop-only on Windows, Linux
+and macOS. Only `beamcraft-geom`, `beamcraft-model` and `beamcraft-kernel` retain WASM
+compatibility as a layering discipline. Every other crate, including protocol, USD layer engine,
+host, IO, CLI, UI and later crates, is desktop-native with no WASM requirement. This amendment
+changes F08 portability policy only; frozen F04/F06 contracts are not edited.
+
 This document fixes where the code of each contract area lives, which way dependencies point,
 which crates exist now and which are created later by their own tasks. It consumes the
 [F04 model and command contract](model-and-commands-v0.1.md) (freeze candidate), the
@@ -21,10 +27,15 @@ crates from it. Change the table and the manifests together.
    with a strictly lower layer number, and only on those listed in its row. A new edge needs a
    reviewed change to the table.
 2. **Kinds.**
-   - `domain`: pure and portable. Builds for `wasm32-unknown-unknown`. No UI, operating-system,
+   - `domain`: the three pure crates geom, model and kernel; builds for
+     `wasm32-unknown-unknown`. No UI, operating-system,
      filesystem, process, network or async-runtime dependency, and no use of `std::fs`,
      `std::process`, `std::net`, `std::thread`, `std::env` or `std::os` outside test code. May
      depend only on other `domain` crates and on the third-party crates of section 3 (none today).
+   - `native`: desktop-native library (protocol, USD layer engine, IO and later crates). No
+     WASM requirement or WASM-clean dependency/source restriction. Internal edges and lower
+     layers still follow the table; third-party dependencies still need the `AGENTS.md` section 5
+     audit. A domain crate may never depend on a native crate.
    - `host`: native engine host. Owns process supervision, pipes, deadlines, filesystem access,
      storage, the outcome ledger and the worker client. Depends on domain crates, never the
      reverse. Third-party dependencies need the audit that `AGENTS.md` section 5 requires.
@@ -44,7 +55,9 @@ crates from it. Change the table and the manifests together.
 
 Columns: package; path; kind; layer; allowed internal dependencies (`-` for none); status
 (`now` = a workspace member today, `planned` = created by its own task); the task that creates a
-planned crate or owns a present one. Dependencies are checked in `[dependencies]`,
+planned crate or owns a present one. Kind `domain` is reserved for the three WASM-required
+crates; all future crates use a desktop-native kind (`native`, `host`, `app` or `tool`).
+Dependencies are checked in `[dependencies]`,
 `[dev-dependencies]`, `[build-dependencies]` and target-specific tables alike.
 
 <!-- module-table:begin -->
@@ -52,9 +65,10 @@ planned crate or owns a present one. Dependencies are checked in `[dependencies]
 |---------|------|------|-------|----------------------|--------|------------|
 | beamcraft-geom | crates/geom | domain | 0 | - | now | G01 |
 | beamcraft-model | crates/model | domain | 1 | beamcraft-geom | now | P01 |
-| beamcraft-protocol | crates/protocol | domain | 2 | beamcraft-model | now | U01 |
+| beamcraft-protocol | crates/protocol | native | 2 | beamcraft-model | now | U01 |
+| beamcraft-layer-engine | crates/layer-engine | host | 2 | beamcraft-model | now | U01 amendment proposed; pending owner review |
 | beamcraft-kernel | crates/kernel | domain | 2 | beamcraft-geom, beamcraft-model | now | G02 |
-| beamcraft-engine | crates/engine | domain | 3 | beamcraft-geom, beamcraft-model, beamcraft-kernel | planned | P01 |
+| beamcraft-engine | crates/engine | native | 3 | beamcraft-geom, beamcraft-model, beamcraft-kernel | planned | P01 |
 | beamcraft-host | crates/host | host | 4 | beamcraft-model, beamcraft-protocol, beamcraft-engine | now | U05 |
 | beamcraft-cli | apps/beamcraft-cli | app | 5 | beamcraft-model, beamcraft-engine, beamcraft-host | now | U04 |
 | beamcraft-ui | apps/beamcraft-ui | app | 5 | beamcraft-model, beamcraft-engine, beamcraft-host | planned | V01 |
@@ -106,6 +120,7 @@ by the named task with real code. Allowed dependencies are those of the owning r
 | Worker supervision, pipes, deadlines, restart limits, diagnostic drain | F05 s.2, 8 | `beamcraft_host::worker` | planned, U01 |
 | Immutable byte storage, publish-if-absent and verified retrieval | F04 s.2, U05 | `beamcraft_host::storage` | **now**, U05; root publication and personal workspace remain planned, U06-U07 |
 | Durable outcome ledger and recovery | F05 s.7, 8 | `beamcraft_host::ledger` | planned, U07 |
+| Rust USD read wrapper (U01 amendment proposed; placement/containment pending owner review, no host edge; separate-process execution remains a proposal) | F11 s.9, LEW-01/02/03/04/07 | `beamcraft_layer_engine` | experimental native read slice, U01 |
 | USD worker (thin Python/pxr) | F05 s.1 | `workers/usd/`, not a Cargo package | planned, U01 |
 | CLI | AGENTS s.3, F06 s.9 | `apps/beamcraft-cli` | **now** (`--version` only) |
 | Native UI and viewport | F06 s.9, V-tasks | `apps/beamcraft-ui` | planned, V01 |
@@ -116,7 +131,7 @@ streaming digest comparison can now use `model::digest`; protocol session integr
 
 ## 5. Crates created now, and why
 
-- **`beamcraft-protocol` (`crates/protocol`, domain).** Created because it holds real, tested code
+- **`beamcraft-protocol` (`crates/protocol`, native library).** Created because it holds real, tested code
   taken directly from F05 sections 3, 4, 9 and 10: the 16-byte header and 44-byte binary prefix
   with bounded encode and decode, the 14 negotiable limits with their maxima and the
   per-field minimum, a bundle size budget and the 16 transport codes with their F04 mapping. It
@@ -160,7 +175,7 @@ unreachable stub is added.
    dependency is checked by its real package name: `package = "..."` is resolved whether written
    inline, dotted (`x.package = "p"`, `x.version = "1"`) or in a sub-table, and an inherited
    `workspace = true` entry is resolved against the root `[workspace.dependencies]`;
-4. a `domain` crate depends on no `host`, `app` or `tool` crate, and on no third-party crate that
+4. a `domain` crate depends on no `native`, `host`, `app` or `tool` crate, and on no third-party crate that
    is not in section 3;
 5. no package depends on an `app` or a `tool`, and `tool` packages set `publish = false`;
 6. source of a `domain` crate does not mention `std::fs`, `std::process`, `std::net`,
@@ -170,7 +185,7 @@ unreachable stub is added.
    whole file only at file level before any item; inside `mod tests { ... }` it exempts only that
    module. Code placed after a test module is still scanned;
 7. every CI job that mentions `wasm32-unknown-unknown` calls
-   `cargo run -p beamcraft-boundaries -- portable` (all `now` `domain` rows) and selects no
+   `cargo run -p beamcraft-boundaries -- portable` (the three `now` `domain` rows) and selects no
    package by hand: continuation lines are joined, and any `-p`, `-pNAME` or `--package`
    argument other than the tool's own `cargo run -p beamcraft-boundaries` is rejected, whether
    in a variable assignment, a continuation or a separate run line;
@@ -185,14 +200,17 @@ keeps its key as the name (Cargo itself rejects such a manifest). The wasm check
 cover what a lexical scan cannot.
 
 The failing paths are proved by tests on an in-memory model (a synthetic manifest set), so no
-broken manifest is committed. The wasm check is therefore as strict as before: today it lists
-`geom` and `model`; it now also covers `protocol`, and every future `domain` crate joins it
-automatically, with no second list to forget.
+broken manifest is committed. Under the WS amendment, the WASM check lists exactly
+`beamcraft-geom`, `beamcraft-model` and `beamcraft-kernel`. Tests prove that a domain crate
+cannot acquire a native-only dependency and that desktop-native crates may use native APIs and
+audited dependencies without joining the WASM list. Real-workspace and CLI tests assert the
+exact list so an accidental scope expansion fails.
 
 ## 7. Amendments proposed to other contracts
 
-None is required. Two clarifications are proposed for the owners of the named documents, as no
-shared contract is edited here:
+WS proposes a separate F06 section 4 clarification: target conformance, including `wasm32`,
+applies to geom/model/kernel only; engine/query/viewport consumers are desktop-native. The
+frozen F06 text is unchanged. Two earlier clarifications remain proposed for F05:
 
 - F05 section 11, row F08: the "canonical-byte comparison" obligation is placed at
   `beamcraft_model::canonical` (pure) with the host as its only caller; it is not implemented yet.

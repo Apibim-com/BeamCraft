@@ -3,7 +3,7 @@
 <p align="center">
   <b>An open-source, clean-room structural steel detailing workbench, written in Rust.</b><br>
   Model, detail and document steel structures in a fast, native app, built from public standards.<br>
-  Windows · Linux · macOS · the web
+  Windows · Linux · macOS
 </p>
 
 <p align="center">
@@ -28,7 +28,7 @@
 > [!NOTE]
 > **BeamCraft is pre-alpha.** There is no usable application yet; this repository currently holds
 > the project scaffold, the rules and the CI that the first crates are built on.
-> Windows and Linux are the initial CI targets. macOS and browser hosting remain development goals.
+> Windows and Linux are the initial CI targets. macOS remains a desktop development goal.
 
 ## Why BeamCraft
 

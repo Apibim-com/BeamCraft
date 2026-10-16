@@ -1,6 +1,7 @@
 # Architecture
 
-BeamCraft is a Cargo workspace with an original Rust engineering and geometry core.
+BeamCraft is a desktop-only Cargo workspace for Windows, Linux and macOS with an original Rust
+engineering and geometry core.
 USD is the planned authoritative project state. By the owner decision of 2026-10-16, the
 pure-Rust `openusd` crate (0.8.x) is the primary layer engine behind a thin BeamCraft wrapper,
 with the aim of no Python/C++ in the product path. The official SDK worker remains only an
@@ -38,7 +39,8 @@ enforce them.
 
 - Extend the existing `geom` and `model` crates. Do not create duplicate geometry or domain cores.
 - Keep domain mathematics, BIM identities, commands and invariants independent of UI, filesystem,
-  scheduling runtimes and the C++ ABI. Pure domain crates must build for `wasm32-unknown-unknown`.
+  scheduling runtimes and the C++ ABI. Only `beamcraft-geom`, `beamcraft-model` and
+  `beamcraft-kernel` stay WASM-compatible as a layering discipline.
 - The pure `protocol` crate holds the F05 wire rules (framing, limits, transport codes). Process
   supervision, pipes and deadlines stay in the native host.
 - Place filesystem access, process supervision, storage and coordination in a native engine host.
@@ -173,9 +175,10 @@ Owner wish of 2026-10-16, to be planned with A03/A04 (cuts, holes), U02 (USD aut
 
 - Dependencies point one way, from higher-level crates down to `model` and `geom`. No back-edges.
   The allowed edges are the module table of the boundary document; `cargo test --workspace` checks
-  the manifests against it. Domain crates (`kind = domain`) have no UI, OS, filesystem, process or
-  async-runtime dependency and build for `wasm32-unknown-unknown`; CI derives that crate list from
-  the same table.
+  the manifests against it. The three pure crates (`kind = domain`) have no UI, OS, filesystem,
+  process or async-runtime dependency; CI derives their WASM check list from the same table.
+  Protocol, USD layer engine, host, IO, CLI, UI and all later crates are desktop-native and
+  have no WASM requirement (owner decision of 2026-10-16, WS amendment to F08).
 - Units: millimetres, radians internally, right-handed, Z up. Convert only at the IO/UI edge.
 - Every feature is reachable headlessly: engine API → CLI command → end-to-end test.
 - Input is untrusted; see `AGENTS.md` §4.

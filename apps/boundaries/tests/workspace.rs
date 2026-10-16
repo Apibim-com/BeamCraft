@@ -22,10 +22,13 @@ fn the_real_workspace_obeys_the_module_table() {
 #[test]
 fn the_portable_list_is_derived_from_the_table() {
     let args = portable_args(&root()).unwrap();
-    for name in ["beamcraft-geom", "beamcraft-model", "beamcraft-protocol"] {
-        assert!(args.contains(&format!("-p {name}")), "{args}");
-    }
+    assert_eq!(
+        args,
+        "-p beamcraft-geom -p beamcraft-model -p beamcraft-kernel"
+    );
     for name in [
+        "beamcraft-protocol",
+        "beamcraft-engine",
         "beamcraft-host",
         "beamcraft-cli",
         "beamcraft-fixtures",
@@ -66,7 +69,7 @@ fn the_binary_reports_success_and_the_portable_list() {
     assert!(portable.status.success());
     let text = String::from_utf8_lossy(&portable.stdout);
     assert!(
-        text.starts_with("-p beamcraft-geom -p beamcraft-model"),
+        text.trim() == "-p beamcraft-geom -p beamcraft-model -p beamcraft-kernel",
         "{text}"
     );
 }
