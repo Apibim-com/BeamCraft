@@ -688,3 +688,27 @@ fn the_face_table_gate_rejects_every_malformed_table() {
     .unwrap_err();
     assert_eq!(e.defect, OpDefect::FaceTableSize);
 }
+
+#[test]
+fn a_cap_edge_beyond_the_g05_per_edge_cap_is_refused_with_the_profile_diagnostic() {
+    // 1,900,000 mm long: the body is admissible, but its section at z = 1 has an edge above
+    // the 1,000,000 mm cap that G05 enforces on every contour edge.
+    let body = cuboid([0.0; 3], [1.9e6, 10.0, 10.0]);
+    let e = plane_cut(
+        &body,
+        &CutPlane::new([0.0, 0.0, 1.0], [0.0, 0.0, 1.0]),
+        Keep::Negative,
+        0,
+    )
+    .unwrap_err();
+    assert_eq!((e.code, e.field), (OpCode::AboveLimit, OpField::Section));
+    assert!(e.profile.is_some());
+    // A section across the short direction is fine.
+    let ok = plane_cut(
+        &body,
+        &CutPlane::new([7.0e5, 0.0, 0.0], [1.0, 0.0, 0.0]),
+        Keep::Negative,
+        0,
+    );
+    assert!(ok.is_ok());
+}

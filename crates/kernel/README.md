@@ -499,6 +499,7 @@ neither was run).
 | Hole inside another hole, or enclosing one | `GEO_UNSUPPORTED_CONTOUR` |
 | Cutter not through, flush with a face (tangent), margin below the floor, empty range | `cutter.not_through`, `cutter.tangent`, `cutter.margin`, `cutter.range` |
 | Triangle, loop, cap-point or exact-predicate budget exceeded | `GEO_ABOVE_LIMIT` (`budget.*`) or `GEO_NUMERIC_UNCERTAIN` (`budget.exact_predicates`) |
+| A cap or section edge longer than the G05 per-edge cap of 1,000,000 mm, or a coordinate beyond 1e9 mm | `GEO_ABOVE_LIMIT` with the G05 diagnostic attached (G05 reports every failure of a stage; the operation attaches the first) |
 | Candidate not certified (degenerate sliver, overlap, uncertain, several shells) | `result.degenerate`, `result.overlapping`, `result.uncertain`, `result.shells`; any other failed self-check `GEO_SELF_CHECK_FAILED` |
 | Cancellation | `GEO_CANCELLED`, no result; polls `Validation`, `Build`, `Checks` (then the G06 polls), `Quantities`; none after sealing |
 
