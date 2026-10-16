@@ -76,8 +76,10 @@ impl Author {
             ))
         }
     }
-    /// Certifies that lifecycle writes do not collide with reads of the target or of elements
-    /// that depend on it. Only a complete, live index can certify.
+    /// Certifies that lifecycle writes (delete, deactivate, create) do not collide with reads of
+    /// the written ID, even when absent, or of elements that depend on it. `writes` and `reads`
+    /// must come from different operations: one operation's own reads of an ID it writes would
+    /// collide. Only a complete, live index can certify.
     pub fn certify_dependent_reads(
         &self,
         index: &ElementIndex,

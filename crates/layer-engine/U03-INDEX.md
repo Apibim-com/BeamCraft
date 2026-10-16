@@ -36,10 +36,20 @@ Error mapping: `INVALID_ID` (DV-BASE-001), `DUPLICATE_ID` (DV-BASE-002), `INVALI
   (section 5) defines typed element-to-element records but no USD mapping, so the index treats
   every composed relationship generically, including unknown names, and applies no endpoint-kind,
   cardinality, cycle or role rules (DV-REL-002..007, 013). Those stay with F10/the owning modules.
-- `bim:lifecycle` absent means `active`; present and not `active`/`deactivated` is an error for
-  every element, owned or foreign (identity-level fail-closed). Owned labels are checked against
-  DV-BASE-003 (1 to 256 bytes, no control characters); foreign labels are inert.
+- `bim:lifecycle` absent means `active`; any present declaration (including one without a value
+  or of another type) that is not `active`/`deactivated` is an error for every element, owned or
+  foreign (identity-level fail-closed). Owned labels use the one shared character rule of the
+  authoring validator (DV-BASE-003: 1 to 256 bytes, no U+0000-001F or U+007F; U+0080-009F are
+  allowed), so any label authoring accepts is indexable; foreign labels are inert.
 - Ownership of an element includes every contributing site, its ancestors and its descendants.
+- A relationship to a descendant prim (for example `<element>/Geometry`) is an incoming
+  dependency of the containing element (`Link::target_owner`); `copy_plan` also refuses
+  relationships carried by descendant prims.
+- `certify_dependent_reads` compares one operation's writes against *another* operation's
+  reads; a lifecycle write of an ID collides with a read of that ID even when it is absent.
+- `IndexBuilder::push` charges bytes, values, sources, relationships and targets against the
+  stage budgets before copying anything from a caller-held page and retains only the index
+  fields; other property values are never copied or traversed.
 - `Page` gained a private start offset so gaps and replays are detectable; no public field changed.
 
 ## Not implemented / limits
@@ -62,5 +72,5 @@ Error mapping: `INVALID_ID` (DV-BASE-001), `DUPLICATE_ID` (DV-BASE-002), `INVALI
 ## Verification
 
 `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings` and
-`cargo test --workspace` pass: 269 workspace tests, 48 in layer-engine (17 new in
-`tests/index.rs`).
+`cargo test --workspace` pass: 276 workspace tests, 55 in layer-engine (24 in
+`tests/index.rs`, of which 7 are regressions for the review of this PR).

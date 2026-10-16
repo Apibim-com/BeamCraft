@@ -10,6 +10,7 @@
 //! never becomes element identity; the full UUIDv7 is the key.
 
 use crate::authored::{Footprint, Group};
+use crate::preflight::charge;
 use crate::*;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -198,6 +199,9 @@ pub struct Link {
     pub ordinal: usize,
     /// Resolved target.
     pub target: LinkTarget,
+    /// The indexed element that is, or contains, the target prim. A link to a descendant such as
+    /// `<element>/Geometry` is a dependency of that element, so it is indexed under it.
+    pub target_owner: Option<ElementId>,
 }
 
 /// Plain, comparable description of what an index covers. Carries no authority by itself.
@@ -331,8 +335,8 @@ impl ElementIndex {
             .map(|v| v.iter().filter_map(|i| self.links.get(*i)).collect())
             .unwrap_or_default()
     }
-    /// Every relationship entry anywhere in the pinned view that targets the element.
-    /// Incomplete evidence is `DEPENDENCY_UNAVAILABLE`, never "no links".
+    /// Every relationship entry anywhere in the pinned view that targets the element or any of
+    /// its descendant prims. Incomplete evidence is `DEPENDENCY_UNAVAILABLE`, never "no links".
     pub fn incoming(&self, id: &ElementId) -> Result<Vec<&Link>, Diagnostic> {
         self.complete()?;
         self.element(id)?;
@@ -368,8 +372,9 @@ impl ElementIndex {
             .links
             .iter()
             .filter(|l| {
-                matches!(&l.target, LinkTarget::Element(t)
-                    if self.elements.get(t).is_some_and(|e| e.lifecycle == Lifecycle::Deactivated))
+                l.target_owner
+                    .and_then(|t| self.elements.get(&t))
+                    .is_some_and(|e| e.lifecycle == Lifecycle::Deactivated)
             })
             .collect())
     }
@@ -402,9 +407,16 @@ impl ElementIndex {
         for link in self
             .links
             .iter()
-            .filter(|l| l.owner.as_ref() == Some(source) && l.source_path == entry.path)
+            .filter(|l| l.owner.as_ref() == Some(source))
         {
             let target = match &link.target {
+                // Links carried by a descendant prim cannot be represented by the plan yet.
+                _ if link.source_path != entry.path => {
+                    return Err(fail(
+                        ErrorCode::DependencyConflict,
+                        "descendant relationship is outside the supported copy set",
+                    ));
+                }
                 // Self links are internal state of the element and follow the copy.
                 LinkTarget::Element(t) if t == source => LinkTarget::Element(*fresh),
                 // Immutable definitions stay shared.
@@ -465,6 +477,8 @@ pub struct IndexBuilder {
     prims: Vec<Prim>,
     paths: BTreeSet<String>,
     links: usize,
+    bytes: usize,
+    scanned: usize,
     complete: bool,
     failed: bool,
 }
@@ -485,6 +499,8 @@ impl IndexBuilder {
             prims: Vec::new(),
             paths: BTreeSet::new(),
             links: 0,
+            bytes: 0,
+            scanned: 0,
             complete: false,
             failed: false,
         })
@@ -556,28 +572,127 @@ impl IndexBuilder {
         }
         for prim in &page.items {
             control.check()?;
-            if prim.path.len() > MAX_PATH_BYTES {
-                return Err(limit());
-            }
-            if !self.paths.insert(prim.path.clone()) {
-                return Err(fail(
-                    ErrorCode::IntegrityError,
-                    "duplicate prim path in snapshot",
-                ));
-            }
-            for relationship in &prim.relationships {
-                if relationship.targets.len() > self.budgets.array_items {
-                    return Err(limit());
-                }
-                self.links = self
-                    .links
-                    .checked_add(relationship.targets.len())
-                    .filter(|n| *n <= MAX_LINKS)
-                    .ok_or_else(limit)?;
-            }
-            self.prims.push(prim.clone());
+            let projected = self.project(prim)?;
+            self.prims.push(projected);
         }
         Ok(())
+    }
+    /// Bounds and charges everything read from a caller-held prim before any of it is copied,
+    /// and retains only the fields the index uses. Ignored property values are neither copied
+    /// nor traversed, so no nesting depth or value size can reach the allocator or the stack.
+    fn project(&mut self, prim: &Prim) -> Result<Prim, Diagnostic> {
+        const USED: [&str; 5] = [
+            "bim:id",
+            "bim:name",
+            "bim:elementKind",
+            "bim:lifecycle",
+            "bim:contentDigest",
+        ];
+        let b = self.budgets;
+        let long = |s: &str| s.len() > MAX_PATH_BYTES;
+        if long(&prim.path) || prim.element_id.as_deref().is_some_and(long) {
+            return Err(limit());
+        }
+        let id_bytes = prim.element_id.as_deref().map_or(0, str::len);
+        charge(
+            &mut self.bytes,
+            prim.path.len().saturating_add(id_bytes).saturating_add(256),
+            b.snapshot_bytes,
+        )?;
+        if !self.paths.insert(prim.path.clone()) {
+            return Err(fail(
+                ErrorCode::IntegrityError,
+                "duplicate prim path in snapshot",
+            ));
+        }
+        charge(&mut self.scanned, prim.properties.len(), b.values)?;
+        let mut properties = Vec::new();
+        for p in prim
+            .properties
+            .iter()
+            .filter(|p| USED.contains(&p.name.as_str()))
+        {
+            if long(&p.name) || long(&p.type_name) {
+                return Err(limit());
+            }
+            // The index reads only text and the block/absent distinction; anything else becomes
+            // an inert placeholder that no rule accepts.
+            let value = match &p.value {
+                None => None,
+                Some(Value::Block) => Some(Value::Block),
+                Some(Value::Text(s)) if !long(s) => Some(Value::Text(s.clone())),
+                Some(_) => Some(Value::Dictionary(BTreeMap::new())),
+            };
+            let text_bytes = match &value {
+                Some(Value::Text(s)) => s.len(),
+                _ => 0,
+            };
+            charge(
+                &mut self.bytes,
+                p.name
+                    .len()
+                    .saturating_add(p.type_name.len())
+                    .saturating_add(text_bytes)
+                    .saturating_add(128),
+                b.snapshot_bytes,
+            )?;
+            properties.push(Property {
+                name: p.name.clone(),
+                type_name: p.type_name.clone(),
+                value,
+            });
+        }
+        if prim.sources.len() > b.values || prim.relationships.len() > b.values {
+            return Err(limit());
+        }
+        for source in &prim.sources {
+            if long(&source.layer) || long(&source.path) {
+                return Err(limit());
+            }
+            charge(
+                &mut self.bytes,
+                source
+                    .layer
+                    .len()
+                    .saturating_add(source.path.len())
+                    .saturating_add(128),
+                b.snapshot_bytes,
+            )?;
+        }
+        for relationship in &prim.relationships {
+            if long(&relationship.name) || relationship.targets.len() > b.array_items {
+                return Err(limit());
+            }
+            charge(
+                &mut self.bytes,
+                relationship.name.len().saturating_add(128),
+                b.snapshot_bytes,
+            )?;
+            self.links = self
+                .links
+                .checked_add(relationship.targets.len())
+                .filter(|n| *n <= MAX_LINKS)
+                .ok_or_else(limit)?;
+            for target in &relationship.targets {
+                if long(target) {
+                    return Err(limit());
+                }
+                charge(
+                    &mut self.bytes,
+                    target.len().saturating_add(32),
+                    b.snapshot_bytes,
+                )?;
+            }
+        }
+        Ok(Prim {
+            path: prim.path.clone(),
+            element_id: prim.element_id.clone(),
+            type_name: None,
+            active: prim.active,
+            properties,
+            relationships: prim.relationships.clone(),
+            sources: prim.sources.clone(),
+        })
     }
     /// Finishes a complete index; a missing, gapped or short delivery is `DEPENDENCY_UNAVAILABLE`.
     pub fn finish(self, control: &Control) -> Result<ElementIndex, Diagnostic> {
@@ -693,6 +808,13 @@ impl IndexBuilder {
                         }
                         Err(error) => return Err(error),
                     };
+                    let target_owner = match &target {
+                        LinkTarget::Element(id) => Some(*id),
+                        LinkTarget::Prim(path) => {
+                            owner_of(path).filter(|id| elements.contains_key(id))
+                        }
+                        LinkTarget::Definition(_) | LinkTarget::Unresolved(_) => None,
+                    };
                     links.push(Link {
                         source_path: prim.path.clone(),
                         owner,
@@ -700,6 +822,7 @@ impl IndexBuilder {
                         name: relationship.name.clone(),
                         ordinal,
                         target,
+                        target_owner,
                     });
                 }
             }
@@ -709,10 +832,11 @@ impl IndexBuilder {
         });
         let mut incoming: BTreeMap<LinkTarget, Vec<usize>> = BTreeMap::new();
         for (position, link) in links.iter().enumerate() {
-            incoming
-                .entry(link.target.clone())
-                .or_default()
-                .push(position);
+            // A link to a descendant prim is a dependency of the element that contains it.
+            let key = link
+                .target_owner
+                .map_or_else(|| link.target.clone(), LinkTarget::Element);
+            incoming.entry(key).or_default().push(position);
         }
         let digest = structure_digest(
             completeness,
@@ -775,7 +899,8 @@ fn identity(prim: &Prim) -> Result<Option<ElementId>, Diagnostic> {
 }
 
 fn label_ok(label: &str) -> bool {
-    !label.is_empty() && label.len() <= MAX_LABEL_BYTES && !label.chars().any(|c| c.is_control())
+    // Same character rule as the authoring validator (DV-BASE-003).
+    !label.is_empty() && label.len() <= MAX_LABEL_BYTES && !label.chars().any(label_char_forbidden)
 }
 
 fn element_entry(
@@ -793,9 +918,9 @@ fn element_entry(
             _ => return Err(fail(ErrorCode::InvalidArgument, "invalid element label")),
         },
     };
+    // Only an absent property defaults to active; every present declaration must be valid.
     let lifecycle = match property(prim, "bim:lifecycle") {
         None => Lifecycle::Active,
-        Some(p) if p.value.is_none() => Lifecycle::Active,
         Some(p) => match (p.type_name.as_str(), text(p)) {
             ("token" | "string", Some("active")) => Lifecycle::Active,
             ("token" | "string", Some("deactivated")) => Lifecycle::Deactivated,
@@ -1038,12 +1163,13 @@ pub(crate) fn dependent_collision(
         let Some(id) = element.filter(|_| write.group == Group::Lifecycle) else {
             continue;
         };
-        // A new element has no dependents; an existing one must have complete evidence.
-        if !index.elements.contains_key(&id) {
-            continue;
+        // The written ID itself always collides with a read of it, even when it is absent (a
+        // read of a fresh ID's absence conflicts with creating it). Dependents exist only for an
+        // indexed element, where complete evidence is required.
+        let mut affected = BTreeSet::from([id]);
+        if index.elements.contains_key(&id) {
+            affected.extend(index.dependents(&id)?);
         }
-        let mut affected = index.dependents(&id)?;
-        affected.insert(id);
         if affected.iter().any(|e| read_elements.contains(e)) {
             return Err(fail(
                 ErrorCode::DependencyConflict,
