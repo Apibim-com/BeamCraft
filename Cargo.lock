@@ -25,7 +25,10 @@ version = "0.0.1"
 name = "beamcraft-cli"
 version = "0.0.1"
 dependencies = [
+ "beamcraft-host",
+ "beamcraft-layer-engine",
  "beamcraft-model",
+ "beamcraft-protocol",
 ]
 
 [[package]]
@@ -41,6 +44,7 @@ name = "beamcraft-host"
 version = "0.0.1"
 dependencies = [
  "beamcraft-model",
+ "beamcraft-protocol",
 ]
 
 [[package]]

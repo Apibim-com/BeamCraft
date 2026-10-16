@@ -12,8 +12,15 @@ authors.workspace = true
 name = "beamcraft"
 path = "src/main.rs"
 
+[[bin]]
+name = "beamcraft-usd-worker"
+path = "src/bin/beamcraft-usd-worker.rs"
+
 [dependencies]
 beamcraft-model.workspace = true
+beamcraft-host = { path = "../../crates/host" }
+beamcraft-protocol.workspace = true
+beamcraft-layer-engine = { path = "../../crates/layer-engine" }
 
 [lints]
 workspace = true

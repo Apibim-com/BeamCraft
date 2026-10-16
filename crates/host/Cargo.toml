@@ -10,6 +10,7 @@ authors.workspace = true
 
 [dependencies]
 beamcraft-model.workspace = true
+beamcraft-protocol.workspace = true
 
 [lints]
 workspace = true

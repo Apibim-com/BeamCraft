@@ -70,7 +70,7 @@ Dependencies are checked in `[dependencies]`,
 | beamcraft-kernel | crates/kernel | domain | 2 | beamcraft-geom, beamcraft-model | now | G02 |
 | beamcraft-engine | crates/engine | native | 3 | beamcraft-geom, beamcraft-model, beamcraft-kernel | planned | P01 |
 | beamcraft-host | crates/host | host | 4 | beamcraft-model, beamcraft-protocol, beamcraft-engine | now | U05 |
-| beamcraft-cli | apps/beamcraft-cli | app | 5 | beamcraft-model, beamcraft-engine, beamcraft-host | now | U04 |
+| beamcraft-cli | apps/beamcraft-cli | app | 5 | beamcraft-model, beamcraft-engine, beamcraft-host, beamcraft-protocol, beamcraft-layer-engine | now | U04 amendment: CLI and thin Rust worker binaries |
 | beamcraft-ui | apps/beamcraft-ui | app | 5 | beamcraft-model, beamcraft-engine, beamcraft-host | planned | V01 |
 | beamcraft-fixtures | tools/fixtures | tool | 9 | - | now | F07 |
 | beamcraft-boundaries | apps/boundaries | tool | 9 | - | now | F08 |
@@ -116,13 +116,14 @@ by the named task with real code. Allowed dependencies are those of the owning r
 | Frame header, binary prefix, bundle budget | F05 s.3, 10 | `beamcraft_protocol::frame` | **now** (tested, bounded) |
 | Negotiable limits and their maxima | F05 s.4, 10 | `beamcraft_protocol::limits` | **now** |
 | Transport `IPC_` codes and their F04 mapping | F05 s.9 | `beamcraft_protocol::code::TransportCode` | **now** |
-| Control-message schemas, handshake, correlation and event state machines (pure, no I/O) | F05 s.4, 5, 7 | `beamcraft_protocol::{message, session}` | planned, U01 |
-| Worker supervision, pipes, deadlines, restart limits, diagnostic drain | F05 s.2, 8 | `beamcraft_host::worker` | planned, U01 |
+| Bounded JSON and closed read-profile messages (pure, no I/O); mutation/event schemas remain unavailable | F05 s.3-7 | `beamcraft_protocol::{json, message}` | U04 amendment: experimental Rust read profile |
+| Worker supervision, pipes, deadlines, restart limits, diagnostic drain; shared command dispatcher | F05 s.2, 8 | `beamcraft_host::{wire, worker, dispatch}` | U04 amendment: experimental native read client |
 | Immutable byte storage, publish-if-absent and verified retrieval | F04 s.2, U05 | `beamcraft_host::storage` | **now**, U05; root publication and personal workspace remain planned, U06-U07 |
 | Durable outcome ledger and recovery | F05 s.7, 8 | `beamcraft_host::ledger` | planned, U07 |
 | Rust USD read wrapper (U01 amendment proposed; placement/containment pending owner review, no host edge; separate-process execution remains a proposal) | F11 s.9, LEW-01/02/03/04/07 | `beamcraft_layer_engine` | experimental native read slice, U01 |
 | USD worker (thin Python/pxr) | F05 s.1 | `workers/usd/`, not a Cargo package | planned, U01 |
-| CLI | AGENTS s.3, F06 s.9 | `apps/beamcraft-cli` | **now** (`--version` only) |
+| USD worker (thin Rust wrapper, separate process; no new package) | F11 s.9, U04 owner topology decision | `apps/beamcraft-cli/src/bin/beamcraft-usd-worker.rs` | U04 amendment: experimental read worker; SDK fallback remains unavailable |
+| CLI | AGENTS s.3, F06 s.9 | `apps/beamcraft-cli` | U04 amendment: version, experimental open/read and byte-storage commands |
 | Native UI and viewport | F06 s.9, V-tasks | `apps/beamcraft-ui` | planned, V01 |
 
 The F05 sections 3 and 10 also require SHA-256 verification of attachments. The protocol crate

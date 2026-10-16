@@ -36,3 +36,34 @@ implemented here. U06/U07 own revision publication and recovery; the CLI command
 SHA-256 is original code implementing FIPS PUB 180-4 (August 2015), sections 4.1.2, 4.2.2,
 5 and 6.2: https://doi.org/10.6028/NIST.FIPS.180-4. NIST examples and .NET-derived boundary
 vectors test it independently. The older fixture-tool hasher remains separate and untouched.
+
+## U04 experimental process client
+
+`dispatch::Dispatcher` is shared by CLI and native callers; constructing one starts nothing.
+`AuthorizedRead::authorize` requires a protected U05 store, an independently selected full
+identity and an explicit owned-layer grant. It verifies manifest/asset bytes and publishes a
+small host grant. `BlobStore::read_capped` tightens a single read before reservation.
+Manifest/grant reads are capped at 1 MiB; individual layer reads at 64 KiB, with U01's
+8-layer/256 KiB aggregate profile. These are byte-storage operations, not U06 publication.
+
+`worker::Session` verifies the capped executable against trusted package configuration,
+clears its environment, opens private stdio pipes and validates the four-message handshake.
+Only the Windows OS `SystemRoot` is retained; no shell, Python or SDK process is invoked.
+One serialized request, bounded pipe channels, independent assembly/request deadlines,
+in-flight ping/pong, cancellation and capped diagnostic drain protect the host boundary.
+Raw diagnostics are discarded. Stop confirms child exit and pipe-task completion before a
+replacement; unconfirmed reaping blocks replacement. Hashing checks the host deadline by chunk.
+
+Only Open/Read/Close and an explicitly uncertain host QueryOutcome are registered. Errors
+carry the host-known workspace identity. Read pages are checked for closed fields, counts,
+identity/path consistency, value shapes/numbers, depth, source digest/ownership, duplicate
+paths and complete delivery counts. A read failure can reconstruct the exact authorized
+input at its nonzero generation, with at most two delayed restarts. Continuations from a
+lost incarnation are stale. No mutation intent is sent, erased, retried or accepted.
+An incarnation-specific supervision handle can force child loss while a request is pending.
+
+This does not close F05 or LEW-03: OS memory/work containment, guaranteed random-byte tokens,
+idle keepalive, complete negotiated profiles, mutation/event schemas, canonical replay and
+durable outcomes remain open. The standard-library token source is explicitly experimental.
+The protected filesystem/package namespaces remain caller prerequisites. See the
+[review and prepared draft PR body](../../docs/design/u04-cli-host.md).

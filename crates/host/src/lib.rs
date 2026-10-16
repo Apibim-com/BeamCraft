@@ -3,4 +3,7 @@
 
 //! Native services above the portable BeamCraft domain crates.
 
+pub mod dispatch;
 pub mod storage;
+pub mod wire;
+pub mod worker;
