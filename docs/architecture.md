@@ -136,6 +136,32 @@ and nothing in it is implemented. Coordination and control servers require expli
 binding and token authentication. Resource paths do not authorize outbound access; local resolution
 and containment are validated.
 
+## Part representations and view filters (planned requirement)
+
+Owner wish of 2026-10-16, to be planned with A03/A04 (cuts, holes), U02 (USD authoring) and V02
+(view snapshot and query). It changes no frozen contract: F04/F06 0.1.0 have no operations.
+
+- A part with operations (holes, cuts) is published with two representations in the same revision:
+  a **full** one with the operations applied and a **simplified** one without them. A part with no
+  operations has one mesh referenced by both. Identical content is stored once (SHA-256).
+- The full representation is the default geometry of the revision, so an ordinary USD reader sees
+  the complete part without BeamCraft. The simplified one is a lightweight stand-in (USD `proxy`
+  purpose is the candidate mechanism). A payload for the heavy mesh is a candidate for fast opening
+  of very large models. The USD encoding is decided by the U-tasks.
+- Each representation has its own shape key and freshness; an operation change makes both stale. The
+  representation is an enumeration, not a flag, so coarser levels can be added later.
+- The simplified representation is flagged not exact. Volume, mass, bills of materials and snapping
+  use only the full one, and the two are never summed (see "References, quantities and
+  collaboration" and F06 section 3).
+- View settings choose what to load, not what exists. A per-view filter can hide whole element
+  kinds that are separate objects (welds, bolts, references) and can switch parts between the
+  simplified and the full representation. The filter belongs to user or workspace settings, not to
+  the shared revision, and changes no authored or derived data.
+- V02 must carry both parameters: an element-kind filter and a representation selector. F06 gains a
+  `representation` field in the version that introduces operations.
+- The gain is measured, not assumed: V01 reports load time, memory and frame time on the 10 000-part
+  scene with each setting.
+
 ## Rules
 
 - Dependencies point one way, from higher-level crates down to `model` and `geom`. No back-edges.
@@ -180,3 +206,13 @@ saved models. F09 admission precedes freezing it for kernel implementers.
 F04 and F06 were frozen at 0.1.0 by the owner on 2026-10-16. See the [tolerance
 comparison](design/tolerance-comparison-v0.1.md). Nothing is implemented by this record, and
 existing admission requirements remain in force.
+
+### Owner decisions of 2026-10-16
+
+1. F04 and F06 are frozen at 0.1.0; P-1a to P-1d, P-2, P-3a and P-3b are confirmed. P-3c (roll jump
+   at the parallel threshold) is accepted as erratum E-2 until a black-box observation of the
+   reference behaviour for a column whose axis moves is recorded.
+2. A future `section_anchor` (nine positions plus offsets) is reserved in F04 section 3.
+3. Part representations and per-view filters are a planned requirement (section above).
+4. The core is extensible by discipline modules (F10); new element kinds, commands and rules are
+   registered by a module, not hard-coded. Importing foreign IFC (E04) remains an open owner decision.
