@@ -60,8 +60,9 @@ enforce them.
   asset is added by that audit. Keep frontend crates above the engine, in F08's planned app; F08's
   audited domain allowlist stays empty until an explicit reviewed table amendment.
 - Add steel, export and drawing modules when their contracts require them. F08 fixed the concrete
-  module paths after F04–F07 and creates no empty crates: `kernel`, `engine` and `ui` are
-  planned paths in the boundary document, created by their own tasks with their first real code.
+  module paths after F04–F07 and creates no empty crates: `ui` is a planned path in the boundary
+  document, created by its own task with its first real code. `engine` exists from V02 with the
+  view snapshot and query slice only.
 
 Prefer well-maintained permissively licensed Rust crates for math, geometry primitives and robust
 predicates, preferably pure Rust; write own algorithms only where no suitable crate exists. Each
@@ -175,6 +176,14 @@ Owner wish of 2026-10-16, to be planned with A03/A04 (cuts, holes), U02 (USD aut
   the shared revision, and changes no authored or derived data.
 - V02 must carry both parameters: an element-kind filter and a representation selector. F06 gains a
   `representation` field in the version that introduces operations.
+- **V02 status (2026-10-16).** `beamcraft_engine::presentation` carries both parameters
+  (`ViewSettings`: `KindFilter` and the `Representation` enumeration, `full` and `simplified`) as a
+  read-time projection of a pinned snapshot; they never enter the snapshot token. A part without
+  operations references one mesh from both representations. The kernel has no operations yet, so a
+  distinct simplified mesh can only be a caller-supplied stand-in (flagged not exact); volume, mass,
+  bills of materials and snapping read the full representation only. Welds and bolts are not
+  registered element kinds yet (F10 vocabulary 0.1), so the filter works on the registered kinds.
+  Measuring the gain on the 10 000-part scene remains a V01 task.
 - The gain is measured, not assumed: V01 reports load time, memory and frame time on the 10 000-part
   scene with each setting.
 
