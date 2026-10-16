@@ -19,6 +19,8 @@ use std::{
     path::PathBuf,
 };
 
+mod view;
+
 fn invalid() -> HostError {
     HostError::logical(ErrorCode::InvalidArgument)
 }
@@ -32,36 +34,42 @@ fn main() -> std::process::ExitCode {
         || (args.len() == 1 && args.first().is_some_and(|s| s == "--help" || s == "-h"))
     {
         println!(
-            "BeamCraft: open | read | query-outcome | blob-put | blob-verify\nRead: --backend rust --store ROOT --worker EXE --worker-digest SHA256 --project-id UUID --workspace-id UUID --revision SHA256 --generation U64\nInput: --manifest SHA256 [--owned NAME,...] or --file FILE --digest SHA256 [--owned root.usda]\nControl: [--timeout-ms 1..120000] [--cancel-after-ms 0..120000]\nOnly the experimental static read profile is available; save/publication/mutation/SDK fallback are unavailable."
+            "BeamCraft: open | read | query-outcome | blob-put | blob-verify | view-snapshot | view-changes\nRead: --backend rust --store ROOT --worker EXE --worker-digest SHA256 --project-id UUID --workspace-id UUID --revision SHA256 --generation U64\nInput: --manifest SHA256 [--owned NAME,...] or --file FILE --digest SHA256 [--owned root.usda]\nControl: [--timeout-ms 1..120000] [--cancel-after-ms 0..120000]\nView (synthetic kernel plate scene, no worker or store): view-snapshot --plates 1..500 [--hide KIND,...] [--representation full|simplified] [--stand-in-simplified true|false] [--select ID,...] [--revision SHA256] [--generation U64]; view-changes --plates 1..500 --edit move-first|resize-first|add-one|remove-last,... [--since TOKEN] [--stand-in-simplified true|false]\nOnly the experimental static read profile is available; save/publication/mutation/SDK fallback are unavailable."
         );
         return std::process::ExitCode::SUCCESS;
     }
-    let result = run(args);
-    let (json, exit) = match result {
-        Ok(j) => (j, 0),
-        Err((e, observed)) => (
-            Json::object([
-                (
-                    "outcome",
-                    Json::text(if e.code == ErrorCode::OutcomeUnknown {
-                        "outcome_unknown"
-                    } else if e.code == ErrorCode::Cancelled {
-                        "cancelled"
-                    } else {
-                        "rejected"
-                    }),
-                ),
-                ("code", Json::text(e.code.as_str())),
-                ("message", Json::text(e.message())),
-                (
-                    "transport_code",
-                    e.transport.map_or(Json::Null, |t| Json::text(t.as_str())),
-                ),
-                ("observed_context", observed),
-                ("diagnostics", Json::Array(vec![])),
-            ]),
-            e.exit_code(),
-        ),
+    let (json, exit) = if args
+        .first()
+        .is_some_and(|c| c == "view-snapshot" || c == "view-changes")
+    {
+        view::execute(&args)
+    } else {
+        match run(args) {
+            Ok(j) => (j, 0),
+            Err((e, observed)) => (
+                Json::object([
+                    (
+                        "outcome",
+                        Json::text(if e.code == ErrorCode::OutcomeUnknown {
+                            "outcome_unknown"
+                        } else if e.code == ErrorCode::Cancelled {
+                            "cancelled"
+                        } else {
+                            "rejected"
+                        }),
+                    ),
+                    ("code", Json::text(e.code.as_str())),
+                    ("message", Json::text(e.message())),
+                    (
+                        "transport_code",
+                        e.transport.map_or(Json::Null, |t| Json::text(t.as_str())),
+                    ),
+                    ("observed_context", observed),
+                    ("diagnostics", Json::Array(vec![])),
+                ]),
+                e.exit_code(),
+            ),
+        }
     };
     match json.encode(&message::read_limits()) {
         Ok(bytes) => {
