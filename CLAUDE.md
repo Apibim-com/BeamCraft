@@ -2,7 +2,7 @@
 
 BeamCraft is a clean-room, open-source, Rust-native structural steel detailing application,
 developed by Apibim. It targets the workflows of tools like Tekla Structures without using any of
-their code or assets. Runs natively on Windows, Linux and macOS, and later on the web via WASM.
+their code or assets. Targets desktop-only use on Windows, Linux and macOS.
 
 ## Start every session here
 
@@ -31,12 +31,14 @@ cargo run -p beamcraft-cli -- --version
 ```
 
 CI (`.github/workflows/ci.yml`) runs the same on Windows and Linux, plus a wasm32 check of the
-library crates and `cargo deny`. A change is not done until these pass.
+three pure crates (`beamcraft-geom`, `beamcraft-model`, `beamcraft-kernel`) and `cargo deny`.
+A change is not done until these pass.
 
 ## Conventions
 
-- Edition 2024, workspace lints in the root `Cargo.toml`. Library crates stay free of UI and OS
-  dependencies and must compile for `wasm32-unknown-unknown`.
+- Edition 2024, workspace lints in the root `Cargo.toml`. Only `beamcraft-geom`,
+  `beamcraft-model` and `beamcraft-kernel` stay WASM-compatible as a layering discipline.
+  Every other crate, including later crates, is desktop-native with no WASM requirement.
 - Crates live in `crates/`, binaries in `apps/`. Dependencies point one way: `geom` ← `model` ←
   everything else. Do not add a back-edge.
 - Every public item has a doc comment (`missing_docs` is on).

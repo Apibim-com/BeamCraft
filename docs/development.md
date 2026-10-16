@@ -25,9 +25,11 @@ cargo deny check
 
 The boundary check compares the workspace manifests with the module table in
 `docs/contracts/module-boundaries-v0.1.md` (it also runs inside `cargo test --workspace`). The
-`portable` command prints the `-p <crate>` list of every `now` domain crate from that table, so the
-wasm crate list is written in one place. In PowerShell, run it first and pass the output to
-`cargo check --target wasm32-unknown-unknown`.
+`portable` command prints exactly `-p beamcraft-geom -p beamcraft-model -p beamcraft-kernel`
+from the three `now` domain rows, so the WASM check list is written in one place. All other
+crates, including later crates, are desktop-native and have no WASM requirement. The three pure
+crates stay WASM-compatible as a layering discipline (owner decision of 2026-10-16, task WS).
+In PowerShell, run it first and pass the output to `cargo check --target wasm32-unknown-unknown`.
 
 Run the documentation command with `RUSTDOCFLAGS=-D warnings`.
 For example, PowerShell uses `$env:RUSTDOCFLAGS = '-D warnings'`.
@@ -72,8 +74,8 @@ above records the state on 2026-10-14, when the minimum was 1.95, and is left un
 ## CI
 
 `.github/workflows/ci.yml` runs on every PR and push to `master`: fmt, clippy (`-D warnings`), tests
-on Windows and Linux, the module-boundary check, docs, a wasm32 check of the portable domain crates
-(listed by the boundary tool, not by hand), and `cargo deny`.
+on Windows and Linux, the module-boundary check, docs, a wasm32 check of `beamcraft-geom`,
+`beamcraft-model` and `beamcraft-kernel` (listed by the boundary tool), and `cargo deny`.
 
 ## Releases
 
