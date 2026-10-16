@@ -1412,3 +1412,248 @@ fn binary_and_text_encodings_index_the_same_identities() {
     // Same identities, different layer provenance: the indexes are not equal.
     assert_ne!(from_binary, from_text);
 }
+
+// ---- review regressions -------------------------------------------------------------------------
+
+#[test]
+fn links_to_descendant_prims_are_dependencies_of_the_containing_element() {
+    let (a, b) = (seq(0xd0), seq(0xd1));
+    let child = format!("</World/Steel/E_{}/Geometry>", hex(&b));
+    let body = world(
+        &(el(&a, &format!("custom rel bim:test:to = {child}"))
+            + &el(
+                &b,
+                &format!(
+                    "def Scope \"Geometry\" {{ custom rel bim:test:self = </World/Steel/E_{}/Geometry> }}",
+                    hex(&b)
+                ),
+            )),
+        "",
+        "",
+    );
+    let index = built(body).unwrap();
+    let (a_id, b_id) = (eid(&a), eid(&b));
+    let incoming = index.incoming(&b_id).unwrap();
+    assert_eq!(incoming.len(), 2);
+    assert!(incoming.iter().any(|l| l.owner == Some(a_id)
+        && matches!(&l.target, LinkTarget::Prim(p) if p.ends_with("/Geometry"))
+        && l.target_owner == Some(b_id)));
+    // The element's own descendant does not block its delete; the external link does.
+    let blockers = index.delete_blockers(&b_id).unwrap();
+    assert_eq!(blockers.len(), 1);
+    assert_eq!(index.dependents(&b_id).unwrap(), [a_id].into());
+    assert!(index.delete_blockers(&a_id).unwrap().is_empty());
+}
+
+#[test]
+fn descendant_links_block_delete_and_collide_with_reads_through_the_author_guards() {
+    let (a, o) = populated();
+    let weak = over(MEMBER, "def Scope \"Geometry\" { }\n")
+        + &over(
+            PLATE,
+            &format!(
+                "custom rel bim:test:to = </World/Steel/E_{}/Geometry>\n",
+                hex(MEMBER)
+            ),
+        );
+    let (a, o) = relayer(&a, &o.context, &weak);
+    let index = a.element_index(&o.context, &control()).unwrap();
+    assert_eq!(
+        code(a.check_delete(&index, &eid(MEMBER), &control())),
+        ErrorCode::DependencyConflict
+    );
+    let write = [Footprint {
+        identity: MEMBER.into(),
+        group: Group::Lifecycle,
+    }];
+    let read = [Footprint {
+        identity: PLATE.into(),
+        group: Group::Placement,
+    }];
+    assert_eq!(
+        code(a.certify_dependent_reads(
+            &index,
+            &write.iter().cloned().collect(),
+            &read.iter().cloned().collect(),
+            &control()
+        )),
+        ErrorCode::DependencyConflict
+    );
+}
+
+#[test]
+fn a_write_of_a_fresh_id_collides_with_a_read_of_its_absence() {
+    let (a, o) = populated();
+    let index = a.element_index(&o.context, &control()).unwrap();
+    let fp = |id: &str| Footprint {
+        identity: id.into(),
+        group: Group::Lifecycle,
+    };
+    let certify = |w: &str, r: &str| {
+        a.certify_dependent_reads(
+            &index,
+            &[fp(w)].into_iter().collect(),
+            &[fp(r)].into_iter().collect(),
+            &control(),
+        )
+    };
+    assert_eq!(code(certify(FRESH, FRESH)), ErrorCode::DependencyConflict);
+    certify(FRESH, &seq(0xe0)).unwrap();
+}
+
+#[test]
+fn copy_plan_refuses_relationships_carried_by_descendant_prims() {
+    let (a, o) = populated();
+    let weak = over(
+        MEMBER,
+        &format!(
+            "def Scope \"Child\" {{ custom rel bim:test:to = </World/Steel/E_{}> }}\n",
+            hex(PLATE)
+        ),
+    );
+    let (a, o) = relayer(&a, &o.context, &weak);
+    let index = a.element_index(&o.context, &control()).unwrap();
+    let outgoing = index.outgoing(&eid(MEMBER)).unwrap();
+    assert!(outgoing.iter().any(|l| l.source_path.ends_with("/Child")));
+    assert_eq!(
+        code(index.copy_plan(&eid(MEMBER), &eid(FRESH))),
+        ErrorCode::DependencyConflict
+    );
+}
+
+#[test]
+fn labels_that_authoring_accepts_are_always_indexable() {
+    let (mut a, o) = populated();
+    // U+0085 is outside the F04 control-character rule (U+0000-001F, U+007F).
+    let name = "a\u{85}b";
+    let o = apply(
+        &mut a,
+        &o.context,
+        vec![Change::Label {
+            id: PLATE.into(),
+            name: name.into(),
+        }],
+    );
+    let index = a.element_index(&o.context, &control()).unwrap();
+    assert_eq!(index.lookup(PLATE).unwrap().label.as_deref(), Some(name));
+    a.authorize_write(&index, &eid(PLATE), &control()).unwrap();
+    for bad in ["", "\u{1f}", "\u{7f}"] {
+        let result = built(world(
+            &format!(
+                "def Xform \"E_{0}\" {{ custom string bim:id = \"{1}\"\n custom string bim:name = \"x{bad}\" }}",
+                hex(&seq(0xf0)),
+                seq(0xf0)
+            ),
+            "",
+            "",
+        ));
+        if bad.is_empty() {
+            assert!(result.is_ok());
+        } else {
+            assert_eq!(code(result), ErrorCode::InvalidArgument);
+        }
+    }
+}
+
+#[test]
+fn every_present_lifecycle_declaration_is_validated() {
+    let id = seq(0xf1);
+    for declaration in [
+        "custom token bim:lifecycle",
+        "custom string bim:lifecycle",
+        "custom int bim:lifecycle",
+        "custom int bim:lifecycle = 3",
+        "custom string bim:lifecycle = \"\"",
+    ] {
+        assert_eq!(
+            code(built(world(&el(&id, declaration), "", ""))),
+            ErrorCode::InvalidArgument,
+            "{declaration}"
+        );
+    }
+    assert!(
+        built(world(
+            &el(&id, "custom token bim:lifecycle = \"active\""),
+            "",
+            ""
+        ))
+        .is_ok()
+    );
+}
+
+#[test]
+fn caller_held_pages_are_bounded_and_charged_before_they_are_copied() {
+    let (a, b) = (seq(0xf2), seq(0xf3));
+    let (r, o) = single(world(&(el(&a, "") + &el(&b, "")), "", ""));
+    let pages = reader_pages(&r, &o.context);
+    let element = pages[0]
+        .items
+        .iter()
+        .position(|p| p.element_id.as_deref() == Some(a.as_str()))
+        .unwrap();
+    let mutate = |f: &dyn Fn(&mut Prim)| {
+        let mut page = pages[0].clone();
+        f(&mut page.items[element]);
+        assemble(&o, &[page])
+    };
+    // Ignored properties are counted against the cumulative value budget.
+    let ignored = Property {
+        name: "future:x".into(),
+        type_name: "double".into(),
+        value: Some(Value::Number(1.0)),
+    };
+    assert_eq!(
+        code(mutate(&|p| p
+            .properties
+            .extend(std::iter::repeat_n(ignored.clone(), 5000)))),
+        ErrorCode::LimitExceeded
+    );
+    // Excessive provenance, one relationship with oversized targets, and oversized names.
+    let source = pages[0].items[element].sources[0].clone();
+    assert_eq!(
+        code(mutate(&|p| p
+            .sources
+            .extend(std::iter::repeat_n(source.clone(), 9000)))),
+        ErrorCode::LimitExceeded
+    );
+    let long = format!("/World/{}", "x".repeat(1000));
+    assert_eq!(
+        code(mutate(&|p| p.relationships.push(Relationship {
+            name: "bim:test:big".into(),
+            targets: vec![long.clone(); 1024],
+        }))),
+        ErrorCode::LimitExceeded
+    );
+    // Ignored properties are never copied, so an oversized ignored name is harmless.
+    assert!(
+        mutate(&|p| p.properties.push(Property {
+            name: "x".repeat(2000),
+            type_name: "string".into(),
+            value: None,
+        }))
+        .is_ok()
+    );
+    // An oversized or non-text value of an index-relevant property is inert, never copied:
+    // as a label it is rejected for an owned element, not retained.
+    let huge = |value: Value| {
+        mutate(&|p| {
+            if let Some(n) = p.properties.iter_mut().find(|q| q.name == "bim:name") {
+                n.value = Some(value.clone());
+            }
+        })
+    };
+    assert_eq!(
+        code(huge(Value::Text("x".repeat(100_000)))),
+        ErrorCode::InvalidArgument
+    );
+    assert_eq!(
+        code(huge(Value::Array(vec![
+            Value::Array(vec![Value::Number(
+                1.0
+            )]);
+            8
+        ]))),
+        ErrorCode::InvalidArgument
+    );
+    assert!(assemble(&o, &pages).is_ok());
+}

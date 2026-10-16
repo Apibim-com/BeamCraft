@@ -108,8 +108,9 @@ and descendants. Every relationship target is resolved to an element, an immutab
 plain prim or (foreign sources and partial indexes only) an `Unresolved` entry; an owned dangling
 target is `DANGLING_RELATIONSHIP`, a short/malformed element or definition target `INVALID_ID`.
 Outgoing and incoming queries, `delete_blockers`, `dependents`, deactivated-target reporting and
-`copy_plan` (fresh ID, self-link remap, shared definitions, refusal of everything else) are pure
-reads of the index.
+`copy_plan` (fresh ID, self-link remap, shared definitions, refusal of everything else including
+descendant-carried links) are pure reads of the index. Links to a descendant prim count as
+dependencies of the containing element.
 
 The index is not authority. A partial index answers `DEPENDENCY_UNAVAILABLE` for every
 relationship query and cannot prove absence. `Author::authorize_write`, `check_delete` and

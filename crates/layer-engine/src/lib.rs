@@ -538,6 +538,12 @@ impl Reader {
     }
 }
 
+/// The single label character rule (F04 section 3, `DV-BASE-003`): U+0000-001F and U+007F.
+/// Shared by authoring and the index so a label that authors can always be indexed.
+pub(crate) fn label_char_forbidden(c: char) -> bool {
+    c <= '\u{1f}' || c == '\u{7f}'
+}
+
 pub(crate) fn uuid7(s: &str) -> bool {
     s.len() == 36
         && s.bytes().enumerate().all(|(i, b)| match i {
