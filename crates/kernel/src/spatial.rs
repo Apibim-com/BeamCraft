@@ -146,6 +146,10 @@ impl BoxIndex {
             return Err(IndexError::ItemCap);
         }
         let max_nodes = max_nodes.min(MAX_INDEX_NODES);
+        // The root is itself a node: a zero budget cannot hold even a one-leaf tree.
+        if max_nodes == 0 {
+            return Err(IndexError::NodeCap);
+        }
         if cancelled() {
             return Err(IndexError::Cancelled);
         }
@@ -446,6 +450,15 @@ mod tests {
             BoxIndex::build(&[], 4, || false).unwrap_err(),
             IndexError::ItemCap
         );
+        // A zero node budget rejects even a one-leaf index (the root is a node).
+        for n in 1..=4 {
+            let few: Vec<Aabb> = lattice(2).into_iter().take(n).collect();
+            assert_eq!(
+                BoxIndex::build(&few, 0, || false).unwrap_err(),
+                IndexError::NodeCap
+            );
+            assert_eq!(BoxIndex::build(&few, 1, || false).unwrap().node_count(), 1);
+        }
         let boxes = lattice(3);
         assert_eq!(
             BoxIndex::build(&boxes, 1, || false).unwrap_err(),

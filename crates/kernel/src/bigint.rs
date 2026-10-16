@@ -214,25 +214,30 @@ impl Big {
         (top, u32::try_from(shift).unwrap_or(u32::MAX), sticky)
     }
 
-    /// Like [`Self::enclose`], but a nonzero value below the normal range encloses
-    /// as `[0, MIN_POSITIVE]` (or its negative), a valid outward bound.
-    /// Overflow is still `None`.
+    /// Like [`Self::enclose`], but a value too small for the normal range gets a
+    /// valid outward bound `[0, 2^top]` (or its negative) instead of `None`, where
+    /// `2^top` (at least `MIN_POSITIVE`) exceeds `|value|`. Normal values always
+    /// take the exact enclosure. Overflow is still `None`.
     pub(crate) fn enclose_clamped(&self, pow2: i32) -> Option<Enclosure> {
-        if self.len == 0 {
-            return Some(Enclosure::point(0.0));
+        if let Some(e) = self.enclose(pow2) {
+            return Some(e);
         }
-        let bits = i32::try_from(64 * (self.len - 1)).ok()? + 64
+        let bits = i32::try_from(64 * self.len.checked_sub(1)?).ok()? + 64
             - i32::try_from(self.limbs().last()?.leading_zeros()).ok()?;
-        // |value| < 2^(bits + pow2); below 2^-1000 nothing else can be said.
-        if bits.checked_add(pow2)? < -1000 {
-            let tiny = f64::MIN_POSITIVE;
-            return Some(if self.neg {
-                Enclosure { lo: -tiny, hi: 0.0 }
-            } else {
-                Enclosure { lo: 0.0, hi: tiny }
-            });
+        // |value| < 2^top.
+        let top = bits.checked_add(pow2)?;
+        if top > 1023 {
+            return None;
         }
-        self.enclose(pow2)
+        let bound = scale_pow2(1.0, top.max(-1022))?;
+        Some(if self.neg {
+            Enclosure {
+                lo: -bound,
+                hi: 0.0,
+            }
+        } else {
+            Enclosure { lo: 0.0, hi: bound }
+        })
     }
 
     /// Encloses `self * 2^pow2` in binary64, or `None` when the result is
@@ -326,6 +331,49 @@ mod tests {
             Big::ZERO.enclose_clamped(-5000),
             Some(Enclosure::point(0.0))
         );
+    }
+
+    #[test]
+    fn clamping_never_excludes_a_value_near_the_normal_boundary() {
+        // Every power of two from 2^-1030 to 2^-990 must stay inside its enclosure;
+        // 2^-1010 is normal and used to be clamped to [0, 2^-1022].
+        for k in -1030..=-990i32 {
+            let value = 2f64.powi(k);
+            let e = Big::from_i64_shifted(1, 0)
+                .unwrap()
+                .enclose_clamped(k)
+                .unwrap();
+            assert!(e.lo <= value && value <= e.hi, "2^{k}: {e:?}");
+            let three = Big::from_i64_shifted(3, 0)
+                .unwrap()
+                .enclose_clamped(k)
+                .unwrap();
+            assert!(
+                three.lo <= 3.0 * value && 3.0 * value <= three.hi,
+                "3*2^{k}: {three:?}"
+            );
+            let neg = Big::from_i64_shifted(-3, 0)
+                .unwrap()
+                .enclose_clamped(k)
+                .unwrap();
+            assert!(
+                neg.lo <= -3.0 * value && -3.0 * value <= neg.hi,
+                "-3*2^{k}: {neg:?}"
+            );
+        }
+        // Normal values keep their tight enclosure.
+        let e = Big::from_i64_shifted(1, 0)
+            .unwrap()
+            .enclose_clamped(-1010)
+            .unwrap();
+        assert_eq!((e.lo, e.hi), (2f64.powi(-1010), 2f64.powi(-1010)));
+        assert!(e.lo > f64::MIN_POSITIVE);
+        // Only a value proven below the normal range is widened to [0, 2^-1022].
+        let below = Big::from_i64_shifted(1, 0)
+            .unwrap()
+            .enclose_clamped(-1023)
+            .unwrap();
+        assert_eq!((below.lo, below.hi), (0.0, f64::MIN_POSITIVE));
     }
 
     #[test]

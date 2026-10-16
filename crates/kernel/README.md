@@ -380,7 +380,7 @@ inexact rigid motions, scale, far-from-origin cancellation, measurement
 cancellation, G02 cross-check), `tests/g06_fuzz.rs` (5 seeded hostile-input suites:
 mutated blobs, random soups, surgery on valid shells, perturbed vertices, maximum
 size soups; no panic, deterministic output, and every `Certified` verdict checked by
-the independent oracle), `tests/g06_fixtures.rs` and 20 unit tests of the
+the independent oracle), `tests/g06_fixtures.rs` and 22 unit tests of the
 integer, interval, predicate, contact and index code.
 
 | Case or fixture | G06 obligation exercised |
