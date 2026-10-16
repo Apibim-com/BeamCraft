@@ -15,6 +15,17 @@ pub mod mesh;
 pub mod profile;
 pub mod result;
 
+// G06: shell certification, exact predicates, measurements and a bounded box index.
+mod bigint;
+pub mod enclosure;
+mod exact;
+mod intersect;
+pub mod measure;
+pub mod spatial;
+pub mod topology;
+pub mod trimesh;
+pub mod verdict;
+
 pub use build::{rectangular_plate, rectangular_plate_with_cancel};
 pub use input::RectangularPlate;
 pub use result::PlateResult;
