@@ -114,9 +114,12 @@ pub(crate) fn self_check(
         if cross.dot(expected_normal).map_err(|_| fail())? <= 0.0 {
             return Err(fail());
         }
-        let av = Vec3::new(a.x, a.y, a.z).map_err(|_| fail())?;
-        let bv = Vec3::new(b.x, b.y, b.z).map_err(|_| fail())?;
-        let cv = Vec3::new(c.x, c.y, c.z).map_err(|_| fail())?;
+        // Relative to the first vertex: the closed-surface volume does not depend on the origin,
+        // and absolute coordinates far from zero would cancel catastrophically.
+        let origin = vertices.first().copied().ok_or_else(fail)?;
+        let av = origin.vector_to(a).map_err(|_| fail())?;
+        let bv = origin.vector_to(b).map_err(|_| fail())?;
+        let cv = origin.vector_to(c).map_err(|_| fail())?;
         volume_sum += av
             .dot(bv.cross(cv).map_err(|_| fail())?)
             .map_err(|_| fail())?;

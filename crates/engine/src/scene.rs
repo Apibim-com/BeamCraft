@@ -24,8 +24,9 @@ pub struct SceneMesh {
 
 impl SceneMesh {
     /// A mesh from its blob, digest and vertices. The snapshot builder re-validates the blob and
-    /// checks that the digest is the blob's.
-    pub const fn new(blob: Vec<u8>, digest: ContentDigest, vertices: Vec<Point3>) -> Self {
+    /// checks that the digest is the blob's. Crate-private: outside the engine a mesh can only
+    /// come from a certified kernel or `SolidMesh` result, so its vertices always match its blob.
+    pub(crate) const fn new(blob: Vec<u8>, digest: ContentDigest, vertices: Vec<Point3>) -> Self {
         Self {
             blob,
             digest,

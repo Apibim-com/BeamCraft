@@ -437,10 +437,16 @@ fn holes(options: &BTreeMap<&str, &str>) -> Run<Vec<Vec<[f64; 2]>>> {
             .ok_or_else(|| invalid("--hole-segments is 8 to 256"))?,
         None => 32,
     };
+    // Non-finite values stay the kernel's `NON_FINITE_NUMBER`; only finite non-positive sizes are
+    // refused here, because a reversed polygon would otherwise pass as a valid clockwise hole.
+    let size_ok = |sizes: &[f64]| sizes.iter().all(|v| !v.is_finite() || *v > 0.0);
     let mut result = Vec::new();
     if let Some(list) = given("--hole-rect") {
         for item in list.split(';').take(MAX_HOLES.saturating_add(1)) {
             if let [x, y, w, h] = numbers(item, 4)?[..] {
+                if !size_ok(&[w, h]) {
+                    return Err(invalid("a hole width and height must be positive"));
+                }
                 result.push(vec![[x, y], [x, y + h], [x + w, y + h], [x + w, y]]);
             }
         }
@@ -448,6 +454,9 @@ fn holes(options: &BTreeMap<&str, &str>) -> Run<Vec<Vec<[f64; 2]>>> {
     if let Some(list) = given("--hole-round") {
         for item in list.split(';').take(MAX_HOLES.saturating_add(1)) {
             if let [x, y, d] = numbers(item, 3)?[..] {
+                if !size_ok(&[d]) {
+                    return Err(invalid("a hole diameter must be positive"));
+                }
                 let r = d / 2.0;
                 result.push(
                     (0..segments)

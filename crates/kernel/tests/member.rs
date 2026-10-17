@@ -231,3 +231,18 @@ fn invalid_members_are_typed_failures_with_no_partial_result() {
         (Code::BelowMinimum, Field::Section)
     );
 }
+
+#[test]
+fn a_member_far_from_the_origin_keeps_its_volume() {
+    // Absolute coordinates near 5e8 mm used to cancel in the signed-volume self-check.
+    let far = 500_000_000.0;
+    let r = straight_member(member(
+        [far, far, far],
+        [far, far, far + 6000.0],
+        200.0,
+        300.0,
+        None,
+    ))
+    .unwrap();
+    assert_eq!(r.volume_mm3(), 200.0 * 300.0 * 6000.0);
+}
