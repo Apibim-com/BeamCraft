@@ -15,6 +15,10 @@ use beamcraft_cli::plate::{
     CreateRequest, Created, Inspection, PlateError, QuantityReport, RevisionSummary, create_plate,
     inspect,
 };
+use beamcraft_cli::workspace::{
+    CreateWorkspace, WorkspaceStatus, create_workspace, publish_workspace,
+    status as workspace_status,
+};
 use beamcraft_engine::command::{Quantities, origin_rectangle_contour};
 use beamcraft_engine::footprint::{Entry, Footprint, Target};
 use beamcraft_engine::quantity::Freshness;
@@ -156,6 +160,15 @@ const COPY_OPTIONS: &[&str] = &[
     "--workspace-id",
 ];
 
+const WORKSPACE_OPTIONS: &[&str] = &[
+    "--store",
+    "--workspace-dir",
+    "--workspace-id",
+    "--user-id",
+    "--revision-id",
+    "--op-id",
+];
+
 fn run(args: &[OsString]) -> Run<Json> {
     let args: Vec<&str> = args
         .iter()
@@ -173,6 +186,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         "create-member" => CREATE_MEMBER_OPTIONS,
         "update-element" => UPDATE_OPTIONS,
         "copy-element" => COPY_OPTIONS,
+        "workspace-create" | "workspace-status" | "workspace-publish" => WORKSPACE_OPTIONS,
         "define-material" => DEFINE_MATERIAL_OPTIONS,
         "define-profile" => DEFINE_PROFILE_OPTIONS,
         "plate-inspect" | "definitions" => &["--store"],
@@ -201,6 +215,9 @@ fn run(args: &[OsString]) -> Run<Json> {
         "create-member" => create_member_command(&store, &options),
         "update-element" => update_command(&store, &options),
         "copy-element" => copy_command(&store, &options),
+        "workspace-create" | "workspace-status" | "workspace-publish" => {
+            workspace_command(&store, command, &options)
+        }
         "define-material" | "define-profile" => define_command(&store, command, &options),
         "definitions" => definitions_json(&inspect(&store)?),
         _ => Ok(inspection_json(&inspect(&store)?)?),
@@ -585,6 +602,117 @@ fn copy_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Js
         ("revision", revision_json(&copied.revision)),
         ("footprint", footprint_json(copied.footprint.as_ref())),
     ]))
+}
+
+fn workspace_json(status: &WorkspaceStatus) -> Json {
+    Json::object([
+        (
+            "workspace_id",
+            Json::text(status.meta.workspace_id.as_str()),
+        ),
+        ("user_id", Json::text(status.meta.user_id.as_str())),
+        (
+            "base_revision",
+            Json::text(status.meta.base_revision.as_str()),
+        ),
+        ("base_is_current", Json::Bool(status.base_is_current)),
+        (
+            "unsent_revisions",
+            Json::text(status.unsent_revisions.to_string()),
+        ),
+        ("draft_head", revision_json(&status.draft_head)),
+        ("published_head", revision_json(&status.published_head)),
+    ])
+}
+
+fn workspace_command(
+    store: &RevisionStore,
+    command: &str,
+    options: &BTreeMap<&str, &str>,
+) -> Run<Json> {
+    let mut source = IdSource::system();
+    let mut fresh = || -> Run<String> {
+        source
+            .next_id()
+            .map(|id| id.to_string())
+            .map_err(|_| PlateError {
+                code: ErrorCode::BackendUnavailable,
+                message: "no identity could be generated",
+            })
+    };
+    let given = |key: &str| options.get(key).copied();
+    let dir = std::path::Path::new(
+        given("--workspace-dir").ok_or_else(|| invalid("--workspace-dir is required"))?,
+    );
+    let published_root = options.get("--store").copied().unwrap_or_default();
+    if dir == std::path::Path::new(published_root) {
+        return Err(invalid("the workspace directory is the published store"));
+    }
+    if command == "workspace-create" && !dir.exists() {
+        std::fs::create_dir(dir).map_err(|_| PlateError {
+            code: ErrorCode::BackendUnavailable,
+            message: "workspace directory could not be created",
+        })?;
+    }
+    let blobs = BlobStore::new(dir).map_err(|e| PlateError {
+        code: e.code(),
+        message: "workspace directory is not usable",
+    })?;
+    let workspace = RevisionStore::new(blobs);
+    let uuid = |key: &str, fresh: &mut dyn FnMut() -> Run<String>| -> Run<Uuid7> {
+        match given(key) {
+            Some(text) => Uuid7::parse(text).map_err(PlateError::from),
+            None => Uuid7::parse(&fresh()?).map_err(PlateError::from),
+        }
+    };
+    match command {
+        "workspace-create" => {
+            let created = create_workspace(
+                store,
+                &workspace,
+                dir,
+                &CreateWorkspace {
+                    workspace_id: uuid("--workspace-id", &mut fresh)?,
+                    user_id: uuid("--user-id", &mut fresh)?,
+                    revision_id: uuid("--revision-id", &mut fresh)?,
+                    op_id: uuid("--op-id", &mut fresh)?,
+                },
+                &mut NoFault,
+            )?;
+            Ok(Json::object([
+                ("outcome", Json::text("workspace_created")),
+                ("workspace", workspace_json(&created)),
+            ]))
+        }
+        "workspace-status" => Ok(Json::object([
+            ("outcome", Json::text("workspace_status")),
+            (
+                "workspace",
+                workspace_json(&workspace_status(store, &workspace, dir)?),
+            ),
+        ])),
+        _ => {
+            let published = publish_workspace(
+                store,
+                &workspace,
+                dir,
+                &uuid("--revision-id", &mut fresh)?,
+                &mut NoFault,
+            )?;
+            Ok(Json::object([
+                (
+                    "outcome",
+                    Json::text(if published.replayed {
+                        "workspace_publish_replayed"
+                    } else {
+                        "workspace_published"
+                    }),
+                ),
+                ("revision", revision_json(&published.revision)),
+                ("workspace", workspace_json(&published.status)),
+            ]))
+        }
+    }
 }
 
 fn create_member_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Json> {
