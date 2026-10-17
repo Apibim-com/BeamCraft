@@ -8,6 +8,11 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+use beamcraft_host::{
+    ids::IdSource,
+    revision::{ExpectedBase, LayerEntry, NoFault, RevisionDraft, RevisionStore, Uuid7},
+    storage::BlobStore,
+};
 use beamcraft_protocol::{
     json::{self, Json},
     message,
@@ -55,6 +60,41 @@ impl Fixture {
         let (code, body) = self.run(command, extra);
         assert_eq!(code, 2, "{command} {extra:?}");
         text(&body, "code")
+    }
+    /// Commits a head-based revision with changed layer text and no content verification, the way
+    /// a layer edited outside BeamCraft would arrive.
+    fn tamper(&self, edit: impl Fn(&str, String) -> String) {
+        let store = RevisionStore::new(BlobStore::new(self.root.join("store")).unwrap());
+        let head = store.open().unwrap();
+        let content = head.manifest().content();
+        let mut ids = IdSource::system();
+        let mut entries = Vec::new();
+        for entry in content.entries() {
+            let original = String::from_utf8(head.layer_bytes(entry.name()).unwrap()).unwrap();
+            let edited = edit(entry.name(), original);
+            store.blobs().publish(edited.as_bytes()).unwrap();
+            entries.push(
+                LayerEntry::from_bytes(entry.name(), entry.role(), edited.as_bytes()).unwrap(),
+            );
+        }
+        let draft = RevisionDraft {
+            project: content.project().clone(),
+            workspace: content.workspace().clone(),
+            revision: Uuid7::parse(&ids.next_id().unwrap().to_string()).unwrap(),
+            op: Uuid7::parse(&ids.next_id().unwrap().to_string()).unwrap(),
+            workspace_generation: content.workspace_generation() + 1,
+            schema: content.schema(),
+            root_layer: content.root_layer().to_owned(),
+            entries,
+        };
+        store
+            .commit_with(
+                &draft,
+                &ExpectedBase::Revision(head.info().revision().clone()),
+                None,
+                &mut NoFault,
+            )
+            .unwrap();
     }
     fn definition(&self, command: &str, extra: &[&str]) -> String {
         text(self.ok(command, extra).get("definition").unwrap(), "digest")
@@ -289,4 +329,37 @@ fn a_copy_is_refused_replayed_or_rejected_by_the_ledger() {
         "DUPLICATE_ID"
     );
     assert_eq!(f.plates().len(), 2);
+}
+
+#[test]
+fn a_copy_refuses_element_links_it_cannot_carry_over() {
+    let f = Fixture::new();
+    let holder = text(at(&f.plate(&[]), &["plate"]), "element_id");
+    let target = text(at(&f.plate(&[]), &["plate"]), "element_id");
+    // The holder gets a link to the other plate, as a later command or another tool would add.
+    let hex = |id: &str| id.replace('-', "");
+    f.tamper(|name, mut text| {
+        if name == "authored.usda" {
+            let marker = format!("\"E_{}\"", hex(&holder));
+            let start = text.find(&marker).unwrap();
+            let brace = start + text[start..].find('{').unwrap() + 1;
+            text.insert_str(
+                brace,
+                &format!(
+                    "\ncustom rel bim:test:supports = </World/Steel/E_{}>\n",
+                    hex(&target)
+                ),
+            );
+        }
+        text
+    });
+    let before = f.plates().len();
+    assert_eq!(
+        f.rejected("copy-element", &["--id", &holder]),
+        "DEPENDENCY_CONFLICT"
+    );
+    assert_eq!(f.plates().len(), before);
+    // The link target holds no link itself, so it can still be copied.
+    f.ok("copy-element", &["--id", &target]);
+    assert_eq!(f.plates().len(), before + 1);
 }
