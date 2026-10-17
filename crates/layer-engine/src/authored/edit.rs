@@ -543,6 +543,24 @@ fn erase_mesh(data: &mut sdf::Data, id: &str) -> Result<(), Diagnostic> {
     Ok(())
 }
 
+fn erase_element(data: &mut sdf::Data, id: &str) -> Result<(), Diagnostic> {
+    let parent = element_path(id)?;
+    let name = parent.rsplit_once('/').map_or(parent.as_str(), |(_, n)| n);
+    for path in data.spec_paths() {
+        let s = path.to_string();
+        if s == parent
+            || s.starts_with(&format!("{parent}."))
+            || s.starts_with(&format!("{parent}/"))
+        {
+            data.erase_spec(&path);
+        }
+    }
+    if data.has_spec(&path("/World/Steel")?) {
+        child(data, "/World/Steel", "primChildren", name, true)?;
+    }
+    Ok(())
+}
+
 pub(super) fn apply(
     original: &OpenRequest,
     targets: &EditTargets,
@@ -669,6 +687,22 @@ pub(super) fn apply(
                 MaterialOpinion::Target(*digest),
             )?,
             Change::Placement { placement, .. } => pose(&mut authored, &p, placement)?,
+            Change::Delete { .. } => {
+                let inside = format!("{p}/");
+                if prims
+                    .iter()
+                    .filter(|v| v.path == p || v.path.starts_with(&inside))
+                    .flat_map(|v| &v.sources)
+                    .any(|s| s.layer != targets.authored && s.layer != targets.derived)
+                {
+                    return Err(fail(
+                        ErrorCode::DependencyUnavailable,
+                        "delete requires the element to live in the authored and derived layers only",
+                    ));
+                }
+                erase_element(&mut authored, id)?;
+                erase_element(&mut derived, id)?;
+            }
             _ => (),
         }
         if matches!(
@@ -790,6 +824,43 @@ fn capture(
                 }
             }
             Change::Label { .. } => add("bim:name", "string", false),
+            Change::Delete { .. } => {
+                for (name, ty) in [
+                    ("bim:id", "string"),
+                    ("bim:name", "string"),
+                    ("bim:elementKind", "token"),
+                    ("bim:geometryMode", "token"),
+                    ("bim:schemaVersion", "string"),
+                    ("bim:createdBy", "string"),
+                    ("bim:material", "rel"),
+                    ("steel:plate:contourPointsMm", "double3[]"),
+                    ("steel:plate:thicknessMm", "double"),
+                    ("steel:plate:holePointsMm", "double3[]"),
+                    ("steel:plate:holeVertexCounts", "int[]"),
+                    ("bim:axisPointsMm", "double3[]"),
+                    ("steel:member:rollRad", "double"),
+                    ("bim:profile", "rel"),
+                ] {
+                    add(name, ty, false);
+                }
+                for &(name, ty) in POSE {
+                    add(name, ty, false);
+                }
+                for &(name, ty) in MESH {
+                    add(name, ty, true);
+                }
+                for (name, ty) in [
+                    ("bim:volumeMm3", "double"),
+                    ("bim:volumeStatus", "token"),
+                    ("bim:massStatus", "token"),
+                    ("bim:shapeSignature", "string"),
+                    ("bim:massSignature", "string"),
+                    ("bim:quantityAlgorithm", "string"),
+                    ("bim:massKg", "double"),
+                ] {
+                    add(name, ty, true);
+                }
+            }
             Change::Contour { .. } => add("steel:plate:contourPointsMm", "double3[]", false),
             Change::Thickness { .. } => add("steel:plate:thicknessMm", "double", false),
             Change::Axis { .. } => add("bim:axisPointsMm", "double3[]", false),

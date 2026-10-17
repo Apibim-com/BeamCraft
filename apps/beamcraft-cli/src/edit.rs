@@ -3,11 +3,13 @@
 
 //! P04 adapter: `UpdateElement` for a plate or a member, committed as the next revision.
 //!
-//! The patch is typed (label, material reference, a plate's thickness) and the adapter writes only
-//! what the patch changes: a rename touches the authored layer alone, a material change rewrites
-//! the quantity record next to an unchanged mesh, and a thickness change rebuilds the mesh and
-//! the records. The engine decides which groups changed and the layer engine's own write set is
-//! checked against the footprint it declares.
+//! The patch is typed (label, material reference, a plate's thickness, the placement translation)
+//! and the adapter writes only what the patch changes: a rename touches the authored layer alone,
+//! a material change rewrites the quantity record next to an unchanged mesh, a thickness change
+//! rebuilds the mesh and the records, and a move (P08) rewrites the placement alone: the
+//! element-local body, its mesh and its stored quantities are not copied or rebuilt. The engine
+//! decides which groups changed and the layer engine's own write set is checked against the
+//! footprint it declares.
 //!
 //! Honesty limits: replay of an `op_id` is decided from the head model (the update is a replay
 //! when the head already holds the patched state), not from a stored canonical request; a later
@@ -30,7 +32,8 @@ use beamcraft_engine::update::{UpdateEffect, effect, patch_member, patch_plate};
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, MaterialOpinion, Prepare, schema_identity,
+    Author, Change, EditTargets, MaterialOpinion, Placement as LayerPlacement, Prepare,
+    schema_identity,
 };
 use beamcraft_model::command::{CommandError, UpdateElement};
 use beamcraft_model::digest::ContentDigest;
@@ -232,6 +235,7 @@ pub fn update_element(
         patch_effect.name,
         patch_effect.material,
         patch_effect.shape,
+        patch_effect.placement,
         new_material,
     )?;
     let schema = schema_identity()?;
@@ -259,7 +263,24 @@ pub fn update_element(
         });
     }
     if let Some(mm) = command.patch.thickness_mm {
-        changes.push(Change::Thickness { id: id_text, mm });
+        changes.push(Change::Thickness {
+            id: id_text.clone(),
+            mm,
+        });
+    }
+    if patch_effect.placement {
+        let placement = match &next {
+            UpdatedElement::Plate(r) => r.authored.placement,
+            UpdatedElement::Member(r) => r.authored.placement,
+        };
+        let [qx, qy, qz, qw] = placement.orientation_xyzw;
+        changes.push(Change::Placement {
+            id: id_text,
+            placement: LayerPlacement {
+                translation_mm: placement.translation_mm,
+                orientation_xyzw: [qx, qy, qz, qw],
+            },
+        });
     }
     if patch_effect.material || patch_effect.shape {
         changes.push(match &next {

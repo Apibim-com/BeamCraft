@@ -9,6 +9,7 @@ use beamcraft_cli::copy::{CopiedElement, CopyRequest, copy_element};
 use beamcraft_cli::definition::{
     DefineRequest, Defined, DefinitionRecord, define, definition_path,
 };
+use beamcraft_cli::delete::{DeleteRequest, DeletedKind, delete_element};
 use beamcraft_cli::edit::{UpdateRequest, UpdatedElement, update_element};
 use beamcraft_cli::history::{Direction, Step, step, timeline};
 use beamcraft_cli::member::{CreateMemberRequest, create_member};
@@ -31,8 +32,8 @@ use beamcraft_host::{
     storage::BlobStore,
 };
 use beamcraft_model::command::{
-    CopyElement, CreatePlate, CreateStraightMember, ElementPatch, MAX_HOLES, MemberKind, Placement,
-    UpdateElement,
+    CopyElement, CreatePlate, CreateStraightMember, DeleteElement, ElementPatch, MAX_HOLES,
+    MemberKind, Placement, UpdateElement,
 };
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
@@ -141,6 +142,17 @@ const UPDATE_OPTIONS: &[&str] = &[
     "--name",
     "--material-digest",
     "--thickness",
+    "--translation",
+    "--op-id",
+    "--revision-id",
+    "--actor-id",
+    "--project-id",
+    "--workspace-id",
+];
+
+const DELETE_OPTIONS: &[&str] = &[
+    "--store",
+    "--id",
     "--op-id",
     "--revision-id",
     "--actor-id",
@@ -188,6 +200,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         "create-plate" => CREATE_OPTIONS,
         "create-member" => CREATE_MEMBER_OPTIONS,
         "update-element" => UPDATE_OPTIONS,
+        "delete-element" => DELETE_OPTIONS,
         "copy-element" => COPY_OPTIONS,
         "workspace-create" | "workspace-status" | "workspace-publish" => WORKSPACE_OPTIONS,
         "workspace-undo" | "workspace-redo" => HISTORY_OPTIONS,
@@ -225,6 +238,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         "create-plate" => create(&store, &options),
         "create-member" => create_member_command(&store, &options),
         "update-element" => update_command(&store, &options),
+        "delete-element" => delete_command(&store, &options),
         "copy-element" => copy_command(&store, &options),
         "workspace-create" | "workspace-status" | "workspace-publish" => {
             workspace_command(&store, command, &options)
@@ -493,6 +507,7 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
                     .map_err(|_| invalid("a number is malformed"))
             })
             .transpose()?,
+        translation_mm: given("--translation").map(translation).transpose()?,
     };
     let updated = update_element(
         store,
@@ -526,6 +541,7 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
                 ("name", Json::Bool(updated.effect.name)),
                 ("material", Json::Bool(updated.effect.material)),
                 ("shape", Json::Bool(updated.effect.shape)),
+                ("placement", Json::Bool(updated.effect.placement)),
             ]),
         ),
         (
@@ -535,6 +551,78 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
         ("element", element),
         ("revision", revision_json(&updated.revision)),
         ("footprint", footprint_json(updated.footprint.as_ref())),
+    ]))
+}
+
+fn delete_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Json> {
+    let mut source = IdSource::system();
+    let mut fresh = || {
+        source.next_id().map_err(|_| PlateError {
+            code: ErrorCode::BackendUnavailable,
+            message: "no identity could be generated",
+        })
+    };
+    let given = |key: &str| options.get(key).copied();
+    let target_id = ElementId::parse(given("--id").ok_or_else(|| invalid("--id is required"))?)
+        .map_err(id_error)?;
+    let op_id = match given("--op-id") {
+        Some(text) => OpId::parse(text).map_err(id_error)?,
+        None => OpId::from_uuid(fresh()?),
+    };
+    let revision_id = match given("--revision-id") {
+        Some(text) => RevisionId::parse(text).map_err(id_error)?,
+        None => RevisionId::from_uuid(fresh()?),
+    };
+    let actor = match given("--actor-id") {
+        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+    };
+    let project = match given("--project-id") {
+        Some(text) => ProjectId::parse(text).map_err(id_error)?,
+        None => ProjectId::from_uuid(fresh()?),
+    };
+    let workspace = match given("--workspace-id") {
+        Some(text) => WorkspaceId::parse(text).map_err(id_error)?,
+        None => WorkspaceId::from_uuid(fresh()?),
+    };
+    let deleted = delete_element(
+        store,
+        &DeleteRequest {
+            op_id,
+            revision_id,
+            actor,
+            project,
+            workspace,
+            command: DeleteElement { target_id },
+        },
+        &mut NoFault,
+    )?;
+    Ok(Json::object([
+        (
+            "outcome",
+            Json::text(if deleted.replayed {
+                "element_delete_replayed"
+            } else {
+                "element_deleted"
+            }),
+        ),
+        ("op_id", Json::text(op_id.to_string())),
+        ("element_id", Json::text(target_id.to_string())),
+        (
+            "kind",
+            deleted.kind.map_or(Json::Null, |k| {
+                Json::text(match k {
+                    DeletedKind::Plate => "plate",
+                    DeletedKind::Member => "member",
+                })
+            }),
+        ),
+        (
+            "changed_layers",
+            Json::Array(deleted.changed_layers.iter().map(Json::text).collect()),
+        ),
+        ("revision", revision_json(&deleted.revision)),
+        ("footprint", footprint_json(deleted.footprint.as_ref())),
     ]))
 }
 

@@ -237,6 +237,25 @@ clears the material, so the mass becomes unknown. An empty patch is `INVALID_ARG
 and mass are stored beside the derived mesh with their own signatures; `plate-inspect` reports
 `stored_quantities` as `current`, `stale` or `missing`, and the publish-time verifier refuses a
 stale record with `INTEGRITY_ERROR`. See the [design note](../../docs/design/p04-quantities-update.md).
+`--translation X,Y,Z` (P08) moves the element: it sets the absolute placement translation and keeps
+the rotation, rewrites the authored layer alone and never rebuilds the body, its mesh or its stored
+quantities.
+
+## P08 move and delete
+
+```text
+beamcraft update-element --store ROOT --id UUID --translation X,Y,Z [ids as above]
+beamcraft delete-element --store ROOT --id UUID
+  [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
+```
+
+A move is the placement patch of `UpdateElement`: the footprint writes the placement and the
+derived invalidation group only, the derived layer is byte for byte unchanged and the stored
+volume and mass stay `current`. `delete-element` removes one plate or member from both layers and
+nothing else (the other elements, the unknown content and the definitions it pinned stay). It is
+refused with `DEPENDENCY_CONFLICT` while another element links to it (no cascade, no dangling
+link), `NOT_FOUND` for an unknown element, and the same `--op-id` is a replay or `OP_ID_REUSE`.
+See the [design note](../../docs/design/p08-move-delete.md).
 
 ## P05 copy-element
 
