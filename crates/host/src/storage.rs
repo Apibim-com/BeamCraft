@@ -41,7 +41,7 @@ fn ends_with_newline(path: &Path) -> Result<bool, StorageError> {
     file.seek(SeekFrom::End(-1)).map_err(io_error)?;
     let mut last = [0u8; 1];
     file.read_exact(&mut last).map_err(io_error)?;
-    Ok(last == [b'\n'])
+    Ok(last == *b"\n")
 }
 
 /// Successful publish-if-absent outcome.
