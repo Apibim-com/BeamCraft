@@ -102,6 +102,28 @@ impl Footprint {
         Self::for_create_with(id, Some(profile), material)
     }
 
+    /// The footprint of `AttachReference` (R01): it reads the absence of the new ID and writes the
+    /// wrapper's lifecycle, label, placement and its source-input group (the pin and the units
+    /// interpretation of a reference). It writes no derived group and names no definition: the
+    /// foreign layer is a stored asset the wrapper points at, never a target of any command.
+    pub fn for_attach(id: ElementId) -> Result<Self, CommandError> {
+        let entry = |group| Entry {
+            target: Target::Element(id),
+            group,
+        };
+        let footprint = Self {
+            reads: BTreeSet::from([entry(Group::Lifecycle)]),
+            writes: BTreeSet::from([
+                entry(Group::Lifecycle),
+                entry(Group::Label),
+                entry(Group::ShapeInputs),
+                entry(Group::Placement),
+            ]),
+        };
+        footprint.check_bound()?;
+        Ok(footprint)
+    }
+
     /// The footprint of `CopyElement` (P05): it reads the absence of the new ID, the source's
     /// lifecycle and every authored group the copy takes from it, and the pinned definitions
     /// (profile and material); it writes what `CreatePlate` writes for the new ID. The source is
