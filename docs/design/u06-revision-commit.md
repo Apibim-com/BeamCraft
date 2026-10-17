@@ -19,11 +19,12 @@ generations; the expected base is verified; there is no partial Save of a set of
 | `RevisionDraft` | What the caller decides. Layer order is irrelevant: entries are sorted, duplicates are `DUPLICATE_ID`, at least one authored and one derived layer, the root layer must be an entry. 20 reordered drafts give byte-identical manifests. |
 | Root | Append-only head log `revisions/<sequence, 20 digits>`. Record `N` is a complete, synced file installed by a **non-replacing hard link**; the root is the highest record. A reader sees revision `N-1` or `N`, never part of a set. |
 | `RevisionStore::commit_with` | Validate draft, read and verify the root, op-id replay, expected base (`BASE_REVISION_MISMATCH`), project, verify every referenced blob (presence, full digest, size) and run the optional `ContentVerifier`, store the manifest blob, write and sync the record, link it. Everything before the link leaves the root unchanged. |
-| Idempotency | Same op id with identical content returns the recorded revision (`Replayed`), also after the root moved on (bounded look-back of 64 records). Same op id, other content: `OP_ID_REUSE`. Same revision id, other op: `INTEGRITY_ERROR`. |
+| Idempotency | A retry returns the recorded revision (`Replayed`) only if the whole canonical request matches: same op id, same content **and the same expected base as originally recorded** (initial or the revision UUID); the original, now stale, base still replays. Same op id with other content or another base: `OP_ID_REUSE`. The op id is found in the newest 64 records; an older retry is found through its revision id (below). |
+| Revision-id uniqueness | Every commit checks the revision UUID against **all** records of the log (not only the replay window) and fails closed on an unreadable record, so a UUID can never be reused at a later sequence and a stale writer expecting an old UUID cannot match a newer head. A reused id with another op: `INTEGRITY_ERROR`. The cost is linear in the log length, so the log is capped at 100,000 revisions. |
 | Compare-and-swap | The link is the CAS. Two committers on one base cannot both win; the loser re-resolves to a replay or `BASE_REVISION_MISMATCH`. There is no lock file a crash could leave behind (100 two-writer repetitions pass). |
 | `RevisionStore::open` | Verifies the log shape (no gap, no unknown name, no torn record), record, manifest, base link and every referenced blob, and returns typed errors for garbage-collected, corrupt, resized or torn state. |
 | `CommitHook` | `Checked`, `BlobsVerified`, `ManifestStored`, `RecordStaged` (abort leaves the root unchanged: `Aborted`, F04 `CANCELLED`) and `Switched` (failure there is `OUTCOME_UNKNOWN`, never success or rollback). This is the seam U07 uses for intent records and fault injection. |
-| `ContentVerifier` | Injected content gate that receives the verified layer bytes and returns U03 evidence or a `ContentRejection` carrying the layer engine's own F04 code (`DUPLICATE_ID`, `INVALID_ID`, `DANGLING_RELATIONSHIP`, `FOREIGN_READ_ONLY`, ...). The host checks that the evidence is complete (`DEPENDENCY_UNAVAILABLE`) and belongs to the draft's project, workspace, generation and base (`STALE_WORKSPACE`), then records it in the manifest. |
+| `ContentVerifier` | Injected content gate. It receives a `VerifyRequest`: the verified layer bytes **and the draft's composition root, schema identity, project, workspace, generation and base pin**, and returns U03 evidence or a `ContentRejection` carrying the layer engine's own F04 code (`DUPLICATE_ID`, `INVALID_ID`, `DANGLING_RELATIONSHIP`, `FOREIGN_READ_ONLY`, ...). The evidence must repeat the root and schema it was built for. The host checks that it names the draft's project, workspace, generation, base, root and schema (`STALE_WORKSPACE` otherwise) and is complete (`DEPENDENCY_UNAVAILABLE`), then records it in the manifest. |
 
 CLI (`beamcraft`): `revision-commit` and `revision-open`, machine-readable JSON, exit codes of the
 existing table. `revision-commit` takes already stored blobs (`blob-put`) and does not parse USD.
@@ -63,7 +64,8 @@ existing table. `revision-commit` takes already stored blobs (`blob-put`) and do
   proof; personal workspaces; a durable op-id ledger beyond the head log; multi-client
   collaboration; a CLI path that runs the layer-engine verifier (needs an F05 profile with an
   index/verify message; the frozen U04 profile has none). The hook is the U07 seam, and the
-  replay look-back of 64 records is the head log's own, not a ledger.
+  replay window of 64 records is the head log's own (older retries resolve through their
+  revision id), not a ledger.
 * The worker protocol is unchanged: no mutation schema was added and the worker cannot publish a
   root; only the host does.
 
@@ -71,6 +73,6 @@ existing table. `revision-commit` takes already stored blobs (`blob-put`) and do
 
 Original code and fixtures; formats derived from F04 sections 2, 6, 8, F05 section 7 and the
 plan. No asset, no third-party dependency, no Tekla/Trimble material. Caps: 64 entries, 128-byte
-names, 64 KiB manifest, 256 MiB declared layer bytes, 64 MiB in memory for a verifier, 1,000,000
-revisions, 512-byte records. Linux/macOS, wasm32 and `cargo deny` were not run (not installed
-here).
+names, 64 KiB manifest, 256 MiB declared layer bytes, 64 MiB in memory for a verifier, 100,000
+revisions (every commit reads all records to prove revision-id uniqueness), 512-byte records.
+Linux/macOS, wasm32 and `cargo deny` were not run (not installed here).

@@ -78,7 +78,11 @@ impl RevisionStore {
         }
     }
 
-    fn load_record(&self, directory: &Path, sequence: u64) -> Result<RootRecord, RevisionError> {
+    pub(super) fn load_record(
+        &self,
+        directory: &Path,
+        sequence: u64,
+    ) -> Result<RootRecord, RevisionError> {
         let bytes = self
             .blobs
             .read_namespace_file(directory, &root::record_name(sequence), MAX_RECORD_BYTES)

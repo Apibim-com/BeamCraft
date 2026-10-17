@@ -114,7 +114,7 @@ pub struct ContentRejection {
 }
 
 /// Plain evidence of a U03 index the verifier derived from the layers it was given. It carries
-/// no authority by itself: the host compares it with the draft before recording it.
+/// no authority by itself: the host compares it with the request before recording it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexEvidence {
     /// Project of the context the index was built in.
@@ -125,6 +125,10 @@ pub struct IndexEvidence {
     pub generation: u64,
     /// Revision digest pinned by that context: the base manifest digest of the draft.
     pub pinned_revision: ContentDigest,
+    /// Composition root layer the index was built from; must be the draft's root.
+    pub root_layer: String,
+    /// Schema identity the layers were validated against; must be the draft's.
+    pub schema: ContentDigest,
     /// `Completeness::Complete` of the index.
     pub complete: bool,
     /// `IndexToken::structure_digest`.
@@ -133,13 +137,57 @@ pub struct IndexEvidence {
     pub prim_count: u64,
 }
 
+/// Everything a [`ContentVerifier`] must verify: the layers and the exact context the manifest
+/// will claim. A verifier opens the layers with this `root_layer` and `schema`, and its
+/// [`IndexEvidence`] must repeat them, so evidence for another composition cannot be recorded.
+#[derive(Debug, Clone, Copy)]
+pub struct VerifyRequest<'a> {
+    /// The complete layer set, sorted by name, with verified bytes.
+    pub layers: &'a [VerifiedLayer<'a>],
+    /// Composition root layer selected by the draft.
+    pub root_layer: &'a str,
+    /// Schema identity digest selected by the draft.
+    pub schema: ContentDigest,
+    /// Project of the draft.
+    pub project: &'a Uuid7,
+    /// Publishing workspace of the draft.
+    pub workspace: &'a Uuid7,
+    /// Workspace generation of the draft.
+    pub generation: u64,
+    /// Manifest digest of the base revision, absent for the first revision.
+    pub pinned_revision: Option<ContentDigest>,
+}
+
 /// Content-level check run after the blobs verify and before the root switch. The host never
 /// parses USD: an implementation (the layer engine, in its own process or crate) opens the
-/// layers, applies the U03 guards (`verify_index`: live, complete, untampered) and the
-/// duplicate/short-ID/dangling checks, and returns the evidence or a [`ContentRejection`].
+/// layers from the request's root, applies the U03 guards (`verify_index`: live, complete,
+/// untampered) and the duplicate/short-ID/dangling checks, and returns the evidence or a
+/// [`ContentRejection`].
 pub trait ContentVerifier {
-    /// Verifies the complete layer set of one revision.
-    fn verify(&self, layers: &[VerifiedLayer<'_>]) -> Result<IndexEvidence, ContentRejection>;
+    /// Verifies the complete layer set of one revision against the request.
+    fn verify(&self, request: &VerifyRequest<'_>) -> Result<IndexEvidence, ContentRejection>;
+}
+
+/// Maps the recorded base of a manifest to the expected base a request would have carried.
+fn recorded_base(info: &RevisionInfo) -> ExpectedBase {
+    match info.manifest().base() {
+        None => ExpectedBase::Initial,
+        Some(base) => ExpectedBase::Revision(base.revision.clone()),
+    }
+}
+
+/// A recorded revision answers a retry only if the whole canonical request matches: the content
+/// and the expected base (F04 section 6). Anything else under this op id is `OP_ID_REUSE`.
+fn replay_of(
+    info: RevisionInfo,
+    content: &Content,
+    expected: &ExpectedBase,
+) -> Result<RevisionInfo, RevisionError> {
+    if info.manifest().content() == content && recorded_base(&info) == *expected {
+        Ok(info)
+    } else {
+        Err(RevisionError::OpIdReuse)
+    }
 }
 
 fn io_error(error: io::Error) -> RevisionError {
@@ -188,7 +236,7 @@ impl RevisionStore {
             None => None,
         };
         if let (Some(directory), Some(head)) = (&directory, &head)
-            && let Some(info) = self.find_replay(directory, head, &content)?
+            && let Some(info) = self.find_replay(directory, head, &content, expected)?
         {
             return Ok(Committed {
                 outcome: CommitOutcome::Replayed,
@@ -233,7 +281,7 @@ impl RevisionStore {
             Ok(()) => {}
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
                 drop(temp);
-                return self.resolve_lost_race(&content);
+                return self.resolve_lost_race(&content, expected);
             }
             Err(e) => return Err(io_error(e)),
         }
@@ -246,27 +294,25 @@ impl RevisionStore {
         })
     }
 
-    /// Looks for the draft's op id (and revision id) in the head and at most
-    /// [`REPLAY_LOOKBACK`] ancestors. The walk stops quietly at an unreadable ancestor: an
-    /// older replay is then answered by the base check, never by a second commit.
+    /// Finds an earlier commit of this operation and enforces revision-id uniqueness.
+    ///
+    /// The op id is looked up in the head and at most [`REPLAY_LOOKBACK`] ancestors (the walk
+    /// stops quietly at an unreadable ancestor). The revision id is checked against **every**
+    /// record of the log, independently of that window, so an id can never be reused at a later
+    /// sequence, and an unreadable record fails closed. A revision id that belongs to the same
+    /// op (an older replay) resolves to that revision. An op that is neither found by id nor by
+    /// the window is answered by the expected-base check, never by a second commit.
     fn find_replay(
         &self,
         directory: &Path,
         head: &RevisionInfo,
         content: &Content,
+        expected: &ExpectedBase,
     ) -> Result<Option<RevisionInfo>, RevisionError> {
         let mut current = head.clone();
         for _ in 0..REPLAY_LOOKBACK {
-            let seen = current.manifest().content();
-            if seen.op() == content.op() {
-                return if seen == content {
-                    Ok(Some(current))
-                } else {
-                    Err(RevisionError::OpIdReuse)
-                };
-            }
-            if seen.revision() == content.revision() {
-                return Err(RevisionError::RevisionIdReuse);
+            if current.manifest().content().op() == content.op() {
+                return replay_of(current, content, expected).map(Some);
             }
             let Some(previous) = current.sequence().checked_sub(1).filter(|s| *s > 0) else {
                 break;
@@ -276,15 +322,34 @@ impl RevisionStore {
                 Err(_) => break,
             }
         }
+        for sequence in 1..=head.sequence() {
+            if self.load_record(directory, sequence)?.revision() != content.revision() {
+                continue;
+            }
+            let owner = if sequence == head.sequence() {
+                head.clone()
+            } else {
+                self.load_at(directory, sequence)?
+            };
+            return if owner.manifest().content().op() == content.op() {
+                replay_of(owner, content, expected).map(Some)
+            } else {
+                Err(RevisionError::RevisionIdReuse)
+            };
+        }
         Ok(None)
     }
 
-    fn resolve_lost_race(&self, content: &Content) -> Result<Committed, RevisionError> {
+    fn resolve_lost_race(
+        &self,
+        content: &Content,
+        expected: &ExpectedBase,
+    ) -> Result<Committed, RevisionError> {
         let directory = self.head_dir()?.ok_or(RevisionError::TornRoot)?;
         let head = self
             .load_head_in(&directory)?
             .ok_or(RevisionError::TornRoot)?;
-        match self.find_replay(&directory, &head, content)? {
+        match self.find_replay(&directory, &head, content, expected)? {
             Some(info) => Ok(Committed {
                 outcome: CommitOutcome::Replayed,
                 info,
@@ -331,12 +396,24 @@ impl RevisionStore {
                 bytes,
             })
             .collect();
-        let evidence = verifier.verify(&layers).map_err(RevisionError::Content)?;
-        // A different project, workspace, generation or pinned base is a stale or foreign
-        // context before it is a coverage question, as in the U03 `verify_index` order.
+        let request = VerifyRequest {
+            layers: &layers,
+            root_layer: content.root_layer(),
+            schema: content.schema(),
+            project: content.project(),
+            workspace: content.workspace(),
+            generation: content.workspace_generation(),
+            pinned_revision: base.map(|b| b.manifest),
+        };
+        let evidence = verifier.verify(&request).map_err(RevisionError::Content)?;
+        // A different project, workspace, generation, pinned base, composition root or schema
+        // is a stale or foreign context before it is a coverage question, as in the U03
+        // `verify_index` order. The evidence must name exactly the request it answers.
         if evidence.project != content.project().as_str()
             || evidence.workspace != content.workspace().as_str()
             || evidence.generation != content.workspace_generation()
+            || evidence.root_layer != content.root_layer()
+            || evidence.schema != content.schema()
             || base.is_some_and(|b| b.manifest != evidence.pinned_revision)
         {
             return Err(RevisionError::IndexMismatch);

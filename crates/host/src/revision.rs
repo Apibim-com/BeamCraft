@@ -16,8 +16,10 @@
 //! # What is promised
 //!
 //! * [`RevisionStore::commit_with`] verifies, before the root switch, the expected base, the
-//!   project, replay/identity reuse, every referenced blob (presence, full digest, declared
-//!   size) and, when a [`ContentVerifier`] is supplied, the complete U03 evidence. Any failure
+//!   project, replay/identity reuse (the op id and base must match a recorded retry; the revision
+//!   id is unique across the whole log), every referenced blob (presence, full digest, declared
+//!   size) and, when a [`ContentVerifier`] is supplied, the complete U03 evidence for the draft's
+//!   root and schema. Any failure
 //!   before the switch returns an error with the previous root untouched. Manifest and layer
 //!   blobs published before a failed attempt remain as unreferenced immutable blobs.
 //! * [`RevisionStore::open`] verifies the record, the manifest, the base link and every
@@ -57,7 +59,7 @@ use crate::storage::StorageError;
 
 pub use commit::{
     CommitHook, CommitOutcome, CommitPoint, Committed, ContentRejection, ContentVerifier,
-    ExpectedBase, IndexEvidence, Injected, NoFault, VerifiedLayer,
+    ExpectedBase, IndexEvidence, Injected, NoFault, VerifiedLayer, VerifyRequest,
 };
 pub use manifest::{BaseRef, Content, IndexRecord, LayerEntry, LayerRole, Manifest, RevisionDraft};
 pub use read::{Revision, RevisionStore};
@@ -69,13 +71,15 @@ pub const MAX_ENTRIES: usize = 64;
 pub const MAX_NAME_BYTES: usize = 128;
 /// Largest encoded manifest.
 pub const MAX_MANIFEST_BYTES: usize = 65_536;
-/// Largest revision sequence number (and head-log length) this store accepts.
-pub const MAX_REVISIONS: u64 = 1_000_000;
+/// Largest revision sequence number (and head-log length) this store accepts. Every commit reads
+/// all records to prove revision-id uniqueness, so the cap bounds that linear cost.
+pub const MAX_REVISIONS: u64 = 100_000;
 /// Largest sum of the declared sizes of one revision's layers.
 pub const MAX_REVISION_BYTES: u64 = 268_435_456;
 /// Largest sum of layer bytes held in memory for a [`ContentVerifier`].
 pub const MAX_CONTENT_VERIFY_BYTES: u64 = 67_108_864;
-/// Most head-log records inspected for an op-id replay or revision-id reuse.
+/// Most head-log records inspected for an op-id replay. Revision-id uniqueness is not bounded by
+/// this window: it is checked against every record.
 pub const REPLAY_LOOKBACK: usize = 64;
 
 /// A full UUIDv7 in canonical lowercase `8-4-4-4-12` form (F04 section 2).
@@ -120,7 +124,7 @@ pub enum RevisionError {
     ProjectMismatch,
     /// The expected base is not the current root: stale writer or lost race.
     BaseMismatch,
-    /// The op id was already committed with different content.
+    /// The op id was already committed with different content or another expected base.
     OpIdReuse,
     /// The revision id was already used by a different operation or content.
     RevisionIdReuse,
@@ -154,7 +158,8 @@ pub enum RevisionError {
     Content(ContentRejection),
     /// The supplied U03 evidence covers only part of the snapshot.
     IndexIncomplete,
-    /// The supplied U03 evidence is for another project, workspace, generation or base.
+    /// The supplied U03 evidence is for another project, workspace, generation, base, composition
+    /// root or schema.
     IndexMismatch,
     /// A [`CommitHook`] aborted before the root switch; the root is provably unchanged.
     Aborted(CommitPoint),

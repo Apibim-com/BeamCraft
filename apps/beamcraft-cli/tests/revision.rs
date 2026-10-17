@@ -13,7 +13,7 @@
 use beamcraft_host::{
     revision::{
         CommitOutcome, ContentRejection, ContentVerifier, ExpectedBase, IndexEvidence, LayerEntry,
-        LayerRole, NoFault, RevisionDraft, RevisionError, RevisionStore, Uuid7, VerifiedLayer,
+        LayerRole, NoFault, RevisionDraft, RevisionError, RevisionStore, Uuid7, VerifyRequest,
     },
     storage::BlobStore,
 };
@@ -323,13 +323,15 @@ fn reject(d: Diagnostic) -> ContentRejection {
         message: d.message,
     }
 }
-fn evidence(index: &ElementIndex) -> IndexEvidence {
+fn evidence(index: &ElementIndex, root_layer: &str, schema: ContentDigest) -> IndexEvidence {
     let token = index.token();
     IndexEvidence {
         project: token.identity.project.clone(),
         workspace: token.identity.workspace.clone(),
         generation: token.identity.generation,
         pinned_revision: token.identity.revision,
+        root_layer: root_layer.to_owned(),
+        schema,
         complete: token.completeness == Completeness::Complete,
         structure_digest: token.structure_digest,
         prim_count: token.prim_count as u64,
@@ -345,16 +347,17 @@ struct Derived {
     u02: bool,
 }
 impl Derived {
-    fn open_request(&self, layers: &[VerifiedLayer<'_>]) -> OpenRequest {
-        let mut request = OpenRequest {
+    fn open_request(&self, request: &VerifyRequest<'_>) -> OpenRequest {
+        let mut open = OpenRequest {
             identity: Identity {
                 project: PROJECT.into(),
                 workspace: WORKSPACE.into(),
                 revision: self.pinned,
                 generation: self.generation,
             },
-            root: "root.usda".into(),
-            assets: layers
+            root: request.root_layer.into(),
+            assets: request
+                .layers
                 .iter()
                 .map(|l| Asset {
                     name: l.name.into(),
@@ -362,7 +365,8 @@ impl Derived {
                     bytes: l.bytes.to_vec(),
                 })
                 .collect(),
-            owned_layers: layers
+            owned_layers: request
+                .layers
                 .iter()
                 .filter(|l| l.role != LayerRole::External)
                 .map(|l| l.name.to_owned())
@@ -372,24 +376,24 @@ impl Derived {
             profile: Profile::StaticLocal,
             budgets: Budgets::default(),
         };
-        request.manifest = request.manifest_digest().unwrap();
-        request
+        open.manifest = open.manifest_digest().unwrap();
+        open
     }
 }
 impl ContentVerifier for Derived {
-    fn verify(&self, layers: &[VerifiedLayer<'_>]) -> Result<IndexEvidence, ContentRejection> {
-        let request = self.open_request(layers);
+    fn verify(&self, request: &VerifyRequest<'_>) -> Result<IndexEvidence, ContentRejection> {
+        let open = self.open_request(request);
         if self.u02 {
-            validate_layers(request.clone(), schema_identity().unwrap(), &control())
+            validate_layers(open.clone(), schema_identity().unwrap(), &control())
                 .map_err(reject)?;
         }
         let mut reader = Reader::default();
-        let opened = reader.open(request, &control()).map_err(reject)?;
+        let opened = reader.open(open, &control()).map_err(reject)?;
         let index = reader
             .element_index(&opened.context, &control())
             .map_err(reject)?;
         reader.verify_index(&index, &control()).map_err(reject)?;
-        Ok(evidence(&index))
+        Ok(evidence(&index, request.root_layer, request.schema))
     }
 }
 
@@ -401,7 +405,8 @@ struct Supplied<'a> {
     index: &'a ElementIndex,
 }
 impl ContentVerifier for Supplied<'_> {
-    fn verify(&self, layers: &[VerifiedLayer<'_>]) -> Result<IndexEvidence, ContentRejection> {
+    fn verify(&self, request: &VerifyRequest<'_>) -> Result<IndexEvidence, ContentRejection> {
+        let layers = request.layers;
         let live = self
             .author
             .export(self.context, &control())
@@ -420,7 +425,12 @@ impl ContentVerifier for Supplied<'_> {
         self.author
             .verify_index(self.index, &control())
             .map_err(reject)?;
-        Ok(evidence(self.index))
+        // The supplied index was built by this author from its own root and schema.
+        Ok(evidence(
+            self.index,
+            "root.usda",
+            schema_identity().unwrap().digest,
+        ))
     }
 }
 
@@ -885,4 +895,56 @@ fn stale_partial_foreign_and_mismatched_indexes_cannot_carry_a_commit() {
     let error = commit_verified(&store, &d2, &base(REV1), &stale).unwrap_err();
     assert_eq!(error.code(), ErrorCode::StaleWorkspace);
     assert_eq!(store.head().unwrap().unwrap(), one.info);
+}
+
+#[test]
+fn the_verifier_indexes_the_selected_root_and_evidence_for_another_root_is_refused() {
+    let fx = Fixture::new();
+    let store = fx.revisions();
+    let (author, opened) = populated(64);
+    let generation = opened.context.identity().generation;
+    let assets = exported(&author, &opened.context);
+    publish(store.blobs(), &assets);
+    let index = author.element_index(&opened.context, &control()).unwrap();
+    assert!(!index.is_empty());
+
+    // The same layers, composed from the empty weak layer instead of root.usda: the verifier
+    // must open that root, so the recorded index describes it (no prims), not root.usda's.
+    let mut other_root = draft(&assets, REV1, COMMIT1, generation);
+    other_root.root_layer = "weak.usda".into();
+    let derived = Derived {
+        generation,
+        pinned: digest(b"pinned U06 base"),
+        u02: false,
+    };
+    let one = commit_verified(&store, &other_root, &ExpectedBase::Initial, &derived).unwrap();
+    let recorded = one.info.manifest().index().unwrap();
+    assert_eq!(recorded.prims, 0);
+    assert_ne!(recorded.structure, index.structure_digest());
+
+    // A verifier that indexed root.usda cannot vouch for a draft that selects another root.
+    let fx2 = Fixture::new();
+    let store2 = fx2.revisions();
+    publish(store2.blobs(), &assets);
+    let supplied = Supplied {
+        author: &author,
+        context: &opened.context,
+        index: &index,
+    };
+    let error =
+        commit_verified(&store2, &other_root, &ExpectedBase::Initial, &supplied).unwrap_err();
+    assert_eq!(error, RevisionError::IndexMismatch);
+    assert_eq!(store2.head().unwrap(), None);
+    // The same evidence is accepted for the root it describes.
+    let ok = commit_verified(
+        &store2,
+        &draft(&assets, REV1, COMMIT1, generation),
+        &ExpectedBase::Initial,
+        &supplied,
+    )
+    .unwrap();
+    assert_eq!(
+        ok.info.manifest().index().unwrap().structure,
+        index.structure_digest()
+    );
 }

@@ -18,7 +18,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use beamcraft_host::revision::{
     CommitOutcome, CommitPoint, ContentRejection, ContentVerifier, ExpectedBase, IndexEvidence,
     Injected, LayerEntry, LayerRole, MAX_CONTENT_VERIFY_BYTES, Manifest, REPLAY_LOOKBACK,
-    RevisionDraft, RevisionError, RevisionInfo, RevisionStore, Uuid7, VerifiedLayer,
+    RevisionDraft, RevisionError, RevisionInfo, RevisionStore, Uuid7, VerifyRequest,
 };
 use beamcraft_host::storage::{BlobStore, MAX_BLOB_BYTES, StorageError};
 use beamcraft_model::{
@@ -370,7 +370,7 @@ fn op_id_replay_is_idempotent_and_reuse_with_other_content_is_rejected() {
 }
 
 #[test]
-fn replay_lookback_is_bounded_and_an_unknown_old_op_is_a_conflict_not_a_second_commit() {
+fn old_ops_beyond_the_window_resolve_by_revision_id_or_fall_back_to_the_base_check() {
     let fx = Fixture::new();
     let store = fx.store();
     let total = u32::try_from(REPLAY_LOOKBACK).unwrap() + 2;
@@ -380,16 +380,139 @@ fn replay_lookback_is_bounded_and_an_unknown_old_op_is_a_conflict_not_a_second_c
         store.commit(&d, &expect(n - 1)).unwrap();
         drafts.push(d);
     }
-    // The newest REPLAY_LOOKBACK revisions (sequence 3..=66) are still recognised ...
+    // The newest REPLAY_LOOKBACK revisions (sequence 3..=66) are found by op id ...
     let inside = store.commit(&drafts[2], &expect(2)).unwrap();
     assert_eq!(inside.outcome, CommitOutcome::Replayed);
     assert_eq!(inside.info.sequence(), 3);
-    // ... an older op is not, and its stale base keeps it from committing again.
+    // ... an older retry of the same request is still found, through its revision id.
+    let old = store.commit(&drafts[1], &expect(1)).unwrap();
+    assert_eq!(old.outcome, CommitOutcome::Replayed);
+    assert_eq!(old.info.sequence(), 2);
+    // An old op that was never committed under this revision id cannot be recognised; its
+    // stale base keeps it from committing.
+    let mut unknown = draft(layers(&store, 2), 2);
+    unknown.revision = id(900);
     assert_eq!(
-        err(store.commit(&drafts[1], &expect(1))),
+        err(store.commit(&unknown, &expect(1))),
         RevisionError::BaseMismatch
     );
     assert_eq!(store.head().unwrap().unwrap().sequence(), u64::from(total));
+}
+
+#[test]
+fn a_revision_id_cannot_be_reused_beyond_the_replay_window() {
+    let fx = Fixture::new();
+    let store = fx.store();
+    let total = u32::try_from(REPLAY_LOOKBACK).unwrap() + 2;
+    for n in 1..=total {
+        commit_n(&store, n);
+    }
+    let head = store.head().unwrap().unwrap();
+    assert_eq!(head.sequence(), u64::from(total));
+
+    // A new operation on the current head tries to reuse revision 1's UUID (more than
+    // REPLAY_LOOKBACK records back). It must be refused, not published at sequence 67.
+    let mut reuse = draft(layers(&store, total + 1), total + 1);
+    reuse.revision = id(101);
+    let error = err(store.commit(&reuse, &expect(total)));
+    assert_eq!(error, RevisionError::RevisionIdReuse);
+    assert_eq!(error.code(), ErrorCode::IntegrityError);
+    assert!(!fx.log(u64::from(total) + 1).exists());
+
+    // Hence a stale writer that still expects revision 1 can never match the head by UUID.
+    let stale = draft(layers(&store, total + 2), total + 2);
+    assert_eq!(
+        err(store.commit(&stale, &expect(1))),
+        RevisionError::BaseMismatch
+    );
+    assert_eq!(store.head().unwrap().unwrap(), head);
+
+    // An unreadable record means uniqueness cannot be established: fail closed.
+    fs::write(fx.log(5), b"garbage").unwrap();
+    let fresh = draft(layers(&store, total + 3), total + 3);
+    assert_eq!(
+        err(store.commit(&fresh, &expect(total))),
+        RevisionError::TornRoot
+    );
+    assert!(!fx.log(u64::from(total) + 1).exists());
+}
+
+#[test]
+fn a_retry_with_a_different_expected_base_is_not_a_replay() {
+    let fx = Fixture::new();
+    let store = fx.store();
+    // Initial commit, retried with an arbitrary base: the canonical request differs.
+    let d1 = draft(layers(&store, 1), 1);
+    let one = store.commit(&d1, &ExpectedBase::Initial).unwrap();
+    for wrong in [expect(1), ExpectedBase::Revision(id(999))] {
+        assert_eq!(
+            err(store.commit(&d1, &wrong)),
+            RevisionError::OpIdReuse,
+            "{wrong:?}"
+        );
+    }
+    assert_eq!(store.head().unwrap().unwrap(), one.info);
+
+    // A commit on a base, retried with the initial or another base: also a different request.
+    let d2 = draft(layers(&store, 2), 2);
+    let two = store.commit(&d2, &expect(1)).unwrap();
+    for wrong in [ExpectedBase::Initial, ExpectedBase::Revision(id(999))] {
+        assert_eq!(err(store.commit(&d2, &wrong)), RevisionError::OpIdReuse);
+    }
+    // The original base replays, also once the base is stale (the root has moved on).
+    commit_n(&store, 3);
+    let replay = store.commit(&d2, &expect(1)).unwrap();
+    assert_eq!(replay.outcome, CommitOutcome::Replayed);
+    assert_eq!(replay.info, two.info);
+    assert_eq!(
+        store.commit(&d1, &ExpectedBase::Initial).unwrap().outcome,
+        CommitOutcome::Replayed
+    );
+}
+
+#[test]
+fn a_lost_race_replay_also_compares_the_expected_base() {
+    // Two writers with the same op but different bases: exactly one commit, never two, and the
+    // other gets OP_ID_REUSE (different canonical request) or a base conflict, never Replayed.
+    for round in 0..20 {
+        let fx = Fixture::new();
+        let store = fx.store();
+        commit_n(&store, 1);
+        commit_n(&store, 2);
+        let d = draft(layers(&store, 3), 3);
+        let barrier = Barrier::new(2);
+        let bases = [expect(2), ExpectedBase::Revision(id(999))];
+        let results: Vec<_> = std::thread::scope(|scope| {
+            bases
+                .iter()
+                .map(|base| {
+                    let store = store.clone();
+                    let (barrier, d) = (&barrier, &d);
+                    scope.spawn(move || {
+                        barrier.wait();
+                        store.commit(d, base)
+                    })
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|h| h.join().unwrap())
+                .collect()
+        });
+        let created = results
+            .iter()
+            .filter(|r| matches!(r, Ok(c) if c.outcome == CommitOutcome::Created))
+            .count();
+        let replayed = results
+            .iter()
+            .filter(|r| matches!(r, Ok(c) if c.outcome == CommitOutcome::Replayed))
+            .count();
+        assert_eq!((created, replayed), (1, 0), "round {round}: {results:?}");
+        assert!(matches!(
+            results.iter().find_map(|r| r.as_ref().err()),
+            Some(RevisionError::OpIdReuse | RevisionError::BaseMismatch)
+        ));
+        assert_eq!(store.head().unwrap().unwrap().sequence(), 3);
+    }
 }
 
 #[test]
@@ -481,21 +604,25 @@ type Seen = (String, LayerRole, ContentDigest, Vec<u8>);
 struct Fake {
     result: Result<IndexEvidence, ContentRejection>,
     seen: RefCell<Vec<Seen>>,
+    request: RefCell<Option<(String, ContentDigest)>>,
 }
 impl Fake {
     fn new(result: Result<IndexEvidence, ContentRejection>) -> Self {
         Self {
             result,
             seen: RefCell::default(),
+            request: RefCell::default(),
         }
     }
 }
 impl ContentVerifier for Fake {
-    fn verify(&self, layers: &[VerifiedLayer<'_>]) -> Result<IndexEvidence, ContentRejection> {
-        *self.seen.borrow_mut() = layers
+    fn verify(&self, request: &VerifyRequest<'_>) -> Result<IndexEvidence, ContentRejection> {
+        *self.seen.borrow_mut() = request
+            .layers
             .iter()
             .map(|l| (l.name.to_owned(), l.role, l.digest, l.bytes.to_vec()))
             .collect();
+        *self.request.borrow_mut() = Some((request.root_layer.to_owned(), request.schema));
         self.result.clone()
     }
 }
@@ -505,6 +632,8 @@ fn evidence(d: &RevisionDraft, pinned: ContentDigest) -> IndexEvidence {
         workspace: d.workspace.to_string(),
         generation: d.workspace_generation,
         pinned_revision: pinned,
+        root_layer: d.root_layer.clone(),
+        schema: d.schema,
         complete: true,
         structure_digest: digest("synthetic index structure"),
         prim_count: 7,
@@ -620,6 +749,52 @@ fn the_content_verifier_gates_the_switch_and_its_evidence_is_recorded() {
     let d3 = draft(layers(&store, 3), 3);
     let three = store.commit(&d3, &expect(2)).unwrap().info;
     assert_eq!(three.manifest().index(), None);
+}
+
+#[test]
+fn the_verifier_is_bound_to_the_selected_root_and_schema() {
+    let fx = Fixture::new();
+    let store = fx.store();
+    let entries = layers(&store, 1);
+    let pinned = digest("pinned");
+    let d_root = draft(entries.clone(), 1);
+
+    // The same layers with another composition root: the verifier is told, and evidence for the
+    // original root cannot be recorded for the new one.
+    let mut d_other = d_root.clone();
+    d_other.root_layer = "derived.usda".into();
+    let fake = Fake::new(Ok(evidence(&d_root, pinned)));
+    let error = err(with_verifier(
+        &store,
+        &d_other,
+        &ExpectedBase::Initial,
+        &fake,
+    ));
+    assert_eq!(error, RevisionError::IndexMismatch);
+    assert_eq!(error.code(), ErrorCode::StaleWorkspace);
+    let asked = fake.request.borrow().clone().unwrap();
+    assert_eq!(asked, ("derived.usda".to_owned(), d_other.schema));
+    assert_eq!(store.head().unwrap(), None);
+
+    // A different schema identity is refused the same way.
+    let mut wrong_schema = evidence(&d_root, pinned);
+    wrong_schema.schema = digest("another schema");
+    let fake = Fake::new(Ok(wrong_schema));
+    assert_eq!(
+        err(with_verifier(
+            &store,
+            &d_root,
+            &ExpectedBase::Initial,
+            &fake
+        )),
+        RevisionError::IndexMismatch
+    );
+
+    // Evidence that names the draft's root and schema is accepted for either root.
+    let fake = Fake::new(Ok(evidence(&d_other, pinned)));
+    let one = with_verifier(&store, &d_other, &ExpectedBase::Initial, &fake).unwrap();
+    assert_eq!(one.info.manifest().content().root_layer(), "derived.usda");
+    assert!(one.info.manifest().index().is_some());
 }
 
 #[test]

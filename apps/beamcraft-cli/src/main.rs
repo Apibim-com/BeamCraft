@@ -184,9 +184,10 @@ fn run(args: Vec<std::ffi::OsString>) -> Result<Json, (HostError, Json)> {
             ]));
         }
         if command == "revision-commit" {
-            // No deadline check after the call: once the root switched, reporting a timeout
-            // would hide a committed revision. A retry with the same op id returns it.
-            return revision::commit(&store, &options);
+            // The deadline and cancellation are checked before and during the commit (not
+            // after the root switch: a timeout would hide a committed revision). A retry with
+            // the same op id returns the revision.
+            return revision::commit(&store, &options, &control);
         }
         if command == "revision-open" {
             let result = revision::open(&store)?;
