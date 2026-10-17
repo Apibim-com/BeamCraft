@@ -563,6 +563,87 @@ impl UpdateElement {
     }
 }
 
+/// F04 section 7 `CopyElement` (P05): a new element with a fresh identity and the same authored
+/// inputs as the source, optionally renamed and translated. The source is only read.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CopyElement {
+    /// The element to copy.
+    pub source_id: ElementId,
+    /// Identity of the copy.
+    pub new_id: ElementId,
+    /// Label of the copy; the source label when `None`.
+    pub name: Option<String>,
+    /// Translation added to the source placement, in millimetres.
+    pub offset_mm: [f64; 3],
+}
+
+impl CopyElement {
+    /// Admits the request: the identities differ (`DUPLICATE_ID`), the label follows the F04 rule,
+    /// the offset is finite (`NON_FINITE_NUMBER`) and within the coordinate cap
+    /// (`LIMIT_EXCEEDED`). That the source exists and the resulting placement stays in range are
+    /// the engine's decisions.
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        if self.source_id == self.new_id {
+            return Err(CommandError::new(
+                ErrorCode::DuplicateId,
+                "new_id",
+                "the copy identity equals the source",
+            ));
+        }
+        if self.name.as_deref().is_some_and(|n| !label_is_valid(n)) {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "name",
+                "label must be 1 to 256 bytes without control characters",
+            ));
+        }
+        if self.offset_mm.iter().any(|v| !v.is_finite()) {
+            return Err(CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "offset_mm",
+                "value is not finite",
+            ));
+        }
+        if self.offset_mm.iter().any(|v| v.abs() > COORDINATE_CAP_MM) {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "offset_mm",
+                "offset component exceeds the coordinate cap",
+            ));
+        }
+        Ok(())
+    }
+
+    /// SHA-256 of a versioned, length-prefixed encoding of the validated request.
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        self.validate_arguments()?;
+        let mut bytes = Vec::with_capacity(128);
+        bytes.extend_from_slice(b"BeamCraft/P05/CopyElement/v1\0");
+        bytes.extend_from_slice(self.source_id.as_bytes());
+        bytes.extend_from_slice(self.new_id.as_bytes());
+        match &self.name {
+            Some(name) => {
+                bytes.push(1);
+                bytes.extend_from_slice(&(name.len() as u64).to_le_bytes());
+                bytes.extend_from_slice(name.as_bytes());
+            }
+            None => bytes.push(0),
+        }
+        for v in self.offset_mm {
+            bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| {
+                CommandError::new(
+                    ErrorCode::NonFiniteNumber,
+                    "offset_mm",
+                    "value cannot be encoded",
+                )
+            })?);
+        }
+        Sha256::digest(&bytes).map_err(|_| {
+            CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -831,5 +912,51 @@ mod tests {
         let mut m = member();
         m.axis_points_mm[0][0] = -0.0;
         assert_eq!(m.content_fingerprint().unwrap(), base);
+    }
+
+    fn copy() -> CopyElement {
+        CopyElement {
+            source_id: ElementId::parse("019a7bf0-0000-7000-8000-000000000005").unwrap(),
+            new_id: ElementId::parse("019a7bf0-0000-7000-8000-000000000008").unwrap(),
+            name: None,
+            offset_mm: [100.0, 0.0, 0.0],
+        }
+    }
+
+    #[test]
+    fn a_copy_has_the_f04_argument_rules() {
+        assert!(copy().validate_arguments().is_ok());
+        let code = |c: CopyElement| c.validate_arguments().unwrap_err().code;
+        let mut c = copy();
+        c.new_id = c.source_id;
+        assert_eq!(code(c), ErrorCode::DuplicateId);
+        let mut c = copy();
+        c.name = Some(String::new());
+        assert_eq!(code(c), ErrorCode::InvalidArgument);
+        let mut c = copy();
+        c.offset_mm[2] = f64::NAN;
+        assert_eq!(code(c), ErrorCode::NonFiniteNumber);
+        let mut c = copy();
+        c.offset_mm[0] = 1_000_000_001.0;
+        assert_eq!(code(c), ErrorCode::LimitExceeded);
+    }
+
+    #[test]
+    fn the_copy_fingerprint_tracks_every_input() {
+        let base = copy().content_fingerprint().unwrap();
+        for mutate in [
+            |c: &mut CopyElement| c.name = Some("Other".into()),
+            |c: &mut CopyElement| c.offset_mm[1] = 1.0,
+            |c: &mut CopyElement| {
+                c.new_id = ElementId::parse("019a7bf0-0000-7000-8000-000000000009").unwrap()
+            },
+            |c: &mut CopyElement| {
+                c.source_id = ElementId::parse("019a7bf0-0000-7000-8000-000000000004").unwrap()
+            },
+        ] {
+            let mut c = copy();
+            mutate(&mut c);
+            assert_ne!(c.content_fingerprint().unwrap(), base);
+        }
     }
 }
