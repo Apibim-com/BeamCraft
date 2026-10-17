@@ -384,8 +384,8 @@ fn decode_mesh(prim: &Prim) -> Option<DerivedMesh> {
 }
 
 /// The quantity record stored beside a mesh: absent (`Some(None)`), complete (`Some(Some(..))`)
-/// or malformed (`None`). A record is present exactly when its shape signature is; then every
-/// other field must be there with its USD type, and a mass value only with a `current` mass.
+/// or malformed (`None`). A record is absent only when none of its attributes exist; otherwise
+/// every field must be there with its USD type, and a mass value only with a `current` mass.
 fn decode_stored(prim: &Prim) -> Option<Option<StoredRecord>> {
     let typed = |name: &str, ty: &str| -> Option<Option<&Value>> {
         let Some(p) = prim.properties.iter().find(|p| p.name == name) else {
@@ -396,7 +396,22 @@ fn decode_stored(prim: &Prim) -> Option<Option<StoredRecord>> {
             _ => None,
         }
     };
-    if typed("bim:shapeSignature", "string")?.is_none() {
+    // Absent only when no attribute of the record exists; a partial record is damaged, so
+    // removing the signature cannot make a tampered value look like a missing record.
+    const FIELDS: [&str; 7] = [
+        "bim:volumeMm3",
+        "bim:volumeStatus",
+        "bim:massKg",
+        "bim:massStatus",
+        "bim:shapeSignature",
+        "bim:massSignature",
+        "bim:quantityAlgorithm",
+    ];
+    if !prim
+        .properties
+        .iter()
+        .any(|p| FIELDS.contains(&p.name.as_str()))
+    {
         return Some(None);
     }
     let string = |name: &str, ty: &str| -> Option<&str> { text(typed(name, ty)??) };

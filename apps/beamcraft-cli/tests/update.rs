@@ -504,3 +504,29 @@ fn a_revision_with_stale_records_cannot_be_published_by_the_verifier() {
         "INTEGRITY_ERROR"
     );
 }
+
+#[test]
+fn a_partial_quantity_record_is_damaged_not_missing() {
+    // Dropping only the signature must not turn a tampered record into a "missing" one that the
+    // verifier lets through.
+    let f = Fixture::new();
+    let steel = f.material("7850");
+    let created = f.plate(&["--material-digest", &steel]);
+    let id = text(at(&created, &["plate"]), "element_id");
+    f.tamper(|name, text| {
+        if name == "derived.usda" {
+            let kept: Vec<&str> = text
+                .lines()
+                .filter(|l| !l.contains("bim:shapeSignature"))
+                .collect();
+            kept.join("\n")
+                .replace("bim:massKg = 39.25", "bim:massKg = 99.0")
+        } else {
+            text
+        }
+    });
+    assert_eq!(
+        f.rejected("update-element", &["--id", &id, "--name", "After tamper"]),
+        "INTEGRITY_ERROR"
+    );
+}

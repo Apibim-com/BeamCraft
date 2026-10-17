@@ -259,14 +259,14 @@ source `NOT_FOUND`, and the same `--op-id` is a replay or `OP_ID_REUSE`. See the
 beamcraft workspace-create  --store PUBLISHED --workspace-dir DIR [--user-id UUID] [--workspace-id UUID]
   [--revision-id UUID] [--op-id UUID]
 beamcraft workspace-status  --store PUBLISHED --workspace-dir DIR
-beamcraft workspace-publish --store PUBLISHED --workspace-dir DIR [--revision-id UUID]
+beamcraft workspace-publish --store PUBLISHED --workspace-dir DIR
 ```
 
 A workspace is a directory that is its own revision store, forked from the published head. Every
 edit command (`create-plate`, `update-element`, `copy-element`, ...) works on it with
 `--store DIR`; the published store is untouched until `workspace-publish`. Two workspaces of one
 user are two directories and stay independent. `workspace-status` reports the unsent draft
-revisions and whether the base is still the published head. `workspace-publish` is a fast-forward
+revisions and whether the base is still the published head. `workspace-publish` (the published revision id is the draft head's id, so an interrupted publish is retried as the same request) is a fast-forward
 only: a moved published head is `BASE_REVISION_MISMATCH`, a fresh fork is `INVALID_ARGUMENT`, and
 repeating a finished or interrupted publish is a replay. There is no authentication and no merge.
 See the [design note](../../docs/design/p06-workspace.md).
