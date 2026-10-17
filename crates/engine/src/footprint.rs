@@ -79,18 +79,46 @@ pub struct Footprint {
 impl Footprint {
     /// The footprint of `CreatePlate` (F04 section 8: "read ID absence and pinned definitions;
     /// write new lifecycle, complete authored fields and relationships"): it reads the absence of
-    /// the new ID (lifecycle) and writes the new element's lifecycle, every authored group
-    /// (including the still empty material reference and relationships, which a create writes as
-    /// "none") and the derived group. There are no pinned definitions to read yet.
+    /// the new ID (lifecycle), reads the pinned material definition's relationship when there is
+    /// one, and writes the new element's lifecycle, every authored group (including the material
+    /// reference and relationships, written as "none" when there is no material) and the derived
+    /// group. A definition is immutable and is never written by this command.
     ///
     /// Fails with `LIMIT_EXCEEDED` if the footprint cannot be bounded (F04: at most 4096 entries).
-    pub fn for_create(id: ElementId) -> Result<Self, CommandError> {
+    pub fn for_create(
+        id: ElementId,
+        material: Option<ContentDigest>,
+    ) -> Result<Self, CommandError> {
+        Self::for_create_with(id, None, material)
+    }
+
+    /// The footprint of `CreateStraightMember`: that of `CreatePlate` plus the read of the pinned
+    /// profile definition, which is required and never written.
+    pub fn for_create_member(
+        id: ElementId,
+        profile: ContentDigest,
+        material: Option<ContentDigest>,
+    ) -> Result<Self, CommandError> {
+        Self::for_create_with(id, Some(profile), material)
+    }
+
+    fn for_create_with(
+        id: ElementId,
+        profile: Option<ContentDigest>,
+        material: Option<ContentDigest>,
+    ) -> Result<Self, CommandError> {
         let element = Target::Element(id);
         let entry = |group| Entry {
             target: element,
             group,
         };
-        let reads = BTreeSet::from([entry(Group::Lifecycle)]);
+        let mut reads = BTreeSet::from([entry(Group::Lifecycle)]);
+        for digest in profile.into_iter().chain(material) {
+            reads.insert(Entry {
+                target: Target::Definition(digest),
+                group: Group::Relationship,
+            });
+        }
         let writes = BTreeSet::from([
             entry(Group::Lifecycle),
             entry(Group::Label),
@@ -103,6 +131,21 @@ impl Footprint {
         let footprint = Self { reads, writes };
         footprint.check_bound()?;
         Ok(footprint)
+    }
+
+    /// The footprint of publishing one immutable definition (P02): it writes the definition's own
+    /// entry and no element. A definition is content-addressed, so two commands that publish the
+    /// same digest write identical bytes; the entry is still a write, because another command
+    /// that reads the definition must not run against a half-published one.
+    pub fn for_define(digest: ContentDigest) -> Self {
+        let entry = Entry {
+            target: Target::Definition(digest),
+            group: Group::Relationship,
+        };
+        Self {
+            reads: BTreeSet::from([entry]),
+            writes: BTreeSet::from([entry]),
+        }
     }
 
     fn check_bound(&self) -> Result<(), CommandError> {
@@ -151,7 +194,7 @@ mod tests {
 
     #[test]
     fn create_reads_the_absence_and_writes_the_complete_authored_state() {
-        let f = Footprint::for_create(id(5)).unwrap();
+        let f = Footprint::for_create(id(5), None).unwrap();
         assert_eq!(f.reads().len(), 1);
         assert!(f.reads().iter().all(|e| e.group == Group::Lifecycle));
         let groups: Vec<_> = f.writes().iter().map(|e| e.group).collect();
@@ -174,9 +217,44 @@ mod tests {
     }
 
     #[test]
+    fn publishing_a_definition_writes_only_that_definition() {
+        let digest = beamcraft_model::digest::Sha256::digest(b"definition").unwrap();
+        let other = beamcraft_model::digest::Sha256::digest(b"other").unwrap();
+        let publish = Footprint::for_define(digest);
+        assert!(
+            publish
+                .writes()
+                .iter()
+                .all(|e| e.target == Target::Definition(digest))
+        );
+        // A plate that pins it conflicts with the publication, one that pins another does not.
+        assert!(publish.conflicts_with(&Footprint::for_create(id(5), Some(digest)).unwrap()));
+        assert!(!publish.conflicts_with(&Footprint::for_create(id(5), Some(other)).unwrap()));
+    }
+
+    #[test]
+    fn a_pinned_material_is_read_never_written() {
+        let digest = beamcraft_model::digest::Sha256::digest(b"material").unwrap();
+        let f = Footprint::for_create(id(5), Some(digest)).unwrap();
+        let read = Entry {
+            target: Target::Definition(digest),
+            group: Group::Relationship,
+        };
+        assert!(f.reads().contains(&read));
+        assert!(
+            f.writes()
+                .iter()
+                .all(|e| e.target == Target::Element(id(5)))
+        );
+        // Two plates that pin the same definition only read it, so they stay independent.
+        let other = Footprint::for_create(id(6), Some(digest)).unwrap();
+        assert!(!f.conflicts_with(&other));
+    }
+
+    #[test]
     fn different_new_elements_are_independent_the_same_one_conflicts() {
-        let a = Footprint::for_create(id(5)).unwrap();
-        let b = Footprint::for_create(id(6)).unwrap();
+        let a = Footprint::for_create(id(5), None).unwrap();
+        let b = Footprint::for_create(id(6), None).unwrap();
         assert!(!a.conflicts_with(&b));
         assert!(!b.conflicts_with(&a));
         assert!(a.conflicts_with(&a));
@@ -184,7 +262,7 @@ mod tests {
 
     #[test]
     fn the_declared_set_covers_a_subset_and_rejects_anything_wider() {
-        let f = Footprint::for_create(id(5)).unwrap();
+        let f = Footprint::for_create(id(5), None).unwrap();
         let narrower: BTreeSet<Entry> = f.writes().iter().copied().take(2).collect();
         assert!(f.covers_writes(&narrower));
         let mut wider = f.writes().clone();

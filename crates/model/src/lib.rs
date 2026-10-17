@@ -4,6 +4,7 @@
 //! The structural model for BeamCraft.
 
 pub mod command;
+pub mod definition;
 pub mod digest;
 pub mod error;
 pub mod id;

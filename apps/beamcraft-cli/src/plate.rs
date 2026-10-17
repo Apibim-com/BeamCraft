@@ -31,27 +31,35 @@
 //!   deletes elements (true in P01); the stored canonical request of F05 replaces it.
 //! * Quantities are returned, not stored: the pinned U02 schema has no quantity attributes.
 
+use crate::definition::{
+    DefinitionRecord, decode_definitions, definition_digest, material_lookup, profile_lookup,
+};
 use beamcraft_engine::command::AuthoredPlate;
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
-use beamcraft_engine::query::committed::{PlateRecord, evaluate_committed, ids, scene_elements};
+use beamcraft_engine::member::AuthoredMember;
+use beamcraft_engine::query::committed::{
+    MemberRecord, PlateRecord, evaluate_committed, evaluate_committed_members, ids,
+    scene_elements_with_members,
+};
+use beamcraft_engine::solid::SolidMesh;
 use beamcraft_engine::transaction::{Admission, PriorOp, admit_create_plate};
 use beamcraft_engine::{Limits, ViewPin, ViewSnapshot};
 use beamcraft_host::ledger::Outcome;
 use beamcraft_host::revision::{
-    CommitHook, CommitOutcome, ContentRejection, ContentVerifier, ExpectedBase, IndexEvidence,
-    LayerEntry, LayerRole, RevisionDraft, RevisionError, RevisionInfo, RevisionStore, Uuid7,
-    VerifyRequest,
+    CommitHook, CommitOutcome, Committed, ContentRejection, ContentVerifier, ExpectedBase,
+    IndexEvidence, LayerEntry, LayerRole, Revision, RevisionDraft, RevisionError, RevisionInfo,
+    RevisionStore, Uuid7, VerifyRequest,
 };
 use beamcraft_layer_engine::authored::{
     Author, Change, EditTargets, Element, Group as LayerGroup, Placement as LayerPlacement,
-    Prepare, Shape, schema_identity, validate_layers,
+    Prepare, Prepared, SchemaIdentity, Shape, schema_identity, validate_layers,
 };
 use beamcraft_layer_engine::index::Completeness;
 use beamcraft_layer_engine::{
     Asset, BACKEND, Budgets, Cancellation, Control, Diagnostic, Identity, OpenRequest, Opened,
     Prim, Profile, Reader, Value,
 };
-use beamcraft_model::command::{CommandError, CreatePlate};
+use beamcraft_model::command::{CommandError, CreatePlate, MemberKind};
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
@@ -118,22 +126,22 @@ impl std::fmt::Display for PlateError {
 
 impl std::error::Error for PlateError {}
 
-fn integrity(message: &'static str) -> PlateError {
+pub(crate) fn integrity(message: &'static str) -> PlateError {
     PlateError::new(ErrorCode::IntegrityError, message)
 }
 
-fn control() -> Control {
+pub(crate) fn control() -> Control {
     Control {
         cancellation: Cancellation::default(),
         deadline: Instant::now() + Duration::from_secs(60),
     }
 }
 
-fn digest_of(bytes: &[u8]) -> Result<ContentDigest, PlateError> {
+pub(crate) fn digest_of(bytes: &[u8]) -> Result<ContentDigest, PlateError> {
     Sha256::digest(bytes).map_err(|_| PlateError::new(ErrorCode::LimitExceeded, "layer too large"))
 }
 
-fn host_uuid(text: &str) -> Result<Uuid7, PlateError> {
+pub(crate) fn host_uuid(text: &str) -> Result<Uuid7, PlateError> {
     Uuid7::parse(text).map_err(PlateError::from)
 }
 
@@ -188,22 +196,24 @@ fn asset(name: &str, bytes: &[u8]) -> Result<Asset, PlateError> {
 
 /// Derived mesh as read back from a derived layer.
 #[derive(Debug, Clone, PartialEq)]
-struct DerivedMesh {
-    points: Vec<[f32; 3]>,
-    counts: Vec<i64>,
-    indices: Vec<i64>,
+pub(crate) struct DerivedMesh {
+    pub(crate) points: Vec<[f32; 3]>,
+    pub(crate) counts: Vec<i64>,
+    pub(crate) indices: Vec<i64>,
     shape_key: String,
     orientation: String,
     subdivision: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct Decoded {
+pub(crate) struct Decoded {
     plates: Vec<(AuthoredPlate, Option<DerivedMesh>)>,
+    pub(crate) members: Vec<(AuthoredMember, Option<DerivedMesh>)>,
     other_elements: usize,
+    pub(crate) definitions: BTreeMap<ContentDigest, DefinitionRecord>,
 }
 
-fn number(value: &Value) -> Option<f64> {
+pub(crate) fn number(value: &Value) -> Option<f64> {
     match value {
         Value::Number(n) => Some(*n),
         _ => None,
@@ -226,14 +236,14 @@ fn numbers<const N: usize>(value: &Value) -> Option<[f64; N]> {
     parsed.try_into().ok()
 }
 
-fn text(value: &Value) -> Option<&str> {
+pub(crate) fn text(value: &Value) -> Option<&str> {
     match value {
         Value::Text(t) => Some(t),
         _ => None,
     }
 }
 
-fn property<'a>(prim: &'a Prim, name: &str) -> Option<&'a Value> {
+pub(crate) fn property<'a>(prim: &'a Prim, name: &str) -> Option<&'a Value> {
     prim.properties
         .iter()
         .find(|p| p.name == name)
@@ -260,6 +270,7 @@ fn decode_plate(prim: &Prim, id: ElementId) -> Result<AuthoredPlate, PlateError>
     let [w, x, y, z] = property(prim, "xformOp:orient")
         .and_then(numbers::<4>)
         .ok_or_else(bad)?;
+    let material = decode_material(prim)?;
     Ok(AuthoredPlate {
         id,
         name: name.to_owned(),
@@ -269,7 +280,59 @@ fn decode_plate(prim: &Prim, id: ElementId) -> Result<AuthoredPlate, PlateError>
             translation_mm: translation,
             orientation_xyzw: [x, y, z, w],
         },
+        material,
+        holes_mm: decode_holes(prim)?,
     })
+}
+
+/// The through-hole polygons of a committed plate: the flat point array cut by the vertex counts.
+/// Both attributes or neither; every count is at least three and every `z` is zero.
+fn decode_holes(prim: &Prim) -> Result<Vec<Vec<[f64; 2]>>, PlateError> {
+    let bad = || integrity("committed plate has inconsistent hole attributes");
+    let (points, counts) = match (
+        property(prim, "steel:plate:holePointsMm"),
+        property(prim, "steel:plate:holeVertexCounts"),
+    ) {
+        (None, None) => return Ok(Vec::new()),
+        (Some(Value::Array(points)), Some(Value::Array(counts))) => (points, counts),
+        _ => return Err(bad()),
+    };
+    let points: Vec<[f64; 3]> = points
+        .iter()
+        .map(numbers::<3>)
+        .collect::<Option<_>>()
+        .ok_or_else(bad)?;
+    let mut holes = Vec::with_capacity(counts.len().min(beamcraft_model::command::MAX_HOLES));
+    let mut at = 0usize;
+    for count in counts {
+        let n = usize::try_from(integer(count).ok_or_else(bad)?).map_err(|_| bad())?;
+        let end = at.checked_add(n).ok_or_else(bad)?;
+        let hole = points.get(at..end).ok_or_else(bad)?;
+        if hole.iter().any(|p| p[2] != 0.0) {
+            return Err(bad());
+        }
+        holes.push(hole.iter().map(|p| [p[0], p[1]]).collect());
+        at = end;
+    }
+    if at != points.len() {
+        return Err(bad());
+    }
+    Ok(holes)
+}
+
+/// The one pinned material target of an element: none, or exactly one definition path. An
+/// explicit empty target list and an absent relationship both mean the material is unknown.
+fn decode_material(prim: &Prim) -> Result<Option<ContentDigest>, PlateError> {
+    let Some(relationship) = prim.relationships.iter().find(|r| r.name == "bim:material") else {
+        return Ok(None);
+    };
+    match relationship.targets.as_slice() {
+        [] => Ok(None),
+        [target] => Ok(Some(definition_digest(target).ok_or_else(|| {
+            integrity("material target is not an immutable definition")
+        })?)),
+        _ => Err(integrity("plate has more than one material target")),
+    }
 }
 
 fn decode_mesh(prim: &Prim) -> Option<DerivedMesh> {
@@ -302,7 +365,11 @@ fn decode_mesh(prim: &Prim) -> Option<DerivedMesh> {
 }
 
 /// Reads every prim of the pinned stage and decodes the plates and their derived meshes.
-fn decode(reader: &Reader, opened: &Opened, control: &Control) -> Result<Decoded, PlateError> {
+pub(crate) fn decode(
+    reader: &Reader,
+    opened: &Opened,
+    control: &Control,
+) -> Result<Decoded, PlateError> {
     let mut prims = Vec::new();
     let mut cursor = None;
     loop {
@@ -315,6 +382,7 @@ fn decode(reader: &Reader, opened: &Opened, control: &Control) -> Result<Decoded
     }
     let by_path: BTreeMap<&str, &Prim> = prims.iter().map(|p| (p.path.as_str(), p)).collect();
     let mut plates = Vec::new();
+    let mut members = Vec::new();
     let mut other = 0usize;
     for prim in &prims {
         let Some(text_id) = prim.element_id.as_deref() else {
@@ -324,29 +392,87 @@ fn decode(reader: &Reader, opened: &Opened, control: &Control) -> Result<Decoded
         if prim.path != id.prim_path() {
             return Err(integrity("element path does not match its id"));
         }
-        if property(prim, "bim:elementKind").and_then(text) != Some("plate") {
-            other += 1;
-            continue;
+        let mesh = || {
+            by_path
+                .get(format!("{}/Geometry", prim.path).as_str())
+                .and_then(|m| decode_mesh(m))
+        };
+        match property(prim, "bim:elementKind").and_then(text) {
+            Some("plate") => plates.push((decode_plate(prim, id)?, mesh())),
+            Some("beam") => members.push((decode_member(prim, id, MemberKind::Beam)?, mesh())),
+            Some("column") => {
+                members.push((decode_member(prim, id, MemberKind::Column)?, mesh()));
+            }
+            _ => other += 1,
         }
-        let authored = decode_plate(prim, id)?;
-        let mesh = by_path
-            .get(format!("{}/Geometry", prim.path).as_str())
-            .and_then(|m| decode_mesh(m));
-        plates.push((authored, mesh));
     }
+    let definitions = decode_definitions(&prims)?;
     Ok(Decoded {
         plates,
+        members,
         other_elements: other,
+        definitions,
     })
 }
 
-fn kernel_mesh(record: &PlateRecord) -> Result<DerivedMesh, PlateError> {
-    let mesh = record.body.result.mesh();
-    let points = mesh
+/// A committed member's authored inputs. The profile is one required pinned definition target;
+/// an absent or empty profile relationship is an integrity error, never a default.
+fn decode_member(
+    prim: &Prim,
+    id: ElementId,
+    kind: MemberKind,
+) -> Result<AuthoredMember, PlateError> {
+    let bad = || integrity("committed member lacks a required authored input");
+    let name = property(prim, "bim:name").and_then(text).ok_or_else(bad)?;
+    let Some(Value::Array(points)) = property(prim, "bim:axisPointsMm") else {
+        return Err(bad());
+    };
+    let axis: Vec<[f64; 3]> = points
+        .iter()
+        .map(numbers::<3>)
+        .collect::<Option<_>>()
+        .ok_or_else(bad)?;
+    let axis_points_mm: [[f64; 3]; 2] = axis.try_into().map_err(|_| bad())?;
+    let roll_rad = property(prim, "steel:member:rollRad")
+        .map(|v| number(v).ok_or_else(bad))
+        .transpose()?;
+    let profile = match prim
+        .relationships
+        .iter()
+        .find(|r| r.name == "bim:profile")
+        .map(|r| r.targets.as_slice())
+    {
+        Some([target]) => definition_digest(target)
+            .ok_or_else(|| integrity("profile target is not an immutable definition"))?,
+        _ => return Err(bad()),
+    };
+    let translation = property(prim, "xformOp:translate")
+        .and_then(numbers::<3>)
+        .ok_or_else(bad)?;
+    let [w, x, y, z] = property(prim, "xformOp:orient")
+        .and_then(numbers::<4>)
+        .ok_or_else(bad)?;
+    Ok(AuthoredMember {
+        id,
+        kind,
+        name: name.to_owned(),
+        axis_points_mm,
+        profile,
+        roll_rad,
+        placement: beamcraft_model::command::Placement {
+            translation_mm: translation,
+            orientation_xyzw: [x, y, z, w],
+        },
+        material: decode_material(prim)?,
+    })
+}
+
+pub(crate) fn kernel_mesh(solid: &SolidMesh) -> Result<DerivedMesh, PlateError> {
+    let points = solid
         .vertices()
         .iter()
         .map(|p| {
-            let cast = [p.x as f32, p.y as f32, p.z as f32];
+            let cast = [p[0] as f32, p[1] as f32, p[2] as f32];
             if cast.iter().all(|v| v.is_finite()) {
                 Ok(cast)
             } else {
@@ -359,29 +485,60 @@ fn kernel_mesh(record: &PlateRecord) -> Result<DerivedMesh, PlateError> {
         .collect::<Result<Vec<_>, _>>()?;
     Ok(DerivedMesh {
         points,
-        counts: vec![3; mesh.triangles().len()],
-        indices: mesh
+        counts: vec![3; solid.triangles().len()],
+        indices: solid
             .triangles()
             .iter()
             .flatten()
             .map(|i| i64::from(*i))
             .collect(),
-        shape_key: mesh.mesh_digest().to_string(),
-        orientation: mesh.orientation().into(),
-        subdivision: mesh.subdivision_scheme().into(),
+        shape_key: solid.digest().to_string(),
+        orientation: "rightHanded".into(),
+        subdivision: "none".into(),
     })
 }
 
-/// The committed derived mesh of every plate must be the kernel's mesh of its authored inputs.
-fn verify_derived(records: &[PlateRecord], decoded: &Decoded) -> Result<(), PlateError> {
-    let found: BTreeMap<ElementId, &Option<DerivedMesh>> =
-        decoded.plates.iter().map(|(a, m)| (a.id, m)).collect();
-    for record in records {
-        let expected = kernel_mesh(record)?;
-        match found.get(&record.authored.id) {
+/// Re-evaluates every committed plate and member with the kernel, resolving their pinned
+/// definitions from the same stage.
+pub(crate) fn evaluate_decoded(
+    decoded: &Decoded,
+) -> Result<(Vec<PlateRecord>, Vec<MemberRecord>), PlateError> {
+    let authored: Vec<AuthoredPlate> = decoded.plates.iter().map(|(a, _)| a.clone()).collect();
+    let members: Vec<AuthoredMember> = decoded.members.iter().map(|(a, _)| a.clone()).collect();
+    let materials = material_lookup(&decoded.definitions);
+    let plates = evaluate_committed(&authored, &materials)?;
+    let members =
+        evaluate_committed_members(&members, &profile_lookup(&decoded.definitions), &materials)?;
+    Ok((plates, members))
+}
+
+/// The committed derived mesh of every plate and member must be the kernel's mesh of its
+/// authored inputs.
+fn verify_derived(
+    records: &[PlateRecord],
+    member_records: &[MemberRecord],
+    decoded: &Decoded,
+) -> Result<(), PlateError> {
+    let found: BTreeMap<ElementId, &Option<DerivedMesh>> = decoded
+        .plates
+        .iter()
+        .map(|(a, m)| (a.id, m))
+        .chain(decoded.members.iter().map(|(a, m)| (a.id, m)))
+        .collect();
+    let expected = records
+        .iter()
+        .map(|r| (r.authored.id, &r.body.solid))
+        .chain(
+            member_records
+                .iter()
+                .map(|r| (r.authored.id, &r.body.solid)),
+        );
+    for (id, result) in expected {
+        let expected = kernel_mesh(result)?;
+        match found.get(&id) {
             Some(Some(actual)) if *actual == expected => {}
             Some(Some(_)) => return Err(integrity("derived mesh differs from the kernel result")),
-            _ => return Err(integrity("plate has no derived mesh")),
+            _ => return Err(integrity("element has no derived mesh")),
         }
     }
     Ok(())
@@ -457,9 +614,8 @@ impl ContentVerifier for PlateVerifier {
             .map_err(reject)?;
         reader.verify_index(&index, &control).map_err(reject)?;
         let decoded = decode(&reader, &opened, &control).map_err(reject)?;
-        let authored: Vec<AuthoredPlate> = decoded.plates.iter().map(|(a, _)| a.clone()).collect();
-        let records = evaluate_committed(&authored).map_err(reject)?;
-        verify_derived(&records, &decoded).map_err(reject)?;
+        let (records, member_records) = evaluate_decoded(&decoded).map_err(reject)?;
+        verify_derived(&records, &member_records, &decoded).map_err(reject)?;
         Ok(evidence(&index, request.root_layer, request.schema))
     }
 }
@@ -507,7 +663,7 @@ pub struct RevisionDetails {
     pub index: Option<(ContentDigest, u64)>,
 }
 
-fn summarize(info: &RevisionInfo) -> RevisionSummary {
+pub(crate) fn summarize(info: &RevisionInfo) -> RevisionSummary {
     let manifest = info.manifest();
     let content = manifest.content();
     RevisionSummary {
@@ -565,13 +721,31 @@ pub struct Created {
 }
 
 /// Revision id, sequence and manifest digest the host ledger recorded for an operation.
-type Recorded = (String, u64, ContentDigest);
+pub(crate) type Recorded = (String, u64, ContentDigest);
 
 fn prior_op(
     store: &RevisionStore,
     op: &Uuid7,
     command: &CreatePlate,
     head_plates: &[PlateRecord],
+) -> Result<(PriorOp, Option<Recorded>), PlateError> {
+    prior_op_with(store, op, || {
+        // The recorded request is reconstructed from the element of that id in the head
+        // model; an absent element can never match, so the command is reuse.
+        match head_plates.iter().find(|r| r.authored.id == command.new_id) {
+            Some(record) => Ok(record.authored.to_command().content_fingerprint()?),
+            None => digest_of(b"no accepted request with this element id"),
+        }
+    })
+}
+
+/// What the host ledger proved about an operation id. `fingerprint` reconstructs the content
+/// fingerprint of the accepted request from the head model and is only called for a committed
+/// operation.
+pub(crate) fn prior_op_with(
+    store: &RevisionStore,
+    op: &Uuid7,
+    fingerprint: impl FnOnce() -> Result<ContentDigest, PlateError>,
 ) -> Result<(PriorOp, Option<Recorded>), PlateError> {
     match store.query_outcome(op)? {
         Outcome::Committed {
@@ -580,12 +754,7 @@ fn prior_op(
             manifest,
             ..
         } => {
-            // The recorded request is reconstructed from the element of that id in the head
-            // model; an absent element can never match, so the command is reuse.
-            let fingerprint = match head_plates.iter().find(|r| r.authored.id == command.new_id) {
-                Some(record) => record.authored.to_command().content_fingerprint()?,
-                None => digest_of(b"no accepted request with this element id")?,
-            };
+            let fingerprint = fingerprint()?;
             Ok((
                 PriorOp::Accepted { fingerprint },
                 Some((revision.as_str().to_owned(), sequence, manifest)),
@@ -597,6 +766,59 @@ fn prior_op(
             "the operation id may or may not have been committed; run revision-recover",
         )),
     }
+}
+
+/// The revision a replayed operation reports: the head when it is that revision, otherwise the
+/// summary the ledger recorded.
+pub(crate) fn replay_summary(
+    head: &Option<Revision>,
+    recorded: Option<Recorded>,
+) -> Result<RevisionSummary, PlateError> {
+    match (head, recorded) {
+        (Some(revision), Some((id, _, _))) if revision.info().revision().as_str() == id => {
+            Ok(summarize(revision.info()))
+        }
+        (_, Some((revision_id, sequence, manifest_digest))) => Ok(RevisionSummary {
+            revision_id,
+            sequence,
+            manifest_digest,
+            details: None,
+        }),
+        _ => Err(integrity("replay without a recorded revision")),
+    }
+}
+
+/// The U02 mesh change of a kernel body.
+pub(crate) fn mesh_change(id: &ElementId, solid: &SolidMesh) -> Result<Change, PlateError> {
+    let mesh = kernel_mesh(solid)?;
+    Ok(Change::Mesh(beamcraft_layer_engine::authored::Mesh {
+        id: id.to_string(),
+        shape_key: solid.digest(),
+        points_mm: mesh.points.clone(),
+        face_counts: vec![3; mesh.counts.len()],
+        indices: mesh
+            .indices
+            .iter()
+            .map(|i| i32::try_from(*i))
+            .collect::<Result<_, _>>()
+            .map_err(|_| integrity("mesh index does not fit"))?,
+    }))
+}
+
+/// The layer engine's own write set must lie inside the footprint the engine declared.
+pub(crate) fn check_footprint(prepared: &Prepared, declared: &Footprint) -> Result<(), PlateError> {
+    let observed: BTreeSet<Entry> = prepared
+        .writes
+        .iter()
+        .map(layer_entry)
+        .collect::<Option<_>>()
+        .ok_or_else(|| integrity("layer engine footprint names an unknown target"))?;
+    if !declared.covers_writes(&observed) {
+        return Err(integrity(
+            "layer engine writes more than the engine footprint declares",
+        ));
+    }
+    Ok(())
 }
 
 fn layer_group(group: LayerGroup) -> Group {
@@ -622,26 +844,29 @@ fn layer_entry(item: &beamcraft_layer_engine::authored::Footprint) -> Option<Ent
     })
 }
 
-/// Creates one plate and publishes it as the next revision of the store, or replays it.
-///
-/// Steps, each failing closed: open and verify the head; decide replay from the host ledger;
-/// engine admission (`CreatePlate` validation, kernel body, footprint); U02 authoring of the
-/// model and derived layers over the head's layers; check that the layer engine's own write set
-/// is inside the engine's declared footprint; publish layer blobs; commit through U06/U07 with
-/// the verifier above (U03 index, structural validation, kernel re-evaluation of every plate);
-/// `hook` observes the commit points for fault injection (pass `&mut NoFault` in production).
-pub fn create_plate(
+/// The layers a new revision is authored over: the verified head, or the empty initial model.
+pub(crate) struct Base {
+    pub(crate) project: String,
+    pub(crate) workspace: String,
+    pub(crate) digest: ContentDigest,
+    pub(crate) generation: u64,
+    pub(crate) assets: Vec<Asset>,
+    pub(crate) expected: ExpectedBase,
+}
+
+/// Opens the head of the store (`None` for a store without a revision) and the base that the next
+/// revision builds on. A store without a revision takes the given identities.
+pub(crate) fn load_base(
     store: &RevisionStore,
-    request: &CreateRequest,
-    hook: &mut dyn CommitHook,
-) -> Result<Created, PlateError> {
-    let control = control();
+    project: &ProjectId,
+    workspace: &WorkspaceId,
+) -> Result<(Option<Revision>, Base), PlateError> {
     let head = match store.open() {
         Ok(revision) => Some(revision),
         Err(RevisionError::NoRevision) => None,
         Err(error) => return Err(error.into()),
     };
-    let (project, workspace, base_digest, base_generation, assets, expected) = match &head {
+    let base = match &head {
         Some(revision) => {
             let content = revision.manifest().content();
             let assets = content
@@ -655,72 +880,95 @@ pub fn create_plate(
                     })
                 })
                 .collect::<Result<Vec<_>, PlateError>>()?;
-            (
-                content.project().as_str().to_owned(),
-                content.workspace().as_str().to_owned(),
-                revision.info().manifest_digest(),
-                content.workspace_generation(),
+            Base {
+                project: content.project().as_str().to_owned(),
+                workspace: content.workspace().as_str().to_owned(),
+                digest: revision.info().manifest_digest(),
+                generation: content.workspace_generation(),
                 assets,
-                ExpectedBase::Revision(revision.info().revision().clone()),
-            )
+                expected: ExpectedBase::Revision(revision.info().revision().clone()),
+            }
         }
-        None => (
-            request.project.to_string(),
-            request.workspace.to_string(),
-            initial_pin()?,
-            0,
-            vec![
+        None => Base {
+            project: project.to_string(),
+            workspace: workspace.to_string(),
+            digest: initial_pin()?,
+            generation: 0,
+            assets: vec![
                 asset(ROOT_LAYER, EMPTY_ROOT.as_bytes())?,
                 asset(AUTHORED_LAYER, EMPTY_LAYER.as_bytes())?,
                 asset(DERIVED_LAYER, EMPTY_LAYER.as_bytes())?,
             ],
-            ExpectedBase::Initial,
-        ),
+            expected: ExpectedBase::Initial,
+        },
     };
-    let base_request = open_request(
+    Ok((head, base))
+}
+
+/// The pinned stage of a base, opened for reading.
+pub(crate) fn open_base(base: &Base) -> Result<OpenRequest, PlateError> {
+    open_request(
         ROOT_LAYER,
-        &project,
-        &workspace,
-        base_digest,
-        base_generation,
-        assets,
-    )?;
-    let head_records = {
+        &base.project,
+        &base.workspace,
+        base.digest,
+        base.generation,
+        base.assets.clone(),
+    )
+}
+
+/// Creates one plate and publishes it as the next revision of the store, or replays it.
+///
+/// Steps, each failing closed: open and verify the head; decide replay from the host ledger;
+/// engine admission (`CreatePlate` validation, a pinned material resolved from the definitions
+/// of the head, kernel body, footprint); U02 authoring of the
+/// model and derived layers over the head's layers; check that the layer engine's own write set
+/// is inside the engine's declared footprint; publish layer blobs; commit through U06/U07 with
+/// the verifier above (U03 index, structural validation, kernel re-evaluation of every plate);
+/// `hook` observes the commit points for fault injection (pass `&mut NoFault` in production).
+pub fn create_plate(
+    store: &RevisionStore,
+    request: &CreateRequest,
+    hook: &mut dyn CommitHook,
+) -> Result<Created, PlateError> {
+    let control = control();
+    let (head, base) = load_base(store, &request.project, &request.workspace)?;
+    let base_request = open_base(&base)?;
+    let Base {
+        project,
+        workspace,
+        generation: base_generation,
+        expected,
+        ..
+    } = base;
+    let (head_records, head_members, definitions) = {
         let mut reader = Reader::default();
         let opened = reader.open(base_request.clone(), &control)?;
         let decoded = decode(&reader, &opened, &control)?;
-        let authored: Vec<AuthoredPlate> = decoded.plates.iter().map(|(a, _)| a.clone()).collect();
-        evaluate_committed(&authored)?
+        let (records, members) = evaluate_decoded(&decoded)?;
+        (records, members, decoded.definitions)
     };
     let op_host = host_uuid(&request.op_id.to_string())?;
     let (prior, recorded) = prior_op(store, &op_host, &request.command, &head_records)?;
-    let existing = ids(&head_records);
-    let admission =
-        admit_create_plate(request.op_id, &request.command, prior, &|id: &ElementId| {
-            existing.contains(id)
-        })?;
+    let mut existing = ids(&head_records);
+    existing.extend(head_members.iter().map(|m| m.authored.id));
+    let admission = admit_create_plate(
+        request.op_id,
+        &request.command,
+        prior,
+        &|id: &ElementId| existing.contains(id),
+        &material_lookup(&definitions),
+    )?;
     let transaction = match admission {
         Admission::Replay => {
             let record = head_records
                 .into_iter()
                 .find(|r| r.authored.id == request.command.new_id)
                 .ok_or_else(|| integrity("replayed element is absent from the head revision"))?;
-            let summary = match (&head, recorded) {
-                (Some(revision), Some((id, _, _))) if revision.info().revision().as_str() == id => {
-                    summarize(revision.info())
-                }
-                (_, Some((revision_id, sequence, manifest_digest))) => RevisionSummary {
-                    revision_id,
-                    sequence,
-                    manifest_digest,
-                    details: None,
-                },
-                _ => return Err(integrity("replay without a recorded revision")),
-            };
             return Ok(Created {
                 replayed: true,
                 plate: record,
-                revision: summary,
+                revision: replay_summary(&head, recorded)?,
                 footprint: None,
             });
         }
@@ -742,7 +990,6 @@ pub fn create_plate(
         schema,
         &control,
     )?;
-    let mesh = kernel_mesh(&record)?;
     let id_text = outcome.authored.id.to_string();
     let placement = outcome.authored.placement;
     let [qx, qy, qz, qw] = placement.orientation_xyzw;
@@ -755,51 +1002,80 @@ pub fn create_plate(
             resources: Vec::new(),
             changes: vec![
                 Change::Create(Element {
-                    id: id_text.clone(),
+                    id: id_text,
                     name: outcome.authored.name.clone(),
                     shape: Shape::Plate {
                         contour_mm: outcome.authored.contour_points_mm.clone(),
                         thickness_mm: outcome.authored.thickness_mm,
+                        holes: outcome
+                            .authored
+                            .holes_mm
+                            .iter()
+                            .map(|h| h.iter().map(|[x, y]| [*x, *y, 0.0]).collect())
+                            .collect(),
                     },
                     placement: LayerPlacement {
                         translation_mm: placement.translation_mm,
                         orientation_xyzw: [qx, qy, qz, qw],
                     },
-                    material: None,
+                    material: outcome.authored.material,
                 }),
-                Change::Mesh(beamcraft_layer_engine::authored::Mesh {
-                    id: id_text,
-                    shape_key: record.body.result.mesh().mesh_digest(),
-                    points_mm: mesh.points.clone(),
-                    face_counts: vec![3; mesh.counts.len()],
-                    indices: mesh
-                        .indices
-                        .iter()
-                        .map(|i| i32::try_from(*i))
-                        .collect::<Result<_, _>>()
-                        .map_err(|_| integrity("mesh index does not fit"))?,
-                }),
+                mesh_change(&outcome.authored.id, &record.body.solid)?,
             ],
         },
         &control,
     )?;
-    let observed: BTreeSet<Entry> = prepared
-        .writes
-        .iter()
-        .map(layer_entry)
-        .collect::<Option<_>>()
-        .ok_or_else(|| integrity("layer engine footprint names an unknown target"))?;
-    if !outcome.footprint.covers_writes(&observed) {
-        return Err(integrity(
-            "layer engine writes more than the engine footprint declares",
-        ));
-    }
-    let generation = base_generation.checked_add(1).ok_or(PlateError::new(
-        ErrorCode::LimitExceeded,
-        "generation exhausted",
-    ))?;
+    check_footprint(&prepared, &outcome.footprint)?;
+    let committed = publish_revision(
+        store,
+        &PublishRequest {
+            prepared: &prepared,
+            schema,
+            project: &project,
+            workspace: &workspace,
+            revision_id: &request.revision_id,
+            op: op_host,
+            base_generation,
+            expected: &expected,
+        },
+        hook,
+    )?;
+    Ok(Created {
+        replayed: committed.outcome == CommitOutcome::Replayed,
+        plate: record,
+        revision: summarize(&committed.info),
+        footprint: Some(transaction.outcome.footprint.clone()),
+    })
+}
+
+/// What `publish_revision` needs to turn a prepared candidate into a committed revision.
+pub(crate) struct PublishRequest<'a> {
+    pub(crate) prepared: &'a Prepared,
+    pub(crate) schema: SchemaIdentity,
+    pub(crate) project: &'a str,
+    pub(crate) workspace: &'a str,
+    pub(crate) revision_id: &'a RevisionId,
+    pub(crate) op: Uuid7,
+    pub(crate) base_generation: u64,
+    pub(crate) expected: &'a ExpectedBase,
+}
+
+/// Stores the layer blobs of a prepared candidate and commits them as the next revision through
+/// U06/U07, with the content verifier of this module.
+pub(crate) fn publish_revision(
+    store: &RevisionStore,
+    request: &PublishRequest<'_>,
+    hook: &mut dyn CommitHook,
+) -> Result<Committed, PlateError> {
+    let generation = request
+        .base_generation
+        .checked_add(1)
+        .ok_or(PlateError::new(
+            ErrorCode::LimitExceeded,
+            "generation exhausted",
+        ))?;
     let mut entries = Vec::new();
-    for layer in &prepared.layers {
+    for layer in &request.prepared.layers {
         store
             .blobs()
             .publish(&layer.bytes)
@@ -811,22 +1087,16 @@ pub fn create_plate(
         )?);
     }
     let draft = RevisionDraft {
-        project: host_uuid(&project)?,
-        workspace: host_uuid(&workspace)?,
+        project: host_uuid(request.project)?,
+        workspace: host_uuid(request.workspace)?,
         revision: host_uuid(&request.revision_id.to_string())?,
-        op: op_host,
+        op: request.op.clone(),
         workspace_generation: generation,
-        schema: schema.digest,
+        schema: request.schema.digest,
         root_layer: ROOT_LAYER.into(),
         entries,
     };
-    let committed = store.commit_with(&draft, &expected, Some(&PlateVerifier), hook)?;
-    Ok(Created {
-        replayed: committed.outcome == CommitOutcome::Replayed,
-        plate: record,
-        revision: summarize(&committed.info),
-        footprint: Some(transaction.outcome.footprint.clone()),
-    })
+    Ok(store.commit_with(&draft, request.expected, Some(&PlateVerifier), hook)?)
 }
 
 /// A plate as listed from a committed revision.
@@ -836,8 +1106,12 @@ pub struct Inspection {
     pub revision: RevisionSummary,
     /// Committed plates in element-id order, re-evaluated by the engine.
     pub plates: Vec<PlateRecord>,
+    /// Committed beams and columns in element-id order, re-evaluated by the engine.
+    pub members: Vec<MemberRecord>,
     /// Elements that are not plates (not created by this slice).
     pub other_elements: usize,
+    /// The immutable profile and material definitions of the revision, by full digest.
+    pub definitions: BTreeMap<ContentDigest, DefinitionRecord>,
     /// The pinned view snapshot built from committed data.
     pub snapshot: ViewSnapshot,
 }
@@ -873,19 +1147,24 @@ pub fn inspect(store: &RevisionStore) -> Result<Inspection, PlateError> {
     let index = reader.element_index(&opened.context, &control)?;
     reader.verify_index(&index, &control)?;
     let decoded = decode(&reader, &opened, &control)?;
-    let authored: Vec<AuthoredPlate> = decoded.plates.iter().map(|(a, _)| a.clone()).collect();
-    let plates = evaluate_committed(&authored)?;
-    verify_derived(&plates, &decoded)?;
+    let (plates, members) = evaluate_decoded(&decoded)?;
+    verify_derived(&plates, &members, &decoded)?;
     let pin = ViewPin::new(
         revision.info().manifest_digest(),
         content.workspace_generation(),
     );
-    let snapshot = ViewSnapshot::build(pin, scene_elements(&plates)?, &Limits::default())
-        .map_err(|e| PlateError::new(e.f04_code(), "view snapshot could not be built"))?;
+    let snapshot = ViewSnapshot::build(
+        pin,
+        scene_elements_with_members(&plates, &members)?,
+        &Limits::default(),
+    )
+    .map_err(|e| PlateError::new(e.f04_code(), "view snapshot could not be built"))?;
     Ok(Inspection {
         revision: summarize(revision.info()),
         plates,
+        members,
         other_elements: decoded.other_elements,
+        definitions: decoded.definitions,
         snapshot,
     })
 }

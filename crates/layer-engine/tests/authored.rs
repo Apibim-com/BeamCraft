@@ -121,6 +121,7 @@ fn elements() -> Vec<Change> {
                     [0.0, 500.0, 0.0],
                 ],
                 thickness_mm: 10.123456789012345,
+                holes: Vec::new(),
             },
             placement: pose(),
             material: Some(r[1].digest),
@@ -1092,4 +1093,240 @@ fn changed_input_bounds_are_inclusive_and_rejections_keep_the_entire_patch_atomi
         .code,
         ErrorCode::StaleWorkspace
     );
+}
+
+#[test]
+fn a_definition_only_batch_publishes_immutable_definitions_and_an_empty_batch_is_rejected() {
+    let (mut a, o) = open(initial());
+    assert_eq!(
+        a.prepare(batch(&o.context, Vec::new()), &control())
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidArgument
+    );
+    let definitions = resources();
+    let mut input = batch(&o.context, Vec::new());
+    input.resources = definitions.clone();
+    let p = a.prepare(input, &control()).unwrap();
+    // Two new definitions are written, no element is touched.
+    let written: BTreeSet<String> = p.writes.iter().map(|f| f.identity.clone()).collect();
+    let expected: BTreeSet<String> = definitions.iter().map(|d| d.digest.to_string()).collect();
+    assert_eq!(written, expected);
+    assert!(p.opinions.is_empty());
+    let o = a
+        .install(
+            &o.context,
+            &p.token,
+            &p.op_id,
+            Decision::Accepted,
+            &control(),
+        )
+        .unwrap();
+    let prims = snapshot(&a, &o.context);
+    for d in &definitions {
+        let definition = prims
+            .iter()
+            .find(|p| p.path == format!("/World/Definitions/D_{}", d.digest))
+            .unwrap();
+        let property = |name: &str| {
+            definition
+                .properties
+                .iter()
+                .find(|p| p.name == name)
+                .and_then(|p| p.value.as_ref())
+        };
+        assert_eq!(
+            property("bim:contentDigest"),
+            Some(&Value::Text(d.digest.to_string()))
+        );
+        assert_eq!(property("bim:units"), Some(&Value::Text("mm".into())));
+    }
+    // The same definitions again change nothing and write nothing: they are immutable.
+    let mut again = batch(&o.context, Vec::new());
+    again.resources = definitions;
+    let p = a.prepare(again, &control()).unwrap();
+    assert!(p.writes.is_empty());
+}
+
+fn holed_plate(holes: Vec<Vec<[f64; 3]>>) -> Change {
+    Change::Create(Element {
+        id: PLATE.into(),
+        name: "Holed".into(),
+        shape: Shape::Plate {
+            contour_mm: vec![
+                [0.0, 0.0, 0.0],
+                [1000.0, 0.0, 0.0],
+                [1000.0, 500.0, 0.0],
+                [0.0, 500.0, 0.0],
+            ],
+            thickness_mm: 10.0,
+            holes,
+        },
+        placement: pose(),
+        material: None,
+    })
+}
+
+#[test]
+fn through_hole_polygons_are_authored_as_flat_points_and_counts_and_validated() {
+    let square = |x: f64, y: f64| {
+        vec![
+            [x, y, 0.0],
+            [x, y + 100.0, 0.0],
+            [x + 100.0, y + 100.0, 0.0],
+            [x + 100.0, y, 0.0],
+        ]
+    };
+    let (mut a, o) = open(initial());
+    let holes = vec![square(100.0, 100.0), square(400.0, 200.0)];
+    let p = a
+        .prepare(
+            batch(&o.context, vec![holed_plate(holes.clone())]),
+            &control(),
+        )
+        .unwrap();
+    let o = a
+        .install(
+            &o.context,
+            &p.token,
+            &p.op_id,
+            Decision::Accepted,
+            &control(),
+        )
+        .unwrap();
+    let prims = snapshot(&a, &o.context);
+    let Some(Value::Array(points)) = value(&prims, PLATE, "steel:plate:holePointsMm") else {
+        panic!("hole points are missing");
+    };
+    assert_eq!(points.len(), 8);
+    assert_eq!(
+        value(&prims, PLATE, "steel:plate:holeVertexCounts"),
+        Some(&Value::Array(vec![Value::Int(4), Value::Int(4)]))
+    );
+    // The exported layers pass the structural validator, so a reader can rely on the shape.
+    let layers = a.export(&o.context, &control()).unwrap();
+    let mut request = initial();
+    request.assets = layers;
+    request.manifest = request.manifest_digest().unwrap();
+    validate_layers(request, schema_identity().unwrap(), &control()).unwrap();
+
+    // A plate without holes authors neither attribute.
+    let (mut b, ob) = open(initial());
+    let p = b
+        .prepare(
+            batch(&ob.context, vec![holed_plate(Vec::new())]),
+            &control(),
+        )
+        .unwrap();
+    let ob = b
+        .install(
+            &ob.context,
+            &p.token,
+            &p.op_id,
+            Decision::Accepted,
+            &control(),
+        )
+        .unwrap();
+    assert_eq!(
+        value(
+            &snapshot(&b, &ob.context),
+            PLATE,
+            "steel:plate:holePointsMm"
+        ),
+        None
+    );
+
+    // Invalid hole input is refused before anything is written.
+    let (mut c, oc) = open(initial());
+    let mut bad = |holes: Vec<Vec<[f64; 3]>>| {
+        c.prepare(batch(&oc.context, vec![holed_plate(holes)]), &control())
+            .map(|_| ())
+            .unwrap_err()
+            .code
+    };
+    assert_eq!(
+        bad(vec![vec![[1.0, 1.0, 0.0], [2.0, 2.0, 0.0]]]),
+        ErrorCode::InvalidArgument
+    );
+    assert_eq!(
+        bad(vec![
+            square(10.0, 10.0)
+                .into_iter()
+                .map(|[x, y, _]| [x, y, 1.0])
+                .collect()
+        ]),
+        ErrorCode::InvalidArgument
+    );
+    assert_eq!(
+        bad(vec![vec![
+            [f64::NAN, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0]
+        ]]),
+        ErrorCode::NonFiniteNumber
+    );
+    assert_eq!(
+        bad(vec![vec![
+            [2e9, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0]
+        ]]),
+        ErrorCode::LimitExceeded
+    );
+    assert_eq!(bad(vec![square(0.0, 0.0); 65]), ErrorCode::LimitExceeded);
+}
+
+#[test]
+fn an_existing_definition_must_match_the_resource_before_it_is_reused() {
+    let resource = Resource::new(Definition::Material {
+        density_kg_m3: Some(1000.0),
+    })
+    .unwrap();
+    let hex = resource.digest.to_string();
+    let stage = |density: &str, active: &str| {
+        let body = format!(
+            "def Xform \"World\" {{ def Scope \"Definitions\" {{ def Scope \"D_{hex}\" {active}{{ \
+             custom string bim:schemaVersion = \"0.1.0\"\n custom token bim:units = \"mm\"\n \
+             custom token bim:definitionKind = \"material\"\n {density}\n \
+             custom string bim:contentDigest = \"{hex}\" }} }} }}"
+        );
+        request(
+            vec![
+                asset(
+                    "root.usda",
+                    "#usda 1.0\n(metersPerUnit=0.001\nupAxis=\"Z\"\nsubLayers=[@authored.usda@,@derived.usda@])\n",
+                ),
+                asset("authored.usda", layer(&body)),
+                asset("derived.usda", layer("")),
+            ],
+            &["root.usda", "authored.usda", "derived.usda"],
+        )
+    };
+    let prepare = |request: OpenRequest| {
+        let (mut a, o) = open(request);
+        let mut input = batch(&o.context, Vec::new());
+        input.resources = vec![resource.clone()];
+        a.prepare(input, &control()).map(|p| p.writes.len())
+    };
+    // The same content is an immutable no-op.
+    assert_eq!(
+        prepare(stage("custom double bim:densityKgM3 = 1000.0", "")).unwrap(),
+        0
+    );
+    // A stored density that disagrees with the path digest, a removed density, and a deactivated
+    // definition are refused instead of being accepted as a no-op.
+    for (density, active) in [
+        ("custom double bim:densityKgM3 = 1.0", ""),
+        ("", ""),
+        ("custom float bim:densityKgM3 = 1000.0", ""),
+        (
+            "custom double bim:densityKgM3 = 1000.0",
+            "(active = false)\n",
+        ),
+    ] {
+        assert!(
+            prepare(stage(density, active)).is_err(),
+            "{density:?} {active:?}"
+        );
+    }
 }

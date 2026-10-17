@@ -5,7 +5,7 @@ U04 adds two native binaries in this existing package: `beamcraft` and
 only the worker constructs a `beamcraft_layer_engine::Reader`. Neither starts
 a socket or a service. The SDK fallback and the worker mutation protocol are unavailable;
 `revision-commit` and `revision-open` (below) publish already stored blobs and do not parse USD.
-`create-plate` (P01, below) is the one command that authors USD and publishes it, in this process.
+`create-plate` (P01, below) and the P02 definition commands are the ones that author USD and publish it, in this process.
 This is an experimental read path, not complete LEW-03/F05 admission.
 
 Build offline with `cargo build --offline -p beamcraft-cli --bins`.
@@ -131,10 +131,19 @@ the engine API. Defaults: revision is the SHA-256 of `beamcraft-synthetic-scene`
 
 ```text
 beamcraft create-plate --store ROOT --width MM --length MM --thickness MM
-  [--name TEXT] [--translation X,Y,Z] [--new-id UUID] [--op-id UUID] [--revision-id UUID]
-  [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
+  [--name TEXT] [--translation X,Y,Z] [--material-digest SHA256]
+  [--hole-rect "X,Y,W,H;..."] [--hole-round "X,Y,D;..."] [--hole-segments 8..256]
+  [--new-id UUID] [--op-id UUID]
+  [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
 beamcraft plate-inspect --store ROOT
 ```
+
+`--hole-rect` and `--hole-round` (A04 pilot, see the [design note](../../docs/design/a04-plate-holes.md))
+author through holes together with the plate: axis-aligned rectangles from the corner `X,Y`, and
+regular polygons (default 32 sides) inscribed in the circle of centre `X,Y` and diameter `D`.
+Only the clockwise polygons are stored, so a "round" hole is that polygon and its volume is exact for
+it; the kernel cuts them (strictly inside the outline, clear of each other, otherwise
+`INVALID_ARGUMENT`) and the volume is the certified enclosure's midpoint. At most 64 holes.
 
 `create-plate` builds the origin rectangle contour `(0,0,0),(w,0,0),(w,l,0),(0,l,0)`, runs the
 engine's `CreatePlate` (F04 admission, kernel mesh and volume, declared footprint), authors the
@@ -142,11 +151,14 @@ model layer and the derived layer as standard USDA with the U02 layer engine, ch
 engine's writes are inside the engine's footprint, and commits through U06/U07 with a verifier that
 runs the U02 structural check, the U03 index and a kernel re-evaluation of every plate in the
 layers. Output is one JSON object: element id, prim path, dimensions, volume (mm3 and m3, status,
-algorithm), mass (`unknown`: no material), mesh digest, revision id, sequence, manifest digest,
+algorithm), mass (kg, density and status: `current` only when `--material-digest` pins a material
+that has a density, otherwise `unknown` with no value), the pinned material digest, mesh digest,
+revision id, sequence, manifest digest,
 generation, layer digests and the index record, and the footprint. Ids that are not given are
 generated (UUIDv7, strictly increasing, safe inside one millisecond). A retry of the same
 `--op-id` with the same `--new-id` and arguments is `plate_replayed` (nothing written); other
-content under that op id is `OP_ID_REUSE`; an owned `--new-id` is `DUPLICATE_ID`. A lost race is
+content (including another material) under that op id is `OP_ID_REUSE`; an owned `--new-id` is
+`DUPLICATE_ID`. A lost race is
 `BASE_REVISION_MISMATCH`. `--store` must be an existing absolute directory; the first call
 creates project and workspace ids (or takes them from the flags), later calls reuse the head's.
 
@@ -155,8 +167,57 @@ layers with a fresh reader, re-evaluates every plate and checks its committed me
 kernel's, and prints the plates, the pinned snapshot token, the element table and the meshes a
 viewer must load (`synthetic: false`).
 
-Limits: rectangular origin plate only (other contours are `UNSUPPORTED_GEOMETRY`); no material;
+Limits: rectangular origin plate only (other contours are `UNSUPPORTED_GEOMETRY`);
 the layer engine runs in-process (no process isolation, LEW-03 open); no workspace, undo or
 envelope/JSON command; quantities are printed, not stored in USD (the pinned schema has none).
 A library target (`beamcraft_cli::plate`) exposes the same path with a commit hook for fault
 injection in tests. `tests/pxr_oracle.rs` (opt-in; skips without a Python that can `import pxr`, honours `BEAMCRAFT_PXR_PYTHON`) reads the saved layers with the OpenUSD reference implementation and runs `UsdUtils.ComplianceChecker`; see the design note for the version and result. See the [design note](../../docs/design/p01-first-plate.md).
+
+## P02 profile and material definitions
+
+```text
+beamcraft define-material --store ROOT [--density KG_M3] [--revision-id UUID] [--actor-id UUID]
+  [--project-id UUID] [--workspace-id UUID]
+beamcraft define-profile --store ROOT --width MM --height MM [same id options]
+beamcraft definitions --store ROOT
+```
+
+`define-material` and `define-profile` publish one immutable definition as the next revision: a
+`/World/Definitions/D_<sha256>` prim in the model layer, with units `mm` and schema version
+`0.1.0`. The digest is the full SHA-256 of the canonical isolated definition layer that the layer
+engine writes, so it pins the values, the units and the version together; the output is
+`definition_created` with that digest, or `definition_exists` (no new revision, nothing written)
+when the head already holds the same content. A material without `--density` keeps an unknown
+density: no default is selected, no value is stored, and plates that pin it report mass `unknown`.
+Density (greater than zero, at most 1,000,000 kg/m3) and rectangle dimensions (0.001 to 1,000,000
+mm) are admitted with the F04 codes (`NON_FINITE_NUMBER`, `LIMIT_EXCEEDED`, `INVALID_ARGUMENT`)
+before anything is written. `definitions` opens the verified head in a fresh process, re-admits
+every definition, recomputes its digest from the stored values (a layer edited after publication is
+`INTEGRITY_ERROR`) and lists digest, kind, values and the plates that pin it. A pinned digest that
+is not in the model is `NOT_FOUND`; one that names a profile is `INVALID_ARGUMENT`.
+
+Limits: no catalogue, designation lookup or environment default; the physical material carries no display appearance (a separate reference and signature
+later); definitions are not an F04 command, so there is no `op_id` replay for them and publication
+is idempotent by content digest; in-process layer engine as above. See the
+[design note](../../docs/design/p02-definitions.md).
+
+## P03 straight member
+
+```text
+beamcraft create-member --store ROOT --start X,Y,Z --end X,Y,Z --profile-digest SHA256
+  [--kind beam|column] [--roll RAD] [--material-digest SHA256] [--name TEXT]
+  [--translation X,Y,Z] [--new-id UUID] [--op-id UUID] [--revision-id UUID] [--actor-id UUID]
+  [--project-id UUID] [--workspace-id UUID]
+```
+
+`create-member` publishes one beam or column whose rectangle section comes from a profile
+definition published earlier (`define-profile`); the optional material works as for plates. The
+engine resolves both from the head (`NOT_FOUND` for an absent digest, `INVALID_ARGUMENT` for the
+wrong kind), the kernel builds the box in the F06 member frame (section centred on the axis, the
+default frame of F06 section 4 plus the explicit roll), and the commit runs the same verifier as
+plates, which now re-evaluates members too. Output: element id, kind, profile and material digests,
+section, axis points, roll, placement, volume and mass (as for plates), mesh digest, revision and
+footprint (the profile and material are reads). `plate-inspect` lists `plates` and `members` and
+puts both in the one pinned snapshot. A placement rotation is `UNSUPPORTED_GEOMETRY`: lay a member
+out with its axis points (an axis along `+X` gives width along `Y` and height along `Z`).
+See the [design note](../../docs/design/p03-straight-member.md).

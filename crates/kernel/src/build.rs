@@ -109,7 +109,7 @@ pub fn rectangular_plate_with_cancel(
     poll(&mut cancelled, Stage::Checks)?;
     // Positive orthogonal axis extents certify a simple convex box by construction.
     // Incidence/orientation/Euler checks independently catch table/build corruption.
-    self_check(&vertices, &PLATE_TRIANGLES)?;
+    self_check(&vertices, &PLATE_TRIANGLES, &normals)?;
     poll(&mut cancelled, Stage::Quantities)?;
     let volume_mm3 = (input.width_mm * input.length_mm) * input.thickness_mm;
     if !volume_mm3.is_finite() || volume_mm3 <= 0.0 {

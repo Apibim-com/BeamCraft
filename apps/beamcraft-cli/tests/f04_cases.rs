@@ -133,6 +133,7 @@ fn command_of(arguments: &Json) -> Result<CreatePlate, ErrorCode> {
             ],
         },
         material_digest: None,
+        holes_mm: Vec::new(),
     })
 }
 
@@ -158,7 +159,13 @@ fn run_case(case_id: &str, arguments: &Json, accepted: &BTreeMap<String, CreateP
     };
     let owned = command.new_id;
     let existing = move |id: &ElementId| case_id == "F04-NEG-03" && *id == owned;
-    match admit_create_plate(op, &command, prior, &existing) {
+    match admit_create_plate(
+        op,
+        &command,
+        prior,
+        &existing,
+        &beamcraft_engine::command::no_materials,
+    ) {
         Ok(Admission::Apply(_)) => Verdict::Applied,
         Ok(Admission::Replay) => Verdict::Replayed,
         Err(e) => Verdict::Rejected(e.code),

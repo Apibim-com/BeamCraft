@@ -24,8 +24,9 @@ digest, instance and triangle tables, ids and bounds, and computes no engineerin
 | Selection | `Selection::{from_ids, from_instances, from_triangles, instances, rebased}` | Holds ids only; display hints are resolved through the projection and discarded. `rebased` enforces the destination snapshot's selection cap (`VIEW_SELECTION_LIMIT`). Selection is viewport state and never enters a key. |
 | Errors | `ViewCode`, `ViewError` | 11 closed codes, `GEO_*` where F06 section 3 names one and `VIEW_*` otherwise, each mapped onto an existing F04 `ErrorCode`. |
 | Headless | `beamcraft view-snapshot`, `beamcraft view-changes` | See the CLI README. |
-| `CreatePlate` (P01) | `command::{create_plate, evaluate_plate, origin_rectangle_contour, AuthoredPlate}`, `transaction::admit_create_plate`, `footprint::Footprint::for_create` | Admission (F04 caps, label, placement, `D`, floor, repeated points), kernel body, quantities (volume current, mass unknown), declared footprint, `op_id` replay/reuse decision. Origin rectangle only, see below. |
-| Committed plates (P01) | `query::committed::{evaluate_committed, scene_elements}` | Authored plates read from a committed revision are re-evaluated by the kernel and become the `ViewSnapshot` input. `beamcraft plate-inspect` uses it. |
+| `CreatePlate` (P01, P02) | `command::{create_plate, evaluate_plate, origin_rectangle_contour, AuthoredPlate, MaterialInfo, MaterialLookup, no_materials}`, `transaction::admit_create_plate`, `footprint::Footprint::{for_create, for_define}` | Admission (F04 caps, label, placement, `D`, floor, repeated points), a pinned material resolved through the caller's lookup (`NOT_FOUND` before any geometry), kernel body, quantities (volume current; mass `current` only with a material that authors a density, otherwise `unknown`), declared footprint (the pinned definition is read, never written), `op_id` replay/reuse decision. Origin rectangle only, see below. |
+| Committed plates (P01, P02) | `query::committed::{evaluate_committed, scene_elements}` | Authored plates read from a committed revision are re-evaluated by the kernel (with their material's re-admitted density) and become the `ViewSnapshot` input. `beamcraft plate-inspect` uses it. |
+| `CreateStraightMember` (P03) | `member::{create_straight_member, admit_create_member, evaluate_member, AuthoredMember, ProfileInfo, ProfileLookup, no_profiles}`, `footprint::Footprint::for_create_member`, `query::committed::{evaluate_committed_members, scene_elements_with_members, MemberRecord}` | Admission, duplicate id, pinned profile (required) then material, kernel member body (F06 member frame), volume and mass, footprint (profile and material read, never written), replay/reuse. A rotated placement is `UNSUPPORTED_GEOMETRY`. |
 
 ## Limits
 
@@ -54,7 +55,9 @@ inputs cannot reach it through `ViewSnapshot::build`.
   geometry status or, for non-planar and self-intersecting contours, reject it as
   `INVALID_ARGUMENT` (F04-NEG-29, -30, -38). A placement rotation other than the identity is
   `UNSUPPORTED_GEOMETRY`. There are no dependency keys (F06 section 7), no stored quantity or
-  signature, no other command. The snapshot builder still takes sealed kernel `PlateResult`s;
+  signature, no other command. Profile and material definitions are published by the CLI adapter
+  (P02); the engine only resolves a pinned material to its density and no command consumes a
+  profile yet (P03). The snapshot builder still takes sealed kernel `PlateResult`s;
   `ElementId` is `beamcraft_model::id::ElementId`. `synthetic` scenes remain stand-ins and every
   command output marks them (`stand_ins`).
 - **No operations exist yet** (A03/A04), so a distinct simplified mesh can only be a stand-in
