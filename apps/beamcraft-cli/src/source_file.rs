@@ -81,7 +81,11 @@ pub fn read_file(path: &str, cap: usize) -> Result<Vec<u8>, ErrorCode> {
             return Err(ErrorCode::InvalidArgument);
         }
     }
-    if !metadata.is_file() || metadata.len() > cap as u64 {
+    // The kind is decided before any size: st_size of a directory or a device means nothing.
+    if !metadata.is_file() {
+        return Err(ErrorCode::InvalidArgument);
+    }
+    if metadata.len() > cap as u64 {
         return Err(ErrorCode::LimitExceeded);
     }
     let mut data = Vec::new();
