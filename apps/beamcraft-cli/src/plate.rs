@@ -483,6 +483,25 @@ pub(crate) fn kernel_mesh(solid: &SolidMesh) -> Result<DerivedMesh, PlateError> 
             }
         })
         .collect::<Result<Vec<_>, _>>()?;
+    // Far from the element origin float32 cannot tell nearby vertices apart; a mesh that loses
+    // vertices that way would store a different (even flat) solid than the one measured.
+    let distinct = |bits: &mut std::collections::BTreeSet<[u64; 3]>, p: [f64; 3]| {
+        bits.insert(p.map(|v| (v + 0.0).to_bits()));
+    };
+    let (mut exact, mut stored) = (
+        std::collections::BTreeSet::new(),
+        std::collections::BTreeSet::new(),
+    );
+    for (p, cast) in mesh.vertices().iter().zip(&points) {
+        distinct(&mut exact, [p.x, p.y, p.z]);
+        distinct(&mut stored, cast.map(f64::from));
+    }
+    if exact.len() != stored.len() {
+        return Err(PlateError::new(
+            ErrorCode::UnsupportedGeometry,
+            "mesh coordinates collapse in float32; the element is too far from its origin",
+        ));
+    }
     Ok(DerivedMesh {
         points,
         counts: vec![3; solid.triangles().len()],
