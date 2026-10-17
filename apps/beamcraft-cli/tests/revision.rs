@@ -214,6 +214,7 @@ fn authored_batch() -> Vec<Change> {
             ],
             face_counts: vec![4],
             indices: vec![0, 1, 2, 3],
+            quantities: None,
         }),
     ]
 }

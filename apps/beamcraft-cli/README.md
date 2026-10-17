@@ -221,3 +221,19 @@ footprint (the profile and material are reads). `plate-inspect` lists `plates` a
 puts both in the one pinned snapshot. A placement rotation is `UNSUPPORTED_GEOMETRY`: lay a member
 out with its axis points (an axis along `+X` gives width along `Y` and height along `Z`).
 See the [design note](../../docs/design/p03-straight-member.md).
+
+## P04 update-element and stored quantities
+
+```text
+beamcraft update-element --store ROOT --id UUID
+  [--name TEXT] [--material-digest HEX|none] [--thickness MM]
+  [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
+```
+
+`update-element` edits one plate or member and writes only the groups that change: a rename
+touches the authored layer alone, a material change rewrites the stored mass record at the same
+mesh, a thickness change rebuilds the mesh and volume (plates only). `--material-digest none`
+clears the material, so the mass becomes unknown. An empty patch is `INVALID_ARGUMENT`. Volume
+and mass are stored beside the derived mesh with their own signatures; `plate-inspect` reports
+`stored_quantities` as `current`, `stale` or `missing`, and the publish-time verifier refuses a
+stale record with `INTEGRITY_ERROR`. See the [design note](../../docs/design/p04-quantities-update.md).

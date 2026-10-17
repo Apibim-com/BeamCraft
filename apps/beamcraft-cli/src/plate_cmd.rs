@@ -8,12 +8,15 @@
 use beamcraft_cli::definition::{
     DefineRequest, Defined, DefinitionRecord, define, definition_path,
 };
+use beamcraft_cli::edit::{UpdateRequest, UpdatedElement, update_element};
 use beamcraft_cli::member::{CreateMemberRequest, create_member};
 use beamcraft_cli::plate::{
-    CreateRequest, Created, Inspection, PlateError, RevisionSummary, create_plate, inspect,
+    CreateRequest, Created, Inspection, PlateError, QuantityReport, RevisionSummary, create_plate,
+    inspect,
 };
 use beamcraft_engine::command::{Quantities, origin_rectangle_contour};
 use beamcraft_engine::footprint::{Entry, Footprint, Target};
+use beamcraft_engine::quantity::Freshness;
 use beamcraft_engine::query::committed::MemberRecord;
 use beamcraft_engine::query::committed::PlateRecord;
 use beamcraft_host::{
@@ -21,8 +24,10 @@ use beamcraft_host::{
     revision::{NoFault, RevisionStore, Uuid7},
     storage::BlobStore,
 };
-use beamcraft_model::command::{CreatePlate, MAX_HOLES, Placement};
-use beamcraft_model::command::{CreateStraightMember, MemberKind};
+use beamcraft_model::command::{
+    CreatePlate, CreateStraightMember, ElementPatch, MAX_HOLES, MemberKind, Placement,
+    UpdateElement,
+};
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
@@ -124,6 +129,19 @@ const CREATE_MEMBER_OPTIONS: &[&str] = &[
     "--workspace-id",
 ];
 
+const UPDATE_OPTIONS: &[&str] = &[
+    "--store",
+    "--id",
+    "--name",
+    "--material-digest",
+    "--thickness",
+    "--op-id",
+    "--revision-id",
+    "--actor-id",
+    "--project-id",
+    "--workspace-id",
+];
+
 fn run(args: &[OsString]) -> Run<Json> {
     let args: Vec<&str> = args
         .iter()
@@ -139,6 +157,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     let allowed: &[&str] = match *command {
         "create-plate" => CREATE_OPTIONS,
         "create-member" => CREATE_MEMBER_OPTIONS,
+        "update-element" => UPDATE_OPTIONS,
         "define-material" => DEFINE_MATERIAL_OPTIONS,
         "define-profile" => DEFINE_PROFILE_OPTIONS,
         "plate-inspect" | "definitions" => &["--store"],
@@ -165,6 +184,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     match *command {
         "create-plate" => create(&store, &options),
         "create-member" => create_member_command(&store, &options),
+        "update-element" => update_command(&store, &options),
         "define-material" | "define-profile" => define_command(&store, command, &options),
         "definitions" => definitions_json(&inspect(&store)?),
         _ => Ok(inspection_json(&inspect(&store)?)?),
@@ -392,6 +412,95 @@ fn holes(options: &BTreeMap<&str, &str>) -> Run<Vec<Vec<[f64; 2]>>> {
         }
     }
     Ok(result)
+}
+
+fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Json> {
+    let mut source = IdSource::system();
+    let mut fresh = || {
+        source.next_id().map_err(|_| PlateError {
+            code: ErrorCode::BackendUnavailable,
+            message: "no identity could be generated",
+        })
+    };
+    let given = |key: &str| options.get(key).copied();
+    let target_id = ElementId::parse(given("--id").ok_or_else(|| invalid("--id is required"))?)
+        .map_err(id_error)?;
+    let op_id = match given("--op-id") {
+        Some(text) => OpId::parse(text).map_err(id_error)?,
+        None => OpId::from_uuid(fresh()?),
+    };
+    let revision_id = match given("--revision-id") {
+        Some(text) => RevisionId::parse(text).map_err(id_error)?,
+        None => RevisionId::from_uuid(fresh()?),
+    };
+    let actor = match given("--actor-id") {
+        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+    };
+    let project = match given("--project-id") {
+        Some(text) => ProjectId::parse(text).map_err(id_error)?,
+        None => ProjectId::from_uuid(fresh()?),
+    };
+    let workspace = match given("--workspace-id") {
+        Some(text) => WorkspaceId::parse(text).map_err(id_error)?,
+        None => WorkspaceId::from_uuid(fresh()?),
+    };
+    let patch = ElementPatch {
+        name: given("--name").map(str::to_owned),
+        material: match given("--material-digest") {
+            None => None,
+            Some("none") => Some(None),
+            Some(text) => Some(Some(digest_option(text)?)),
+        },
+        thickness_mm: given("--thickness")
+            .map(|text| {
+                text.parse::<f64>()
+                    .map_err(|_| invalid("a number is malformed"))
+            })
+            .transpose()?,
+    };
+    let updated = update_element(
+        store,
+        &UpdateRequest {
+            op_id,
+            revision_id,
+            actor,
+            project,
+            workspace,
+            command: UpdateElement { target_id, patch },
+        },
+        &mut NoFault,
+    )?;
+    let element = match &updated.element {
+        UpdatedElement::Plate(record) => plate_json(record)?,
+        UpdatedElement::Member(record) => member_json(record)?,
+    };
+    Ok(Json::object([
+        (
+            "outcome",
+            Json::text(if updated.replayed {
+                "element_update_replayed"
+            } else {
+                "element_updated"
+            }),
+        ),
+        ("op_id", Json::text(op_id.to_string())),
+        (
+            "effect",
+            Json::object([
+                ("name", Json::Bool(updated.effect.name)),
+                ("material", Json::Bool(updated.effect.material)),
+                ("shape", Json::Bool(updated.effect.shape)),
+            ]),
+        ),
+        (
+            "changed_layers",
+            Json::Array(updated.changed_layers.iter().map(Json::text).collect()),
+        ),
+        ("element", element),
+        ("revision", revision_json(&updated.revision)),
+        ("footprint", footprint_json(updated.footprint.as_ref())),
+    ]))
 }
 
 fn create_member_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Json> {
@@ -805,17 +914,83 @@ fn created_json(created: &Created, op_id: OpId) -> Run<Json> {
     ]))
 }
 
+fn freshness_json(
+    freshness: Freshness,
+    stored_value: Option<f64>,
+    stored_status: Option<&str>,
+) -> Run<Json> {
+    Ok(Json::object([
+        ("freshness", Json::text(freshness.as_str())),
+        ("stored_value", stored_value.map_or(Ok(Json::Null), num)?),
+        (
+            "stored_status",
+            stored_status.map_or(Json::Null, Json::text),
+        ),
+    ]))
+}
+
+/// The stored quantity record of one element against what the engine computes now. A `stale`
+/// stored value is shown as a previous value, never as the current one.
+fn stored_json(report: &QuantityReport) -> Run<Json> {
+    let stored = report.stored.as_ref();
+    Ok(Json::object([
+        (
+            "volume",
+            freshness_json(
+                report.assessment.volume,
+                stored.map(|s| s.volume_mm3),
+                stored.map(|s| s.volume_status.as_str()),
+            )?,
+        ),
+        (
+            "mass",
+            freshness_json(
+                report.assessment.mass,
+                stored.and_then(|s| s.mass_kg),
+                stored.map(|s| s.mass_status.as_str()),
+            )?,
+        ),
+        (
+            "expected_shape_signature",
+            Json::text(report.expected.shape_signature.to_string()),
+        ),
+        (
+            "expected_mass_signature",
+            Json::text(report.expected.mass_signature.to_string()),
+        ),
+        (
+            "stored_shape_signature",
+            stored.map_or(Json::Null, |s| Json::text(s.shape_signature.to_string())),
+        ),
+        (
+            "stored_mass_signature",
+            stored.map_or(Json::Null, |s| Json::text(s.mass_signature.to_string())),
+        ),
+    ]))
+}
+
+/// The element JSON with its stored-quantity report attached.
+fn with_stored(element: Json, id: ElementId, inspection: &Inspection) -> Run<Json> {
+    let Json::Object(mut object) = element else {
+        return Ok(element);
+    };
+    if let Some(report) = inspection.quantities.get(&id) {
+        object.insert("stored_quantities".into(), stored_json(report)?);
+    }
+    Ok(Json::Object(object))
+}
+
 fn inspection_json(inspection: &Inspection) -> Run<Json> {
     let snapshot = &inspection.snapshot;
     let plates = inspection
         .plates
         .iter()
-        .map(plate_json)
+        .map(|p| with_stored(plate_json(p)?, p.authored.id, inspection))
         .collect::<Run<Vec<_>>>()?;
     let members = inspection
         .members
         .iter()
-        .map(member_json)
+        .map(|m| with_stored(member_json(m)?, m.authored.id, inspection))
         .collect::<Run<Vec<_>>>()?;
     let meshes = snapshot
         .meshes()

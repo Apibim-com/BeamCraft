@@ -461,6 +461,108 @@ pub const MAX_HOLES: usize = 64;
 /// Most points of one hole polygon.
 pub const HOLE_POINT_CAP: usize = 1024;
 
+/// A typed patch of supported authored fields (F04 section 7 `UpdateElement`). A field that is
+/// `None` is left unchanged. `material` distinguishes no change (`None`), clearing the reference
+/// (`Some(None)`) and pinning a definition (`Some(Some(digest))`). There is no raw USD setter.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ElementPatch {
+    /// New label.
+    pub name: Option<String>,
+    /// New material reference, or its explicit removal.
+    pub material: Option<Option<ContentDigest>>,
+    /// New plate thickness in millimetres (a plate only).
+    pub thickness_mm: Option<f64>,
+}
+
+/// F04 section 7 `UpdateElement`: the target element and a typed patch.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UpdateElement {
+    /// The element to change.
+    pub target_id: ElementId,
+    /// The patch.
+    pub patch: ElementPatch,
+}
+
+impl UpdateElement {
+    /// Admits the patch: it must change something, the label follows the F04 rule and the
+    /// thickness is finite (`NON_FINITE_NUMBER`) and at most 1,000,000 mm (`LIMIT_EXCEEDED`). That
+    /// a field applies to the target's kind and the geometry are the engine's decisions.
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        let patch = &self.patch;
+        if patch.name.is_none() && patch.material.is_none() && patch.thickness_mm.is_none() {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "changes",
+                "the patch changes nothing",
+            ));
+        }
+        if patch.name.as_deref().is_some_and(|n| !label_is_valid(n)) {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "name",
+                "label must be 1 to 256 bytes without control characters",
+            ));
+        }
+        if let Some(t) = patch.thickness_mm {
+            if !t.is_finite() {
+                return Err(CommandError::new(
+                    ErrorCode::NonFiniteNumber,
+                    "thickness_mm",
+                    "value is not finite",
+                ));
+            }
+            if t > DIMENSION_CAP_MM {
+                return Err(CommandError::new(
+                    ErrorCode::LimitExceeded,
+                    "thickness_mm",
+                    "thickness exceeds the dimension cap",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// SHA-256 of a versioned, length-prefixed encoding of the validated request.
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        self.validate_arguments()?;
+        let mut bytes = Vec::with_capacity(128);
+        bytes.extend_from_slice(b"BeamCraft/P04/UpdateElement/v1\0");
+        bytes.extend_from_slice(self.target_id.as_bytes());
+        match &self.patch.name {
+            Some(name) => {
+                bytes.push(1);
+                bytes.extend_from_slice(&(name.len() as u64).to_le_bytes());
+                bytes.extend_from_slice(name.as_bytes());
+            }
+            None => bytes.push(0),
+        }
+        match &self.patch.material {
+            None => bytes.push(0),
+            Some(None) => bytes.push(1),
+            Some(Some(digest)) => {
+                bytes.push(2);
+                bytes.extend_from_slice(digest.as_bytes());
+            }
+        }
+        match self.patch.thickness_mm {
+            Some(t) => {
+                bytes.push(1);
+                bytes.extend_from_slice(&canonical_f64_bytes(t).map_err(|_| {
+                    CommandError::new(
+                        ErrorCode::NonFiniteNumber,
+                        "thickness_mm",
+                        "value cannot be encoded",
+                    )
+                })?);
+            }
+            None => bytes.push(0),
+        }
+        Sha256::digest(&bytes).map_err(|_| {
+            CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

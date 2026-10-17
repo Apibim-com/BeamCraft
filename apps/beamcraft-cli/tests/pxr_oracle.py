@@ -153,6 +153,16 @@ def main():
         check(volume > 0.0, "mesh is not outward oriented (negative volume)")
         check(close(volume, expected), "pxr-read volume %r != closed form %r" % (volume, expected))
         check(close(volume, plate["cli_volume_mm3"]), "pxr-read volume differs from the CLI output")
+        # The stored quantity record beside the mesh is a plain USD attribute set.
+        stored_volume = mesh.GetPrim().GetAttribute("bim:volumeMm3")
+        check(stored_volume.IsValid() and close(stored_volume.Get(), plate["cli_volume_mm3"]), "stored volume differs")
+        check(mesh.GetPrim().GetAttribute("bim:volumeStatus").Get() == "current", "stored volume status differs")
+        check(len(mesh.GetPrim().GetAttribute("bim:shapeSignature").Get()) == 64, "shape signature is not a sha256")
+        if plate.get("cli_mass_kg") is not None:
+            stored_mass = mesh.GetPrim().GetAttribute("bim:massKg")
+            check(stored_mass.IsValid() and close(stored_mass.Get(), plate["cli_mass_kg"]), "stored mass differs")
+        elif "cli_mass_kg" in plate:
+            check(not mesh.GetPrim().GetAttribute("bim:massKg").IsValid(), "unknown mass has a stored value")
 
         # Material: one pinned immutable definition, or no target at all (never a guessed default).
         relationship = prim.GetRelationship("bim:material")

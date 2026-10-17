@@ -6,5 +6,6 @@
 //! application layer.
 
 pub mod definition;
+pub mod edit;
 pub mod member;
 pub mod plate;
