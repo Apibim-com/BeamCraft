@@ -31,6 +31,7 @@ use beamcraft_layer_engine::authored::{
     Author, Change, EditTargets, Element, MemberKind as LayerKind, Placement as LayerPlacement,
     Prepare, Shape, schema_identity,
 };
+use beamcraft_layer_engine::index::{ElementId as LayerElementId, LinkTarget};
 use beamcraft_model::command::{CommandError, CopyElement, MemberKind};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
@@ -215,6 +216,25 @@ pub fn copy_element(
         schema,
         &control,
     )?;
+    // Links the adapter does not carry over must not be dropped silently: the layer engine plans
+    // the copy and anything beyond the pinned definitions refuses it.
+    let index = author.element_index(&opened.context, &control)?;
+    let plan = index.copy_plan(
+        &LayerElementId::parse(&command.source_id.to_string())?,
+        &LayerElementId::parse(&command.new_id.to_string())?,
+    )?;
+    if plan
+        .links
+        .iter()
+        .any(|l| !matches!(l.target, LinkTarget::Definition(_)))
+    {
+        return Err(CommandError::new(
+            ErrorCode::DependencyConflict,
+            "source_id",
+            "the source has element links that a copy does not carry over yet",
+        )
+        .into());
+    }
     let changes = match &copy {
         CopiedElement::Plate(r) => {
             let a = &r.authored;
