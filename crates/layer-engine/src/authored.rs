@@ -459,7 +459,7 @@ impl Author {
             ));
         }
         let b = self.request.budgets;
-        if input.changes.is_empty() {
+        if input.changes.is_empty() && input.resources.is_empty() {
             return Err(fail(ErrorCode::InvalidArgument, "empty authored batch"));
         }
         if input.changes.len() > b.values.min(4096) || input.resources.len() > b.prims {

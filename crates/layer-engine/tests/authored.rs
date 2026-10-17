@@ -1093,3 +1093,56 @@ fn changed_input_bounds_are_inclusive_and_rejections_keep_the_entire_patch_atomi
         ErrorCode::StaleWorkspace
     );
 }
+
+#[test]
+fn a_definition_only_batch_publishes_immutable_definitions_and_an_empty_batch_is_rejected() {
+    let (mut a, o) = open(initial());
+    assert_eq!(
+        a.prepare(batch(&o.context, Vec::new()), &control())
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidArgument
+    );
+    let definitions = resources();
+    let mut input = batch(&o.context, Vec::new());
+    input.resources = definitions.clone();
+    let p = a.prepare(input, &control()).unwrap();
+    // Two new definitions are written, no element is touched.
+    let written: BTreeSet<String> = p.writes.iter().map(|f| f.identity.clone()).collect();
+    let expected: BTreeSet<String> = definitions.iter().map(|d| d.digest.to_string()).collect();
+    assert_eq!(written, expected);
+    assert!(p.opinions.is_empty());
+    let o = a
+        .install(
+            &o.context,
+            &p.token,
+            &p.op_id,
+            Decision::Accepted,
+            &control(),
+        )
+        .unwrap();
+    let prims = snapshot(&a, &o.context);
+    for d in &definitions {
+        let definition = prims
+            .iter()
+            .find(|p| p.path == format!("/World/Definitions/D_{}", d.digest))
+            .unwrap();
+        let property = |name: &str| {
+            definition
+                .properties
+                .iter()
+                .find(|p| p.name == name)
+                .and_then(|p| p.value.as_ref())
+        };
+        assert_eq!(
+            property("bim:contentDigest"),
+            Some(&Value::Text(d.digest.to_string()))
+        );
+        assert_eq!(property("bim:units"), Some(&Value::Text("mm".into())));
+    }
+    // The same definitions again change nothing and write nothing: they are immutable.
+    let mut again = batch(&o.context, Vec::new());
+    again.resources = definitions;
+    let p = a.prepare(again, &control()).unwrap();
+    assert!(p.writes.is_empty());
+}

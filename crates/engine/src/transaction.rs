@@ -11,7 +11,7 @@
 //! compared through [`beamcraft_model::command::CreatePlate::content_fingerprint`], a typed-argument digest; the F05
 //! canonical-byte comparison is planned and replaces it without changing this API.
 
-use crate::command::{CreatePlateOutcome, create_plate};
+use crate::command::{CreatePlateOutcome, MaterialLookup, create_plate};
 use beamcraft_model::command::{CommandError, CreatePlate};
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
@@ -61,6 +61,7 @@ pub fn admit_create_plate(
     command: &CreatePlate,
     prior: PriorOp,
     existing: &dyn Fn(&ElementId) -> bool,
+    materials: MaterialLookup<'_>,
 ) -> Result<Admission, CommandError> {
     match prior {
         PriorOp::Accepted { fingerprint } => {
@@ -76,7 +77,7 @@ pub fn admit_create_plate(
         }
         PriorOp::Unseen => Ok(Admission::Apply(Box::new(Transaction {
             op_id,
-            outcome: create_plate(command, existing)?,
+            outcome: create_plate(command, existing, materials)?,
         }))),
     }
 }
@@ -84,7 +85,18 @@ pub fn admit_create_plate(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::command::no_materials;
     use beamcraft_model::command::Placement;
+
+    // Shadows the glob import: these tests have no material definitions.
+    fn admit_create_plate(
+        op_id: OpId,
+        command: &CreatePlate,
+        prior: PriorOp,
+        existing: &dyn Fn(&ElementId) -> bool,
+    ) -> Result<Admission, CommandError> {
+        super::admit_create_plate(op_id, command, prior, existing, &no_materials)
+    }
 
     fn command(width: f64) -> CreatePlate {
         CreatePlate {

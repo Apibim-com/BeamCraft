@@ -27,8 +27,10 @@ use crate::footprint::Footprint;
 use beamcraft_geom::tolerance::TOLERANCE_POLICY_VERSION;
 use beamcraft_geom::{MathError, Point3};
 use beamcraft_kernel::diagnostic::Failure;
+use beamcraft_kernel::measure::analytic_mass_kg;
 use beamcraft_kernel::{PlateResult, RectangularPlate, rectangular_plate};
 use beamcraft_model::command::{CommandError, CreatePlate, Placement};
+use beamcraft_model::definition::MaterialSpec;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
@@ -37,6 +39,29 @@ use beamcraft_model::id::ElementId;
 pub const VOLUME_ALGORITHM: &str = "kernel-g02-rectangular-plate-volume/1;tolerance-policy-3";
 
 const _: () = assert!(TOLERANCE_POLICY_VERSION == 3);
+
+/// The physical content of a resolved immutable material definition.
+///
+/// The adapter that reads the committed model hands this over; the engine never reads USD. A
+/// density of `None` is unknown and stays unknown.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MaterialInfo {
+    /// Density in kg/m3, when the definition authors one.
+    pub density_kg_m3: Option<f64>,
+}
+
+/// Resolves a pinned material digest. A digest with no definition is `NOT_FOUND`; a digest that
+/// names a definition of another kind is `INVALID_ARGUMENT`.
+pub type MaterialLookup<'a> = &'a dyn Fn(&ContentDigest) -> Result<MaterialInfo, CommandError>;
+
+/// A lookup that knows no definition: any pinned material is `NOT_FOUND`.
+pub fn no_materials(_: &ContentDigest) -> Result<MaterialInfo, CommandError> {
+    Err(CommandError::new(
+        ErrorCode::NotFound,
+        "material_digest",
+        "material definition is not in the model",
+    ))
+}
 
 /// The authored state of one plate: exactly the inputs F04 section 4 stores in the model layer.
 /// Nothing derived is in it.
@@ -52,6 +77,8 @@ pub struct AuthoredPlate {
     pub thickness_mm: f64,
     /// Rigid placement as submitted.
     pub placement: Placement,
+    /// Pinned physical material definition; absence means the material and density are unknown.
+    pub material: Option<ContentDigest>,
 }
 
 impl AuthoredPlate {
@@ -63,6 +90,7 @@ impl AuthoredPlate {
             contour_points_mm: command.contour_points_mm.clone(),
             thickness_mm: command.thickness_mm,
             placement: command.placement,
+            material: command.material_digest,
         }
     }
 
@@ -74,7 +102,7 @@ impl AuthoredPlate {
             contour_points_mm: self.contour_points_mm.clone(),
             thickness_mm: self.thickness_mm,
             placement: self.placement,
-            material_digest: None,
+            material_digest: self.material,
         }
     }
 }
@@ -98,9 +126,10 @@ impl QuantityStatus {
     }
 }
 
-/// The quantity records of one plate. There is no material in P01, so mass is `unknown`:
-/// density is never guessed. The input signature of F06 section 7 is not implemented (`keys` are
-/// planned), so no signature is claimed.
+/// The quantity records of one plate. Mass is `current` only with a resolved material that
+/// authors a density; otherwise it is `unknown` and carries no value: density is never guessed.
+/// The input signature of F06 section 7 is not implemented (`keys` are planned), so no signature
+/// is claimed.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Quantities {
     /// Volume in mm3: `(width * length) * thickness`.
@@ -109,6 +138,10 @@ pub struct Quantities {
     pub volume_m3: f64,
     /// Status of the volume record.
     pub volume_status: QuantityStatus,
+    /// Density in kg/m3 used for the mass, when the material authors one.
+    pub density_kg_m3: Option<f64>,
+    /// Mass in kg, present exactly when `mass_status` is `current`.
+    pub mass_kg: Option<f64>,
     /// Status of the mass record.
     pub mass_status: QuantityStatus,
     /// Algorithm version of the volume record.
@@ -129,15 +162,50 @@ pub struct PlateBody {
 }
 
 impl PlateBody {
-    /// The quantity records of this body.
+    /// The quantity records of this body with no material: volume only, mass `unknown`.
     pub fn quantities(&self) -> Quantities {
         Quantities {
             volume_mm3: self.result.volume_mm3(),
             volume_m3: self.result.volume_m3(),
             volume_status: QuantityStatus::Current,
+            density_kg_m3: None,
+            mass_kg: None,
             mass_status: QuantityStatus::Unknown,
             algorithm: VOLUME_ALGORITHM,
         }
+    }
+
+    /// The quantity records of this body with the physical material of the element.
+    ///
+    /// The density is re-admitted here because a committed definition is untrusted input. Mass is
+    /// `fl(fl(V_mm3 * density) / 1e9)` (F06 section 2); an absent density keeps it `unknown`.
+    pub fn quantities_for(
+        &self,
+        material: Option<MaterialInfo>,
+    ) -> Result<Quantities, CommandError> {
+        let mut quantities = self.quantities();
+        let Some(density) = material.and_then(|m| m.density_kg_m3) else {
+            return Ok(quantities);
+        };
+        MaterialSpec {
+            density_kg_m3: Some(density),
+        }
+        .validate()?;
+        let record = analytic_mass_kg(quantities.volume_mm3, Some(density)).map_err(|code| {
+            CommandError::new(
+                code.f04_code(),
+                "density_kg_m3",
+                "mass could not be computed",
+            )
+        })?;
+        quantities.density_kg_m3 = Some(density);
+        quantities.mass_kg = record.kg;
+        quantities.mass_status = if record.kg.is_some() {
+            QuantityStatus::Current
+        } else {
+            QuantityStatus::Unknown
+        };
+        Ok(quantities)
     }
 }
 
@@ -337,10 +405,13 @@ pub fn origin_rectangle_contour(
 ///
 /// `existing` is the set of element IDs already owned by the draft; a creation ID in it is
 /// `DUPLICATE_ID`, checked after argument admission and before geometry as F04 section 8 orders.
+/// A pinned material is resolved next (`materials`), so a missing definition is `NOT_FOUND`
+/// before any geometry runs and its read is part of the footprint.
 /// A placement rotation other than the identity is `UNSUPPORTED_GEOMETRY` (module documentation).
 pub fn create_plate(
     command: &CreatePlate,
     existing: &dyn Fn(&ElementId) -> bool,
+    materials: MaterialLookup<'_>,
 ) -> Result<CreatePlateOutcome, CommandError> {
     command.validate_arguments()?;
     if existing(&command.new_id) {
@@ -350,7 +421,12 @@ pub fn create_plate(
             "element id is already owned",
         ));
     }
-    let footprint = Footprint::for_create(command.new_id)?;
+    let material = command
+        .material_digest
+        .as_ref()
+        .map(materials)
+        .transpose()?;
+    let footprint = Footprint::for_create(command.new_id, command.material_digest)?;
     let authored = AuthoredPlate::from_command(command);
     let body = evaluate_plate(&authored)?;
     if !command.placement.is_identity_rotation() {
@@ -360,7 +436,7 @@ pub fn create_plate(
             "rotated placement is not evaluated in this slice",
         ));
     }
-    let quantities = body.quantities();
+    let quantities = body.quantities_for(material)?;
     Ok(CreatePlateOutcome {
         fingerprint: command.content_fingerprint()?,
         authored,
@@ -391,6 +467,96 @@ mod tests {
 
     fn none(_: &ElementId) -> bool {
         false
+    }
+
+    // Shadows the glob import: these tests have no material definitions unless they say so.
+    fn create_plate(
+        command: &CreatePlate,
+        existing: &dyn Fn(&ElementId) -> bool,
+    ) -> Result<CreatePlateOutcome, CommandError> {
+        super::create_plate(command, existing, &no_materials)
+    }
+
+    fn digest(text: &[u8]) -> ContentDigest {
+        beamcraft_model::digest::Sha256::digest(text).unwrap()
+    }
+
+    #[test]
+    fn a_pinned_material_with_density_gives_a_current_mass_and_is_in_the_footprint() {
+        let known = digest(b"steel");
+        let lookup = |d: &ContentDigest| {
+            if *d == known {
+                Ok(MaterialInfo {
+                    density_kg_m3: Some(1000.0),
+                })
+            } else {
+                no_materials(d)
+            }
+        };
+        let mut c = command(rect(1000.0, 500.0), 10.0);
+        c.material_digest = Some(known);
+        let out = super::create_plate(&c, &none, &lookup).unwrap();
+        // F04 section 5 analytic example: 0.005 m3 at 1000 kg/m3 is 5 kg.
+        assert_eq!(out.quantities.mass_status, QuantityStatus::Current);
+        assert_eq!(out.quantities.density_kg_m3, Some(1000.0));
+        assert!((out.quantities.mass_kg.unwrap() - 5.0).abs() <= 1e-9);
+        assert_eq!(out.authored.material, Some(known));
+        assert_eq!(out.authored.to_command(), c);
+        assert!(out.footprint.reads().iter().any(|e| {
+            e.target == crate::footprint::Target::Definition(known)
+                && e.group == crate::footprint::Group::Relationship
+        }));
+    }
+
+    #[test]
+    fn unknown_density_stays_unknown_and_a_missing_definition_is_not_found() {
+        let known = digest(b"no-density");
+        let lookup = |d: &ContentDigest| {
+            if *d == known {
+                Ok(MaterialInfo {
+                    density_kg_m3: None,
+                })
+            } else {
+                no_materials(d)
+            }
+        };
+        let mut c = command(rect(1000.0, 500.0), 10.0);
+        c.material_digest = Some(known);
+        let out = super::create_plate(&c, &none, &lookup).unwrap();
+        assert_eq!(out.quantities.mass_status, QuantityStatus::Unknown);
+        assert_eq!(out.quantities.mass_kg, None);
+        assert_eq!(out.quantities.density_kg_m3, None);
+        c.material_digest = Some(digest(b"absent"));
+        assert_eq!(code(&c), ErrorCode::NotFound);
+        // The definition is resolved before geometry runs.
+        c.thickness_mm = 0.0;
+        assert_eq!(code(&c), ErrorCode::NotFound);
+    }
+
+    #[test]
+    fn a_committed_density_is_admitted_again_before_it_makes_a_mass() {
+        let body = evaluate_plate(&AuthoredPlate::from_command(&command(
+            rect(1000.0, 500.0),
+            10.0,
+        )))
+        .unwrap();
+        for (density, expected) in [
+            (f64::NAN, ErrorCode::NonFiniteNumber),
+            (0.0, ErrorCode::InvalidArgument),
+            (-7850.0, ErrorCode::InvalidArgument),
+            (2_000_000.0, ErrorCode::LimitExceeded),
+        ] {
+            let error = body
+                .quantities_for(Some(MaterialInfo {
+                    density_kg_m3: Some(density),
+                }))
+                .unwrap_err();
+            assert_eq!(error.code, expected, "{density}");
+        }
+        assert_eq!(
+            body.quantities_for(None).unwrap().mass_status,
+            QuantityStatus::Unknown
+        );
     }
 
     fn code(c: &CreatePlate) -> ErrorCode {
@@ -545,6 +711,7 @@ mod tests {
                 contour_points_mm: contour,
                 thickness_mm: 10.0,
                 placement: Placement::IDENTITY,
+                material: None,
             };
             assert!(evaluate_plate(&authored).is_err());
         }

@@ -129,8 +129,8 @@ impl Placement {
     }
 }
 
-/// F04 section 7 `CreatePlate`. `material_digest` is carried for contract fidelity; P01 has no
-/// material definitions and the engine rejects `Some` with `UNSUPPORTED_PROPERTY`.
+/// F04 section 7 `CreatePlate`. `material_digest` pins an existing immutable material definition;
+/// whether the digest resolves (`NOT_FOUND`) is the engine's decision, not an argument check.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreatePlate {
     /// The new element's full identity; creation also checks that it is unused.
@@ -217,13 +217,6 @@ impl CreatePlate {
             ));
         }
         self.placement.validate()?;
-        if self.material_digest.is_some() {
-            return Err(CommandError::new(
-                ErrorCode::UnsupportedProperty,
-                "material_digest",
-                "material definitions are not implemented",
-            ));
-        }
         Ok(())
     }
 
@@ -243,7 +236,7 @@ impl CreatePlate {
             )
         };
         let mut bytes = Vec::with_capacity(64 + self.contour_points_mm.len() * 24);
-        bytes.extend_from_slice(b"BeamCraft/P01/CreatePlate/v1\0");
+        bytes.extend_from_slice(b"BeamCraft/P02/CreatePlate/v2\0");
         bytes.extend_from_slice(self.new_id.as_bytes());
         let name = self.name.as_bytes();
         bytes.extend_from_slice(&(name.len() as u64).to_le_bytes());
@@ -261,6 +254,13 @@ impl CreatePlate {
             bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| bad())?);
             Ok::<(), CommandError>(())
         })?;
+        match &self.material_digest {
+            Some(digest) => {
+                bytes.push(1);
+                bytes.extend_from_slice(digest.as_bytes());
+            }
+            None => bytes.push(0),
+        }
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
         })
@@ -342,9 +342,6 @@ mod tests {
         let mut p = plate();
         p.thickness_mm = 1_000_000.5;
         assert_eq!(code(&p), ErrorCode::LimitExceeded);
-        let mut p = plate();
-        p.material_digest = Some(crate::digest::Sha256::digest(b"m").unwrap());
-        assert_eq!(code(&p), ErrorCode::UnsupportedProperty);
     }
 
     #[test]
@@ -414,5 +411,24 @@ mod tests {
         let mut bad = plate();
         bad.thickness_mm = f64::NAN;
         assert!(bad.content_fingerprint().is_err());
+    }
+
+    #[test]
+    fn a_material_reference_is_admitted_and_part_of_the_fingerprint() {
+        let digest = |text: &[u8]| crate::digest::Sha256::digest(text).unwrap();
+        let none = plate().content_fingerprint().unwrap();
+        let mut a = plate();
+        a.material_digest = Some(digest(b"a"));
+        assert!(a.validate_arguments().is_ok());
+        let mut b = plate();
+        b.material_digest = Some(digest(b"b"));
+        let fingerprints = [
+            none,
+            a.content_fingerprint().unwrap(),
+            b.content_fingerprint().unwrap(),
+        ];
+        assert_ne!(fingerprints[0], fingerprints[1]);
+        assert_ne!(fingerprints[1], fingerprints[2]);
+        assert_ne!(fingerprints[0], fingerprints[2]);
     }
 }

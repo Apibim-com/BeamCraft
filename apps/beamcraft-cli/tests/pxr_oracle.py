@@ -86,6 +86,32 @@ def main():
         check(close(volume, expected), "pxr-read volume %r != closed form %r" % (volume, expected))
         check(close(volume, plate["cli_volume_mm3"]), "pxr-read volume differs from the CLI output")
 
+        # Material: one pinned immutable definition, or no target at all (never a guessed default).
+        relationship = prim.GetRelationship("bim:material")
+        targets = [t.pathString for t in relationship.GetTargets()] if relationship else []
+        material = plate.get("material")
+        if material is None:
+            check(targets == [], "plate without a material has targets %r" % targets)
+        else:
+            definition_path = "/World/Definitions/D_" + material["digest"]
+            check(targets == [definition_path], "material target differs: %r" % targets)
+            definition = stage.GetPrimAtPath(definition_path)
+            check(definition.IsValid(), "missing definition prim " + definition_path)
+            if definition.IsValid():
+                check(definition.GetAttribute("bim:units").Get() == "mm", "definition units differ")
+                check(definition.GetAttribute("bim:schemaVersion").Get() == "0.1.0", "definition version differs")
+                check(definition.GetAttribute("bim:definitionKind").Get() == "material", "definition kind differs")
+                check(definition.GetAttribute("bim:contentDigest").Get() == material["digest"], "definition digest label differs")
+                density = definition.GetAttribute("bim:densityKgM3")
+                if material["density"] is None:
+                    check(not density.IsValid() or density.Get() is None, "unknown density has a value")
+                    check(plate["cli_mass_kg"] is None, "CLI reports a mass for an unknown density")
+                else:
+                    check(density.IsValid() and density.Get() == material["density"], "density differs")
+                    # Mass from the pxr-read volume (mm3) and density, in the order of the F06 contract.
+                    mass = (volume * density.Get()) / 1e9
+                    check(close(mass, plate["cli_mass_kg"]), "pxr-derived mass %r != CLI mass %r" % (mass, plate["cli_mass_kg"]))
+
         # Placement as a pxr reader composes it.
         transform = UsdGeom.Xformable(prim).ComputeLocalToWorldTransform(Usd.TimeCode.Default())
         tx, ty, tz = plate["translation"]

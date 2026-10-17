@@ -72,7 +72,9 @@ Unknown admitted metadata, attributes, relationships, specs and sublayer order s
 editing; untouched layers retain their exact bytes. No flatten operation is used.
 
 Resources are contributor/engine-supplied rectangular profiles or optional-density
-materials. Their digest commits the canonical isolated USD definition layer produced by
+materials. A batch may consist of resources only (no element change): it publishes the
+definitions, declares each newly written one as a write of its digest, and rewrites nothing
+that already exists. Their digest commits the canonical isolated USD definition layer produced by
 `Resource::bytes`, excluding the eventual embedding path/digest label. Existing known
 definition values are rehashed before use. Unknown fields remain inert, outside that
 closed resource identity; this is not a catalogue or a hash of arbitrary embedded specs.

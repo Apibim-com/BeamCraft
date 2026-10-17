@@ -1,0 +1,525 @@
+// SPDX-License-Identifier: MPL-2.0
+// SPDX-FileCopyrightText: 2026 Apibim
+
+//! P02 adapter: immutable profile and material definitions as USD assets of a committed revision.
+//!
+//! A definition is a content-addressed `Scope` prim `/World/Definitions/D_<sha256>` in the model
+//! layer. Its digest is the full SHA-256 of the canonical isolated definition layer that the layer
+//! engine writes (`Resource::bytes`), so a digest pins values, units (`mm`) and schema version
+//! (`0.1.0`) together. Publishing writes the definition and no element; an element then pins it
+//! through a `bim:material` (or, for members, `bim:profile`) relationship. The physical material
+//! never carries display appearance: that is a separate reference and signature (F04 section 4).
+//!
+//! Scope and honesty:
+//!
+//! * Only the F06 rectangle profile and a material with an optional density exist. There is no
+//!   catalogue, no commercial designation, no environment default and no density inferred from a
+//!   name: a material without a density stays unknown, and so does the mass of its elements.
+//! * No command consumes a profile yet (P03 adds the straight member), so a published profile is
+//!   verified and listed but not referenced.
+//! * Like `plate`, this runs the layer engine in-process (no LEW-03 containment) and is not a
+//!   hostile-parser boundary. Definitions are not a F04 command: the contract lists
+//!   contributor/engine-supplied immutable resources, so publication is an adapter operation
+//!   whose identity is the content digest and which is therefore idempotent without an `op_id`
+//!   replay record.
+
+use crate::plate::{
+    Base, PlateError, PublishRequest, RevisionSummary, control, decode, host_uuid, integrity,
+    load_base, number, open_base, property, publish_revision, summarize, text,
+};
+use beamcraft_engine::command::MaterialInfo;
+use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
+use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
+use beamcraft_layer_engine::authored::{
+    Author, Definition, EditTargets, Prepare, Resource, schema_identity,
+};
+use beamcraft_layer_engine::{Prim, Reader};
+use beamcraft_model::command::CommandError;
+use beamcraft_model::definition::{MaterialSpec, RectangleProfileSpec};
+use beamcraft_model::digest::ContentDigest;
+use beamcraft_model::error::ErrorCode;
+use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
+use std::collections::{BTreeMap, BTreeSet};
+
+/// Path prefix of an immutable definition prim.
+const DEFINITION_PREFIX: &str = "/World/Definitions/D_";
+
+/// The logical content of one published definition.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DefinitionRecord {
+    /// A physical material; the density is unknown when `None`.
+    Material {
+        /// Density in kg/m3, when authored.
+        density_kg_m3: Option<f64>,
+    },
+    /// The first-scope centred rectangle section.
+    RectangleProfile {
+        /// Section width in millimetres.
+        width_mm: f64,
+        /// Section height in millimetres.
+        height_mm: f64,
+    },
+}
+
+impl DefinitionRecord {
+    /// The `bim:definitionKind` token.
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            Self::Material { .. } => "material",
+            Self::RectangleProfile { .. } => "rectangle",
+        }
+    }
+
+    /// Admits the values with the F04 codes and caps.
+    pub fn validate(&self) -> Result<(), CommandError> {
+        match *self {
+            Self::Material { density_kg_m3 } => MaterialSpec { density_kg_m3 }.validate(),
+            Self::RectangleProfile {
+                width_mm,
+                height_mm,
+            } => RectangleProfileSpec {
+                width_mm,
+                height_mm,
+            }
+            .validate(),
+        }
+    }
+
+    fn definition(&self) -> Definition {
+        match *self {
+            Self::Material { density_kg_m3 } => Definition::Material { density_kg_m3 },
+            Self::RectangleProfile {
+                width_mm,
+                height_mm,
+            } => Definition::RectangleProfile {
+                width_mm,
+                height_mm,
+            },
+        }
+    }
+
+    /// The pinned resource: the definition and the digest of its canonical USD layer.
+    pub fn resource(&self) -> Result<Resource, PlateError> {
+        self.validate()?;
+        Ok(Resource::new(self.definition())?)
+    }
+}
+
+/// The USD path of the definition with this digest.
+pub fn definition_path(digest: &ContentDigest) -> String {
+    format!("{DEFINITION_PREFIX}{digest}")
+}
+
+/// The digest named by a definition path, or `None` for any other path (including a descendant of
+/// a definition and a short or upper-case digest).
+pub(crate) fn definition_digest(path: &str) -> Option<ContentDigest> {
+    let digest: ContentDigest = path.strip_prefix(DEFINITION_PREFIX)?.parse().ok()?;
+    (definition_path(&digest) == path).then_some(digest)
+}
+
+fn decode_definition(
+    prim: &Prim,
+    digest: ContentDigest,
+) -> Result<Option<DefinitionRecord>, PlateError> {
+    let bad = || integrity("committed definition lacks a required value");
+    let units = property(prim, "bim:units").and_then(text);
+    let version = property(prim, "bim:schemaVersion").and_then(text);
+    let kind = property(prim, "bim:definitionKind").and_then(text);
+    if units != Some("mm") || version != Some("0.1.0") {
+        return Err(integrity("committed definition has other units or version"));
+    }
+    let record = match kind {
+        Some("rectangle") => DefinitionRecord::RectangleProfile {
+            width_mm: property(prim, "steel:profile:widthMm")
+                .and_then(number)
+                .ok_or_else(bad)?,
+            height_mm: property(prim, "steel:profile:heightMm")
+                .and_then(number)
+                .ok_or_else(bad)?,
+        },
+        Some("material") => DefinitionRecord::Material {
+            density_kg_m3: property(prim, "bim:densityKgM3")
+                .map(|v| number(v).ok_or_else(bad))
+                .transpose()?,
+        },
+        // A newer kind stays inert: it can be listed by an ordinary reader, never used here.
+        _ => return Ok(None),
+    };
+    record.validate()?;
+    // The path, the label and the recomputed canonical bytes must name the same content.
+    let pinned = record.resource()?.digest;
+    let label = property(prim, "bim:contentDigest").and_then(text);
+    if pinned != digest || label != Some(&digest.to_string()) {
+        return Err(integrity("definition content does not match its digest"));
+    }
+    Ok(Some(record))
+}
+
+/// Every immutable definition of a pinned stage, by full digest. Values are re-admitted and the
+/// digest recomputed from them, because a committed layer is untrusted input.
+pub(crate) fn decode_definitions(
+    prims: &[Prim],
+) -> Result<BTreeMap<ContentDigest, DefinitionRecord>, PlateError> {
+    let mut definitions = BTreeMap::new();
+    for prim in prims {
+        let Some(digest) = definition_digest(&prim.path) else {
+            continue;
+        };
+        if let Some(record) = decode_definition(prim, digest)? {
+            definitions.insert(digest, record);
+        }
+    }
+    Ok(definitions)
+}
+
+/// Resolves a pinned material against the definitions of a stage: absent is `NOT_FOUND`, a
+/// profile is `INVALID_ARGUMENT`.
+pub(crate) fn material_lookup(
+    definitions: &BTreeMap<ContentDigest, DefinitionRecord>,
+) -> impl Fn(&ContentDigest) -> Result<MaterialInfo, CommandError> + '_ {
+    move |digest| match definitions.get(digest) {
+        Some(DefinitionRecord::Material { density_kg_m3 }) => Ok(MaterialInfo {
+            density_kg_m3: *density_kg_m3,
+        }),
+        Some(DefinitionRecord::RectangleProfile { .. }) => Err(CommandError::new(
+            ErrorCode::InvalidArgument,
+            "material_digest",
+            "digest names a profile, not a material",
+        )),
+        None => Err(CommandError::new(
+            ErrorCode::NotFound,
+            "material_digest",
+            "material definition is not in the model",
+        )),
+    }
+}
+
+/// Inputs of one `define` call.
+#[derive(Debug, Clone)]
+pub struct DefineRequest {
+    /// Identity of the revision this call creates, if it creates one.
+    pub revision_id: RevisionId,
+    /// Operation recorded for the revision, if one is created.
+    pub op_id: OpId,
+    /// The publishing actor (trusted context, `bim:createdBy` of elements, not of definitions).
+    pub actor: Uuid7,
+    /// Project of a store that has no revision yet. Ignored otherwise.
+    pub project: ProjectId,
+    /// Workspace of a store that has no revision yet. Ignored otherwise.
+    pub workspace: WorkspaceId,
+    /// The definition to publish.
+    pub definition: DefinitionRecord,
+}
+
+/// Result of `define`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Defined {
+    /// True when the head already held this exact definition: nothing was written.
+    pub already_defined: bool,
+    /// Full digest of the canonical definition layer; what a command pins.
+    pub digest: ContentDigest,
+    /// The logical content that digest pins.
+    pub record: DefinitionRecord,
+    /// The revision that holds the definition (the head itself when it already did).
+    pub revision: RevisionSummary,
+}
+
+/// Publishes one immutable definition as the next revision, or reports that the head already has
+/// it. A definition never changes: the same content has the same digest and the same bytes.
+///
+/// Steps, each failing closed: admit the values (F04 caps); open the head and read its
+/// definitions; author the definition over the head's layers with U02 (no element is touched);
+/// check that the layer engine wrote exactly the engine's declared footprint; publish the layer
+/// blobs and commit through U06/U07 with the verifier of `plate` (U03 index, structural check,
+/// digest and kernel re-evaluation of every plate).
+pub fn define(
+    store: &RevisionStore,
+    request: &DefineRequest,
+    hook: &mut dyn CommitHook,
+) -> Result<Defined, PlateError> {
+    let control = control();
+    let resource = request.definition.resource()?;
+    let digest = resource.digest;
+    let (head, base) = load_base(store, &request.project, &request.workspace)?;
+    let base_request = open_base(&base)?;
+    let mut reader = Reader::default();
+    let opened = reader.open(base_request.clone(), &control)?;
+    let decoded = decode(&reader, &opened, &control)?;
+    if decoded.definitions.contains_key(&digest) {
+        let head = head.ok_or_else(|| integrity("definitions exist without a revision"))?;
+        return Ok(Defined {
+            already_defined: true,
+            digest,
+            record: request.definition,
+            revision: summarize(head.info()),
+        });
+    }
+    let Base {
+        project,
+        workspace,
+        generation: base_generation,
+        expected,
+        ..
+    } = base;
+    let schema = schema_identity()?;
+    let (mut author, opened) = Author::open(
+        base_request,
+        EditTargets {
+            authored: crate::plate::AUTHORED_LAYER.into(),
+            derived: crate::plate::DERIVED_LAYER.into(),
+        },
+        schema,
+        &control,
+    )?;
+    let prepared = author.prepare(
+        Prepare {
+            context: opened.context.clone(),
+            op_id: request.op_id.to_string(),
+            actor: request.actor.to_string(),
+            schema,
+            resources: vec![resource],
+            changes: Vec::new(),
+        },
+        &control,
+    )?;
+    let footprint = Footprint::for_define(digest);
+    let observed: BTreeSet<Entry> = prepared
+        .writes
+        .iter()
+        .map(|item| {
+            Some(Entry {
+                target: Target::Definition(item.identity.parse().ok()?),
+                group: Group::Relationship,
+            })
+        })
+        .collect::<Option<_>>()
+        .ok_or_else(|| integrity("layer engine footprint names an unknown target"))?;
+    if observed.is_empty() || !footprint.covers_writes(&observed) {
+        return Err(integrity(
+            "layer engine writes other than the engine footprint declares",
+        ));
+    }
+    let committed = publish_revision(
+        store,
+        &PublishRequest {
+            prepared: &prepared,
+            schema,
+            project: &project,
+            workspace: &workspace,
+            revision_id: &request.revision_id,
+            op: host_uuid(&request.op_id.to_string())?,
+            base_generation,
+            expected: &expected,
+        },
+        hook,
+    )?;
+    Ok(Defined {
+        // A replayed commit means these very bytes were already published under this operation.
+        already_defined: committed.outcome == CommitOutcome::Replayed,
+        digest,
+        record: request.definition,
+        revision: summarize(&committed.info),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use beamcraft_layer_engine::{Property, Value};
+
+    fn prim(path: String, properties: Vec<(&str, &str, Value)>) -> Prim {
+        Prim {
+            path,
+            element_id: None,
+            type_name: Some("Scope".into()),
+            active: true,
+            properties: properties
+                .into_iter()
+                .map(|(name, type_name, value)| Property {
+                    name: name.into(),
+                    type_name: type_name.into(),
+                    value: Some(value),
+                })
+                .collect(),
+            relationships: Vec::new(),
+            sources: Vec::new(),
+        }
+    }
+
+    fn text(value: &str) -> Value {
+        Value::Text(value.into())
+    }
+
+    fn material_prim(path_density: Option<f64>, layer_density: Option<f64>) -> Prim {
+        let record = DefinitionRecord::Material {
+            density_kg_m3: path_density,
+        };
+        let digest = record.resource().unwrap().digest;
+        let mut properties = vec![
+            ("bim:schemaVersion", "string", text("0.1.0")),
+            ("bim:units", "token", text("mm")),
+            ("bim:definitionKind", "token", text("material")),
+            ("bim:contentDigest", "string", text(&digest.to_string())),
+        ];
+        if let Some(density) = layer_density {
+            properties.push(("bim:densityKgM3", "double", Value::Number(density)));
+        }
+        prim(definition_path(&digest), properties)
+    }
+
+    #[test]
+    fn a_definition_round_trips_through_its_digest() {
+        let prims = [
+            material_prim(Some(7850.0), Some(7850.0)),
+            material_prim(None, None),
+        ];
+        let found = decode_definitions(&prims).unwrap();
+        assert_eq!(found.len(), 2);
+        assert!(found.values().any(
+            |r| matches!(r, DefinitionRecord::Material { density_kg_m3: Some(d) } if *d == 7850.0)
+        ));
+        assert!(found.values().any(|r| matches!(
+            r,
+            DefinitionRecord::Material {
+                density_kg_m3: None
+            }
+        )));
+    }
+
+    #[test]
+    fn a_layer_edited_after_publication_no_longer_matches_its_digest() {
+        // The path pins 7850 kg/m3 but the layer says 1: the digest is recomputed from the values.
+        let edited = material_prim(Some(7850.0), Some(1.0));
+        assert_eq!(
+            decode_definitions(&[edited]).unwrap_err().code,
+            ErrorCode::IntegrityError
+        );
+        // The density was removed: unknown is a different content from 7850.
+        let removed = material_prim(Some(7850.0), None);
+        assert_eq!(
+            decode_definitions(&[removed]).unwrap_err().code,
+            ErrorCode::IntegrityError
+        );
+        // A density added to a definition that was published without one.
+        let added = material_prim(None, Some(7850.0));
+        assert_eq!(
+            decode_definitions(&[added]).unwrap_err().code,
+            ErrorCode::IntegrityError
+        );
+    }
+
+    #[test]
+    fn other_units_a_hostile_density_and_a_forged_label_are_rejected() {
+        let mut other_units = material_prim(Some(7850.0), Some(7850.0));
+        other_units.properties.retain(|p| p.name != "bim:units");
+        other_units.properties.push(Property {
+            name: "bim:units".into(),
+            type_name: "token".into(),
+            value: Some(text("m")),
+        });
+        assert_eq!(
+            decode_definitions(&[other_units]).unwrap_err().code,
+            ErrorCode::IntegrityError
+        );
+        // A density outside the F04 cap is refused before it can make a mass.
+        let hostile = DefinitionRecord::Material {
+            density_kg_m3: Some(1e9),
+        };
+        let digest = beamcraft_model::digest::Sha256::digest(b"forged").unwrap();
+        let hostile = prim(
+            definition_path(&digest),
+            vec![
+                ("bim:schemaVersion", "string", text("0.1.0")),
+                ("bim:units", "token", text("mm")),
+                ("bim:definitionKind", "token", text(hostile.kind())),
+                ("bim:densityKgM3", "double", Value::Number(1e9)),
+            ],
+        );
+        assert_eq!(
+            decode_definitions(&[hostile]).unwrap_err().code,
+            ErrorCode::LimitExceeded
+        );
+        let mut forged = material_prim(Some(7850.0), Some(7850.0));
+        forged.properties.retain(|p| p.name != "bim:contentDigest");
+        forged.properties.push(Property {
+            name: "bim:contentDigest".into(),
+            type_name: "string".into(),
+            value: Some(text(&"0".repeat(64))),
+        });
+        assert_eq!(
+            decode_definitions(&[forged]).unwrap_err().code,
+            ErrorCode::IntegrityError
+        );
+    }
+
+    #[test]
+    fn unknown_kinds_and_other_paths_stay_inert() {
+        let digest = beamcraft_model::digest::Sha256::digest(b"future").unwrap();
+        let future = prim(
+            definition_path(&digest),
+            vec![
+                ("bim:schemaVersion", "string", text("0.1.0")),
+                ("bim:units", "token", text("mm")),
+                ("bim:definitionKind", "token", text("catalogue")),
+            ],
+        );
+        let child = prim(format!("{}/Child", definition_path(&digest)), Vec::new());
+        let upper = prim(
+            format!("{DEFINITION_PREFIX}{}", digest.to_string().to_uppercase()),
+            Vec::new(),
+        );
+        let steel = prim("/World/Steel".into(), Vec::new());
+        assert!(
+            decode_definitions(&[future, child, upper, steel])
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(definition_digest(&definition_path(&digest)), Some(digest));
+        assert_eq!(definition_digest("/World/Definitions/D_abc"), None);
+    }
+
+    #[test]
+    fn a_material_lookup_distinguishes_absent_from_a_profile() {
+        let steel = DefinitionRecord::Material {
+            density_kg_m3: Some(7850.0),
+        };
+        let profile = DefinitionRecord::RectangleProfile {
+            width_mm: 200.0,
+            height_mm: 300.0,
+        };
+        let (steel_digest, profile_digest) = (
+            steel.resource().unwrap().digest,
+            profile.resource().unwrap().digest,
+        );
+        let definitions = BTreeMap::from([(steel_digest, steel), (profile_digest, profile)]);
+        let lookup = material_lookup(&definitions);
+        assert_eq!(lookup(&steel_digest).unwrap().density_kg_m3, Some(7850.0));
+        assert_eq!(
+            lookup(&profile_digest).unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
+        let absent = beamcraft_model::digest::Sha256::digest(b"absent").unwrap();
+        assert_eq!(lookup(&absent).unwrap_err().code, ErrorCode::NotFound);
+    }
+
+    #[test]
+    fn a_definition_value_is_admitted_before_it_is_published() {
+        for (record, code) in [
+            (
+                DefinitionRecord::Material {
+                    density_kg_m3: Some(0.0),
+                },
+                ErrorCode::InvalidArgument,
+            ),
+            (
+                DefinitionRecord::RectangleProfile {
+                    width_mm: 200.0,
+                    height_mm: 2e6,
+                },
+                ErrorCode::LimitExceeded,
+            ),
+        ] {
+            assert_eq!(record.resource().unwrap_err().code, code);
+        }
+    }
+}

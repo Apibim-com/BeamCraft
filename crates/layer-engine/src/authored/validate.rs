@@ -618,6 +618,16 @@ pub(super) fn changes(
             identity: resource.digest.to_string(),
             group: Group::Relationship,
         });
+        // A definition that is not in the stage yet is created; an existing one is immutable.
+        if !prims
+            .iter()
+            .any(|p| p.path == definition_path(resource.digest))
+        {
+            writes.insert(Footprint {
+                identity: resource.digest.to_string(),
+                group: Group::Relationship,
+            });
+        }
     }
     if reads.len().saturating_add(writes.len()) > 4096 {
         return Err(limit());

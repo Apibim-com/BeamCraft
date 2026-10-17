@@ -33,6 +33,8 @@ version. These types are a scaffold, not a USD engine or profile catalogue.
 
 P01 adds the first vertical slice on top: `model::{id, command, limits}` (full UUIDv7 identities, `CreatePlate` admission), `engine::{command, footprint, transaction}` (kernel-evaluated rectangular plate, footprint, `op_id` decision), `host::ids`, and the CLI commands `create-plate` and `plate-inspect`, which author standard USD layers with the U02 layer engine and publish them as one atomic revision through U06/U07 ([design note](design/p01-first-plate.md)). It is a rectangular plate only, with no workspace, undo or process isolation of the layer engine.
 
+P02 adds immutable profile and material definitions on top (`model::definition`, `engine::command::{MaterialInfo, MaterialLookup}`, `engine::footprint::Footprint::for_define`, `beamcraft_cli::definition`, and the CLI commands `define-material`, `define-profile` and `definitions`): a definition is a content-addressed `/World/Definitions/D_<sha256>` prim, a plate pins a material through `bim:material`, and mass is `current` only when that material authors a density ([design note](design/p02-definitions.md)).
+
 [Module boundaries (F08)](contracts/module-boundaries-v0.1.md) give the exact crate and module path
 of every contract area, the allowed dependency edges and which crates are planned. A test and CI
 enforce them.
