@@ -68,7 +68,7 @@ Dependencies are checked in `[dependencies]`,
 | beamcraft-protocol | crates/protocol | native | 2 | beamcraft-model | now | U01 |
 | beamcraft-layer-engine | crates/layer-engine | host | 2 | beamcraft-model | now | U01/U02/U03; separate process, owner decision 2026-10-16 |
 | beamcraft-kernel | crates/kernel | domain | 2 | beamcraft-geom, beamcraft-model | now | G02 |
-| beamcraft-engine | crates/engine | native | 3 | beamcraft-geom, beamcraft-model, beamcraft-kernel | now | V02 (view snapshot and query slice); P01 extends it with commands |
+| beamcraft-engine | crates/engine | native | 3 | beamcraft-geom, beamcraft-model, beamcraft-kernel | now | V02 (view snapshot and query slice); P01 (`CreatePlate` application, footprints, transactions, committed-plate queries) |
 | beamcraft-host | crates/host | host | 4 | beamcraft-model, beamcraft-protocol, beamcraft-engine | now | U05 |
 | beamcraft-cli | apps/beamcraft-cli | app | 5 | beamcraft-model, beamcraft-engine, beamcraft-host, beamcraft-protocol, beamcraft-layer-engine | now | U04 amendment: CLI and thin Rust worker binaries |
 | beamcraft-ui | apps/beamcraft-ui | app | 5 | beamcraft-model, beamcraft-engine, beamcraft-host | planned | V01 |
@@ -105,15 +105,17 @@ by the named task with real code. Allowed dependencies are those of the owning r
 | Three dependency keys, mass signature, invalidation | F06 s.7 | `beamcraft_kernel::keys` | planned, G01 |
 | Quantities and statuses | F06 s.8, F04 s.5 | `beamcraft_kernel::quantity` | planned, G01 |
 | Pick and feature geometry for one body | F06 s.9 | `beamcraft_kernel::pick` | planned, G01 |
-| Pinned queries (`ListElements`, `GetMeshSnapshot`, `LookupFeature`, `GetChanges`, `QueryBounds`), snapshot tokens | F06 s.9 | `beamcraft_engine::query` | **now, partial**, V02: `ListElements`, mesh blobs by digest, world `QueryBounds`, `GetChanges` over a bounded history, snapshot tokens, selection. `LookupFeature` and `Pick` planned (G04); dependency keys and statuses planned (P01) |
+| Pinned queries (`ListElements`, `GetMeshSnapshot`, `LookupFeature`, `GetChanges`, `QueryBounds`), snapshot tokens | F06 s.9 | `beamcraft_engine::query` | **now, partial**, V02: `ListElements`, mesh blobs by digest, world `QueryBounds`, `GetChanges` over a bounded history, snapshot tokens, selection. `LookupFeature` and `Pick` planned (G04); dependency keys planned. P01 adds `query::committed`: authored plates of a committed revision become kernel-evaluated records and the pinned snapshot input |
 | View settings (element-kind filter, representation selector), read-time projection, instance/triangle id tables | architecture "Part representations and view filters", F06 s.9 | `beamcraft_engine::presentation` | **now**, V02 |
 | Presentation key preimage | F06 s.7 | `beamcraft_engine::presentation` (V01 may move it to the UI if it needs no engine state; never into the kernel) | planned, V01 |
-| Identity (UUIDv7 `ElementId`), units, input limits | F04 s.2, 3 | `beamcraft_model::{id, limits}` | planned, P01 |
+| Identity (UUIDv7 `ElementId`), units, input limits | F04 s.2, 3 | `beamcraft_model::{id, limits}` | **now**, P01 (`Uuid7`, typed ids, deterministic UUIDv7 generator with injected clock and entropy; F04 section 3 caps) |
 | SHA-256 digest type and hasher, for F04 resources, F06 keys and F05 buffers | F04 s.2, F06 s.6, 7, F05 s.3 | `beamcraft_model::digest` | **now**, U05 (full digest, incremental FIPS 180-4 SHA-256) |
-| F04 command and envelope types | F04 s.6, 7 | `beamcraft_model::command` | planned, P01 |
+| F04 command and envelope types | F04 s.6, 7 | `beamcraft_model::command` | **now, partial**, P01: `CreatePlate` arguments, `Placement`, label/contour/placement admission, typed `CommandError`, argument content fingerprint. The envelope and the other commands are planned |
 | F04 stable error codes | F04 s.8 | `beamcraft_model::error::ErrorCode` | **now** (23 codes, tested) |
 | Bounded JSON decoder and RFC 8785 canonical bytes of the validated envelope | F04 s.3, F05 s.6 | `beamcraft_model::{json, canonical}` | planned, P01 |
-| Command application, footprints, transactions, replay decisions | F04 s.8, F05 s.7 | `beamcraft_engine::{command, footprint, transaction}` | planned, P01 |
+| Command application, footprints, transactions, replay decisions | F04 s.8, F05 s.7 | `beamcraft_engine::{command, footprint, transaction}` | **now, partial**, P01: `CreatePlate` only (origin rectangle), the Create footprint, op_id replay/reuse decision; no canonical F05 bytes |
+| Production UUIDv7 source (system clock, per-process OS-seeded entropy; uniqueness, not secrecy) | F04 s.2 | `beamcraft_host::ids` | **now**, P01 |
+| P01 adapter: engine command to U02 authoring to U06/U07 commit, and reopen through U01/U03 to the engine query | AGENTS s.3 | `apps/beamcraft-cli` (`beamcraft_cli::plate`, in-process layer engine) | **now**, P01 (experimental; no process isolation) |
 | Frame header, binary prefix, bundle budget | F05 s.3, 10 | `beamcraft_protocol::frame` | **now** (tested, bounded) |
 | Negotiable limits and their maxima | F05 s.4, 10 | `beamcraft_protocol::limits` | **now** |
 | Transport `IPC_` codes and their F04 mapping | F05 s.9 | `beamcraft_protocol::code::TransportCode` | **now** |
@@ -125,7 +127,7 @@ by the named task with real code. Allowed dependencies are those of the owning r
 | Rust USD read wrapper (no host edge; separate process, owner decision 2026-10-16; process containment still requires implementation) | F11 s.9, LEW-01/02/03/04/07 | `beamcraft_layer_engine` | experimental native read slice, U01 |
 | USD worker (thin Python/pxr) | F05 s.1 | `workers/usd/`, not a Cargo package | planned, U01 |
 | USD worker (thin Rust wrapper, separate process; no new package) | F11 s.9, U04 owner topology decision | `apps/beamcraft-cli/src/bin/beamcraft-usd-worker.rs` | U04 amendment: experimental read worker; SDK fallback remains unavailable |
-| CLI | AGENTS s.3, F06 s.9 | `apps/beamcraft-cli` | U04 amendment: version, experimental open/read and byte-storage commands; U06: `revision-commit`, `revision-open`; V02: `view-snapshot` and `view-changes` over a synthetic kernel plate scene |
+| CLI | AGENTS s.3, F06 s.9 | `apps/beamcraft-cli` | U04 amendment: version, experimental open/read and byte-storage commands; U06: `revision-commit`, `revision-open`; V02: `view-snapshot` and `view-changes` over a synthetic kernel plate scene; P01: `create-plate` and `plate-inspect` over a store (the CLI package also has a library target, `beamcraft_cli`, for its tests) |
 | Native UI and viewport | F06 s.9, V-tasks | `apps/beamcraft-ui` | planned, V01 |
 
 The F05 sections 3 and 10 also require SHA-256 verification of attachments. The protocol crate
@@ -157,8 +159,9 @@ streaming digest comparison can now use `model::digest`; protocol session integr
   selector) applied as a read-time projection, ids/instances/triangles tables and a selection API.
   It depends on `geom`, `model` and `kernel`, adds no third-party dependency and has no UI,
   renderer or I/O code. Command application, authored elements, dependency keys, `LookupFeature`
-  and `Pick` remain planned (P01, G04). `ElementId` lives in `beamcraft_engine::element` until
-  P01 provides `beamcraft_model::id`.
+  and `Pick` remain planned (G04). P01 added `CreatePlate` application, footprints, the op_id
+  transaction decision and the committed-plate queries; `ElementId` now comes from
+  `beamcraft_model::id` (re-exported by `beamcraft_engine::element`).
 - **`beamcraft-boundaries` (`apps/boundaries`, tool).** Created because it holds the real, tested
   checker of section 6. It is a development tool with no dependencies; it is not part of the
   product.

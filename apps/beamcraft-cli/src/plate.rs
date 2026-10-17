@@ -40,7 +40,7 @@ use beamcraft_host::ledger::Outcome;
 use beamcraft_host::revision::{
     CommitHook, CommitOutcome, ContentRejection, ContentVerifier, ExpectedBase, IndexEvidence,
     LayerEntry, LayerRole, RevisionDraft, RevisionError, RevisionInfo, RevisionStore, Uuid7,
-    VerifiedLayer,
+    VerifyRequest,
 };
 use beamcraft_layer_engine::authored::{
     Author, Change, EditTargets, Element, Group as LayerGroup, Placement as LayerPlacement,
@@ -151,6 +151,7 @@ fn role_of(name: &str) -> LayerRole {
 }
 
 fn open_request(
+    root: &str,
     project: &str,
     workspace: &str,
     revision: ContentDigest,
@@ -165,7 +166,7 @@ fn open_request(
             revision,
             generation,
         },
-        root: ROOT_LAYER.into(),
+        root: root.into(),
         assets,
         owned_layers,
         manifest: digest_of(b"placeholder")?,
@@ -386,13 +387,19 @@ fn verify_derived(records: &[PlateRecord], decoded: &Decoded) -> Result<(), Plat
     Ok(())
 }
 
-fn evidence(index: &beamcraft_layer_engine::index::ElementIndex) -> IndexEvidence {
+fn evidence(
+    index: &beamcraft_layer_engine::index::ElementIndex,
+    root_layer: &str,
+    schema: ContentDigest,
+) -> IndexEvidence {
     let token = index.token();
     IndexEvidence {
         project: token.identity.project.clone(),
         workspace: token.identity.workspace.clone(),
         generation: token.identity.generation,
         pinned_revision: token.identity.revision,
+        root_layer: root_layer.to_owned(),
+        schema,
         complete: token.completeness == Completeness::Complete,
         structure_digest: token.structure_digest,
         prim_count: token.prim_count as u64,
@@ -409,16 +416,12 @@ fn reject(error: impl Into<PlateError>) -> ContentRejection {
 
 /// Opens exactly the committed bytes in a fresh reader and derives everything from them, so the
 /// index and the verified plates cannot be stale, partial or foreign.
-struct PlateVerifier {
-    project: String,
-    workspace: String,
-    generation: u64,
-    pinned: ContentDigest,
-}
+struct PlateVerifier;
 
 impl ContentVerifier for PlateVerifier {
-    fn verify(&self, layers: &[VerifiedLayer<'_>]) -> Result<IndexEvidence, ContentRejection> {
-        let assets = layers
+    fn verify(&self, request: &VerifyRequest<'_>) -> Result<IndexEvidence, ContentRejection> {
+        let assets = request
+            .layers
             .iter()
             .map(|l| Asset {
                 name: l.name.into(),
@@ -426,19 +429,29 @@ impl ContentVerifier for PlateVerifier {
                 bytes: l.bytes.to_vec(),
             })
             .collect();
-        let request = open_request(
-            &self.project,
-            &self.workspace,
-            self.pinned,
-            self.generation,
+        let pinned = match request.pinned_revision {
+            Some(base) => base,
+            None => initial_pin().map_err(reject)?,
+        };
+        let open = open_request(
+            request.root_layer,
+            request.project.as_str(),
+            request.workspace.as_str(),
+            pinned,
+            request.generation,
             assets,
         )
         .map_err(reject)?;
         let control = control();
         let schema = schema_identity().map_err(reject)?;
-        validate_layers(request.clone(), schema, &control).map_err(reject)?;
+        if schema.digest != request.schema {
+            return Err(reject(integrity(
+                "draft schema is not the admitted U02 schema",
+            )));
+        }
+        validate_layers(open.clone(), schema, &control).map_err(reject)?;
         let mut reader = Reader::default();
-        let opened = reader.open(request, &control).map_err(reject)?;
+        let opened = reader.open(open, &control).map_err(reject)?;
         let index = reader
             .element_index(&opened.context, &control)
             .map_err(reject)?;
@@ -447,7 +460,7 @@ impl ContentVerifier for PlateVerifier {
         let authored: Vec<AuthoredPlate> = decoded.plates.iter().map(|(a, _)| a.clone()).collect();
         let records = evaluate_committed(&authored).map_err(reject)?;
         verify_derived(&records, &decoded).map_err(reject)?;
-        Ok(evidence(&index))
+        Ok(evidence(&index, request.root_layer, request.schema))
     }
 }
 
@@ -664,7 +677,14 @@ pub fn create_plate(
             ExpectedBase::Initial,
         ),
     };
-    let base_request = open_request(&project, &workspace, base_digest, base_generation, assets)?;
+    let base_request = open_request(
+        ROOT_LAYER,
+        &project,
+        &workspace,
+        base_digest,
+        base_generation,
+        assets,
+    )?;
     let head_records = {
         let mut reader = Reader::default();
         let opened = reader.open(base_request.clone(), &control)?;
@@ -800,13 +820,7 @@ pub fn create_plate(
         root_layer: ROOT_LAYER.into(),
         entries,
     };
-    let verifier = PlateVerifier {
-        project,
-        workspace,
-        generation,
-        pinned: base_digest,
-    };
-    let committed = store.commit_with(&draft, &expected, Some(&verifier), hook)?;
+    let committed = store.commit_with(&draft, &expected, Some(&PlateVerifier), hook)?;
     Ok(Created {
         replayed: committed.outcome == CommitOutcome::Replayed,
         plate: record,
@@ -846,6 +860,7 @@ pub fn inspect(store: &RevisionStore) -> Result<Inspection, PlateError> {
         })
         .collect::<Result<Vec<_>, PlateError>>()?;
     let request = open_request(
+        content.root_layer(),
         content.project().as_str(),
         content.workspace().as_str(),
         revision.info().manifest_digest(),
