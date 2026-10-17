@@ -170,7 +170,10 @@ draft](contracts/geometry-contract-v0.1.md) specifies the kernel input, mesh, ke
 in the same way. The [F10 domain vocabulary and module contract
 draft](contracts/domain-vocabulary-v0.1.md) specifies the shared element kinds, relationships,
 validation rules and discipline-module boundary in the same way; only the steel module is in scope
-and nothing in it is implemented. Coordination and control servers require explicit opt-in, loopback
+and nothing in it is implemented. The [E01 IFC export contract
+draft](contracts/ifc-export-v0.1.md) specifies, in the same way, the IFC subset, the deterministic
+GlobalId derived from the UUIDv7, the representation, the losses and the writer design of the
+export adapter; import is out of its scope and nothing in it is implemented. Coordination and control servers require explicit opt-in, loopback
 binding and token authentication. Resource paths do not authorize outbound access; local resolution
 and containment are validated.
 
