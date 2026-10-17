@@ -41,6 +41,8 @@ P04 adds `model::command::UpdateElement`, `engine::{update, quantity}`, `beamcra
 
 P05 adds `model::command::CopyElement`, `engine::copy`, `beamcraft_cli::copy` and the CLI command `copy-element`: a new element with a fresh id, the source's authored inputs and pinned definitions, and the same body and mesh digest; the source is only read ([design note](design/p05-copy-element.md)).
 
+P06 adds `beamcraft_cli::workspace` and the CLI commands `workspace-create`, `workspace-status` and `workspace-publish`: a personal workspace is a separate draft revision store forked from the published head, and it reaches the published head only by a fast-forward publish through the same verifier ([design note](design/p06-workspace.md)).
+
 [Module boundaries (F08)](contracts/module-boundaries-v0.1.md) give the exact crate and module path
 of every contract area, the allowed dependency edges and which crates are planned. A test and CI
 enforce them.
