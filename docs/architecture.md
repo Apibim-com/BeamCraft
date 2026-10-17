@@ -83,8 +83,12 @@ messages describe operations, not a second persisted native model.
 
 A published root references complete immutable generations of authored and derived layers.
 Publishing replaces the root atomically after verifying assets and the expected base revision.
-Recovery must expose either the previous or the new complete revision. U05–U07 define and test the
-storage mechanism; a sequence of uncoordinated file replacements is insufficient.
+Recovery must expose either the previous or the new complete revision. U05 stores the blobs and
+U06 (`beamcraft_host::revision`) commits a revision as a canonical manifest blob plus an
+append-only head log whose records are installed by a non-replacing hard link, which is both the
+atomic root switch and the compare-and-swap on the expected base; the reader verifies the
+manifest and every layer blob and refuses partial state. U07 owns crash recovery; a sequence of
+uncoordinated file replacements is insufficient.
 
 Every placed element has a full UUIDv7. Prim names retain all 32 hexadecimal digits of the UUID;
 renaming a user label does not change identity. Immutable resources use full SHA-256 digests and
@@ -106,8 +110,11 @@ namespace from hostile concurrent local writers: portable safe std checks cannot
 directory replacement between validation and opening. Windows additionally opens blob reparse
 points without following them. These checks are not an OS sandbox. U05 promises neither
 directory-entry crash durability nor crash-atomic multi-file publication; crashes may leave
-temporary files. U06/U07 own revision publication and recovery. Garbage collection is deferred
-until retained revisions and drafts are accounted for. The asset CLI belongs to U04.
+temporary files. U06 adds the revision commit and reader (see
+[its record](design/u06-revision-commit.md)) and likewise promises no directory-entry crash
+durability and no cleanup of `.tmp-*` files or unreferenced blobs; U07 owns recovery. Garbage
+collection is deferred until retained revisions and drafts are accounted for. The asset CLI
+belongs to U04; `revision-commit` and `revision-open` are the U06 commands.
 
 Copies receive independent identities and share immutable geometry until a shape edit.
 Personal workspaces preserve unpublished authored edits, derived results and journals across

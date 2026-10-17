@@ -3,6 +3,8 @@
 
 //! Headless CLI using the same native dispatcher as application callers.
 
+mod revision;
+
 use beamcraft_host::{
     dispatch::{self, AuthorizedRead, Command, Dispatcher},
     storage::BlobStore,
@@ -34,7 +36,7 @@ fn main() -> std::process::ExitCode {
         || (args.len() == 1 && args.first().is_some_and(|s| s == "--help" || s == "-h"))
     {
         println!(
-            "BeamCraft: open | read | query-outcome | blob-put | blob-verify | view-snapshot | view-changes\nRead: --backend rust --store ROOT --worker EXE --worker-digest SHA256 --project-id UUID --workspace-id UUID --revision SHA256 --generation U64\nInput: --manifest SHA256 [--owned NAME,...] or --file FILE --digest SHA256 [--owned root.usda]\nControl: [--timeout-ms 1..120000] [--cancel-after-ms 0..120000]\nView (synthetic kernel plate scene, no worker or store): view-snapshot --plates 1..500 [--hide KIND,...] [--representation full|simplified] [--stand-in-simplified true|false] [--select ID,...] [--revision SHA256] [--generation U64]; view-changes --plates 1..500 --edit move-first|resize-first|add-one|remove-last,... [--since TOKEN] [--stand-in-simplified true|false]\nOnly the experimental static read profile is available; save/publication/mutation/SDK fallback are unavailable."
+            "BeamCraft: open | read | query-outcome | blob-put | blob-verify | revision-commit | revision-open | view-snapshot | view-changes\nRead: --backend rust --store ROOT --worker EXE --worker-digest SHA256 --project-id UUID --workspace-id UUID --revision SHA256 --generation U64\nInput: --manifest SHA256 [--owned NAME,...] or --file FILE --digest SHA256 [--owned root.usda]\nControl: [--timeout-ms 1..120000] [--cancel-after-ms 0..120000]\nRevision: revision-commit --store ROOT --project-id UUID --workspace-id UUID --revision-id UUID --op-id UUID --generation U64 --base none|REVISION_UUID --schema SHA256 --root-layer NAME --layers ROLE:NAME:SHA256,... (ROLE authored|derived|external; blobs must be stored first); revision-open --store ROOT\nView (synthetic kernel plate scene, no worker or store): view-snapshot --plates 1..500 [--hide KIND,...] [--representation full|simplified] [--stand-in-simplified true|false] [--select ID,...] [--revision SHA256] [--generation U64]; view-changes --plates 1..500 --edit move-first|resize-first|add-one|remove-last,... [--since TOKEN] [--stand-in-simplified true|false]\nOnly the experimental static read profile is available; save/mutation/SDK fallback are unavailable; revision commit verifies blobs but not USD content."
         );
         return std::process::ExitCode::SUCCESS;
     }
@@ -124,6 +126,11 @@ fn run(args: Vec<std::ffi::OsString>) -> Result<Json, (HostError, Json)> {
                     | "--timeout-ms"
                     | "--cancel-after-ms"
                     | "--op-id"
+                    | "--revision-id"
+                    | "--base"
+                    | "--schema"
+                    | "--root-layer"
+                    | "--layers"
             ) || options.insert(key.as_str(), value.as_str()).is_some()
             {
                 return Err(invalid());
@@ -175,6 +182,17 @@ fn run(args: Vec<std::ffi::OsString>) -> Result<Json, (HostError, Json)> {
                 ("outcome", Json::text("blob_verified")),
                 ("digest", Json::text(digest.to_string())),
             ]));
+        }
+        if command == "revision-commit" {
+            // The deadline and cancellation are checked before and during the commit (not
+            // after the root switch: a timeout would hide a committed revision). A retry with
+            // the same op id returns the revision.
+            return revision::commit(&store, &options, &control);
+        }
+        if command == "revision-open" {
+            let result = revision::open(&store)?;
+            control.remaining()?;
+            return Ok(result);
         }
         if !matches!(command.as_str(), "open" | "read" | "query-outcome") {
             return Err(HostError::logical(ErrorCode::UnsupportedCommand));

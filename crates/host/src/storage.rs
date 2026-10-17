@@ -91,7 +91,7 @@ impl fmt::Display for StorageError {
 
 impl std::error::Error for StorageError {}
 
-fn io_error(error: io::Error) -> StorageError {
+pub(crate) fn io_error(error: io::Error) -> StorageError {
     if error.kind() == io::ErrorKind::NotFound {
         StorageError::NotFound
     } else {
@@ -99,7 +99,7 @@ fn io_error(error: io::Error) -> StorageError {
     }
 }
 
-fn is_link(metadata: &Metadata) -> bool {
+pub(crate) fn is_link(metadata: &Metadata) -> bool {
     if metadata.file_type().is_symlink() {
         return true;
     }
@@ -228,6 +228,16 @@ impl BlobStore {
     }
 
     fn read_file(&self, path: &Path, digest: &ContentDigest) -> Result<Vec<u8>, StorageError> {
+        let bytes = self.read_bounded(path, self.cap)?;
+        let actual = Sha256::digest(&bytes).map_err(|_| StorageError::LimitExceeded)?;
+        if actual != *digest {
+            return Err(StorageError::DigestMismatch);
+        }
+        Ok(bytes)
+    }
+
+    /// Reads one regular, non-link file below the canonical root without digest verification.
+    fn read_bounded(&self, path: &Path, cap: usize) -> Result<Vec<u8>, StorageError> {
         let metadata = fs::symlink_metadata(path).map_err(io_error)?;
         if is_link(&metadata) || !metadata.is_file() {
             return Err(StorageError::UnsafeEntry);
@@ -239,7 +249,7 @@ impl BlobStore {
             return Err(StorageError::UnsafeEntry);
         }
         let length = usize::try_from(metadata.len()).map_err(|_| StorageError::LimitExceeded)?;
-        if length > self.cap {
+        if length > cap {
             return Err(StorageError::LimitExceeded);
         }
         let mut options = OpenOptions::new();
@@ -270,7 +280,7 @@ impl BlobStore {
             let next = bytes
                 .len()
                 .checked_add(count)
-                .filter(|n| *n <= self.cap)
+                .filter(|n| *n <= cap)
                 .ok_or(StorageError::LimitExceeded)?;
             bytes
                 .try_reserve_exact(next - bytes.len())
@@ -278,11 +288,29 @@ impl BlobStore {
             let chunk = buffer.get(..count).ok_or(StorageError::LimitExceeded)?;
             bytes.extend_from_slice(chunk);
         }
-        let actual = Sha256::digest(&bytes).map_err(|_| StorageError::LimitExceeded)?;
-        if actual != *digest {
-            return Err(StorageError::DigestMismatch);
-        }
         Ok(bytes)
+    }
+
+    /// Resolves a fixed host-owned namespace directory below the checked root (U06 revision
+    /// records). `name` is an internal literal, never caller text. Same link/containment checks
+    /// and the same unprotected-concurrent-writer limitation as blob access.
+    pub(crate) fn namespace_dir(&self, name: &str, create: bool) -> Result<PathBuf, StorageError> {
+        self.check_root()?;
+        let path = self.root.join(name);
+        self.check_directory(&path, create)?;
+        Ok(path)
+    }
+
+    /// Reads a small regular file of a checked namespace directory with a tight cap and the
+    /// blob reader's entry checks. The bytes are not digest-addressed; the caller validates them.
+    pub(crate) fn read_namespace_file(
+        &self,
+        directory: &Path,
+        name: &str,
+        cap: usize,
+    ) -> Result<Vec<u8>, StorageError> {
+        self.check_directory(directory, false)?;
+        self.read_bounded(&directory.join(name), self.cap.min(cap))
     }
 
     fn compare(
