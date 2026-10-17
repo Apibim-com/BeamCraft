@@ -44,7 +44,7 @@ pub(super) fn targets(request: &OpenRequest, targets: &EditTargets) -> Result<()
             .map_err(|_| corrupt())?
             && let sdf::Value::Dictionary(fields) = value.as_ref()
             && let Some(pin) = fields.get("bimSchemaDigest")
-            && pin != &sdf::Value::String(schema_identity()?.digest.to_string())
+            && !matches!(pin, sdf::Value::String(s) if pin_accepted(s)?)
         {
             return Err(fail(
                 ErrorCode::UnsupportedVersion,

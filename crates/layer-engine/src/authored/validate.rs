@@ -375,11 +375,10 @@ fn link<'a>(
 pub(super) fn snapshot(
     prims: &[Prim],
     metadata: &BTreeMap<String, Value>,
-    schema: SchemaIdentity,
 ) -> Result<Validation, Diagnostic> {
     if let Some(Value::Dictionary(data)) = metadata.get("customLayerData")
         && let Some(pin) = data.get("bimSchemaDigest")
-        && pin != &Value::Text(schema.digest.to_string())
+        && !matches!(pin, Value::Text(s) if pin_accepted(s)?)
     {
         return Err(fail(
             ErrorCode::UnsupportedVersion,

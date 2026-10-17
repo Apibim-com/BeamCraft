@@ -671,12 +671,14 @@ fn concurrent_creates_publish_only_complete_revisions_with_distinct_ids() {
             }
             _ => {
                 losers += 1;
-                // A lost race is a typed rejection, never a half-written root.
+                // A lost race is a typed rejection, never a half-written root. Windows can report
+                // a sharing violation on the root switch as PERMISSION_DENIED.
                 assert!(
                     [
                         "BASE_REVISION_MISMATCH",
                         "INTEGRITY_ERROR",
-                        "OUTCOME_UNKNOWN"
+                        "OUTCOME_UNKNOWN",
+                        "PERMISSION_DENIED"
                     ]
                     .contains(&text(&body, "code").as_str())
                         || text(&body, "code") == "BACKEND_UNAVAILABLE",

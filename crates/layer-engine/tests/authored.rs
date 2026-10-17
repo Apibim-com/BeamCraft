@@ -1536,3 +1536,59 @@ fn delete_removes_the_whole_element_in_both_layers_and_nothing_else() {
         ErrorCode::MalformedCommand
     );
 }
+
+#[test]
+fn a_store_pinned_to_the_previous_mapping_stays_editable_and_is_repinned() {
+    let previous = "d6c612a28cdd4d62527c2a2c0afee8f9b0665d1e0d3b66a718673a28155466b4";
+    let pinned = |body: &str| {
+        format!(
+            "#usda 1.0\n(metersPerUnit=0.001\nupAxis=\"Z\"\ncustomLayerData={{string bimSchemaDigest=\"{previous}\"}})\n{body}\n"
+        )
+    };
+    let mut input = initial();
+    for name in ["authored.usda", "derived.usda"] {
+        let old = input.assets.iter_mut().find(|a| a.name == name).unwrap();
+        let text = String::from_utf8(old.bytes.clone()).unwrap();
+        let body = text.split_once(")\n").unwrap().1.to_owned();
+        *old = asset(name, pinned(&body));
+    }
+    input.manifest = input.manifest_digest().unwrap();
+    let (mut a, o) = open(input);
+    let p = prepare_initial(&mut a, &o.context);
+    let installed = a
+        .install(
+            &o.context,
+            &p.token,
+            &p.op_id,
+            Decision::Accepted,
+            &control(),
+        )
+        .unwrap();
+    let exported = a.export(&installed.context, &control()).unwrap();
+    let current = schema_identity().unwrap().digest.to_string();
+    for name in ["authored.usda", "derived.usda"] {
+        let layer = exported.iter().find(|l| l.name == name).unwrap();
+        let text = String::from_utf8(layer.bytes.clone()).unwrap();
+        assert!(
+            text.contains(&current) && !text.contains(previous),
+            "{name}"
+        );
+    }
+    let mut other = initial();
+    let old = other
+        .assets
+        .iter_mut()
+        .find(|a| a.name == "authored.usda")
+        .unwrap();
+    *old = asset(
+        "authored.usda",
+        pinned("").replace(previous, &"0".repeat(64)),
+    );
+    other.manifest = other.manifest_digest().unwrap();
+    assert_eq!(
+        Author::open(other, targets(), schema_identity().unwrap(), &control())
+            .err()
+            .map(|e| e.code),
+        Some(ErrorCode::UnsupportedVersion)
+    );
+}

@@ -67,6 +67,49 @@ pub fn schema_identity() -> Result<SchemaIdentity, Diagnostic> {
     })
 }
 
+/// Descriptor of the mapping revision that preceded the optional section properties of P02.2.
+/// Layers pinned to it contain nothing the current mapping refuses (every added field is
+/// optional), so they stay readable and editable; an edit rewrites the pin to the current digest.
+const PREVIOUS_DESCRIPTOR: &str = concat!(
+    "BeamCraft/U02/codeless/1\nmodel=0.1.0;backend=openusd=0.8.0;features=none;save=usda-owned-v1\n",
+    "root:metersPerUnit=0.001;upAxis=Z;customLayerData:bimSchemaDigest=sha256\n",
+    "element=/World/Steel/E_<uuid7-32>;type=Xform\n",
+    "bim:id=string;bim:name=string;bim:elementKind=token;bim:geometryMode=token(parametric);",
+    "bim:schemaVersion=string(0.1.0);bim:createdBy=string(uuid7);bim:revision=string(uuid7,optional)\n",
+    "steel:plate:contourPointsMm=double3[];steel:plate:thicknessMm=double;",
+    "steel:plate:holePointsMm=double3[](optional,z=0);steel:plate:holeVertexCounts=int[](optional,>=3 each);",
+    "bim:axisPointsMm=double3[];steel:member:rollRad=double(optional)\n",
+    "xformOp:translate=double3;xformOp:orient=quatd;xformOpOrder=token[](translate,orient)\n",
+    "bim:profile=rel;bim:material=rel;definition=/World/Definitions/D_<sha256-64>\n",
+    "definition:bim:contentDigest=string;bim:schemaVersion=string(0.1.0);bim:units=token(mm);",
+    "bim:definitionKind=token;steel:profile:widthMm=double;steel:profile:heightMm=double;",
+    "bim:densityKgM3=double(optional)\n",
+    "derived=<element>/Geometry:Mesh;points=point3f[];faceVertexCounts=int[];faceVertexIndices=int[];",
+    "subdivisionScheme=token(none);orientation=token(rightHanded);bim:shapeKey=string(sha256);",
+    "quantities(optional,all or none)=bim:volumeMm3=double;bim:volumeStatus=token;bim:massKg=double(optional);",
+    "bim:massStatus=token;bim:shapeSignature=string(sha256);bim:massSignature=string(sha256);",
+    "bim:quantityAlgorithm=string\n",
+    "changes=Create|Label|Contour|Thickness|Axis|Roll|Profile|Material|Placement|Mesh;",
+    "opinion=Absent|Block|Value|Remove;relationship=Targets|Empty|Remove\n",
+    "snapshot=Prim(path,element_id,type_name,active,properties,relationships,sources);",
+    "property=(name,type_name,optional-value);relationship=(name,ordered-targets)\n",
+    "prepare=(context,op_id,actor,schema,resources,changes);resource=(digest,definition);",
+    "element=(id,name,shape,placement,optional-material);placement=(translation_mm[3],orientation_xyzw[4]);",
+    "mesh=(id,shape_key,points_mm,face_counts,indices);",
+    "authored-item=(element_id,attribute,type_name,opinion);install=(context,token,op_id,Accepted);",
+    "discard=(context,token,op_id,Undecided|Rejected);unknown=OUTCOME_UNKNOWN\n",
+);
+
+/// Whether a layer's saved `bimSchemaDigest` is the current mapping or the previous one that
+/// the current mapping reads without change.
+pub(crate) fn pin_accepted(pin: &str) -> Result<bool, Diagnostic> {
+    if pin == schema_identity()?.digest.to_string() {
+        return Ok(true);
+    }
+    let previous = Sha256::digest(PREVIOUS_DESCRIPTOR.as_bytes()).map_err(|_| limit())?;
+    Ok(pin == previous.to_string())
+}
+
 /// Explicit property opinion in the owned edit layer, distinct from composition results.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Opinion<T> {
@@ -463,11 +506,7 @@ impl Author {
         let mut opened = reader.open(request.clone(), control)?;
         opened.capabilities.mutations = true;
         edit::targets(&request, &targets)?;
-        validate::snapshot(
-            &reader.pinned(&opened.context)?.prims,
-            &opened.metadata,
-            schema,
-        )?;
+        validate::snapshot(&reader.pinned(&opened.context)?.prims, &opened.metadata)?;
         Ok((
             Self {
                 reader,
@@ -538,8 +577,7 @@ impl Author {
                 .ok_or_else(limit)?;
             request.manifest = request.manifest_digest()?;
             let candidate = backend::open(request.clone(), control)?;
-            let validation =
-                validate::snapshot(&candidate.prims, &candidate.metadata, input.schema)?;
+            let validation = validate::snapshot(&candidate.prims, &candidate.metadata)?;
             control.check()?;
             Ok::<_, Diagnostic>((request, candidate, opinions, validation))
         }))
@@ -664,7 +702,7 @@ pub fn validate_layers(
             "backend unwound during validation",
         )
     })??;
-    validate::snapshot(&candidate.prims, &candidate.metadata, schema)
+    validate::snapshot(&candidate.prims, &candidate.metadata)
 }
 
 pub(super) fn element_path(id: &str) -> Result<String, Diagnostic> {
@@ -678,4 +716,25 @@ pub(super) fn definition_path(digest: ContentDigest) -> String {
 }
 pub(super) fn invalid() -> Diagnostic {
     fail(ErrorCode::InvalidArgument, "invalid authored field value")
+}
+
+#[cfg(test)]
+mod pin_tests {
+    use super::*;
+
+    #[test]
+    fn the_previous_mapping_pin_is_accepted_and_others_are_not() {
+        // Pinned value: the digest of the descriptor of master before P02.2.
+        let previous = "d6c612a28cdd4d62527c2a2c0afee8f9b0665d1e0d3b66a718673a28155466b4";
+        assert_eq!(
+            Sha256::digest(PREVIOUS_DESCRIPTOR.as_bytes())
+                .unwrap()
+                .to_string(),
+            previous
+        );
+        assert!(pin_accepted(previous).unwrap());
+        assert!(pin_accepted(&schema_identity().unwrap().digest.to_string()).unwrap());
+        assert!(!pin_accepted(&"0".repeat(64)).unwrap());
+        assert!(!pin_accepted("").unwrap());
+    }
 }
