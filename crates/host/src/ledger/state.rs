@@ -10,7 +10,10 @@ use beamcraft_model::digest::ContentDigest;
 use crate::revision::Uuid7;
 
 use super::record::{AbortReason, CommittedRecord, Intent, Record};
-use super::{LedgerError, MAX_LEDGER_RECORDS, MAX_UNRESOLVED_INTENTS};
+use super::{
+    LEDGER_HEADROOM_INTENTS, LEDGER_HEADROOM_RECORDS, LedgerError, MAX_LEDGER_RECORDS,
+    MAX_UNRESOLVED_INTENTS,
+};
 
 /// What the reader found that was not a valid record. None of it is ever trusted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -19,6 +22,8 @@ pub struct LedgerDiagnostics {
     pub bytes: u64,
     /// Valid records read.
     pub records: usize,
+    /// Complete lines read, valid or not (blank lines included).
+    pub lines: usize,
     /// Complete lines that are not a valid record (garbage, flipped bytes, a torn append that
     /// later appends moved past). Ignored.
     pub damaged_lines: usize,
@@ -60,8 +65,11 @@ impl Scan {
     /// Parses ledger bytes. Records are applied in file order. An unterminated final fragment is
     /// a torn append and is ignored; a complete line that is not a valid record is counted and
     /// ignored; two accepted records for one operation that disagree are
-    /// [`LedgerError::Inconsistent`]; more than [`MAX_LEDGER_RECORDS`] lines or
-    /// [`MAX_UNRESOLVED_INTENTS`] open intents are [`LedgerError::LimitExceeded`].
+    /// [`LedgerError::Inconsistent`]; more than [`MAX_LEDGER_RECORDS`] plus
+    /// [`LEDGER_HEADROOM_RECORDS`] lines or [`MAX_UNRESOLVED_INTENTS`] plus
+    /// [`LEDGER_HEADROOM_INTENTS`] open intents are [`LedgerError::LimitExceeded`]. New intents
+    /// are admitted only below the base limits; the headroom is for racing appenders and for
+    /// closing records.
     pub fn parse(bytes: &[u8]) -> Result<Self, LedgerError> {
         let mut scan = Self {
             diagnostics: LedgerDiagnostics {
@@ -79,8 +87,9 @@ impl Scan {
             }
             lines = lines
                 .checked_add(1)
-                .filter(|n| *n <= MAX_LEDGER_RECORDS)
+                .filter(|n| *n <= MAX_LEDGER_RECORDS + LEDGER_HEADROOM_RECORDS)
                 .ok_or(LedgerError::LimitExceeded)?;
+            scan.diagnostics.lines = lines;
             if piece.is_empty() {
                 continue;
             }
@@ -107,7 +116,7 @@ impl Scan {
                 if state.committed.is_none() {
                     state.open.push(id);
                     self.open.insert(id, intent);
-                    if self.open.len() > MAX_UNRESOLVED_INTENTS {
+                    if self.open.len() > MAX_UNRESOLVED_INTENTS + LEDGER_HEADROOM_INTENTS {
                         return Err(LedgerError::LimitExceeded);
                     }
                 }
@@ -188,6 +197,21 @@ impl Scan {
             .filter_map(|state| state.committed.as_ref())
     }
 
+    /// How many head-log sequences in `after+1 ..= upto` the ledger accounts for, by a
+    /// `committed` record or an unresolved intent. Equal to `upto - after` when nothing in that
+    /// range is missing from the ledger (forged records are cross-checked against the root
+    /// separately).
+    pub fn covered(&self, after: u64, upto: u64) -> u64 {
+        let range = after.saturating_add(1)..=upto;
+        let sequences: std::collections::BTreeSet<u64> = self
+            .committed()
+            .map(|record| record.sequence)
+            .chain(self.open.values().map(|intent| intent.sequence))
+            .filter(|sequence| range.contains(sequence))
+            .collect();
+        u64::try_from(sequences.len()).unwrap_or(u64::MAX)
+    }
+
     /// What the reader ignored.
     pub const fn diagnostics(&self) -> LedgerDiagnostics {
         self.diagnostics
@@ -216,6 +240,7 @@ mod tests {
             base: None,
             fingerprint: digest(content),
             created: 0,
+            attempt: digest("attempt"),
             blobs: vec![digest("blob")],
         }
     }
@@ -367,13 +392,13 @@ mod tests {
 
     #[test]
     fn line_and_open_intent_caps_are_enforced() {
-        let blanks = vec![b'\n'; MAX_LEDGER_RECORDS + 1];
+        let blanks = vec![b'\n'; MAX_LEDGER_RECORDS + LEDGER_HEADROOM_RECORDS + 1];
         assert_eq!(
             Scan::parse(&blanks).unwrap_err(),
             LedgerError::LimitExceeded
         );
         let mut bytes = Vec::new();
-        for n in 0..=u32::try_from(MAX_UNRESOLVED_INTENTS).unwrap() {
+        for n in 0..=u32::try_from(MAX_UNRESOLVED_INTENTS + LEDGER_HEADROOM_INTENTS).unwrap() {
             bytes.extend(Record::Intent(intent(n + 1, "a")).encode().0);
         }
         assert_eq!(Scan::parse(&bytes).unwrap_err(), LedgerError::LimitExceeded);

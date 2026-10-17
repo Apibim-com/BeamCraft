@@ -255,7 +255,29 @@ impl RevisionStore {
                 }
                 Ok(Outcome::Unknown)
             }
-            OpStatus::Aborted(reason) => Ok(Outcome::Aborted { reason }),
+            OpStatus::Aborted(reason) => {
+                // An abort is only a statement about one attempt. A retry may have switched the
+                // root with its own intent damaged or lost, so the root is consulted first, and
+                // a ledger with ignored lines cannot prove that every attempt was closed.
+                let Ok(head) = &head else {
+                    return Ok(Outcome::Unknown);
+                };
+                if let (Some(head), Some(directory)) = (head, directory.as_deref())
+                    && let Some(info) = self.find_op(directory, head, op)
+                {
+                    return Ok(Outcome::Committed {
+                        revision: info.revision().clone(),
+                        sequence: info.sequence(),
+                        manifest: info.manifest_digest(),
+                        source: OutcomeSource::Root,
+                    });
+                }
+                Ok(if scan.diagnostics().damaged_lines == 0 {
+                    Outcome::Aborted { reason }
+                } else {
+                    Outcome::Unknown
+                })
+            }
             OpStatus::Unseen => {
                 let Ok(head) = head else {
                     return Ok(Outcome::Unknown);
@@ -285,9 +307,13 @@ impl RevisionStore {
                         source: OutcomeSource::Root,
                     });
                 }
-                // Revisions that predate the ledger were never journaled: absence from the
-                // ledger is a proof only when the ledger began before any revision existed.
-                Ok(if intact && scan.genesis_head() == Some(0) {
+                // Revisions that predate the ledger were never journaled, and a ledger cut at a
+                // record boundary looks intact: absence from the ledger is a proof only when the
+                // ledger began before any revision existed and accounts for every sequence of
+                // the root.
+                let head_sequence = head.sequence();
+                let covered = scan.covered(0, head_sequence) == head_sequence;
+                Ok(if intact && scan.genesis_head() == Some(0) && covered {
                     Outcome::NotFound
                 } else {
                     Outcome::Unknown
@@ -344,14 +370,18 @@ impl RevisionStore {
             return Err(disagree);
         }
         let info = self.load_at(directory, record.sequence)?;
-        if info.revision() != &record.revision || info.manifest_digest() != record.manifest {
+        if info.revision() != &record.revision
+            || info.manifest_digest() != record.manifest
+            || info.manifest().content().op() != &record.op
+        {
             return Err(disagree);
         }
         Ok(info)
     }
 
-    /// True when the root demonstrably lacks what a `Committed` record claims. Checked against
-    /// the head and the newest [`REPLAY_LOOKBACK`] records only.
+    /// True when the root demonstrably lacks what a `Committed` record claims: a sequence the
+    /// root has not reached, a record that cannot be read, or another revision, manifest or
+    /// operation at that sequence. Every recorded outcome is checked, not only recent ones.
     fn disagrees(
         &self,
         directory: Option<&Path>,
@@ -364,10 +394,12 @@ impl RevisionStore {
         if record.sequence > head.sequence() {
             return true;
         }
-        let near = head.sequence().saturating_sub(record.sequence) < REPLAY_LOOKBACK as u64;
-        near && self.load_at(directory, record.sequence).is_ok_and(|info| {
-            info.revision() != &record.revision || info.manifest_digest() != record.manifest
-        })
+        self.load_at(directory, record.sequence)
+            .map_or(true, |info| {
+                info.revision() != &record.revision
+                    || info.manifest_digest() != record.manifest
+                    || info.manifest().content().op() != &record.op
+            })
     }
 
     /// Finds the revision an op id created among the newest [`REPLAY_LOOKBACK`] head-log

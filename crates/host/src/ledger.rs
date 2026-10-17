@@ -71,8 +71,14 @@
 //!   with an integrity error instead of being trusted.
 //! * Protection from a hostile writer to the store directory: the per-record SHA-256 detects
 //!   accidents, it does not authenticate the writer.
-//! * Ledger rotation or compaction: the file is capped ([`MAX_LEDGER_BYTES`]); at the cap
-//!   commits fail with `LIMIT_EXCEEDED` before they write anything.
+//! * Ledger rotation or compaction: new commits are admitted only below [`MAX_LEDGER_BYTES`]
+//!   (and the line and open-intent limits), with room reserved to close every open intent; a
+//!   full ledger refuses a commit with `LIMIT_EXCEEDED` before it writes anything. The length
+//!   check and the append are not atomic across processes, so appenders that race each other
+//!   can overshoot; the reader and closing records accept [`LEDGER_HEADROOM_BYTES`] more (and
+//!   proportional line and intent headroom) for that. More simultaneous racing attempts than
+//!   the headroom holds is not promised: the ledger then fails closed (every read is
+//!   `LIMIT_EXCEEDED`) rather than being trusted partially.
 //! * Garbage collection: recovery removes only abandoned temporary files and *reports*
 //!   unreferenced blobs. It deletes no blob, because drafts, personal workspaces and retained
 //!   revisions (not yet implemented) may still need them.
@@ -83,9 +89,13 @@ mod state;
 
 use std::fmt;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use beamcraft_model::{ErrorCode, digest::ContentDigest};
+use beamcraft_model::{
+    ErrorCode,
+    digest::{ContentDigest, Sha256},
+};
 
 use crate::revision::{RevisionStore, Uuid7};
 use crate::storage::{BlobStore, StorageError};
@@ -94,12 +104,26 @@ pub use record::{AbortReason, CommittedRecord, Intent, MAX_RECORD_BYTES, Record}
 pub use recover::{RecoveryPolicy, RecoveryReport, Unreferenced};
 pub use state::{LedgerDiagnostics, OpStatus, Scan};
 
-/// Largest ledger file the reader and writer accept.
+/// Bytes of ledger a new commit attempt may grow the file to. An attempt is admitted only if,
+/// after its intent, every unresolved intent (its own included) still has room for its closing
+/// record below this limit.
 pub const MAX_LEDGER_BYTES: u64 = 16_777_216;
-/// Most lines (valid or not) one ledger read processes.
+/// Extra bytes the reader and every append accept above [`MAX_LEDGER_BYTES`]. Closing records
+/// and appenders that raced each other past the admission check use it; without coordination
+/// between processes no tighter bound than "headroom" can be promised.
+pub const LEDGER_HEADROOM_BYTES: u64 = 1_048_576;
+/// Lines (valid or not) below which a new attempt is admitted.
 pub const MAX_LEDGER_RECORDS: usize = 131_072;
-/// Most intents without resolution one ledger may hold.
+/// Extra lines the reader accepts above [`MAX_LEDGER_RECORDS`].
+pub const LEDGER_HEADROOM_RECORDS: usize = 8192;
+/// Intents without resolution below which a new attempt is admitted.
 pub const MAX_UNRESOLVED_INTENTS: usize = 4096;
+/// Extra open intents the reader accepts above [`MAX_UNRESOLVED_INTENTS`].
+pub const LEDGER_HEADROOM_INTENTS: usize = 1024;
+/// Upper bound of one `committed` or `aborted` line, reserved per open intent at admission.
+const MAX_CLOSING_BYTES: u64 = 256;
+/// Bytes admission reserves for a genesis line.
+const GENESIS_BYTES: u64 = 128;
 
 const DIR: &str = "ledger";
 const FILE: &str = "outcomes.log";
@@ -197,6 +221,20 @@ pub(crate) fn now_secs() -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
+/// A fresh identity for one commit attempt: process id, clock nanoseconds and a process-wide
+/// counter, hashed. Two attempts of one process never share it, and two processes would need the
+/// same id, nanosecond and counter value.
+pub(crate) fn new_attempt(op: &Uuid7) -> ContentDigest {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let counter = NEXT.fetch_add(1, Ordering::Relaxed);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let text = format!("{} {op} {nanos} {counter}", std::process::id());
+    // A short text is far below the SHA-256 length domain; the fallback is never used.
+    Sha256::digest(text.as_bytes()).unwrap_or(ContentDigest::from_bytes([0; 32]))
+}
+
 impl<'a> Ledger<'a> {
     pub(crate) const fn new(blobs: &'a BlobStore) -> Self {
         Self { blobs }
@@ -215,15 +253,55 @@ impl<'a> Ledger<'a> {
         let Some(directory) = self.dir(false)? else {
             return Ok(Scan::default());
         };
-        let cap = usize::try_from(MAX_LEDGER_BYTES).map_err(|_| LedgerError::LimitExceeded)?;
+        let hard = MAX_LEDGER_BYTES + LEDGER_HEADROOM_BYTES;
+        let cap = usize::try_from(hard).map_err(|_| LedgerError::LimitExceeded)?;
         match self.blobs.read_namespace_exact(&directory, FILE, cap)? {
             Some(bytes) => Scan::parse(&bytes),
             None => Ok(Scan::default()),
         }
     }
 
+    /// Admits a new attempt: its intent (and genesis) must fit with room left for the closing
+    /// record of every unresolved intent, its own included, under the base limits of bytes,
+    /// lines and open intents. Nothing is written when it does not fit, so a full ledger
+    /// refuses the commit before the root can be touched and always keeps room to close what
+    /// is open.
+    pub(crate) fn admit(
+        &self,
+        scan: &Scan,
+        intent: &Record,
+        genesis_head: Option<u64>,
+    ) -> Result<(), LedgerError> {
+        let open = u64::try_from(scan.open_intents().count()).unwrap_or(u64::MAX);
+        if open >= u64::try_from(MAX_UNRESOLVED_INTENTS).unwrap_or(0) {
+            return Err(LedgerError::LimitExceeded);
+        }
+        let intent_bytes = u64::try_from(intent.encode().0.len()).unwrap_or(u64::MAX);
+        let genesis = if genesis_head.is_some() {
+            GENESIS_BYTES
+        } else {
+            0
+        };
+        let needed = scan
+            .diagnostics()
+            .bytes
+            .saturating_add(1) // newline after a torn fragment
+            .saturating_add(genesis)
+            .saturating_add(intent_bytes)
+            .saturating_add(open.saturating_add(1).saturating_mul(MAX_CLOSING_BYTES));
+        let lines = u64::try_from(scan.diagnostics().lines)
+            .unwrap_or(u64::MAX)
+            .saturating_add(3) // torn newline, genesis, intent
+            .saturating_add(open.saturating_add(1));
+        if needed > MAX_LEDGER_BYTES || lines > u64::try_from(MAX_LEDGER_RECORDS).unwrap_or(0) {
+            return Err(LedgerError::LimitExceeded);
+        }
+        Ok(())
+    }
+
     /// Appends records in one synced write. `genesis_head` adds the genesis record first, for a
-    /// ledger that has none.
+    /// ledger that has none. Admission of a new attempt is [`Self::admit`]; this only enforces
+    /// the hard limit (base plus headroom), which closing records may use.
     pub(crate) fn append(
         &self,
         records: &[Record],
@@ -237,8 +315,12 @@ impl<'a> Ledger<'a> {
         for record in records {
             bytes.extend(record.encode().0);
         }
-        self.blobs
-            .append_namespace_file(&directory, FILE, &bytes, MAX_LEDGER_BYTES)?;
+        self.blobs.append_namespace_file(
+            &directory,
+            FILE,
+            &bytes,
+            MAX_LEDGER_BYTES + LEDGER_HEADROOM_BYTES,
+        )?;
         Ok(())
     }
 }

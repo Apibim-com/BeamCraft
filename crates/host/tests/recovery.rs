@@ -15,12 +15,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use beamcraft_host::ledger::{
-    AbortReason, CommittedRecord, LedgerError, MAX_LEDGER_BYTES, MAX_RECORD_BYTES, Outcome,
-    OutcomeSource, Record, RecoveryPolicy, RecoveryReport, Scan,
+    AbortReason, CommittedRecord, Intent, LEDGER_HEADROOM_BYTES, LedgerError, MAX_LEDGER_BYTES,
+    MAX_LEDGER_RECORDS, MAX_RECORD_BYTES, MAX_UNRESOLVED_INTENTS, Outcome, OutcomeSource, Record,
+    RecoveryPolicy, RecoveryReport, Scan,
 };
 use beamcraft_host::revision::{
     BaseRef, CommitOutcome, CommitPoint, Content, ExpectedBase, Injected, LayerEntry, LayerRole,
-    Manifest, RevisionDraft, RevisionError, RevisionInfo, RevisionStore, Uuid7,
+    Manifest, REPLAY_LOOKBACK, RevisionDraft, RevisionError, RevisionInfo, RevisionStore, Uuid7,
 };
 use beamcraft_host::storage::{BlobStore, StorageError};
 use beamcraft_model::{
@@ -516,6 +517,44 @@ fn different_content_under_the_same_op_id_is_op_id_reuse_before_and_after_recove
 }
 
 #[test]
+fn an_op_id_is_bound_to_its_expected_base_too() {
+    // Unresolved attempt: the same content under a different expected base is another request.
+    let fx = Fixture::new();
+    let store = fx.store();
+    commit_n(&store, 1);
+    let d = draft(&store, 2);
+    crash_at(&store, &d, &expect(1), CommitPoint::RecordStaged);
+    assert_eq!(
+        store.commit(&d, &ExpectedBase::Initial).unwrap_err(),
+        RevisionError::OpIdReuse
+    );
+    quiescent(&store);
+    // Once the attempt is closed as not accepted the id is free again.
+    assert_eq!(
+        store.commit(&d, &expect(1)).unwrap().outcome,
+        CommitOutcome::Created
+    );
+
+    // Committed attempt, also after recovery: the original (now stale) base replays, another
+    // base is OP_ID_REUSE.
+    let fx = Fixture::new();
+    let store = fx.store();
+    let d = draft(&store, 1);
+    crash_at(&store, &d, &expect(0), CommitPoint::Switched);
+    quiescent(&store);
+    commit_n(&store, 2);
+    assert_eq!(
+        store.commit(&d, &expect(0)).unwrap().outcome,
+        CommitOutcome::Replayed
+    );
+    assert_eq!(
+        store.commit(&d, &expect(2)).unwrap_err(),
+        RevisionError::OpIdReuse
+    );
+    assert_eq!(store.head().unwrap().unwrap().sequence(), 2);
+}
+
+#[test]
 fn graceful_cancellation_is_recorded_and_a_failed_switch_hook_is_resolved_by_a_retry() {
     let fx = Fixture::new();
     let store = fx.store();
@@ -978,7 +1017,10 @@ fn a_full_ledger_refuses_the_commit_before_anything_is_written() {
 
     // Above the cap the file is not read at all.
     let mut huge = bytes.clone();
-    huge.resize(usize::try_from(MAX_LEDGER_BYTES).unwrap() + 1, b'\n');
+    huge.resize(
+        usize::try_from(MAX_LEDGER_BYTES + LEDGER_HEADROOM_BYTES).unwrap() + 1,
+        b'\n',
+    );
     fx.set_ledger(&huge);
     assert_eq!(
         store.query_outcome(&id(201)).unwrap_err(),
@@ -1125,4 +1167,296 @@ fn open_recovered_returns_the_verified_root_with_the_report() {
         .unwrap();
     assert_eq!(revision.info().sequence(), 2);
     assert_eq!(report.committed, vec![id(202)]);
+}
+
+// ---- review findings: capacity, outcome proofs, attempt identity -----------------------------
+
+/// Commits `count` revisions 1..=count.
+fn commit_many(store: &RevisionStore, count: u32) {
+    for n in 1..=count {
+        commit_n(store, n);
+    }
+}
+
+fn open_intent(op: u32) -> Record {
+    Record::Intent(Intent {
+        op: id(op),
+        project: id(1),
+        revision: id(100_000 + op),
+        sequence: 1,
+        base: None,
+        fingerprint: digest(&format!("content {op}")),
+        created: 0,
+        attempt: digest(&format!("attempt {op}")),
+        blobs: vec![digest("blob")],
+    })
+}
+
+#[test]
+fn admission_refuses_an_attempt_that_would_break_the_readers_limits() {
+    // 4,096 unresolved intents: a 4,097th attempt is refused, not written and then unreadable.
+    let fx = Fixture::new();
+    let store = fx.store();
+    let mut bytes = Record::Genesis { head: 0 }.encode().0;
+    for op in 0..u32::try_from(MAX_UNRESOLVED_INTENTS).unwrap() {
+        bytes.extend(open_intent(10_000 + op).encode().0);
+    }
+    fx.set_ledger(&bytes);
+    let d = draft(&store, 1);
+    assert_eq!(
+        store.commit(&d, &expect(0)).unwrap_err(),
+        RevisionError::Ledger(LedgerError::LimitExceeded)
+    );
+    assert_eq!(fx.ledger_bytes(), bytes, "nothing was appended");
+    assert!(!fx.0.join("revisions").exists());
+    // The ledger still reads, and recovery can close everything that is open.
+    assert!(store.query_outcome(&id(10_000)).is_ok());
+    let report = quiescent(&store);
+    assert_eq!(report.aborted.len(), MAX_UNRESOLVED_INTENTS);
+    assert_eq!(
+        store.commit(&d, &expect(0)).unwrap().outcome,
+        CommitOutcome::Created
+    );
+
+    // A ledger at the line limit refuses too.
+    let fx = Fixture::new();
+    let store = fx.store();
+    let mut lines = Record::Genesis { head: 0 }.encode().0;
+    lines.extend(vec![b'\n'; MAX_LEDGER_RECORDS - 2]);
+    fx.set_ledger(&lines);
+    assert_eq!(
+        store.commit(&draft(&store, 1), &expect(0)).unwrap_err(),
+        RevisionError::Ledger(LedgerError::LimitExceeded)
+    );
+    assert_eq!(fx.ledger_bytes(), lines);
+    assert!(store.query_outcome(&id(201)).is_ok());
+}
+
+#[test]
+fn admission_reserves_room_for_the_closing_record_and_recovery_may_use_the_headroom() {
+    let fx = Fixture::new();
+    let store = fx.store();
+    commit_n(&store, 1);
+    let cap = usize::try_from(MAX_LEDGER_BYTES).unwrap();
+    let pad = |fx: &Fixture, leave: usize| {
+        let mut bytes = fx.ledger_bytes();
+        while bytes.len() + MAX_RECORD_BYTES < cap - leave {
+            bytes.extend(vec![b'x'; MAX_RECORD_BYTES - 2]);
+            bytes.push(b'\n');
+        }
+        let rest = cap - leave - bytes.len();
+        bytes.extend(vec![b'x'; rest - 1]);
+        bytes.push(b'\n');
+        fx.set_ledger(&bytes);
+        bytes
+    };
+    // 800 bytes left: the intent (about 630) fits, but not together with its closing record.
+    let bytes = pad(&fx, 800);
+    assert_eq!(bytes.len(), cap - 800);
+    let d = draft(&store, 2);
+    assert_eq!(
+        store.commit(&d, &expect(1)).unwrap_err(),
+        RevisionError::Ledger(LedgerError::LimitExceeded)
+    );
+    assert_eq!(fx.ledger_bytes(), bytes);
+    assert!(!fx.log(2).exists());
+
+    // An attempt admitted earlier can still be closed even when the file is past the base limit:
+    // closing records use the headroom.
+    let fx = Fixture::new();
+    let store = fx.store();
+    commit_n(&store, 1);
+    let d = draft(&store, 2);
+    crash_at(&store, &d, &expect(1), CommitPoint::RecordStaged);
+    let bytes = pad(&fx, 50);
+    assert!(bytes.len() > cap - 100);
+    let report = quiescent(&store);
+    assert_eq!(report.aborted, vec![id(202)]);
+    assert!(fx.ledger_bytes().len() > bytes.len());
+    assert!(
+        u64::try_from(fx.ledger_bytes().len()).unwrap() <= MAX_LEDGER_BYTES + LEDGER_HEADROOM_BYTES
+    );
+    assert_eq!(fx.scan().open_intents().count(), 0);
+    // The padding is damaged history, so the ledger alone cannot prove the op never happened.
+    assert_eq!(store.query_outcome(&id(202)).unwrap(), Outcome::Unknown);
+}
+
+#[test]
+fn an_abort_is_checked_against_the_root_and_damaged_history_is_not_a_proof() {
+    let fx = Fixture::new();
+    let store = fx.store();
+    let d = draft(&store, 1);
+    // Attempt 1 is cancelled; the retry switches the root and crashes before `committed`.
+    let cancelled = store.commit_with(&d, &expect(0), None, &mut |p: CommitPoint| {
+        if p == CommitPoint::ManifestStored {
+            Err(Injected)
+        } else {
+            Ok(())
+        }
+    });
+    assert!(cancelled.is_err());
+    crash_at(&store, &d, &expect(0), CommitPoint::Switched);
+    // The retry's intent line is damaged: only the earlier abort is left in the ledger.
+    let mut bytes = fx.ledger_bytes();
+    let text = String::from_utf8(bytes.clone()).unwrap();
+    let start = text.rfind("L1 intent").unwrap();
+    bytes[start + 12] ^= 0x01;
+    fx.set_ledger(&bytes);
+    assert_eq!(fx.scan().diagnostics().damaged_lines, 1);
+    assert!(is_committed(
+        &store.query_outcome(&id(201)).unwrap(),
+        OutcomeSource::Root
+    ));
+
+    // A damaged ledger cannot prove that every attempt was closed: Unknown, not Aborted.
+    let fx = Fixture::new();
+    let store = fx.store();
+    let d = draft(&store, 1);
+    let cancelled = store.commit_with(&d, &expect(0), None, &mut |p: CommitPoint| {
+        if p == CommitPoint::ManifestStored {
+            Err(Injected)
+        } else {
+            Ok(())
+        }
+    });
+    assert!(cancelled.is_err());
+    assert_eq!(
+        store.query_outcome(&id(201)).unwrap(),
+        Outcome::Aborted {
+            reason: AbortReason::Cancelled
+        }
+    );
+    let mut bytes = fx.ledger_bytes();
+    bytes.extend(b"damaged line, maybe a lost intent\n");
+    fx.set_ledger(&bytes);
+    assert_eq!(store.query_outcome(&id(201)).unwrap(), Outcome::Unknown);
+}
+
+#[test]
+fn not_found_needs_the_ledger_to_account_for_every_revision_of_the_root() {
+    let fx = Fixture::new();
+    let store = fx.store();
+    let total = u32::try_from(REPLAY_LOOKBACK).unwrap() + 6;
+    commit_many(&store, total);
+    assert_eq!(store.query_outcome(&id(999)).unwrap(), Outcome::NotFound);
+
+    // Cut the ledger at a record boundary after revision 2: genesis 0 and no damaged line, but
+    // revisions 3.. are not accounted for, so an unrecorded op is unknown, not "never applied".
+    let full = fx.ledger_bytes();
+    let mut ends = full
+        .iter()
+        .enumerate()
+        .filter(|(_, b)| **b == b'\n')
+        .map(|(i, _)| i + 1);
+    let keep = ends.nth(2 * 2).unwrap(); // genesis + 2 x (intent, committed)
+    fx.set_ledger(&full[..keep]);
+    let scan = fx.scan();
+    assert_eq!(scan.genesis_head(), Some(0));
+    assert_eq!(scan.diagnostics().damaged_lines, 0);
+    assert_eq!(store.query_outcome(&id(999)).unwrap(), Outcome::Unknown);
+    // An op the cut dropped and the window no longer shows is unknown as well.
+    assert_eq!(store.query_outcome(&id(203)).unwrap(), Outcome::Unknown);
+    // Recovery cannot rebuild what was never recorded; it reports nothing false.
+    assert!(quiescent(&store).is_noop());
+}
+
+#[test]
+fn a_committed_record_must_name_the_operation_and_every_old_record_is_checked() {
+    let fx = Fixture::new();
+    let store = fx.store();
+    let one = commit_n(&store, 1);
+    // Another op id claims revision 1's real revision, sequence and manifest digest.
+    let mut bytes = fx.ledger_bytes();
+    bytes.extend(
+        Record::Committed(CommittedRecord {
+            op: id(777),
+            revision: id(101),
+            sequence: 1,
+            manifest: one.manifest_digest(),
+        })
+        .encode()
+        .0,
+    );
+    fx.set_ledger(&bytes);
+    assert_eq!(
+        store.query_outcome(&id(777)).unwrap_err(),
+        RevisionError::Ledger(LedgerError::RootDisagrees)
+    );
+    assert_eq!(quiescent(&store).disagreements, vec![id(777)]);
+    // It cannot make a commit of that op id "replay" either.
+    let mut other = draft(&store, 50);
+    other.op = id(777);
+    assert_eq!(
+        store.commit(&other, &expect(1)).unwrap_err(),
+        RevisionError::Ledger(LedgerError::RootDisagrees)
+    );
+
+    // Records older than the replay window are verified by recovery, not skipped.
+    let fx = Fixture::new();
+    let store = fx.store();
+    commit_many(&store, u32::try_from(REPLAY_LOOKBACK).unwrap() + 6);
+    let mut bytes = fx.ledger_bytes();
+    bytes.extend(forged_commit(778, 101, 1));
+    fx.set_ledger(&bytes);
+    let report = quiescent(&store);
+    assert_eq!(report.disagreements, vec![id(778)]);
+    assert!(report.root_error.is_none());
+}
+
+#[test]
+fn an_identical_retry_after_a_crash_at_the_switch_replays_even_after_the_root_moved_on() {
+    let fx = Fixture::new();
+    let store = fx.store();
+    commit_n(&store, 1);
+    let d = draft(&store, 2);
+    crash_at(&store, &d, &expect(1), CommitPoint::Switched);
+    // Other operations push revision 2 far out of the replay window while its intent is open.
+    for n in 3..u32::try_from(REPLAY_LOOKBACK).unwrap() + 6 {
+        commit_n(&store, n);
+    }
+    assert_eq!(fx.scan().open_intents().count(), 1);
+    let before = store.head().unwrap().unwrap();
+    let retry = store.commit(&d, &expect(1)).unwrap();
+    assert_eq!(retry.outcome, CommitOutcome::Replayed);
+    assert_eq!(retry.info.sequence(), 2);
+    assert_eq!(
+        store.head().unwrap().unwrap(),
+        before,
+        "no second publication"
+    );
+    assert!(is_committed(
+        &store.query_outcome(&id(202)).unwrap(),
+        OutcomeSource::Ledger
+    ));
+}
+
+#[test]
+fn each_attempt_has_its_own_identity_and_an_abort_closes_only_that_attempt() {
+    let fx = Fixture::new();
+    let store = fx.store();
+    let d = draft(&store, 1);
+    // Two identical attempts of the same op and content, started back to back (same second),
+    // the first left unresolved by a crash, the second cancelled.
+    crash_at(&store, &d, &expect(0), CommitPoint::RecordStaged);
+    let cancelled = store.commit_with(&d, &expect(0), None, &mut |p: CommitPoint| {
+        if p == CommitPoint::ManifestStored {
+            Err(Injected)
+        } else {
+            Ok(())
+        }
+    });
+    assert_eq!(
+        cancelled.unwrap_err(),
+        RevisionError::Aborted(CommitPoint::ManifestStored)
+    );
+    let scan = fx.scan();
+    assert_eq!(
+        scan.open_intents().count(),
+        1,
+        "the first attempt is still open"
+    );
+    let attempts: Vec<_> = scan.open_intents().map(|(_, i)| i.attempt).collect();
+    assert_ne!(attempts[0], digest("attempt"));
+    // The op is not reported as aborted while an attempt is unresolved.
+    assert_eq!(store.query_outcome(&id(201)).unwrap(), Outcome::Unknown);
 }

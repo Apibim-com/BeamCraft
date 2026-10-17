@@ -16,13 +16,13 @@ new complete snapshot; recovery is idempotent.
 
 | Piece | Behaviour |
 |---|---|
-| Ledger file | `ledger/outcomes.log`, append-only. One closed canonical text line per record, ending in a SHA-256 of the line's other bytes. Records: `genesis` (head sequence that existed before the ledger), `intent` (op, project, revision, sequence, base, content fingerprint, creation second, layer blob digests), `committed` (op, revision, sequence, manifest digest), `aborted` (op, identity of the intent it closes, reason `cancelled` / `rejected` / `lost-race` / `recovered`). A parsed record is re-encoded and must equal the input. |
-| Strict reading | The whole file is read under a cap (16 MiB, 131,072 lines, 4,096 open intents; lines under 8 KiB). An unterminated final fragment is a torn append and is ignored. A complete line that is not a valid record is counted and ignored. Two different accepted records for one op are `Inconsistent`. Nothing ignored is ever acted on. |
+| Ledger file | `ledger/outcomes.log`, append-only. One closed canonical text line per record, ending in a SHA-256 of the line's other bytes. Records: `genesis` (head sequence that existed before the ledger), `intent` (op, project, revision, sequence, base, content fingerprint, creation second, a per-attempt identity, layer blob digests), `committed` (op, revision, sequence, manifest digest), `aborted` (op, identity of the intent it closes, reason `cancelled` / `rejected` / `lost-race` / `recovered`). A parsed record is re-encoded and must equal the input. |
+| Strict reading | The whole file is read under a cap (a new attempt is admitted below 16 MiB, 131,072 lines and 4,096 open intents, reserving room to close every open one; the reader accepts 1 MiB, 8,192 lines and 1,024 intents more for racing appenders and closing records; lines under 8 KiB). An unterminated final fragment is a torn append and is ignored. A complete line that is not a valid record is counted and ignored. Two different accepted records for one op are `Inconsistent`. Nothing ignored is ever acted on. |
 | Commit order | validate, replay, base -> **intent appended and synced** -> blobs verified, manifest blob stored, record staged -> **root switch** (the U06 non-replacing link) -> **committed appended and synced**. A failure before the switch closes the attempt as `aborted`. If the intent cannot be written the commit fails with the root untouched. If the committed record cannot be written after the switch the result is `OUTCOME_UNKNOWN`, never success and never rollback. |
 | `CommitHook` | Two points were added: `IntentRecorded` (after the intent) and `Recorded` (after the committed record, observational). A hook that unwinds simulates a crash: no error handling of the commit runs afterwards. |
 | QueryOutcome | `RevisionStore::query_outcome(op)` is read-only and answers from the ledger **cross-checked against the root**: `Committed` (with source `Ledger` or `Root`), `Aborted`, `NotFound`, `Unknown` (`OUTCOME_UNKNOWN`). A ledger `Committed` that the root does not hold is `INTEGRITY_ERROR`, not an acceptance. |
-| Recovery | `RevisionStore::recover(RecoveryPolicy)` closes each unresolved intent from the root: if the head log holds the intent's revision (same id, op and content fingerprint) at the intent's sequence it appends `committed`; if the root has not reached that sequence or holds another revision there it appends `aborted`; if the root cannot be verified the intent stays open and is reported. It removes abandoned `.tmp-*` (revision record) and `.publish-*` (blob) temporaries, reports ledger records the root contradicts, and reports unreferenced blobs without deleting any. `open_recovered` recovers and then opens the root. |
-| Replay and reuse | The ledger recognises an op id beyond the head log's 64-record look-back (`Replayed`). While an attempt is unresolved or committed, different content under the same op id is `OP_ID_REUSE`; an attempt closed as not accepted leaves the id free. A replay of an op whose ledger record is missing writes the missing `committed` record. |
+| Recovery | `RevisionStore::recover(RecoveryPolicy)` closes each unresolved intent from the root: if the head log holds the intent's revision (same id, op and content fingerprint) at the intent's sequence it appends `committed`; if the root has not reached that sequence or holds another revision there it appends `aborted`; if the root cannot be verified the intent stays open and is reported. It removes abandoned `.tmp-*` (revision record) and `.publish-*` (blob) temporaries, reports every ledger `committed` record that the root contradicts (wrong revision, manifest or operation at its sequence, an unreadable or unreached sequence; all records are checked, not only recent ones), and reports unreferenced blobs without deleting any. `open_recovered` recovers and then opens the root. |
+| Replay and reuse | The ledger recognises an op id beyond the head log's 64-record look-back (`Replayed`; the revision-id scan of U06 does the same for an identical retry). While an attempt is unresolved or committed, a different content or expected base under the same op id is `OP_ID_REUSE`; an attempt closed as not accepted leaves the id free. Each attempt has its own identity, so closing one attempt never closes another identical one. A replay of an op whose ledger record is missing writes the missing `committed` record. |
 
 CLI (`beamcraft`): `revision-recover --store ROOT --min-age-secs N` and
 `revision-outcome --store ROOT --op-id UUID`, machine-readable JSON, exit codes of the existing
@@ -52,12 +52,15 @@ table. Every `revision-commit` goes through the ledger.
    remove it. A wrong clock can only make recovery act early or late; it never accepts anything
    unproven.
 5. **`NotFound` is a proof, so it is rare.** It is returned only when the ledger began before any
-   revision existed (`genesis 0`), has no damaged line and has no record of the op. A store with
-   revisions that predate the ledger, or a ledger with an ignored damaged line, answers `Unknown`
-   for an unrecorded op, because that op may be among history that was never journaled or a lost
-   record. Absence of a record is never reported as "not applied" otherwise.
-6. **Op id binding.** An op id is bound to its content while an attempt is unresolved or committed.
-   A closed (`aborted`) attempt had no effect, so a corrected retry under the same id is allowed,
+   revision existed (`genesis 0`), has no damaged line, accounts (by `committed` records or open
+   intents) for every sequence of the root, and has no record of the op. A store with revisions
+   that predate the ledger, a ledger with an ignored damaged line and a ledger cut at a record
+   boundary answer `Unknown` for an unrecorded op. `Aborted` is likewise only answered when the
+   root does not hold the op (a retry may have switched it with its own intent lost) and no line
+   was ignored. Absence of a record is never reported as "not applied" otherwise.
+6. **Op id binding.** An op id is bound to its whole request (content and expected base, F04
+   section 6) while an attempt is unresolved or committed; another content or base is
+   `OP_ID_REUSE`. A closed (`aborted`) attempt had no effect, so a corrected retry under the same id is allowed,
    as in U06 before the ledger. This is the one place where the ledger could be stricter; it is
    not, to keep U06's behaviour for a rejected-then-fixed command.
 7. **`query-outcome` is untouched.** The frozen U04 stage-profile command still returns
@@ -99,8 +102,12 @@ switch, so the answer is `NotFound`; the whole intent is `Unknown` until recover
   trusted. Protection from a hostile writer to the store directory: the per-record SHA-256 is an
   integrity check against accidents, not authentication; whoever can write the file can forge a
   line, and the answers are still cross-checked against the root.
-* Not implemented: ledger rotation or compaction (a full ledger refuses commits with
-  `LIMIT_EXCEEDED` before writing; about 20,000 commits fit); garbage collection of blobs (needs
+* Not implemented: ledger rotation or compaction (a full ledger refuses new attempts with
+  `LIMIT_EXCEEDED` before writing, with room kept to close every open intent; about 20,000
+  commits fit). The length check and the append are not atomic across processes, so racing
+  appenders can overshoot the admission limit; the headroom absorbs that, and beyond it the
+  ledger fails closed (every read is `LIMIT_EXCEEDED`) instead of being partially trusted;
+  garbage collection of blobs (needs
   retained revisions and drafts accounted for); personal workspaces and preserved drafts across
   restart; multi-client collaboration; a CLI switch that injects faults (the E2E tests produce the
   interrupted commit through the host hook and then run the real binary); wiring the host
@@ -111,7 +118,9 @@ switch, so the answer is `NotFound`; the whole intent is `Unknown` until recover
 
 Original code and fixtures; formats derived from F04 section 8, F05 section 7 and the plan, and
 the head-log design of U06. No asset, no third-party dependency, no Tekla/Trimble material.
-Caps: record line 8 KiB, ledger 16 MiB, 131,072 lines, 4,096 open intents, 64 layer digests per
-intent, unreferenced-blob scan 4,096 revisions and 262,144 blobs (otherwise "not computed"), 1,024
-digests per report (the CLI prints 256; the total is exact). Linux/macOS, wasm32 and `cargo deny`
-were not run (not installed here).
+Caps: record line 8 KiB; a new attempt is admitted only below 16 MiB, 131,072 lines and 4,096 open
+intents, with room reserved to close every open intent; the reader and closing records accept
+1 MiB, 8,192 lines and 1,024 open intents more (headroom for racing appenders). 64 layer digests
+per intent, unreferenced-blob scan 4,096 revisions and 262,144 blobs (otherwise "not computed"),
+1,024 digests per report (the CLI prints 256; the total is exact). Linux/macOS, wasm32 and
+`cargo deny` were not run (not installed here).
