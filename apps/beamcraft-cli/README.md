@@ -39,8 +39,10 @@ An explicitly selected unavailable backend returns 3; there is no automatic SDK 
 
 `blob-put --store ROOT --file FILE` and `blob-verify --store ROOT --digest SHA256`
 use U05 byte storage. They do not publish a project revision. `query-outcome` requires the
-selected identity and `--op-id UUIDV7`, works without a worker, and returns OUTCOME_UNKNOWN
-until U07 can provide durable proof. It does not report an assumed rejection on replay.
+selected identity and `--op-id UUIDV7`, works without a worker, and still returns
+OUTCOME_UNKNOWN: it is the frozen U04 stage-profile command and is not wired to the U07
+ledger (the profile has no recorded-result message). The durable host-ledger answer is
+`revision-outcome` below. Neither reports an assumed rejection on replay.
 
 ## U06 revision commands
 
@@ -66,8 +68,29 @@ a commit must repeat the same `--base`: another base under the same op id is `OP
 These commands check blob integrity, not USD content: the layer engine runs in its own process
 and the frozen U04 profile has no verify/index message, so duplicate-ID, dangling-link and
 U03-index checks run only through the host API's injected `ContentVerifier` (exercised in the
-tests with the real layer engine). A CLI commit records `index: null`. U07 recovery is not
-implemented. See the [U06 record](../../docs/design/u06-revision-commit.md).
+tests with the real layer engine). A CLI commit records `index: null`. See the
+[U06 record](../../docs/design/u06-revision-commit.md).
+
+## U07 recovery commands
+
+```text
+beamcraft revision-recover --store ROOT --min-age-secs U64
+beamcraft revision-outcome --store ROOT --op-id UUIDV7
+```
+
+Every `revision-commit` now writes a synced intent to `ledger/outcomes.log` before the root
+switch and a committed record after it. `revision-recover` closes unresolved intents from the
+root, removes abandoned temporary files, reports unreferenced blobs (it deletes none), verifies
+the root and prints one JSON report (`recovery_complete`, or `recovery_incomplete` with exit 0
+when an intent is in flight, unprovable, or the ledger contradicts the root; check `outcome`).
+`--min-age-secs` is required and has no default: `0` asserts that no commit is running on the
+store, a larger value leaves younger intents and temporary files alone. Running it twice changes
+nothing. `revision-outcome` is read-only and prints `outcome_committed` (with `source`
+`ledger` or `root`), `outcome_aborted` (with `reason`), `outcome_not_recorded` (only when the
+ledger covers the whole history) or the standard `outcome_unknown` (exit 4); a ledger that the
+root contradicts is `INTEGRITY_ERROR`. Not implemented: a CLI fault-injection switch (the
+tests simulate the crash through the host commit hook and then run the real binary), ledger
+rotation, garbage collection. See the [U07 record](../../docs/design/u07-journal-recovery.md).
 
 The worker accepts only `--store ROOT`; unknown plugin/runtime options fail before reading
 model data. It has no plugin/script loader. Two explicit unquoted USDA directive names,

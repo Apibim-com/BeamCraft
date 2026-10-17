@@ -31,7 +31,7 @@ change stored bytes can still change them after a verified read; readers receive
 snapshot. Neither this API nor SHA-256 authenticates a hostile writer.
 
 No directory crash durability, garbage collection or worker is implemented in `storage`;
-revision publication is the separate `revision` module below and recovery is U07; the CLI
+revision publication is the separate `revision` module below and recovery is the `ledger` module (U07, below); the CLI
 byte commands are U04.
 
 SHA-256 is original code implementing FIPS PUB 180-4 (August 2015), sections 4.1.2, 4.2.2,
@@ -54,13 +54,34 @@ the compare-and-swap for the expected base.
 - `ContentVerifier` is the injected content gate (layer engine, U03 evidence). It receives a
   `VerifyRequest` (layers plus the draft's root layer, schema, project, workspace, generation
   and base pin) and its `IndexEvidence` must name that root and schema. `CommitHook`
-  marks `Checked`, `BlobsVerified`, `ManifestStored`, `RecordStaged`, `Switched`: abort before
-  `Switched` leaves the root unchanged, a failure at `Switched` is `OutcomeUnknown`. U07 uses it.
+  marks `Checked`, `IntentRecorded`, `BlobsVerified`, `ManifestStored`, `RecordStaged`,
+  `Switched`, `Recorded`: abort before `Switched` leaves the root unchanged, a failure at
+  `Switched` is `OutcomeUnknown`; a hook that unwinds simulates a crash (U07 fault injection).
 - `beamcraft revision-commit` / `revision-open` are the headless commands.
 
-Not promised: directory-entry crash durability, cleanup of `.tmp-*` files or unreferenced blobs
-after a crash, garbage collection, protection from a hostile writer to the store directory.
-Not implemented: U07 journal/recovery, personal workspaces, collaboration, a CLI verifier.
+Not promised: directory-entry crash durability, garbage collection, protection from a hostile
+writer to the store directory. Not implemented: personal workspaces, collaboration, a CLI
+verifier.
+
+## U07 journal and recovery
+
+`beamcraft_host::ledger` adds a durable append-only outcome ledger (`ledger/outcomes.log`,
+checksummed text lines) and recovery; see the [design record](../../docs/design/u07-journal-recovery.md).
+`RevisionStore::commit_with` appends a synced `Intent` before the root switch and a `Committed`
+record after it.
+
+- `RevisionStore::query_outcome(&op)` is the host-ledger QueryOutcome: `Outcome::Committed`,
+  `Aborted`, `NotFound` or `Unknown` (`OUTCOME_UNKNOWN`). Read-only; never fabricates acceptance.
+- `RevisionStore::recover(RecoveryPolicy)` closes unresolved intents from the root (the root is the
+  authority), removes abandoned `.tmp-*`/`.publish-*` files and reports unreferenced blobs
+  without deleting any. Idempotent; no lock file. `open_recovered` recovers and then opens.
+- `beamcraft revision-recover --min-age-secs N` and `revision-outcome --op-id UUID` are the
+  headless commands.
+
+Not promised: directory-entry crash durability (files are synced, directories are not),
+protection from a hostile writer (the per-record SHA-256 is not authentication). Not
+implemented: ledger rotation (a full ledger refuses commits with `LIMIT_EXCEEDED`), garbage
+collection, personal workspaces, collaboration.
 
 ## U04 experimental process client
 
