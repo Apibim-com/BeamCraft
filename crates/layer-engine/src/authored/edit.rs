@@ -400,6 +400,7 @@ fn create(data: &mut sdf::Data, e: &Element, actor: &str) -> Result<(), Diagnost
         Shape::Plate {
             contour_mm,
             thickness_mm,
+            holes,
         } => {
             attr(
                 data,
@@ -415,6 +416,27 @@ fn create(data: &mut sdf::Data, e: &Element, actor: &str) -> Result<(), Diagnost
                 "double",
                 sdf::Value::Double(*thickness_mm),
             )?;
+            if !holes.is_empty() {
+                let flat: Vec<[f64; 3]> = holes.iter().flatten().copied().collect();
+                let counts = holes
+                    .iter()
+                    .map(|h| i32::try_from(h.len()).map_err(|_| limit()))
+                    .collect::<Result<Vec<_>, _>>()?;
+                attr(
+                    data,
+                    &p,
+                    "steel:plate:holePointsMm",
+                    "double3[]",
+                    points(&flat),
+                )?;
+                attr(
+                    data,
+                    &p,
+                    "steel:plate:holeVertexCounts",
+                    "int[]",
+                    sdf::Value::IntVec(counts),
+                )?;
+            }
         }
         Shape::Member {
             axis_mm,
@@ -717,9 +739,13 @@ fn capture(
                     add(name, ty, false);
                 }
                 match e.shape {
-                    Shape::Plate { .. } => {
+                    Shape::Plate { ref holes, .. } => {
                         add("steel:plate:contourPointsMm", "double3[]", false);
                         add("steel:plate:thicknessMm", "double", false);
+                        if !holes.is_empty() {
+                            add("steel:plate:holePointsMm", "double3[]", false);
+                            add("steel:plate:holeVertexCounts", "int[]", false);
+                        }
                     }
                     Shape::Member { .. } => {
                         add("bim:axisPointsMm", "double3[]", false);

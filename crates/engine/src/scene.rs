@@ -8,46 +8,86 @@
 //! caller's `kind` nor any mesh: it re-validates every blob.
 
 use crate::element::{ElementId, ElementKind};
-use beamcraft_geom::Translation3;
+use beamcraft_geom::{Point3, Translation3};
 use beamcraft_kernel::PlateResult;
+use beamcraft_model::digest::ContentDigest;
+
+/// The mesh of one representation: the exact BCMESH01 blob, its digest and the vertex positions
+/// (element-local millimetres) the bounds are computed from. Any sealed kernel body can be
+/// offered: a plate or member box, or a solid with through holes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SceneMesh {
+    pub(crate) blob: Vec<u8>,
+    pub(crate) digest: ContentDigest,
+    pub(crate) vertices: Vec<Point3>,
+}
+
+impl SceneMesh {
+    /// A mesh from its blob, digest and vertices. The snapshot builder re-validates the blob and
+    /// checks that the digest is the blob's.
+    pub const fn new(blob: Vec<u8>, digest: ContentDigest, vertices: Vec<Point3>) -> Self {
+        Self {
+            blob,
+            digest,
+            vertices,
+        }
+    }
+}
+
+impl From<&PlateResult> for SceneMesh {
+    fn from(result: &PlateResult) -> Self {
+        let mesh = result.mesh();
+        Self {
+            blob: mesh.blob().to_vec(),
+            digest: mesh.mesh_digest(),
+            vertices: mesh.vertices().to_vec(),
+        }
+    }
+}
+
+impl From<PlateResult> for SceneMesh {
+    fn from(result: PlateResult) -> Self {
+        Self::from(&result)
+    }
+}
 
 /// One element offered to the snapshot builder.
 ///
-/// `full` is the representation with all operations applied; there are no operations in the
-/// kernel yet, so `full` is the plain primitive. `simplified` is the optional lightweight
-/// stand-in. When it is absent the part has no operations and one mesh serves both
-/// representations. A caller-supplied `simplified` is flagged not exact by the snapshot.
+/// `full` is the representation with all operations applied. `simplified` is the optional
+/// lightweight stand-in. When it is absent the part has no distinct simplified mesh and one mesh
+/// serves both representations. A caller-supplied `simplified` is flagged not exact by the
+/// snapshot.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SceneElement {
     pub(crate) id: ElementId,
     pub(crate) kind: ElementKind,
     pub(crate) placement: Translation3,
-    pub(crate) full: PlateResult,
-    pub(crate) simplified: Option<PlateResult>,
+    pub(crate) full: SceneMesh,
+    pub(crate) simplified: Option<SceneMesh>,
 }
 
 impl SceneElement {
     /// An element whose kernel body is `full`, placed by a translation (the only placement of
-    /// the first scope). A non-plate `kind` carries the plate body as a stand-in until P01.
-    pub const fn new(
+    /// the first scope).
+    pub fn new(
         id: ElementId,
         kind: ElementKind,
         placement: Translation3,
-        full: PlateResult,
+        full: impl Into<SceneMesh>,
     ) -> Self {
         Self {
             id,
             kind,
             placement,
-            full,
+            full: full.into(),
             simplified: None,
         }
     }
 
     /// Adds a distinct simplified representation.
     #[must_use]
-    pub fn with_simplified(mut self, simplified: PlateResult) -> Self {
-        self.simplified = Some(simplified);
+    pub fn with_simplified(mut self, simplified: impl Into<SceneMesh>) -> Self {
+        self.simplified = Some(simplified.into());
         self
     }
 

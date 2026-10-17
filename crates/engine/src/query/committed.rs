@@ -10,9 +10,12 @@
 
 use crate::command::{AuthoredPlate, MaterialLookup, PlateBody, Quantities, evaluate_plate};
 use crate::element::ElementKind;
+use crate::member::{
+    AuthoredMember, MemberBody, ProfileLookup, evaluate_member, member_quantities,
+};
 use crate::scene::SceneElement;
 use beamcraft_geom::Translation3;
-use beamcraft_model::command::{CommandError, label_is_valid};
+use beamcraft_model::command::{CommandError, MemberKind, label_is_valid};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
 use std::collections::BTreeSet;
@@ -70,36 +73,111 @@ pub fn evaluate_committed(
     Ok(records)
 }
 
+/// A committed member with its re-evaluated body.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemberRecord {
+    /// The authored state read from the committed model layer.
+    pub authored: AuthoredMember,
+    /// The body the kernel evaluates from it and its profile.
+    pub body: MemberBody,
+    /// The quantity records of that body.
+    pub quantities: Quantities,
+}
+
+/// Re-evaluates committed authored members, ordered by element id.
+///
+/// The pinned profile and material are resolved through the lookups; a definition that cannot
+/// be resolved is rejected with the lookup's code (`NOT_FOUND`), never dropped. The label rule
+/// and the placement are re-checked because the layer is untrusted input.
+pub fn evaluate_committed_members(
+    members: &[AuthoredMember],
+    profiles: ProfileLookup<'_>,
+    materials: MaterialLookup<'_>,
+) -> Result<Vec<MemberRecord>, CommandError> {
+    let mut seen = BTreeSet::new();
+    let mut records = Vec::with_capacity(members.len().min(crate::limits::MAX_ELEMENTS));
+    for authored in members {
+        if !seen.insert(authored.id) {
+            return Err(CommandError::new(
+                ErrorCode::DuplicateId,
+                "id",
+                "element id appears twice",
+            ));
+        }
+        if !label_is_valid(&authored.name) {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "name",
+                "committed label is not valid",
+            ));
+        }
+        authored.placement.validate()?;
+        let profile = profiles(&authored.profile)?;
+        let material = authored.material.as_ref().map(materials).transpose()?;
+        let body = evaluate_member(authored, profile)?;
+        let quantities = member_quantities(&body, material)?;
+        records.push(MemberRecord {
+            authored: authored.clone(),
+            body,
+            quantities,
+        });
+    }
+    records.sort_by_key(|r| r.authored.id);
+    Ok(records)
+}
+
 /// The snapshot-builder input for committed plates. Each placement must be a pure translation
 /// (identity rotation); another rotation is `UNSUPPORTED_GEOMETRY`, because the view contract
 /// carries translations only.
 pub fn scene_elements(records: &[PlateRecord]) -> Result<Vec<SceneElement>, CommandError> {
-    records
-        .iter()
-        .map(|r| {
-            if !r.authored.placement.is_identity_rotation() {
-                return Err(CommandError::new(
-                    ErrorCode::UnsupportedGeometry,
-                    "placement.orientation_xyzw",
-                    "rotated placement is not evaluated in this slice",
-                ));
-            }
-            let [x, y, z] = r.authored.placement.translation_mm;
-            let placement = Translation3::new(x, y, z).map_err(|_| {
-                CommandError::new(
-                    ErrorCode::NonFiniteNumber,
-                    "placement.translation_mm",
-                    "value is not finite",
-                )
-            })?;
-            Ok(SceneElement::new(
-                r.authored.id,
-                ElementKind::Plate,
-                placement,
-                r.body.result.clone(),
-            ))
+    scene_elements_with_members(records, &[])
+}
+
+/// The snapshot-builder input for committed plates and members, in element-id order.
+pub fn scene_elements_with_members(
+    plates: &[PlateRecord],
+    members: &[MemberRecord],
+) -> Result<Vec<SceneElement>, CommandError> {
+    let translation = |placement: &beamcraft_model::command::Placement| {
+        if !placement.is_identity_rotation() {
+            return Err(CommandError::new(
+                ErrorCode::UnsupportedGeometry,
+                "placement.orientation_xyzw",
+                "rotated placement is not evaluated in this slice",
+            ));
+        }
+        let [x, y, z] = placement.translation_mm;
+        Translation3::new(x, y, z).map_err(|_| {
+            CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "placement.translation_mm",
+                "value is not finite",
+            )
         })
-        .collect()
+    };
+    let mut elements = Vec::with_capacity(plates.len().saturating_add(members.len()));
+    for r in plates {
+        elements.push(SceneElement::new(
+            r.authored.id,
+            ElementKind::Plate,
+            translation(&r.authored.placement)?,
+            r.body.solid.scene_mesh(),
+        ));
+    }
+    for r in members {
+        let kind = match r.authored.kind {
+            MemberKind::Beam => ElementKind::Beam,
+            MemberKind::Column => ElementKind::Column,
+        };
+        elements.push(SceneElement::new(
+            r.authored.id,
+            kind,
+            translation(&r.authored.placement)?,
+            r.body.solid.scene_mesh(),
+        ));
+    }
+    elements.sort_by_key(SceneElement::id);
+    Ok(elements)
 }
 
 /// The ids of committed plates, for the `DUPLICATE_ID` check of a new command.
@@ -135,7 +213,58 @@ mod tests {
                 ..Placement::IDENTITY
             },
             material: None,
+            holes_mm: Vec::new(),
         }
+    }
+
+    #[test]
+    fn committed_members_join_plates_in_one_id_ordered_scene() {
+        use crate::member::ProfileInfo;
+        let profile: ContentDigest = Sha256::digest(b"profile").unwrap();
+        let profiles = |d: &ContentDigest| {
+            if *d == profile {
+                Ok(ProfileInfo {
+                    width_mm: 200.0,
+                    height_mm: 300.0,
+                })
+            } else {
+                crate::member::no_profiles(d)
+            }
+        };
+        let member = |n: u8, kind: MemberKind| AuthoredMember {
+            id: ElementId::parse(&format!("019a7bf0-0000-7000-8000-0000000000{n:02x}")).unwrap(),
+            kind,
+            name: format!("Member {n}"),
+            axis_points_mm: [[0.0; 3], [0.0, 0.0, 3000.0]],
+            profile,
+            roll_rad: None,
+            placement: Placement::IDENTITY,
+            material: None,
+        };
+        let members = super::evaluate_committed_members(
+            &[member(8, MemberKind::Column), member(3, MemberKind::Beam)],
+            &profiles,
+            &no_materials,
+        )
+        .unwrap();
+        assert!(members[0].authored.id < members[1].authored.id);
+        assert_eq!(members[0].quantities.volume_mm3, 200.0 * 300.0 * 3000.0);
+        let plates = evaluate_committed(&[plate(5, 1000.0, 0.0)]).unwrap();
+        let scene = scene_elements_with_members(&plates, &members).unwrap();
+        let ids: Vec<_> = scene.iter().map(SceneElement::id).collect();
+        let mut sorted = ids.clone();
+        sorted.sort();
+        assert_eq!(ids, sorted);
+        assert_eq!(scene.len(), 3);
+        // A dangling profile is rejected, never dropped.
+        let mut dangling = member(9, MemberKind::Beam);
+        dangling.profile = Sha256::digest(b"absent").unwrap();
+        assert_eq!(
+            super::evaluate_committed_members(&[dangling], &profiles, &no_materials)
+                .unwrap_err()
+                .code,
+            ErrorCode::NotFound
+        );
     }
 
     #[test]

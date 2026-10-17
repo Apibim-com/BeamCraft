@@ -186,6 +186,7 @@ fn authored_batch() -> Vec<Change> {
                     [0.0, 500.0, 0.0],
                 ],
                 thickness_mm: 10.0,
+                holes: Vec::new(),
             },
             placement: pose(),
             material: Some(r[1].digest),

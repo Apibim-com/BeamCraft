@@ -583,3 +583,22 @@ volume of a box cut by a half-space (tests only), and the G05/G06 mathematics of
 third-party code, crate, test or data and no commercial-product material was consulted; there is
 no copied asset. The clean-room input list of this task is the repository's own kernel code and
 documents named in the task, and the public mathematics above.
+
+## P03: straight member (`member` module)
+
+`straight_member(StraightMember { start, end, width_mm, height_mm, roll_rad })` builds the F06
+section 6 box of a centred rectangle section along an axis, in the certified `geom::MemberFrame`
+(F06 section 4 rules 1 to 3: default frame by the horizontal or near-vertical rule, explicit roll,
+frame certificate). It returns the same sealed `PlateResult` as `rectangular_plate`: 8 vertices,
+12 triangles, 6 faces (`f.x0 .. f.z1`, `z0` is the end face at `p1`), one 392-byte BCMESH01 blob,
+volume `(width * height) * axis length`, and the body-scaled tolerance. The shared self-check now
+takes the six outward face normals, so a rotated frame is checked against its own normals and not
+against the axes. Failures are one typed diagnostic with the new fields `axis_points_mm`, `profile`
+and `roll_rad`; an axis shorter than the floor is `GEO_BELOW_MINIMUM` on the axis (`INVALID_ARGUMENT`).
+
+Verified by `tests/member.rs` against hand-derived closed forms: a vertical axis (`X_m = +X`,
+`Y_m = +Y`), a horizontal axis along `+X` (`Z_m = +X`, `Y_m = +Z`, `X_m = +Y`), a quarter-turn roll,
+a tilted axis with a 7000 mm length from `(2000, 3000, 6000)`, divergence-theorem volumes of the mesh,
+and the typed failures. Not here: other profile kinds, element placement rotation, sin/cos
+reproducibility across targets (still the open owner decision of `geom`), keys and FeatureId tables
+beyond the plate/member box tokens.

@@ -86,6 +86,12 @@ pub enum Field {
     Volume,
     /// Host cancellation request.
     Cancellation,
+    /// Member axis points.
+    Axis,
+    /// Member section width or height.
+    Section,
+    /// Member roll angle.
+    Roll,
 }
 
 impl Field {
@@ -99,6 +105,9 @@ impl Field {
             Self::Mesh => "mesh",
             Self::Volume => "volume_mm3",
             Self::Cancellation => "cancellation",
+            Self::Axis => "axis_points_mm",
+            Self::Section => "profile",
+            Self::Roll => "roll_rad",
         }
     }
 }

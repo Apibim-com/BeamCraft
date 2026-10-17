@@ -29,6 +29,7 @@ use crate::plate::{
 };
 use beamcraft_engine::command::MaterialInfo;
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
+use beamcraft_engine::member::ProfileInfo;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
     Author, Definition, EditTargets, Prepare, Resource, schema_identity,
@@ -213,6 +214,32 @@ pub(crate) fn material_lookup(
             ErrorCode::NotFound,
             "material_digest",
             "material definition is not in the model",
+        )),
+    }
+}
+
+/// Resolves a pinned profile against the definitions of a stage: absent is `NOT_FOUND`, a
+/// material is `INVALID_ARGUMENT`.
+pub(crate) fn profile_lookup(
+    definitions: &BTreeMap<ContentDigest, DefinitionRecord>,
+) -> impl Fn(&ContentDigest) -> Result<ProfileInfo, CommandError> + '_ {
+    move |digest| match definitions.get(digest) {
+        Some(DefinitionRecord::RectangleProfile {
+            width_mm,
+            height_mm,
+        }) => Ok(ProfileInfo {
+            width_mm: *width_mm,
+            height_mm: *height_mm,
+        }),
+        Some(DefinitionRecord::Material { .. }) => Err(CommandError::new(
+            ErrorCode::InvalidArgument,
+            "profile_digest",
+            "digest names a material, not a profile",
+        )),
+        None => Err(CommandError::new(
+            ErrorCode::NotFound,
+            "profile_digest",
+            "profile definition is not in the model",
         )),
     }
 }

@@ -32,6 +32,59 @@ def close(actual, expected, rel=1e-6):
     return abs(actual - expected) <= rel * abs(expected)
 
 
+def check_member(stage, member, check, report):
+    """A beam or column: authored inputs, pinned profile, closed-form volume, bounds, mass."""
+    path = "/World/Steel/E_" + member["id"].replace("-", "")
+    prim = stage.GetPrimAtPath(path)
+    check(prim.IsValid(), "missing prim " + path)
+    if not prim.IsValid():
+        return
+    check(prim.GetTypeName() == "Xform", "member is not an Xform")
+    check(prim.GetAttribute("bim:id").Get() == member["id"], "bim:id is not the full UUID")
+    check(prim.GetAttribute("bim:name").Get() == member["name"], "bim:name differs")
+    check(prim.GetAttribute("bim:elementKind").Get() == member["kind"], "bim:elementKind differs")
+    check(prim.GetAttribute("bim:geometryMode").Get() == "parametric", "geometryMode differs")
+    axis = [tuple(p) for p in prim.GetAttribute("bim:axisPointsMm").Get()]
+    check(axis == [tuple(p) for p in member["axis"]], "axis differs: %r" % axis)
+    roll = prim.GetAttribute("steel:member:rollRad")
+    if member["roll"] is not None:
+        check(roll.IsValid() and roll.Get() == member["roll"], "roll differs")
+    profile = prim.GetRelationship("bim:profile")
+    targets = [t.pathString for t in profile.GetTargets()] if profile else []
+    profile_path = "/World/Definitions/D_" + member["profile"]
+    check(targets == [profile_path], "profile target differs: %r" % targets)
+    definition = stage.GetPrimAtPath(profile_path)
+    check(definition.IsValid(), "missing profile definition prim")
+    if definition.IsValid():
+        check(definition.GetAttribute("bim:definitionKind").Get() == "rectangle", "profile kind differs")
+        check(definition.GetAttribute("bim:units").Get() == "mm", "profile units differ")
+        check(definition.GetAttribute("steel:profile:widthMm").Get() == member["width"], "profile width differs")
+        check(definition.GetAttribute("steel:profile:heightMm").Get() == member["height"], "profile height differs")
+    mesh = UsdGeom.Mesh(stage.GetPrimAtPath(path + "/Geometry"))
+    check(bool(mesh), "Geometry is not a UsdGeom.Mesh")
+    points = mesh.GetPointsAttr().Get()
+    counts = mesh.GetFaceVertexCountsAttr().Get()
+    indices = mesh.GetFaceVertexIndicesAttr().Get()
+    check(len(points) == 8 and len(counts) == 12 and len(indices) == 36, "mesh counts differ")
+    check(mesh.GetOrientationAttr().Get() == UsdGeom.Tokens.rightHanded, "orientation differs")
+    check(mesh.GetSubdivisionSchemeAttr().Get() == UsdGeom.Tokens.none, "subdivision differs")
+    volume = signed_volume(points, counts, indices)
+    check(volume > 0.0, "mesh is not outward oriented (negative volume)")
+    check(close(volume, member["volume_mm3"]), "pxr-read volume %r != closed form %r" % (volume, member["volume_mm3"]))
+    check(close(volume, member["cli_volume_mm3"]), "pxr-read volume differs from the CLI output")
+    lo = [min(p[i] for p in points) for i in range(3)]
+    hi = [max(p[i] for p in points) for i in range(3)]
+    check(
+        all(abs(a - b) <= 1e-3 for a, b in zip(lo, member["bounds_min"]))
+        and all(abs(a - b) <= 1e-3 for a, b in zip(hi, member["bounds_max"])),
+        "pxr bounds differ: %r %r" % (lo, hi),
+    )
+    if member["density"] is not None:
+        mass = (volume * member["density"]) / 1e9
+        check(close(mass, member["cli_mass_kg"]), "pxr-derived mass %r != CLI mass %r" % (mass, member["cli_mass_kg"]))
+    report["plates"].append({"id": member["id"], "volume_mm3": volume, "kind": member["kind"]})
+
+
 def main():
     root, expectation = sys.argv[1], sys.argv[2]
     with open(expectation, encoding="utf-8") as handle:
@@ -56,6 +109,9 @@ def main():
     report = {"usd_version": ".".join(str(v) for v in Usd.GetVersion()), "plates": []}
     cache = UsdGeom.BBoxCache(Usd.TimeCode.Default(), [UsdGeom.Tokens.default_])
     for plate in plates:
+        if plate.get("kind") in ("beam", "column"):
+            check_member(stage, plate, check, report)
+            continue
         path = "/World/Steel/E_" + plate["id"].replace("-", "")
         prim = stage.GetPrimAtPath(path)
         check(prim.IsValid(), "missing prim " + path)
@@ -77,11 +133,23 @@ def main():
         points = mesh.GetPointsAttr().Get()
         counts = mesh.GetFaceVertexCountsAttr().Get()
         indices = mesh.GetFaceVertexIndicesAttr().Get()
-        check(len(points) == 8 and len(counts) == 12 and len(indices) == 36, "mesh counts differ")
+        holes = plate.get("hole_counts")
+        if holes is None:
+            check(len(points) == 8 and len(counts) == 12 and len(indices) == 36, "mesh counts differ")
+        else:
+            # A plate with through holes: the authored polygons are plain USD arrays, the mesh is
+            # a larger closed triangle mesh and the volume is the closed form of the polygons.
+            hole_counts = list(prim.GetAttribute("steel:plate:holeVertexCounts").Get())
+            hole_points = prim.GetAttribute("steel:plate:holePointsMm").Get()
+            check(hole_counts == holes, "hole vertex counts differ: %r" % hole_counts)
+            check(len(hole_points) == sum(holes), "hole point count differs")
+            check(all(tuple(p)[2] == 0.0 for p in hole_points), "a hole point is not in the XY plane")
+            check(all(c == 3 for c in counts) and len(indices) == 3 * len(counts), "mesh is not a triangle mesh")
+            check(len(counts) > 12, "a plate with holes has more than 12 triangles")
         check(mesh.GetOrientationAttr().Get() == UsdGeom.Tokens.rightHanded, "orientation differs")
         check(mesh.GetSubdivisionSchemeAttr().Get() == UsdGeom.Tokens.none, "subdivision differs")
         volume = signed_volume(points, counts, indices)
-        expected = w * l * plate["thickness"]
+        expected = plate.get("expected_volume_mm3", w * l * plate["thickness"])
         check(volume > 0.0, "mesh is not outward oriented (negative volume)")
         check(close(volume, expected), "pxr-read volume %r != closed form %r" % (volume, expected))
         check(close(volume, plate["cli_volume_mm3"]), "pxr-read volume differs from the CLI output")

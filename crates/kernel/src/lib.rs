@@ -13,6 +13,7 @@ pub mod build;
 pub mod diagnostic;
 pub mod feature_id;
 pub mod input;
+pub mod member;
 pub mod mesh;
 pub mod profile;
 pub mod result;
@@ -31,4 +32,5 @@ pub mod verdict;
 
 pub use build::{rectangular_plate, rectangular_plate_with_cancel};
 pub use input::RectangularPlate;
+pub use member::{StraightMember, straight_member};
 pub use result::PlateResult;
