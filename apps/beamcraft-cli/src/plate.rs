@@ -1225,6 +1225,18 @@ pub(crate) fn publish_revision(
     Ok(store.commit_with(&draft, request.expected, Some(&PlateVerifier), hook)?)
 }
 
+/// Commits a complete layer set through U06/U07 with the content verifier of this module (U03
+/// index, structural validation, kernel re-evaluation of every element). Used where the layers
+/// already exist as bytes, such as forking and publishing a workspace.
+pub(crate) fn commit_verified(
+    store: &RevisionStore,
+    draft: &RevisionDraft,
+    expected: &ExpectedBase,
+    hook: &mut dyn CommitHook,
+) -> Result<Committed, PlateError> {
+    Ok(store.commit_with(draft, expected, Some(&PlateVerifier), hook)?)
+}
+
 /// A plate as listed from a committed revision.
 #[derive(Debug, Clone)]
 pub struct Inspection {
