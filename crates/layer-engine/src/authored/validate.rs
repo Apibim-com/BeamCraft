@@ -560,6 +560,14 @@ pub(super) fn changes(
         let path = element_path(id)?;
         owned(prims, &path, true)?;
         let existing = prims.iter().find(|p| p.path == path);
+        if matches!(change, Change::Delete { .. })
+            && input.changes.iter().filter(|c| c.key().0 == id).count() > 1
+        {
+            return Err(fail(
+                ErrorCode::MalformedCommand,
+                "a delete cannot be combined with other changes of the element",
+            ));
+        }
         match change {
             Change::Create(_) if existing.is_some() => {
                 return Err(fail(ErrorCode::DuplicateId, "element already exists"));
@@ -621,6 +629,18 @@ pub(super) fn changes(
                 &[Group::Placement, Group::Derived],
             ),
             Change::Mesh(_) => (&[Group::Lifecycle, Group::ShapeInputs], &[Group::Derived]),
+            Change::Delete { .. } => (
+                &[Group::Lifecycle, Group::Relationship],
+                &[
+                    Group::Lifecycle,
+                    Group::Label,
+                    Group::ShapeInputs,
+                    Group::Placement,
+                    Group::Material,
+                    Group::Relationship,
+                    Group::Derived,
+                ],
+            ),
             _ => (
                 &[Group::Lifecycle, Group::ShapeInputs],
                 &[Group::ShapeInputs, Group::Derived],
@@ -638,8 +658,10 @@ pub(super) fn changes(
                 group,
             });
         }
-        if !matches!(change, Change::Label { .. } | Change::Create(_))
-            && let Some(p) = existing
+        if !matches!(
+            change,
+            Change::Label { .. } | Change::Create(_) | Change::Delete { .. }
+        ) && let Some(p) = existing
         {
             for target in p
                 .relationships

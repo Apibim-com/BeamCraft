@@ -61,8 +61,11 @@ are not authenticated by this library. Dropping the process or library is not ev
 of rollback. Durable outcome queries, recovery, op_id replay and publication remain host
 duties. Saved bytes are not an atomic U06 publication.
 
-Changes cover create, label, contour, thickness, axis, roll, profile, material, placement
-and transferred meshes. Optional roll distinguishes value, declaration without default,
+Changes cover create, delete, label, contour, thickness, axis, roll, profile, material, placement
+and transferred meshes. A delete removes the whole element prim from the authored layer and its
+result prims from the derived layer (every group is written; both layers must own it, and a
+delete cannot share a batch with another change of the element); that nothing links to it is
+proved separately with `Author::check_delete`. Optional roll distinguishes value, declaration without default,
 block and property removal. A material distinguishes one pinned target, an explicit empty
 list and removal; omitting a change leaves it untouched. Every contributing source and
 ancestor must be owned, including sources contributed through references. Unsupported

@@ -7,6 +7,7 @@
 
 pub mod copy;
 pub mod definition;
+pub mod delete;
 pub mod edit;
 pub mod history;
 pub mod member;

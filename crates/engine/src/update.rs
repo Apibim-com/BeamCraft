@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! `UpdateElement` for the supported fields (F04 section 7, P04): a typed patch of the label, the
-//! material reference and a plate's thickness.
+//! `UpdateElement` for the supported fields (F04 section 7, P04, P08): a typed patch of the label,
+//! the material reference, a plate's thickness and the placement translation (a move).
 //!
 //! The engine applies the patch to the authored state, re-evaluates what depends on it and says
 //! which groups changed, so the adapter writes only those:
@@ -12,13 +12,15 @@
 //! | `name` | no | no | untouched |
 //! | `material` | no | yes | quantity record only (same mesh bytes) |
 //! | `thickness_mm` | yes | yes | mesh and quantity record |
+//! | `translation_mm` | no | no | untouched (the body is element-local) |
 //!
-//! Fields outside this list (contour, axis, roll, profile, placement) are
+//! A move keeps the rotation and never touches the shape, the body or the stored quantities, so
+//! no geometry is copied or rebuilt. Fields outside this list (contour, axis, roll, profile) are
 //! `UNSUPPORTED_PROPERTY`: they belong to later tasks.
 
 use crate::command::AuthoredPlate;
 use crate::member::AuthoredMember;
-use beamcraft_model::command::{CommandError, ElementPatch};
+use beamcraft_model::command::{CommandError, ElementPatch, Placement};
 use beamcraft_model::error::ErrorCode;
 
 /// Which groups of an element a patch changes.
@@ -30,6 +32,8 @@ pub struct UpdateEffect {
     pub material: bool,
     /// A shape input changes, so the body is rebuilt.
     pub shape: bool,
+    /// The placement translation changes (a move); the body is untouched.
+    pub placement: bool,
 }
 
 /// The effect of a patch on the element it targets, ignoring whether a value really differs:
@@ -39,6 +43,7 @@ pub const fn effect(patch: &ElementPatch) -> UpdateEffect {
         name: patch.name.is_some(),
         material: patch.material.is_some(),
         shape: patch.thickness_mm.is_some(),
+        placement: patch.translation_mm.is_some(),
     }
 }
 
@@ -57,6 +62,7 @@ pub fn patch_plate(
     if let Some(thickness) = patch.thickness_mm {
         next.thickness_mm = thickness;
     }
+    next.placement = moved(&plate.placement, patch)?;
     Ok(next)
 }
 
@@ -80,13 +86,28 @@ pub fn patch_member(
     if let Some(material) = patch.material {
         next.material = material;
     }
+    next.placement = moved(&member.placement, patch)?;
+    Ok(next)
+}
+
+/// The placement after the patch: the translation is replaced, the rotation kept, and the result
+/// is validated (`LIMIT_EXCEEDED` outside the coordinate range).
+fn moved(placement: &Placement, patch: &ElementPatch) -> Result<Placement, CommandError> {
+    let Some(translation_mm) = patch.translation_mm else {
+        return Ok(*placement);
+    };
+    let next = Placement {
+        translation_mm,
+        orientation_xyzw: placement.orientation_xyzw,
+    };
+    next.validate()?;
     Ok(next)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use beamcraft_model::command::{MemberKind, Placement};
+    use beamcraft_model::command::MemberKind;
     use beamcraft_model::digest::Sha256;
     use beamcraft_model::id::ElementId;
 
@@ -118,7 +139,8 @@ mod tests {
             UpdateEffect {
                 name: true,
                 material: false,
-                shape: false
+                shape: false,
+                placement: false
             }
         );
         let clear = ElementPatch {
@@ -126,6 +148,38 @@ mod tests {
             ..ElementPatch::default()
         };
         assert!(effect(&clear).material && !effect(&clear).shape);
+        let shift = ElementPatch {
+            translation_mm: Some([1.0, 2.0, 3.0]),
+            ..ElementPatch::default()
+        };
+        assert!(effect(&shift).placement && !effect(&shift).shape && !effect(&shift).material);
+    }
+
+    #[test]
+    fn a_move_replaces_the_translation_keeps_the_rotation_and_the_shape() {
+        let mut turned = plate();
+        turned.placement.orientation_xyzw = [0.0, 0.0, 1.0, 0.0];
+        let next = patch_plate(
+            &turned,
+            &ElementPatch {
+                translation_mm: Some([5.0, 6.0, 7.0]),
+                ..ElementPatch::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(next.placement.translation_mm, [5.0, 6.0, 7.0]);
+        assert_eq!(next.placement.orientation_xyzw, [0.0, 0.0, 1.0, 0.0]);
+        assert_eq!(next.contour_points_mm, turned.contour_points_mm);
+        assert_eq!(next.thickness_mm, turned.thickness_mm);
+        let far = patch_plate(
+            &plate(),
+            &ElementPatch {
+                translation_mm: Some([2e9, 0.0, 0.0]),
+                ..ElementPatch::default()
+            },
+        )
+        .unwrap_err();
+        assert_eq!(far.code, ErrorCode::LimitExceeded);
     }
 
     #[test]
