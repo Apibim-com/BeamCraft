@@ -1,0 +1,7 @@
+// SPDX-License-Identifier: MPL-2.0
+// SPDX-FileCopyrightText: 2026 Apibim
+
+//! BeamCraft command-line interface library: the P01 plate adapter shared by the `beamcraft`
+//! binary and its tests. Nothing depends on this package; it is the application layer.
+
+pub mod plate;

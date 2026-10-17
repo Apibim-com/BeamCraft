@@ -1,0 +1,876 @@
+// SPDX-License-Identifier: MPL-2.0
+// SPDX-FileCopyrightText: 2026 Apibim
+
+//! P01 adapter: the first end-to-end plate, from `CreatePlate` to a committed USD revision and
+//! back.
+//!
+//! The engine (`beamcraft-engine`) validates the command and builds the kernel body; this module
+//! is the thin wiring that the module table assigns to the application layer, because only the
+//! application may link both the layer engine (USD authoring and reading) and the host
+//! (revision store, ledger). It computes no geometry:
+//!
+//! ```text
+//! CreatePlate --engine--> authored state + kernel body + footprint
+//!   --layer engine (U02)--> model layer + derived layer bytes (standard USD, no plugin)
+//!   --host (U06/U07)--> blobs, intent, verified U03 index, atomic root switch, outcome
+//! reopen: verified revision --layer engine (U01/U03)--> authored plates --engine--> snapshot
+//! ```
+//!
+//! # Scope and honesty
+//!
+//! * One implicit personal workspace per store: project and workspace identities are taken from
+//!   the first revision (or supplied for the first one), the generation is the head's plus one.
+//!   `CreatePlate` and `CommitWorkspace` are fused: a successful call is a published revision.
+//!   Workspaces, drafts and undo (P06, P07) do not exist.
+//! * The layer engine runs **in this process**. The owner decision of 2026-10-16 places it in a
+//!   separate process (LEW-03 containment); there is no authoring message in the frozen U04
+//!   profile, so this path has no process isolation and must not be treated as a hostile-parser
+//!   boundary.
+//! * Replay (`op_id`): an operation the host ledger proves committed is compared with the
+//!   element of that id in the head revision. This is sound only while no command edits or
+//!   deletes elements (true in P01); the stored canonical request of F05 replaces it.
+//! * Quantities are returned, not stored: the pinned U02 schema has no quantity attributes.
+
+use beamcraft_engine::command::AuthoredPlate;
+use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
+use beamcraft_engine::query::committed::{PlateRecord, evaluate_committed, ids, scene_elements};
+use beamcraft_engine::transaction::{Admission, PriorOp, admit_create_plate};
+use beamcraft_engine::{Limits, ViewPin, ViewSnapshot};
+use beamcraft_host::ledger::Outcome;
+use beamcraft_host::revision::{
+    CommitHook, CommitOutcome, ContentRejection, ContentVerifier, ExpectedBase, IndexEvidence,
+    LayerEntry, LayerRole, RevisionDraft, RevisionError, RevisionInfo, RevisionStore, Uuid7,
+    VerifiedLayer,
+};
+use beamcraft_layer_engine::authored::{
+    Author, Change, EditTargets, Element, Group as LayerGroup, Placement as LayerPlacement,
+    Prepare, Shape, schema_identity, validate_layers,
+};
+use beamcraft_layer_engine::index::Completeness;
+use beamcraft_layer_engine::{
+    Asset, BACKEND, Budgets, Cancellation, Control, Diagnostic, Identity, OpenRequest, Opened,
+    Prim, Profile, Reader, Value,
+};
+use beamcraft_model::command::{CommandError, CreatePlate};
+use beamcraft_model::digest::{ContentDigest, Sha256};
+use beamcraft_model::error::ErrorCode;
+use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use std::collections::{BTreeMap, BTreeSet};
+use std::time::{Duration, Instant};
+
+/// Virtual name of the root layer.
+pub const ROOT_LAYER: &str = "root.usda";
+/// Virtual name of the authored (model) layer.
+pub const AUTHORED_LAYER: &str = "authored.usda";
+/// Virtual name of the derived (geometry) layer.
+pub const DERIVED_LAYER: &str = "derived.usda";
+
+const EMPTY_ROOT: &str = "#usda 1.0\n(\n    defaultPrim = \"World\"\n    metersPerUnit = 0.001\n    subLayers = [@authored.usda@, @derived.usda@]\n    upAxis = \"Z\"\n)\n";
+const EMPTY_LAYER: &str = "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n)\n";
+
+/// A typed failure: a stable F04 code and a fixed safe message. No paths, no OS text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlateError {
+    /// Stable F04 code.
+    pub code: ErrorCode,
+    /// Fixed ASCII explanation.
+    pub message: &'static str,
+}
+
+impl PlateError {
+    const fn new(code: ErrorCode, message: &'static str) -> Self {
+        Self { code, message }
+    }
+}
+
+impl From<CommandError> for PlateError {
+    fn from(error: CommandError) -> Self {
+        Self::new(error.code, error.message)
+    }
+}
+
+impl From<Diagnostic> for PlateError {
+    fn from(error: Diagnostic) -> Self {
+        Self::new(error.code, error.message)
+    }
+}
+
+impl From<ContentRejection> for PlateError {
+    fn from(error: ContentRejection) -> Self {
+        Self::new(error.code, error.message)
+    }
+}
+
+impl From<RevisionError> for PlateError {
+    fn from(error: RevisionError) -> Self {
+        match error {
+            RevisionError::Content(rejection) => rejection.into(),
+            other => Self::new(other.code(), "revision store rejected the operation"),
+        }
+    }
+}
+
+impl std::fmt::Display for PlateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.code, self.message)
+    }
+}
+
+impl std::error::Error for PlateError {}
+
+fn integrity(message: &'static str) -> PlateError {
+    PlateError::new(ErrorCode::IntegrityError, message)
+}
+
+fn control() -> Control {
+    Control {
+        cancellation: Cancellation::default(),
+        deadline: Instant::now() + Duration::from_secs(60),
+    }
+}
+
+fn digest_of(bytes: &[u8]) -> Result<ContentDigest, PlateError> {
+    Sha256::digest(bytes).map_err(|_| PlateError::new(ErrorCode::LimitExceeded, "layer too large"))
+}
+
+fn host_uuid(text: &str) -> Result<Uuid7, PlateError> {
+    Uuid7::parse(text).map_err(PlateError::from)
+}
+
+/// The pin of the context that has no base revision.
+fn initial_pin() -> Result<ContentDigest, PlateError> {
+    digest_of(b"beamcraft-p01-initial-base")
+}
+
+fn role_of(name: &str) -> LayerRole {
+    if name == DERIVED_LAYER {
+        LayerRole::Derived
+    } else {
+        LayerRole::Authored
+    }
+}
+
+fn open_request(
+    project: &str,
+    workspace: &str,
+    revision: ContentDigest,
+    generation: u64,
+    assets: Vec<Asset>,
+) -> Result<OpenRequest, PlateError> {
+    let owned_layers = assets.iter().map(|a| a.name.clone()).collect();
+    let mut request = OpenRequest {
+        identity: Identity {
+            project: project.into(),
+            workspace: workspace.into(),
+            revision,
+            generation,
+        },
+        root: ROOT_LAYER.into(),
+        assets,
+        owned_layers,
+        manifest: digest_of(b"placeholder")?,
+        backend: BACKEND,
+        profile: Profile::StaticLocal,
+        budgets: Budgets::default(),
+    };
+    request.manifest = request.manifest_digest()?;
+    Ok(request)
+}
+
+fn asset(name: &str, bytes: &[u8]) -> Result<Asset, PlateError> {
+    Ok(Asset {
+        name: name.into(),
+        digest: digest_of(bytes)?,
+        bytes: bytes.to_vec(),
+    })
+}
+
+/// Derived mesh as read back from a derived layer.
+#[derive(Debug, Clone, PartialEq)]
+struct DerivedMesh {
+    points: Vec<[f32; 3]>,
+    counts: Vec<i64>,
+    indices: Vec<i64>,
+    shape_key: String,
+    orientation: String,
+    subdivision: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct Decoded {
+    plates: Vec<(AuthoredPlate, Option<DerivedMesh>)>,
+    other_elements: usize,
+}
+
+fn number(value: &Value) -> Option<f64> {
+    match value {
+        Value::Number(n) => Some(*n),
+        _ => None,
+    }
+}
+
+fn integer(value: &Value) -> Option<i64> {
+    match value {
+        Value::Int(n) => Some(*n),
+        Value::Uint(n) => i64::try_from(*n).ok(),
+        _ => None,
+    }
+}
+
+fn numbers<const N: usize>(value: &Value) -> Option<[f64; N]> {
+    let Value::Array(items) = value else {
+        return None;
+    };
+    let parsed: Vec<f64> = items.iter().map(number).collect::<Option<_>>()?;
+    parsed.try_into().ok()
+}
+
+fn text(value: &Value) -> Option<&str> {
+    match value {
+        Value::Text(t) => Some(t),
+        _ => None,
+    }
+}
+
+fn property<'a>(prim: &'a Prim, name: &str) -> Option<&'a Value> {
+    prim.properties
+        .iter()
+        .find(|p| p.name == name)
+        .and_then(|p| p.value.as_ref())
+}
+
+fn decode_plate(prim: &Prim, id: ElementId) -> Result<AuthoredPlate, PlateError> {
+    let bad = || integrity("committed plate lacks a required authored input");
+    let name = property(prim, "bim:name").and_then(text).ok_or_else(bad)?;
+    let thickness = property(prim, "steel:plate:thicknessMm")
+        .and_then(number)
+        .ok_or_else(bad)?;
+    let Some(Value::Array(points)) = property(prim, "steel:plate:contourPointsMm") else {
+        return Err(bad());
+    };
+    let contour = points
+        .iter()
+        .map(numbers::<3>)
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(bad)?;
+    let translation = property(prim, "xformOp:translate")
+        .and_then(numbers::<3>)
+        .ok_or_else(bad)?;
+    let [w, x, y, z] = property(prim, "xformOp:orient")
+        .and_then(numbers::<4>)
+        .ok_or_else(bad)?;
+    Ok(AuthoredPlate {
+        id,
+        name: name.to_owned(),
+        contour_points_mm: contour,
+        thickness_mm: thickness,
+        placement: beamcraft_model::command::Placement {
+            translation_mm: translation,
+            orientation_xyzw: [x, y, z, w],
+        },
+    })
+}
+
+fn decode_mesh(prim: &Prim) -> Option<DerivedMesh> {
+    let Value::Array(points) = property(prim, "points")? else {
+        return None;
+    };
+    let Value::Array(counts) = property(prim, "faceVertexCounts")? else {
+        return None;
+    };
+    let Value::Array(indices) = property(prim, "faceVertexIndices")? else {
+        return None;
+    };
+    let points = points
+        .iter()
+        .map(|p| {
+            let [x, y, z] = numbers::<3>(p)?;
+            Some([x as f32, y as f32, z as f32])
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(DerivedMesh {
+        points,
+        counts: counts.iter().map(integer).collect::<Option<_>>()?,
+        indices: indices.iter().map(integer).collect::<Option<_>>()?,
+        shape_key: property(prim, "bim:shapeKey").and_then(text)?.to_owned(),
+        orientation: property(prim, "orientation").and_then(text)?.to_owned(),
+        subdivision: property(prim, "subdivisionScheme")
+            .and_then(text)?
+            .to_owned(),
+    })
+}
+
+/// Reads every prim of the pinned stage and decodes the plates and their derived meshes.
+fn decode(reader: &Reader, opened: &Opened, control: &Control) -> Result<Decoded, PlateError> {
+    let mut prims = Vec::new();
+    let mut cursor = None;
+    loop {
+        let page = reader.read(&opened.context, cursor.as_ref(), control)?;
+        prims.extend(page.items);
+        match page.next {
+            Some(next) => cursor = Some(next),
+            None => break,
+        }
+    }
+    let by_path: BTreeMap<&str, &Prim> = prims.iter().map(|p| (p.path.as_str(), p)).collect();
+    let mut plates = Vec::new();
+    let mut other = 0usize;
+    for prim in &prims {
+        let Some(text_id) = prim.element_id.as_deref() else {
+            continue;
+        };
+        let id = ElementId::parse(text_id).map_err(|_| integrity("element id is not a UUIDv7"))?;
+        if prim.path != id.prim_path() {
+            return Err(integrity("element path does not match its id"));
+        }
+        if property(prim, "bim:elementKind").and_then(text) != Some("plate") {
+            other += 1;
+            continue;
+        }
+        let authored = decode_plate(prim, id)?;
+        let mesh = by_path
+            .get(format!("{}/Geometry", prim.path).as_str())
+            .and_then(|m| decode_mesh(m));
+        plates.push((authored, mesh));
+    }
+    Ok(Decoded {
+        plates,
+        other_elements: other,
+    })
+}
+
+fn kernel_mesh(record: &PlateRecord) -> Result<DerivedMesh, PlateError> {
+    let mesh = record.body.result.mesh();
+    let points = mesh
+        .vertices()
+        .iter()
+        .map(|p| {
+            let cast = [p.x as f32, p.y as f32, p.z as f32];
+            if cast.iter().all(|v| v.is_finite()) {
+                Ok(cast)
+            } else {
+                Err(PlateError::new(
+                    ErrorCode::UnsupportedGeometry,
+                    "mesh coordinate does not fit float32",
+                ))
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(DerivedMesh {
+        points,
+        counts: vec![3; mesh.triangles().len()],
+        indices: mesh
+            .triangles()
+            .iter()
+            .flatten()
+            .map(|i| i64::from(*i))
+            .collect(),
+        shape_key: mesh.mesh_digest().to_string(),
+        orientation: mesh.orientation().into(),
+        subdivision: mesh.subdivision_scheme().into(),
+    })
+}
+
+/// The committed derived mesh of every plate must be the kernel's mesh of its authored inputs.
+fn verify_derived(records: &[PlateRecord], decoded: &Decoded) -> Result<(), PlateError> {
+    let found: BTreeMap<ElementId, &Option<DerivedMesh>> =
+        decoded.plates.iter().map(|(a, m)| (a.id, m)).collect();
+    for record in records {
+        let expected = kernel_mesh(record)?;
+        match found.get(&record.authored.id) {
+            Some(Some(actual)) if *actual == expected => {}
+            Some(Some(_)) => return Err(integrity("derived mesh differs from the kernel result")),
+            _ => return Err(integrity("plate has no derived mesh")),
+        }
+    }
+    Ok(())
+}
+
+fn evidence(index: &beamcraft_layer_engine::index::ElementIndex) -> IndexEvidence {
+    let token = index.token();
+    IndexEvidence {
+        project: token.identity.project.clone(),
+        workspace: token.identity.workspace.clone(),
+        generation: token.identity.generation,
+        pinned_revision: token.identity.revision,
+        complete: token.completeness == Completeness::Complete,
+        structure_digest: token.structure_digest,
+        prim_count: token.prim_count as u64,
+    }
+}
+
+fn reject(error: impl Into<PlateError>) -> ContentRejection {
+    let error: PlateError = error.into();
+    ContentRejection {
+        code: error.code,
+        message: error.message,
+    }
+}
+
+/// Opens exactly the committed bytes in a fresh reader and derives everything from them, so the
+/// index and the verified plates cannot be stale, partial or foreign.
+struct PlateVerifier {
+    project: String,
+    workspace: String,
+    generation: u64,
+    pinned: ContentDigest,
+}
+
+impl ContentVerifier for PlateVerifier {
+    fn verify(&self, layers: &[VerifiedLayer<'_>]) -> Result<IndexEvidence, ContentRejection> {
+        let assets = layers
+            .iter()
+            .map(|l| Asset {
+                name: l.name.into(),
+                digest: l.digest,
+                bytes: l.bytes.to_vec(),
+            })
+            .collect();
+        let request = open_request(
+            &self.project,
+            &self.workspace,
+            self.pinned,
+            self.generation,
+            assets,
+        )
+        .map_err(reject)?;
+        let control = control();
+        let schema = schema_identity().map_err(reject)?;
+        validate_layers(request.clone(), schema, &control).map_err(reject)?;
+        let mut reader = Reader::default();
+        let opened = reader.open(request, &control).map_err(reject)?;
+        let index = reader
+            .element_index(&opened.context, &control)
+            .map_err(reject)?;
+        reader.verify_index(&index, &control).map_err(reject)?;
+        let decoded = decode(&reader, &opened, &control).map_err(reject)?;
+        let authored: Vec<AuthoredPlate> = decoded.plates.iter().map(|(a, _)| a.clone()).collect();
+        let records = evaluate_committed(&authored).map_err(reject)?;
+        verify_derived(&records, &decoded).map_err(reject)?;
+        Ok(evidence(&index))
+    }
+}
+
+/// One layer of a revision.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LayerSummary {
+    /// `authored`, `derived` or `external`.
+    pub role: &'static str,
+    /// Virtual layer name.
+    pub name: String,
+    /// Full SHA-256 of the layer bytes.
+    pub digest: ContentDigest,
+    /// Layer size in bytes.
+    pub size: u64,
+}
+
+/// What the host recorded about a revision.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RevisionSummary {
+    /// Full revision UUIDv7.
+    pub revision_id: String,
+    /// Head-log sequence.
+    pub sequence: u64,
+    /// SHA-256 of the manifest blob: the content identity of the revision.
+    pub manifest_digest: ContentDigest,
+    /// Project, workspace, operation and generation, when the manifest is available.
+    pub details: Option<RevisionDetails>,
+}
+
+/// Manifest fields of a revision.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RevisionDetails {
+    /// Project UUIDv7.
+    pub project: String,
+    /// Workspace UUIDv7.
+    pub workspace: String,
+    /// Operation that created the revision.
+    pub op: String,
+    /// Workspace generation.
+    pub generation: u64,
+    /// Layers in manifest order.
+    pub layers: Vec<LayerSummary>,
+    /// U03 index structure digest and prim count recorded at commit.
+    pub index: Option<(ContentDigest, u64)>,
+}
+
+fn summarize(info: &RevisionInfo) -> RevisionSummary {
+    let manifest = info.manifest();
+    let content = manifest.content();
+    RevisionSummary {
+        revision_id: info.revision().as_str().to_owned(),
+        sequence: info.sequence(),
+        manifest_digest: info.manifest_digest(),
+        details: Some(RevisionDetails {
+            project: content.project().as_str().to_owned(),
+            workspace: content.workspace().as_str().to_owned(),
+            op: content.op().as_str().to_owned(),
+            generation: content.workspace_generation(),
+            layers: content
+                .entries()
+                .iter()
+                .map(|e| LayerSummary {
+                    role: e.role().as_str(),
+                    name: e.name().to_owned(),
+                    digest: e.digest(),
+                    size: e.size(),
+                })
+                .collect(),
+            index: manifest.index().map(|i| (i.structure, i.prims)),
+        }),
+    }
+}
+
+/// Inputs of one `create_plate` call beyond the command itself.
+#[derive(Debug, Clone)]
+pub struct CreateRequest {
+    /// The logical operation. A retry with the same id and identical content is a replay.
+    pub op_id: OpId,
+    /// Identity of the revision this call creates. Only used when the call creates one.
+    pub revision_id: RevisionId,
+    /// The creating actor (trusted context, `bim:createdBy`).
+    pub actor: Uuid7,
+    /// Project of a store that has no revision yet. Ignored otherwise: the store's wins.
+    pub project: ProjectId,
+    /// Workspace of a store that has no revision yet. Ignored otherwise.
+    pub workspace: WorkspaceId,
+    /// The command.
+    pub command: CreatePlate,
+}
+
+/// Result of `create_plate`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Created {
+    /// True when the same operation was already committed and nothing was written.
+    pub replayed: bool,
+    /// The element the command created (or created earlier).
+    pub plate: PlateRecord,
+    /// The revision that holds it.
+    pub revision: RevisionSummary,
+    /// The footprint the engine declared; `None` for a replay, which applies nothing.
+    pub footprint: Option<Footprint>,
+}
+
+/// Revision id, sequence and manifest digest the host ledger recorded for an operation.
+type Recorded = (String, u64, ContentDigest);
+
+fn prior_op(
+    store: &RevisionStore,
+    op: &Uuid7,
+    command: &CreatePlate,
+    head_plates: &[PlateRecord],
+) -> Result<(PriorOp, Option<Recorded>), PlateError> {
+    match store.query_outcome(op)? {
+        Outcome::Committed {
+            revision,
+            sequence,
+            manifest,
+            ..
+        } => {
+            // The recorded request is reconstructed from the element of that id in the head
+            // model; an absent element can never match, so the command is reuse.
+            let fingerprint = match head_plates.iter().find(|r| r.authored.id == command.new_id) {
+                Some(record) => record.authored.to_command().content_fingerprint()?,
+                None => digest_of(b"no accepted request with this element id")?,
+            };
+            Ok((
+                PriorOp::Accepted { fingerprint },
+                Some((revision.as_str().to_owned(), sequence, manifest)),
+            ))
+        }
+        Outcome::Aborted { .. } | Outcome::NotFound => Ok((PriorOp::Unseen, None)),
+        Outcome::Unknown => Err(PlateError::new(
+            ErrorCode::OutcomeUnknown,
+            "the operation id may or may not have been committed; run revision-recover",
+        )),
+    }
+}
+
+fn layer_group(group: LayerGroup) -> Group {
+    match group {
+        LayerGroup::Lifecycle => Group::Lifecycle,
+        LayerGroup::Label => Group::Label,
+        LayerGroup::ShapeInputs => Group::ShapeInputs,
+        LayerGroup::Placement => Group::Placement,
+        LayerGroup::Material => Group::MaterialRef,
+        LayerGroup::Derived => Group::Derived,
+        LayerGroup::Relationship => Group::Relationship,
+    }
+}
+
+fn layer_entry(item: &beamcraft_layer_engine::authored::Footprint) -> Option<Entry> {
+    let target = match ElementId::parse(&item.identity) {
+        Ok(id) => Target::Element(id),
+        Err(_) => Target::Definition(item.identity.parse().ok()?),
+    };
+    Some(Entry {
+        target,
+        group: layer_group(item.group),
+    })
+}
+
+/// Creates one plate and publishes it as the next revision of the store, or replays it.
+///
+/// Steps, each failing closed: open and verify the head; decide replay from the host ledger;
+/// engine admission (`CreatePlate` validation, kernel body, footprint); U02 authoring of the
+/// model and derived layers over the head's layers; check that the layer engine's own write set
+/// is inside the engine's declared footprint; publish layer blobs; commit through U06/U07 with
+/// the verifier above (U03 index, structural validation, kernel re-evaluation of every plate);
+/// `hook` observes the commit points for fault injection (pass `&mut NoFault` in production).
+pub fn create_plate(
+    store: &RevisionStore,
+    request: &CreateRequest,
+    hook: &mut dyn CommitHook,
+) -> Result<Created, PlateError> {
+    let control = control();
+    let head = match store.open() {
+        Ok(revision) => Some(revision),
+        Err(RevisionError::NoRevision) => None,
+        Err(error) => return Err(error.into()),
+    };
+    let (project, workspace, base_digest, base_generation, assets, expected) = match &head {
+        Some(revision) => {
+            let content = revision.manifest().content();
+            let assets = content
+                .entries()
+                .iter()
+                .map(|e| {
+                    Ok(Asset {
+                        name: e.name().into(),
+                        digest: e.digest(),
+                        bytes: revision.layer_bytes(e.name())?,
+                    })
+                })
+                .collect::<Result<Vec<_>, PlateError>>()?;
+            (
+                content.project().as_str().to_owned(),
+                content.workspace().as_str().to_owned(),
+                revision.info().manifest_digest(),
+                content.workspace_generation(),
+                assets,
+                ExpectedBase::Revision(revision.info().revision().clone()),
+            )
+        }
+        None => (
+            request.project.to_string(),
+            request.workspace.to_string(),
+            initial_pin()?,
+            0,
+            vec![
+                asset(ROOT_LAYER, EMPTY_ROOT.as_bytes())?,
+                asset(AUTHORED_LAYER, EMPTY_LAYER.as_bytes())?,
+                asset(DERIVED_LAYER, EMPTY_LAYER.as_bytes())?,
+            ],
+            ExpectedBase::Initial,
+        ),
+    };
+    let base_request = open_request(&project, &workspace, base_digest, base_generation, assets)?;
+    let head_records = {
+        let mut reader = Reader::default();
+        let opened = reader.open(base_request.clone(), &control)?;
+        let decoded = decode(&reader, &opened, &control)?;
+        let authored: Vec<AuthoredPlate> = decoded.plates.iter().map(|(a, _)| a.clone()).collect();
+        evaluate_committed(&authored)?
+    };
+    let op_host = host_uuid(&request.op_id.to_string())?;
+    let (prior, recorded) = prior_op(store, &op_host, &request.command, &head_records)?;
+    let existing = ids(&head_records);
+    let admission =
+        admit_create_plate(request.op_id, &request.command, prior, &|id: &ElementId| {
+            existing.contains(id)
+        })?;
+    let transaction = match admission {
+        Admission::Replay => {
+            let record = head_records
+                .into_iter()
+                .find(|r| r.authored.id == request.command.new_id)
+                .ok_or_else(|| integrity("replayed element is absent from the head revision"))?;
+            let summary = match (&head, recorded) {
+                (Some(revision), Some((id, _, _))) if revision.info().revision().as_str() == id => {
+                    summarize(revision.info())
+                }
+                (_, Some((revision_id, sequence, manifest_digest))) => RevisionSummary {
+                    revision_id,
+                    sequence,
+                    manifest_digest,
+                    details: None,
+                },
+                _ => return Err(integrity("replay without a recorded revision")),
+            };
+            return Ok(Created {
+                replayed: true,
+                plate: record,
+                revision: summary,
+                footprint: None,
+            });
+        }
+        Admission::Apply(transaction) => *transaction,
+    };
+    let outcome = &transaction.outcome;
+    let record = PlateRecord {
+        authored: outcome.authored.clone(),
+        body: outcome.body.clone(),
+        quantities: outcome.quantities,
+    };
+    let schema = schema_identity()?;
+    let (mut author, opened) = Author::open(
+        base_request,
+        EditTargets {
+            authored: AUTHORED_LAYER.into(),
+            derived: DERIVED_LAYER.into(),
+        },
+        schema,
+        &control,
+    )?;
+    let mesh = kernel_mesh(&record)?;
+    let id_text = outcome.authored.id.to_string();
+    let placement = outcome.authored.placement;
+    let [qx, qy, qz, qw] = placement.orientation_xyzw;
+    let prepared = author.prepare(
+        Prepare {
+            context: opened.context.clone(),
+            op_id: request.op_id.to_string(),
+            actor: request.actor.to_string(),
+            schema,
+            resources: Vec::new(),
+            changes: vec![
+                Change::Create(Element {
+                    id: id_text.clone(),
+                    name: outcome.authored.name.clone(),
+                    shape: Shape::Plate {
+                        contour_mm: outcome.authored.contour_points_mm.clone(),
+                        thickness_mm: outcome.authored.thickness_mm,
+                    },
+                    placement: LayerPlacement {
+                        translation_mm: placement.translation_mm,
+                        orientation_xyzw: [qx, qy, qz, qw],
+                    },
+                    material: None,
+                }),
+                Change::Mesh(beamcraft_layer_engine::authored::Mesh {
+                    id: id_text,
+                    shape_key: record.body.result.mesh().mesh_digest(),
+                    points_mm: mesh.points.clone(),
+                    face_counts: vec![3; mesh.counts.len()],
+                    indices: mesh
+                        .indices
+                        .iter()
+                        .map(|i| i32::try_from(*i))
+                        .collect::<Result<_, _>>()
+                        .map_err(|_| integrity("mesh index does not fit"))?,
+                }),
+            ],
+        },
+        &control,
+    )?;
+    let observed: BTreeSet<Entry> = prepared
+        .writes
+        .iter()
+        .map(layer_entry)
+        .collect::<Option<_>>()
+        .ok_or_else(|| integrity("layer engine footprint names an unknown target"))?;
+    if !outcome.footprint.covers_writes(&observed) {
+        return Err(integrity(
+            "layer engine writes more than the engine footprint declares",
+        ));
+    }
+    let generation = base_generation.checked_add(1).ok_or(PlateError::new(
+        ErrorCode::LimitExceeded,
+        "generation exhausted",
+    ))?;
+    let mut entries = Vec::new();
+    for layer in &prepared.layers {
+        store
+            .blobs()
+            .publish(&layer.bytes)
+            .map_err(|e| PlateError::new(e.code(), "layer blob could not be stored"))?;
+        entries.push(LayerEntry::from_bytes(
+            &layer.name,
+            role_of(&layer.name),
+            &layer.bytes,
+        )?);
+    }
+    let draft = RevisionDraft {
+        project: host_uuid(&project)?,
+        workspace: host_uuid(&workspace)?,
+        revision: host_uuid(&request.revision_id.to_string())?,
+        op: op_host,
+        workspace_generation: generation,
+        schema: schema.digest,
+        root_layer: ROOT_LAYER.into(),
+        entries,
+    };
+    let verifier = PlateVerifier {
+        project,
+        workspace,
+        generation,
+        pinned: base_digest,
+    };
+    let committed = store.commit_with(&draft, &expected, Some(&verifier), hook)?;
+    Ok(Created {
+        replayed: committed.outcome == CommitOutcome::Replayed,
+        plate: record,
+        revision: summarize(&committed.info),
+        footprint: Some(transaction.outcome.footprint.clone()),
+    })
+}
+
+/// A plate as listed from a committed revision.
+#[derive(Debug, Clone)]
+pub struct Inspection {
+    /// The verified revision.
+    pub revision: RevisionSummary,
+    /// Committed plates in element-id order, re-evaluated by the engine.
+    pub plates: Vec<PlateRecord>,
+    /// Elements that are not plates (not created by this slice).
+    pub other_elements: usize,
+    /// The pinned view snapshot built from committed data.
+    pub snapshot: ViewSnapshot,
+}
+
+/// Opens the head revision with verification, reads its model and derived layers in a fresh
+/// reader, re-evaluates every plate with the kernel, checks the committed meshes against the
+/// kernel's and builds the pinned view snapshot.
+pub fn inspect(store: &RevisionStore) -> Result<Inspection, PlateError> {
+    let revision = store.open()?;
+    let content = revision.manifest().content();
+    let assets = content
+        .entries()
+        .iter()
+        .map(|e| {
+            Ok(Asset {
+                name: e.name().into(),
+                digest: e.digest(),
+                bytes: revision.layer_bytes(e.name())?,
+            })
+        })
+        .collect::<Result<Vec<_>, PlateError>>()?;
+    let request = open_request(
+        content.project().as_str(),
+        content.workspace().as_str(),
+        revision.info().manifest_digest(),
+        content.workspace_generation(),
+        assets,
+    )?;
+    let control = control();
+    let mut reader = Reader::default();
+    let opened = reader.open(request, &control)?;
+    let index = reader.element_index(&opened.context, &control)?;
+    reader.verify_index(&index, &control)?;
+    let decoded = decode(&reader, &opened, &control)?;
+    let authored: Vec<AuthoredPlate> = decoded.plates.iter().map(|(a, _)| a.clone()).collect();
+    let plates = evaluate_committed(&authored)?;
+    verify_derived(&plates, &decoded)?;
+    let pin = ViewPin::new(
+        revision.info().manifest_digest(),
+        content.workspace_generation(),
+    );
+    let snapshot = ViewSnapshot::build(pin, scene_elements(&plates)?, &Limits::default())
+        .map_err(|e| PlateError::new(e.f04_code(), "view snapshot could not be built"))?;
+    Ok(Inspection {
+        revision: summarize(revision.info()),
+        plates,
+        other_elements: decoded.other_elements,
+        snapshot,
+    })
+}

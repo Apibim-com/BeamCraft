@@ -1,0 +1,34 @@
+// SPDX-License-Identifier: MPL-2.0
+// SPDX-FileCopyrightText: 2026 Apibim
+
+//! The initial operating caps of F04 section 3, in one place.
+//!
+//! These are original first-slice constants, not vendor tolerances or promises of kernel
+//! accuracy. The geometric caps are the `beamcraft_geom::tolerance` constants (F06 section 4);
+//! this module adds the ones that belong to commands, labels and footprints. Callers may lower a
+//! limit, never raise it.
+
+pub use beamcraft_geom::tolerance::{
+    CONTOUR_POINT_CAP, COORDINATE_CAP_MM, DIMENSION_CAP_MM, PLATE_SIZE_CAP_MM, ROLL_CAP_RAD,
+};
+
+/// Encoded logical command, in bytes, before parsing.
+pub const MAX_COMMAND_BYTES: usize = 1_048_576;
+/// Nesting depth of a logical command.
+pub const MAX_COMMAND_DEPTH: usize = 16;
+/// One string, in UTF-8 bytes, unless a narrower field cap applies.
+pub const MAX_STRING_BYTES: usize = 4096;
+/// Shortest element label, in UTF-8 bytes.
+pub const MIN_LABEL_BYTES: usize = 1;
+/// Longest element label, in UTF-8 bytes.
+pub const MAX_LABEL_BYTES: usize = 256;
+/// Fewest contour points of a plate.
+pub const MIN_CONTOUR_POINTS: usize = 3;
+/// Largest material density in kg/m3, when authored in a definition.
+pub const MAX_DENSITY_KG_M3: f64 = 1_000_000.0;
+/// Most relationship targets of one element.
+pub const MAX_RELATIONSHIP_TARGETS: usize = 1024;
+/// Most derived footprint entries of one command.
+pub const MAX_FOOTPRINT_ENTRIES: usize = 4096;
+/// Largest deviation of a placement quaternion's squared norm from one.
+pub const ORIENTATION_NORM_TOLERANCE: f64 = 1e-6;

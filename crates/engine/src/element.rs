@@ -3,69 +3,18 @@
 
 //! Element identity and kind for the view contract.
 //!
-//! `ElementId` follows F04 section 2 (full UUIDv7, canonical lowercase). P01 plans
-//! `beamcraft_model::id`; until it lands this crate holds the same validated form, so the type
-//! can later become an alias of the model one without changing a signature. `ElementKind`
+//! `ElementId` is `beamcraft_model::id::ElementId` (F04 section 2: full UUIDv7, canonical
+//! lowercase); V02 held a private copy until P01 provided the model type. `ElementKind`
 //! mirrors the closed F10 section 2.1 registry; it classifies, it does not imply geometry.
 
 use crate::error::{ViewCode, ViewError};
-use core::fmt;
 
-/// A validated, canonical lowercase UUIDv7. Ordering is the canonical ASCII order of the text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ElementId([u8; 16]);
+pub use beamcraft_model::id::ElementId;
+use beamcraft_model::id::IdError;
 
-impl ElementId {
-    /// Parses the canonical `8-4-4-4-12` lowercase form; checks version 7 and the RFC variant.
-    pub fn parse(text: &str) -> Result<Self, ViewError> {
-        let invalid = || ViewError::new(ViewCode::IdInvalid);
-        let bytes = text.as_bytes();
-        if bytes.len() != 36 {
-            return Err(invalid());
-        }
-        let mut out = [0u8; 16];
-        let mut nibble = 0usize;
-        for (i, b) in bytes.iter().enumerate() {
-            if matches!(i, 8 | 13 | 18 | 23) {
-                if *b != b'-' {
-                    return Err(invalid());
-                }
-                continue;
-            }
-            let value = match *b {
-                b'0'..=b'9' => *b - b'0',
-                b'a'..=b'f' => *b - b'a' + 10,
-                _ => return Err(invalid()),
-            };
-            let slot = out.get_mut(nibble / 2).ok_or_else(invalid)?;
-            *slot = if nibble.is_multiple_of(2) {
-                value << 4
-            } else {
-                *slot | value
-            };
-            nibble += 1;
-        }
-        if out.get(6).map(|b| b >> 4) != Some(7) || out.get(8).map(|b| b >> 6) != Some(2) {
-            return Err(invalid());
-        }
-        Ok(Self(out))
-    }
-
-    /// The 16 raw bytes.
-    pub const fn as_bytes(&self) -> &[u8; 16] {
-        &self.0
-    }
-}
-
-impl fmt::Display for ElementId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (i, b) in self.0.iter().enumerate() {
-            if matches!(i, 4 | 6 | 8 | 10) {
-                f.write_str("-")?;
-            }
-            write!(f, "{b:02x}")?;
-        }
-        Ok(())
+impl From<IdError> for ViewError {
+    fn from(_: IdError) -> Self {
+        Self::new(ViewCode::IdInvalid)
     }
 }
 
@@ -237,7 +186,7 @@ mod tests {
             "０1990000-0000-7000-8000-000000000001",
         ] {
             assert_eq!(
-                ElementId::parse(bad).unwrap_err().code(),
+                ViewError::from(ElementId::parse(bad).unwrap_err()).code(),
                 ViewCode::IdInvalid,
                 "{bad:?}"
             );
