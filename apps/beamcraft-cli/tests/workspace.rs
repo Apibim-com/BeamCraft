@@ -286,3 +286,47 @@ fn bad_workspaces_are_rejected_without_writing() {
         "INVALID_ID"
     );
 }
+
+#[test]
+fn publish_takes_its_id_from_the_draft_and_aliases_of_the_published_store_are_refused() {
+    let f = Fixture::new();
+    let published = f.published();
+    let id = f.plate(&published, "Base plate");
+    let (dir, _) = f.fork("ws-a", USER_A);
+    f.ok_in(&dir, "update-element", &["--id", &id, "--name", "Draft"]);
+
+    // The draft head's id is the published revision id, so a retry in any process is the same
+    // request; a caller-chosen id would not be.
+    assert_eq!(
+        f.code_in(
+            &published,
+            "workspace-publish",
+            &["--workspace-dir", &dir, "--revision-id", USER_B]
+        ),
+        "INVALID_ARGUMENT"
+    );
+    let draft_head = text(
+        at(
+            &f.ok_in(&published, "workspace-status", &["--workspace-dir", &dir]),
+            &["workspace", "draft_head"],
+        ),
+        "revision_id",
+    );
+    f.ok_in(&published, "workspace-publish", &["--workspace-dir", &dir]);
+    let inspected = f.ok_in(&published, "plate-inspect", &[]);
+    assert_eq!(
+        text(at(&inspected, &["revision"]), "revision_id"),
+        draft_head
+    );
+
+    // `published/.` is the published store itself.
+    let alias = format!("{published}{}.", std::path::MAIN_SEPARATOR);
+    assert_eq!(
+        f.code_in(
+            &published,
+            "workspace-create",
+            &["--workspace-dir", &alias, "--user-id", USER_A]
+        ),
+        "INVALID_ARGUMENT"
+    );
+}

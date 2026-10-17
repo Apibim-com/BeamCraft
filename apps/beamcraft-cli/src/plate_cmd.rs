@@ -644,15 +644,22 @@ fn workspace_command(
     let dir = std::path::Path::new(
         given("--workspace-dir").ok_or_else(|| invalid("--workspace-dir is required"))?,
     );
-    let published_root = options.get("--store").copied().unwrap_or_default();
-    if dir == std::path::Path::new(published_root) {
-        return Err(invalid("the workspace directory is the published store"));
+    if command == "workspace-publish" && given("--revision-id").is_some() {
+        return Err(invalid(
+            "workspace-publish takes its revision id from the draft head",
+        ));
     }
     if command == "workspace-create" && !dir.exists() {
         std::fs::create_dir(dir).map_err(|_| PlateError {
             code: ErrorCode::BackendUnavailable,
             message: "workspace directory could not be created",
         })?;
+    }
+    // Compared after resolving aliases such as `PUBLISHED/.` or a link to the same directory.
+    let same_store = |a: &std::path::Path, b: &std::path::Path| matches!((std::fs::canonicalize(a), std::fs::canonicalize(b)), (Ok(a), Ok(b)) if a == b);
+    let published_root = options.get("--store").copied().unwrap_or_default();
+    if same_store(dir, std::path::Path::new(published_root)) {
+        return Err(invalid("the workspace directory is the published store"));
     }
     let blobs = BlobStore::new(dir).map_err(|e| PlateError {
         code: e.code(),
@@ -692,13 +699,7 @@ fn workspace_command(
             ),
         ])),
         _ => {
-            let published = publish_workspace(
-                store,
-                &workspace,
-                dir,
-                &uuid("--revision-id", &mut fresh)?,
-                &mut NoFault,
-            )?;
+            let published = publish_workspace(store, &workspace, dir, &mut NoFault)?;
             Ok(Json::object([
                 (
                     "outcome",

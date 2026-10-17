@@ -106,8 +106,9 @@ fn meta_path(dir: &Path) -> PathBuf {
 /// Reads and validates the metadata of a workspace directory.
 pub fn read_meta(dir: &Path) -> Result<WorkspaceMeta, PlateError> {
     let path = meta_path(dir);
-    let length = fs::metadata(&path).map_err(|_| unusable())?.len();
-    if length > META_CAP {
+    // A link is never followed: the metadata is a regular file inside the workspace.
+    let metadata = fs::symlink_metadata(&path).map_err(|_| unusable())?;
+    if !metadata.is_file() || metadata.len() > META_CAP {
         return Err(unusable());
     }
     let text = fs::read_to_string(&path).map_err(|_| unusable())?;
@@ -117,7 +118,16 @@ pub fn read_meta(dir: &Path) -> Result<WorkspaceMeta, PlateError> {
 /// Replaces the metadata atomically: a temporary file, synced, then renamed over the old one.
 fn write_meta(dir: &Path, meta: &WorkspaceMeta) -> Result<(), PlateError> {
     let temporary = dir.join(format!("{META_FILE}.tmp"));
-    let mut file = fs::File::create(&temporary).map_err(|_| unusable())?;
+    // Exclusive creation: a leftover or planted entry (even a link) is removed as an entry, never
+    // written through.
+    if fs::symlink_metadata(&temporary).is_ok() {
+        fs::remove_file(&temporary).map_err(|_| unusable())?;
+    }
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .map_err(|_| unusable())?;
     file.write_all(meta.encode().as_bytes())
         .and_then(|()| file.sync_all())
         .map_err(|_| unusable())?;
@@ -266,14 +276,14 @@ pub struct Published {
 /// Publishes the draft head as the next published revision, fast-forward only.
 ///
 /// The draft head's layers are committed to the published store with the draft head's revision id
-/// as the operation, so a retry after an interruption is recognised. The published head must still
+/// as both the operation and the published revision id, so a retry after an interruption (even in
+/// a new process) is the same request and is recognised. The published head must still
 /// be the base (`BASE_REVISION_MISMATCH` otherwise) and there must be something to publish
 /// (`INVALID_ARGUMENT`). On success the base moves to the new published revision.
 pub fn publish_workspace(
     published: &RevisionStore,
     workspace: &RevisionStore,
     dir: &Path,
-    revision_id: &Uuid7,
     hook: &mut dyn CommitHook,
 ) -> Result<Published, PlateError> {
     let meta = read_meta(dir)?;
@@ -332,7 +342,7 @@ pub fn publish_workspace(
     let next = RevisionDraft {
         project: published_content.project().clone(),
         workspace: published_content.workspace().clone(),
-        revision: revision_id.clone(),
+        revision: op.clone(),
         op,
         workspace_generation: generation,
         schema: content.schema(),
