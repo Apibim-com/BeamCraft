@@ -444,6 +444,11 @@ fn diagnostics_are_fixed_ascii_and_use_existing_f04_codes() {
             ErrorCode::InvalidArgument,
         ),
         (
+            Code::AxisTooShort,
+            "GEO_AXIS_TOO_SHORT",
+            ErrorCode::InvalidArgument,
+        ),
+        (
             Code::AboveLimit,
             "GEO_ABOVE_LIMIT",
             ErrorCode::LimitExceeded,

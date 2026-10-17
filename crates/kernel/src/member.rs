@@ -33,7 +33,7 @@ pub struct StraightMember {
     pub roll_rad: Option<f64>,
 }
 
-fn locate(input: &StraightMember, error: MathError) -> (Code, Field) {
+fn locate(input: &StraightMember, error: MathError) -> (Code, Field, Stage) {
     let scalars = [
         (input.start.x, Field::Axis, COORDINATE_CAP_MM),
         (input.start.y, Field::Axis, COORDINATE_CAP_MM),
@@ -51,7 +51,7 @@ fn locate(input: &StraightMember, error: MathError) -> (Code, Field) {
                 .iter()
                 .find(|(v, _, _)| !v.is_finite())
                 .map_or(Field::Mesh, |(_, f, _)| *f);
-            (Code::NonFinite, field)
+            (Code::NonFinite, field, Stage::Finiteness)
         }
         MathError::AboveLimit => {
             let field = scalars
@@ -64,13 +64,18 @@ fn locate(input: &StraightMember, error: MathError) -> (Code, Field) {
                     }
                 })
                 .map_or(Field::LocalSize, |(_, f, _)| *f);
-            (Code::AboveLimit, field)
+            (Code::AboveLimit, field, Stage::Caps)
         }
-        MathError::NotPositive => (Code::NotPositive, Field::Section),
-        MathError::BelowMinimum => (Code::BelowMinimum, Field::Section),
-        MathError::AxisTooShort | MathError::ZeroAxis => (Code::BelowMinimum, Field::Axis),
-        MathError::InvalidFrame | MathError::NumericUncertain | MathError::InvalidPointCount => {
-            (Code::NumericUncertain, Field::LocalSize)
+        MathError::NotPositive => (Code::NotPositive, Field::Section, Stage::Ranges),
+        MathError::BelowMinimum => (Code::BelowMinimum, Field::Section, Stage::Ranges),
+        MathError::AxisTooShort | MathError::ZeroAxis => {
+            (Code::AxisTooShort, Field::Axis, Stage::Ranges)
+        }
+        // F06 section 4 rule 2: a failed frame certificate is reported at the build stage.
+        MathError::InvalidFrame => (Code::NumericUncertain, Field::LocalSize, Stage::Build),
+        // F06 section 2 stage 3: a non-finite derived local size is a caps-stage finding.
+        MathError::NumericUncertain | MathError::InvalidPointCount => {
+            (Code::NumericUncertain, Field::LocalSize, Stage::Caps)
         }
     }
 }
@@ -90,12 +95,7 @@ pub fn straight_member(input: StraightMember) -> Result<PlateResult, Failure> {
         input.roll_rad,
     )
     .map_err(|error| {
-        let (code, field) = locate(&input, error);
-        let stage = match code {
-            Code::NonFinite => Stage::Finiteness,
-            Code::AboveLimit => Stage::Caps,
-            _ => Stage::Ranges,
-        };
+        let (code, field, stage) = locate(&input, error);
         Failure::one(code, field, stage)
     })?;
     let scale = frame.scale();
@@ -145,4 +145,47 @@ pub fn straight_member(input: StraightMember) -> Result<PlateResult, Failure> {
         volume_mm3,
         tolerance: scale.tolerance(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn input() -> StraightMember {
+        StraightMember {
+            start: Point3::ORIGIN,
+            end: Point3::new(0.0, 0.0, 1000.0),
+            width_mm: 200.0,
+            height_mm: 300.0,
+            roll_rad: None,
+        }
+    }
+
+    #[test]
+    fn every_math_error_has_the_f06_code_and_stage() {
+        // F06 sections 2 and 4: axis findings are GEO_AXIS_TOO_SHORT at the range stage, a
+        // failed frame certificate is GEO_NUMERIC_UNCERTAIN at the build stage (F06-NEG-31,
+        // F06-NEG-35) and a non-finite derived intermediate is the same code at the caps stage
+        // (F06-NEG-50).
+        let table = [
+            (MathError::AxisTooShort, Code::AxisTooShort, Stage::Ranges),
+            (MathError::ZeroAxis, Code::AxisTooShort, Stage::Ranges),
+            (
+                MathError::InvalidFrame,
+                Code::NumericUncertain,
+                Stage::Build,
+            ),
+            (
+                MathError::NumericUncertain,
+                Code::NumericUncertain,
+                Stage::Caps,
+            ),
+            (MathError::NotPositive, Code::NotPositive, Stage::Ranges),
+            (MathError::BelowMinimum, Code::BelowMinimum, Stage::Ranges),
+        ];
+        for (error, code, stage) in table {
+            let (got_code, _, got_stage) = locate(&input(), error);
+            assert_eq!((got_code, got_stage), (code, stage), "{error:?}");
+        }
+    }
 }

@@ -602,3 +602,15 @@ a tilted axis with a 7000 mm length from `(2000, 3000, 6000)`, divergence-theore
 and the typed failures. Not here: other profile kinds, element placement rotation, sin/cos
 reproducibility across targets (still the open owner decision of `geom`), keys and FeatureId tables
 beyond the plate/member box tokens.
+
+## G07: acceptance of the first scope
+
+[`docs/design/g07-kernel-first-scope-acceptance.md`](../../docs/design/g07-kernel-first-scope-acceptance.md)
+records the independent acceptance (ACCEPTED WITH CONDITIONS): the supported and unsupported lists,
+a trace of every validation-plan row and every F06 case to code and tests, the measured numbers and
+the preconditions for G08. G07 added `tests/g07_acceptance.rs` (member meshes against the F06 vertex
+lists, special-value sweeps over every public builder and operation, never-exact mesh probes, a
+near-tolerance cut, pinned blob digests), `examples/g07_bench.rs` (timing and determinism harness,
+`cargo run --release -p beamcraft-kernel --example g07_bench`) and `Code::AxisTooShort`
+(`GEO_AXIS_TOO_SHORT`), which the member builder now reports for an axis below the floor together
+with the contract's stages for a failed frame certificate and a non-finite derived scale.

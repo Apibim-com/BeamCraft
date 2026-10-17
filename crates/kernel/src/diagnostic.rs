@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! Typed F06 diagnostic subset for the rectangular plate builder.
+//! Typed F06 diagnostic subset for the rectangular plate and straight member builders.
 
 use beamcraft_model::error::ErrorCode;
 
@@ -24,7 +24,7 @@ pub enum Stage {
     Quantities,
 }
 
-/// Stable geometry error code; this enum covers only G02 failures.
+/// Stable geometry error code; this enum covers the plate and member builder failures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Code {
     /// Submitted NaN or infinity.
@@ -33,6 +33,8 @@ pub enum Code {
     NotPositive,
     /// A positive dimension below the scaled minimum.
     BelowMinimum,
+    /// A member axis of length zero or below the scaled minimum (F06 `GEO_AXIS_TOO_SHORT`).
+    AxisTooShort,
     /// A dimension above its cap.
     AboveLimit,
     /// A derived numeric value could not be certified.
@@ -50,6 +52,7 @@ impl Code {
             Self::NonFinite => "GEO_NON_FINITE",
             Self::NotPositive => "GEO_NOT_POSITIVE",
             Self::BelowMinimum => "GEO_BELOW_MINIMUM",
+            Self::AxisTooShort => "GEO_AXIS_TOO_SHORT",
             Self::AboveLimit => "GEO_ABOVE_LIMIT",
             Self::NumericUncertain => "GEO_NUMERIC_UNCERTAIN",
             Self::SelfCheckFailed => "GEO_SELF_CHECK_FAILED",
@@ -61,7 +64,9 @@ impl Code {
     pub const fn f04_code(self) -> ErrorCode {
         match self {
             Self::NonFinite => ErrorCode::NonFiniteNumber,
-            Self::NotPositive | Self::BelowMinimum => ErrorCode::InvalidArgument,
+            Self::NotPositive | Self::BelowMinimum | Self::AxisTooShort => {
+                ErrorCode::InvalidArgument
+            }
             Self::AboveLimit => ErrorCode::LimitExceeded,
             Self::NumericUncertain | Self::SelfCheckFailed => ErrorCode::UnsupportedGeometry,
             Self::Cancelled => ErrorCode::Cancelled,
