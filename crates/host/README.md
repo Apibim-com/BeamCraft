@@ -51,7 +51,9 @@ the compare-and-swap for the expected base.
 - `RevisionStore::commit(&draft, &expected)` / `commit_with(.., verifier, hook)`.
 - `RevisionStore::open()` verifies record, manifest, base link and every layer blob and
   refuses missing, corrupt, resized or torn state with `RevisionError` (`code()` maps to F04).
-- `ContentVerifier` is the injected content gate (layer engine, U03 evidence); `CommitHook`
+- `ContentVerifier` is the injected content gate (layer engine, U03 evidence). It receives a
+  `VerifyRequest` (layers plus the draft's root layer, schema, project, workspace, generation
+  and base pin) and its `IndexEvidence` must name that root and schema. `CommitHook`
   marks `Checked`, `IntentRecorded`, `BlobsVerified`, `ManifestStored`, `RecordStaged`,
   `Switched`, `Recorded`: abort before `Switched` leaves the root unchanged, a failure at
   `Switched` is `OutcomeUnknown`; a hook that unwinds simulates a crash (U07 fault injection).

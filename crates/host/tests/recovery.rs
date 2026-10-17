@@ -516,6 +516,44 @@ fn different_content_under_the_same_op_id_is_op_id_reuse_before_and_after_recove
 }
 
 #[test]
+fn an_op_id_is_bound_to_its_expected_base_too() {
+    // Unresolved attempt: the same content under a different expected base is another request.
+    let fx = Fixture::new();
+    let store = fx.store();
+    commit_n(&store, 1);
+    let d = draft(&store, 2);
+    crash_at(&store, &d, &expect(1), CommitPoint::RecordStaged);
+    assert_eq!(
+        store.commit(&d, &ExpectedBase::Initial).unwrap_err(),
+        RevisionError::OpIdReuse
+    );
+    quiescent(&store);
+    // Once the attempt is closed as not accepted the id is free again.
+    assert_eq!(
+        store.commit(&d, &expect(1)).unwrap().outcome,
+        CommitOutcome::Created
+    );
+
+    // Committed attempt, also after recovery: the original (now stale) base replays, another
+    // base is OP_ID_REUSE.
+    let fx = Fixture::new();
+    let store = fx.store();
+    let d = draft(&store, 1);
+    crash_at(&store, &d, &expect(0), CommitPoint::Switched);
+    quiescent(&store);
+    commit_n(&store, 2);
+    assert_eq!(
+        store.commit(&d, &expect(0)).unwrap().outcome,
+        CommitOutcome::Replayed
+    );
+    assert_eq!(
+        store.commit(&d, &expect(2)).unwrap_err(),
+        RevisionError::OpIdReuse
+    );
+    assert_eq!(store.head().unwrap().unwrap().sequence(), 2);
+}
+
+#[test]
 fn graceful_cancellation_is_recorded_and_a_failed_switch_hook_is_resolved_by_a_retry() {
     let fx = Fixture::new();
     let store = fx.store();

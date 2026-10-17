@@ -8,11 +8,11 @@
 use beamcraft_host::{
     ledger::{Outcome, OutcomeSource, RecoveryPolicy},
     revision::{
-        CommitOutcome, ExpectedBase, LayerEntry, LayerRole, RevisionDraft, RevisionError,
-        RevisionInfo, RevisionStore, Uuid7,
+        CommitOutcome, CommitPoint, ExpectedBase, Injected, LayerEntry, LayerRole, RevisionDraft,
+        RevisionError, RevisionInfo, RevisionStore, Uuid7,
     },
     storage::BlobStore,
-    worker::HostError,
+    worker::{Control, HostError},
 };
 use beamcraft_model::{ErrorCode, digest::ContentDigest};
 use beamcraft_protocol::json::Json;
@@ -93,10 +93,25 @@ fn summary(outcome: &str, info: &RevisionInfo) -> Json {
 
 /// `revision-commit`: all layer blobs must already be in the store (`blob-put`). Each
 /// `--layers` item is `ROLE:NAME:SHA256`; the size is taken from the verified stored bytes.
-pub(crate) fn commit(blobs: &BlobStore, options: &BTreeMap<&str, &str>) -> Result<Json, HostError> {
+/// The deadline and cancellation of `control` are honoured while preparing and at every commit
+/// point before the root switch; they are never checked after it.
+pub(crate) fn commit(
+    blobs: &BlobStore,
+    options: &BTreeMap<&str, &str>,
+    control: &Control,
+) -> Result<Json, HostError> {
+    commit_checked(blobs, options, &mut || control.remaining().map(|_| ()))
+}
+
+fn commit_checked(
+    blobs: &BlobStore,
+    options: &BTreeMap<&str, &str>,
+    check: &mut dyn FnMut() -> Result<(), HostError>,
+) -> Result<Json, HostError> {
     let get = |key: &str| options.get(key).copied().ok_or_else(invalid);
     let uuid = |key: &str| Uuid7::parse(get(key)?).map_err(failure);
     let digest = |key: &str| get(key)?.parse::<ContentDigest>().map_err(|_| invalid());
+    check()?;
     let mut entries = Vec::new();
     for item in get("--layers")?.split(',') {
         if entries.len() >= MAX_CLI_LAYERS {
@@ -109,6 +124,7 @@ pub(crate) fn commit(blobs: &BlobStore, options: &BTreeMap<&str, &str>) -> Resul
             return Err(invalid());
         };
         let layer = layer.parse::<ContentDigest>().map_err(|_| invalid())?;
+        check()?;
         let size = blobs
             .read(&layer)
             .map_err(|e| HostError::logical(e.code()))?
@@ -137,9 +153,28 @@ pub(crate) fn commit(blobs: &BlobStore, options: &BTreeMap<&str, &str>) -> Resul
         root_layer: get("--root-layer")?.to_owned(),
         entries,
     };
-    let committed = RevisionStore::new(blobs.clone())
-        .commit(&draft, &expected)
-        .map_err(failure)?;
+    // A failed check aborts at the next pre-switch point with the root unchanged and reports the
+    // original cancellation or deadline error. `Switched` is exempt: after it the revision is
+    // committed and a timeout would hide it.
+    let mut stopped = None;
+    let result = RevisionStore::new(blobs.clone()).commit_with(
+        &draft,
+        &expected,
+        None,
+        &mut |point: CommitPoint| {
+            if matches!(point, CommitPoint::Switched | CommitPoint::Recorded) {
+                return Ok(());
+            }
+            check().map_err(|error| {
+                stopped = Some(error);
+                Injected
+            })
+        },
+    );
+    let committed = match (result, stopped) {
+        (Err(RevisionError::Aborted(_)), Some(error)) => return Err(error),
+        (result, _) => result.map_err(failure)?,
+    };
     Ok(summary(
         match committed.outcome {
             CommitOutcome::Created => "revision_committed",
@@ -304,4 +339,97 @@ pub(crate) fn outcome(
         ]),
         Outcome::Unknown => return Err(HostError::logical(ErrorCode::OutcomeUnknown)),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    struct Store(std::path::PathBuf);
+    impl Store {
+        fn new() -> Self {
+            let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("target")
+                .join("u06-unit")
+                .join(format!(
+                    "{}-{}",
+                    std::process::id(),
+                    NEXT.fetch_add(1, Ordering::Relaxed)
+                ));
+            std::fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+    }
+    impl Drop for Store {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn run(
+        fail_at: Option<usize>,
+    ) -> (
+        usize,
+        Result<Json, HostError>,
+        Option<std::path::PathBuf>,
+        Store,
+    ) {
+        let store = Store::new();
+        let blobs = BlobStore::new(&store.0).unwrap();
+        let root = blobs.publish(b"#usda 1.0\n# root\n").unwrap().0;
+        let derived = blobs.publish(b"#usda 1.0\n# derived\n").unwrap().0;
+        let layers = format!("authored:root.usda:{root},derived:derived.usda:{derived}");
+        let schema = root.to_string();
+        let options = BTreeMap::from([
+            ("--layers", layers.as_str()),
+            ("--project-id", "0199e7a0-0000-7000-8000-000000000001"),
+            ("--workspace-id", "0199e7a0-0000-7000-8000-000000000002"),
+            ("--revision-id", "0199e7a0-0000-7000-8000-000000000003"),
+            ("--op-id", "0199e7a0-0000-7000-8000-000000000004"),
+            ("--generation", "7"),
+            ("--base", "none"),
+            ("--schema", schema.as_str()),
+            ("--root-layer", "root.usda"),
+        ]);
+        let mut calls = 0usize;
+        let result = commit_checked(&blobs, &options, &mut || {
+            calls += 1;
+            if fail_at == Some(calls) {
+                Err(HostError::logical(ErrorCode::BackendUnavailable))
+            } else {
+                Ok(())
+            }
+        });
+        let log = store.0.join("revisions");
+        (calls, result, log.exists().then_some(log), store)
+    }
+
+    #[test]
+    fn a_failed_check_at_any_pre_switch_point_aborts_with_the_original_error_and_no_root() {
+        let (total, ok, log, _keep) = run(None);
+        assert!(ok.is_ok());
+        assert!(log.is_some());
+        // One check before the layer reads, one per layer read, one at each of the five
+        // pre-switch points (U07 added `IntentRecorded`).
+        assert_eq!(total, 8);
+        for at in 1..=total {
+            let (calls, result, log, store) = run(Some(at));
+            let error = result.unwrap_err();
+            // The deadline/cancellation error is preserved, not replaced by the abort code.
+            assert_eq!(error.code, ErrorCode::BackendUnavailable, "check {at}");
+            assert_eq!(calls, at, "no check runs after the failing one");
+            // Nothing was published: no head record exists (the directory may hold none).
+            let head =
+                beamcraft_host::revision::RevisionStore::new(BlobStore::new(&store.0).unwrap())
+                    .head()
+                    .unwrap();
+            assert_eq!(head, None, "check {at}");
+            assert!(log.is_none_or(|l| std::fs::read_dir(l).unwrap().count() == 0));
+        }
+    }
 }

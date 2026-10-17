@@ -59,8 +59,11 @@ expected base, every blob and the op id, then switches the root in one step; a r
 same op returns `revision_replayed`. `revision-open` verifies the root, its manifest and every
 layer blob and prints the revision (`revision_verified`). Output is JSON with decimal strings
 for `sequence`, `workspace_generation` and sizes. Errors use the existing exit codes
-(`BASE_REVISION_MISMATCH`, `OP_ID_REUSE`, `INTEGRITY_ERROR`, ... exit 2). No deadline is
-checked after the root switch, because a timeout would hide a committed revision.
+(`BASE_REVISION_MISMATCH`, `OP_ID_REUSE`, `INTEGRITY_ERROR`, ... exit 2). `--timeout-ms` and
+`--cancel-after-ms` are checked while preparing and at every commit point before the root
+switch (the root is then unchanged and the cancellation/deadline error is reported); they are
+never checked after the switch, because a timeout would hide a committed revision. A retry of
+a commit must repeat the same `--base`: another base under the same op id is `OP_ID_REUSE`.
 
 These commands check blob integrity, not USD content: the layer engine runs in its own process
 and the frozen U04 profile has no verify/index message, so duplicate-ID, dangling-link and

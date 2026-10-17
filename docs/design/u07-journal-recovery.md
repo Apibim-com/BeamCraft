@@ -56,8 +56,9 @@ table. Every `revision-commit` goes through the ledger.
    revisions that predate the ledger, or a ledger with an ignored damaged line, answers `Unknown`
    for an unrecorded op, because that op may be among history that was never journaled or a lost
    record. Absence of a record is never reported as "not applied" otherwise.
-6. **Op id binding.** An op id is bound to its content while an attempt is unresolved or committed.
-   A closed (`aborted`) attempt had no effect, so a corrected retry under the same id is allowed,
+6. **Op id binding.** An op id is bound to its whole request (content and expected base, F04
+   section 6) while an attempt is unresolved or committed; another content or base is
+   `OP_ID_REUSE`. A closed (`aborted`) attempt had no effect, so a corrected retry under the same id is allowed,
    as in U06 before the ledger. This is the one place where the ledger could be stricter; it is
    not, to keep U06's behaviour for a rejected-then-fixed command.
 7. **`query-outcome` is untouched.** The frozen U04 stage-profile command still returns
