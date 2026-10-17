@@ -8,7 +8,9 @@ use std::path::Path;
 
 use beamcraft_model::{ErrorCode, digest::ContentDigest};
 
-use crate::ledger::{AbortReason, CommittedRecord, Intent, OpStatus, Record, now_secs};
+use crate::ledger::{
+    AbortReason, CommittedRecord, Intent, OpStatus, Record, new_attempt, now_secs,
+};
 
 use super::manifest::{BaseRef, Content, IndexRecord, LayerRole, Manifest, RevisionDraft};
 use super::read::RevisionStore;
@@ -336,6 +338,7 @@ impl RevisionStore {
             base: head.as_ref().map(|h| h.revision().clone()),
             fingerprint,
             created: now_secs(),
+            attempt: new_attempt(content.op()),
             blobs: content.entries().iter().map(|e| e.digest()).collect(),
         };
         let record = Record::Intent(intent);
@@ -344,6 +347,7 @@ impl RevisionStore {
             .genesis_head()
             .is_none()
             .then(|| head.as_ref().map_or(0, RevisionInfo::sequence));
+        ledger.admit(&scan, &record, genesis)?;
         ledger.append(&[record], genesis)?;
 
         let attempt = Attempt {

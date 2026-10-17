@@ -6,7 +6,7 @@
 //! ```text
 //! L1 genesis <head sequence>                                         <sha256>
 //! L1 intent <op> <project> <revision> <sequence> <base|none>
-//!    <content fingerprint> <created unix s> <n> <layer sha256>*n     <sha256>
+//!    <content fingerprint> <created unix s> <attempt sha256> <n> <layer sha256>*n  <sha256>
 //! L1 committed <op> <revision> <sequence> <manifest sha256>          <sha256>
 //! L1 aborted <op> <intent id> <reason>                               <sha256>
 //! ```
@@ -48,6 +48,10 @@ pub struct Intent {
     /// Seconds since the Unix epoch when the attempt started; used only to tell a crashed
     /// attempt from one that is still running (see [`RecoveryPolicy`](super::RecoveryPolicy)).
     pub created: u64,
+    /// Identity of this one attempt: a digest over process, clock and a process-wide counter, so
+    /// two identical commits started in the same second still have different intents and one
+    /// attempt's closing record can never close another's.
+    pub attempt: ContentDigest,
     /// Digests of the layer blobs the revision references, in manifest order.
     pub blobs: Vec<ContentDigest>,
 }
@@ -141,13 +145,14 @@ impl Record {
             Self::Intent(i) => {
                 let base = i.base.as_ref().map_or("none", Uuid7::as_str);
                 let mut text = format!(
-                    "{VERSION} intent {} {} {} {} {base} {} {} {}",
+                    "{VERSION} intent {} {} {} {} {base} {} {} {} {}",
                     i.op,
                     i.project,
                     i.revision,
                     i.sequence,
                     i.fingerprint,
                     i.created,
+                    i.attempt,
                     i.blobs.len()
                 );
                 for digest in &i.blobs {
@@ -207,6 +212,7 @@ impl Record {
                 };
                 let fingerprint = digest(tokens.next())?;
                 let created = decimal(tokens.next()?)?;
+                let attempt = digest(tokens.next())?;
                 let count = usize::try_from(decimal(tokens.next()?)?).ok()?;
                 if count == 0 || count > MAX_ENTRIES {
                     return None;
@@ -223,6 +229,7 @@ impl Record {
                     base,
                     fingerprint,
                     created,
+                    attempt,
                     blobs,
                 })
             }
@@ -267,6 +274,7 @@ mod tests {
             base: Some(id(4)),
             fingerprint: digest("content"),
             created: 1_700_000_000,
+            attempt: digest("attempt"),
             blobs: (0..blobs).map(|n| digest(&format!("blob {n}"))).collect(),
         }
     }
