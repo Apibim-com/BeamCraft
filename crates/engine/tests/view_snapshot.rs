@@ -10,7 +10,8 @@
 use beamcraft_engine::synthetic::{SyntheticEdit, apply_edit, plate_scene};
 use beamcraft_engine::{
     ChangeKind, ElementId, ElementKind, KindFilter, Limits, Representation, SceneElement,
-    Selection, SnapshotHistory, SnapshotToken, ViewCode, ViewPin, ViewSettings, ViewSnapshot,
+    Selection, SnapshotHistory, SnapshotToken, ViewCode, ViewError, ViewPin, ViewSettings,
+    ViewSnapshot,
 };
 use beamcraft_geom::Translation3;
 use beamcraft_kernel::{RectangularPlate, rectangular_plate};
@@ -563,7 +564,10 @@ fn every_closed_error_has_a_negative_test() {
     );
 
     // VIEW_ID_INVALID and VIEW_ARGUMENT_INVALID (token, setting).
-    assert_eq!(code(ElementId::parse("not-an-id")), ViewCode::IdInvalid);
+    assert_eq!(
+        code(ElementId::parse("not-an-id").map_err(ViewError::from)),
+        ViewCode::IdInvalid
+    );
     for bad in [
         "".to_owned(),
         "vs1-".to_owned(),

@@ -1,20 +1,25 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! The BeamCraft engine API. V02 adds the renderer-agnostic view snapshot and query contract.
+//! The BeamCraft engine API. V02 adds the renderer-agnostic view snapshot and query contract;
+//! P01 adds `CreatePlate` application ([`command`], [`footprint`], [`transaction`]) and the read
+//! side over committed plates ([`query::committed`]).
 //!
 //! The crate holds pure, bounded, deterministic data and no UI, wgpu, egui, I/O or clock. A
 //! renderer receives meshes by digest, instance and triangle tables, ids and bounds; it computes
-//! no engineering geometry. P01 (command application, authored elements, dependency keys) is not
-//! implemented: the builder takes sealed kernel plate results directly, see [`scene`].
+//! no engineering geometry. P01 implements the first command only (a rectangular plate); keys,
+//! the other commands and personal workspaces are not implemented.
 
+pub mod command;
 pub mod element;
 pub mod error;
+pub mod footprint;
 pub mod limits;
 pub mod presentation;
 pub mod query;
 pub mod scene;
 pub mod synthetic;
+pub mod transaction;
 
 pub use element::{ElementId, ElementKind, KindFilter};
 pub use error::{ViewCode, ViewError};

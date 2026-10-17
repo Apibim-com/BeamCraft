@@ -3,8 +3,11 @@
 
 //! The structural model for BeamCraft.
 
+pub mod command;
 pub mod digest;
 pub mod error;
+pub mod id;
+pub mod limits;
 
 pub use error::ErrorCode;
 

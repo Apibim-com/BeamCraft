@@ -6,10 +6,12 @@
 //! Implemented: `ListElements`, `GetMeshSnapshot` (blobs by digest), `QueryBounds` (element and
 //! all, world space), `GetChanges` and the selection API. Not implemented: `LookupFeature` and
 //! `Pick`, which need kernel feature geometry (G04), and local-space bounds and keys, which need
-//! the P01 dependency keys. Nothing here is a mock of those.
+//! the dependency keys (planned). Nothing here is a mock of those. [`committed`] (P01) turns the
+//! authored plates of a committed revision into the snapshot builder's input.
 
 pub mod bounds;
 pub mod changes;
+pub mod committed;
 pub mod mesh;
 pub mod selection;
 pub mod snapshot;

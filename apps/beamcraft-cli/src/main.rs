@@ -21,6 +21,7 @@ use std::{
     path::PathBuf,
 };
 
+mod plate_cmd;
 mod view;
 
 fn invalid() -> HostError {
@@ -36,7 +37,7 @@ fn main() -> std::process::ExitCode {
         || (args.len() == 1 && args.first().is_some_and(|s| s == "--help" || s == "-h"))
     {
         println!(
-            "BeamCraft: open | read | query-outcome | blob-put | blob-verify | revision-commit | revision-open | revision-recover | revision-outcome | view-snapshot | view-changes\nRead: --backend rust --store ROOT --worker EXE --worker-digest SHA256 --project-id UUID --workspace-id UUID --revision SHA256 --generation U64\nInput: --manifest SHA256 [--owned NAME,...] or --file FILE --digest SHA256 [--owned root.usda]\nControl: [--timeout-ms 1..120000] [--cancel-after-ms 0..120000]\nRevision: revision-commit --store ROOT --project-id UUID --workspace-id UUID --revision-id UUID --op-id UUID --generation U64 --base none|REVISION_UUID --schema SHA256 --root-layer NAME --layers ROLE:NAME:SHA256,... (ROLE authored|derived|external; blobs must be stored first); revision-open --store ROOT\nRecovery: revision-recover --store ROOT --min-age-secs U64 (0 asserts that no commit is running; closes unresolved intents from the root, removes abandoned temporary files, reports unreferenced blobs, deletes no blob); revision-outcome --store ROOT --op-id UUID (host-ledger QueryOutcome: committed | aborted | not recorded | OUTCOME_UNKNOWN)\nView (synthetic kernel plate scene, no worker or store): view-snapshot --plates 1..500 [--hide KIND,...] [--representation full|simplified] [--stand-in-simplified true|false] [--select ID,...] [--revision SHA256] [--generation U64]; view-changes --plates 1..500 --edit move-first|resize-first|add-one|remove-last,... [--since TOKEN] [--stand-in-simplified true|false]\nOnly the experimental static read profile is available; save/mutation/SDK fallback are unavailable; revision commit verifies blobs but not USD content."
+            "BeamCraft: open | read | query-outcome | blob-put | blob-verify | revision-commit | revision-open | revision-recover | revision-outcome | create-plate | plate-inspect | view-snapshot | view-changes\nRead: --backend rust --store ROOT --worker EXE --worker-digest SHA256 --project-id UUID --workspace-id UUID --revision SHA256 --generation U64\nInput: --manifest SHA256 [--owned NAME,...] or --file FILE --digest SHA256 [--owned root.usda]\nControl: [--timeout-ms 1..120000] [--cancel-after-ms 0..120000]\nRevision: revision-commit --store ROOT --project-id UUID --workspace-id UUID --revision-id UUID --op-id UUID --generation U64 --base none|REVISION_UUID --schema SHA256 --root-layer NAME --layers ROLE:NAME:SHA256,... (ROLE authored|derived|external; blobs must be stored first); revision-open --store ROOT\nRecovery: revision-recover --store ROOT --min-age-secs U64 (0 asserts that no commit is running; closes unresolved intents from the root, removes abandoned temporary files, reports unreferenced blobs, deletes no blob); revision-outcome --store ROOT --op-id UUID (host-ledger QueryOutcome: committed | aborted | not recorded | OUTCOME_UNKNOWN)\nPlate (P01, committed USD revision): create-plate --store ROOT --width MM --length MM --thickness MM [--name TEXT] [--translation X,Y,Z] [--new-id UUID] [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID] (rectangular origin plate only; a retry of the same --op-id needs the same --new-id and arguments and is replayed); plate-inspect --store ROOT (verified head revision, plates, meshes, snapshot)\nView (synthetic kernel plate scene, no worker or store): view-snapshot --plates 1..500 [--hide KIND,...] [--representation full|simplified] [--stand-in-simplified true|false] [--select ID,...] [--revision SHA256] [--generation U64]; view-changes --plates 1..500 --edit move-first|resize-first|add-one|remove-last,... [--since TOKEN] [--stand-in-simplified true|false]\nOnly the experimental static read profile is available; save/mutation/SDK fallback are unavailable; revision-commit verifies blobs but not USD content; create-plate verifies the USD content (U03 index, structural check, kernel re-evaluation) in-process."
         );
         return std::process::ExitCode::SUCCESS;
     }
@@ -45,6 +46,11 @@ fn main() -> std::process::ExitCode {
         .is_some_and(|c| c == "view-snapshot" || c == "view-changes")
     {
         view::execute(&args)
+    } else if args
+        .first()
+        .is_some_and(|c| c == "create-plate" || c == "plate-inspect")
+    {
+        plate_cmd::execute(&args)
     } else {
         match run(args) {
             Ok(j) => (j, 0),

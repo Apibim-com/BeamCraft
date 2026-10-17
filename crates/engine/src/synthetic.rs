@@ -58,7 +58,9 @@ fn plate(width: f64, length: f64, thickness: f64) -> Result<PlateResult, ViewErr
 }
 
 fn synthetic_id(ordinal: u64) -> Result<ElementId, ViewError> {
-    ElementId::parse(&format!("01990000-0000-7000-8000-{ordinal:012x}"))
+    Ok(ElementId::parse(&format!(
+        "01990000-0000-7000-8000-{ordinal:012x}"
+    ))?)
 }
 
 fn element(ordinal: u64, stand_in_simplified: bool) -> Result<SceneElement, ViewError> {

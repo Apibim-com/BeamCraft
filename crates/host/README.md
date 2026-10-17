@@ -113,3 +113,7 @@ idle keepalive, complete negotiated profiles, mutation/event schemas, canonical 
 durable outcomes remain open. The standard-library token source is explicitly experimental.
 The protected filesystem/package namespaces remain caller prerequisites. See the
 [review and prepared draft PR body](../../docs/design/u04-cli-host.md).
+
+## P01 identity source
+
+`beamcraft_host::ids::IdSource` feeds the pure `beamcraft_model::id::UuidV7Generator` with the system clock and per-process entropy from `std::hash::RandomState` (OS-seeded by `std`, no new dependency). Identities from one source are strictly increasing and complete, also inside one millisecond; across processes uniqueness rests on 62 random bits and on the existence check at creation. The entropy is not documented as cryptographic and no identity is a secret or a capability. `IdSource::with_sources` injects both inputs.
