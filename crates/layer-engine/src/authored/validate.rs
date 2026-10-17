@@ -618,11 +618,19 @@ pub(super) fn changes(
             identity: resource.digest.to_string(),
             group: Group::Relationship,
         });
-        // A definition that is not in the stage yet is created; an existing one is immutable.
-        if !prims
+        // A definition that is not in the stage yet is created; an existing one is immutable and
+        // must already be exactly this content, active and owned (kind, fields, types, label and
+        // the recomputed digest), or the batch is refused instead of treating it as a no-op.
+        if prims
             .iter()
             .any(|p| p.path == definition_path(resource.digest))
         {
+            let kind = match resource.definition {
+                Definition::RectangleProfile { .. } => "rectangle",
+                Definition::Material { .. } => "material",
+            };
+            self::resource(prims, resource.digest, kind)?;
+        } else {
             writes.insert(Footprint {
                 identity: resource.digest.to_string(),
                 group: Group::Relationship,

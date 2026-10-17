@@ -1146,3 +1146,58 @@ fn a_definition_only_batch_publishes_immutable_definitions_and_an_empty_batch_is
     let p = a.prepare(again, &control()).unwrap();
     assert!(p.writes.is_empty());
 }
+
+#[test]
+fn an_existing_definition_must_match_the_resource_before_it_is_reused() {
+    let resource = Resource::new(Definition::Material {
+        density_kg_m3: Some(1000.0),
+    })
+    .unwrap();
+    let hex = resource.digest.to_string();
+    let stage = |density: &str, active: &str| {
+        let body = format!(
+            "def Xform \"World\" {{ def Scope \"Definitions\" {{ def Scope \"D_{hex}\" {active}{{ \
+             custom string bim:schemaVersion = \"0.1.0\"\n custom token bim:units = \"mm\"\n \
+             custom token bim:definitionKind = \"material\"\n {density}\n \
+             custom string bim:contentDigest = \"{hex}\" }} }} }}"
+        );
+        request(
+            vec![
+                asset(
+                    "root.usda",
+                    "#usda 1.0\n(metersPerUnit=0.001\nupAxis=\"Z\"\nsubLayers=[@authored.usda@,@derived.usda@])\n",
+                ),
+                asset("authored.usda", layer(&body)),
+                asset("derived.usda", layer("")),
+            ],
+            &["root.usda", "authored.usda", "derived.usda"],
+        )
+    };
+    let prepare = |request: OpenRequest| {
+        let (mut a, o) = open(request);
+        let mut input = batch(&o.context, Vec::new());
+        input.resources = vec![resource.clone()];
+        a.prepare(input, &control()).map(|p| p.writes.len())
+    };
+    // The same content is an immutable no-op.
+    assert_eq!(
+        prepare(stage("custom double bim:densityKgM3 = 1000.0", "")).unwrap(),
+        0
+    );
+    // A stored density that disagrees with the path digest, a removed density, and a deactivated
+    // definition are refused instead of being accepted as a no-op.
+    for (density, active) in [
+        ("custom double bim:densityKgM3 = 1.0", ""),
+        ("", ""),
+        ("custom float bim:densityKgM3 = 1000.0", ""),
+        (
+            "custom double bim:densityKgM3 = 1000.0",
+            "(active = false)\n",
+        ),
+    ] {
+        assert!(
+            prepare(stage(density, active)).is_err(),
+            "{density:?} {active:?}"
+        );
+    }
+}
