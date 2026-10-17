@@ -172,7 +172,7 @@ fn invalid_members_are_typed_failures_with_no_partial_result() {
             end: ok.start,
             ..ok
         }),
-        (Code::BelowMinimum, Field::Axis)
+        (Code::AxisTooShort, Field::Axis)
     );
     assert_eq!(
         failure(StraightMember {
