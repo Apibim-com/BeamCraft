@@ -709,18 +709,14 @@ fn boxes_triangular_prisms_and_rotated_boxes_are_prisms_and_sheared_ones_are_not
     .unwrap();
     assert_eq!(assert_sealed(&res).volume, (8.0 * 30.0 - 6.0) * 40.0);
     // Shearing the top cap sideways keeps two horizontal caps but slants the walls.
-    let sheared = mapped(
-        &boxed,
-        |q| {
-            if q[2] > 14.0 {
-                [q[0] + 1.0, q[1], q[2]]
-            } else {
-                q
-            }
-        },
-        |n| n,
-        false,
-    );
+    let mut slanted = common_mesh::cuboid([5.0, -3.0, 10.0], [45.0, 27.0, 18.0]);
+    for q in &mut slanted.v {
+        if q[2] > 14.0 {
+            q[0] += 1.0;
+        }
+    }
+    let ids = ["s:f.a", "s:f.b", "s:f.c", "s:f.d", "s:f.e", "s:f.f"];
+    let sheared = body_of(&slanted, &CUBOID_FACES, &ids, &[None; 6]);
     let e = through_hole(
         &sheared,
         &HoleCutter::new(hole_rect(20.0, 5.0, 30.0, 15.0), 9.0, 19.0, 1),
@@ -761,4 +757,60 @@ fn boxes_triangular_prisms_and_rotated_boxes_are_prisms_and_sheared_ones_are_not
     )
     .unwrap_err();
     assert_eq!(e.defect, OpDefect::BodyNotPrism);
+}
+
+#[test]
+fn negative_zero_in_a_cutter_gives_the_same_bytes_as_positive_zero() {
+    let body = cuboid([-10.0, -10.0, 0.0], [10.0, 10.0, 4.0]);
+    let hole =
+        |a: f64, b: f64| Cavity::polygon(vec![p(a, 2.0), p(2.0, 2.0), p(2.0, -2.0), p(b, -2.0)]);
+    let negative = through_hole(&body, &HoleCutter::new(hole(-0.0, 0.0), -1.0, 5.0, 0)).unwrap();
+    let positive = through_hole(&body, &HoleCutter::new(hole(0.0, 0.0), -1.0, 5.0, 0)).unwrap();
+    let both = through_hole(&body, &HoleCutter::new(hole(-0.0, -0.0), -1.0, 5.0, 0)).unwrap();
+    assert_sealed(&negative);
+    assert_eq!(negative.blob(), positive.blob());
+    assert_eq!(negative.mesh_digest(), positive.mesh_digest());
+    assert_eq!(both.blob(), positive.blob());
+    assert!(
+        negative
+            .body()
+            .mesh()
+            .vertices()
+            .iter()
+            .flatten()
+            .all(|v| !v.is_sign_negative() || *v != 0.0)
+    );
+}
+
+#[test]
+fn a_hole_after_a_cut_still_respects_the_floor_of_the_original_body() {
+    // The plate's F06 floor is eps = 2^-22 * D = 0.234375 mm. Halving it in X shrinks the cap
+    // outline, whose own floor would be about 0.169 mm; the body keeps 0.234375 mm.
+    let body = plate(786_432.0, 589_824.0, 10.0);
+    assert_eq!(body.tolerance().eps_geom_mm(), 0.234_375);
+    let half = plane_cut(
+        &body,
+        &CutPlane::new([393_216.0, 0.0, 0.0], [1.0, 0.0, 0.0]),
+        Keep::Negative,
+        0,
+    )
+    .unwrap();
+    assert_eq!(half.body().tolerance().eps_geom_mm(), 0.234_375);
+    let cavity = || hole_rect(0.2, 1000.0, 1000.0, 2000.0);
+    // The cap outline alone would admit 0.2 mm of clearance to the wall ...
+    let outline = rect(0.0, 0.0, 393_216.0, 589_824.0);
+    let alone = beamcraft_kernel::profile::Profile::admit(&outline, &[cavity()]).unwrap();
+    assert!(alone.tolerance().eps_geom_mm() < 0.2);
+    // ... but the body's floor does not, before and after the cut.
+    for b in [&body, half.body()] {
+        let e = through_hole(b, &HoleCutter::new(cavity(), -1.0, 11.0, 5)).unwrap_err();
+        assert_eq!((e.code, e.field), (OpCode::ContourInvalid, OpField::Cutter));
+        assert!(e.profile.is_some());
+    }
+    // 0.25 mm of clearance clears the floor.
+    let ok = through_hole(
+        half.body(),
+        &HoleCutter::new(hole_rect(0.25, 1000.0, 1000.0, 2000.0), -1.0, 11.0, 5),
+    );
+    assert!(ok.is_ok());
 }

@@ -14,6 +14,7 @@ use crate::bigint::Big;
 use crate::diagnostic::Stage;
 use crate::exact::{min_exponent, scaled};
 use crate::profile::{Cavity, Point2, Profile};
+use beamcraft_geom::tolerance::Tolerance;
 use core::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -190,6 +191,7 @@ pub(crate) fn triangulate_cap(
     holes: &[CapLoop],
     project: impl Fn([f64; 3]) -> [f64; 2],
     limits: &OpLimits,
+    floor: Tolerance,
     field: OpField,
     section: bool,
 ) -> Result<Vec<[u32; 3]>, OpFailure> {
@@ -231,7 +233,7 @@ pub(crate) fn triangulate_cap(
         error.profile = diagnostic;
         error
     };
-    let profile = Profile::admit(&flat(outer), &cavities).map_err(refuse)?;
+    let profile = Profile::admit_with_floor(&flat(outer), &cavities, floor).map_err(refuse)?;
     let triangles = profile.triangulate().map_err(refuse)?;
     let ids: Vec<u32> = outer
         .ids
@@ -255,6 +257,15 @@ pub(crate) fn triangulate_cap(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn floor() -> Tolerance {
+        Tolerance::for_plate(&[
+            beamcraft_geom::Point3::new(0.0, 0.0, 0.0),
+            beamcraft_geom::Point3::new(8.0, 0.0, 0.0),
+            beamcraft_geom::Point3::new(8.0, 8.0, 0.0),
+        ])
+        .unwrap()
+    }
 
     fn budget() -> ExactBudget {
         ExactBudget::new(100)
@@ -351,6 +362,7 @@ mod tests {
             std::slice::from_ref(&hole),
             flat,
             &limits,
+            floor(),
             OpField::Cap,
             false,
         )
@@ -382,6 +394,7 @@ mod tests {
             std::slice::from_ref(&hole),
             flat,
             &few,
+            floor(),
             OpField::Cap,
             false,
         )
@@ -396,6 +409,7 @@ mod tests {
             std::slice::from_ref(&hole),
             flat,
             &few,
+            floor(),
             OpField::Cap,
             false,
         )
@@ -409,6 +423,7 @@ mod tests {
             std::slice::from_ref(&out),
             flat,
             &limits,
+            floor(),
             OpField::Cap,
             false,
         )
@@ -420,6 +435,7 @@ mod tests {
             std::slice::from_ref(&out),
             flat,
             &limits,
+            floor(),
             OpField::Section,
             true,
         )

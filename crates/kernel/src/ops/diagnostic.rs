@@ -212,6 +212,8 @@ pub enum OpDefect {
     FaceTableSize,
     /// The ordinal is above its cap (999).
     Ordinal,
+    /// The body mesh is not in element-local space.
+    BodySpace,
     /// The whole body lies strictly on the kept side: nothing would be removed.
     PlaneOutside,
     /// The whole body lies strictly on the removed side: nothing would be kept.
@@ -274,6 +276,7 @@ impl OpDefect {
             Self::FaceTableEntry => "face_table.entry",
             Self::FaceTableSize => "face_table.size",
             Self::Ordinal => "ordinal",
+            Self::BodySpace => "body.space",
             Self::PlaneOutside => "plane.outside",
             Self::PlaneEmpty => "plane.empty",
             Self::PlaneTangent => "plane.tangent",

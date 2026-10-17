@@ -96,11 +96,9 @@ pub fn plane_cut_with(
     };
     let sense_value = f64::from(sense);
     let mut sides: Vec<i8> = Vec::with_capacity(vertices.len());
-    let mut values: Vec<f64> = Vec::with_capacity(vertices.len());
     for p in vertices {
-        let (sign, value) = plane.evaluate(*p, &mut budget)?;
+        let (sign, _) = plane.evaluate(*p, &mut budget)?;
         sides.push(sign * sense);
-        values.push(value * sense_value);
     }
     let count = |wanted: i8| sides.iter().filter(|s| **s == wanted).count();
     let (positive, zero, negative) = (count(1), count(0), count(-1));
@@ -145,22 +143,11 @@ pub fn plane_cut_with(
         let at = |i: u32| {
             usize::try_from(i)
                 .ok()
-                .and_then(|i| Some((*vertices.get(i)?, *values.get(i)?)))
+                .and_then(|i| vertices.get(i))
+                .copied()
                 .ok_or_else(internal)
         };
-        let (pa, pb) = (at(key.0)?, at(key.1)?);
-        // Always interpolate from the lexicographically smaller endpoint.
-        let ((p, dp), (q, dq)) = if cmp_point(pa.0, pb.0) == Ordering::Greater {
-            (pb, pa)
-        } else {
-            (pa, pb)
-        };
-        let t = dp.abs() / (dp.abs() + dq.abs());
-        let mut point = [0.0; 3];
-        for ((slot, a), b) in point.iter_mut().zip(p).zip(q) {
-            let v = (a + t * (b - a)).clamp(a.min(b), a.max(b));
-            *slot = if v == 0.0 { 0.0 } else { v };
-        }
+        let point = plane.intersection(at(key.0)?, at(key.1)?)?;
         let id = u32::try_from(out.len()).map_err(|_| internal())?;
         out.push(point);
         crossing.insert(key, id);
@@ -275,7 +262,15 @@ pub fn plane_cut_with(
         OpField::Section,
         &mut budget,
     )?;
-    let cap = triangulate_cap(&outer, &holes, frame, limits, OpField::Section, true)?;
+    let cap = triangulate_cap(
+        &outer,
+        &holes,
+        frame,
+        limits,
+        body.tolerance(),
+        OpField::Section,
+        true,
+    )?;
 
     let mut deviation = 0.0f64;
     for p in out_vertices.iter().skip(original) {

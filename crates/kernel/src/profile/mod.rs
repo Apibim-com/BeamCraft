@@ -142,6 +142,16 @@ impl Profile {
         admit::admit(outer, cavities, None)
     }
 
+    /// Admission with a minimum local-size policy supplied by the owner of the surrounding
+    /// body (see the operations in `ops`); the larger floor applies.
+    pub(crate) fn admit_with_floor(
+        outer: &[Point2],
+        cavities: &[Cavity],
+        floor: Tolerance,
+    ) -> Result<Self, ProfileFailure> {
+        admit::admit_with_floor(outer, cavities, None, Some(floor))
+    }
+
     pub(crate) fn from_parts(
         outer: Vec<Point2>,
         cavities: Vec<Cavity>,

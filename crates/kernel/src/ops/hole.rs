@@ -185,13 +185,22 @@ pub fn through_hole_with(
     top_holes.push(new_ring(prism.z1, base + m32));
     let mut bottom_holes = prism.bottom.1.clone();
     bottom_holes.push(new_ring(prism.z0, base));
-    let top_cap = triangulate_cap(&prism.top.0, &top_holes, flat, limits, OpField::Cap, false)
-        .map_err(|e| cutter_field(e, prism.top.1.len()))?;
+    let top_cap = triangulate_cap(
+        &prism.top.0,
+        &top_holes,
+        flat,
+        limits,
+        body.tolerance(),
+        OpField::Cap,
+        false,
+    )
+    .map_err(|e| cutter_field(e, prism.top.1.len()))?;
     let bottom_cap = triangulate_cap(
         &prism.bottom.0,
         &bottom_holes,
         flat,
         limits,
+        body.tolerance(),
         OpField::Cap,
         false,
     )

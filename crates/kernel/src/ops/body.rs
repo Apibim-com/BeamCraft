@@ -15,7 +15,7 @@ use crate::measure::measure;
 use crate::profile::{Extrusion, FaceRole};
 use crate::result::PlateResult;
 use crate::topology::{Analysis, Limits, analyze_with_tolerance};
-use crate::trimesh::TriMesh;
+use crate::trimesh::{Space, TriMesh};
 use beamcraft_geom::Vec3;
 use beamcraft_geom::tolerance::Tolerance;
 
@@ -25,6 +25,9 @@ pub const MAX_LOCAL_ID_BYTES: usize = 22;
 
 /// Largest operation ordinal; keeps `cut:f.h<ordinal>.s<k>` inside [`MAX_LOCAL_ID_BYTES`].
 pub const MAX_ORDINAL: u16 = 999;
+
+/// Smallest cosine between a supplied face normal and the face's area vector (about 0.08 degrees).
+const NORMAL_AGREEMENT: f64 = 0.999_999;
 
 /// A certified, immutable solid with its face table.
 #[derive(Debug, Clone)]
@@ -74,6 +77,16 @@ impl Body {
     ) -> Result<Self, OpFailure> {
         let faces = usize::try_from(mesh.face_count())
             .map_err(|_| table_error(OpDefect::FaceTableSize, OpCode::BlobInvalid))?;
+        // Operations seal element-local blobs without converting coordinates, so a world-space
+        // mesh would be silently relabelled as local.
+        if mesh.space() != Space::Local {
+            return Err(OpFailure::new(
+                OpCode::BlobInvalid,
+                OpField::Body,
+                OpDefect::BodySpace,
+                Stage::Validation,
+            ));
+        }
         if face_ids.len() != faces || normals.len() != faces {
             return Err(table_error(OpDefect::FaceTableSize, OpCode::BlobInvalid));
         }
@@ -124,6 +137,7 @@ impl Body {
                 Stage::Checks,
             ));
         }
+        check_normals(&mesh, &normals)?;
         let measurement =
             measure(&mesh, &analysis).map_err(|e| OpFailure::from_mesh(e, OpField::Body))?;
         let volume_mm3 = measurement.volume_mm3().ok_or_else(|| {
@@ -238,4 +252,37 @@ impl Body {
 
 fn unit(n: Vec3) -> [f64; 3] {
     [n.x(), n.y(), n.z()]
+}
+
+// A planar face's supplied normal must agree with the oriented triangles it labels: the area
+// vector of the face (sum of the triangles' cross products, outward by the certified winding)
+// has to point along it. A curved face has no normal and nothing to check.
+fn check_normals(mesh: &TriMesh, normals: &[Option<[f64; 3]>]) -> Result<(), OpFailure> {
+    let bad = || table_error(OpDefect::FaceTableEntry, OpCode::BlobInvalid);
+    let mut sums = vec![[0.0f64; 3]; normals.len()];
+    for (index, face) in mesh.faces().iter().enumerate() {
+        let [a, b, c] = mesh.triangle_points(index).ok_or_else(bad)?;
+        let (u, w) = (
+            [b[0] - a[0], b[1] - a[1], b[2] - a[2]],
+            [c[0] - a[0], c[1] - a[1], c[2] - a[2]],
+        );
+        let cross = [
+            u[1] * w[2] - u[2] * w[1],
+            u[2] * w[0] - u[0] * w[2],
+            u[0] * w[1] - u[1] * w[0],
+        ];
+        let sum = sums.get_mut(usize::from(*face)).ok_or_else(bad)?;
+        for (s, v) in sum.iter_mut().zip(cross) {
+            *s += v;
+        }
+    }
+    for (normal, sum) in normals.iter().zip(&sums) {
+        let Some(n) = normal else { continue };
+        let length = (sum[0] * sum[0] + sum[1] * sum[1] + sum[2] * sum[2]).sqrt();
+        let along = sum[0] * n[0] + sum[1] * n[1] + sum[2] * n[2];
+        if !(length > 0.0 && along >= NORMAL_AGREEMENT * length) {
+            return Err(bad());
+        }
+    }
+    Ok(())
 }

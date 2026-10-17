@@ -21,8 +21,9 @@
 //! * Which side of the plane every vertex is on is an exact sign (filtered binary64 first, then
 //!   fixed-capacity integers, as in the G06 predicates); nothing is decided by an epsilon.
 //! * A mesh edge crossing the plane gets one new vertex, the binary64 rounding of the exact
-//!   intersection (computed from the lexicographically smaller endpoint, so it does not depend
-//!   on vertex numbering). The cap is therefore planar only up to that rounding; the largest
+//!   intersection (each coordinate is rounded once, by exact integer comparisons with the
+//!   neighbouring midpoints, so it depends neither on vertex numbering nor on rounded
+//!   interpolation). The cap is therefore planar only up to that rounding; the largest
 //!   deviation is certified and reported ([`OpResult::plane_deviation_mm`]).
 //! * The cap loops are the boundary of the clipped surface; they are triangulated by the G05
 //!   admission and ear clipping, in a frame that does not depend on which half is kept.

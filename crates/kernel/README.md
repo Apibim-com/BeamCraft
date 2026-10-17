@@ -443,7 +443,7 @@ neither was run).
 
 | Item | Purpose |
 |------|---------|
-| `Body` | Immutable certified solid: BCMESH01 mesh, local face ids, outward unit normals (`None` for a curved face), the body's own `Tolerance`, its G06 `Analysis` and volume enclosure. `Body::from_plate`, `from_extrusion`, `from_mesh` admit a G02 plate, a G05 extrusion or any mesh with a face table; only a certified single shell is admitted |
+| `Body` | Immutable certified solid: BCMESH01 mesh, local face ids, outward unit normals (`None` for a curved face), the body's own `Tolerance`, its G06 `Analysis` and volume enclosure. `Body::from_plate`, `from_extrusion`, `from_mesh` admit a G02 plate, a G05 extrusion or any mesh with a face table; only a certified, element-local single shell is admitted: a world-space mesh is refused (ody.space) because operations seal local blobs, and every supplied planar normal must agree with its face's area vector (cosine at least 0.999999, ace_table.entry) |
 | `plane_cut`, `plane_cut_with` | Cut by `CutPlane { point, normal }`, `Keep::{Positive, Negative}`, an ordinal naming the cap, `OpLimits` and a cancellation callback |
 | `through_hole`, `through_hole_with` | Subtract `HoleCutter { cavity, z_from_mm, z_to_mm, ordinal }` (a G05 `Cavity`: circle, slot, ellipse or polygon, clockwise) |
 | `OpResult` | Sealed result: `body()` (feed it to the next operation), `blob()` and `mesh_digest()` (SHA-256), face table and normals, `removed_faces()`, volume enclosure (mm3 and m3), analytic volume (holes), bounds, Euler characteristic, genus, `plane_deviation_mm()` (cuts), `OpStats` |
@@ -459,8 +459,10 @@ neither was run).
   zero. A scaled normal is the same plane.
 * **Clip.** Every triangle is clipped against the closed half-space (one-plane
   Sutherland-Hodgman): vertices on the plane are used as they are, a strictly crossing edge gets
-  one new vertex, the binary64 rounding of the exact intersection, interpolated from the
-  lexicographically smaller endpoint and clamped to the edge, so it does not depend on numbering;
+  one new vertex whose every coordinate is the correctly rounded (nearest, ties to even) value of
+  the exact rational intersection: a seed from enclosures is moved by exact integer comparisons with
+  the neighbouring midpoints until it is proved nearest, so it depends neither on numbering nor on
+  rounded interpolation and never leaves the edge;
   quads are split along the diagonal at the smallest vertex.
 * **Cap.** The boundary of the clipped surface is the section. Its loops are chained, rotated to
   their smallest vertex, split into the single outer loop (exact positive area) and holes, admitted
@@ -532,7 +534,7 @@ never engineering quantities (F06 section 8: `unsupported`). A hole's analytic v
 the polygon the cavity really is; for an approximated curve it is the polygon's, and the G05
 `CurveApproximation` carries the bound to the true curve. A plane cut has no closed form
 independent of its own section, so `analytic_volume_mm3` is `None`; the closed forms live in the
-tests. The result keeps the body's `Tolerance`. Work is bounded by the budgets above and the F06
+tests. The result keeps the body's `Tolerance`, and cap admission uses the larger of that floor and the one derived from the (possibly smaller) cap outline, so a hole after a cut cannot be finer than the original body allowed. Work is bounded by the budgets above and the F06
 mesh caps (4096 vertices, 8192 triangles); no recursion, no `unsafe`, no panicking path, and every
 allocation is sized by a validated count. Certification of large bodies is bounded by the G06
 pair budget: a 16-hole body of 7,756 triangles is refused at admission as not certified (tested).

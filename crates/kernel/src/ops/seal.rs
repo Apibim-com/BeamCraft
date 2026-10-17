@@ -218,7 +218,14 @@ fn canonicalise(c: Candidate, limits: &OpLimits) -> Result<Canonical, OpFailure>
     let mut order: Vec<usize> = (0..c.vertices.len())
         .filter(|i| vertex_used.get(*i).copied().unwrap_or(false))
         .collect();
-    let key = |i: usize| c.vertices.get(i).copied().unwrap_or([0.0; 3]);
+    // Negative zero is the same coordinate as positive zero but sorts before it.
+    let key = |i: usize| {
+        c.vertices
+            .get(i)
+            .copied()
+            .unwrap_or([0.0; 3])
+            .map(|v| if v == 0.0 { 0.0 } else { v })
+    };
     order.sort_by(|&a, &b| {
         let (p, q) = (key(a), key(b));
         p[0].total_cmp(&q[0])

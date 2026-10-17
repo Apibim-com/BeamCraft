@@ -712,3 +712,135 @@ fn a_cap_edge_beyond_the_g05_per_edge_cap_is_refused_with_the_profile_diagnostic
     );
     assert!(ok.is_ok());
 }
+
+#[test]
+fn world_space_meshes_are_not_admitted_as_element_local_bodies() {
+    let cube = common_mesh::cuboid([0.0; 3], [4.0; 3]);
+    let ids = ["b:f.a", "b:f.b", "b:f.c", "b:f.d", "b:f.e", "b:f.f"].map(str::to_owned);
+    for (space, expected) in [(0u32, true), (1, false)] {
+        let blob = common_mesh::blob(&cube.v, &cube.t, &CUBOID_FACES, 6, space);
+        let mesh = beamcraft_kernel::trimesh::TriMesh::from_blob(&blob).unwrap();
+        let r = Body::from_mesh(mesh, ids.to_vec(), vec![None; 6], None);
+        if expected {
+            assert!(r.is_ok());
+        } else {
+            let e = r.unwrap_err();
+            assert_eq!(
+                (e.code, e.field, e.defect),
+                (OpCode::BlobInvalid, OpField::Body, OpDefect::BodySpace)
+            );
+        }
+    }
+}
+
+#[test]
+fn supplied_normals_must_agree_with_the_oriented_faces() {
+    let cube = common_mesh::cuboid([0.0; 3], [4.0; 3]);
+    let blob = common_mesh::blob(&cube.v, &cube.t, &CUBOID_FACES, 6, 0);
+    let ids = ["b:f.a", "b:f.b", "b:f.c", "b:f.d", "b:f.e", "b:f.f"].map(str::to_owned);
+    let make = |normals: Vec<Option<[f64; 3]>>| {
+        let mesh = beamcraft_kernel::trimesh::TriMesh::from_blob(&blob).unwrap();
+        Body::from_mesh(mesh, ids.to_vec(), normals, None)
+    };
+    let good: Vec<Option<[f64; 3]>> = CUBOID_NORMALS.iter().map(|n| Some(*n)).collect();
+    assert!(make(good.clone()).is_ok());
+    // The x-min normal flipped inward, perpendicular, and slightly tilted (cos < 0.999999).
+    let tilt: [f64; 3] = [-0.999_99, 0.004_472_091, 0.0];
+    let len = (tilt[0] * tilt[0] + tilt[1] * tilt[1]).sqrt();
+    for bad in [
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, -1.0],
+        [tilt[0] / len, tilt[1] / len, 0.0],
+    ] {
+        let mut normals = good.clone();
+        normals[0] = Some(bad);
+        let e = make(normals).unwrap_err();
+        assert_eq!(
+            (e.code, e.field, e.defect),
+            (
+                OpCode::BlobInvalid,
+                OpField::FaceTable,
+                OpDefect::FaceTableEntry
+            ),
+            "{bad:?}"
+        );
+    }
+    // A curved face has no normal and is not checked.
+    let mut curved = good;
+    curved[0] = None;
+    assert!(make(curved).is_ok());
+}
+
+#[test]
+fn new_vertices_are_the_correctly_rounded_exact_intersections() {
+    // The reviewer's case: the edge (-1,0,0)-(1,0,0) cut by x = 0.1 must give exactly 0.1.
+    let body = cuboid([-1.0; 3], [1.0; 3]);
+    let r = cut(&body, [0.1, 0.0, 0.0], [1.0, 0.0, 0.0], Keep::Negative);
+    let new: Vec<[f64; 3]> = r
+        .body()
+        .mesh()
+        .vertices()
+        .iter()
+        .copied()
+        .filter(|v| v[0] == 0.1)
+        .collect();
+    assert_eq!(
+        new.len(),
+        8,
+        "every crossing vertex lies exactly at x = 0.1"
+    );
+    assert!(r.body().mesh().vertices().iter().all(|v| v[0] <= 0.1));
+    assert_eq!(r.plane_deviation_mm(), Some(0.0));
+    // Oblique planes with d / n0 exact, through an integer box: the exact intersection of a segment with n.x = d
+    // is (A (n.B - d) - B (n.A - d)) / (n.(B - A)) with small integers, so a correctly rounded
+    // IEEE division of exact integers is an independent oracle for every coordinate.
+    let corners: Vec<[f64; 3]> = (0..8)
+        .map(|i| {
+            [
+                f64::from(i & 1) * 7.0,
+                f64::from(i >> 1 & 1) * 5.0,
+                f64::from(i >> 2 & 1) * 3.0,
+            ]
+        })
+        .collect();
+    let body = cuboid([0.0; 3], [7.0, 5.0, 3.0]);
+    let mut checked = 0;
+    for (n, d) in [
+        ([3.0, 5.0, 7.0], 42.0),
+        ([1.0, 1.0, 1.0], 6.0),
+        ([2.0, -3.0, 5.0], 4.0),
+        ([7.0, 11.0, 13.0], 56.0),
+        ([-1.0, 4.0, 9.0], 23.0),
+    ] {
+        let mut oracle: Vec<[f64; 3]> = Vec::new();
+        for a in &corners {
+            for b in &corners {
+                let (fa, fb) = (
+                    n[0] * a[0] + n[1] * a[1] + n[2] * a[2] - d,
+                    n[0] * b[0] + n[1] * b[1] + n[2] * b[2] - d,
+                );
+                if fa < 0.0 && fb > 0.0 {
+                    let den = fb - fa;
+                    let mut p = [0.0; 3];
+                    for k in 0..3 {
+                        p[k] = (a[k] * fb - b[k] * fa) / den;
+                    }
+                    oracle.push(p);
+                }
+            }
+        }
+        let r = cut(&body, [d / n[0], 0.0, 0.0], n, Keep::Negative);
+        for v in r.body().mesh().vertices() {
+            if corners.contains(v) {
+                continue;
+            }
+            assert!(
+                oracle.contains(v),
+                "{v:?} is not a correctly rounded intersection for {n:?}"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked >= 20);
+}

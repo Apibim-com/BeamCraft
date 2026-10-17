@@ -15,8 +15,6 @@ use crate::trimesh::MAX_COORDINATE_MM;
 const U: f64 = 1.110_223_024_625_156_5e-16;
 /// Smallest permanent for which the filter is trusted.
 const FILTER_FLOOR: f64 = 1e-200;
-/// Margin over the rounding-error bound beyond which the binary64 value itself is also precise.
-const PRECISE: f64 = 1_048_576.0;
 /// Smallest largest-component magnitude of an accepted normal.
 const MIN_NORMAL_COMPONENT: f64 = 1e-100;
 
@@ -89,9 +87,9 @@ impl CutPlane {
 
     /// The exact sign of `normal . (p - point)` and a binary64 estimate of the value.
     ///
-    /// The estimate carries the exact sign (never zero for a non-zero sign) and is only used to
-    /// place a new vertex; it is the filtered value when that is precise, else the midpoint of
-    /// an enclosure of the exact integer value.
+    /// The estimate carries the exact sign (never zero for a non-zero sign) and is not used to
+    /// place vertices (see [`Self::intersection`]); it is the filtered value when the filter
+    /// decides, else the midpoint of an enclosure of the exact integer value.
     pub(crate) fn evaluate(
         &self,
         p: [f64; 3],
@@ -108,12 +106,7 @@ impl CutPlane {
         let permanent = terms.iter().map(|t| t.abs()).sum::<f64>();
         let bound = 8.0 * U * permanent;
         if permanent > FILTER_FLOOR && value.abs() > bound {
-            let sign = if value > 0.0 { 1 } else { -1 };
-            if value.abs() > PRECISE * bound {
-                return Ok((sign, value));
-            }
-            budget.charge()?;
-            return self.exact(p).map(|(s, v, _)| (s, v));
+            return Ok((if value > 0.0 { 1 } else { -1 }, value));
         }
         budget.charge()?;
         self.exact(p).map(|(s, v, _)| (s, v))
@@ -152,6 +145,126 @@ impl CutPlane {
             f64::from(sign) * f64::MIN_POSITIVE
         };
         Ok((sign, estimate, enclosure))
+    }
+
+    /// The binary64 rounding (to nearest, ties to even) of every coordinate of the exact
+    /// intersection of the plane with the segment `a`-`b`.
+    ///
+    /// The endpoints must have strictly opposite exact signs. The exact coordinate is the
+    /// rational `(dA * b_i - dB * a_i) / (dA - dB)` with `dA`, `dB` the exact plane values; a
+    /// seed from outward-rounded enclosures is moved by at most a few representable steps until
+    /// two exact integer comparisons with the neighbouring midpoints prove it is the nearest
+    /// double. The result does not depend on the order of the endpoints and never leaves the
+    /// segment. The work is at most eight exact comparison rounds per coordinate.
+    pub(crate) fn intersection(&self, a: [f64; 3], b: [f64; 3]) -> Result<[f64; 3], OpFailure> {
+        let mut out = [0.0; 3];
+        for (axis, slot) in out.iter_mut().enumerate() {
+            let rounded = self.rounded_coordinate(a, b, axis)?;
+            *slot = if rounded == 0.0 { 0.0 } else { rounded };
+        }
+        Ok(out)
+    }
+
+    /// Exact numerator and positive denominator of the intersection coordinate `axis`, in the
+    /// common unit `2^e` (`value = num / den * 2^e`), with `e` fine enough for `extra` too.
+    fn ratio(
+        &self,
+        a: [f64; 3],
+        b: [f64; 3],
+        axis: usize,
+        extra: &[f64],
+    ) -> Result<(Big, Big, i32), OpFailure> {
+        let range = || OpFailure::numeric(OpField::Plane, OpDefect::NumericRange, Stage::Build);
+        let e = min_exponent(
+            a.iter()
+                .chain(b.iter())
+                .chain(self.point.iter())
+                .chain(self.normal.iter())
+                .chain(extra.iter())
+                .copied(),
+        );
+        let s = |x: f64| scaled(x, e).map_err(|_| range());
+        let value = |p: [f64; 3]| -> Result<Big, OpFailure> {
+            let mut sum = Big::ZERO;
+            for ((n, q), o) in self.normal.iter().zip(p).zip(self.point) {
+                let diff = s(q)?.sub(&s(o)?).map_err(|_| range())?;
+                sum = sum
+                    .add(&s(*n)?.mul(&diff).map_err(|_| range())?)
+                    .map_err(|_| range())?;
+            }
+            Ok(sum)
+        };
+        let (da, db) = (value(a)?, value(b)?);
+        let (ai, bi) = (
+            s(a.get(axis).copied().ok_or_else(range)?)?,
+            s(b.get(axis).copied().ok_or_else(range)?)?,
+        );
+        let mut num = da
+            .mul(&bi)
+            .and_then(|x| x.sub(&db.mul(&ai)?))
+            .map_err(|_| range())?;
+        let mut den = da.sub(&db).map_err(|_| range())?;
+        if den.sign() == 0 || da.sign() * db.sign() >= 0 {
+            return Err(range());
+        }
+        if den.sign() < 0 {
+            num = num.negated();
+            den = den.negated();
+        }
+        Ok((num, den, e))
+    }
+
+    /// Sign of `exact coordinate - (lo + hi) / 2`.
+    fn compare_midpoint(
+        &self,
+        a: [f64; 3],
+        b: [f64; 3],
+        axis: usize,
+        lo: f64,
+        hi: f64,
+    ) -> Result<i8, OpFailure> {
+        let range = || OpFailure::numeric(OpField::Plane, OpDefect::NumericRange, Stage::Build);
+        let (num, den, e) = self.ratio(a, b, axis, &[lo, hi])?;
+        let sum = scaled(lo, e)
+            .and_then(|l| l.add(&scaled(hi, e)?))
+            .map_err(|_| range())?;
+        let doubled = num.add(&num).map_err(|_| range())?;
+        Ok(doubled
+            .sub(&sum.mul(&den).map_err(|_| range())?)
+            .map_err(|_| range())?
+            .sign())
+    }
+
+    fn rounded_coordinate(&self, a: [f64; 3], b: [f64; 3], axis: usize) -> Result<f64, OpFailure> {
+        let range = || OpFailure::numeric(OpField::Plane, OpDefect::NumericRange, Stage::Build);
+        let (ai, bi) = (
+            a.get(axis).copied().ok_or_else(range)?,
+            b.get(axis).copied().ok_or_else(range)?,
+        );
+        let (low, high) = (ai.min(bi), ai.max(bi));
+        let (num, den, e) = self.ratio(a, b, axis, &[])?;
+        let seed = e
+            .checked_mul(3)
+            .and_then(|p| num.enclose_clamped(p))
+            .zip(e.checked_mul(2).and_then(|p| den.enclose(p)))
+            .and_then(|(n, d)| n.div(d))
+            .map_or(low, |q| q.midpoint())
+            .clamp(low, high);
+        let even = |x: f64| x.to_bits() & 1 == 0;
+        let mut c = seed;
+        for _ in 0..8 {
+            let (down, up) = (c.next_down(), c.next_up());
+            match self.compare_midpoint(a, b, axis, down, c)? {
+                -1 => c = down,
+                0 => return Ok(if even(down) { down } else { c }),
+                _ => match self.compare_midpoint(a, b, axis, c, up)? {
+                    1 => c = up,
+                    0 => return Ok(if even(c) { c } else { up }),
+                    _ => return Ok(c.clamp(low, high)),
+                },
+            }
+        }
+        Err(range())
     }
 
     /// Upper bound of the distance from `p` to the plane, from the exact value and an
