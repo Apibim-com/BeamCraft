@@ -5,6 +5,7 @@
 //! the adapter of `beamcraft_cli::plate` and print one JSON object (same error shape as the other
 //! commands; exit 0 success, 2 rejection, 3 backend unavailable, 4 outcome unknown).
 
+use beamcraft_cli::copy::{CopiedElement, CopyRequest, copy_element};
 use beamcraft_cli::definition::{
     DefineRequest, Defined, DefinitionRecord, define, definition_path,
 };
@@ -25,7 +26,7 @@ use beamcraft_host::{
     storage::BlobStore,
 };
 use beamcraft_model::command::{
-    CreatePlate, CreateStraightMember, ElementPatch, MAX_HOLES, MemberKind, Placement,
+    CopyElement, CreatePlate, CreateStraightMember, ElementPatch, MAX_HOLES, MemberKind, Placement,
     UpdateElement,
 };
 use beamcraft_model::digest::ContentDigest;
@@ -142,6 +143,19 @@ const UPDATE_OPTIONS: &[&str] = &[
     "--workspace-id",
 ];
 
+const COPY_OPTIONS: &[&str] = &[
+    "--store",
+    "--id",
+    "--name",
+    "--offset",
+    "--new-id",
+    "--op-id",
+    "--revision-id",
+    "--actor-id",
+    "--project-id",
+    "--workspace-id",
+];
+
 fn run(args: &[OsString]) -> Run<Json> {
     let args: Vec<&str> = args
         .iter()
@@ -158,6 +172,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         "create-plate" => CREATE_OPTIONS,
         "create-member" => CREATE_MEMBER_OPTIONS,
         "update-element" => UPDATE_OPTIONS,
+        "copy-element" => COPY_OPTIONS,
         "define-material" => DEFINE_MATERIAL_OPTIONS,
         "define-profile" => DEFINE_PROFILE_OPTIONS,
         "plate-inspect" | "definitions" => &["--store"],
@@ -185,6 +200,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         "create-plate" => create(&store, &options),
         "create-member" => create_member_command(&store, &options),
         "update-element" => update_command(&store, &options),
+        "copy-element" => copy_command(&store, &options),
         "define-material" | "define-profile" => define_command(&store, command, &options),
         "definitions" => definitions_json(&inspect(&store)?),
         _ => Ok(inspection_json(&inspect(&store)?)?),
@@ -491,6 +507,83 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
         ("element", element),
         ("revision", revision_json(&updated.revision)),
         ("footprint", footprint_json(updated.footprint.as_ref())),
+    ]))
+}
+
+fn copy_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Json> {
+    let mut source = IdSource::system();
+    let mut fresh = || {
+        source.next_id().map_err(|_| PlateError {
+            code: ErrorCode::BackendUnavailable,
+            message: "no identity could be generated",
+        })
+    };
+    let given = |key: &str| options.get(key).copied();
+    let source_id = ElementId::parse(given("--id").ok_or_else(|| invalid("--id is required"))?)
+        .map_err(id_error)?;
+    let new_id = match given("--new-id") {
+        Some(text) => ElementId::parse(text).map_err(id_error)?,
+        None => ElementId::from_uuid(fresh()?),
+    };
+    let op_id = match given("--op-id") {
+        Some(text) => OpId::parse(text).map_err(id_error)?,
+        None => OpId::from_uuid(fresh()?),
+    };
+    let revision_id = match given("--revision-id") {
+        Some(text) => RevisionId::parse(text).map_err(id_error)?,
+        None => RevisionId::from_uuid(fresh()?),
+    };
+    let actor = match given("--actor-id") {
+        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+    };
+    let project = match given("--project-id") {
+        Some(text) => ProjectId::parse(text).map_err(id_error)?,
+        None => ProjectId::from_uuid(fresh()?),
+    };
+    let workspace = match given("--workspace-id") {
+        Some(text) => WorkspaceId::parse(text).map_err(id_error)?,
+        None => WorkspaceId::from_uuid(fresh()?),
+    };
+    let copied = copy_element(
+        store,
+        &CopyRequest {
+            op_id,
+            revision_id,
+            actor,
+            project,
+            workspace,
+            command: CopyElement {
+                source_id,
+                new_id,
+                name: given("--name").map(str::to_owned),
+                offset_mm: given("--offset").map_or(Ok([0.0; 3]), translation)?,
+            },
+        },
+        &mut NoFault,
+    )?;
+    let element = match &copied.element {
+        CopiedElement::Plate(record) => plate_json(record)?,
+        CopiedElement::Member(record) => member_json(record)?,
+    };
+    Ok(Json::object([
+        (
+            "outcome",
+            Json::text(if copied.replayed {
+                "element_copy_replayed"
+            } else {
+                "element_copied"
+            }),
+        ),
+        ("op_id", Json::text(op_id.to_string())),
+        ("source_id", Json::text(source_id.to_string())),
+        (
+            "changed_layers",
+            Json::Array(copied.changed_layers.iter().map(Json::text).collect()),
+        ),
+        ("element", element),
+        ("revision", revision_json(&copied.revision)),
+        ("footprint", footprint_json(copied.footprint.as_ref())),
     ]))
 }
 

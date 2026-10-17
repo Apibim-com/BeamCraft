@@ -102,6 +102,34 @@ impl Footprint {
         Self::for_create_with(id, Some(profile), material)
     }
 
+    /// The footprint of `CopyElement` (P05): it reads the absence of the new ID, the source's
+    /// lifecycle and every authored group the copy takes from it, and the pinned definitions
+    /// (profile and material); it writes what `CreatePlate` writes for the new ID. The source is
+    /// never written.
+    pub fn for_copy(
+        source: ElementId,
+        new_id: ElementId,
+        profile: Option<ContentDigest>,
+        material: Option<ContentDigest>,
+    ) -> Result<Self, CommandError> {
+        let mut footprint = Self::for_create_with(new_id, profile, material)?;
+        for group in [
+            Group::Lifecycle,
+            Group::Label,
+            Group::ShapeInputs,
+            Group::Placement,
+            Group::MaterialRef,
+            Group::Relationship,
+        ] {
+            footprint.reads.insert(Entry {
+                target: Target::Element(source),
+                group,
+            });
+        }
+        footprint.check_bound()?;
+        Ok(footprint)
+    }
+
     fn for_create_with(
         id: ElementId,
         profile: Option<ContentDigest>,

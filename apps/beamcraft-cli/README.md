@@ -237,3 +237,18 @@ clears the material, so the mass becomes unknown. An empty patch is `INVALID_ARG
 and mass are stored beside the derived mesh with their own signatures; `plate-inspect` reports
 `stored_quantities` as `current`, `stale` or `missing`, and the publish-time verifier refuses a
 stale record with `INTEGRITY_ERROR`. See the [design note](../../docs/design/p04-quantities-update.md).
+
+## P05 copy-element
+
+```text
+beamcraft copy-element --store ROOT --id SOURCE_UUID [--name TEXT] [--offset X,Y,Z] [--new-id UUID]
+  [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
+```
+
+`copy-element` creates one new plate or member with a fresh id and the source's authored inputs;
+the label defaults to the source's and `--offset` is added to the placement translation. The body
+is element-local, so the copy has the same mesh digest, volume and mass; the pinned profile and
+material are shared by digest. The source is only read (the footprint says so and is checked).
+Editing the copy later rebuilds only the copy. A reused identity is `DUPLICATE_ID`, an unknown
+source `NOT_FOUND`, and the same `--op-id` is a replay or `OP_ID_REUSE`. See the
+[design note](../../docs/design/p05-copy-element.md).

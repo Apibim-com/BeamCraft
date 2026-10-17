@@ -5,6 +5,7 @@
 //! shared by the `beamcraft` binary and its tests. Nothing depends on this package; it is the
 //! application layer.
 
+pub mod copy;
 pub mod definition;
 pub mod edit;
 pub mod member;

@@ -39,6 +39,8 @@ P03 adds the straight beam and column (`kernel::member::straight_member`, `model
 
 P04 adds `model::command::UpdateElement`, `engine::{update, quantity}`, `beamcraft_cli::edit` and the CLI command `update-element`: a name, material or thickness edit rewrites only the groups it changes, and volume and mass are stored as optional attributes beside the derived mesh with their own signatures, so a reader can tell current from stale ([design note](design/p04-quantities-update.md)).
 
+P05 adds `model::command::CopyElement`, `engine::copy`, `beamcraft_cli::copy` and the CLI command `copy-element`: a new element with a fresh id, the source's authored inputs and pinned definitions, and the same body and mesh digest; the source is only read ([design note](design/p05-copy-element.md)).
+
 [Module boundaries (F08)](contracts/module-boundaries-v0.1.md) give the exact crate and module path
 of every contract area, the allowed dependency edges and which crates are planned. A test and CI
 enforce them.
