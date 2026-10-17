@@ -15,7 +15,7 @@ use crate::error::ErrorCode;
 use crate::id::ElementId;
 use crate::limits::{
     CONTOUR_POINT_CAP, COORDINATE_CAP_MM, DIMENSION_CAP_MM, MAX_LABEL_BYTES, MIN_CONTOUR_POINTS,
-    MIN_LABEL_BYTES, ORIENTATION_NORM_TOLERANCE,
+    MIN_LABEL_BYTES, ORIENTATION_NORM_TOLERANCE, ROLL_CAP_RAD,
 };
 use beamcraft_geom::canonical_f64_bytes;
 use core::fmt;
@@ -151,6 +151,144 @@ pub struct CreatePlate {
 pub fn label_is_valid(name: &str) -> bool {
     (MIN_LABEL_BYTES..=MAX_LABEL_BYTES).contains(&name.len())
         && !name.chars().any(|c| c <= '\u{1f}' || c == '\u{7f}')
+}
+
+/// The explicit member kind of F04 section 7; it is independent of the USD model kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemberKind {
+    /// A straight beam.
+    Beam,
+    /// A straight column.
+    Column,
+}
+
+impl MemberKind {
+    /// The `bim:elementKind` token.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Beam => "beam",
+            Self::Column => "column",
+        }
+    }
+}
+
+/// F04 section 7 `CreateStraightMember`: a straight member with a pinned profile (required) and
+/// an optional pinned material. Whether the digests resolve (`NOT_FOUND`) and the shape (axis
+/// length, supported section) are the engine's decisions, not argument checks.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CreateStraightMember {
+    /// The new element's full identity.
+    pub new_id: ElementId,
+    /// Beam or column.
+    pub kind: MemberKind,
+    /// Label, 1 to 256 UTF-8 bytes without control characters.
+    pub name: String,
+    /// The two element-local axis points `p1` and `p2`.
+    pub axis_points_mm: [[f64; 3]; 2],
+    /// Pinned profile definition.
+    pub profile_digest: ContentDigest,
+    /// Rigid placement.
+    pub placement: Placement,
+    /// Explicit roll about the member axis; `None` is zero.
+    pub roll_rad: Option<f64>,
+    /// Optional pinned material definition.
+    pub material_digest: Option<ContentDigest>,
+}
+
+impl CreateStraightMember {
+    /// Admits what does not depend on geometry: label, finiteness, the coordinate and roll caps
+    /// and the placement. A non-finite number is `NON_FINITE_NUMBER`; a coordinate above
+    /// 1,000,000,000 mm or a roll above 2 pi is `LIMIT_EXCEEDED`.
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        if !label_is_valid(&self.name) {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "name",
+                "label must be 1 to 256 bytes without control characters",
+            ));
+        }
+        let roll = self.roll_rad.unwrap_or(0.0);
+        if !roll.is_finite() || self.axis_points_mm.iter().flatten().any(|v| !v.is_finite()) {
+            return Err(CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "axis_points_mm",
+                "value is not finite",
+            ));
+        }
+        if self
+            .axis_points_mm
+            .iter()
+            .flatten()
+            .any(|v| v.abs() > COORDINATE_CAP_MM)
+        {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "axis_points_mm",
+                "coordinate exceeds the coordinate cap",
+            ));
+        }
+        if roll.abs() > ROLL_CAP_RAD {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "roll_rad",
+                "roll exceeds 2 pi",
+            ));
+        }
+        self.placement.validate()
+    }
+
+    /// SHA-256 of a versioned, length-prefixed binary encoding of the validated arguments, with
+    /// signed zero normalized; like [`CreatePlate::content_fingerprint`] it is not the F05
+    /// canonical form.
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        self.validate_arguments()?;
+        let bad = || {
+            CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "axis_points_mm",
+                "value cannot be encoded",
+            )
+        };
+        let mut bytes = Vec::with_capacity(256);
+        bytes.extend_from_slice(b"BeamCraft/P03/CreateStraightMember/v1\0");
+        bytes.extend_from_slice(self.new_id.as_bytes());
+        bytes.push(match self.kind {
+            MemberKind::Beam => 0,
+            MemberKind::Column => 1,
+        });
+        let name = self.name.as_bytes();
+        bytes.extend_from_slice(&(name.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(name);
+        bytes.extend_from_slice(self.profile_digest.as_bytes());
+        match &self.material_digest {
+            Some(digest) => {
+                bytes.push(1);
+                bytes.extend_from_slice(digest.as_bytes());
+            }
+            None => bytes.push(0),
+        }
+        match self.roll_rad {
+            Some(roll) => {
+                bytes.push(1);
+                bytes.extend_from_slice(&canonical_f64_bytes(roll).map_err(|_| bad())?);
+            }
+            None => bytes.push(0),
+        }
+        let mut scalars = self
+            .axis_points_mm
+            .iter()
+            .flatten()
+            .copied()
+            .chain(self.placement.translation_mm)
+            .chain(self.placement.orientation_xyzw);
+        scalars.try_for_each(|v| {
+            bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| bad())?);
+            Ok::<(), CommandError>(())
+        })?;
+        Sha256::digest(&bytes).map_err(|_| {
+            CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+        })
+    }
 }
 
 impl CreatePlate {
@@ -430,5 +568,72 @@ mod tests {
         assert_ne!(fingerprints[0], fingerprints[1]);
         assert_ne!(fingerprints[1], fingerprints[2]);
         assert_ne!(fingerprints[0], fingerprints[2]);
+    }
+
+    fn member() -> CreateStraightMember {
+        let digest = |text: &[u8]| crate::digest::Sha256::digest(text).unwrap();
+        CreateStraightMember {
+            new_id: ElementId::parse("019a7bf0-0000-7000-8000-000000000007").unwrap(),
+            kind: MemberKind::Beam,
+            name: "Synthetic beam".into(),
+            axis_points_mm: [[0.0; 3], [6000.0, 0.0, 0.0]],
+            profile_digest: digest(b"profile"),
+            placement: Placement::IDENTITY,
+            roll_rad: None,
+            material_digest: None,
+        }
+    }
+
+    #[test]
+    fn a_member_has_the_f04_argument_rules() {
+        assert!(member().validate_arguments().is_ok());
+        let code = |m: CreateStraightMember| m.validate_arguments().unwrap_err().code;
+        let mut m = member();
+        m.name = "line\nbreak".into();
+        assert_eq!(code(m), ErrorCode::InvalidArgument);
+        let mut m = member();
+        m.axis_points_mm[1][2] = f64::NAN;
+        assert_eq!(code(m), ErrorCode::NonFiniteNumber);
+        let mut m = member();
+        m.roll_rad = Some(f64::INFINITY);
+        assert_eq!(code(m), ErrorCode::NonFiniteNumber);
+        let mut m = member();
+        m.axis_points_mm[0][0] = 1_000_000_000.5;
+        assert_eq!(code(m), ErrorCode::LimitExceeded);
+        let mut m = member();
+        m.roll_rad = Some(core::f64::consts::TAU);
+        assert!(m.validate_arguments().is_ok());
+        m.roll_rad = Some(6.3);
+        assert_eq!(code(m), ErrorCode::LimitExceeded);
+        let mut m = member();
+        m.placement.orientation_xyzw = [0.0, 0.0, 0.0, 0.5];
+        assert_eq!(code(m), ErrorCode::InvalidArgument);
+    }
+
+    #[test]
+    fn the_member_fingerprint_tracks_every_input() {
+        let base = member().content_fingerprint().unwrap();
+        let digest = |text: &[u8]| crate::digest::Sha256::digest(text).unwrap();
+        for mutate in [
+            |m: &mut CreateStraightMember| m.kind = MemberKind::Column,
+            |m: &mut CreateStraightMember| m.name = "Other".into(),
+            |m: &mut CreateStraightMember| m.axis_points_mm[1][0] = 6001.0,
+            |m: &mut CreateStraightMember| m.roll_rad = Some(0.5),
+            |m: &mut CreateStraightMember| m.placement.translation_mm[1] = 1.0,
+        ] {
+            let mut m = member();
+            mutate(&mut m);
+            assert_ne!(m.content_fingerprint().unwrap(), base);
+        }
+        let mut m = member();
+        m.profile_digest = digest(b"other profile");
+        assert_ne!(m.content_fingerprint().unwrap(), base);
+        let mut m = member();
+        m.material_digest = Some(digest(b"material"));
+        assert_ne!(m.content_fingerprint().unwrap(), base);
+        // Signed zero and an explicit zero roll are not the same authored input, but -0.0 is 0.0.
+        let mut m = member();
+        m.axis_points_mm[0][0] = -0.0;
+        assert_eq!(m.content_fingerprint().unwrap(), base);
     }
 }

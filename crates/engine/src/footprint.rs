@@ -89,13 +89,31 @@ impl Footprint {
         id: ElementId,
         material: Option<ContentDigest>,
     ) -> Result<Self, CommandError> {
+        Self::for_create_with(id, None, material)
+    }
+
+    /// The footprint of `CreateStraightMember`: that of `CreatePlate` plus the read of the pinned
+    /// profile definition, which is required and never written.
+    pub fn for_create_member(
+        id: ElementId,
+        profile: ContentDigest,
+        material: Option<ContentDigest>,
+    ) -> Result<Self, CommandError> {
+        Self::for_create_with(id, Some(profile), material)
+    }
+
+    fn for_create_with(
+        id: ElementId,
+        profile: Option<ContentDigest>,
+        material: Option<ContentDigest>,
+    ) -> Result<Self, CommandError> {
         let element = Target::Element(id);
         let entry = |group| Entry {
             target: element,
             group,
         };
         let mut reads = BTreeSet::from([entry(Group::Lifecycle)]);
-        if let Some(digest) = material {
+        for digest in profile.into_iter().chain(material) {
             reads.insert(Entry {
                 target: Target::Definition(digest),
                 group: Group::Relationship,

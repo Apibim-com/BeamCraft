@@ -310,3 +310,122 @@ fn pxr_reads_pinned_materials_and_the_mass_agrees_with_the_closed_form() {
     assert_eq!(report.get("plates").unwrap().array().unwrap().len(), 3);
     let _ = fs::remove_dir_all(&root);
 }
+
+#[test]
+fn pxr_reads_a_beam_and_a_column_against_the_closed_form() {
+    let Some((python, python_args)) = find_python() else {
+        println!(
+            "SKIP: no Python interpreter with pxr found (set BEAMCRAFT_PXR_PYTHON, or install \
+             usd-core for `py -3.11`). The independent pxr gate was NOT run."
+        );
+        return;
+    };
+    let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("p03-pxr");
+    fs::create_dir_all(&base).unwrap();
+    let root = base.join(format!("run-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let store = root.join("store");
+    let layers = root.join("layers");
+    fs::create_dir_all(&store).unwrap();
+    fs::create_dir_all(&layers).unwrap();
+    let store_arg = store.to_str().unwrap();
+
+    let digest_of = |reply: &Json| text(reply.get("definition").unwrap(), "digest");
+    let steel = digest_of(&run_binary(&[
+        "define-material",
+        "--store",
+        store_arg,
+        "--density",
+        "7850",
+    ]));
+    let profile = digest_of(&run_binary(&[
+        "define-profile",
+        "--store",
+        store_arg,
+        "--width",
+        "200",
+        "--height",
+        "300",
+    ]));
+    let beam = run_binary(&[
+        "create-member",
+        "--store",
+        store_arg,
+        "--kind",
+        "beam",
+        "--start",
+        "0,0,0",
+        "--end",
+        "6000,0,0",
+        "--profile-digest",
+        &profile,
+        "--material-digest",
+        &steel,
+        "--name",
+        "Beam",
+    ]);
+    let column = run_binary(&[
+        "create-member",
+        "--store",
+        store_arg,
+        "--kind",
+        "column",
+        "--start",
+        "0,0,0",
+        "--end",
+        "0,0,3000",
+        "--profile-digest",
+        &profile,
+        "--roll",
+        "1.5707963267948966",
+        "--name",
+        "Column",
+    ]);
+    let inspected = run_binary(&["plate-inspect", "--store", store_arg]);
+    copy_layers(&store, &layers, &inspected);
+    let member = |reply: &Json, name: &str, kind: &str, axis: &str, roll: &str, tail: &str| {
+        let m = reply.get("member").unwrap();
+        let mass = match m
+            .get("quantities")
+            .unwrap()
+            .get("mass")
+            .unwrap()
+            .get("kg")
+            .unwrap()
+        {
+            Json::Null => "null".to_owned(),
+            value => format!("{:?}", value.float().unwrap()),
+        };
+        format!(
+            r#"{{"kind":"{kind}","id":"{}","name":"{name}","axis":{axis},"roll":{roll},"profile":"{profile}","width":200.0,"height":300.0,"cli_volume_mm3":{:?},"cli_mass_kg":{mass},{tail}}}"#,
+            text(m, "element_id"),
+            num(reply, &["member", "quantities", "volume", "mm3"]),
+        )
+    };
+    // Hand-derived from F06 section 4: the +X axis gives Z_m = +X, Y_m = +Z, X_m = +Y, so the
+    // 200 mm width spans Y and the 300 mm height spans Z. The vertical axis gives X_m = +X and
+    // Y_m = +Y; the quarter-turn roll takes X_m toward Y_m, so the width spans Y and the height X.
+    let expect = format!(
+        "[{},{}]",
+        member(
+            &beam,
+            "Beam",
+            "beam",
+            "[[0.0,0.0,0.0],[6000.0,0.0,0.0]]",
+            "null",
+            r#""volume_mm3":360000000.0,"density":7850.0,"bounds_min":[0.0,-100.0,-150.0],"bounds_max":[6000.0,100.0,150.0]"#
+        ),
+        member(
+            &column,
+            "Column",
+            "column",
+            "[[0.0,0.0,0.0],[0.0,0.0,3000.0]]",
+            "1.5707963267948966",
+            r#""volume_mm3":180000000.0,"density":null,"bounds_min":[-150.0,-100.0,0.0],"bounds_max":[150.0,100.0,3000.0]"#
+        ),
+    );
+    assert_eq!(num(&beam, &["member", "quantities", "mass", "kg"]), 2826.0);
+    let report = run_script(&python, &python_args, &layers, &expect);
+    assert_eq!(report.get("plates").unwrap().array().unwrap().len(), 2);
+    let _ = fs::remove_dir_all(&root);
+}

@@ -15,12 +15,14 @@ pub mod element;
 pub mod error;
 pub mod footprint;
 pub mod limits;
+pub mod member;
 pub mod presentation;
 pub mod query;
 pub mod scene;
 pub mod synthetic;
 pub mod transaction;
 
+pub use beamcraft_kernel::PlateResult;
 pub use element::{ElementId, ElementKind, KindFilter};
 pub use error::{ViewCode, ViewError};
 pub use limits::Limits;

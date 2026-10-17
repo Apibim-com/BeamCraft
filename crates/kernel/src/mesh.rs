@@ -77,23 +77,16 @@ impl PlateMesh {
 pub(crate) fn self_check(
     vertices: &[Point3; 8],
     triangles: &[[u32; 3]; 12],
+    face_normals: &[Vec3; 6],
 ) -> Result<(), Failure> {
     let fail = || Failure::one(Code::SelfCheckFailed, Field::Mesh, Stage::Checks);
     let mut volume_sum = 0.0;
     let mut unique_edges = 0usize;
     let mut used = [false; 8];
-    for (triangle, expected_normal) in triangles.iter().zip(
-        [
-            [-1.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.0, -1.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, 0.0, -1.0],
-            [0.0, 0.0, 1.0],
-        ]
-        .into_iter()
-        .flat_map(|n| [n, n]),
-    ) {
+    for (triangle, expected_normal) in triangles
+        .iter()
+        .zip(face_normals.iter().flat_map(|n| [*n, *n]))
+    {
         let [ia, ib, ic] = *triangle;
         if ia == ib || ib == ic || ia == ic {
             return Err(fail());
@@ -118,9 +111,7 @@ pub(crate) fn self_check(
             .vector_to(b)
             .and_then(|ab| ab.cross(a.vector_to(c)?))
             .map_err(|_| fail())?;
-        let [nx, ny, nz] = expected_normal;
-        let normal = Vec3::new(nx, ny, nz).map_err(|_| fail())?;
-        if cross.dot(normal).map_err(|_| fail())? <= 0.0 {
+        if cross.dot(expected_normal).map_err(|_| fail())? <= 0.0 {
             return Err(fail());
         }
         let av = Vec3::new(a.x, a.y, a.z).map_err(|_| fail())?;
@@ -210,6 +201,7 @@ mod tests {
         })
         .unwrap();
         let vertices = mesh.mesh().vertices();
+        let normals = *mesh.mesh().face_normals();
         for mutation in 0..4 {
             let mut triangles = PLATE_TRIANGLES;
             match mutation {
@@ -219,7 +211,7 @@ mod tests {
                 _ => triangles[0][0] = triangles[0][1],
             }
             assert_eq!(
-                self_check(vertices, &triangles)
+                self_check(vertices, &triangles, &normals)
                     .unwrap_err()
                     .diagnostics()
                     .next()
@@ -230,6 +222,6 @@ mod tests {
         }
         let mut bad = *vertices;
         bad[7].z = 0.0;
-        assert!(self_check(&bad, &PLATE_TRIANGLES).is_err());
+        assert!(self_check(&bad, &PLATE_TRIANGLES, &normals).is_err());
     }
 }

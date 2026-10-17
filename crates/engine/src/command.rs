@@ -164,15 +164,7 @@ pub struct PlateBody {
 impl PlateBody {
     /// The quantity records of this body with no material: volume only, mass `unknown`.
     pub fn quantities(&self) -> Quantities {
-        Quantities {
-            volume_mm3: self.result.volume_mm3(),
-            volume_m3: self.result.volume_m3(),
-            volume_status: QuantityStatus::Current,
-            density_kg_m3: None,
-            mass_kg: None,
-            mass_status: QuantityStatus::Unknown,
-            algorithm: VOLUME_ALGORITHM,
-        }
+        quantities_without_material(&self.result, VOLUME_ALGORITHM)
     }
 
     /// The quantity records of this body with the physical material of the element.
@@ -183,30 +175,53 @@ impl PlateBody {
         &self,
         material: Option<MaterialInfo>,
     ) -> Result<Quantities, CommandError> {
-        let mut quantities = self.quantities();
-        let Some(density) = material.and_then(|m| m.density_kg_m3) else {
-            return Ok(quantities);
-        };
-        MaterialSpec {
-            density_kg_m3: Some(density),
-        }
-        .validate()?;
-        let record = analytic_mass_kg(quantities.volume_mm3, Some(density)).map_err(|code| {
-            CommandError::new(
-                code.f04_code(),
-                "density_kg_m3",
-                "mass could not be computed",
-            )
-        })?;
-        quantities.density_kg_m3 = Some(density);
-        quantities.mass_kg = record.kg;
-        quantities.mass_status = if record.kg.is_some() {
-            QuantityStatus::Current
-        } else {
-            QuantityStatus::Unknown
-        };
-        Ok(quantities)
+        quantities_with_material(&self.result, VOLUME_ALGORITHM, material)
     }
+}
+
+pub(crate) fn quantities_without_material(
+    result: &PlateResult,
+    algorithm: &'static str,
+) -> Quantities {
+    Quantities {
+        volume_mm3: result.volume_mm3(),
+        volume_m3: result.volume_m3(),
+        volume_status: QuantityStatus::Current,
+        density_kg_m3: None,
+        mass_kg: None,
+        mass_status: QuantityStatus::Unknown,
+        algorithm,
+    }
+}
+
+pub(crate) fn quantities_with_material(
+    result: &PlateResult,
+    algorithm: &'static str,
+    material: Option<MaterialInfo>,
+) -> Result<Quantities, CommandError> {
+    let mut quantities = quantities_without_material(result, algorithm);
+    let Some(density) = material.and_then(|m| m.density_kg_m3) else {
+        return Ok(quantities);
+    };
+    MaterialSpec {
+        density_kg_m3: Some(density),
+    }
+    .validate()?;
+    let record = analytic_mass_kg(quantities.volume_mm3, Some(density)).map_err(|code| {
+        CommandError::new(
+            code.f04_code(),
+            "density_kg_m3",
+            "mass could not be computed",
+        )
+    })?;
+    quantities.density_kg_m3 = Some(density);
+    quantities.mass_kg = record.kg;
+    quantities.mass_status = if record.kg.is_some() {
+        QuantityStatus::Current
+    } else {
+        QuantityStatus::Unknown
+    };
+    Ok(quantities)
 }
 
 /// Everything one accepted `CreatePlate` produces for the layers and the host.

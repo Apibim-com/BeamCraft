@@ -187,8 +187,28 @@ every definition, recomputes its digest from the stored values (a layer edited a
 `INTEGRITY_ERROR`) and lists digest, kind, values and the plates that pin it. A pinned digest that
 is not in the model is `NOT_FOUND`; one that names a profile is `INVALID_ARGUMENT`.
 
-Limits: no catalogue, designation lookup or environment default; no command consumes a profile
-yet (P03); the physical material carries no display appearance (a separate reference and signature
+Limits: no catalogue, designation lookup or environment default; the physical material carries no display appearance (a separate reference and signature
 later); definitions are not an F04 command, so there is no `op_id` replay for them and publication
 is idempotent by content digest; in-process layer engine as above. See the
 [design note](../../docs/design/p02-definitions.md).
+
+## P03 straight member
+
+```text
+beamcraft create-member --store ROOT --start X,Y,Z --end X,Y,Z --profile-digest SHA256
+  [--kind beam|column] [--roll RAD] [--material-digest SHA256] [--name TEXT]
+  [--translation X,Y,Z] [--new-id UUID] [--op-id UUID] [--revision-id UUID] [--actor-id UUID]
+  [--project-id UUID] [--workspace-id UUID]
+```
+
+`create-member` publishes one beam or column whose rectangle section comes from a profile
+definition published earlier (`define-profile`); the optional material works as for plates. The
+engine resolves both from the head (`NOT_FOUND` for an absent digest, `INVALID_ARGUMENT` for the
+wrong kind), the kernel builds the box in the F06 member frame (section centred on the axis, the
+default frame of F06 section 4 plus the explicit roll), and the commit runs the same verifier as
+plates, which now re-evaluates members too. Output: element id, kind, profile and material digests,
+section, axis points, roll, placement, volume and mass (as for plates), mesh digest, revision and
+footprint (the profile and material are reads). `plate-inspect` lists `plates` and `members` and
+puts both in the one pinned snapshot. A placement rotation is `UNSUPPORTED_GEOMETRY`: lay a member
+out with its axis points (an axis along `+X` gives width along `Y` and height along `Z`).
+See the [design note](../../docs/design/p03-straight-member.md).
