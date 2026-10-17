@@ -1,7 +1,7 @@
 {
  "artifact_version": 1,
  "contract_version": "0.1.0",
- "status": "draft, not frozen; owner decisions Q-1 to Q-11 of 2026-10-17 applied",
+ "status": "draft, not frozen; owner decisions Q-1 to Q-13 of 2026-10-17 applied",
  "role": "original logical acceptance descriptions for the E01 IFC export contract; not an exporter, IFC file or USD fixture",
  "contract": "ifc-export-v0.1.md",
  "f04_contract": "model-and-commands-v0.1.md",
@@ -61,7 +61,7 @@
    "rule_id": "IFCX-SCOPE-005",
    "severity": "info",
    "f04_code": "-",
-   "text": "An element whose lifecycle is deactivated is not exported and is listed (F10 section 3.2; open question Q-12). It is the only element that is not exported."
+   "text": "An element whose lifecycle is deactivated is not exported and is listed (F10 section 3.2; owner decision Q-12). It is the only element that is not exported."
   },
   {
    "rule_id": "IFCX-SCOPE-006",

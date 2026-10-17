@@ -8,7 +8,7 @@ file, how an element becomes an IFC entity, how its 22-character GlobalId is der
 and how the writer is built and driven.** It is written before the exporter (E02) so that E02 has a
 public mapping to implement and a loss list to report. **Nothing here is implemented.** No writer,
 GlobalId function, export command, project record or level exists in code. The examples are
-acceptance descriptions, not APIs or saved files. The owner's decisions on the first draft's eleven
+acceptance descriptions, not APIs or saved files. The owner's decisions on the first draft's
 questions are recorded in section 17; two model tasks that E02 now depends on (a stored ProjectId and
 a Level concept) are specified in section 19.
 
@@ -305,7 +305,7 @@ or invented.
 
 ### 4.2 Handling of every element
 
-**No element is skipped** (`IFCX-SCOPE-006`) except a deactivated one (`IFCX-SCOPE-005`; Q-12). Each
+**No element is skipped** (`IFCX-SCOPE-006`) except a deactivated one (`IFCX-SCOPE-005`; Q-12 decided). Each
 element goes through the checks below in this order; a failure of a request-level check refuses the
 export, the others only degrade the element and are listed.
 
@@ -429,8 +429,8 @@ and column without holes, assuming P01 stores it (case `E01-POS-16`).
 lists as open. The exporter writes each coordinate as the **shortest decimal text that parses back
 to the same binary32** (section 11.3), not as the longer text of the binary32 value widened to
 binary64. A reader that parses the text as a double obtains a value within one binary32 unit of the
-stored one. For integer millimetre coordinates the value is exact. Open question Q-13 asks whether
-export should wait for a binary64 derived mesh.
+stored one. For integer millimetre coordinates the value is exact. The owner decided (Q-13) to keep binary32
+mesh coordinates; export does not wait for a binary64 derived mesh.
 
 A face with a vertex count other than 3, a mesh with no faces or an element with no derived mesh
 (valid non-rectangular plates, members with another profile kind, kinds the kernel does not know)
@@ -453,7 +453,7 @@ Counts are bounded by `IFCX-LIM-005`.
 published volume. The bound is the CR-TOL-001 quantity bound (relative 1e-6) when all coordinates
 are exactly representable in binary32, as in the examples of the case file. For a general mesh the
 bound is the one implied by half a binary32 unit per coordinate and is stated per case by E02; it
-is not claimed to be 1e-6 in general (Q-13). `IFCX-GEO-007`: no profile, extrusion, boolean or
+is not claimed to be 1e-6 in general (binary32 coordinates, Q-13 decided). `IFCX-GEO-007`: no profile, extrusion, boolean or
 opening entity exists in the file.
 
 ## 7. Material and profile
@@ -886,7 +886,7 @@ diagnostic and are checked by the acceptance cases. Counts: 77 rules, 26 error, 
 | IFCX-SCOPE-002 | error | DEPENDENCY_UNAVAILABLE | The export reads exactly one verified committed revision, the published head by default or an explicit RevisionId. A revision that cannot be read and verified completely is refused; there is no partial export. |
 | IFCX-SCOPE-003 | error | UNSUPPORTED_COMMAND | IFC import, and any reading of IFC by BeamCraft, is outside this contract. A request to import is refused. |
 | IFCX-SCOPE-004 | error | INTEGRITY_ERROR | Export is read-only: it changes no authored state, derived state, revision or generation, and writes no attribute into the store. |
-| IFCX-SCOPE-005 | info | - | An element whose lifecycle is deactivated is not exported and is listed (F10 section 3.2; open question Q-12). It is the only element that is not exported. |
+| IFCX-SCOPE-005 | info | - | An element whose lifecycle is deactivated is not exported and is listed (F10 section 3.2; owner decision Q-12). It is the only element that is not exported. |
 | IFCX-SCOPE-006 | mapping | - | Every other element of the revision is exported. An element without usable geometry is exported without a representation and listed; nothing else is skipped. |
 | IFCX-VER-001 | error | UNSUPPORTED_VERSION | contract_version is exactly 0.1.0 and the requested schema identifier is IFC4 (IFC4 ADD2 TC1), the only supported one. |
 | IFCX-VER-002 | error | UNSUPPORTED_PROPERTY | The only output format is the clear-text STEP physical file. Any other requested format is refused. |
@@ -961,11 +961,11 @@ diagnostic and are checked by the acceptance cases. Counts: 77 rules, 26 error, 
 | IFCX-SURF-002 | mapping | - | The export report of section 15.4 is deterministic, lists every element's GlobalId, representation, quantity freshness and omissions, and carries the SHA-256 of the file. |
 
 
-## 17. Decisions of the owner and remaining questions
+## 17. Decisions of the owner
 
 ### 17.1 Decisions (2026-10-17, owner)
 
-The owner answered the eleven questions of the first draft in one session. The draft proposals they
+The owner answered the eleven questions of the first draft in one session and the two that followed (Q-12, Q-13) the same day. The draft proposals they
 replace are withdrawn.
 
 | Q | Decision | Where applied |
@@ -981,6 +981,8 @@ replace are withdrawn.
 | Q-9 | A material without a grade is named **`Unspecified`**, with the definition digest in a property. | 7 |
 | Q-10 | **Declared** area, mass per metre and surface per metre are exported as clearly labelled declared properties, never in a quantity set. | 9.2 |
 | Q-11 | The **SHA-256 construction** for the GlobalIds of project, site, building, storeys and relationships is accepted. | 3.5 |
+| Q-12 | **Deactivated elements are not exported; every other element is.** Export by a user-defined filter or selection is a planned future extension: an extension point, out of scope for 0.1.0, with no behaviour and no case here. | 4.2, 17.3 |
+| Q-13 | **Binary32 mesh coordinates are kept** as drafted (the derived layer's precision); export does not wait for a binary64 derived mesh. | 6.2, 6.4 |
 
 **Q-8, what is recorded and what is not.** The owner's own IFC tool, Altiro Desktop, is the chosen
 independent check of E02's output (`IFCX-VAL-001`). A connector for it also exists in the author's
@@ -996,14 +998,18 @@ the tool an open E02 gate, not an admitted oracle:
 3. whether it validates against the IFC4 schema and reports the checks the cases need (volume of the
    mesh, closed shell, element count and GlobalIds).
 
-### 17.2 Remaining questions
+### 17.2 Open questions
 
-- **Q-12, deactivated elements.** The draft does not export an element whose lifecycle is
-  `deactivated` (retained but out of play, F10 section 3.2); this is the only element not exported.
-  Should it instead be exported with a flag? In 0.1.0 no command produces that state.
-- **Q-13, mesh precision.** The derived layer stores binary32 mesh points, so exported coordinates
-  are binary32 (6.2). Should E02 wait for a binary64 derived mesh (P04 lists the precision policy as
-  open), or accept binary32 with the stated bound?
+None. Q-8's unverified items (17.1) are an E02 gate, not a question.
+
+### 17.3 Extension point: export by selection
+
+The owner plans a future export of a user-defined filter or selection of elements. It is **not part
+of 0.1.0** and this contract defines no option, behaviour or case for it. The only commitment is
+that the element set of an export is chosen in one place (the engine's pinned-snapshot element list
+of section 4.3), so that a later version can restrict it without changing the mapping rules. Levels,
+materials and relationships would then be limited to those the selected elements use; that rule
+belongs to the future contract version.
 
 ## 18. Public specification index
 
@@ -1141,4 +1147,6 @@ case of the case file that is reachable.
 - 2026-10-17: owner decisions Q-1 to Q-11 applied. IFC4 ADD2 TC1; mesh only; stored ProjectId (D1);
   levels (D2); proxies instead of skips; no persisted GlobalId; `Unspecified` materials; declared
   values; Altiro Desktop as the validation gate. Rules and cases were regenerated and renumbered
-  (the first draft was never frozen). Q-12 and Q-13 are new.
+  (the first draft was never frozen).
+- 2026-10-17: Q-12 and Q-13 decided by the owner and moved to the Decisions record; export by
+  selection recorded as an extension point (17.3).
