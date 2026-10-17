@@ -44,7 +44,7 @@ pub(super) fn targets(request: &OpenRequest, targets: &EditTargets) -> Result<()
             .map_err(|_| corrupt())?
             && let sdf::Value::Dictionary(fields) = value.as_ref()
             && let Some(pin) = fields.get("bimSchemaDigest")
-            && pin != &sdf::Value::String(schema_identity()?.digest.to_string())
+            && !matches!(pin, sdf::Value::String(s) if pin_accepted(s)?)
         {
             return Err(fail(
                 ErrorCode::UnsupportedVersion,
@@ -305,6 +305,7 @@ fn definition(data: &mut sdf::Data, p: &str, value: &Definition) -> Result<(), D
         Definition::RectangleProfile {
             width_mm,
             height_mm,
+            section,
         } => {
             attr(
                 data,
@@ -327,8 +328,27 @@ fn definition(data: &mut sdf::Data, p: &str, value: &Definition) -> Result<(), D
                 "double",
                 sdf::Value::Double(*height_mm),
             )?;
+            optional_text(data, p, "steel:profile:designation", &section.designation)?;
+            optional_text(data, p, "steel:profile:standard", &section.standard)?;
+            optional_number(data, p, "steel:profile:areaMm2", section.area_mm2)?;
+            optional_number(
+                data,
+                p,
+                "steel:profile:massPerMeterKg",
+                section.mass_per_meter_kg,
+            )?;
+            optional_number(
+                data,
+                p,
+                "steel:profile:surfacePerMeterM2",
+                section.surface_per_meter_m2,
+            )?;
         }
-        Definition::Material { density_kg_m3 } => {
+        Definition::Material {
+            density_kg_m3,
+            grade,
+            standard,
+        } => {
             attr(
                 data,
                 p,
@@ -336,12 +356,34 @@ fn definition(data: &mut sdf::Data, p: &str, value: &Definition) -> Result<(), D
                 "token",
                 sdf::Value::token("material"),
             )?;
-            if let Some(d) = density_kg_m3 {
-                attr(data, p, "bim:densityKgM3", "double", sdf::Value::Double(*d))?;
-            }
+            optional_number(data, p, "bim:densityKgM3", *density_kg_m3)?;
+            optional_text(data, p, "bim:materialGrade", grade)?;
+            optional_text(data, p, "bim:materialStandard", standard)?;
         }
     }
     Ok(())
+}
+fn optional_text(
+    data: &mut sdf::Data,
+    p: &str,
+    name: &str,
+    value: &Option<String>,
+) -> Result<(), Diagnostic> {
+    match value {
+        Some(v) => attr(data, p, name, "string", sdf::Value::String(v.clone())),
+        None => Ok(()),
+    }
+}
+fn optional_number(
+    data: &mut sdf::Data,
+    p: &str,
+    name: &str,
+    value: Option<f64>,
+) -> Result<(), Diagnostic> {
+    match value {
+        Some(v) => attr(data, p, name, "double", sdf::Value::Double(v)),
+        None => Ok(()),
+    }
 }
 pub(super) fn definition_bytes(d: &Definition) -> Result<Vec<u8>, Diagnostic> {
     validate::definition(d)?;

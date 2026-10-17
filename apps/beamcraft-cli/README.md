@@ -176,11 +176,23 @@ injection in tests. `tests/pxr_oracle.rs` (opt-in; skips without a Python that c
 ## P02 profile and material definitions
 
 ```text
-beamcraft define-material --store ROOT [--density KG_M3] [--revision-id UUID] [--actor-id UUID]
-  [--project-id UUID] [--workspace-id UUID]
-beamcraft define-profile --store ROOT --width MM --height MM [same id options]
+beamcraft define-material --store ROOT [--density KG_M3] [--grade TEXT] [--standard TEXT]
+  [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
+beamcraft define-profile --store ROOT --width MM --height MM [--designation TEXT] [--standard TEXT]
+  [--area-mm2 N] [--mass-per-meter-kg N] [--surface-per-meter-m2 N] [same id options]
 beamcraft definitions --store ROOT
 ```
+
+P02.2: a profile may declare its catalogue identity and section numbers, and a material its grade
+and standard. They are optional, stay unknown when absent and are part of the definition's digest
+(a definition without them keeps its earlier digest). Labels follow the element-label rule;
+numbers are finite, greater than zero and capped. For the rectangle family the declared area and
+surface per metre must agree with `width * height` and the perimeter within 0.1 percent
+(`INVALID_ARGUMENT` otherwise); the declared mass per metre is stored as declared and is checked
+against area times density only when a member quantity uses it (P04). A grade never selects a
+density. The numbers are plain USD attributes (`steel:profile:areaMm2`, `steel:profile:massPerMeterKg`,
+`steel:profile:surfacePerMeterM2`, `steel:profile:designation`, `steel:profile:standard`,
+`bim:materialGrade`, `bim:materialStandard`).
 
 `define-material` and `define-profile` publish one immutable definition as the next revision: a
 `/World/Definitions/D_<sha256>` prim in the model layer, with units `mm` and schema version

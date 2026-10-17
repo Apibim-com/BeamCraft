@@ -226,6 +226,7 @@ pub(crate) fn quantities_with_material(
     };
     MaterialSpec {
         density_kg_m3: Some(density),
+        ..MaterialSpec::default()
     }
     .validate()?;
     let record = analytic_mass_kg(quantities.volume_mm3, Some(density)).map_err(|code| {

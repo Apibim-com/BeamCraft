@@ -99,10 +99,13 @@ fn resources() -> Vec<Resource> {
         Resource::new(Definition::RectangleProfile {
             width_mm: 100.0,
             height_mm: 50.0,
+            section: SectionProperties::default(),
         })
         .unwrap(),
         Resource::new(Definition::Material {
             density_kg_m3: Some(1000.0),
+            grade: None,
+            standard: None,
         })
         .unwrap(),
     ]
@@ -864,6 +867,7 @@ fn material_empty_remove_profile_pin_and_loaded_unknown_schema_preservation() {
     let r = Resource::new(Definition::RectangleProfile {
         width_mm: 120.0,
         height_mm: 60.0,
+        section: SectionProperties::default(),
     })
     .unwrap();
     let mut input = batch(
@@ -1281,6 +1285,8 @@ fn through_hole_polygons_are_authored_as_flat_points_and_counts_and_validated() 
 fn an_existing_definition_must_match_the_resource_before_it_is_reused() {
     let resource = Resource::new(Definition::Material {
         density_kg_m3: Some(1000.0),
+        grade: None,
+        standard: None,
     })
     .unwrap();
     let hex = resource.digest.to_string();
@@ -1661,4 +1667,60 @@ fn value_at<'a>(prim: &'a Prim, name: &str) -> Option<&'a Value> {
         .iter()
         .find(|p| p.name == name)
         .and_then(|p| p.value.as_ref())
+}
+
+#[test]
+fn a_store_pinned_to_the_previous_mapping_stays_editable_and_is_repinned() {
+    let previous = "70fc49a1d81314a6599284532bd2d45c18f77b4318266238cc6923b25c05f28e";
+    let pinned = |body: &str| {
+        format!(
+            "#usda 1.0\n(metersPerUnit=0.001\nupAxis=\"Z\"\ncustomLayerData={{string bimSchemaDigest=\"{previous}\"}})\n{body}\n"
+        )
+    };
+    let mut input = initial();
+    for name in ["authored.usda", "derived.usda"] {
+        let old = input.assets.iter_mut().find(|a| a.name == name).unwrap();
+        let text = String::from_utf8(old.bytes.clone()).unwrap();
+        let body = text.split_once(")\n").unwrap().1.to_owned();
+        *old = asset(name, pinned(&body));
+    }
+    input.manifest = input.manifest_digest().unwrap();
+    let (mut a, o) = open(input);
+    let p = prepare_initial(&mut a, &o.context);
+    let installed = a
+        .install(
+            &o.context,
+            &p.token,
+            &p.op_id,
+            Decision::Accepted,
+            &control(),
+        )
+        .unwrap();
+    let exported = a.export(&installed.context, &control()).unwrap();
+    let current = schema_identity().unwrap().digest.to_string();
+    for name in ["authored.usda", "derived.usda"] {
+        let layer = exported.iter().find(|l| l.name == name).unwrap();
+        let text = String::from_utf8(layer.bytes.clone()).unwrap();
+        assert!(
+            text.contains(&current) && !text.contains(previous),
+            "{name}"
+        );
+    }
+    let mut other = initial();
+    let old = other
+        .assets
+        .iter_mut()
+        .find(|a| a.name == "authored.usda")
+        .unwrap();
+    *old = asset(
+        "authored.usda",
+        pinned("").replace(previous, &"0".repeat(64)),
+    );
+    other.manifest = other.manifest_digest().unwrap();
+    assert_eq!(
+        Author::open(other, targets(), schema_identity().unwrap(), &control())
+            .err()
+            .map(|e| e.code),
+        Some(ErrorCode::UnsupportedVersion)
+    );
 }

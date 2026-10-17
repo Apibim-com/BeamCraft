@@ -26,6 +26,15 @@ pub const MAX_LABEL_BYTES: usize = 256;
 pub const MIN_CONTOUR_POINTS: usize = 3;
 /// Largest material density in kg/m3, when authored in a definition.
 pub const MAX_DENSITY_KG_M3: f64 = 1_000_000.0;
+/// Largest declared section area in mm2 (the square of the dimension cap).
+pub const MAX_AREA_MM2: f64 = 1e12;
+/// Largest declared mass per metre of a section, in kg/m.
+pub const MAX_MASS_PER_METER_KG: f64 = 1_000_000.0;
+/// Largest declared surface per metre of a section, in m2/m.
+pub const MAX_SURFACE_PER_METER_M2: f64 = 10_000.0;
+/// Relative tolerance between a declared section value and the value the profile family's
+/// own formula gives. A larger gap is refused, never silently resolved to one of the two.
+pub const DECLARED_RELATIVE_TOLERANCE: f64 = 1e-3;
 /// Most relationship targets of one element.
 pub const MAX_RELATIONSHIP_TARGETS: usize = 1024;
 /// Most derived footprint entries of one command.

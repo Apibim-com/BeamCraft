@@ -9,23 +9,44 @@
 //! caps. There is no catalogue, no commercial designation and no inferred default: a material
 //! without a density keeps an unknown density and never selects a guessed one.
 
-use crate::command::CommandError;
+use crate::command::{CommandError, label_is_valid};
 use crate::error::ErrorCode;
-use crate::limits::{DIMENSION_CAP_MM, MAX_DENSITY_KG_M3};
+use crate::limits::{
+    DECLARED_RELATIVE_TOLERANCE, DIMENSION_CAP_MM, MAX_AREA_MM2, MAX_DENSITY_KG_M3,
+    MAX_MASS_PER_METER_KG, MAX_SURFACE_PER_METER_M2,
+};
 use beamcraft_geom::tolerance::ABSOLUTE_FLOOR_MM;
 
 /// A physical (engineering) material. Display appearance is a separate reference and signature
 /// (F04 section 4) and is not part of this value.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct MaterialSpec {
     /// Density in kg/m3. `None` is unknown, never a default.
     pub density_kg_m3: Option<f64>,
+    /// Declared steel grade, for example the grade named in the cited standard. A label only:
+    /// it never selects a density or any other number.
+    pub grade: Option<String>,
+    /// Declared standard of the grade, a label only.
+    pub standard: Option<String>,
+}
+
+fn declared_label(value: &Option<String>, field: &'static str) -> Result<(), CommandError> {
+    match value {
+        Some(text) if !label_is_valid(text) => Err(CommandError::new(
+            ErrorCode::InvalidArgument,
+            field,
+            "label is empty, too long or has control characters",
+        )),
+        _ => Ok(()),
+    }
 }
 
 impl MaterialSpec {
     /// Admits the density: finite (`NON_FINITE_NUMBER`), at most 1,000,000 kg/m3
-    /// (`LIMIT_EXCEEDED`) and greater than zero (`INVALID_ARGUMENT`).
+    /// (`LIMIT_EXCEEDED`) and greater than zero (`INVALID_ARGUMENT`); and the labels.
     pub fn validate(&self) -> Result<(), CommandError> {
+        declared_label(&self.grade, "grade")?;
+        declared_label(&self.standard, "standard")?;
         let Some(density) = self.density_kg_m3 else {
             return Ok(());
         };
@@ -54,19 +75,84 @@ impl MaterialSpec {
     }
 }
 
+/// Declared section properties of a profile definition (P02.2): the catalogue identity and the
+/// numbers a bill of materials reads. Every value is optional and stays unknown when absent;
+/// nothing is inferred from the designation.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SectionProperties {
+    /// Designation as printed in the cited standard, a label only.
+    pub designation: Option<String>,
+    /// Standard that defines the designation, a label only.
+    pub standard: Option<String>,
+    /// Declared cross-section area in mm2.
+    pub area_mm2: Option<f64>,
+    /// Declared catalogue mass per metre in kg/m. Used for the nominal mass of a member.
+    pub mass_per_meter_kg: Option<f64>,
+    /// Declared surface area per metre of length in m2/m.
+    pub surface_per_meter_m2: Option<f64>,
+}
+
+impl SectionProperties {
+    fn validate(&self) -> Result<(), CommandError> {
+        declared_label(&self.designation, "designation")?;
+        declared_label(&self.standard, "standard")?;
+        for (value, cap, field) in [
+            (self.area_mm2, MAX_AREA_MM2, "area_mm2"),
+            (
+                self.mass_per_meter_kg,
+                MAX_MASS_PER_METER_KG,
+                "mass_per_meter_kg",
+            ),
+            (
+                self.surface_per_meter_m2,
+                MAX_SURFACE_PER_METER_M2,
+                "surface_per_meter_m2",
+            ),
+        ] {
+            let Some(value) = value else { continue };
+            if !value.is_finite() {
+                return Err(CommandError::new(
+                    ErrorCode::NonFiniteNumber,
+                    field,
+                    "value is not finite",
+                ));
+            }
+            if value > cap {
+                return Err(CommandError::new(
+                    ErrorCode::LimitExceeded,
+                    field,
+                    "value exceeds its cap",
+                ));
+            }
+            if value <= 0.0 {
+                return Err(CommandError::new(
+                    ErrorCode::InvalidArgument,
+                    field,
+                    "value must be greater than zero",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// The first-scope parametric profile: a centred rectangle section (F06 section 2).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct RectangleProfileSpec {
     /// Section width in millimetres (along the rolled local X).
     pub width_mm: f64,
     /// Section height in millimetres (along the rolled local Y).
     pub height_mm: f64,
+    /// Declared catalogue identity and section numbers; all optional.
+    pub section: SectionProperties,
 }
 
 impl RectangleProfileSpec {
     /// Admits both dimensions: finite (`NON_FINITE_NUMBER`), at most 1,000,000 mm
     /// (`LIMIT_EXCEEDED`) and at least the absolute geometric floor of 0.001 mm
-    /// (`INVALID_ARGUMENT`).
+    /// (`INVALID_ARGUMENT`). Declared section numbers are admitted the same way and, for a
+    /// rectangle, must agree with the family's own formula within 0.1 percent: the area with
+    /// `width * height` and the surface per metre with the perimeter (`INVALID_ARGUMENT`).
     pub fn validate(&self) -> Result<(), CommandError> {
         let dimensions = [self.width_mm, self.height_mm];
         if dimensions.iter().any(|v| !v.is_finite()) {
@@ -90,6 +176,28 @@ impl RectangleProfileSpec {
                 "section dimension is below the geometric floor",
             ));
         }
+        self.section.validate()?;
+        let agrees = |declared: f64, formula: f64| {
+            (declared - formula).abs() <= DECLARED_RELATIVE_TOLERANCE * formula
+        };
+        if let Some(area) = self.section.area_mm2
+            && !agrees(area, self.width_mm * self.height_mm)
+        {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "area_mm2",
+                "declared area differs from width times height",
+            ));
+        }
+        if let Some(surface) = self.section.surface_per_meter_m2
+            && !agrees(surface, 2.0 * (self.width_mm + self.height_mm) / 1000.0)
+        {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "surface_per_meter_m2",
+                "declared surface differs from the perimeter",
+            ));
+        }
         Ok(())
     }
 }
@@ -101,6 +209,7 @@ mod tests {
     fn density(value: Option<f64>) -> Result<(), ErrorCode> {
         MaterialSpec {
             density_kg_m3: value,
+            ..MaterialSpec::default()
         }
         .validate()
         .map_err(|e| e.code)
@@ -110,9 +219,84 @@ mod tests {
         RectangleProfileSpec {
             width_mm,
             height_mm,
+            section: SectionProperties::default(),
         }
         .validate()
         .map_err(|e| e.code)
+    }
+
+    fn declared(section: SectionProperties) -> Result<(), ErrorCode> {
+        RectangleProfileSpec {
+            width_mm: 200.0,
+            height_mm: 300.0,
+            section,
+        }
+        .validate()
+        .map_err(|e| e.code)
+    }
+
+    #[test]
+    fn declared_section_numbers_and_labels_are_admitted_or_refused_by_code() {
+        let ok = SectionProperties {
+            designation: Some("RECT 200x300".into()),
+            standard: Some("Synthetic".into()),
+            area_mm2: Some(60_000.0),
+            mass_per_meter_kg: Some(471.0),
+            surface_per_meter_m2: Some(1.0),
+        };
+        assert_eq!(declared(ok.clone()), Ok(()));
+        let with = |f: fn(&mut SectionProperties)| {
+            let mut s = ok.clone();
+            f(&mut s);
+            declared(s)
+        };
+        assert_eq!(
+            with(|s| s.area_mm2 = Some(60_100.0)),
+            Err(ErrorCode::InvalidArgument)
+        );
+        assert_eq!(
+            with(|s| s.surface_per_meter_m2 = Some(1.1)),
+            Err(ErrorCode::InvalidArgument)
+        );
+        assert_eq!(
+            with(|s| s.mass_per_meter_kg = Some(f64::NAN)),
+            Err(ErrorCode::NonFiniteNumber)
+        );
+        assert_eq!(
+            with(|s| s.mass_per_meter_kg = Some(0.0)),
+            Err(ErrorCode::InvalidArgument)
+        );
+        assert_eq!(
+            with(|s| s.mass_per_meter_kg = Some(2e6)),
+            Err(ErrorCode::LimitExceeded)
+        );
+        assert_eq!(
+            with(|s| s.designation = Some(String::new())),
+            Err(ErrorCode::InvalidArgument)
+        );
+        assert_eq!(
+            with(|s| s.standard = Some("a\nb".into())),
+            Err(ErrorCode::InvalidArgument)
+        );
+    }
+
+    #[test]
+    fn material_labels_are_admitted_and_never_choose_a_density() {
+        let material = MaterialSpec {
+            grade: Some("S355".into()),
+            standard: Some("EN 10025-2".into()),
+            ..MaterialSpec::default()
+        };
+        assert_eq!(material.validate().map_err(|e| e.code), Ok(()));
+        assert_eq!(material.density_kg_m3, None);
+        let bad = MaterialSpec {
+            grade: Some("x".repeat(257)),
+            ..MaterialSpec::default()
+        };
+        assert_eq!(
+            bad.validate().map_err(|e| e.code),
+            Err(ErrorCode::InvalidArgument)
+        );
     }
 
     #[test]

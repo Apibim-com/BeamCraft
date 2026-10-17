@@ -121,6 +121,8 @@ fn a_material_with_density_gives_the_plate_a_current_mass_across_processes() {
     // The digest is the identity of the canonical isolated definition layer of the layer engine.
     let expected = Resource::new(Definition::Material {
         density_kg_m3: Some(7850.0),
+        grade: None,
+        standard: None,
     })
     .unwrap()
     .digest
@@ -256,6 +258,7 @@ fn a_definition_is_immutable_and_publishing_it_again_writes_nothing() {
     let expected = Resource::new(Definition::RectangleProfile {
         width_mm: 200.0,
         height_mm: 300.0,
+        section: Default::default(),
     })
     .unwrap()
     .digest
@@ -279,6 +282,88 @@ fn a_definition_is_immutable_and_publishing_it_again_writes_nothing() {
     assert!(authored.contains("custom double steel:profile:heightMm = 300.0"));
     let listed = f.ok("definitions", &[]);
     assert_eq!(num(&listed, &["definition_count"]), 2.0);
+}
+
+#[test]
+fn declared_section_properties_and_material_labels_are_stored_listed_and_pinned() {
+    let f = Fixture::new();
+    let profile = f.ok(
+        "define-profile",
+        &[
+            "--width",
+            "200",
+            "--height",
+            "300",
+            "--designation",
+            "RECT 200x300",
+            "--standard",
+            "Synthetic",
+            "--area-mm2",
+            "60000",
+            "--mass-per-meter-kg",
+            "471",
+            "--surface-per-meter-m2",
+            "1",
+        ],
+    );
+    assert_eq!(text(&profile, "outcome"), "definition_created");
+    let shown = at(&profile, &["definition"]);
+    assert_eq!(text(shown, "designation"), "RECT 200x300");
+    assert_eq!(num(shown, &["area_mm2"]), 60_000.0);
+    assert_eq!(num(shown, &["mass_per_meter_kg"]), 471.0);
+    let plain = f.ok("define-profile", &["--width", "200", "--height", "300"]);
+    assert_eq!(text(&plain, "outcome"), "definition_created");
+    assert_ne!(digest_of(&plain), digest_of(&profile));
+    assert!(matches!(
+        at(&plain, &["definition", "designation"]),
+        Json::Null
+    ));
+    let steel = f.ok(
+        "define-material",
+        &[
+            "--density",
+            STEEL,
+            "--grade",
+            "S355",
+            "--standard",
+            "EN 10025-2",
+        ],
+    );
+    assert_eq!(text(at(&steel, &["definition"]), "grade"), "S355");
+    // The values are plain USD attributes in the saved layer, and a fresh process lists them.
+    let authored = f.layer_text("authored.usda", &steel);
+    assert!(authored.contains("custom string steel:profile:designation = \"RECT 200x300\""));
+    assert!(authored.contains("custom double steel:profile:massPerMeterKg = 471.0"));
+    assert!(authored.contains("custom string bim:materialGrade = \"S355\""));
+    let listed = f.ok("definitions", &[]);
+    assert_eq!(num(&listed, &["definition_count"]), 3.0);
+    // A grade never selects a density: a material with only a grade stays unknown.
+    let labelled = f.ok("define-material", &["--grade", "S355"]);
+    assert!(matches!(
+        at(&labelled, &["definition", "density_kg_m3"]),
+        Json::Null
+    ));
+    // A declared area that disagrees with the rectangle formula is refused and publishes nothing.
+    let before = sequence(&labelled);
+    assert_eq!(
+        f.rejected(
+            "define-profile",
+            &["--width", "200", "--height", "300", "--area-mm2", "1"]
+        ),
+        "INVALID_ARGUMENT"
+    );
+    assert_eq!(
+        f.rejected(
+            "define-profile",
+            &["--width", "200", "--height", "300", "--designation", ""]
+        ),
+        "INVALID_ARGUMENT"
+    );
+    // Nothing was published by the refusals: the head is still the last accepted revision.
+    assert_eq!(
+        sequence(&f.ok("define-profile", &["--width", "200", "--height", "300"])),
+        before
+    );
 }
 
 #[test]
