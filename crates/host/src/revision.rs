@@ -32,11 +32,12 @@
 //!   directory is not synced (portable safe `std` cannot do that on every platform), so after
 //!   power loss a just-reported commit may be absent. Absence is still a complete previous root.
 //! * A crash can leave a `.tmp-*` file in `revisions/` and unreferenced blobs; readers ignore
-//!   them and nothing here removes them. A hook failure after the link is
-//!   [`RevisionError::OutcomeUnknown`], because the new root may be visible.
-//! * There is no journal, op-id ledger beyond the head log, crash recovery, garbage collection,
-//!   personal workspace or multi-client coordination. U07 owns recovery; the [`CommitHook`]
-//!   points are the seam where it injects faults and records intent.
+//!   them. U07 recovery ([`crate::ledger`]) removes abandoned temporaries and reports unreferenced
+//!   blobs. A hook failure after the link is [`RevisionError::OutcomeUnknown`], because the new
+//!   root may be visible.
+//! * There is no garbage collection, personal workspace or multi-client coordination. Every
+//!   commit writes an intent and an outcome to the U07 outcome ledger ([`crate::ledger`]); the
+//!   [`CommitHook`] points are where it injects faults.
 //! * The same namespace protection as [`crate::storage`] is required: a hostile writer to the
 //!   store directory can still replace files between a check and its use.
 //! * This module never parses USD. Layer content and U03 index checks are done by an injected
@@ -53,6 +54,7 @@ use std::io;
 
 use beamcraft_model::ErrorCode;
 
+use crate::ledger::LedgerError;
 use crate::storage::StorageError;
 
 pub use commit::{
@@ -163,6 +165,8 @@ pub enum RevisionError {
     OutcomeUnknown,
     /// Blob storage failed.
     Storage(StorageError),
+    /// The outcome ledger failed or contradicts the root. See [`crate::ledger`].
+    Ledger(LedgerError),
     /// Filesystem I/O failed; only its safe category is retained.
     Io(io::ErrorKind),
 }
@@ -192,6 +196,7 @@ impl RevisionError {
             Self::Aborted(_) => ErrorCode::Cancelled,
             Self::OutcomeUnknown => ErrorCode::OutcomeUnknown,
             Self::Storage(error) => error.code(),
+            Self::Ledger(error) => error.code(),
             Self::Io(io::ErrorKind::PermissionDenied) => ErrorCode::PermissionDenied,
             Self::Io(_) => ErrorCode::BackendUnavailable,
         }
@@ -223,6 +228,10 @@ impl fmt::Display for RevisionError {
             Self::Aborted(_) => "commit aborted before the root switch",
             Self::OutcomeUnknown => "commit outcome unknown after the root switch",
             Self::Storage(_) => "blob storage failed",
+            Self::Ledger(error) => match error {
+                LedgerError::RootDisagrees => "ledger records a commit that the root lacks",
+                _ => "outcome ledger failed",
+            },
             Self::Io(_) => "revision I/O failed",
         })
     }
@@ -233,5 +242,11 @@ impl std::error::Error for RevisionError {}
 impl From<StorageError> for RevisionError {
     fn from(error: StorageError) -> Self {
         Self::Storage(error)
+    }
+}
+
+impl From<LedgerError> for RevisionError {
+    fn from(error: LedgerError) -> Self {
+        Self::Ledger(error)
     }
 }

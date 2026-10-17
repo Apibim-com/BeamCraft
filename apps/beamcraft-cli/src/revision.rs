@@ -6,6 +6,7 @@
 //! which runs in its own process and is not wired to these commands (see the README).
 
 use beamcraft_host::{
+    ledger::{Outcome, OutcomeSource, RecoveryPolicy},
     revision::{
         CommitOutcome, ExpectedBase, LayerEntry, LayerRole, RevisionDraft, RevisionError,
         RevisionInfo, RevisionStore, Uuid7,
@@ -152,4 +153,155 @@ pub(crate) fn commit(blobs: &BlobStore, options: &BTreeMap<&str, &str>) -> Resul
 pub(crate) fn open(blobs: &BlobStore) -> Result<Json, HostError> {
     let revision = RevisionStore::new(blobs.clone()).open().map_err(failure)?;
     Ok(summary("revision_verified", revision.info()))
+}
+
+/// Most unreferenced digests `revision-recover` prints; the total is always exact.
+const MAX_CLI_UNREFERENCED: usize = 256;
+
+fn uuids(ids: &[Uuid7]) -> Json {
+    Json::Array(ids.iter().map(|id| Json::text(id.as_str())).collect())
+}
+
+/// `revision-recover`: closes every unresolved intent from the root, removes abandoned
+/// temporary files, reports unreferenced blobs (never deletes one) and verifies the root.
+/// `--min-age-secs 0` asserts that no commit is running on the store; a larger value leaves
+/// younger intents and files alone. Exit 0 with `recovery_incomplete` when something could not
+/// be decided; the report says what.
+pub(crate) fn recover(
+    blobs: &BlobStore,
+    options: &BTreeMap<&str, &str>,
+) -> Result<Json, HostError> {
+    let min_age = options
+        .get("--min-age-secs")
+        .copied()
+        .and_then(generation)
+        .ok_or_else(invalid)?;
+    let store = RevisionStore::new(blobs.clone());
+    let report = store
+        .recover(RecoveryPolicy::live(min_age))
+        .map_err(failure)?;
+    let (revision, revision_error) = match store.open() {
+        Ok(revision) => (summary("revision_verified", revision.info()), Json::Null),
+        Err(RevisionError::NoRevision) => (Json::Null, Json::Null),
+        Err(error) => (Json::Null, Json::text(error.code().as_str())),
+    };
+    let complete = report.unprovable.is_empty()
+        && report.disagreements.is_empty()
+        && report.in_flight.is_empty()
+        && report.root_error.is_none()
+        && revision_error == Json::Null;
+    let unreferenced = report.unreferenced.as_ref().map_or(Json::Null, |u| {
+        Json::object([
+            ("total", Json::text(u.total.to_string())),
+            (
+                "digests",
+                Json::Array(
+                    u.digests
+                        .iter()
+                        .take(MAX_CLI_UNREFERENCED)
+                        .map(|d| Json::text(d.to_string()))
+                        .collect(),
+                ),
+            ),
+        ])
+    });
+    Ok(Json::object([
+        (
+            "outcome",
+            Json::text(if complete {
+                "recovery_complete"
+            } else {
+                "recovery_incomplete"
+            }),
+        ),
+        ("min_age_secs", Json::text(min_age.to_string())),
+        ("committed", uuids(&report.committed)),
+        ("aborted", uuids(&report.aborted)),
+        ("in_flight", uuids(&report.in_flight)),
+        (
+            "unprovable",
+            Json::Array(
+                report
+                    .unprovable
+                    .iter()
+                    .map(|(op, error)| {
+                        Json::object([
+                            ("op_id", Json::text(op.as_str())),
+                            ("code", Json::text(error.code().as_str())),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+        ("disagreements", uuids(&report.disagreements)),
+        (
+            "root_error",
+            report
+                .root_error
+                .map_or(Json::Null, |e| Json::text(e.code().as_str())),
+        ),
+        (
+            "removed_temp_files",
+            Json::text(report.removed_temp_files.to_string()),
+        ),
+        ("unreferenced", unreferenced),
+        (
+            "ledger",
+            Json::object([
+                ("bytes", Json::text(report.ledger.bytes.to_string())),
+                ("records", Json::text(report.ledger.records.to_string())),
+                (
+                    "damaged_lines",
+                    Json::text(report.ledger.damaged_lines.to_string()),
+                ),
+                ("torn_tail", Json::Bool(report.ledger.torn_tail)),
+            ]),
+        ),
+        ("revision", revision),
+        ("revision_error", revision_error),
+    ]))
+}
+
+/// `revision-outcome`: the host-ledger QueryOutcome for one op id. Read-only. A recorded
+/// result is exit 0; `OUTCOME_UNKNOWN` is the standard unknown result (exit 4); a ledger that
+/// contradicts the root is `INTEGRITY_ERROR`.
+pub(crate) fn outcome(
+    blobs: &BlobStore,
+    options: &BTreeMap<&str, &str>,
+) -> Result<Json, HostError> {
+    let op = Uuid7::parse(options.get("--op-id").copied().ok_or_else(invalid)?).map_err(failure)?;
+    let answer = RevisionStore::new(blobs.clone())
+        .query_outcome(&op)
+        .map_err(failure)?;
+    Ok(match answer {
+        Outcome::Committed {
+            revision,
+            sequence,
+            manifest,
+            source,
+        } => Json::object([
+            ("outcome", Json::text("outcome_committed")),
+            ("op_id", Json::text(op.as_str())),
+            ("revision_id", Json::text(revision.as_str())),
+            ("sequence", Json::text(sequence.to_string())),
+            ("manifest_digest", Json::text(manifest.to_string())),
+            (
+                "source",
+                Json::text(match source {
+                    OutcomeSource::Ledger => "ledger",
+                    OutcomeSource::Root => "root",
+                }),
+            ),
+        ]),
+        Outcome::Aborted { reason } => Json::object([
+            ("outcome", Json::text("outcome_aborted")),
+            ("op_id", Json::text(op.as_str())),
+            ("reason", Json::text(reason.as_str())),
+        ]),
+        Outcome::NotFound => Json::object([
+            ("outcome", Json::text("outcome_not_recorded")),
+            ("op_id", Json::text(op.as_str())),
+        ]),
+        Outcome::Unknown => return Err(HostError::logical(ErrorCode::OutcomeUnknown)),
+    })
 }

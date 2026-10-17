@@ -14,7 +14,7 @@ use super::{MAX_MANIFEST_BYTES, RevisionError};
 /// A revision store bound to one [`BlobStore`] root. Resource methods take no path or URI.
 #[derive(Debug, Clone)]
 pub struct RevisionStore {
-    pub(super) blobs: BlobStore,
+    pub(crate) blobs: BlobStore,
 }
 
 /// A revision whose record, manifest, base link and every layer blob were verified by
@@ -60,7 +60,7 @@ impl RevisionStore {
         })
     }
 
-    pub(super) fn head_dir(&self) -> Result<Option<PathBuf>, RevisionError> {
+    pub(crate) fn head_dir(&self) -> Result<Option<PathBuf>, RevisionError> {
         match self.blobs.namespace_dir(root::DIR, false) {
             Ok(path) => Ok(Some(path)),
             Err(StorageError::NotFound) => Ok(None),
@@ -68,7 +68,7 @@ impl RevisionStore {
         }
     }
 
-    pub(super) fn load_head_in(
+    pub(crate) fn load_head_in(
         &self,
         directory: &Path,
     ) -> Result<Option<RevisionInfo>, RevisionError> {
@@ -97,7 +97,7 @@ impl RevisionStore {
 
     /// Loads one log record with its manifest and checks that the record, the manifest and the
     /// previous record agree.
-    pub(super) fn load_at(
+    pub(crate) fn load_at(
         &self,
         directory: &Path,
         sequence: u64,

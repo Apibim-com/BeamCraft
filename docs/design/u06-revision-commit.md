@@ -2,7 +2,7 @@
 
 Date: 2026-10-16. Status: **experimental engine API plus headless commands; the byte, manifest
 and root layer of U06 is implemented, content verification is injected (not wired into the CLI)
-and U07 recovery is not implemented.** Branch `feat/u06-revision-commit`, stacked on
+and U07 recovery was added on top (see [U07](u07-journal-recovery.md)).** Branch `feat/u06-revision-commit`, stacked on
 `feat/u03-uuid-relationship-index` (PR #53); retarget to `master` after #53 merges.
 
 Plan row: U06 / M, owner Storage, depends on U02, U03, U05. Result: immutable generations of
@@ -22,7 +22,7 @@ generations; the expected base is verified; there is no partial Save of a set of
 | Idempotency | Same op id with identical content returns the recorded revision (`Replayed`), also after the root moved on (bounded look-back of 64 records). Same op id, other content: `OP_ID_REUSE`. Same revision id, other op: `INTEGRITY_ERROR`. |
 | Compare-and-swap | The link is the CAS. Two committers on one base cannot both win; the loser re-resolves to a replay or `BASE_REVISION_MISMATCH`. There is no lock file a crash could leave behind (100 two-writer repetitions pass). |
 | `RevisionStore::open` | Verifies the log shape (no gap, no unknown name, no torn record), record, manifest, base link and every referenced blob, and returns typed errors for garbage-collected, corrupt, resized or torn state. |
-| `CommitHook` | `Checked`, `BlobsVerified`, `ManifestStored`, `RecordStaged` (abort leaves the root unchanged: `Aborted`, F04 `CANCELLED`) and `Switched` (failure there is `OUTCOME_UNKNOWN`, never success or rollback). This is the seam U07 uses for intent records and fault injection. |
+| `CommitHook` | `Checked`, `IntentRecorded` (U07), `BlobsVerified`, `ManifestStored`, `RecordStaged` (abort leaves the root unchanged: `Aborted`, F04 `CANCELLED`), `Switched` (failure there is `OUTCOME_UNKNOWN`, never success or rollback) and `Recorded` (U07, observational). U07 uses the points for the intent record and fault injection. |
 | `ContentVerifier` | Injected content gate that receives the verified layer bytes and returns U03 evidence or a `ContentRejection` carrying the layer engine's own F04 code (`DUPLICATE_ID`, `INVALID_ID`, `DANGLING_RELATIONSHIP`, `FOREIGN_READ_ONLY`, ...). The host checks that the evidence is complete (`DEPENDENCY_UNAVAILABLE`) and belongs to the draft's project, workspace, generation and base (`STALE_WORKSPACE`), then records it in the manifest. |
 
 CLI (`beamcraft`): `revision-commit` and `revision-open`, machine-readable JSON, exit codes of the
@@ -56,14 +56,16 @@ existing table. `revision-commit` takes already stored blobs (`blob-put`) and do
   deterministic bytes.
 * Not promised: **directory-entry crash durability** (the temporary record is synced, the directory
   is not, so a reported commit can vanish after power loss; what remains is still a complete
-  previous root); removal of `.tmp-*` files or unreferenced blobs after a crash; garbage
-  collection; protection from a hostile local writer to the store directory (same limitation as
-  U05).
-* Not implemented: **U07** journal, intent record, crash recovery and fault-injected recovery
-  proof; personal workspaces; a durable op-id ledger beyond the head log; multi-client
-  collaboration; a CLI path that runs the layer-engine verifier (needs an F05 profile with an
-  index/verify message; the frozen U04 profile has none). The hook is the U07 seam, and the
-  replay look-back of 64 records is the head log's own, not a ledger.
+  previous root); garbage collection; protection from a hostile local writer to the store
+  directory (same limitation as U05). Removal of `.tmp-*` files and the report of unreferenced
+  blobs after a crash are done by U07 recovery ([record](u07-journal-recovery.md)), which deletes
+  no blob.
+* Not implemented in U06 (U07 adds the journal, intent record, recovery and the durable op-id
+  ledger, see its record; this document's `CommitHook` gained the `IntentRecorded` and `Recorded`
+  points): personal workspaces; multi-client collaboration; a CLI path that runs the
+  layer-engine verifier (needs an F05 profile with an index/verify message; the frozen U04
+  profile has none). The replay look-back of 64 records is the head log's own; with the U07
+  ledger an older op id is also recognised beyond it.
 * The worker protocol is unchanged: no mutation schema was added and the worker cannot publish a
   root; only the host does.
 

@@ -384,7 +384,15 @@ fn replay_lookback_is_bounded_and_an_unknown_old_op_is_a_conflict_not_a_second_c
     let inside = store.commit(&drafts[2], &expect(2)).unwrap();
     assert_eq!(inside.outcome, CommitOutcome::Replayed);
     assert_eq!(inside.info.sequence(), 3);
-    // ... an older op is not, and its stale base keeps it from committing again.
+    // ... an older op is recognised by the durable ledger (U07) beyond the head log's look-back
+    // and resolves to its recorded revision instead of a second commit ...
+    let old = store.commit(&drafts[1], &expect(1)).unwrap();
+    assert_eq!(old.outcome, CommitOutcome::Replayed);
+    assert_eq!(old.info.sequence(), 2);
+    assert_eq!(store.head().unwrap().unwrap().sequence(), u64::from(total));
+    // ... while a store without a ledger falls back to the look-back alone, where the stale
+    // base keeps the old op from committing again.
+    fs::remove_dir_all(fx.0.join("ledger")).unwrap();
     assert_eq!(
         err(store.commit(&drafts[1], &expect(1))),
         RevisionError::BaseMismatch
@@ -396,6 +404,7 @@ fn replay_lookback_is_bounded_and_an_unknown_old_op_is_a_conflict_not_a_second_c
 fn abort_at_every_point_before_the_switch_keeps_the_previous_revision_readable() {
     let all = [
         CommitPoint::Checked,
+        CommitPoint::IntentRecorded,
         CommitPoint::BlobsVerified,
         CommitPoint::ManifestStored,
         CommitPoint::RecordStaged,
@@ -458,6 +467,7 @@ fn failure_after_the_switch_is_outcome_unknown_and_the_new_revision_is_complete(
         seen,
         [
             CommitPoint::Checked,
+            CommitPoint::IntentRecorded,
             CommitPoint::BlobsVerified,
             CommitPoint::ManifestStored,
             CommitPoint::RecordStaged,

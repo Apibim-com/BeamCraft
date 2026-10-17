@@ -8,10 +8,19 @@ use std::path::Path;
 
 use beamcraft_model::{ErrorCode, digest::ContentDigest};
 
+use crate::ledger::{AbortReason, CommittedRecord, Intent, OpStatus, Record, now_secs};
+
 use super::manifest::{BaseRef, Content, IndexRecord, LayerRole, Manifest, RevisionDraft};
 use super::read::RevisionStore;
 use super::root::{self, RevisionInfo, RootRecord, TempRecord};
 use super::{MAX_CONTENT_VERIFY_BYTES, MAX_REVISIONS, REPLAY_LOOKBACK, RevisionError, Uuid7};
+
+/// How the root switch ended: this call installed the record, or another committer already
+/// installed this very operation.
+enum Switched {
+    Created(RevisionInfo),
+    Replayed(RevisionInfo),
+}
 
 /// The base the caller believes is the current root.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,21 +51,27 @@ pub struct Committed {
     pub info: RevisionInfo,
 }
 
-/// A defined point of the commit between the first read and the root switch. A [`CommitHook`]
-/// is called when the commit reaches it. U07 uses these points to record intent and to inject
-/// faults; they are the contract between U06 and U07.
+/// A defined point of the commit between the first read and the end. A [`CommitHook`] is called
+/// when the commit reaches it. U07 uses these points to inject faults; they are the contract
+/// between U06 and U07, in this order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommitPoint {
     /// Draft, base, replay and project checks passed. Nothing has been written.
     Checked,
-    /// Every referenced blob (and the content verifier) passed. Nothing has been written.
+    /// The write-ahead intent is recorded in the ledger and synced (U07). The root is unchanged.
+    IntentRecorded,
+    /// Every referenced blob (and the content verifier) passed. The root is unchanged.
     BlobsVerified,
     /// The manifest blob is stored. It is unreferenced until the switch.
     ManifestStored,
     /// The complete record is written and synced under a temporary name; the root is unchanged.
     RecordStaged,
-    /// The root switched: the record is installed. A failure here is `OUTCOME_UNKNOWN`.
+    /// The root switched: the record is installed, the ledger has no outcome yet. A failure here
+    /// is `OUTCOME_UNKNOWN`.
     Switched,
+    /// The `Committed` record is in the ledger: the commit is complete and its outcome proven.
+    /// The hook is only told; an error here is ignored.
+    Recorded,
 }
 
 /// A fault a [`CommitHook`] injects. It carries no detail on purpose.
@@ -65,8 +80,11 @@ pub struct Injected;
 
 /// Observer and fault-injection seam called at each [`CommitPoint`] in order. Returning
 /// `Err(Injected)` before [`CommitPoint::Switched`] aborts the commit with the root unchanged
-/// ([`RevisionError::Aborted`]); returning it at `Switched` yields
-/// [`RevisionError::OutcomeUnknown`], because the new root is already visible.
+/// ([`RevisionError::Aborted`]) and the attempt closed in the ledger as cancelled; returning it
+/// at `Switched` yields [`RevisionError::OutcomeUnknown`], because the new root is already
+/// visible and the ledger is left for recovery or a retry to resolve. A hook that panics
+/// simulates a crash at that point: no error handling runs and the ledger keeps exactly what
+/// was synced so far.
 pub trait CommitHook {
     /// Called when the commit reaches `point`.
     fn reached(&mut self, point: CommitPoint) -> Result<(), Injected>;
@@ -174,6 +192,15 @@ impl RevisionStore {
     /// or a [`RevisionError::BaseMismatch`].
     ///
     /// With a verifier the manifest records its verified index; without one it records none.
+    ///
+    /// U07: after the base, project and replay checks the commit appends a synced intent to the
+    /// outcome ledger ([`crate::ledger`]) before anything of the attempt can reach the root (if
+    /// that fails the commit fails with nothing changed), and after the switch appends a
+    /// `Committed` record. A failure before the switch closes the attempt as aborted; a failure
+    /// to record after the switch is [`RevisionError::OutcomeUnknown`], resolved by
+    /// [`RevisionStore::recover`] or an identical retry. An op id stays bound to its content
+    /// while an attempt is unresolved or committed ([`RevisionError::OpIdReuse`]), also beyond
+    /// the head log's look-back.
     pub fn commit_with(
         &self,
         draft: &RevisionDraft,
@@ -182,18 +209,42 @@ impl RevisionStore {
         hook: &mut dyn CommitHook,
     ) -> Result<Committed, RevisionError> {
         let content = Content::from_draft(draft)?;
+        let fingerprint = content.fingerprint()?;
         let directory = self.head_dir()?;
         let head = match &directory {
             Some(directory) => self.load_head_in(directory)?,
             None => None,
         };
+        let ledger = self.ledger();
+        let scan = ledger.scan()?;
         if let (Some(directory), Some(head)) = (&directory, &head)
             && let Some(info) = self.find_replay(directory, head, &content)?
         {
+            self.record_committed(&info);
             return Ok(Committed {
                 outcome: CommitOutcome::Replayed,
                 info,
             });
+        }
+        // An op id stays bound to its content while an attempt is unresolved or committed. An
+        // attempt closed as not accepted had no effect and leaves the id free.
+        if scan
+            .open_intents_of(content.op())
+            .iter()
+            .any(|open| open.fingerprint != fingerprint)
+        {
+            return Err(RevisionError::OpIdReuse);
+        }
+        if let OpStatus::Committed(record) = scan.status(content.op()) {
+            let info = self.load_committed(directory.as_deref(), &record)?;
+            return if info.manifest().content() == &content {
+                Ok(Committed {
+                    outcome: CommitOutcome::Replayed,
+                    info,
+                })
+            } else {
+                Err(RevisionError::OpIdReuse)
+            };
         }
         match (&head, expected) {
             (None, ExpectedBase::Initial) => {}
@@ -217,7 +268,90 @@ impl RevisionStore {
         });
         point(hook, CommitPoint::Checked)?;
 
-        let index = self.verify_content(&content, base.as_ref(), verifier)?;
+        // Write-ahead: the intent is on stable storage before anything of this attempt can
+        // reach the root. If it cannot be recorded, the commit fails here with nothing changed.
+        let intent = Intent {
+            op: content.op().clone(),
+            project: content.project().clone(),
+            revision: content.revision().clone(),
+            sequence,
+            base: head.as_ref().map(|h| h.revision().clone()),
+            fingerprint,
+            created: now_secs(),
+            blobs: content.entries().iter().map(|e| e.digest()).collect(),
+        };
+        let record = Record::Intent(intent);
+        let intent_id = record.encode().1;
+        let genesis = scan
+            .genesis_head()
+            .is_none()
+            .then(|| head.as_ref().map_or(0, RevisionInfo::sequence));
+        ledger.append(&[record], genesis)?;
+
+        match self.switch_root(&content, sequence, base, verifier, hook, &intent_id) {
+            Err(error) => {
+                // Best effort: a failure to write this leaves the intent for recovery to close.
+                let reason = match error {
+                    RevisionError::Aborted(_) => AbortReason::Cancelled,
+                    RevisionError::BaseMismatch => AbortReason::LostRace,
+                    _ => AbortReason::Rejected,
+                };
+                let _ = ledger.append(
+                    &[Record::Aborted {
+                        op: content.op().clone(),
+                        intent: intent_id,
+                        reason,
+                    }],
+                    None,
+                );
+                Err(error)
+            }
+            Ok(Switched::Replayed(info)) => {
+                self.record_committed(&info);
+                Ok(Committed {
+                    outcome: CommitOutcome::Replayed,
+                    info,
+                })
+            }
+            Ok(Switched::Created(info)) => {
+                if hook.reached(CommitPoint::Switched).is_err() {
+                    return Err(RevisionError::OutcomeUnknown);
+                }
+                let committed = CommittedRecord {
+                    op: content.op().clone(),
+                    revision: info.revision().clone(),
+                    sequence: info.sequence(),
+                    manifest: info.manifest_digest(),
+                };
+                // The root already switched: a failed write is an unknown outcome, never a
+                // success and never a rollback. Recovery or a retry resolves it.
+                ledger
+                    .append(&[Record::Committed(committed)], None)
+                    .map_err(|_| RevisionError::OutcomeUnknown)?;
+                let _ = hook.reached(CommitPoint::Recorded);
+                Ok(Committed {
+                    outcome: CommitOutcome::Created,
+                    info,
+                })
+            }
+        }
+    }
+
+    /// Everything between the recorded intent and the end of the root switch. Any error leaves
+    /// the root unchanged; success means the record is installed (or another committer
+    /// installed this very operation first).
+    fn switch_root(
+        &self,
+        content: &Content,
+        sequence: u64,
+        base: Option<BaseRef>,
+        verifier: Option<&dyn ContentVerifier>,
+        hook: &mut dyn CommitHook,
+        intent_id: &ContentDigest,
+    ) -> Result<Switched, RevisionError> {
+        point(hook, CommitPoint::IntentRecorded)?;
+
+        let index = self.verify_content(content, base.as_ref(), verifier)?;
         point(hook, CommitPoint::BlobsVerified)?;
 
         let manifest = Manifest::assemble(content.clone(), sequence, base, index)?;
@@ -229,21 +363,49 @@ impl RevisionStore {
         let temp = TempRecord::create(&directory, &record.encode()).map_err(io_error)?;
         point(hook, CommitPoint::RecordStaged)?;
 
+        // Recovery may have closed this intent while it looked abandoned. Re-check right before
+        // the link; this narrows that race, it cannot close it (see the ledger module docs).
+        let again = self.ledger().scan()?;
+        if !again.is_open(intent_id) {
+            drop(temp);
+            return if matches!(again.status(content.op()), OpStatus::Committed(_)) {
+                self.resolve_lost_race(content).map(Switched::Replayed)
+            } else {
+                Err(RevisionError::Aborted(CommitPoint::RecordStaged))
+            };
+        }
+
         match temp.install(&directory, sequence) {
             Ok(()) => {}
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
                 drop(temp);
-                return self.resolve_lost_race(&content);
+                return self.resolve_lost_race(content).map(Switched::Replayed);
             }
             Err(e) => return Err(io_error(e)),
         }
-        if hook.reached(CommitPoint::Switched).is_err() {
-            return Err(RevisionError::OutcomeUnknown);
+        Ok(Switched::Created(RevisionInfo { record, manifest }))
+    }
+
+    /// Appends a `Committed` record for a revision the root proves, unless the ledger already
+    /// holds one. Best effort: the root is the authority, the ledger only restates it.
+    fn record_committed(&self, info: &RevisionInfo) {
+        let ledger = self.ledger();
+        let Ok(scan) = ledger.scan() else { return };
+        let op = info.manifest().content().op();
+        if matches!(scan.status(op), OpStatus::Committed(_)) {
+            return;
         }
-        Ok(Committed {
-            outcome: CommitOutcome::Created,
-            info: RevisionInfo { record, manifest },
-        })
+        let genesis = scan
+            .genesis_head()
+            .is_none()
+            .then(|| self.head().ok().flatten().map_or(0, |h| h.sequence()));
+        let record = Record::Committed(CommittedRecord {
+            op: op.clone(),
+            revision: info.revision().clone(),
+            sequence: info.sequence(),
+            manifest: info.manifest_digest(),
+        });
+        let _ = ledger.append(&[record], genesis);
     }
 
     /// Looks for the draft's op id (and revision id) in the head and at most
@@ -279,18 +441,13 @@ impl RevisionStore {
         Ok(None)
     }
 
-    fn resolve_lost_race(&self, content: &Content) -> Result<Committed, RevisionError> {
+    fn resolve_lost_race(&self, content: &Content) -> Result<RevisionInfo, RevisionError> {
         let directory = self.head_dir()?.ok_or(RevisionError::TornRoot)?;
         let head = self
             .load_head_in(&directory)?
             .ok_or(RevisionError::TornRoot)?;
-        match self.find_replay(&directory, &head, content)? {
-            Some(info) => Ok(Committed {
-                outcome: CommitOutcome::Replayed,
-                info,
-            }),
-            None => Err(RevisionError::BaseMismatch),
-        }
+        self.find_replay(&directory, &head, content)?
+            .ok_or(RevisionError::BaseMismatch)
     }
 
     /// Verifies every referenced blob and, with a verifier, the content-level evidence.

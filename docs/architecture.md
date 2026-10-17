@@ -86,7 +86,10 @@ Recovery must expose either the previous or the new complete revision. U05 store
 U06 (`beamcraft_host::revision`) commits a revision as a canonical manifest blob plus an
 append-only head log whose records are installed by a non-replacing hard link, which is both the
 atomic root switch and the compare-and-swap on the expected base; the reader verifies the
-manifest and every layer blob and refuses partial state. U07 owns crash recovery; a sequence of
+manifest and every layer blob and refuses partial state. U07 (`beamcraft_host::ledger`, see
+[its record](design/u07-journal-recovery.md)) adds a durable append-only outcome ledger that
+records an intent before the root switch and the outcome after it, recovers an unfinished commit
+from the root, and answers QueryOutcome; a sequence of
 uncoordinated file replacements is insufficient.
 
 Every placed element has a full UUIDv7. Prim names retain all 32 hexadecimal digits of the UUID;
@@ -111,9 +114,11 @@ points without following them. These checks are not an OS sandbox. U05 promises 
 directory-entry crash durability nor crash-atomic multi-file publication; crashes may leave
 temporary files. U06 adds the revision commit and reader (see
 [its record](design/u06-revision-commit.md)) and likewise promises no directory-entry crash
-durability and no cleanup of `.tmp-*` files or unreferenced blobs; U07 owns recovery. Garbage
+durability. U07's recovery removes only abandoned temporary files (`.tmp-*` record temps and
+`.publish-*` blob temps) and *reports* unreferenced blobs; it deletes no blob. Garbage
 collection is deferred until retained revisions and drafts are accounted for. The asset CLI
-belongs to U04; `revision-commit` and `revision-open` are the U06 commands.
+belongs to U04; `revision-commit` and `revision-open` are the U06 commands, `revision-recover`
+and `revision-outcome` the U07 ones.
 
 Copies receive independent identities and share immutable geometry until a shape edit.
 Personal workspaces preserve unpublished authored edits, derived results and journals across

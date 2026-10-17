@@ -120,7 +120,7 @@ by the named task with real code. Allowed dependencies are those of the owning r
 | Worker supervision, pipes, deadlines, restart limits, diagnostic drain; shared command dispatcher | F05 s.2, 8 | `beamcraft_host::{wire, worker, dispatch}` | U04 amendment: experimental native read client |
 | Immutable byte storage, publish-if-absent and verified retrieval | F04 s.2, U05 | `beamcraft_host::storage` | **now**, U05 |
 | Revision manifest, atomic root (head log), expected-base commit, verified reader, commit hook seam | F04 s.2, 6, 8, U06 | `beamcraft_host::revision` | **now**, U06 (experimental; content verifier is injected, host links no layer engine); personal workspace remains planned, U07 |
-| Durable outcome ledger and recovery | F05 s.7, 8 | `beamcraft_host::ledger` | planned, U07 |
+| Durable outcome ledger (write-ahead intent, committed/aborted records), recovery of an unfinished commit, host-ledger QueryOutcome | F05 s.7, 8, U07 | `beamcraft_host::ledger` | **now**, U07 (experimental; personal workspaces, collaboration, ledger rotation and garbage collection are not implemented) |
 | Rust USD read wrapper (no host edge; separate process, owner decision 2026-10-16; process containment still requires implementation) | F11 s.9, LEW-01/02/03/04/07 | `beamcraft_layer_engine` | experimental native read slice, U01 |
 | USD worker (thin Python/pxr) | F05 s.1 | `workers/usd/`, not a Cargo package | planned, U01 |
 | USD worker (thin Rust wrapper, separate process; no new package) | F11 s.9, U04 owner topology decision | `apps/beamcraft-cli/src/bin/beamcraft-usd-worker.rs` | U04 amendment: experimental read worker; SDK fallback remains unavailable |
