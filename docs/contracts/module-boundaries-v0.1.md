@@ -100,7 +100,7 @@ by the named task with real code. Allowed dependencies are those of the owning r
 | Rigid transform, vectors, quaternion, tolerance constants, canonical f64 encoding for keys | F06 s.2, 4, 7 | `beamcraft_geom` (modules `vec`, `quat`, `tolerance`) | planned, G01. Today `geom` holds `Point3` only |
 | Kernel input and result, diagnostics, `GEO_` codes and their F04 mapping | F06 s.2, 3 | `beamcraft_kernel::{input, result, diagnostic}` | planned, G01 |
 | Analytic box builders, self-checks, cancellation points | F06 s.4, 6, 10 | `beamcraft_kernel::build` | planned, G01 |
-| Mesh blob builder, validator, face table, digest rule | F06 s.6 | `beamcraft_kernel::mesh` | planned, G01 |
+| Mesh blob builder, validator, face table, digest rule | F06 s.6 | `beamcraft_kernel::mesh` (plate builder, G02); generic blob/buffer validator `beamcraft_kernel::trimesh` (G06) | planned, G01 |
 | FeatureId (`fid1`) | F06 s.5 | `beamcraft_kernel::feature_id` (uses `ElementId` from `model::id`) | planned, G01 |
 | Three dependency keys, mass signature, invalidation | F06 s.7 | `beamcraft_kernel::keys` | planned, G01 |
 | Quantities and statuses | F06 s.8, F04 s.5 | `beamcraft_kernel::quantity` | planned, G01 |
@@ -166,8 +166,15 @@ streaming digest comparison can now use `model::digest`; protocol session integr
 **`beamcraft-kernel` (`crates/kernel`, domain)** is created by G02 with the tested
 dimension-based rectangular plate builder, bounded staged diagnostics, local feature roles,
 self-checks and fixed BCMESH01 encoding. It depends only on `geom` and `model`.
-The full contour/placement request adapter, generic blob validator, keys, quantities
-status integration and the `LookupFeature`/`Pick` queries remain planned under the section 4
+G06 adds the generic BCMESH01 blob and buffer validator (`trimesh`), shell topology
+and orientation certification (`topology`), mesh measurements and F06 section 8 status
+helpers (`measure`), a bounded box index (`spatial`) and their typed verdicts
+(`verdict`, `enclosure`), still inside this crate and without new dependencies.
+G09 adds the bounded pilot `ops` module (plane cut and through hole over certified solids,
+with typed refusals); it is not a general boolean kernel, and the A03/A04 commands, keys and
+queries stay with their tasks.
+The full contour/placement request adapter, keys, engine-level quantity
+integration and the `LookupFeature`/`Pick` queries remain planned under the section 4
 paths.
 
 **Not created, on purpose:** `ui`. The task named in section 2 creates it with its first real
