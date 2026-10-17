@@ -8,6 +8,7 @@
 pub mod copy;
 pub mod definition;
 pub mod edit;
+pub mod history;
 pub mod member;
 pub mod plate;
 pub mod workspace;

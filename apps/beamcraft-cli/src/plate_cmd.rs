@@ -10,6 +10,7 @@ use beamcraft_cli::definition::{
     DefineRequest, Defined, DefinitionRecord, define, definition_path,
 };
 use beamcraft_cli::edit::{UpdateRequest, UpdatedElement, update_element};
+use beamcraft_cli::history::{Direction, Step, step, timeline};
 use beamcraft_cli::member::{CreateMemberRequest, create_member};
 use beamcraft_cli::plate::{
     CreateRequest, Created, Inspection, PlateError, QuantityReport, RevisionSummary, create_plate,
@@ -169,6 +170,8 @@ const WORKSPACE_OPTIONS: &[&str] = &[
     "--op-id",
 ];
 
+const HISTORY_OPTIONS: &[&str] = &["--workspace-dir", "--revision-id", "--op-id"];
+
 fn run(args: &[OsString]) -> Run<Json> {
     let args: Vec<&str> = args
         .iter()
@@ -187,6 +190,8 @@ fn run(args: &[OsString]) -> Run<Json> {
         "update-element" => UPDATE_OPTIONS,
         "copy-element" => COPY_OPTIONS,
         "workspace-create" | "workspace-status" | "workspace-publish" => WORKSPACE_OPTIONS,
+        "workspace-undo" | "workspace-redo" => HISTORY_OPTIONS,
+        "workspace-history" => &["--workspace-dir"],
         "define-material" => DEFINE_MATERIAL_OPTIONS,
         "define-profile" => DEFINE_PROFILE_OPTIONS,
         "plate-inspect" | "definitions" => &["--store"],
@@ -201,6 +206,12 @@ fn run(args: &[OsString]) -> Run<Json> {
         if !allowed.contains(key) || options.insert(*key, *value).is_some() {
             return Err(invalid("unknown or repeated option"));
         }
+    }
+    if matches!(
+        *command,
+        "workspace-undo" | "workspace-redo" | "workspace-history"
+    ) {
+        return history_command(command, &options);
     }
     let store_root = options
         .get("--store")
@@ -623,6 +634,89 @@ fn workspace_json(status: &WorkspaceStatus) -> Json {
         ("draft_head", revision_json(&status.draft_head)),
         ("published_head", revision_json(&status.published_head)),
     ])
+}
+
+fn history_command(command: &str, options: &BTreeMap<&str, &str>) -> Run<Json> {
+    let dir = std::path::Path::new(
+        options
+            .get("--workspace-dir")
+            .ok_or_else(|| invalid("--workspace-dir is required"))?,
+    );
+    let blobs = BlobStore::new(dir).map_err(|e| PlateError {
+        code: e.code(),
+        message: "workspace directory is not usable",
+    })?;
+    let workspace = RevisionStore::new(blobs);
+    let units = |sequences: &[u64]| {
+        Json::Array(
+            sequences
+                .iter()
+                .map(|s| Json::text(s.to_string()))
+                .collect(),
+        )
+    };
+    if command == "workspace-history" {
+        let line = timeline(&workspace, dir)?;
+        return Ok(Json::object([
+            ("outcome", Json::text("workspace_history")),
+            ("draft_head", revision_json(&line.head_summary())),
+            ("undo_units", Json::text(line.undo.len().to_string())),
+            ("redo_units", Json::text(line.redo.len().to_string())),
+            ("undo_restores_sequences", units(&line.undo)),
+            ("redo_restores_sequences", units(&line.redo)),
+        ]));
+    }
+    let mut source = IdSource::system();
+    let mut uuid = |key: &str| -> Run<Uuid7> {
+        match options.get(key) {
+            Some(text) => Uuid7::parse(text).map_err(PlateError::from),
+            None => source
+                .next_id()
+                .map_err(|_| PlateError {
+                    code: ErrorCode::BackendUnavailable,
+                    message: "no identity could be generated",
+                })
+                .and_then(|id| Uuid7::parse(&id.to_string()).map_err(PlateError::from)),
+        }
+    };
+    let (direction, done, replayed) = if command == "workspace-undo" {
+        (
+            Direction::Undo,
+            "workspace_undone",
+            "workspace_undo_replayed",
+        )
+    } else {
+        (
+            Direction::Redo,
+            "workspace_redone",
+            "workspace_redo_replayed",
+        )
+    };
+    let stepped = step(
+        &workspace,
+        dir,
+        direction,
+        &Step {
+            revision_id: uuid("--revision-id")?,
+            op_id: uuid("--op-id")?,
+        },
+        &mut NoFault,
+    )?;
+    Ok(Json::object([
+        (
+            "outcome",
+            Json::text(if stepped.replayed { replayed } else { done }),
+        ),
+        ("revision", revision_json(&stepped.revision)),
+        (
+            "restored_sequence",
+            stepped
+                .restored_sequence
+                .map_or(Json::Null, |s| Json::text(s.to_string())),
+        ),
+        ("undo_units", Json::text(stepped.undo_units.to_string())),
+        ("redo_units", Json::text(stepped.redo_units.to_string())),
+    ]))
 }
 
 fn workspace_command(
