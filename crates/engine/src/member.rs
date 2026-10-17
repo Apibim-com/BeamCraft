@@ -16,6 +16,7 @@
 
 use crate::command::{MaterialInfo, MaterialLookup, Quantities, quantities_with_material};
 use crate::footprint::Footprint;
+use crate::solid::SolidMesh;
 use crate::transaction::PriorOp;
 use beamcraft_geom::Point3;
 use beamcraft_kernel::diagnostic::{Failure, Field};
@@ -107,6 +108,8 @@ impl AuthoredMember {
 pub struct MemberBody {
     /// Sealed kernel result (mesh, volume, tolerance).
     pub result: PlateResult,
+    /// The certified mesh, as every body offers it to the derived layer and the view.
+    pub solid: SolidMesh,
     /// Section width in millimetres.
     pub width_mm: f64,
     /// Section height in millimetres.
@@ -153,6 +156,7 @@ pub fn evaluate_member(
     })
     .map_err(|failure| map_kernel(&failure))?;
     Ok(MemberBody {
+        solid: SolidMesh::from_box(&result),
         result,
         width_mm: profile.width_mm,
         height_mm: profile.height_mm,
@@ -164,7 +168,7 @@ pub fn member_quantities(
     body: &MemberBody,
     material: Option<MaterialInfo>,
 ) -> Result<Quantities, CommandError> {
-    quantities_with_material(&body.result, MEMBER_VOLUME_ALGORITHM, material)
+    quantities_with_material(body.result.volume_mm3(), MEMBER_VOLUME_ALGORITHM, material)
 }
 
 /// Everything one accepted `CreateStraightMember` produces for the layers and the host.

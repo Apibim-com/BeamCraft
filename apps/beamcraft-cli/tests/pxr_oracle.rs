@@ -312,6 +312,56 @@ fn pxr_reads_pinned_materials_and_the_mass_agrees_with_the_closed_form() {
 }
 
 #[test]
+fn pxr_reads_a_plate_with_through_holes_against_the_closed_form() {
+    let Some((python, python_args)) = find_python() else {
+        println!(
+            "SKIP: no Python interpreter with pxr found (set BEAMCRAFT_PXR_PYTHON, or install \
+             usd-core for `py -3.11`). The independent pxr gate was NOT run."
+        );
+        return;
+    };
+    let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("a04-pxr");
+    fs::create_dir_all(&base).unwrap();
+    let root = base.join(format!("run-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let store = root.join("store");
+    let layers = root.join("layers");
+    fs::create_dir_all(&store).unwrap();
+    fs::create_dir_all(&layers).unwrap();
+    let store_arg = store.to_str().unwrap();
+
+    let created = run_binary(&plate_args(
+        store_arg,
+        "1000",
+        "500",
+        "10",
+        &[
+            "--name",
+            "Holed",
+            "--hole-rect",
+            "600,150,200,200",
+            "--hole-round",
+            "250,250,100",
+        ],
+    ));
+    let inspected = run_binary(&["plate-inspect", "--store", store_arg]);
+    copy_layers(&store, &layers, &inspected);
+    // Closed form: the box minus a 200 x 200 square and a regular 32-gon inscribed in a circle of
+    // diameter 100, whose area is (32 / 2) * r^2 * sin(2 pi / 32).
+    let polygon = 16.0 * 50.0 * 50.0 * (std::f64::consts::PI / 16.0).sin();
+    let expected = (1000.0 * 500.0 - 200.0 * 200.0 - polygon) * 10.0;
+    assert!((num(&created, &["plate", "quantities", "volume", "mm3"]) - expected).abs() < 1e-3);
+    let expect = format!(
+        r#"[{{"id":"{}","name":"Holed","width":1000.0,"length":500.0,"thickness":10.0,"translation":[0.0,0.0,0.0],"cli_volume_mm3":{:?},"expected_volume_mm3":{expected:?},"hole_counts":[4,32]}}]"#,
+        text(created.get("plate").unwrap(), "element_id"),
+        num(&created, &["plate", "quantities", "volume", "mm3"]),
+    );
+    let report = run_script(&python, &python_args, &layers, &expect);
+    assert_eq!(report.get("plates").unwrap().array().unwrap().len(), 1);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
 fn pxr_reads_a_beam_and_a_column_against_the_closed_form() {
     let Some((python, python_args)) = find_python() else {
         println!(

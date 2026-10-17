@@ -34,7 +34,6 @@
 use crate::definition::{
     DefinitionRecord, decode_definitions, definition_digest, material_lookup, profile_lookup,
 };
-use beamcraft_engine::PlateResult;
 use beamcraft_engine::command::AuthoredPlate;
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
 use beamcraft_engine::member::AuthoredMember;
@@ -42,6 +41,7 @@ use beamcraft_engine::query::committed::{
     MemberRecord, PlateRecord, evaluate_committed, evaluate_committed_members, ids,
     scene_elements_with_members,
 };
+use beamcraft_engine::solid::SolidMesh;
 use beamcraft_engine::transaction::{Admission, PriorOp, admit_create_plate};
 use beamcraft_engine::{Limits, ViewPin, ViewSnapshot};
 use beamcraft_host::ledger::Outcome;
@@ -281,7 +281,43 @@ fn decode_plate(prim: &Prim, id: ElementId) -> Result<AuthoredPlate, PlateError>
             orientation_xyzw: [x, y, z, w],
         },
         material,
+        holes_mm: decode_holes(prim)?,
     })
+}
+
+/// The through-hole polygons of a committed plate: the flat point array cut by the vertex counts.
+/// Both attributes or neither; every count is at least three and every `z` is zero.
+fn decode_holes(prim: &Prim) -> Result<Vec<Vec<[f64; 2]>>, PlateError> {
+    let bad = || integrity("committed plate has inconsistent hole attributes");
+    let (points, counts) = match (
+        property(prim, "steel:plate:holePointsMm"),
+        property(prim, "steel:plate:holeVertexCounts"),
+    ) {
+        (None, None) => return Ok(Vec::new()),
+        (Some(Value::Array(points)), Some(Value::Array(counts))) => (points, counts),
+        _ => return Err(bad()),
+    };
+    let points: Vec<[f64; 3]> = points
+        .iter()
+        .map(numbers::<3>)
+        .collect::<Option<_>>()
+        .ok_or_else(bad)?;
+    let mut holes = Vec::with_capacity(counts.len().min(beamcraft_model::command::MAX_HOLES));
+    let mut at = 0usize;
+    for count in counts {
+        let n = usize::try_from(integer(count).ok_or_else(bad)?).map_err(|_| bad())?;
+        let end = at.checked_add(n).ok_or_else(bad)?;
+        let hole = points.get(at..end).ok_or_else(bad)?;
+        if hole.iter().any(|p| p[2] != 0.0) {
+            return Err(bad());
+        }
+        holes.push(hole.iter().map(|p| [p[0], p[1]]).collect());
+        at = end;
+    }
+    if at != points.len() {
+        return Err(bad());
+    }
+    Ok(holes)
 }
 
 /// The one pinned material target of an element: none, or exactly one definition path. An
@@ -431,15 +467,12 @@ fn decode_member(
     })
 }
 
-pub(crate) fn kernel_mesh(
-    result: &beamcraft_engine::PlateResult,
-) -> Result<DerivedMesh, PlateError> {
-    let mesh = result.mesh();
-    let points = mesh
+pub(crate) fn kernel_mesh(solid: &SolidMesh) -> Result<DerivedMesh, PlateError> {
+    let points = solid
         .vertices()
         .iter()
         .map(|p| {
-            let cast = [p.x as f32, p.y as f32, p.z as f32];
+            let cast = [p[0] as f32, p[1] as f32, p[2] as f32];
             if cast.iter().all(|v| v.is_finite()) {
                 Ok(cast)
             } else {
@@ -452,16 +485,16 @@ pub(crate) fn kernel_mesh(
         .collect::<Result<Vec<_>, _>>()?;
     Ok(DerivedMesh {
         points,
-        counts: vec![3; mesh.triangles().len()],
-        indices: mesh
+        counts: vec![3; solid.triangles().len()],
+        indices: solid
             .triangles()
             .iter()
             .flatten()
             .map(|i| i64::from(*i))
             .collect(),
-        shape_key: mesh.mesh_digest().to_string(),
-        orientation: mesh.orientation().into(),
-        subdivision: mesh.subdivision_scheme().into(),
+        shape_key: solid.digest().to_string(),
+        orientation: "rightHanded".into(),
+        subdivision: "none".into(),
     })
 }
 
@@ -494,11 +527,11 @@ fn verify_derived(
         .collect();
     let expected = records
         .iter()
-        .map(|r| (r.authored.id, &r.body.result))
+        .map(|r| (r.authored.id, &r.body.solid))
         .chain(
             member_records
                 .iter()
-                .map(|r| (r.authored.id, &r.body.result)),
+                .map(|r| (r.authored.id, &r.body.solid)),
         );
     for (id, result) in expected {
         let expected = kernel_mesh(result)?;
@@ -756,11 +789,11 @@ pub(crate) fn replay_summary(
 }
 
 /// The U02 mesh change of a kernel body.
-pub(crate) fn mesh_change(id: &ElementId, result: &PlateResult) -> Result<Change, PlateError> {
-    let mesh = kernel_mesh(result)?;
+pub(crate) fn mesh_change(id: &ElementId, solid: &SolidMesh) -> Result<Change, PlateError> {
+    let mesh = kernel_mesh(solid)?;
     Ok(Change::Mesh(beamcraft_layer_engine::authored::Mesh {
         id: id.to_string(),
-        shape_key: result.mesh().mesh_digest(),
+        shape_key: solid.digest(),
         points_mm: mesh.points.clone(),
         face_counts: vec![3; mesh.counts.len()],
         indices: mesh
@@ -974,6 +1007,12 @@ pub fn create_plate(
                     shape: Shape::Plate {
                         contour_mm: outcome.authored.contour_points_mm.clone(),
                         thickness_mm: outcome.authored.thickness_mm,
+                        holes: outcome
+                            .authored
+                            .holes_mm
+                            .iter()
+                            .map(|h| h.iter().map(|[x, y]| [*x, *y, 0.0]).collect())
+                            .collect(),
                     },
                     placement: LayerPlacement {
                         translation_mm: placement.translation_mm,
@@ -981,7 +1020,7 @@ pub fn create_plate(
                     },
                     material: outcome.authored.material,
                 }),
-                mesh_change(&outcome.authored.id, &record.body.result)?,
+                mesh_change(&outcome.authored.id, &record.body.solid)?,
             ],
         },
         &control,

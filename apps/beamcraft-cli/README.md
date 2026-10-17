@@ -131,10 +131,19 @@ the engine API. Defaults: revision is the SHA-256 of `beamcraft-synthetic-scene`
 
 ```text
 beamcraft create-plate --store ROOT --width MM --length MM --thickness MM
-  [--name TEXT] [--translation X,Y,Z] [--material-digest SHA256] [--new-id UUID] [--op-id UUID]
+  [--name TEXT] [--translation X,Y,Z] [--material-digest SHA256]
+  [--hole-rect "X,Y,W,H;..."] [--hole-round "X,Y,D;..."] [--hole-segments 8..256]
+  [--new-id UUID] [--op-id UUID]
   [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
 beamcraft plate-inspect --store ROOT
 ```
+
+`--hole-rect` and `--hole-round` (A04 pilot, see the [design note](../../docs/design/a04-plate-holes.md))
+author through holes together with the plate: axis-aligned rectangles from the corner `X,Y`, and
+regular polygons (default 32 sides) inscribed in the circle of centre `X,Y` and diameter `D`.
+Only the clockwise polygons are stored, so a "round" hole is that polygon and its volume is exact for
+it; the kernel cuts them (strictly inside the outline, clear of each other, otherwise
+`INVALID_ARGUMENT`) and the volume is the certified enclosure's midpoint. At most 64 holes.
 
 `create-plate` builds the origin rectangle contour `(0,0,0),(w,0,0),(w,l,0),(0,l,0)`, runs the
 engine's `CreatePlate` (F04 admission, kernel mesh and volume, declared footprint), authors the

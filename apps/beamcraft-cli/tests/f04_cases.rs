@@ -133,6 +133,7 @@ fn command_of(arguments: &Json) -> Result<CreatePlate, ErrorCode> {
             ],
         },
         material_digest: None,
+        holes_mm: Vec::new(),
     })
 }
 

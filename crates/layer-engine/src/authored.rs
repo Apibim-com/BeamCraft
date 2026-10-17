@@ -22,6 +22,7 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "bim:id=string;bim:name=string;bim:elementKind=token;bim:geometryMode=token(parametric);",
     "bim:schemaVersion=string(0.1.0);bim:createdBy=string(uuid7);bim:revision=string(uuid7,optional)\n",
     "steel:plate:contourPointsMm=double3[];steel:plate:thicknessMm=double;",
+    "steel:plate:holePointsMm=double3[](optional,z=0);steel:plate:holeVertexCounts=int[](optional,>=3 each);",
     "bim:axisPointsMm=double3[];steel:member:rollRad=double(optional)\n",
     "xformOp:translate=double3;xformOp:orient=quatd;xformOpOrder=token[](translate,orient)\n",
     "bim:profile=rel;bim:material=rel;definition=/World/Definitions/D_<sha256-64>\n",
@@ -100,6 +101,9 @@ pub enum Shape {
         contour_mm: Vec<[f64; 3]>,
         /// Explicit extrusion thickness in millimetres.
         thickness_mm: f64,
+        /// Through-hole polygons in plate-local XY (`z` is zero), each at least three points,
+        /// stored as one flat point array plus the vertex counts. Empty means a solid plate.
+        holes: Vec<Vec<[f64; 3]>>,
     },
     /// Straight member, with a required pinned rectangular profile.
     Member {

@@ -145,6 +145,10 @@ pub struct CreatePlate {
     pub placement: Placement,
     /// Optional pinned material definition.
     pub material_digest: Option<ContentDigest>,
+    /// Through-hole polygons in the plate's local XY, each at least three points, clockwise as
+    /// seen from +Z (the cutter convention of the kernel). Whether a hole is strictly inside the
+    /// outline and clear of the others is the kernel's decision. Empty means a solid plate.
+    pub holes_mm: Vec<Vec<[f64; 2]>>,
 }
 
 /// Whether `name` is a valid element label (F04 section 3, `DV-BASE-003`).
@@ -355,6 +359,46 @@ impl CreatePlate {
             ));
         }
         self.placement.validate()?;
+        self.validate_holes()
+    }
+
+    fn validate_holes(&self) -> Result<(), CommandError> {
+        if self.holes_mm.len() > MAX_HOLES {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "holes_mm",
+                "more than 64 holes",
+            ));
+        }
+        if self.holes_mm.iter().any(|h| h.len() > HOLE_POINT_CAP) {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "holes_mm",
+                "a hole has more than 1024 points",
+            ));
+        }
+        if self.holes_mm.iter().any(|h| h.len() < MIN_CONTOUR_POINTS) {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "holes_mm",
+                "a hole needs at least 3 points",
+            ));
+        }
+        let coordinates = || self.holes_mm.iter().flatten().flatten();
+        if coordinates().any(|v| !v.is_finite()) {
+            return Err(CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "holes_mm",
+                "value is not finite",
+            ));
+        }
+        if coordinates().any(|v| v.abs() > COORDINATE_CAP_MM) {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "holes_mm",
+                "coordinate exceeds the coordinate cap",
+            ));
+        }
         Ok(())
     }
 
@@ -374,7 +418,7 @@ impl CreatePlate {
             )
         };
         let mut bytes = Vec::with_capacity(64 + self.contour_points_mm.len() * 24);
-        bytes.extend_from_slice(b"BeamCraft/P02/CreatePlate/v2\0");
+        bytes.extend_from_slice(b"BeamCraft/P04/CreatePlate/v3\0");
         bytes.extend_from_slice(self.new_id.as_bytes());
         let name = self.name.as_bytes();
         bytes.extend_from_slice(&(name.len() as u64).to_le_bytes());
@@ -399,11 +443,23 @@ impl CreatePlate {
             }
             None => bytes.push(0),
         }
+        bytes.extend_from_slice(&(self.holes_mm.len() as u64).to_le_bytes());
+        for hole in &self.holes_mm {
+            bytes.extend_from_slice(&(hole.len() as u64).to_le_bytes());
+            for v in hole.iter().flatten() {
+                bytes.extend_from_slice(&canonical_f64_bytes(*v).map_err(|_| bad())?);
+            }
+        }
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
         })
     }
 }
+
+/// Most through holes of one plate.
+pub const MAX_HOLES: usize = 64;
+/// Most points of one hole polygon.
+pub const HOLE_POINT_CAP: usize = 1024;
 
 #[cfg(test)]
 mod tests {
@@ -422,11 +478,49 @@ mod tests {
             thickness_mm: 10.0,
             placement: Placement::IDENTITY,
             material_digest: None,
+            holes_mm: Vec::new(),
         }
     }
 
     fn code(plate: &CreatePlate) -> ErrorCode {
         plate.validate_arguments().unwrap_err().code
+    }
+
+    fn hole() -> Vec<[f64; 2]> {
+        vec![
+            [100.0, 100.0],
+            [100.0, 200.0],
+            [200.0, 200.0],
+            [200.0, 100.0],
+        ]
+    }
+
+    #[test]
+    fn holes_have_caps_codes_and_part_of_the_fingerprint() {
+        let solid = plate().content_fingerprint().unwrap();
+        let mut p = plate();
+        p.holes_mm = vec![hole()];
+        assert!(p.validate_arguments().is_ok());
+        assert_ne!(p.content_fingerprint().unwrap(), solid);
+        let mut moved = p.clone();
+        moved.holes_mm[0][0][0] = 101.0;
+        assert_ne!(
+            moved.content_fingerprint().unwrap(),
+            p.content_fingerprint().unwrap()
+        );
+        let mut bad = plate();
+        bad.holes_mm = vec![vec![[1.0, 1.0], [2.0, 2.0]]];
+        assert_eq!(code(&bad), ErrorCode::InvalidArgument);
+        bad.holes_mm = vec![vec![[f64::NAN, 1.0], [2.0, 2.0], [3.0, 1.0]]];
+        assert_eq!(code(&bad), ErrorCode::NonFiniteNumber);
+        bad.holes_mm = vec![vec![[2e9, 1.0], [2.0, 2.0], [3.0, 1.0]]];
+        assert_eq!(code(&bad), ErrorCode::LimitExceeded);
+        bad.holes_mm = vec![hole(); MAX_HOLES + 1];
+        assert_eq!(code(&bad), ErrorCode::LimitExceeded);
+        bad.holes_mm = vec![vec![[0.0, 0.0]; HOLE_POINT_CAP + 1]];
+        assert_eq!(code(&bad), ErrorCode::LimitExceeded);
+        bad.holes_mm = vec![hole(); MAX_HOLES];
+        assert!(bad.validate_arguments().is_ok());
     }
 
     #[test]

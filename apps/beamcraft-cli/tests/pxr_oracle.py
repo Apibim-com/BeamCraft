@@ -133,11 +133,23 @@ def main():
         points = mesh.GetPointsAttr().Get()
         counts = mesh.GetFaceVertexCountsAttr().Get()
         indices = mesh.GetFaceVertexIndicesAttr().Get()
-        check(len(points) == 8 and len(counts) == 12 and len(indices) == 36, "mesh counts differ")
+        holes = plate.get("hole_counts")
+        if holes is None:
+            check(len(points) == 8 and len(counts) == 12 and len(indices) == 36, "mesh counts differ")
+        else:
+            # A plate with through holes: the authored polygons are plain USD arrays, the mesh is
+            # a larger closed triangle mesh and the volume is the closed form of the polygons.
+            hole_counts = list(prim.GetAttribute("steel:plate:holeVertexCounts").Get())
+            hole_points = prim.GetAttribute("steel:plate:holePointsMm").Get()
+            check(hole_counts == holes, "hole vertex counts differ: %r" % hole_counts)
+            check(len(hole_points) == sum(holes), "hole point count differs")
+            check(all(tuple(p)[2] == 0.0 for p in hole_points), "a hole point is not in the XY plane")
+            check(all(c == 3 for c in counts) and len(indices) == 3 * len(counts), "mesh is not a triangle mesh")
+            check(len(counts) > 12, "a plate with holes has more than 12 triangles")
         check(mesh.GetOrientationAttr().Get() == UsdGeom.Tokens.rightHanded, "orientation differs")
         check(mesh.GetSubdivisionSchemeAttr().Get() == UsdGeom.Tokens.none, "subdivision differs")
         volume = signed_volume(points, counts, indices)
-        expected = w * l * plate["thickness"]
+        expected = plate.get("expected_volume_mm3", w * l * plate["thickness"])
         check(volume > 0.0, "mesh is not outward oriented (negative volume)")
         check(close(volume, expected), "pxr-read volume %r != closed form %r" % (volume, expected))
         check(close(volume, plate["cli_volume_mm3"]), "pxr-read volume differs from the CLI output")

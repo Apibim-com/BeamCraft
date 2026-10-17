@@ -24,10 +24,13 @@
 //! evaluation here (`UNSUPPORTED_GEOMETRY`): the view contract carries translations only.
 
 use crate::footprint::Footprint;
+use crate::solid::SolidMesh;
 use beamcraft_geom::tolerance::TOLERANCE_POLICY_VERSION;
 use beamcraft_geom::{MathError, Point3};
 use beamcraft_kernel::diagnostic::Failure;
 use beamcraft_kernel::measure::analytic_mass_kg;
+use beamcraft_kernel::ops::{Body, HoleCutter, OpCode, OpFailure, through_hole};
+use beamcraft_kernel::profile::{Cavity, Point2};
 use beamcraft_kernel::{PlateResult, RectangularPlate, rectangular_plate};
 use beamcraft_model::command::{CommandError, CreatePlate, Placement};
 use beamcraft_model::definition::MaterialSpec;
@@ -37,6 +40,10 @@ use beamcraft_model::id::ElementId;
 
 /// Version label of the volume algorithm in a [`Quantities`] record.
 pub const VOLUME_ALGORITHM: &str = "kernel-g02-rectangular-plate-volume/1;tolerance-policy-3";
+
+/// Version label of the volume algorithm of a plate with through holes: the midpoint of the G06
+/// enclosure of the certified result of the G09 hole operation.
+pub const HOLED_VOLUME_ALGORITHM: &str = "kernel-g09-through-hole-volume/1;tolerance-policy-3";
 
 const _: () = assert!(TOLERANCE_POLICY_VERSION == 3);
 
@@ -79,6 +86,8 @@ pub struct AuthoredPlate {
     pub placement: Placement,
     /// Pinned physical material definition; absence means the material and density are unknown.
     pub material: Option<ContentDigest>,
+    /// Through-hole polygons in the plate's local XY, as authored. Empty means a solid plate.
+    pub holes_mm: Vec<Vec<[f64; 2]>>,
 }
 
 impl AuthoredPlate {
@@ -91,6 +100,7 @@ impl AuthoredPlate {
             thickness_mm: command.thickness_mm,
             placement: command.placement,
             material: command.material_digest,
+            holes_mm: command.holes_mm.clone(),
         }
     }
 
@@ -103,6 +113,7 @@ impl AuthoredPlate {
             thickness_mm: self.thickness_mm,
             placement: self.placement,
             material_digest: self.material,
+            holes_mm: self.holes_mm.clone(),
         }
     }
 }
@@ -151,20 +162,33 @@ pub struct Quantities {
 /// A plate evaluated by the kernel: the sealed body and its supported dimensions.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlateBody {
-    /// Sealed kernel result (mesh, volume, tolerance).
+    /// The sealed kernel box of the outline and thickness, before any hole.
     pub result: PlateResult,
+    /// The certified mesh of the plate as authored: the box, or the box with its through holes.
+    pub solid: SolidMesh,
     /// Width along local X, in millimetres.
     pub width_mm: f64,
     /// Length along local Y, in millimetres.
     pub length_mm: f64,
     /// Thickness along local Z, in millimetres.
     pub thickness_mm: f64,
+    /// Number of through holes applied.
+    pub hole_count: usize,
 }
 
 impl PlateBody {
+    /// The algorithm label of this body's volume record.
+    pub const fn algorithm(&self) -> &'static str {
+        if self.hole_count == 0 {
+            VOLUME_ALGORITHM
+        } else {
+            HOLED_VOLUME_ALGORITHM
+        }
+    }
+
     /// The quantity records of this body with no material: volume only, mass `unknown`.
     pub fn quantities(&self) -> Quantities {
-        quantities_without_material(&self.result, VOLUME_ALGORITHM)
+        quantities_without_material(self.solid.volume_mm3(), self.algorithm())
     }
 
     /// The quantity records of this body with the physical material of the element.
@@ -175,17 +199,14 @@ impl PlateBody {
         &self,
         material: Option<MaterialInfo>,
     ) -> Result<Quantities, CommandError> {
-        quantities_with_material(&self.result, VOLUME_ALGORITHM, material)
+        quantities_with_material(self.solid.volume_mm3(), self.algorithm(), material)
     }
 }
 
-pub(crate) fn quantities_without_material(
-    result: &PlateResult,
-    algorithm: &'static str,
-) -> Quantities {
+pub(crate) fn quantities_without_material(volume_mm3: f64, algorithm: &'static str) -> Quantities {
     Quantities {
-        volume_mm3: result.volume_mm3(),
-        volume_m3: result.volume_m3(),
+        volume_mm3,
+        volume_m3: volume_mm3 / 1_000_000_000.0,
         volume_status: QuantityStatus::Current,
         density_kg_m3: None,
         mass_kg: None,
@@ -195,11 +216,11 @@ pub(crate) fn quantities_without_material(
 }
 
 pub(crate) fn quantities_with_material(
-    result: &PlateResult,
+    volume_mm3: f64,
     algorithm: &'static str,
     material: Option<MaterialInfo>,
 ) -> Result<Quantities, CommandError> {
-    let mut quantities = quantities_without_material(result, algorithm);
+    let mut quantities = quantities_without_material(volume_mm3, algorithm);
     let Some(density) = material.and_then(|m| m.density_kg_m3) else {
         return Ok(quantities);
     };
@@ -362,11 +383,14 @@ pub fn evaluate_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandErro
                 thickness_mm: authored.thickness_mm,
             })
             .map_err(|f| map_kernel(&f))?;
+            let solid = apply_holes(&result, authored.thickness_mm, &authored.holes_mm)?;
             Ok(PlateBody {
                 result,
+                solid,
                 width_mm: width,
                 length_mm: length,
                 thickness_mm: authored.thickness_mm,
+                hole_count: authored.holes_mm.len(),
             })
         }
         Contour::ClockwiseOriginRectangle => Err(CommandError::new(
@@ -380,6 +404,61 @@ pub fn evaluate_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandErro
             "only the origin rectangle contour is evaluated in this slice",
         )),
     }
+}
+
+/// Millimetres by which a hole cutter reaches past both faces of the plate.
+const CUTTER_OVERSHOOT_MM: f64 = 1.0;
+
+fn map_operation(failure: &OpFailure) -> CommandError {
+    let (code, message) = match failure.code {
+        OpCode::ContourInvalid | OpCode::UnsupportedContour => (
+            ErrorCode::InvalidArgument,
+            "a hole is not a valid clockwise polygon strictly inside the outline and clear of the others",
+        ),
+        other => (other.f04_code(), "hole evaluation failed"),
+    };
+    CommandError::new(code, "holes_mm", message)
+}
+
+/// The certified mesh of a plate with its through holes. Each hole is one kernel cutter, in
+/// order, so the wall ids of the first hole are `h0`. With no holes it is the plain box.
+///
+/// The kernel decides, with exact predicates, whether a hole lies strictly inside the outline,
+/// is clear of the others and is a clockwise simple polygon; a refusal is `INVALID_ARGUMENT`
+/// for a bad polygon and the kernel's own code otherwise, and nothing is applied.
+fn apply_holes(
+    result: &PlateResult,
+    thickness_mm: f64,
+    holes: &[Vec<[f64; 2]>],
+) -> Result<SolidMesh, CommandError> {
+    if holes.is_empty() {
+        return Ok(SolidMesh::from_box(result));
+    }
+    let mut body = Body::from_plate(result).map_err(|f| map_operation(&f))?;
+    let mut last = None;
+    for (ordinal, hole) in holes.iter().enumerate() {
+        let cavity = Cavity::polygon(hole.iter().map(|[x, y]| Point2::new(*x, *y)).collect());
+        let ordinal = u16::try_from(ordinal).map_err(|_| {
+            CommandError::new(ErrorCode::LimitExceeded, "holes_mm", "too many holes")
+        })?;
+        let cutter = HoleCutter::new(
+            cavity,
+            -CUTTER_OVERSHOOT_MM,
+            thickness_mm + CUTTER_OVERSHOOT_MM,
+            ordinal,
+        );
+        let applied = through_hole(&body, &cutter).map_err(|f| map_operation(&f))?;
+        body = applied.body().clone();
+        last = Some(applied);
+    }
+    let applied = last.ok_or_else(|| {
+        CommandError::new(
+            ErrorCode::UnsupportedGeometry,
+            "holes_mm",
+            "hole evaluation produced no result",
+        )
+    })?;
+    Ok(SolidMesh::from_operation(&applied))
 }
 
 /// The contour of the origin rectangle of F04-POS-01: `(0,0,0), (w,0,0), (w,l,0), (0,l,0)`,
@@ -473,6 +552,7 @@ mod tests {
             thickness_mm: thickness,
             placement: Placement::IDENTITY,
             material_digest: None,
+            holes_mm: Vec::new(),
         }
     }
 
@@ -642,6 +722,86 @@ mod tests {
     }
 
     #[test]
+    fn through_holes_are_cut_by_the_kernel_with_exact_volume_and_mass() {
+        // Clockwise seen from +Z, as the kernel's cutter requires.
+        let square = |x: f64, y: f64, s: f64| vec![[x, y], [x, y + s], [x + s, y + s], [x + s, y]];
+        let mut c = command(rect(1000.0, 500.0), 10.0);
+        c.holes_mm = vec![square(100.0, 100.0, 100.0), square(400.0, 200.0, 50.0)];
+        let out = create_plate(&c, &none).unwrap();
+        // (1000 * 500 - 100 * 100 - 50 * 50) * 10 = 4,875,000 mm3, closed form.
+        assert!((out.quantities.volume_mm3 - 4_875_000.0).abs() <= 1e-6);
+        assert_eq!(out.quantities.algorithm, HOLED_VOLUME_ALGORITHM);
+        assert_eq!(out.body.hole_count, 2);
+        assert_eq!(out.authored.holes_mm, c.holes_mm);
+        assert_eq!(out.authored.to_command(), c);
+        let solid = &out.body.solid;
+        // Cap loops plus wall quads: far more than the 12 triangles of the plain box.
+        assert!(solid.triangles().len() > 12);
+        let plain = create_plate(&command(rect(1000.0, 500.0), 10.0), &none).unwrap();
+        assert_ne!(solid.digest(), plain.body.solid.digest());
+        assert_eq!(plain.body.solid.triangles().len(), 12);
+        // The mesh volume agrees with the divergence theorem over the returned triangles.
+        let v = solid.vertices();
+        let signed: f64 = solid
+            .triangles()
+            .iter()
+            .map(|[a, b, c]| {
+                let (a, b, c) = (v[*a as usize], v[*b as usize], v[*c as usize]);
+                let cross = [
+                    b[1] * c[2] - b[2] * c[1],
+                    b[2] * c[0] - b[0] * c[2],
+                    b[0] * c[1] - b[1] * c[0],
+                ];
+                (a[0] * cross[0] + a[1] * cross[1] + a[2] * cross[2]) / 6.0
+            })
+            .sum();
+        assert!((signed - 4_875_000.0).abs() <= 1e-3, "{signed}");
+        // The hole does not change the box the dimensions come from.
+        assert_eq!(out.body.width_mm, 1000.0);
+        assert_eq!(out.body.result.volume_mm3(), 5_000_000.0);
+    }
+
+    #[test]
+    fn a_hole_the_kernel_refuses_applies_nothing() {
+        let square = |x: f64, y: f64, s: f64| vec![[x, y], [x, y + s], [x + s, y + s], [x + s, y]];
+        let code_of = |holes: Vec<Vec<[f64; 2]>>| {
+            let mut c = command(rect(1000.0, 500.0), 10.0);
+            c.holes_mm = holes;
+            create_plate(&c, &none).unwrap_err().code
+        };
+        // Counter-clockwise is not a cutter.
+        let mut ccw = square(100.0, 100.0, 100.0);
+        ccw.reverse();
+        assert_eq!(code_of(vec![ccw]), ErrorCode::InvalidArgument);
+        // Outside, crossing and touching the outline.
+        assert_eq!(
+            code_of(vec![square(2000.0, 100.0, 100.0)]),
+            ErrorCode::InvalidArgument
+        );
+        assert_eq!(
+            code_of(vec![square(950.0, 100.0, 100.0)]),
+            ErrorCode::InvalidArgument
+        );
+        assert_eq!(
+            code_of(vec![square(0.0, 100.0, 100.0)]),
+            ErrorCode::InvalidArgument
+        );
+        // Overlapping another hole.
+        assert_eq!(
+            code_of(vec![
+                square(100.0, 100.0, 100.0),
+                square(150.0, 150.0, 100.0)
+            ]),
+            ErrorCode::InvalidArgument
+        );
+        // Argument-level failures come first.
+        assert_eq!(
+            code_of(vec![vec![[1.0, 1.0], [2.0, 2.0]]]),
+            ErrorCode::InvalidArgument
+        );
+    }
+
+    #[test]
     fn the_inclusive_floor_is_the_scaled_geometric_minimum() {
         // F04-POS-17: 0.001 mm is exactly the absolute floor, so it is accepted.
         let out = create_plate(&command(rect(1000.0, 500.0), 0.001), &none).unwrap();
@@ -727,6 +887,7 @@ mod tests {
                 thickness_mm: 10.0,
                 placement: Placement::IDENTITY,
                 material: None,
+                holes_mm: Vec::new(),
             };
             assert!(evaluate_plate(&authored).is_err());
         }
