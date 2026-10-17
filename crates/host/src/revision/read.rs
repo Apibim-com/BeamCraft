@@ -60,6 +60,31 @@ impl RevisionStore {
         })
     }
 
+    /// The record and manifest of one earlier (or the current) revision by its 1-based log
+    /// sequence, with the same record, manifest and base-link checks as [`Self::head`]. A
+    /// sequence of zero or beyond the head is [`RevisionError::NoRevision`].
+    pub fn info_at(&self, sequence: u64) -> Result<RevisionInfo, RevisionError> {
+        let directory = self.head_dir()?.ok_or(RevisionError::NoRevision)?;
+        match root::scan(&directory)? {
+            Some(head) if sequence > 0 && sequence <= head => self.load_at(&directory, sequence),
+            _ => Err(RevisionError::NoRevision),
+        }
+    }
+
+    /// Opens one revision by its log sequence and verifies every layer blob it references, as
+    /// [`Self::open`] does for the head. The blobs of an earlier revision stay readable as long as
+    /// the store does not garbage-collect them.
+    pub fn open_at(&self, sequence: u64) -> Result<Revision, RevisionError> {
+        let info = self.info_at(sequence)?;
+        for (index, entry) in info.manifest.content().entries().iter().enumerate() {
+            self.read_entry(index, entry)?;
+        }
+        Ok(Revision {
+            store: self.clone(),
+            info,
+        })
+    }
+
     pub(crate) fn head_dir(&self) -> Result<Option<PathBuf>, RevisionError> {
         match self.blobs.namespace_dir(root::DIR, false) {
             Ok(path) => Ok(Some(path)),

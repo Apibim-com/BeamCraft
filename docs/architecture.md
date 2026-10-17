@@ -43,6 +43,8 @@ P05 adds `model::command::CopyElement`, `engine::copy`, `beamcraft_cli::copy` an
 
 P06 adds `beamcraft_cli::workspace` and the CLI commands `workspace-create`, `workspace-status` and `workspace-publish`: a personal workspace is a separate draft revision store forked from the published head, and it reaches the published head only by a fast-forward publish through the same verifier ([design note](design/p06-workspace.md)).
 
+P07 adds `beamcraft_cli::history`, `RevisionStore::info_at`/`open_at` in the host and the CLI commands `workspace-undo`, `workspace-redo` and `workspace-history`: an undo commits the layers of the earlier state as a new verified draft revision (so element, mesh and stored quantities return together), and the undo and redo stacks are derived from the revision log plus an append-only `undo.log` ([design note](design/p07-undo-redo.md)).
+
 [Module boundaries (F08)](contracts/module-boundaries-v0.1.md) give the exact crate and module path
 of every contract area, the allowed dependency edges and which crates are planned. A test and CI
 enforce them.

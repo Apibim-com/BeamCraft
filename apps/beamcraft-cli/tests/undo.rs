@@ -1,0 +1,336 @@
+// SPDX-License-Identifier: MPL-2.0
+// SPDX-FileCopyrightText: 2026 Apibim
+// Contributor-original synthetic plates, MPL-2.0. Expected values are closed forms.
+
+//! P07 end to end: durable undo and redo of a workspace draft. Every step is one new verified
+//! revision whose layers are byte for byte those of the restored state, so identity, mesh and
+//! stored quantities come back together; the stacks survive a process restart (every call here is
+//! a fresh process) and a crash between an intent and its commit.
+
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+
+use beamcraft_protocol::{
+    json::{self, Json},
+    message,
+};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT: AtomicU64 = AtomicU64::new(0);
+
+const USER: &str = "01890a5d-ac96-774b-b9cc-aaaaaaaaaaaa";
+
+struct Fixture {
+    root: PathBuf,
+}
+impl Fixture {
+    fn new() -> Self {
+        let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("p07-tests");
+        fs::create_dir_all(&base).unwrap();
+        let root = base.join(format!(
+            "e2e-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(root.join("published")).unwrap();
+        Self { root }
+    }
+    fn dir(&self, name: &str) -> String {
+        self.root.join(name).to_str().unwrap().to_owned()
+    }
+    fn run(&self, args: &[&str]) -> (i32, Json) {
+        let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
+            .args(args)
+            .output()
+            .unwrap();
+        let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
+        (output.status.code().unwrap(), body)
+    }
+    fn ok(&self, args: &[&str]) -> Json {
+        let (code, body) = self.run(args);
+        assert_eq!(code, 0, "{args:?}: {body:?}");
+        body
+    }
+    fn code(&self, args: &[&str]) -> (i32, String) {
+        let (code, body) = self.run(args);
+        assert_ne!(code, 0, "{args:?}: {body:?}");
+        (code, text(&body, "code"))
+    }
+    /// A published store with one plate (hole, steel) and a forked workspace.
+    fn forked(&self) -> (String, String, String) {
+        let published = self.dir("published");
+        let steel = text(
+            at(
+                &self.ok(&[
+                    "define-material",
+                    "--store",
+                    &published,
+                    "--density",
+                    "7850",
+                ]),
+                &["definition"],
+            ),
+            "digest",
+        );
+        let created = self.ok(&[
+            "create-plate",
+            "--store",
+            &published,
+            "--width",
+            "1000",
+            "--length",
+            "500",
+            "--thickness",
+            "10",
+            "--material-digest",
+            &steel,
+            "--hole-rect",
+            "100,100,100,100",
+        ]);
+        let id = text(at(&created, &["plate"]), "element_id");
+        let dir = self.dir("ws");
+        self.ok(&[
+            "workspace-create",
+            "--store",
+            &published,
+            "--workspace-dir",
+            &dir,
+            "--user-id",
+            USER,
+        ]);
+        (published, dir, id)
+    }
+    fn edit(&self, dir: &str, args: &[&str]) -> Json {
+        let mut all = vec![args[0], "--store", dir];
+        all.extend_from_slice(&args[1..]);
+        self.ok(&all)
+    }
+    fn history(&self, dir: &str) -> Json {
+        self.ok(&["workspace-history", "--workspace-dir", dir])
+    }
+    fn layers(&self, dir: &str) -> Vec<(String, String)> {
+        at(&self.history(dir), &["draft_head", "manifest", "layers"])
+            .array()
+            .unwrap()
+            .iter()
+            .map(|l| (text(l, "name"), text(l, "digest")))
+            .collect()
+    }
+    fn units(&self, dir: &str) -> (String, String) {
+        let h = self.history(dir);
+        (text(&h, "undo_units"), text(&h, "redo_units"))
+    }
+    fn plates(&self, dir: &str) -> Vec<Json> {
+        at(&self.ok(&["plate-inspect", "--store", dir]), &["plates"])
+            .array()
+            .unwrap()
+            .to_vec()
+    }
+}
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        assert!(self.root.is_absolute() && self.root.file_name().is_some());
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+fn text(json: &Json, key: &str) -> String {
+    json.get(key).unwrap().string().unwrap().to_owned()
+}
+fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
+    path.iter().fold(json, |j, k| j.get(k).unwrap())
+}
+fn num(json: &Json, path: &[&str]) -> f64 {
+    at(json, path).float().unwrap()
+}
+fn find<'a>(plates: &'a [Json], id: &str) -> &'a Json {
+    plates.iter().find(|p| text(p, "element_id") == id).unwrap()
+}
+
+#[test]
+fn undo_and_redo_restore_a_copy_and_a_change_atomically() {
+    let f = Fixture::new();
+    let (published, dir, id) = f.forked();
+    let initial = f.layers(&dir);
+    assert_eq!(f.units(&dir), ("0".into(), "0".into()));
+
+    // A copy is one unit: undo removes it and redo brings back the same element.
+    let copied = f.edit(&dir, &["copy-element", "--id", &id, "--name", "Copy"]);
+    let copy_id = text(at(&copied, &["element"]), "element_id");
+    let copy_mesh = text(at(&copied, &["element"]), "mesh_digest");
+    let after_copy = f.layers(&dir);
+    assert_ne!(after_copy, initial);
+    assert_eq!(f.units(&dir), ("1".into(), "0".into()));
+
+    let undone = f.ok(&["workspace-undo", "--workspace-dir", &dir]);
+    assert_eq!(text(&undone, "outcome"), "workspace_undone");
+    assert_eq!(f.plates(&dir).len(), 1);
+    assert_eq!(f.layers(&dir), initial);
+    assert_eq!(f.units(&dir), ("0".into(), "1".into()));
+
+    let redone = f.ok(&["workspace-redo", "--workspace-dir", &dir]);
+    assert_eq!(text(&redone, "outcome"), "workspace_redone");
+    let plates = f.plates(&dir);
+    assert_eq!(plates.len(), 2);
+    let copy = find(&plates, &copy_id);
+    assert_eq!(text(copy, "mesh_digest"), copy_mesh);
+    assert_eq!(text(copy, "name"), "Copy");
+    assert_eq!(f.layers(&dir), after_copy);
+    assert_eq!(f.units(&dir), ("1".into(), "0".into()));
+
+    // A shape change: undo restores the thickness, the volume, the mass and their freshness.
+    let before_change = f.layers(&dir);
+    f.edit(&dir, &["update-element", "--id", &id, "--thickness", "20"]);
+    let changed = f.plates(&dir);
+    assert_eq!(
+        num(find(&changed, &id), &["quantities", "volume", "mm3"]),
+        9_800_000.0
+    );
+    f.ok(&["workspace-undo", "--workspace-dir", &dir]);
+    let restored = f.plates(&dir);
+    let source = find(&restored, &id);
+    assert_eq!(num(source, &["quantities", "volume", "mm3"]), 4_900_000.0);
+    assert_eq!(num(source, &["quantities", "mass", "kg"]), 38.465);
+    for quantity in ["volume", "mass"] {
+        assert_eq!(
+            text(at(source, &["stored_quantities", quantity]), "freshness"),
+            "current"
+        );
+    }
+    assert_eq!(f.layers(&dir), before_change);
+
+    // A new edit after an undo discards the redo stack.
+    assert_eq!(f.units(&dir), ("1".into(), "1".into()));
+    f.edit(&dir, &["update-element", "--id", &id, "--name", "Renamed"]);
+    assert_eq!(f.units(&dir), ("2".into(), "0".into()));
+    let (_, code) = f.code(&["workspace-redo", "--workspace-dir", &dir]);
+    assert_eq!(code, "INVALID_ARGUMENT");
+
+    // Undo reaches back to the fork and not before.
+    for _ in 0..2 {
+        f.ok(&["workspace-undo", "--workspace-dir", &dir]);
+    }
+    let (_, code) = f.code(&["workspace-undo", "--workspace-dir", &dir]);
+    assert_eq!(code, "INVALID_ARGUMENT");
+    assert_eq!(f.units(&dir), ("0".into(), "2".into()));
+    assert_eq!(f.layers(&dir), initial);
+
+    // The published store was never touched by any of this.
+    let published_plates = f.ok(&["plate-inspect", "--store", &published]);
+    assert_eq!(at(&published_plates, &["plates"]).array().unwrap().len(), 1);
+}
+
+#[test]
+fn an_undone_draft_publishes_the_restored_state() {
+    let f = Fixture::new();
+    let (published, dir, id) = f.forked();
+    f.edit(&dir, &["update-element", "--id", &id, "--name", "Draft"]);
+    f.ok(&["workspace-undo", "--workspace-dir", &dir]);
+    let sent = f.ok(&[
+        "workspace-publish",
+        "--store",
+        &published,
+        "--workspace-dir",
+        &dir,
+    ]);
+    assert_eq!(text(&sent, "outcome"), "workspace_published");
+    let plates = at(
+        &f.ok(&["plate-inspect", "--store", &published]),
+        &["plates"],
+    )
+    .array()
+    .unwrap()
+    .to_vec();
+    assert_eq!(plates.len(), 1);
+    assert_ne!(text(&plates[0], "name"), "Draft");
+}
+
+#[test]
+fn replay_reuse_and_an_interrupted_step_are_handled() {
+    let f = Fixture::new();
+    let (_, dir, id) = f.forked();
+    f.edit(&dir, &["update-element", "--id", &id, "--name", "One"]);
+    f.edit(&dir, &["update-element", "--id", &id, "--name", "Two"]);
+
+    let step = ["--op-id", "01890a5d-ac96-774b-b9cc-0000000000a1"];
+    let mut undo = vec!["workspace-undo", "--workspace-dir", &dir];
+    undo.extend_from_slice(&step);
+    let first = f.ok(&undo);
+    assert_eq!(text(&first, "outcome"), "workspace_undone");
+    let replay = f.ok(&undo);
+    assert_eq!(text(&replay, "outcome"), "workspace_undo_replayed");
+    assert_eq!(f.units(&dir), ("1".into(), "1".into()));
+    let mut redo = vec!["workspace-redo", "--workspace-dir", &dir];
+    redo.extend_from_slice(&step);
+    assert_eq!(f.code(&redo).1, "OP_ID_REUSE");
+
+    // A crash after the intent was written and before the commit: the intent alone changes
+    // nothing, and the same operation finishes it.
+    let head = text(at(&f.history(&dir), &["draft_head"]), "revision_id");
+    let revision = "01890a5d-ac96-774b-b9cc-0000000000b2";
+    let op = "01890a5d-ac96-774b-b9cc-0000000000b3";
+    let log = Path::new(&dir).join("undo.log");
+    let mut text_log = fs::read_to_string(&log).unwrap();
+    text_log.push_str(&format!("undo {revision} {op} {head}\n"));
+    fs::write(&log, &text_log).unwrap();
+    assert_eq!(f.units(&dir), ("1".into(), "1".into()));
+    let finished = f.ok(&["workspace-undo", "--workspace-dir", &dir, "--op-id", op]);
+    assert_eq!(text(&finished, "outcome"), "workspace_undone");
+    assert_eq!(text(at(&finished, &["revision"]), "revision_id"), revision);
+    assert_eq!(f.units(&dir), ("0".into(), "2".into()));
+
+    // An intent recorded against another head cannot be resumed.
+    let stale_op = "01890a5d-ac96-774b-b9cc-0000000000c4";
+    let mut text_log = fs::read_to_string(&log).unwrap();
+    text_log.push_str(&format!(
+        "redo 01890a5d-ac96-774b-b9cc-0000000000c5 {stale_op} 01890a5d-ac96-774b-b9cc-0000000000c6\n"
+    ));
+    fs::write(&log, &text_log).unwrap();
+    let (_, code) = f.code(&[
+        "workspace-redo",
+        "--workspace-dir",
+        &dir,
+        "--op-id",
+        stale_op,
+    ]);
+    assert_eq!(code, "OP_ID_REUSE");
+    assert_eq!(f.units(&dir), ("0".into(), "2".into()));
+}
+
+#[test]
+fn bad_inputs_are_rejected_without_writing() {
+    let f = Fixture::new();
+    let (_, dir, _) = f.forked();
+    assert_eq!(f.code(&["workspace-undo"]).1, "INVALID_ARGUMENT");
+    assert_eq!(
+        f.code(&["workspace-undo", "--workspace-dir", &dir, "--op-id", "x"])
+            .1,
+        "INVALID_ID"
+    );
+    assert_eq!(
+        f.code(&["workspace-undo", "--workspace-dir", &dir, "--store", &dir])
+            .1,
+        "INVALID_ARGUMENT"
+    );
+    // A directory that is not a workspace, and a damaged log, are backend errors.
+    let empty = f.dir("empty");
+    fs::create_dir(&empty).unwrap();
+    assert_eq!(
+        f.code(&["workspace-history", "--workspace-dir", &empty]).0,
+        3
+    );
+    let log = Path::new(&dir).join("undo.log");
+    fs::write(&log, "garbage\n").unwrap();
+    assert_eq!(f.code(&["workspace-history", "--workspace-dir", &dir]).0, 3);
+    // An intent whose revision was never committed is ignored.
+    fs::write(
+        &log,
+        "undo 01890a5d-ac96-774b-b9cc-0000000000b2 01890a5d-ac96-774b-b9cc-0000000000b3 \
+         01890a5d-ac96-774b-b9cc-0000000000b4\n",
+    )
+    .unwrap();
+    assert_eq!(f.units(&dir), ("0".into(), "0".into()));
+}

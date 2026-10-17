@@ -51,6 +51,9 @@ the compare-and-swap for the expected base.
 - `RevisionStore::commit(&draft, &expected)` / `commit_with(.., verifier, hook)`.
 - `RevisionStore::open()` verifies record, manifest, base link and every layer blob and
   refuses missing, corrupt, resized or torn state with `RevisionError` (`code()` maps to F04).
+- `RevisionStore::info_at(sequence)` / `open_at(sequence)` read one earlier (or the current)
+  revision by its 1-based log sequence with the same checks; zero or past the head is
+  `NoRevision`. Used by the workspace undo (P07) to restore an earlier state as a new revision.
 - `ContentVerifier` is the injected content gate (layer engine, U03 evidence). It receives a
   `VerifyRequest` (layers plus the draft's root layer, schema, project, workspace, generation
   and base pin) and its `IndexEvidence` must name that root and schema. `CommitHook`
