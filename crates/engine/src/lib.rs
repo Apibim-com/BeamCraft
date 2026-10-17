@@ -17,11 +17,13 @@ pub mod footprint;
 pub mod limits;
 pub mod member;
 pub mod presentation;
+pub mod quantity;
 pub mod query;
 pub mod scene;
 pub mod solid;
 pub mod synthetic;
 pub mod transaction;
+pub mod update;
 
 pub use beamcraft_kernel::PlateResult;
 pub use element::{ElementId, ElementKind, KindFilter};

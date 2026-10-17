@@ -30,7 +30,10 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "bim:definitionKind=token;steel:profile:widthMm=double;steel:profile:heightMm=double;",
     "bim:densityKgM3=double(optional)\n",
     "derived=<element>/Geometry:Mesh;points=point3f[];faceVertexCounts=int[];faceVertexIndices=int[];",
-    "subdivisionScheme=token(none);orientation=token(rightHanded);bim:shapeKey=string(sha256)\n",
+    "subdivisionScheme=token(none);orientation=token(rightHanded);bim:shapeKey=string(sha256);",
+    "quantities(optional,all or none)=bim:volumeMm3=double;bim:volumeStatus=token;bim:massKg=double(optional);",
+    "bim:massStatus=token;bim:shapeSignature=string(sha256);bim:massSignature=string(sha256);",
+    "bim:quantityAlgorithm=string\n",
     "changes=Create|Label|Contour|Thickness|Axis|Roll|Profile|Material|Placement|Mesh;",
     "opinion=Absent|Block|Value|Remove;relationship=Targets|Empty|Remove\n",
     "snapshot=Prim(path,element_id,type_name,active,properties,relationships,sources);",
@@ -186,6 +189,28 @@ impl Resource {
     }
 }
 
+/// Quantity records stored beside a derived mesh (F04 section 5): each has a status, an optional
+/// value and the signature of the inputs it was computed from, so a reader can tell a current
+/// record from a stale one without trusting it. Computed by the engine; this library only stores,
+/// bounds and reads them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredQuantities {
+    /// Volume in mm3.
+    pub volume_mm3: f64,
+    /// `current`, `stale` or `unknown`.
+    pub volume_status: String,
+    /// Mass in kg, present exactly for a `current` mass.
+    pub mass_kg: Option<f64>,
+    /// `current`, `stale` or `unknown`.
+    pub mass_status: String,
+    /// Signature of the shape inputs of the volume.
+    pub shape_signature: ContentDigest,
+    /// Signature of the mass inputs: the shape signature and the density or its absence.
+    pub mass_signature: ContentDigest,
+    /// Algorithm label of the volume record, at most 128 bytes.
+    pub algorithm: String,
+}
+
 /// Already computed F06 mesh data; no geometry or quantity algorithm runs in this crate.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Mesh {
@@ -199,6 +224,8 @@ pub struct Mesh {
     pub face_counts: Vec<i32>,
     /// Flattened point indices.
     pub indices: Vec<i32>,
+    /// Optional stored quantity records of this body. A rewrite replaces them as a whole.
+    pub quantities: Option<StoredQuantities>,
 }
 
 /// Closed worker-facing batch items, produced by a trusted engine, never raw USD setters.

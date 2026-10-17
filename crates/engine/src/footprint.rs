@@ -133,6 +133,50 @@ impl Footprint {
         Ok(footprint)
     }
 
+    /// The footprint of `UpdateElement` (F04 section 8): it reads the element's lifecycle and the
+    /// groups it changes, reads a newly pinned definition, and writes only the groups of the
+    /// supported fields it changes, plus the derived group when the shape or the material does.
+    /// A rename touches the label alone.
+    pub fn for_update(
+        id: ElementId,
+        name: bool,
+        material: bool,
+        shape: bool,
+        new_material: Option<ContentDigest>,
+    ) -> Result<Self, CommandError> {
+        let entry = |group| Entry {
+            target: Target::Element(id),
+            group,
+        };
+        let mut reads = BTreeSet::from([entry(Group::Lifecycle)]);
+        let mut writes = BTreeSet::new();
+        if name {
+            reads.insert(entry(Group::Label));
+            writes.insert(entry(Group::Label));
+        }
+        if material {
+            reads.insert(entry(Group::ShapeInputs));
+            writes.extend([
+                entry(Group::MaterialRef),
+                entry(Group::Relationship),
+                entry(Group::Derived),
+            ]);
+            if let Some(digest) = new_material {
+                reads.insert(Entry {
+                    target: Target::Definition(digest),
+                    group: Group::Relationship,
+                });
+            }
+        }
+        if shape {
+            reads.insert(entry(Group::ShapeInputs));
+            writes.extend([entry(Group::ShapeInputs), entry(Group::Derived)]);
+        }
+        let footprint = Self { reads, writes };
+        footprint.check_bound()?;
+        Ok(footprint)
+    }
+
     /// The footprint of publishing one immutable definition (P02): it writes the definition's own
     /// entry and no element. A definition is content-addressed, so two commands that publish the
     /// same digest write identical bytes; the entry is still a write, because another command
