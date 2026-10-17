@@ -25,7 +25,7 @@
 
 use crate::plate::{
     Base, PlateError, PublishRequest, RevisionSummary, control, decode, host_uuid, integrity,
-    load_base, number, open_base, property, publish_revision, summarize, text,
+    load_base, number, open_base, publish_revision, summarize, text,
 };
 use beamcraft_engine::command::MaterialInfo;
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
@@ -34,7 +34,7 @@ use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
     Author, Definition, EditTargets, Prepare, Resource, schema_identity,
 };
-use beamcraft_layer_engine::{Prim, Reader};
+use beamcraft_layer_engine::{Prim, Reader, Value};
 use beamcraft_model::command::CommandError;
 use beamcraft_model::definition::{MaterialSpec, RectangleProfileSpec};
 use beamcraft_model::digest::ContentDigest;
@@ -118,38 +118,61 @@ pub(crate) fn definition_digest(path: &str) -> Option<ContentDigest> {
     (definition_path(&digest) == path).then_some(digest)
 }
 
+/// A required property of an exact USD type with a value. A missing property is `None`; a
+/// property declared with another type, without a value or blocked is an integrity error, so a
+/// value-only match can never accept a field that the layer engine would reject.
+fn field<'a>(prim: &'a Prim, name: &str, ty: &str) -> Result<Option<&'a Value>, PlateError> {
+    let Some(property) = prim.properties.iter().find(|p| p.name == name) else {
+        return Ok(None);
+    };
+    match &property.value {
+        Some(value) if property.type_name == ty && !matches!(value, Value::Block) => {
+            Ok(Some(value))
+        }
+        _ => Err(integrity(
+            "committed definition field has another type or no value",
+        )),
+    }
+}
+
 fn decode_definition(
     prim: &Prim,
     digest: ContentDigest,
 ) -> Result<Option<DefinitionRecord>, PlateError> {
     let bad = || integrity("committed definition lacks a required value");
-    let units = property(prim, "bim:units").and_then(text);
-    let version = property(prim, "bim:schemaVersion").and_then(text);
-    let kind = property(prim, "bim:definitionKind").and_then(text);
-    if units != Some("mm") || version != Some("0.1.0") {
+    let required = |name: &str, ty: &str| field(prim, name, ty)?.ok_or_else(bad);
+    let kind = required("bim:definitionKind", "token")?;
+    let kind = text(kind).ok_or_else(bad)?;
+    // A newer kind stays inert: it can be listed by an ordinary reader, never used here.
+    if !matches!(kind, "rectangle" | "material") {
+        return Ok(None);
+    }
+    if !prim.active {
+        return Err(integrity("committed definition is inactive"));
+    }
+    if text(required("bim:units", "token")?) != Some("mm")
+        || text(required("bim:schemaVersion", "string")?) != Some("0.1.0")
+    {
         return Err(integrity("committed definition has other units or version"));
     }
-    let record = match kind {
-        Some("rectangle") => DefinitionRecord::RectangleProfile {
-            width_mm: property(prim, "steel:profile:widthMm")
-                .and_then(number)
-                .ok_or_else(bad)?,
-            height_mm: property(prim, "steel:profile:heightMm")
-                .and_then(number)
-                .ok_or_else(bad)?,
-        },
-        Some("material") => DefinitionRecord::Material {
-            density_kg_m3: property(prim, "bim:densityKgM3")
+    let double = |name: &str| number(required(name, "double")?).ok_or_else(bad);
+    let record = if kind == "rectangle" {
+        DefinitionRecord::RectangleProfile {
+            width_mm: double("steel:profile:widthMm")?,
+            height_mm: double("steel:profile:heightMm")?,
+        }
+    } else {
+        DefinitionRecord::Material {
+            // Only an absent property means an unknown density.
+            density_kg_m3: field(prim, "bim:densityKgM3", "double")?
                 .map(|v| number(v).ok_or_else(bad))
                 .transpose()?,
-        },
-        // A newer kind stays inert: it can be listed by an ordinary reader, never used here.
-        _ => return Ok(None),
+        }
     };
     record.validate()?;
     // The path, the label and the recomputed canonical bytes must name the same content.
     let pinned = record.resource()?.digest;
-    let label = property(prim, "bim:contentDigest").and_then(text);
+    let label = text(required("bim:contentDigest", "string")?);
     if pinned != digest || label != Some(&digest.to_string()) {
         return Err(integrity("definition content does not match its digest"));
     }
@@ -352,7 +375,7 @@ pub fn define(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use beamcraft_layer_engine::{Property, Value};
+    use beamcraft_layer_engine::Property;
 
     fn prim(path: String, properties: Vec<(&str, &str, Value)>) -> Prim {
         Prim {
@@ -477,6 +500,86 @@ mod tests {
             decode_definitions(&[forged]).unwrap_err().code,
             ErrorCode::IntegrityError
         );
+    }
+
+    #[test]
+    fn malformed_inactive_and_mistyped_definitions_are_integrity_errors() {
+        let code = |prim: Prim| decode_definitions(&[prim]).unwrap_err().code;
+        let steel = || material_prim(Some(7850.0), Some(7850.0));
+        let replace = |prim: &mut Prim, name: &str, property: Option<Property>| {
+            prim.properties.retain(|p| p.name != name);
+            prim.properties.extend(property);
+        };
+        let property = |name: &str, ty: &str, value: Option<Value>| Property {
+            name: name.into(),
+            type_name: ty.into(),
+            value,
+        };
+        // A missing, mistyped or valueless kind is not "a newer kind".
+        let mut p = steel();
+        replace(&mut p, "bim:definitionKind", None);
+        assert_eq!(code(p), ErrorCode::IntegrityError);
+        let mut p = steel();
+        replace(
+            &mut p,
+            "bim:definitionKind",
+            Some(property(
+                "bim:definitionKind",
+                "token",
+                Some(Value::Number(1.0)),
+            )),
+        );
+        assert_eq!(code(p), ErrorCode::IntegrityError);
+        let mut p = steel();
+        replace(
+            &mut p,
+            "bim:definitionKind",
+            Some(property("bim:definitionKind", "token", None)),
+        );
+        assert_eq!(code(p), ErrorCode::IntegrityError);
+        // A deactivated definition cannot supply a density.
+        let mut p = steel();
+        p.active = false;
+        assert_eq!(code(p), ErrorCode::IntegrityError);
+        // The density changed from double to float, or declared without a value, is not unknown.
+        let mut p = steel();
+        replace(
+            &mut p,
+            "bim:densityKgM3",
+            Some(property(
+                "bim:densityKgM3",
+                "float",
+                Some(Value::Number(7850.0)),
+            )),
+        );
+        assert_eq!(code(p), ErrorCode::IntegrityError);
+        let mut p = steel();
+        replace(
+            &mut p,
+            "bim:densityKgM3",
+            Some(property("bim:densityKgM3", "double", None)),
+        );
+        assert_eq!(code(p), ErrorCode::IntegrityError);
+        let mut p = steel();
+        replace(
+            &mut p,
+            "bim:densityKgM3",
+            Some(property("bim:densityKgM3", "double", Some(Value::Block))),
+        );
+        assert_eq!(code(p), ErrorCode::IntegrityError);
+        // Units and the label must have their exact types too.
+        let mut p = steel();
+        replace(
+            &mut p,
+            "bim:units",
+            Some(property("bim:units", "string", Some(text("mm")))),
+        );
+        assert_eq!(code(p), ErrorCode::IntegrityError);
+        let mut p = steel();
+        replace(&mut p, "bim:contentDigest", None);
+        assert_eq!(code(p), ErrorCode::IntegrityError);
+        // Only an absent density property is unknown.
+        assert!(decode_definitions(&[material_prim(None, None)]).is_ok());
     }
 
     #[test]
