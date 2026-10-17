@@ -256,6 +256,19 @@ fn hole_rejections_use_the_f04_codes_and_publish_nothing() {
         f.rejected(&["--hole-rect", "100,100,-100,100"]),
         "INVALID_ARGUMENT"
     );
+    // Two negative dimensions give a valid clockwise polygon, so the CLI must refuse them itself.
+    assert_eq!(
+        f.rejected(&["--hole-rect", "200,200,-100,-100"]),
+        "INVALID_ARGUMENT"
+    );
+    assert_eq!(
+        f.rejected(&["--hole-round", "250,250,-100"]),
+        "INVALID_ARGUMENT"
+    );
+    assert_eq!(
+        f.rejected(&["--hole-round", "250,250,0"]),
+        "INVALID_ARGUMENT"
+    );
     // Malformed generators.
     assert_eq!(f.rejected(&["--hole-rect", "1,2,3"]), "INVALID_ARGUMENT");
     assert_eq!(f.rejected(&["--hole-round", "1,2,x"]), "INVALID_ARGUMENT");
