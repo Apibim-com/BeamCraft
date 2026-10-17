@@ -472,6 +472,8 @@ pub struct ElementPatch {
     pub material: Option<Option<ContentDigest>>,
     /// New plate thickness in millimetres (a plate only).
     pub thickness_mm: Option<f64>,
+    /// New placement translation in millimetres, absolute; the rotation is kept (a move).
+    pub translation_mm: Option<[f64; 3]>,
 }
 
 /// F04 section 7 `UpdateElement`: the target element and a typed patch.
@@ -484,17 +486,38 @@ pub struct UpdateElement {
 }
 
 impl UpdateElement {
-    /// Admits the patch: it must change something, the label follows the F04 rule and the
-    /// thickness is finite (`NON_FINITE_NUMBER`) and at most 1,000,000 mm (`LIMIT_EXCEEDED`). That
-    /// a field applies to the target's kind and the geometry are the engine's decisions.
+    /// Admits the patch: it must change something, the label follows the F04 rule, the
+    /// thickness is finite (`NON_FINITE_NUMBER`) and at most 1,000,000 mm (`LIMIT_EXCEEDED`), and
+    /// the translation is finite and within the coordinate cap. That a field applies to the
+    /// target's kind and the geometry are the engine's decisions.
     pub fn validate_arguments(&self) -> Result<(), CommandError> {
         let patch = &self.patch;
-        if patch.name.is_none() && patch.material.is_none() && patch.thickness_mm.is_none() {
+        if patch.name.is_none()
+            && patch.material.is_none()
+            && patch.thickness_mm.is_none()
+            && patch.translation_mm.is_none()
+        {
             return Err(CommandError::new(
                 ErrorCode::InvalidArgument,
                 "changes",
                 "the patch changes nothing",
             ));
+        }
+        if let Some(translation) = patch.translation_mm {
+            if translation.iter().any(|v| !v.is_finite()) {
+                return Err(CommandError::new(
+                    ErrorCode::NonFiniteNumber,
+                    "translation_mm",
+                    "value is not finite",
+                ));
+            }
+            if translation.iter().any(|v| v.abs() > COORDINATE_CAP_MM) {
+                return Err(CommandError::new(
+                    ErrorCode::LimitExceeded,
+                    "translation_mm",
+                    "translation component exceeds the coordinate cap",
+                ));
+            }
         }
         if patch.name.as_deref().is_some_and(|n| !label_is_valid(n)) {
             return Err(CommandError::new(
@@ -557,6 +580,40 @@ impl UpdateElement {
             }
             None => bytes.push(0),
         }
+        // Appended only when present, so the fingerprints of earlier patches are unchanged.
+        if let Some(translation) = self.patch.translation_mm {
+            bytes.push(2);
+            for v in translation {
+                bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| {
+                    CommandError::new(
+                        ErrorCode::NonFiniteNumber,
+                        "translation_mm",
+                        "value cannot be encoded",
+                    )
+                })?);
+            }
+        }
+        Sha256::digest(&bytes).map_err(|_| {
+            CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+        })
+    }
+}
+
+/// F04 section 7 `DeleteElement` (P08): removes one owned element. It is refused while another
+/// element still links to it (`DEPENDENCY_CONFLICT`); there is no cascade.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeleteElement {
+    /// The element to delete.
+    pub target_id: ElementId,
+}
+
+impl DeleteElement {
+    /// SHA-256 of a versioned encoding of the request. Whether the element exists and whether
+    /// something links to it are the engine's and the layer engine's decisions.
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        let mut bytes = Vec::with_capacity(64);
+        bytes.extend_from_slice(b"BeamCraft/P08/DeleteElement/v1\0");
+        bytes.extend_from_slice(self.target_id.as_bytes());
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
         })
@@ -958,5 +1015,55 @@ mod tests {
             mutate(&mut c);
             assert_ne!(c.content_fingerprint().unwrap(), base);
         }
+    }
+
+    fn id(n: u8) -> ElementId {
+        ElementId::parse(&format!("019a7bf0-0000-7000-8000-0000000000{n:02x}")).unwrap()
+    }
+
+    #[test]
+    fn a_move_patch_has_argument_rules_and_a_fingerprint() {
+        let update = |translation: [f64; 3]| UpdateElement {
+            target_id: id(5),
+            patch: ElementPatch {
+                translation_mm: Some(translation),
+                ..ElementPatch::default()
+            },
+        };
+        assert!(update([1.0, 2.0, 3.0]).validate_arguments().is_ok());
+        let code = |u: UpdateElement| u.validate_arguments().unwrap_err().code;
+        assert_eq!(
+            code(update([f64::INFINITY, 0.0, 0.0])),
+            ErrorCode::NonFiniteNumber
+        );
+        assert_eq!(
+            code(update([0.0, 1_000_000_001.0, 0.0])),
+            ErrorCode::LimitExceeded
+        );
+        let base = update([1.0, 2.0, 3.0]).content_fingerprint().unwrap();
+        assert_ne!(update([1.0, 2.0, 4.0]).content_fingerprint().unwrap(), base);
+        // A patch without a move keeps the fingerprint it had before moves existed.
+        let rename = UpdateElement {
+            target_id: id(5),
+            patch: ElementPatch {
+                name: Some("A".into()),
+                ..ElementPatch::default()
+            },
+        };
+        assert_ne!(rename.content_fingerprint().unwrap(), base);
+    }
+
+    #[test]
+    fn the_delete_fingerprint_names_the_target() {
+        let a = DeleteElement { target_id: id(5) };
+        let b = DeleteElement { target_id: id(6) };
+        assert_eq!(
+            a.content_fingerprint().unwrap(),
+            a.clone().content_fingerprint().unwrap()
+        );
+        assert_ne!(
+            a.content_fingerprint().unwrap(),
+            b.content_fingerprint().unwrap()
+        );
     }
 }

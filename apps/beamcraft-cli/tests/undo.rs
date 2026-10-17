@@ -334,3 +334,28 @@ fn bad_inputs_are_rejected_without_writing() {
     .unwrap();
     assert_eq!(f.units(&dir), ("0".into(), "0".into()));
 }
+
+#[test]
+fn undo_restores_a_move_and_a_deleted_element() {
+    let f = Fixture::new();
+    let (_, dir, id) = f.forked();
+    let initial = f.layers(&dir);
+    f.edit(
+        &dir,
+        &["update-element", "--id", &id, "--translation", "5,6,7"],
+    );
+    let moved = f.layers(&dir);
+    f.edit(&dir, &["delete-element", "--id", &id]);
+    assert!(f.plates(&dir).is_empty());
+
+    f.ok(&["workspace-undo", "--workspace-dir", &dir]);
+    let plates = f.plates(&dir);
+    assert_eq!(plates.len(), 1);
+    assert_eq!(text(&plates[0], "element_id"), id);
+    assert_eq!(f.layers(&dir), moved);
+    f.ok(&["workspace-undo", "--workspace-dir", &dir]);
+    assert_eq!(f.layers(&dir), initial);
+    f.ok(&["workspace-redo", "--workspace-dir", &dir]);
+    f.ok(&["workspace-redo", "--workspace-dir", &dir]);
+    assert!(f.plates(&dir).is_empty());
+}
