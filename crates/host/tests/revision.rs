@@ -388,10 +388,17 @@ fn old_ops_beyond_the_window_resolve_by_revision_id_or_fall_back_to_the_base_che
     let old = store.commit(&drafts[1], &expect(1)).unwrap();
     assert_eq!(old.outcome, CommitOutcome::Replayed);
     assert_eq!(old.info.sequence(), 2);
-    // An old op that was never committed under this revision id cannot be recognised; its
-    // stale base keeps it from committing.
+    // An old op id with another revision id is, with the durable ledger (U07), recognised as
+    // committed and rejected as reuse ...
     let mut unknown = draft(layers(&store, 2), 2);
     unknown.revision = id(900);
+    assert_eq!(
+        err(store.commit(&unknown, &expect(1))),
+        RevisionError::OpIdReuse
+    );
+    // ... while a store without a ledger cannot recognise it: its stale base keeps it from
+    // committing.
+    fs::remove_dir_all(fx.0.join("ledger")).unwrap();
     assert_eq!(
         err(store.commit(&unknown, &expect(1))),
         RevisionError::BaseMismatch
@@ -519,6 +526,7 @@ fn a_lost_race_replay_also_compares_the_expected_base() {
 fn abort_at_every_point_before_the_switch_keeps_the_previous_revision_readable() {
     let all = [
         CommitPoint::Checked,
+        CommitPoint::IntentRecorded,
         CommitPoint::BlobsVerified,
         CommitPoint::ManifestStored,
         CommitPoint::RecordStaged,
@@ -581,6 +589,7 @@ fn failure_after_the_switch_is_outcome_unknown_and_the_new_revision_is_complete(
         seen,
         [
             CommitPoint::Checked,
+            CommitPoint::IntentRecorded,
             CommitPoint::BlobsVerified,
             CommitPoint::ManifestStored,
             CommitPoint::RecordStaged,

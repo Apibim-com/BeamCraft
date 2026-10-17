@@ -31,6 +31,8 @@ tools/
 negotiable limits, a bundle budget and the transport codes; it does no I/O. The CLI reports its
 version. These types are a scaffold, not a USD engine or profile catalogue.
 
+P01 adds the first vertical slice on top: `model::{id, command, limits}` (full UUIDv7 identities, `CreatePlate` admission), `engine::{command, footprint, transaction}` (kernel-evaluated rectangular plate, footprint, `op_id` decision), `host::ids`, and the CLI commands `create-plate` and `plate-inspect`, which author standard USD layers with the U02 layer engine and publish them as one atomic revision through U06/U07 ([design note](design/p01-first-plate.md)). It is a rectangular plate only, with no workspace, undo or process isolation of the layer engine.
+
 [Module boundaries (F08)](contracts/module-boundaries-v0.1.md) give the exact crate and module path
 of every contract area, the allowed dependency edges and which crates are planned. A test and CI
 enforce them.
@@ -87,7 +89,10 @@ Recovery must expose either the previous or the new complete revision. U05 store
 U06 (`beamcraft_host::revision`) commits a revision as a canonical manifest blob plus an
 append-only head log whose records are installed by a non-replacing hard link, which is both the
 atomic root switch and the compare-and-swap on the expected base; the reader verifies the
-manifest and every layer blob and refuses partial state. U07 owns crash recovery; a sequence of
+manifest and every layer blob and refuses partial state. U07 (`beamcraft_host::ledger`, see
+[its record](design/u07-journal-recovery.md)) adds a durable append-only outcome ledger that
+records an intent before the root switch and the outcome after it, recovers an unfinished commit
+from the root, and answers QueryOutcome; a sequence of
 uncoordinated file replacements is insufficient.
 
 Every placed element has a full UUIDv7. Prim names retain all 32 hexadecimal digits of the UUID;
@@ -112,9 +117,11 @@ points without following them. These checks are not an OS sandbox. U05 promises 
 directory-entry crash durability nor crash-atomic multi-file publication; crashes may leave
 temporary files. U06 adds the revision commit and reader (see
 [its record](design/u06-revision-commit.md)) and likewise promises no directory-entry crash
-durability and no cleanup of `.tmp-*` files or unreferenced blobs; U07 owns recovery. Garbage
+durability. U07's recovery removes only abandoned temporary files (`.tmp-*` record temps and
+`.publish-*` blob temps) and *reports* unreferenced blobs; it deletes no blob. Garbage
 collection is deferred until retained revisions and drafts are accounted for. The asset CLI
-belongs to U04; `revision-commit` and `revision-open` are the U06 commands.
+belongs to U04; `revision-commit` and `revision-open` are the U06 commands, `revision-recover`
+and `revision-outcome` the U07 ones.
 
 Copies receive independent identities and share immutable geometry until a shape edit.
 Personal workspaces preserve unpublished authored edits, derived results and journals across

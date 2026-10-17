@@ -128,7 +128,7 @@ fn run(args: &[OsString]) -> View<Json> {
             .map(|text| {
                 let ids = text
                     .split(',')
-                    .map(ElementId::parse)
+                    .map(|id| ElementId::parse(id).map_err(ViewError::from))
                     .collect::<View<Vec<_>>>()?;
                 Selection::from_ids(&snapshot, &ids)
             })

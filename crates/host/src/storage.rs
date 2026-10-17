@@ -14,7 +14,7 @@
 //! Filesystems without hard-link support return an error; there is no replacing fallback.
 //! Temp bytes are flushed and synced before installation. No directory-sync durability,
 //! crash-atomic multi-file commit, garbage collection or collision impossibility is claimed.
-//! A crash can leave a temporary file; cleanup/recovery belongs to U06/U07.
+//! A crash can leave a temporary file; U07 recovery (`crate::ledger`) removes abandoned ones.
 
 use std::fmt;
 use std::fs::{self, File, Metadata, OpenOptions};
@@ -29,7 +29,20 @@ use beamcraft_model::digest::{ContentDigest, Sha256};
 /// budget of 33,554,432 bytes. This storage cap does not widen attachment wire limits.
 pub const MAX_BLOB_BYTES: usize = 33_554_432;
 
+/// Directory entries one namespace scan inspects before it gives up with `LimitExceeded`.
+const MAX_SCANNED_ENTRIES: usize = 1_100_000;
+
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+
+/// True when the last byte of a non-empty regular file is a newline.
+fn ends_with_newline(path: &Path) -> Result<bool, StorageError> {
+    use std::io::{Seek, SeekFrom};
+    let mut file = File::open(path).map_err(io_error)?;
+    file.seek(SeekFrom::End(-1)).map_err(io_error)?;
+    let mut last = [0u8; 1];
+    file.read_exact(&mut last).map_err(io_error)?;
+    Ok(last == *b"\n")
+}
 
 /// Successful publish-if-absent outcome.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -311,6 +324,182 @@ impl BlobStore {
     ) -> Result<Vec<u8>, StorageError> {
         self.check_directory(directory, false)?;
         self.read_bounded(&directory.join(name), self.cap.min(cap))
+    }
+
+    /// Reads one regular file of a checked namespace directory under an exact caller cap that
+    /// is independent of this store's blob cap (the U07 ledger). `Ok(None)` means the file does
+    /// not exist. The bytes are not digest-addressed; the caller validates them.
+    pub(crate) fn read_namespace_exact(
+        &self,
+        directory: &Path,
+        name: &str,
+        cap: usize,
+    ) -> Result<Option<Vec<u8>>, StorageError> {
+        self.check_directory(directory, false)?;
+        match self.read_bounded(&directory.join(name), cap) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(StorageError::NotFound) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Appends `record` to a regular file of a checked namespace directory in one write, then
+    /// flushes and syncs the file. When the file is non-empty and does not end in a newline (a
+    /// torn earlier append), a newline is written first so the torn bytes can never merge with
+    /// this record. Refuses to grow the file beyond `max_len` with
+    /// [`StorageError::LimitExceeded`] before writing anything. The file is created when
+    /// absent; its directory entry is not synced.
+    pub(crate) fn append_namespace_file(
+        &self,
+        directory: &Path,
+        name: &str,
+        record: &[u8],
+        max_len: u64,
+    ) -> Result<(), StorageError> {
+        self.check_directory(directory, false)?;
+        let path = directory.join(name);
+        match fs::symlink_metadata(&path) {
+            Ok(metadata) if is_link(&metadata) || !metadata.is_file() => {
+                return Err(StorageError::UnsafeEntry);
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(io_error(e)),
+        }
+        let mut options = OpenOptions::new();
+        options.append(true).create(true);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            options.custom_flags(0x0020_0000); // FILE_FLAG_OPEN_REPARSE_POINT
+        }
+        let mut file = options.open(&path).map_err(io_error)?;
+        let opened = file.metadata().map_err(io_error)?;
+        if is_link(&opened) || !opened.is_file() {
+            return Err(StorageError::UnsafeEntry);
+        }
+        if !fs::canonicalize(&path)
+            .map_err(io_error)?
+            .starts_with(&self.canonical_root)
+        {
+            return Err(StorageError::UnsafeEntry);
+        }
+        let length = opened.len();
+        let mut buffer = Vec::new();
+        if length > 0 && !ends_with_newline(&path)? {
+            buffer.push(b'\n');
+        }
+        buffer
+            .try_reserve_exact(record.len())
+            .map_err(|_| StorageError::Io(io::ErrorKind::OutOfMemory))?;
+        buffer.extend_from_slice(record);
+        let added = u64::try_from(buffer.len()).map_err(|_| StorageError::LimitExceeded)?;
+        if length
+            .checked_add(added)
+            .is_none_or(|total| total > max_len)
+        {
+            return Err(StorageError::LimitExceeded);
+        }
+        file.write_all(&buffer).map_err(io_error)?;
+        file.flush().map_err(io_error)?;
+        file.sync_all().map_err(io_error)
+    }
+
+    /// Removes regular files named `prefix*` directly inside a checked namespace directory
+    /// (`blobs` itself is also one) whose last modification is at least `min_age` old; a zero
+    /// age removes them all. Links, directories and everything else are left alone. Returns the
+    /// number removed. This deletes only abandoned temporary names, never installed content:
+    /// a name that is also a hard link of an installed file merely loses the extra name.
+    pub(crate) fn remove_stale_temps(
+        &self,
+        directory: &Path,
+        prefix: &str,
+        min_age: std::time::Duration,
+    ) -> Result<usize, StorageError> {
+        self.check_directory(directory, false)?;
+        let now = std::time::SystemTime::now();
+        let (mut scanned, mut removed) = (0usize, 0usize);
+        for entry in fs::read_dir(directory).map_err(io_error)? {
+            let entry = entry.map_err(io_error)?;
+            scanned = scanned
+                .checked_add(1)
+                .filter(|n| *n <= MAX_SCANNED_ENTRIES)
+                .ok_or(StorageError::LimitExceeded)?;
+            if !entry
+                .file_name()
+                .to_str()
+                .is_some_and(|n| n.starts_with(prefix))
+            {
+                continue;
+            }
+            let path = entry.path();
+            let Ok(metadata) = fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if is_link(&metadata) || !metadata.is_file() {
+                continue;
+            }
+            let age = metadata
+                .modified()
+                .ok()
+                .and_then(|modified| now.duration_since(modified).ok());
+            let old_enough = min_age.is_zero() || age.is_some_and(|age| age >= min_age);
+            if old_enough {
+                match fs::remove_file(&path) {
+                    Ok(()) => removed += 1,
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(io_error(e)),
+                }
+            }
+        }
+        Ok(removed)
+    }
+
+    /// Lists the digests of installed blob files (`blobs/<2 hex>/<64 hex>`) without reading
+    /// their bytes; unrelated names are ignored. At most `limit` blobs are listed, more is
+    /// [`StorageError::LimitExceeded`]. An absent `blobs` directory lists nothing.
+    pub(crate) fn list_digests(&self, limit: usize) -> Result<Vec<ContentDigest>, StorageError> {
+        self.check_root()?;
+        let blobs = self.root.join("blobs");
+        match self.check_directory(&blobs, false) {
+            Ok(()) => {}
+            Err(StorageError::NotFound) => return Ok(Vec::new()),
+            Err(error) => return Err(error),
+        }
+        let mut found = Vec::new();
+        let mut scanned = 0usize;
+        for shard in fs::read_dir(&blobs).map_err(io_error)? {
+            let shard = shard.map_err(io_error)?;
+            let Some(prefix) = shard.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            let metadata = fs::symlink_metadata(shard.path()).map_err(io_error)?;
+            if prefix.len() != 2 || is_link(&metadata) || !metadata.is_dir() {
+                continue;
+            }
+            for blob in fs::read_dir(shard.path()).map_err(io_error)? {
+                let blob = blob.map_err(io_error)?;
+                scanned = scanned
+                    .checked_add(1)
+                    .filter(|n| *n <= MAX_SCANNED_ENTRIES)
+                    .ok_or(StorageError::LimitExceeded)?;
+                let Some(name) = blob.file_name().to_str().map(str::to_owned) else {
+                    continue;
+                };
+                if !name.starts_with(&prefix) {
+                    continue;
+                }
+                let Ok(digest) = name.parse::<ContentDigest>() else {
+                    continue;
+                };
+                if found.len() >= limit {
+                    return Err(StorageError::LimitExceeded);
+                }
+                found.push(digest);
+            }
+        }
+        found.sort();
+        Ok(found)
     }
 
     fn compare(

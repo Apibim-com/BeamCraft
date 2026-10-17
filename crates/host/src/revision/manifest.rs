@@ -247,6 +247,15 @@ impl Content {
         Ok(())
     }
 
+    /// Identity of the caller-decided content alone: the SHA-256 of the canonical manifest
+    /// encoding with sequence 1, no base and no index. The same content has the same
+    /// fingerprint whatever it is later stacked on, so the U07 ledger uses it to bind an op id
+    /// to what that operation was asked to commit.
+    pub fn fingerprint(&self) -> Result<ContentDigest, RevisionError> {
+        let bytes = Manifest::assemble(self.clone(), 1, None, None)?.encode();
+        Sha256::digest(&bytes).map_err(|_| RevisionError::LimitExceeded)
+    }
+
     /// Project id.
     pub fn project(&self) -> &Uuid7 {
         &self.project

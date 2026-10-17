@@ -24,6 +24,8 @@ digest, instance and triangle tables, ids and bounds, and computes no engineerin
 | Selection | `Selection::{from_ids, from_instances, from_triangles, instances, rebased}` | Holds ids only; display hints are resolved through the projection and discarded. `rebased` enforces the destination snapshot's selection cap (`VIEW_SELECTION_LIMIT`). Selection is viewport state and never enters a key. |
 | Errors | `ViewCode`, `ViewError` | 11 closed codes, `GEO_*` where F06 section 3 names one and `VIEW_*` otherwise, each mapped onto an existing F04 `ErrorCode`. |
 | Headless | `beamcraft view-snapshot`, `beamcraft view-changes` | See the CLI README. |
+| `CreatePlate` (P01) | `command::{create_plate, evaluate_plate, origin_rectangle_contour, AuthoredPlate}`, `transaction::admit_create_plate`, `footprint::Footprint::for_create` | Admission (F04 caps, label, placement, `D`, floor, repeated points), kernel body, quantities (volume current, mass unknown), declared footprint, `op_id` replay/reuse decision. Origin rectangle only, see below. |
+| Committed plates (P01) | `query::committed::{evaluate_committed, scene_elements}` | Authored plates read from a committed revision are re-evaluated by the kernel and become the `ViewSnapshot` input. `beamcraft plate-inspect` uses it. |
 
 ## Limits
 
@@ -45,12 +47,16 @@ inputs cannot reach it through `ViewSnapshot::build`.
 
 ## What is not implemented (and is not faked)
 
-- **P01 is absent.** There are no authored elements, commands, dependency keys, quantity
-  statuses or ElementId in `beamcraft_model::id`. The builder takes sealed kernel
-  `PlateResult`s (the only body the kernel builds) with a caller-supplied `ElementKind` and a
-  translation placement. Until P01, `ElementId` lives in `beamcraft_engine::element`; a non-plate
-  kind carries a plate body as a stand-in. `synthetic` builds such scenes with the real kernel
-  for the CLI and tests, and every command output marks them (`stand_ins`).
+- **P01 is a first slice only.** `CreatePlate` is implemented for the origin rectangle contour
+  `(0,0,0),(w,0,0),(w,l,0),(0,l,0)` (F04-POS-01). Its clockwise mirror is `INVALID_ARGUMENT`; every
+  other contour that passes the structural stages (translated or rotated rectangles, polygons)
+  is `UNSUPPORTED_GEOMETRY` and authors nothing, where F04 would accept it with an `unsupported`
+  geometry status or, for non-planar and self-intersecting contours, reject it as
+  `INVALID_ARGUMENT` (F04-NEG-29, -30, -38). A placement rotation other than the identity is
+  `UNSUPPORTED_GEOMETRY`. There are no dependency keys (F06 section 7), no stored quantity or
+  signature, no other command. The snapshot builder still takes sealed kernel `PlateResult`s;
+  `ElementId` is `beamcraft_model::id::ElementId`. `synthetic` scenes remain stand-ins and every
+  command output marks them (`stand_ins`).
 - **No operations exist yet** (A03/A04), so a distinct simplified mesh can only be a stand-in
   supplied by the caller. Measuring the load-time gain on the 10 000-part scene is a V01 task.
 - **Welds and bolts are not registered kinds** (F10 vocabulary 0.1). The kind filter works on

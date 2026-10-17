@@ -3,8 +3,9 @@
 U04 adds two native binaries in this existing package: `beamcraft` and
 `beamcraft-usd-worker`. The CLI calls `beamcraft_host::dispatch::Dispatcher`;
 only the worker constructs a `beamcraft_layer_engine::Reader`. Neither starts
-a socket or a service. The SDK fallback and mutations are unavailable; `revision-commit` and
-`revision-open` (below) are the only publication path, and they do not parse USD.
+a socket or a service. The SDK fallback and the worker mutation protocol are unavailable;
+`revision-commit` and `revision-open` (below) publish already stored blobs and do not parse USD.
+`create-plate` (P01, below) is the one command that authors USD and publishes it, in this process.
 This is an experimental read path, not complete LEW-03/F05 admission.
 
 Build offline with `cargo build --offline -p beamcraft-cli --bins`.
@@ -39,8 +40,10 @@ An explicitly selected unavailable backend returns 3; there is no automatic SDK 
 
 `blob-put --store ROOT --file FILE` and `blob-verify --store ROOT --digest SHA256`
 use U05 byte storage. They do not publish a project revision. `query-outcome` requires the
-selected identity and `--op-id UUIDV7`, works without a worker, and returns OUTCOME_UNKNOWN
-until U07 can provide durable proof. It does not report an assumed rejection on replay.
+selected identity and `--op-id UUIDV7`, works without a worker, and still returns
+OUTCOME_UNKNOWN: it is the frozen U04 stage-profile command and is not wired to the U07
+ledger (the profile has no recorded-result message). The durable host-ledger answer is
+`revision-outcome` below. Neither reports an assumed rejection on replay.
 
 ## U06 revision commands
 
@@ -66,8 +69,29 @@ a commit must repeat the same `--base`: another base under the same op id is `OP
 These commands check blob integrity, not USD content: the layer engine runs in its own process
 and the frozen U04 profile has no verify/index message, so duplicate-ID, dangling-link and
 U03-index checks run only through the host API's injected `ContentVerifier` (exercised in the
-tests with the real layer engine). A CLI commit records `index: null`. U07 recovery is not
-implemented. See the [U06 record](../../docs/design/u06-revision-commit.md).
+tests with the real layer engine). A CLI commit records `index: null`. See the
+[U06 record](../../docs/design/u06-revision-commit.md).
+
+## U07 recovery commands
+
+```text
+beamcraft revision-recover --store ROOT --min-age-secs U64
+beamcraft revision-outcome --store ROOT --op-id UUIDV7
+```
+
+Every `revision-commit` now writes a synced intent to `ledger/outcomes.log` before the root
+switch and a committed record after it. `revision-recover` closes unresolved intents from the
+root, removes abandoned temporary files, reports unreferenced blobs (it deletes none), verifies
+the root and prints one JSON report (`recovery_complete`, or `recovery_incomplete` with exit 0
+when an intent is in flight, unprovable, or the ledger contradicts the root; check `outcome`).
+`--min-age-secs` is required and has no default: `0` asserts that no commit is running on the
+store, a larger value leaves younger intents and temporary files alone. Running it twice changes
+nothing. `revision-outcome` is read-only and prints `outcome_committed` (with `source`
+`ledger` or `root`), `outcome_aborted` (with `reason`), `outcome_not_recorded` (only when the
+ledger covers the whole history) or the standard `outcome_unknown` (exit 4); a ledger that the
+root contradicts is `INTEGRITY_ERROR`. Not implemented: a CLI fault-injection switch (the
+tests simulate the crash through the host commit hook and then run the real binary), ledger
+rotation, garbage collection. See the [U07 record](../../docs/design/u07-journal-recovery.md).
 
 The worker accepts only `--store ROOT`; unknown plugin/runtime options fail before reading
 model data. It has no plugin/script loader. Two explicit unquoted USDA directive names,
@@ -82,7 +106,7 @@ the precise profile, production gates and tests.
 `view-snapshot` and `view-changes` need no store, worker or backend. They call
 `beamcraft-engine` and print one JSON object (same shape for errors as above, plus a
 `diagnostics` entry with the view code such as `GEO_STALE_TOKEN`; exit 2 on rejection).
-P01 does not exist, so the scene is **synthetic**, built with the real kernel
+The scene is **synthetic** (see `plate-inspect` for committed plates), built with the real kernel
 (`--plates 1..500`): every fifth element is labelled `support` and, with
 `--stand-in-simplified true`, every third carries a distinct stand-in simplified mesh. The
 output marks both under `stand_ins`.
@@ -102,3 +126,37 @@ snapshots the scene, applies the scripted edits as the next generation and print
 `GetChanges` delta, with `new_meshes` empty for a placement-only edit. An unknown `--since`
 token is `GEO_STALE_TOKEN`. No mesh bytes are exported; a consumer reads blobs by digest through
 the engine API. Defaults: revision is the SHA-256 of `beamcraft-synthetic-scene`, generation 1.
+
+## P01 first plate commands
+
+```text
+beamcraft create-plate --store ROOT --width MM --length MM --thickness MM
+  [--name TEXT] [--translation X,Y,Z] [--new-id UUID] [--op-id UUID] [--revision-id UUID]
+  [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
+beamcraft plate-inspect --store ROOT
+```
+
+`create-plate` builds the origin rectangle contour `(0,0,0),(w,0,0),(w,l,0),(0,l,0)`, runs the
+engine's `CreatePlate` (F04 admission, kernel mesh and volume, declared footprint), authors the
+model layer and the derived layer as standard USDA with the U02 layer engine, checks that the layer
+engine's writes are inside the engine's footprint, and commits through U06/U07 with a verifier that
+runs the U02 structural check, the U03 index and a kernel re-evaluation of every plate in the
+layers. Output is one JSON object: element id, prim path, dimensions, volume (mm3 and m3, status,
+algorithm), mass (`unknown`: no material), mesh digest, revision id, sequence, manifest digest,
+generation, layer digests and the index record, and the footprint. Ids that are not given are
+generated (UUIDv7, strictly increasing, safe inside one millisecond). A retry of the same
+`--op-id` with the same `--new-id` and arguments is `plate_replayed` (nothing written); other
+content under that op id is `OP_ID_REUSE`; an owned `--new-id` is `DUPLICATE_ID`. A lost race is
+`BASE_REVISION_MISMATCH`. `--store` must be an existing absolute directory; the first call
+creates project and workspace ids (or takes them from the flags), later calls reuse the head's.
+
+`plate-inspect` opens the head revision with full verification in a fresh process, re-reads the
+layers with a fresh reader, re-evaluates every plate and checks its committed mesh against the
+kernel's, and prints the plates, the pinned snapshot token, the element table and the meshes a
+viewer must load (`synthetic: false`).
+
+Limits: rectangular origin plate only (other contours are `UNSUPPORTED_GEOMETRY`); no material;
+the layer engine runs in-process (no process isolation, LEW-03 open); no workspace, undo or
+envelope/JSON command; quantities are printed, not stored in USD (the pinned schema has none).
+A library target (`beamcraft_cli::plate`) exposes the same path with a commit hook for fault
+injection in tests. `tests/pxr_oracle.rs` (opt-in; skips without a Python that can `import pxr`, honours `BEAMCRAFT_PXR_PYTHON`) reads the saved layers with the OpenUSD reference implementation and runs `UsdUtils.ComplianceChecker`; see the design note for the version and result. See the [design note](../../docs/design/p01-first-plate.md).
