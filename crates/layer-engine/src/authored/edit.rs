@@ -527,6 +527,28 @@ fn mesh(data: &mut sdf::Data, m: &Mesh) -> Result<(), Diagnostic> {
     }
     Ok(())
 }
+/// The stored quantity attributes of a mesh prim; a replacement writes them as a whole.
+const QUANTITY_FIELDS: [(&str, &str); 7] = [
+    ("bim:volumeMm3", "double"),
+    ("bim:volumeStatus", "token"),
+    ("bim:massStatus", "token"),
+    ("bim:shapeSignature", "string"),
+    ("bim:massSignature", "string"),
+    ("bim:quantityAlgorithm", "string"),
+    ("bim:massKg", "double"),
+];
+/// Drops the quantity attributes of an existing mesh prim and nothing else, so a replacement
+/// never keeps a stale record while unknown content under the mesh is preserved.
+fn clear_quantities(data: &mut sdf::Data, id: &str) -> Result<(), Diagnostic> {
+    let p = format!("{}/Geometry", element_path(id)?);
+    if !data.has_spec(&path(&p)?) {
+        return Ok(());
+    }
+    for (name, ty) in QUANTITY_FIELDS {
+        attribute(data, &p, name, ty, Opinion::Remove, true)?;
+    }
+    Ok(())
+}
 fn erase_mesh(data: &mut sdf::Data, id: &str) -> Result<(), Diagnostic> {
     let parent = element_path(id)?;
     let p = format!("{parent}/Geometry");
@@ -744,8 +766,9 @@ pub(super) fn apply(
                     "mesh writes require exclusive derived layer",
                 ));
             }
-            // A mesh change is a whole replacement: stale quantity attributes never survive it.
-            erase_mesh(&mut derived, &m.id)?;
+            // A mesh change replaces the supported fields and the quantity record as a whole:
+            // stale quantity attributes never survive it, unknown content stays.
+            clear_quantities(&mut derived, &m.id)?;
             mesh(&mut derived, m)?;
         }
     }
@@ -849,15 +872,7 @@ fn capture(
                 for &(name, ty) in MESH {
                     add(name, ty, true);
                 }
-                for (name, ty) in [
-                    ("bim:volumeMm3", "double"),
-                    ("bim:volumeStatus", "token"),
-                    ("bim:massStatus", "token"),
-                    ("bim:shapeSignature", "string"),
-                    ("bim:massSignature", "string"),
-                    ("bim:quantityAlgorithm", "string"),
-                    ("bim:massKg", "double"),
-                ] {
+                for (name, ty) in QUANTITY_FIELDS {
                     add(name, ty, true);
                 }
             }
@@ -872,24 +887,13 @@ fn capture(
                     add(name, ty, false);
                 }
             }
-            Change::Mesh(m) => {
+            Change::Mesh(_) => {
                 for &(name, ty) in MESH {
                     add(name, ty, true);
                 }
-                if let Some(q) = &m.quantities {
-                    for (name, ty) in [
-                        ("bim:volumeMm3", "double"),
-                        ("bim:volumeStatus", "token"),
-                        ("bim:massStatus", "token"),
-                        ("bim:shapeSignature", "string"),
-                        ("bim:massSignature", "string"),
-                        ("bim:quantityAlgorithm", "string"),
-                    ] {
-                        add(name, ty, true);
-                    }
-                    if q.mass_kg.is_some() {
-                        add("bim:massKg", "double", true);
-                    }
+                // Every quantity field is reported: absent ones as removals.
+                for (name, ty) in QUANTITY_FIELDS {
+                    add(name, ty, true);
                 }
             }
         }

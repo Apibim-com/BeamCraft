@@ -84,8 +84,10 @@ fn log_path(dir: &Path) -> PathBuf {
 
 fn read_log(dir: &Path) -> Result<Vec<Intent>, PlateError> {
     let path = log_path(dir);
-    let length = match fs::metadata(&path) {
-        Ok(metadata) => metadata.len(),
+    // A link is never followed: the log is a regular file inside the workspace.
+    let length = match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.is_file() => metadata.len(),
+        Ok(_) => return Err(unusable()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(_) => return Err(unusable()),
     };
@@ -129,7 +131,11 @@ fn append_intent(dir: &Path, intent: &Intent) -> Result<(), PlateError> {
         intent.base.as_str()
     );
     let path = log_path(dir);
-    let used = fs::metadata(&path).map_or(0, |m| m.len());
+    let used = match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.is_file() => metadata.len(),
+        Ok(_) => return Err(unusable()),
+        Err(_) => 0,
+    };
     let line_length = u64::try_from(line.len()).map_err(|_| unusable())?;
     if used.saturating_add(line_length) > LOG_CAP {
         return Err(PlateError {

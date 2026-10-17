@@ -1333,6 +1333,88 @@ fn an_existing_definition_must_match_the_resource_before_it_is_reused() {
 }
 
 #[test]
+fn replacing_a_mesh_drops_only_the_quantity_record_and_reports_every_removal() {
+    let (mut a, o) = populated();
+    let with = |quantities| Mesh {
+        quantities,
+        ..mesh()
+    };
+    let quantities = StoredQuantities {
+        volume_mm3: 5.0e6,
+        volume_status: "current".into(),
+        mass_kg: Some(39.25),
+        mass_status: "current".into(),
+        shape_signature: digest(b"shape"),
+        mass_signature: digest(b"mass"),
+        algorithm: "test/v1".into(),
+    };
+    let p = a
+        .prepare(
+            batch(&o.context, vec![Change::Mesh(with(Some(quantities)))]),
+            &control(),
+        )
+        .unwrap();
+    let installed = a
+        .install(
+            &o.context,
+            &p.token,
+            &p.op_id,
+            Decision::Accepted,
+            &control(),
+        )
+        .unwrap();
+
+    // Unknown content that another tool put under the mesh prim.
+    let mut assets = a.export(&installed.context, &control()).unwrap();
+    let derived = assets
+        .iter_mut()
+        .find(|x| x.name == "derived.usda")
+        .unwrap();
+    let text = String::from_utf8(derived.bytes.clone()).unwrap();
+    let at = text.find("\"Geometry\"").unwrap();
+    let brace = at + text[at..].find('{').unwrap() + 1;
+    let edited = format!(
+        "{}\ncustom double future:note = 5\n{}",
+        &text[..brace],
+        &text[brace..]
+    );
+    *derived = asset("derived.usda", edited);
+    let (mut b, o) = open(request(
+        assets,
+        &["root.usda", "authored.usda", "derived.usda", "weak.usda"],
+    ));
+
+    // A replacement without a record removes all seven fields and says so.
+    let p = b
+        .prepare(
+            batch(&o.context, vec![Change::Mesh(with(None))]),
+            &control(),
+        )
+        .unwrap();
+    let removed: std::collections::BTreeSet<&str> = p
+        .opinions
+        .iter()
+        .filter(|i| i.opinion == Opinion::Remove)
+        .map(|i| i.attribute)
+        .collect();
+    for name in [
+        "bim:volumeMm3",
+        "bim:volumeStatus",
+        "bim:massStatus",
+        "bim:shapeSignature",
+        "bim:massSignature",
+        "bim:quantityAlgorithm",
+        "bim:massKg",
+    ] {
+        assert!(removed.contains(name), "{name}");
+    }
+    let layer = p.layers.iter().find(|x| x.name == "derived.usda").unwrap();
+    let text = String::from_utf8(layer.bytes.clone()).unwrap();
+    assert!(text.contains("future:note"));
+    assert!(!text.contains("bim:volumeMm3") && !text.contains("bim:massKg"));
+}
+
+#[test]
 fn delete_removes_the_whole_element_in_both_layers_and_nothing_else() {
     let (mut a, o) = populated();
     let before = snapshot(&a, &o.context);

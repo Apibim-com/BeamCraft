@@ -29,7 +29,7 @@ beamcraft workspace-publish --store PUBLISHED --workspace-dir DIR
 - `workspace-create` copies the published head's layer bytes as the first draft revision under the
   workspace's own id. Repeating it with the same identities resumes an interrupted fork; another
   user or workspace id for an existing directory is `DUPLICATE_ID`.
-- `workspace-publish` is a fast-forward: when the published head is still the base, the draft head's
+- `workspace-publish` takes no revision id: the published revision id and the operation are both the draft head's revision id, so an interrupted publish retried in a new process is the same request. It is a fast-forward: when the published head is still the base, the draft head's
   layers are committed as one new published revision through the same strict verifier. Otherwise
   it is `BASE_REVISION_MISMATCH` and nothing is written. A fresh fork is `INVALID_ARGUMENT`.
 - Publish is atomic in the published store's single head update. It is idempotent: the published
