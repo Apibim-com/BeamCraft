@@ -36,7 +36,11 @@ use crate::definition::{
 };
 use beamcraft_engine::command::AuthoredPlate;
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
-use beamcraft_engine::member::AuthoredMember;
+use beamcraft_engine::member::{AuthoredMember, ProfileInfo};
+use beamcraft_engine::quantity::{
+    Assessment, Freshness, QuantityRecord, StoredRecord, assess, member_shape_signature,
+    plate_shape_signature, record_for,
+};
 use beamcraft_engine::query::committed::{
     MemberRecord, PlateRecord, evaluate_committed, evaluate_committed_members, ids,
     scene_elements_with_members,
@@ -52,7 +56,7 @@ use beamcraft_host::revision::{
 };
 use beamcraft_layer_engine::authored::{
     Author, Change, EditTargets, Element, Group as LayerGroup, Placement as LayerPlacement,
-    Prepare, Prepared, SchemaIdentity, Shape, schema_identity, validate_layers,
+    Prepare, Prepared, SchemaIdentity, Shape, StoredQuantities, schema_identity, validate_layers,
 };
 use beamcraft_layer_engine::index::Completeness;
 use beamcraft_layer_engine::{
@@ -203,6 +207,20 @@ pub(crate) struct DerivedMesh {
     shape_key: String,
     orientation: String,
     subdivision: String,
+    /// The quantity record stored beside the mesh, if any. Not part of the geometry.
+    stored: Option<StoredRecord>,
+}
+
+impl DerivedMesh {
+    /// Whether two meshes are the same geometry, whatever quantity record they carry.
+    fn same_geometry(&self, other: &Self) -> bool {
+        self.points == other.points
+            && self.counts == other.counts
+            && self.indices == other.indices
+            && self.shape_key == other.shape_key
+            && self.orientation == other.orientation
+            && self.subdivision == other.subdivision
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -361,7 +379,44 @@ fn decode_mesh(prim: &Prim) -> Option<DerivedMesh> {
         subdivision: property(prim, "subdivisionScheme")
             .and_then(text)?
             .to_owned(),
+        stored: decode_stored(prim)?,
     })
+}
+
+/// The quantity record stored beside a mesh: absent (`Some(None)`), complete (`Some(Some(..))`)
+/// or malformed (`None`). A record is present exactly when its shape signature is; then every
+/// other field must be there with its USD type, and a mass value only with a `current` mass.
+fn decode_stored(prim: &Prim) -> Option<Option<StoredRecord>> {
+    let typed = |name: &str, ty: &str| -> Option<Option<&Value>> {
+        let Some(p) = prim.properties.iter().find(|p| p.name == name) else {
+            return Some(None);
+        };
+        match &p.value {
+            Some(v) if p.type_name == ty && !matches!(v, Value::Block) => Some(Some(v)),
+            _ => None,
+        }
+    };
+    if typed("bim:shapeSignature", "string")?.is_none() {
+        return Some(None);
+    }
+    let string = |name: &str, ty: &str| -> Option<&str> { text(typed(name, ty)??) };
+    let digest = |name: &str| -> Option<ContentDigest> {
+        string(name, "string")?.parse::<ContentDigest>().ok()
+    };
+    let mass_kg = match typed("bim:massKg", "double")? {
+        None => None,
+        Some(value) => Some(number(value)?),
+    };
+    let record = StoredRecord {
+        volume_mm3: number(typed("bim:volumeMm3", "double")??)?,
+        volume_status: string("bim:volumeStatus", "token")?.to_owned(),
+        mass_kg,
+        mass_status: string("bim:massStatus", "token")?.to_owned(),
+        shape_signature: digest("bim:shapeSignature")?,
+        mass_signature: digest("bim:massSignature")?,
+        algorithm: string("bim:quantityAlgorithm", "string")?.to_owned(),
+    };
+    Some(Some(record))
 }
 
 /// Reads every prim of the pinned stage and decodes the plates and their derived meshes.
@@ -495,6 +550,7 @@ pub(crate) fn kernel_mesh(solid: &SolidMesh) -> Result<DerivedMesh, PlateError> 
         shape_key: solid.digest().to_string(),
         orientation: "rightHanded".into(),
         subdivision: "none".into(),
+        stored: None,
     })
 }
 
@@ -512,13 +568,57 @@ pub(crate) fn evaluate_decoded(
     Ok((plates, members))
 }
 
+/// The quantity record the engine expects for a plate: its quantities under the signature of its
+/// shape inputs.
+pub(crate) fn plate_record(record: &PlateRecord) -> QuantityRecord {
+    let shape = plate_shape_signature(&record.authored, record.body.algorithm());
+    record_for(shape, &record.quantities)
+}
+
+/// The quantity record the engine expects for a member.
+pub(crate) fn member_record(record: &MemberRecord) -> QuantityRecord {
+    let profile = ProfileInfo {
+        width_mm: record.body.width_mm,
+        height_mm: record.body.height_mm,
+    };
+    let shape = member_shape_signature(&record.authored, profile, record.quantities.algorithm);
+    record_for(shape, &record.quantities)
+}
+
+/// What the derived layer stores for a quantity record, and what a reader found.
+pub(crate) fn stored_quantities(record: &QuantityRecord) -> StoredQuantities {
+    StoredQuantities {
+        volume_mm3: record.volume_mm3,
+        volume_status: record.volume_status.to_owned(),
+        mass_kg: record.mass_kg,
+        mass_status: record.mass_status.to_owned(),
+        shape_signature: record.shape_signature,
+        mass_signature: record.mass_signature,
+        algorithm: record.algorithm.clone(),
+    }
+}
+
+/// The stored record of one element next to what the engine computes now, and how fresh it is.
+#[derive(Debug, Clone, PartialEq)]
+pub struct QuantityReport {
+    /// What the derived layer stores, if anything.
+    pub stored: Option<StoredRecord>,
+    /// What the engine computes from the present inputs.
+    pub expected: QuantityRecord,
+    /// Freshness of the stored volume and mass.
+    pub assessment: Assessment,
+}
+
 /// The committed derived mesh of every plate and member must be the kernel's mesh of its
-/// authored inputs.
+/// authored inputs, and a stored quantity record must be the engine's or, outside `strict` mode,
+/// is reported as stale. Publishing is strict: a layer whose stored quantities disagree with the
+/// kernel cannot become a revision.
 fn verify_derived(
     records: &[PlateRecord],
     member_records: &[MemberRecord],
     decoded: &Decoded,
-) -> Result<(), PlateError> {
+    strict: bool,
+) -> Result<BTreeMap<ElementId, QuantityReport>, PlateError> {
     let found: BTreeMap<ElementId, &Option<DerivedMesh>> = decoded
         .plates
         .iter()
@@ -527,21 +627,38 @@ fn verify_derived(
         .collect();
     let expected = records
         .iter()
-        .map(|r| (r.authored.id, &r.body.solid))
+        .map(|r| (r.authored.id, &r.body.solid, plate_record(r)))
         .chain(
             member_records
                 .iter()
-                .map(|r| (r.authored.id, &r.body.solid)),
+                .map(|r| (r.authored.id, &r.body.solid, member_record(r))),
         );
-    for (id, result) in expected {
-        let expected = kernel_mesh(result)?;
-        match found.get(&id) {
-            Some(Some(actual)) if *actual == expected => {}
-            Some(Some(_)) => return Err(integrity("derived mesh differs from the kernel result")),
-            _ => return Err(integrity("element has no derived mesh")),
+    let mut reports = BTreeMap::new();
+    for (id, solid, record) in expected {
+        let mesh = kernel_mesh(solid)?;
+        let Some(Some(actual)) = found.get(&id) else {
+            return Err(integrity("element has no derived mesh"));
+        };
+        if !actual.same_geometry(&mesh) {
+            return Err(integrity("derived mesh differs from the kernel result"));
         }
+        let assessment = assess(actual.stored.as_ref(), &record);
+        if strict
+            && actual.stored.is_some()
+            && (assessment.volume != Freshness::Current || assessment.mass != Freshness::Current)
+        {
+            return Err(integrity("stored quantities differ from the kernel's"));
+        }
+        reports.insert(
+            id,
+            QuantityReport {
+                stored: actual.stored.clone(),
+                expected: record,
+                assessment,
+            },
+        );
     }
-    Ok(())
+    Ok(reports)
 }
 
 fn evidence(
@@ -615,7 +732,7 @@ impl ContentVerifier for PlateVerifier {
         reader.verify_index(&index, &control).map_err(reject)?;
         let decoded = decode(&reader, &opened, &control).map_err(reject)?;
         let (records, member_records) = evaluate_decoded(&decoded).map_err(reject)?;
-        verify_derived(&records, &member_records, &decoded).map_err(reject)?;
+        verify_derived(&records, &member_records, &decoded, true).map_err(reject)?;
         Ok(evidence(&index, request.root_layer, request.schema))
     }
 }
@@ -789,11 +906,16 @@ pub(crate) fn replay_summary(
 }
 
 /// The U02 mesh change of a kernel body.
-pub(crate) fn mesh_change(id: &ElementId, solid: &SolidMesh) -> Result<Change, PlateError> {
+pub(crate) fn mesh_change(
+    id: &ElementId,
+    solid: &SolidMesh,
+    record: &QuantityRecord,
+) -> Result<Change, PlateError> {
     let mesh = kernel_mesh(solid)?;
     Ok(Change::Mesh(beamcraft_layer_engine::authored::Mesh {
         id: id.to_string(),
         shape_key: solid.digest(),
+        quantities: Some(stored_quantities(record)),
         points_mm: mesh.points.clone(),
         face_counts: vec![3; mesh.counts.len()],
         indices: mesh
@@ -1020,7 +1142,11 @@ pub fn create_plate(
                     },
                     material: outcome.authored.material,
                 }),
-                mesh_change(&outcome.authored.id, &record.body.solid)?,
+                mesh_change(
+                    &outcome.authored.id,
+                    &record.body.solid,
+                    &plate_record(&record),
+                )?,
             ],
         },
         &control,
@@ -1108,6 +1234,8 @@ pub struct Inspection {
     pub plates: Vec<PlateRecord>,
     /// Committed beams and columns in element-id order, re-evaluated by the engine.
     pub members: Vec<MemberRecord>,
+    /// Stored quantity records against the engine's, by element id.
+    pub quantities: BTreeMap<ElementId, QuantityReport>,
     /// Elements that are not plates (not created by this slice).
     pub other_elements: usize,
     /// The immutable profile and material definitions of the revision, by full digest.
@@ -1148,7 +1276,7 @@ pub fn inspect(store: &RevisionStore) -> Result<Inspection, PlateError> {
     reader.verify_index(&index, &control)?;
     let decoded = decode(&reader, &opened, &control)?;
     let (plates, members) = evaluate_decoded(&decoded)?;
-    verify_derived(&plates, &members, &decoded)?;
+    let quantities = verify_derived(&plates, &members, &decoded, false)?;
     let pin = ViewPin::new(
         revision.info().manifest_digest(),
         content.workspace_generation(),
@@ -1163,6 +1291,7 @@ pub fn inspect(store: &RevisionStore) -> Result<Inspection, PlateError> {
         revision: summarize(revision.info()),
         plates,
         members,
+        quantities,
         other_elements: decoded.other_elements,
         definitions: decoded.definitions,
         snapshot,

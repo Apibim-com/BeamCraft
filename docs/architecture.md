@@ -37,6 +37,8 @@ P02 adds immutable profile and material definitions on top (`model::definition`,
 
 P03 adds the straight beam and column (`kernel::member::straight_member`, `model::command::CreateStraightMember`, `engine::member`, `beamcraft_cli::member` and the CLI command `create-member`): a member pins a rectangle profile definition, the kernel builds the box in the F06 member frame, and members are re-evaluated at publish and reopen like plates ([design note](design/p03-straight-member.md)).
 
+P04 adds `model::command::UpdateElement`, `engine::{update, quantity}`, `beamcraft_cli::edit` and the CLI command `update-element`: a name, material or thickness edit rewrites only the groups it changes, and volume and mass are stored as optional attributes beside the derived mesh with their own signatures, so a reader can tell current from stale ([design note](design/p04-quantities-update.md)).
+
 [Module boundaries (F08)](contracts/module-boundaries-v0.1.md) give the exact crate and module path
 of every contract area, the allowed dependency edges and which crates are planned. A test and CI
 enforce them.

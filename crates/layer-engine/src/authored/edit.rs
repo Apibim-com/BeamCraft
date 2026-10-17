@@ -492,7 +492,40 @@ fn mesh(data: &mut sdf::Data, m: &Mesh) -> Result<(), Diagnostic> {
         "bim:shapeKey",
         "string",
         sdf::Value::String(m.shape_key.to_string()),
-    )
+    )?;
+    if let Some(q) = &m.quantities {
+        let mut fields = vec![
+            ("bim:volumeMm3", "double", sdf::Value::Double(q.volume_mm3)),
+            (
+                "bim:volumeStatus",
+                "token",
+                sdf::Value::token(&q.volume_status),
+            ),
+            ("bim:massStatus", "token", sdf::Value::token(&q.mass_status)),
+            (
+                "bim:shapeSignature",
+                "string",
+                sdf::Value::String(q.shape_signature.to_string()),
+            ),
+            (
+                "bim:massSignature",
+                "string",
+                sdf::Value::String(q.mass_signature.to_string()),
+            ),
+            (
+                "bim:quantityAlgorithm",
+                "string",
+                sdf::Value::String(q.algorithm.clone()),
+            ),
+        ];
+        if let Some(kg) = q.mass_kg {
+            fields.push(("bim:massKg", "double", sdf::Value::Double(kg)));
+        }
+        for (name, ty, value) in fields {
+            attr(data, &p, name, ty, value)?;
+        }
+    }
+    Ok(())
 }
 fn erase_mesh(data: &mut sdf::Data, id: &str) -> Result<(), Diagnostic> {
     let parent = element_path(id)?;
@@ -677,6 +710,8 @@ pub(super) fn apply(
                     "mesh writes require exclusive derived layer",
                 ));
             }
+            // A mesh change is a whole replacement: stale quantity attributes never survive it.
+            erase_mesh(&mut derived, &m.id)?;
             mesh(&mut derived, m)?;
         }
     }
@@ -766,9 +801,24 @@ fn capture(
                     add(name, ty, false);
                 }
             }
-            Change::Mesh(_) => {
+            Change::Mesh(m) => {
                 for &(name, ty) in MESH {
                     add(name, ty, true);
+                }
+                if let Some(q) = &m.quantities {
+                    for (name, ty) in [
+                        ("bim:volumeMm3", "double"),
+                        ("bim:volumeStatus", "token"),
+                        ("bim:massStatus", "token"),
+                        ("bim:shapeSignature", "string"),
+                        ("bim:massSignature", "string"),
+                        ("bim:quantityAlgorithm", "string"),
+                    ] {
+                        add(name, ty, true);
+                    }
+                    if q.mass_kg.is_some() {
+                        add("bim:massKg", "double", true);
+                    }
                 }
             }
         }

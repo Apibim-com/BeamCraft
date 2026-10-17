@@ -13,8 +13,8 @@
 use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
     AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, PublishRequest, RevisionSummary,
-    check_footprint, control, decode, evaluate_decoded, host_uuid, load_base, mesh_change,
-    open_base, prior_op_with, publish_revision, replay_summary, summarize,
+    check_footprint, control, decode, evaluate_decoded, host_uuid, load_base, member_record,
+    mesh_change, open_base, prior_op_with, publish_revision, replay_summary, summarize,
 };
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::member::{MemberAdmission, admit_create_member};
@@ -170,7 +170,11 @@ pub fn create_member(
                     },
                     material: outcome.authored.material,
                 }),
-                mesh_change(&outcome.authored.id, &record.body.solid)?,
+                mesh_change(
+                    &outcome.authored.id,
+                    &record.body.solid,
+                    &member_record(&record),
+                )?,
             ],
         },
         &control,

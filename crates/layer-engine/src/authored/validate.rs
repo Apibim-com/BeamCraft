@@ -525,6 +525,7 @@ pub(super) fn snapshot(
             points_mm: points,
             face_counts: integers("faceVertexCounts")?,
             indices: integers("faceVertexIndices")?,
+            quantities: None,
         };
         mesh(&result, Budgets::default())?;
         if text(p, "subdivisionScheme", "token")? != "none"
@@ -770,7 +771,12 @@ pub(super) fn changes(
                     group: Group::Relationship,
                 });
             }
-            Change::Mesh(m) => mesh(m, b)?,
+            Change::Mesh(m) => {
+                mesh(m, b)?;
+                if let Some(q) = &m.quantities {
+                    quantities(q)?;
+                }
+            }
             _ => (),
         }
     }
@@ -834,9 +840,31 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                 .into_iter()
                 .chain(placement.orientation_xyzw),
         ),
-        Change::Mesh(m) => finite(m.points_mm.iter().flatten().map(|n| f64::from(*n))),
+        Change::Mesh(m) => finite(
+            m.points_mm.iter().flatten().map(|n| f64::from(*n)).chain(
+                m.quantities
+                    .iter()
+                    .flat_map(|q| [q.volume_mm3].into_iter().chain(q.mass_kg)),
+            ),
+        ),
         _ => Ok(()),
     }
+}
+fn quantities(q: &StoredQuantities) -> Result<(), Diagnostic> {
+    let status = |s: &str| matches!(s, "current" | "stale" | "unknown");
+    if !status(&q.volume_status)
+        || !status(&q.mass_status)
+        || q.algorithm.len() > 128
+        || q.algorithm.is_empty()
+        || q.volume_mm3 < 0.0
+        || q.mass_kg.is_some_and(|kg| kg < 0.0)
+        // A mass value exists exactly when its status is current.
+        || q.mass_kg.is_some() != (q.mass_status == "current")
+    {
+        return Err(invalid());
+    }
+    cap([q.volume_mm3], 1e30)?;
+    cap(q.mass_kg, 1e30)
 }
 fn mesh(m: &Mesh, b: Budgets) -> Result<(), Diagnostic> {
     if m.points_mm.len().saturating_mul(3) > b.array_items
