@@ -1375,6 +1375,7 @@ mod tests {
             name: name.into(),
             type_name: "double3[]".into(),
             value,
+            interpolation: None,
         }
     }
 

@@ -431,11 +431,20 @@ pub(crate) fn open(request: OpenRequest, control: &Control) -> Result<Candidate,
             if let Some(v) = &value {
                 value_size(v, &mut output_bytes, b.snapshot_bytes)?;
             }
+            let interpolation = match attr
+                .get_metadata::<sdf::Value>("interpolation")
+                .map_err(|_| corrupt())?
+            {
+                Some(sdf::Value::Token(s)) => Some(s.to_string()),
+                Some(_) => return Err(unsupported()),
+                None => None,
+            };
             charge(
                 &mut output_bytes,
                 property
                     .len()
                     .saturating_add(type_name.len())
+                    .saturating_add(interpolation.as_ref().map_or(0, String::len))
                     .saturating_add(128),
                 b.snapshot_bytes,
             )?;
@@ -443,6 +452,7 @@ pub(crate) fn open(request: OpenRequest, control: &Control) -> Result<Candidate,
                 name: property.to_string(),
                 type_name,
                 value,
+                interpolation,
             });
         }
         properties.sort_by(|a, b| a.name.cmp(&b.name));
@@ -484,6 +494,14 @@ pub(crate) fn open(request: OpenRequest, control: &Control) -> Result<Candidate,
                 b.snapshot_bytes,
             )?;
         }
+        let kind = prim.kind().map_err(|_| corrupt())?.map(|k| k.to_string());
+        if let Some(kind) = &kind {
+            charge(
+                &mut output_bytes,
+                kind.len().saturating_add(32),
+                b.snapshot_bytes,
+            )?;
+        }
         charge(
             &mut output_bytes,
             path.len().saturating_add(256),
@@ -497,7 +515,7 @@ pub(crate) fn open(request: OpenRequest, control: &Control) -> Result<Candidate,
                 .map_err(|_| corrupt())?
                 .map(|s| s.to_string()),
             active: prim.is_active().map_err(|_| corrupt())?,
-            kind: prim.kind().map_err(|_| corrupt())?.map(|k| k.to_string()),
+            kind,
             display_name,
             properties,
             relationships,

@@ -702,3 +702,26 @@ def Xform \"A\" { custom double3[] v = [(1,2,3),(4,5,6)] }
         }
     }
 }
+
+#[test]
+fn kind_and_display_name_are_charged_to_the_snapshot_budget() {
+    for key in ["kind", "displayName"] {
+        let build = |value: &str| {
+            let mut req = request(vec![asset(
+                "root.usda",
+                layer(&format!("def Xform \"A\" ({key} = \"{value}\") {{ }}")),
+            )]);
+            req.budgets.snapshot_bytes = 2000;
+            req
+        };
+        assert!(
+            Reader::default().open(build("x"), &control()).is_ok(),
+            "{key}"
+        );
+        assert_eq!(
+            error(build(&"x".repeat(5000))),
+            ErrorCode::LimitExceeded,
+            "{key}"
+        );
+    }
+}

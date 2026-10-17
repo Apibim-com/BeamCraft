@@ -640,6 +640,7 @@ impl IndexBuilder {
                 name: p.name.clone(),
                 type_name: p.type_name.clone(),
                 value,
+                interpolation: p.interpolation.clone(),
             });
         }
         if prim.sources.len() > b.values || prim.relationships.len() > b.values {

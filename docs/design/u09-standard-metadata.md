@@ -14,8 +14,8 @@ Usd.ModelAPI documentation only; no third-party sample was used.
 |---|---|
 | Authoring (`authored/edit.rs`) | `/World` assembly, `/World/Steel` group, element component, `Geometry` subcomponent. `displayName` = `bim:name` at create and on every `Label` change. `extent` (`float3[]`, min and max of the float32 points) and `normals` (`normal3f[]`, `interpolation = "uniform"`, one unit Newell normal per face) are written with the mesh. |
 | `authored/derive.rs` | `extent` and `face_normals`, shared by authoring and validation, with bad buffers refused (no panic, no indexing). |
-| Reader (`Prim`) | `Prim::kind` and `Prim::display_name` carry the composed metadata (charged to the snapshot budget). |
-| Validator | An owned element must be a component with `displayName` equal to `bim:name`; an owned Mesh must be a subcomponent whose `extent` equals the point bounds and whose normals match the points within 1e-5 per component; an authored `/World` or `/World/Steel` kind must be the expected one. |
+| Reader (`Prim`, `Property`) | `Prim::kind` and `Prim::display_name` carry the composed metadata, `Property::interpolation` the composed `interpolation` of an attribute; all are charged to the snapshot budget. |
+| Validator | An owned element must be a component with `displayName` equal to `bim:name`; an owned Mesh must be a subcomponent whose `extent` equals the point bounds and whose `normals` have `uniform` interpolation (missing or `vertex` is refused) and match the points within 1e-5 per component; an authored `/World` or `/World/Steel` kind must be the expected one. |
 | Schema | `SCHEMA_DESCRIPTOR` lists the new fields, so the schema digest changes (experimental stores written before U09 are not readable by this schema pin). |
 
 ## Decisions

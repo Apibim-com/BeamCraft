@@ -307,6 +307,8 @@ pub struct Property {
     pub type_name: String,
     /// Absent default is different from an explicit block.
     pub value: Option<Value>,
+    /// Composed `interpolation` metadata, when authored (for example `uniform` on `normals`).
+    pub interpolation: Option<String>,
 }
 /// One static composed prim; no engineering shape or write capability is implied.
 #[derive(Debug, Clone, PartialEq)]

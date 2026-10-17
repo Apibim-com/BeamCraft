@@ -572,6 +572,15 @@ pub(super) fn snapshot(
             derive::face_normals(&result.points_mm, &result.face_counts, &result.indices)
                 .ok_or_else(invalid)?;
         let stored = vec3s(required(p, "normals", "normal3f[]")?)?;
+        // Per-face data read as per-vertex data (the USD default) would mis-shade every reader.
+        let interpolation = p
+            .properties
+            .iter()
+            .find(|v| v.name == "normals")
+            .and_then(|v| v.interpolation.as_deref());
+        if interpolation != Some("uniform") {
+            return Err(invalid());
+        }
         if stored.len() != expected.len()
             || stored.iter().zip(&expected).any(|(s, e)| {
                 s.iter()

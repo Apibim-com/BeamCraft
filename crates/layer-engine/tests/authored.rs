@@ -1638,6 +1638,16 @@ fn validator_refuses_a_wrong_display_name_kind_extent_or_normal() {
             "(1000.0, 500.0, 1.0)]",
         ),
         ("derived.usda", "[(0.0, 0.0, 1.0)]", "[(0.0, 0.0, -1.0)]"),
+        (
+            "derived.usda",
+            "interpolation = \"uniform\"",
+            "interpolation = \"vertex\"",
+        ),
+        (
+            "derived.usda",
+            "interpolation = \"uniform\"",
+            "doc = \"no interpolation\"",
+        ),
     ] {
         let input = tampered(&a, &o.context, layer, from, to);
         assert!(
