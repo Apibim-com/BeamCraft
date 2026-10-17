@@ -270,3 +270,20 @@ revisions and whether the base is still the published head. `workspace-publish` 
 only: a moved published head is `BASE_REVISION_MISMATCH`, a fresh fork is `INVALID_ARGUMENT`, and
 repeating a finished or interrupted publish is a replay. There is no authentication and no merge.
 See the [design note](../../docs/design/p06-workspace.md).
+
+## P07 undo and redo
+
+```text
+beamcraft workspace-undo    --workspace-dir DIR [--revision-id UUID] [--op-id UUID]
+beamcraft workspace-redo    --workspace-dir DIR [--revision-id UUID] [--op-id UUID]
+beamcraft workspace-history --workspace-dir DIR
+```
+
+Every accepted command is one revision of the draft and therefore one undo unit. `workspace-undo`
+commits a **new** verified revision whose layers are those of the state before the last unit, so
+the element, its mesh and its stored quantities come back together; `workspace-redo` restores the
+undone state. The stacks are derived from the revision log and the append-only `undo.log` (an edit
+after an undo discards the redo stack), so they survive a restart and a crash between an intent
+and its commit; the same `--op-id` replays or finishes a step. Nothing to undo or redo is
+`INVALID_ARGUMENT`; undo does not reach before the fork and does not touch the published store.
+See the [design note](../../docs/design/p07-undo-redo.md).

@@ -163,6 +163,13 @@ fn commit_and_open_round_trip_with_a_verified_chain() {
     // A fresh handle on the same directory, as another process would have, sees the same root.
     let fresh = fx.store().open().unwrap();
     assert_eq!(fresh.info(), &second);
+
+    // An earlier revision is readable by its sequence; zero and a sequence past the head are not.
+    assert_eq!(fx.store().info_at(1).unwrap(), first.info);
+    assert_eq!(fx.store().info_at(2).unwrap(), second);
+    assert_eq!(fx.store().open_at(1).unwrap().info(), &first.info);
+    assert_eq!(err(fx.store().info_at(0)), RevisionError::NoRevision);
+    assert_eq!(err(fx.store().info_at(3)), RevisionError::NoRevision);
     let manifest_bytes = fx.store().blobs().read(&second.manifest_digest()).unwrap();
     assert_eq!(manifest_bytes, second.manifest().encode());
     assert_eq!(
