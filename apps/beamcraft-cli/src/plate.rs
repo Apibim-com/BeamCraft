@@ -1362,6 +1362,8 @@ mod tests {
             element_id: None,
             type_name: None,
             active: true,
+            kind: None,
+            display_name: None,
             properties,
             relationships: Vec::new(),
             sources: Vec::new(),
@@ -1373,6 +1375,7 @@ mod tests {
             name: name.into(),
             type_name: "double3[]".into(),
             value,
+            interpolation: None,
         }
     }
 

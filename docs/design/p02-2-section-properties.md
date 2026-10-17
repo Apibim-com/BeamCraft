@@ -28,7 +28,8 @@ included, and no value is copied from a commercial table (AGENTS.md section 1.2)
   only, and the web and flange fields belong to the I-section families (A07).
 - A grade is a label. It never selects a density.
 - The schema digest changes (the descriptor lists the new attributes). Layers pinned to the
-  previous digest contain nothing the new mapping refuses, so `PREVIOUS_DESCRIPTOR` is accepted
+  previous digest contain nothing the new mapping refuses, so `PREVIOUS_DESCRIPTOR` (the mapping
+  of master with U09; stores from before U09 lack the kind, name, extent and normals) is accepted
   next to the current one when a store is opened or edited, and the next edit rewrites the pin.
   Checked with a store created by the pre-change binary and edited by this one. A later mapping
   change that is not backward compatible must not extend this list.

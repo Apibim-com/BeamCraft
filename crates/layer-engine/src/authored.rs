@@ -4,6 +4,7 @@
 //! Codeless U02 schema and isolated layer authoring for a trusted command engine.
 //! This is a worker-library boundary, not an F04 command validator or acceptance ledger.
 
+mod derive;
 mod edit;
 mod guard;
 mod validate;
@@ -26,6 +27,8 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:plate:holePointsMm=double3[](optional,z=0);steel:plate:holeVertexCounts=int[](optional,>=3 each);",
     "bim:axisPointsMm=double3[];steel:member:rollRad=double(optional)\n",
     "xformOp:translate=double3;xformOp:orient=quatd;xformOpOrder=token[](translate,orient)\n",
+    "kind:/World=assembly;/World/Steel=group;element=component;element/Geometry=subcomponent;",
+    "displayName(element)=bim:name\n",
     "bim:profile=rel;bim:material=rel;definition=/World/Definitions/D_<sha256-64>\n",
     "definition:bim:contentDigest=string;bim:schemaVersion=string(0.1.0);bim:units=token(mm);",
     "bim:definitionKind=token;steel:profile:widthMm=double;steel:profile:heightMm=double;",
@@ -35,7 +38,9 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "bim:densityKgM3=double(optional);bim:materialGrade=string(optional);",
     "bim:materialStandard=string(optional)\n",
     "derived=<element>/Geometry:Mesh;points=point3f[];faceVertexCounts=int[];faceVertexIndices=int[];",
-    "subdivisionScheme=token(none);orientation=token(rightHanded);bim:shapeKey=string(sha256);",
+    "subdivisionScheme=token(none);orientation=token(rightHanded);",
+    "extent=float3[](min,max of points);normals=normal3f[](uniform,one unit Newell normal per face);",
+    "bim:shapeKey=string(sha256);",
     "quantities(optional,all or none)=bim:volumeMm3=double;bim:volumeStatus=token;bim:massKg=double(optional);",
     "bim:massStatus=token;bim:shapeSignature=string(sha256);bim:massSignature=string(sha256);",
     "bim:quantityAlgorithm=string\n",
@@ -67,9 +72,11 @@ pub fn schema_identity() -> Result<SchemaIdentity, Diagnostic> {
     })
 }
 
-/// Descriptor of the mapping revision that preceded the optional section properties of P02.2.
-/// Layers pinned to it contain nothing the current mapping refuses (every added field is
-/// optional), so they stay readable and editable; an edit rewrites the pin to the current digest.
+/// Descriptor of the mapping revision that preceded the optional section properties of P02.2
+/// (the one with the U09 standard metadata). Layers pinned to it contain nothing the current
+/// mapping refuses (every added field is optional), so they stay readable and editable; an edit
+/// rewrites the pin to the current digest. Layers written before U09 lack the kind, display name,
+/// extent and normals and are not covered.
 const PREVIOUS_DESCRIPTOR: &str = concat!(
     "BeamCraft/U02/codeless/1\nmodel=0.1.0;backend=openusd=0.8.0;features=none;save=usda-owned-v1\n",
     "root:metersPerUnit=0.001;upAxis=Z;customLayerData:bimSchemaDigest=sha256\n",
@@ -80,12 +87,16 @@ const PREVIOUS_DESCRIPTOR: &str = concat!(
     "steel:plate:holePointsMm=double3[](optional,z=0);steel:plate:holeVertexCounts=int[](optional,>=3 each);",
     "bim:axisPointsMm=double3[];steel:member:rollRad=double(optional)\n",
     "xformOp:translate=double3;xformOp:orient=quatd;xformOpOrder=token[](translate,orient)\n",
+    "kind:/World=assembly;/World/Steel=group;element=component;element/Geometry=subcomponent;",
+    "displayName(element)=bim:name\n",
     "bim:profile=rel;bim:material=rel;definition=/World/Definitions/D_<sha256-64>\n",
     "definition:bim:contentDigest=string;bim:schemaVersion=string(0.1.0);bim:units=token(mm);",
     "bim:definitionKind=token;steel:profile:widthMm=double;steel:profile:heightMm=double;",
     "bim:densityKgM3=double(optional)\n",
     "derived=<element>/Geometry:Mesh;points=point3f[];faceVertexCounts=int[];faceVertexIndices=int[];",
-    "subdivisionScheme=token(none);orientation=token(rightHanded);bim:shapeKey=string(sha256);",
+    "subdivisionScheme=token(none);orientation=token(rightHanded);",
+    "extent=float3[](min,max of points);normals=normal3f[](uniform,one unit Newell normal per face);",
+    "bim:shapeKey=string(sha256);",
     "quantities(optional,all or none)=bim:volumeMm3=double;bim:volumeStatus=token;bim:massKg=double(optional);",
     "bim:massStatus=token;bim:shapeSignature=string(sha256);bim:massSignature=string(sha256);",
     "bim:quantityAlgorithm=string\n",
@@ -724,8 +735,8 @@ mod pin_tests {
 
     #[test]
     fn the_previous_mapping_pin_is_accepted_and_others_are_not() {
-        // Pinned value: the digest of the descriptor of master before P02.2.
-        let previous = "d6c612a28cdd4d62527c2a2c0afee8f9b0665d1e0d3b66a718673a28155466b4";
+        // Pinned value: the digest of the descriptor of master with U09, before P02.2.
+        let previous = "70fc49a1d81314a6599284532bd2d45c18f77b4318266238cc6923b25c05f28e";
         assert_eq!(
             Sha256::digest(PREVIOUS_DESCRIPTOR.as_bytes())
                 .unwrap()

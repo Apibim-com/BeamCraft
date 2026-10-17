@@ -41,7 +41,11 @@ archive/features pin remains independently checked. No schema generation, `openu
 Python, C++ plugin or new dependency is used. Elements are standard `Xform` prims with
 explicit custom attributes and profile/material relationships. Transferred engine results
 are standard `Mesh` children with standard points, topology, orientation and subdivision
-properties. Ordinary USD readers need no BeamCraft plugin. This compatibility intention
+properties, plus the U09 standard metadata: model `kind` (`/World` assembly, `/World/Steel`
+group, element component, `Geometry` subcomponent), `displayName` equal to `bim:name`, an
+authored `extent` (min and max of the float32 points) and one flat `normals` value per face
+(`uniform` interpolation, Newell method). A rename rewrites `displayName` only; the path, the
+identity and the mesh do not change. Ordinary USD readers need no BeamCraft plugin. This compatibility intention
 is tested with the same Rust backend; SDK interchange has **not run**. No solid evaluation
 or exact quantity computation runs here.
 

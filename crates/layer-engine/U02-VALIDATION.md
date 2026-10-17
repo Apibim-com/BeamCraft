@@ -36,10 +36,10 @@ Its rule profile is `u02-structural-v1`:
 |---|---|---|
 | U02-V01 | Full source/manifest digests, static profile, explicit mm/Z metadata, numeric admission, budgets and contributing provenance | U01 upstream allocator/abort/deadline containment remains unproved |
 | U02-V02 | Exact requested schema digest/model version, present root schema marker, supported known property types | Unknown/newer element kinds, modes and versions remain inert; they cannot be edited |
-| U02-V03 | Full matching UUID/path, actor, label, required supported inputs and Xform type | No persistent/reconstructible UUID index is added |
+| U02-V03 | Full matching UUID/path, actor, label, required supported inputs and Xform type; element `kind` component and `displayName` equal to `bim:name`; `/World` and `/World/Steel` kinds when authored | No persistent/reconstructible UUID index is added |
 | U02-V04 | Required/optional definition targets, definition kind, units/version and recomputed canonical definition digest | Digests identify the closed isolated definition representation, not arbitrary embedded unknown metadata |
 | U02-V05 | Scalar caps, positive/scaled length minima, local size, pose norm/order and optional density | No exact contour topology, planarity, rectangle support, engineering result certification or full F06 ordered multi-finding validator |
-| U02-V06 | Known owned standard Mesh point/topology buffers, counts/indices, subdivision/orientation and full shape-key format | No closed-solid, manifold, freshness, signed-volume or signature verification |
+| U02-V06 | Known owned standard Mesh point/topology buffers, counts/indices, subdivision/orientation, full shape-key format, `subcomponent` kind, `extent` equal to the point bounds and one unit face normal per face (1e-5 per component) | No closed-solid, manifold, freshness, signed-volume or signature verification |
 
 Prepare additionally checks edit-layer ownership/participation/present schema markers,
 normalized change keys, immutable resource bytes, field/kind compatibility and every

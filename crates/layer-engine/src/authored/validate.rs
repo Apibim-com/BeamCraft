@@ -226,6 +226,25 @@ fn points(prim: &Prim, name: &str) -> Result<Vec<[f64; 3]>, Diagnostic> {
         })
         .collect()
 }
+fn vec3s(value: &Value) -> Result<Vec<[f32; 3]>, Diagnostic> {
+    let Value::Array(values) = value else {
+        return Err(invalid());
+    };
+    values
+        .iter()
+        .map(|v| {
+            let Value::Array(items) = v else {
+                return Err(invalid());
+            };
+            match items.as_slice() {
+                [Value::Number(x), Value::Number(y), Value::Number(z)] => {
+                    Ok([*x as f32, *y as f32, *z as f32])
+                }
+                _ => Err(invalid()),
+            }
+        })
+        .collect()
+}
 fn norm([x, y, z]: [f64; 3]) -> f64 {
     ((x * x + y * y) + z * z).sqrt()
 }
@@ -376,6 +395,15 @@ pub(super) fn snapshot(
     prims: &[Prim],
     metadata: &BTreeMap<String, Value>,
 ) -> Result<Validation, Diagnostic> {
+    for (path, kind) in [("/World", "assembly"), ("/World/Steel", "group")] {
+        if let Some(p) = prims
+            .iter()
+            .find(|p| p.path == path && p.sources.iter().all(|s| s.owned))
+            && p.kind.as_deref().is_some_and(|k| k != kind)
+        {
+            return Err(invalid());
+        }
+    }
     if let Some(Value::Dictionary(data)) = metadata.get("customLayerData")
         && let Some(pin) = data.get("bimSchemaDigest")
         && !matches!(pin, Value::Text(s) if pin_accepted(s)?)
@@ -414,7 +442,11 @@ pub(super) fn snapshot(
         if !uuid7(text(p, "bim:createdBy", "string")?) {
             return Err(fail(ErrorCode::InvalidId, "invalid actor identity"));
         }
-        label(text(p, "bim:name", "string")?)?;
+        let name = text(p, "bim:name", "string")?;
+        label(name)?;
+        if p.kind.as_deref() != Some("component") || p.display_name.as_deref() != Some(name) {
+            return Err(invalid());
+        }
         let kind = text(p, "bim:elementKind", "token")?;
         if p.type_name.as_deref() != Some("Xform") {
             return Err(unsupported());
@@ -549,6 +581,36 @@ pub(super) fn snapshot(
             quantities: None,
         };
         mesh(&result, Budgets::default())?;
+        if p.kind.as_deref() != Some("subcomponent") {
+            return Err(invalid());
+        }
+        let expected = derive::extent(&result.points_mm).ok_or_else(invalid)?;
+        let stored = vec3s(required(p, "extent", "float3[]")?)?;
+        if stored.len() != 2 || stored.iter().zip(expected).any(|(s, e)| *s != e) {
+            return Err(invalid());
+        }
+        let expected =
+            derive::face_normals(&result.points_mm, &result.face_counts, &result.indices)
+                .ok_or_else(invalid)?;
+        let stored = vec3s(required(p, "normals", "normal3f[]")?)?;
+        // Per-face data read as per-vertex data (the USD default) would mis-shade every reader.
+        let interpolation = p
+            .properties
+            .iter()
+            .find(|v| v.name == "normals")
+            .and_then(|v| v.interpolation.as_deref());
+        if interpolation != Some("uniform") {
+            return Err(invalid());
+        }
+        if stored.len() != expected.len()
+            || stored.iter().zip(&expected).any(|(s, e)| {
+                s.iter()
+                    .zip(e)
+                    .any(|(s, e)| (s - e).abs() > derive::NORMAL_TOLERANCE)
+            })
+        {
+            return Err(invalid());
+        }
         if text(p, "subdivisionScheme", "token")? != "none"
             || text(p, "orientation", "token")? != "rightHanded"
         {
