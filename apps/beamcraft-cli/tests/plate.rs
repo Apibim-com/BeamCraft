@@ -119,6 +119,7 @@ fn parse_usda(source: &str) -> Usda {
     let mut depth_in_dict = 0usize;
     let mut stack: Vec<String> = Vec::new();
     let mut pending: Option<String> = None;
+    let mut skipping = false;
     for line in lines {
         if line.is_empty() {
             continue;
@@ -151,15 +152,23 @@ fn parse_usda(source: &str) -> Usda {
             stack.pop().expect("balanced braces");
             continue;
         }
+        if skipping {
+            // Prim or attribute metadata (kind, displayName, interpolation): not needed here.
+            skipping = line != ")";
+            continue;
+        }
         let is_header = ["def ", "over ", "class "]
             .iter()
             .any(|k| line.starts_with(k))
-            && line.ends_with('"');
+            && (line.ends_with('"') || line.ends_with(" ("));
         if is_header {
-            let name = line.rsplit('"').nth(1).unwrap();
+            let name = line.trim_end_matches(" (").rsplit('"').nth(1).unwrap();
             pending = Some(name.to_owned());
+            skipping = line.ends_with(" (");
             continue;
         }
+        let skip_after = line.ends_with(" (");
+        let line = line.strip_suffix(" (").unwrap_or(line);
         let (lhs, rhs) = line.split_once(" = ").expect("an attribute line");
         let name = lhs.split_whitespace().last().unwrap();
         let path = stack.last().expect("attribute inside a prim").clone();
@@ -167,6 +176,7 @@ fn parse_usda(source: &str) -> Usda {
             .get_mut(&path)
             .unwrap()
             .insert(name.to_owned(), rhs.to_owned());
+        skipping = skip_after;
     }
     assert!(stack.is_empty() && pending.is_none() && !in_metadata);
     usda
@@ -671,12 +681,14 @@ fn concurrent_creates_publish_only_complete_revisions_with_distinct_ids() {
             }
             _ => {
                 losers += 1;
-                // A lost race is a typed rejection, never a half-written root.
+                // A lost race is a typed rejection, never a half-written root. Windows can report
+                // a sharing violation on the root switch as PERMISSION_DENIED.
                 assert!(
                     [
                         "BASE_REVISION_MISMATCH",
                         "INTEGRITY_ERROR",
-                        "OUTCOME_UNKNOWN"
+                        "OUTCOME_UNKNOWN",
+                        "PERMISSION_DENIED"
                     ]
                     .contains(&text(&body, "code").as_str())
                         || text(&body, "code") == "BACKEND_UNAVAILABLE",

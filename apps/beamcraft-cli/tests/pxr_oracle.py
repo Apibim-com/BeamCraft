@@ -32,6 +32,38 @@ def close(actual, expected, rel=1e-6):
     return abs(actual - expected) <= rel * abs(expected)
 
 
+def check_standard_metadata(stage, prim, name, mesh, points, counts, indices, check):
+    """U09: model kinds, display name, authored extent and flat normals, as plain USD."""
+    world = Usd.ModelAPI(stage.GetPrimAtPath("/World"))
+    steel = Usd.ModelAPI(stage.GetPrimAtPath("/World/Steel"))
+    element = Usd.ModelAPI(prim)
+    geometry = Usd.ModelAPI(mesh.GetPrim())
+    check(world.GetKind() == "assembly", "/World kind is not assembly")
+    check(steel.GetKind() == "group", "/World/Steel kind is not group")
+    check(element.GetKind() == "component", "element kind is not component")
+    check(geometry.GetKind() == "subcomponent", "Geometry kind is not subcomponent")
+    check(prim.IsModel() and prim.IsComponent(), "element is not in the model hierarchy")
+    check(prim.GetDisplayName() == name, "displayName differs from bim:name")
+    extent = mesh.GetExtentAttr().Get()
+    computed = UsdGeom.PointBased.ComputeExtent(points)
+    check(
+        extent is not None and len(extent) == 2
+        and all(abs(a - b) <= 1e-3 for e, c in zip(extent, computed) for a, b in zip(e, c)),
+        "authored extent %r differs from the computed bounds %r" % (extent, computed),
+    )
+    normals = mesh.GetNormalsAttr().Get()
+    check(mesh.GetNormalsInterpolation() == UsdGeom.Tokens.uniform, "normals are not per face")
+    check(normals is not None and len(normals) == len(counts), "normals count differs from faces")
+    if normals is not None and len(normals) == len(counts):
+        cursor = 0
+        for normal, count in zip(normals, counts):
+            face = [Gf.Vec3d(points[i]) for i in indices[cursor:cursor + count]]
+            cursor += count
+            newell = Gf.Cross(face[1] - face[0], face[2] - face[0])
+            if newell.GetLength() > 0.0:
+                check(Gf.Dot(Gf.Vec3d(normal), newell.GetNormalized()) > 0.999, "a face normal is not outward")
+
+
 def check_member(stage, member, check, report):
     """A beam or column: authored inputs, pinned profile, closed-form volume, bounds, mass."""
     path = "/World/Steel/E_" + member["id"].replace("-", "")
@@ -68,6 +100,7 @@ def check_member(stage, member, check, report):
     check(len(points) == 8 and len(counts) == 12 and len(indices) == 36, "mesh counts differ")
     check(mesh.GetOrientationAttr().Get() == UsdGeom.Tokens.rightHanded, "orientation differs")
     check(mesh.GetSubdivisionSchemeAttr().Get() == UsdGeom.Tokens.none, "subdivision differs")
+    check_standard_metadata(stage, prim, member["name"], mesh, points, counts, indices, check)
     volume = signed_volume(points, counts, indices)
     check(volume > 0.0, "mesh is not outward oriented (negative volume)")
     check(close(volume, member["volume_mm3"]), "pxr-read volume %r != closed form %r" % (volume, member["volume_mm3"]))
@@ -148,6 +181,7 @@ def main():
             check(len(counts) > 12, "a plate with holes has more than 12 triangles")
         check(mesh.GetOrientationAttr().Get() == UsdGeom.Tokens.rightHanded, "orientation differs")
         check(mesh.GetSubdivisionSchemeAttr().Get() == UsdGeom.Tokens.none, "subdivision differs")
+        check_standard_metadata(stage, prim, plate["name"], mesh, points, counts, indices, check)
         volume = signed_volume(points, counts, indices)
         expected = plate.get("expected_volume_mm3", w * l * plate["thickness"])
         check(volume > 0.0, "mesh is not outward oriented (negative volume)")

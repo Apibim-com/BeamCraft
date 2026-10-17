@@ -1602,6 +1602,7 @@ fn caller_held_pages_are_bounded_and_charged_before_they_are_copied() {
         name: "future:x".into(),
         type_name: "double".into(),
         value: Some(Value::Number(1.0)),
+        interpolation: None,
     };
     assert_eq!(
         code(mutate(&|p| p
@@ -1631,6 +1632,7 @@ fn caller_held_pages_are_bounded_and_charged_before_they_are_copied() {
             name: "x".repeat(2000),
             type_name: "string".into(),
             value: None,
+            interpolation: None,
         }))
         .is_ok()
     );

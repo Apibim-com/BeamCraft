@@ -307,6 +307,8 @@ pub struct Property {
     pub type_name: String,
     /// Absent default is different from an explicit block.
     pub value: Option<Value>,
+    /// Composed `interpolation` metadata, when authored (for example `uniform` on `normals`).
+    pub interpolation: Option<String>,
 }
 /// One static composed prim; no engineering shape or write capability is implied.
 #[derive(Debug, Clone, PartialEq)]
@@ -319,6 +321,10 @@ pub struct Prim {
     pub type_name: Option<String>,
     /// Composed active state.
     pub active: bool,
+    /// Composed model `kind` metadata, when authored.
+    pub kind: Option<String>,
+    /// Composed `displayName` metadata, when authored.
+    pub display_name: Option<String>,
     /// Static attributes, ordered by full name.
     pub properties: Vec<Property>,
     /// Static composed relationships, ordered by full name; the UUID/link index is built

@@ -383,12 +383,15 @@ mod tests {
             element_id: None,
             type_name: Some("Scope".into()),
             active: true,
+            kind: None,
+            display_name: None,
             properties: properties
                 .into_iter()
                 .map(|(name, type_name, value)| Property {
                     name: name.into(),
                     type_name: type_name.into(),
                     value: Some(value),
+                    interpolation: None,
                 })
                 .collect(),
             relationships: Vec::new(),
@@ -466,6 +469,7 @@ mod tests {
             name: "bim:units".into(),
             type_name: "token".into(),
             value: Some(text("m")),
+            interpolation: None,
         });
         assert_eq!(
             decode_definitions(&[other_units]).unwrap_err().code,
@@ -495,6 +499,7 @@ mod tests {
             name: "bim:contentDigest".into(),
             type_name: "string".into(),
             value: Some(text(&"0".repeat(64))),
+            interpolation: None,
         });
         assert_eq!(
             decode_definitions(&[forged]).unwrap_err().code,
@@ -514,6 +519,7 @@ mod tests {
             name: name.into(),
             type_name: ty.into(),
             value,
+            interpolation: None,
         };
         // A missing, mistyped or valueless kind is not "a newer kind".
         let mut p = steel();

@@ -4,6 +4,7 @@
 //! Codeless U02 schema and isolated layer authoring for a trusted command engine.
 //! This is a worker-library boundary, not an F04 command validator or acceptance ledger.
 
+mod derive;
 mod edit;
 mod guard;
 mod validate;
@@ -25,12 +26,16 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:plate:holePointsMm=double3[](optional,z=0);steel:plate:holeVertexCounts=int[](optional,>=3 each);",
     "bim:axisPointsMm=double3[];steel:member:rollRad=double(optional)\n",
     "xformOp:translate=double3;xformOp:orient=quatd;xformOpOrder=token[](translate,orient)\n",
+    "kind:/World=assembly;/World/Steel=group;element=component;element/Geometry=subcomponent;",
+    "displayName(element)=bim:name\n",
     "bim:profile=rel;bim:material=rel;definition=/World/Definitions/D_<sha256-64>\n",
     "definition:bim:contentDigest=string;bim:schemaVersion=string(0.1.0);bim:units=token(mm);",
     "bim:definitionKind=token;steel:profile:widthMm=double;steel:profile:heightMm=double;",
     "bim:densityKgM3=double(optional)\n",
     "derived=<element>/Geometry:Mesh;points=point3f[];faceVertexCounts=int[];faceVertexIndices=int[];",
-    "subdivisionScheme=token(none);orientation=token(rightHanded);bim:shapeKey=string(sha256);",
+    "subdivisionScheme=token(none);orientation=token(rightHanded);",
+    "extent=float3[](min,max of points);normals=normal3f[](uniform,one unit Newell normal per face);",
+    "bim:shapeKey=string(sha256);",
     "quantities(optional,all or none)=bim:volumeMm3=double;bim:volumeStatus=token;bim:massKg=double(optional);",
     "bim:massStatus=token;bim:shapeSignature=string(sha256);bim:massSignature=string(sha256);",
     "bim:quantityAlgorithm=string\n",
