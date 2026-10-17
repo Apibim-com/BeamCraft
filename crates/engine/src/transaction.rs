@@ -111,6 +111,7 @@ mod tests {
             thickness_mm: 10.0,
             placement: Placement::IDENTITY,
             material_digest: None,
+            holes_mm: Vec::new(),
         }
     }
 

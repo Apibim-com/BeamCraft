@@ -170,7 +170,7 @@ pub fn create_member(
                     },
                     material: outcome.authored.material,
                 }),
-                mesh_change(&outcome.authored.id, &record.body.result)?,
+                mesh_change(&outcome.authored.id, &record.body.solid)?,
             ],
         },
         &control,

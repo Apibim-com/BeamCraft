@@ -161,7 +161,7 @@ pub fn scene_elements_with_members(
             r.authored.id,
             ElementKind::Plate,
             translation(&r.authored.placement)?,
-            r.body.result.clone(),
+            r.body.solid.scene_mesh(),
         ));
     }
     for r in members {
@@ -173,7 +173,7 @@ pub fn scene_elements_with_members(
             r.authored.id,
             kind,
             translation(&r.authored.placement)?,
-            r.body.result.clone(),
+            r.body.solid.scene_mesh(),
         ));
     }
     elements.sort_by_key(SceneElement::id);
@@ -213,6 +213,7 @@ mod tests {
                 ..Placement::IDENTITY
             },
             material: None,
+            holes_mm: Vec::new(),
         }
     }
 

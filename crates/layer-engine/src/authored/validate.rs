@@ -34,8 +34,14 @@ pub(super) fn input_bounds(input: &Prepare, b: Budgets) -> Result<(), Diagnostic
                 if e.name.len() > 256 {
                     return Err(limit());
                 }
-                if let Shape::Plate { contour_mm, .. } = &e.shape {
+                if let Shape::Plate {
+                    contour_mm, holes, ..
+                } = &e.shape
+                {
                     count(contour_mm.len().checked_mul(3).ok_or_else(limit)?, 8)?;
+                    let hole_points = holes.iter().map(Vec::len).sum::<usize>();
+                    count(hole_points.checked_mul(3).ok_or_else(limit)?, 8)?;
+                    count(holes.len(), 4)?;
                 }
             }
             Change::Label { name, .. } if name.len() > 256 => return Err(limit()),
@@ -213,6 +219,50 @@ fn plate(points: &[[f64; 3]], thickness: f64) -> Result<(), Diagnostic> {
 fn relationship<'a>(prim: &'a Prim, name: &str) -> Option<&'a Relationship> {
     prim.relationships.iter().find(|r| r.name == name)
 }
+/// The optional through-hole polygons of a loaded plate: either both attributes or neither, the
+/// counts add up to the points, every hole has at least three points, and the totals are capped.
+fn plate_holes(prim: &Prim) -> Result<Vec<Vec<[f64; 3]>>, Diagnostic> {
+    let present = |name: &str| prim.properties.iter().any(|p| p.name == name);
+    let (has_points, has_counts) = (
+        present("steel:plate:holePointsMm"),
+        present("steel:plate:holeVertexCounts"),
+    );
+    if !has_points && !has_counts {
+        return Ok(Vec::new());
+    }
+    if has_points != has_counts {
+        return Err(invalid());
+    }
+    let points = points(prim, "steel:plate:holePointsMm")?;
+    let Value::Array(counts) = required(prim, "steel:plate:holeVertexCounts", "int[]")? else {
+        return Err(invalid());
+    };
+    if counts.len() > MAX_HOLES || points.len() > MAX_HOLES * MAX_HOLE_POINTS {
+        return Err(limit());
+    }
+    cap(points.iter().flatten().copied(), 1e9)?;
+    let mut holes = Vec::with_capacity(counts.len());
+    let mut at = 0usize;
+    for count in counts {
+        let n = match count {
+            Value::Int(n) => usize::try_from(*n).map_err(|_| invalid())?,
+            _ => return Err(invalid()),
+        };
+        if !(3..=MAX_HOLE_POINTS).contains(&n) {
+            return Err(invalid());
+        }
+        let end = at.checked_add(n).ok_or_else(invalid)?;
+        holes.push(points.get(at..end).ok_or_else(invalid)?.to_vec());
+        at = end;
+    }
+    if at != points.len() || holes.iter().flatten().any(|p| p[2] != 0.0) {
+        return Err(invalid());
+    }
+    Ok(holes)
+}
+/// Most through holes of one plate and most points of one hole.
+const MAX_HOLES: usize = 64;
+const MAX_HOLE_POINTS: usize = 1024;
 fn resource<'a>(
     prims: &'a [Prim],
     digest: ContentDigest,
@@ -334,10 +384,13 @@ pub(super) fn snapshot(
             return Err(unsupported());
         }
         match kind {
-            "plate" => plate(
-                &points(p, "steel:plate:contourPointsMm")?,
-                number(p, "steel:plate:thicknessMm")?,
-            )?,
+            "plate" => {
+                plate(
+                    &points(p, "steel:plate:contourPointsMm")?,
+                    number(p, "steel:plate:thicknessMm")?,
+                )?;
+                plate_holes(p)?;
+            }
             "beam" | "column" => {
                 let axis = points(p, "bim:axisPointsMm")?;
                 let [a, b] = axis.as_slice() else {
@@ -641,10 +694,23 @@ pub(super) fn changes(
                     Shape::Plate {
                         contour_mm,
                         thickness_mm,
+                        holes,
                     } => {
                         count_points(contour_mm, b)?;
                         cap(contour_mm.iter().flatten().copied(), 1e9)?;
                         cap([*thickness_mm], 1e6)?;
+                        if holes.len() > MAX_HOLES {
+                            return Err(limit());
+                        }
+                        for hole in holes {
+                            if hole.len() > MAX_HOLE_POINTS {
+                                return Err(limit());
+                            }
+                            if hole.len() < 3 || hole.iter().any(|p| p[2] != 0.0) {
+                                return Err(invalid());
+                            }
+                            cap(hole.iter().flatten().copied(), 1e9)?;
+                        }
                     }
                     Shape::Member {
                         axis_mm,
@@ -727,7 +793,15 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                 Shape::Plate {
                     contour_mm,
                     thickness_mm,
-                } => finite(contour_mm.iter().flatten().copied().chain([*thickness_mm])),
+                    holes,
+                } => finite(
+                    contour_mm
+                        .iter()
+                        .flatten()
+                        .copied()
+                        .chain(holes.iter().flatten().flatten().copied())
+                        .chain([*thickness_mm]),
+                ),
                 Shape::Member {
                     axis_mm, roll_rad, ..
                 } => finite(

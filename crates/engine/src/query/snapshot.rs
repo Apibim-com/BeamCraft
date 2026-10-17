@@ -15,9 +15,8 @@ use crate::limits::{Limits, MAX_PAGE_SIZE};
 use crate::presentation::Representation;
 use crate::query::bounds::Aabb;
 use crate::query::mesh::MeshEntry;
-use crate::scene::SceneElement;
+use crate::scene::{SceneElement, SceneMesh};
 use beamcraft_geom::{Translation3, canonical_f64_bytes};
-use beamcraft_kernel::PlateResult;
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use std::collections::BTreeMap;
 
@@ -154,9 +153,9 @@ struct MeshRegistry {
 }
 
 impl MeshRegistry {
-    fn add(&mut self, plate: &PlateResult) -> Result<ContentDigest, ViewError> {
-        let digest = plate.mesh().mesh_digest();
-        let entry = MeshEntry::from_blob(plate.mesh().blob(), &digest)?;
+    fn add(&mut self, mesh: &SceneMesh) -> Result<ContentDigest, ViewError> {
+        let digest = mesh.digest;
+        let entry = MeshEntry::from_blob(&mesh.blob, &digest)?;
         match self.map.get(&digest) {
             Some(existing) if existing.bytes() == entry.bytes() => {}
             Some(_) => return Err(ViewError::new(ViewCode::BlobInvalid)),
@@ -181,10 +180,10 @@ struct Pending {
     simplified: (ContentDigest, Aabb),
 }
 
-fn world_bounds(plate: &PlateResult, placement: Translation3) -> Result<Aabb, ViewError> {
+fn world_bounds(mesh: &SceneMesh, placement: Translation3) -> Result<Aabb, ViewError> {
     let numeric = || ViewError::new(ViewCode::NumericUncertain);
     let mut bounds: Option<Aabb> = None;
-    for vertex in plate.mesh().vertices() {
+    for vertex in &mesh.vertices {
         let point = Aabb::at(placement.apply_point(*vertex).map_err(|_| numeric())?);
         bounds = Some(bounds.map_or(point, |b| b.union(point)));
     }
