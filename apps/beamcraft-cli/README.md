@@ -159,4 +159,4 @@ Limits: rectangular origin plate only (other contours are `UNSUPPORTED_GEOMETRY`
 the layer engine runs in-process (no process isolation, LEW-03 open); no workspace, undo or
 envelope/JSON command; quantities are printed, not stored in USD (the pinned schema has none).
 A library target (`beamcraft_cli::plate`) exposes the same path with a commit hook for fault
-injection in tests. See the [design note](../../docs/design/p01-first-plate.md).
+injection in tests. `tests/pxr_oracle.rs` (opt-in; skips without a Python that can `import pxr`, honours `BEAMCRAFT_PXR_PYTHON`) reads the saved layers with the OpenUSD reference implementation and runs `UsdUtils.ComplianceChecker`; see the design note for the version and result. See the [design note](../../docs/design/p01-first-plate.md).

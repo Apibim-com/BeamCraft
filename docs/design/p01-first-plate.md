@@ -81,10 +81,26 @@ beamcraft plate-inspect --store ROOT
   Xform placement, mesh `points`/`faceVertexCounts`/`faceVertexIndices`, closed 2-manifold,
   positive signed volume, bounds. A fresh process then reads the same bytes with the pure-Rust
   `openusd` 0.8.0 backend (the layer engine).
-* **pxr / usdchecker: NOT run.** `python -c "import pxr"` fails and no `usdchecker`/`usdview` is on
-  PATH; no package was installed or downloaded. Nothing here claims pxr or usdchecker
-  compatibility; the Rust backend and the hand-written reader are not the OpenUSD reference
-  implementation. The K1 phrase "readable by ordinary OpenUSD" is therefore **not demonstrated**.
+* **pxr oracle: run, passed (local, opt-in).** `apps/beamcraft-cli/tests/pxr_oracle.rs` creates two
+  plates with the real binary, copies the saved layers under their manifest names and runs
+  `pxr_oracle.py` with the OpenUSD reference implementation: `usd-core` 25.11
+  (`Usd.GetVersion()` = 0.25.11) in CPython 3.11.9 (`py -3.11`, installed by the owner; nothing
+  was downloaded or installed by this work). `Usd.Stage.Open` of `root.usda` composes the model and
+  derived layers; pxr reads `metersPerUnit` 0.001, `upAxis` Z, `defaultPrim` /World, the full-UUID
+  `bim:*` attributes, `steel:plate:*`, the composed Xform translation, `UsdGeom.Mesh` points /
+  counts / indices (8 / 12 / 36, right-handed, subdivision none), a divergence-theorem volume from
+  the pxr-read points (5,000,000 and 3,000,000 mm3, equal to width*length*thickness and to the CLI
+  output within 1e-6) and `UsdGeom.BBoxCache` world bounds equal to the placed plate.
+  `UsdUtils.ComplianceChecker` (default rules, ARKit off; the engine behind `usdchecker`) reports
+  0 errors, 0 failed checks, 0 warnings. **The `usdchecker` executable itself was not run** (the
+  wheel does not ship it). The mesh has no authored `extent`; pxr computes bounds without it and
+  the checker does not flag it. No float32 incompatibility appeared (volumes agree to 1e-6). The
+  test skips with an explicit message when no interpreter with pxr exists (CI); a skip is not
+  evidence. Limits: one Windows machine and one OpenUSD version, 25.11, which is **not** the
+  F03-audited 26.8 release (`docs/audits/openusd-26.8.md` still requires an audited tool
+  distribution before the U02 independent-reader gate counts as closed). usd-core is a local test
+  oracle only (not vendored, not a dependency, nothing committed from it); its TOST-1.0 terms apply
+  to the installed wheel and `ATTRIBUTION.md` lists it as an external oracle, not redistributed.
 * **Failure injection with real process death**: a child re-executes the test binary and
   `abort()`s inside the commit hook at each of the seven U06/U07 commit points, with and without a
   base revision. After each, a fresh `plate-inspect` sees one complete revision (old before the
@@ -103,9 +119,12 @@ beamcraft plate-inspect --store ROOT
 
 K1 asks that the CLI creates a plate and atomically saves a complete revision readable by ordinary
 OpenUSD. Demonstrated here: CLI create, atomic complete revision (U06/U07, fault-injected), reopen
-in fresh processes, independently hand-parsed USDA. Not demonstrated: pxr/usdchecker reading,
+in fresh processes, independently hand-parsed USDA, and read by pxr 25.11 with a clean
+`ComplianceChecker` run (local oracle). Not demonstrated: the `usdchecker` executable, the
+F03-audited 26.8 distribution,
 cross-platform bytes (Windows only), layer-engine process containment, `CommitWorkspace`/workspace,
-cargo-deny and wasm32 (not installed here). K0 and K1 stay open.
+cargo-deny and wasm32 (not installed here). K0 stays open; the K1 pxr read is demonstrated only
+as stated above, while the remaining items keep K1 open.
 
 ## Provenance
 

@@ -10,9 +10,9 @@
 //! checks the saved bytes without BeamCraft or `openusd`. Failure injection kills a real child
 //! process at every commit point.
 //!
-//! The pxr reference implementation and `usdchecker` are **not** run here (not installed, and no
-//! dependency or download is added): the independent-reader evidence is the pure-Rust `openusd`
-//! backend in a fresh process plus the hand-written USDA reader. That is not a pxr claim.
+//! The pxr reference implementation is exercised separately by pxr_oracle.rs (opt-in, skips when no
+//! interpreter with pxr exists). Here the independent-reader evidence is the pure-Rust `openusd`
+//! backend in a fresh process plus the hand-written USDA reader.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
