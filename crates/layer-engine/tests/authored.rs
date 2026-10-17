@@ -99,10 +99,13 @@ fn resources() -> Vec<Resource> {
         Resource::new(Definition::RectangleProfile {
             width_mm: 100.0,
             height_mm: 50.0,
+            section: SectionProperties::default(),
         })
         .unwrap(),
         Resource::new(Definition::Material {
             density_kg_m3: Some(1000.0),
+            grade: None,
+            standard: None,
         })
         .unwrap(),
     ]
@@ -864,6 +867,7 @@ fn material_empty_remove_profile_pin_and_loaded_unknown_schema_preservation() {
     let r = Resource::new(Definition::RectangleProfile {
         width_mm: 120.0,
         height_mm: 60.0,
+        section: SectionProperties::default(),
     })
     .unwrap();
     let mut input = batch(
@@ -1281,6 +1285,8 @@ fn through_hole_polygons_are_authored_as_flat_points_and_counts_and_validated() 
 fn an_existing_definition_must_match_the_resource_before_it_is_reused() {
     let resource = Resource::new(Definition::Material {
         density_kg_m3: Some(1000.0),
+        grade: None,
+        standard: None,
     })
     .unwrap();
     let hex = resource.digest.to_string();

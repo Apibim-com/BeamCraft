@@ -35,6 +35,7 @@ use beamcraft_model::command::{
     CopyElement, CreatePlate, CreateStraightMember, DeleteElement, ElementPatch, MAX_HOLES,
     MemberKind, Placement, UpdateElement,
 };
+use beamcraft_model::definition::SectionProperties;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
@@ -102,6 +103,8 @@ const CREATE_OPTIONS: &[&str] = &[
 const DEFINE_MATERIAL_OPTIONS: &[&str] = &[
     "--store",
     "--density",
+    "--grade",
+    "--standard",
     "--revision-id",
     "--actor-id",
     "--project-id",
@@ -112,6 +115,11 @@ const DEFINE_PROFILE_OPTIONS: &[&str] = &[
     "--store",
     "--width",
     "--height",
+    "--designation",
+    "--standard",
+    "--area-mm2",
+    "--mass-per-meter-kg",
+    "--surface-per-meter-m2",
     "--revision-id",
     "--actor-id",
     "--project-id",
@@ -295,19 +303,31 @@ fn define_command(
         })
     };
     let given = |key: &str| options.get(key).copied();
+    let optional_float = |key: &str| {
+        given(key)
+            .map(|text| {
+                text.parse::<f64>()
+                    .map_err(|_| invalid("a number is malformed"))
+            })
+            .transpose()
+    };
     let definition = if command == "define-material" {
         DefinitionRecord::Material {
-            density_kg_m3: given("--density")
-                .map(|text| {
-                    text.parse::<f64>()
-                        .map_err(|_| invalid("a number is malformed"))
-                })
-                .transpose()?,
+            density_kg_m3: optional_float("--density")?,
+            grade: given("--grade").map(str::to_owned),
+            standard: given("--standard").map(str::to_owned),
         }
     } else {
         DefinitionRecord::RectangleProfile {
             width_mm: float(options, "--width")?,
             height_mm: float(options, "--height")?,
+            section: SectionProperties {
+                designation: given("--designation").map(str::to_owned),
+                standard: given("--standard").map(str::to_owned),
+                area_mm2: optional_float("--area-mm2")?,
+                mass_per_meter_kg: optional_float("--mass-per-meter-kg")?,
+                surface_per_meter_m2: optional_float("--surface-per-meter-m2")?,
+            },
         }
     };
     let revision_id = match given("--revision-id") {
@@ -1095,16 +1115,40 @@ fn definition_json(digest: &ContentDigest, record: &DefinitionRecord) -> Run<Jso
         ("units", Json::text("mm")),
         ("schema_version", Json::text("0.1.0")),
     ];
-    match *record {
-        DefinitionRecord::Material { density_kg_m3 } => {
-            fields.push(("density_kg_m3", density_kg_m3.map_or(Ok(Json::Null), num)?))
+    match record {
+        DefinitionRecord::Material {
+            density_kg_m3,
+            grade,
+            standard,
+        } => {
+            fields.push(("density_kg_m3", density_kg_m3.map_or(Ok(Json::Null), num)?));
+            fields.push(("grade", grade.as_ref().map_or(Json::Null, Json::text)));
+            fields.push(("standard", standard.as_ref().map_or(Json::Null, Json::text)));
         }
         DefinitionRecord::RectangleProfile {
             width_mm,
             height_mm,
+            section,
         } => {
-            fields.push(("width_mm", num(width_mm)?));
-            fields.push(("height_mm", num(height_mm)?));
+            fields.push(("width_mm", num(*width_mm)?));
+            fields.push(("height_mm", num(*height_mm)?));
+            fields.push((
+                "designation",
+                section.designation.as_ref().map_or(Json::Null, Json::text),
+            ));
+            fields.push((
+                "standard",
+                section.standard.as_ref().map_or(Json::Null, Json::text),
+            ));
+            fields.push(("area_mm2", section.area_mm2.map_or(Ok(Json::Null), num)?));
+            fields.push((
+                "mass_per_meter_kg",
+                section.mass_per_meter_kg.map_or(Ok(Json::Null), num)?,
+            ));
+            fields.push((
+                "surface_per_meter_m2",
+                section.surface_per_meter_m2.map_or(Ok(Json::Null), num)?,
+            ));
         }
     }
     Ok(Json::Object(

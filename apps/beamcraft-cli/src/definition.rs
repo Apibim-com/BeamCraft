@@ -36,7 +36,7 @@ use beamcraft_layer_engine::authored::{
 };
 use beamcraft_layer_engine::{Prim, Reader, Value};
 use beamcraft_model::command::CommandError;
-use beamcraft_model::definition::{MaterialSpec, RectangleProfileSpec};
+use beamcraft_model::definition::{MaterialSpec, RectangleProfileSpec, SectionProperties};
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
@@ -46,12 +46,16 @@ use std::collections::{BTreeMap, BTreeSet};
 const DEFINITION_PREFIX: &str = "/World/Definitions/D_";
 
 /// The logical content of one published definition.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum DefinitionRecord {
     /// A physical material; the density is unknown when `None`.
     Material {
         /// Density in kg/m3, when authored.
         density_kg_m3: Option<f64>,
+        /// Declared grade, a label only.
+        grade: Option<String>,
+        /// Declared standard of the grade, a label only.
+        standard: Option<String>,
     },
     /// The first-scope centred rectangle section.
     RectangleProfile {
@@ -59,6 +63,8 @@ pub enum DefinitionRecord {
         width_mm: f64,
         /// Section height in millimetres.
         height_mm: f64,
+        /// Declared designation, standard and section numbers; absent values stay unknown.
+        section: SectionProperties,
     },
 }
 
@@ -73,28 +79,49 @@ impl DefinitionRecord {
 
     /// Admits the values with the F04 codes and caps.
     pub fn validate(&self) -> Result<(), CommandError> {
-        match *self {
-            Self::Material { density_kg_m3 } => MaterialSpec { density_kg_m3 }.validate(),
+        match self {
+            Self::Material {
+                density_kg_m3,
+                grade,
+                standard,
+            } => MaterialSpec {
+                density_kg_m3: *density_kg_m3,
+                grade: grade.clone(),
+                standard: standard.clone(),
+            }
+            .validate(),
             Self::RectangleProfile {
                 width_mm,
                 height_mm,
+                section,
             } => RectangleProfileSpec {
-                width_mm,
-                height_mm,
+                width_mm: *width_mm,
+                height_mm: *height_mm,
+                section: section.clone(),
             }
             .validate(),
         }
     }
 
     fn definition(&self) -> Definition {
-        match *self {
-            Self::Material { density_kg_m3 } => Definition::Material { density_kg_m3 },
+        match self.clone() {
+            Self::Material {
+                density_kg_m3,
+                grade,
+                standard,
+            } => Definition::Material {
+                density_kg_m3,
+                grade,
+                standard,
+            },
             Self::RectangleProfile {
                 width_mm,
                 height_mm,
+                section,
             } => Definition::RectangleProfile {
                 width_mm,
                 height_mm,
+                section,
             },
         }
     }
@@ -156,17 +183,34 @@ fn decode_definition(
         return Err(integrity("committed definition has other units or version"));
     }
     let double = |name: &str| number(required(name, "double")?).ok_or_else(bad);
+    let optional_double = |name: &str| {
+        field(prim, name, "double")?
+            .map(|v| number(v).ok_or_else(bad))
+            .transpose()
+    };
+    let optional_text = |name: &str| {
+        field(prim, name, "string")?
+            .map(|v| text(v).map(str::to_owned).ok_or_else(bad))
+            .transpose()
+    };
     let record = if kind == "rectangle" {
         DefinitionRecord::RectangleProfile {
             width_mm: double("steel:profile:widthMm")?,
             height_mm: double("steel:profile:heightMm")?,
+            section: SectionProperties {
+                designation: optional_text("steel:profile:designation")?,
+                standard: optional_text("steel:profile:standard")?,
+                area_mm2: optional_double("steel:profile:areaMm2")?,
+                mass_per_meter_kg: optional_double("steel:profile:massPerMeterKg")?,
+                surface_per_meter_m2: optional_double("steel:profile:surfacePerMeterM2")?,
+            },
         }
     } else {
         DefinitionRecord::Material {
             // Only an absent property means an unknown density.
-            density_kg_m3: field(prim, "bim:densityKgM3", "double")?
-                .map(|v| number(v).ok_or_else(bad))
-                .transpose()?,
+            density_kg_m3: optional_double("bim:densityKgM3")?,
+            grade: optional_text("bim:materialGrade")?,
+            standard: optional_text("bim:materialStandard")?,
         }
     };
     record.validate()?;
@@ -202,7 +246,7 @@ pub(crate) fn material_lookup(
     definitions: &BTreeMap<ContentDigest, DefinitionRecord>,
 ) -> impl Fn(&ContentDigest) -> Result<MaterialInfo, CommandError> + '_ {
     move |digest| match definitions.get(digest) {
-        Some(DefinitionRecord::Material { density_kg_m3 }) => Ok(MaterialInfo {
+        Some(DefinitionRecord::Material { density_kg_m3, .. }) => Ok(MaterialInfo {
             density_kg_m3: *density_kg_m3,
         }),
         Some(DefinitionRecord::RectangleProfile { .. }) => Err(CommandError::new(
@@ -227,6 +271,7 @@ pub(crate) fn profile_lookup(
         Some(DefinitionRecord::RectangleProfile {
             width_mm,
             height_mm,
+            ..
         }) => Ok(ProfileInfo {
             width_mm: *width_mm,
             height_mm: *height_mm,
@@ -300,7 +345,7 @@ pub fn define(
         return Ok(Defined {
             already_defined: true,
             digest,
-            record: request.definition,
+            record: request.definition.clone(),
             revision: summarize(head.info()),
         });
     }
@@ -367,7 +412,7 @@ pub fn define(
         // A replayed commit means these very bytes were already published under this operation.
         already_defined: committed.outcome == CommitOutcome::Replayed,
         digest,
-        record: request.definition,
+        record: request.definition.clone(),
         revision: summarize(&committed.info),
     })
 }
@@ -403,6 +448,8 @@ mod tests {
     fn material_prim(path_density: Option<f64>, layer_density: Option<f64>) -> Prim {
         let record = DefinitionRecord::Material {
             density_kg_m3: path_density,
+            grade: None,
+            standard: None,
         };
         let digest = record.resource().unwrap().digest;
         let mut properties = vec![
@@ -425,15 +472,102 @@ mod tests {
         ];
         let found = decode_definitions(&prims).unwrap();
         assert_eq!(found.len(), 2);
-        assert!(found.values().any(
-            |r| matches!(r, DefinitionRecord::Material { density_kg_m3: Some(d) } if *d == 7850.0)
-        ));
+        assert!(found.values().any(|r| matches!(
+            r,
+            DefinitionRecord::Material { density_kg_m3: Some(d), .. } if *d == 7850.0
+        )));
         assert!(found.values().any(|r| matches!(
             r,
             DefinitionRecord::Material {
-                density_kg_m3: None
+                density_kg_m3: None,
+                ..
             }
         )));
+    }
+
+    #[test]
+    fn declared_section_values_and_labels_round_trip_and_are_pinned_by_the_digest() {
+        let profile = DefinitionRecord::RectangleProfile {
+            width_mm: 200.0,
+            height_mm: 300.0,
+            section: SectionProperties {
+                designation: Some("RECT 200x300".into()),
+                standard: Some("Synthetic".into()),
+                area_mm2: Some(60_000.0),
+                mass_per_meter_kg: Some(471.0),
+                surface_per_meter_m2: Some(1.0),
+            },
+        };
+        let material = DefinitionRecord::Material {
+            density_kg_m3: Some(7850.0),
+            grade: Some("S355".into()),
+            standard: Some("EN 10025-2".into()),
+        };
+        let plain = DefinitionRecord::RectangleProfile {
+            width_mm: 200.0,
+            height_mm: 300.0,
+            section: SectionProperties::default(),
+        };
+        let digest = |r: &DefinitionRecord| r.resource().unwrap().digest;
+        // Declared values are part of the identity; a plain profile keeps its earlier digest.
+        assert_ne!(digest(&profile), digest(&plain));
+        let mut profile_props = vec![
+            ("bim:schemaVersion", "string", text("0.1.0")),
+            ("bim:units", "token", text("mm")),
+            ("bim:definitionKind", "token", text("rectangle")),
+            (
+                "bim:contentDigest",
+                "string",
+                text(&digest(&profile).to_string()),
+            ),
+            ("steel:profile:widthMm", "double", Value::Number(200.0)),
+            ("steel:profile:heightMm", "double", Value::Number(300.0)),
+            ("steel:profile:areaMm2", "double", Value::Number(60_000.0)),
+            (
+                "steel:profile:massPerMeterKg",
+                "double",
+                Value::Number(471.0),
+            ),
+            (
+                "steel:profile:surfacePerMeterM2",
+                "double",
+                Value::Number(1.0),
+            ),
+            ("steel:profile:designation", "string", text("RECT 200x300")),
+            ("steel:profile:standard", "string", text("Synthetic")),
+        ];
+        let found = decode_definitions(&[prim(
+            definition_path(&digest(&profile)),
+            profile_props.clone(),
+        )])
+        .unwrap();
+        assert_eq!(found.get(&digest(&profile)), Some(&profile));
+        // Dropping the designation from the layer no longer matches the pinned content.
+        profile_props.retain(|p| p.0 != "steel:profile:designation");
+        assert_eq!(
+            decode_definitions(&[prim(definition_path(&digest(&profile)), profile_props)])
+                .unwrap_err()
+                .code,
+            ErrorCode::IntegrityError
+        );
+        let found = decode_definitions(&[prim(
+            definition_path(&digest(&material)),
+            vec![
+                ("bim:schemaVersion", "string", text("0.1.0")),
+                ("bim:units", "token", text("mm")),
+                ("bim:definitionKind", "token", text("material")),
+                (
+                    "bim:contentDigest",
+                    "string",
+                    text(&digest(&material).to_string()),
+                ),
+                ("bim:densityKgM3", "double", Value::Number(7850.0)),
+                ("bim:materialGrade", "string", text("S355")),
+                ("bim:materialStandard", "string", text("EN 10025-2")),
+            ],
+        )])
+        .unwrap();
+        assert_eq!(found.get(&digest(&material)), Some(&material));
     }
 
     #[test]
@@ -474,6 +608,8 @@ mod tests {
         // A density outside the F04 cap is refused before it can make a mass.
         let hostile = DefinitionRecord::Material {
             density_kg_m3: Some(1e9),
+            grade: None,
+            standard: None,
         };
         let digest = beamcraft_model::digest::Sha256::digest(b"forged").unwrap();
         let hostile = prim(
@@ -612,10 +748,13 @@ mod tests {
     fn a_material_lookup_distinguishes_absent_from_a_profile() {
         let steel = DefinitionRecord::Material {
             density_kg_m3: Some(7850.0),
+            grade: None,
+            standard: None,
         };
         let profile = DefinitionRecord::RectangleProfile {
             width_mm: 200.0,
             height_mm: 300.0,
+            section: SectionProperties::default(),
         };
         let (steel_digest, profile_digest) = (
             steel.resource().unwrap().digest,
@@ -638,6 +777,8 @@ mod tests {
             (
                 DefinitionRecord::Material {
                     density_kg_m3: Some(0.0),
+                    grade: None,
+                    standard: None,
                 },
                 ErrorCode::InvalidArgument,
             ),
@@ -645,8 +786,20 @@ mod tests {
                 DefinitionRecord::RectangleProfile {
                     width_mm: 200.0,
                     height_mm: 2e6,
+                    section: SectionProperties::default(),
                 },
                 ErrorCode::LimitExceeded,
+            ),
+            (
+                DefinitionRecord::RectangleProfile {
+                    width_mm: 200.0,
+                    height_mm: 300.0,
+                    section: SectionProperties {
+                        area_mm2: Some(1.0),
+                        ..SectionProperties::default()
+                    },
+                },
+                ErrorCode::InvalidArgument,
             ),
         ] {
             assert_eq!(record.resource().unwrap_err().code, code);

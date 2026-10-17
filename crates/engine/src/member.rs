@@ -144,6 +144,7 @@ pub fn evaluate_member(
     RectangleProfileSpec {
         width_mm: profile.width_mm,
         height_mm: profile.height_mm,
+        ..RectangleProfileSpec::default()
     }
     .validate()?;
     let [p1, p2] = authored.axis_points_mm;

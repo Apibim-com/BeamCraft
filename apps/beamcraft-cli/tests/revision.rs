@@ -164,10 +164,13 @@ fn resources() -> Vec<Resource> {
         Resource::new(Definition::RectangleProfile {
             width_mm: 100.0,
             height_mm: 50.0,
+            section: Default::default(),
         })
         .unwrap(),
         Resource::new(Definition::Material {
             density_kg_m3: Some(1000.0),
+            grade: None,
+            standard: None,
         })
         .unwrap(),
     ]

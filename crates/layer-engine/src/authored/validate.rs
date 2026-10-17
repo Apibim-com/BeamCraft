@@ -93,31 +93,84 @@ fn pose(p: &Placement) -> Result<(), Diagnostic> {
     Ok(())
 }
 pub(super) fn definition(d: &Definition) -> Result<(), Diagnostic> {
+    let refused = |e: beamcraft_model::command::CommandError| {
+        fail(
+            e.code,
+            "definition value refused by the F04 admission rules",
+        )
+    };
     match d {
         Definition::RectangleProfile {
             width_mm,
             height_mm,
-        } => {
-            finite([*width_mm, *height_mm])?;
-            cap([*width_mm, *height_mm], 1e6)?;
-            if *width_mm < 0.001 || *height_mm < 0.001 {
-                return Err(invalid());
-            }
+            section,
+        } => beamcraft_model::definition::RectangleProfileSpec {
+            width_mm: *width_mm,
+            height_mm: *height_mm,
+            section: section.clone(),
         }
+        .validate()
+        .map_err(refused),
         Definition::Material {
-            density_kg_m3: Some(n),
-        } => {
-            finite([*n])?;
-            cap([*n], 1e6)?;
-            if *n <= 0.0 {
-                return Err(invalid());
-            }
+            density_kg_m3,
+            grade,
+            standard,
+        } => beamcraft_model::definition::MaterialSpec {
+            density_kg_m3: *density_kg_m3,
+            grade: grade.clone(),
+            standard: standard.clone(),
         }
-        Definition::Material {
-            density_kg_m3: None,
-        } => (),
+        .validate()
+        .map_err(refused),
     }
-    Ok(())
+}
+/// An optional property of an exact USD type. A property declared with another type, blocked or
+/// without a value is invalid; only an absent one is unknown.
+fn optional<'a>(prim: &'a Prim, name: &str, ty: &str) -> Result<Option<&'a Value>, Diagnostic> {
+    match prim.properties.iter().find(|p| p.name == name) {
+        None => Ok(None),
+        Some(p) if p.type_name == ty => match &p.value {
+            Some(v) if !matches!(v, Value::Block) => Ok(Some(v)),
+            _ => Err(invalid()),
+        },
+        Some(_) => Err(invalid()),
+    }
+}
+fn optional_number(prim: &Prim, name: &str) -> Result<Option<f64>, Diagnostic> {
+    match optional(prim, name, "double")? {
+        None => Ok(None),
+        Some(Value::Number(n)) => Ok(Some(*n)),
+        Some(_) => Err(invalid()),
+    }
+}
+fn optional_text(prim: &Prim, name: &str) -> Result<Option<String>, Diagnostic> {
+    match optional(prim, name, "string")? {
+        None => Ok(None),
+        Some(Value::Text(s)) => Ok(Some(s.clone())),
+        Some(_) => Err(invalid()),
+    }
+}
+/// The logical definition stored in a definition prim of this kind.
+fn read_definition(p: &Prim, kind: &str) -> Result<Definition, Diagnostic> {
+    match kind {
+        "rectangle" => Ok(Definition::RectangleProfile {
+            width_mm: number(p, "steel:profile:widthMm")?,
+            height_mm: number(p, "steel:profile:heightMm")?,
+            section: SectionProperties {
+                designation: optional_text(p, "steel:profile:designation")?,
+                standard: optional_text(p, "steel:profile:standard")?,
+                area_mm2: optional_number(p, "steel:profile:areaMm2")?,
+                mass_per_meter_kg: optional_number(p, "steel:profile:massPerMeterKg")?,
+                surface_per_meter_m2: optional_number(p, "steel:profile:surfacePerMeterM2")?,
+            },
+        }),
+        "material" => Ok(Definition::Material {
+            density_kg_m3: optional_number(p, "bim:densityKgM3")?,
+            grade: optional_text(p, "bim:materialGrade")?,
+            standard: optional_text(p, "bim:materialStandard")?,
+        }),
+        _ => Err(unsupported()),
+    }
 }
 pub(super) fn owned(prims: &[Prim], path: &str, descendants: bool) -> Result<(), Diagnostic> {
     let prefix = format!("{path}/");
@@ -287,23 +340,7 @@ fn resource<'a>(
     {
         return Err(corrupt());
     }
-    let definition = match kind {
-        "rectangle" => Definition::RectangleProfile {
-            width_mm: number(p, "steel:profile:widthMm")?,
-            height_mm: number(p, "steel:profile:heightMm")?,
-        },
-        "material" => Definition::Material {
-            density_kg_m3: match p.properties.iter().find(|p| p.name == "bim:densityKgM3") {
-                None => None,
-                Some(p) if p.type_name == "double" => match p.value {
-                    Some(Value::Number(n)) => Some(n),
-                    _ => return Err(invalid()),
-                },
-                _ => return Err(invalid()),
-            },
-        },
-        _ => return Err(unsupported()),
-    };
+    let definition = read_definition(p, kind)?;
     if Resource::new(definition)?.digest != digest {
         return Err(corrupt());
     }
@@ -400,10 +437,7 @@ pub(super) fn snapshot(
                     link(p, prims, "bim:profile", "rectangle", true)?.ok_or_else(invalid)?;
                 let width = number(profile, "steel:profile:widthMm")?;
                 let height = number(profile, "steel:profile:heightMm")?;
-                definition(&Definition::RectangleProfile {
-                    width_mm: width,
-                    height_mm: height,
-                })?;
+                definition(&read_definition(profile, "rectangle")?)?;
                 let length = norm(difference(*b, *a));
                 let half_width = width / 2.0;
                 let half_height = height / 2.0;
@@ -427,19 +461,7 @@ pub(super) fn snapshot(
             _ => continue, // Unknown vocabulary remains inert; edits below refuse it.
         }
         if let Some(material) = link(p, prims, "bim:material", "material", false)? {
-            let density = material
-                .properties
-                .iter()
-                .find(|v| v.name == "bim:densityKgM3")
-                .and_then(|v| v.value.as_ref());
-            let density = match density {
-                None => None,
-                Some(Value::Number(n)) => Some(*n),
-                _ => return Err(invalid()),
-            };
-            definition(&Definition::Material {
-                density_kg_m3: density,
-            })?;
+            definition(&read_definition(material, "material")?)?;
         }
         let translation = match required(p, "xformOp:translate", "double3")? {
             Value::Array(v) => match v.as_slice() {

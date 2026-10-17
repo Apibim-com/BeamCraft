@@ -11,6 +11,7 @@ mod validate;
 pub use guard::WriteGrant;
 
 use crate::*;
+pub use beamcraft_model::definition::SectionProperties;
 use std::collections::BTreeMap;
 
 /// Canonical UTF-8 schema descriptor. Its exact bytes commit the mapping and item profile.
@@ -28,7 +29,11 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "bim:profile=rel;bim:material=rel;definition=/World/Definitions/D_<sha256-64>\n",
     "definition:bim:contentDigest=string;bim:schemaVersion=string(0.1.0);bim:units=token(mm);",
     "bim:definitionKind=token;steel:profile:widthMm=double;steel:profile:heightMm=double;",
-    "bim:densityKgM3=double(optional)\n",
+    "steel:profile:designation=string(optional);steel:profile:standard=string(optional);",
+    "steel:profile:areaMm2=double(optional);steel:profile:massPerMeterKg=double(optional);",
+    "steel:profile:surfacePerMeterM2=double(optional);",
+    "bim:densityKgM3=double(optional);bim:materialGrade=string(optional);",
+    "bim:materialStandard=string(optional)\n",
     "derived=<element>/Geometry:Mesh;points=point3f[];faceVertexCounts=int[];faceVertexIndices=int[];",
     "subdivisionScheme=token(none);orientation=token(rightHanded);bim:shapeKey=string(sha256);",
     "quantities(optional,all or none)=bim:volumeMm3=double;bim:volumeStatus=token;bim:massKg=double(optional);",
@@ -154,11 +159,17 @@ pub enum Definition {
         width_mm: f64,
         /// Height in millimetres.
         height_mm: f64,
+        /// Declared designation, standard and section numbers; absent values stay unknown.
+        section: SectionProperties,
     },
     /// Material with explicitly optional density.
     Material {
         /// Density in kg/m3; None remains unknown.
         density_kg_m3: Option<f64>,
+        /// Declared grade, a label only.
+        grade: Option<String>,
+        /// Declared standard of the grade, a label only.
+        standard: Option<String>,
     },
 }
 
