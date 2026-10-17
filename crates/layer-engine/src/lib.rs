@@ -319,6 +319,10 @@ pub struct Prim {
     pub type_name: Option<String>,
     /// Composed active state.
     pub active: bool,
+    /// Composed model `kind` metadata, when authored.
+    pub kind: Option<String>,
+    /// Composed `displayName` metadata, when authored.
+    pub display_name: Option<String>,
     /// Static attributes, ordered by full name.
     pub properties: Vec<Property>,
     /// Static composed relationships, ordered by full name; the UUID/link index is built

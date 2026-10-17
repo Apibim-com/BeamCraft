@@ -383,6 +383,8 @@ mod tests {
             element_id: None,
             type_name: Some("Scope".into()),
             active: true,
+            kind: None,
+            display_name: None,
             properties: properties
                 .into_iter()
                 .map(|(name, type_name, value)| Property {

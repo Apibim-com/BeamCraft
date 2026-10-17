@@ -1530,3 +1530,125 @@ fn delete_removes_the_whole_element_in_both_layers_and_nothing_else() {
         ErrorCode::MalformedCommand
     );
 }
+
+fn prim<'a>(prims: &'a [Prim], path: &str) -> &'a Prim {
+    prims.iter().find(|p| p.path == path).unwrap()
+}
+fn export_request(a: &Author, context: &Context) -> OpenRequest {
+    request(
+        a.export(context, &control()).unwrap(),
+        &["root.usda", "authored.usda", "derived.usda", "weak.usda"],
+    )
+}
+fn tampered(a: &Author, context: &Context, layer: &str, from: &str, to: &str) -> OpenRequest {
+    let mut input = export_request(a, context);
+    let asset = input.assets.iter_mut().find(|a| a.name == layer).unwrap();
+    let text = String::from_utf8(asset.bytes.clone()).unwrap();
+    assert!(text.contains(from), "{from} not found in {text}");
+    *asset = self::asset(layer, text.replacen(from, to, 1));
+    input.manifest = input.manifest_digest().unwrap();
+    input
+}
+
+#[test]
+fn standard_usd_metadata_kind_display_name_extent_and_flat_normals() {
+    let (mut a, o) = populated();
+    let all = snapshot(&a, &o.context);
+    assert_eq!(prim(&all, "/World").kind.as_deref(), Some("assembly"));
+    assert_eq!(prim(&all, "/World/Steel").kind.as_deref(), Some("group"));
+    let plate = prim(&all, &path(PLATE));
+    assert_eq!(plate.kind.as_deref(), Some("component"));
+    assert_eq!(plate.display_name.as_deref(), Some("Plate Ω"));
+    let geometry = prim(&all, &format!("{}/Geometry", path(PLATE)));
+    assert_eq!(geometry.kind.as_deref(), Some("subcomponent"));
+    let v3 = |x: f64, y: f64, z: f64| {
+        Value::Array(vec![Value::Number(x), Value::Number(y), Value::Number(z)])
+    };
+    assert_eq!(
+        value_at(geometry, "extent"),
+        Some(&Value::Array(vec![
+            v3(0.0, 0.0, 0.0),
+            v3(1000.0, 500.0, 0.0)
+        ]))
+    );
+    assert_eq!(
+        value_at(geometry, "normals"),
+        Some(&Value::Array(vec![v3(0.0, 0.0, 1.0)]))
+    );
+
+    // A rename changes the display name only: path, identity and the mesh stay.
+    let mut input = batch(
+        &o.context,
+        vec![Change::Label {
+            id: PLATE.into(),
+            name: "Renamed".into(),
+        }],
+    );
+    input.op_id = "0199e7a0-0000-7000-8000-000000000007".into();
+    let p = a.prepare(input, &control()).unwrap();
+    let renamed = a
+        .install(
+            &o.context,
+            &p.token,
+            &p.op_id,
+            Decision::Accepted,
+            &control(),
+        )
+        .unwrap();
+    let after = snapshot(&a, &renamed.context);
+    let plate = prim(&after, &path(PLATE));
+    assert_eq!(plate.display_name.as_deref(), Some("Renamed"));
+    assert_eq!(plate.element_id.as_deref(), Some(PLATE));
+    assert_eq!(
+        prim(&after, &format!("{}/Geometry", path(PLATE))),
+        prim(&all, &format!("{}/Geometry", path(PLATE)))
+    );
+    assert_eq!(
+        p.layers.iter().filter(|l| l.name == "derived.usda").count(),
+        1
+    );
+    assert!(
+        validate_layers(
+            export_request(&a, &renamed.context),
+            schema_identity().unwrap(),
+            &control()
+        )
+        .is_ok()
+    );
+}
+
+#[test]
+fn validator_refuses_a_wrong_display_name_kind_extent_or_normal() {
+    let (a, o) = populated();
+    for (layer, from, to) in [
+        (
+            "authored.usda",
+            "displayName = \"Plate Ω\"",
+            "displayName = \"Other\"",
+        ),
+        ("authored.usda", "kind = \"component\"", "kind = \"group\""),
+        (
+            "derived.usda",
+            "kind = \"subcomponent\"",
+            "kind = \"component\"",
+        ),
+        (
+            "derived.usda",
+            "(1000.0, 500.0, 0.0)]",
+            "(1000.0, 500.0, 1.0)]",
+        ),
+        ("derived.usda", "[(0.0, 0.0, 1.0)]", "[(0.0, 0.0, -1.0)]"),
+    ] {
+        let input = tampered(&a, &o.context, layer, from, to);
+        assert!(
+            validate_layers(input, schema_identity().unwrap(), &control()).is_err(),
+            "{from}"
+        );
+    }
+}
+fn value_at<'a>(prim: &'a Prim, name: &str) -> Option<&'a Value> {
+    prim.properties
+        .iter()
+        .find(|p| p.name == name)
+        .and_then(|p| p.value.as_ref())
+}

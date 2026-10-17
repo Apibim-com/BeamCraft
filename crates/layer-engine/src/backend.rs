@@ -469,6 +469,21 @@ pub(crate) fn open(request: OpenRequest, control: &Control) -> Result<Candidate,
                 "element path lacks full identity",
             ));
         }
+        let display_name = match prim
+            .get_metadata::<sdf::Value>("displayName")
+            .map_err(|_| corrupt())?
+        {
+            Some(sdf::Value::String(s)) => Some(s),
+            Some(_) => return Err(unsupported()),
+            None => None,
+        };
+        if let Some(name) = &display_name {
+            charge(
+                &mut output_bytes,
+                name.len().saturating_add(32),
+                b.snapshot_bytes,
+            )?;
+        }
         charge(
             &mut output_bytes,
             path.len().saturating_add(256),
@@ -482,6 +497,8 @@ pub(crate) fn open(request: OpenRequest, control: &Control) -> Result<Candidate,
                 .map_err(|_| corrupt())?
                 .map(|s| s.to_string()),
             active: prim.is_active().map_err(|_| corrupt())?,
+            kind: prim.kind().map_err(|_| corrupt())?.map(|k| k.to_string()),
+            display_name,
             properties,
             relationships,
             sources,

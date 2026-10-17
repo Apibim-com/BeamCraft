@@ -689,6 +689,8 @@ impl IndexBuilder {
             element_id: prim.element_id.clone(),
             type_name: None,
             active: prim.active,
+            kind: None,
+            display_name: None,
             properties,
             relationships: prim.relationships.clone(),
             sources: prim.sources.clone(),

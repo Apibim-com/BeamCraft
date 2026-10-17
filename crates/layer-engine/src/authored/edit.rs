@@ -140,9 +140,17 @@ fn prim(data: &mut sdf::Data, p: &str, ty: Option<&str>, defining: bool) -> Resu
     }
     Ok(())
 }
-fn container(data: &mut sdf::Data, p: &str, ty: &str) -> Result<(), Diagnostic> {
+fn container(
+    data: &mut sdf::Data,
+    p: &str,
+    ty: &str,
+    kind: Option<&str>,
+) -> Result<(), Diagnostic> {
     if !data.has_spec(&path(p)?) {
         prim(data, p, Some(ty), true)?;
+    }
+    if let Some(kind) = kind {
+        field(data, p, "kind", sdf::Value::token(kind))?;
     }
     Ok(())
 }
@@ -368,9 +376,11 @@ fn serialize(data: &sdf::Data, max: usize) -> Result<Vec<u8>, Diagnostic> {
 }
 fn create(data: &mut sdf::Data, e: &Element, actor: &str) -> Result<(), Diagnostic> {
     let p = element_path(&e.id)?;
-    container(data, "/World", "Xform")?;
-    container(data, "/World/Steel", "Scope")?;
+    container(data, "/World", "Xform", Some("assembly"))?;
+    container(data, "/World/Steel", "Scope", Some("group"))?;
     prim(data, &p, Some("Xform"), true)?;
+    field(data, &p, "kind", sdf::Value::token("component"))?;
+    field(data, &p, "displayName", sdf::Value::String(e.name.clone()))?;
     let kind = match e.shape {
         Shape::Plate { .. } => "plate",
         Shape::Member {
@@ -465,6 +475,10 @@ fn create(data: &mut sdf::Data, e: &Element, actor: &str) -> Result<(), Diagnost
 fn mesh(data: &mut sdf::Data, m: &Mesh) -> Result<(), Diagnostic> {
     let p = format!("{}/Geometry", element_path(&m.id)?);
     prim(data, &p, Some("Mesh"), true)?;
+    field(data, &p, "kind", sdf::Value::token("subcomponent"))?;
+    let extent = derive::extent(&m.points_mm).ok_or_else(invalid)?;
+    let normals =
+        derive::face_normals(&m.points_mm, &m.face_counts, &m.indices).ok_or_else(invalid)?;
     for (name, ty, v) in [
         (
             "points",
@@ -483,9 +497,21 @@ fn mesh(data: &mut sdf::Data, m: &Mesh) -> Result<(), Diagnostic> {
         ),
         ("subdivisionScheme", "token", sdf::Value::token("none")),
         ("orientation", "token", sdf::Value::token("rightHanded")),
+        (
+            "extent",
+            "float3[]",
+            sdf::Value::Vec3fVec(extent.iter().map(|p| (*p).into()).collect()),
+        ),
+        (
+            "normals",
+            "normal3f[]",
+            sdf::Value::Vec3fVec(normals.iter().map(|n| (*n).into()).collect()),
+        ),
     ] {
         attribute(data, &p, name, ty, Opinion::Value(v), false)?;
     }
+    let normals_spec = path(&format!("{p}.normals"))?;
+    data.set_field(&normals_spec, "interpolation", sdf::Value::token("uniform"));
     attr(
         data,
         &p,
@@ -632,8 +658,8 @@ pub(super) fn apply(
         if prims.iter().any(|v| v.path == p) {
             continue;
         } // Existing immutable bytes are never rewritten.
-        container(&mut authored, "/World", "Xform")?;
-        container(&mut authored, "/World/Definitions", "Scope")?;
+        container(&mut authored, "/World", "Xform", Some("assembly"))?;
+        container(&mut authored, "/World/Definitions", "Scope", None)?;
         definition(&mut authored, &p, &r.definition)?;
         attr(
             &mut authored,
@@ -655,13 +681,21 @@ pub(super) fn apply(
         let (id, _) = c.key();
         let p = element_path(id)?;
         match c {
-            Change::Label { name, .. } => attr(
-                &mut authored,
-                &p,
-                "bim:name",
-                "string",
-                sdf::Value::String(name.clone()),
-            )?,
+            Change::Label { name, .. } => {
+                attr(
+                    &mut authored,
+                    &p,
+                    "bim:name",
+                    "string",
+                    sdf::Value::String(name.clone()),
+                )?;
+                field(
+                    &mut authored,
+                    &p,
+                    "displayName",
+                    sdf::Value::String(name.clone()),
+                )?;
+            }
             Change::Contour { points_mm, .. } => attr(
                 &mut authored,
                 &p,
@@ -806,6 +840,8 @@ fn capture(
         ("faceVertexIndices", "int[]"),
         ("orientation", "token"),
         ("subdivisionScheme", "token"),
+        ("extent", "float3[]"),
+        ("normals", "normal3f[]"),
         ("bim:shapeKey", "string"),
     ];
     let mut fields = BTreeMap::new();

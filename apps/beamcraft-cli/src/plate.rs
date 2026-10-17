@@ -1362,6 +1362,8 @@ mod tests {
             element_id: None,
             type_name: None,
             active: true,
+            kind: None,
+            display_name: None,
             properties,
             relationships: Vec::new(),
             sources: Vec::new(),
