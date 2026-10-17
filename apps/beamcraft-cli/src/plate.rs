@@ -289,11 +289,18 @@ fn decode_plate(prim: &Prim, id: ElementId) -> Result<AuthoredPlate, PlateError>
 /// Both attributes or neither; every count is at least three and every `z` is zero.
 fn decode_holes(prim: &Prim) -> Result<Vec<Vec<[f64; 2]>>, PlateError> {
     let bad = || integrity("committed plate has inconsistent hole attributes");
+    // A declaration without a value is not "no holes": it is a damaged record.
+    let declared = |name: &str| prim.properties.iter().any(|p| p.name == name);
     let (points, counts) = match (
         property(prim, "steel:plate:holePointsMm"),
         property(prim, "steel:plate:holeVertexCounts"),
     ) {
-        (None, None) => return Ok(Vec::new()),
+        (None, None)
+            if !declared("steel:plate:holePointsMm")
+                && !declared("steel:plate:holeVertexCounts") =>
+        {
+            return Ok(Vec::new());
+        }
         (Some(Value::Array(points)), Some(Value::Array(counts))) => (points, counts),
         _ => return Err(bad()),
     };
@@ -483,6 +490,25 @@ pub(crate) fn kernel_mesh(solid: &SolidMesh) -> Result<DerivedMesh, PlateError> 
             }
         })
         .collect::<Result<Vec<_>, _>>()?;
+    // Far from the element origin float32 cannot tell nearby vertices apart; a mesh that loses
+    // vertices that way would store a different (even flat) solid than the one measured.
+    let distinct = |bits: &mut std::collections::BTreeSet<[u64; 3]>, p: [f64; 3]| {
+        bits.insert(p.map(|v| (v + 0.0).to_bits()));
+    };
+    let (mut exact, mut stored) = (
+        std::collections::BTreeSet::new(),
+        std::collections::BTreeSet::new(),
+    );
+    for (p, cast) in solid.vertices().iter().zip(&points) {
+        distinct(&mut exact, *p);
+        distinct(&mut stored, cast.map(f64::from));
+    }
+    if exact.len() != stored.len() {
+        return Err(PlateError::new(
+            ErrorCode::UnsupportedGeometry,
+            "mesh coordinates collapse in float32; the element is too far from its origin",
+        ));
+    }
     Ok(DerivedMesh {
         points,
         counts: vec![3; solid.triangles().len()],
@@ -1167,4 +1193,42 @@ pub fn inspect(store: &RevisionStore) -> Result<Inspection, PlateError> {
         definitions: decoded.definitions,
         snapshot,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use beamcraft_layer_engine::Property;
+
+    fn prim(properties: Vec<Property>) -> Prim {
+        Prim {
+            path: "/World/Steel/E_0".into(),
+            element_id: None,
+            type_name: None,
+            active: true,
+            properties,
+            relationships: Vec::new(),
+            sources: Vec::new(),
+        }
+    }
+
+    fn property(name: &str, value: Option<Value>) -> Property {
+        Property {
+            name: name.into(),
+            type_name: "double3[]".into(),
+            value,
+        }
+    }
+
+    #[test]
+    fn a_hole_declaration_without_a_value_is_a_damaged_record_not_no_holes() {
+        assert_eq!(
+            decode_holes(&prim(Vec::new())).unwrap(),
+            Vec::<Vec<[f64; 2]>>::new()
+        );
+        let lone = prim(vec![property("steel:plate:holePointsMm", None)]);
+        assert!(decode_holes(&lone).is_err());
+        let lone_counts = prim(vec![property("steel:plate:holeVertexCounts", None)]);
+        assert!(decode_holes(&lone_counts).is_err());
+    }
 }

@@ -392,3 +392,28 @@ fn replay_reuse_and_a_duplicate_id_across_kinds() {
         "DUPLICATE_ID"
     );
 }
+
+#[test]
+fn a_member_whose_mesh_would_collapse_in_float32_is_refused() {
+    let f = Fixture::new();
+    let profile = f.profile("1", "1");
+    let args = [
+        "--start",
+        "100000000,0,0",
+        "--end",
+        "100000000,0,1000",
+        "--profile-digest",
+        profile.as_str(),
+    ];
+    assert_eq!(f.rejected("create-member", &args), "UNSUPPORTED_GEOMETRY");
+    // A normal offset of the same size of member is fine.
+    let ok = [
+        "--start",
+        "1000,0,0",
+        "--end",
+        "1000,0,1000",
+        "--profile-digest",
+        profile.as_str(),
+    ];
+    f.ok("create-member", &ok);
+}
