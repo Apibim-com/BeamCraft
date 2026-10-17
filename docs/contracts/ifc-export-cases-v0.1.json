@@ -1,7 +1,7 @@
 {
  "artifact_version": 1,
  "contract_version": "0.1.0",
- "status": "draft, not frozen",
+ "status": "draft, not frozen; owner decisions Q-1 to Q-11 of 2026-10-17 applied",
  "role": "original logical acceptance descriptions for the E01 IFC export contract; not an exporter, IFC file or USD fixture",
  "contract": "ifc-export-v0.1.md",
  "f04_contract": "model-and-commands-v0.1.md",
@@ -9,18 +9,18 @@
  "f10_contract": "domain-vocabulary-v0.1.md",
  "polarity": {
   "positive": "the rule is satisfied or the described export succeeds as stated",
-  "negative": "the rule fires: the element is skipped, the omission or loss is listed, or the request is refused with the listed code"
+  "negative": "the rule fires: an element is exported with a listed loss, a warning is raised, or the request is refused with the listed code"
  },
  "rule_severity": {
-  "error": "an element is skipped or the request is refused; the F04 code is stated",
-  "warning": "reported, export continues",
+  "error": "the request is refused; the F04 code is stated",
+  "warning": "reported, export continues; the F04 code is the one strict mode refuses with, if any",
   "info": "reported, export continues",
   "mapping": "a mapping or format rule; breach is an exporter defect found by the acceptance cases, not a runtime diagnostic"
  },
  "id_scheme": [
   "Element ids are 019a7bf0-0000-7000-8000- followed by 12 digits: 300000 plus the number n of the element in the case.",
-  "Project id 019a7bf0-0000-7000-8000-000000000001; revision id 019a7bf0-0000-7000-8000-000000000010.",
-  "Case ids are E01-POS-nn and E01-NEG-nn and never change; a withdrawn case keeps its id."
+  "Project id 019a7bf0-0000-7000-8000-000000000001 (the stored one); revision id 019a7bf0-0000-7000-8000-000000000010; level ids 019a7bf0-0000-7000-8000-0000000001nn.",
+  "Case ids are E01-POS-nn and E01-NEG-nn and never change once the contract is frozen."
  ],
  "comparison": [
   "Identifiers, strings, booleans, integers, codes, statuses and file bytes compare exactly.",
@@ -28,16 +28,16 @@
  ],
  "assumptions": [
   "Cases describe logical inputs and outcomes. They are proposed future tests, not a runnable exporter, IFC file or USD fixture.",
-  "A case with a needs field depends on a limit being lifted, a harness hook or a proposal that the owner has not decided; it is not reachable with the stores of today.",
+  "A case with a needs field depends on a limit being lifted, a harness hook, or one of the dependencies D1 (stored ProjectId) and D2 (Level concept) of section 19; it is not reachable with the stores of today.",
   "Material and profile digests in cases stand for actual validated resources that the harness must supply; no placeholder hash is a real resource.",
-  "Quantity values are hand-derived from the box formulas of F06 section 8."
+  "Quantity values are hand-derived from the box formulas of F06 section 8. Box meshes follow the F06 section 6 canonical order, which P01 is assumed to store in the derived layer."
  ],
  "rules": [
   {
    "rule_id": "IFCX-SCOPE-001",
    "severity": "warning",
-   "f04_code": "-",
-   "text": "Only the kinds plate, beam and column are exported. Any other kind, reserved or unknown, is skipped, stays untouched in the store and is listed (F10 DV-KIND-002)."
+   "f04_code": "UNSUPPORTED_COMMAND",
+   "text": "An element whose kind has no IFC mapping (every kind except plate, beam and column, reserved or unknown) is exported as IfcBuildingElementProxy and listed. It is never skipped. The code is the one strict mode refuses with."
   },
   {
    "rule_id": "IFCX-SCOPE-002",
@@ -55,19 +55,25 @@
    "rule_id": "IFCX-SCOPE-004",
    "severity": "error",
    "f04_code": "INTEGRITY_ERROR",
-   "text": "Export is read-only: it changes no authored state, derived state, revision or generation."
+   "text": "Export is read-only: it changes no authored state, derived state, revision or generation, and writes no attribute into the store."
   },
   {
    "rule_id": "IFCX-SCOPE-005",
    "severity": "info",
    "f04_code": "-",
-   "text": "An element whose lifecycle is deactivated is not exported and is listed (F10 section 3.2)."
+   "text": "An element whose lifecycle is deactivated is not exported and is listed (F10 section 3.2; open question Q-12). It is the only element that is not exported."
+  },
+  {
+   "rule_id": "IFCX-SCOPE-006",
+   "severity": "mapping",
+   "f04_code": "-",
+   "text": "Every other element of the revision is exported. An element without usable geometry is exported without a representation and listed; nothing else is skipped."
   },
   {
    "rule_id": "IFCX-VER-001",
    "severity": "error",
    "f04_code": "UNSUPPORTED_VERSION",
-   "text": "contract_version is exactly 0.1.0 and the requested schema identifier is in the supported set, which is IFC4X3_ADD2 only (open question Q-1)."
+   "text": "contract_version is exactly 0.1.0 and the requested schema identifier is IFC4 (IFC4 ADD2 TC1), the only supported one."
   },
   {
    "rule_id": "IFCX-VER-002",
@@ -85,13 +91,13 @@
    "rule_id": "IFCX-GUID-001",
    "severity": "mapping",
    "f04_code": "-",
-   "text": "The GlobalId of an element is E(ElementId) of section 3.1: alphabet, first character 0 to 3, big-endian bit order, 22 characters. No other value is written to the file or to the derived attribute."
+   "text": "The GlobalId of an element is E(ElementId) of section 3.1: alphabet, first character 0 to 3, big-endian bit order, 22 characters."
   },
   {
    "rule_id": "IFCX-GUID-002",
    "severity": "error",
    "f04_code": "INVALID_ID",
-   "text": "An ElementId that is not a canonical lowercase UUIDv7 with the RFC variant gets no GlobalId. There is no repair, lowercasing, truncation, padding or hash fallback."
+   "text": "An ElementId that is not a canonical lowercase UUIDv7 with the RFC variant gets no GlobalId, with no repair, lowercasing, truncation, padding or hash fallback. In an export the element makes the request fail: a stored revision with such an id is not a valid revision."
   },
   {
    "rule_id": "IFCX-GUID-003",
@@ -103,7 +109,7 @@
    "rule_id": "IFCX-GUID-004",
    "severity": "mapping",
    "f04_code": "-",
-   "text": "Entities that are not elements get a synthetic GlobalId from the SHA-256 construction of section 3.5, a function of the ProjectId and the fixed role keys only."
+   "text": "Entities that are not elements get a synthetic GlobalId from the SHA-256 construction of section 3.5, a function of the stored ProjectId, the LevelId or ElementId and the fixed role only (owner decision Q-11)."
   },
   {
    "rule_id": "IFCX-GUID-005",
@@ -125,27 +131,63 @@
   },
   {
    "rule_id": "IFCX-GUID-008",
-   "severity": "error",
-   "f04_code": "INTEGRITY_ERROR",
-   "text": "When the derived layer carries bim:ifcGlobalId, it must equal E(bim:id). A different value is an integrity error, never a second identity."
+   "severity": "mapping",
+   "f04_code": "-",
+   "text": "The GlobalId is computed at export (and by the CLI helper) and is not persisted: no attribute is written to the authored or derived layer. A stored attribute of that name found in a layer is unknown content, preserved, ignored and never trusted (owner decision Q-6)."
   },
   {
    "rule_id": "IFCX-REQ-001",
    "severity": "error",
    "f04_code": "INVALID_ID",
-   "text": "project_id and an explicit revision_id are full canonical UUIDv7 text."
+   "text": "An explicit revision_id is a full canonical UUIDv7 text."
   },
   {
    "rule_id": "IFCX-REQ-002",
    "severity": "error",
    "f04_code": "INVALID_ARGUMENT",
-   "text": "A required option is missing, an option is unknown or repeated, or a value is out of range."
+   "text": "A required option is missing, an option is unknown or repeated, or a value is out of range. There is no project-id option: the ProjectId is read from the project entry."
   },
   {
    "rule_id": "IFCX-REQ-003",
    "severity": "error",
    "f04_code": "NOT_FOUND",
    "text": "An explicit revision_id names no committed revision of the store."
+  },
+  {
+   "rule_id": "IFCX-PRJ-001",
+   "severity": "error",
+   "f04_code": "DEPENDENCY_UNAVAILABLE",
+   "text": "The project entry of the revision must record a ProjectId (dependency D1, section 19). A revision without one is refused; no ProjectId is invented or taken from an option."
+  },
+  {
+   "rule_id": "IFCX-PRJ-002",
+   "severity": "mapping",
+   "f04_code": "-",
+   "text": "The GlobalIds of the project, site, building, storeys and relationships derive from the stored ProjectId, so two exports of the same project agree and two projects never share them."
+  },
+  {
+   "rule_id": "IFCX-LVL-001",
+   "severity": "mapping",
+   "f04_code": "-",
+   "text": "Each stored Level (dependency D2, section 19) becomes one IfcBuildingStorey with its name and elevation; the elements assigned to it are contained in it by one IfcRelContainedInSpatialStructure."
+  },
+  {
+   "rule_id": "IFCX-LVL-002",
+   "severity": "error",
+   "f04_code": "DANGLING_RELATIONSHIP",
+   "text": "An element assigned to a LevelId that no Level of the revision carries refuses the export."
+  },
+  {
+   "rule_id": "IFCX-LVL-003",
+   "severity": "mapping",
+   "f04_code": "-",
+   "text": "An element with no level is contained in the IfcBuilding. A project with no Level has no storey."
+  },
+  {
+   "rule_id": "IFCX-LVL-004",
+   "severity": "mapping",
+   "f04_code": "-",
+   "text": "A storey placement is the point (0, 0, elevation) relative to the building placement. Element placements stay relative to the building placement, so a level adds no arithmetic to any element number."
   },
   {
    "rule_id": "IFCX-PLC-001",
@@ -155,15 +197,15 @@
   },
   {
    "rule_id": "IFCX-PLC-002",
-   "severity": "error",
+   "severity": "warning",
    "f04_code": "UNSUPPORTED_GEOMETRY",
-   "text": "A placement with scale, shear, reflection or a matrix form is not exported; the element is skipped."
+   "text": "A placement of a proxy element that cannot be read as a rigid pose (scale, shear, reflection, matrix form) is not exported: the element has no ObjectPlacement and no representation, and is listed."
   },
   {
    "rule_id": "IFCX-PLC-003",
    "severity": "error",
    "f04_code": "INVALID_ARGUMENT",
-   "text": "A stored quaternion outside the F04 section 3 caps (component range, squared norm) skips the element."
+   "text": "A stored quaternion of a plate, beam or column outside the F04 section 3 caps refuses the export: the revision violates F04."
   },
   {
    "rule_id": "IFCX-PLC-004",
@@ -175,55 +217,49 @@
    "rule_id": "IFCX-GEO-001",
    "severity": "mapping",
    "f04_code": "-",
-   "text": "Every exported element has exactly one shape representation, identifier Body, type SweptSolid, with exactly one IfcExtrudedAreaSolid item."
+   "text": "Every element with usable geometry has exactly one shape representation, identifier Body, type Tessellation, with exactly one IfcTriangulatedFaceSet item and nothing else (owner decision Q-2)."
   },
   {
    "rule_id": "IFCX-GEO-002",
    "severity": "mapping",
    "f04_code": "-",
-   "text": "A beam or column is a rectangle profile centred on the axis, extruded from the point p1 along the member axis by the axis length, in the frame the kernel derived (F04 P-2, P-3)."
+   "text": "The face set is the published derived mesh of the pinned revision in its stored vertex and triangle order, in element-local coordinates, with 1-based indices; Closed is true for plate, beam and column and unset for any other kind. Normals are not written."
   },
   {
    "rule_id": "IFCX-GEO-003",
    "severity": "mapping",
    "f04_code": "-",
-   "text": "A plate is its outline in the plate frame, extruded along the plate normal by the thickness. Through holes become inner curves of the profile. No boolean entity and no opening element is written."
+   "text": "Mesh coordinates are the stored binary32 values written as the shortest decimal that parses back to the same binary32, unscaled millimetres (section 11.3)."
   },
   {
    "rule_id": "IFCX-GEO-004",
-   "severity": "error",
+   "severity": "warning",
    "f04_code": "UNSUPPORTED_GEOMETRY",
-   "text": "An element whose geometry status is not a supported sealed result (for example a valid non-rectangular plate) is skipped. No geometry is exported that BeamCraft itself does not certify."
+   "text": "An element that has no derived mesh (geometry status unsupported, for example a valid non-rectangular plate or a member with another profile kind), or whose mesh has a face that is not a triangle, is exported without a representation and listed. The code is the one strict mode refuses with."
   },
   {
    "rule_id": "IFCX-GEO-005",
    "severity": "error",
-   "f04_code": "UNSUPPORTED_GEOMETRY",
-   "text": "A member whose profile kind is not rectangle is skipped."
+   "f04_code": "INTEGRITY_ERROR",
+   "text": "For a plate, beam or column the stored derived mesh must equal the kernel's re-evaluation of the authored inputs (digest equality). A mismatch refuses the whole export."
   },
   {
    "rule_id": "IFCX-GEO-006",
    "severity": "error",
-   "f04_code": "NON_FINITE_NUMBER",
-   "text": "A non-finite stored number in a shape input skips the element."
+   "f04_code": "INTEGRITY_ERROR",
+   "text": "A derived mesh that is structurally invalid (an index out of range, a non-finite coordinate, counts that disagree) refuses the export."
   },
   {
    "rule_id": "IFCX-GEO-007",
-   "severity": "error",
-   "f04_code": "INTEGRITY_ERROR",
-   "text": "The stored derived mesh of an exported element must equal the kernel's re-evaluation of its authored inputs (digest equality). A mismatch refuses the whole export."
+   "severity": "mapping",
+   "f04_code": "-",
+   "text": "Holes are part of the mesh. No profile, extrusion, boolean, opening or void entity is written, and no authored parameter other than those in BeamCraft_Element and BeamCraft_Declared (section 9)."
   },
   {
    "rule_id": "IFCX-GEO-008",
    "severity": "mapping",
    "f04_code": "-",
-   "text": "The exporter takes frames and dimensions from the kernel's own derivation and never re-implements them. The tessellation of the written solid reproduces the published volume within the CR-TOL-001 quantity bound."
-  },
-  {
-   "rule_id": "IFCX-GEO-009",
-   "severity": "mapping",
-   "f04_code": "-",
-   "text": "Version 0.1.0 writes no tessellated or boundary-representation item and no second representation (open question Q-2)."
+   "text": "The volume of the exported face set, recomputed from the file by the divergence sum, equals the published volume within the bound of section 6.4."
   },
   {
    "rule_id": "IFCX-MAT-001",
@@ -235,7 +271,7 @@
    "rule_id": "IFCX-MAT-002",
    "severity": "mapping",
    "f04_code": "-",
-   "text": "IfcMaterial.Name is the declared grade, otherwise the text BC- followed by the full 64 lowercase hex digits of the digest; Description is the declared standard when present."
+   "text": "IfcMaterial.Name is the declared grade, otherwise the text Unspecified. Description is the declared standard when present. The full digest is always written as the property MaterialDigest of the property group BeamCraft_Material (owner decision Q-9)."
   },
   {
    "rule_id": "IFCX-MAT-003",
@@ -259,13 +295,13 @@
    "rule_id": "IFCX-QTY-002",
    "severity": "warning",
    "f04_code": "-",
-   "text": "A quantity whose freshness is stale, missing, unknown or unsupported is not written (no zero, no previous value); its status is written in the BeamCraft_Element property set and the omission is listed."
+   "text": "A quantity whose freshness is stale, missing, unknown or unsupported is not written (no zero, no previous value); its status is written in BeamCraft_Element and the omission is listed (owner decision Q-5)."
   },
   {
    "rule_id": "IFCX-QTY-003",
    "severity": "mapping",
    "f04_code": "-",
-   "text": "Mapping of the published quantities: volume to NetVolume, mass to NetWeight, in the base quantity set of the product type and in SI units (section 8.2)."
+   "text": "Mapping of the published quantities: volume to NetVolume, mass to NetWeight, in the IFC4 base quantity set of the product type and in SI units (section 8.2)."
   },
   {
    "rule_id": "IFCX-QTY-004",
@@ -283,19 +319,37 @@
    "rule_id": "IFCX-QTY-006",
    "severity": "mapping",
    "f04_code": "-",
-   "text": "Every written quantity set also names the algorithm label and signatures of the records in BeamCraft_Element, so a reader can compare them with the derived layer."
+   "text": "BeamCraft_Element names the statuses, signatures and algorithm label of the records, so a reader can compare them with the derived layer."
+  },
+  {
+   "rule_id": "IFCX-QTY-007",
+   "severity": "mapping",
+   "f04_code": "-",
+   "text": "The IFC4 plate base quantity set has no weight quantities. A plate's current mass is written as the properties NetWeightKg and GrossWeightKg of BeamCraft_Element (IfcMassMeasure, kilograms), under the same freshness and Gross rules."
+  },
+  {
+   "rule_id": "IFCX-DECL-001",
+   "severity": "mapping",
+   "f04_code": "-",
+   "text": "Declared section values of a member's profile definition (designation, standard, area, mass per metre, surface per metre) are written, when present, in the separate property set BeamCraft_Declared, never in a quantity set (owner decision Q-10)."
+  },
+  {
+   "rule_id": "IFCX-DECL-002",
+   "severity": "mapping",
+   "f04_code": "-",
+   "text": "Declared values are written as authored, without conversion or check, in properties whose names carry the unit (DeclaredSectionAreaMm2, DeclaredMassPerMeterKg, DeclaredSurfacePerMeterM2), each with a description that says it is declared and not computed."
   },
   {
    "rule_id": "IFCX-PSET-001",
    "severity": "mapping",
    "f04_code": "-",
-   "text": "Each exported element has one property set BeamCraft_Element with the properties of section 9.1, and no other property set in 0.1.0."
+   "text": "Each exported element has one property set BeamCraft_Element with the properties of section 9.1."
   },
   {
    "rule_id": "IFCX-PSET-002",
    "severity": "mapping",
    "f04_code": "-",
-   "text": "A BeamCraft property set name never starts with Pset_ or Qto_; only the buildingSMART quantity sets of section 8.2 use the Qto_ prefix."
+   "text": "A BeamCraft property set or group name never starts with Pset_ or Qto_, except Pset_MaterialCommon and the Qto_ sets of the specification used as section 8 and 7 state."
   },
   {
    "rule_id": "IFCX-PSET-003",
@@ -319,13 +373,13 @@
    "rule_id": "IFCX-UNIT-002",
    "severity": "mapping",
    "f04_code": "-",
-   "text": "Lengths and coordinates are written exactly as the internal millimetre values. No scaling is applied to any length."
+   "text": "Lengths and coordinates are written exactly as the internal millimetre values (mesh values as their binary32 text). No scaling is applied to any length; the storey elevation is written as stored."
   },
   {
    "rule_id": "IFCX-DET-001",
    "severity": "mapping",
    "f04_code": "-",
-   "text": "Elements are processed and listed in ascending canonical ElementId order (byte comparison of the 36-character lowercase text); materials in ascending digest order."
+   "text": "Elements, levels and relationship members are processed and listed in ascending canonical id order (byte comparison of the 36-character lowercase text); materials in ascending digest order."
   },
   {
    "rule_id": "IFCX-DET-002",
@@ -337,7 +391,7 @@
    "rule_id": "IFCX-DET-003",
    "severity": "mapping",
    "f04_code": "-",
-   "text": "A REAL is written as the shortest decimal text that parses back to the same binary64, in the notation of section 11.3."
+   "text": "A binary64 REAL and a binary32 REAL are each written as the shortest decimal text that parses back to the same value of its own type, in the notation of section 11.3."
   },
   {
    "rule_id": "IFCX-DET-004",
@@ -349,7 +403,7 @@
    "rule_id": "IFCX-DET-005",
    "severity": "mapping",
    "f04_code": "-",
-   "text": "Header fields are the fixed values of section 11.5; the only variable one is the time stamp derived from the RevisionId."
+   "text": "Header fields are the fixed values of section 11.5; the only variable one is the time stamp derived from the RevisionId (owner decision Q-4)."
   },
   {
    "rule_id": "IFCX-DET-006",
@@ -391,7 +445,7 @@
    "rule_id": "IFCX-ERR-005",
    "severity": "mapping",
    "f04_code": "-",
-   "text": "In strict mode any skipped element refuses the export with the code of the first skip. Omitted quantities do not."
+   "text": "In strict mode any element exported as a proxy, without a representation or without a placement refuses the export with the code of the first such finding. Omitted quantities and truncated names do not."
   },
   {
    "rule_id": "IFCX-LIM-001",
@@ -409,13 +463,25 @@
    "rule_id": "IFCX-LIM-003",
    "severity": "mapping",
    "f04_code": "-",
-   "text": "Every count in the writer is bounded by a cap already enforced upstream (F04 section 3 and the A04 hole caps) or by LIM-001/002; no allocation is sized by an unchecked input, no recursion is used and no input-derived index is used."
+   "text": "Every count in the writer is bounded by a cap enforced upstream or by LIM-001, 002 and 005; no allocation is sized by an unchecked input, no recursion is used and no input-derived index is used."
   },
   {
    "rule_id": "IFCX-LIM-004",
    "severity": "mapping",
    "f04_code": "-",
    "text": "The report keeps at most 256 findings in the F10 order and states total_findings and truncated; the per-element table is complete."
+  },
+  {
+   "rule_id": "IFCX-LIM-005",
+   "severity": "error",
+   "f04_code": "LIMIT_EXCEEDED",
+   "text": "A single mesh of more than 262,144 vertices or 524,288 triangles, or a project of more than 1,024 levels, refuses the export."
+  },
+  {
+   "rule_id": "IFCX-VAL-001",
+   "severity": "mapping",
+   "f04_code": "-",
+   "text": "Acceptance of E02 includes validating a written file with the owner's chosen independent tool, Altiro Desktop (owner decision Q-8), run locally as a separate process with no upload of the file; its admission is an open E02 gate (section 17)."
   },
   {
    "rule_id": "IFCX-SURF-001",
@@ -508,6 +574,14 @@
     "project_id": "019a7bf0-0000-7000-8000-000000000001",
     "global_id": "2ghTuGpW1EXNtW6xLArrhQ",
     "note": "script-derived; E02 must reproduce it with the in-repo SHA-256"
+   },
+   {
+    "vector_id": "V-SYN-02",
+    "role": "storey",
+    "project_id": "019a7bf0-0000-7000-8000-000000000001",
+    "level_id": "019a7bf0-0000-7000-8000-000000000101",
+    "global_id": "2886jimw3h7h75lUh8nRj7",
+    "note": "script-derived; keys ProjectId then LevelId"
    }
   ]
  },
@@ -574,10 +648,10 @@
   }
  ],
  "case_counts": {
-  "logical_cases": 90,
-  "positive": 43,
-  "negative": 47,
-  "rules": 66
+  "logical_cases": 100,
+  "positive": 50,
+  "negative": 50,
+  "rules": 77
  },
  "cases": [
   {
@@ -808,7 +882,8 @@
    "case_id": "E01-POS-12",
    "title": "Synthetic GlobalId of the site",
    "rules": [
-    "IFCX-GUID-004"
+    "IFCX-GUID-004",
+    "IFCX-PRJ-002"
    ],
    "polarity": "positive",
    "given": {
@@ -872,34 +947,33 @@
   },
   {
    "case_id": "E01-POS-15",
-   "title": "Derived attribute equals the encoding of bim:id",
+   "title": "The GlobalId is computed, not stored",
    "rules": [
-    "IFCX-GUID-001",
-    "IFCX-GUID-008"
+    "IFCX-GUID-008",
+    "IFCX-SCOPE-004"
    ],
    "polarity": "positive",
    "given": {
     "element": "019a7bf0-0000-7000-8000-000000200001",
-    "derived_attribute": {
-     "bim:ifcGlobalId": "01cdlm001m080000008001"
-    }
+    "store_digest_before": "SHA-256 of every store file"
    },
    "action": {
-    "type": "verify_derived_layer"
+    "type": "export_ifc"
    },
    "expected": {
-    "outcome": "accepted"
-   },
-   "needs": "the derived attribute is a proposal (open question Q-6)"
+    "file_global_id": "01cdlm001m080000008001",
+    "store_digest_after_equal": true,
+    "bim_ifcGlobalId_attribute_written": false
+   }
   },
   {
    "case_id": "E01-POS-16",
    "title": "Plate 1000 x 500 x 10 without material",
    "rules": [
     "IFCX-GEO-001",
+    "IFCX-GEO-002",
     "IFCX-GEO-003",
     "IFCX-QTY-001",
-    "IFCX-QTY-002",
     "IFCX-QTY-003",
     "IFCX-UNIT-002"
    ],
@@ -907,10 +981,13 @@
    "given": {
     "options": {
      "contract_version": "0.1.0",
-     "schema": "IFC4X3_ADD2",
+     "schema": "IFC4",
      "format": "step",
-     "project_id": "019a7bf0-0000-7000-8000-000000000001",
      "strict": false
+    },
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": []
     },
     "elements": [
      {
@@ -959,63 +1036,126 @@
      "volume_mm3": 5000000,
      "volume_status": "current",
      "mass_status": "unknown"
-    }
+    },
+    "derived_mesh": "the F06 canonical box mesh, as P01 stores it (assumed order)"
    },
    "action": {
     "type": "export_ifc"
    },
    "expected": {
     "status": "ok",
-    "exported": 1,
     "entity": "IfcPlate",
     "predefined_type": "NOTDEFINED",
-    "solid": {
-     "position": {
-      "location": [
+    "representation": {
+     "identifier": "Body",
+     "type": "Tessellation",
+     "item": "IfcTriangulatedFaceSet",
+     "closed": true,
+     "coordinates_mm": [
+      [
        0,
        0,
        0
       ],
-      "axis": [
+      [
+       1000,
        0,
-       0,
-       1
+       0
       ],
-      "ref_direction": [
+      [
+       0,
+       500,
+       0
+      ],
+      [
+       1000,
+       500,
+       0
+      ],
+      [
+       0,
+       0,
+       10
+      ],
+      [
+       1000,
+       0,
+       10
+      ],
+      [
+       0,
+       500,
+       10
+      ],
+      [
+       1000,
+       500,
+       10
+      ]
+     ],
+     "coord_index_1_based": [
+      [
        1,
-       0,
-       0
-      ]
-     },
-     "profile": "IfcArbitraryClosedProfileDef",
-     "outline_2d": [
-      [
-       0,
-       0
+       5,
+       7
       ],
       [
-       1000,
-       0
+       1,
+       7,
+       3
       ],
       [
-       1000,
-       500
+       2,
+       4,
+       8
       ],
       [
-       0,
-       500
+       2,
+       8,
+       6
       ],
       [
-       0,
-       0
+       1,
+       2,
+       6
+      ],
+      [
+       1,
+       6,
+       5
+      ],
+      [
+       3,
+       7,
+       8
+      ],
+      [
+       3,
+       8,
+       4
+      ],
+      [
+       1,
+       3,
+       4
+      ],
+      [
+       1,
+       4,
+       2
+      ],
+      [
+       5,
+       6,
+       8
+      ],
+      [
+       5,
+       8,
+       7
       ]
      ],
-     "extruded_direction": [
-      0,
-      0,
-      1
-     ],
-     "depth": 10
+     "normals": null
     },
     "quantities": {
      "set": "Qto_PlateBaseQuantities",
@@ -1028,14 +1168,16 @@
      "VolumeStatus": "current"
     },
     "material": null
-   }
+   },
+   "derivation": "F06 canonical box: vertex i = ((o + xb*e1) + yb*e2) + zb*e3 with o = (0,0,0), e1 = (1000,0,0), e2 = (0,500,0), e3 = (0,0,10); quad (a,b,c,d) of face f gives triangles (a,b,c) and (a,c,d); IFC indices are the vertex indices plus one."
   },
   {
    "case_id": "E01-POS-17",
-   "title": "Plate with a material of density 7850",
+   "title": "Plate with a material of density 7850: weights go to properties in IFC4",
    "rules": [
     "IFCX-QTY-003",
     "IFCX-QTY-004",
+    "IFCX-QTY-007",
     "IFCX-MAT-001",
     "IFCX-MAT-003"
    ],
@@ -1043,10 +1185,13 @@
    "given": {
     "options": {
      "contract_version": "0.1.0",
-     "schema": "IFC4X3_ADD2",
+     "schema": "IFC4",
      "format": "step",
-     "project_id": "019a7bf0-0000-7000-8000-000000000001",
      "strict": false
+    },
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": []
     },
     "elements": [
      {
@@ -1109,10 +1254,14 @@
    "expected": {
     "status": "ok",
     "quantities": {
+     "set": "Qto_PlateBaseQuantities",
      "NetVolume_m3": 0.005,
      "GrossVolume_m3": 0.005,
-     "NetWeight_kg": 39.25,
-     "GrossWeight_kg": 39.25
+     "weights_in_set": "absent"
+    },
+    "BeamCraft_Element": {
+     "NetWeightKg": 39.25,
+     "GrossWeightKg": 39.25
     },
     "material": {
      "entity": "IfcMaterial",
@@ -1121,8 +1270,7 @@
      "MassDensity_kg_m3": 7850
     }
    },
-   "derivation": "5,000,000 mm3 / 1e9 = 0.005 m3; 0.005 m3 * 7850 kg/m3 = 39.25 kg.",
-   "needs": "a plate Qto set that carries weights exists in IFC4X3_ADD2; for IFC4 they would move to BeamCraft_Element (Q-1)"
+   "derivation": "5,000,000 mm3 / 1e9 = 0.005 m3; 0.005 m3 * 7850 kg/m3 = 39.25 kg. The IFC4 plate base quantity set has no weight quantity."
   },
   {
    "case_id": "E01-POS-18",
@@ -1138,10 +1286,13 @@
    "given": {
     "options": {
      "contract_version": "0.1.0",
-     "schema": "IFC4X3_ADD2",
+     "schema": "IFC4",
      "format": "step",
-     "project_id": "019a7bf0-0000-7000-8000-000000000001",
      "strict": false
+    },
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": []
     },
     "elements": [
      {
@@ -1180,6 +1331,7 @@
       },
       "material": {
        "grade": "S-synthetic",
+       "standard": "Synthetic standard",
        "density_kg_m3": 7850
       }
      }
@@ -1198,39 +1350,125 @@
     "status": "ok",
     "entity": "IfcBeam",
     "predefined_type": "BEAM",
-    "solid": {
-     "position": {
-      "location": [
+    "representation": {
+     "type": "Tessellation",
+     "closed": true,
+     "coordinates_mm": [
+      [
        0,
-       0,
-       0
+       -100,
+       -150
       ],
-      "axis": [
-       1,
+      [
        0,
-       0
+       100,
+       -150
       ],
-      "ref_direction": [
+      [
        0,
-       1,
-       0
-      ]
-     },
-     "profile": {
-      "entity": "IfcRectangleProfileDef",
-      "XDim": 200,
-      "YDim": 300,
-      "position_2d": [
+       -100,
+       150
+      ],
+      [
        0,
-       0
+       100,
+       150
+      ],
+      [
+       4000,
+       -100,
+       -150
+      ],
+      [
+       4000,
+       100,
+       -150
+      ],
+      [
+       4000,
+       -100,
+       150
+      ],
+      [
+       4000,
+       100,
+       150
       ]
-     },
-     "extruded_direction": [
-      0,
-      0,
-      1
      ],
-     "depth": 4000
+     "coord_index_1_based": [
+      [
+       1,
+       5,
+       7
+      ],
+      [
+       1,
+       7,
+       3
+      ],
+      [
+       2,
+       4,
+       8
+      ],
+      [
+       2,
+       8,
+       6
+      ],
+      [
+       1,
+       2,
+       6
+      ],
+      [
+       1,
+       6,
+       5
+      ],
+      [
+       3,
+       7,
+       8
+      ],
+      [
+       3,
+       8,
+       4
+      ],
+      [
+       1,
+       3,
+       4
+      ],
+      [
+       1,
+       4,
+       2
+      ],
+      [
+       5,
+       6,
+       8
+      ],
+      [
+       5,
+       8,
+       7
+      ]
+     ]
+    },
+    "local_bounds_mm": {
+     "min": [
+      0,
+      -100,
+      -150
+     ],
+     "max": [
+      4000,
+      100,
+      150
+     ]
     },
     "quantities": {
      "set": "Qto_BeamBaseQuantities",
@@ -1241,7 +1479,7 @@
      "Length": "absent (not published)"
     }
    },
-   "derivation": "F04 horizontal example: Z_m = (1,0,0), Y_m = (0,0,1), X_m = (0,1,0). The solid's Y axis is Z x X = (1,0,0) x (0,1,0) = (0,0,1) = Y_m, so the 300 mm height is vertical. 200*300*4000 = 2.4e8 mm3 = 0.24 m3; 0.24 * 7850 = 1884 kg."
+   "derivation": "F04 horizontal example: Z_m = (1,0,0), Y_m = (0,0,1), X_m = (0,1,0). Box origin o = (p1 - (w/2) X_m) - (h/2) Y_m = (0,-100,-150); e1 = 200 X_m, e2 = 300 Y_m, e3 = p2 - p1. 200*300*4000 = 2.4e8 mm3 = 0.24 m3; 0.24 * 7850 = 1884 kg."
   },
   {
    "case_id": "E01-POS-19",
@@ -1253,10 +1491,13 @@
    "given": {
     "options": {
      "contract_version": "0.1.0",
-     "schema": "IFC4X3_ADD2",
+     "schema": "IFC4",
      "format": "step",
-     "project_id": "019a7bf0-0000-7000-8000-000000000001",
      "strict": false
+    },
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": []
     },
     "elements": [
      {
@@ -1308,53 +1549,140 @@
     "status": "ok",
     "entity": "IfcColumn",
     "predefined_type": "COLUMN",
-    "solid": {
-     "position": {
-      "location": [
-       0,
-       0,
+    "representation": {
+     "type": "Tessellation",
+     "closed": true,
+     "coordinates_mm": [
+      [
+       -100,
+       -150,
        0
       ],
-      "axis": [
-       0,
-       0,
-       1
-      ],
-      "ref_direction": [
-       1,
-       0,
+      [
+       100,
+       -150,
        0
+      ],
+      [
+       -100,
+       150,
+       0
+      ],
+      [
+       100,
+       150,
+       0
+      ],
+      [
+       -100,
+       -150,
+       3000
+      ],
+      [
+       100,
+       -150,
+       3000
+      ],
+      [
+       -100,
+       150,
+       3000
+      ],
+      [
+       100,
+       150,
+       3000
       ]
-     },
-     "profile": {
-      "entity": "IfcRectangleProfileDef",
-      "XDim": 200,
-      "YDim": 300
-     },
-     "depth": 3000
+     ],
+     "coord_index_1_based": [
+      [
+       1,
+       5,
+       7
+      ],
+      [
+       1,
+       7,
+       3
+      ],
+      [
+       2,
+       4,
+       8
+      ],
+      [
+       2,
+       8,
+       6
+      ],
+      [
+       1,
+       2,
+       6
+      ],
+      [
+       1,
+       6,
+       5
+      ],
+      [
+       3,
+       7,
+       8
+      ],
+      [
+       3,
+       8,
+       4
+      ],
+      [
+       1,
+       3,
+       4
+      ],
+      [
+       1,
+       4,
+       2
+      ],
+      [
+       5,
+       6,
+       8
+      ],
+      [
+       5,
+       8,
+       7
+      ]
+     ]
     },
     "quantities": {
      "set": "Qto_ColumnBaseQuantities",
      "NetVolume_m3": 0.18
     }
    },
-   "derivation": "F04 vertical example: Z_m = (0,0,1), Y_m = (0,1,0), X_m = (1,0,0). 200*300*3000 = 1.8e8 mm3 = 0.18 m3."
+   "derivation": "F04 vertical example: Z_m = (0,0,1), Y_m = (0,1,0), X_m = (1,0,0). o = (-100,-150,0). 200*300*3000 = 1.8e8 mm3 = 0.18 m3."
   },
   {
    "case_id": "E01-POS-20",
-   "title": "Plate with one 100 x 100 rectangular through hole",
+   "title": "Plate with one 100 x 100 rectangular through hole: the hole is in the mesh",
    "rules": [
-    "IFCX-GEO-003",
-    "IFCX-QTY-004"
+    "IFCX-GEO-007",
+    "IFCX-QTY-004",
+    "IFCX-GEO-008"
    ],
    "polarity": "positive",
    "given": {
     "options": {
      "contract_version": "0.1.0",
-     "schema": "IFC4X3_ADD2",
+     "schema": "IFC4",
      "format": "step",
-     "project_id": "019a7bf0-0000-7000-8000-000000000001",
      "strict": false
+    },
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": []
     },
     "elements": [
      {
@@ -1419,6 +1747,7 @@
       ],
       "material": {
        "grade": "S-synthetic",
+       "standard": "Synthetic standard",
        "density_kg_m3": 7850
       }
      }
@@ -1435,39 +1764,26 @@
    },
    "expected": {
     "status": "ok",
-    "profile": "IfcArbitraryProfileDefWithVoids",
-    "inner_curves": 1,
-    "inner_curve_points_as_stored": [
-     [
-      100,
-      100
-     ],
-     [
-      100,
-      200
-     ],
-     [
-      200,
-      200
-     ],
-     [
-      200,
-      100
-     ],
-     [
-      100,
-      100
-     ]
-    ],
+    "representation": "one IfcTriangulatedFaceSet of the cut mesh",
+    "closed": true,
+    "entities_written": {
+     "IfcArbitraryProfileDefWithVoids": 0,
+     "IfcExtrudedAreaSolid": 0,
+     "IfcBooleanResult": 0,
+     "IfcOpeningElement": 0
+    },
     "quantities": {
      "NetVolume_m3": 0.0049,
-     "NetWeight_kg": 38.465,
-     "GrossVolume": "absent",
-     "GrossWeight": "absent"
+     "GrossVolume": "absent"
     },
-    "booleans_or_openings_written": 0
+    "BeamCraft_Element": {
+     "NetWeightKg": 38.465,
+     "GrossWeightKg": "absent",
+     "HoleCount": 1
+    },
+    "volume_of_file_mesh_mm3": 4900000
    },
-   "derivation": "(1000*500 - 100*100)*10 = 4,900,000 mm3 = 0.0049 m3; 4.9e6 * 7850 / 1e9 = 38.465 kg. The hole is a polygon as stored; a round-hole intent, if any, is not exported (L-03). Gross values would be the box without the hole, which no record publishes, so they are omitted."
+   "derivation": "(1000*500 - 100*100)*10 = 4,900,000 mm3 = 0.0049 m3; 4.9e6 * 7850 / 1e9 = 38.465 kg. The hole polygon, its intent and the extrusion are not exported (L-03, L-04)."
   },
   {
    "case_id": "E01-POS-21",
@@ -1480,10 +1796,13 @@
    "given": {
     "options": {
      "contract_version": "0.1.0",
-     "schema": "IFC4X3_ADD2",
+     "schema": "IFC4",
      "format": "step",
-     "project_id": "019a7bf0-0000-7000-8000-000000000001",
      "strict": false
+    },
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": []
     },
     "elements": [
      {
@@ -1535,6 +1854,7 @@
    "expected": {
     "status": "ok",
     "local_placement": {
+     "relative_to": "building placement",
      "location": [
       100,
       200,
@@ -1551,10 +1871,11 @@
       0
      ],
      "comparison": "dimensionless: absolute 1e-6 at zero, relative 1e-6 otherwise"
-    }
+    },
+    "mesh_unchanged": "element-local coordinates as in E01-POS-16"
    },
    "derivation": "F04-POS-10 pose. R(q) maps (1,0,0) to (0,1,0) and (0,0,1) to (0,0,1) (a +90 degree turn about +Z). The squared norm differs from one by about 2.2e-16, inside the F04 limit.",
-   "needs": "the current P01/P03 slices refuse a non-identity rotation (UNSUPPORTED_GEOMETRY), so this case becomes reachable when that limit is lifted"
+   "needs": "the current P01/P03/A04 slices refuse a non-identity rotation (UNSUPPORTED_GEOMETRY), so this case becomes reachable when that limit is lifted"
   },
   {
    "case_id": "E01-POS-22",
@@ -1602,9 +1923,8 @@
     "revision": "019a7bf0-0000-7000-8000-000000000010",
     "options": {
      "contract_version": "0.1.0",
-     "schema": "IFC4X3_ADD2",
+     "schema": "IFC4",
      "format": "step",
-     "project_id": "019a7bf0-0000-7000-8000-000000000001",
      "strict": false
     },
     "runs": 2,
@@ -1661,10 +1981,13 @@
    "given": {
     "options": {
      "contract_version": "0.1.0",
-     "schema": "IFC4X3_ADD2",
+     "schema": "IFC4",
      "format": "step",
-     "project_id": "019a7bf0-0000-7000-8000-000000000001",
      "strict": false
+    },
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": []
     },
     "elements": [
      {
@@ -1720,12 +2043,12 @@
     "mass_unit": "IfcSIUnit MASSUNIT KILO GRAM",
     "plane_angle_unit": "RADIAN",
     "density_unit": "IfcDerivedUnit MASSDENSITYUNIT kg per m3",
-    "written_length_text": "1000."
+    "written_coordinate_text": "1000."
    }
   },
   {
    "case_id": "E01-POS-26",
-   "title": "REAL text vectors",
+   "title": "REAL text vectors (binary64)",
    "rules": [
     "IFCX-DET-003"
    ],
@@ -1865,26 +2188,43 @@
   },
   {
    "case_id": "E01-POS-29",
-   "title": "Material without a grade is named by its full digest",
+   "title": "Material without a grade is named Unspecified with its digest in a property",
    "rules": [
     "IFCX-MAT-002",
     "IFCX-MAT-003"
    ],
    "polarity": "positive",
    "given": {
-    "material": {
-     "digest": "abababababababababababababababababababababababababababababababab",
-     "density_kg_m3": null
-    }
+    "materials": [
+     {
+      "digest": "abababababababababababababababababababababababababababababababab",
+      "density_kg_m3": null
+     },
+     {
+      "digest": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "density_kg_m3": 7850
+     }
+    ]
    },
    "action": {
     "type": "export_ifc"
    },
    "expected": {
-    "Name": "BC-abababababababababababababababababababababababababababababababab",
-    "MassDensity": "absent",
-    "weights": "absent",
-    "MassStatus": "unknown"
+    "ifc_materials": 2,
+    "Name": [
+     "Unspecified",
+     "Unspecified"
+    ],
+    "BeamCraft_Material.MaterialDigest": [
+     "abababababababababababababababababababababababababababababababab",
+     "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+    ],
+    "MassDensity": [
+     "absent",
+     7850
+    ],
+    "weights_for_first": "absent",
+    "MassStatus_for_first": "unknown"
    }
   },
   {
@@ -1908,12 +2248,18 @@
   },
   {
    "case_id": "E01-POS-31",
-   "title": "A reserved-kind element is skipped and the rest is exported",
+   "title": "A wall is exported as IfcBuildingElementProxy, not skipped",
    "rules": [
-    "IFCX-SCOPE-001"
+    "IFCX-SCOPE-001",
+    "IFCX-SCOPE-006",
+    "IFCX-GEO-002"
    ],
    "polarity": "positive",
    "given": {
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": []
+    },
     "elements": [
      {
       "id": "019a7bf0-0000-7000-8000-000000300010",
@@ -1959,7 +2305,9 @@
      {
       "id": "019a7bf0-0000-7000-8000-000000300040",
       "kind": "wall",
-      "discipline": "arch"
+      "discipline": "arch",
+      "name": "Synthetic wall",
+      "derived_mesh": "present, 8 vertices, 12 triangles"
      }
     ]
    },
@@ -1968,15 +2316,20 @@
    },
    "expected": {
     "status": "ok_with_losses",
-    "exported": 1,
-    "skipped": [
-     {
-      "element_id": "019a7bf0-0000-7000-8000-000000300040",
-      "code": "-",
-      "severity": "warning",
-      "rule": "IFCX-SCOPE-001"
-     }
-    ],
+    "exported": 2,
+    "wall": {
+     "entity": "IfcBuildingElementProxy",
+     "predefined_type": "NOTDEFINED",
+     "ObjectType": "wall",
+     "representation": "Tessellation with Closed unset",
+     "quantity_set": "absent",
+     "BeamCraft_Element.ElementKind": "wall"
+    },
+    "finding": {
+     "rule": "IFCX-SCOPE-001",
+     "element_id": "019a7bf0-0000-7000-8000-000000300040",
+     "severity": "warning"
+    },
     "wall_preserved_in_store": true
    }
   },
@@ -1988,6 +2341,10 @@
    ],
    "polarity": "positive",
    "given": {
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": []
+    },
     "elements": [
      {
       "id": "019a7bf0-0000-7000-8000-000000300010",
@@ -2052,6 +2409,10 @@
    ],
    "polarity": "positive",
    "given": {
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": []
+    },
     "elements": []
    },
    "action": {
@@ -2065,12 +2426,13 @@
      "IfcSite",
      "IfcBuilding"
     ],
-    "products": 0
+    "products": 0,
+    "storeys": 0
    }
   },
   {
    "case_id": "E01-POS-34",
-   "title": "Strict mode succeeds when nothing is skipped, even with unknown mass",
+   "title": "Strict mode succeeds when every element has a mapping and a mesh, even with unknown mass",
    "rules": [
     "IFCX-ERR-005",
     "IFCX-QTY-002"
@@ -2079,10 +2441,13 @@
    "given": {
     "options": {
      "contract_version": "0.1.0",
-     "schema": "IFC4X3_ADD2",
+     "schema": "IFC4",
      "format": "step",
-     "project_id": "019a7bf0-0000-7000-8000-000000000001",
      "strict": true
+    },
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": []
     },
     "elements": [
      {
@@ -2171,10 +2536,13 @@
    "given": {
     "options": {
      "contract_version": "0.1.0",
-     "schema": "IFC4X3_ADD2",
+     "schema": "IFC4",
      "format": "step",
-     "project_id": "019a7bf0-0000-7000-8000-000000000001",
      "strict": false
+    },
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": []
     },
     "elements": [
      {
@@ -2284,9 +2652,8 @@
     "revision": "019a7bf0-0000-7000-8000-000000000010",
     "options": {
      "contract_version": "0.1.0",
-     "schema": "IFC4X3_ADD2",
+     "schema": "IFC4",
      "format": "step",
-     "project_id": "019a7bf0-0000-7000-8000-000000000001",
      "strict": false
     }
    },
@@ -2332,7 +2699,7 @@
    },
    "expected": {
     "FILE_SCHEMA": [
-     "IFC4X3_ADD2"
+     "IFC4"
     ],
     "FILE_NAME_name": "beamcraft-export.ifc",
     "author_and_organization": [
@@ -2345,7 +2712,7 @@
   },
   {
    "case_id": "E01-POS-40",
-   "title": "Independent geometry check: the written solid reproduces the published volume",
+   "title": "Independent geometry check: the volume of the written mesh equals the published volume",
    "rules": [
     "IFCX-GEO-008"
    ],
@@ -2353,10 +2720,13 @@
    "given": {
     "options": {
      "contract_version": "0.1.0",
-     "schema": "IFC4X3_ADD2",
+     "schema": "IFC4",
      "format": "step",
-     "project_id": "019a7bf0-0000-7000-8000-000000000001",
      "strict": false
+    },
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": []
     },
     "elements": [
      {
@@ -2395,6 +2765,7 @@
       },
       "material": {
        "grade": "S-synthetic",
+       "standard": "Synthetic standard",
        "density_kg_m3": 7850
       }
      }
@@ -2404,28 +2775,31 @@
     "type": "export_ifc_then_validate"
    },
    "expected": {
-    "volume_of_solid_from_file_mm3": 240000000,
+    "volume_of_file_mesh_mm3": 240000000,
     "published_volume_mm3": 240000000,
-    "bound": "CR-TOL-001 relative 1e-6",
-    "frame_taken_from": "kernel derivation"
+    "bound": "section 6.4",
+    "closed_shell_check": "every edge in two triangles, once in each direction"
    },
-   "derivation": "The validation tool is chosen by E02 (open question Q-8); it recomputes the volume from the written IfcExtrudedAreaSolid only."
+   "derivation": "Divergence sum (1/6) * sum(v0 . (v1 x v2)) over the written triangles. The coordinates are integers, so binary32 is exact here and the sum is exact."
   },
   {
    "case_id": "E01-POS-41",
-   "title": "No tessellated item, no boolean, no opening in any exported element",
+   "title": "No profile, extrusion, boolean, opening or second representation in any element",
    "rules": [
-    "IFCX-GEO-009",
-    "IFCX-GEO-003"
+    "IFCX-GEO-007",
+    "IFCX-GEO-001"
    ],
    "polarity": "positive",
    "given": {
     "options": {
      "contract_version": "0.1.0",
-     "schema": "IFC4X3_ADD2",
+     "schema": "IFC4",
      "format": "step",
-     "project_id": "019a7bf0-0000-7000-8000-000000000001",
      "strict": false
+    },
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": []
     },
     "elements": [
      {
@@ -2591,10 +2965,6 @@
         ],
         [
          200,
-         200
-        ],
-        [
-         200,
          100
         ]
        ]
@@ -2607,12 +2977,15 @@
    },
    "expected": {
     "entities_of_type": {
-     "IfcTriangulatedFaceSet": 0,
-     "IfcPolygonalFaceSet": 0,
-     "IfcFacetedBrep": 0,
+     "IfcExtrudedAreaSolid": 0,
+     "IfcRectangleProfileDef": 0,
+     "IfcArbitraryClosedProfileDef": 0,
+     "IfcArbitraryProfileDefWithVoids": 0,
      "IfcBooleanResult": 0,
      "IfcOpeningElement": 0,
-     "IfcRelVoidsElement": 0
+     "IfcRelVoidsElement": 0,
+     "IfcPolygonalFaceSet": 0,
+     "IfcFacetedBrep": 0
     },
     "shape_representations_per_element": 1
    }
@@ -2628,10 +3001,13 @@
    "given": {
     "options": {
      "contract_version": "0.1.0",
-     "schema": "IFC4X3_ADD2",
+     "schema": "IFC4",
      "format": "step",
-     "project_id": "019a7bf0-0000-7000-8000-000000000001",
      "strict": false
+    },
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": []
     },
     "elements": [
      {
@@ -2698,7 +3074,7 @@
      "QuantityAlgorithm",
      "HoleCount"
     ],
-    "other_property_sets": 0
+    "other_property_sets_for_a_plate": 0
    }
   },
   {
@@ -2711,10 +3087,13 @@
    "given": {
     "options": {
      "contract_version": "0.1.0",
-     "schema": "IFC4X3_ADD2",
+     "schema": "IFC4",
      "format": "step",
-     "project_id": "019a7bf0-0000-7000-8000-000000000001",
      "strict": false
+    },
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": []
     },
     "elements": [
      {
@@ -2835,15 +3214,559 @@
    },
    "expected": {
     "custom_names": [
-     "BeamCraft_Element"
+     "BeamCraft_Element",
+     "BeamCraft_Material",
+     "BeamCraft_Declared"
     ],
-    "names_starting_Pset_": 0,
+    "names_starting_Pset_": [
+     "Pset_MaterialCommon"
+    ],
     "names_starting_Qto_": [
      "Qto_PlateBaseQuantities",
      "Qto_BeamBaseQuantities",
      "Qto_ColumnBaseQuantities"
     ]
    }
+  },
+  {
+   "case_id": "E01-POS-44",
+   "title": "REAL text vectors (binary32 mesh coordinates)",
+   "rules": [
+    "IFCX-DET-003",
+    "IFCX-GEO-003"
+   ],
+   "polarity": "positive",
+   "given": {
+    "values": [
+     {
+      "binary32_nearest_to": "0.1",
+      "text": "0.1",
+      "text_if_widened_to_binary64": "0.10000000149011612"
+     },
+     {
+      "binary32_nearest_to": "1e-7",
+      "text": "1.E-7",
+      "text_if_widened_to_binary64": "1.0000000116860974E-7"
+     },
+     {
+      "binary32_nearest_to": "3.4028235e38",
+      "text": "3.4028235E38",
+      "text_if_widened_to_binary64": "3.4028234663852886E38"
+     },
+     {
+      "binary32_nearest_to": "1000",
+      "text": "1000.",
+      "text_if_widened_to_binary64": "1000."
+     },
+     {
+      "binary32_nearest_to": "0.3",
+      "text": "0.3",
+      "text_if_widened_to_binary64": "0.30000001192092896"
+     }
+    ]
+   },
+   "action": {
+    "type": "format_real32"
+   },
+   "expected": {
+    "all_match": true
+   },
+   "derivation": "The stored value is a binary32. The text is the shortest decimal that parses back to the same binary32 (0.1 for the binary32 nearest 0.1); widening to binary64 first would print the exact long form shown, which is not used."
+  },
+  {
+   "case_id": "E01-POS-45",
+   "title": "Levels become storeys; assigned elements are contained in them",
+   "rules": [
+    "IFCX-LVL-001",
+    "IFCX-LVL-004",
+    "IFCX-DET-001"
+   ],
+   "polarity": "positive",
+   "given": {
+    "options": {
+     "contract_version": "0.1.0",
+     "schema": "IFC4",
+     "format": "step",
+     "strict": false
+    },
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": [
+      {
+       "level_id": "019a7bf0-0000-7000-8000-000000000101",
+       "name": "Level 0",
+       "elevation_mm": 0
+      },
+      {
+       "level_id": "019a7bf0-0000-7000-8000-000000000102",
+       "name": "Level 1",
+       "elevation_mm": 3000
+      }
+     ]
+    },
+    "elements": [
+     {
+      "id": "019a7bf0-0000-7000-8000-000000300010",
+      "kind": "plate",
+      "name": "Synthetic plate",
+      "contour_points_mm": [
+       [
+        0,
+        0,
+        0
+       ],
+       [
+        1000,
+        0,
+        0
+       ],
+       [
+        1000,
+        500,
+        0
+       ],
+       [
+        0,
+        500,
+        0
+       ]
+      ],
+      "thickness_mm": 10,
+      "placement": {
+       "translation_mm": [
+        0,
+        0,
+        0
+       ],
+       "orientation_xyzw": [
+        0,
+        0,
+        0,
+        1
+       ]
+      },
+      "level": "019a7bf0-0000-7000-8000-000000000101"
+     },
+     {
+      "id": "019a7bf0-0000-7000-8000-000000300011",
+      "kind": "beam",
+      "name": "Synthetic beam",
+      "axis_points_mm": [
+       [
+        0,
+        0,
+        0
+       ],
+       [
+        4000,
+        0,
+        0
+       ]
+      ],
+      "profile": {
+       "kind": "rectangle",
+       "width_mm": 200,
+       "height_mm": 300
+      },
+      "placement": {
+       "translation_mm": [
+        0,
+        0,
+        0
+       ],
+       "orientation_xyzw": [
+        0,
+        0,
+        0,
+        1
+       ]
+      },
+      "level": "019a7bf0-0000-7000-8000-000000000102"
+     }
+    ]
+   },
+   "action": {
+    "type": "export_ifc"
+   },
+   "expected": {
+    "status": "ok",
+    "storeys": [
+     {
+      "Name": "Level 0",
+      "Elevation": 0,
+      "placement_location": [
+       0,
+       0,
+       0
+      ]
+     },
+     {
+      "Name": "Level 1",
+      "Elevation": 3000,
+      "placement_location": [
+       0,
+       0,
+       3000
+      ]
+     }
+    ],
+    "storey_global_id_of_level_0": "2886jimw3h7h75lUh8nRj7",
+    "storeys_aggregated_in_building_by_one_relationship": true,
+    "containment": {
+     "Level 0": [
+      "019a7bf0-0000-7000-8000-000000300010"
+     ],
+     "Level 1": [
+      "019a7bf0-0000-7000-8000-000000300011"
+     ]
+    },
+    "element_placement_relative_to": "building placement",
+    "element_locations_unchanged": true
+   },
+   "derivation": "The storey GlobalId is E(first 16 bytes of SHA-256(BCIFC-GUID 0x00 storey 0x00 ProjectId LevelId)). A level adds no arithmetic to any element number.",
+   "needs": "dependency D2 (Level concept) must exist"
+  },
+  {
+   "case_id": "E01-POS-46",
+   "title": "An element without a level is contained in the building",
+   "rules": [
+    "IFCX-LVL-003"
+   ],
+   "polarity": "positive",
+   "given": {
+    "options": {
+     "contract_version": "0.1.0",
+     "schema": "IFC4",
+     "format": "step",
+     "strict": false
+    },
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": [
+      {
+       "level_id": "019a7bf0-0000-7000-8000-000000000101",
+       "name": "Level 0",
+       "elevation_mm": 0
+      },
+      {
+       "level_id": "019a7bf0-0000-7000-8000-000000000102",
+       "name": "Level 1",
+       "elevation_mm": 3000
+      }
+     ]
+    },
+    "elements": [
+     {
+      "id": "019a7bf0-0000-7000-8000-000000300010",
+      "kind": "plate",
+      "name": "Synthetic plate",
+      "contour_points_mm": [
+       [
+        0,
+        0,
+        0
+       ],
+       [
+        1000,
+        0,
+        0
+       ],
+       [
+        1000,
+        500,
+        0
+       ],
+       [
+        0,
+        500,
+        0
+       ]
+      ],
+      "thickness_mm": 10,
+      "placement": {
+       "translation_mm": [
+        0,
+        0,
+        0
+       ],
+       "orientation_xyzw": [
+        0,
+        0,
+        0,
+        1
+       ]
+      },
+      "level": "019a7bf0-0000-7000-8000-000000000101"
+     },
+     {
+      "id": "019a7bf0-0000-7000-8000-000000300012",
+      "kind": "column",
+      "name": "Synthetic column",
+      "axis_points_mm": [
+       [
+        0,
+        0,
+        0
+       ],
+       [
+        0,
+        0,
+        3000
+       ]
+      ],
+      "profile": {
+       "kind": "rectangle",
+       "width_mm": 200,
+       "height_mm": 300
+      },
+      "placement": {
+       "translation_mm": [
+        0,
+        0,
+        0
+       ],
+       "orientation_xyzw": [
+        0,
+        0,
+        0,
+        1
+       ]
+      }
+     }
+    ]
+   },
+   "action": {
+    "type": "export_ifc"
+   },
+   "expected": {
+    "status": "ok",
+    "containment": {
+     "Level 0": [
+      "019a7bf0-0000-7000-8000-000000300010"
+     ],
+     "IfcBuilding": [
+      "019a7bf0-0000-7000-8000-000000300012"
+     ]
+    }
+   },
+   "needs": "dependency D2"
+  },
+  {
+   "case_id": "E01-POS-47",
+   "title": "Project-level GlobalIds come from the stored ProjectId",
+   "rules": [
+    "IFCX-PRJ-002",
+    "IFCX-GUID-004"
+   ],
+   "polarity": "positive",
+   "given": {
+    "store_a": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001"
+    },
+    "revisions": [
+     "019a7bf0-0000-7000-8000-000000000010",
+     "019a7bf0-0000-7000-8000-000000000011"
+    ],
+    "store_b": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000002"
+    }
+   },
+   "action": {
+    "type": "export_ifc"
+   },
+   "expected": {
+    "IfcProject_and_IfcSite_global_ids_equal_across_revisions_of_a": true,
+    "global_ids_of_a_and_b_differ": true,
+    "IfcSite_global_id_of_a": "2ghTuGpW1EXNtW6xLArrhQ"
+   },
+   "needs": "dependency D1 (stored ProjectId)"
+  },
+  {
+   "case_id": "E01-POS-48",
+   "title": "Declared section values are separate, labelled properties",
+   "rules": [
+    "IFCX-DECL-001",
+    "IFCX-DECL-002",
+    "IFCX-PSET-002"
+   ],
+   "polarity": "positive",
+   "given": {
+    "options": {
+     "contract_version": "0.1.0",
+     "schema": "IFC4",
+     "format": "step",
+     "strict": false
+    },
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": []
+    },
+    "elements": [
+     {
+      "id": "019a7bf0-0000-7000-8000-000000300011",
+      "kind": "beam",
+      "name": "Synthetic beam",
+      "axis_points_mm": [
+       [
+        0,
+        0,
+        0
+       ],
+       [
+        4000,
+        0,
+        0
+       ]
+      ],
+      "profile": {
+       "kind": "rectangle",
+       "width_mm": 200,
+       "height_mm": 300,
+       "designation": "Synthetic-RECT-200x300",
+       "standard": "Synthetic standard",
+       "area_mm2": 60000,
+       "mass_per_meter_kg": 471,
+       "surface_per_meter_m2": 1.0
+      },
+      "placement": {
+       "translation_mm": [
+        0,
+        0,
+        0
+       ],
+       "orientation_xyzw": [
+        0,
+        0,
+        0,
+        1
+       ]
+      }
+     }
+    ]
+   },
+   "action": {
+    "type": "export_ifc"
+   },
+   "expected": {
+    "BeamCraft_Declared": {
+     "DeclaredDesignation": "Synthetic-RECT-200x300",
+     "DeclaredStandard": "Synthetic standard",
+     "DeclaredSectionAreaMm2": 60000,
+     "DeclaredMassPerMeterKg": 471,
+     "DeclaredSurfacePerMeterM2": 1.0,
+     "description_says_declared": true
+    },
+    "quantity_set_contains_declared_values": false,
+    "values_converted_or_checked": false
+   }
+  },
+  {
+   "case_id": "E01-POS-49",
+   "title": "A plate without a mesh is exported without a representation, not skipped",
+   "rules": [
+    "IFCX-GEO-004",
+    "IFCX-SCOPE-006"
+   ],
+   "polarity": "positive",
+   "given": {
+    "options": {
+     "contract_version": "0.1.0",
+     "schema": "IFC4",
+     "format": "step",
+     "strict": false
+    },
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": []
+    },
+    "elements": [
+     {
+      "id": "019a7bf0-0000-7000-8000-000000300050",
+      "kind": "plate",
+      "name": "Pentagon",
+      "contour_points_mm": [
+       [
+        0,
+        0,
+        0
+       ],
+       [
+        1000,
+        0,
+        0
+       ],
+       [
+        1000,
+        500,
+        0
+       ],
+       [
+        500,
+        800,
+        0
+       ],
+       [
+        0,
+        500,
+        0
+       ]
+      ],
+      "thickness_mm": 10,
+      "placement": {
+       "translation_mm": [
+        0,
+        0,
+        0
+       ],
+       "orientation_xyzw": [
+        0,
+        0,
+        0,
+        1
+       ]
+      }
+     }
+    ]
+   },
+   "action": {
+    "type": "export_ifc"
+   },
+   "expected": {
+    "status": "ok_with_losses",
+    "exported": 1,
+    "entity": "IfcPlate",
+    "representation": null,
+    "ObjectPlacement": "written",
+    "finding": {
+     "rule": "IFCX-GEO-004",
+     "f04_code_for_strict": "UNSUPPORTED_GEOMETRY"
+    },
+    "quantities": "absent"
+   },
+   "derivation": "A valid pentagon is an accepted authored input with unsupported evaluation until A02 (F04 section 3, P-1), so it has no derived mesh."
+  },
+  {
+   "case_id": "E01-POS-50",
+   "title": "Altiro Desktop validation of a written file is an E02 gate",
+   "rules": [
+    "IFCX-VAL-001"
+   ],
+   "polarity": "positive",
+   "given": {
+    "file": "export of the beam, column, plate and plate with a hole",
+    "tool": "Altiro Desktop (owner's choice)"
+   },
+   "action": {
+    "type": "validate_with_owner_tool"
+   },
+   "expected": {
+    "runs_locally_as_separate_process": "to be confirmed",
+    "file_uploaded_over_network": false,
+    "reads_file_without_errors": true,
+    "element_count_equals_report": true,
+    "global_ids_equal_report": true
+   },
+   "needs": "the admission questions of section 17 (local-only operation, licence, oracle role) are open"
   },
   {
    "case_id": "E01-NEG-01",
@@ -3046,6 +3969,10 @@
    ],
    "polarity": "negative",
    "given": {
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": []
+    },
     "elements": [
      {
       "id": "019a7bf0-0000-7000-8000-000000300010",
@@ -3162,34 +4089,38 @@
   },
   {
    "case_id": "E01-NEG-13",
-   "title": "Tampered derived GlobalId attribute",
+   "title": "A stored bim:ifcGlobalId attribute is ignored",
    "rules": [
     "IFCX-GUID-008"
    ],
    "polarity": "negative",
    "given": {
     "element": "019a7bf0-0000-7000-8000-000000200001",
-    "derived_attribute": {
+    "layer_contains": {
      "bim:ifcGlobalId": "01cdlm001m080000000005"
     }
    },
    "action": {
-    "type": "verify_derived_layer"
+    "type": "export_ifc"
    },
    "expected": {
-    "outcome": "rejected",
-    "code": "INTEGRITY_ERROR"
-   },
-   "needs": "the derived attribute is a proposal (open question Q-6)"
+    "file_global_id": "01cdlm001m080000008001",
+    "stored_attribute_preserved_unchanged": true,
+    "stored_attribute_trusted": false
+   }
   },
   {
    "case_id": "E01-NEG-14",
-   "title": "Valid non-rectangular plate is skipped",
+   "title": "An element with a malformed id refuses the export",
    "rules": [
-    "IFCX-GEO-004"
+    "IFCX-GUID-002"
    ],
    "polarity": "negative",
    "given": {
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": []
+    },
     "elements": [
      {
       "id": "019a7bf0-0000-7000-8000-000000300010",
@@ -3233,49 +4164,8 @@
       }
      },
      {
-      "id": "019a7bf0-0000-7000-8000-000000300050",
-      "kind": "plate",
-      "contour_points_mm": [
-       [
-        0,
-        0,
-        0
-       ],
-       [
-        1000,
-        0,
-        0
-       ],
-       [
-        1000,
-        500,
-        0
-       ],
-       [
-        500,
-        800,
-        0
-       ],
-       [
-        0,
-        500,
-        0
-       ]
-      ],
-      "thickness_mm": 10,
-      "placement": {
-       "translation_mm": [
-        0,
-        0,
-        0
-       ],
-       "orientation_xyzw": [
-        0,
-        0,
-        0,
-        1
-       ]
-      }
+      "id": "019A7BF0-0000-7000-8000-000000300077",
+      "kind": "plate"
      }
     ]
    },
@@ -3283,21 +4173,15 @@
     "type": "export_ifc"
    },
    "expected": {
-    "status": "ok_with_losses",
-    "exported": 1,
-    "skipped": [
-     {
-      "element_id": "019a7bf0-0000-7000-8000-000000300050",
-      "code": "UNSUPPORTED_GEOMETRY",
-      "rule": "IFCX-GEO-004"
-     }
-    ]
+    "status": "failed",
+    "primary_code": "INVALID_ID",
+    "file_written": false
    },
-   "derivation": "A valid pentagon is an accepted authored input with unsupported evaluation until A02 (F04 section 3, P-1)."
+   "needs": "loaded content only; the revision verifier normally refuses it earlier"
   },
   {
    "case_id": "E01-NEG-15",
-   "title": "Strict mode refuses on a skipped element",
+   "title": "Strict mode refuses an element without a mesh",
    "rules": [
     "IFCX-ERR-005",
     "IFCX-GEO-004"
@@ -3306,10 +4190,13 @@
    "given": {
     "options": {
      "contract_version": "0.1.0",
-     "schema": "IFC4X3_ADD2",
+     "schema": "IFC4",
      "format": "step",
-     "project_id": "019a7bf0-0000-7000-8000-000000000001",
      "strict": true
+    },
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": []
     },
     "elements": [
      {
@@ -3371,12 +4258,16 @@
   },
   {
    "case_id": "E01-NEG-16",
-   "title": "Member with a non-rectangle profile is skipped",
+   "title": "Member with a non-rectangle profile has no representation",
    "rules": [
-    "IFCX-GEO-005"
+    "IFCX-GEO-004"
    ],
    "polarity": "negative",
    "given": {
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": []
+    },
     "elements": [
      {
       "id": "019a7bf0-0000-7000-8000-000000300011",
@@ -3418,51 +4309,32 @@
    },
    "expected": {
     "status": "ok_with_losses",
-    "skipped": [
-     {
-      "code": "UNSUPPORTED_GEOMETRY",
-      "rule": "IFCX-GEO-005"
-     }
-    ]
+    "exported": 1,
+    "entity": "IfcBeam",
+    "representation": null,
+    "finding": {
+     "rule": "IFCX-GEO-004"
+    }
    },
    "needs": "loaded content only; no other profile family is authored yet (A07)"
   },
   {
    "case_id": "E01-NEG-17",
-   "title": "Placement with scale is skipped",
+   "title": "Proxy with a placement of scale form has no placement and no representation",
    "rules": [
-    "IFCX-PLC-002"
+    "IFCX-PLC-002",
+    "IFCX-SCOPE-001"
    ],
    "polarity": "negative",
    "given": {
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": []
+    },
     "elements": [
      {
-      "id": "019a7bf0-0000-7000-8000-000000300010",
-      "kind": "plate",
-      "name": "Synthetic plate",
-      "contour_points_mm": [
-       [
-        0,
-        0,
-        0
-       ],
-       [
-        1000,
-        0,
-        0
-       ],
-       [
-        1000,
-        500,
-        0
-       ],
-       [
-        0,
-        500,
-        0
-       ]
-      ],
-      "thickness_mm": 10,
+      "id": "019a7bf0-0000-7000-8000-000000300041",
+      "kind": "wall",
       "placement": {
        "translation_mm": [
         0,
@@ -3474,7 +4346,8 @@
         1,
         1
        ]
-      }
+      },
+      "derived_mesh": "present"
      }
     ]
    },
@@ -3483,22 +4356,24 @@
    },
    "expected": {
     "status": "ok_with_losses",
-    "skipped": [
-     {
-      "code": "UNSUPPORTED_GEOMETRY",
-      "rule": "IFCX-PLC-002"
-     }
-    ]
+    "entity": "IfcBuildingElementProxy",
+    "ObjectPlacement": null,
+    "representation": null,
+    "f04_code_for_strict": "UNSUPPORTED_GEOMETRY"
    }
   },
   {
    "case_id": "E01-NEG-18",
-   "title": "Stored quaternion outside the F04 norm band is skipped",
+   "title": "Stored quaternion of a plate outside the F04 norm band refuses the export",
    "rules": [
     "IFCX-PLC-003"
    ],
    "polarity": "negative",
    "given": {
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": []
+    },
     "elements": [
      {
       "id": "019a7bf0-0000-7000-8000-000000300010",
@@ -3547,24 +4422,24 @@
     "type": "export_ifc"
    },
    "expected": {
-    "status": "ok_with_losses",
-    "skipped": [
-     {
-      "code": "INVALID_ARGUMENT",
-      "rule": "IFCX-PLC-003"
-     }
-    ]
+    "status": "failed",
+    "primary_code": "INVALID_ARGUMENT",
+    "file_written": false
    },
    "needs": "loaded content only; authoring already refuses it"
   },
   {
    "case_id": "E01-NEG-19",
-   "title": "Non-finite stored shape number is skipped",
+   "title": "Non-finite coordinate in a derived mesh refuses the export",
    "rules": [
     "IFCX-GEO-006"
    ],
    "polarity": "negative",
    "given": {
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": []
+    },
     "elements": [
      {
       "id": "019a7bf0-0000-7000-8000-000000300010",
@@ -3592,7 +4467,7 @@
         0
        ]
       ],
-      "thickness_mm": "non-finite in loaded content",
+      "thickness_mm": 10,
       "placement": {
        "translation_mm": [
         0,
@@ -3605,7 +4480,8 @@
         0,
         1
        ]
-      }
+      },
+      "derived_mesh": "one coordinate is NaN"
      }
     ]
    },
@@ -3613,13 +4489,9 @@
     "type": "export_ifc"
    },
    "expected": {
-    "status": "ok_with_losses",
-    "skipped": [
-     {
-      "code": "NON_FINITE_NUMBER",
-      "rule": "IFCX-GEO-006"
-     }
-    ]
+    "status": "failed",
+    "primary_code": "INTEGRITY_ERROR",
+    "file_written": false
    },
    "needs": "loaded content only; the layer validator normally refuses it earlier"
   },
@@ -3627,7 +4499,7 @@
    "case_id": "E01-NEG-20",
    "title": "Stored mesh differs from the kernel re-evaluation",
    "rules": [
-    "IFCX-GEO-007"
+    "IFCX-GEO-005"
    ],
    "polarity": "negative",
    "given": {
@@ -3731,7 +4603,8 @@
     "weights": "absent",
     "VolumeStatus": "stale",
     "MassStatus": "stale"
-   }
+   },
+   "derivation": "The mesh check of GEO-005 would also fail for such a layer; this case isolates the quantity rule with a mesh that matches."
   },
   {
    "case_id": "E01-NEG-25",
@@ -3839,7 +4712,7 @@
   },
   {
    "case_id": "E01-NEG-30",
-   "title": "Unsupported schema identifier",
+   "title": "Unsupported schema identifier (IFC4X3_ADD2)",
    "rules": [
     "IFCX-VER-001"
    ],
@@ -3847,9 +4720,8 @@
    "given": {
     "options": {
      "contract_version": "0.1.0",
-     "schema": "IFC2X3",
+     "schema": "IFC4X3_ADD2",
      "format": "step",
-     "project_id": "019a7bf0-0000-7000-8000-000000000001",
      "strict": false
     }
    },
@@ -3872,9 +4744,8 @@
    "given": {
     "options": {
      "contract_version": "0.2.0",
-     "schema": "IFC4X3_ADD2",
+     "schema": "IFC4",
      "format": "step",
-     "project_id": "019a7bf0-0000-7000-8000-000000000001",
      "strict": false
     }
    },
@@ -3897,9 +4768,8 @@
    "given": {
     "options": {
      "contract_version": "0.1.0",
-     "schema": "IFC4X3_ADD2",
+     "schema": "IFC4",
      "format": "ifcxml",
-     "project_id": "019a7bf0-0000-7000-8000-000000000001",
      "strict": false
     }
    },
@@ -3914,19 +4784,13 @@
   },
   {
    "case_id": "E01-NEG-33",
-   "title": "Malformed project id",
+   "title": "Malformed explicit revision id",
    "rules": [
     "IFCX-REQ-001"
    ],
    "polarity": "negative",
    "given": {
-    "options": {
-     "contract_version": "0.1.0",
-     "schema": "IFC4X3_ADD2",
-     "format": "step",
-     "project_id": "019A7BF0-0000-7000-8000-000000000001",
-     "strict": false
-    }
+    "revision_id": "019A7BF0-0000-7000-8000-000000000010"
    },
    "action": {
     "type": "export_ifc"
@@ -3939,21 +4803,16 @@
   },
   {
    "case_id": "E01-NEG-34",
-   "title": "Missing project id",
+   "title": "A project-id option does not exist",
    "rules": [
     "IFCX-REQ-002"
    ],
    "polarity": "negative",
    "given": {
-    "options": {
-     "contract_version": "0.1.0",
-     "schema": "IFC4X3_ADD2",
-     "format": "step",
-     "strict": false
-    }
+    "cli": "export-ifc --store ROOT --out FILE --project-id 019a7bf0-0000-7000-8000-000000000001"
    },
    "action": {
-    "type": "export_ifc"
+    "type": "invoke"
    },
    "expected": {
     "status": "failed",
@@ -3990,7 +4849,7 @@
    "polarity": "negative",
    "given": {
     "store": "one layer blob missing",
-    "plus": "a skipped element elsewhere"
+    "plus": "an element without a mesh elsewhere"
    },
    "action": {
     "type": "export_ifc"
@@ -4191,7 +5050,7 @@
    ],
    "polarity": "negative",
    "given": {
-    "skipped_elements": 300
+    "elements_with_findings": 300
    },
    "action": {
     "type": "export_ifc"
@@ -4202,25 +5061,205 @@
     "truncated": true,
     "per_element_table_complete": true
    },
-   "needs": "a synthetic store with 300 skipped elements"
+   "needs": "a synthetic store with 300 proxy elements"
   },
   {
    "case_id": "E01-NEG-47",
-   "title": "Writer allocation is bounded",
+   "title": "A mesh above the writer cap refuses the export",
    "rules": [
+    "IFCX-LIM-005",
     "IFCX-LIM-003"
    ],
    "polarity": "negative",
    "given": {
-    "plate_with_holes": "64 holes of 1024 points"
+    "plate_with_holes": "derived mesh of 262,145 vertices"
    },
    "action": {
     "type": "export_ifc"
    },
    "expected": {
-    "status": "ok_or_LIMIT_EXCEEDED",
+    "status": "failed",
+    "primary_code": "LIMIT_EXCEEDED",
     "panic": false,
     "allocation_sized_by_unchecked_input": false
+   },
+   "needs": "a synthetic derived layer"
+  },
+  {
+   "case_id": "E01-NEG-48",
+   "title": "A revision without a stored ProjectId is refused",
+   "rules": [
+    "IFCX-PRJ-001"
+   ],
+   "polarity": "negative",
+   "given": {
+    "store": {
+     "project_id_stored": null
+    },
+    "elements": [
+     {
+      "id": "019a7bf0-0000-7000-8000-000000300010",
+      "kind": "plate",
+      "name": "Synthetic plate",
+      "contour_points_mm": [
+       [
+        0,
+        0,
+        0
+       ],
+       [
+        1000,
+        0,
+        0
+       ],
+       [
+        1000,
+        500,
+        0
+       ],
+       [
+        0,
+        500,
+        0
+       ]
+      ],
+      "thickness_mm": 10,
+      "placement": {
+       "translation_mm": [
+        0,
+        0,
+        0
+       ],
+       "orientation_xyzw": [
+        0,
+        0,
+        0,
+        1
+       ]
+      }
+     }
+    ]
+   },
+   "action": {
+    "type": "export_ifc"
+   },
+   "expected": {
+    "status": "failed",
+    "primary_code": "DEPENDENCY_UNAVAILABLE",
+    "file_written": false,
+    "project_id_invented_or_taken_from_option": false
+   },
+   "needs": "stores of today have no ProjectId; dependency D1 changes that"
+  },
+  {
+   "case_id": "E01-NEG-49",
+   "title": "An element assigned to an unknown level refuses the export",
+   "rules": [
+    "IFCX-LVL-002"
+   ],
+   "polarity": "negative",
+   "given": {
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": [
+      {
+       "level_id": "019a7bf0-0000-7000-8000-000000000101",
+       "name": "Level 0",
+       "elevation_mm": 0
+      },
+      {
+       "level_id": "019a7bf0-0000-7000-8000-000000000102",
+       "name": "Level 1",
+       "elevation_mm": 3000
+      }
+     ]
+    },
+    "elements": [
+     {
+      "id": "019a7bf0-0000-7000-8000-000000300010",
+      "kind": "plate",
+      "name": "Synthetic plate",
+      "contour_points_mm": [
+       [
+        0,
+        0,
+        0
+       ],
+       [
+        1000,
+        0,
+        0
+       ],
+       [
+        1000,
+        500,
+        0
+       ],
+       [
+        0,
+        500,
+        0
+       ]
+      ],
+      "thickness_mm": 10,
+      "placement": {
+       "translation_mm": [
+        0,
+        0,
+        0
+       ],
+       "orientation_xyzw": [
+        0,
+        0,
+        0,
+        1
+       ]
+      },
+      "level": "019a7bf0-0000-7000-8000-0000000001ff"
+     }
+    ]
+   },
+   "action": {
+    "type": "export_ifc"
+   },
+   "expected": {
+    "status": "failed",
+    "primary_code": "DANGLING_RELATIONSHIP",
+    "file_written": false
+   },
+   "needs": "dependency D2"
+  },
+  {
+   "case_id": "E01-NEG-50",
+   "title": "A mesh with a quadrilateral face has no representation",
+   "rules": [
+    "IFCX-GEO-004"
+   ],
+   "polarity": "negative",
+   "given": {
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": []
+    },
+    "elements": [
+     {
+      "id": "019a7bf0-0000-7000-8000-000000300042",
+      "kind": "wall",
+      "derived_mesh": "one face with 4 vertices"
+     }
+    ]
+   },
+   "action": {
+    "type": "export_ifc"
+   },
+   "expected": {
+    "status": "ok_with_losses",
+    "entity": "IfcBuildingElementProxy",
+    "representation": null,
+    "finding": {
+     "rule": "IFCX-GEO-004"
+    },
+    "face_triangulated_by_the_exporter": false
    }
   }
  ]
