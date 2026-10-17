@@ -102,6 +102,34 @@ impl Footprint {
         Self::for_create_with(id, Some(profile), material)
     }
 
+    /// The footprint of `CopyElement` (P05): it reads the absence of the new ID, the source's
+    /// lifecycle and every authored group the copy takes from it, and the pinned definitions
+    /// (profile and material); it writes what `CreatePlate` writes for the new ID. The source is
+    /// never written.
+    pub fn for_copy(
+        source: ElementId,
+        new_id: ElementId,
+        profile: Option<ContentDigest>,
+        material: Option<ContentDigest>,
+    ) -> Result<Self, CommandError> {
+        let mut footprint = Self::for_create_with(new_id, profile, material)?;
+        for group in [
+            Group::Lifecycle,
+            Group::Label,
+            Group::ShapeInputs,
+            Group::Placement,
+            Group::MaterialRef,
+            Group::Relationship,
+        ] {
+            footprint.reads.insert(Entry {
+                target: Target::Element(source),
+                group,
+            });
+        }
+        footprint.check_bound()?;
+        Ok(footprint)
+    }
+
     fn for_create_with(
         id: ElementId,
         profile: Option<ContentDigest>,
@@ -136,12 +164,15 @@ impl Footprint {
     /// The footprint of `UpdateElement` (F04 section 8): it reads the element's lifecycle and the
     /// groups it changes, reads a newly pinned definition, and writes only the groups of the
     /// supported fields it changes, plus the derived group when the shape or the material does.
-    /// A rename touches the label alone.
+    /// A rename touches the label alone. A move reads the local shape and the placement and writes
+    /// the placement plus the derived group (the world-measurement invalidation of F04 section 8;
+    /// the element-local body is not rebuilt).
     pub fn for_update(
         id: ElementId,
         name: bool,
         material: bool,
         shape: bool,
+        placement: bool,
         new_material: Option<ContentDigest>,
     ) -> Result<Self, CommandError> {
         let entry = |group| Entry {
@@ -172,7 +203,37 @@ impl Footprint {
             reads.insert(entry(Group::ShapeInputs));
             writes.extend([entry(Group::ShapeInputs), entry(Group::Derived)]);
         }
+        if placement {
+            reads.extend([entry(Group::ShapeInputs), entry(Group::Placement)]);
+            writes.extend([entry(Group::Placement), entry(Group::Derived)]);
+        }
         let footprint = Self { reads, writes };
+        footprint.check_bound()?;
+        Ok(footprint)
+    }
+
+    /// The footprint of `DeleteElement` (P08): it reads the element's lifecycle and the
+    /// relationships (the incoming-relationship index that decides whether deletion is allowed),
+    /// and writes the element's whole authored state and its derived group, because removing the
+    /// prim removes every group it holds. Pinned definitions are not read or written: the
+    /// element's links to them go away with it and the definitions are immutable.
+    pub fn for_delete(id: ElementId) -> Result<Self, CommandError> {
+        let entry = |group| Entry {
+            target: Target::Element(id),
+            group,
+        };
+        let footprint = Self {
+            reads: BTreeSet::from([entry(Group::Lifecycle), entry(Group::Relationship)]),
+            writes: BTreeSet::from([
+                entry(Group::Lifecycle),
+                entry(Group::Label),
+                entry(Group::ShapeInputs),
+                entry(Group::Placement),
+                entry(Group::MaterialRef),
+                entry(Group::Relationship),
+                entry(Group::Derived),
+            ]),
+        };
         footprint.check_bound()?;
         Ok(footprint)
     }
@@ -315,6 +376,40 @@ mod tests {
             group: Group::Label,
         });
         assert!(!f.covers_writes(&wider));
+    }
+
+    #[test]
+    fn a_move_writes_the_placement_and_the_derived_invalidation_only() {
+        let f = Footprint::for_update(id(5), false, false, false, true, None).unwrap();
+        let groups: BTreeSet<_> = f.writes().iter().map(|e| e.group).collect();
+        assert_eq!(groups, BTreeSet::from([Group::Placement, Group::Derived]));
+        assert!(f.reads().iter().any(|e| e.group == Group::Placement));
+        assert!(f.reads().iter().any(|e| e.group == Group::ShapeInputs));
+        // Moving one element does not conflict with moving another, and conflicts with a rename
+        // only through nothing: the label group is not written.
+        let other = Footprint::for_update(id(6), false, false, false, true, None).unwrap();
+        assert!(!f.conflicts_with(&other));
+        let rename = Footprint::for_update(id(5), true, false, false, false, None).unwrap();
+        assert!(!f.conflicts_with(&rename));
+    }
+
+    #[test]
+    fn a_delete_reads_the_links_and_writes_the_whole_element() {
+        let f = Footprint::for_delete(id(5)).unwrap();
+        let writes: BTreeSet<_> = f.writes().iter().map(|e| e.group).collect();
+        assert_eq!(writes.len(), 7);
+        assert!(
+            f.writes()
+                .iter()
+                .all(|e| e.target == Target::Element(id(5)))
+        );
+        assert!(f.reads().iter().any(|e| e.group == Group::Relationship));
+        // It conflicts with anything that touches the same element and with nothing else.
+        let update = Footprint::for_update(id(5), true, false, false, false, None).unwrap();
+        assert!(f.conflicts_with(&update));
+        assert!(!f.conflicts_with(&Footprint::for_delete(id(6)).unwrap()));
+        // A copy of the element reads its lifecycle, so it cannot run against the delete.
+        assert!(f.conflicts_with(&Footprint::for_copy(id(5), id(7), None, None).unwrap()));
     }
 
     #[test]

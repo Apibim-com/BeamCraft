@@ -39,6 +39,14 @@ P03 adds the straight beam and column (`kernel::member::straight_member`, `model
 
 P04 adds `model::command::UpdateElement`, `engine::{update, quantity}`, `beamcraft_cli::edit` and the CLI command `update-element`: a name, material or thickness edit rewrites only the groups it changes, and volume and mass are stored as optional attributes beside the derived mesh with their own signatures, so a reader can tell current from stale ([design note](design/p04-quantities-update.md)).
 
+P05 adds `model::command::CopyElement`, `engine::copy`, `beamcraft_cli::copy` and the CLI command `copy-element`: a new element with a fresh id, the source's authored inputs and pinned definitions, and the same body and mesh digest; the source is only read ([design note](design/p05-copy-element.md)).
+
+P06 adds `beamcraft_cli::workspace` and the CLI commands `workspace-create`, `workspace-status` and `workspace-publish`: a personal workspace is a separate draft revision store forked from the published head, and it reaches the published head only by a fast-forward publish through the same verifier ([design note](design/p06-workspace.md)).
+
+P07 adds `beamcraft_cli::history`, `RevisionStore::info_at`/`open_at` in the host and the CLI commands `workspace-undo`, `workspace-redo` and `workspace-history`: an undo commits the layers of the earlier state as a new verified draft revision (so element, mesh and stored quantities return together), and the undo and redo stacks are derived from the revision log plus an append-only `undo.log` ([design note](design/p07-undo-redo.md)).
+
+P08 adds `Footprint::for_delete` and the placement patch of `UpdateElement` in the engine, `Change::Delete` in the layer engine, `beamcraft_cli::delete` and the CLI command `delete-element`: a move rewrites only the placement and never rebuilds the body, and a delete removes the whole element from both layers and is refused while another element links to it ([design note](design/p08-move-delete.md)).
+
 [Module boundaries (F08)](contracts/module-boundaries-v0.1.md) give the exact crate and module path
 of every contract area, the allowed dependency edges and which crates are planned. A test and CI
 enforce them.

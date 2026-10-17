@@ -1413,3 +1413,120 @@ fn replacing_a_mesh_drops_only_the_quantity_record_and_reports_every_removal() {
     assert!(text.contains("future:note"));
     assert!(!text.contains("bim:volumeMm3") && !text.contains("bim:massKg"));
 }
+
+#[test]
+fn delete_removes_the_whole_element_in_both_layers_and_nothing_else() {
+    let (mut a, o) = populated();
+    let before = snapshot(&a, &o.context);
+    assert!(
+        before
+            .iter()
+            .any(|p| p.element_id.as_deref() == Some(PLATE))
+    );
+    let prepared = a
+        .prepare(
+            batch(&o.context, vec![Change::Delete { id: PLATE.into() }]),
+            &control(),
+        )
+        .unwrap();
+    // The footprint is the whole element: every group is written, the lifecycle and the
+    // relationships are read.
+    let groups = |set: &std::collections::BTreeSet<Footprint>| {
+        set.iter()
+            .map(|f| (f.identity.clone(), f.group))
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    assert_eq!(prepared.writes.len(), 7);
+    assert!(
+        groups(&prepared.writes)
+            .iter()
+            .all(|(identity, _)| identity == PLATE)
+    );
+    assert!(prepared.reads.iter().any(|f| f.group == Group::Lifecycle));
+    assert!(
+        prepared
+            .reads
+            .iter()
+            .any(|f| f.group == Group::Relationship)
+    );
+    // Every supported field of the element is reported as removed.
+    assert!(
+        prepared
+            .opinions
+            .iter()
+            .all(|i| i.element_id == PLATE && i.opinion == Opinion::Remove)
+    );
+    let installed = a
+        .install(
+            &o.context,
+            &prepared.token,
+            &prepared.op_id,
+            Decision::Accepted,
+            &control(),
+        )
+        .unwrap();
+    let after = snapshot(&a, &installed.context);
+    assert!(!after.iter().any(|p| p.element_id.as_deref() == Some(PLATE)));
+    assert!(!after.iter().any(|p| p.path.starts_with(&path(PLATE))));
+    // The other element and the unknown content are exactly as they were.
+    let member = |prims: &[Prim]| {
+        prims
+            .iter()
+            .filter(|p| p.element_id.as_deref() == Some(MEMBER))
+            .map(|p| Prim {
+                sources: Vec::new(),
+                ..p.clone()
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(member(&after), member(&before));
+    let exported = a.export(&installed.context, &control()).unwrap();
+    let authored = exported.iter().find(|a| a.name == "authored.usda").unwrap();
+    let parsed = openusd::usda::parse(std::str::from_utf8(&authored.bytes).unwrap()).unwrap();
+    assert!(parsed.has_spec(&openusd::sdf::Path::new("/Unknown.future:link").unwrap()));
+    assert!(!parsed.has_spec(&openusd::sdf::Path::new(&path(PLATE)).unwrap()));
+    let derived = exported.iter().find(|a| a.name == "derived.usda").unwrap();
+    let parsed = openusd::usda::parse(std::str::from_utf8(&derived.bytes).unwrap()).unwrap();
+    assert!(
+        !parsed.has_spec(&openusd::sdf::Path::new(&format!("{}/Geometry", path(PLATE))).unwrap())
+    );
+    let request = request(
+        exported,
+        &["root.usda", "authored.usda", "derived.usda", "weak.usda"],
+    );
+    assert!(validate_layers(request, schema_identity().unwrap(), &control()).is_ok());
+
+    // The element is gone, so a second delete is not found, and a delete cannot share a batch
+    // with another change of the same element.
+    assert_eq!(
+        a.prepare(
+            batch(
+                &installed.context,
+                vec![Change::Delete { id: PLATE.into() }]
+            ),
+            &control()
+        )
+        .unwrap_err()
+        .code,
+        ErrorCode::NotFound
+    );
+    let (mut b, o) = populated();
+    assert_eq!(
+        b.prepare(
+            batch(
+                &o.context,
+                vec![
+                    Change::Delete { id: MEMBER.into() },
+                    Change::Label {
+                        id: MEMBER.into(),
+                        name: "x".into()
+                    }
+                ]
+            ),
+            &control()
+        )
+        .unwrap_err()
+        .code,
+        ErrorCode::MalformedCommand
+    );
+}

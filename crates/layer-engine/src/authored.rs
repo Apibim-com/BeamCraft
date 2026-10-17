@@ -291,11 +291,19 @@ pub enum Change {
     },
     /// Transfer a complete validated engine result to the derived layer.
     Mesh(Mesh),
+    /// Remove the whole element: its authored prim in the authored layer and its result prims in
+    /// the derived layer. The caller proves with [`Author::check_delete`] that nothing links to
+    /// it; the definitions it pinned are immutable and stay.
+    Delete {
+        /// Full target UUIDv7.
+        id: String,
+    },
 }
 impl Change {
     pub(super) fn key(&self) -> (&str, &'static str) {
         match self {
             Self::Create(e) => (&e.id, "lifecycle"),
+            Self::Delete { id } => (id, "lifecycle"),
             Self::Label { id, .. } => (id, "bim:name"),
             Self::Contour { id, .. } => (id, "steel:plate:contourPointsMm"),
             Self::Thickness { id, .. } => (id, "steel:plate:thicknessMm"),

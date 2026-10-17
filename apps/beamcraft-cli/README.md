@@ -237,3 +237,72 @@ clears the material, so the mass becomes unknown. An empty patch is `INVALID_ARG
 and mass are stored beside the derived mesh with their own signatures; `plate-inspect` reports
 `stored_quantities` as `current`, `stale` or `missing`, and the publish-time verifier refuses a
 stale record with `INTEGRITY_ERROR`. See the [design note](../../docs/design/p04-quantities-update.md).
+`--translation X,Y,Z` (P08) moves the element: it sets the absolute placement translation and keeps
+the rotation, rewrites the authored layer alone and never rebuilds the body, its mesh or its stored
+quantities.
+
+## P08 move and delete
+
+```text
+beamcraft update-element --store ROOT --id UUID --translation X,Y,Z [ids as above]
+beamcraft delete-element --store ROOT --id UUID
+  [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
+```
+
+A move is the placement patch of `UpdateElement`: the footprint writes the placement and the
+derived invalidation group only, the derived layer is byte for byte unchanged and the stored
+volume and mass stay `current`. `delete-element` removes one plate or member from both layers and
+nothing else (the other elements, the unknown content and the definitions it pinned stay). It is
+refused with `DEPENDENCY_CONFLICT` while another element links to it (no cascade, no dangling
+link), `NOT_FOUND` for an unknown element, and the same `--op-id` is a replay or `OP_ID_REUSE`.
+See the [design note](../../docs/design/p08-move-delete.md).
+
+## P05 copy-element
+
+```text
+beamcraft copy-element --store ROOT --id SOURCE_UUID [--name TEXT] [--offset X,Y,Z] [--new-id UUID]
+  [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
+```
+
+`copy-element` creates one new plate or member with a fresh id and the source's authored inputs;
+the label defaults to the source's and `--offset` is added to the placement translation. The body
+is element-local, so the copy has the same mesh digest, volume and mass; the pinned profile and
+material are shared by digest. The source is only read (the footprint says so and is checked).
+Editing the copy later rebuilds only the copy. A reused identity is `DUPLICATE_ID`, an unknown
+source `NOT_FOUND`, and the same `--op-id` is a replay or `OP_ID_REUSE`. See the
+[design note](../../docs/design/p05-copy-element.md).
+
+## P06 personal workspaces
+
+```text
+beamcraft workspace-create  --store PUBLISHED --workspace-dir DIR [--user-id UUID] [--workspace-id UUID]
+  [--revision-id UUID] [--op-id UUID]
+beamcraft workspace-status  --store PUBLISHED --workspace-dir DIR
+beamcraft workspace-publish --store PUBLISHED --workspace-dir DIR
+```
+
+A workspace is a directory that is its own revision store, forked from the published head. Every
+edit command (`create-plate`, `update-element`, `copy-element`, ...) works on it with
+`--store DIR`; the published store is untouched until `workspace-publish`. Two workspaces of one
+user are two directories and stay independent. `workspace-status` reports the unsent draft
+revisions and whether the base is still the published head. `workspace-publish` (the published revision id is the draft head's id, so an interrupted publish is retried as the same request) is a fast-forward
+only: a moved published head is `BASE_REVISION_MISMATCH`, a fresh fork is `INVALID_ARGUMENT`, and
+repeating a finished or interrupted publish is a replay. There is no authentication and no merge.
+See the [design note](../../docs/design/p06-workspace.md).
+
+## P07 undo and redo
+
+```text
+beamcraft workspace-undo    --workspace-dir DIR [--revision-id UUID] [--op-id UUID]
+beamcraft workspace-redo    --workspace-dir DIR [--revision-id UUID] [--op-id UUID]
+beamcraft workspace-history --workspace-dir DIR
+```
+
+Every accepted command is one revision of the draft and therefore one undo unit. `workspace-undo`
+commits a **new** verified revision whose layers are those of the state before the last unit, so
+the element, its mesh and its stored quantities come back together; `workspace-redo` restores the
+undone state. The stacks are derived from the revision log and the append-only `undo.log` (an edit
+after an undo discards the redo stack), so they survive a restart and a crash between an intent
+and its commit; the same `--op-id` replays or finishes a step. Nothing to undo or redo is
+`INVALID_ARGUMENT`; undo does not reach before the fork and does not touch the published store.
+See the [design note](../../docs/design/p07-undo-redo.md).
