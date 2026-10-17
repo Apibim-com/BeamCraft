@@ -112,144 +112,6 @@ and the F08 table/creation note. The boundary checker and CI derive the portable
 crate list from that table, so neither their code nor CI needs an edit. G01,
 frozen F04/F06, ROADMAP.md, root Cargo.toml and other crates stay untouched.
 
-## G06: topology, orientation and measurements
-
-G06 adds a verification and measurement foundation that works on **any** BCMESH01
-blob or vertex/index buffer of finite input, not only on G02 boxes. It is original
-scalar code from public mathematics, adds no dependency, and keeps every G02 file,
-test and result unchanged. Plan row (owner): own checks of shells, orientation,
-volume and a bounded spatial index; an open or unsupported mesh never gets an exact
-status; independent invariants and transforms; headless API. (G04 design section 8
-lists a different, unconfirmed G06 allocation, "issue pilot-cut requirements"; the
-owner's row wins and pilot cuts belong to G09. Its G05-style items "analytic
-measurements, mass/status handling and independent mesh checks" are covered in part
-here: status/mass rules, an independent mesh cross-check of sealed plates and exact
-mesh measurements; contours, extrusion and triangulation remain G05.)
-
-| Module | Content |
-|--------|---------|
-| `trimesh` | `TriMesh`: F06 section 6/10 structural gate for `BCMESH01` blobs (`from_blob`, `to_blob`) and buffers (`from_buffers`), caps (4096 vertices, 8192 triangles, 1024 face-table entries, 16 shells, 213,024 bytes, coordinates at most 4e9 mm), rigid `transformed`, local scale `tolerance` |
-| `topology` | `analyze` / `analyze_with` / `analyze_with_tolerance`: sealed `Analysis` with `ShellStatus`, `Defects`, per-shell `ShellReport` (Euler characteristic, genus, orientation, signed-volume enclosure); `classify_point` for certified meshes; `Limits` (explicit caps) |
-| `measure` | `measure`: volume, area, centroid enclosures and exact vertex bounds, gated by the analysis; F06 section 8 `QuantityStatus`, `mass_status`, `analytic_mass_kg`; `cross_check_plate` (independent re-read of a sealed G02 plate) |
-| `spatial` | `Aabb` and `BoxIndex`: static median-split box tree (leaf size 4, at most 8192 items and 16,384 nodes, depth under 16, no recursion), overlap queries and overlapping-pair enumeration with explicit pair/result caps |
-| `verdict`, `enclosure` | `MeshCode` (stable `GEO_` tokens with F04 mapping), `Fault`, `MeshError`, `ShellStatus`, `Uncertainty`; outward-rounded `Enclosure` |
-
-`bigint`, `exact` and `intersect` are crate-private: fixed-capacity (72 x u64, no heap,
-no recursion) integers, exact `orient2d`/`orient3d` and closed-set segment/triangle
-contact.
-
-**Method.** (1) Structural gate, then undirected-edge incidence by sorting directed
-edges (`O(T log T)`, no welding, no healing): boundary, three-or-more-triangle,
-same-direction and duplicate-triangle detection, vertex fans by corner union-find,
-shells by shared vertices, Euler characteristic `V - E + F` and genus `(2 - chi)/2`
-per closed shell. (2) Degeneracy under the F06 section 4 policy: a repeated index, an
-edge strictly shorter than `eps_geom`, exactly collinear corners or an unused vertex.
-(3) Exact signed volume per shell: every binary64 coordinate is an integer multiple
-of a power of two, so `sum(v0 . (v1 x v2))` is computed exactly in integers and
-enclosed once; its sign is the shell orientation (G04 section 2: exact sums, no
-epsilon sign). (4) Self-intersection by two closed triangles meeting exactly when an
-edge of one meets the other, decided from exact orientation signs (a floating-point
-filter whose error bound is derived in `exact`, with exact integer fallback), over
-candidate pairs from the box index; pairs sharing an edge or one vertex are classified
-by that shared feature, so touching, crossing, folding and coincident faces are all
-certified defects, and a one-binary-step gap is certified disjoint. (5) A shell inside
-another is detected by exact crossing parity of axis rays from up to eight vertices
-(six directions each); a grazing probe is skipped, never guessed.
-
-**Verdict and precedence.** `Certified` needs every proof. Otherwise, in order:
-`Degenerate`, `NonManifold`, `Open`, `InconsistentOrientation`, `Inward` (negative
-shell volume, including a cavity shell), `Degenerate` (exactly zero volume),
-`Overlapping`, `Uncertain`. `Uncertain` carries its reason (pair cap, index cap,
-exact-predicate budget, numeric range, containment) and is never exact. Codes:
-open/non-manifold/misoriented -> `GEO_MESH_NOT_CLOSED`, inward -> `GEO_MESH_INWARD`,
-degenerate/overlapping/uncertain -> `GEO_MESH_NOT_CERTIFIED` (numeric range ->
-`GEO_NUMERIC_UNCERTAIN`), all `UNSUPPORTED_GEOMETRY`; structural failures are
-`GEO_NON_FINITE`, `GEO_ABOVE_LIMIT`, `GEO_BUFFER_LIMIT`, `GEO_TOPOLOGY_LIMIT`,
-`GEO_BLOB_INVALID`, `GEO_CANCELLED`. These live in `verdict`; `diagnostic::Code` (G02)
-is intentionally not edited and can absorb them later.
-
-**Measurements and statuses.** Only a `Certified` analysis yields volume, area and
-centroid, as outward-rounded enclosures of the polyhedron the given binary64
-vertices define (area and centroid use exact cross/moment integers, one rounding
-enclosure per triangle). They are mesh-computed values, never engineering
-quantities: `MeshMeasurement::quantity_status()` is always `unsupported` (F06
-section 8: a mesh from another source gets no engineering quantity), its mass is
-`unsupported` even with an absent density (F06-NEG-18), and bounds are exact vertex
-extents, not a volume. `mass_status` implements the section 8 precedence (unsupported,
-then unknown for absent density, then stale, then current); `analytic_mass_kg` keeps
-`fl(fl(V*density)/1e9)` and refuses an underflowed zero. Transforms: `TriMesh::transformed`
-applies the production `RigidTransform` per vertex (approximate frame certificate, so
-exact rigidity is not claimed); exact motions (dyadic translation, quarter turns,
-axis permutations) preserve volume bit for bit in tests, power-of-two and integer
-scale factors scale V and S as `k^3` and `k^2`, and a mirrored mesh is `Inward`.
-
-**Tolerance.** `TriMesh::tolerance` derives the F06 `eps_geom = max(0.001, 2^-22 L)`
-with `L` the largest distance from vertex 0 (G01 norm, capped at the 2,000,000 mm
-plate cap) because a bare mesh has no body inputs. A caller that knows the body
-passes its own `Tolerance` to `analyze_with_tolerance`; `cross_check_plate` does.
-Known consequence, covered by a test: for a plate at exactly its inclusive minimum
-thickness the plate rule (thickness excluded from `D`) is sound while the generic rule
-is slightly larger and reports `Degenerate`.
-
-**Work bounds and cancellation.** No recursion; allocations are sized by validated
-counts only. `Limits::DEFAULT`: 2^20 candidate pairs, 16,384 index nodes, 2^18 exact
-fallbacks; exceeding any gives `Uncertain`. Polls (stage that would run next):
-`Validation` at entry, `Build` before incidence, `Checks` before degeneracy and
-orientation, then for a clean closed outward mesh a `Checks` poll before the index,
-one per index build and about every 1024 units of pair work, one per nested-shell
-probe pair, and a final `Quantities` poll before sealing. `measure_with_cancel`
-polls `Validation`, then `Quantities` before the pass and every 512 triangles. A
-cancelled call returns only `MeshError` (no partial result); nothing polls after
-sealing.
-
-**Tests** (all original; oracles are voxel counting, closed forms, `std` maps and
-integer/f64 scalar code, never production math): `tests/g06_shells.rs` (28: box,
-prism, tunnel genus 1 and 2 by Euler, disjoint shells, 16/17 shell cap, shuffled and
-relabelled copies, repeat identity, 120 seeded voxel sets against an independent
-verdict, open, duplicate, three-face edge, edge/vertex contact, flipped triangle,
-inverted and cavity shells, collapsed/collinear/short/unused, overlap, touching,
-nested, budgets, large slab, point classification, blob and buffer validation at
-and one above every cap, cancellation at every poll), `tests/g06_measure.rs` (16:
-closed-form volume/area/centroid, refusal without values, mass rules, exact and
-inexact rigid motions, scale, far-from-origin cancellation, measurement
-cancellation, G02 cross-check), `tests/g06_fuzz.rs` (5 seeded hostile-input suites:
-mutated blobs, random soups, surgery on valid shells, perturbed vertices, maximum
-size soups; no panic, deterministic output, and every `Certified` verdict checked by
-the independent oracle), `tests/g06_fixtures.rs` and 22 unit tests of the
-integer, interval, predicate, contact and index code.
-
-| Case or fixture | G06 obligation exercised |
-|-----------------|--------------------------|
-| F06-POS-27 | Blob exactly at every cap is structurally valid and round-trips |
-| F06-NEG-11 to 14 | Counts above caps and 32-bit-overflowing counts rejected before any size |
-| F06-NEG-15, 30 | Length disagreement and empty blob are `GEO_BLOB_INVALID` |
-| F06-NEG-18 | Open mesh: three boundary edges, Euler 1, no value, mass unsupported |
-| F06-NEG-19 | Overlapping closed boxes: Euler 4, `Overlapping`, the sum 2000 never reported |
-| F06-NEG-20 | Fully inverted box: signed volume -5e4 enclosed, `Inward` |
-| G03 `g03.plate.*` with expectation `ok` (22) | Sealed G02 blob re-read, certified under the plate tolerance, counts/Euler/bounds exact, exact rational volume inside the mesh enclosure |
-| G03 invalid and limit rows (26) | Not run: the real builder rejects them, so no mesh exists |
-| G03 `large-positive`, `large-negative`, `large-mixed`, `large-minimum-cube` (4, `unverified`, no expectations) | Not run: origin placement is outside the dimension-only builder and no reference exists |
-| G03 `through-hole`, `cavity`, `thin-wall`, `nonrectangular` | Not run: need G05 contours and G09 cuts; not faked. A hand-made hollow body is refused as `Inward` by `tests/g06_shells.rs`, which is not a fixture claim |
-
-**Not implemented, stated plainly.** Ray first-hit and ray-based picking (point
-classification of a certified mesh exists; F06 pick queries stay analytic and belong
-to later tasks); healing, welding or repair; cavities and holes as valid solids
-(negative shells are refused); exact area/centroid (enclosures only); engineering
-quantities for non-analytic meshes (by contract); member and contour meshes (G05);
-cross-target byte conformance, which native tests do not show; the `cargo deny` and
-`wasm32-unknown-unknown` checks, which were not available in the authoring
-environment. The crate uses only `std` plus `geom`/`model`, so no new licence or
-WASM-incompatible dependency is introduced, but the WASM claim awaits CI.
-
-**Headless and provenance.** The kernel calls are the engine API; the CLI command and
-the engine/CLI end-to-end gate stay owned by P01, as for G02. References are public
-mathematics: the divergence theorem (signed tetrahedron volume), Euler-Poincare for
-closed orientable surfaces, standard orientation-determinant predicates and the
-two-closed-triangles-meet-iff-an-edge-meets-the-other fact, IEEE 754 rounding
-(correctly rounded operations bound each widening by one representable step), and
-F06 sections 4, 6, 8 and 10 with G04 sections 2-4. No third-party geometry crate,
-source, test or data, and no commercial-product material, was used.
-
 ## G05: profiles, extrusion and triangulation (`profile` module)
 
 G05 is the base for BeamCraft's own round and oval holes: a planar profile (one outer
@@ -414,3 +276,310 @@ orientation determinant (with a standard rounding-error filter derived here); ea
 bridging as publicly described by D. Eberly ("Triangulation by Ear Clipping", method only, no code
 read); Taylor series for sine and cosine; the linear-interpolation error bound; F06 0.1.0 sections 2-6,
 10; F04 section 3 P-1. No third-party code, crate, fixture or asset, and no Tekla/Trimble material.
+
+## G06: topology, orientation and measurements
+
+G06 adds a verification and measurement foundation that works on **any** BCMESH01
+blob or vertex/index buffer of finite input, not only on G02 boxes. It is original
+scalar code from public mathematics, adds no dependency, and keeps every G02 file,
+test and result unchanged. Plan row (owner): own checks of shells, orientation,
+volume and a bounded spatial index; an open or unsupported mesh never gets an exact
+status; independent invariants and transforms; headless API. (G04 design section 8
+lists a different, unconfirmed G06 allocation, "issue pilot-cut requirements"; the
+owner's row wins and pilot cuts belong to G09. Its G05-style items "analytic
+measurements, mass/status handling and independent mesh checks" are covered in part
+here: status/mass rules, an independent mesh cross-check of sealed plates and exact
+mesh measurements; contours, extrusion and triangulation remain G05.)
+
+| Module | Content |
+|--------|---------|
+| `trimesh` | `TriMesh`: F06 section 6/10 structural gate for `BCMESH01` blobs (`from_blob`, `to_blob`) and buffers (`from_buffers`), caps (4096 vertices, 8192 triangles, 1024 face-table entries, 16 shells, 213,024 bytes, coordinates at most 4e9 mm), rigid `transformed`, local scale `tolerance` |
+| `topology` | `analyze` / `analyze_with` / `analyze_with_tolerance`: sealed `Analysis` with `ShellStatus`, `Defects`, per-shell `ShellReport` (Euler characteristic, genus, orientation, signed-volume enclosure); `classify_point` for certified meshes; `Limits` (explicit caps) |
+| `measure` | `measure`: volume, area, centroid enclosures and exact vertex bounds, gated by the analysis; F06 section 8 `QuantityStatus`, `mass_status`, `analytic_mass_kg`; `cross_check_plate` (independent re-read of a sealed G02 plate) |
+| `spatial` | `Aabb` and `BoxIndex`: static median-split box tree (leaf size 4, at most 8192 items and 16,384 nodes, depth under 16, no recursion), overlap queries and overlapping-pair enumeration with explicit pair/result caps |
+| `verdict`, `enclosure` | `MeshCode` (stable `GEO_` tokens with F04 mapping), `Fault`, `MeshError`, `ShellStatus`, `Uncertainty`; outward-rounded `Enclosure` |
+
+`bigint`, `exact` and `intersect` are crate-private: fixed-capacity (72 x u64, no heap,
+no recursion) integers, exact `orient2d`/`orient3d` and closed-set segment/triangle
+contact.
+
+**Method.** (1) Structural gate, then undirected-edge incidence by sorting directed
+edges (`O(T log T)`, no welding, no healing): boundary, three-or-more-triangle,
+same-direction and duplicate-triangle detection, vertex fans by corner union-find,
+shells by shared vertices, Euler characteristic `V - E + F` and genus `(2 - chi)/2`
+per closed shell. (2) Degeneracy under the F06 section 4 policy: a repeated index, an
+edge strictly shorter than `eps_geom`, exactly collinear corners or an unused vertex.
+(3) Exact signed volume per shell: every binary64 coordinate is an integer multiple
+of a power of two, so `sum(v0 . (v1 x v2))` is computed exactly in integers and
+enclosed once; its sign is the shell orientation (G04 section 2: exact sums, no
+epsilon sign). (4) Self-intersection by two closed triangles meeting exactly when an
+edge of one meets the other, decided from exact orientation signs (a floating-point
+filter whose error bound is derived in `exact`, with exact integer fallback), over
+candidate pairs from the box index; pairs sharing an edge or one vertex are classified
+by that shared feature, so touching, crossing, folding and coincident faces are all
+certified defects, and a one-binary-step gap is certified disjoint. (5) A shell inside
+another is detected by exact crossing parity of axis rays from up to eight vertices
+(six directions each); a grazing probe is skipped, never guessed.
+
+**Verdict and precedence.** `Certified` needs every proof. Otherwise, in order:
+`Degenerate`, `NonManifold`, `Open`, `InconsistentOrientation`, `Inward` (negative
+shell volume, including a cavity shell), `Degenerate` (exactly zero volume),
+`Overlapping`, `Uncertain`. `Uncertain` carries its reason (pair cap, index cap,
+exact-predicate budget, numeric range, containment) and is never exact. Codes:
+open/non-manifold/misoriented -> `GEO_MESH_NOT_CLOSED`, inward -> `GEO_MESH_INWARD`,
+degenerate/overlapping/uncertain -> `GEO_MESH_NOT_CERTIFIED` (numeric range ->
+`GEO_NUMERIC_UNCERTAIN`), all `UNSUPPORTED_GEOMETRY`; structural failures are
+`GEO_NON_FINITE`, `GEO_ABOVE_LIMIT`, `GEO_BUFFER_LIMIT`, `GEO_TOPOLOGY_LIMIT`,
+`GEO_BLOB_INVALID`, `GEO_CANCELLED`. These live in `verdict`; `diagnostic::Code` (G02)
+is intentionally not edited and can absorb them later.
+
+**Measurements and statuses.** Only a `Certified` analysis yields volume, area and
+centroid, as outward-rounded enclosures of the polyhedron the given binary64
+vertices define (area and centroid use exact cross/moment integers, one rounding
+enclosure per triangle). They are mesh-computed values, never engineering
+quantities: `MeshMeasurement::quantity_status()` is always `unsupported` (F06
+section 8: a mesh from another source gets no engineering quantity), its mass is
+`unsupported` even with an absent density (F06-NEG-18), and bounds are exact vertex
+extents, not a volume. `mass_status` implements the section 8 precedence (unsupported,
+then unknown for absent density, then stale, then current); `analytic_mass_kg` keeps
+`fl(fl(V*density)/1e9)` and refuses an underflowed zero. Transforms: `TriMesh::transformed`
+applies the production `RigidTransform` per vertex (approximate frame certificate, so
+exact rigidity is not claimed); exact motions (dyadic translation, quarter turns,
+axis permutations) preserve volume bit for bit in tests, power-of-two and integer
+scale factors scale V and S as `k^3` and `k^2`, and a mirrored mesh is `Inward`.
+
+**Tolerance.** `TriMesh::tolerance` derives the F06 `eps_geom = max(0.001, 2^-22 L)`
+with `L` the largest distance from vertex 0 (G01 norm, capped at the 2,000,000 mm
+plate cap) because a bare mesh has no body inputs. A caller that knows the body
+passes its own `Tolerance` to `analyze_with_tolerance`; `cross_check_plate` does.
+Known consequence, covered by a test: for a plate at exactly its inclusive minimum
+thickness the plate rule (thickness excluded from `D`) is sound while the generic rule
+is slightly larger and reports `Degenerate`.
+
+**Work bounds and cancellation.** No recursion; allocations are sized by validated
+counts only. `Limits::DEFAULT`: 2^20 candidate pairs, 16,384 index nodes, 2^18 exact
+fallbacks; exceeding any gives `Uncertain`. Polls (stage that would run next):
+`Validation` at entry, `Build` before incidence, `Checks` before degeneracy and
+orientation, then for a clean closed outward mesh a `Checks` poll before the index,
+one per index build and about every 1024 units of pair work, one per nested-shell
+probe pair, and a final `Quantities` poll before sealing. `measure_with_cancel`
+polls `Validation`, then `Quantities` before the pass and every 512 triangles. A
+cancelled call returns only `MeshError` (no partial result); nothing polls after
+sealing.
+
+**Tests** (all original; oracles are voxel counting, closed forms, `std` maps and
+integer/f64 scalar code, never production math): `tests/g06_shells.rs` (28: box,
+prism, tunnel genus 1 and 2 by Euler, disjoint shells, 16/17 shell cap, shuffled and
+relabelled copies, repeat identity, 120 seeded voxel sets against an independent
+verdict, open, duplicate, three-face edge, edge/vertex contact, flipped triangle,
+inverted and cavity shells, collapsed/collinear/short/unused, overlap, touching,
+nested, budgets, large slab, point classification, blob and buffer validation at
+and one above every cap, cancellation at every poll), `tests/g06_measure.rs` (16:
+closed-form volume/area/centroid, refusal without values, mass rules, exact and
+inexact rigid motions, scale, far-from-origin cancellation, measurement
+cancellation, G02 cross-check), `tests/g06_fuzz.rs` (5 seeded hostile-input suites:
+mutated blobs, random soups, surgery on valid shells, perturbed vertices, maximum
+size soups; no panic, deterministic output, and every `Certified` verdict checked by
+the independent oracle), `tests/g06_fixtures.rs` and 22 unit tests of the
+integer, interval, predicate, contact and index code.
+
+| Case or fixture | G06 obligation exercised |
+|-----------------|--------------------------|
+| F06-POS-27 | Blob exactly at every cap is structurally valid and round-trips |
+| F06-NEG-11 to 14 | Counts above caps and 32-bit-overflowing counts rejected before any size |
+| F06-NEG-15, 30 | Length disagreement and empty blob are `GEO_BLOB_INVALID` |
+| F06-NEG-18 | Open mesh: three boundary edges, Euler 1, no value, mass unsupported |
+| F06-NEG-19 | Overlapping closed boxes: Euler 4, `Overlapping`, the sum 2000 never reported |
+| F06-NEG-20 | Fully inverted box: signed volume -5e4 enclosed, `Inward` |
+| G03 `g03.plate.*` with expectation `ok` (22) | Sealed G02 blob re-read, certified under the plate tolerance, counts/Euler/bounds exact, exact rational volume inside the mesh enclosure |
+| G03 invalid and limit rows (26) | Not run: the real builder rejects them, so no mesh exists |
+| G03 `large-positive`, `large-negative`, `large-mixed`, `large-minimum-cube` (4, `unverified`, no expectations) | Not run: origin placement is outside the dimension-only builder and no reference exists |
+| G03 `through-hole`, `cavity`, `thin-wall`, `nonrectangular` | Not run: need G05 contours and G09 cuts; not faked. A hand-made hollow body is refused as `Inward` by `tests/g06_shells.rs`, which is not a fixture claim |
+
+**Not implemented, stated plainly.** Ray first-hit and ray-based picking (point
+classification of a certified mesh exists; F06 pick queries stay analytic and belong
+to later tasks); healing, welding or repair; cavities and holes as valid solids
+(negative shells are refused); exact area/centroid (enclosures only); engineering
+quantities for non-analytic meshes (by contract); member and contour meshes (G05);
+cross-target byte conformance, which native tests do not show; the `cargo deny` and
+`wasm32-unknown-unknown` checks, which were not available in the authoring
+environment. The crate uses only `std` plus `geom`/`model`, so no new licence or
+WASM-incompatible dependency is introduced, but the WASM claim awaits CI.
+
+**Headless and provenance.** The kernel calls are the engine API; the CLI command and
+the engine/CLI end-to-end gate stay owned by P01, as for G02. References are public
+mathematics: the divergence theorem (signed tetrahedron volume), Euler-Poincare for
+closed orientable surfaces, standard orientation-determinant predicates and the
+two-closed-triangles-meet-iff-an-edge-meets-the-other fact, IEEE 754 rounding
+(correctly rounded operations bound each widening by one representable step), and
+F06 sections 4, 6, 8 and 10 with G04 sections 2-4. No third-party geometry crate,
+source, test or data, and no commercial-product material, was used.
+
+## G09: pilot plane cut and through hole (`ops` module)
+
+G09 adds two **bounded** operations over solids that the G06 certification already accepted: a
+plane cut that keeps one half-space and caps the section, and a through hole that subtracts a
+straight prism from a Z-prism body. It is a pilot for A03 (plane cut) and A04 (hole), **not a
+general boolean kernel**: general robust CSG (curved or oblique cutters, several outer section
+loops, boundary-crossing or oblique holes, coplanar or tangent contact, non-manifold results)
+remains separate work, and every such request is refused with a typed failure and no partial
+result. It adds no dependency (no boolean, clipping or triangulation crate), no asset and no I/O
+and stays pure and WASM-compatible; the exact predicates, enclosures and G05 triangulation are
+reused, not rewritten. The kernel call is the headless API; the CLI commands and the engine/CLI
+end-to-end gate are owned by P01, A03 and A04 (as for G02, G05 and G06), and this task adds no
+engine or CLI command.
+
+Owner row (wins): G09 / M, pilot of cuts and boolean operations, depends on G05 and G06; own
+bounded operations over agreed solids; independent fixtures verify volume, bounds, topology and
+failure; not a port of foreign functions. The kernel design section 8 lists G09 as "numeric
+robustness, query/E2E validation and determinism evidence". Here: numeric robustness (exact side
+predicate, bounded budgets, hostile fuzz) and determinism evidence (repeat identity and
+input-order invariance of the bytes, native only) are done; **query/E2E validation is not**
+(queries are P01; no mock result is claimed) and cross-target byte conformance is not shown
+(`wasm32-unknown-unknown` and `cargo deny` are not installed in the authoring environment, so
+neither was run).
+
+### API
+
+| Item | Purpose |
+|------|---------|
+| `Body` | Immutable certified solid: BCMESH01 mesh, local face ids, outward unit normals (`None` for a curved face), the body's own `Tolerance`, its G06 `Analysis` and volume enclosure. `Body::from_plate`, `from_extrusion`, `from_mesh` admit a G02 plate, a G05 extrusion or any mesh with a face table; only a certified, element-local single shell is admitted: a world-space mesh is refused (ody.space) because operations seal local blobs, and every supplied planar normal must agree with its face's area vector (cosine at least 0.999999, ace_table.entry) |
+| `plane_cut`, `plane_cut_with` | Cut by `CutPlane { point, normal }`, `Keep::{Positive, Negative}`, an ordinal naming the cap, `OpLimits` and a cancellation callback |
+| `through_hole`, `through_hole_with` | Subtract `HoleCutter { cavity, z_from_mm, z_to_mm, ordinal }` (a G05 `Cavity`: circle, slot, ellipse or polygon, clockwise) |
+| `OpResult` | Sealed result: `body()` (feed it to the next operation), `blob()` and `mesh_digest()` (SHA-256), face table and normals, `removed_faces()`, volume enclosure (mm3 and m3), analytic volume (holes), bounds, Euler characteristic, genus, `plane_deviation_mm()` (cuts), `OpStats` |
+| `OpFailure` | `OpCode` (F06 `GEO_` tokens plus two proposed), `OpField`, `OpDefect` (fixed tokens), stage, and the first G05 admission diagnostic when a cap was refused; never geometry or user text |
+| `OpLimits` | `max_triangles` 8192, `max_loops` 64, `max_cap_points` 2048, `max_exact_predicates` 2^18 and the G06 `Limits` of the certification |
+
+### Method
+
+* **Side of the plane.** For every vertex `normal . (v - point)` has an exact sign: a binary64
+  evaluation decides it when its error bound (`8u` times the permanent) allows, otherwise
+  fixed-capacity integers over the scaled binary64 values (the G06 `bigint` and `scaled`) decide
+  it, charged against `max_exact_predicates`. Nothing is decided by an epsilon; `0` is an exact
+  zero. A scaled normal is the same plane.
+* **Clip.** Every triangle is clipped against the closed half-space (one-plane
+  Sutherland-Hodgman): vertices on the plane are used as they are, a strictly crossing edge gets
+  one new vertex whose every coordinate is the correctly rounded (nearest, ties to even) value of
+  the exact rational intersection: a seed from enclosures is moved by exact integer comparisons with
+  the neighbouring midpoints until it is proved nearest, so it depends neither on numbering nor on
+  rounded interpolation and never leaves the edge;
+  quads are split along the diagonal at the smallest vertex.
+* **Cap.** The boundary of the clipped surface is the section. Its loops are chained, rotated to
+  their smallest vertex, split into the single outer loop (exact positive area) and holes, admitted
+  and ear-clipped by G05 in a frame fixed by the plane alone (dominant normal axis), so both halves
+  of a plane and the spellings `(n, d)` and `(-n, -d)` share one triangulation and the two halves'
+  volumes add up exactly. The cap is planar **only up to the rounding of the new vertices**; the
+  largest distance of a new vertex from the plane is certified (exact value, enclosed) and
+  returned as `plane_deviation_mm`.
+* **Hole.** The body must be a straight prism: its extreme heights `z0 < z1`, one outward horizontal
+  cap face at each and every other triangle exactly vertical (exact zero projected area; extra
+  vertices at intermediate heights on walls are fine). The caps are re-triangulated with the cavity
+  added to their boundary loops (existing loops are kept vertex for vertex, so the walls stay
+  valid), the cutter's walls are added over `[z0, z1]`, and the cavity must lie strictly inside the
+  outline and clear of other holes by the G05 admission (exact signs, `eps_geom` floors,
+  inclusive minimum). The cutter must reach past both caps by at least `eps_geom` of the body.
+* **Seal.** Every candidate is canonicalised (unused vertices and faces dropped, vertices sorted by
+  coordinates, triangles rotated and sorted by face), encoded, parsed back by the G06 blob gate and
+  certified by the G06 analysis (closed, 2-manifold, outward, non-degenerate, free of
+  self-intersection, one shell). Holes also require Euler characteristic exactly 2 less (genus +1)
+  and a mesh volume that overlaps the analytic enclosure `V_body - |area| * thickness` (both exact
+  integers, enclosed once). Anything else is refused; there is no healing.
+
+### Refusals (all typed, none partial)
+
+| Situation | Failure |
+|-----------|---------|
+| Body not a certified single shell | `GEO_MESH_*` code of the verdict; several shells `GEO_OP_UNSUPPORTED` / `body.shells` |
+| Plane with NaN/inf, component above 4e9, zero normal, normal below 1e-100 | `GEO_NON_FINITE`, `GEO_ABOVE_LIMIT`, `GEO_NOT_POSITIVE`, `GEO_NUMERIC_UNCERTAIN` (`numeric.range`) |
+| Whole body strictly on the kept / removed side | `GEO_OP_NO_EFFECT` `plane.outside` / `plane.empty` |
+| Plane touches the body only (vertex, edge, face) | `GEO_OP_UNSUPPORTED` `plane.tangent` |
+| A face of the body in the plane while the plane crosses | `GEO_OP_UNSUPPORTED` `plane.coplanar_face` |
+| Section with several outer loops, a self-touching section, or a kept body pinched at an edge | `section.multiple`, `section.pinched` or `result.overlapping` |
+| Section or cap not admissible (edge below `eps_geom`, island in a hole, ...) | `section.not_admissible` / the G05 diagnostic |
+| Hole body not a Z-prism, caps not one face each | `body.not_prism`, `body.cap_faces`, `body.loops` |
+| Hole touching or crossing the outline or another hole, wrong winding, self-intersecting | `GEO_CONTOUR_INVALID` with the G05 diagnostic (`cavity` = number of existing holes) |
+| Hole inside another hole, or enclosing one | `GEO_UNSUPPORTED_CONTOUR` |
+| Cutter not through, flush with a face (tangent), margin below the floor, empty range | `cutter.not_through`, `cutter.tangent`, `cutter.margin`, `cutter.range` |
+| Triangle, loop, cap-point or exact-predicate budget exceeded | `GEO_ABOVE_LIMIT` (`budget.*`) or `GEO_NUMERIC_UNCERTAIN` (`budget.exact_predicates`) |
+| A cap or section edge longer than the G05 per-edge cap of 1,000,000 mm, or a coordinate beyond 1e9 mm | `GEO_ABOVE_LIMIT` with the G05 diagnostic attached (G05 reports every failure of a stage; the operation attaches the first) |
+| Candidate not certified (degenerate sliver, overlap, uncertain, several shells) | `result.degenerate`, `result.overlapping`, `result.uncertain`, `result.shells`; any other failed self-check `GEO_SELF_CHECK_FAILED` |
+| Cancellation | `GEO_CANCELLED`, no result; polls `Validation`, `Build`, `Checks` (then the G06 polls), `Quantities`; none after sealing |
+
+One cutter per call. Several holes are several calls on the result body (`OpResult::into_body`);
+a second cutter that overlaps, touches or nests with an earlier hole is refused by the same
+admission. The pilot refuses a plate whose plane cut leaves kept pieces touching along an edge
+(`result.overlapping`) rather than sealing a pinched solid.
+
+### Local feature ids (provisional, contract amendment required)
+
+Input faces keep their ids, including a clipped face, and keep their relative order; a face whose
+triangles all disappear leaves the table and is reported in `OpResult::removed_faces()` (the id is
+lost, not renamed). New faces use the local kind `cut`, ordinal 0 to 999 supplied by the caller (the
+engine owns the mapping from its authored feature and must keep it stable), appended after the
+surviving faces: the plane-cut cap `cut:f.p<ordinal>`; hole walls `cut:f.h<ordinal>.s<k>` (edge `k` of
+a polygonal cavity, authored order, as G05's `f.c<j>.s<k>`) or `cut:f.h<ordinal>` (the one curved wall
+of an approximated curve cavity). All ids are at most 22 bytes (F06 allows 64 bytes in total with
+`fid1:`, the 36-byte ElementId and the colon), use `a-z0-9:.-`, are unique, and a reused
+ordinal is refused. Edges and vertices are not named. F06 0.1.0 (frozen) defines only the plate
+and member boxes; before an engine may qualify and persist the `extrusion` and `cut` kinds, an
+amendment must adopt this grammar. Needed amendments, none made here: operation results and the
+`cut` kind; the proposed tokens `GEO_OP_UNSUPPORTED` and `GEO_OP_NO_EFFECT`; the curved-wall and
+approximated-volume statuses already noted for G05; the BCMESH01 face-table meaning of a face lost by
+an operation.
+
+### Numbers and bounds
+
+Volumes are enclosures of the exact signed volume of the binary64 mesh (G06); they are mesh values,
+never engineering quantities (F06 section 8: `unsupported`). A hole's analytic volume is exact for
+the polygon the cavity really is; for an approximated curve it is the polygon's, and the G05
+`CurveApproximation` carries the bound to the true curve. A plane cut has no closed form
+independent of its own section, so `analytic_volume_mm3` is `None`; the closed forms live in the
+tests. The result keeps the body's `Tolerance`, and cap admission uses the larger of that floor and the one derived from the (possibly smaller) cap outline, so a hole after a cut cannot be finer than the original body allowed. Work is bounded by the budgets above and the F06
+mesh caps (4096 vertices, 8192 triangles); no recursion, no `unsafe`, no panicking path, and every
+allocation is sized by a validated count. Certification of large bodies is bounded by the G06
+pair budget: a 16-hole body of 7,756 triangles is refused at admission as not certified (tested).
+
+### Verification and case coverage
+
+Tests call the public API and reread the actual buffers with independent code in `tests/common`,
+`tests/common_mesh` and `tests/common_ops` (blob reader and re-encoder, edge-incidence map, Euler,
+divergence volume, per-face area vectors, independent canonical-order check; no production math).
+
+| File | Content |
+|------|---------|
+| `tests/g09_cut.rs` (17) | Corner, hexagon and general planes of boxes against the inclusion-exclusion closed form `sum (-1)^k max(0, d - n.s)^3 / (6 n1 n2 n3)` and voxel counting; both halves add up; vertex-on-plane, edge-on-plane and reflex-vertex planes; horizontal cut of a plate with a hole (section with a cavity, genus kept); cut of an L prism against an independent polygon clip; translation, quarter-turn and mirror; repeat identity and 12 renumberings per body with identical bytes; cut of a cut; tangent, coplanar, outside, empty, non-finite, zero and tiny normals, ordinals, id collision, several section loops, pinched kept side, and the whole face-table gate |
+| `tests/g09_hole.rs` (14) | Round, slot, ellipse and polygon holes against closed-form areas (`n/2 r^2 sin(2 pi/n)`, obround, ellipse), the same vertex set, volume and surface area as the G05 extrusion of the same profile, genus and Euler change (+1 per hole, `2 - 2g`), one to three holes in any order, offset and L prisms with existing holes, quarter turns and mirrors, voxel counting, canonical bytes under renumbering, G02 plate and box and triangular prism bodies, shear and pyramid refusals, every contact, range, winding, non-finite and ordinal refusal |
+| `tests/g09_budget_fuzz.rs` (6) | Every budget at its value and one below (triangles, loops, cap points, exact predicates, certification pairs) with identical bytes at the limit; cancellation at every poll of a hole, a cut and a cut through vertices (poll order fixed, no poll after the cancelled one, none after sealing); seeded hostile planes (vertices, midpoints, three-vertex planes, special values such as `1e-300`, `5e-324`, `1e9`; 192 cuts of which 65 seal and 32 give both halves, each success re-verified and the halves summing to the body); seeded hostile cutters (240 attempts over four sequential holes, each success checked against the shoelace area); 600 mutated cube blobs |
+| `src/ops` unit tests (12) | Exact side sign against a rounded-sum cancellation and an integer reference, distance bound, validation order, loop chaining, canonical loops, exact area sign against an `i128` reference, cap tiling and budgets, loop splitting, corrupt candidates that never seal, canonical bytes |
+
+G03 fixtures, run by `tests/g09_hole.rs` on the real G02 plate and operation: `g03.plate.through-hole`
+(23 x 47 x 3, round hole of diameter 8 at the centre), `g03.plate.cavity` (rectangular void
+`11 x 23`, exact volume `2484`) and `g03.plate.thin-wall` (a void leaving the minimum wall of
+0.001 mm on every side, accepted at exactly `eps_geom` and refused one representable step
+tighter). Their rows in `docs/fixtures/g03/expectations.tsv` stay `not_run` (G03 is not edited and
+its harness reads no operation results); this is a mapping, not a changed record.
+`g03.plate.nonrectangular` is an outline (A02/G05), not a cut, and is **not run**. The large and
+dimension fixtures remain with G02 and G05.
+
+### Not implemented
+
+Oblique, curved or multiple simultaneous cutters; holes that touch or cross the outline; blind or
+partial holes; non-prism bodies for holes (a tilted cut result is refused as `body.not_prism`);
+several outer section loops; sections that touch themselves; coplanar and tangent planes; edge and
+vertex names; a general boolean, offset or fillet; placement and rotation of the body (the caller
+supplies the body-frame plane and cutter; exact quarter turns and mirrors are tested by transforming
+both); persistent topological naming across operations beyond the rules above; engine and CLI
+commands, keys and queries (P01, A03, A04); cross-target byte evidence; `cargo deny` and
+`wasm32` checks (not installed here). The two design-section-8 G09 items "query/E2E validation" and
+"no claim from mock-only checks" are respected by leaving the first undone.
+
+### Provenance
+
+Original scalar code from public mathematics only: half-space clipping of a convex polygon (the
+Sutherland-Hodgman idea for one plane), exact signs of integer-scaled binary64 values with a
+static rounding-error filter derived in the code, the shoelace area, the divergence theorem for
+signed volume, the Euler-Poincare relation `V - E + F = 2 - 2g`, inclusion-exclusion for the
+volume of a box cut by a half-space (tests only), and the G05/G06 mathematics of this crate. No
+third-party code, crate, test or data and no commercial-product material was consulted; there is
+no copied asset. The clean-room input list of this task is the repository's own kernel code and
+documents named in the task, and the public mathematics above.

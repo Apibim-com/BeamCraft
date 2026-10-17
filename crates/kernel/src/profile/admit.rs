@@ -80,10 +80,26 @@ pub(crate) fn admit(
     cavities: &[Cavity],
     thickness: Option<f64>,
 ) -> Result<Profile, ProfileFailure> {
+    admit_with_floor(outer, cavities, thickness, None)
+}
+
+/// Like [`admit`], but a caller that knows the body the profile belongs to may pass its
+/// Tolerance: the larger of that floor and the one derived from the outline applies, so a
+/// cap that is smaller than the body it was cut from cannot admit finer features than the body.
+pub(crate) fn admit_with_floor(
+    outer: &[Point2],
+    cavities: &[Cavity],
+    thickness: Option<f64>,
+    floor: Option<Tolerance>,
+) -> Result<Profile, ProfileFailure> {
     check_counts(outer, cavities)?;
     let list = contours(outer, cavities);
     check_finite(&list, thickness)?;
-    let tolerance = check_caps(outer, &list, thickness)?;
+    let derived = check_caps(outer, &list, thickness)?;
+    let tolerance = match floor {
+        Some(f) if f.eps_geom_mm() > derived.eps_geom_mm() => f,
+        _ => derived,
+    };
     check_contours(&list, thickness, tolerance)?;
     Ok(Profile::from_parts(
         outer.to_vec(),

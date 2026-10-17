@@ -170,6 +170,9 @@ G06 adds the generic BCMESH01 blob and buffer validator (`trimesh`), shell topol
 and orientation certification (`topology`), mesh measurements and F06 section 8 status
 helpers (`measure`), a bounded box index (`spatial`) and their typed verdicts
 (`verdict`, `enclosure`), still inside this crate and without new dependencies.
+G09 adds the bounded pilot `ops` module (plane cut and through hole over certified solids,
+with typed refusals); it is not a general boolean kernel, and the A03/A04 commands, keys and
+queries stay with their tasks.
 The full contour/placement request adapter, keys, engine-level quantity
 integration and the `LookupFeature`/`Pick` queries remain planned under the section 4
 paths.
