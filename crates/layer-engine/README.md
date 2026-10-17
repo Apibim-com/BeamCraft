@@ -101,6 +101,31 @@ catalogue and the F06 engineering validator. It does not certify contour topolog
 planarity, support, mesh solidness, exact quantities, F06 result freshness or signatures.
 Those remain engine prerequisites. See [the U02 validation report](U02-VALIDATION.md).
 
+## Read-only foreign references (R01)
+
+`Change::AttachReference` authors an owned wrapper of kind `reference` (element path, `group` kind)
+around a foreign layer that is already a **non-owned** manifest entry with exactly the pinned
+digest and size. Below the wrapper are an owned `Correction` prim (the optional units and up-axis
+interpretation, `Change::ReferenceUnits`) and a typeless `Source` prim that holds the reference arc
+and nothing else; everything composed below `Source` is foreign. Moving (`Change::Placement`) or
+renaming (`Change::Label`) a wrapper does not touch a foreign prim. `Prepared.retained` returns the
+non-owned layers byte for byte; they are never among `Prepared.layers`.
+
+The read-only rule is enforced where the layers are read, not only where they are written:
+`authored::validate_layers`, `Author::open` and `Author::prepare` scan the specs of every owned
+layer, and an owned spec at `Source` may hold only `specifier` and `references`, with no spec
+below it (`FOREIGN_READ_ONLY`). The composed provenance of every prim below `Source` must be
+foreign only, with the pinned digest, layer name and default prim. `Reader::refuse_layer_write`
+answers `FOREIGN_READ_ONLY` for a layer the host did not select as owned. `inspect_foreign_layer`
+examines a candidate source (format, default prim, declared units, up axis) under the same byte,
+field and budget rules as every stage asset, without composing or resolving it; a URL or escaping
+identifier in it is `PERMISSION_DENIED`, an arc outside the static profile
+`UNSUPPORTED_PROPERTY`, another local asset `DEPENDENCY_UNAVAILABLE`. `authored::read_references`
+reads the wrappers back (after the same validation). A foreign prim that carries an element
+identity (`bim:id`, or a name starting `E_`) makes the stage fail with `INVALID_ID`. The schema
+descriptor lists the wrapper; layers pinned to the P02.2 mapping are still accepted. See the
+[R01 design note](../../docs/design/r01-readonly-reference.md).
+
 ## UUID and relationship index (U03)
 
 `index::ElementIndex` is a reconstructible lookup built only from the complete pinned snapshot
