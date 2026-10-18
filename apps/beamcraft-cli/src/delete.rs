@@ -59,6 +59,8 @@ pub enum DeletedKind {
     Member,
     /// An assembly (A01); refused while it still has parts.
     Assembly,
+    /// A weld (A06), a `connection` element; deleting it removes its `connects` record.
+    Weld,
 }
 
 /// Result of `delete_element`.
@@ -126,6 +128,8 @@ pub fn delete_element(
         Some(DeletedKind::Member)
     } else if crate::assembly::is_assembly(&base_request, &command.target_id, &control)? {
         Some(DeletedKind::Assembly)
+    } else if crate::weld::is_weld(&base_request, &command.target_id, &control)? {
+        Some(DeletedKind::Weld)
     } else {
         None
     };

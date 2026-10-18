@@ -53,6 +53,8 @@ A01 adds assemblies (`model::command::{CreateAssembly, AttachToAssembly, DetachF
 
 C01 adds changesets (`model::changeset`, `host::changeset` claims, `beamcraft_cli::changeset` and the CLI commands `changeset-create`, `changeset-inspect` and `changeset-apply`): a workspace's unsent revisions become one canonical, digest-addressed message (base, operations, claimed actor, conservative footprint, complete layer set with base digests, required blobs); the receiver checks the actor against the trusted caller, binds the changeset id to the payload before publishing, and publishes fast-forward only ([design note](design/c01-changeset.md)).
 
+A06 adds a minimal weld (`model::command::CreateWeld`, `engine::weld`, `Footprint::for_weld`, `Shape::Weld` in the layer engine, `beamcraft_cli::weld` and the CLI commands `create-weld` and `welds`): a weld is a `connection` element with no body, explicitly authored fillet size, workshop or site and side, and one ordered `bim:connects` record towards two distinct plates, beams or columns; a welded part cannot be deleted under it and a weld cannot be copied ([design note](design/a06-welds.md)).
+
 [Module boundaries (F08)](contracts/module-boundaries-v0.1.md) give the exact crate and module path
 of every contract area, the allowed dependency edges and which crates are planned. A test and CI
 enforce them.

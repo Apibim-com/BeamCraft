@@ -1,0 +1,236 @@
+// SPDX-License-Identifier: MPL-2.0
+// SPDX-FileCopyrightText: 2026 Apibim
+
+//! A06 headless commands: `create-weld` and `welds`. They call the engine API through
+//! `beamcraft_cli::weld` and print one JSON object with the same error shape and exit codes as
+//! the plate commands.
+
+use crate::plate_cmd::{footprint_json, id_error, revision_json};
+use beamcraft_cli::plate::PlateError;
+use beamcraft_cli::weld::{WeldChange, WeldContext, WeldView, create_weld, welds};
+use beamcraft_host::{
+    ids::IdSource,
+    revision::{NoFault, RevisionStore, Uuid7},
+    storage::BlobStore,
+};
+use beamcraft_model::command::{CreateWeld, WeldLocation, WeldSide, WeldSpec, WeldType};
+use beamcraft_model::error::ErrorCode;
+use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use beamcraft_protocol::json::Json;
+use std::collections::BTreeMap;
+use std::ffi::OsString;
+
+type Run<T> = Result<T, PlateError>;
+
+fn invalid(message: &'static str) -> PlateError {
+    PlateError {
+        code: ErrorCode::InvalidArgument,
+        message,
+    }
+}
+
+const CONTEXT_OPTIONS: [&str; 5] = [
+    "--op-id",
+    "--revision-id",
+    "--actor-id",
+    "--project-id",
+    "--workspace-id",
+];
+
+/// Whether `command` is one of the weld commands.
+pub fn handles(command: &OsString) -> bool {
+    command == "create-weld" || command == "welds"
+}
+
+/// Runs one weld command and returns the JSON result and the process exit code.
+pub fn execute(args: &[OsString]) -> (Json, u8) {
+    match run(args) {
+        Ok(json) => (json, 0),
+        Err(e) => (
+            Json::object([
+                (
+                    "outcome",
+                    Json::text(if e.code == ErrorCode::OutcomeUnknown {
+                        "outcome_unknown"
+                    } else {
+                        "rejected"
+                    }),
+                ),
+                ("code", Json::text(e.code.as_str())),
+                ("message", Json::text(e.message)),
+                ("transport_code", Json::Null),
+                ("observed_context", Json::Null),
+                ("diagnostics", Json::Array(vec![])),
+            ]),
+            match e.code {
+                ErrorCode::OutcomeUnknown => 4,
+                ErrorCode::BackendUnavailable => 3,
+                _ => 2,
+            },
+        ),
+    }
+}
+
+fn run(args: &[OsString]) -> Run<Json> {
+    let args: Vec<&str> = args
+        .iter()
+        .map(|a| {
+            a.to_str()
+                .filter(|s| s.len() <= 4096)
+                .ok_or_else(|| invalid("argument is not bounded UTF-8"))
+        })
+        .collect::<Run<_>>()?;
+    let (command, tail) = args
+        .split_first()
+        .ok_or_else(|| invalid("missing command"))?;
+    let own: &[&str] = match *command {
+        "create-weld" => &[
+            "--store",
+            "--name",
+            "--new-id",
+            "--main",
+            "--secondary",
+            "--type",
+            "--size",
+            "--location",
+            "--side",
+        ],
+        "welds" => &["--store"],
+        _ => return Err(invalid("unknown command")),
+    };
+    if !tail.len().is_multiple_of(2) || tail.len() > 40 {
+        return Err(invalid("options are KEY VALUE pairs"));
+    }
+    let mut options = BTreeMap::new();
+    for pair in tail.as_chunks::<2>().0 {
+        let [key, value] = pair;
+        let allowed = own.contains(key) || (*command != "welds" && CONTEXT_OPTIONS.contains(key));
+        if !allowed || options.insert(*key, *value).is_some() {
+            return Err(invalid("unknown or repeated option"));
+        }
+    }
+    let store_root = options
+        .get("--store")
+        .ok_or_else(|| invalid("--store is required"))?;
+    let blobs = BlobStore::new(store_root).map_err(|e| PlateError {
+        code: e.code(),
+        message: "store root is not usable",
+    })?;
+    let store = RevisionStore::new(blobs);
+    if *command == "welds" {
+        return Ok(Json::object([
+            ("outcome", Json::text("welds")),
+            ("welds", views_json(&welds(&store)?)),
+        ]));
+    }
+    let given = |key: &str| options.get(key).copied();
+    let required = |key: &str, missing: &'static str| given(key).ok_or_else(|| invalid(missing));
+    // Every weld property is authored explicitly: no option has a default except the type, of
+    // which `fillet` is the only supported value.
+    let weld = WeldSpec {
+        weld_type: match given("--type") {
+            Some(t) => WeldType::parse(t).ok_or(PlateError {
+                code: ErrorCode::UnsupportedGeometry,
+                message: "--type supports fillet only",
+            })?,
+            None => WeldType::Fillet,
+        },
+        size_mm: required("--size", "--size is required")?
+            .parse::<f64>()
+            .map_err(|_| invalid("--size is a number of millimetres"))?,
+        location: WeldLocation::parse(required("--location", "--location is required")?)
+            .ok_or_else(|| invalid("--location is workshop or site"))?,
+        side: WeldSide::parse(required("--side", "--side is required")?)
+            .ok_or_else(|| invalid("--side is arrow, other or both"))?,
+    };
+    let element = |key: &str, missing: &'static str| -> Run<ElementId> {
+        ElementId::parse(required(key, missing)?).map_err(id_error)
+    };
+    let (main_id, secondary_id) = (
+        element("--main", "--main is required")?,
+        element("--secondary", "--secondary is required")?,
+    );
+    let name = required("--name", "--name is required")?.to_owned();
+    let mut source = IdSource::system();
+    let mut fresh = || {
+        source.next_id().map_err(|_| PlateError {
+            code: ErrorCode::BackendUnavailable,
+            message: "no identity could be generated",
+        })
+    };
+    let context = WeldContext {
+        op_id: match given("--op-id") {
+            Some(text) => OpId::parse(text).map_err(id_error)?,
+            None => OpId::from_uuid(fresh()?),
+        },
+        revision_id: match given("--revision-id") {
+            Some(text) => RevisionId::parse(text).map_err(id_error)?,
+            None => RevisionId::from_uuid(fresh()?),
+        },
+        actor: match given("--actor-id") {
+            Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
+            None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+        },
+        project: match given("--project-id") {
+            Some(text) => ProjectId::parse(text).map_err(id_error)?,
+            None => ProjectId::from_uuid(fresh()?),
+        },
+        workspace: match given("--workspace-id") {
+            Some(text) => WorkspaceId::parse(text).map_err(id_error)?,
+            None => WorkspaceId::from_uuid(fresh()?),
+        },
+    };
+    let new_id = match given("--new-id") {
+        Some(text) => ElementId::parse(text).map_err(id_error)?,
+        None => ElementId::from_uuid(fresh()?),
+    };
+    let command = CreateWeld {
+        new_id,
+        name,
+        main_id,
+        secondary_id,
+        weld,
+    };
+    let change = create_weld(&store, &context, &command, &mut NoFault)?;
+    Ok(change_json(new_id, context.op_id, &change))
+}
+
+fn views_json(views: &[WeldView]) -> Json {
+    Json::Array(
+        views
+            .iter()
+            .map(|v| {
+                Json::object([
+                    ("id", Json::text(v.id.to_string())),
+                    ("name", Json::text(v.name.clone())),
+                    ("main", Json::text(v.main.to_string())),
+                    ("secondary", Json::text(v.secondary.to_string())),
+                    ("type", Json::text(v.spec.weld_type.as_token())),
+                    ("size_mm", Json::text(v.spec.size_mm.to_string())),
+                    ("location", Json::text(v.spec.location.as_token())),
+                    ("side", Json::text(v.spec.side.as_token())),
+                ])
+            })
+            .collect(),
+    )
+}
+
+fn change_json(subject: ElementId, op_id: OpId, change: &WeldChange) -> Json {
+    let outcome = if change.replayed {
+        "weld_created_replayed"
+    } else {
+        "weld_created"
+    };
+    Json::object([
+        ("outcome", Json::text(outcome)),
+        ("op_id", Json::text(op_id.to_string())),
+        ("element_id", Json::text(subject.to_string())),
+        (
+            "changed_layers",
+            Json::Array(change.changed_layers.iter().map(Json::text).collect()),
+        ),
+        ("welds", views_json(&change.welds)),
+        ("revision", revision_json(&change.revision)),
+        ("footprint", footprint_json(change.footprint.as_ref())),
+    ])
+}

@@ -91,7 +91,7 @@ struct Model {
     ids: Vec<ElementId>,
 }
 
-fn read_prims(
+pub(crate) fn read_prims(
     reader: &Reader,
     context: &beamcraft_layer_engine::Context,
     control: &Control,

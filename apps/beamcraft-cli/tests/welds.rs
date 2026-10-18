@@ -1,0 +1,353 @@
+// SPDX-License-Identifier: MPL-2.0
+// SPDX-FileCopyrightText: 2026 Apibim
+// Contributor-original synthetic plates, beams and welds, MPL-2.0.
+
+//! A06 end to end: `create-weld` and `welds` through the real CLI binary and committed revisions.
+//! A weld is a `connection` element with its own identity, explicitly authored properties
+//! (type, size, workshop or site, side) and one `connects` record towards two distinct parts; it
+//! has no body. Wrong parts and properties are refused with nothing written; a welded part cannot
+//! be deleted while the weld connects it, and a weld cannot be copied.
+
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+
+use beamcraft_host::{
+    ids::IdSource,
+    revision::{ExpectedBase, LayerEntry, NoFault, RevisionDraft, RevisionStore, Uuid7},
+    storage::BlobStore,
+};
+use beamcraft_protocol::{
+    json::{self, Json},
+    message,
+};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT: AtomicU64 = AtomicU64::new(0);
+
+const WELD: &str = "019a7bf0-0000-7000-8000-000000600001";
+const SECOND: &str = "019a7bf0-0000-7000-8000-000000600002";
+const FRAME: &str = "019a7bf0-0000-7000-8000-000000600003";
+
+struct Fixture {
+    root: PathBuf,
+}
+impl Fixture {
+    fn new() -> Self {
+        let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("a06-tests");
+        fs::create_dir_all(&base).unwrap();
+        let root = base.join(format!(
+            "e2e-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(root.join("store")).unwrap();
+        Self { root }
+    }
+    fn run(&self, command: &str, extra: &[&str]) -> (i32, Json) {
+        let store = self.root.join("store").to_str().unwrap().to_owned();
+        let mut args = vec![command, "--store", store.as_str()];
+        args.extend_from_slice(extra);
+        let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
+            .args(&args)
+            .output()
+            .unwrap();
+        let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
+        (output.status.code().unwrap(), body)
+    }
+    fn ok(&self, command: &str, extra: &[&str]) -> Json {
+        let (code, body) = self.run(command, extra);
+        assert_eq!(code, 0, "{command} {extra:?}: {body:?}");
+        body
+    }
+    fn rejected(&self, command: &str, extra: &[&str]) -> String {
+        let before = self.head();
+        let (code, body) = self.run(command, extra);
+        assert_eq!(code, 2, "{command} {extra:?}: {body:?}");
+        // A refusal writes no revision.
+        assert_eq!(self.head(), before, "{command} {extra:?}");
+        text(&body, "code")
+    }
+    fn head(&self) -> String {
+        text(&self.ok("revision-open", &[]), "revision_id")
+    }
+    fn plate(&self) -> String {
+        let body = self.ok(
+            "create-plate",
+            &["--width", "1000", "--length", "500", "--thickness", "10"],
+        );
+        text(at(&body, &["plate"]), "element_id")
+    }
+    fn beam(&self) -> String {
+        let profile = text(
+            at(
+                &self.ok("define-profile", &["--width", "100", "--height", "50"]),
+                &["definition"],
+            ),
+            "digest",
+        );
+        let body = self.ok(
+            "create-member",
+            &[
+                "--start",
+                "0,0,0",
+                "--end",
+                "3000,0,0",
+                "--profile-digest",
+                &profile,
+            ],
+        );
+        text(at(&body, &["member"]), "element_id")
+    }
+    fn weld_args<'a>(id: &'a str, main: &'a str, secondary: &'a str) -> Vec<&'a str> {
+        vec![
+            "--name",
+            "W1",
+            "--new-id",
+            id,
+            "--main",
+            main,
+            "--secondary",
+            secondary,
+            "--size",
+            "6",
+            "--location",
+            "workshop",
+            "--side",
+            "both",
+        ]
+    }
+    fn weld(&self, id: &str, main: &str, secondary: &str) -> Json {
+        self.ok("create-weld", &Self::weld_args(id, main, secondary))
+    }
+    /// Commits a head-based revision with edited layer text and no content verification, the way
+    /// a layer edited outside BeamCraft would arrive through `revision-commit`.
+    fn tamper(&self, edit: impl Fn(&str, String) -> String) {
+        let store = RevisionStore::new(BlobStore::new(self.root.join("store")).unwrap());
+        let head = store.open().unwrap();
+        let content = head.manifest().content();
+        let mut ids = IdSource::system();
+        let mut entries = Vec::new();
+        for entry in content.entries() {
+            let original = String::from_utf8(head.layer_bytes(entry.name()).unwrap()).unwrap();
+            let edited = edit(entry.name(), original);
+            store.blobs().publish(edited.as_bytes()).unwrap();
+            entries.push(
+                LayerEntry::from_bytes(entry.name(), entry.role(), edited.as_bytes()).unwrap(),
+            );
+        }
+        let draft = RevisionDraft {
+            project: content.project().clone(),
+            workspace: content.workspace().clone(),
+            revision: Uuid7::parse(&ids.next_id().unwrap().to_string()).unwrap(),
+            op: Uuid7::parse(&ids.next_id().unwrap().to_string()).unwrap(),
+            workspace_generation: content.workspace_generation() + 1,
+            schema: content.schema(),
+            root_layer: content.root_layer().to_owned(),
+            entries,
+        };
+        store
+            .commit_with(
+                &draft,
+                &ExpectedBase::Revision(head.info().revision().clone()),
+                None,
+                &mut NoFault,
+            )
+            .unwrap();
+    }
+    fn welds(&self) -> Vec<Json> {
+        list(&self.ok("welds", &[]), "welds").to_vec()
+    }
+}
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        assert!(self.root.is_absolute() && self.root.file_name().is_some());
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+fn text(json: &Json, key: &str) -> String {
+    json.get(key).unwrap().string().unwrap().to_owned()
+}
+fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
+    path.iter().fold(json, |j, k| j.get(k).unwrap())
+}
+fn list<'a>(json: &'a Json, key: &str) -> &'a [Json] {
+    at(json, &[key]).array().unwrap()
+}
+fn strings(json: &Json, key: &str) -> Vec<String> {
+    list(json, key)
+        .iter()
+        .map(|v| v.string().unwrap().to_owned())
+        .collect()
+}
+fn groups(change: &Json, key: &str) -> Vec<(String, String)> {
+    list(at(change, &["footprint"]), key)
+        .iter()
+        .map(|e| (text(e, "target"), text(e, "group")))
+        .collect()
+}
+
+#[test]
+fn a_weld_authors_its_properties_and_connects_record_and_reads_its_parts() {
+    let f = Fixture::new();
+    let plate = f.plate();
+    let beam = f.beam();
+    let inspected = f.ok("plate-inspect", &[]);
+    let mesh_before = text(&list(&inspected, "plates")[0], "mesh_digest");
+
+    let created = f.weld(WELD, &plate, &beam);
+    assert_eq!(text(&created, "outcome"), "weld_created");
+    assert_eq!(text(&created, "element_id"), WELD);
+    // No body: only the authored layer changes.
+    assert_eq!(strings(&created, "changed_layers"), ["authored.usda"]);
+    // The record lives with the weld: every write is the weld's own; both parts are read.
+    let writes = groups(&created, "writes");
+    assert_eq!(writes.len(), 7);
+    assert!(writes.iter().all(|(target, _)| target == WELD));
+    for part in [&plate, &beam] {
+        assert!(groups(&created, "reads").contains(&(part.clone(), "lifecycle".to_owned())));
+    }
+    let welds = f.welds();
+    assert_eq!(welds.len(), 1);
+    let w = &welds[0];
+    assert_eq!(text(w, "id"), WELD);
+    assert_eq!(text(w, "name"), "W1");
+    assert_eq!(text(w, "main"), plate);
+    assert_eq!(text(w, "secondary"), beam);
+    assert_eq!(text(w, "type"), "fillet");
+    assert_eq!(text(w, "size_mm"), "6");
+    assert_eq!(text(w, "location"), "workshop");
+    assert_eq!(text(w, "side"), "both");
+
+    // The parts' bodies are untouched and the weld adds nothing to the view.
+    let inspected = f.ok("plate-inspect", &[]);
+    assert_eq!(
+        text(&list(&inspected, "plates")[0], "mesh_digest"),
+        mesh_before
+    );
+    assert_eq!(list(at(&inspected, &["snapshot"]), "elements").len(), 2);
+
+    // A retry of the same operation replays; the same id with other content is reuse.
+    let op = "019a7bf0-0000-7000-8000-0000006000a1";
+    let mut args = Fixture::weld_args(SECOND, &beam, &plate);
+    args.extend_from_slice(&["--op-id", op]);
+    let first = f.ok("create-weld", &args);
+    assert_eq!(text(&first, "outcome"), "weld_created");
+    let head = f.head();
+    let again = f.ok("create-weld", &args);
+    assert_eq!(text(&again, "outcome"), "weld_created_replayed");
+    assert_eq!(f.head(), head);
+    let mut other = Fixture::weld_args(SECOND, &beam, &plate);
+    other[1] = "W2";
+    other.extend_from_slice(&["--op-id", op]);
+    assert_eq!(f.rejected("create-weld", &other), "OP_ID_REUSE");
+
+    // DV-REL-009: a welded part is not deleted under its weld; DV-REL-011: a weld is not copied.
+    assert_eq!(
+        f.rejected("delete-element", &["--id", &plate]),
+        "DEPENDENCY_CONFLICT"
+    );
+    assert_eq!(
+        f.rejected("copy-element", &["--id", WELD]),
+        "DEPENDENCY_CONFLICT"
+    );
+    for id in [WELD, SECOND] {
+        let deleted = f.ok("delete-element", &["--id", id]);
+        assert_eq!(text(&deleted, "kind"), "weld");
+    }
+    assert!(f.welds().is_empty());
+    f.ok("delete-element", &["--id", &plate]);
+}
+
+#[test]
+fn wrong_parts_and_properties_are_refused_with_nothing_written() {
+    let f = Fixture::new();
+    // No head yet: the parts cannot exist.
+    let missing = "019a7bf0-0000-7000-8000-0000006000ff";
+    let (code, body) = f.run("create-weld", &Fixture::weld_args(WELD, missing, FRAME));
+    assert_eq!((code, text(&body, "code").as_str()), (2, "NOT_FOUND"));
+
+    let plate = f.plate();
+    let beam = f.beam();
+    f.ok("create-assembly", &["--name", "Frame", "--new-id", FRAME]);
+    f.weld(WELD, &plate, &beam);
+    let weld = |main: &str, secondary: &str| {
+        f.rejected("create-weld", &Fixture::weld_args(SECOND, main, secondary))
+    };
+    // DV-REL-006/007: two distinct parts.
+    assert_eq!(weld(&plate, &plate), "INVALID_ARGUMENT");
+    assert_eq!(weld(&plate, missing), "NOT_FOUND");
+    // DV-REL-003: a weld joins plates, beams or columns; an assembly is not supported here.
+    assert_eq!(weld(&plate, FRAME), "UNSUPPORTED_GEOMETRY");
+    assert_eq!(weld(&plate, WELD), "INVALID_ARGUMENT");
+    // A weld is not one of its own parts, and its identity must be free.
+    assert_eq!(
+        f.rejected("create-weld", &Fixture::weld_args(&plate, &plate, &beam)),
+        "INVALID_ARGUMENT"
+    );
+    assert_eq!(
+        f.rejected("create-weld", &Fixture::weld_args(FRAME, &plate, &beam)),
+        "DUPLICATE_ID"
+    );
+    // Every property is authored explicitly and checked.
+    let with = |key: &str, value: Option<&str>| {
+        let mut args = Fixture::weld_args(SECOND, &plate, &beam);
+        let at = args.iter().position(|a| *a == key);
+        match (at, value) {
+            (Some(i), Some(v)) => args[i + 1] = v,
+            (Some(i), None) => {
+                args.drain(i..i + 2);
+            }
+            (None, Some(v)) => args.extend_from_slice(&[key, v]),
+            (None, None) => {}
+        }
+        f.rejected("create-weld", &args)
+    };
+    for key in [
+        "--size",
+        "--location",
+        "--side",
+        "--name",
+        "--main",
+        "--secondary",
+    ] {
+        assert_eq!(with(key, None), "INVALID_ARGUMENT", "{key}");
+    }
+    assert_eq!(with("--side", Some("left")), "INVALID_ARGUMENT");
+    assert_eq!(with("--location", Some("yard")), "INVALID_ARGUMENT");
+    assert_eq!(with("--size", Some("0")), "INVALID_ARGUMENT");
+    assert_eq!(with("--size", Some("1000.5")), "INVALID_ARGUMENT");
+    assert_eq!(with("--size", Some("NaN")), "NON_FINITE_NUMBER");
+    assert_eq!(with("--type", Some("butt")), "UNSUPPORTED_GEOMETRY");
+    assert_eq!(with("--colour", Some("red")), "INVALID_ARGUMENT");
+    assert_eq!(f.welds().len(), 1);
+}
+
+#[test]
+fn a_damaged_connects_record_is_refused_not_reported() {
+    let f = Fixture::new();
+    let plate = f.plate();
+    let beam = f.beam();
+    f.weld(WELD, &plate, &beam);
+    let path = |id: &str| format!("</World/Steel/E_{}>", id.replace('-', ""));
+    let full = format!("rel bim:connects = [{}, {}]", path(&plate), path(&beam));
+    let single = format!("rel bim:connects = {}", path(&plate));
+    f.tamper(|name, text| {
+        if name == "authored.usda" {
+            assert!(text.contains(&full), "{text}");
+            text.replacen(&full, &single, 1)
+        } else {
+            text
+        }
+    });
+    let (code, body) = f.run("welds", &[]);
+    assert_eq!(
+        (code, text(&body, "code").as_str()),
+        (2, "DEPENDENCY_CONFLICT")
+    );
+    let (code, _) = f.run("create-weld", &Fixture::weld_args(SECOND, &plate, &beam));
+    assert_eq!(code, 2);
+}
