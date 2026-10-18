@@ -32,7 +32,9 @@ members** (A07.1 probe), and a circular hollow section above about 110 mm exceed
 * Ceilings stay ceilings: `Budgets::validate` still refuses any value above the default, every cap
   is still charged before allocation, and callers may tighten.
 * The first-slice profile stays for small untrusted inputs that are not a project stage: the R01
-  reference source inspection uses it explicitly, so R01 behaviour is unchanged. The hostile-input
+  reference source inspection and the U04 USD worker use it explicitly, so their behaviour is
+  unchanged (the worker's results cross the host read protocol, whose arrays hold at most 1024
+  entries, so a larger input is refused at open rather than failing the read). The hostile-input
   tests of the layer engine (index paging, USDC declared counts, foreign inspection) run on it too,
   because they test that a cap holds, not its size; new tests check the model profile's own caps
   at the boundary and plus one (array at 32,768 and 32,769 scalars, a layer of 32 MiB + 1 byte,

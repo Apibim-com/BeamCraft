@@ -491,7 +491,11 @@ fn load(
         manifest: ContentDigest::from_bytes([0; 32]),
         backend: engine::BACKEND,
         profile: engine::Profile::StaticLocal,
-        budgets: engine::Budgets::default(),
+        // The worker's results cross the host read protocol, whose arrays hold at most 1024
+        // entries (`protocol::message`), and its layers are read capped at 65536 bytes, so it
+        // opens with the first-slice profile: an input the protocol cannot carry is refused at
+        // open instead of failing the read and stopping the worker.
+        budgets: engine::Budgets::FIRST_SLICE,
     };
     request.manifest = request.manifest_digest().map_err(|e| e.code)?;
     Ok(request)
