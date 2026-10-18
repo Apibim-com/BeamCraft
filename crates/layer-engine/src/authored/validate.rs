@@ -437,6 +437,7 @@ pub(super) fn snapshot(
     prims: &[Prim],
     metadata: &BTreeMap<String, Value>,
 ) -> Result<Validation, Diagnostic> {
+    reference::stray_holders(prims)?;
     for (path, kind) in [("/World", "assembly"), ("/World/Steel", "group")] {
         if let Some(p) = prims
             .iter()

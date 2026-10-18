@@ -581,10 +581,11 @@ impl IndexBuilder {
     /// and retains only the fields the index uses. Ignored property values are neither copied
     /// nor traversed, so no nesting depth or value size can reach the allocator or the stack.
     fn project(&mut self, prim: &Prim) -> Result<Prim, Diagnostic> {
-        const USED: [&str; 5] = [
+        const USED: [&str; 6] = [
             "bim:id",
             "bim:name",
             "bim:elementKind",
+            "bim:geometryMode",
             "bim:lifecycle",
             "bim:contentDigest",
         ];
@@ -979,10 +980,13 @@ fn tainted(foreign: &BTreeSet<String>, path: &str, shield: Option<&str>) -> bool
         .any(|p| !hidden(p))
 }
 
-/// The path below which an R01 reference wrapper composes foreign content, if `prim` is one. The
-/// index keeps only the element kind; the wrapper's exact shape is validated by U02, not here.
+/// The path below which an R01 reference wrapper composes foreign content, if `prim` is one: the
+/// element kind and the geometry mode must both be `reference`. The wrapper's exact shape is
+/// validated by U02 before any write; a prim with only one of the two gets no exception, so its
+/// foreign descendant makes it foreign and it can never be granted an owned write.
 fn shield(prim: &Prim) -> Option<String> {
-    (property(prim, "bim:elementKind").and_then(text) == Some("reference"))
+    let is = |name: &str| property(prim, name).and_then(text) == Some("reference");
+    (is("bim:elementKind") && is("bim:geometryMode"))
         .then(|| format!("{}/Correction/Source", prim.path))
 }
 

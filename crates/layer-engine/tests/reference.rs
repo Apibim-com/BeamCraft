@@ -1161,3 +1161,102 @@ fn layers_pinned_to_the_p02_2_mapping_stay_editable_and_get_the_current_pin() {
         .unwrap();
     assert_eq!(error.code, ErrorCode::UnsupportedVersion);
 }
+
+#[test]
+fn an_arc_holder_that_is_not_a_plain_def_is_refused() {
+    let (a, o) = attached();
+    let assets = exported(&a, &o.context);
+    let holder = source_path(WRAPPER);
+    for specifier in [sdf::Specifier::Over, sdf::Specifier::Class] {
+        {
+            let layer_name = "authored.usda";
+            let bad = tamper(&assets, layer_name, |d| {
+                let p = sdf::Path::new(&holder).unwrap();
+                d.set_field(&p, "specifier", sdf::Value::Specifier(specifier));
+            });
+            let error = validate(bad).unwrap_err();
+            assert_eq!(
+                error.code,
+                ErrorCode::ForeignReadOnly,
+                "{specifier:?}: {error}"
+            );
+        }
+    }
+    // An `over` of the holder in another owned layer is an opinion on the foreign root too.
+    let bad = tamper(&assets, "derived.usda", |d| {
+        over(d, &holder);
+    });
+    assert_eq!(validate(bad).unwrap_err().code, ErrorCode::ForeignReadOnly);
+}
+
+#[test]
+fn half_faked_wrappers_are_refused_and_never_owned() {
+    let (a, o) = attached();
+    let assets = exported(&a, &o.context);
+    let element = path(WRAPPER);
+    let set = |d: &mut sdf::Data, name: &str, value: &str| {
+        let p = sdf::Path::new(&format!("{element}.{name}")).unwrap();
+        d.set_field(&p, "default", sdf::Value::token(value));
+    };
+    // Same arc, other geometry mode: it would skip the wrapper validator and the spec scan.
+    let parametric = tamper(&assets, "authored.usda", |d| {
+        set(d, "bim:geometryMode", "parametric");
+    });
+    assert_eq!(
+        validate(parametric.clone()).unwrap_err().code,
+        ErrorCode::ForeignReadOnly
+    );
+    let error = Author::open(
+        request(parametric.clone(), &OWNED),
+        targets(),
+        schema_identity().unwrap(),
+        &control(),
+    )
+    .err()
+    .unwrap();
+    assert_eq!(error.code, ErrorCode::ForeignReadOnly);
+    // A reader (which does not run the U02 validator) still never calls it owned.
+    let mut reader = Reader::default();
+    let opened = reader
+        .open(request(parametric, &OWNED), &control())
+        .unwrap();
+    let index = reader.element_index(&opened.context, &control()).unwrap();
+    let id = beamcraft_layer_engine::index::ElementId::parse(WRAPPER).unwrap();
+    assert_eq!(
+        index.element(&id).unwrap().ownership,
+        beamcraft_layer_engine::index::Ownership::Foreign
+    );
+    // Reference mode with another kind: not a wrapper, so its holder is stray.
+    for (name, value) in [("bim:elementKind", "plate"), ("bim:elementKind", "beam")] {
+        let bad = tamper(&assets, "authored.usda", |d| set(d, name, value));
+        assert_eq!(
+            validate(bad).unwrap_err().code,
+            ErrorCode::ForeignReadOnly,
+            "{value}"
+        );
+    }
+    // Kind reference, a mode that is neither: the holder is stray.
+    let bad = tamper(&assets, "authored.usda", |d| {
+        set(d, "bim:geometryMode", "mesh")
+    });
+    assert_eq!(validate(bad).unwrap_err().code, ErrorCode::ForeignReadOnly);
+    // An arc on a `Correction/Source` path below a prim that is no wrapper at all.
+    let bad = tamper(&assets, "authored.usda", |d| {
+        let holder = "/World/Fake/Correction/Source";
+        def(d, holder);
+        let p = sdf::Path::new(holder).unwrap();
+        d.set_field(
+            &p,
+            "references",
+            sdf::Value::ReferenceListOp(sdf::ListOp::prepended([sdf::Reference {
+                asset_path: pin().layer_name(),
+                prim_path: sdf::Path::new("/Site").unwrap(),
+                layer_offset: sdf::LayerOffset::IDENTITY,
+                custom_data: Default::default(),
+            }])),
+        );
+    });
+    assert_eq!(validate(bad).unwrap_err().code, ErrorCode::ForeignReadOnly);
+    // The untouched layers remain valid.
+    assert!(validate(assets).is_ok());
+}

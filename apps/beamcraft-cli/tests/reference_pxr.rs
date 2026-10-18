@@ -259,7 +259,7 @@ fn pxr_composes_the_reference_and_places_the_foreign_points_as_the_engine_says()
     let report = json::decode(report.trim().as_bytes(), &message::read_limits()).unwrap();
     let compliance = report.get("compliance").unwrap();
     println!("COMPLIANCE: {compliance:?}");
-    for key in ["errors", "failed_checks"] {
+    for key in ["errors", "failed_checks", "warnings"] {
         assert!(
             compliance.get(key).unwrap().array().unwrap().is_empty(),
             "compliance {key}: {compliance:?}"

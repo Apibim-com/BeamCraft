@@ -527,6 +527,15 @@ pub(super) fn layers(request: &OpenRequest, prims: &[Prim]) -> Result<(), Diagno
                     {
                         return Err(foreign_write());
                     }
+                    // The holder is a plain `def`: an `over` or a `class` spec carrying the same
+                    // arc would be another kind of opinion on the foreign root prim.
+                    let specifier = layer.get_field(&spec, "specifier").map_err(|_| corrupt())?;
+                    if !matches!(
+                        specifier.as_ref(),
+                        sdf::Value::Specifier(sdf::Specifier::Def)
+                    ) {
+                        return Err(foreign_write());
+                    }
                 } else if text.starts_with(holder.as_str())
                     && matches!(text.as_bytes().get(holder.len()), Some(b'/' | b'.' | b'['))
                 {
@@ -674,4 +683,22 @@ pub fn read_references(prims: &[Prim]) -> Result<Vec<ReferenceView>, Diagnostic>
     }
     views.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(views)
+}
+
+/// Refuses an arc holder that does not belong to a validated wrapper. A prim named
+/// `<element>/Correction/Source` that composes foreign content is only legitimate below an owned
+/// element of kind `reference` and geometry mode `reference`; a half-faked wrapper (another
+/// geometry mode or kind, partly foreign element, missing parts) would otherwise hide a foreign
+/// tree from the wrapper validator and from the read-only scans, which are keyed by the wrapper.
+pub(super) fn stray_holders(prims: &[Prim]) -> Result<(), Diagnostic> {
+    let holders = source_paths(prims);
+    for p in prims {
+        if !p.path.ends_with(&format!("/{CORRECTION}/{SOURCE}")) {
+            continue;
+        }
+        if p.sources.iter().any(|s| !s.owned) && !holders.contains(&p.path) {
+            return Err(foreign_write());
+        }
+    }
+    Ok(())
 }
