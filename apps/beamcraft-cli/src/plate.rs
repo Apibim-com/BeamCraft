@@ -1035,6 +1035,36 @@ pub(crate) struct Base {
     pub(crate) expected: ExpectedBase,
 }
 
+/// The layers of one stored revision as a base to open or author over.
+pub(crate) fn base_of(revision: &Revision) -> Result<Base, PlateError> {
+    let content = revision.manifest().content();
+    let assets = content
+        .entries()
+        .iter()
+        .map(|e| {
+            Ok(Asset {
+                name: e.name().into(),
+                digest: e.digest(),
+                bytes: revision.layer_bytes(e.name())?,
+            })
+        })
+        .collect::<Result<Vec<_>, PlateError>>()?;
+    Ok(Base {
+        project: content.project().as_str().to_owned(),
+        workspace: content.workspace().as_str().to_owned(),
+        digest: revision.info().manifest_digest(),
+        generation: content.workspace_generation(),
+        assets,
+        external: content
+            .entries()
+            .iter()
+            .filter(|e| e.role() == LayerRole::External)
+            .map(|e| e.name().to_owned())
+            .collect(),
+        expected: ExpectedBase::Revision(revision.info().revision().clone()),
+    })
+}
+
 /// Opens the head of the store (`None` for a store without a revision) and the base that the next
 /// revision builds on. A store without a revision takes the given identities.
 pub(crate) fn load_base(
@@ -1048,34 +1078,7 @@ pub(crate) fn load_base(
         Err(error) => return Err(error.into()),
     };
     let base = match &head {
-        Some(revision) => {
-            let content = revision.manifest().content();
-            let assets = content
-                .entries()
-                .iter()
-                .map(|e| {
-                    Ok(Asset {
-                        name: e.name().into(),
-                        digest: e.digest(),
-                        bytes: revision.layer_bytes(e.name())?,
-                    })
-                })
-                .collect::<Result<Vec<_>, PlateError>>()?;
-            Base {
-                project: content.project().as_str().to_owned(),
-                workspace: content.workspace().as_str().to_owned(),
-                digest: revision.info().manifest_digest(),
-                generation: content.workspace_generation(),
-                assets,
-                external: content
-                    .entries()
-                    .iter()
-                    .filter(|e| e.role() == LayerRole::External)
-                    .map(|e| e.name().to_owned())
-                    .collect(),
-                expected: ExpectedBase::Revision(revision.info().revision().clone()),
-            }
-        }
+        Some(revision) => base_of(revision)?,
         None => Base {
             project: project.to_string(),
             workspace: workspace.to_string(),

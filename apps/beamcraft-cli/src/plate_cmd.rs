@@ -650,6 +650,7 @@ fn delete_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
                     DeletedKind::Plate => "plate",
                     DeletedKind::Member => "member",
                     DeletedKind::Assembly => "assembly",
+                    DeletedKind::Weld => "weld",
                 })
             }),
         ),

@@ -1966,3 +1966,275 @@ fn an_assembly_never_gets_a_body_reads_cover_the_chain_and_detach_masks_weaker_r
     let (_, o) = installed(&mut a, &o, vec![part_of(PLATE, None)]);
     assert_eq!(targets_of(&snapshot(&a, &o.context), PLATE), Some(vec![]));
 }
+
+const WELD: &str = "0199e7a0-0000-7000-8000-000000000201";
+fn weld(main: &str, secondary: &str) -> Weld {
+    Weld {
+        connects: [main.into(), secondary.into()],
+        weld_type: "fillet".into(),
+        size_mm: 6.0,
+        location: "workshop".into(),
+        side: "both".into(),
+    }
+}
+fn create_weld(id: &str, w: Weld) -> Change {
+    Change::Create(Element {
+        id: id.into(),
+        name: "W1".into(),
+        shape: Shape::Weld(w),
+        placement: Placement {
+            translation_mm: [0.0; 3],
+            orientation_xyzw: [0.0, 0.0, 0.0, 1.0],
+        },
+        material: None,
+    })
+}
+fn refused_code(a: &mut Author, o: &Opened, changes: Vec<Change>) -> Option<ErrorCode> {
+    let digests = |a: &Author| {
+        a.export(&o.context, &control())
+            .unwrap()
+            .iter()
+            .map(|l| l.digest)
+            .collect::<Vec<_>>()
+    };
+    let before = digests(a);
+    let code = a
+        .prepare(batch(&o.context, changes), &control())
+        .err()
+        .map(|e| e.code);
+    assert_eq!(digests(a), before);
+    code
+}
+
+#[test]
+fn a_weld_authors_its_properties_and_connects_record_and_writes_only_itself() {
+    let (mut a, o) = populated();
+    let (p, o) = installed(&mut a, &o, vec![create_weld(WELD, weld(PLATE, MEMBER))]);
+    let prims = snapshot(&a, &o.context);
+    let w = prim(&prims, &path(WELD));
+    assert_eq!(w.kind.as_deref(), Some("component"));
+    assert_eq!(
+        value(&prims, WELD, "bim:elementKind"),
+        Some(&Value::Text("connection".into()))
+    );
+    for (name, token) in [
+        ("steel:weld:type", "fillet"),
+        ("steel:weld:location", "workshop"),
+        ("steel:weld:side", "both"),
+    ] {
+        assert_eq!(value(&prims, WELD, name), Some(&Value::Text(token.into())));
+    }
+    assert_eq!(
+        value(&prims, WELD, "steel:weld:sizeMm"),
+        Some(&Value::Number(6.0))
+    );
+    // The record lives with the weld, in order: main part first.
+    let connects = w
+        .relationships
+        .iter()
+        .find(|r| r.name == "bim:connects")
+        .map(|r| r.targets.clone());
+    assert_eq!(connects, Some(vec![path(PLATE), path(MEMBER)]));
+    // No body: a weld is not solid geometry in this slice.
+    assert!(
+        !prims
+            .iter()
+            .any(|p| p.path == format!("{}/Geometry", path(WELD)))
+    );
+    // Only the weld is written; both parts are read (existence and kind).
+    assert!(p.writes.iter().all(|f| f.identity == WELD));
+    for part in [PLATE, MEMBER] {
+        assert!(p.reads.contains(&Footprint {
+            identity: part.into(),
+            group: Group::Lifecycle,
+        }));
+    }
+    assert!(p.validation.rules.iter().any(|r| r.starts_with("A06-V01")));
+    // Every authored weld field is reported.
+    for name in [
+        "steel:weld:type",
+        "steel:weld:sizeMm",
+        "steel:weld:location",
+        "steel:weld:side",
+        "bim:connects",
+    ] {
+        assert!(
+            p.opinions
+                .iter()
+                .any(|i| i.element_id == WELD && i.attribute == name),
+            "{name}"
+        );
+    }
+
+    // A weld can be renamed; its shape, placement and membership are not edits of this slice.
+    let (_, o) = installed(
+        &mut a,
+        &o,
+        vec![Change::Label {
+            id: WELD.into(),
+            name: "W2".into(),
+        }],
+    );
+    for change in [
+        Change::Thickness {
+            id: WELD.into(),
+            mm: 5.0,
+        },
+        Change::Placement {
+            id: WELD.into(),
+            placement: Placement {
+                translation_mm: [1.0, 0.0, 0.0],
+                orientation_xyzw: [0.0, 0.0, 0.0, 1.0],
+            },
+        },
+        Change::PartOf {
+            id: WELD.into(),
+            assembly: None,
+        },
+    ] {
+        assert_eq!(
+            refused_code(&mut a, &o, vec![change]),
+            Some(ErrorCode::UnsupportedProperty)
+        );
+    }
+
+    // A welded part cannot be deleted while the weld connects it (DV-REL-009); the weld itself
+    // can, and then the part can.
+    let index = a.element_index(&o.context, &control()).unwrap();
+    let plate = index::ElementId::parse(PLATE).unwrap();
+    assert_eq!(
+        a.check_delete(&index, &plate, &control())
+            .err()
+            .map(|e| e.code),
+        Some(ErrorCode::DependencyConflict)
+    );
+    // A weld has element links, so it is not copied incompletely (DV-REL-011).
+    let fresh = index::ElementId::parse("0199e7a0-0000-7000-8000-0000000002ff").unwrap();
+    assert_eq!(
+        index
+            .copy_plan(&index::ElementId::parse(WELD).unwrap(), &fresh)
+            .err()
+            .map(|e| e.code),
+        Some(ErrorCode::DependencyConflict)
+    );
+    // The welded part itself copies: the incoming record stays on the original.
+    assert!(index.copy_plan(&plate, &fresh).is_ok());
+    let (_, o) = installed(&mut a, &o, vec![Change::Delete { id: WELD.into() }]);
+    let index = a.element_index(&o.context, &control()).unwrap();
+    a.check_delete(&index, &plate, &control()).unwrap();
+}
+
+#[test]
+fn wrong_weld_inputs_targets_and_loaded_records_are_refused() {
+    let (mut a, o) = populated();
+    let (_, o) = installed(&mut a, &o, vec![assembly(FRAME, "Frame")]);
+    let with = |f: &dyn Fn(&mut Weld)| {
+        let mut w = weld(PLATE, MEMBER);
+        f(&mut w);
+        vec![create_weld(WELD, w)]
+    };
+    let cases: Vec<(Vec<Change>, ErrorCode)> = vec![
+        (
+            with(&|w| w.connects[1] = PLATE.into()),
+            ErrorCode::InvalidArgument,
+        ),
+        (
+            with(&|w| w.connects[0] = WELD.into()),
+            ErrorCode::InvalidArgument,
+        ),
+        (
+            with(&|w| w.connects[1] = "0199e7a0-0000-7000-8000-0000000002fe".into()),
+            ErrorCode::DanglingRelationship,
+        ),
+        (
+            with(&|w| w.connects[1] = FRAME.into()),
+            ErrorCode::UnsupportedProperty,
+        ),
+        (
+            with(&|w| w.connects[1] = "not-a-uuid".into()),
+            ErrorCode::InvalidId,
+        ),
+        (
+            with(&|w| w.weld_type = "butt".into()),
+            ErrorCode::UnsupportedProperty,
+        ),
+        (
+            with(&|w| w.side = "left".into()),
+            ErrorCode::InvalidArgument,
+        ),
+        (
+            with(&|w| w.location = "".into()),
+            ErrorCode::InvalidArgument,
+        ),
+        (with(&|w| w.size_mm = 0.0), ErrorCode::InvalidArgument),
+        (with(&|w| w.size_mm = 1000.5), ErrorCode::LimitExceeded),
+        (with(&|w| w.size_mm = f64::NAN), ErrorCode::NonFiniteNumber),
+    ];
+    for (changes, code) in cases {
+        assert_eq!(
+            refused_code(&mut a, &o, changes.clone()),
+            Some(code),
+            "{changes:?}"
+        );
+    }
+    // A weld has no material and no body; its placement is the identity.
+    let mut placed = create_weld(WELD, weld(PLATE, MEMBER));
+    if let Change::Create(e) = &mut placed {
+        e.placement.translation_mm = [0.0, 0.0, 1.0];
+    }
+    assert_eq!(
+        refused_code(&mut a, &o, vec![placed]),
+        Some(ErrorCode::UnsupportedProperty)
+    );
+    let mut body = mesh();
+    body.id = WELD.into();
+    assert_eq!(
+        refused_code(
+            &mut a,
+            &o,
+            vec![create_weld(WELD, weld(PLATE, MEMBER)), Change::Mesh(body)]
+        ),
+        Some(ErrorCode::UnsupportedProperty)
+    );
+
+    // Loaded content: one target breaks the cardinality, and a connects record on a part is
+    // outside the vocabulary.
+    let (_, o) = installed(&mut a, &o, vec![create_weld(WELD, weld(PLATE, MEMBER))]);
+    let from = format!("rel bim:connects = [<{}>, <{}>]", path(PLATE), path(MEMBER));
+    for (to, code) in [
+        (
+            format!("rel bim:connects = <{}>", path(PLATE)),
+            ErrorCode::DependencyConflict,
+        ),
+        (
+            format!("rel bim:connects = [<{}>, <{}>]", path(PLATE), path(PLATE)),
+            ErrorCode::InvalidArgument,
+        ),
+        (
+            format!("rel bim:connects = [<{}>, <{}>]", path(PLATE), path(FRAME)),
+            ErrorCode::UnsupportedProperty,
+        ),
+    ] {
+        let input = tampered(&a, &o.context, "authored.usda", &from, &to);
+        assert_eq!(
+            validate_layers(input, schema_identity().unwrap(), &control())
+                .err()
+                .map(|e| e.code),
+            Some(code),
+            "{to}"
+        );
+    }
+    let input = tampered(
+        &a,
+        &o.context,
+        "authored.usda",
+        "token steel:weld:side = \"both\"",
+        "token steel:weld:side = \"left\"",
+    );
+    assert_eq!(
+        validate_layers(input, schema_identity().unwrap(), &control())
+            .err()
+            .map(|e| e.code),
+        Some(ErrorCode::InvalidArgument)
+    );
+}
