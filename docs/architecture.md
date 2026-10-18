@@ -58,6 +58,8 @@ V03 adds the native window and viewport (`apps/beamcraft-ui`, `beamcraft_engine:
 
 A06 adds a minimal weld (`model::command::CreateWeld`, `engine::weld`, `Footprint::for_weld`, `Shape::Weld` in the layer engine, `beamcraft_cli::weld` and the CLI commands `create-weld` and `welds`): a weld is a `connection` element with no body, explicitly authored fillet size, workshop or site and side, and one ordered `bim:connects` record towards two distinct plates, beams or columns; a welded part cannot be deleted under it and a weld cannot be copied ([design note](design/a06-welds.md)).
 
+V04 adds picking and snaps (`engine::query::feature`, `engine::query::pick` and the CLI commands `pick`, `feature-lookup` and `snap`): `fid1` FeatureIds for box bodies derived from the snapshot's validated blobs, the F06 ray and point `Pick` with its ordering and limits, `LookupFeature`, and vertex and member-axis snaps; no result carries an index and an index is refused as an address ([design note](design/v04-picking-snaps.md)).
+
 [Module boundaries (F08)](contracts/module-boundaries-v0.1.md) give the exact crate and module path
 of every contract area, the allowed dependency edges and which crates are planned. A test and CI
 enforce them.

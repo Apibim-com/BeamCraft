@@ -7,10 +7,10 @@
 //! input (F06 section 7). It holds element ids only; instance and triangle indices are accepted
 //! as display hints and resolved to ids through a projection of one snapshot, then discarded.
 //!
-//! Geometric ray and point picking (F06 `Pick`) and `LookupFeature` are not implemented: they
-//! need kernel feature geometry (G04). This module neither approximates nor fakes them. A
-//! display-only GPU pick can feed [`Selection::from_triangles`] or [`Selection::from_instances`]
-//! as a hint; anything that selects for engineering use must come from the engine's `Pick`.
+//! Geometric ray and point picking (F06 `Pick`) and `LookupFeature` live in
+//! [`crate::query::pick`] and [`crate::query::feature`]. A display-only GPU pick can feed
+//! [`Selection::from_triangles`] or [`Selection::from_instances`] as a hint; anything that
+//! selects for engineering use must come from the engine's `Pick`.
 
 use crate::element::ElementId;
 use crate::error::{ViewCode, ViewError};
