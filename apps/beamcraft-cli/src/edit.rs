@@ -3,7 +3,8 @@
 
 //! P04 adapter: `UpdateElement` for a plate or a member, committed as the next revision.
 //!
-//! The patch is typed (label, material reference, a plate's thickness, the placement translation)
+//! The patch is typed (label, material reference, a plate's thickness, the placement translation,
+//! the D2 level assignment)
 //! and the adapter writes only what the patch changes: a rename touches the authored layer alone,
 //! a material change rewrites the quantity record next to an unchanged mesh, a thickness change
 //! rebuilds the mesh and the records, and a move (P08) rewrites the placement alone: the
@@ -50,7 +51,8 @@ pub struct UpdateRequest {
     pub revision_id: RevisionId,
     /// The acting user (trusted context).
     pub actor: Uuid7,
-    /// Project of a store that has no revision yet; an update of such a store is `NOT_FOUND`.
+    /// Project of a store that has no revision yet; an update of such a store is `NOT_FOUND`. A
+    /// store with a revision ignores it (see `plate::ensure_project`).
     pub project: ProjectId,
     /// Workspace of a store that has no revision yet.
     pub workspace: WorkspaceId,
@@ -124,12 +126,12 @@ pub fn update_element(
         expected,
         ..
     } = base;
-    let (plates, members, definitions) = {
+    let (plates, members, definitions, levels) = {
         let mut reader = Reader::default();
         let opened = reader.open(base_request.clone(), &control)?;
         let decoded = decode(&reader, &opened, &control)?;
         let (plates, members) = evaluate_decoded(&decoded)?;
-        (plates, members, decoded.definitions)
+        (plates, members, decoded.definitions, decoded.levels)
     };
     let materials = material_lookup(&definitions);
     let patch_effect = effect(&command.patch);
@@ -184,11 +186,13 @@ pub fn update_element(
             )
         }
     };
+    let head_level = levels.level_of(&command.target_id);
+    let next_level = command.patch.level.unwrap_or(head_level);
     let same_state = |a: &UpdatedElement, b: &UpdatedElement| match (a, b) {
         (UpdatedElement::Plate(a), UpdatedElement::Plate(b)) => a.authored == b.authored,
         (UpdatedElement::Member(a), UpdatedElement::Member(b)) => a.authored == b.authored,
         _ => false,
-    };
+    } && head_level == next_level;
 
     let op_host = host_uuid(&request.op_id.to_string())?;
     let fingerprint = command.content_fingerprint()?;
@@ -230,7 +234,7 @@ pub fn update_element(
         .into());
     }
 
-    let footprint = Footprint::for_update(
+    let mut footprint = Footprint::for_update(
         command.target_id,
         patch_effect.name,
         patch_effect.material,
@@ -238,6 +242,11 @@ pub fn update_element(
         patch_effect.placement,
         new_material,
     )?;
+    // The level decision needs the model (kind of the target, existence and kind of the level);
+    // it runs after replay and no-op detection, so a retry never fails on its own result.
+    if let Some(level) = command.patch.level {
+        footprint = footprint.union(levels.assign(command.target_id, level)?.footprint)?;
+    }
     let schema = schema_identity()?;
     let (mut author, opened) = Author::open(
         base_request,
@@ -275,11 +284,17 @@ pub fn update_element(
         };
         let [qx, qy, qz, qw] = placement.orientation_xyzw;
         changes.push(Change::Placement {
-            id: id_text,
+            id: id_text.clone(),
             placement: LayerPlacement {
                 translation_mm: placement.translation_mm,
                 orientation_xyzw: [qx, qy, qz, qw],
             },
+        });
+    }
+    if let Some(level) = command.patch.level {
+        changes.push(Change::Level {
+            id: id_text,
+            level: level.map(|l| l.to_string()),
         });
     }
     if patch_effect.material || patch_effect.shape {

@@ -474,6 +474,9 @@ pub struct ElementPatch {
     pub thickness_mm: Option<f64>,
     /// New placement translation in millimetres, absolute; the rotation is kept (a move).
     pub translation_mm: Option<[f64; 3]>,
+    /// D2: new level assignment of a plate, beam or column, or its explicit removal
+    /// (`Some(None)`). Whether the level exists is the engine's decision.
+    pub level: Option<Option<ElementId>>,
 }
 
 /// F04 section 7 `UpdateElement`: the target element and a typed patch.
@@ -496,6 +499,7 @@ impl UpdateElement {
             && patch.material.is_none()
             && patch.thickness_mm.is_none()
             && patch.translation_mm.is_none()
+            && patch.level.is_none()
         {
             return Err(CommandError::new(
                 ErrorCode::InvalidArgument,
@@ -591,6 +595,15 @@ impl UpdateElement {
                         "value cannot be encoded",
                     )
                 })?);
+            }
+        }
+        // Appended only when present, so the fingerprints of earlier patches are unchanged.
+        match self.patch.level {
+            None => {}
+            Some(None) => bytes.extend_from_slice(&[3, 0]),
+            Some(Some(level)) => {
+                bytes.extend_from_slice(&[3, 1]);
+                bytes.extend_from_slice(level.as_bytes());
             }
         }
         Sha256::digest(&bytes).map_err(|_| {
@@ -793,6 +806,70 @@ impl DetachFromAssembly {
         let mut bytes = Vec::with_capacity(64);
         bytes.extend_from_slice(b"BeamCraft/A01/DetachFromAssembly/v1\0");
         bytes.extend_from_slice(self.part_id.as_bytes());
+        Sha256::digest(&bytes).map_err(|_| {
+            CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+        })
+    }
+}
+
+/// D2 `CreateLevel`: a new `level` element (a storey): a name and an elevation in millimetres.
+/// A level has no geometry and no placement of its own; plates and members are assigned to it
+/// through `UpdateElement` (`ElementPatch::level`), and the elevation moves no element.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CreateLevel {
+    /// Identity of the new level.
+    pub new_id: ElementId,
+    /// Explicit user label, 1 to 256 UTF-8 bytes without control characters.
+    pub name: String,
+    /// Elevation in millimetres: finite and at most 1,000,000,000 in magnitude (the coordinate
+    /// cap). Negative elevations are allowed (a basement).
+    pub elevation_mm: f64,
+}
+
+impl CreateLevel {
+    /// Admits the request: the label follows the F04 rule (`INVALID_ARGUMENT`), the elevation is
+    /// finite (`NON_FINITE_NUMBER`) and within the coordinate cap (`LIMIT_EXCEEDED`). Whether the
+    /// identity is free (`DUPLICATE_ID`) is the engine's decision.
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        if !label_is_valid(&self.name) {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "name",
+                "label must be 1 to 256 bytes without control characters",
+            ));
+        }
+        if !self.elevation_mm.is_finite() {
+            return Err(CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "elevation_mm",
+                "value is not finite",
+            ));
+        }
+        if self.elevation_mm.abs() > COORDINATE_CAP_MM {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "elevation_mm",
+                "elevation exceeds the coordinate cap",
+            ));
+        }
+        Ok(())
+    }
+
+    /// SHA-256 of a versioned, length-prefixed encoding of the validated request.
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        self.validate_arguments()?;
+        let mut bytes = Vec::with_capacity(72 + self.name.len());
+        bytes.extend_from_slice(b"BeamCraft/D2/CreateLevel/v1\0");
+        bytes.extend_from_slice(self.new_id.as_bytes());
+        bytes.extend_from_slice(&(self.name.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(self.name.as_bytes());
+        bytes.extend_from_slice(&canonical_f64_bytes(self.elevation_mm).map_err(|_| {
+            CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "elevation_mm",
+                "value cannot be encoded",
+            )
+        })?);
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
         })
@@ -1513,5 +1590,83 @@ mod tests {
             assert_eq!(back, Some(token));
         }
         assert!(WeldType::parse("butt").is_none() && WeldSide::parse("Arrow").is_none());
+    }
+
+    #[test]
+    fn create_level_admits_a_label_and_a_bounded_finite_elevation() {
+        let level = CreateLevel {
+            new_id: id(1),
+            name: "Level 1".into(),
+            elevation_mm: 3000.0,
+        };
+        assert!(level.validate_arguments().is_ok());
+        let code = |l: CreateLevel| l.validate_arguments().unwrap_err().code;
+        for elevation in [-1_000_000_000.0, 0.0, 1_000_000_000.0] {
+            let l = CreateLevel {
+                elevation_mm: elevation,
+                ..level.clone()
+            };
+            assert!(l.validate_arguments().is_ok(), "{elevation}");
+        }
+        for elevation in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let l = CreateLevel {
+                elevation_mm: elevation,
+                ..level.clone()
+            };
+            assert_eq!(code(l), ErrorCode::NonFiniteNumber);
+        }
+        for elevation in [1_000_000_000.5, -1e300] {
+            let l = CreateLevel {
+                elevation_mm: elevation,
+                ..level.clone()
+            };
+            assert_eq!(code(l), ErrorCode::LimitExceeded);
+        }
+        for name in ["", "tab\there"] {
+            let l = CreateLevel {
+                name: name.into(),
+                ..level.clone()
+            };
+            assert_eq!(code(l), ErrorCode::InvalidArgument);
+        }
+        let base = level.content_fingerprint().unwrap();
+        for changed in [
+            CreateLevel {
+                new_id: id(2),
+                ..level.clone()
+            },
+            CreateLevel {
+                name: "Level 2".into(),
+                ..level.clone()
+            },
+            CreateLevel {
+                elevation_mm: 3000.5,
+                ..level.clone()
+            },
+        ] {
+            assert_ne!(changed.content_fingerprint().unwrap(), base);
+        }
+        assert_eq!(level.clone().content_fingerprint().unwrap(), base);
+    }
+
+    #[test]
+    fn a_level_patch_counts_as_a_change_and_is_part_of_the_fingerprint() {
+        let patch = |level| UpdateElement {
+            target_id: id(5),
+            patch: ElementPatch {
+                level,
+                ..ElementPatch::default()
+            },
+        };
+        assert!(patch(Some(Some(id(9)))).validate_arguments().is_ok());
+        assert!(patch(Some(None)).validate_arguments().is_ok());
+        assert_eq!(
+            patch(None).validate_arguments().unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
+        let set = patch(Some(Some(id(9)))).content_fingerprint().unwrap();
+        let other = patch(Some(Some(id(10)))).content_fingerprint().unwrap();
+        let clear = patch(Some(None)).content_fingerprint().unwrap();
+        assert!(set != other && set != clear && other != clear);
     }
 }

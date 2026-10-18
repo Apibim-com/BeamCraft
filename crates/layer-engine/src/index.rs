@@ -421,6 +421,8 @@ impl ElementIndex {
                 LinkTarget::Element(t) if t == source => LinkTarget::Element(*fresh),
                 // Immutable definitions stay shared.
                 LinkTarget::Definition(d) => LinkTarget::Definition(*d),
+                // A level assignment (D2) stays with the copy: the copy is on the same level.
+                LinkTarget::Element(t) if link.name == "bim:level" => LinkTarget::Element(*t),
                 _ => {
                     return Err(fail(
                         ErrorCode::DependencyConflict,

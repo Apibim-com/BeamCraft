@@ -25,6 +25,69 @@ use std::collections::BTreeMap;
 /// No generated schema, plugin, fallback values or external schema resources are required.
 pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "BeamCraft/U02/codeless/1\nmodel=0.1.0;backend=openusd=0.8.0;features=none;save=usda-owned-v1\n",
+    "root:metersPerUnit=0.001;upAxis=Z;customLayerData:bimSchemaDigest=sha256;",
+    "bimProjectId=string(uuid7,optional,root layer only,written once with the first revision)\n",
+    "element=/World/Steel/E_<uuid7-32>;type=Xform\n",
+    "bim:id=string;bim:name=string;bim:elementKind=token;bim:geometryMode=token(parametric);",
+    "bim:schemaVersion=string(0.1.0);bim:createdBy=string(uuid7);bim:revision=string(uuid7,optional)\n",
+    "steel:plate:contourPointsMm=double3[];steel:plate:thicknessMm=double;",
+    "steel:plate:holePointsMm=double3[](optional,z=0);steel:plate:holeVertexCounts=int[](optional,>=3 each);",
+    "bim:axisPointsMm=double3[];steel:member:rollRad=double(optional)\n",
+    "assembly=element;bim:elementKind=assembly;kind=assembly;no shape inputs, material or Geometry;placement=identity\n",
+    "bim:partOf=rel(0..1 element target of kind assembly;source plate|beam|column|assembly;no self;acyclic)\n",
+    "connection=element;bim:elementKind=connection;kind=component;a weld only (A06);no material or Geometry;placement=identity\n",
+    "steel:weld:type=token(fillet);steel:weld:sizeMm=double(>0,<=1000);steel:weld:location=token(workshop|site);",
+    "steel:weld:side=token(arrow|other|both)\n",
+    "bim:connects=rel(2 distinct ordered element targets of kind plate|beam|column, main part first;source connection)\n",
+    "level=element;bim:elementKind=level;kind=component;bim:elevationMm=double(finite,abs<=1e9);no material or Geometry;placement=identity\n",
+    "bim:level=rel(0..1 element target of kind level;source plate|beam|column)\n",
+    "xformOp:translate=double3;xformOp:orient=quatd;xformOpOrder=token[](translate,orient)\n",
+    "kind:/World=assembly;/World/Steel=group;element=component;element/Geometry=subcomponent;",
+    "displayName(element)=bim:name\n",
+    "bim:profile=rel;bim:material=rel;definition=/World/Definitions/D_<sha256-64>\n",
+    "definition:bim:contentDigest=string;bim:schemaVersion=string(0.1.0);bim:units=token(mm);",
+    "bim:definitionKind=token;steel:profile:widthMm=double;steel:profile:heightMm=double;",
+    "steel:profile:designation=string(optional);steel:profile:standard=string(optional);",
+    "steel:profile:areaMm2=double(optional);steel:profile:massPerMeterKg=double(optional);",
+    "steel:profile:surfacePerMeterM2=double(optional);",
+    "section profile=bim:definitionKind=token(i_shape|channel|angle|rhs|chs|lipped_c|plain_c|lipped_z|omega);",
+    "steel:profile:<parameter>Mm=double for each family parameter in order (h,b,tw,tf,r|h,b,t,r|d,t|h,b,c,t,r);",
+    "custom profile=bim:definitionKind=token(custom);steel:profile:outerPointsMm=double3[](z=0);",
+    "steel:profile:cavityPointsMm=double3[](optional,z=0);steel:profile:cavityVertexCounts=int[](optional,>=3 each);",
+    "bim:densityKgM3=double(optional);bim:materialGrade=string(optional);",
+    "bim:materialStandard=string(optional)\n",
+    "derived=<element>/Geometry:Mesh;points=point3f[];faceVertexCounts=int[];faceVertexIndices=int[];",
+    "subdivisionScheme=token(none);orientation=token(rightHanded);",
+    "extent=float3[](min,max of points);normals=normal3f[](uniform,one unit Newell normal per face);",
+    "bim:shapeKey=string(sha256);",
+    "quantities(optional,all or none)=bim:volumeMm3=double;bim:volumeStatus=token;bim:massKg=double(optional);",
+    "bim:massStatus=token;bim:shapeSignature=string(sha256);bim:massSignature=string(sha256);",
+    "bim:quantityAlgorithm=string\n",
+    "reference=/World/Steel/E_<uuid7-32>;type=Xform;kind=group;bim:elementKind=reference;bim:geometryMode=reference;",
+    "bim:reference:sourceDigest=string(sha256);bim:reference:sourceBytes=int;bim:reference:sourceFormat=token(usda|usdc);",
+    "bim:reference:sourceVersion=int;bim:reference:sourceLabel=string;bim:reference:sourceDefaultPrim=string;",
+    "bim:reference:declaredMetersPerUnit=double(optional);bim:reference:declaredUpAxis=token(Y|Z,optional)\n",
+    "reference/Correction=Xform;kind=group;bim:reference:correctionMetersPerUnit=double;bim:reference:correctionUpAxis=token(Y|Z);",
+    "bim:reference:correctionSourceDigest=string(sha256);xformOp:rotateX:bimUpAxis=double(degrees,Y up only);",
+    "xformOp:scale:bimUnits=double3(metersPerUnit*1000);xformOpOrder=token[](rotateX,scale;empty without correction)\n",
+    "reference/Correction/Source=def without type;references=@external/<sha256>.<usda|usdc>@</defaultPrim>;nothing else owned at or below\n",
+    "changes=Create|Label|Contour|Thickness|Axis|Roll|Profile|Material|Placement|Mesh|AttachReference|ReferenceUnits|PartOf|Level|Delete;",
+    "opinion=Absent|Block|Value|Remove;relationship=Targets|Empty|Remove\n",
+    "snapshot=Prim(path,element_id,type_name,active,properties,relationships,sources);",
+    "property=(name,type_name,optional-value);relationship=(name,ordered-targets)\n",
+    "prepare=(context,op_id,actor,schema,resources,changes);resource=(digest,definition);",
+    "element=(id,name,shape,placement,optional-material);placement=(translation_mm[3],orientation_xyzw[4]);",
+    "mesh=(id,shape_key,points_mm,face_counts,indices);",
+    "authored-item=(element_id,attribute,type_name,opinion);install=(context,token,op_id,Accepted);",
+    "discard=(context,token,op_id,Undecided|Rejected);unknown=OUTCOME_UNKNOWN\n",
+);
+
+/// Descriptor of the A07.1 mapping revision (section profiles), before D1 and D2 added the optional
+/// project record of the root layer, the `level` element and `bim:level`. Layers pinned to it
+/// contain nothing the current mapping refuses (D1 and D2 only add optional content), so they stay
+/// readable and editable.
+const A07_1_DESCRIPTOR: &str = concat!(
+    "BeamCraft/U02/codeless/1\nmodel=0.1.0;backend=openusd=0.8.0;features=none;save=usda-owned-v1\n",
     "root:metersPerUnit=0.001;upAxis=Z;customLayerData:bimSchemaDigest=sha256\n",
     "element=/World/Steel/E_<uuid7-32>;type=Xform\n",
     "bim:id=string;bim:name=string;bim:elementKind=token;bim:geometryMode=token(parametric);",
@@ -340,6 +403,7 @@ pub(crate) fn pin_accepted(pin: &str) -> Result<bool, Diagnostic> {
         return Ok(true);
     }
     for descriptor in [
+        A07_1_DESCRIPTOR,
         A06_DESCRIPTOR,
         A01_DESCRIPTOR,
         R01_DESCRIPTOR,
@@ -352,6 +416,23 @@ pub(crate) fn pin_accepted(pin: &str) -> Result<bool, Diagnostic> {
         }
     }
     Ok(false)
+}
+
+/// Key of the D1 project record in the root layer's `customLayerData`.
+pub const PROJECT_RECORD_KEY: &str = "bimProjectId";
+
+/// The ProjectId recorded in the metadata of the root layer (D1), or `None` for a store that has
+/// none. A record that is not a text holding a full UUIDv7 is `INVALID_ID`: it is never read as
+/// "absent" and never repaired.
+pub fn project_record(metadata: &BTreeMap<String, Value>) -> Result<Option<String>, Diagnostic> {
+    let Some(Value::Dictionary(data)) = metadata.get("customLayerData") else {
+        return Ok(None);
+    };
+    match data.get(PROJECT_RECORD_KEY) {
+        None => Ok(None),
+        Some(Value::Text(id)) if uuid7(id) => Ok(Some(id.clone())),
+        Some(_) => Err(fail(ErrorCode::InvalidId, "invalid project record")),
+    }
 }
 
 /// Explicit property opinion in the owned edit layer, distinct from composition results.
@@ -418,6 +499,13 @@ pub enum Shape {
     /// `bim:connects` record towards two distinct parts. No material and no derived body; its
     /// placement must be the identity in this slice.
     Weld(Weld),
+    /// D2 level (a storey): an element of kind `level` with a stored elevation, no material and no
+    /// derived body. Plates, beams and columns are assigned to it by [`Change::Level`]. Its
+    /// placement must be the identity: the elevation is a value, never a pose.
+    Level {
+        /// Elevation in millimetres, finite and at most 1,000,000,000 in magnitude.
+        elevation_mm: f64,
+    },
 }
 
 /// The authored inputs of a weld (A06). Tokens are the exact stored values.
@@ -645,6 +733,15 @@ pub enum Change {
         /// Full UUIDv7 of the assembly, or `None` for an explicit empty record (a detach).
         assembly: Option<String>,
     },
+    /// Set or remove the one `bim:level` record of a plate, beam or column (D2). The target must
+    /// be an active owned level; kind, cardinality and dangling targets are re-checked on the
+    /// candidate.
+    Level {
+        /// Full source UUIDv7: the plate, beam or column.
+        id: String,
+        /// Full UUIDv7 of the level, or `None` for an explicit empty record (an unassignment).
+        level: Option<String>,
+    },
 }
 impl Change {
     pub(super) fn key(&self) -> (&str, &'static str) {
@@ -663,6 +760,7 @@ impl Change {
             Self::AttachReference(r) => (&r.id, "lifecycle"),
             Self::ReferenceUnits { id, .. } => (id, "reference:units"),
             Self::PartOf { id, .. } => (id, "bim:partOf"),
+            Self::Level { id, .. } => (id, "bim:level"),
         }
     }
 }
@@ -1031,6 +1129,20 @@ pub(super) fn invalid() -> Diagnostic {
 #[cfg(test)]
 mod pin_tests {
     use super::*;
+
+    #[test]
+    fn the_a07_1_mapping_pin_is_accepted_and_is_not_the_current_one() {
+        // Pinned value: the digest of the descriptor of master with A07.1, before D1 and D2.
+        let a07_1 = "0311df71b2f7a4bd7b19e87ca7daef1884e989bd099bca24ee165de8e6bc310c";
+        assert_eq!(
+            Sha256::digest(A07_1_DESCRIPTOR.as_bytes())
+                .unwrap()
+                .to_string(),
+            a07_1
+        );
+        assert!(pin_accepted(a07_1).unwrap());
+        assert_ne!(a07_1, schema_identity().unwrap().digest.to_string());
+    }
 
     #[test]
     fn the_a06_mapping_pin_is_accepted_and_is_not_the_current_one() {

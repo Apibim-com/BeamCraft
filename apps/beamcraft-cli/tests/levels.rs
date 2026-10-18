@@ -1,0 +1,689 @@
+// SPDX-License-Identifier: MPL-2.0
+// SPDX-FileCopyrightText: 2026 Apibim
+// Contributor-original synthetic plates, beams and levels, MPL-2.0.
+
+//! D1 and D2 end to end through the real CLI binary and committed revisions.
+//!
+//! D1: the first revision records the project in the root layer; later revisions agree; an
+//! explicit different `--project-id` is refused with nothing written; a fork reports its
+//! parent's project; a store without a record is never given one; damaged records are typed
+//! errors. D2: levels are elements with their own identity and no body; assignment is the
+//! `bim:level` record of the plate or member (`update-element --level`); a level never touches a
+//! body; a level in use is not deleted; a copy keeps the level.
+
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+
+use beamcraft_host::{
+    ids::IdSource,
+    revision::{ExpectedBase, LayerEntry, NoFault, RevisionDraft, RevisionStore, Uuid7},
+    storage::BlobStore,
+};
+use beamcraft_protocol::{
+    json::{self, Json},
+    message,
+};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT: AtomicU64 = AtomicU64::new(0);
+
+const PROJECT: &str = "019a7bf0-0000-7000-8000-00000000d001";
+const OTHER_PROJECT: &str = "019a7bf0-0000-7000-8000-00000000d002";
+const STOREY: &str = "019a7bf0-0000-7000-8000-000000300001";
+const ROOF: &str = "019a7bf0-0000-7000-8000-000000300002";
+const MISSING: &str = "019a7bf0-0000-7000-8000-0000003000ff";
+
+struct Fixture {
+    root: PathBuf,
+}
+impl Fixture {
+    fn new() -> Self {
+        let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("d1d2-tests");
+        fs::create_dir_all(&base).unwrap();
+        let root = base.join(format!(
+            "e2e-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(root.join("store")).unwrap();
+        Self { root }
+    }
+    fn store(&self) -> String {
+        self.root.join("store").to_str().unwrap().to_owned()
+    }
+    fn run_in(&self, store: &str, command: &str, extra: &[&str]) -> (i32, Json) {
+        let mut args = vec![command, "--store", store];
+        args.extend_from_slice(extra);
+        let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
+            .args(&args)
+            .output()
+            .unwrap();
+        let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
+        (output.status.code().unwrap(), body)
+    }
+    fn run(&self, command: &str, extra: &[&str]) -> (i32, Json) {
+        self.run_in(&self.store(), command, extra)
+    }
+    fn ok(&self, command: &str, extra: &[&str]) -> Json {
+        let (code, body) = self.run(command, extra);
+        assert_eq!(code, 0, "{command} {extra:?}: {body:?}");
+        body
+    }
+    fn rejected(&self, command: &str, extra: &[&str]) -> String {
+        let before = self.head();
+        let (code, body) = self.run(command, extra);
+        assert_eq!(code, 2, "{command} {extra:?}: {body:?}");
+        // A refusal writes no revision.
+        assert_eq!(self.head(), before, "{command} {extra:?}");
+        text(&body, "code")
+    }
+    fn head(&self) -> String {
+        text(&self.ok("revision-open", &[]), "revision_id")
+    }
+    fn plate_with(&self, extra: &[&str]) -> String {
+        let mut args = vec!["--width", "1000", "--length", "500", "--thickness", "10"];
+        args.extend_from_slice(extra);
+        text(
+            at(&self.ok("create-plate", &args), &["plate"]),
+            "element_id",
+        )
+    }
+    fn plate(&self) -> String {
+        self.plate_with(&[])
+    }
+    fn beam(&self) -> String {
+        let profile = text(
+            at(
+                &self.ok("define-profile", &["--width", "100", "--height", "50"]),
+                &["definition"],
+            ),
+            "digest",
+        );
+        let body = self.ok(
+            "create-member",
+            &[
+                "--start",
+                "0,0,0",
+                "--end",
+                "3000,0,0",
+                "--profile-digest",
+                &profile,
+            ],
+        );
+        text(at(&body, &["member"]), "element_id")
+    }
+    fn level(&self, id: &str, name: &str, elevation: &str) -> Json {
+        self.ok(
+            "create-level",
+            &["--name", name, "--elevation", elevation, "--new-id", id],
+        )
+    }
+    fn assign(&self, element: &str, level: &str) -> Json {
+        self.ok("update-element", &["--id", element, "--level", level])
+    }
+    fn inspect(&self) -> Json {
+        self.ok("plate-inspect", &[])
+    }
+    fn levels(&self) -> Vec<Json> {
+        list(&self.ok("levels", &[]), "levels").to_vec()
+    }
+    fn layer_digest(&self, name: &str) -> String {
+        let body = self.ok("revision-open", &[]);
+        list(&body, "layers")
+            .iter()
+            .find(|l| text(l, "name") == name)
+            .map(|l| text(l, "digest"))
+            .unwrap()
+    }
+    fn layer_text(&self, name: &str) -> String {
+        let store = RevisionStore::new(BlobStore::new(self.root.join("store")).unwrap());
+        let head = store.open().unwrap();
+        String::from_utf8(head.layer_bytes(name).unwrap()).unwrap()
+    }
+    /// Commits a head-based revision with edited layer text and no content verification, the way
+    /// a layer edited outside BeamCraft would arrive through `revision-commit`.
+    fn tamper(&self, edit: impl Fn(&str, String) -> String) {
+        let store = RevisionStore::new(BlobStore::new(self.root.join("store")).unwrap());
+        let head = store.open().unwrap();
+        let content = head.manifest().content();
+        let mut ids = IdSource::system();
+        let mut entries = Vec::new();
+        for entry in content.entries() {
+            let original = String::from_utf8(head.layer_bytes(entry.name()).unwrap()).unwrap();
+            let edited = edit(entry.name(), original);
+            store.blobs().publish(edited.as_bytes()).unwrap();
+            entries.push(
+                LayerEntry::from_bytes(entry.name(), entry.role(), edited.as_bytes()).unwrap(),
+            );
+        }
+        let draft = RevisionDraft {
+            project: content.project().clone(),
+            workspace: content.workspace().clone(),
+            revision: Uuid7::parse(&ids.next_id().unwrap().to_string()).unwrap(),
+            op: Uuid7::parse(&ids.next_id().unwrap().to_string()).unwrap(),
+            workspace_generation: content.workspace_generation() + 1,
+            schema: content.schema(),
+            root_layer: content.root_layer().to_owned(),
+            entries,
+        };
+        store
+            .commit_with(
+                &draft,
+                &ExpectedBase::Revision(head.info().revision().clone()),
+                None,
+                &mut NoFault,
+            )
+            .unwrap();
+    }
+}
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        assert!(self.root.is_absolute() && self.root.file_name().is_some());
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+fn text(json: &Json, key: &str) -> String {
+    json.get(key).unwrap().string().unwrap().to_owned()
+}
+fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
+    path.iter().fold(json, |j, k| j.get(k).unwrap())
+}
+fn list<'a>(json: &'a Json, key: &str) -> &'a [Json] {
+    at(json, &[key]).array().unwrap()
+}
+fn strings(json: &Json, key: &str) -> Vec<String> {
+    list(json, key)
+        .iter()
+        .map(|v| v.string().unwrap().to_owned())
+        .collect()
+}
+fn groups(change: &Json, key: &str) -> Vec<(String, String)> {
+    list(at(change, &["footprint"]), key)
+        .iter()
+        .map(|e| (text(e, "target"), text(e, "group")))
+        .collect()
+}
+fn project_record(inspected: &Json) -> Option<String> {
+    inspected
+        .get("project_id_record")
+        .unwrap()
+        .string()
+        .ok()
+        .map(str::to_owned)
+}
+fn manifest_project(json: &Json) -> String {
+    text(at(json, &["revision", "manifest"]), "project_id")
+}
+fn element<'a>(inspected: &'a Json, key: &str, id: &str) -> &'a Json {
+    list(inspected, key)
+        .iter()
+        .find(|e| text(e, "element_id") == id)
+        .unwrap()
+}
+fn level_of(inspected: &Json, key: &str, id: &str) -> Option<String> {
+    element(inspected, key, id)
+        .get("level")
+        .unwrap()
+        .string()
+        .ok()
+        .map(str::to_owned)
+}
+fn level<'a>(levels: &'a [Json], id: &str) -> &'a Json {
+    levels.iter().find(|l| text(l, "id") == id).unwrap()
+}
+
+#[test]
+fn the_first_revision_records_the_project_and_later_revisions_agree() {
+    let f = Fixture::new();
+    // The first command records its --project-id in the root layer, once.
+    let plate = f.plate_with(&["--project-id", PROJECT]);
+    let first = f.inspect();
+    assert_eq!(project_record(&first).as_deref(), Some(PROJECT));
+    assert_eq!(manifest_project(&first), PROJECT);
+    let root = f.layer_text("root.usda");
+    assert!(
+        root.contains("bimProjectId") && root.contains(PROJECT),
+        "{root}"
+    );
+    assert!(root.contains("bimSchemaDigest"));
+    let root_digest = f.layer_digest("root.usda");
+
+    // Every later revision reports the same record, whatever command wrote it, and the root
+    // layer is not rewritten: nothing but the first revision authors the record.
+    f.level(STOREY, "Level 1", "0");
+    f.assign(&plate, STOREY);
+    f.ok("update-element", &["--id", &plate, "--name", "Renamed"]);
+    f.ok("create-assembly", &["--name", "A", "--project-id", PROJECT]);
+    let later = f.inspect();
+    assert_eq!(project_record(&later).as_deref(), Some(PROJECT));
+    assert_eq!(manifest_project(&later), PROJECT);
+    assert_eq!(f.layer_digest("root.usda"), root_digest);
+
+    // A different explicit project id is refused by every command that writes a revision, with
+    // no revision written; the same id is accepted; no id takes the store's own.
+    let before = f.head();
+    for (command, extra) in [
+        (
+            "create-plate",
+            vec!["--width", "10", "--length", "10", "--thickness", "1"],
+        ),
+        ("create-level", vec!["--name", "L", "--elevation", "1"]),
+        ("create-assembly", vec!["--name", "B"]),
+        ("update-element", vec!["--id", &plate, "--name", "X"]),
+        ("delete-element", vec!["--id", &plate]),
+        ("define-material", vec![]),
+    ] {
+        let mut args = extra.clone();
+        args.extend(["--project-id", OTHER_PROJECT]);
+        assert_eq!(f.rejected(command, &args), "INVALID_ARGUMENT", "{command}");
+    }
+    assert_eq!(f.head(), before);
+    f.ok(
+        "update-element",
+        &["--id", &plate, "--name", "Same", "--project-id", PROJECT],
+    );
+    assert_eq!(project_record(&f.inspect()).as_deref(), Some(PROJECT));
+    // A malformed id is an identity error, not a mismatch.
+    assert_eq!(
+        f.rejected("create-assembly", &["--name", "C", "--project-id", "nope"]),
+        "INVALID_ID"
+    );
+}
+
+#[test]
+fn a_generated_project_is_recorded_and_a_fork_reports_its_parent_project() {
+    let f = Fixture::new();
+    f.plate();
+    let inspected = f.inspect();
+    let project = manifest_project(&inspected);
+    assert_eq!(
+        project_record(&inspected).as_deref(),
+        Some(project.as_str())
+    );
+
+    let dir = f.root.join("draft").to_str().unwrap().to_owned();
+    f.ok(
+        "workspace-create",
+        &[
+            "--workspace-dir",
+            &dir,
+            "--user-id",
+            "019a7bf0-0000-7000-8000-00000000d0aa",
+        ],
+    );
+    let (code, forked) = f.run_in(&dir, "plate-inspect", &[]);
+    assert_eq!(code, 0, "{forked:?}");
+    assert_eq!(project_record(&forked).as_deref(), Some(project.as_str()));
+    assert_eq!(manifest_project(&forked), project);
+    // An edit inside the fork keeps it, and the fork refuses another explicit project.
+    let (code, edited) = f.run_in(
+        &dir,
+        "create-level",
+        &["--name", "Draft level", "--elevation", "1000"],
+    );
+    assert_eq!(code, 0, "{edited:?}");
+    let (code, refused) = f.run_in(
+        &dir,
+        "create-level",
+        &[
+            "--name",
+            "Other",
+            "--elevation",
+            "1",
+            "--project-id",
+            OTHER_PROJECT,
+        ],
+    );
+    assert_eq!(code, 2, "{refused:?}");
+    assert_eq!(text(&refused, "code"), "INVALID_ARGUMENT");
+    let (_, again) = f.run_in(&dir, "plate-inspect", &[]);
+    assert_eq!(project_record(&again).as_deref(), Some(project.as_str()));
+}
+
+#[test]
+fn a_store_without_a_record_is_never_given_one_and_damaged_records_are_typed_errors() {
+    let f = Fixture::new();
+    f.plate_with(&["--project-id", PROJECT]);
+    // The record as an older store would not have it: removed outside BeamCraft.
+    f.tamper(|name, text| {
+        if name == "root.usda" {
+            text.lines()
+                .filter(|l| !l.contains("bimProjectId"))
+                .collect::<Vec<_>>()
+                .join("\n")
+                + "\n"
+        } else {
+            text
+        }
+    });
+    let legacy = f.inspect();
+    assert_eq!(project_record(&legacy), None);
+    assert_eq!(manifest_project(&legacy), PROJECT);
+    // Later revisions keep it absent: the export refuses such a store, it is not repaired here.
+    f.level(STOREY, "Level 1", "0");
+    f.plate();
+    assert_eq!(project_record(&f.inspect()), None);
+    assert!(!f.layer_text("root.usda").contains("bimProjectId"));
+
+    // An invalid stored value is INVALID_ID when read, and a valid one that is not the
+    // revision's own project is an integrity error.
+    for (value, code) in [
+        ("not-a-uuid", "INVALID_ID"),
+        (OTHER_PROJECT, "INTEGRITY_ERROR"),
+    ] {
+        let g = Fixture::new();
+        g.plate_with(&["--project-id", PROJECT]);
+        g.tamper(|name, text| {
+            if name == "root.usda" {
+                text.replace(PROJECT, value)
+            } else {
+                text
+            }
+        });
+        let (status, body) = g.run("plate-inspect", &[]);
+        assert_eq!(status, 2, "{value}: {body:?}");
+        assert_eq!(text(&body, "code"), code, "{value}");
+        // Nothing builds on a damaged record either.
+        let (status, body) = g.run("create-level", &["--name", "L", "--elevation", "0"]);
+        assert_eq!(status, 2, "{value}: {body:?}");
+        assert_eq!(text(&body, "code"), code, "{value}");
+    }
+}
+
+#[test]
+fn levels_are_created_listed_assigned_and_never_touch_a_body() {
+    let f = Fixture::new();
+    let plate = f.plate();
+    let beam = f.beam();
+    let before = f.inspect();
+    let mesh_before = text(element(&before, "plates", &plate), "mesh_digest");
+    let derived_before = f.layer_digest("derived.usda");
+    // A project with elements and no level reports none and no level on any element.
+    assert!(f.levels().is_empty());
+    assert_eq!(level_of(&before, "plates", &plate), None);
+    assert_eq!(level_of(&before, "members", &beam), None);
+
+    let created = f.level(ROOF, "Roof", "-250.5");
+    assert_eq!(text(&created, "outcome"), "level_created");
+    assert_eq!(strings(&created, "changed_layers"), ["authored.usda"]);
+    assert_eq!(text(&created, "element_id"), ROOF);
+    // A level is its own element: it writes only itself (the create footprint is conservative and
+    // declares every group of the new element).
+    let written = groups(&created, "writes");
+    assert!(written.iter().all(|(target, _)| target == ROOF));
+    f.level(STOREY, "Level 1", "3000");
+
+    // Levels list in ascending identity order with their elevation and elements.
+    let listed = f.levels();
+    assert_eq!(
+        listed.iter().map(|l| text(l, "id")).collect::<Vec<_>>(),
+        [STOREY, ROOF]
+    );
+    assert_eq!(text(level(&listed, STOREY), "name"), "Level 1");
+    assert!(strings(level(&listed, STOREY), "elements").is_empty());
+    let elevation = level(&listed, ROOF).get("elevation_mm").unwrap();
+    assert_eq!(elevation, &Json::number(-250.5).unwrap());
+
+    // Assigning writes the element's relationship group only and rebuilds no body.
+    let assigned = f.assign(&plate, STOREY);
+    assert_eq!(text(&assigned, "outcome"), "element_updated");
+    assert_eq!(at(&assigned, &["effect", "level"]), &Json::Bool(true));
+    assert_eq!(at(&assigned, &["effect", "shape"]), &Json::Bool(false));
+    assert_eq!(at(&assigned, &["effect", "placement"]), &Json::Bool(false));
+    assert_eq!(strings(&assigned, "changed_layers"), ["authored.usda"]);
+    assert_eq!(
+        groups(&assigned, "writes"),
+        [(plate.clone(), "relationship".to_owned())]
+    );
+    assert!(groups(&assigned, "reads").contains(&(STOREY.to_owned(), "lifecycle".to_owned())));
+    f.assign(&beam, STOREY);
+    assert_eq!(f.layer_digest("derived.usda"), derived_before.clone());
+
+    let after = f.inspect();
+    assert_eq!(level_of(&after, "plates", &plate).as_deref(), Some(STOREY));
+    assert_eq!(level_of(&after, "members", &beam).as_deref(), Some(STOREY));
+    // Shape key, mass signature and mesh bytes are those they were before any level existed.
+    assert_eq!(
+        text(element(&after, "plates", &plate), "mesh_digest"),
+        mesh_before
+    );
+    assert_eq!(
+        at(element(&after, "plates", &plate), &["stored_quantities"]),
+        at(element(&before, "plates", &plate), &["stored_quantities"])
+    );
+    assert_eq!(
+        at(&after, &["snapshot"]).get("meshes"),
+        at(&before, &["snapshot"]).get("meshes")
+    );
+    let listed = f.levels();
+    let mut users = strings(level(&listed, STOREY), "elements");
+    users.sort();
+    let mut expected = vec![plate.clone(), beam.clone()];
+    expected.sort();
+    assert_eq!(users, expected);
+    // The level list is part of the inspection too.
+    assert_eq!(list(&after, "levels").len(), 2);
+
+    // Another level replaces the record (one level per element); none removes it.
+    f.assign(&plate, ROOF);
+    assert_eq!(
+        level_of(&f.inspect(), "plates", &plate).as_deref(),
+        Some(ROOF)
+    );
+    let cleared = f.ok("update-element", &["--id", &plate, "--level", "none"]);
+    assert_eq!(at(&cleared, &["effect", "level"]), &Json::Bool(true));
+    assert_eq!(level_of(&f.inspect(), "plates", &plate), None);
+    assert_eq!(f.layer_digest("derived.usda"), derived_before);
+    // A move or a rename next to the level is one operation with both effects.
+    let both = f.ok(
+        "update-element",
+        &[
+            "--id",
+            &plate,
+            "--level",
+            STOREY,
+            "--translation",
+            "100,0,0",
+        ],
+    );
+    assert_eq!(at(&both, &["effect", "level"]), &Json::Bool(true));
+    assert_eq!(at(&both, &["effect", "placement"]), &Json::Bool(true));
+    assert_eq!(
+        level_of(&f.inspect(), "plates", &plate).as_deref(),
+        Some(STOREY)
+    );
+}
+
+#[test]
+fn level_arguments_assignments_and_identities_are_validated_with_nothing_written() {
+    let f = Fixture::new();
+    let plate = f.plate();
+    let beam = f.beam();
+    f.level(STOREY, "Level 1", "0");
+    f.ok("create-assembly", &["--name", "Frame"]);
+
+    let create = |name: &str, elevation: &str, id: &str| {
+        f.rejected(
+            "create-level",
+            &["--name", name, "--elevation", elevation, "--new-id", id],
+        )
+    };
+    // Duplicate identities, whatever the kind that holds them.
+    assert_eq!(create("Again", "1", STOREY), "DUPLICATE_ID");
+    assert_eq!(create("Again", "1", &plate), "DUPLICATE_ID");
+    // Elevations: finite and within the coordinate cap.
+    assert_eq!(create("L", "NaN", ROOF), "NON_FINITE_NUMBER");
+    assert_eq!(create("L", "inf", ROOF), "NON_FINITE_NUMBER");
+    assert_eq!(create("L", "1000000000.5", ROOF), "LIMIT_EXCEEDED");
+    assert_eq!(create("L", "-1e12", ROOF), "LIMIT_EXCEEDED");
+    assert_eq!(create("L", "high", ROOF), "INVALID_ARGUMENT");
+    assert_eq!(create("", "1", ROOF), "INVALID_ARGUMENT");
+    assert_eq!(create("L", "1", "not-a-uuid"), "INVALID_ID");
+    assert_eq!(
+        f.rejected("create-level", &["--name", "L", "--new-id", ROOF]),
+        "INVALID_ARGUMENT"
+    );
+    assert_eq!(
+        f.rejected("create-level", &["--elevation", "1", "--new-id", ROOF]),
+        "INVALID_ARGUMENT"
+    );
+    // The edges are accepted.
+    f.level(ROOF, "Far", "1000000000");
+
+    let update = |element: &str, level: &str| {
+        f.rejected("update-element", &["--id", element, "--level", level])
+    };
+    // An unknown level is a dangling relationship; a target that is not a level is an argument
+    // error; a malformed id is an identity error.
+    assert_eq!(update(&plate, MISSING), "DANGLING_RELATIONSHIP");
+    assert_eq!(update(&plate, &beam), "INVALID_ARGUMENT");
+    assert_eq!(update(&plate, "not-a-uuid"), "INVALID_ID");
+    assert_eq!(update(MISSING, STOREY), "NOT_FOUND");
+    // Removing a level that is not there, or assigning the one already held, changes nothing.
+    assert_eq!(update(&plate, "none"), "INVALID_ARGUMENT");
+    f.assign(&plate, STOREY);
+    assert_eq!(update(&plate, STOREY), "INVALID_ARGUMENT");
+    assert_eq!(
+        f.rejected(
+            "update-element",
+            &["--id", &plate, "--level", "none", "--name", ""]
+        ),
+        "INVALID_ARGUMENT"
+    );
+}
+
+#[test]
+fn replay_reuse_delete_and_copy_follow_the_level_records() {
+    let f = Fixture::new();
+    let plate = f.plate();
+    let create_op = "019a7bf0-0000-7000-8000-00000000b001";
+    let assign_op = "019a7bf0-0000-7000-8000-00000000b002";
+    let args = [
+        "--name",
+        "Level 1",
+        "--elevation",
+        "3000",
+        "--new-id",
+        STOREY,
+    ];
+    let first = f.ok(
+        "create-level",
+        &[&args[..], &["--op-id", create_op]].concat(),
+    );
+    let again = f.ok(
+        "create-level",
+        &[&args[..], &["--op-id", create_op]].concat(),
+    );
+    assert_eq!(text(&again, "outcome"), "level_created_replayed");
+    assert_eq!(
+        text(at(&again, &["revision"]), "revision_id"),
+        text(at(&first, &["revision"]), "revision_id")
+    );
+    assert_eq!(at(&again, &["footprint"]), &Json::Null);
+    assert_eq!(
+        f.rejected(
+            "create-level",
+            &[
+                "--name",
+                "Level 1",
+                "--elevation",
+                "3001",
+                "--new-id",
+                STOREY,
+                "--op-id",
+                create_op
+            ],
+        ),
+        "OP_ID_REUSE"
+    );
+    let assign = [
+        "--id",
+        plate.as_str(),
+        "--level",
+        STOREY,
+        "--op-id",
+        assign_op,
+    ];
+    f.ok("update-element", &assign);
+    let replay = f.ok("update-element", &assign);
+    assert_eq!(text(&replay, "outcome"), "element_update_replayed");
+    assert_eq!(f.levels().len(), 1);
+
+    // A copy stays on the level of its source and the source is untouched.
+    let copy_id = "019a7bf0-0000-7000-8000-000000300010";
+    let copied = f.ok("copy-element", &["--id", &plate, "--new-id", copy_id]);
+    assert_eq!(text(&copied, "outcome"), "element_copied");
+    let inspected = f.inspect();
+    assert_eq!(
+        level_of(&inspected, "plates", copy_id).as_deref(),
+        Some(STOREY)
+    );
+    assert_eq!(
+        level_of(&inspected, "plates", &plate).as_deref(),
+        Some(STOREY)
+    );
+    assert_eq!(
+        text(element(&inspected, "plates", copy_id), "mesh_digest"),
+        text(element(&inspected, "plates", &plate), "mesh_digest")
+    );
+    // A level is not copied.
+    assert_eq!(
+        f.rejected("copy-element", &["--id", STOREY]),
+        "UNSUPPORTED_PROPERTY"
+    );
+
+    // A level that elements use is not deleted, and there is no cascade.
+    assert_eq!(
+        f.rejected("delete-element", &["--id", STOREY]),
+        "DEPENDENCY_CONFLICT"
+    );
+    // Deleting an element removes its own record; the level stays with the others.
+    f.ok("delete-element", &["--id", &plate]);
+    assert_eq!(strings(level(&f.levels(), STOREY), "elements"), [copy_id]);
+    assert_eq!(
+        f.rejected("delete-element", &["--id", STOREY]),
+        "DEPENDENCY_CONFLICT"
+    );
+    f.ok("update-element", &["--id", copy_id, "--level", "none"]);
+    let deleted = f.ok("delete-element", &["--id", STOREY]);
+    assert_eq!(text(&deleted, "kind"), "level");
+    assert!(f.levels().is_empty());
+}
+
+#[test]
+fn level_records_stored_outside_beamcraft_are_refused_when_read() {
+    let path = |id: &str| format!("/World/Steel/E_{}", id.replace('-', ""));
+    // A target that is not a level, two targets and a target that does not exist.
+    for (case, code) in [
+        ("member", "INVALID_ARGUMENT"),
+        ("two", "DEPENDENCY_CONFLICT"),
+        ("missing", "DANGLING_RELATIONSHIP"),
+    ] {
+        let g = Fixture::new();
+        let plate = g.plate();
+        let beam = g.beam();
+        g.level(STOREY, "Level 1", "0");
+        g.assign(&plate, STOREY);
+        let from = format!("bim:level = <{}>", path(STOREY));
+        let to = match case {
+            "member" => format!("<{}>", path(&beam)),
+            "two" => format!("[<{}>, <{}>]", path(STOREY), path(&beam)),
+            _ => format!("<{}>", path(MISSING)),
+        };
+        g.tamper(|name, text| {
+            if name == "authored.usda" {
+                assert!(text.contains(&from), "{text}");
+                text.replace(&from, &format!("bim:level = {to}"))
+            } else {
+                text
+            }
+        });
+        let (status, body) = g.run("levels", &[]);
+        assert_eq!(status, 2, "{case}: {body:?}");
+        assert_eq!(text(&body, "code"), code, "{case}");
+    }
+}

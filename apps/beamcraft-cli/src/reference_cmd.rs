@@ -126,6 +126,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         message: "store root is not usable",
     })?;
     let store = RevisionStore::new(blobs);
+    crate::plate_cmd::check_project_option(&store, &options)?;
     match *command {
         "reference-attach" => attach_command(&store, &options),
         "reference-move" => move_command(&store, &options),

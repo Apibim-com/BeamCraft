@@ -16,6 +16,7 @@ pub mod copy;
 pub mod element;
 pub mod error;
 pub mod footprint;
+pub mod level;
 pub mod limits;
 pub mod member;
 pub mod presentation;
