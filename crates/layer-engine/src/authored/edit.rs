@@ -516,6 +516,7 @@ fn create(data: &mut sdf::Data, e: &Element, actor: &str) -> Result<(), Diagnost
     let kind = match e.shape {
         Shape::Assembly => "assembly",
         Shape::Weld(_) => "connection",
+        Shape::Level { .. } => "level",
         Shape::Plate { .. } => "plate",
         Shape::Member {
             kind: MemberKind::Beam,
@@ -623,6 +624,13 @@ fn create(data: &mut sdf::Data, e: &Element, actor: &str) -> Result<(), Diagnost
                 .collect::<Result<Vec<_>, _>>()?;
             relationship_targets(data, &p, "bim:connects", Some(targets))?;
         }
+        Shape::Level { elevation_mm } => attr(
+            data,
+            &p,
+            "bim:elevationMm",
+            "double",
+            sdf::Value::Double(*elevation_mm),
+        )?,
     }
     if let Some(d) = e.material {
         relationship(data, &p, "bim:material", MaterialOpinion::Target(d))?;
@@ -916,6 +924,14 @@ pub(super) fn apply(
                 };
                 relationship_targets(&mut authored, &p, "bim:partOf", Some(targets))?;
             }
+            Change::Level { level, .. } => {
+                // An unassignment authors an explicit empty target list, as a detach does.
+                let targets = match level.as_deref() {
+                    Some(l) => vec![path(&element_path(l)?)?],
+                    None => Vec::new(),
+                };
+                relationship_targets(&mut authored, &p, "bim:level", Some(targets))?;
+            }
             Change::ReferenceUnits { interpretation, .. } => {
                 let wrapper = prims
                     .iter()
@@ -1079,6 +1095,7 @@ fn capture(
                             add(name, ty, 0);
                         }
                     }
+                    Shape::Level { .. } => add("bim:elevationMm", "double", 0),
                 }
             }
             Change::AttachReference(r) => {
@@ -1118,6 +1135,8 @@ fn capture(
                     ("steel:member:rollRad", "double"),
                     ("bim:profile", "rel"),
                     ("bim:partOf", "rel"),
+                    ("bim:level", "rel"),
+                    ("bim:elevationMm", "double"),
                 ] {
                     add(name, ty, 0);
                 }
@@ -1141,6 +1160,7 @@ fn capture(
             Change::Profile { .. } => add("bim:profile", "rel", 0),
             Change::Material { .. } => add("bim:material", "rel", 0),
             Change::PartOf { .. } => add("bim:partOf", "rel", 0),
+            Change::Level { .. } => add("bim:level", "rel", 0),
             Change::Placement { .. } => {
                 for &(name, ty) in POSE {
                     add(name, ty, 0);

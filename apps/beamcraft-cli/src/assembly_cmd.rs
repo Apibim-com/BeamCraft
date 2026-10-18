@@ -107,6 +107,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         message: "store root is not usable",
     })?;
     let store = RevisionStore::new(blobs);
+    let _claim = crate::plate_cmd::check_project_option(&store, &options)?;
     if *command == "assemblies" {
         return Ok(Json::object([
             ("outcome", Json::text("assemblies")),

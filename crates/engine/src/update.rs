@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! `UpdateElement` for the supported fields (F04 section 7, P04, P08): a typed patch of the label,
-//! the material reference, a plate's thickness and the placement translation (a move).
+//! `UpdateElement` for the supported fields (F04 section 7, P04, P08, D2): a typed patch of the
+//! label, the material reference, a plate's thickness, the placement translation (a move) and the
+//! level assignment.
 //!
 //! The engine applies the patch to the authored state, re-evaluates what depends on it and says
 //! which groups changed, so the adapter writes only those:
@@ -13,6 +14,7 @@
 //! | `material` | no | yes | quantity record only (same mesh bytes) |
 //! | `thickness_mm` | yes | yes | mesh and quantity record |
 //! | `translation_mm` | no | no | untouched (the body is element-local) |
+//! | `level` | no | no | untouched (a relationship of the element only) |
 //!
 //! A move keeps the rotation and never touches the shape, the body or the stored quantities, so
 //! no geometry is copied or rebuilt. Fields outside this list (contour, axis, roll, profile) are
@@ -34,6 +36,8 @@ pub struct UpdateEffect {
     pub shape: bool,
     /// The placement translation changes (a move); the body is untouched.
     pub placement: bool,
+    /// The level assignment changes (D2), including its removal; no geometry is touched.
+    pub level: bool,
 }
 
 /// The effect of a patch on the element it targets, ignoring whether a value really differs:
@@ -44,6 +48,7 @@ pub const fn effect(patch: &ElementPatch) -> UpdateEffect {
         material: patch.material.is_some(),
         shape: patch.thickness_mm.is_some(),
         placement: patch.translation_mm.is_some(),
+        level: patch.level.is_some(),
     }
 }
 
@@ -140,7 +145,8 @@ mod tests {
                 name: true,
                 material: false,
                 shape: false,
-                placement: false
+                placement: false,
+                level: false
             }
         );
         let clear = ElementPatch {
@@ -148,6 +154,16 @@ mod tests {
             ..ElementPatch::default()
         };
         assert!(effect(&clear).material && !effect(&clear).shape);
+        let to_level = ElementPatch {
+            level: Some(None),
+            ..ElementPatch::default()
+        };
+        assert!(
+            effect(&to_level).level
+                && !effect(&to_level).shape
+                && !effect(&to_level).material
+                && !effect(&to_level).placement
+        );
         let shift = ElementPatch {
             translation_mm: Some([1.0, 2.0, 3.0]),
             ..ElementPatch::default()

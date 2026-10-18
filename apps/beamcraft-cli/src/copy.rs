@@ -11,8 +11,9 @@
 //! Honesty limits: the mesh is still stored once per element in the derived layer, so "shared" is
 //! the equal content digest, not one stored asset; replay of an `op_id` is decided from the head
 //! model (the copy is a replay when the head already holds the copy of the source's current
-//! state), as in `edit`. Elements have no relationships to each other yet, so the layer engine's
-//! `copy_plan` has nothing to remap beyond the definition links the copy keeps.
+//! state), as in `edit`. The layer engine's `copy_plan` remaps nothing beyond the definition links
+//! the copy keeps and the level assignment (D2), which the copy shares: it stays on the level of
+//! its source. Any other element link (a `part-of` or `connects` record) refuses the copy.
 
 use crate::definition::material_lookup;
 use crate::plate::{
@@ -117,12 +118,12 @@ pub fn copy_element(
         expected,
         ..
     } = base;
-    let (plates, members, definitions) = {
+    let (plates, members, definitions, levels) = {
         let mut reader = Reader::default();
         let opened = reader.open(base_request.clone(), &control)?;
         let decoded = decode(&reader, &opened, &control)?;
         let (plates, members) = evaluate_decoded(&decoded)?;
-        (plates, members, decoded.definitions)
+        (plates, members, decoded.definitions, decoded.levels)
     };
     // The copy checks that the pinned definitions still resolve, as every create does.
     let materials = material_lookup(&definitions);
@@ -146,6 +147,13 @@ pub fn copy_element(
             ErrorCode::DependencyConflict,
             "source_id",
             "a weld has element links that a copy does not carry over",
+        )
+        .into());
+    } else if crate::level::is_level(&base_request, &command.source_id, &control)? {
+        return Err(CommandError::new(
+            ErrorCode::UnsupportedProperty,
+            "source_id",
+            "a level is not copied",
         )
         .into());
     } else {
@@ -214,7 +222,12 @@ pub fn copy_element(
         .into());
     }
 
-    let footprint = Footprint::for_copy(command.source_id, command.new_id, profile, material)?;
+    // The copy stays on the source's level (D2).
+    let level = levels.level_of(&command.source_id);
+    let mut footprint = Footprint::for_copy(command.source_id, command.new_id, profile, material)?;
+    if let Some(level) = level {
+        footprint = footprint.union(Footprint::for_level(command.new_id, Some(level))?)?;
+    }
     let schema = schema_identity()?;
     let (mut author, opened) = Author::open(
         base_request,
@@ -226,16 +239,19 @@ pub fn copy_element(
         &control,
     )?;
     // Links the adapter does not carry over must not be dropped silently: the layer engine plans
-    // the copy and anything beyond the pinned definitions refuses it.
+    // the copy and anything beyond the pinned definitions and the level assignment refuses it.
     let index = author.element_index(&opened.context, &control)?;
     let plan = index.copy_plan(
         &LayerElementId::parse(&command.source_id.to_string())?,
         &LayerElementId::parse(&command.new_id.to_string())?,
     )?;
+    let is_level_link = |l: &beamcraft_layer_engine::index::PlannedLink| {
+        l.name == "bim:level" && matches!(l.target, LinkTarget::Element(_))
+    };
     if plan
         .links
         .iter()
-        .any(|l| !matches!(l.target, LinkTarget::Definition(_)))
+        .any(|l| !matches!(l.target, LinkTarget::Definition(_)) && !is_level_link(l))
     {
         return Err(CommandError::new(
             ErrorCode::DependencyConflict,
@@ -244,7 +260,18 @@ pub fn copy_element(
         )
         .into());
     }
-    let changes = match &copy {
+    let planned_level = plan
+        .links
+        .iter()
+        .find(|l| is_level_link(l))
+        .map(|l| match &l.target {
+            LinkTarget::Element(t) => t.to_string(),
+            _ => String::new(),
+        });
+    if planned_level != level.map(|l| l.to_string()) {
+        return Err(integrity("the level of the source differs between readers"));
+    }
+    let mut changes = match &copy {
         CopiedElement::Plate(r) => {
             let a = &r.authored;
             let [qx, qy, qz, qw] = a.placement.orientation_xyzw;
@@ -296,6 +323,12 @@ pub fn copy_element(
             ]
         }
     };
+    if let Some(level) = level {
+        changes.push(Change::Level {
+            id: command.new_id.to_string(),
+            level: Some(level.to_string()),
+        });
+    }
     let prepared = author.prepare(
         Prepare {
             context: opened.context.clone(),

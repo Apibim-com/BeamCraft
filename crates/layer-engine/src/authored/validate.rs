@@ -548,6 +548,7 @@ pub(super) fn snapshot(
             "layer schema digest mismatch",
         ));
     }
+    project_record(metadata)?;
     for p in prims.iter().filter(|p| p.element_id.is_some()) {
         let id = p.element_id.as_deref().ok_or_else(invalid)?;
         // Foreign content is preserved inertly, not interpreted as engineering input.
@@ -563,6 +564,13 @@ pub(super) fn snapshot(
             if text(p, "bim:elementKind", "token")? != "reference" {
                 return Err(unsupported());
             }
+            // A foreign wrapper is no storey member: a level record on it is outside D2.
+            if relationship(p, "bim:level").is_some_and(|r| !r.targets.is_empty()) {
+                return Err(fail(
+                    ErrorCode::InvalidArgument,
+                    "only a plate, beam or column is assigned to a level",
+                ));
+            }
             reference::element(p, prims)?;
             continue;
         }
@@ -571,7 +579,7 @@ pub(super) fn snapshot(
         }
         if !matches!(
             text(p, "bim:elementKind", "token")?,
-            "plate" | "beam" | "column" | "assembly" | "connection"
+            "plate" | "beam" | "column" | "assembly" | "connection" | "level"
         ) {
             continue;
         }
@@ -647,12 +655,15 @@ pub(super) fn snapshot(
             }
             // An assembly has no shape inputs and no material of its own; a connection is a weld
             // with its own properties (A06) and no material either.
-            "assembly" | "connection" => {
+            "assembly" | "connection" | "level" => {
                 if relationship(p, "bim:material").is_some_and(|r| !r.targets.is_empty()) {
                     return Err(invalid());
                 }
                 if kind == "connection" {
                     weld_properties(p)?;
+                }
+                if kind == "level" {
+                    elevation(number(p, "bim:elevationMm")?)?;
                 }
             }
             _ => continue, // Unknown vocabulary remains inert; edits below refuse it.
@@ -661,8 +672,8 @@ pub(super) fn snapshot(
             definition(&read_definition(material, "material")?)?;
         }
         owned_pose(p)?;
-        // The placement of an assembly and of a weld is the identity in this slice.
-        if matches!(kind, "assembly" | "connection")
+        // The placement of an assembly, a weld and a level is the identity in this slice.
+        if matches!(kind, "assembly" | "connection" | "level")
             && (required(p, "xformOp:translate", "double3")?
                 != &Value::Array(vec![Value::Number(0.0); 3])
                 || required(p, "xformOp:orient", "quatd")?
@@ -678,6 +689,7 @@ pub(super) fn snapshot(
     }
     part_of(prims)?;
     connects(prims)?;
+    level_links(prims)?;
     for p in prims
         .iter()
         .filter(|p| p.type_name.as_deref() == Some("Mesh") && p.sources.iter().all(|s| s.owned))
@@ -691,9 +703,12 @@ pub(super) fn snapshot(
         else {
             continue;
         };
-        // An assembly or a weld has no body: a Geometry mesh under one is refused, authored or
-        // loaded.
-        if matches!(supported_kind(element), Some("assembly" | "connection")) {
+        // An assembly, a weld or a level has no body: a Geometry mesh under one is refused,
+        // authored or loaded.
+        if matches!(
+            supported_kind(element),
+            Some("assembly" | "connection" | "level")
+        ) {
             return Err(unsupported());
         }
         let id = element.element_id.clone().ok_or_else(invalid)?;
@@ -785,6 +800,7 @@ pub(super) fn snapshot(
             "U02-V06:standard-mesh-buffer-structure",
             "A01-V01:part-of-kinds-cardinality-self-link-and-cycles",
             "A06-V01:weld-properties-and-connects-two-distinct-parts",
+            "D2-V01:level-elevation-and-level-kinds-cardinality-and-dangling",
         ],
         prims: prims.len(),
     })
@@ -806,8 +822,92 @@ fn supported_kind(p: &Prim) -> Option<&str> {
     if version != "0.1.0" || token("bim:geometryMode")? != "parametric" {
         return None;
     }
-    token("bim:elementKind")
-        .filter(|k| matches!(*k, "plate" | "beam" | "column" | "assembly" | "connection"))
+    token("bim:elementKind").filter(|k| {
+        matches!(
+            *k,
+            "plate" | "beam" | "column" | "assembly" | "connection" | "level"
+        )
+    })
+}
+
+/// The elevation of a loaded or authored level: finite and within the coordinate cap.
+fn elevation(mm: f64) -> Result<(), Diagnostic> {
+    finite([mm])?;
+    cap([mm], 1e9)
+}
+
+/// D2 `level` records (F10 relationships, domain vocabulary section 5.1 pattern): only a plate,
+/// beam or column carries a `bim:level` record, with at most one target (`DV-REL-004`,
+/// `DEPENDENCY_CONFLICT`), which must be an active owned level (`DV-REL-001` dangling,
+/// `DV-REL-003` kind). A level itself carries no `bim:level`, `bim:partOf`, `bim:connects` or
+/// `bim:profile` record.
+fn level_links(prims: &[Prim]) -> Result<(), Diagnostic> {
+    let elements: BTreeMap<&str, (&Prim, &str)> = prims
+        .iter()
+        .filter_map(|p| supported_kind(p).map(|k| (p.path.as_str(), (p, k))))
+        .collect();
+    for &(p, kind) in elements.values() {
+        if kind == "level" {
+            for name in ["bim:level", "bim:partOf", "bim:profile"] {
+                if relationship(p, name).is_some_and(|r| !r.targets.is_empty()) {
+                    return Err(fail(
+                        ErrorCode::InvalidArgument,
+                        "a level carries no element or definition links",
+                    ));
+                }
+            }
+        }
+        let Some(r) = relationship(p, "bim:level") else {
+            continue;
+        };
+        let target = match r.targets.as_slice() {
+            [] => continue,
+            [target] => target.as_str(),
+            _ => {
+                return Err(fail(
+                    ErrorCode::DependencyConflict,
+                    "an element is assigned to at most one level",
+                ));
+            }
+        };
+        if !matches!(kind, "plate" | "beam" | "column") {
+            return Err(fail(
+                ErrorCode::InvalidArgument,
+                "only a plate, beam or column is assigned to a level",
+            ));
+        }
+        match elements.get(target) {
+            Some((t, "level")) if t.active => {}
+            Some((t, _)) if !t.active => {
+                return Err(fail(
+                    ErrorCode::DanglingRelationship,
+                    "level target is not active",
+                ));
+            }
+            Some(_) => {
+                return Err(fail(
+                    ErrorCode::InvalidArgument,
+                    "level target is not a level",
+                ));
+            }
+            None if prims
+                .iter()
+                .any(|p| p.path == target && p.element_id.is_some()) =>
+            {
+                return Err(fail(
+                    ErrorCode::InvalidArgument,
+                    "level target is not a supported owned level",
+                ));
+            }
+            None => {
+                return Err(fail(
+                    ErrorCode::DanglingRelationship,
+                    "level target unavailable",
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The weld properties of a loaded `connection` (A06): every one is authored, with a supported
@@ -1076,7 +1176,7 @@ pub(super) fn changes(
             Change::Create(_) | Change::AttachReference(_) => (),
             // A mesh or part-of record of an element created in the same batch; the candidate
             // snapshot re-validates it as a whole.
-            Change::Mesh(_) | Change::PartOf { .. }
+            Change::Mesh(_) | Change::PartOf { .. } | Change::Level { .. }
                 if existing.is_none()
                     && input
                         .changes
@@ -1114,18 +1214,25 @@ pub(super) fn changes(
                     Change::Label { .. } => {
                         matches!(
                             kind,
-                            "plate" | "beam" | "column" | "reference" | "assembly" | "connection"
+                            "plate"
+                                | "beam"
+                                | "column"
+                                | "reference"
+                                | "assembly"
+                                | "connection"
+                                | "level"
                         )
                     }
                     Change::Delete { .. } => {
                         matches!(
                             kind,
-                            "plate" | "beam" | "column" | "assembly" | "connection"
+                            "plate" | "beam" | "column" | "assembly" | "connection" | "level"
                         )
                     }
                     Change::PartOf { .. } => {
                         matches!(kind, "plate" | "beam" | "column" | "assembly")
                     }
+                    Change::Level { .. } => matches!(kind, "plate" | "beam" | "column"),
                     _ => matches!(kind, "plate" | "beam" | "column"),
                 };
                 if !valid {
@@ -1165,7 +1272,7 @@ pub(super) fn changes(
                 &[Group::Placement, Group::Derived],
             ),
             Change::Mesh(_) => (&[Group::Lifecycle, Group::ShapeInputs], &[Group::Derived]),
-            Change::PartOf { .. } => (
+            Change::PartOf { .. } | Change::Level { .. } => (
                 &[Group::Lifecycle, Group::Relationship],
                 &[Group::Relationship],
             ),
@@ -1217,12 +1324,27 @@ pub(super) fn changes(
                 }
             }
         }
+        if let Change::Level {
+            level: Some(target),
+            ..
+        } = change
+        {
+            if !uuid7(target) {
+                return Err(fail(ErrorCode::InvalidId, "invalid full element identity"));
+            }
+            // The level's existence and kind decide acceptance; it is only read.
+            reads.insert(Footprint {
+                identity: target.clone(),
+                group: Group::Lifecycle,
+            });
+        }
         if !matches!(
             change,
             Change::Label { .. }
                 | Change::Create(_)
                 | Change::Delete { .. }
                 | Change::PartOf { .. }
+                | Change::Level { .. }
         ) && let Some(p) = existing
         {
             for target in p
@@ -1359,6 +1481,15 @@ pub(super) fn changes(
                             });
                         }
                     }
+                    Shape::Level { elevation_mm } => {
+                        if e.material.is_some()
+                            || e.placement.translation_mm != [0.0; 3]
+                            || e.placement.orientation_xyzw != [0.0, 0.0, 0.0, 1.0]
+                        {
+                            return Err(unsupported());
+                        }
+                        elevation(*elevation_mm)?;
+                    }
                 }
                 if let Some(d) = e.material {
                     reads.insert(Footprint {
@@ -1454,6 +1585,7 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                 ),
                 Shape::Assembly => Ok(()),
                 Shape::Weld(w) => finite([w.size_mm]),
+                Shape::Level { elevation_mm } => finite([*elevation_mm]),
             }
         }
         Change::AttachReference(r) => finite(

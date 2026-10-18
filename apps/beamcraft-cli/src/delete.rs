@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! P08 adapter: `DeleteElement` for a plate, a member or an A01 assembly, committed as the next
-//! revision.
+//! P08 adapter: `DeleteElement` for a plate, a member, an A01 assembly, an A06 weld or a D2 level,
+//! committed as the next revision.
 //!
 //! The delete removes the whole element, its authored prim and its result prims, and nothing else:
 //! the other elements, the unknown content and the immutable definitions it pinned stay. Before any
@@ -61,6 +61,8 @@ pub enum DeletedKind {
     Assembly,
     /// A weld (A06), a `connection` element; deleting it removes its `connects` record.
     Weld,
+    /// A level (D2); refused while a plate, beam or column is assigned to it.
+    Level,
 }
 
 /// Result of `delete_element`.
@@ -130,6 +132,8 @@ pub fn delete_element(
         Some(DeletedKind::Assembly)
     } else if crate::weld::is_weld(&base_request, &command.target_id, &control)? {
         Some(DeletedKind::Weld)
+    } else if crate::level::is_level(&base_request, &command.target_id, &control)? {
+        Some(DeletedKind::Level)
     } else {
         None
     };

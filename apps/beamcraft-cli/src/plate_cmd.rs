@@ -14,8 +14,8 @@ use beamcraft_cli::edit::{UpdateRequest, UpdatedElement, update_element};
 use beamcraft_cli::history::{Direction, Step, step, timeline};
 use beamcraft_cli::member::{CreateMemberRequest, create_member};
 use beamcraft_cli::plate::{
-    CreateRequest, Created, Inspection, PlateError, QuantityReport, RevisionSummary, create_plate,
-    inspect,
+    CreateRequest, Created, Inspection, PlateError, ProjectClaim, QuantityReport, RevisionSummary,
+    claim_project, create_plate, ensure_project, inspect,
 };
 use beamcraft_cli::workspace::{
     CreateWorkspace, WorkspaceStatus, create_workspace, publish_workspace,
@@ -175,6 +175,7 @@ const UPDATE_OPTIONS: &[&str] = &[
     "--material-digest",
     "--thickness",
     "--translation",
+    "--level",
     "--op-id",
     "--revision-id",
     "--actor-id",
@@ -266,6 +267,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         message: "store root is not usable",
     })?;
     let store = RevisionStore::new(blobs);
+    let _claim = check_project_option(&store, &options)?;
     match *command {
         "create-plate" => create(&store, &options),
         "create-member" => create_member_command(&store, &options),
@@ -306,6 +308,24 @@ pub(crate) fn id_error(error: beamcraft_model::id::IdError) -> PlateError {
     PlateError {
         code: error.code(),
         message: "identity is not a full canonical UUIDv7",
+    }
+}
+
+/// D1: an explicit `--project-id` must be the project the store records (a store without a
+/// revision takes it). The early check runs here; the returned claim binds the command's base
+/// loading to that project until it is dropped, so a store initialised by another writer in
+/// between is refused rather than adopted. Shared by every command that authors a revision.
+pub(crate) fn check_project_option(
+    store: &RevisionStore,
+    options: &BTreeMap<&str, &str>,
+) -> Run<Option<ProjectClaim>> {
+    match options.get("--project-id") {
+        Some(text) => {
+            let project = ProjectId::parse(text).map_err(id_error)?;
+            ensure_project(store, &project)?;
+            Ok(Some(claim_project(project)))
+        }
+        None => Ok(None),
     }
 }
 
@@ -642,6 +662,12 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
             })
             .transpose()?,
         translation_mm: given("--translation").map(translation).transpose()?,
+        level: given("--level")
+            .map(|text| match text {
+                "none" => Ok(None),
+                other => ElementId::parse(other).map(Some).map_err(id_error),
+            })
+            .transpose()?,
     };
     let updated = update_element(
         store,
@@ -676,6 +702,7 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
                 ("material", Json::Bool(updated.effect.material)),
                 ("shape", Json::Bool(updated.effect.shape)),
                 ("placement", Json::Bool(updated.effect.placement)),
+                ("level", Json::Bool(updated.effect.level)),
             ]),
         ),
         (
@@ -750,6 +777,7 @@ fn delete_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
                     DeletedKind::Member => "member",
                     DeletedKind::Assembly => "assembly",
                     DeletedKind::Weld => "weld",
+                    DeletedKind::Level => "level",
                 })
             }),
         ),
@@ -1562,7 +1590,7 @@ fn stored_json(report: &QuantityReport) -> Run<Json> {
     ]))
 }
 
-/// The element JSON with its stored-quantity report attached.
+/// The element JSON with its stored-quantity report and its level (D2) attached.
 fn with_stored(element: Json, id: ElementId, inspection: &Inspection) -> Run<Json> {
     let Json::Object(mut object) = element else {
         return Ok(element);
@@ -1570,6 +1598,13 @@ fn with_stored(element: Json, id: ElementId, inspection: &Inspection) -> Run<Jso
     if let Some(report) = inspection.quantities.get(&id) {
         object.insert("stored_quantities".into(), stored_json(report)?);
     }
+    object.insert(
+        "level".into(),
+        inspection
+            .levels
+            .level_of(&id)
+            .map_or(Json::Null, |l| Json::text(l.to_string())),
+    );
     Ok(Json::Object(object))
 }
 
@@ -1622,6 +1657,17 @@ fn inspection_json(inspection: &Inspection) -> Run<Json> {
         ),
         ("plates", Json::Array(plates)),
         ("members", Json::Array(members)),
+        (
+            "project_id_record",
+            inspection
+                .project_record
+                .as_deref()
+                .map_or(Json::Null, Json::text),
+        ),
+        (
+            "levels",
+            crate::level_cmd::views_json(&beamcraft_cli::level::views(&inspection.levels))?,
+        ),
         (
             "snapshot",
             Json::object([
