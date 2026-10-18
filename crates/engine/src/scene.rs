@@ -11,26 +11,28 @@ use crate::element::{ElementId, ElementKind};
 use beamcraft_geom::{Point3, Translation3};
 use beamcraft_kernel::PlateResult;
 use beamcraft_model::digest::ContentDigest;
+use std::sync::Arc;
 
 /// The mesh of one representation: the exact BCMESH01 blob, its digest and the vertex positions
 /// (element-local millimetres) the bounds are computed from. Any sealed kernel body can be
-/// offered: a plate or member box, or a solid with through holes.
+/// offered: a plate or member box, or a solid with through holes. The bytes and vertices are
+/// shared, so elements that reuse one mesh (copies) hold it once in memory.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SceneMesh {
-    pub(crate) blob: Vec<u8>,
+    pub(crate) blob: Arc<[u8]>,
     pub(crate) digest: ContentDigest,
-    pub(crate) vertices: Vec<Point3>,
+    pub(crate) vertices: Arc<[Point3]>,
 }
 
 impl SceneMesh {
     /// A mesh from its blob, digest and vertices. The snapshot builder re-validates the blob and
     /// checks that the digest is the blob's. Crate-private: outside the engine a mesh can only
     /// come from a certified kernel or `SolidMesh` result, so its vertices always match its blob.
-    pub(crate) const fn new(blob: Vec<u8>, digest: ContentDigest, vertices: Vec<Point3>) -> Self {
+    pub(crate) fn new(blob: Vec<u8>, digest: ContentDigest, vertices: Vec<Point3>) -> Self {
         Self {
-            blob,
+            blob: blob.into(),
             digest,
-            vertices,
+            vertices: vertices.into(),
         }
     }
 }
@@ -39,9 +41,9 @@ impl From<&PlateResult> for SceneMesh {
     fn from(result: &PlateResult) -> Self {
         let mesh = result.mesh();
         Self {
-            blob: mesh.blob().to_vec(),
+            blob: Arc::from(mesh.blob().as_slice()),
             digest: mesh.mesh_digest(),
-            vertices: mesh.vertices().to_vec(),
+            vertices: Arc::from(mesh.vertices().as_slice()),
         }
     }
 }

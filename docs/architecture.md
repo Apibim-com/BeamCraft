@@ -14,6 +14,7 @@ no production USD backend is integrated. U05 implements immutable byte storage o
 ```
 apps/
   beamcraft-cli     command-line entry point (binary: beamcraft)
+  beamcraft-ui      native window and viewport (binary: beamcraft-ui)
   boundaries        module-boundary checker (development tool, not shipped)
 crates/
   geom              points, vectors, coordinate systems   (no deps)
@@ -52,6 +53,8 @@ R01 adds read-only foreign references (`model::reference`, `engine::reference`, 
 A01 adds assemblies (`model::command::{CreateAssembly, AttachToAssembly, DetachFromAssembly}`, `engine::assembly`, `Footprint::for_part_of`, `Shape::Assembly` and `Change::PartOf` in the layer engine, `beamcraft_cli::assembly` and the CLI commands `create-assembly`, `assembly-attach`, `assembly-detach` and `assemblies`): an assembly is an element with its own identity and no body, and membership is the one `bim:partOf` relationship authored on the part, validated for kinds, cardinality, self-links and cycles ([design note](design/a01-assemblies.md)).
 
 C01 adds changesets (`model::changeset`, `host::changeset` claims, `beamcraft_cli::changeset` and the CLI commands `changeset-create`, `changeset-inspect` and `changeset-apply`): a workspace's unsent revisions become one canonical, digest-addressed message (base, operations, claimed actor, conservative footprint, complete layer set with base digests, required blobs); the receiver checks the actor against the trusted caller, binds the changeset id to the payload before publishing, and publishes fast-forward only ([design note](design/c01-changeset.md)).
+
+V03 adds the native window and viewport (`apps/beamcraft-ui`, `beamcraft_engine::query::bundle`, the CLI command `view-export`): the UI runs `beamcraft view-export` in a separate process, rebuilds and re-validates the engine's snapshot of the accepted revision, and draws each distinct mesh once with one instance per element ([design note](design/v03-viewport.md)).
 
 A06 adds a minimal weld (`model::command::CreateWeld`, `engine::weld`, `Footprint::for_weld`, `Shape::Weld` in the layer engine, `beamcraft_cli::weld` and the CLI commands `create-weld` and `welds`): a weld is a `connection` element with no body, explicitly authored fillet size, workshop or site and side, and one ordered `bim:connects` record towards two distinct plates, beams or columns; a welded part cannot be deleted under it and a weld cannot be copied ([design note](design/a06-welds.md)).
 
