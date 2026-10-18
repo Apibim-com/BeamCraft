@@ -45,6 +45,7 @@ pub(super) fn input_bounds(input: &Prepare, b: Budgets) -> Result<(), Diagnostic
                 }
             }
             Change::Label { name, .. } if name.len() > 256 => return Err(limit()),
+            Change::AttachReference(r) if r.name.len() > 256 => return Err(limit()),
             Change::Contour { points_mm, .. } => {
                 count(points_mm.len().checked_mul(3).ok_or_else(limit)?, 8)?
             }
@@ -67,13 +68,13 @@ pub(super) fn finite(values: impl IntoIterator<Item = f64>) -> Result<(), Diagno
     }
     Ok(())
 }
-fn cap(values: impl IntoIterator<Item = f64>, max: f64) -> Result<(), Diagnostic> {
+pub(super) fn cap(values: impl IntoIterator<Item = f64>, max: f64) -> Result<(), Diagnostic> {
     if values.into_iter().any(|n| n.abs() > max) {
         return Err(limit());
     }
     Ok(())
 }
-fn label(s: &str) -> Result<(), Diagnostic> {
+pub(super) fn label(s: &str) -> Result<(), Diagnostic> {
     if s.len() > 256 {
         return Err(limit());
     }
@@ -82,7 +83,7 @@ fn label(s: &str) -> Result<(), Diagnostic> {
     }
     Ok(())
 }
-fn pose(p: &Placement) -> Result<(), Diagnostic> {
+pub(super) fn pose(p: &Placement) -> Result<(), Diagnostic> {
     cap(p.translation_mm, 1e9)?;
     cap(p.orientation_xyzw, 1.0)?;
     let [x, y, z, w] = p.orientation_xyzw;
@@ -126,7 +127,11 @@ pub(super) fn definition(d: &Definition) -> Result<(), Diagnostic> {
 }
 /// An optional property of an exact USD type. A property declared with another type, blocked or
 /// without a value is invalid; only an absent one is unknown.
-fn optional<'a>(prim: &'a Prim, name: &str, ty: &str) -> Result<Option<&'a Value>, Diagnostic> {
+pub(super) fn optional<'a>(
+    prim: &'a Prim,
+    name: &str,
+    ty: &str,
+) -> Result<Option<&'a Value>, Diagnostic> {
     match prim.properties.iter().find(|p| p.name == name) {
         None => Ok(None),
         Some(p) if p.type_name == ty => match &p.value {
@@ -136,14 +141,14 @@ fn optional<'a>(prim: &'a Prim, name: &str, ty: &str) -> Result<Option<&'a Value
         Some(_) => Err(invalid()),
     }
 }
-fn optional_number(prim: &Prim, name: &str) -> Result<Option<f64>, Diagnostic> {
+pub(super) fn optional_number(prim: &Prim, name: &str) -> Result<Option<f64>, Diagnostic> {
     match optional(prim, name, "double")? {
         None => Ok(None),
         Some(Value::Number(n)) => Ok(Some(*n)),
         Some(_) => Err(invalid()),
     }
 }
-fn optional_text(prim: &Prim, name: &str) -> Result<Option<String>, Diagnostic> {
+pub(super) fn optional_text(prim: &Prim, name: &str) -> Result<Option<String>, Diagnostic> {
     match optional(prim, name, "string")? {
         None => Ok(None),
         Some(Value::Text(s)) => Ok(Some(s.clone())),
@@ -189,7 +194,7 @@ pub(super) fn owned(prims: &[Prim], path: &str, descendants: bool) -> Result<(),
     }
     Ok(())
 }
-fn required<'a>(prim: &'a Prim, name: &str, ty: &str) -> Result<&'a Value, Diagnostic> {
+pub(super) fn required<'a>(prim: &'a Prim, name: &str, ty: &str) -> Result<&'a Value, Diagnostic> {
     prim.properties
         .iter()
         .find(|p| p.name == name && p.type_name == ty)
@@ -197,19 +202,19 @@ fn required<'a>(prim: &'a Prim, name: &str, ty: &str) -> Result<&'a Value, Diagn
         .filter(|v| !matches!(v, Value::Block))
         .ok_or_else(invalid)
 }
-fn text<'a>(prim: &'a Prim, name: &str, ty: &str) -> Result<&'a str, Diagnostic> {
+pub(super) fn text<'a>(prim: &'a Prim, name: &str, ty: &str) -> Result<&'a str, Diagnostic> {
     match required(prim, name, ty)? {
         Value::Text(s) => Ok(s),
         _ => Err(invalid()),
     }
 }
-fn number(prim: &Prim, name: &str) -> Result<f64, Diagnostic> {
+pub(super) fn number(prim: &Prim, name: &str) -> Result<f64, Diagnostic> {
     match required(prim, name, "double")? {
         Value::Number(n) => Ok(*n),
         _ => Err(invalid()),
     }
 }
-fn points(prim: &Prim, name: &str) -> Result<Vec<[f64; 3]>, Diagnostic> {
+pub(super) fn points(prim: &Prim, name: &str) -> Result<Vec<[f64; 3]>, Diagnostic> {
     let Value::Array(values) = required(prim, name, "double3[]")? else {
         return Err(invalid());
     };
@@ -226,7 +231,7 @@ fn points(prim: &Prim, name: &str) -> Result<Vec<[f64; 3]>, Diagnostic> {
         })
         .collect()
 }
-fn vec3s(value: &Value) -> Result<Vec<[f32; 3]>, Diagnostic> {
+pub(super) fn vec3s(value: &Value) -> Result<Vec<[f32; 3]>, Diagnostic> {
     let Value::Array(values) = value else {
         return Err(invalid());
     };
@@ -288,7 +293,7 @@ fn plate(points: &[[f64; 3]], thickness: f64) -> Result<(), Diagnostic> {
     // Planarity, exact topology and rectangle support are deliberately the engine's F06 gate.
     Ok(())
 }
-fn relationship<'a>(prim: &'a Prim, name: &str) -> Option<&'a Relationship> {
+pub(super) fn relationship<'a>(prim: &'a Prim, name: &str) -> Option<&'a Relationship> {
     prim.relationships.iter().find(|r| r.name == name)
 }
 /// The optional through-hole polygons of a loaded plate: either both attributes or neither, the
@@ -391,10 +396,48 @@ fn link<'a>(
     }
 }
 
+/// The rigid placement an owned element carries: translation, orientation and the exact
+/// `[translate, orient]` operation order. Shared by plates, members and reference wrappers.
+pub(super) fn owned_pose(p: &Prim) -> Result<(), Diagnostic> {
+    let translation = match required(p, "xformOp:translate", "double3")? {
+        Value::Array(v) => match v.as_slice() {
+            [Value::Number(x), Value::Number(y), Value::Number(z)] => [*x, *y, *z],
+            _ => return Err(invalid()),
+        },
+        _ => return Err(invalid()),
+    };
+    let orientation = match required(p, "xformOp:orient", "quatd")? {
+        Value::Array(v) => match v.as_slice() {
+            [
+                Value::Number(w),
+                Value::Number(x),
+                Value::Number(y),
+                Value::Number(z),
+            ] => [*x, *y, *z, *w],
+            _ => return Err(invalid()),
+        },
+        _ => return Err(invalid()),
+    };
+    pose(&Placement {
+        translation_mm: translation,
+        orientation_xyzw: orientation,
+    })?;
+    if required(p, "xformOpOrder", "token[]")?
+        != &Value::Array(vec![
+            Value::Text("xformOp:translate".into()),
+            Value::Text("xformOp:orient".into()),
+        ])
+    {
+        return Err(unsupported());
+    }
+    Ok(())
+}
+
 pub(super) fn snapshot(
     prims: &[Prim],
     metadata: &BTreeMap<String, Value>,
 ) -> Result<Validation, Diagnostic> {
+    reference::stray_holders(prims)?;
     for (path, kind) in [("/World", "assembly"), ("/World/Steel", "group")] {
         if let Some(p) = prims
             .iter()
@@ -422,6 +465,13 @@ pub(super) fn snapshot(
         // Loaded newer schemas, unknown kinds and geometry modes stay inert/read-only.
         // The mutation guard independently refuses editing them.
         if text(p, "bim:schemaVersion", "string")? != "0.1.0" {
+            continue;
+        }
+        if text(p, "bim:geometryMode", "token")? == "reference" {
+            if text(p, "bim:elementKind", "token")? != "reference" {
+                return Err(unsupported());
+            }
+            reference::element(p, prims)?;
             continue;
         }
         if text(p, "bim:geometryMode", "token")? != "parametric" {
@@ -494,37 +544,7 @@ pub(super) fn snapshot(
         if let Some(material) = link(p, prims, "bim:material", "material", false)? {
             definition(&read_definition(material, "material")?)?;
         }
-        let translation = match required(p, "xformOp:translate", "double3")? {
-            Value::Array(v) => match v.as_slice() {
-                [Value::Number(x), Value::Number(y), Value::Number(z)] => [*x, *y, *z],
-                _ => return Err(invalid()),
-            },
-            _ => return Err(invalid()),
-        };
-        let orientation = match required(p, "xformOp:orient", "quatd")? {
-            Value::Array(v) => match v.as_slice() {
-                [
-                    Value::Number(w),
-                    Value::Number(x),
-                    Value::Number(y),
-                    Value::Number(z),
-                ] => [*x, *y, *z, *w],
-                _ => return Err(invalid()),
-            },
-            _ => return Err(invalid()),
-        };
-        pose(&Placement {
-            translation_mm: translation,
-            orientation_xyzw: orientation,
-        })?;
-        if required(p, "xformOpOrder", "token[]")?
-            != &Value::Array(vec![
-                Value::Text("xformOp:translate".into()),
-                Value::Text("xformOp:orient".into()),
-            ])
-        {
-            return Err(unsupported());
-        }
+        owned_pose(p)?;
     }
     for p in prims
         .iter()
@@ -641,8 +661,13 @@ pub(super) fn changes(
     for change in &input.changes {
         let (id, _) = change.key();
         let path = element_path(id)?;
-        owned(prims, &path, true)?;
         let existing = prims.iter().find(|p| p.path == path);
+        // A wrapper is owned although its `Source` descendant is foreign: only the wrapper's own
+        // levels are checked here, and the loaded shape (`reference::element`) refuses every
+        // owned opinion below `Source`. Every other element must be wholly owned.
+        let wrapper = existing
+            .is_some_and(|p| matches!(text(p, "bim:geometryMode", "token"), Ok("reference")));
+        owned(prims, &path, !wrapper)?;
         if matches!(change, Change::Delete { .. })
             && input.changes.iter().filter(|c| c.key().0 == id).count() > 1
         {
@@ -652,10 +677,10 @@ pub(super) fn changes(
             ));
         }
         match change {
-            Change::Create(_) if existing.is_some() => {
+            Change::Create(_) | Change::AttachReference(_) if existing.is_some() => {
                 return Err(fail(ErrorCode::DuplicateId, "element already exists"));
             }
-            Change::Create(_) => (),
+            Change::Create(_) | Change::AttachReference(_) => (),
             Change::Mesh(_)
                 if existing.is_none()
                     && input
@@ -674,13 +699,21 @@ pub(super) fn changes(
                     ));
                 }
                 let kind = text(p, "bim:elementKind", "token")?;
-                if text(p, "bim:geometryMode", "token")? != "parametric" {
+                let mode = text(p, "bim:geometryMode", "token")?;
+                if mode != if wrapper { "reference" } else { "parametric" }
+                    || (wrapper && kind != "reference")
+                {
                     return Err(unsupported());
                 }
                 let valid = match change {
                     Change::Contour { .. } | Change::Thickness { .. } => kind == "plate",
                     Change::Axis { .. } | Change::Roll { .. } | Change::Profile { .. } => {
                         matches!(kind, "beam" | "column")
+                    }
+                    Change::ReferenceUnits { .. } => wrapper,
+                    // A rename and a move are the only edits a wrapper takes as an element.
+                    Change::Label { .. } | Change::Placement { .. } => {
+                        matches!(kind, "plate" | "beam" | "column" | "reference")
                     }
                     _ => matches!(kind, "plate" | "beam" | "column"),
                 };
@@ -700,6 +733,15 @@ pub(super) fn changes(
                     Group::Material,
                     Group::Relationship,
                     Group::Derived,
+                ],
+            ),
+            Change::AttachReference(_) => (
+                &[Group::Lifecycle],
+                &[
+                    Group::Lifecycle,
+                    Group::Label,
+                    Group::ShapeInputs,
+                    Group::Placement,
                 ],
             ),
             Change::Label { .. } => (&[Group::Lifecycle, Group::Label], &[Group::Label]),
@@ -850,6 +892,10 @@ pub(super) fn changes(
                 }
             }
             Change::Label { name, .. } => label(name)?,
+            Change::AttachReference(r) => reference::check_new(r)?,
+            Change::ReferenceUnits { interpretation, .. } => {
+                reference::check_units(interpretation)?
+            }
             Change::Contour { points_mm, .. } => {
                 count_points(points_mm, b)?;
                 cap(points_mm.iter().flatten().copied(), 1e9)?;
@@ -931,6 +977,16 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                         .chain(roll_rad.iter().copied()),
                 ),
             }
+        }
+        Change::AttachReference(r) => finite(
+            r.placement
+                .translation_mm
+                .into_iter()
+                .chain(r.placement.orientation_xyzw)
+                .chain(r.source.declared_meters_per_unit),
+        ),
+        Change::ReferenceUnits { interpretation, .. } => {
+            finite(interpretation.iter().map(|i| i.meters_per_unit))
         }
         Change::Contour { points_mm, .. } => finite(points_mm.iter().flatten().copied()),
         Change::Axis { points_mm, .. } => finite(points_mm.iter().flatten().copied()),

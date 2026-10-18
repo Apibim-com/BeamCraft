@@ -8,10 +8,10 @@ use openusd::{
 };
 use std::io::{self, Write};
 
-fn path(text: &str) -> Result<sdf::Path, Diagnostic> {
+pub(super) fn path(text: &str) -> Result<sdf::Path, Diagnostic> {
     sdf::Path::new(text).map_err(|_| corrupt())
 }
-fn data(asset: &Asset) -> Result<sdf::Data, Diagnostic> {
+pub(super) fn data(asset: &Asset) -> Result<sdf::Data, Diagnostic> {
     if !asset.name.ends_with(".usda") {
         return Err(unsupported());
     }
@@ -77,7 +77,12 @@ pub(super) fn targets(request: &OpenRequest, targets: &EditTargets) -> Result<()
     }
     Ok(())
 }
-fn field(data: &mut sdf::Data, p: &str, key: &str, value: sdf::Value) -> Result<(), Diagnostic> {
+pub(super) fn field(
+    data: &mut sdf::Data,
+    p: &str,
+    key: &str,
+    value: sdf::Value,
+) -> Result<(), Diagnostic> {
     let p = path(p)?;
     if !data.has_spec(&p) {
         return Err(corrupt());
@@ -85,7 +90,7 @@ fn field(data: &mut sdf::Data, p: &str, key: &str, value: sdf::Value) -> Result<
     data.set_field(&p, key, value);
     Ok(())
 }
-fn child(
+pub(super) fn child(
     data: &mut sdf::Data,
     parent: &str,
     key: &str,
@@ -107,7 +112,12 @@ fn child(
     }
     field(data, parent, key, sdf::Value::TokenVec(names))
 }
-fn prim(data: &mut sdf::Data, p: &str, ty: Option<&str>, defining: bool) -> Result<(), Diagnostic> {
+pub(super) fn prim(
+    data: &mut sdf::Data,
+    p: &str,
+    ty: Option<&str>,
+    defining: bool,
+) -> Result<(), Diagnostic> {
     if p == "/" {
         if !data.has_spec(&sdf::Path::abs_root()) {
             data.create_spec(sdf::Path::abs_root(), sdf::SpecType::PseudoRoot);
@@ -140,7 +150,7 @@ fn prim(data: &mut sdf::Data, p: &str, ty: Option<&str>, defining: bool) -> Resu
     }
     Ok(())
 }
-fn container(
+pub(super) fn container(
     data: &mut sdf::Data,
     p: &str,
     ty: &str,
@@ -154,7 +164,7 @@ fn container(
     }
     Ok(())
 }
-fn attribute(
+pub(super) fn attribute(
     data: &mut sdf::Data,
     p: &str,
     name: &str,
@@ -190,7 +200,7 @@ fn attribute(
     }
     Ok(())
 }
-fn attr(
+pub(super) fn attr(
     data: &mut sdf::Data,
     p: &str,
     name: &str,
@@ -246,7 +256,7 @@ fn relationship(
 fn points(values: &[[f64; 3]]) -> sdf::Value {
     sdf::Value::Vec3dVec(values.iter().map(|p| (*p).into()).collect())
 }
-fn pose(data: &mut sdf::Data, p: &str, value: &Placement) -> Result<(), Diagnostic> {
+pub(super) fn pose(data: &mut sdf::Data, p: &str, value: &Placement) -> Result<(), Diagnostic> {
     let [x, y, z] = value.translation_mm;
     let [qx, qy, qz, qw] = value.orientation_xyzw;
     for (name, ty, v) in [
@@ -408,7 +418,7 @@ impl Write for BoundedOutput {
         Ok(())
     }
 }
-fn serialize(data: &sdf::Data, max: usize) -> Result<Vec<u8>, Diagnostic> {
+pub(super) fn serialize(data: &sdf::Data, max: usize) -> Result<Vec<u8>, Diagnostic> {
     let mut output = BoundedOutput {
         bytes: Vec::new(),
         max,
@@ -719,6 +729,13 @@ pub(super) fn apply(
         }
     }
     for c in &input.changes {
+        if let Change::AttachReference(r) = c {
+            control.check()?;
+            reference::check_source_asset(original, targets, &r.source)?;
+            reference::attach(&mut authored, r, &input.actor)?;
+        }
+    }
+    for c in &input.changes {
         control.check()?;
         let (id, _) = c.key();
         let p = element_path(id)?;
@@ -785,6 +802,18 @@ pub(super) fn apply(
                 MaterialOpinion::Target(*digest),
             )?,
             Change::Placement { placement, .. } => pose(&mut authored, &p, placement)?,
+            Change::ReferenceUnits { interpretation, .. } => {
+                let wrapper = prims
+                    .iter()
+                    .find(|v| v.path == p)
+                    .ok_or_else(|| fail(ErrorCode::NotFound, "element not found"))?;
+                reference::units(
+                    &mut authored,
+                    id,
+                    interpretation,
+                    reference::recorded_digest(wrapper)?,
+                )?;
+            }
             Change::Delete { .. } => {
                 let inside = format!("{p}/");
                 if prims
@@ -886,11 +915,12 @@ fn capture(
         ("normals", "normal3f[]"),
         ("bim:shapeKey", "string"),
     ];
+    // Place of an attribute: 0 the element, 1 the derived mesh, 2 the wrapper's units level.
     let mut fields = BTreeMap::new();
     for change in &input.changes {
         let (id, _) = change.key();
-        let mut add = |name: &'static str, ty: &'static str, mesh: bool| {
-            fields.insert((id.to_owned(), name), (ty, mesh));
+        let mut add = |name: &'static str, ty: &'static str, place: u8| {
+            fields.insert((id.to_owned(), name, place), ty);
         };
         match change {
             Change::Create(e) => {
@@ -903,28 +933,47 @@ fn capture(
                     ("bim:createdBy", "string"),
                     ("bim:material", "rel"),
                 ] {
-                    add(name, ty, false);
+                    add(name, ty, 0);
                 }
                 for &(name, ty) in POSE {
-                    add(name, ty, false);
+                    add(name, ty, 0);
                 }
                 match e.shape {
                     Shape::Plate { ref holes, .. } => {
-                        add("steel:plate:contourPointsMm", "double3[]", false);
-                        add("steel:plate:thicknessMm", "double", false);
+                        add("steel:plate:contourPointsMm", "double3[]", 0);
+                        add("steel:plate:thicknessMm", "double", 0);
                         if !holes.is_empty() {
-                            add("steel:plate:holePointsMm", "double3[]", false);
-                            add("steel:plate:holeVertexCounts", "int[]", false);
+                            add("steel:plate:holePointsMm", "double3[]", 0);
+                            add("steel:plate:holeVertexCounts", "int[]", 0);
                         }
                     }
                     Shape::Member { .. } => {
-                        add("bim:axisPointsMm", "double3[]", false);
-                        add("steel:member:rollRad", "double", false);
-                        add("bim:profile", "rel", false);
+                        add("bim:axisPointsMm", "double3[]", 0);
+                        add("steel:member:rollRad", "double", 0);
+                        add("bim:profile", "rel", 0);
                     }
                 }
             }
-            Change::Label { .. } => add("bim:name", "string", false),
+            Change::AttachReference(r) => {
+                for &(name, ty) in reference::ATTACH_FIELDS {
+                    let absent = (name == "bim:reference:declaredMetersPerUnit"
+                        && r.source.declared_meters_per_unit.is_none())
+                        || (name == "bim:reference:declaredUpAxis"
+                            && r.source.declared_up_axis.is_none());
+                    if !absent {
+                        add(name, ty, 0);
+                    }
+                }
+                for &(name, ty) in POSE {
+                    add(name, ty, 0);
+                }
+            }
+            Change::ReferenceUnits { .. } => {
+                for &(name, ty) in reference::UNITS_FIELDS {
+                    add(name, ty, 2);
+                }
+            }
+            Change::Label { .. } => add("bim:name", "string", 0),
             Change::Delete { .. } => {
                 for (name, ty) in [
                     ("bim:id", "string"),
@@ -942,36 +991,36 @@ fn capture(
                     ("steel:member:rollRad", "double"),
                     ("bim:profile", "rel"),
                 ] {
-                    add(name, ty, false);
+                    add(name, ty, 0);
                 }
                 for &(name, ty) in POSE {
-                    add(name, ty, false);
+                    add(name, ty, 0);
                 }
                 for &(name, ty) in MESH {
-                    add(name, ty, true);
+                    add(name, ty, 1);
                 }
                 for (name, ty) in QUANTITY_FIELDS {
-                    add(name, ty, true);
+                    add(name, ty, 1);
                 }
             }
-            Change::Contour { .. } => add("steel:plate:contourPointsMm", "double3[]", false),
-            Change::Thickness { .. } => add("steel:plate:thicknessMm", "double", false),
-            Change::Axis { .. } => add("bim:axisPointsMm", "double3[]", false),
-            Change::Roll { .. } => add("steel:member:rollRad", "double", false),
-            Change::Profile { .. } => add("bim:profile", "rel", false),
-            Change::Material { .. } => add("bim:material", "rel", false),
+            Change::Contour { .. } => add("steel:plate:contourPointsMm", "double3[]", 0),
+            Change::Thickness { .. } => add("steel:plate:thicknessMm", "double", 0),
+            Change::Axis { .. } => add("bim:axisPointsMm", "double3[]", 0),
+            Change::Roll { .. } => add("steel:member:rollRad", "double", 0),
+            Change::Profile { .. } => add("bim:profile", "rel", 0),
+            Change::Material { .. } => add("bim:material", "rel", 0),
             Change::Placement { .. } => {
                 for &(name, ty) in POSE {
-                    add(name, ty, false);
+                    add(name, ty, 0);
                 }
             }
             Change::Mesh(_) => {
                 for &(name, ty) in MESH {
-                    add(name, ty, true);
+                    add(name, ty, 1);
                 }
                 // Every quantity field is reported: absent ones as removals.
                 for (name, ty) in QUANTITY_FIELDS {
-                    add(name, ty, true);
+                    add(name, ty, 1);
                 }
             }
         }
@@ -984,7 +1033,7 @@ fn capture(
                 | Change::Profile { .. }
         ) {
             for &(name, ty) in MESH {
-                add(name, ty, true);
+                add(name, ty, 1);
             }
         }
         if fields.len() > b.values {
@@ -992,11 +1041,15 @@ fn capture(
         }
     }
     let mut result = Vec::new();
-    for ((id, name), (ty, is_mesh)) in fields {
+    for ((id, name, place), ty) in fields {
         let p = element_path(&id)?;
-        let p = if is_mesh { format!("{p}/Geometry") } else { p };
+        let p = match place {
+            1 => format!("{p}/Geometry"),
+            2 => format!("{p}/{}", reference::CORRECTION),
+            _ => p,
+        };
         let spec = path(&format!("{p}.{name}"))?;
-        let data = if is_mesh { derived } else { authored };
+        let data = if place == 1 { derived } else { authored };
         let opinion = if !data.has_spec(&spec) {
             Opinion::Remove
         } else if ty == "rel" {
