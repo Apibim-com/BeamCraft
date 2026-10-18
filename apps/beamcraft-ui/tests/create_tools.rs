@@ -387,3 +387,54 @@ fn a_missing_cli_is_an_error_not_a_hang() {
     let error = command::commit(&stores.root.join("no-such-beamcraft"), &staged).unwrap_err();
     assert_eq!(error.code, "CLI_UNAVAILABLE");
 }
+
+#[test]
+fn a_refresh_runs_off_the_ui_thread_and_keeps_its_two_results_apart() {
+    let Some(cli) = cli() else { return };
+    let stores = Stores::new();
+    let ui = stores.ui();
+    let refresh = |cli: PathBuf, store: PathBuf| {
+        std::thread::spawn(move || source::reload(&cli, &store))
+            .join()
+            .unwrap()
+    };
+    // No revision yet: both queries answer with the CLI's NOT_FOUND on their own.
+    let empty = refresh(cli.clone(), ui.clone());
+    assert!(matches!(&empty.scene, Err(Error::Cli(m)) if m.ends_with("NOT_FOUND")));
+    assert_eq!(empty.definitions.unwrap_err().code, "NOT_FOUND");
+
+    let store = ui.to_str().unwrap();
+    ok(
+        &cli,
+        &[
+            "define-profile",
+            "--store",
+            store,
+            "--width",
+            "100",
+            "--height",
+            "200",
+        ],
+    );
+    ok(
+        &cli,
+        &[
+            "create-plate",
+            "--store",
+            store,
+            "--width",
+            "10",
+            "--length",
+            "20",
+            "--thickness",
+            "5",
+        ],
+    );
+    let full = refresh(cli, ui);
+    let (snapshot, scene) = full.scene.unwrap();
+    assert_eq!(scene.elements, 1);
+    assert!(!snapshot.pin().revision().to_string().is_empty());
+    let definitions = full.definitions.unwrap();
+    assert_eq!(definitions.profiles.len(), 1);
+    assert!(definitions.materials.is_empty());
+}

@@ -134,20 +134,18 @@ pub struct Prepared {
 }
 
 impl Prepared {
-    /// The command line a user could type to get the same result.
-    pub fn command_line(&self) -> String {
-        let mut line = String::from("beamcraft");
+    /// The argument list, one JSON string per line. It is not a shell command line: no shell
+    /// quoting rule is claimed, and every argument (spaces, quotes, backslashes, control
+    /// characters) is shown unambiguously as the process receives it.
+    pub fn argument_list(&self) -> String {
+        let mut list = String::new();
         for arg in &self.args {
-            line.push(' ');
-            if arg.is_empty() || arg.contains(char::is_whitespace) {
-                line.push('"');
-                line.push_str(arg);
-                line.push('"');
-            } else {
-                line.push_str(arg);
+            if !list.is_empty() {
+                list.push('\n');
             }
+            list.push_str(&crate::json_string(arg));
         }
-        line
+        list
     }
 }
 
@@ -485,6 +483,8 @@ pub struct Tools {
     pub plate: PlateForm,
     /// The member form.
     pub member: MemberForm,
+    /// The store's definitions, as of the last refresh.
+    pub definitions: Definitions,
     staged: Option<Prepared>,
     busy: bool,
 }
@@ -495,6 +495,7 @@ impl Default for Tools {
             active: ToolKind::Plate,
             plate: PlateForm::default(),
             member: MemberForm::default(),
+            definitions: Definitions::default(),
             staged: None,
             busy: false,
         }
@@ -502,6 +503,32 @@ impl Default for Tools {
 }
 
 impl Tools {
+    /// Applies a definitions refresh. A failed refresh clears the choices (they would be stale)
+    /// and returns the reason to show; a store without a revision has no definitions yet and
+    /// is not an error. A selected choice that no longer exists is deselected.
+    pub fn apply_definitions(&mut self, result: Result<Definitions, ToolError>) -> Option<String> {
+        let (definitions, problem) = match result {
+            Ok(definitions) => (definitions, None),
+            Err(e) if e.code == "NOT_FOUND" => (Definitions::default(), None),
+            Err(e) => (Definitions::default(), Some(format!("definitions: {e}"))),
+        };
+        let known = |list: &[Choice], digest: &Option<String>| {
+            digest
+                .as_ref()
+                .is_some_and(|d| list.iter().any(|c| &c.digest == d))
+        };
+        if !known(&definitions.profiles, &self.member.profile) {
+            self.member.profile = None;
+        }
+        if !known(&definitions.materials, &self.member.material) {
+            self.member.material = None;
+        }
+        if !known(&definitions.materials, &self.plate.material) {
+            self.plate.material = None;
+        }
+        self.definitions = definitions;
+        problem
+    }
     /// The command of the selected form.
     pub fn prepare(&self, store: &Path) -> Result<Prepared, FormError> {
         match self.active {
@@ -663,12 +690,56 @@ mod tests {
     }
 
     #[test]
-    fn the_command_line_quotes_spaces() {
+    fn a_failed_definitions_refresh_is_reported_and_clears_stale_choices() {
+        let choice = |digest: &str| Choice {
+            digest: digest.into(),
+            label: digest.into(),
+        };
+        let listed = Definitions {
+            profiles: vec![choice("p")],
+            materials: vec![choice("m")],
+        };
+        let mut tools = Tools::default();
+        tools.member.profile = Some("p".into());
+        tools.member.material = Some("m".into());
+        tools.plate.material = Some("gone".into());
+        assert_eq!(tools.apply_definitions(Ok(listed)), None);
+        assert_eq!(tools.member.profile.as_deref(), Some("p"));
+        assert_eq!(tools.member.material.as_deref(), Some("m"));
+        assert_eq!(tools.plate.material, None);
+        let failure = ToolError {
+            code: "CLI_FAILED".into(),
+            message: "boom".into(),
+        };
+        let problem = tools.apply_definitions(Err(failure)).unwrap();
+        assert_eq!(problem, "definitions: CLI_FAILED: boom");
+        assert!(tools.definitions.profiles.is_empty());
+        assert_eq!(tools.member.profile, None);
+        // A store with no revision yet simply has no definitions.
+        let empty = ToolError {
+            code: "NOT_FOUND".into(),
+            message: "no revision".into(),
+        };
+        assert_eq!(tools.apply_definitions(Err(empty)), None);
+    }
+
+    #[test]
+    fn the_argument_list_round_trips_every_argument() {
         let mut form = plate();
-        form.name = "Base plate".into();
-        let line = form.prepare(Path::new("my store")).unwrap().command_line();
-        assert!(line.starts_with("beamcraft create-plate --store \"my store\" --width 1000"));
-        assert!(line.ends_with("--name \"Base plate\""));
+        form.name = "Plate \"A\" \\ $x `y` 'z' é\nend".into();
+        let prepared = form.prepare(Path::new("my store\\a b")).unwrap();
+        let shown = prepared.argument_list();
+        assert_eq!(shown.lines().count(), prepared.args.len());
+        let array = format!("[{}]", shown.replace('\n', ","));
+        let decoded = json::decode(array.as_bytes(), &message::read_limits()).unwrap();
+        let back: Vec<&str> = decoded
+            .array()
+            .unwrap()
+            .iter()
+            .map(|a| a.string().unwrap())
+            .collect();
+        assert_eq!(back, prepared.args);
+        assert!(shown.contains("\"Plate \\\"A\\\" \\\\ $x"));
     }
 
     const CREATED: &str = r#"{"footprint":{},"op_id":"o","outcome":"plate_created","plate":{"element_id":"e1","mesh_digest":"m1","name":"P1","quantities":{"mass":{"status":"unknown"},"volume":{"mm3":200000,"status":"current"}}},"revision":{"manifest_digest":"d1","revision_id":"r1","sequence":"3"}}"#;

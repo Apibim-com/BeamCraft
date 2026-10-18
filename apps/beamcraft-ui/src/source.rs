@@ -5,9 +5,11 @@
 //! (`beamcraft view-export --store ROOT --out -`) and the engine rebuilds and re-validates it.
 //! The viewport never opens USD itself and never trusts the bytes it receives.
 
-use crate::Error;
+use crate::scene::Scene;
+use crate::tools::{Definitions, ToolError};
+use crate::{Error, command};
 use beamcraft_engine::query::bundle::max_bundle_bytes;
-use beamcraft_engine::{Limits, ViewSnapshot};
+use beamcraft_engine::{Limits, Representation, ViewSnapshot};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -60,4 +62,26 @@ pub fn load(cli: &Path, store: &Path) -> Result<ViewSnapshot, Error> {
         return Err(Error::Cli(format!("view-export rejected: {code}")));
     }
     Ok(ViewSnapshot::from_bundle(&bytes, &limits)?)
+}
+
+/// Everything one window refresh reads, gathered without a window or a GPU so it can run on a
+/// worker thread: the accepted snapshot with its scene, and the store's definitions. The two
+/// results are independent; one failing never hides the other.
+pub struct Reloaded {
+    /// The accepted snapshot and the scene built from it.
+    pub scene: Result<(ViewSnapshot, Scene), Error>,
+    /// The profile and material definitions of the same store.
+    pub definitions: Result<Definitions, ToolError>,
+}
+
+/// Runs the CLI queries of one refresh (blocking; call it off the UI thread).
+pub fn reload(cli: &Path, store: &Path) -> Reloaded {
+    let scene = load(cli, store).and_then(|snapshot| {
+        let scene = Scene::from_snapshot(&snapshot, Representation::Full)?;
+        Ok((snapshot, scene))
+    });
+    Reloaded {
+        scene,
+        definitions: command::definitions(cli, store),
+    }
 }

@@ -19,8 +19,8 @@ beamcraft-ui --synthetic COUNT --metrics FRAMES [--width W] [--height H]
   are ignored while a text field has the keyboard).
 - V05.1 Create panel (experimental): a plate (width, length, thickness, optional name and material)
   or a straight beam/column (start, end, profile and material chosen from the store's definitions,
-  optional name). Preview stages the exact `beamcraft create-plate` / `create-member` command (no
-  geometry preview), Commit runs it in a separate process and reloads the accepted revision,
+  optional name). Preview stages the exact `create-plate` / `create-member` argument list (one per line, not a shell
+  command line; no geometry preview), Commit runs it in a separate process and reloads the accepted revision,
   Cancel drops it and publishes nothing; a CLI refusal is shown with its code and message. The
   parameter mapping and reply parsing are `tools.rs` (pure, unit-tested); the process is
   `command.rs`. See [the design note](../../docs/design/v05-1-ui-create-tools.md).

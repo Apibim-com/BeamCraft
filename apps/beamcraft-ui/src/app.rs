@@ -7,9 +7,10 @@
 use crate::camera::Camera;
 use crate::render::{Renderer, Uploaded};
 use crate::scene::Scene;
+use crate::source::Reloaded;
 use crate::tools::{Choice, Created, MAX_TEXT, MemberKind, ToolError, ToolKind, Tools};
 use crate::{Error, check_font, command, source};
-use beamcraft_engine::{Representation, ViewSnapshot};
+use beamcraft_engine::ViewSnapshot;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Instant;
@@ -43,9 +44,13 @@ pub struct App {
     last: Instant,
     fps: f32,
     tools: Tools,
-    definitions: crate::tools::Definitions,
     job: Option<Receiver<Result<Created, ToolError>>>,
+    reload_job: Option<Receiver<Reloaded>>,
+    reload_queued: bool,
+    /// The result of the last Preview, Cancel or Commit.
     tool_note: Option<Result<String, String>>,
+    /// Why the last definitions refresh failed; kept apart from `tool_note` so neither hides the other.
+    refresh_error: Option<String>,
 }
 
 const RED: egui::Color32 = egui::Color32::from_rgb(230, 80, 60);
@@ -183,70 +188,76 @@ impl App {
             last: Instant::now(),
             fps: 0.0,
             tools: Tools::default(),
-            definitions: crate::tools::Definitions::default(),
             job: None,
+            reload_job: None,
+            reload_queued: false,
             tool_note: None,
+            refresh_error: None,
         };
         app.reload();
         Ok(app)
     }
 
-    fn reload_definitions(&mut self) {
-        match command::definitions(&self.source.cli, &self.source.store) {
-            Ok(definitions) => self.definitions = definitions,
-            Err(e) => {
-                self.definitions = crate::tools::Definitions::default();
-                // A store without a revision simply has none yet.
-                if e.code != "NOT_FOUND" {
-                    self.tool_note = Some(Err(format!("definitions: {e}")));
-                }
-            }
+    /// Starts a refresh on a worker thread (the CLI queries and the scene build); the result is
+    /// applied by `poll_reload`. A refresh asked for while one runs is queued, so it still reads
+    /// the store after whatever just changed it.
+    fn reload(&mut self) {
+        if self.reload_job.is_some() {
+            self.reload_queued = true;
+            return;
         }
-        // A choice that no longer exists must not stay selected.
-        let known = |list: &[Choice], digest: &Option<String>| {
-            digest
-                .as_ref()
-                .is_some_and(|d| list.iter().any(|c| &c.digest == d))
-        };
-        let d = &self.definitions;
-        if !known(&d.profiles, &self.tools.member.profile) {
-            self.tools.member.profile = None;
-        }
-        if !known(&d.materials, &self.tools.member.material) {
-            self.tools.member.material = None;
-        }
-        if !known(&d.materials, &self.tools.plate.material) {
-            self.tools.plate.material = None;
+        let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name("beamcraft-reload".into())
+            .spawn(move || {
+                let _ = tx.send(source::reload(&cli, &store));
+            });
+        match spawned {
+            Ok(_) => self.reload_job = Some(rx),
+            Err(_) => self.error = Some("the reload thread could not be started".into()),
         }
     }
 
-    fn reload(&mut self) {
-        self.reload_definitions();
-        let result = (|| -> Result<Loaded, Error> {
-            let snapshot = source::load(&self.source.cli, &self.source.store)?;
-            let scene = Scene::from_snapshot(&snapshot, Representation::Full)?;
+    fn poll_reload(&mut self) {
+        let Some(rx) = &self.reload_job else { return };
+        let reloaded = match rx.try_recv() {
+            Ok(reloaded) => reloaded,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => {
+                self.reload_job = None;
+                self.error = Some("the reload thread ended without a result".into());
+                return;
+            }
+        };
+        self.reload_job = None;
+        self.refresh_error = self.tools.apply_definitions(reloaded.definitions);
+        let result = reloaded.scene.and_then(|(snapshot, scene)| {
             let uploaded = Uploaded::new(&self.state.device, &self.state.queue, &scene)?;
             Ok(Loaded {
                 snapshot,
                 scene,
                 uploaded,
             })
-        })();
+        });
         match result {
             Ok(loaded) => {
                 let (target, extent) = loaded.scene.framing();
                 // A scene the camera cannot frame keeps the previous scene and shows why.
-                if let Err(e) = self.camera.fit(target, extent, self.aspect()) {
-                    self.error = Some(e.to_string());
-                    return;
+                match self.camera.fit(target, extent, self.aspect()) {
+                    Ok(()) => {
+                        self.loaded = Some(loaded);
+                        self.error = None;
+                    }
+                    Err(e) => self.error = Some(e.to_string()),
                 }
-                self.loaded = Some(loaded);
-                self.error = None;
             }
             Err(e) => self.error = Some(e.to_string()),
         }
+        if std::mem::take(&mut self.reload_queued) {
+            self.reload();
+        }
     }
-
     fn aspect(&self) -> f32 {
         (self.renderer.width as f32 / self.renderer.height as f32).clamp(0.05, 20.0)
     }
@@ -351,8 +362,8 @@ impl App {
             ui.selectable_value(&mut self.tools.active, ToolKind::Member, "Member");
         });
         ui.label("Dimensions in mm.");
-        let materials = self.definitions.materials.clone();
-        let profiles = self.definitions.profiles.clone();
+        let materials = self.tools.definitions.materials.clone();
+        let profiles = self.tools.definitions.profiles.clone();
         match self.tools.active {
             ToolKind::Plate => {
                 let form = &mut self.tools.plate;
@@ -380,7 +391,11 @@ impl App {
                         ui.label(label);
                         for (axis, text) in ["X", "Y", "Z"].iter().zip(point.iter_mut()) {
                             ui.label(*axis);
-                            ui.add(egui::TextEdit::singleline(text).desired_width(56.0));
+                            ui.add(
+                                egui::TextEdit::singleline(text)
+                                    .desired_width(56.0)
+                                    .char_limit(MAX_TEXT),
+                            );
                         }
                     });
                 }
@@ -441,14 +456,25 @@ impl App {
         });
         if let Some(staged) = self.tools.staged() {
             let current = self.tools.can_commit(&store);
-            ui.label("Preview: Commit runs exactly this command; the engine builds the shape then (no geometry preview).");
-            ui.add(egui::Label::new(egui::RichText::new(staged.command_line()).monospace()).wrap());
+            ui.label(format!(
+                "Preview: Commit runs `beamcraft` with exactly these {} arguments, one per line (not a shell command line). The engine builds the shape then; there is no geometry preview.",
+                staged.args.len()
+            ));
+            ui.add(
+                egui::Label::new(egui::RichText::new(staged.argument_list()).monospace()).wrap(),
+            );
             if !current {
                 ui.colored_label(RED, "The parameters changed: preview again.");
             }
         }
         if busy {
             ui.label("Running…");
+        }
+        if self.reload_job.is_some() {
+            ui.label("Refreshing the model and definitions…");
+        }
+        if let Some(problem) = &self.refresh_error {
+            ui.colored_label(RED, problem);
         }
         match &self.tool_note {
             Some(Ok(message)) => {
@@ -519,6 +545,7 @@ impl eframe::App for App {
             )
         });
         self.poll_commit();
+        self.poll_reload();
         if reload {
             self.reload();
         }
