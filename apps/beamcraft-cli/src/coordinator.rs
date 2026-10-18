@@ -39,7 +39,11 @@ use std::path::{Path, PathBuf};
 /// The publish handler of one coordinator.
 pub struct PublishHandler {
     published: RevisionStore,
+    /// The workspaces root as given: stores are opened under it, as every other command opens
+    /// the paths it is given (the store refuses links on that path itself).
     root: PathBuf,
+    /// Its canonical form, for the containment check only.
+    canonical_root: PathBuf,
 }
 
 fn refused(code: ErrorCode, message: &'static str) -> PlateError {
@@ -49,19 +53,28 @@ fn refused(code: ErrorCode, message: &'static str) -> PlateError {
 impl PublishHandler {
     /// A handler publishing into `published` from workspaces under `workspaces_root`.
     pub fn new(published: RevisionStore, workspaces_root: &Path) -> Result<Self, PlateError> {
-        let root = workspaces_root.canonicalize().map_err(|_| {
+        let canonical_root = workspaces_root.canonicalize().map_err(|_| {
             refused(
                 ErrorCode::NotFound,
                 "the workspaces root is not a directory",
             )
         })?;
-        if !root.is_dir() {
+        if !canonical_root.is_dir() {
             return Err(refused(
                 ErrorCode::NotFound,
                 "the workspaces root is not a directory",
             ));
         }
-        Ok(Self { published, root })
+        Ok(Self {
+            published,
+            root: std::path::absolute(workspaces_root).map_err(|_| {
+                refused(
+                    ErrorCode::NotFound,
+                    "the workspaces root is not a directory",
+                )
+            })?,
+            canonical_root,
+        })
     }
 
     /// The directory of a named workspace, contained in the root.
@@ -77,17 +90,21 @@ impl PublishHandler {
                 "a workspace is named by one directory component",
             ));
         }
-        let dir = self
-            .root
-            .join(name)
+        let dir = self.root.join(name);
+        let canonical = dir
             .canonicalize()
             .map_err(|_| refused(ErrorCode::NotFound, "the workspace does not exist"))?;
-        if !dir.starts_with(&self.root) || dir == self.root || !dir.is_dir() {
+        if !canonical.starts_with(&self.canonical_root)
+            || canonical == self.canonical_root
+            || !canonical.is_dir()
+        {
             return Err(refused(
                 ErrorCode::PermissionDenied,
                 "the workspace is outside the workspaces root",
             ));
         }
+        // The canonical path only proves containment; on Windows it is a verbatim `\\?\` path,
+        // which the store's link checks do not walk like the given one.
         Ok(dir)
     }
 
