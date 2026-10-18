@@ -468,3 +468,46 @@ fn a_changeset_id_that_names_another_committed_operation_is_reuse_every_time() {
     ]);
     assert_eq!(text(at(&status, &["workspace"]), "unsent_revisions"), "1");
 }
+
+#[test]
+fn an_assembly_membership_writes_the_part_relationship_and_publishes() {
+    let f = Fixture::new();
+    let dir = f.forked("ws");
+    let assembly = "019a7bf0-0000-7000-8000-000000000030";
+    f.ok(&[
+        "create-assembly",
+        "--store",
+        &dir,
+        "--name",
+        "Frame",
+        "--new-id",
+        assembly,
+    ]);
+    f.ok(&[
+        "assembly-attach",
+        "--store",
+        &dir,
+        "--id",
+        PLATE,
+        "--assembly-id",
+        assembly,
+    ]);
+    let changeset = f.create(&dir, &[]);
+    // The part's one bim:partOf record is its relationship group (Footprint::for_part_of); the
+    // new assembly writes every group.
+    assert_eq!(writes(&changeset, PLATE), ["relationship"]);
+    assert_eq!(writes(&changeset, assembly).len(), 7);
+    let store = f.path("published");
+    let digest = text(&changeset, "digest");
+    let applied = f.ok(&f.apply_args(&store, &dir, &digest, USER));
+    assert_eq!(text(&applied, "outcome"), "changeset_applied");
+    let all = f.ok(&["assemblies", "--store", &store]);
+    let published = list(&all, "assemblies");
+    assert_eq!(published.len(), 1);
+    assert_eq!(text(&published[0], "id"), assembly);
+    let parts: Vec<String> = list(&published[0], "parts")
+        .iter()
+        .map(|p| p.string().unwrap().to_owned())
+        .collect();
+    assert_eq!(parts, [PLATE]);
+}

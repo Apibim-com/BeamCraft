@@ -215,9 +215,23 @@ fn relationship(
     name: &str,
     opinion: MaterialOpinion,
 ) -> Result<(), Diagnostic> {
+    let targets = match opinion {
+        MaterialOpinion::Target(d) => Some(vec![path(&definition_path(d))?]),
+        MaterialOpinion::Empty => Some(Vec::new()),
+        MaterialOpinion::Remove => None,
+    };
+    relationship_targets(data, p, name, targets)
+}
+/// Authors an explicit relationship target list, or removes the relationship spec (`None`).
+fn relationship_targets(
+    data: &mut sdf::Data,
+    p: &str,
+    name: &str,
+    targets: Option<Vec<sdf::Path>>,
+) -> Result<(), Diagnostic> {
     prim(data, p, None, false)?;
     let full = path(&format!("{p}.{name}"))?;
-    if opinion == MaterialOpinion::Remove {
+    let Some(targets) = targets else {
         // Refuse erasing unknown relationship-target specs/metadata that this profile cannot model.
         if data
             .spec_paths()
@@ -229,7 +243,7 @@ fn relationship(
         data.erase_spec(&full);
         child(data, p, "propertyChildren", name, true)?;
         return Ok(());
-    }
+    };
     if !data.has_spec(&full) {
         data.create_spec(full.clone(), sdf::SpecType::Relationship);
         child(data, p, "propertyChildren", name, false)?;
@@ -242,10 +256,6 @@ fn relationship(
         "variability",
         sdf::Value::Variability(sdf::Variability::Uniform),
     );
-    let targets = match opinion {
-        MaterialOpinion::Target(d) => vec![path(&definition_path(d))?],
-        _ => Vec::new(),
-    };
     data.set_field(
         &full,
         "targetPaths",
@@ -431,9 +441,14 @@ fn create(data: &mut sdf::Data, e: &Element, actor: &str) -> Result<(), Diagnost
     container(data, "/World", "Xform", Some("assembly"))?;
     container(data, "/World/Steel", "Scope", Some("group"))?;
     prim(data, &p, Some("Xform"), true)?;
-    field(data, &p, "kind", sdf::Value::token("component"))?;
+    let model_kind = match e.shape {
+        Shape::Assembly => "assembly",
+        _ => "component",
+    };
+    field(data, &p, "kind", sdf::Value::token(model_kind))?;
     field(data, &p, "displayName", sdf::Value::String(e.name.clone()))?;
     let kind = match e.shape {
+        Shape::Assembly => "assembly",
         Shape::Plate { .. } => "plate",
         Shape::Member {
             kind: MemberKind::Beam,
@@ -518,6 +533,7 @@ fn create(data: &mut sdf::Data, e: &Element, actor: &str) -> Result<(), Diagnost
                 )?;
             }
         }
+        Shape::Assembly => (),
     }
     if let Some(d) = e.material {
         relationship(data, &p, "bim:material", MaterialOpinion::Target(d))?;
@@ -802,6 +818,15 @@ pub(super) fn apply(
                 MaterialOpinion::Target(*digest),
             )?,
             Change::Placement { placement, .. } => pose(&mut authored, &p, placement)?,
+            Change::PartOf { assembly, .. } => {
+                // A detach authors an explicit empty target list, which also masks a weaker
+                // layer's record; removing the spec could reveal it again.
+                let targets = match assembly.as_deref() {
+                    Some(a) => vec![path(&element_path(a)?)?],
+                    None => Vec::new(),
+                };
+                relationship_targets(&mut authored, &p, "bim:partOf", Some(targets))?;
+            }
             Change::ReferenceUnits { interpretation, .. } => {
                 let wrapper = prims
                     .iter()
@@ -952,6 +977,7 @@ fn capture(
                         add("steel:member:rollRad", "double", 0);
                         add("bim:profile", "rel", 0);
                     }
+                    Shape::Assembly => (),
                 }
             }
             Change::AttachReference(r) => {
@@ -990,6 +1016,7 @@ fn capture(
                     ("bim:axisPointsMm", "double3[]"),
                     ("steel:member:rollRad", "double"),
                     ("bim:profile", "rel"),
+                    ("bim:partOf", "rel"),
                 ] {
                     add(name, ty, 0);
                 }
@@ -1009,6 +1036,7 @@ fn capture(
             Change::Roll { .. } => add("steel:member:rollRad", "double", 0),
             Change::Profile { .. } => add("bim:profile", "rel", 0),
             Change::Material { .. } => add("bim:material", "rel", 0),
+            Change::PartOf { .. } => add("bim:partOf", "rel", 0),
             Change::Placement { .. } => {
                 for &(name, ty) in POSE {
                     add(name, ty, 0);
