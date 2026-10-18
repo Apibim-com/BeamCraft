@@ -14,6 +14,7 @@ no production USD backend is integrated. U05 implements immutable byte storage o
 ```
 apps/
   beamcraft-cli     command-line entry point (binary: beamcraft)
+  beamcraft-ui      native window and viewport (binary: beamcraft-ui)
   boundaries        module-boundary checker (development tool, not shipped)
 crates/
   geom              points, vectors, coordinate systems   (no deps)
@@ -46,6 +47,8 @@ P06 adds `beamcraft_cli::workspace` and the CLI commands `workspace-create`, `wo
 P07 adds `beamcraft_cli::history`, `RevisionStore::info_at`/`open_at` in the host and the CLI commands `workspace-undo`, `workspace-redo` and `workspace-history`: an undo commits the layers of the earlier state as a new verified draft revision (so element, mesh and stored quantities return together), and the undo and redo stacks are derived from the revision log plus an append-only `undo.log` ([design note](design/p07-undo-redo.md)).
 
 P08 adds `Footprint::for_delete` and the placement patch of `UpdateElement` in the engine, `Change::Delete` in the layer engine, `beamcraft_cli::delete` and the CLI command `delete-element`: a move rewrites only the placement and never rebuilds the body, and a delete removes the whole element from both layers and is refused while another element links to it ([design note](design/p08-move-delete.md)).
+
+V03 adds the native window and viewport (`apps/beamcraft-ui`, `beamcraft_engine::query::bundle`, the CLI command `view-export`): the UI runs `beamcraft view-export` in a separate process, rebuilds and re-validates the engine's snapshot of the accepted revision, and draws each distinct mesh once with one instance per element ([design note](design/v03-viewport.md)).
 
 [Module boundaries (F08)](contracts/module-boundaries-v0.1.md) give the exact crate and module path
 of every contract area, the allowed dependency edges and which crates are planned. A test and CI
