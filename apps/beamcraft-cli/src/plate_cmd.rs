@@ -649,6 +649,7 @@ fn delete_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
                 Json::text(match k {
                     DeletedKind::Plate => "plate",
                     DeletedKind::Member => "member",
+                    DeletedKind::Assembly => "assembly",
                 })
             }),
         ),

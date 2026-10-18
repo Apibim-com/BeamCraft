@@ -4,7 +4,7 @@
 
 //! V03 `view-export`: the verified head's view snapshot as one engine bundle. The bundle rebuilds
 //! the identical snapshot (same token as `plate-inspect`), shares one mesh between copies, never
-//! overwrites a file and is refused for a store without a revision.
+//! overwrites a file, draws no body for an assembly and is refused for a store without a revision.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
@@ -126,5 +126,55 @@ fn a_store_without_a_revision_and_bad_options_are_refused() {
         assert_eq!(code, 2, "{args:?}");
         assert_eq!(text(&json_of(&body), "code"), "INVALID_ARGUMENT");
     }
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn an_assembly_has_no_body_and_its_parts_are_drawn() {
+    let root = root("assembly");
+    let store = root.join("store");
+    let store = store.to_str().unwrap();
+    let plate = "019a7bf0-0000-7000-8000-000000000010";
+    let assembly = "019a7bf0-0000-7000-8000-000000000030";
+    for args in [
+        &[
+            "create-plate",
+            "--store",
+            store,
+            "--width",
+            "800",
+            "--length",
+            "400",
+            "--thickness",
+            "12",
+            "--new-id",
+            plate,
+        ][..],
+        &[
+            "create-assembly",
+            "--store",
+            store,
+            "--name",
+            "Frame",
+            "--new-id",
+            assembly,
+        ],
+        &[
+            "assembly-attach",
+            "--store",
+            store,
+            "--id",
+            plate,
+            "--assembly-id",
+            assembly,
+        ],
+    ] {
+        assert_eq!(run(args).0, 0, "{args:?}");
+    }
+    let (code, bundle) = run(&["view-export", "--store", store, "--out", "-"]);
+    assert_eq!(code, 0);
+    let snapshot = ViewSnapshot::from_bundle(&bundle, &Limits::default()).unwrap();
+    assert_eq!(snapshot.len(), 1);
+    assert_eq!(snapshot.meshes().len(), 1);
     let _ = fs::remove_dir_all(&root);
 }

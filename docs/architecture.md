@@ -50,6 +50,8 @@ P08 adds `Footprint::for_delete` and the placement patch of `UpdateElement` in t
 
 R01 adds read-only foreign references (`model::reference`, `engine::reference`, `beamcraft_cli::reference` and the CLI commands `reference-attach`, `reference-move`, `reference-correct-units`, `reference-write` and `reference-inspect`): a foreign USDA/USDC layer is stored under its SHA-256 as an `external` layer of the revision and composed below an owned wrapper element whose placement and explicit units correction are stored apart from it; every write to the source or a foreign prim is refused, and a network path is refused before any I/O ([design note](design/r01-readonly-reference.md)).
 
+A01 adds assemblies (`model::command::{CreateAssembly, AttachToAssembly, DetachFromAssembly}`, `engine::assembly`, `Footprint::for_part_of`, `Shape::Assembly` and `Change::PartOf` in the layer engine, `beamcraft_cli::assembly` and the CLI commands `create-assembly`, `assembly-attach`, `assembly-detach` and `assemblies`): an assembly is an element with its own identity and no body, and membership is the one `bim:partOf` relationship authored on the part, validated for kinds, cardinality, self-links and cycles ([design note](design/a01-assemblies.md)).
+
 V03 adds the native window and viewport (`apps/beamcraft-ui`, `beamcraft_engine::query::bundle`, the CLI command `view-export`): the UI runs `beamcraft view-export` in a separate process, rebuilds and re-validates the engine's snapshot of the accepted revision, and draws each distinct mesh once with one instance per element ([design note](design/v03-viewport.md)).
 
 [Module boundaries (F08)](contracts/module-boundaries-v0.1.md) give the exact crate and module path
