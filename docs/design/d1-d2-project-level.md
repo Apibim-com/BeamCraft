@@ -68,10 +68,29 @@ beamcraft delete-element --store ROOT --id LEVEL_UUID   (refused while elements 
    in this slice; the validator refuses a loaded record on them.
 8. **The elevation cap is the F04 coordinate cap** (1,000,000,000 mm, inclusive), negative values
    allowed. NaN and infinities are `NON_FINITE_NUMBER`, beyond the cap `LIMIT_EXCEEDED`.
-9. **An explicit `--project-id` is checked in the command layer, not in the engine API.** The
-   library functions still take a `ProjectId` that a store with a head ignores (documented on
-   `plate::load_base`, `plate::ensure_project` and `UpdateRequest`); `plate::ensure_project` is the
-   check and the CLI calls it. A library caller must call it too.
+9. **An explicit `--project-id` is a claim bound to base loading.** The CLI runs the early typed
+   check (`plate::ensure_project`) and then holds a `plate::ProjectClaim` (a thread-local claim
+   with a drop guard) for the whole command. `load_base` compares the claim with the project of
+   the exact head it opened, which is the base the revision is committed on, and a first revision
+   records the claimed project; a store initialised by another writer between the check and the
+   base loading is refused with `INVALID_ARGUMENT` (regression test
+   `tests/project_claim.rs`), and a writer that raced on an empty store is stopped by the host's
+   initial-base check. The library request types keep their `project` field, which a store with a
+   head still ignores when no claim is held; a library caller that names a project must hold a
+   claim too. The claim binds reads of the same thread as well. **Design choice to confirm:** a
+   thread-local claim avoids adding a field to every request type; the alternative is an explicit
+   `claimed_project` field on each request/context.
+10. **Replay of a level creation is decided from the operation's own revision** (the host ledger's
+    recorded sequence, as `weld::created_by`): that revision must have introduced the level id,
+    with the same name and elevation, and not the one before it; another request under the same
+    `op_id` is `OP_ID_REUSE` whatever the head holds.
+11. **Readers apply the ownership, schema and mode guard.** Foreign, newer-schema and
+    unsupported-mode elements are inert identities (`Levels::insert_other`), so they neither fail
+    the level reader nor can be listed or assigned. `plate-inspect` runs the structural validator
+    before decoding. An element that exists but cannot hold a level (a level, assembly, weld or
+    reference) is `UNSUPPORTED_PROPERTY` for `update-element --level`, not `NOT_FOUND`. An owned,
+    current-schema reference wrapper with a nonempty `bim:level` is refused by the structural
+    validator (`INVALID_ARGUMENT`).
 
 ## Requirement coverage
 
@@ -100,7 +119,7 @@ not written by this task.
 
 ## Evidence
 
-* `apps/beamcraft-cli/tests/levels.rs` (7 end-to-end tests through the binary): the project is
+* `apps/beamcraft-cli/tests/levels.rs` (8 end-to-end tests through the binary): the project is
   recorded by the first revision and the root digest is stable across revisions; an explicit
   different project is refused by every revision-writing command with no revision written; a
   generated project is recorded; a fork and edits inside it keep it; a store without a record
@@ -113,6 +132,8 @@ not written by this task.
   creation and assignment; a copy keeps the level and a level is not copied; a level in use is
   `DEPENDENCY_CONFLICT` until the last element leaves; stored graphs with a non-level target, two
   targets and a missing target are refused when read.
+* `apps/beamcraft-cli/tests/project_claim.rs`: a store initialised by another writer after a
+  caller's early check is not adopted by the caller's claimed project; claims nest and restore.
 * `crates/layer-engine/tests/authored.rs`: authoring and validating levels and `bim:level` records
   (kinds, groups written and read, bodies, elevation, loaded tampering, `check_delete`,
   `copy_plan`) and the project record (read, validated, kept through an edit, absent, invalid);
@@ -130,7 +151,7 @@ not written by this task.
 * The raw `revision-commit` path does not require a store that had a record to keep it: the verifier
   checks that a recorded id equals the manifest's project, not that a record present in the base
   is still there. Removing it outside BeamCraft makes the store a "store without a record".
-* The check of an explicit `--project-id` is not in the library request types (decision 9).
+* The explicit project claim is a thread-local guard, not a field of the request types (decision 9).
 * The F04 and F10 amendments that the contract proposes are still not applied.
 * The schema descriptor changed (`bimProjectId` line, `level` element, `bim:level`, `Level`
   change): other open PRs that also edit it (for example A07.2) will conflict; the earlier

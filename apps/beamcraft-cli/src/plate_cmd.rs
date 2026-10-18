@@ -14,8 +14,8 @@ use beamcraft_cli::edit::{UpdateRequest, UpdatedElement, update_element};
 use beamcraft_cli::history::{Direction, Step, step, timeline};
 use beamcraft_cli::member::{CreateMemberRequest, create_member};
 use beamcraft_cli::plate::{
-    CreateRequest, Created, Inspection, PlateError, QuantityReport, RevisionSummary, create_plate,
-    ensure_project, inspect,
+    CreateRequest, Created, Inspection, PlateError, ProjectClaim, QuantityReport, RevisionSummary,
+    claim_project, create_plate, ensure_project, inspect,
 };
 use beamcraft_cli::workspace::{
     CreateWorkspace, WorkspaceStatus, create_workspace, publish_workspace,
@@ -267,7 +267,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         message: "store root is not usable",
     })?;
     let store = RevisionStore::new(blobs);
-    check_project_option(&store, &options)?;
+    let _claim = check_project_option(&store, &options)?;
     match *command {
         "create-plate" => create(&store, &options),
         "create-member" => create_member_command(&store, &options),
@@ -312,14 +312,20 @@ pub(crate) fn id_error(error: beamcraft_model::id::IdError) -> PlateError {
 }
 
 /// D1: an explicit `--project-id` must be the project the store records (a store without a
-/// revision takes it). Shared by every command that authors a revision.
+/// revision takes it). The early check runs here; the returned claim binds the command's base
+/// loading to that project until it is dropped, so a store initialised by another writer in
+/// between is refused rather than adopted. Shared by every command that authors a revision.
 pub(crate) fn check_project_option(
     store: &RevisionStore,
     options: &BTreeMap<&str, &str>,
-) -> Run<()> {
+) -> Run<Option<ProjectClaim>> {
     match options.get("--project-id") {
-        Some(text) => ensure_project(store, &ProjectId::parse(text).map_err(id_error)?),
-        None => Ok(()),
+        Some(text) => {
+            let project = ProjectId::parse(text).map_err(id_error)?;
+            ensure_project(store, &project)?;
+            Ok(Some(claim_project(project)))
+        }
+        None => Ok(None),
     }
 }
 

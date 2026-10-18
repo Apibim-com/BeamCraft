@@ -34,6 +34,11 @@ const OTHER_PROJECT: &str = "019a7bf0-0000-7000-8000-00000000d002";
 const STOREY: &str = "019a7bf0-0000-7000-8000-000000300001";
 const ROOF: &str = "019a7bf0-0000-7000-8000-000000300002";
 const MISSING: &str = "019a7bf0-0000-7000-8000-0000003000ff";
+const ASSEMBLY: &str = "019a7bf0-0000-7000-8000-000000300020";
+const WRAPPER: &str = "019a7bf0-0000-7000-8000-000000300030";
+
+/// An invented foreign source for the wrapper of the reference regression.
+const SITE: &str = "#usda 1.0\n(\n    defaultPrim = \"Site\"\n    metersPerUnit = 1.0\n    upAxis = \"Z\"\n)\ndef Xform \"Site\"\n{\n}\n";
 
 struct Fixture {
     root: PathBuf,
@@ -53,6 +58,12 @@ impl Fixture {
     }
     fn store(&self) -> String {
         self.root.join("store").to_str().unwrap().to_owned()
+    }
+    /// Writes the invented foreign source and returns its path text.
+    fn source(&self) -> String {
+        let path = self.root.join("site.usda");
+        fs::write(&path, SITE).unwrap();
+        path.to_str().unwrap().to_owned()
     }
     fn run_in(&self, store: &str, command: &str, extra: &[&str]) -> (i32, Json) {
         let mut args = vec![command, "--store", store];
@@ -504,8 +515,10 @@ fn level_arguments_assignments_and_identities_are_validated_with_nothing_written
     let plate = f.plate();
     let beam = f.beam();
     f.level(STOREY, "Level 1", "0");
-    f.ok("create-assembly", &["--name", "Frame"]);
-
+    f.ok(
+        "create-assembly",
+        &["--name", "Frame", "--new-id", ASSEMBLY],
+    );
     let create = |name: &str, elevation: &str, id: &str| {
         f.rejected(
             "create-level",
@@ -543,6 +556,10 @@ fn level_arguments_assignments_and_identities_are_validated_with_nothing_written
     assert_eq!(update(&plate, &beam), "INVALID_ARGUMENT");
     assert_eq!(update(&plate, "not-a-uuid"), "INVALID_ID");
     assert_eq!(update(MISSING, STOREY), "NOT_FOUND");
+    // An element that exists but cannot hold a level is an unsupported assignment, not a missing
+    // element: a level and an assembly.
+    assert_eq!(update(STOREY, ROOF), "UNSUPPORTED_PROPERTY");
+    assert_eq!(update(ASSEMBLY, STOREY), "UNSUPPORTED_PROPERTY");
     // Removing a level that is not there, or assigning the one already held, changes nothing.
     assert_eq!(update(&plate, "none"), "INVALID_ARGUMENT");
     f.assign(&plate, STOREY);
@@ -600,6 +617,25 @@ fn replay_reuse_delete_and_copy_follow_the_level_records() {
         ),
         "OP_ID_REUSE"
     );
+    // The operation id belongs to the creation of STOREY: the arguments of another level that
+    // the head holds are not a replay of it, whatever the head says.
+    f.level(ROOF, "Roof", "9000");
+    assert_eq!(
+        f.rejected(
+            "create-level",
+            &[
+                "--name",
+                "Roof",
+                "--elevation",
+                "9000",
+                "--new-id",
+                ROOF,
+                "--op-id",
+                create_op
+            ],
+        ),
+        "OP_ID_REUSE"
+    );
     let assign = [
         "--id",
         plate.as_str(),
@@ -611,7 +647,7 @@ fn replay_reuse_delete_and_copy_follow_the_level_records() {
     f.ok("update-element", &assign);
     let replay = f.ok("update-element", &assign);
     assert_eq!(text(&replay, "outcome"), "element_update_replayed");
-    assert_eq!(f.levels().len(), 1);
+    assert_eq!(f.levels().len(), 2);
 
     // A copy stays on the level of its source and the source is untouched.
     let copy_id = "019a7bf0-0000-7000-8000-000000300010";
@@ -651,39 +687,121 @@ fn replay_reuse_delete_and_copy_follow_the_level_records() {
     f.ok("update-element", &["--id", copy_id, "--level", "none"]);
     let deleted = f.ok("delete-element", &["--id", STOREY]);
     assert_eq!(text(&deleted, "kind"), "level");
-    assert!(f.levels().is_empty());
+    assert_eq!(f.levels().len(), 1);
 }
 
 #[test]
 fn level_records_stored_outside_beamcraft_are_refused_when_read() {
     let path = |id: &str| format!("/World/Steel/E_{}", id.replace('-', ""));
-    // A target that is not a level, two targets and a target that does not exist.
+    // A target that is not a level, two targets, a target that does not exist, an elevation
+    // beyond the cap and a level record on an owned foreign-source wrapper. Every reader that
+    // interprets levels refuses them with the same code: the level list, the inspection and any
+    // command that builds on the store.
     for (case, code) in [
         ("member", "INVALID_ARGUMENT"),
         ("two", "DEPENDENCY_CONFLICT"),
         ("missing", "DANGLING_RELATIONSHIP"),
+        ("elevation", "LIMIT_EXCEEDED"),
+        ("wrapper", "INVALID_ARGUMENT"),
     ] {
         let g = Fixture::new();
         let plate = g.plate();
         let beam = g.beam();
         g.level(STOREY, "Level 1", "0");
         g.assign(&plate, STOREY);
-        let from = format!("bim:level = <{}>", path(STOREY));
+        if case == "wrapper" {
+            let source = g.source();
+            g.ok(
+                "reference-attach",
+                &["--source", &source, "--new-id", WRAPPER],
+            );
+        }
+        let from = match case {
+            "elevation" => "bim:elevationMm = 0.0".to_owned(),
+            _ => format!("bim:level = <{}>", path(STOREY)),
+        };
         let to = match case {
-            "member" => format!("<{}>", path(&beam)),
-            "two" => format!("[<{}>, <{}>]", path(STOREY), path(&beam)),
-            _ => format!("<{}>", path(MISSING)),
+            "member" => format!("bim:level = <{}>", path(&beam)),
+            "two" => format!("bim:level = [<{}>, <{}>]", path(STOREY), path(&beam)),
+            "missing" => format!("bim:level = <{}>", path(MISSING)),
+            "elevation" => "bim:elevationMm = 3000000000.5".to_owned(),
+            _ => format!("bim:level = <{}>", path(STOREY)),
         };
         g.tamper(|name, text| {
-            if name == "authored.usda" {
-                assert!(text.contains(&from), "{text}");
-                text.replace(&from, &format!("bim:level = {to}"))
-            } else {
-                text
+            if name != "authored.usda" {
+                return text;
             }
+            if case == "wrapper" {
+                // The record is added to the wrapper; the plate's own record stays valid.
+                let at = text
+                    .find(&format!("\"E_{}\"", WRAPPER.replace('-', "")))
+                    .unwrap();
+                let open = at + text[at..].find('{').unwrap() + 1;
+                return format!(
+                    "{}\n        custom rel bim:level = <{}>{}",
+                    &text[..open],
+                    path(STOREY),
+                    &text[open..]
+                );
+            }
+            assert!(text.contains(&from), "{text}");
+            text.replace(&from, &to)
         });
-        let (status, body) = g.run("levels", &[]);
+        for command in ["levels", "plate-inspect"] {
+            let (status, body) = g.run(command, &[]);
+            assert_eq!(status, 2, "{case} {command}: {body:?}");
+            assert_eq!(text(&body, "code"), code, "{case} {command}");
+        }
+        let (status, body) = g.run("create-level", &["--name", "L", "--elevation", "1"]);
         assert_eq!(status, 2, "{case}: {body:?}");
         assert_eq!(text(&body, "code"), code, "{case}");
     }
+}
+
+#[test]
+fn a_foreign_or_newer_schema_level_stays_inert_instead_of_blocking_readers() {
+    let f = Fixture::new();
+    let plate = f.plate();
+    f.level(STOREY, "Level 1", "3000");
+    f.level(ROOF, "Roof", "6000");
+    let header = format!("\"E_{}\"", STOREY.replace('-', ""));
+    // A level written by a newer schema: it does not carry the current elevation field.
+    f.tamper(|name, text| {
+        if name != "authored.usda" {
+            return text;
+        }
+        let at = text.find(&header).unwrap();
+        let (head, tail) = text.split_at(at);
+        let tail = tail.replacen(
+            "bim:schemaVersion = \"0.1.0\"",
+            "bim:schemaVersion = \"0.2.0\"",
+            1,
+        );
+        let tail: Vec<&str> = tail
+            .lines()
+            .filter(|l| !l.contains("bim:elevationMm") || l.contains("= 6000"))
+            .collect();
+        format!("{head}{}\n", tail.join("\n"))
+    });
+    // It is not listed, it does not block the inspection or an unrelated edit, and its
+    // identity is still in use.
+    let listed = f.levels();
+    assert_eq!(
+        listed.iter().map(|l| text(l, "id")).collect::<Vec<_>>(),
+        [ROOF]
+    );
+    let inspected = f.inspect();
+    assert_eq!(list(&inspected, "plates").len(), 1);
+    f.ok("update-element", &["--id", &plate, "--name", "Renamed"]);
+    assert_eq!(
+        f.rejected(
+            "create-level",
+            &["--name", "Again", "--elevation", "1", "--new-id", STOREY],
+        ),
+        "DUPLICATE_ID"
+    );
+    assert_eq!(
+        f.rejected("update-element", &["--id", STOREY, "--level", ROOF]),
+        "UNSUPPORTED_PROPERTY"
+    );
 }

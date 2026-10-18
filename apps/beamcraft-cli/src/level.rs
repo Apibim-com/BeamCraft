@@ -11,14 +11,15 @@
 //! lives with its source, so assigning writes only that element. A level has no geometric effect:
 //! nothing here rebuilds or moves a body.
 //!
-//! Honesty limits: replay of an `op_id` is decided from the head state, as in `assembly` (a
-//! creation is a replay when the head already holds a level of that id, name and elevation). A
+//! Honesty limits: replay of an `op_id` is decided from the revision the host ledger recorded for
+//! it, as in `weld`: a creation is a replay only when that revision introduced a level of that
+//! id with the same name and elevation; another request under the same id is `OP_ID_REUSE`. A
 //! level cannot be renamed or re-elevated yet, and a level is not copied. Deleting a level that
 //! elements use is `DEPENDENCY_CONFLICT`; there is no cascade.
 
 use crate::assembly::read_prims;
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, PublishRequest, RevisionSummary,
+    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, PublishRequest, RevisionSummary, base_of,
     check_footprint, control, digest_of, host_uuid, integrity, load_base, number, open_base,
     prior_op_with, property, publish_revision, replay_summary, summarize, text,
 };
@@ -94,7 +95,16 @@ pub(crate) fn levels_of(prims: &[Prim]) -> Result<Levels, PlateError> {
         let Some(id) = by_path.get(prim.path.as_str()).copied() else {
             continue;
         };
-        let holder = match property(prim, "bim:elementKind").and_then(text) {
+        // Only owned 0.1.0 parametric elements are interpreted, as the structural validator does;
+        // newer, foreign or other-mode content stays inert and counts as a used identity only.
+        let supported = !prim.sources.is_empty()
+            && prim.sources.iter().all(|s| s.owned)
+            && property(prim, "bim:schemaVersion").and_then(text) == Some("0.1.0")
+            && property(prim, "bim:geometryMode").and_then(text) == Some("parametric");
+        let holder = match property(prim, "bim:elementKind")
+            .and_then(text)
+            .filter(|_| supported)
+        {
             Some("plate") => HolderKind::Plate,
             Some("beam") => HolderKind::Beam,
             Some("column") => HolderKind::Column,
@@ -185,6 +195,29 @@ pub fn levels(store: &RevisionStore) -> Result<Vec<LevelView>, PlateError> {
     Ok(views(&model_of(&open_base(&base)?, &control)?))
 }
 
+/// The level `id` as the operation committed at `sequence` created it: present in that revision
+/// and absent (as any element) from the revision before it. `None` when that revision did not
+/// create such a level, so the operation id belongs to another request.
+fn created_by(
+    store: &RevisionStore,
+    sequence: u64,
+    id: &ElementId,
+    control: &Control,
+) -> Result<Option<LevelRecord>, PlateError> {
+    let at = store.open_at(sequence)?;
+    let model = model_of(&open_base(&base_of(&at)?)?, control)?;
+    let Some(record) = model.level(id).cloned() else {
+        return Ok(None);
+    };
+    if sequence > 1 {
+        let before = store.open_at(sequence - 1)?;
+        if model_of(&open_base(&base_of(&before)?)?, control)?.contains(id) {
+            return Ok(None);
+        }
+    }
+    Ok(Some(record))
+}
+
 /// Creates one level and publishes the next revision (the first one records the project), or
 /// replays the operation.
 ///
@@ -198,7 +231,7 @@ pub fn create_level(
     command: &CreateLevel,
     hook: &mut dyn CommitHook,
 ) -> Result<LevelChange, PlateError> {
-    let fingerprint = command.content_fingerprint()?;
+    command.validate_arguments()?;
     let control = control();
     let (head, base) = load_base(store, &context.project, &context.workspace)?;
     let before: BTreeMap<String, _> = base
@@ -216,18 +249,22 @@ pub fn create_level(
         ..
     } = base;
     let op_host = host_uuid(&context.op_id.to_string())?;
-    let held = model.level(&command.new_id).is_some_and(|record| {
-        record.name == command.name && record.elevation_mm == command.elevation_mm
-    });
+    // The ledger proves that the operation committed; what it committed is read from its own
+    // revision, never from the head, so another level that happens to match is not a replay.
     let (prior, recorded) = prior_op_with(store, &op_host, || {
-        if held {
-            Ok(fingerprint)
-        } else {
-            digest_of(b"no accepted request matches the head state")
-        }
+        digest_of(b"the accepted request is decided from the operation's revision")
     })?;
+    let accepted = match (&prior, &recorded) {
+        (PriorOp::Accepted { .. }, Some((_, sequence, _))) => {
+            created_by(store, *sequence, &command.new_id, &control)?
+        }
+        _ => None,
+    };
+    let same = accepted
+        .as_ref()
+        .is_some_and(|r| r.name == command.name && r.elevation_mm == command.elevation_mm);
     match prior {
-        PriorOp::Accepted { fingerprint: seen } if seen == fingerprint => {
+        PriorOp::Accepted { .. } if same => {
             return Ok(LevelChange {
                 replayed: true,
                 revision: replay_summary(&head, recorded)?,

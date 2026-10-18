@@ -70,6 +70,7 @@ use beamcraft_model::command::{CommandError, CreatePlate, MemberKind};
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
@@ -1124,48 +1125,91 @@ pub(crate) fn base_of(revision: &Revision) -> Result<Base, PlateError> {
 
 /// Opens the head of the store (`None` for a store without a revision) and the base that the next
 /// revision builds on. A store without a revision takes the given identities and records the
-/// project (D1); a store with one keeps its own, whatever is given here: [`ensure_project`]
-/// is the check for a project that a caller claims explicitly.
+/// project (D1); a store with one keeps its own, unless the caller holds a [`ProjectClaim`]: the
+/// claim is compared with the project of the exact head opened here, which is also the base the
+/// revision is committed on, so a store initialised by another writer after an earlier check can
+/// never adopt a claimed project silently. A first revision records the claimed project.
 pub(crate) fn load_base(
     store: &RevisionStore,
     project: &ProjectId,
     workspace: &WorkspaceId,
 ) -> Result<(Option<Revision>, Base), PlateError> {
+    let claim = CLAIMED_PROJECT.with(Cell::get);
     let head = match store.open() {
         Ok(revision) => Some(revision),
         Err(RevisionError::NoRevision) => None,
         Err(error) => return Err(error.into()),
     };
     let base = match &head {
-        Some(revision) => base_of(revision)?,
-        None => Base {
-            project: project.to_string(),
-            workspace: workspace.to_string(),
-            digest: initial_pin()?,
-            generation: 0,
-            assets: vec![
-                asset(ROOT_LAYER, empty_root(project).as_bytes())?,
-                asset(AUTHORED_LAYER, EMPTY_LAYER.as_bytes())?,
-                asset(DERIVED_LAYER, EMPTY_LAYER.as_bytes())?,
-            ],
-            external: BTreeSet::new(),
-            expected: ExpectedBase::Initial,
-        },
+        Some(revision) => {
+            let base = base_of(revision)?;
+            if claim.is_some_and(|c| c.to_string() != base.project) {
+                return Err(project_mismatch());
+            }
+            base
+        }
+        None => {
+            let project = claim.as_ref().unwrap_or(project);
+            Base {
+                project: project.to_string(),
+                workspace: workspace.to_string(),
+                digest: initial_pin()?,
+                generation: 0,
+                assets: vec![
+                    asset(ROOT_LAYER, empty_root(project).as_bytes())?,
+                    asset(AUTHORED_LAYER, EMPTY_LAYER.as_bytes())?,
+                    asset(DERIVED_LAYER, EMPTY_LAYER.as_bytes())?,
+                ],
+                external: BTreeSet::new(),
+                expected: ExpectedBase::Initial,
+            }
+        }
     };
     Ok((head, base))
 }
 
-/// D1: a project id that the caller names explicitly must be the one the store records. A store
-/// without a revision accepts any (the first revision records it); a store with one refuses a
-/// different id with `INVALID_ARGUMENT`, so a mismatch is never silently ignored in favour of the
-/// store's own. Callers that give no id take the store's.
+fn project_mismatch() -> PlateError {
+    PlateError::new(
+        ErrorCode::InvalidArgument,
+        "the project id differs from the project recorded in the store",
+    )
+}
+
+thread_local! {
+    static CLAIMED_PROJECT: Cell<Option<ProjectId>> = const { Cell::new(None) };
+}
+
+/// D1: an explicit project claim of the current thread, held until dropped. While it is held every
+/// revision this thread authors is built on a base of that project: [`load_base`] refuses a head
+/// of another project with `INVALID_ARGUMENT` and a first revision records the claimed one. The
+/// CLI holds one per command that names `--project-id`; a library caller that names a project
+/// holds one too. Claims nest and restore the previous one.
+#[must_use = "the claim ends when it is dropped"]
+pub struct ProjectClaim {
+    previous: Option<ProjectId>,
+}
+
+/// Starts a [`ProjectClaim`] on the current thread.
+pub fn claim_project(project: ProjectId) -> ProjectClaim {
+    ProjectClaim {
+        previous: CLAIMED_PROJECT.with(|c| c.replace(Some(project))),
+    }
+}
+
+impl Drop for ProjectClaim {
+    fn drop(&mut self) {
+        CLAIMED_PROJECT.with(|c| c.set(self.previous));
+    }
+}
+
+/// D1: an early, typed check of a project id that the caller names explicitly: a store without a
+/// revision accepts any (the first revision records it); a store with one refuses a different id
+/// with `INVALID_ARGUMENT`. It is advisory: the binding check is the [`ProjectClaim`] that
+/// [`load_base`] compares with the base it builds on. Callers that give no id take the store's.
 pub fn ensure_project(store: &RevisionStore, claimed: &ProjectId) -> Result<(), PlateError> {
     match store.open() {
         Ok(head) if head.manifest().content().project().as_str() == claimed.to_string() => Ok(()),
-        Ok(_) => Err(PlateError::new(
-            ErrorCode::InvalidArgument,
-            "the project id differs from the project recorded in the store",
-        )),
+        Ok(_) => Err(project_mismatch()),
         Err(RevisionError::NoRevision) => Ok(()),
         Err(error) => Err(error.into()),
     }
@@ -1453,6 +1497,9 @@ pub fn inspect(store: &RevisionStore) -> Result<Inspection, PlateError> {
         &external,
     )?;
     let control = control();
+    // The structural rules (D2-V01 among them) run before anything is decoded, so a damaged
+    // level or project record is refused rather than reported.
+    validate_layers(request.clone(), schema_identity()?, &control)?;
     let mut reader = Reader::default();
     let opened = reader.open(request, &control)?;
     let record = project_record(&opened.metadata)?;

@@ -564,6 +564,13 @@ pub(super) fn snapshot(
             if text(p, "bim:elementKind", "token")? != "reference" {
                 return Err(unsupported());
             }
+            // A foreign wrapper is no storey member: a level record on it is outside D2.
+            if relationship(p, "bim:level").is_some_and(|r| !r.targets.is_empty()) {
+                return Err(fail(
+                    ErrorCode::InvalidArgument,
+                    "only a plate, beam or column is assigned to a level",
+                ));
+            }
             reference::element(p, prims)?;
             continue;
         }

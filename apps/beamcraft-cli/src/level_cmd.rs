@@ -89,7 +89,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             ("levels", views_json(&levels(&store)?)?),
         ]));
     }
-    check_project_option(&store, &options)?;
+    let _claim = check_project_option(&store, &options)?;
     let mut source = IdSource::system();
     let mut fresh = || {
         source.next_id().map_err(|_| PlateError {

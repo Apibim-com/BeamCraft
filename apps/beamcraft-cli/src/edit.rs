@@ -152,7 +152,15 @@ pub fn update_element(
                 .find(|r| r.authored.id == command.target_id)
                 .map(Target::Member)
         })
-        .ok_or_else(not_found)?;
+        .ok_or_else(|| match command.patch.level {
+            // A known element that cannot hold a level is an unsupported assignment, not a
+            // missing element.
+            Some(level) => levels
+                .assign(command.target_id, level)
+                .err()
+                .map_or_else(not_found, PlateError::from),
+            None => not_found(),
+        })?;
     let (head_element, next) = match target {
         Target::Plate(head) => {
             let authored = patch_plate(&head.authored, &command.patch)?;
