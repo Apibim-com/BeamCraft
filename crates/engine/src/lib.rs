@@ -20,6 +20,7 @@ pub mod member;
 pub mod presentation;
 pub mod quantity;
 pub mod query;
+pub mod reference;
 pub mod scene;
 pub mod solid;
 pub mod synthetic;

@@ -8,6 +8,8 @@ mod backend;
 pub mod index;
 mod preflight;
 
+pub use backend::ForeignLayer;
+
 use std::collections::BTreeSet;
 use std::sync::{
     Arc,
@@ -411,6 +413,8 @@ struct Installed {
     context: Context,
     prims: Vec<Prim>,
     budgets: Budgets,
+    /// Every supplied layer and whether the host selected it as owned.
+    layers: std::collections::BTreeMap<String, bool>,
 }
 /// Single owner of one private stage. No upstream handle or setter is exposed.
 #[derive(Default)]
@@ -473,6 +477,7 @@ impl Reader {
             context,
             prims: candidate.prims,
             budgets: candidate.budgets,
+            layers: candidate.layers,
         });
         result
     }
@@ -542,6 +547,51 @@ impl Reader {
             "mutations are unavailable in read profile",
         ))
     }
+}
+
+impl Reader {
+    /// Read-slice refusal of a write to a whole layer. A layer the host did not select as owned
+    /// (a foreign source) is `FOREIGN_READ_ONLY`; an unknown name is `NOT_FOUND`; even an owned
+    /// layer is `UNSUPPORTED_COMMAND` here, because this slice has no mutation path. Like
+    /// [`Self::refuse_write`] it grants nothing.
+    pub fn refuse_layer_write(&self, context: &Context, layer: &str) -> Result<(), Diagnostic> {
+        let stage = self.pinned(context)?;
+        match stage.layers.get(layer) {
+            None => Err(fail(
+                ErrorCode::NotFound,
+                "layer not present in pinned view",
+            )),
+            Some(false) => Err(fail(
+                ErrorCode::ForeignReadOnly,
+                "foreign layers are read-only",
+            )),
+            Some(true) => Err(fail(
+                ErrorCode::UnsupportedCommand,
+                "mutations are unavailable in read profile",
+            )),
+        }
+    }
+}
+
+/// Reads what a foreign layer declares (format, default prim, units, up axis) after the same
+/// byte, field and budget admission as every stage asset, without composing or resolving anything.
+/// This is how a foreign source is examined before it is attached; see [`ForeignLayer`] for the
+/// refusals. It is parser work in this process and carries the same containment limits as
+/// [`Reader::open`].
+pub fn inspect_foreign_layer(
+    bytes: &[u8],
+    budgets: Budgets,
+    control: &Control,
+) -> Result<ForeignLayer, Diagnostic> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        backend::inspect_foreign(bytes, budgets, control)
+    }))
+    .map_err(|_| {
+        fail(
+            ErrorCode::BackendUnavailable,
+            "backend unwound while inspecting a foreign layer",
+        )
+    })?
 }
 
 /// The single label character rule (F04 section 3, `DV-BASE-003`): U+0000-001F and U+007F.

@@ -318,3 +318,34 @@ after an undo discards the redo stack), so they survive a restart and a crash be
 and its commit; the same `--op-id` replays or finishes a step. Nothing to undo or redo is
 `INVALID_ARGUMENT`; undo does not reach before the fork and does not touch the published store.
 See the [design note](../../docs/design/p07-undo-redo.md).
+
+## R01 read-only references
+
+```text
+beamcraft reference-attach        --store ROOT --source FILE [--name TEXT] [--translation X,Y,Z] [--rotation-z-deg DEG]
+  [--new-id UUID] [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
+beamcraft reference-move          --store ROOT --id UUID [--translation X,Y,Z] [--rotation-z-deg DEG] [same ids]
+beamcraft reference-correct-units --store ROOT --id UUID (--meters-per-unit F --up-axis Y|Z | --clear true) [same ids]
+beamcraft reference-write         --store ROOT --id UUID (--target source | --prim /DefaultPrim/Path [--attribute NAME])
+beamcraft reference-inspect       --store ROOT
+```
+
+`reference-attach` reads a local USDA or restricted USDC layer (at most 65536 bytes, one
+self-contained layer with a `defaultPrim`) and publishes a revision in which its bytes are an
+`external` layer named by their SHA-256, composed below an owned wrapper element. The file is only
+read; its path is never stored (only its file name, as a label). A URL, a network share or a device
+path (any `scheme:` of two or more characters, or a path starting with two slashes or two
+backslashes) is `PERMISSION_DENIED` on the text alone,
+before the store or the file system is touched. The wrapper has its own placement
+(`reference-move`, absolute, stored apart from the foreign content) and, only when the owner asks,
+an explicit units and up-axis interpretation (`reference-correct-units`; `--clear true` removes
+it). The source keeps declaring what it declares; `units_status` in the output says whether it
+matches the project (millimetres, Z up), `needs_correction`, is `undeclared`, or is `corrected`.
+Without a correction the source is taken as stored.
+
+`reference-write` has no success path: the source layer and every prim of the source (existing or
+not, including an override a layer of ours would author) answer `FOREIGN_READ_ONLY`, exit 2, and
+nothing is written. `reference-inspect` opens the verified head (every blob re-hashed) and lists
+the wrappers, their pinned source, the foreign prims and the external layers. Every other command
+(`create-plate`, `update-element`, `workspace-publish`, `workspace-undo`, ...) carries the external
+layer into its revision unchanged. See the [design note](../../docs/design/r01-readonly-reference.md).

@@ -162,15 +162,22 @@ fn role_of(name: &str) -> LayerRole {
     }
 }
 
-fn open_request(
+pub(crate) fn open_request(
     root: &str,
     project: &str,
     workspace: &str,
     revision: ContentDigest,
     generation: u64,
     assets: Vec<Asset>,
+    external: &BTreeSet<String>,
 ) -> Result<OpenRequest, PlateError> {
-    let owned_layers = assets.iter().map(|a| a.name.clone()).collect();
+    // The host selects ownership: every layer of a revision is owned except the external ones
+    // (foreign sources), which stay read-only whatever their bytes say.
+    let owned_layers = assets
+        .iter()
+        .map(|a| a.name.clone())
+        .filter(|name| !external.contains(name))
+        .collect();
     let mut request = OpenRequest {
         identity: Identity {
             project: project.into(),
@@ -480,6 +487,8 @@ pub(crate) fn decode(
             Some("column") => {
                 members.push((decode_member(prim, id, MemberKind::Column)?, mesh()));
             }
+            // R01 wrappers are decoded by `beamcraft_cli::reference`.
+            Some("reference") => {}
             _ => other += 1,
         }
     }
@@ -748,6 +757,12 @@ impl ContentVerifier for PlateVerifier {
             Some(base) => base,
             None => initial_pin().map_err(reject)?,
         };
+        let external = request
+            .layers
+            .iter()
+            .filter(|l| l.role == LayerRole::External)
+            .map(|l| l.name.to_owned())
+            .collect();
         let open = open_request(
             request.root_layer,
             request.project.as_str(),
@@ -755,6 +770,7 @@ impl ContentVerifier for PlateVerifier {
             pinned,
             request.generation,
             assets,
+            &external,
         )
         .map_err(reject)?;
         let control = control();
@@ -1014,6 +1030,8 @@ pub(crate) struct Base {
     pub(crate) digest: ContentDigest,
     pub(crate) generation: u64,
     pub(crate) assets: Vec<Asset>,
+    /// Names of the layers that are foreign sources: stored and composed, never owned or written.
+    pub(crate) external: BTreeSet<String>,
     pub(crate) expected: ExpectedBase,
 }
 
@@ -1049,6 +1067,12 @@ pub(crate) fn load_base(
                 digest: revision.info().manifest_digest(),
                 generation: content.workspace_generation(),
                 assets,
+                external: content
+                    .entries()
+                    .iter()
+                    .filter(|e| e.role() == LayerRole::External)
+                    .map(|e| e.name().to_owned())
+                    .collect(),
                 expected: ExpectedBase::Revision(revision.info().revision().clone()),
             }
         }
@@ -1062,6 +1086,7 @@ pub(crate) fn load_base(
                 asset(AUTHORED_LAYER, EMPTY_LAYER.as_bytes())?,
                 asset(DERIVED_LAYER, EMPTY_LAYER.as_bytes())?,
             ],
+            external: BTreeSet::new(),
             expected: ExpectedBase::Initial,
         },
     };
@@ -1077,6 +1102,7 @@ pub(crate) fn open_base(base: &Base) -> Result<OpenRequest, PlateError> {
         base.digest,
         base.generation,
         base.assets.clone(),
+        &base.external,
     )
 }
 
@@ -1253,6 +1279,20 @@ pub(crate) fn publish_revision(
             &layer.bytes,
         )?);
     }
+    // Foreign sources are carried into every revision byte for byte as external entries. Their
+    // blob is published if absent (publication compares existing bytes in full) and is never
+    // rewritten.
+    for layer in &request.prepared.retained {
+        store
+            .blobs()
+            .publish(&layer.bytes)
+            .map_err(|e| PlateError::new(e.code(), "foreign layer blob could not be stored"))?;
+        entries.push(LayerEntry::from_bytes(
+            &layer.name,
+            LayerRole::External,
+            &layer.bytes,
+        )?);
+    }
     let draft = RevisionDraft {
         project: host_uuid(request.project)?,
         workspace: host_uuid(request.workspace)?,
@@ -1314,6 +1354,12 @@ pub fn inspect(store: &RevisionStore) -> Result<Inspection, PlateError> {
             })
         })
         .collect::<Result<Vec<_>, PlateError>>()?;
+    let external = content
+        .entries()
+        .iter()
+        .filter(|e| e.role() == LayerRole::External)
+        .map(|e| e.name().to_owned())
+        .collect();
     let request = open_request(
         content.root_layer(),
         content.project().as_str(),
@@ -1321,6 +1367,7 @@ pub fn inspect(store: &RevisionStore) -> Result<Inspection, PlateError> {
         revision.info().manifest_digest(),
         content.workspace_generation(),
         assets,
+        &external,
     )?;
     let control = control();
     let mut reader = Reader::default();
