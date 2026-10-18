@@ -479,7 +479,7 @@ pub(super) fn snapshot(
         }
         if !matches!(
             text(p, "bim:elementKind", "token")?,
-            "plate" | "beam" | "column"
+            "plate" | "beam" | "column" | "assembly"
         ) {
             continue;
         }
@@ -494,10 +494,15 @@ pub(super) fn snapshot(
         }
         let name = text(p, "bim:name", "string")?;
         label(name)?;
-        if p.kind.as_deref() != Some("component") || p.display_name.as_deref() != Some(name) {
+        let kind = text(p, "bim:elementKind", "token")?;
+        let model_kind = if kind == "assembly" {
+            "assembly"
+        } else {
+            "component"
+        };
+        if p.kind.as_deref() != Some(model_kind) || p.display_name.as_deref() != Some(name) {
             return Err(invalid());
         }
-        let kind = text(p, "bim:elementKind", "token")?;
         if p.type_name.as_deref() != Some("Xform") {
             return Err(unsupported());
         }
@@ -539,13 +544,34 @@ pub(super) fn snapshot(
                     cap([*n], std::f64::consts::TAU)?;
                 }
             }
+            // An assembly has no shape inputs and no material of its own.
+            "assembly" => {
+                if relationship(p, "bim:material").is_some_and(|r| !r.targets.is_empty()) {
+                    return Err(invalid());
+                }
+            }
             _ => continue, // Unknown vocabulary remains inert; edits below refuse it.
         }
         if let Some(material) = link(p, prims, "bim:material", "material", false)? {
             definition(&read_definition(material, "material")?)?;
         }
         owned_pose(p)?;
+        // An assembly's placement is the identity in this slice.
+        if kind == "assembly"
+            && (required(p, "xformOp:translate", "double3")?
+                != &Value::Array(vec![Value::Number(0.0); 3])
+                || required(p, "xformOp:orient", "quatd")?
+                    != &Value::Array(vec![
+                        Value::Number(1.0),
+                        Value::Number(0.0),
+                        Value::Number(0.0),
+                        Value::Number(0.0),
+                    ]))
+        {
+            return Err(unsupported());
+        }
     }
+    part_of(prims)?;
     for p in prims
         .iter()
         .filter(|p| p.type_name.as_deref() == Some("Mesh") && p.sources.iter().all(|s| s.owned))
@@ -559,6 +585,10 @@ pub(super) fn snapshot(
         else {
             continue;
         };
+        // An assembly has no body: a Geometry mesh under one is refused, authored or loaded.
+        if supported_kind(element) == Some("assembly") {
+            return Err(unsupported());
+        }
         let id = element.element_id.clone().ok_or_else(invalid)?;
         let key = text(p, "bim:shapeKey", "string")?
             .parse::<ContentDigest>()
@@ -646,9 +676,155 @@ pub(super) fn snapshot(
             "U02-V04:definition-target-kind-and-digest-label",
             "U02-V05:scalar-caps-dimensions-scaled-minima-pose",
             "U02-V06:standard-mesh-buffer-structure",
+            "A01-V01:part-of-kinds-cardinality-self-link-and-cycles",
         ],
         prims: prims.len(),
     })
+}
+
+/// The kind token of an owned, supported 0.1.0 element prim, or `None` for content that stays inert.
+fn supported_kind(p: &Prim) -> Option<&str> {
+    if p.element_id.is_none() || p.sources.is_empty() || p.sources.iter().any(|s| !s.owned) {
+        return None;
+    }
+    let token = |name: &str| match required(p, name, "token").ok()? {
+        Value::Text(s) => Some(s.as_str()),
+        _ => None,
+    };
+    let version = match required(p, "bim:schemaVersion", "string").ok()? {
+        Value::Text(s) => s.as_str(),
+        _ => return None,
+    };
+    if version != "0.1.0" || token("bim:geometryMode")? != "parametric" {
+        return None;
+    }
+    token("bim:elementKind").filter(|k| matches!(*k, "plate" | "beam" | "column" | "assembly"))
+}
+
+/// A01 `part-of` records (domain vocabulary section 5.1): a supported element has at most one
+/// target (`DV-REL-004`, `DEPENDENCY_CONFLICT`), never itself (`DV-REL-006`), which must be an
+/// active owned assembly (`DV-REL-001` dangling, `DV-REL-003` kind), and the records form no cycle
+/// of any length (`DV-REL-005`, `DEPENDENCY_CONFLICT`). The walk is linear in the element count.
+fn part_of(prims: &[Prim]) -> Result<(), Diagnostic> {
+    let elements: BTreeMap<&str, (&Prim, &str)> = prims
+        .iter()
+        .filter_map(|p| supported_kind(p).map(|k| (p.path.as_str(), (p, k))))
+        .collect();
+    let mut parent: BTreeMap<&str, &str> = BTreeMap::new();
+    for (&path, &(p, _)) in &elements {
+        let Some(r) = relationship(p, "bim:partOf") else {
+            continue;
+        };
+        let target = match r.targets.as_slice() {
+            [] => continue,
+            [target] => target.as_str(),
+            _ => {
+                return Err(fail(
+                    ErrorCode::DependencyConflict,
+                    "an element is a part of at most one assembly",
+                ));
+            }
+        };
+        if target == path {
+            return Err(fail(
+                ErrorCode::InvalidArgument,
+                "an element cannot be a part of itself",
+            ));
+        }
+        match elements.get(target) {
+            Some((t, "assembly")) if t.active => {}
+            Some((t, _)) if !t.active => {
+                return Err(fail(
+                    ErrorCode::DanglingRelationship,
+                    "part-of target is not active",
+                ));
+            }
+            Some(_) => {
+                return Err(fail(
+                    ErrorCode::InvalidArgument,
+                    "part-of target is not an assembly",
+                ));
+            }
+            None if prims
+                .iter()
+                .any(|p| p.path == target && p.element_id.is_some()) =>
+            {
+                return Err(fail(
+                    ErrorCode::InvalidArgument,
+                    "part-of target is not a supported owned assembly",
+                ));
+            }
+            None => {
+                return Err(fail(
+                    ErrorCode::DanglingRelationship,
+                    "part-of target unavailable",
+                ));
+            }
+        }
+        parent.insert(path, target);
+    }
+    // 0 unvisited, 1 on the current chain, 2 proven acyclic.
+    let mut state: BTreeMap<&str, u8> = BTreeMap::new();
+    for &start in parent.keys() {
+        let mut chain = Vec::new();
+        let mut at = Some(start);
+        while let Some(node) = at {
+            match state.get(node).copied().unwrap_or(0) {
+                2 => break,
+                1 => {
+                    return Err(fail(
+                        ErrorCode::DependencyConflict,
+                        "part-of records form a cycle",
+                    ));
+                }
+                _ => {
+                    state.insert(node, 1);
+                    chain.push(node);
+                    at = parent.get(node).copied();
+                }
+            }
+        }
+        for node in chain {
+            state.insert(node, 2);
+        }
+    }
+    Ok(())
+}
+
+/// The `part-of` chain from `start` upwards: `start`, its assembly, that one's assembly, and so on.
+/// The batch's own `PartOf` changes override the composed records. The walk stops at a repeated
+/// element (a cycle, refused later by the candidate check) and is bounded by the prim count.
+fn chain(prims: &[Prim], changes: &[Change], start: &str) -> Vec<String> {
+    let id_of_path: BTreeMap<&str, &str> = prims
+        .iter()
+        .filter_map(|p| Some((p.path.as_str(), p.element_id.as_deref()?)))
+        .collect();
+    let mut parent: BTreeMap<String, Option<String>> = BTreeMap::new();
+    for p in prims {
+        let (Some(id), Some(r)) = (p.element_id.as_deref(), relationship(p, "bim:partOf")) else {
+            continue;
+        };
+        let target = match r.targets.as_slice() {
+            [target] => id_of_path.get(target.as_str()).map(|t| (*t).to_owned()),
+            _ => None,
+        };
+        parent.insert(id.to_owned(), target);
+    }
+    for change in changes {
+        if let Change::PartOf { id, assembly } = change {
+            parent.insert(id.clone(), assembly.clone());
+        }
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut at = Some(start.to_owned());
+    while let Some(node) = at {
+        if out.contains(&node) || out.len() > prims.len().saturating_add(changes.len()) {
+            break;
+        }
+        at = parent.get(&node).cloned().flatten();
+        out.push(node);
+    }
+    out
 }
 
 pub(super) fn changes(
@@ -681,7 +857,9 @@ pub(super) fn changes(
                 return Err(fail(ErrorCode::DuplicateId, "element already exists"));
             }
             Change::Create(_) | Change::AttachReference(_) => (),
-            Change::Mesh(_)
+            // A mesh or part-of record of an element created in the same batch; the candidate
+            // snapshot re-validates it as a whole.
+            Change::Mesh(_) | Change::PartOf { .. }
                 if existing.is_none()
                     && input
                         .changes
@@ -711,9 +889,16 @@ pub(super) fn changes(
                         matches!(kind, "beam" | "column")
                     }
                     Change::ReferenceUnits { .. } => wrapper,
-                    // A rename and a move are the only edits a wrapper takes as an element.
-                    Change::Label { .. } | Change::Placement { .. } => {
+                    // A rename and a move are the only edits a wrapper takes as an element; an
+                    // assembly can be renamed, deleted and be a part, never moved (identity pose).
+                    Change::Placement { .. } => {
                         matches!(kind, "plate" | "beam" | "column" | "reference")
+                    }
+                    Change::Label { .. } => {
+                        matches!(kind, "plate" | "beam" | "column" | "reference" | "assembly")
+                    }
+                    Change::Delete { .. } | Change::PartOf { .. } => {
+                        matches!(kind, "plate" | "beam" | "column" | "assembly")
                     }
                     _ => matches!(kind, "plate" | "beam" | "column"),
                 };
@@ -754,6 +939,10 @@ pub(super) fn changes(
                 &[Group::Placement, Group::Derived],
             ),
             Change::Mesh(_) => (&[Group::Lifecycle, Group::ShapeInputs], &[Group::Derived]),
+            Change::PartOf { .. } => (
+                &[Group::Lifecycle, Group::Relationship],
+                &[Group::Relationship],
+            ),
             Change::Delete { .. } => (
                 &[Group::Lifecycle, Group::Relationship],
                 &[
@@ -783,9 +972,31 @@ pub(super) fn changes(
                 group,
             });
         }
+        if let Change::PartOf {
+            assembly: Some(target),
+            ..
+        } = change
+        {
+            if !uuid7(target) {
+                return Err(fail(ErrorCode::InvalidId, "invalid full element identity"));
+            }
+            // The target's existence and kind and its whole chain decide acceptance (cycle check),
+            // so every assembly on the chain is read, with this batch's own records applied.
+            for ancestor in chain(prims, &input.changes, target) {
+                for group in [Group::Lifecycle, Group::Relationship] {
+                    reads.insert(Footprint {
+                        identity: ancestor.clone(),
+                        group,
+                    });
+                }
+            }
+        }
         if !matches!(
             change,
-            Change::Label { .. } | Change::Create(_) | Change::Delete { .. }
+            Change::Label { .. }
+                | Change::Create(_)
+                | Change::Delete { .. }
+                | Change::PartOf { .. }
         ) && let Some(p) = existing
         {
             for target in p
@@ -883,6 +1094,14 @@ pub(super) fn changes(
                             group: Group::Relationship,
                         });
                     }
+                    Shape::Assembly => {
+                        if e.material.is_some()
+                            || e.placement.translation_mm != [0.0; 3]
+                            || e.placement.orientation_xyzw != [0.0, 0.0, 0.0, 1.0]
+                        {
+                            return Err(unsupported());
+                        }
+                    }
                 }
                 if let Some(d) = e.material {
                     reads.insert(Footprint {
@@ -976,6 +1195,7 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                         .copied()
                         .chain(roll_rad.iter().copied()),
                 ),
+                Shape::Assembly => Ok(()),
             }
         }
         Change::AttachReference(r) => finite(

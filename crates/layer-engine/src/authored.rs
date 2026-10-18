@@ -31,6 +31,57 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:plate:contourPointsMm=double3[];steel:plate:thicknessMm=double;",
     "steel:plate:holePointsMm=double3[](optional,z=0);steel:plate:holeVertexCounts=int[](optional,>=3 each);",
     "bim:axisPointsMm=double3[];steel:member:rollRad=double(optional)\n",
+    "assembly=element;bim:elementKind=assembly;kind=assembly;no shape inputs, material or Geometry;placement=identity\n",
+    "bim:partOf=rel(0..1 element target of kind assembly;source plate|beam|column|assembly;no self;acyclic)\n",
+    "xformOp:translate=double3;xformOp:orient=quatd;xformOpOrder=token[](translate,orient)\n",
+    "kind:/World=assembly;/World/Steel=group;element=component;element/Geometry=subcomponent;",
+    "displayName(element)=bim:name\n",
+    "bim:profile=rel;bim:material=rel;definition=/World/Definitions/D_<sha256-64>\n",
+    "definition:bim:contentDigest=string;bim:schemaVersion=string(0.1.0);bim:units=token(mm);",
+    "bim:definitionKind=token;steel:profile:widthMm=double;steel:profile:heightMm=double;",
+    "steel:profile:designation=string(optional);steel:profile:standard=string(optional);",
+    "steel:profile:areaMm2=double(optional);steel:profile:massPerMeterKg=double(optional);",
+    "steel:profile:surfacePerMeterM2=double(optional);",
+    "bim:densityKgM3=double(optional);bim:materialGrade=string(optional);",
+    "bim:materialStandard=string(optional)\n",
+    "derived=<element>/Geometry:Mesh;points=point3f[];faceVertexCounts=int[];faceVertexIndices=int[];",
+    "subdivisionScheme=token(none);orientation=token(rightHanded);",
+    "extent=float3[](min,max of points);normals=normal3f[](uniform,one unit Newell normal per face);",
+    "bim:shapeKey=string(sha256);",
+    "quantities(optional,all or none)=bim:volumeMm3=double;bim:volumeStatus=token;bim:massKg=double(optional);",
+    "bim:massStatus=token;bim:shapeSignature=string(sha256);bim:massSignature=string(sha256);",
+    "bim:quantityAlgorithm=string\n",
+    "reference=/World/Steel/E_<uuid7-32>;type=Xform;kind=group;bim:elementKind=reference;bim:geometryMode=reference;",
+    "bim:reference:sourceDigest=string(sha256);bim:reference:sourceBytes=int;bim:reference:sourceFormat=token(usda|usdc);",
+    "bim:reference:sourceVersion=int;bim:reference:sourceLabel=string;bim:reference:sourceDefaultPrim=string;",
+    "bim:reference:declaredMetersPerUnit=double(optional);bim:reference:declaredUpAxis=token(Y|Z,optional)\n",
+    "reference/Correction=Xform;kind=group;bim:reference:correctionMetersPerUnit=double;bim:reference:correctionUpAxis=token(Y|Z);",
+    "bim:reference:correctionSourceDigest=string(sha256);xformOp:rotateX:bimUpAxis=double(degrees,Y up only);",
+    "xformOp:scale:bimUnits=double3(metersPerUnit*1000);xformOpOrder=token[](rotateX,scale;empty without correction)\n",
+    "reference/Correction/Source=def without type;references=@external/<sha256>.<usda|usdc>@</defaultPrim>;nothing else owned at or below\n",
+    "changes=Create|Label|Contour|Thickness|Axis|Roll|Profile|Material|Placement|Mesh|AttachReference|ReferenceUnits|PartOf|Delete;",
+    "opinion=Absent|Block|Value|Remove;relationship=Targets|Empty|Remove\n",
+    "snapshot=Prim(path,element_id,type_name,active,properties,relationships,sources);",
+    "property=(name,type_name,optional-value);relationship=(name,ordered-targets)\n",
+    "prepare=(context,op_id,actor,schema,resources,changes);resource=(digest,definition);",
+    "element=(id,name,shape,placement,optional-material);placement=(translation_mm[3],orientation_xyzw[4]);",
+    "mesh=(id,shape_key,points_mm,face_counts,indices);",
+    "authored-item=(element_id,attribute,type_name,opinion);install=(context,token,op_id,Accepted);",
+    "discard=(context,token,op_id,Undecided|Rejected);unknown=OUTCOME_UNKNOWN\n",
+);
+
+/// Descriptor of the R01 mapping revision (reference wrappers), before the A01 assembly kind and
+/// `bim:partOf`. Layers pinned to it contain nothing the current mapping refuses (A01 only adds an
+/// optional kind and relationship), so they stay readable and editable.
+const R01_DESCRIPTOR: &str = concat!(
+    "BeamCraft/U02/codeless/1\nmodel=0.1.0;backend=openusd=0.8.0;features=none;save=usda-owned-v1\n",
+    "root:metersPerUnit=0.001;upAxis=Z;customLayerData:bimSchemaDigest=sha256\n",
+    "element=/World/Steel/E_<uuid7-32>;type=Xform\n",
+    "bim:id=string;bim:name=string;bim:elementKind=token;bim:geometryMode=token(parametric);",
+    "bim:schemaVersion=string(0.1.0);bim:createdBy=string(uuid7);bim:revision=string(uuid7,optional)\n",
+    "steel:plate:contourPointsMm=double3[];steel:plate:thicknessMm=double;",
+    "steel:plate:holePointsMm=double3[](optional,z=0);steel:plate:holeVertexCounts=int[](optional,>=3 each);",
+    "bim:axisPointsMm=double3[];steel:member:rollRad=double(optional)\n",
     "xformOp:translate=double3;xformOp:orient=quatd;xformOpOrder=token[](translate,orient)\n",
     "kind:/World=assembly;/World/Steel=group;element=component;element/Geometry=subcomponent;",
     "displayName(element)=bim:name\n",
@@ -172,7 +223,7 @@ pub(crate) fn pin_accepted(pin: &str) -> Result<bool, Diagnostic> {
     if pin == schema_identity()?.digest.to_string() {
         return Ok(true);
     }
-    for descriptor in [P02_2_DESCRIPTOR, PREVIOUS_DESCRIPTOR] {
+    for descriptor in [R01_DESCRIPTOR, P02_2_DESCRIPTOR, PREVIOUS_DESCRIPTOR] {
         let digest = Sha256::digest(descriptor.as_bytes()).map_err(|_| limit())?;
         if pin == digest.to_string() {
             return Ok(true);
@@ -238,6 +289,9 @@ pub enum Shape {
         /// Missing roll has no authored default; engineering default is zero.
         roll_rad: Option<f64>,
     },
+    /// A01 assembly: a grouping target of `bim:partOf` with no shape inputs, no material and no
+    /// derived body. Its placement must be the identity in this slice.
+    Assembly,
 }
 
 /// Closed initial member vocabulary.
@@ -434,6 +488,14 @@ pub enum Change {
         /// The interpretation to store, or `None` to clear it.
         interpretation: Option<UnitsInterpretation>,
     },
+    /// Set or remove the one `bim:partOf` record of an element (A01). The target must be an owned
+    /// assembly; kinds, cardinality, self-links and cycles are re-checked on the candidate.
+    PartOf {
+        /// Full source UUIDv7: the part.
+        id: String,
+        /// Full UUIDv7 of the assembly, or `None` for an explicit empty record (a detach).
+        assembly: Option<String>,
+    },
 }
 impl Change {
     pub(super) fn key(&self) -> (&str, &'static str) {
@@ -451,6 +513,7 @@ impl Change {
             Self::Mesh(m) => (&m.id, "derived"),
             Self::AttachReference(r) => (&r.id, "lifecycle"),
             Self::ReferenceUnits { id, .. } => (id, "reference:units"),
+            Self::PartOf { id, .. } => (id, "bim:partOf"),
         }
     }
 }
@@ -845,6 +908,13 @@ mod pin_tests {
             previous
         );
         assert!(pin_accepted(previous).unwrap());
+        // The R01 descriptor (the master mapping before A01) is accepted too; its digest is
+        // checked against the R01 mapping identity recomputed from the descriptor text.
+        let r01 = Sha256::digest(R01_DESCRIPTOR.as_bytes())
+            .unwrap()
+            .to_string();
+        assert!(pin_accepted(&r01).unwrap());
+        assert_ne!(r01, schema_identity().unwrap().digest.to_string());
         assert!(pin_accepted(&schema_identity().unwrap().digest.to_string()).unwrap());
         assert!(!pin_accepted(&"0".repeat(64)).unwrap());
         assert!(!pin_accepted("").unwrap());

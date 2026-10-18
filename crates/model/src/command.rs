@@ -701,6 +701,104 @@ impl CopyElement {
     }
 }
 
+/// A01 `CreateAssembly`: a new `assembly` element (domain vocabulary section 2.3), a grouping
+/// target of `part-of` with no shape, material or derived body of its own. It carries the common
+/// base only; its placement is the identity in this slice.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CreateAssembly {
+    /// Identity of the new assembly.
+    pub new_id: ElementId,
+    /// Explicit user label.
+    pub name: String,
+}
+
+impl CreateAssembly {
+    /// Admits the request: the label follows the F04 rule (`DV-BASE-003`). Whether the identity
+    /// is free (`DUPLICATE_ID`) is the engine's decision.
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        if !label_is_valid(&self.name) {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "name",
+                "label must be 1 to 256 bytes without control characters",
+            ));
+        }
+        Ok(())
+    }
+
+    /// SHA-256 of a versioned, length-prefixed encoding of the validated request.
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        self.validate_arguments()?;
+        let mut bytes = Vec::with_capacity(64 + self.name.len());
+        bytes.extend_from_slice(b"BeamCraft/A01/CreateAssembly/v1\0");
+        bytes.extend_from_slice(self.new_id.as_bytes());
+        bytes.extend_from_slice(&(self.name.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(self.name.as_bytes());
+        Sha256::digest(&bytes).map_err(|_| {
+            CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+        })
+    }
+}
+
+/// A01 `AttachToAssembly`: authors the one `part-of` record of `part_id` (domain vocabulary
+/// section 5.1), so the part becomes a member of `assembly_id`. The record lives with its source,
+/// the part; the assembly is only read.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AttachToAssembly {
+    /// The part: a plate, beam, column or (for nesting) another assembly.
+    pub part_id: ElementId,
+    /// The target assembly.
+    pub assembly_id: ElementId,
+}
+
+impl AttachToAssembly {
+    /// Admits the request: a self-link is `INVALID_ARGUMENT` (`DV-REL-006`). Kinds, cardinality
+    /// and cycles (`DV-REL-003` to `DV-REL-005`) need the model and are the engine's decisions.
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        if self.part_id == self.assembly_id {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "assembly_id",
+                "an element cannot be a part of itself",
+            ));
+        }
+        Ok(())
+    }
+
+    /// SHA-256 of a versioned encoding of the validated request.
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        self.validate_arguments()?;
+        let mut bytes = Vec::with_capacity(80);
+        bytes.extend_from_slice(b"BeamCraft/A01/AttachToAssembly/v1\0");
+        bytes.extend_from_slice(self.part_id.as_bytes());
+        bytes.extend_from_slice(self.assembly_id.as_bytes());
+        Sha256::digest(&bytes).map_err(|_| {
+            CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+        })
+    }
+}
+
+/// A01 `DetachFromAssembly`: removes the `part-of` record of `part_id`. The former assembly is
+/// not written and stays, even when it has no parts left.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DetachFromAssembly {
+    /// The part whose membership ends.
+    pub part_id: ElementId,
+}
+
+impl DetachFromAssembly {
+    /// SHA-256 of a versioned encoding of the request. Whether the part exists and is a member
+    /// of an assembly are the engine's decisions.
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        let mut bytes = Vec::with_capacity(64);
+        bytes.extend_from_slice(b"BeamCraft/A01/DetachFromAssembly/v1\0");
+        bytes.extend_from_slice(self.part_id.as_bytes());
+        Sha256::digest(&bytes).map_err(|_| {
+            CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1064,6 +1162,63 @@ mod tests {
         assert_ne!(
             a.content_fingerprint().unwrap(),
             b.content_fingerprint().unwrap()
+        );
+    }
+
+    #[test]
+    fn assembly_commands_admit_labels_refuse_self_links_and_fingerprint_their_content() {
+        let a = ElementId::parse("019a7bf0-0000-7000-8000-000000200001").unwrap();
+        let b = ElementId::parse("019a7bf0-0000-7000-8000-000000200002").unwrap();
+        let create = CreateAssembly {
+            new_id: a,
+            name: "Frame A".into(),
+        };
+        assert!(create.validate_arguments().is_ok());
+        let renamed = CreateAssembly {
+            name: "Frame B".into(),
+            ..create.clone()
+        };
+        assert_ne!(
+            create.content_fingerprint().unwrap(),
+            renamed.content_fingerprint().unwrap()
+        );
+        for bad in ["", "tab\there"] {
+            let c = CreateAssembly {
+                name: bad.into(),
+                ..create.clone()
+            };
+            assert_eq!(
+                c.validate_arguments().unwrap_err().code,
+                ErrorCode::InvalidArgument
+            );
+        }
+        let attach = AttachToAssembly {
+            part_id: a,
+            assembly_id: b,
+        };
+        assert!(attach.validate_arguments().is_ok());
+        let swapped = AttachToAssembly {
+            part_id: b,
+            assembly_id: a,
+        };
+        assert_ne!(
+            attach.content_fingerprint().unwrap(),
+            swapped.content_fingerprint().unwrap()
+        );
+        let own = AttachToAssembly {
+            part_id: a,
+            assembly_id: a,
+        };
+        assert_eq!(
+            own.content_fingerprint().unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
+        let detach = DetachFromAssembly { part_id: a };
+        assert_ne!(
+            detach.content_fingerprint().unwrap(),
+            DetachFromAssembly { part_id: b }
+                .content_fingerprint()
+                .unwrap()
         );
     }
 }
