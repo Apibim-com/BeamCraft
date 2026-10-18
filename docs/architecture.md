@@ -53,6 +53,8 @@ A01 adds assemblies (`model::command::{CreateAssembly, AttachToAssembly, DetachF
 
 C01 adds changesets (`model::changeset`, `host::changeset` claims, `beamcraft_cli::changeset` and the CLI commands `changeset-create`, `changeset-inspect` and `changeset-apply`): a workspace's unsent revisions become one canonical, digest-addressed message (base, operations, claimed actor, conservative footprint, complete layer set with base digests, required blobs); the receiver checks the actor against the trusted caller, binds the changeset id to the payload before publishing, and publishes fast-forward only ([design note](design/c01-changeset.md)).
 
+V04 adds picking and snaps (`engine::query::feature`, `engine::query::pick` and the CLI commands `pick`, `feature-lookup` and `snap`): `fid1` FeatureIds for box bodies derived from the snapshot's validated blobs, the F06 ray and point `Pick` with its ordering and limits, `LookupFeature`, and vertex and member-axis snaps; no result carries an index and an index is refused as an address ([design note](design/v04-picking-snaps.md)).
+
 [Module boundaries (F08)](contracts/module-boundaries-v0.1.md) give the exact crate and module path
 of every contract area, the allowed dependency edges and which crates are planned. A test and CI
 enforce them.

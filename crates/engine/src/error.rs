@@ -34,11 +34,23 @@ pub enum ViewCode {
     UnknownElement,
     /// A malformed token, setting, page size, index or option (`VIEW_ARGUMENT_INVALID`).
     ArgumentInvalid,
+    /// NaN or infinity in a query number (`GEO_NON_FINITE`).
+    NonFinite,
+    /// A bad ray or point query input (`GEO_PICK_INPUT_INVALID`).
+    PickInputInvalid,
+    /// Hit count, radius or scanned elements above their caps (`GEO_PICK_LIMIT`).
+    PickLimit,
+    /// A malformed FeatureId (`GEO_FEATURE_ID_INVALID`).
+    FeatureIdInvalid,
+    /// A well-formed FeatureId naming no feature of the snapshot (`GEO_FEATURE_NOT_FOUND`).
+    FeatureNotFound,
+    /// A triangle, vertex or buffer index used as an address (`GEO_TRIANGLE_ADDRESS_FORBIDDEN`).
+    TriangleAddressForbidden,
 }
 
 impl ViewCode {
     /// Every code, in declaration order.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 17] = [
         Self::StaleToken,
         Self::BufferLimit,
         Self::TopologyLimit,
@@ -50,6 +62,12 @@ impl ViewCode {
         Self::DuplicateElement,
         Self::UnknownElement,
         Self::ArgumentInvalid,
+        Self::NonFinite,
+        Self::PickInputInvalid,
+        Self::PickLimit,
+        Self::FeatureIdInvalid,
+        Self::FeatureNotFound,
+        Self::TriangleAddressForbidden,
     ];
 
     /// Stable wire token, at most 32 ASCII bytes.
@@ -66,6 +84,12 @@ impl ViewCode {
             Self::DuplicateElement => "VIEW_DUPLICATE_ELEMENT",
             Self::UnknownElement => "VIEW_UNKNOWN_ELEMENT",
             Self::ArgumentInvalid => "VIEW_ARGUMENT_INVALID",
+            Self::NonFinite => "GEO_NON_FINITE",
+            Self::PickInputInvalid => "GEO_PICK_INPUT_INVALID",
+            Self::PickLimit => "GEO_PICK_LIMIT",
+            Self::FeatureIdInvalid => "GEO_FEATURE_ID_INVALID",
+            Self::FeatureNotFound => "GEO_FEATURE_NOT_FOUND",
+            Self::TriangleAddressForbidden => "GEO_TRIANGLE_ADDRESS_FORBIDDEN",
         }
     }
 
@@ -73,15 +97,21 @@ impl ViewCode {
     pub const fn f04_code(self) -> ErrorCode {
         match self {
             Self::StaleToken => ErrorCode::StaleWorkspace,
-            Self::BufferLimit | Self::TopologyLimit | Self::ElementLimit | Self::SelectionLimit => {
-                ErrorCode::LimitExceeded
-            }
+            Self::BufferLimit
+            | Self::TopologyLimit
+            | Self::ElementLimit
+            | Self::SelectionLimit
+            | Self::PickLimit => ErrorCode::LimitExceeded,
             Self::BlobInvalid => ErrorCode::IntegrityError,
             Self::NumericUncertain => ErrorCode::UnsupportedGeometry,
             Self::IdInvalid => ErrorCode::InvalidId,
             Self::DuplicateElement => ErrorCode::DuplicateId,
-            Self::UnknownElement => ErrorCode::NotFound,
-            Self::ArgumentInvalid => ErrorCode::InvalidArgument,
+            Self::UnknownElement | Self::FeatureNotFound => ErrorCode::NotFound,
+            Self::ArgumentInvalid | Self::PickInputInvalid | Self::FeatureIdInvalid => {
+                ErrorCode::InvalidArgument
+            }
+            Self::NonFinite => ErrorCode::NonFiniteNumber,
+            Self::TriangleAddressForbidden => ErrorCode::UnsupportedProperty,
         }
     }
 }
@@ -161,6 +191,16 @@ mod tests {
         assert_eq!(
             ViewCode::ArgumentInvalid.f04_code(),
             ErrorCode::InvalidArgument
+        );
+        assert_eq!(ViewCode::NonFinite.f04_code(), ErrorCode::NonFiniteNumber);
+        for code in [ViewCode::PickInputInvalid, ViewCode::FeatureIdInvalid] {
+            assert_eq!(code.f04_code(), ErrorCode::InvalidArgument);
+        }
+        assert_eq!(ViewCode::PickLimit.f04_code(), ErrorCode::LimitExceeded);
+        assert_eq!(ViewCode::FeatureNotFound.f04_code(), ErrorCode::NotFound);
+        assert_eq!(
+            ViewCode::TriangleAddressForbidden.f04_code(),
+            ErrorCode::UnsupportedProperty
         );
         let error = ViewError::from(ViewCode::StaleToken);
         assert_eq!(error.f04_code(), ErrorCode::StaleWorkspace);
