@@ -126,6 +126,13 @@ fn prims_of(revision: &Revision) -> Result<Vec<Prim>, PlateError> {
             })
         })
         .collect::<Result<Vec<_>, PlateError>>()?;
+    // Foreign sources (R01) stay read-only: only the external layers are not owned.
+    let external = content
+        .entries()
+        .iter()
+        .filter(|e| e.role() == HostRole::External)
+        .map(|e| e.name().to_owned())
+        .collect();
     let request = open_request(
         content.root_layer(),
         content.project().as_str(),
@@ -133,6 +140,7 @@ fn prims_of(revision: &Revision) -> Result<Vec<Prim>, PlateError> {
         revision.info().manifest_digest(),
         content.workspace_generation(),
         assets,
+        &external,
     )?;
     let control = control();
     let mut reader = Reader::default();

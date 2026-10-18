@@ -7,9 +7,14 @@
 mod derive;
 mod edit;
 mod guard;
+mod reference;
 mod validate;
 
 pub use guard::WriteGrant;
+pub use reference::{
+    ForeignPrim, Reference, ReferenceView, SourceFormat, SourcePin, UnitsInterpretation, UpAxis,
+    read_references,
+};
 
 use crate::*;
 pub use beamcraft_model::definition::SectionProperties;
@@ -18,6 +23,56 @@ use std::collections::BTreeMap;
 /// Canonical UTF-8 schema descriptor. Its exact bytes commit the mapping and item profile.
 /// No generated schema, plugin, fallback values or external schema resources are required.
 pub const SCHEMA_DESCRIPTOR: &str = concat!(
+    "BeamCraft/U02/codeless/1\nmodel=0.1.0;backend=openusd=0.8.0;features=none;save=usda-owned-v1\n",
+    "root:metersPerUnit=0.001;upAxis=Z;customLayerData:bimSchemaDigest=sha256\n",
+    "element=/World/Steel/E_<uuid7-32>;type=Xform\n",
+    "bim:id=string;bim:name=string;bim:elementKind=token;bim:geometryMode=token(parametric);",
+    "bim:schemaVersion=string(0.1.0);bim:createdBy=string(uuid7);bim:revision=string(uuid7,optional)\n",
+    "steel:plate:contourPointsMm=double3[];steel:plate:thicknessMm=double;",
+    "steel:plate:holePointsMm=double3[](optional,z=0);steel:plate:holeVertexCounts=int[](optional,>=3 each);",
+    "bim:axisPointsMm=double3[];steel:member:rollRad=double(optional)\n",
+    "xformOp:translate=double3;xformOp:orient=quatd;xformOpOrder=token[](translate,orient)\n",
+    "kind:/World=assembly;/World/Steel=group;element=component;element/Geometry=subcomponent;",
+    "displayName(element)=bim:name\n",
+    "bim:profile=rel;bim:material=rel;definition=/World/Definitions/D_<sha256-64>\n",
+    "definition:bim:contentDigest=string;bim:schemaVersion=string(0.1.0);bim:units=token(mm);",
+    "bim:definitionKind=token;steel:profile:widthMm=double;steel:profile:heightMm=double;",
+    "steel:profile:designation=string(optional);steel:profile:standard=string(optional);",
+    "steel:profile:areaMm2=double(optional);steel:profile:massPerMeterKg=double(optional);",
+    "steel:profile:surfacePerMeterM2=double(optional);",
+    "bim:densityKgM3=double(optional);bim:materialGrade=string(optional);",
+    "bim:materialStandard=string(optional)\n",
+    "derived=<element>/Geometry:Mesh;points=point3f[];faceVertexCounts=int[];faceVertexIndices=int[];",
+    "subdivisionScheme=token(none);orientation=token(rightHanded);",
+    "extent=float3[](min,max of points);normals=normal3f[](uniform,one unit Newell normal per face);",
+    "bim:shapeKey=string(sha256);",
+    "quantities(optional,all or none)=bim:volumeMm3=double;bim:volumeStatus=token;bim:massKg=double(optional);",
+    "bim:massStatus=token;bim:shapeSignature=string(sha256);bim:massSignature=string(sha256);",
+    "bim:quantityAlgorithm=string\n",
+    "reference=/World/Steel/E_<uuid7-32>;type=Xform;kind=group;bim:elementKind=reference;bim:geometryMode=reference;",
+    "bim:reference:sourceDigest=string(sha256);bim:reference:sourceBytes=int;bim:reference:sourceFormat=token(usda|usdc);",
+    "bim:reference:sourceVersion=int;bim:reference:sourceLabel=string;bim:reference:sourceDefaultPrim=string;",
+    "bim:reference:declaredMetersPerUnit=double(optional);bim:reference:declaredUpAxis=token(Y|Z,optional)\n",
+    "reference/Correction=Xform;kind=group;bim:reference:correctionMetersPerUnit=double;bim:reference:correctionUpAxis=token(Y|Z);",
+    "bim:reference:correctionSourceDigest=string(sha256);xformOp:rotateX:bimUpAxis=double(degrees,Y up only);",
+    "xformOp:scale:bimUnits=double3(metersPerUnit*1000);xformOpOrder=token[](rotateX,scale;empty without correction)\n",
+    "reference/Correction/Source=def without type;references=@external/<sha256>.<usda|usdc>@</defaultPrim>;nothing else owned at or below\n",
+    "changes=Create|Label|Contour|Thickness|Axis|Roll|Profile|Material|Placement|Mesh|AttachReference|ReferenceUnits;",
+    "opinion=Absent|Block|Value|Remove;relationship=Targets|Empty|Remove\n",
+    "snapshot=Prim(path,element_id,type_name,active,properties,relationships,sources);",
+    "property=(name,type_name,optional-value);relationship=(name,ordered-targets)\n",
+    "prepare=(context,op_id,actor,schema,resources,changes);resource=(digest,definition);",
+    "element=(id,name,shape,placement,optional-material);placement=(translation_mm[3],orientation_xyzw[4]);",
+    "mesh=(id,shape_key,points_mm,face_counts,indices);",
+    "authored-item=(element_id,attribute,type_name,opinion);install=(context,token,op_id,Accepted);",
+    "discard=(context,token,op_id,Undecided|Rejected);unknown=OUTCOME_UNKNOWN\n",
+);
+
+/// Descriptor of the mapping revision that preceded the R01 reference wrappers (the one with the
+/// optional section properties of P02.2). Layers pinned to it contain nothing the current mapping
+/// refuses (R01 only adds the `reference` element and its change items), so they stay readable
+/// and editable; an edit rewrites the pin to the current digest.
+const P02_2_DESCRIPTOR: &str = concat!(
     "BeamCraft/U02/codeless/1\nmodel=0.1.0;backend=openusd=0.8.0;features=none;save=usda-owned-v1\n",
     "root:metersPerUnit=0.001;upAxis=Z;customLayerData:bimSchemaDigest=sha256\n",
     "element=/World/Steel/E_<uuid7-32>;type=Xform\n",
@@ -111,14 +166,19 @@ const PREVIOUS_DESCRIPTOR: &str = concat!(
     "discard=(context,token,op_id,Undecided|Rejected);unknown=OUTCOME_UNKNOWN\n",
 );
 
-/// Whether a layer's saved `bimSchemaDigest` is the current mapping or the previous one that
-/// the current mapping reads without change.
+/// Whether a layer's saved `bimSchemaDigest` is the current mapping or an earlier one that the
+/// current mapping reads without change.
 pub(crate) fn pin_accepted(pin: &str) -> Result<bool, Diagnostic> {
     if pin == schema_identity()?.digest.to_string() {
         return Ok(true);
     }
-    let previous = Sha256::digest(PREVIOUS_DESCRIPTOR.as_bytes()).map_err(|_| limit())?;
-    Ok(pin == previous.to_string())
+    for descriptor in [P02_2_DESCRIPTOR, PREVIOUS_DESCRIPTOR] {
+        let digest = Sha256::digest(descriptor.as_bytes()).map_err(|_| limit())?;
+        if pin == digest.to_string() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Explicit property opinion in the owned edit layer, distinct from composition results.
@@ -363,6 +423,17 @@ pub enum Change {
         /// Full target UUIDv7.
         id: String,
     },
+    /// R01: author a new wrapper around a foreign source whose layer is already a non-owned entry
+    /// of the manifest. The only foreign-facing opinion written is the reference arc.
+    AttachReference(Reference),
+    /// R01: write or clear the explicit units and up-axis interpretation on the owned units level
+    /// of a wrapper. The foreign content is never touched.
+    ReferenceUnits {
+        /// Full target UUIDv7 of the wrapper.
+        id: String,
+        /// The interpretation to store, or `None` to clear it.
+        interpretation: Option<UnitsInterpretation>,
+    },
 }
 impl Change {
     pub(super) fn key(&self) -> (&str, &'static str) {
@@ -378,6 +449,8 @@ impl Change {
             Self::Material { id, .. } => (id, "bim:material"),
             Self::Placement { id, .. } => (id, "placement"),
             Self::Mesh(m) => (&m.id, "derived"),
+            Self::AttachReference(r) => (&r.id, "lifecycle"),
+            Self::ReferenceUnits { id, .. } => (id, "reference:units"),
         }
     }
 }
@@ -446,6 +519,9 @@ pub struct Prepared {
     pub schema: SchemaIdentity,
     /// Exact owned layer bytes and digests (unchanged source layers are retained verbatim).
     pub layers: Vec<Asset>,
+    /// The layers the host did not select as owned (foreign sources), byte for byte as they were
+    /// supplied. They are never rewritten; a revision keeps them as external entries.
+    pub retained: Vec<Asset>,
     /// Exact local authored opinions for changed supported fields, ordered by UUID/attribute.
     /// These describe the selected edit layer, not resolved weaker defaults.
     pub opinions: Vec<AuthoredItem>,
@@ -517,7 +593,9 @@ impl Author {
         let mut opened = reader.open(request.clone(), control)?;
         opened.capabilities.mutations = true;
         edit::targets(&request, &targets)?;
-        validate::snapshot(&reader.pinned(&opened.context)?.prims, &opened.metadata)?;
+        let prims = &reader.pinned(&opened.context)?.prims;
+        validate::snapshot(prims, &opened.metadata)?;
+        reference::layers(&request, prims)?;
         Ok((
             Self {
                 reader,
@@ -589,6 +667,7 @@ impl Author {
             request.manifest = request.manifest_digest()?;
             let candidate = backend::open(request.clone(), control)?;
             let validation = validate::snapshot(&candidate.prims, &candidate.metadata)?;
+            reference::layers(&request, &candidate.prims)?;
             control.check()?;
             Ok::<_, Diagnostic>((request, candidate, opinions, validation))
         }))
@@ -608,6 +687,12 @@ impl Author {
                 .assets
                 .iter()
                 .filter(|a| request.owned_layers.contains(&a.name))
+                .cloned()
+                .collect(),
+            retained: request
+                .assets
+                .iter()
+                .filter(|a| !request.owned_layers.contains(&a.name))
                 .cloned()
                 .collect(),
             opinions,
@@ -705,7 +790,9 @@ pub fn validate_layers(
 ) -> Result<Validation, Diagnostic> {
     validate::schema(schema)?;
     let candidate = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        backend::open(request, control)
+        let candidate = backend::open(request.clone(), control)?;
+        reference::layers(&request, &candidate.prims)?;
+        Ok::<_, Diagnostic>(candidate)
     }))
     .map_err(|_| {
         fail(
@@ -732,6 +819,20 @@ pub(super) fn invalid() -> Diagnostic {
 #[cfg(test)]
 mod pin_tests {
     use super::*;
+
+    #[test]
+    fn the_p02_2_mapping_pin_is_accepted_and_is_not_the_current_one() {
+        // Pinned value: the digest of the descriptor of master with P02.2, before R01.
+        let p02_2 = "960c23cae54987cab86028cde90e360eb44ed64f8b6847f3c4f98b02d630ef56";
+        assert_eq!(
+            Sha256::digest(P02_2_DESCRIPTOR.as_bytes())
+                .unwrap()
+                .to_string(),
+            p02_2
+        );
+        assert!(pin_accepted(p02_2).unwrap());
+        assert_ne!(p02_2, schema_identity().unwrap().digest.to_string());
+    }
 
     #[test]
     fn the_previous_mapping_pin_is_accepted_and_others_are_not() {

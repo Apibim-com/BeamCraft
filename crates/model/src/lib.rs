@@ -10,6 +10,7 @@ pub mod digest;
 pub mod error;
 pub mod id;
 pub mod limits;
+pub mod reference;
 
 pub use error::ErrorCode;
 

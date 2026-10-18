@@ -43,9 +43,9 @@ use beamcraft_protocol::json::Json;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 
-type Run<T> = Result<T, PlateError>;
+pub(crate) type Run<T> = Result<T, PlateError>;
 
-fn invalid(message: &'static str) -> PlateError {
+pub(crate) fn invalid(message: &'static str) -> PlateError {
     PlateError {
         code: ErrorCode::InvalidArgument,
         message,
@@ -54,7 +54,13 @@ fn invalid(message: &'static str) -> PlateError {
 
 /// Runs one plate command and returns the JSON result and the process exit code.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
-    match run(args) {
+    report(run(args))
+}
+
+/// The shared result shape of the store commands: the JSON object and the exit code (0 success,
+/// 2 rejection, 3 backend unavailable, 4 outcome unknown).
+pub(crate) fn report(result: Run<Json>) -> (Json, u8) {
+    match result {
         Ok(json) => (json, 0),
         Err(e) => (
             Json::object([
@@ -265,7 +271,7 @@ fn float(options: &BTreeMap<&str, &str>, key: &'static str) -> Run<f64> {
         .map_err(|_| invalid("a number is malformed"))
 }
 
-fn translation(text: &str) -> Run<[f64; 3]> {
+pub(crate) fn translation(text: &str) -> Run<[f64; 3]> {
     let parts: Vec<f64> = text
         .split(',')
         .map(|p| {
@@ -1071,14 +1077,14 @@ fn member_json(record: &MemberRecord) -> Run<Json> {
     ]))
 }
 
-fn num(value: f64) -> Run<Json> {
+pub(crate) fn num(value: f64) -> Run<Json> {
     Json::number(value).map_err(|_| PlateError {
         code: ErrorCode::NonFiniteNumber,
         message: "a result is not finite",
     })
 }
 
-fn triple(values: [f64; 3]) -> Run<Json> {
+pub(crate) fn triple(values: [f64; 3]) -> Run<Json> {
     Ok(Json::Array(
         values.into_iter().map(num).collect::<Run<Vec<_>>>()?,
     ))
@@ -1319,7 +1325,7 @@ pub(crate) fn revision_json(revision: &RevisionSummary) -> Json {
     ])
 }
 
-fn footprint_json(footprint: Option<&Footprint>) -> Json {
+pub(crate) fn footprint_json(footprint: Option<&Footprint>) -> Json {
     let entries = |set: &std::collections::BTreeSet<Entry>| {
         Json::Array(
             set.iter()
