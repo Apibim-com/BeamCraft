@@ -27,6 +27,7 @@ pub mod solid;
 pub mod synthetic;
 pub mod transaction;
 pub mod update;
+pub mod weld;
 
 pub use beamcraft_kernel::PlateResult;
 pub use element::{ElementId, ElementKind, KindFilter};

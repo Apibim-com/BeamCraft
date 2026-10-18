@@ -139,6 +139,15 @@ pub fn copy_element(
             body: source.body.clone(),
             quantities: source.quantities,
         })
+    } else if crate::weld::is_weld(&base_request, &command.source_id, &control)? {
+        // A weld always has element links (its `connects` record), so a single-element copy
+        // would drop them (DV-REL-011).
+        return Err(CommandError::new(
+            ErrorCode::DependencyConflict,
+            "source_id",
+            "a weld has element links that a copy does not carry over",
+        )
+        .into());
     } else {
         return Err(not_found());
     };
