@@ -489,3 +489,67 @@ fn bad_query_inputs_are_refused_before_any_scan() {
         "NOT_FOUND"
     );
 }
+
+#[test]
+fn a_small_member_far_from_the_origin_keeps_its_features() {
+    let f = Fixture::new();
+    let profile = text(
+        at(
+            &f.ok("define-profile", &["--width", "1", "--height", "1"]),
+            &["definition"],
+        ),
+        "digest",
+    );
+    f.ok(
+        "create-member",
+        &[
+            "--start",
+            "0,0,0",
+            "--end",
+            "3,4,0",
+            "--translation",
+            "1000000000,1000000000,0",
+            "--profile-digest",
+            &profile,
+            "--new-id",
+            MEMBER,
+        ],
+    );
+    // A placement-only move never removes FeatureIds: the body is checked in local space.
+    let picked = f.ok(
+        "pick",
+        &[
+            "--point",
+            "1000000000,1000000000,0",
+            "--radius",
+            "2",
+            "--targets",
+            "vertex",
+        ],
+    );
+    assert!(list(&picked, "skipped").is_empty(), "{picked:?}");
+    assert!(!list(&picked, "hits").is_empty());
+    // Local geometry is exact, not world minus translation: for an axis along (0.6, 0.8, 0),
+    // X_m = (-0.8, 0.6, 0) and Y_m = +Z (F06 P-2), so v.x0.y0.z0 = (0.4, -0.3, -0.5).
+    let found = f.ok(
+        "feature-lookup",
+        &["--feature-id", &fid(MEMBER, "member:v.x0.y0.z0")],
+    );
+    let local = triple(at(&found, &["local", "position"]));
+    for (got, want) in local.iter().zip([0.4, -0.3, -0.5]) {
+        assert!((got - want).abs() < 1e-12, "{local:?}");
+    }
+    let snapped = f.ok(
+        "snap",
+        &[
+            "--point",
+            "1000000000,1000000000,0",
+            "--radius",
+            "1",
+            "--kinds",
+            "axis_end",
+        ],
+    );
+    let c = &list(&snapped, "candidates")[0];
+    assert!(number(at(c, &["distance_mm"])) < 1e-3);
+}

@@ -399,19 +399,32 @@ impl BoxFeatures {
     /// The world-space features of a snapshot element, or `None` when its body has no FeatureIds
     /// (no box layout, or a kind without a body kind).
     pub(crate) fn world(snapshot: &ViewSnapshot, entry: &ElementEntry) -> Option<Self> {
+        Self::placed(snapshot, entry, entry.placement_mm)
+    }
+
+    /// The element-local features (no translation).
+    pub(crate) fn local(snapshot: &ViewSnapshot, entry: &ElementEntry) -> Option<Self> {
+        Self::placed(snapshot, entry, [0.0; 3])
+    }
+
+    fn placed(snapshot: &ViewSnapshot, entry: &ElementEntry, by: V3) -> Option<Self> {
         let body = BodyKind::of(entry.kind)?;
         let mesh = snapshot.mesh_at(entry.full.mesh_slot)?;
         let local = box_vertices(mesh)?;
-        let mut vertices = local;
-        for v in &mut vertices {
-            *v = add(*v, entry.placement_mm);
+        // The rectangle check and the normals use element-local positions: a translation far
+        // from the origin adds rounding to world coordinates that says nothing about the body,
+        // and a placement-only move must keep every FeatureId.
+        let mut faces = Vec::with_capacity(6);
+        for quad in FACE_QUADS {
+            faces.push(face_of(&local, quad)?);
         }
+        let shift = |v: V3| add(v, by);
+        let vertices = local.map(shift);
         if !vertices.iter().all(|v| finite(*v)) {
             return None;
         }
-        let mut faces = Vec::with_capacity(6);
-        for quad in FACE_QUADS {
-            faces.push(face_of(&vertices, quad)?);
+        for face in &mut faces {
+            face.corners = face.corners.map(shift);
         }
         Some(Self {
             element: entry.id,
@@ -502,28 +515,6 @@ fn geometry(features: &BoxFeatures, id: &FeatureId) -> Option<FeatureGeometry> {
     })
 }
 
-fn shifted(g: &FeatureGeometry, by: [f64; 3]) -> FeatureGeometry {
-    let back = |p: [f64; 3]| sub(p, by);
-    match g {
-        FeatureGeometry::Face {
-            normal,
-            corners,
-            vertex_ids,
-        } => FeatureGeometry::Face {
-            normal: *normal,
-            corners: corners.map(back),
-            vertex_ids: vertex_ids.clone(),
-        },
-        FeatureGeometry::Edge { ends, vertex_ids } => FeatureGeometry::Edge {
-            ends: ends.map(back),
-            vertex_ids: vertex_ids.clone(),
-        },
-        FeatureGeometry::Vertex { position } => FeatureGeometry::Vertex {
-            position: back(*position),
-        },
-    }
-}
-
 /// `LookupFeature`: the kind, owner, role and geometry of one feature of the snapshot.
 ///
 /// A malformed id is `GEO_FEATURE_ID_INVALID`; an index used as an address is
@@ -537,9 +528,12 @@ pub fn lookup_feature(snapshot: &ViewSnapshot, text: &str) -> Result<FeatureLook
     if BodyKind::of(entry.kind) != Some(id.body()) {
         return Err(not_found());
     }
-    let features = BoxFeatures::world(snapshot, entry).ok_or_else(not_found)?;
-    let world = geometry(&features, &id).ok_or_else(not_found)?;
-    let local = shifted(&world, entry.placement_mm);
+    let world = BoxFeatures::world(snapshot, entry)
+        .and_then(|f| geometry(&f, &id))
+        .ok_or_else(not_found)?;
+    let local = BoxFeatures::local(snapshot, entry)
+        .and_then(|f| geometry(&f, &id))
+        .ok_or_else(not_found)?;
     Ok(FeatureLookup { id, local, world })
 }
 

@@ -252,6 +252,12 @@ fn closest_on_segment(p: V3, a: V3, b: V3) -> (V3, f64) {
 /// The closest pair between the ray segment `o + s*d1`, `s` in `[0, 1]`, and the edge
 /// `p + t*d2`, `t` in `[0, 1]`: the smallest `s` among minimizing pairs, the edge point and the
 /// distance.
+///
+/// The minimum lies at a segment end, at the projection of an edge end, or at the interior
+/// solution of the two-line problem. Every candidate's distance is measured from its parameter
+/// and the smallest wins, so a nearly parallel pair keeps an interior crossing (the interior
+/// solution is computed from the components perpendicular to the edge, which stays accurate as
+/// the lines approach parallel) and an imprecise parameter can only lose to a true minimum.
 fn segment_segment(o: V3, d1: V3, p: V3, q: V3) -> (f64, V3, f64) {
     let d2 = sub(q, p);
     let r = sub(o, p);
@@ -264,24 +270,25 @@ fn segment_segment(o: V3, d1: V3, p: V3, q: V3) -> (f64, V3, f64) {
     if a <= 0.0 {
         return measure(0.0);
     }
-    let (b, c, f) = (dot(d1, d2), dot(d1, r), dot(d2, r));
-    let denom = a * e - b * b;
-    if e > 0.0 && denom > 1e-12 * a * e {
-        // Not parallel: one minimizing pair.
-        let mut s = ((b * f - c * e) / denom).clamp(0.0, 1.0);
-        let t = (b * s + f) / e;
-        if t < 0.0 {
-            s = (-c / a).clamp(0.0, 1.0);
-        } else if t > 1.0 {
-            s = ((b - c) / a).clamp(0.0, 1.0);
-        }
-        return measure(s);
-    }
-    // Parallel (or a degenerate edge): the distance is minimal at a segment end or at the
-    // projection of an edge end; among equal distances the smallest parameter wins.
     let project = |x: V3| (dot(sub(x, o), d1) / a).clamp(0.0, 1.0);
+    let mut candidates = vec![0.0, 1.0, project(p), project(q)];
+    if e > 0.0 {
+        // The interior minimizer of the two lines, from the parts perpendicular to the edge:
+        // subtracting projections as vectors avoids the cancellation of `a*e - b*b` when the
+        // lines are nearly parallel.
+        let along = scale(d2, 1.0 / e.sqrt());
+        let w = sub(d1, scale(along, dot(d1, along)));
+        let r_perp = sub(r, scale(along, dot(r, along)));
+        let ww = dot(w, w);
+        if ww > 0.0 {
+            let s = (-dot(r_perp, w) / ww).clamp(0.0, 1.0);
+            if s.is_finite() {
+                candidates.push(s);
+            }
+        }
+    }
     let mut best = measure(0.0);
-    for s in [project(p), project(q), 1.0] {
+    for s in candidates {
         let candidate = measure(s);
         let tie = (candidate.2 - best.2).abs() <= 1e-12 * (1.0 + best.2);
         if candidate.2 < best.2 && !tie || tie && candidate.0 < best.0 {
@@ -315,7 +322,7 @@ fn hits_of(features: &BoxFeatures, query: &PickQuery, dir: V3) -> Result<Vec<Hit
                         continue;
                     }
                     let [a, b, _, d] = face.corners;
-                    let t = dot(sub(a, o), n) / un;
+                    let t = canonical(dot(sub(a, o), n) / un);
                     if !t.is_finite() {
                         return Err(uncertain());
                     }
@@ -352,7 +359,7 @@ fn hits_of(features: &BoxFeatures, query: &PickQuery, dir: V3) -> Result<Vec<Hit
                 for role in 0..12 {
                     let [p, q] = features.edge(role).ok_or_else(uncertain)?;
                     let (s, point, distance) = segment_segment(o, d1, p, q);
-                    let t = s * ray.t_max_mm;
+                    let t = canonical(s * ray.t_max_mm);
                     if !(distance.is_finite() && t.is_finite() && finite(point)) {
                         return Err(uncertain());
                     }
@@ -373,7 +380,7 @@ fn hits_of(features: &BoxFeatures, query: &PickQuery, dir: V3) -> Result<Vec<Hit
             }
             if wanted(&ray.targets, FeatureKind::Vertex) {
                 for (role, v) in features.vertices.iter().enumerate() {
-                    let t = dot(sub(*v, o), dir).clamp(0.0, ray.t_max_mm);
+                    let t = canonical(dot(sub(*v, o), dir).clamp(0.0, ray.t_max_mm));
                     let distance = norm(sub(add(o, scale(dir, t)), *v));
                     if !(distance.is_finite() && t.is_finite()) {
                         return Err(uncertain());
@@ -473,9 +480,15 @@ fn hits_of(features: &BoxFeatures, query: &PickQuery, dir: V3) -> Result<Vec<Hit
     Ok(out)
 }
 
+/// `x` with negative zero replaced by positive zero: `total_cmp` orders `-0.0` before `0.0`,
+/// which would let a sign decide a tie that F06 breaks by identity.
+fn canonical(x: f64) -> f64 {
+    x + 0.0
+}
+
 /// The F06 quantum of a parameter or distance.
 fn quantum(x: f64) -> f64 {
-    (x / EPS_PICK_MM).floor()
+    canonical((canonical(x) / EPS_PICK_MM).floor())
 }
 
 fn order(a: &Hit, b: &Hit) -> Ordering {
@@ -486,9 +499,8 @@ fn order(a: &Hit, b: &Hit) -> Ordering {
         .then_with(|| a.feature_kind.rank().cmp(&b.feature_kind.rank()))
         .then_with(|| a.feature_id.local_id().cmp(&b.feature_id.local_id()))
         .then_with(|| {
-            a.t_mm
-                .unwrap_or(a.distance_mm)
-                .total_cmp(&b.t_mm.unwrap_or(b.distance_mm))
+            canonical(a.t_mm.unwrap_or(a.distance_mm))
+                .total_cmp(&canonical(b.t_mm.unwrap_or(b.distance_mm)))
         })
 }
 
@@ -632,9 +644,8 @@ fn snap_order(a: &SnapCandidate, b: &SnapCandidate) -> Ordering {
         .then_with(|| a.element_id.to_string().cmp(&b.element_id.to_string()))
         .then_with(|| local(a).cmp(&local(b)))
         .then_with(|| {
-            a.axis_parameter
-                .unwrap_or(0.0)
-                .total_cmp(&b.axis_parameter.unwrap_or(0.0))
+            canonical(a.axis_parameter.unwrap_or(0.0))
+                .total_cmp(&canonical(b.axis_parameter.unwrap_or(0.0)))
         })
 }
 
@@ -877,5 +888,42 @@ mod tests {
             snap(&s, &repeated).unwrap_err().code(),
             ViewCode::PickInputInvalid
         );
+    }
+
+    #[test]
+    fn a_nearly_parallel_ray_keeps_its_interior_crossing() {
+        // Edge along X; the ray crosses it at x = 5000 with a 5e-7 slope.
+        let dir = [1.0, 5e-7, 0.0];
+        let length = norm(dir);
+        let u = scale(dir, 1.0 / length);
+        let o = [0.0, -0.0025, 0.0];
+        let (s, point, distance) =
+            segment_segment(o, scale(u, 10_000.0), [0.0; 3], [10_000.0, 0.0, 0.0]);
+        assert!(distance <= EPS_PICK_MM, "{distance}");
+        assert!((s * 10_000.0 - 5000.0).abs() < 1e-3, "{s}");
+        assert!((point[0] - 5000.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn a_zero_parameter_tie_is_broken_by_local_id_not_by_the_sign_of_zero() {
+        let s = snapshot(1);
+        let (min, _) = bounds(&s, 0);
+        // From the plate's minimum corner, inward along -X/+Y: f.x0 (back) and f.y0 (front)
+        // are both hit at t = 0, one of them computed as -0.0.
+        let ray = RayPick {
+            include_backfaces: true,
+            max_hits: 1,
+            ..RayPick::new(min, [-1.0, 1.0, 0.0], vec![FeatureKind::Face])
+        };
+        let result = pick(&s, &PickQuery::Ray(ray)).unwrap();
+        assert_eq!(result.hits.len(), 1);
+        assert!(result.truncated);
+        assert!(
+            result.hits[0]
+                .feature_id
+                .to_string()
+                .ends_with(":plate:f.x0")
+        );
+        assert_eq!(result.hits[0].t_mm.map(f64::is_sign_negative), Some(false));
     }
 }
