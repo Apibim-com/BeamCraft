@@ -88,7 +88,7 @@ impl Camera {
     pub fn distance(&self) -> f32 {
         self.distance
     }
-    /// Perspective basis with depth range [0,1], vertical FOV 45 degrees.
+    /// Perspective basis with depth range `[0, 1]`, vertical FOV 45 degrees.
     pub fn view(&self, aspect: f32) -> Result<View, Error> {
         if !aspect.is_finite() || !(0.05..=20.0).contains(&aspect) {
             return Err(Error::Input("camera aspect"));
