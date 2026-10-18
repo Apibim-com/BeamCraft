@@ -14,7 +14,8 @@
 //!   publishes only its own actor's changesets (`PERMISSION_DENIED` otherwise). Publication is
 //!   fast-forward only: when the head is no longer the expected one the answer is
 //!   `BASE_REVISION_MISMATCH` with the current head, and nothing is written. The same payload
-//!   replays.
+//!   replays. The current head in an answer is re-read after the decision and marked `known` or
+//!   `unavailable`; a failed re-read never changes the decision itself.
 //!
 //! The queue makes publications of one coordinator strictly sequential, so two concurrent
 //! publications from the same base accept exactly one; a commit to the published store from
@@ -129,6 +130,12 @@ impl PublishHandler {
             ));
         }
         let head_json = |head: &Option<String>| head.clone().map_or(Json::Null, Json::text);
+        // After C01 decided, the head is re-read for the client's information only: a failed
+        // re-read must not turn a known publication (or refusal) into a different answer.
+        let current = |this: &Self| match this.head() {
+            Ok(head) => (head_json(&head), Json::text("known")),
+            Err(_) => (Json::Null, Json::text("unavailable")),
+        };
         if request.op == "head" {
             return Ok(Json::object([
                 ("outcome", Json::text("head")),
@@ -160,26 +167,34 @@ impl PublishHandler {
             &request.actor,
             &mut NoFault,
         ) {
-            Ok(applied) => Ok(Json::object([
-                (
-                    "outcome",
-                    Json::text(if applied.replayed {
-                        "changeset_replayed"
-                    } else {
-                        "changeset_applied"
-                    }),
-                ),
-                ("revision_id", Json::text(applied.revision.revision_id)),
-                ("changeset", Json::text(applied.digest.to_string())),
-                ("workspace_synced", Json::Bool(applied.workspace_synced)),
-                ("current_head", head_json(&self.head()?)),
-            ])),
-            Err(e) if e.code == ErrorCode::BaseRevisionMismatch => Ok(Json::object([
-                ("outcome", Json::text("rejected")),
-                ("code", Json::text(e.code.as_str())),
-                ("message", Json::text(e.message)),
-                ("current_head", head_json(&self.head()?)),
-            ])),
+            Ok(applied) => {
+                let (head, status) = current(self);
+                Ok(Json::object([
+                    (
+                        "outcome",
+                        Json::text(if applied.replayed {
+                            "changeset_replayed"
+                        } else {
+                            "changeset_applied"
+                        }),
+                    ),
+                    ("revision_id", Json::text(applied.revision.revision_id)),
+                    ("changeset", Json::text(applied.digest.to_string())),
+                    ("workspace_synced", Json::Bool(applied.workspace_synced)),
+                    ("current_head", head),
+                    ("current_head_status", status),
+                ]))
+            }
+            Err(e) if e.code == ErrorCode::BaseRevisionMismatch => {
+                let (head, status) = current(self);
+                Ok(Json::object([
+                    ("outcome", Json::text("rejected")),
+                    ("code", Json::text(e.code.as_str())),
+                    ("message", Json::text(e.message)),
+                    ("current_head", head),
+                    ("current_head_status", status),
+                ]))
+            }
             Err(e) => Err(e),
         }
     }

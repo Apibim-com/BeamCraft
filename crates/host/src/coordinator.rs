@@ -32,7 +32,7 @@ use std::net::{Ipv4Addr, Shutdown, SocketAddr, SocketAddrV4, TcpListener, TcpStr
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, mpsc};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Protocol tag every request carries.
 pub const PROTOCOL: &str = "beamcraft-coordinator/1";
@@ -164,10 +164,16 @@ pub trait Handler: Send + 'static {
     fn handle(&mut self, request: Request) -> Json;
 }
 
-/// The JSON shape of a refusal.
+/// The JSON shape of a refusal (or of an unknown outcome, for `OUTCOME_UNKNOWN`).
 pub fn rejection(code: ErrorCode, message: &str) -> Json {
+    // An unknown outcome is not a refusal: the request may still commit.
+    let outcome = if code == ErrorCode::OutcomeUnknown {
+        "outcome_unknown"
+    } else {
+        "rejected"
+    };
     Json::object([
-        ("outcome", Json::text("rejected")),
+        ("outcome", Json::text(outcome)),
         ("code", Json::text(code.as_str())),
         ("message", Json::text(message)),
     ])
@@ -189,20 +195,45 @@ fn write_frame(stream: &mut TcpStream, body: &Json) -> Result<(), CoordinatorErr
         .map_err(|_| error(ErrorCode::BackendUnavailable, "frame cannot be written"))
 }
 
-fn read_frame(stream: &mut TcpStream) -> Result<Json, CoordinatorError> {
+/// Fills `buffer` before `deadline`. Each read gets only the time that remains, so a peer that
+/// trickles bytes cannot hold the connection past the deadline (a per-read timeout alone would
+/// restart with every byte).
+fn read_exact_by(
+    stream: &mut TcpStream,
+    buffer: &mut [u8],
+    deadline: Instant,
+) -> Result<(), CoordinatorError> {
+    let unreadable = || error(ErrorCode::MalformedCommand, "frame cannot be read");
+    let mut filled = 0;
+    while filled < buffer.len() {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|d| !d.is_zero())
+            .ok_or_else(unreadable)?;
+        stream
+            .set_read_timeout(Some(remaining))
+            .map_err(|_| unreadable())?;
+        let rest = buffer.get_mut(filled..).ok_or_else(unreadable)?;
+        match stream.read(rest) {
+            Ok(0) | Err(_) => return Err(unreadable()),
+            Ok(n) => filled = filled.saturating_add(n),
+        }
+    }
+    Ok(())
+}
+
+/// Reads one whole frame within `budget`, measured from the call.
+fn read_frame(stream: &mut TcpStream, budget: Duration) -> Result<Json, CoordinatorError> {
+    let deadline = Instant::now() + budget;
     let mut length = [0u8; 4];
-    stream
-        .read_exact(&mut length)
-        .map_err(|_| error(ErrorCode::MalformedCommand, "frame cannot be read"))?;
+    read_exact_by(stream, &mut length, deadline)?;
     let length = usize::try_from(u32::from_be_bytes(length))
         .map_err(|_| error(ErrorCode::LimitExceeded, "frame is too large"))?;
     if length > MAX_FRAME_BYTES {
         return Err(error(ErrorCode::LimitExceeded, "frame is too large"));
     }
     let mut body = vec![0u8; length];
-    stream
-        .read_exact(&mut body)
-        .map_err(|_| error(ErrorCode::MalformedCommand, "frame cannot be read"))?;
+    read_exact_by(stream, &mut body, deadline)?;
     json::decode(&body, &message::read_limits()).map_err(|_| {
         error(
             ErrorCode::MalformedCommand,
@@ -345,6 +376,10 @@ impl Coordinator {
             })
         };
         let active = Arc::new(AtomicUsize::new(0));
+        // Connection threads are joined before `serve` returns, so every answer, the last one
+        // included, is written before the process can exit. Finished threads are reaped as new
+        // connections arrive, so this holds at most about `MAX_CONNECTIONS` handles.
+        let mut connections: Vec<std::thread::JoinHandle<()>> = Vec::new();
         for stream in self.listener.incoming() {
             if stop.load(Ordering::SeqCst) {
                 break;
@@ -371,29 +406,37 @@ impl Coordinator {
                 queue.clone(),
                 Arc::clone(&active),
             );
-            std::thread::spawn(move || {
+            connections.retain(|handle| !handle.is_finished());
+            connections.push(std::thread::spawn(move || {
                 let answer = connection(&mut stream, &clients, &queue);
                 let _ = write_frame(&mut stream, &answer);
                 let _ = stream.shutdown(Shutdown::Both);
                 active.fetch_sub(1, Ordering::SeqCst);
-            });
+            }));
         }
         drop(queue);
-        worker.join().map_err(|_| {
+        let handled = worker.join().map_err(|_| {
             error(
                 ErrorCode::BackendUnavailable,
                 "the handler stopped unexpectedly",
             )
-        })
+        });
+        // Every connection thread ends within its read deadline plus one bounded write; queued
+        // jobs the stopped handler dropped are answered at once.
+        for handle in connections {
+            let _ = handle.join();
+        }
+        handled
     }
 }
 
 /// Reads, authenticates and queues one request and waits for its answer.
 fn connection(stream: &mut TcpStream, clients: &[Client], queue: &mpsc::SyncSender<Job>) -> Json {
-    let request = match read_frame(stream).and_then(|frame| authenticate(clients, frame)) {
-        Ok(request) => request,
-        Err(e) => return rejection(e.code, e.message),
-    };
+    let request =
+        match read_frame(stream, IO_TIMEOUT).and_then(|frame| authenticate(clients, frame)) {
+            Ok(request) => request,
+            Err(e) => return rejection(e.code, e.message),
+        };
     let (reply, answer) = mpsc::channel();
     match queue.try_send(Job { request, reply }) {
         Ok(()) => {}
@@ -445,7 +488,7 @@ pub fn call(
     let _ = stream.set_read_timeout(Some(HANDLER_TIMEOUT));
     let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
     write_frame(&mut stream, &Json::Object(map))?;
-    read_frame(&mut stream).map_err(|e| CoordinatorError {
+    read_frame(&mut stream, HANDLER_TIMEOUT).map_err(|e| CoordinatorError {
         // A missing answer after a sent request leaves the outcome open.
         code: ErrorCode::OutcomeUnknown,
         message: e.message,
@@ -592,7 +635,7 @@ mod tests {
         let raw = |bytes: &[u8]| {
             let mut s = TcpStream::connect(address).unwrap();
             s.write_all(bytes).unwrap();
-            read_frame(&mut s).unwrap()
+            read_frame(&mut s, IO_TIMEOUT).unwrap()
         };
         let code = |j: Json| j.get("code").unwrap().string().unwrap().to_owned();
         assert_eq!(code(raw(&[0xff, 0xff, 0xff, 0xff])), "LIMIT_EXCEEDED");
@@ -604,5 +647,46 @@ mod tests {
         // One authenticated request is handled, then the server stops.
         call(address, &token('a'), "last", []).unwrap();
         assert_eq!(server.join().unwrap().unwrap(), 1);
+    }
+
+    #[test]
+    fn a_trickling_peer_is_cut_off_at_the_frame_deadline() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        // One byte every 50 ms: each read alone would finish well inside any per-read timeout.
+        let peer = std::thread::spawn(move || {
+            let mut s = TcpStream::connect(address).unwrap();
+            for _ in 0..40 {
+                if s.write_all(&[0]).is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        });
+        let (mut server, _) = listener.accept().unwrap();
+        let started = Instant::now();
+        let refused = read_frame(&mut server, Duration::from_millis(300));
+        assert_eq!(refused.unwrap_err().code, ErrorCode::MalformedCommand);
+        assert!(
+            started.elapsed() < Duration::from_millis(1500),
+            "{:?}",
+            started.elapsed()
+        );
+        drop(server);
+        peer.join().unwrap();
+    }
+
+    #[test]
+    fn an_unknown_outcome_is_not_labelled_a_refusal() {
+        let unknown = rejection(ErrorCode::OutcomeUnknown, "late");
+        assert_eq!(
+            unknown.get("outcome").unwrap().string().unwrap(),
+            "outcome_unknown"
+        );
+        let refused = rejection(ErrorCode::PermissionDenied, "no");
+        assert_eq!(
+            refused.get("outcome").unwrap().string().unwrap(),
+            "rejected"
+        );
     }
 }

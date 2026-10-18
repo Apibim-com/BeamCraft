@@ -39,10 +39,16 @@ beamcraft coordinator-head --address 127.0.0.1:PORT --token-file FILE
   otherwise). Direct `changeset-apply` on a store the user can write still trusts `--actor-id`.
 - **One queue.** Every authenticated request goes through one bounded FIFO queue to one handler
   thread, so publications of one coordinator are strictly sequential. Reading and authenticating
-  a request happen before it joins the queue, under a read deadline, so a slow client cannot stall
-  it. A full queue or too many connections is `LIMIT_EXCEEDED`; a request dropped because the
+  a request happen before it joins the queue, under one absolute deadline for the whole frame
+  (each read gets only the time that remains), so a client that trickles bytes cannot stall the
+  queue or hold a connection slot. A full queue or too many connections is `LIMIT_EXCEEDED`; a request dropped because the
   coordinator stopped is `BACKEND_UNAVAILABLE` (not handled); no answer within 120 s is
-  `OUTCOME_UNKNOWN`.
+  `OUTCOME_UNKNOWN`, labelled `outcome_unknown`, not `rejected`. On shutdown the coordinator joins
+  every connection thread before returning, so the last answer is written before the process
+  exits.
+- **Current head is information.** After C01 decided, the head is re-read for the answer and
+  marked `known` or `unavailable` (`current_head_status`); a failed re-read never turns a
+  publication or a refusal into a different answer.
 - **Expected head.** A publication names the head the client expects; it must be the changeset's
   base (`INVALID_ARGUMENT` otherwise). Inside the queue, C01's receipt publishes fast-forward only,
   so a moved head is `BASE_REVISION_MISMATCH` and the answer carries the current head for a later
