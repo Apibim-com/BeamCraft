@@ -402,12 +402,10 @@ fn the_token_decides_the_actor_and_workspaces_stay_inside_the_root() {
     let stranger = f.token("stranger", OTHER_TOKEN);
     let outside = f.path("outside");
     fs::create_dir(&outside).unwrap();
-    let mut requests = 3;
+    // The symbolic-link case runs on Unix only, so the request budget differs by platform.
+    let requests = if cfg!(unix) { 4 } else { 3 };
     #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(&outside, f.root.join("workspaces/escape")).unwrap();
-        requests += 1;
-    }
+    std::os::unix::fs::symlink(&outside, f.root.join("workspaces/escape")).unwrap();
     let server = f.serve(&[(USER, &token), (STRANGER, &stranger)], requests);
     let address = server.address.clone();
     let before = f.head();
