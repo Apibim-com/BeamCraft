@@ -479,7 +479,7 @@ pub(super) fn snapshot(
         }
         if !matches!(
             text(p, "bim:elementKind", "token")?,
-            "plate" | "beam" | "column" | "assembly"
+            "plate" | "beam" | "column" | "assembly" | "connection"
         ) {
             continue;
         }
@@ -544,10 +544,14 @@ pub(super) fn snapshot(
                     cap([*n], std::f64::consts::TAU)?;
                 }
             }
-            // An assembly has no shape inputs and no material of its own.
-            "assembly" => {
+            // An assembly has no shape inputs and no material of its own; a connection is a weld
+            // with its own properties (A06) and no material either.
+            "assembly" | "connection" => {
                 if relationship(p, "bim:material").is_some_and(|r| !r.targets.is_empty()) {
                     return Err(invalid());
+                }
+                if kind == "connection" {
+                    weld_properties(p)?;
                 }
             }
             _ => continue, // Unknown vocabulary remains inert; edits below refuse it.
@@ -556,8 +560,8 @@ pub(super) fn snapshot(
             definition(&read_definition(material, "material")?)?;
         }
         owned_pose(p)?;
-        // An assembly's placement is the identity in this slice.
-        if kind == "assembly"
+        // The placement of an assembly and of a weld is the identity in this slice.
+        if matches!(kind, "assembly" | "connection")
             && (required(p, "xformOp:translate", "double3")?
                 != &Value::Array(vec![Value::Number(0.0); 3])
                 || required(p, "xformOp:orient", "quatd")?
@@ -572,6 +576,7 @@ pub(super) fn snapshot(
         }
     }
     part_of(prims)?;
+    connects(prims)?;
     for p in prims
         .iter()
         .filter(|p| p.type_name.as_deref() == Some("Mesh") && p.sources.iter().all(|s| s.owned))
@@ -585,8 +590,9 @@ pub(super) fn snapshot(
         else {
             continue;
         };
-        // An assembly has no body: a Geometry mesh under one is refused, authored or loaded.
-        if supported_kind(element) == Some("assembly") {
+        // An assembly or a weld has no body: a Geometry mesh under one is refused, authored or
+        // loaded.
+        if matches!(supported_kind(element), Some("assembly" | "connection")) {
             return Err(unsupported());
         }
         let id = element.element_id.clone().ok_or_else(invalid)?;
@@ -677,6 +683,7 @@ pub(super) fn snapshot(
             "U02-V05:scalar-caps-dimensions-scaled-minima-pose",
             "U02-V06:standard-mesh-buffer-structure",
             "A01-V01:part-of-kinds-cardinality-self-link-and-cycles",
+            "A06-V01:weld-properties-and-connects-two-distinct-parts",
         ],
         prims: prims.len(),
     })
@@ -698,7 +705,116 @@ fn supported_kind(p: &Prim) -> Option<&str> {
     if version != "0.1.0" || token("bim:geometryMode")? != "parametric" {
         return None;
     }
-    token("bim:elementKind").filter(|k| matches!(*k, "plate" | "beam" | "column" | "assembly"))
+    token("bim:elementKind")
+        .filter(|k| matches!(*k, "plate" | "beam" | "column" | "assembly" | "connection"))
+}
+
+/// The weld properties of a loaded `connection` (A06): every one is authored, with a supported
+/// token, and the size is finite in `(0, 1000]`. A connection without them is not a weld this
+/// slice can read, so it is refused rather than guessed.
+fn weld_properties(p: &Prim) -> Result<(), Diagnostic> {
+    weld_tokens(
+        text(p, "steel:weld:type", "token")?,
+        text(p, "steel:weld:location", "token")?,
+        text(p, "steel:weld:side", "token")?,
+    )?;
+    weld_size(number(p, "steel:weld:sizeMm")?)
+}
+fn weld_tokens(weld_type: &str, location: &str, side: &str) -> Result<(), Diagnostic> {
+    if weld_type != "fillet" {
+        return Err(unsupported());
+    }
+    if !matches!(location, "workshop" | "site") || !matches!(side, "arrow" | "other" | "both") {
+        return Err(invalid());
+    }
+    Ok(())
+}
+fn weld_size(mm: f64) -> Result<(), Diagnostic> {
+    finite([mm])?;
+    if mm <= 0.0 {
+        return Err(invalid());
+    }
+    cap([mm], 1000.0)
+}
+
+/// A06 `connects` records (domain vocabulary section 5.1): only a weld carries one, with exactly
+/// two distinct targets (`DV-REL-004`, `DV-REL-007`), never itself (`DV-REL-006`), each an active
+/// owned plate, beam or column (`DV-REL-001` dangling, `DV-REL-003` kind). An assembly is a valid
+/// target in the vocabulary but not for a weld in this slice.
+fn connects(prims: &[Prim]) -> Result<(), Diagnostic> {
+    let elements: BTreeMap<&str, (&Prim, &str)> = prims
+        .iter()
+        .filter_map(|p| supported_kind(p).map(|k| (p.path.as_str(), (p, k))))
+        .collect();
+    for (&path, &(p, kind)) in &elements {
+        let Some(r) = relationship(p, "bim:connects") else {
+            if kind == "connection" {
+                return Err(fail(
+                    ErrorCode::DependencyConflict,
+                    "a weld connects exactly two parts",
+                ));
+            }
+            continue;
+        };
+        if kind != "connection" {
+            return Err(fail(
+                ErrorCode::InvalidArgument,
+                "only a connection carries a connects record",
+            ));
+        }
+        let [first, second] = r.targets.as_slice() else {
+            return Err(fail(
+                ErrorCode::DependencyConflict,
+                "a weld connects exactly two parts",
+            ));
+        };
+        if first == second {
+            return Err(fail(
+                ErrorCode::InvalidArgument,
+                "a weld connects two distinct parts",
+            ));
+        }
+        for target in [first, second] {
+            if target == path {
+                return Err(fail(
+                    ErrorCode::InvalidArgument,
+                    "a weld cannot connect itself",
+                ));
+            }
+            match elements.get(target.as_str()) {
+                Some((t, _)) if !t.active => {
+                    return Err(fail(
+                        ErrorCode::DanglingRelationship,
+                        "connects target is not active",
+                    ));
+                }
+                Some((_, "plate" | "beam" | "column")) => {}
+                Some((_, "assembly")) => return Err(unsupported()),
+                Some(_) => {
+                    return Err(fail(
+                        ErrorCode::InvalidArgument,
+                        "connects target is not a plate, beam or column",
+                    ));
+                }
+                None if prims
+                    .iter()
+                    .any(|p| p.path == *target && p.element_id.is_some()) =>
+                {
+                    return Err(fail(
+                        ErrorCode::InvalidArgument,
+                        "connects target is not a supported owned part",
+                    ));
+                }
+                None => {
+                    return Err(fail(
+                        ErrorCode::DanglingRelationship,
+                        "connects target unavailable",
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// A01 `part-of` records (domain vocabulary section 5.1): a supported element has at most one
@@ -895,9 +1011,18 @@ pub(super) fn changes(
                         matches!(kind, "plate" | "beam" | "column" | "reference")
                     }
                     Change::Label { .. } => {
-                        matches!(kind, "plate" | "beam" | "column" | "reference" | "assembly")
+                        matches!(
+                            kind,
+                            "plate" | "beam" | "column" | "reference" | "assembly" | "connection"
+                        )
                     }
-                    Change::Delete { .. } | Change::PartOf { .. } => {
+                    Change::Delete { .. } => {
+                        matches!(
+                            kind,
+                            "plate" | "beam" | "column" | "assembly" | "connection"
+                        )
+                    }
+                    Change::PartOf { .. } => {
                         matches!(kind, "plate" | "beam" | "column" | "assembly")
                     }
                     _ => matches!(kind, "plate" | "beam" | "column"),
@@ -1102,6 +1227,36 @@ pub(super) fn changes(
                             return Err(unsupported());
                         }
                     }
+                    Shape::Weld(w) => {
+                        if e.material.is_some()
+                            || e.placement.translation_mm != [0.0; 3]
+                            || e.placement.orientation_xyzw != [0.0, 0.0, 0.0, 1.0]
+                        {
+                            return Err(unsupported());
+                        }
+                        weld_tokens(&w.weld_type, &w.location, &w.side)?;
+                        weld_size(w.size_mm)?;
+                        let [main, secondary] = &w.connects;
+                        if !uuid7(main) || !uuid7(secondary) {
+                            return Err(fail(
+                                ErrorCode::InvalidId,
+                                "invalid full element identity",
+                            ));
+                        }
+                        if main == secondary || main == &e.id || secondary == &e.id {
+                            return Err(fail(
+                                ErrorCode::InvalidArgument,
+                                "a weld connects two distinct other parts",
+                            ));
+                        }
+                        // The parts' existence and kinds decide acceptance; they are only read.
+                        for part in [main, secondary] {
+                            reads.insert(Footprint {
+                                identity: part.clone(),
+                                group: Group::Lifecycle,
+                            });
+                        }
+                    }
                 }
                 if let Some(d) = e.material {
                     reads.insert(Footprint {
@@ -1196,6 +1351,7 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                         .chain(roll_rad.iter().copied()),
                 ),
                 Shape::Assembly => Ok(()),
+                Shape::Weld(w) => finite([w.size_mm]),
             }
         }
         Change::AttachReference(r) => finite(

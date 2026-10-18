@@ -15,7 +15,7 @@ use crate::error::ErrorCode;
 use crate::id::ElementId;
 use crate::limits::{
     CONTOUR_POINT_CAP, COORDINATE_CAP_MM, DIMENSION_CAP_MM, MAX_LABEL_BYTES, MIN_CONTOUR_POINTS,
-    MIN_LABEL_BYTES, ORIENTATION_NORM_TOLERANCE, ROLL_CAP_RAD,
+    MIN_LABEL_BYTES, ORIENTATION_NORM_TOLERANCE, ROLL_CAP_RAD, WELD_SIZE_CAP_MM,
 };
 use beamcraft_geom::canonical_f64_bytes;
 use core::fmt;
@@ -799,6 +799,195 @@ impl DetachFromAssembly {
     }
 }
 
+/// The weld types A06 supports. Every other type (butt, plug, spot and so on) is not modelled and
+/// has no token here, so it cannot be requested.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WeldType {
+    /// A fillet weld.
+    Fillet,
+}
+
+/// Where a weld is made. It is always authored explicitly; there is no default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WeldLocation {
+    /// Made in the workshop.
+    Workshop,
+    /// Made on site.
+    Site,
+}
+
+/// The side of the joint a weld is on, relative to the main part's reference side. It is always
+/// authored explicitly; there is no default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WeldSide {
+    /// The reference (arrow) side.
+    Arrow,
+    /// The opposite side.
+    Other,
+    /// Both sides.
+    Both,
+}
+
+impl WeldType {
+    /// The stored token.
+    pub const fn as_token(self) -> &'static str {
+        match self {
+            Self::Fillet => "fillet",
+        }
+    }
+    /// Parses an exact token.
+    pub fn parse(token: &str) -> Option<Self> {
+        (token == "fillet").then_some(Self::Fillet)
+    }
+}
+
+impl WeldLocation {
+    /// The stored token.
+    pub const fn as_token(self) -> &'static str {
+        match self {
+            Self::Workshop => "workshop",
+            Self::Site => "site",
+        }
+    }
+    /// Parses an exact token.
+    pub fn parse(token: &str) -> Option<Self> {
+        match token {
+            "workshop" => Some(Self::Workshop),
+            "site" => Some(Self::Site),
+            _ => None,
+        }
+    }
+}
+
+impl WeldSide {
+    /// The stored token.
+    pub const fn as_token(self) -> &'static str {
+        match self {
+            Self::Arrow => "arrow",
+            Self::Other => "other",
+            Self::Both => "both",
+        }
+    }
+    /// Parses an exact token.
+    pub fn parse(token: &str) -> Option<Self> {
+        match token {
+            "arrow" => Some(Self::Arrow),
+            "other" => Some(Self::Other),
+            "both" => Some(Self::Both),
+            _ => None,
+        }
+    }
+}
+
+/// The authored properties of one weld (A06). No solid geometry is derived from them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WeldSpec {
+    /// The weld type.
+    pub weld_type: WeldType,
+    /// Nominal size in millimetres: finite, greater than 0 and at most [`WELD_SIZE_CAP_MM`].
+    pub size_mm: f64,
+    /// Workshop or site.
+    pub location: WeldLocation,
+    /// Arrow side, other side or both.
+    pub side: WeldSide,
+}
+
+/// A06 `CreateWeld`: a new `connection` element (domain vocabulary section 2.3) that is a weld. Its
+/// one `connects` record (section 5.1) names exactly two distinct parts in order, the main part
+/// first; the record lives with the weld, so the parts are only read. It carries the common base
+/// and the weld properties; it has no body, material or derived geometry, and its placement is
+/// the identity in this slice.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CreateWeld {
+    /// Identity of the new weld.
+    pub new_id: ElementId,
+    /// Explicit user label.
+    pub name: String,
+    /// The main part: a plate, beam or column.
+    pub main_id: ElementId,
+    /// The part welded to it: a plate, beam or column.
+    pub secondary_id: ElementId,
+    /// The weld properties.
+    pub weld: WeldSpec,
+}
+
+impl CreateWeld {
+    /// Admits the request: the label (`DV-BASE-003`), two distinct parts (`DV-REL-006`,
+    /// `DV-REL-007`), a weld that is not one of its own parts, and a finite size in
+    /// `(0, WELD_SIZE_CAP_MM]`. Whether the parts exist and their kinds are the engine's decisions.
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        if !label_is_valid(&self.name) {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "name",
+                "label must be 1 to 256 bytes without control characters",
+            ));
+        }
+        if self.main_id == self.secondary_id {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "secondary_id",
+                "a weld connects two distinct parts",
+            ));
+        }
+        if self.new_id == self.main_id || self.new_id == self.secondary_id {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "new_id",
+                "a weld cannot connect itself",
+            ));
+        }
+        let size = self.weld.size_mm;
+        if !size.is_finite() {
+            return Err(CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "size_mm",
+                "weld size must be finite",
+            ));
+        }
+        if size <= 0.0 || size > WELD_SIZE_CAP_MM {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "size_mm",
+                "weld size must be greater than 0 and at most 1000 mm",
+            ));
+        }
+        Ok(())
+    }
+
+    /// SHA-256 of a versioned, length-prefixed encoding of the validated request.
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        self.validate_arguments()?;
+        let mut bytes = Vec::with_capacity(128 + self.name.len());
+        bytes.extend_from_slice(b"BeamCraft/A06/CreateWeld/v1\0");
+        bytes.extend_from_slice(self.new_id.as_bytes());
+        bytes.extend_from_slice(&(self.name.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(self.name.as_bytes());
+        bytes.extend_from_slice(self.main_id.as_bytes());
+        bytes.extend_from_slice(self.secondary_id.as_bytes());
+        for token in [
+            self.weld.weld_type.as_token(),
+            self.weld.location.as_token(),
+            self.weld.side.as_token(),
+        ] {
+            // Tokens are short constants; the length prefix keeps the encoding unambiguous.
+            bytes.extend_from_slice(&(token.len() as u64).to_le_bytes());
+            bytes.extend_from_slice(token.as_bytes());
+        }
+        let size = canonical_f64_bytes(self.weld.size_mm).map_err(|_| {
+            CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "size_mm",
+                "weld size must be finite",
+            )
+        })?;
+        bytes.extend_from_slice(&size);
+        Sha256::digest(&bytes).map_err(|_| {
+            CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1220,5 +1409,109 @@ mod tests {
                 .content_fingerprint()
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn create_weld_admits_two_distinct_parts_and_a_bounded_size() {
+        let id =
+            |n: u32| ElementId::parse(&format!("019a7bf0-0000-7000-8000-0000003{n:05}")).unwrap();
+        let weld = CreateWeld {
+            new_id: id(1),
+            name: "W1".into(),
+            main_id: id(2),
+            secondary_id: id(3),
+            weld: WeldSpec {
+                weld_type: WeldType::Fillet,
+                size_mm: 6.0,
+                location: WeldLocation::Workshop,
+                side: WeldSide::Arrow,
+            },
+        };
+        assert!(weld.validate_arguments().is_ok());
+        let base = weld.content_fingerprint().unwrap();
+        // Every authored property and the part order are part of the content.
+        let variants = [
+            CreateWeld {
+                secondary_id: id(2),
+                main_id: id(3),
+                ..weld.clone()
+            },
+            CreateWeld {
+                weld: WeldSpec {
+                    location: WeldLocation::Site,
+                    ..weld.weld
+                },
+                ..weld.clone()
+            },
+            CreateWeld {
+                weld: WeldSpec {
+                    side: WeldSide::Both,
+                    ..weld.weld
+                },
+                ..weld.clone()
+            },
+            CreateWeld {
+                weld: WeldSpec {
+                    size_mm: 8.0,
+                    ..weld.weld
+                },
+                ..weld.clone()
+            },
+        ];
+        for v in &variants {
+            assert_ne!(v.content_fingerprint().unwrap(), base);
+        }
+        let refused = |w: CreateWeld| w.validate_arguments().unwrap_err().code;
+        assert_eq!(
+            refused(CreateWeld {
+                secondary_id: id(2),
+                ..weld.clone()
+            }),
+            ErrorCode::InvalidArgument
+        );
+        assert_eq!(
+            refused(CreateWeld {
+                new_id: id(2),
+                ..weld.clone()
+            }),
+            ErrorCode::InvalidArgument
+        );
+        for size in [0.0, -1.0, 1000.5] {
+            assert_eq!(
+                refused(CreateWeld {
+                    weld: WeldSpec {
+                        size_mm: size,
+                        ..weld.weld
+                    },
+                    ..weld.clone()
+                }),
+                ErrorCode::InvalidArgument
+            );
+        }
+        assert_eq!(
+            refused(CreateWeld {
+                weld: WeldSpec {
+                    size_mm: f64::NAN,
+                    ..weld.weld
+                },
+                ..weld.clone()
+            }),
+            ErrorCode::NonFiniteNumber
+        );
+        assert_eq!(
+            refused(CreateWeld {
+                name: String::new(),
+                ..weld.clone()
+            }),
+            ErrorCode::InvalidArgument
+        );
+        for token in ["fillet", "workshop", "site", "arrow", "other", "both"] {
+            let back = WeldType::parse(token)
+                .map(WeldType::as_token)
+                .or(WeldLocation::parse(token).map(WeldLocation::as_token))
+                .or(WeldSide::parse(token).map(WeldSide::as_token));
+            assert_eq!(back, Some(token));
+        }
+        assert!(WeldType::parse("butt").is_none() && WeldSide::parse("Arrow").is_none());
     }
 }

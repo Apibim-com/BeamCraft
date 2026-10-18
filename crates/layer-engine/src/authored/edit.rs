@@ -449,6 +449,7 @@ fn create(data: &mut sdf::Data, e: &Element, actor: &str) -> Result<(), Diagnost
     field(data, &p, "displayName", sdf::Value::String(e.name.clone()))?;
     let kind = match e.shape {
         Shape::Assembly => "assembly",
+        Shape::Weld(_) => "connection",
         Shape::Plate { .. } => "plate",
         Shape::Member {
             kind: MemberKind::Beam,
@@ -534,6 +535,28 @@ fn create(data: &mut sdf::Data, e: &Element, actor: &str) -> Result<(), Diagnost
             }
         }
         Shape::Assembly => (),
+        Shape::Weld(w) => {
+            for (name, value) in [
+                ("steel:weld:type", &w.weld_type),
+                ("steel:weld:location", &w.location),
+                ("steel:weld:side", &w.side),
+            ] {
+                attr(data, &p, name, "token", sdf::Value::token(value.as_str()))?;
+            }
+            attr(
+                data,
+                &p,
+                "steel:weld:sizeMm",
+                "double",
+                sdf::Value::Double(w.size_mm),
+            )?;
+            let targets = w
+                .connects
+                .iter()
+                .map(|id| path(&element_path(id)?))
+                .collect::<Result<Vec<_>, _>>()?;
+            relationship_targets(data, &p, "bim:connects", Some(targets))?;
+        }
     }
     if let Some(d) = e.material {
         relationship(data, &p, "bim:material", MaterialOpinion::Target(d))?;
@@ -930,6 +953,13 @@ fn capture(
         ("xformOp:orient", "quatd"),
         ("xformOpOrder", "token[]"),
     ];
+    const WELD: &[(&str, &str)] = &[
+        ("steel:weld:type", "token"),
+        ("steel:weld:sizeMm", "double"),
+        ("steel:weld:location", "token"),
+        ("steel:weld:side", "token"),
+        ("bim:connects", "rel"),
+    ];
     const MESH: &[(&str, &str)] = &[
         ("points", "point3f[]"),
         ("faceVertexCounts", "int[]"),
@@ -978,6 +1008,11 @@ fn capture(
                         add("bim:profile", "rel", 0);
                     }
                     Shape::Assembly => (),
+                    Shape::Weld(_) => {
+                        for &(name, ty) in WELD {
+                            add(name, ty, 0);
+                        }
+                    }
                 }
             }
             Change::AttachReference(r) => {
@@ -1018,6 +1053,9 @@ fn capture(
                     ("bim:profile", "rel"),
                     ("bim:partOf", "rel"),
                 ] {
+                    add(name, ty, 0);
+                }
+                for &(name, ty) in WELD {
                     add(name, ty, 0);
                 }
                 for &(name, ty) in POSE {

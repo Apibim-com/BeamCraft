@@ -260,6 +260,24 @@ impl Footprint {
         Ok(footprint)
     }
 
+    /// The footprint of `CreateWeld` (A06): that of `CreatePlate` for the new weld, which writes
+    /// its lifecycle, every authored group (the weld properties are its shape inputs, the
+    /// `connects` record its relationships) and the derived group, plus the read of each connected
+    /// part's lifecycle: their existence and kind decide acceptance. The `connects` record lives
+    /// with the weld (domain vocabulary section 5.2), so no part is written. A later delete of a
+    /// part writes its lifecycle and therefore conflicts with a concurrent weld creation.
+    pub fn for_weld(id: ElementId, parts: [ElementId; 2]) -> Result<Self, CommandError> {
+        let mut footprint = Self::for_create_with(id, None, None)?;
+        for part in parts {
+            footprint.reads.insert(Entry {
+                target: Target::Element(part),
+                group: Group::Lifecycle,
+            });
+        }
+        footprint.check_bound()?;
+        Ok(footprint)
+    }
+
     /// The footprint of `AttachToAssembly` and `DetachFromAssembly` (A01): the `part-of` record
     /// lives with its source, so only the part's relationship group is written. It reads the
     /// part's lifecycle and relationships and, for an attach, the lifecycle and relationships of
