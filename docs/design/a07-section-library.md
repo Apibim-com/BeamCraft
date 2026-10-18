@@ -1,0 +1,212 @@
+# A07 section families, environments and profile libraries
+
+Date: 2026-10-18. Status: **design proposal; nothing is implemented. Owner decisions in section 7
+are open.** Branch `feat/a07-section-library`, based on `origin/master` `d893f94`.
+
+Plan row: A07, the I-section families named by the P02.2 note, widened by the owner on
+2026-10-18. The owner's goals:
+
+1. The user never types section dimensions to place a member. They choose "insert column",
+   pick a designation (for example the name of a wide-flange shape) from the profile library of
+   the active **environment**, and the engine and kernel do the rest.
+2. An environment is a per-country (or per-company) set of libraries, selected in the
+   application's settings.
+3. Users can add their own sections: parametric shapes with their own dimensions, cold-formed
+   (light-gauge, LSTK) shapes, and fully custom outlines.
+
+This is the MVP scope item 1 of `ROADMAP.md`. The UI picker belongs to V05; this note covers the
+engine, data and CLI parts that the picker will call (`AGENTS.md` section 3: engine API and CLI
+first).
+
+## 1. What exists today
+
+* A member pins exactly one immutable profile definition by the full SHA-256 of its USD layer
+  (`bim:profile`, P02/P03). The definition is a content-addressed prim
+  `/World/Definitions/D_<sha256>`; equal content is one definition.
+* The only profile kind is `RectangleProfile { width_mm, height_mm, section }` with optional
+  declared `SectionProperties` (designation, standard, area, mass per metre, surface per metre).
+* `kernel::straight_member` builds an 8-vertex box. G05 (`kernel::profile`) already admits any
+  planar outer contour with cavities, triangulates it and extrudes it into a sealed mesh, with a
+  flagged polygon approximation for curves. A04 introduced `engine::solid::SolidMesh` for bodies
+  that are not boxes.
+
+## 2. The model in one picture
+
+```text
+Environment (settings)          Libraries (data files)            Model (USD revision)
+  "cl"  -> [aisc, icha, user]     aisc/profiles.toml                 /World/Definitions/D_<sha>
+  "uk"  -> [en, user]               W310x52 = i_shape{...}  --resolve-->  profile definition:
+  ...                             user/profiles.toml                       shape + dims + labels
+                                    MY-C150 = lipped_c{...}          member --bim:profile--> D_<sha>
+```
+
+* **Libraries are inputs, not model state.** Resolving a designation produces a complete profile
+  definition (shape family, every dimension, declared section numbers, designation and library
+  provenance labels) which is pinned by content like any other definition. A model therefore
+  never depends on the library files: changing or deleting a library never changes an existing
+  member, and opening a model on another machine needs no library.
+* Resolving the same entry twice gives the same bytes and therefore the same digest, so placing
+  a hundred `W310x52` columns creates one definition.
+* An entry edited later (a corrected flange thickness) is a different definition; existing
+  members keep the old one until an explicit `UpdateElement` repins them. Detecting "library
+  entry changed since placement" is a later report, not an automatic edit.
+
+## 3. Section families (A07.1)
+
+A `SectionShape` is a closed enumeration. Every family generates its outline in the section
+plane (millimetres, the F06 member frame: width along the rolled `X_m`, height along `Y_m`,
+centred on the axis by the rule of section 4) and is admitted by its own rules before the kernel
+sees a point.
+
+| Family | Parameters | Notes |
+|---|---|---|
+| `rectangle` | `h`, `b` | Existing; solid bar. Stays byte-compatible. |
+| `i_shape` | `h`, `b`, `tw`, `tf`, `r` | Doubly symmetric I/H (wide flange, IPE/HE style). |
+| `channel` | `h`, `b`, `tw`, `tf`, `r` | Hot-rolled parallel-flange channel. |
+| `angle` | `h`, `b`, `t`, `r` | Equal or unequal leg. |
+| `rhs` | `h`, `b`, `t`, `r_out` | Rectangular/square hollow section (one cavity). |
+| `chs` | `d`, `t` | Circular hollow section (one cavity). |
+| `lipped_c` | `h`, `b`, `c`, `t`, `r_in` | Cold-formed C with lips (LSTK). |
+| `plain_c` | `h`, `b`, `t`, `r_in` | Cold-formed U/C without lips. |
+| `lipped_z` | `h`, `b`, `c`, `t`, `r_in` | Cold-formed Z with lips. |
+| `omega` | `h`, `b`, `c`, `t`, `r_in` | Cold-formed hat section. |
+| `custom` | outer contour, cavities | Any user outline, admitted by G05 as is. |
+
+Rules:
+
+* Admission per family: finite, inside the F04 dimension cap, above the geometric floor, and the
+  family's own consistency (`2*tf < h`, `tw < b`, `r` fits between web and flange, `2*t < d`,
+  lips shorter than the flange, ...). A violation is `INVALID_ARGUMENT` naming the parameter.
+* Root and corner radii are generated as arcs approximated by a deterministic polygon with the
+  G05 sagitta bound, so the geometry is flagged `Approximated` (G05 rule; F06 0.1.0 has no exact
+  curves). Volume and mass for BOM keep their own sources (section 5).
+* The point budget is the G05 one (1024 per contour, 2048 total); the generator chooses the arc
+  segment count from the radius and the sagitta bound and refuses (`LIMIT_EXCEEDED`), never
+  truncates.
+* `custom` is stored as authored points; nothing is reordered, merged or repaired (F04 P-1).
+* A new family is a new enumeration value and a new schema descriptor line, never a free-form
+  string interpreted at runtime.
+
+## 4. Kernel and engine (A07.1)
+
+* `kernel::section_member(input)`: admits the generated outline with G05, extrudes it along
+  `+Z` by the axis length and places it with the `geom::MemberFrame` basis (the same frame, roll
+  and minima as `straight_member`). The result is a `SolidMesh`; the rectangle keeps
+  `straight_member` so existing digests do not change.
+* Insertion point: the section's reference point is the centre of its bounding box, as for the
+  rectangle today. Offsets (top-of-steel, flange edge) are a later placement option.
+* `engine::member` resolves `ProfileInfo` as the full `SectionShape` instead of
+  `width_mm`/`height_mm`, and the publish-time verifier re-generates and re-extrudes every member.
+* Layer engine: `Definition::Profile { shape, section, source }` beside the existing
+  `RectangleProfile`, written as `steel:profile:family`, one `double` attribute per parameter
+  (`steel:profile:hMm`, ...) and, for `custom`, the same flat point and count arrays as A04
+  holes. The schema descriptor gains these lines; the previous descriptors stay accepted.
+* CLI: `define-profile --family i_shape --h 310 --b 165 --tw 5.8 --tf 9.7 --r 8.9 ...` for
+  explicit definitions (tests, scripting, user-defined sections).
+
+## 5. Section numbers and mass
+
+* The library entry may declare area, mass per metre and surface per metre (P02.2 fields). They
+  are what a BOM reads, and they are part of the definition's identity.
+* The kernel computes its own area from the generated polygon. A declared area that differs from
+  the polygon area by more than the family tolerance is refused, as P02.2 does for the rectangle.
+  The tolerance must cover the radius approximation; the value is decided with the first real
+  data (section 7, D3).
+* No density, grade or mass is ever guessed from a designation.
+
+## 6. Environments and libraries (A07.2, A07.3)
+
+**File format.** One TOML file per library (human-editable, diff-friendly), for example:
+
+```toml
+[library]
+id = "example"
+title = "Synthetic example sections"
+version = "1"
+standard = "Synthetic"            # label only
+source = "Contributor-original synthetic values for tests"
+licence = "MPL-2.0"
+
+[[profile]]
+designation = "EX-I300"
+family = "i_shape"
+h = 300.0
+b = 150.0
+tw = 7.0
+tf = 10.0
+r = 15.0
+mass_per_meter_kg = 36.0          # optional declared numbers
+```
+
+**Environment.** A small TOML file naming an ordered list of libraries:
+
+```toml
+[environment]
+id = "cl"
+title = "Chile"
+libraries = ["aisc-shapes", "cold-formed-cl", "user"]
+```
+
+**Lookup order.** Project libraries, then the user's own library, then the environment's
+libraries in order. The first library that has the designation wins; a duplicate inside one
+library is refused when the library is loaded, and a shadowed designation is reported.
+
+**Where files live.** The application data directory holds `environments/` and `libraries/`;
+the active environment is a user setting. The CLI takes `--environment DIR` explicitly, never a
+hidden global, so tests and scripts are reproducible.
+
+**Untrusted input.** A library file is untrusted (`AGENTS.md` section 4): file size and entry
+count are capped before parsing, every entry is admitted by its family rules, a bad entry is
+reported with its file, line and designation and never stops the other entries from loading,
+and nothing in a library can name a path, URL or executable.
+
+**Commands (headless first).**
+
+```text
+beamcraft library-list   --environment DIR [--family F] [--filter TEXT]
+beamcraft library-show   --environment DIR --designation NAME
+beamcraft create-member  --store ROOT --environment DIR --profile NAME --start .. --end ..
+```
+
+`create-member --profile NAME` resolves the entry, defines the profile if it is not in the model
+yet (content-addressed, so it is idempotent) and pins it, in one revision.
+
+**User sections (A07.3).** A user library is the same format in the user's data directory.
+`library-add` writes an admitted entry to it (parametric, cold-formed or `custom` outline), so
+the UI "new profile" dialog of V05 calls the same API.
+
+## 7. Owner decisions needed
+
+* **D1. Library data source.** `AGENTS.md` section 1.2 forbids profile tables copied from a
+  commercial database, and allows public standards or manufacturer data with a licence that
+  allows it, entered as our own data. Proposal: the repository ships the mechanism and one
+  synthetic example library only. Each national library (for example AISC shapes and the ICHA
+  catalogue for Chile, EN 10365 sections for the UK and Europe) is added separately, with its
+  source and licence recorded in `ATTRIBUTION.md`, or kept as a separate data pack outside the
+  open repository if its licence does not allow redistribution. Which sources may be used is
+  the owner's decision.
+* **D2. Radii.** Proposal: model root and corner radii as approximated arcs (more faithful
+  geometry, flagged `Approximated`). The alternative is sharp corners, which gives exact
+  polygons but a visibly wrong shape for cold-formed sections.
+* **D3. Declared-area tolerance** for families with radii (section 5).
+* **D4. Contract amendment.** F04 and F06 0.1.0 name the rectangle as the only initial profile.
+  A07.1 needs an amendment (F04 section 4 profile kinds, F06 section 2 member input) recorded
+  before or with the implementation, as A04 did for holes.
+
+## 8. Work split
+
+| Sub-task | Result | Depends on |
+|---|---|---|
+| A07.1 | Families of section 3 (hot-rolled and cold-formed) and `custom`, kernel `section_member`, layer-engine definition, engine, `define-profile --family`, end-to-end test | D2, D4 |
+| A07.2 | Library and environment files, loader, `library-list`, `library-show`, `create-member --profile NAME`, synthetic example library, end-to-end test | A07.1, D1 |
+| A07.3 | User library and `library-add` for parametric, cold-formed and custom sections | A07.2 |
+| V05 | UI: insert member, pick from the library; new-profile dialog | A07.2, A07.3 |
+
+Each sub-task is its own PR. Completing a sub-task does not complete A07.
+
+## Provenance
+
+Section families and their parameters are generic engineering geometry described in public
+standards (EN 10365, ASTM A6, EN 10162 for cold-formed sections) and textbooks; no dimension
+table, catalogue file or software material is used. The environment and library concept is the
+owner's requirement of 2026-10-18; the file formats are original to this note.
