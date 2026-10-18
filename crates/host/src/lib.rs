@@ -3,6 +3,7 @@
 
 //! Native services above the portable BeamCraft domain crates.
 
+pub mod changeset;
 pub mod dispatch;
 pub mod ids;
 pub mod ledger;
