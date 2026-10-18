@@ -57,9 +57,11 @@ beamcraft definitions   --store ROOT
 7. **Refresh is off the UI thread.** `source::reload` runs the snapshot export, the engine rebuild,
    the scene build and the `definitions` query on a worker; only the GPU upload happens on the UI
    thread when the result is polled. A refresh requested while one runs is queued, so the last
-   one reads the store after the change that asked for it. The snapshot export has no deadline of
-   its own (V03), so a hung CLI would keep the refresh pending (the panel says so) but never
-   blocks a frame.
+   one reads the store after the change that asked for it. The snapshot export runs under the
+   same 120 s deadline as the create commands (`source::load_within`, built on
+   `command::run_capped`; its output cap stays the engine's bundle limit, which a 4 MiB cap would
+   break), so a hung CLI ends in a typed error (`view-export did not finish in time`) shown in the
+   panel instead of an endless refresh.
 8. **Two statuses, never one.** The result of the last Preview/Cancel/Commit and the error of the
    last definitions refresh are separate fields and both are shown, so a refresh failure (which
    also clears the now stale choices) is never overwritten by a success message, including after
@@ -93,7 +95,7 @@ beamcraft definitions   --store ROOT
   reading of created, stale-volume, refusal, unknown-outcome and garbage replies (a forged code is
   not echoed, a zero exit cannot hide a rejection), splitting of definitions, and the state machine
   (commit only what was previewed and only while unchanged, no second commit while busy, cancel).
-- `apps/beamcraft-ui/tests/create_tools.rs` (5, real `beamcraft` binary, no GPU needed):
+- `apps/beamcraft-ui/tests/create_tools.rs` (6, real `beamcraft` binary, no GPU needed):
   - a plate made through the tool mapping and `command::commit` equals the same plate made by
     hand in a second store: same `mesh_digest`, same volume (5 000 000 mm3 for 1000 x 500 x 10),
     same volume algorithm, same world bounds, and the viewport reload pins the manifest digest the
@@ -106,6 +108,8 @@ beamcraft definitions   --store ROOT
     caller with the CLI's own code (`INVALID_ARGUMENT`, `NOT_FOUND`) and message, identical to the
     hand run, and publishes nothing;
   - a missing CLI is `CLI_UNAVAILABLE`, not a hang;
+  - a snapshot export with a zero deadline is stopped and reported as `did not finish in time`;
+    a missing CLI is `CLI_UNAVAILABLE`;
   - `source::reload` run on a spawned thread: on a store without a revision the snapshot and the
     definitions each fail on their own with `NOT_FOUND`; with a revision both succeed.
 - The window (`beamcraft-ui --store ROOT`) was started on Windows (adapter not recorded) and stayed

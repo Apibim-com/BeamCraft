@@ -28,11 +28,14 @@ pub struct Output {
     pub stdout: Vec<u8>,
 }
 
-fn drain(stream: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle<Vec<u8>> {
+fn drain(
+    stream: Option<impl Read + Send + 'static>,
+    cap: usize,
+) -> std::thread::JoinHandle<Vec<u8>> {
     std::thread::spawn(move || {
         let mut bytes = Vec::new();
         if let Some(stream) = stream {
-            let cap = u64::try_from(MAX_OUTPUT).unwrap_or(u64::MAX);
+            let cap = u64::try_from(cap).unwrap_or(u64::MAX);
             let mut limited = stream.take(cap.saturating_add(1));
             if limited.read_to_end(&mut bytes).is_err() {
                 bytes.clear();
@@ -44,8 +47,18 @@ fn drain(stream: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle<
     })
 }
 
-/// Runs `cli args...` and waits for it, at most `deadline`.
+/// Runs `cli args...` and waits for it, at most `deadline`; output is capped at [`MAX_OUTPUT`].
 pub fn run(cli: &Path, args: &[String], deadline: Duration) -> Result<Output, ToolError> {
+    run_capped(cli, args, deadline, MAX_OUTPUT)
+}
+
+/// Like [`run`] with an explicit output cap (more than `cap` bytes of output is an error).
+pub fn run_capped(
+    cli: &Path,
+    args: &[String],
+    deadline: Duration,
+    cap: usize,
+) -> Result<Output, ToolError> {
     let mut command = Command::new(cli);
     command
         .args(args)
@@ -64,7 +77,7 @@ pub fn run(cli: &Path, args: &[String], deadline: Duration) -> Result<Output, To
             format!("the beamcraft CLI could not be started ({})", e.kind()),
         )
     })?;
-    let reader = drain(child.stdout.take());
+    let reader = drain(child.stdout.take(), cap);
     let started = Instant::now();
     let status = loop {
         match child.try_wait() {
@@ -91,7 +104,7 @@ pub fn run(cli: &Path, args: &[String], deadline: Duration) -> Result<Output, To
         }
     };
     let stdout = reader.join().unwrap_or_default();
-    if stdout.len() > MAX_OUTPUT {
+    if stdout.len() > cap {
         return Err(ToolError::local(
             "CLI_FAILED",
             "the CLI reply exceeds the size limit",

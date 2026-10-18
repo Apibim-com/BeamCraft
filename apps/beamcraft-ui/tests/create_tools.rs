@@ -438,3 +438,35 @@ fn a_refresh_runs_off_the_ui_thread_and_keeps_its_two_results_apart() {
     assert_eq!(definitions.profiles.len(), 1);
     assert!(definitions.materials.is_empty());
 }
+
+#[test]
+fn a_snapshot_export_that_misses_its_deadline_is_a_typed_error() {
+    let Some(cli) = cli() else { return };
+    let stores = Stores::new();
+    let ui = stores.ui();
+    ok(
+        &cli,
+        &[
+            "create-plate",
+            "--store",
+            ui.to_str().unwrap(),
+            "--width",
+            "10",
+            "--length",
+            "20",
+            "--thickness",
+            "5",
+        ],
+    );
+    // A zero deadline cannot be met by a process that has just started: it is stopped.
+    match source::load_within(&cli, &ui, std::time::Duration::ZERO) {
+        Err(Error::Cli(message)) => {
+            assert!(message.contains("did not finish in time"), "{message}")
+        }
+        other => panic!("expected a deadline error, got {other:?}"),
+    }
+    // The same call within the default deadline succeeds.
+    assert!(source::load(&cli, &ui).is_ok());
+    let missing = source::load(&stores.root.join("no-such-beamcraft"), &ui);
+    assert!(matches!(missing, Err(Error::Cli(m)) if m.contains("CLI_UNAVAILABLE")));
+}
