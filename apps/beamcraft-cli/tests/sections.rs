@@ -287,3 +287,23 @@ fn bad_section_input_is_refused_with_its_code() {
         "INVALID_ARGUMENT"
     );
 }
+
+#[test]
+fn more_detailed_members_fit_one_revision_than_the_first_slice_allowed() {
+    // The U01 first-slice layer ceilings stopped at 7 such I-sections; the model profile
+    // keeps going. Twelve stay cheap for a debug test run.
+    let f = Fixture::new();
+    let profile = defined(&f, I300);
+    for n in 0..12 {
+        let y = format!("{}", n * 1000);
+        member(
+            &f,
+            "beam",
+            &format!("0,{y},0"),
+            &format!("6000,{y},0"),
+            &profile,
+        );
+    }
+    let inspected = f.ok("plate-inspect", &[]);
+    assert_eq!(num(&inspected, &["member_count"]), 12.0);
+}

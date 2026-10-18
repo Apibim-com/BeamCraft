@@ -208,6 +208,29 @@ fn api_cli_real_worker_parity_without_python_sdk_or_search_paths() {
 }
 
 #[test]
+fn an_array_the_read_protocol_cannot_carry_is_refused_at_open() {
+    // 1024 entries cross the host read protocol; 1025 are refused when the worker opens the layer,
+    // not accepted and then failed during the read (which would stop the worker).
+    for (n, ok) in [(1024usize, true), (1025, false)] {
+        let values = std::iter::repeat_n("1", n).collect::<Vec<_>>().join(",");
+        let bytes = format!(
+            "#usda 1.0\n(metersPerUnit=0.001\nupAxis=\"Z\")\ndef Xform \"P\" {{\ncustom int[] demo:values = [{values}]\n}}\n"
+        )
+        .into_bytes();
+        let fixture = Fixture::new(&bytes);
+        let mut host = Dispatcher::new(fixture.config());
+        let opened = host.execute(HostCommand::Open(fixture.grant()), &control());
+        if ok {
+            let context = opened.unwrap().context.unwrap();
+            let page = read(&mut host, context);
+            assert_eq!(page.body.get("items").unwrap().array().unwrap().len(), 1);
+        } else {
+            assert_eq!(opened.unwrap_err().code, ErrorCode::LimitExceeded);
+        }
+    }
+}
+
+#[test]
 fn corrupt_numeric_plugin_and_digest_faults_are_safe_machine_errors() {
     for (bytes,expected) in [
         (b"this is not a USD layer".to_vec(),ErrorCode::IntegrityError),

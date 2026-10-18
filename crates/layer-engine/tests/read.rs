@@ -58,7 +58,7 @@ fn request(assets: Vec<Asset>) -> OpenRequest {
         manifest: digest(b"pending"),
         backend: BACKEND,
         profile: Profile::StaticLocal,
-        budgets: Budgets::default(),
+        budgets: Budgets::FIRST_SLICE,
     };
     reseal(&mut request);
     request
@@ -724,4 +724,53 @@ fn kind_and_display_name_are_charged_to_the_snapshot_budget() {
             "{key}"
         );
     }
+}
+
+#[test]
+fn the_model_profile_is_the_default_ceiling_and_its_caps_hold_at_plus_one() {
+    // The default ceiling is the model profile; nothing may be raised above it.
+    let (d, m) = (Budgets::default(), Budgets::MODEL);
+    assert_eq!(
+        (
+            d.layer_bytes,
+            d.total_bytes,
+            d.prims,
+            d.values,
+            d.array_items
+        ),
+        (
+            m.layer_bytes,
+            m.total_bytes,
+            m.prims,
+            m.values,
+            m.array_items
+        )
+    );
+    assert_eq!((m.layer_bytes, m.total_bytes), (33_554_432, 67_108_864));
+    let mut above = request(vec![asset("root.usda", model())]);
+    above.budgets = Budgets::MODEL;
+    above.budgets.array_items += 1;
+    assert_eq!(
+        above.manifest_digest().unwrap_err().code,
+        ErrorCode::LimitExceeded
+    );
+    // One element mesh at the engine blob caps fits; one scalar more does not.
+    let at_cap = Budgets::MODEL.array_items;
+    for n in [at_cap, at_cap + 1] {
+        let arr = std::iter::repeat_n("1", n).collect::<Vec<_>>().join(",");
+        let mut req = request(vec![asset(
+            "root.usda",
+            layer(&format!("def Xform \"A\" {{ int[] values = [{arr}] }}")),
+        )]);
+        req.budgets = Budgets::MODEL;
+        reseal(&mut req);
+        assert_eq!(Reader::default().open(req, &control()).is_ok(), n == at_cap);
+    }
+    // A layer one byte above the model ceiling is refused before it is parsed.
+    let mut text = layer("def Xform \"A\" {}");
+    text.push_str(&" ".repeat(Budgets::MODEL.layer_bytes + 1 - text.len()));
+    let mut req = request(vec![asset("root.usda", text)]);
+    req.budgets = Budgets::MODEL;
+    reseal(&mut req);
+    assert_eq!(error(req), ErrorCode::LimitExceeded);
 }

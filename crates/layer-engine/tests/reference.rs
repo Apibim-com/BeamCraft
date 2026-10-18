@@ -955,7 +955,7 @@ fn two_wrappers_may_share_one_stored_source_and_stay_independent() {
 #[test]
 fn foreign_layer_inspection_reports_declarations_and_refuses_unsafe_content() {
     let ctl = control();
-    let info = inspect_foreign_layer(FOREIGN.as_bytes(), Budgets::default(), &ctl).unwrap();
+    let info = inspect_foreign_layer(FOREIGN.as_bytes(), Budgets::FIRST_SLICE, &ctl).unwrap();
     assert_eq!(info.default_prim.as_deref(), Some("Site"));
     assert_eq!(info.meters_per_unit, Some(1.0));
     assert_eq!(info.up_axis.as_deref(), Some("Y"));
@@ -963,13 +963,13 @@ fn foreign_layer_inspection_reports_declarations_and_refuses_unsafe_content() {
     assert_eq!(info.format, SourceFormat::Usda);
     // A source that declares nothing is reported as declaring nothing.
     let bare = "#usda 1.0\n(\n    defaultPrim = \"A\"\n)\ndef Scope \"A\" {}\n";
-    let info = inspect_foreign_layer(bare.as_bytes(), Budgets::default(), &ctl).unwrap();
+    let info = inspect_foreign_layer(bare.as_bytes(), Budgets::FIRST_SLICE, &ctl).unwrap();
     assert_eq!((info.meters_per_unit, info.up_axis.clone()), (None, None));
     let none = "#usda 1.0\ndef Scope \"A\" {}\n";
-    let info = inspect_foreign_layer(none.as_bytes(), Budgets::default(), &ctl).unwrap();
+    let info = inspect_foreign_layer(none.as_bytes(), Budgets::FIRST_SLICE, &ctl).unwrap();
     assert_eq!(info.default_prim, None);
     let check = |text: &str, code: ErrorCode| {
-        let error = inspect_foreign_layer(text.as_bytes(), Budgets::default(), &ctl).unwrap_err();
+        let error = inspect_foreign_layer(text.as_bytes(), Budgets::FIRST_SLICE, &ctl).unwrap_err();
         assert_eq!(error.code, code, "{text:?}: {error}");
     };
     // URLs and escaping identifiers are refused before anything is resolved.
@@ -1037,7 +1037,7 @@ fn foreign_layer_inspection_reports_declarations_and_refuses_unsafe_content() {
     let cancelled = control();
     cancelled.cancellation.cancel();
     assert_eq!(
-        inspect_foreign_layer(FOREIGN.as_bytes(), Budgets::default(), &cancelled)
+        inspect_foreign_layer(FOREIGN.as_bytes(), Budgets::FIRST_SLICE, &cancelled)
             .unwrap_err()
             .code,
         ErrorCode::Cancelled
@@ -1063,7 +1063,7 @@ def Xform "Site"
     let mut buffer = std::io::Cursor::new(Vec::new());
     openusd::usdc::CrateWriter::write(&data, &mut buffer).unwrap();
     let bytes = buffer.into_inner();
-    let info = inspect_foreign_layer(&bytes, Budgets::default(), &control()).unwrap();
+    let info = inspect_foreign_layer(&bytes, Budgets::FIRST_SLICE, &control()).unwrap();
     assert_eq!(info.format, SourceFormat::Usdc);
     assert_eq!(info.default_prim.as_deref(), Some("Site"));
     assert_eq!(info.meters_per_unit, Some(0.01));
@@ -1111,7 +1111,7 @@ fn a_binary_layer_outside_the_restricted_profile_fails_closed_with_a_diagnostic(
     let mut buffer = std::io::Cursor::new(Vec::new());
     openusd::usdc::CrateWriter::write(&data, &mut buffer).unwrap();
     let bytes = buffer.into_inner();
-    match inspect_foreign_layer(&bytes, Budgets::default(), &control()) {
+    match inspect_foreign_layer(&bytes, Budgets::FIRST_SLICE, &control()) {
         Ok(info) => assert_eq!(info.format, SourceFormat::Usdc),
         Err(error) => assert!(
             matches!(
@@ -1124,7 +1124,7 @@ fn a_binary_layer_outside_the_restricted_profile_fails_closed_with_a_diagnostic(
     // A truncated binary layer is an integrity error before anything else.
     let cut = bytes.get(..bytes.len() / 2).unwrap();
     assert_eq!(
-        inspect_foreign_layer(cut, Budgets::default(), &control())
+        inspect_foreign_layer(cut, Budgets::FIRST_SLICE, &control())
             .unwrap_err()
             .code,
         ErrorCode::IntegrityError

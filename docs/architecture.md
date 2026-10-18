@@ -64,6 +64,8 @@ C02 adds a local coordinator (`host::coordinator`, `beamcraft_cli::coordinator` 
 
 A07.1 adds section profiles (`model::section`, `kernel::section`, `Definition::SectionProfile` in the layer engine, `ProfileInfo::Section` in `engine::member` and `define-profile --family`): nine closed parametric families (I, channel, angle, RHS, CHS, lipped C, plain C, lipped Z, omega) and custom outlines are immutable, content-addressed profile definitions; the kernel generates a detailed outline (radii as polygons on the arcs) and a simplified one (sharp corners) centred on the section's bounding box and extrudes the detailed one along the member axis. Only the detailed body is stored so far; profile libraries and environments are A07.2 ([design note](design/a07-section-library.md)).
 
+The layer engine's default stage ceilings are the model profile (`Budgets::MODEL`: 32 MiB per layer, 64 MiB per stage, 32,768 scalars per array, sized from the host blob and verification limits and the engine view caps); the U01 first-slice profile (`Budgets::FIRST_SLICE`) remains for small untrusted inputs such as R01 reference sources ([design note](design/layer-budgets-model-profile.md)).
+
 [Module boundaries (F08)](contracts/module-boundaries-v0.1.md) give the exact crate and module path
 of every contract area, the allowed dependency edges and which crates are planned. A test and CI
 enforce them.

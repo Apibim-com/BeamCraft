@@ -248,7 +248,7 @@ fn pin_source(
     })?;
     let cap = usize::try_from(MAX_SOURCE_BYTES).map_err(|_| integrity("source cap"))?;
     let bytes = read_file(path, cap).map_err(io_error)?;
-    let info = inspect_foreign_layer(&bytes, Budgets::default(), control)?;
+    let info = inspect_foreign_layer(&bytes, Budgets::FIRST_SLICE, control)?;
     let default_prim = info.default_prim.ok_or(PlateError {
         code: ErrorCode::UnsupportedProperty,
         message: "the source declares no defaultPrim; a root prim is never guessed",

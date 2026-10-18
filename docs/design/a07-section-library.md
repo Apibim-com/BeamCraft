@@ -261,10 +261,8 @@ Deviations and limits, recorded rather than hidden:
   and not yet compared with the outline area; the rectangle keeps its P02.2 check.
 * **Volume status.** A section member's volume is `current` for the polygon it stores; the arcs are
   approximated (flagged in the kernel result), as the A04 round holes are.
-* **Layer budgets.** The U01 first-slice ceilings (64 KiB per layer, 1024 items per array) bound
-  model size: a probe stored 7 detailed I-sections 300x150 (or 36 rectangle members) in one
-  revision before `LIMIT_EXCEEDED`. This is not caused by A07.1 but makes it visible; raising the
-  ceilings or storing meshes outside the derived layer text is a separate task.
+* **Layer budgets.** The U01 first-slice ceilings bounded a revision to 7 detailed I-sections; they
+  were replaced by the model profile ([layer budgets](layer-budgets-model-profile.md)).
 * No placement offsets, no rotated placement (P03 rule), no member holes or cuts.
 
 Evidence: `cargo test -p beamcraft-model section`, `cargo test -p beamcraft-kernel --test section`
