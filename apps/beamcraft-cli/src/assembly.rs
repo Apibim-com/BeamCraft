@@ -29,7 +29,7 @@ use beamcraft_engine::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
     Author, Change, EditTargets, Element, Placement as LayerPlacement, Prepare, Shape,
-    schema_identity,
+    schema_identity, validate_layers,
 };
 use beamcraft_layer_engine::{Control, OpenRequest, Prim, Reader};
 use beamcraft_model::command::{
@@ -110,6 +110,9 @@ fn read_prims(
 }
 
 fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, PlateError> {
+    // Stored bytes are verified, not interpreted: the structural rules (A01-V01 among them) run
+    // before the hierarchy is read, so a damaged graph is refused rather than reported or replayed.
+    validate_layers(request.clone(), schema_identity()?, control)?;
     let mut reader = Reader::default();
     let opened = reader.open(request.clone(), control)?;
     let prims = read_prims(&reader, &opened.context, control)?;

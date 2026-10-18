@@ -35,6 +35,13 @@ beamcraft assemblies --store ROOT
 - One assembly per part (`DV-REL-004`): attaching a member of another assembly is
   `DEPENDENCY_CONFLICT` ("detach first"), never a silent re-parent. Attaching to the same assembly
   again with a new `op_id` is `INVALID_ARGUMENT` (no change).
+- A detach authors an explicit empty `bim:partOf` target list rather than removing the spec, so a
+  weaker owned layer's record is masked, never revealed. A `Geometry` mesh under an assembly is
+  refused on authored candidates and loaded layers alike.
+- The layer engine's read set for an attach covers the target's whole chain (with the batch's own
+  records applied), matching `Footprint::for_part_of`. `assemblies` and every A01 command run the
+  structural validator before interpreting the hierarchy, so a cyclic or wrong-kind graph stored
+  through `revision-commit` is refused, not reported or replayed.
 - Nested assemblies are allowed (`DVC-REL-005-P`); there is no depth limit in the vocabulary, so the
   walks are bounded by the element count.
 - `bim:geometryMode` is `parametric` for an assembly to keep the common base uniform; it has no

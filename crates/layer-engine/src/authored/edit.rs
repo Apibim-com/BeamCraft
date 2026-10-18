@@ -802,11 +802,13 @@ pub(super) fn apply(
             )?,
             Change::Placement { placement, .. } => pose(&mut authored, &p, placement)?,
             Change::PartOf { assembly, .. } => {
-                let targets = assembly
-                    .as_deref()
-                    .map(|a| Ok::<_, Diagnostic>(vec![path(&element_path(a)?)?]))
-                    .transpose()?;
-                relationship_targets(&mut authored, &p, "bim:partOf", targets)?;
+                // A detach authors an explicit empty target list, which also masks a weaker
+                // layer's record; removing the spec could reveal it again.
+                let targets = match assembly.as_deref() {
+                    Some(a) => vec![path(&element_path(a)?)?],
+                    None => Vec::new(),
+                };
+                relationship_targets(&mut authored, &p, "bim:partOf", Some(targets))?;
             }
             Change::Delete { .. } => {
                 let inside = format!("{p}/");

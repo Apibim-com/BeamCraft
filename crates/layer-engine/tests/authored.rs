@@ -1882,10 +1882,87 @@ fn assemblies_and_part_of_records_are_authored_on_the_part_and_validated() {
         Some(ErrorCode::DependencyConflict)
     );
 
-    // Detach removes the record; the assembly stays.
+    // Detach authors an explicit empty record; the assembly stays.
     let (_, o) = installed(&mut a, &o, vec![part_of(PLATE, None)]);
     let prims = snapshot(&a, &o.context);
-    assert_eq!(targets_of(&prims, PLATE), None);
+    assert_eq!(targets_of(&prims, PLATE), Some(vec![]));
     assert_eq!(targets_of(&prims, MEMBER), Some(vec![path(FRAME)]));
     assert!(prims.iter().any(|p| p.path == path(FRAME)));
+}
+
+#[test]
+fn an_assembly_never_gets_a_body_reads_cover_the_chain_and_detach_masks_weaker_records() {
+    let (mut a, o) = populated();
+    // Create and mesh in one batch: the existing-element kind guard does not apply, the
+    // candidate check must.
+    let mut body = mesh();
+    body.id = FRAME.into();
+    let refused = a
+        .prepare(
+            batch(
+                &o.context,
+                vec![assembly(FRAME, "Frame"), Change::Mesh(body)],
+            ),
+            &control(),
+        )
+        .err()
+        .map(|e| e.code);
+    assert_eq!(refused, Some(ErrorCode::UnsupportedProperty));
+
+    let (_, o) = installed(
+        &mut a,
+        &o,
+        vec![
+            assembly(FRAME, "Frame"),
+            assembly(OUTER, "Outer"),
+            part_of(FRAME, Some(OUTER)),
+        ],
+    );
+    // Attaching to FRAME reads the whole chain FRAME -> OUTER.
+    let p = a
+        .prepare(
+            batch(&o.context, vec![part_of(PLATE, Some(FRAME))]),
+            &control(),
+        )
+        .unwrap();
+    for id in [FRAME, OUTER] {
+        for group in [Group::Lifecycle, Group::Relationship] {
+            assert!(
+                p.reads.contains(&Footprint {
+                    identity: id.into(),
+                    group
+                }),
+                "{id} {group:?}"
+            );
+        }
+    }
+    a.discard(
+        &o.context,
+        &p.token,
+        &p.op_id,
+        Decision::Undecided,
+        &control(),
+    )
+    .unwrap();
+
+    // A weaker owned layer supplies the membership; a detach must still end it.
+    let mut weak = export_request(&a, &o.context);
+    let text = format!(
+        "over \"World\" {{ over \"Steel\" {{ over \"E_{}\" {{ custom rel bim:partOf = <{}> }} }} }}",
+        PLATE.replace('-', ""),
+        path(FRAME)
+    );
+    *weak
+        .assets
+        .iter_mut()
+        .find(|l| l.name == "weak.usda")
+        .unwrap() = asset("weak.usda", layer(&text));
+    weak.manifest = weak.manifest_digest().unwrap();
+    let (mut a, o) = open(weak);
+    assert_eq!(
+        targets_of(&snapshot(&a, &o.context), PLATE),
+        Some(vec![path(FRAME)])
+    );
+    let (_, o) = installed(&mut a, &o, vec![part_of(PLATE, None)]);
+    assert_eq!(targets_of(&snapshot(&a, &o.context), PLATE), Some(vec![]));
 }

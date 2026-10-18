@@ -10,6 +10,11 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+use beamcraft_host::{
+    ids::IdSource,
+    revision::{ExpectedBase, LayerEntry, NoFault, RevisionDraft, RevisionStore, Uuid7},
+    storage::BlobStore,
+};
 use beamcraft_protocol::{
     json::{self, Json},
     message,
@@ -104,6 +109,41 @@ impl Fixture {
             "assembly-attach",
             &["--id", part, "--assembly-id", assembly],
         )
+    }
+    /// Commits a head-based revision with edited layer text and no content verification, the way
+    /// a layer edited outside BeamCraft would arrive through `revision-commit`.
+    fn tamper(&self, edit: impl Fn(&str, String) -> String) {
+        let store = RevisionStore::new(BlobStore::new(self.root.join("store")).unwrap());
+        let head = store.open().unwrap();
+        let content = head.manifest().content();
+        let mut ids = IdSource::system();
+        let mut entries = Vec::new();
+        for entry in content.entries() {
+            let original = String::from_utf8(head.layer_bytes(entry.name()).unwrap()).unwrap();
+            let edited = edit(entry.name(), original);
+            store.blobs().publish(edited.as_bytes()).unwrap();
+            entries.push(
+                LayerEntry::from_bytes(entry.name(), entry.role(), edited.as_bytes()).unwrap(),
+            );
+        }
+        let draft = RevisionDraft {
+            project: content.project().clone(),
+            workspace: content.workspace().clone(),
+            revision: Uuid7::parse(&ids.next_id().unwrap().to_string()).unwrap(),
+            op: Uuid7::parse(&ids.next_id().unwrap().to_string()).unwrap(),
+            workspace_generation: content.workspace_generation() + 1,
+            schema: content.schema(),
+            root_layer: content.root_layer().to_owned(),
+            entries,
+        };
+        store
+            .commit_with(
+                &draft,
+                &ExpectedBase::Revision(head.info().revision().clone()),
+                None,
+                &mut NoFault,
+            )
+            .unwrap();
     }
     fn assemblies(&self) -> Vec<Json> {
         list(&self.ok("assemblies", &[]), "assemblies").to_vec()
@@ -312,4 +352,30 @@ fn replay_reuse_delete_and_copy_follow_the_part_of_records() {
     let deleted = f.ok("delete-element", &["--id", FRAME]);
     assert_eq!(text(&deleted, "kind"), "assembly");
     assert!(f.assemblies().is_empty());
+}
+
+#[test]
+fn a_cycle_stored_outside_beamcraft_is_refused_when_read() {
+    let f = Fixture::new();
+    f.assembly(FRAME, "Frame");
+    f.assembly(OUTER, "Outer");
+    f.attach(FRAME, OUTER);
+    // OUTER -> FRAME closes a two-cycle that no command would author.
+    let outer = format!("E_{}", OUTER.replace('-', ""));
+    let frame_path = format!("/World/Steel/E_{}", FRAME.replace('-', ""));
+    f.tamper(|name, text| {
+        if name != "authored.usda" {
+            return text;
+        }
+        let at = text.find(&format!("\"{outer}\"")).unwrap();
+        let open = at + text[at..].find('{').unwrap() + 1;
+        format!(
+            "{}\n        custom rel bim:partOf = <{frame_path}>{}",
+            &text[..open],
+            &text[open..]
+        )
+    });
+    let (code, body) = f.run("assemblies", &[]);
+    assert_eq!(code, 2, "{body:?}");
+    assert_eq!(text(&body, "code"), "DEPENDENCY_CONFLICT");
 }

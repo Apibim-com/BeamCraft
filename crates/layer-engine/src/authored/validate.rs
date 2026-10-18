@@ -554,6 +554,10 @@ pub(super) fn snapshot(
         else {
             continue;
         };
+        // An assembly has no body: a Geometry mesh under one is refused, authored or loaded.
+        if supported_kind(element) == Some("assembly") {
+            return Err(unsupported());
+        }
         let id = element.element_id.clone().ok_or_else(invalid)?;
         let key = text(p, "bim:shapeKey", "string")?
             .parse::<ContentDigest>()
@@ -756,6 +760,42 @@ fn part_of(prims: &[Prim]) -> Result<(), Diagnostic> {
     Ok(())
 }
 
+/// The `part-of` chain from `start` upwards: `start`, its assembly, that one's assembly, and so on.
+/// The batch's own `PartOf` changes override the composed records. The walk stops at a repeated
+/// element (a cycle, refused later by the candidate check) and is bounded by the prim count.
+fn chain(prims: &[Prim], changes: &[Change], start: &str) -> Vec<String> {
+    let id_of_path: BTreeMap<&str, &str> = prims
+        .iter()
+        .filter_map(|p| Some((p.path.as_str(), p.element_id.as_deref()?)))
+        .collect();
+    let mut parent: BTreeMap<String, Option<String>> = BTreeMap::new();
+    for p in prims {
+        let (Some(id), Some(r)) = (p.element_id.as_deref(), relationship(p, "bim:partOf")) else {
+            continue;
+        };
+        let target = match r.targets.as_slice() {
+            [target] => id_of_path.get(target.as_str()).map(|t| (*t).to_owned()),
+            _ => None,
+        };
+        parent.insert(id.to_owned(), target);
+    }
+    for change in changes {
+        if let Change::PartOf { id, assembly } = change {
+            parent.insert(id.clone(), assembly.clone());
+        }
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut at = Some(start.to_owned());
+    while let Some(node) = at {
+        if out.contains(&node) || out.len() > prims.len().saturating_add(changes.len()) {
+            break;
+        }
+        at = parent.get(&node).cloned().flatten();
+        out.push(node);
+    }
+    out
+}
+
 pub(super) fn changes(
     input: &Prepare,
     prims: &[Prim],
@@ -883,12 +923,15 @@ pub(super) fn changes(
             if !uuid7(target) {
                 return Err(fail(ErrorCode::InvalidId, "invalid full element identity"));
             }
-            // The target's existence, kind and its own chain decide acceptance (cycle check).
-            for group in [Group::Lifecycle, Group::Relationship] {
-                reads.insert(Footprint {
-                    identity: target.clone(),
-                    group,
-                });
+            // The target's existence and kind and its whole chain decide acceptance (cycle check),
+            // so every assembly on the chain is read, with this batch's own records applied.
+            for ancestor in chain(prims, &input.changes, target) {
+                for group in [Group::Lifecycle, Group::Relationship] {
+                    reads.insert(Footprint {
+                        identity: ancestor.clone(),
+                        group,
+                    });
+                }
             }
         }
         if !matches!(
