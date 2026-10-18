@@ -1180,7 +1180,7 @@ thread_local! {
 }
 
 /// D1: an explicit project claim of the current thread, held until dropped. While it is held every
-/// revision this thread authors is built on a base of that project: [`load_base`] refuses a head
+/// revision this thread authors is built on a base of that project: `load_base` refuses a head
 /// of another project with `INVALID_ARGUMENT` and a first revision records the claimed one. The
 /// CLI holds one per command that names `--project-id`; a library caller that names a project
 /// holds one too. Claims nest and restore the previous one.
@@ -1205,7 +1205,7 @@ impl Drop for ProjectClaim {
 /// D1: an early, typed check of a project id that the caller names explicitly: a store without a
 /// revision accepts any (the first revision records it); a store with one refuses a different id
 /// with `INVALID_ARGUMENT`. It is advisory: the binding check is the [`ProjectClaim`] that
-/// [`load_base`] compares with the base it builds on. Callers that give no id take the store's.
+/// `load_base` compares with the base it builds on. Callers that give no id take the store's.
 pub fn ensure_project(store: &RevisionStore, claimed: &ProjectId) -> Result<(), PlateError> {
     match store.open() {
         Ok(head) if head.manifest().content().project().as_str() == claimed.to_string() => Ok(()),
