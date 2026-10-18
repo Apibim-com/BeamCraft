@@ -1,0 +1,85 @@
+// SPDX-License-Identifier: MPL-2.0
+// SPDX-FileCopyrightText: 2026 Apibim
+
+//! V03: the native BeamCraft window and viewport.
+//!
+//! The viewport shows the accepted (published) revision of a store. Its input is the engine's
+//! pinned view snapshot, produced by the headless CLI (`beamcraft view-export --out -`) in a
+//! separate process and rebuilt here with [`beamcraft_engine::ViewSnapshot::from_bundle`], which
+//! re-validates every blob, digest and the token. The renderer computes no engineering geometry:
+//! it decodes the engine's element-local meshes, derives display-only flat normals, and draws
+//! each distinct mesh once with one instance per element placement.
+//!
+//! Units: the model is in millimetres (right-handed, Z up). The scene is re-centred on the
+//! engineering bounds in f64 before conversion to f32, so large world coordinates keep their
+//! precision on the GPU.
+
+pub mod app;
+pub mod camera;
+pub mod metrics;
+pub mod render;
+pub mod scene;
+pub mod source;
+
+/// A bounded viewport failure; adapter absence is reported, never replaced by a fake result.
+#[derive(Debug)]
+pub enum Error {
+    /// A caller argument or camera input is out of range or not finite.
+    Input(&'static str),
+    /// The engine refused the snapshot or one of its meshes.
+    View(beamcraft_engine::ViewError),
+    /// The CLI process failed or answered with a rejection.
+    Cli(String),
+    /// No native graphics adapter exists.
+    NoAdapter,
+    /// Graphics device, validation, mapping or completion failure.
+    Graphics(String),
+    /// A bounded CPU allocation could not be reserved.
+    Allocation,
+    /// A file or process operation failed.
+    Io(std::io::Error),
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Input(what) => write!(f, "invalid input: {what}"),
+            Self::View(e) => write!(f, "view snapshot refused: {}", e.code().as_str()),
+            Self::Cli(message) => write!(f, "beamcraft CLI: {message}"),
+            Self::NoAdapter => f.write_str("no native graphics adapter"),
+            Self::Graphics(message) => write!(f, "graphics: {message}"),
+            Self::Allocation => f.write_str("allocation refused"),
+            Self::Io(e) => write!(f, "I/O: {}", e.kind()),
+        }
+    }
+}
+
+impl std::error::Error for Error {}
+
+impl From<beamcraft_engine::ViewError> for Error {
+    fn from(error: beamcraft_engine::ViewError) -> Self {
+        Self::View(error)
+    }
+}
+
+/// Fallibly parses face 0 with the parser epaint uses at font init, which panics on failure.
+pub fn check_font(bytes: &[u8]) -> Result<(), Error> {
+    skrifa::FontRef::from_index(bytes, 0)
+        .map(|_| ())
+        .map_err(|_| Error::Input("font file does not parse"))
+}
+
+/// JSON string escaping without a serialization dependency.
+pub fn json_string(s: &str) -> String {
+    let mut out = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}

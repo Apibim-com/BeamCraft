@@ -1,0 +1,33 @@
+[package]
+name = "beamcraft-ui"
+default-run = "beamcraft-ui"
+description = "Native BeamCraft window and viewport."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[[bin]]
+name = "beamcraft-ui"
+path = "src/main.rs"
+
+# Pins follow docs/audits/ui-stack-audit-v0.1.md: default features off, so `default_fonts`
+# (Ubuntu/Bitstream licences) is never enabled; the UI font is the admitted Inter read at run
+# time from assets/fonts/inter. The PdfCraft vendor patches and craft-libs are not used.
+# `accesskit` is off: on Linux it pulls zbus 5 crates (zbus_names, zvariant, zvariant_derive)
+# that RustSec now flags as unmaintained; re-enabling it is an owner decision on those advisories.
+[dependencies]
+beamcraft-model.workspace = true
+beamcraft-engine = { path = "../../crates/engine", version = "0.0.1" }
+egui = { version = "=0.36.2", default-features = false }
+eframe = { version = "=0.36.2", default-features = false, features = ["wgpu_no_default_features", "links", "wayland", "x11"] }
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "wgsl", "dx12", "vulkan", "metal"] }
+pollster = "=1.0.1"
+# The parser epaint 0.36.2 uses at font init; validates Inter before egui can panic on it.
+skrifa = "=0.44.0"
+
+[lints]
+workspace = true
