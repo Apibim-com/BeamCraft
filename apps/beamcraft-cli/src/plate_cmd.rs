@@ -1506,6 +1506,19 @@ pub(crate) fn definition_json(digest: &ContentDigest, record: &DefinitionRecord)
                 }
             }
             section_fields(&mut fields, section)?;
+            fields.push((
+                "declared_area_warning",
+                match record.declared_area_warning() {
+                    Some(w) => Json::object([
+                        ("declared_mm2", num(w.declared_mm2)?),
+                        ("kernel_mm2", num(w.kernel_mm2)?),
+                        ("relative_difference", num(w.relative_difference)?),
+                        ("threshold", num(w.threshold)?),
+                        ("threshold_percent", num(w.threshold * 100.0)?),
+                    ]),
+                    None => Json::Null,
+                },
+            ));
         }
     }
     Ok(Json::Object(

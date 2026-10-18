@@ -375,6 +375,7 @@ fn hostile_and_damaged_libraries_are_refused_without_a_crash() {
 #[test]
 fn a_bad_entry_is_reported_and_the_other_entries_still_load() {
     let f = Fixture::new();
+    // A catalogue area that disagrees with the outline is a warning, not a bad entry.
     let wrong_area = format!("{I_BODY}double steel:profile:areaMm2 = 5000\n");
     let incomplete = "token steel:profile:family = \"i_shape\"\ndouble steel:profile:hMm = 300\n";
     let nan = format!("{I_BODY}double steel:profile:massPerMeterKg = -1\n");
@@ -392,19 +393,49 @@ fn a_bad_entry_is_reported_and_the_other_entries_still_load() {
     );
     let listed = f.raw(&["library-list", "--library", &library]);
     assert_eq!(listed.0, 0, "{:?}", listed.1);
-    assert_eq!(num(&listed.1, &["entry_count"]), 1.0);
+    assert_eq!(num(&listed.1, &["entry_count"]), 2.0);
     let rejected = at(&listed.1, &["rejected"]).array().unwrap();
-    assert_eq!(rejected.len(), 4);
+    assert_eq!(rejected.len(), 3);
     for entry in rejected {
         assert_eq!(text(entry, "code"), "INVALID_ARGUMENT");
         assert!(text(entry, "prim_path").starts_with("/Library/Profiles/"));
         assert!(text(entry, "designation").starts_with("T-"));
     }
+    // The warning is reported in the listing, and only for the entry that disagrees.
+    let entries = at(&listed.1, &["entries"]).array().unwrap();
+    let warning_of = |designation: &str| {
+        entries
+            .iter()
+            .find(|e| text(e, "designation") == designation)
+            .unwrap()
+            .get("declared_area_warning")
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(warning_of("T-GOOD"), Json::Null);
+    let warning = warning_of("T-AREA");
+    assert_eq!(num(&warning, &["declared_mm2"]), 5000.0);
+    assert!(num(&warning, &["kernel_mm2"]) > 5100.0);
+    assert!(num(&warning, &["relative_difference"]) > 0.01);
+    assert_eq!(num(&warning, &["threshold_percent"]), 1.0);
     f.ok(
         "define-profile",
         &["--library", &library, "--designation", "T-GOOD"],
     );
-    for bad in ["T-AREA", "T-PART", "T-MASS", "T-FAM"] {
+    let created = f.ok(
+        "define-profile",
+        &["--library", &library, "--designation", "T-AREA"],
+    );
+    assert_eq!(text(&created, "outcome"), "definition_created");
+    assert_eq!(num(&created, &["definition", "area_mm2"]), 5000.0);
+    assert_eq!(
+        num(
+            &created,
+            &["definition", "declared_area_warning", "declared_mm2"]
+        ),
+        5000.0
+    );
+    for bad in ["T-PART", "T-MASS", "T-FAM"] {
         let body = f.rejected(
             "define-profile",
             &["--library", &library, "--designation", bad],
@@ -413,9 +444,81 @@ fn a_bad_entry_is_reported_and_the_other_entries_still_load() {
     }
     assert_eq!(
         sequence(&f.ok("define-material", &["--density", "1"])),
-        2,
+        3,
         "the refused entries published nothing"
     );
+}
+
+#[test]
+fn a_declared_section_area_that_disagrees_with_the_outline_warns_and_malformed_ones_are_refused() {
+    let f = Fixture::new();
+    let tube = |area: &'static str| {
+        vec![
+            "--family",
+            "chs",
+            "--d",
+            "114",
+            "--t",
+            "5",
+            "--designation",
+            "TUBE",
+            "--area-mm2",
+            area,
+        ]
+    };
+    // A ring of 114 x 5 mm has about 1,712 mm2.
+    let agrees = f.ok("define-profile", &tube("1712"));
+    assert_eq!(
+        at(&agrees, &["definition"])
+            .get("declared_area_warning")
+            .unwrap(),
+        &Json::Null
+    );
+    // A catalogue value far from the outline is kept as declared and reported.
+    let differs = f.ok("define-profile", &tube("2000"));
+    assert_eq!(text(&differs, "outcome"), "definition_created");
+    let definition = at(&differs, &["definition"]);
+    assert_eq!(num(definition, &["area_mm2"]), 2000.0);
+    let warning = at(definition, &["declared_area_warning"]);
+    assert_eq!(num(warning, &["declared_mm2"]), 2000.0);
+    assert!((num(warning, &["kernel_mm2"]) - 1712.0).abs() < 17.0);
+    assert!((num(warning, &["relative_difference"]) - 0.168).abs() < 0.01);
+    assert_eq!(num(warning, &["threshold"]), 0.01);
+    assert_eq!(num(warning, &["threshold_percent"]), 1.0);
+    // The same warning is listed from the stored definition in a fresh process.
+    let listed = f.ok("definitions", &["--name", "TUBE"]);
+    let warnings = at(&listed, &["definitions"])
+        .array()
+        .unwrap()
+        .iter()
+        .filter(|d| d.get("declared_area_warning").unwrap() != &Json::Null)
+        .count();
+    assert_eq!(warnings, 1);
+    // The warned definition is a normal definition: a member can pin it by digest.
+    let member = f.ok(
+        "create-member",
+        &[
+            "--start",
+            "0,0,0",
+            "--end",
+            "0,0,1000",
+            "--profile-digest",
+            &digest_of(&differs),
+        ],
+    );
+    assert_eq!(text(&member, "outcome"), "member_created");
+    // Malformed values are still refused.
+    for bad in ["0", "-5", "NaN", "inf", "2e12"] {
+        let (code, _) = f.run("define-profile", &tube(bad));
+        assert_eq!(code, 2, "{bad}");
+    }
+    // The rectangle keeps its refusing 0.1 percent check (P02.2).
+    let (code, body) = f.run(
+        "define-profile",
+        &["--width", "200", "--height", "300", "--area-mm2", "70000"],
+    );
+    assert_eq!(code, 2, "{body:?}");
+    assert_eq!(text(&body, "code"), "INVALID_ARGUMENT");
 }
 
 #[test]

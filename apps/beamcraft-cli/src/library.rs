@@ -250,7 +250,9 @@ fn command(error: CommandError) -> PlateError {
 
 const DAMAGED_OUTLINE: &str = "the custom outline attributes are inconsistent";
 
-/// The profile definition of one entry prim, admitted for publication.
+/// The profile definition of one entry prim, admitted by the F04 value rules. A declared area
+/// that disagrees with the outline is not a reason to refuse the entry (see
+/// [`DefinitionRecord::declared_area_warning`]).
 fn decode_record(prim: &Prim, designation: &str) -> Result<DefinitionRecord, PlateError> {
     let section = SectionProperties {
         designation: Some(designation.to_owned()),
@@ -305,7 +307,7 @@ fn decode_record(prim: &Prim, designation: &str) -> Result<DefinitionRecord, Pla
             }
         }
     };
-    record.admit_for_publication().map_err(command)?;
+    record.validate().map_err(command)?;
     Ok(record)
 }
 
@@ -493,12 +495,19 @@ mod tests {
     }
 
     #[test]
-    fn a_declared_area_that_contradicts_the_outline_refuses_the_entry() {
+    fn a_declared_area_that_contradicts_the_outline_loads_and_warns() {
         let wrong = format!("{I_BODY}            double steel:profile:areaMm2 = 5000\n");
         let text = library(&[entry("A", "T-AREA", &wrong)]);
         let loaded = load_text("area.usda", &text).unwrap();
-        assert!(loaded.entries.is_empty());
-        assert_eq!(loaded.rejected.len(), 1);
+        assert!(loaded.rejected.is_empty());
+        let found = loaded.entry("T-AREA").unwrap();
+        assert!(matches!(
+            &found.record,
+            DefinitionRecord::SectionProfile { section, .. } if section.area_mm2 == Some(5000.0)
+        ));
+        let warning = found.record.declared_area_warning().unwrap();
+        assert_eq!(warning.declared_mm2, 5000.0);
+        assert!(warning.relative_difference > 0.01);
     }
 
     #[test]

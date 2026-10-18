@@ -222,34 +222,45 @@ pub struct SectionProfileSpec {
 }
 
 impl SectionProfileSpec {
-    /// Admits the shape and the declared values. A declared area is compared with the area of
-    /// the generated outline by the engine, which owns the kernel; this crate cannot compute it.
+    /// Admits the shape and the declared values. The declared area is a catalogue value and is
+    /// never refused for disagreeing with the outline; [`Self::declared_area_warning`] reports it.
     pub fn validate(&self) -> Result<(), CommandError> {
         self.shape.validate()?;
         self.section.validate()
     }
 
     /// Compares the declared area, if any, with the net area of the generated outline in mm2
-    /// (computed by the caller): a gap above 1 percent (`DECLARED_SECTION_AREA_TOLERANCE`) is
-    /// `INVALID_ARGUMENT`, never resolved silently to one of the two numbers. No declared area
-    /// is always accepted.
-    pub fn check_declared_area(&self, outline_area_mm2: f64) -> Result<(), CommandError> {
-        let Some(declared) = self.section.area_mm2 else {
-            return Ok(());
-        };
-        if !outline_area_mm2.is_finite()
-            || outline_area_mm2 <= 0.0
-            || (declared - outline_area_mm2).abs()
-                > DECLARED_SECTION_AREA_TOLERANCE * outline_area_mm2
-        {
-            return Err(CommandError::new(
-                ErrorCode::InvalidArgument,
-                "area_mm2",
-                "declared area differs from the outline area",
-            ));
+    /// (computed by the caller, which owns the kernel). A relative gap above 1 percent
+    /// (`DECLARED_SECTION_AREA_TOLERANCE`) is a warning, never a refusal: owner decision D3
+    /// (2026-10-18), catalogue values are authoritative. No declared area, or an outline area
+    /// that is not a positive finite number, gives no warning.
+    pub fn declared_area_warning(&self, outline_area_mm2: f64) -> Option<DeclaredAreaWarning> {
+        let declared = self.section.area_mm2?;
+        if !outline_area_mm2.is_finite() || outline_area_mm2 <= 0.0 {
+            return None;
         }
-        Ok(())
+        let relative_difference = (declared - outline_area_mm2).abs() / outline_area_mm2;
+        (relative_difference > DECLARED_SECTION_AREA_TOLERANCE).then_some(DeclaredAreaWarning {
+            declared_mm2: declared,
+            kernel_mm2: outline_area_mm2,
+            relative_difference,
+            threshold: DECLARED_SECTION_AREA_TOLERANCE,
+        })
     }
+}
+
+/// A declared section area that differs from the kernel's outline area by more than the
+/// threshold. Informational: the definition is created and keeps the declared value.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DeclaredAreaWarning {
+    /// The declared (catalogue) area in mm2.
+    pub declared_mm2: f64,
+    /// The net area of the generated outline in mm2.
+    pub kernel_mm2: f64,
+    /// `|declared - kernel| / kernel`.
+    pub relative_difference: f64,
+    /// The relative threshold that was exceeded (0.01).
+    pub threshold: f64,
 }
 
 #[cfg(test)]
@@ -340,7 +351,7 @@ mod tests {
     }
 
     #[test]
-    fn declared_section_area_is_compared_with_the_outline_within_one_percent() {
+    fn a_declared_section_area_beyond_one_percent_is_a_warning_not_a_refusal() {
         use crate::section::{ParametricSection, SectionFamily};
         let spec = |area: Option<f64>| SectionProfileSpec {
             shape: SectionShape::Parametric(
@@ -351,18 +362,24 @@ mod tests {
                 ..SectionProperties::default()
             },
         };
-        assert_eq!(spec(None).check_declared_area(1000.0), Ok(()));
-        assert_eq!(spec(Some(1009.0)).check_declared_area(1000.0), Ok(()));
-        assert_eq!(spec(Some(991.0)).check_declared_area(1000.0), Ok(()));
-        let refused = |declared, outline| {
-            spec(Some(declared))
-                .check_declared_area(outline)
-                .map_err(|e| e.code)
-        };
-        assert_eq!(refused(1011.0, 1000.0), Err(ErrorCode::InvalidArgument));
-        assert_eq!(refused(989.0, 1000.0), Err(ErrorCode::InvalidArgument));
-        assert_eq!(refused(1000.0, f64::NAN), Err(ErrorCode::InvalidArgument));
-        assert_eq!(refused(1000.0, 0.0), Err(ErrorCode::InvalidArgument));
+        // The spec itself is admitted whatever the declared area is.
+        assert!(spec(Some(1.0)).validate().is_ok());
+        assert_eq!(spec(None).declared_area_warning(1000.0), None);
+        assert_eq!(spec(Some(1009.0)).declared_area_warning(1000.0), None);
+        assert_eq!(spec(Some(991.0)).declared_area_warning(1000.0), None);
+        let warning = spec(Some(1100.0)).declared_area_warning(1000.0).unwrap();
+        assert_eq!(warning.declared_mm2, 1100.0);
+        assert_eq!(warning.kernel_mm2, 1000.0);
+        assert!((warning.relative_difference - 0.1).abs() < 1e-12);
+        assert_eq!(warning.threshold, 0.01);
+        assert!(spec(Some(989.0)).declared_area_warning(1000.0).is_some());
+        // An outline area that cannot be compared gives no warning.
+        assert_eq!(spec(Some(1000.0)).declared_area_warning(f64::NAN), None);
+        assert_eq!(spec(Some(1000.0)).declared_area_warning(0.0), None);
+        // Malformed declared values are still refused.
+        for bad in [f64::NAN, 0.0, -5.0, 2e12] {
+            assert!(spec(Some(bad)).validate().is_err(), "{bad}");
+        }
     }
 
     #[test]

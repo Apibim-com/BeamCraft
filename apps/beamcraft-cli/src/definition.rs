@@ -30,7 +30,7 @@ use crate::plate::{
 use crate::plate::{decode_polygon, decode_polygons};
 use beamcraft_engine::command::MaterialInfo;
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
-use beamcraft_engine::member::{ProfileInfo, admit_section_profile};
+use beamcraft_engine::member::{ProfileInfo, declared_section_area_warning};
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
     Author, Definition, EditTargets, Prepare, Resource, schema_identity,
@@ -38,7 +38,7 @@ use beamcraft_layer_engine::authored::{
 use beamcraft_layer_engine::{Prim, Reader, Value};
 use beamcraft_model::command::{CommandError, label_is_valid};
 use beamcraft_model::definition::{
-    MaterialSpec, RectangleProfileSpec, SectionProfileSpec, SectionProperties,
+    DeclaredAreaWarning, MaterialSpec, RectangleProfileSpec, SectionProfileSpec, SectionProperties,
 };
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
@@ -182,17 +182,18 @@ impl DefinitionRecord {
         }
     }
 
-    /// Admission for publication: [`Self::validate`] and, for a section profile that declares an
-    /// area, the agreement of that area with the generated outline (A07.2, decision D3 pending).
-    /// A committed definition is read with `validate` only, so a store published before this
-    /// check stays readable.
-    pub fn admit_for_publication(&self) -> Result<(), CommandError> {
+    /// The warning for a section profile whose declared area differs from the generated outline
+    /// by more than 1 percent (owner decision D3: catalogue values are authoritative, so this
+    /// is reported and never refuses). `None` for every other definition and when it agrees.
+    pub fn declared_area_warning(&self) -> Option<DeclaredAreaWarning> {
         match self {
-            Self::SectionProfile { shape, section } => admit_section_profile(&SectionProfileSpec {
-                shape: shape.clone(),
-                section: section.clone(),
-            }),
-            _ => self.validate(),
+            Self::SectionProfile { shape, section } => {
+                declared_section_area_warning(&SectionProfileSpec {
+                    shape: shape.clone(),
+                    section: section.clone(),
+                })
+            }
+            _ => None,
         }
     }
 
@@ -587,7 +588,6 @@ pub fn define(
     hook: &mut dyn CommitHook,
 ) -> Result<Defined, PlateError> {
     let control = control();
-    request.definition.admit_for_publication()?;
     let resource = request.definition.resource()?;
     let digest = resource.digest;
     let (head, base) = load_base(store, &request.project, &request.workspace)?;
@@ -1104,7 +1104,7 @@ mod tests {
         let fitted = name(material(Some(7850.0), Some(&long)));
         assert_eq!(fitted, long);
         let record = material(Some(7850.0), Some(&long)).named(None);
-        assert!(record.admit_for_publication().is_ok());
+        assert!(record.validate().is_ok());
         assert!(matches!(
             record,
             DefinitionRecord::Material { density_kg_m3: Some(d), grade: Some(_), .. } if d == 7850.0
