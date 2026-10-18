@@ -49,6 +49,13 @@ beamcraft welds --store ROOT
   the P08 incoming-link index); deleting the weld removes its own record. Copying a weld is
   `DEPENDENCY_CONFLICT` (`DV-REL-011`); copying a welded part is allowed and leaves the weld on the
   original.
+- **Replay is bound to the operation's own revision.** The host ledger proves that an `op_id`
+  committed; the request it committed is read from that revision (the weld must be present there
+  and absent from the revision before), never from the head, so a later weld with matching
+  arguments under a reused `op_id` is `OP_ID_REUSE`, not a replay.
+- **Only supported content is interpreted.** `welds` and `create-weld` read kinds only from owned,
+  `0.1.0`, `parametric` elements, as the structural validator does; a newer-schema or foreign
+  `connection` stays inert and is never decoded as a weld.
 - **Stored bytes are verified, not interpreted.** `welds` and `create-weld` run the structural
   validator first, so a damaged `connects` record committed through `revision-commit` is refused
   rather than reported or replayed.
@@ -74,14 +81,15 @@ used.
 
 ## Evidence
 
-- `apps/beamcraft-cli/tests/welds.rs` (3 end-to-end tests through the binary): a weld writes only
+- `apps/beamcraft-cli/tests/welds.rs` (5 end-to-end tests through the binary): a weld writes only
   `authored.usda` and only its own footprint groups, reads both parts, lists back with every
   property, leaves the parts' bodies and the view unchanged; replay and `OP_ID_REUSE`; delete of a
   welded part and copy of a weld are `DEPENDENCY_CONFLICT`; deleting the welds then the part
   works. Refusals of same part twice, unknown part, assembly or weld as a part, a weld that is its
   own part, a taken identity, each missing property, bad tokens, out-of-range and non-finite sizes,
   an unsupported type and an unknown option write no revision. A tampered one-target record is
-  refused on read.
+  refused on read. An `op_id` reused for another weld is `OP_ID_REUSE`; a newer-schema connection
+  beside a supported weld stays inert.
 - `crates/layer-engine/tests/authored.rs` adds two layer tests (authoring, model kind, ordered
   targets, no body, reported opinions, atomic refusals, loaded-content cardinality, kind and token
   checks, delete and copy evidence from the element index).

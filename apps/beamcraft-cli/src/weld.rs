@@ -12,16 +12,17 @@
 //! parts' kinds from the head model; the layer engine re-checks the same rules on the candidate
 //! and the strict verifier on the committed bytes.
 //!
-//! Honesty limits: replay of an `op_id` is decided from the head state, as in `assembly` (a
-//! creation is a replay when the head holds exactly this weld). No command renames, edits or
+//! Replay of an `op_id` is decided from the revision the host ledger recorded for it: the
+//! operation is a replay only when that revision created exactly this weld (present there, absent
+//! from the revision before), whatever the head holds now. No command renames, edits or
 //! moves a weld yet; its placement is the identity. Deleting a welded part is `DEPENDENCY_CONFLICT` while the weld connects it (no cascade); deleting the weld
 //! is `delete-element`. Copying a weld is refused (`DV-REL-011`).
 
 use crate::assembly::read_prims;
 use crate::plate::{
-    AUTHORED_LAYER, DERIVED_LAYER, PlateError, PublishRequest, RevisionSummary, check_footprint,
-    control, digest_of, host_uuid, integrity, load_base, number, open_base, prior_op_with,
-    property, publish_revision, replay_summary, summarize, text,
+    AUTHORED_LAYER, DERIVED_LAYER, PlateError, PublishRequest, RevisionSummary, base_of,
+    check_footprint, control, digest_of, host_uuid, integrity, load_base, number, open_base,
+    prior_op_with, property, publish_revision, replay_summary, summarize, text,
 };
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::transaction::PriorOp;
@@ -146,7 +147,16 @@ fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, PlateErro
         let Some(id) = by_path.get(prim.path.as_str()).copied() else {
             continue;
         };
-        let kind = match property(prim, "bim:elementKind").and_then(text) {
+        // Only owned 0.1.0 parametric elements are interpreted, as the structural validator does;
+        // newer, foreign or other-mode content stays inert and is never decoded as a weld.
+        let supported = !prim.sources.is_empty()
+            && prim.sources.iter().all(|s| s.owned)
+            && property(prim, "bim:schemaVersion").and_then(text) == Some("0.1.0")
+            && property(prim, "bim:geometryMode").and_then(text) == Some("parametric");
+        let kind = match property(prim, "bim:elementKind")
+            .and_then(text)
+            .filter(|_| supported)
+        {
             Some("plate" | "beam" | "column") => PartKind::Part,
             Some("assembly") => PartKind::Assembly,
             Some("connection") => {
@@ -159,6 +169,33 @@ fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, PlateErro
     }
     model.welds.sort_by_key(|w| w.id);
     Ok(model)
+}
+
+/// The weld `id` as the operation committed at `sequence` created it: present in that revision
+/// and absent (as any element) from the revision before it. `None` when that revision did not
+/// create such a weld, so the operation id belongs to another request.
+fn created_by(
+    store: &RevisionStore,
+    sequence: u64,
+    id: &ElementId,
+    control: &Control,
+) -> Result<Option<WeldView>, PlateError> {
+    let at = store.open_at(sequence)?;
+    let model = model_of(&open_base(&base_of(&at)?)?, control)?;
+    let Some(weld) = model.welds.into_iter().find(|w| w.id == *id) else {
+        return Ok(None);
+    };
+    if sequence > 1 {
+        let before = store.open_at(sequence - 1)?;
+        if model_of(&open_base(&base_of(&before)?)?, control)?
+            .parts
+            .kind(id)
+            .is_some()
+        {
+            return Ok(None);
+        }
+    }
+    Ok(Some(weld))
 }
 
 /// Whether the pinned model holds a weld of this identity (for `delete-element`).
@@ -202,7 +239,7 @@ pub fn create_weld(
     command: &CreateWeld,
     hook: &mut dyn CommitHook,
 ) -> Result<WeldChange, PlateError> {
-    let fingerprint = command.content_fingerprint()?;
+    command.validate_arguments()?;
     let control = control();
     let (head, base) = load_base(store, &context.project, &context.workspace)?;
     let before: BTreeMap<String, _> = base
@@ -213,22 +250,25 @@ pub fn create_weld(
     let base_request = open_base(&base)?;
     let model = model_of(&base_request, &control)?;
     let op_host = host_uuid(&context.op_id.to_string())?;
-    let held = model.welds.iter().any(|w| {
-        w.id == command.new_id
-            && w.name == command.name
+    // The ledger proves that the operation committed; what it committed is read from its own
+    // revision, never from the head, so another weld that happens to match is not a replay.
+    let (prior, recorded) = prior_op_with(store, &op_host, || {
+        digest_of(b"the accepted request is decided from the operation's revision")
+    })?;
+    let accepted = match (&prior, &recorded) {
+        (PriorOp::Accepted { .. }, Some((_, sequence, _))) => {
+            created_by(store, *sequence, &command.new_id, &control)?
+        }
+        _ => None,
+    };
+    let same = accepted.as_ref().is_some_and(|w| {
+        w.name == command.name
             && w.main == command.main_id
             && w.secondary == command.secondary_id
             && w.spec == command.weld
     });
-    let (prior, recorded) = prior_op_with(store, &op_host, || {
-        if held {
-            Ok(fingerprint)
-        } else {
-            digest_of(b"no accepted request matches the head state")
-        }
-    })?;
     match prior {
-        PriorOp::Accepted { fingerprint: seen } if seen == fingerprint => {
+        PriorOp::Accepted { .. } if same => {
             return Ok(WeldChange {
                 replayed: true,
                 revision: replay_summary(&head, recorded)?,

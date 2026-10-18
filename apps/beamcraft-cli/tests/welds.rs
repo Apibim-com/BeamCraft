@@ -351,3 +351,56 @@ fn a_damaged_connects_record_is_refused_not_reported() {
     let (code, _) = f.run("create-weld", &Fixture::weld_args(SECOND, &plate, &beam));
     assert_eq!(code, 2);
 }
+
+#[test]
+fn an_operation_id_replays_only_the_weld_its_own_revision_created() {
+    let f = Fixture::new();
+    let plate = f.plate();
+    let beam = f.beam();
+    let (op_a, op_b) = (
+        "019a7bf0-0000-7000-8000-0000006000b1",
+        "019a7bf0-0000-7000-8000-0000006000b2",
+    );
+    let with_op = |id: &'static str, op: &'static str| {
+        let mut args = Fixture::weld_args(id, &plate, &beam);
+        args.extend_from_slice(&["--op-id", op]);
+        args.iter().map(|s| s.to_string()).collect::<Vec<_>>()
+    };
+    let first = with_op(WELD, op_a);
+    f.ok("create-weld", &as_strs(&first));
+    let second = with_op(SECOND, op_b);
+    f.ok("create-weld", &as_strs(&second));
+    // W2's arguments under op A: the head holds W2, but op A's revision created W1.
+    let reused = with_op(SECOND, op_a);
+    assert_eq!(f.rejected("create-weld", &as_strs(&reused)), "OP_ID_REUSE");
+    // Op A's own request still replays.
+    let replay = f.ok("create-weld", &as_strs(&first));
+    assert_eq!(text(&replay, "outcome"), "weld_created_replayed");
+}
+
+#[test]
+fn a_newer_schema_connection_stays_inert_beside_supported_welds() {
+    let f = Fixture::new();
+    let plate = f.plate();
+    let beam = f.beam();
+    f.weld(WELD, &plate, &beam);
+    let newer = "        def Xform \"E_019a7bf0000070008000000000600099\" (\n            kind = \"component\"\n        )\n        {\n            custom string bim:id = \"019a7bf0-0000-7000-8000-000000600099\"\n            custom token bim:elementKind = \"connection\"\n            custom string bim:schemaVersion = \"0.2.0\"\n            custom token bim:geometryMode = \"parametric\"\n        }\n";
+    f.tamper(|name, text| {
+        if name != "authored.usda" {
+            return text;
+        }
+        let open = "def Scope \"Steel\" (\n        kind = \"group\"\n    )\n    {\n";
+        let at = text.find(open).unwrap() + open.len();
+        format!("{}{newer}{}", &text[..at], &text[at..])
+    });
+    // Only the supported weld is reported, and new welds can still be created.
+    let welds = f.welds();
+    assert_eq!(welds.len(), 1);
+    assert_eq!(text(&welds[0], "id"), WELD);
+    f.weld(SECOND, &beam, &plate);
+    assert_eq!(f.welds().len(), 2);
+}
+
+fn as_strs(v: &[String]) -> Vec<&str> {
+    v.iter().map(String::as_str).collect()
+}
