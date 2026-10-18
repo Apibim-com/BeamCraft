@@ -17,6 +17,7 @@ pub mod member;
 pub mod mesh;
 pub mod profile;
 pub mod result;
+pub mod section;
 
 // G06: shell certification, exact predicates, measurements and a bounded box index.
 mod bigint;

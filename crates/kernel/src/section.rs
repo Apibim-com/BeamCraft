@@ -1,0 +1,583 @@
+// SPDX-License-Identifier: MPL-2.0
+// SPDX-FileCopyrightText: 2026 Apibim
+
+//! A07.1: outlines of the parametric section families and straight members of any section.
+//!
+//! [`outline`] turns an admitted `model::section::SectionShape` into a G05 profile (one
+//! counter-clockwise outer contour and clockwise cavities) in the section plane, centred on the
+//! centre of the section's bounding box: width along `X`, height along `Y`. Every family has
+//! axis-aligned straight edges, so each corner is either sharp or a quarter arc whose centre is
+//! `P - r*d1 + r*d2` (`d1`, `d2` the unit directions of the edges into and out of the sharp corner
+//! `P`); concave root fillets and convex bends use the same rule, and the inner and outer bends
+//! of a cold-formed section share their centre because the inner polygon is the outer one offset
+//! by the thickness.
+//!
+//! Two representations come from one shape (owner decision of 2026-10-18):
+//!
+//! * [`Representation::Detailed`]: every radius is a quarter arc, approximated by a polygon with
+//!   its vertices on the arc (the G05 deterministic trigonometry and sagitta bound). The result
+//!   is flagged approximated; F06 0.1.0 has no exact curves.
+//! * [`Representation::Simplified`]: every radius is a sharp corner, and a circular hollow
+//!   section is a coarse polygon. It is a lightweight stand-in, never used for quantities.
+//!
+//! [`section_member`] extrudes the outline along the member axis with G05 and maps it into the
+//! F06 member frame (`geom::MemberFrame`, the same frame, roll and minima as
+//! [`crate::straight_member`]), then certifies the closed single shell with G06 before sealing it.
+
+use crate::diagnostic::{Failure, Field};
+use crate::member::{StraightMember, locate};
+use crate::ops::{Body, OpFailure, OpField};
+use crate::profile::diagnostic::{ProfileCode, ProfileFailure};
+use crate::profile::{Cavity, CurveSpec, Point2, extrude};
+use crate::trimesh::TriMesh;
+use beamcraft_geom::tolerance::Tolerance;
+use beamcraft_geom::{MemberFrame, Point3, RigidTransform};
+use beamcraft_model::digest::{ContentDigest, Sha256};
+use beamcraft_model::error::ErrorCode;
+use beamcraft_model::section::{CustomSection, ParametricSection, SectionFamily, SectionShape};
+
+/// Which outline of a section to build.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Representation {
+    /// Every radius as an approximated arc: the default geometry and the source of quantities.
+    Detailed,
+    /// Sharp corners and a coarse circle: a lightweight view stand-in, not exact.
+    Simplified,
+}
+
+/// Arc approximation of the detailed outline: 0.05 mm sagitta, 16 to 256 edges per full turn.
+pub const DETAILED_ARCS: CurveSpec = CurveSpec {
+    max_sagitta_mm: 0.05,
+    min_segments: 16,
+    max_segments: 256,
+};
+
+/// Edges per full turn of a circular hollow section in the simplified outline.
+pub const SIMPLIFIED_CIRCLE_SEGMENTS: u64 = 16;
+
+/// A section outline in the section plane, centred on its bounding box.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SectionOutline {
+    /// Outer contour, counter-clockwise.
+    pub outer: Vec<Point2>,
+    /// Cavities, each clockwise.
+    pub cavities: Vec<Cavity>,
+    /// Bounding-box width along `X`, millimetres.
+    pub width_mm: f64,
+    /// Bounding-box height along `Y`, millimetres.
+    pub height_mm: f64,
+    /// Whether any curve of the section is replaced by a polygon (or dropped).
+    pub approximated: bool,
+}
+
+/// Why a section could not be built: the failure of the stage that refused it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SectionFailure {
+    /// The section values were refused before any point was generated.
+    Shape(ErrorCode),
+    /// The member axis, roll or frame was refused.
+    Frame(Failure),
+    /// G05 refused the outline or the extrusion.
+    Profile(ProfileFailure),
+    /// G06 refused the placed mesh.
+    Body(OpFailure),
+}
+
+impl SectionFailure {
+    /// The F04 code of the failure.
+    pub fn f04_code(&self) -> ErrorCode {
+        match self {
+            Self::Shape(code) => *code,
+            Self::Frame(f) => f
+                .diagnostics()
+                .next()
+                .map_or(ErrorCode::UnsupportedGeometry, |d| d.code.f04_code()),
+            Self::Profile(f) => f
+                .diagnostics()
+                .first()
+                .map_or(ErrorCode::UnsupportedGeometry, |d| d.code.f04_code()),
+            Self::Body(f) => f.code.f04_code(),
+        }
+    }
+}
+
+/// One corner of a sharp outline: its position and the radius of its arc (zero is sharp).
+#[derive(Debug, Clone, Copy)]
+struct Corner {
+    x: f64,
+    y: f64,
+    r: f64,
+}
+
+const fn c(x: f64, y: f64, r: f64) -> Corner {
+    Corner { x, y, r }
+}
+
+/// Unit axis direction from `a` to `b` of an axis-aligned edge, or `None` for a degenerate or
+/// oblique edge (which no family generates).
+fn axis(a: Corner, b: Corner) -> Option<(i8, i8)> {
+    let sign = |v: f64| {
+        if v > 0.0 {
+            1
+        } else if v < 0.0 {
+            -1
+        } else {
+            0
+        }
+    };
+    match (sign(b.x - a.x), sign(b.y - a.y)) {
+        (0, 0) => None,
+        (sx, 0) => Some((sx, 0)),
+        (0, sy) => Some((0, sy)),
+        _ => None,
+    }
+}
+
+/// Quadrant index of a unit axis direction: `+X` 0, `+Y` 1, `-X` 2, `-Y` 3.
+const fn quadrant(d: (i8, i8)) -> u64 {
+    match d {
+        (1, _) => 0,
+        (_, 1) => 1,
+        (-1, _) => 2,
+        _ => 3,
+    }
+}
+
+fn contour_failure() -> SectionFailure {
+    SectionFailure::Shape(ErrorCode::InvalidArgument)
+}
+
+/// Traces a closed counter-clockwise (or clockwise) corner list into points, replacing every
+/// corner of nonzero radius by a quarter arc of `n` edges per full turn (`n` a multiple of four).
+fn trace(corners: &[Corner], n: u64) -> Result<Vec<Point2>, SectionFailure> {
+    let len = corners.len();
+    let mut out = Vec::with_capacity(len.saturating_mul(usize::try_from(n / 4 + 1).unwrap_or(1)));
+    for i in 0..len {
+        let at = |k: usize| corners.get(k % len).copied().ok_or_else(contour_failure);
+        let (prev, p, next) = (at(i + len - 1)?, at(i)?, at(i + 1)?);
+        if p.r == 0.0 {
+            out.push(Point2::new(p.x, p.y));
+            continue;
+        }
+        let d1 = axis(prev, p).ok_or_else(contour_failure)?;
+        let d2 = axis(p, next).ok_or_else(contour_failure)?;
+        let (d1x, d1y) = (f64::from(d1.0), f64::from(d1.1));
+        let (d2x, d2y) = (f64::from(d2.0), f64::from(d2.1));
+        let centre = (p.x - p.r * d1x + p.r * d2x, p.y - p.r * d1y + p.r * d2y);
+        // The arc runs from direction -d2 to direction d1 about the centre: counter-clockwise
+        // for a left turn, clockwise for a right turn.
+        let left = d1x * d2y - d1y * d2x > 0.0;
+        let quarter = n / 4;
+        let start = quadrant((-d2.0, -d2.1)) * quarter;
+        for step in 0..=quarter {
+            let k = if left { start + step } else { start + n - step };
+            let (cos, sin) = crate::profile::unit_direction(k, n);
+            out.push(Point2::new(centre.0 + p.r * cos, centre.1 + p.r * sin));
+        }
+    }
+    out.dedup();
+    Ok(out)
+}
+
+/// Reverses a counter-clockwise ring to clockwise, keeping the first point first.
+fn reversed(ccw: Vec<Point2>) -> Vec<Point2> {
+    let mut out = Vec::with_capacity(ccw.len());
+    out.extend(ccw.first().copied());
+    out.extend(ccw.iter().skip(1).rev().copied());
+    out
+}
+
+fn shift(corners: &mut [Corner], width: f64, height: f64) {
+    let (dx, dy) = (width / 2.0, height / 2.0);
+    for corner in corners {
+        corner.x -= dx;
+        corner.y -= dy;
+    }
+}
+
+fn circle(radius: f64, n: u64) -> Vec<Point2> {
+    (0..n)
+        .map(|k| {
+            let (cos, sin) = crate::profile::unit_direction(k, n);
+            Point2::new(radius * cos, radius * sin)
+        })
+        .collect()
+}
+
+/// Edges per full turn for the largest radius of a section under [`DETAILED_ARCS`].
+fn segments_for(radius: f64) -> Result<u64, SectionFailure> {
+    crate::profile::choose_segments(radius, DETAILED_ARCS)
+        .map(|(n, _)| u64::from(n))
+        .map_err(SectionFailure::Profile)
+}
+
+/// The sharp corner list (in bounding-box coordinates) and size of a parametric family; the last
+/// parameter's radius is already chosen by the caller.
+fn corners(section: &ParametricSection) -> Result<(Vec<Corner>, f64, f64), SectionFailure> {
+    let list = match (section.family(), section.values()) {
+        (SectionFamily::IShape, &[h, b, tw, tf, r]) => {
+            let (l, rt) = ((b - tw) / 2.0, (b + tw) / 2.0);
+            let list = vec![
+                c(0.0, 0.0, 0.0),
+                c(b, 0.0, 0.0),
+                c(b, tf, 0.0),
+                c(rt, tf, r),
+                c(rt, h - tf, r),
+                c(b, h - tf, 0.0),
+                c(b, h, 0.0),
+                c(0.0, h, 0.0),
+                c(0.0, h - tf, 0.0),
+                c(l, h - tf, r),
+                c(l, tf, r),
+                c(0.0, tf, 0.0),
+            ];
+            (list, b, h)
+        }
+        (SectionFamily::Channel, &[h, b, tw, tf, r]) => {
+            let list = vec![
+                c(0.0, 0.0, 0.0),
+                c(b, 0.0, 0.0),
+                c(b, tf, 0.0),
+                c(tw, tf, r),
+                c(tw, h - tf, r),
+                c(b, h - tf, 0.0),
+                c(b, h, 0.0),
+                c(0.0, h, 0.0),
+            ];
+            (list, b, h)
+        }
+        (SectionFamily::Angle, &[h, b, t, r]) => {
+            let list = vec![
+                c(0.0, 0.0, 0.0),
+                c(b, 0.0, 0.0),
+                c(b, t, 0.0),
+                c(t, t, r),
+                c(t, h, 0.0),
+                c(0.0, h, 0.0),
+            ];
+            (list, b, h)
+        }
+        (SectionFamily::Rhs, &[h, b, _, r]) => {
+            let list = vec![c(0.0, 0.0, r), c(b, 0.0, r), c(b, h, r), c(0.0, h, r)];
+            (list, b, h)
+        }
+        (SectionFamily::PlainC, &[h, b, t, r]) => {
+            let big = if r > 0.0 { r + t } else { 0.0 };
+            let list = vec![
+                c(0.0, 0.0, big),
+                c(b, 0.0, 0.0),
+                c(b, t, 0.0),
+                c(t, t, r),
+                c(t, h - t, r),
+                c(b, h - t, 0.0),
+                c(b, h, 0.0),
+                c(0.0, h, big),
+            ];
+            (list, b, h)
+        }
+        (SectionFamily::LippedC, &[h, b, lip, t, r]) => {
+            let big = if r > 0.0 { r + t } else { 0.0 };
+            let list = vec![
+                c(0.0, 0.0, big),
+                c(b, 0.0, big),
+                c(b, lip, 0.0),
+                c(b - t, lip, 0.0),
+                c(b - t, t, r),
+                c(t, t, r),
+                c(t, h - t, r),
+                c(b - t, h - t, r),
+                c(b - t, h - lip, 0.0),
+                c(b, h - lip, 0.0),
+                c(b, h, big),
+                c(0.0, h, big),
+            ];
+            (list, b, h)
+        }
+        (SectionFamily::LippedZ, &[h, b, lip, t, r]) => {
+            let big = if r > 0.0 { r + t } else { 0.0 };
+            let w = 2.0 * b - t;
+            let list = vec![
+                c(0.0, lip, 0.0),
+                c(0.0, 0.0, big),
+                c(b, 0.0, big),
+                c(b, h - t, r),
+                c(w - t, h - t, r),
+                c(w - t, h - lip, 0.0),
+                c(w, h - lip, 0.0),
+                c(w, h, big),
+                c(b - t, h, big),
+                c(b - t, t, r),
+                c(t, t, r),
+                c(t, lip, 0.0),
+            ];
+            (list, w, h)
+        }
+        (SectionFamily::Omega, &[h, b, brim, t, r]) => {
+            let big = if r > 0.0 { r + t } else { 0.0 };
+            let w = b + 2.0 * brim - 2.0 * t;
+            let list = vec![
+                c(0.0, 0.0, 0.0),
+                c(brim, 0.0, big),
+                c(brim, h - t, r),
+                c(b + brim - 2.0 * t, h - t, r),
+                c(b + brim - 2.0 * t, 0.0, big),
+                c(w, 0.0, 0.0),
+                c(w, t, 0.0),
+                c(b + brim - t, t, r),
+                c(b + brim - t, h, big),
+                c(brim - t, h, big),
+                c(brim - t, t, r),
+                c(0.0, t, 0.0),
+            ];
+            (list, w, h)
+        }
+        _ => return Err(contour_failure()),
+    };
+    Ok(list)
+}
+
+/// The outline of an admitted section shape in the requested representation.
+///
+/// The shape is admitted again here (the kernel never trusts a caller's admission), so a refused
+/// value is [`SectionFailure::Shape`] with its F04 code. A custom outline is returned exactly as
+/// authored; G05 decides its winding and simplicity when it is extruded.
+pub fn outline(
+    shape: &SectionShape,
+    representation: Representation,
+) -> Result<SectionOutline, SectionFailure> {
+    shape
+        .validate()
+        .map_err(|e| SectionFailure::Shape(e.code))?;
+    match shape {
+        SectionShape::Custom(custom) => Ok(custom_outline(custom)),
+        SectionShape::Parametric(section) => parametric_outline(section, representation),
+    }
+}
+
+fn custom_outline(custom: &CustomSection) -> SectionOutline {
+    let points = |contour: &[[f64; 2]]| {
+        contour
+            .iter()
+            .map(|[x, y]| Point2::new(*x, *y))
+            .collect::<Vec<_>>()
+    };
+    let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]);
+    for [x, y] in &custom.outer {
+        lo = [lo[0].min(*x), lo[1].min(*y)];
+        hi = [hi[0].max(*x), hi[1].max(*y)];
+    }
+    SectionOutline {
+        outer: points(&custom.outer),
+        cavities: custom
+            .cavities
+            .iter()
+            .map(|c| Cavity::polygon(points(c)))
+            .collect(),
+        width_mm: hi[0] - lo[0],
+        height_mm: hi[1] - lo[1],
+        approximated: false,
+    }
+}
+
+fn parametric_outline(
+    section: &ParametricSection,
+    representation: Representation,
+) -> Result<SectionOutline, SectionFailure> {
+    let simplified = representation == Representation::Simplified;
+    if let (SectionFamily::Chs, &[d, t]) = (section.family(), section.values()) {
+        let n = if simplified {
+            SIMPLIFIED_CIRCLE_SEGMENTS
+        } else {
+            segments_for(d / 2.0)?
+        };
+        return Ok(SectionOutline {
+            outer: circle(d / 2.0, n),
+            cavities: vec![Cavity::polygon(reversed(circle(d / 2.0 - t, n)))],
+            width_mm: d,
+            height_mm: d,
+            approximated: true,
+        });
+    }
+    let used = if simplified {
+        section.without_radius()
+    } else {
+        section.clone()
+    };
+    let radius = used.values().last().copied().unwrap_or(0.0);
+    let (mut list, width, height) = corners(&used)?;
+    shift(&mut list, width, height);
+    // The outer bend of a cold-formed section is the largest radius; one edge count per section
+    // keeps every arc on the same angular grid.
+    let largest = list.iter().fold(0.0f64, |m, c| m.max(c.r));
+    let n = if largest > 0.0 {
+        segments_for(largest)?
+    } else {
+        4
+    };
+    let outer = trace(&list, n)?;
+    let mut cavities = Vec::new();
+    if let (SectionFamily::Rhs, &[h, b, t, r]) = (used.family(), used.values()) {
+        let inner_r = if r > t { r - t } else { 0.0 };
+        let mut inner = vec![
+            c(t, t, inner_r),
+            c(b - t, t, inner_r),
+            c(b - t, h - t, inner_r),
+            c(t, h - t, inner_r),
+        ];
+        shift(&mut inner, width, height);
+        cavities.push(Cavity::polygon(reversed(trace(&inner, n)?)));
+    }
+    Ok(SectionOutline {
+        outer,
+        cavities,
+        width_mm: width,
+        height_mm: height,
+        approximated: radius > 0.0 || simplified,
+    })
+}
+
+/// Raw input of a straight member of any section, element-local millimetres and radians.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SectionMember {
+    /// Axis start `p1`.
+    pub start: Point3,
+    /// Axis end `p2`.
+    pub end: Point3,
+    /// The section shape.
+    pub shape: SectionShape,
+    /// Which outline to extrude.
+    pub representation: Representation,
+    /// Explicit roll about `+Z_m`; absent is zero.
+    pub roll_rad: Option<f64>,
+}
+
+/// A sealed straight member of any section.
+#[derive(Debug, Clone)]
+pub struct SectionResult {
+    body: Body,
+    blob: Vec<u8>,
+    digest: ContentDigest,
+    net_area_mm2: f64,
+    volume_mm3: f64,
+    approximated: bool,
+}
+
+impl SectionResult {
+    /// The certified body (vertices, triangles, face table and normals).
+    pub const fn body(&self) -> &Body {
+        &self.body
+    }
+
+    /// The exact BCMESH01 blob of the placed mesh.
+    pub fn blob(&self) -> &[u8] {
+        &self.blob
+    }
+
+    /// SHA-256 of the blob.
+    pub const fn mesh_digest(&self) -> ContentDigest {
+        self.digest
+    }
+
+    /// Net area of the extruded outline, mm2 (shoelace of the generated polygon).
+    pub const fn net_area_mm2(&self) -> f64 {
+        self.net_area_mm2
+    }
+
+    /// Volume `net_area * axis_length`, mm3.
+    pub const fn volume_mm3(&self) -> f64 {
+        self.volume_mm3
+    }
+
+    /// Whether the outline approximates (or, simplified, drops) a curve.
+    pub const fn approximated(&self) -> bool {
+        self.approximated
+    }
+
+    /// The member's F06 local-size policy.
+    pub const fn tolerance(&self) -> Tolerance {
+        self.body.tolerance()
+    }
+}
+
+/// Builds a closed straight member of any admitted section, validating every submitted value.
+///
+/// Order: the section shape, then the member frame from the axis, the outline's bounding box and
+/// the roll (the [`crate::straight_member`] rules and codes), then the G05 outline admission and
+/// extrusion along the axis length, then the rigid placement `world = R*local + p1` and the G06
+/// certification of one closed shell.
+pub fn section_member(input: &SectionMember) -> Result<SectionResult, SectionFailure> {
+    let shape = outline(&input.shape, input.representation)?;
+    let frame_input = StraightMember {
+        start: input.start,
+        end: input.end,
+        width_mm: shape.width_mm,
+        height_mm: shape.height_mm,
+        roll_rad: input.roll_rad,
+    };
+    let frame = MemberFrame::new(
+        input.start,
+        input.end,
+        shape.width_mm,
+        shape.height_mm,
+        input.roll_rad,
+    )
+    .map_err(|error| {
+        let (code, field, stage) = locate(&frame_input, error);
+        SectionFailure::Frame(Failure::one(code, field, stage))
+    })?;
+    let length = frame.scale().axis_length_mm();
+    let extrusion =
+        extrude(&shape.outer, &shape.cavities, length).map_err(SectionFailure::Profile)?;
+    let numeric = || {
+        SectionFailure::Frame(Failure::one(
+            crate::diagnostic::Code::NumericUncertain,
+            Field::Mesh,
+            crate::diagnostic::Stage::Build,
+        ))
+    };
+    let placement =
+        RigidTransform::from_body_frame(frame.frame(), input.start).map_err(|_| numeric())?;
+    let local = TriMesh::from_blob(extrusion.mesh().blob())
+        .map_err(|e| SectionFailure::Body(OpFailure::from_mesh(e, OpField::Body)))?;
+    let placed = local
+        .placed(&placement)
+        .map_err(|e| SectionFailure::Body(OpFailure::from_mesh(e, OpField::Body)))?;
+    let normals = extrusion
+        .mesh()
+        .face_normals()
+        .iter()
+        .map(|n| match n {
+            Some(v) => placement
+                .apply_vector(*v)
+                .map(|w| Some([w.x(), w.y(), w.z()]))
+                .map_err(|_| numeric()),
+            None => Ok(None),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let body = Body::from_mesh(
+        placed,
+        extrusion.mesh().face_table().to_vec(),
+        normals,
+        Some(frame.scale().tolerance()),
+    )
+    .map_err(SectionFailure::Body)?;
+    let blob = body.to_blob();
+    let digest = Sha256::digest(&blob).map_err(|_| numeric())?;
+    let net_area_mm2 = extrusion.net_area_mm2();
+    let volume_mm3 = net_area_mm2 * length;
+    if !volume_mm3.is_finite() || volume_mm3 <= 0.0 {
+        return Err(SectionFailure::Profile(ProfileFailure::global(
+            ProfileCode::NumericUncertain,
+            crate::profile::diagnostic::ProfileField::Thickness,
+            crate::diagnostic::Stage::Quantities,
+        )));
+    }
+    Ok(SectionResult {
+        body,
+        blob,
+        digest,
+        net_area_mm2,
+        volume_mm3,
+        approximated: shape.approximated,
+    })
+}

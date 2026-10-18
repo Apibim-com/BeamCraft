@@ -33,7 +33,7 @@ pub struct StraightMember {
     pub roll_rad: Option<f64>,
 }
 
-fn locate(input: &StraightMember, error: MathError) -> (Code, Field, Stage) {
+pub(crate) fn locate(input: &StraightMember, error: MathError) -> (Code, Field, Stage) {
     let scalars = [
         (input.start.x, Field::Axis, COORDINATE_CAP_MM),
         (input.start.y, Field::Axis, COORDINATE_CAP_MM),

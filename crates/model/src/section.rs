@@ -215,12 +215,12 @@ impl ParametricSection {
                 rule(2.0 * tf < h, "tf_mm", "flanges leave no web")?;
                 rule(tw < b, "tw_mm", "web is not narrower than the flange")?;
                 rule(
-                    tw + 2.0 * r <= b,
+                    tw + 2.0 * r < b,
                     "r_mm",
                     "root radius does not fit the flange",
                 )?;
                 rule(
-                    2.0 * (tf + r) <= h,
+                    2.0 * (tf + r) < h,
                     "r_mm",
                     "root radius does not fit the web",
                 )
@@ -228,9 +228,9 @@ impl ParametricSection {
             (SectionFamily::Channel, &[h, b, tw, tf, r]) => {
                 rule(2.0 * tf < h, "tf_mm", "flanges leave no web")?;
                 rule(tw < b, "tw_mm", "web is not narrower than the flange")?;
-                rule(tw + r <= b, "r_mm", "root radius does not fit the flange")?;
+                rule(tw + r < b, "r_mm", "root radius does not fit the flange")?;
                 rule(
-                    2.0 * (tf + r) <= h,
+                    2.0 * (tf + r) < h,
                     "r_mm",
                     "root radius does not fit the web",
                 )
@@ -238,7 +238,7 @@ impl ParametricSection {
             (SectionFamily::Angle, &[h, b, t, r]) => {
                 rule(t < h && t < b, "t_mm", "thickness is not below both legs")?;
                 rule(
-                    t + r <= h.min(b),
+                    t + r < h.min(b),
                     "r_mm",
                     "root radius does not fit the legs",
                 )
@@ -246,7 +246,7 @@ impl ParametricSection {
             (SectionFamily::Rhs, &[h, b, t, r]) => {
                 rule(2.0 * t < h.min(b), "t_mm", "walls leave no cavity")?;
                 rule(
-                    2.0 * r <= h.min(b),
+                    2.0 * r < h.min(b),
                     "r_mm",
                     "corner radius does not fit the sides",
                 )?;
