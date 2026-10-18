@@ -8,7 +8,7 @@ file, how an element becomes an IFC entity, how its 22-character GlobalId is der
 and how the writer is built and driven.** It is written before the exporter (E02) so that E02 has a
 public mapping to implement and a loss list to report. **Nothing here is implemented.** No writer,
 GlobalId function, export command, project record or level exists in code. The examples are
-acceptance descriptions, not APIs or saved files. The owner's decisions on the first draft's eleven
+acceptance descriptions, not APIs or saved files. The owner's decisions on the first draft's
 questions are recorded in section 17; two model tasks that E02 now depends on (a stored ProjectId and
 a Level concept) are specified in section 19.
 
@@ -252,7 +252,9 @@ the project entry** (dependency D1, `IFCX-PRJ-001`, `IFCX-PRJ-002`).
 | `IfcRelDefinesByProperties` for BeamCraft_Declared | `rel-pset-declared` | ElementId |
 | `IfcRelDefinesByProperties` for the quantity set | `rel-qto-element` | ElementId |
 
-These values are not UUIDs and carry no version bits. Vectors `V-SYN-01` (role `site`, ProjectId
+Every row is written only when the entity is written (`IFCX-EMIT-001`, section 11.2): for example the
+quantity-set rows exist only for an element with at least one quantity to write. These values are not
+UUIDs and carry no version bits. Vectors `V-SYN-01` (role `site`, ProjectId
 `019a7bf0-0000-7000-8000-000000000001`) is `2ghTuGpW1EXNtW6xLArrhQ`, and `V-SYN-02` (role `storey`,
 the same ProjectId, LevelId `019a7bf0-0000-7000-8000-000000000101`) is `2886jimw3h7h75lUh8nRj7`; both were
 derived with a throwaway script and must be reproduced with the in-repo SHA-256 before they are
@@ -305,7 +307,7 @@ or invented.
 
 ### 4.2 Handling of every element
 
-**No element is skipped** (`IFCX-SCOPE-006`) except a deactivated one (`IFCX-SCOPE-005`; Q-12). Each
+**No element is skipped** (`IFCX-SCOPE-006`) except a deactivated one (`IFCX-SCOPE-005`; Q-12 decided). Each
 element goes through the checks below in this order; a failure of a request-level check refuses the
 export, the others only degrade the element and are listed.
 
@@ -349,8 +351,9 @@ sit above them.
 | `elevation_mm` | `Elevation`, and `ObjectPlacement` at `(0, 0, elevation_mm)` relative to the building placement |
 | LevelId | `GlobalId` by section 3.5 (role `storey`) |
 
-`CompositionType` is `.ELEMENT.`. Each element with a level is contained in that storey; an element
-with no level is contained in the building (`IFCX-LVL-003`); a project with no level has no storey.
+`CompositionType` is `.ELEMENT.`. A storey and the project name follow the label rule of section 9.1: over 255
+characters, `Name` is truncated to 255 and the full text is in `Description` (`IFCX-PSET-004`). Each element with a level is contained in that storey; an element
+with no level is contained in the building (`IFCX-LVL-003`); a project with no level has no storey. A storey with no exported element is still written, without a containment relationship (`IFCX-EMIT-001`, 11.2).
 An element assigned to a LevelId that the revision does not carry refuses the export
 (`IFCX-LVL-002`).
 
@@ -429,8 +432,8 @@ and column without holes, assuming P01 stores it (case `E01-POS-16`).
 lists as open. The exporter writes each coordinate as the **shortest decimal text that parses back
 to the same binary32** (section 11.3), not as the longer text of the binary32 value widened to
 binary64. A reader that parses the text as a double obtains a value within one binary32 unit of the
-stored one. For integer millimetre coordinates the value is exact. Open question Q-13 asks whether
-export should wait for a binary64 derived mesh.
+stored one. For integer millimetre coordinates the value is exact. The owner decided (Q-13) to keep binary32
+mesh coordinates; export does not wait for a binary64 derived mesh.
 
 A face with a vertex count other than 3, a mesh with no faces or an element with no derived mesh
 (valid non-rectangular plates, members with another profile kind, kinds the kernel does not know)
@@ -453,7 +456,7 @@ Counts are bounded by `IFCX-LIM-005`.
 published volume. The bound is the CR-TOL-001 quantity bound (relative 1e-6) when all coordinates
 are exactly representable in binary32, as in the examples of the case file. For a general mesh the
 bound is the one implied by half a binary32 unit per coordinate and is stated per case by E02; it
-is not claimed to be 1e-6 in general (Q-13). `IFCX-GEO-007`: no profile, extrusion, boolean or
+is not claimed to be 1e-6 in general (binary32 coordinates, Q-13 decided). `IFCX-GEO-007`: no profile, extrusion, boolean or
 opening entity exists in the file.
 
 ## 7. Material and profile
@@ -461,7 +464,8 @@ opening entity exists in the file.
 **Material** (`IFCX-MAT-001` to `IFCX-MAT-003`). A pinned material definition (`bim:material`) used
 by at least one exported element becomes one `IfcMaterial` (S30). `Name` is the declared grade
 (P02.2) or, when none is declared, the text `Unspecified`; `Description` is the declared standard
-when present (owner decision Q-9). Two different materials with no grade therefore have the same
+when present (owner decision Q-9). A grade over 255 characters is truncated to 255 in `Name`, listed, and
+the full grade is the property `FullName` (`IfcText`) of `BeamCraft_Material` (`IFCX-PSET-004`). Two different materials with no grade therefore have the same
 name and are told apart by the property **`MaterialDigest`** (`IfcIdentifier`, the full 64 lowercase
 hexadecimal digits) in an `IfcMaterialProperties` named `BeamCraft_Material` (S32), which every
 material has. One `IfcRelAssociatesMaterial` (S31) links the material to all its exported elements
@@ -543,21 +547,29 @@ One `IfcPropertySet` per exported element, linked by one `IfcRelDefinesByPropert
 | Property | Type | Content | Present |
 |----------|------|---------|---------|
 | `ElementId` | `IfcIdentifier` | Canonical 36-character ElementId | always |
-| `ElementKind` | `IfcLabel` | `plate`, `beam`, `column`, or the kind token of a proxy | always |
-| `SchemaVersion` | `IfcLabel` | `bim:schemaVersion` | always |
-| `GeometryMode` | `IfcLabel` | `bim:geometryMode` | always |
+| `ElementKind` | `IfcText` | `plate`, `beam`, `column`, or the kind token of a proxy | always |
+| `SchemaVersion` | `IfcText` | `bim:schemaVersion` | always |
+| `GeometryMode` | `IfcText` | `bim:geometryMode` | always |
 | `ProfileDigest` | `IfcIdentifier` | Full ContentDigest of the profile definition | members |
 | `MaterialDigest` | `IfcIdentifier` | Full ContentDigest of the material definition | with a material |
 | `HoleCount` | `IfcInteger` | Number of through holes | plates |
 | `VolumeStatus`, `MassStatus` | `IfcLabel` | `current`, `stale`, `missing`, `unknown`, `unsupported` | plate, beam, column |
 | `ShapeSignature`, `MassSignature` | `IfcIdentifier` | Signatures of the stored records | when a record exists |
-| `QuantityAlgorithm` | `IfcLabel` | Algorithm label of the stored record | when a record exists |
+| `QuantityAlgorithm` | `IfcText` | Algorithm label of the stored record | when a record exists |
 | `NetWeightKg`, `GrossWeightKg` | `IfcMassMeasure` | Plate mass, kilograms (section 8.2) | plates, when current |
 | `Label` | `IfcText` | The full label | only when the name was truncated |
 
-`IfcRoot.Name` is `bim:name` (S16 to S19). A label longer than 255 characters (`IfcLabel` is limited
-to 255, S04) is truncated to 255 characters in `Name` and written in full in `Label`, and the
-truncation is listed (`IFCX-PSET-004`). For a proxy `IfcObject.ObjectType` is the kind token.
+`IfcRoot.Name` is `bim:name` (S16 to S19). **Every BeamCraft string that lands in an `IfcLabel`
+attribute is limited to 255 characters (S04), while the model allows labels of 256 bytes (names,
+grades, designations, standards) and, in loaded content, kind tokens of up to 4096 bytes** (F04
+section 3). The policy
+(`IFCX-PSET-004`) is: the attributes that are `IfcLabel` are `IfcRoot.Name` (element, storey, project),
+`IfcObject.ObjectType` and `IfcMaterial.Name`; a longer text is truncated to its first 255 code
+points, the truncation is listed (`IFC_NAME_TRUNCATED`) and the full text is kept in an unbounded
+`IfcText`: the property `Label` for an element, `FullName` in `BeamCraft_Material` for a material,
+`Description` for a storey and the project. For a proxy `IfcObject.ObjectType` is the kind token, truncated
+the same way, and `ElementKind` holds it in full. Every other BeamCraft string is written as `IfcText`
+(no limit); identifiers and digests are at most 64 characters. Nothing is refused for length.
 No custom set name starts with `Pset_` or `Qto_` (`IFCX-PSET-002`), because those prefixes belong
 to the specification's own sets (`Pset_MaterialCommon` and the `Qto_` base quantity sets are the
 only ones used). The actor id (`bim:createdBy`), the revision number of the element, file paths, host
@@ -574,8 +586,8 @@ saying that the value is declared in the profile definition and not computed by 
 
 | Property | Type | Content |
 |----------|------|---------|
-| `DeclaredDesignation` | `IfcLabel` | declared designation |
-| `DeclaredStandard` | `IfcLabel` | declared standard |
+| `DeclaredDesignation` | `IfcText` | declared designation |
+| `DeclaredStandard` | `IfcText` | declared standard |
 | `DeclaredSectionAreaMm2` | `IfcReal` | declared area in mm2 |
 | `DeclaredMassPerMeterKg` | `IfcReal` | declared mass per metre in kg |
 | `DeclaredSurfacePerMeterM2` | `IfcReal` | declared surface per metre in m2 |
@@ -625,13 +637,20 @@ STEP instance names `#1`, `#2`, ... are assigned by one counter in this emission
 2. the project, the site, the building, then the storeys in LevelId order, with their placements,
    and the aggregation relationships;
 3. the materials in ascending digest order, each followed by its properties;
-4. for each element in ElementId order: placement entities, point list, face set, shape
-   representation, product definition shape, the product, its property sets, its quantity set (if
-   any) and the `IfcRelDefinesByProperties` of each;
-5. the containment relationships (one per storey in LevelId order, then the building's), then one
-   material association per material in digest order.
+4. for each element in ElementId order: placement entities (when the element has a placement),
+   point list, face set, shape representation and product definition shape (when it has a mesh), the
+   product, `BeamCraft_Element` with its `IfcRelDefinesByProperties`, `BeamCraft_Declared` with its
+   relationship (only with a declared value), and the quantity set with its relationship (**only
+   with at least one quantity to write**);
+5. the containment relationships (one per storey in LevelId order that has at least one exported
+   element, then the building's if at least one exported element has no level), then one material
+   association per material in digest order.
 
 Forward references are allowed in a STEP file; the counter order, not the reference order, is fixed.
+An optional entity is written only when it has content (`IFCX-EMIT-001`): a relationship never has
+an empty related set or a missing relating definition, and no list attribute is empty. In step 3 a
+material is written only if an exported element uses it. In step 2 the building-to-storeys
+aggregation is written only when there is at least one storey.
 
 ### 11.3 Real numbers
 
@@ -704,7 +723,7 @@ is listed in the report when it applies to an element and is stated here once.
 | L-08 | Authorship (`bim:createdBy`), per-element revision, workspace and draft state, the journal, undo and redo history and every time are not exported. |
 | L-09 | Relationships between elements (F10 section 5) are not exported; none exist in the first slice. |
 | L-10 | Display appearance and colours are not exported. |
-| L-11 | A label longer than 255 characters is truncated in `Name`; the full text is in `Label`. |
+| L-11 | A text longer than 255 characters in an `IfcLabel` attribute (element, storey, project or material name, object type) is truncated to 255 code points; the full text is in `Label`, `FullName` or `Description` (`IFCX-PSET-004`). |
 | L-12 | The site and the building are synthetic. The model records no grids, no site data and no building data. |
 | L-13 | The quaternion is not recoverable: only the rotation is, and only up to the rounding of the direction vectors (`q` and `-q` are indistinguishable). |
 | L-14 | The escapes of 11.4 and the header form are taken from the public description of the STEP physical file and are not yet checked against an independent reader. |
@@ -720,8 +739,8 @@ bytewise). `IFCX-ERR-001`: unavailable input makes the status `incomplete` and t
 `DEPENDENCY_UNAVAILABLE`, ahead of any other error. A failed or incomplete export writes no file. A
 finding has `code` (the `IFC_` token), `f04_code`, `severity`, an optional `element_id` and a fixed
 schema `field` token; messages are fixed English text that never echo input values, private paths or
-exceptions (the F06 section 3 rule). For a warning the `f04_code` is the code strict mode refuses
-with; for the other warnings and for info it is `null`.
+exceptions (the F06 section 3 rule). The `f04_code` of a finding is `null` unless the finding is
+fatal in strict mode (see below).
 
 | `IFC_` code | F04 code | Severity / level | Meaning | Rules |
 |-------------|----------|------------------|---------|-------|
@@ -738,19 +757,25 @@ with; for the other warnings and for info it is `null`.
 | `IFC_LIMIT` | `LIMIT_EXCEEDED` | error, request | Too many elements, levels, mesh vertices or triangles, or output bytes | LIM-001, LIM-002, LIM-005 |
 | `IFC_OUTPUT_FAILED` | `BACKEND_UNAVAILABLE` | error, request | The output sink or file system failed | ERR-002 |
 | `IFC_CANCELLED` | `CANCELLED` | error, request | Cancelled before the install point | ERR-004 |
-| `IFC_KIND_PROXY` | `UNSUPPORTED_COMMAND` (strict) | warning, element | Kind without mapping, exported as proxy | SCOPE-001 |
+| `IFC_KIND_PROXY` | none | warning, element | Kind without mapping, exported as proxy | SCOPE-001 |
 | `IFC_GEOMETRY_ABSENT` | `UNSUPPORTED_GEOMETRY` (strict) | warning, element | No usable mesh; exported without representation | GEO-004 |
 | `IFC_PLACEMENT_ABSENT` | `UNSUPPORTED_GEOMETRY` (strict) | warning, element | Proxy placement is not a rigid pose | PLC-002 |
 | `IFC_QUANTITY_OMITTED` | none | warning, element | Quantity stale, missing, unknown or unsupported | QTY-002 |
-| `IFC_NAME_TRUNCATED` | none | warning, element | Label longer than 255 characters | PSET-004 |
+| `IFC_NAME_TRUNCATED` | none | warning, element, level or project | Text longer than 255 characters written into an `IfcLabel` attribute | PSET-004 |
 | `IFC_ELEMENT_DEACTIVATED` | none | info, element | Deactivated element not exported | SCOPE-005 |
 
 Every F04 code used above exists in F04 section 8; no code is added. **Strict mode** (`--strict`,
-`IFCX-ERR-005`) is kept as an optional flag because the default is to export everything and report:
-it turns every `_PROXY`, `_GEOMETRY_ABSENT` and `_PLACEMENT_ABSENT` finding into a refusal with that
-finding's strict code (the first in finding order), for a caller that wants a file only when every
-element is a first-scope element with its mesh. Quantity omissions, name truncation and the info case
-never refuse. The status is `ok_with_losses` when any warning was raised, `ok` otherwise.
+`IFCX-ERR-005`) is kept as an optional flag because the default is to export everything and report.
+In strict mode **only an element-level finding that carries an F04 code is fatal**: `IFC_GEOMETRY_ABSENT`
+and `IFC_PLACEMENT_ABSENT` (both `UNSUPPORTED_GEOMETRY`), so a caller can demand that every plate,
+beam and column leaves with its mesh. The export is refused with the code of the first such finding
+in finding order (F10 section 6.4). Findings without a code (`IFC_KIND_PROXY`, `IFC_QUANTITY_OMITTED`,
+`IFC_NAME_TRUNCATED`, `IFC_ELEMENT_DEACTIVATED`) are never fatal, strict or not.
+
+**Status.** `failed` or `incomplete` as above; otherwise `ok_with_losses` when any warning was raised
+**or any element was not exported** (a deactivated element, an info finding), and `ok` only when
+nothing was raised and every element was exported. A missing mass because no material is pinned is
+a quantity omission and therefore a warning.
 
 ## 14. Bounds
 
@@ -761,7 +786,7 @@ never refuse. The status is `ok_with_losses` when any warning was raised, `ok` o
 | One mesh | 262,144 vertices and 524,288 triangles (`IFCX-LIM-005`) | draft proposal; covers a plate of 64 holes of 1024 points |
 | Output size | 268,435,456 bytes (256 MiB), checked before each write with checked arithmetic (`IFCX-LIM-002`) | draft proposal |
 | Findings in the report | 256 listed, total counted up to 1,000,000 | F10 section 6.3 |
-| Label | 1 to 256 bytes at input (F04); 255 characters in `Name` | F04 section 3, S04 |
+| Label | 1 to 256 bytes at input (F04); 255 characters in an `IfcLabel` attribute, the rest preserved in an `IfcText` | F04 section 3, S04 |
 | Strings | at most 4096 bytes before escaping (F04); the escaped text counts toward the output cap | F04 section 3 |
 | Instance numbers | a checked counter; overflow is `LIMIT_EXCEEDED` | the output cap makes it unreachable |
 
@@ -855,9 +880,9 @@ outputs; the exit code follows the existing CLI convention.
 
 ## 16. Acceptance cases
 
-[The case file](ifc-export-cases-v0.1.json) holds 100 original logical acceptance
-descriptions: 50 positive and 50 negative, with stable IDs `E01-POS-nn` and `E01-NEG-nn`, and
-77 rules `IFCX-<FAMILY>-<NNN>` of which every one is exercised by at least one case. A
+[The case file](ifc-export-cases-v0.1.json) holds 105 original logical acceptance
+descriptions: 52 positive and 53 negative, with stable IDs `E01-POS-nn` and `E01-NEG-nn`, and
+78 rules `IFCX-<FAMILY>-<NNN>` of which every one is exercised by at least one case. A
 negative case is one where the rule fires: an element is exported with a listed loss, a warning is
 raised, or the request is refused with the stated F04 code. A case with a `needs` field depends on
 a limit that is not yet lifted, a harness hook, or the dependencies D1 and D2 of section 19. They are
@@ -872,21 +897,22 @@ the written file.
 | Levels and project | `E01-POS-45`, `E01-POS-46`, `E01-NEG-48`, `E01-NEG-49` |
 | Proxies, elements without mesh, scope, headless, report, validation gate | `E01-POS-30` to `E01-POS-38`, `E01-POS-49`, `E01-POS-50`, `E01-NEG-15` to `E01-NEG-17`, `E01-NEG-36`, `E01-NEG-43`, `E01-NEG-50` |
 | Integrity, quantities freshness | `E01-NEG-18` to `E01-NEG-29` |
+| Label limits, optional entities | `E01-POS-51`, `E01-POS-52`, `E01-NEG-51` to `E01-NEG-53` |
 | Request errors, limits, output failures | `E01-NEG-30` to `E01-NEG-35`, `E01-NEG-37` to `E01-NEG-42`, `E01-NEG-44` to `E01-NEG-47` |
 
 ### 16.1 Rule catalogue
 
 Severity `error` rules name the F04 code of the failing condition; `mapping` rules have no runtime
-diagnostic and are checked by the acceptance cases. Counts: 77 rules, 26 error, 5 warning, 3 info,
-43 mapping.
+diagnostic and are checked by the acceptance cases. Counts: 78 rules, 26 error, 5 warning, 3 info,
+44 mapping.
 
 | Rule | Severity | F04 code | Statement |
 |------|----------|----------|-----------|
-| IFCX-SCOPE-001 | warning | UNSUPPORTED_COMMAND | An element whose kind has no IFC mapping (every kind except plate, beam and column, reserved or unknown) is exported as IfcBuildingElementProxy and listed. It is never skipped. The code is the one strict mode refuses with. |
+| IFCX-SCOPE-001 | warning | - | An element whose kind has no IFC mapping (every kind except plate, beam and column, reserved or unknown) is exported as IfcBuildingElementProxy and listed. It is never skipped, and it is not fatal in strict mode. |
 | IFCX-SCOPE-002 | error | DEPENDENCY_UNAVAILABLE | The export reads exactly one verified committed revision, the published head by default or an explicit RevisionId. A revision that cannot be read and verified completely is refused; there is no partial export. |
 | IFCX-SCOPE-003 | error | UNSUPPORTED_COMMAND | IFC import, and any reading of IFC by BeamCraft, is outside this contract. A request to import is refused. |
 | IFCX-SCOPE-004 | error | INTEGRITY_ERROR | Export is read-only: it changes no authored state, derived state, revision or generation, and writes no attribute into the store. |
-| IFCX-SCOPE-005 | info | - | An element whose lifecycle is deactivated is not exported and is listed (F10 section 3.2; open question Q-12). It is the only element that is not exported. |
+| IFCX-SCOPE-005 | info | - | An element whose lifecycle is deactivated is not exported and is listed (F10 section 3.2; owner decision Q-12). It is the only element that is not exported. |
 | IFCX-SCOPE-006 | mapping | - | Every other element of the revision is exported. An element without usable geometry is exported without a representation and listed; nothing else is skipped. |
 | IFCX-VER-001 | error | UNSUPPORTED_VERSION | contract_version is exactly 0.1.0 and the requested schema identifier is IFC4 (IFC4 ADD2 TC1), the only supported one. |
 | IFCX-VER-002 | error | UNSUPPORTED_PROPERTY | The only output format is the clear-text STEP physical file. Any other requested format is refused. |
@@ -936,7 +962,7 @@ diagnostic and are checked by the acceptance cases. Counts: 77 rules, 26 error, 
 | IFCX-PSET-001 | mapping | - | Each exported element has one property set BeamCraft_Element with the properties of section 9.1. |
 | IFCX-PSET-002 | mapping | - | A BeamCraft property set or group name never starts with Pset_ or Qto_, except Pset_MaterialCommon and the Qto_ sets of the specification used as section 8 and 7 state. |
 | IFCX-PSET-003 | mapping | - | No property, string or header field contains an actor id, credential, private path, host name, user name or wall-clock time. |
-| IFCX-PSET-004 | warning | - | A label longer than 255 characters is written truncated to 255 characters in IfcRoot.Name, with the full label in the property Label, and the truncation is listed. |
+| IFCX-PSET-004 | warning | - | A BeamCraft string written into an IfcLabel attribute (IfcRoot.Name of an element, storey or project, IfcObject.ObjectType, IfcMaterial.Name) is limited to 255 characters. A longer text is truncated to 255 code points and the truncation is listed; the full text is kept in an unbounded IfcText: the property Label (element), FullName in BeamCraft_Material (material), IfcRoot.Description (storey, project) or ElementKind in BeamCraft_Element (proxy ObjectType). Other BeamCraft strings are written as IfcText, so no length limit applies to them. |
 | IFCX-UNIT-001 | mapping | - | The unit assignment is: length milli metre, plane angle radian, area square metre, volume cubic metre, mass kilogram, mass density kilogram per cubic metre (derived unit). |
 | IFCX-UNIT-002 | mapping | - | Lengths and coordinates are written exactly as the internal millimetre values (mesh values as their binary32 text). No scaling is applied to any length; the storey elevation is written as stored. |
 | IFCX-DET-001 | mapping | - | Elements, levels and relationship members are processed and listed in ascending canonical id order (byte comparison of the 36-character lowercase text); materials in ascending digest order. |
@@ -950,7 +976,8 @@ diagnostic and are checked by the acceptance cases. Counts: 77 rules, 26 error, 
 | IFCX-ERR-002 | error | BACKEND_UNAVAILABLE | A failing output sink or file system gives no output file. The file is written to a temporary name and installed only after complete success. |
 | IFCX-ERR-003 | error | INVALID_ARGUMENT | An existing output file is not replaced unless overwrite is requested; a symbolic link or reparse point at the output name or its parent is refused. |
 | IFCX-ERR-004 | error | CANCELLED | Cancellation before the install point discards all work and leaves no file. |
-| IFCX-ERR-005 | mapping | - | In strict mode any element exported as a proxy, without a representation or without a placement refuses the export with the code of the first such finding. Omitted quantities and truncated names do not. |
+| IFCX-ERR-005 | mapping | - | In strict mode only an element-level finding that carries an F04 code (IFC_GEOMETRY_ABSENT and IFC_PLACEMENT_ABSENT, code UNSUPPORTED_GEOMETRY) refuses the export, with the code of the first such finding in finding order (F10 section 6.4). Warnings and info without a code (proxies, quantity omissions, truncated names, deactivated elements) are never fatal. |
+| IFCX-EMIT-001 | mapping | - | An optional entity is written only when it has content, so no mandatory attribute or relationship is empty: IfcElementQuantity and its IfcRelDefinesByProperties only with at least one quantity; BeamCraft_Declared and its relationship only with a declared value; Pset_MaterialCommon only with a density; IfcMaterial and its IfcRelAssociatesMaterial only with at least one exported element using it; IfcRelContainedInSpatialStructure (of a storey or of the building) only with at least one exported element; the building-to-storeys IfcRelAggregates only with at least one storey; a representation only with a mesh. |
 | IFCX-LIM-001 | error | LIMIT_EXCEEDED | At most 65,536 elements are exported in one file; more refuse the export before any output is produced. |
 | IFCX-LIM-002 | error | LIMIT_EXCEEDED | The output is at most 268,435,456 bytes. The writer checks the running size before each write; exceeding it refuses the export and removes the temporary file. |
 | IFCX-LIM-003 | mapping | - | Every count in the writer is bounded by a cap enforced upstream or by LIM-001, 002 and 005; no allocation is sized by an unchecked input, no recursion is used and no input-derived index is used. |
@@ -961,11 +988,11 @@ diagnostic and are checked by the acceptance cases. Counts: 77 rules, 26 error, 
 | IFCX-SURF-002 | mapping | - | The export report of section 15.4 is deterministic, lists every element's GlobalId, representation, quantity freshness and omissions, and carries the SHA-256 of the file. |
 
 
-## 17. Decisions of the owner and remaining questions
+## 17. Decisions of the owner
 
 ### 17.1 Decisions (2026-10-17, owner)
 
-The owner answered the eleven questions of the first draft in one session. The draft proposals they
+The owner answered the eleven questions of the first draft in one session and the two that followed (Q-12, Q-13) the same day. The draft proposals they
 replace are withdrawn.
 
 | Q | Decision | Where applied |
@@ -981,6 +1008,8 @@ replace are withdrawn.
 | Q-9 | A material without a grade is named **`Unspecified`**, with the definition digest in a property. | 7 |
 | Q-10 | **Declared** area, mass per metre and surface per metre are exported as clearly labelled declared properties, never in a quantity set. | 9.2 |
 | Q-11 | The **SHA-256 construction** for the GlobalIds of project, site, building, storeys and relationships is accepted. | 3.5 |
+| Q-12 | **Deactivated elements are not exported; every other element is.** Export by a user-defined filter or selection is a planned future extension: an extension point, out of scope for 0.1.0, with no behaviour and no case here. | 4.2, 17.3 |
+| Q-13 | **Binary32 mesh coordinates are kept** as drafted (the derived layer's precision); export does not wait for a binary64 derived mesh. | 6.2, 6.4 |
 
 **Q-8, what is recorded and what is not.** The owner's own IFC tool, Altiro Desktop, is the chosen
 independent check of E02's output (`IFCX-VAL-001`). A connector for it also exists in the author's
@@ -996,14 +1025,18 @@ the tool an open E02 gate, not an admitted oracle:
 3. whether it validates against the IFC4 schema and reports the checks the cases need (volume of the
    mesh, closed shell, element count and GlobalIds).
 
-### 17.2 Remaining questions
+### 17.2 Open questions
 
-- **Q-12, deactivated elements.** The draft does not export an element whose lifecycle is
-  `deactivated` (retained but out of play, F10 section 3.2); this is the only element not exported.
-  Should it instead be exported with a flag? In 0.1.0 no command produces that state.
-- **Q-13, mesh precision.** The derived layer stores binary32 mesh points, so exported coordinates
-  are binary32 (6.2). Should E02 wait for a binary64 derived mesh (P04 lists the precision policy as
-  open), or accept binary32 with the stated bound?
+None. Q-8's unverified items (17.1) are an E02 gate, not a question.
+
+### 17.3 Extension point: export by selection
+
+The owner plans a future export of a user-defined filter or selection of elements. It is **not part
+of 0.1.0** and this contract defines no option, behaviour or case for it. The only commitment is
+that the element set of an export is chosen in one place (the engine's pinned-snapshot element list
+of section 4.3), so that a later version can restrict it without changing the mapping rules. Levels,
+materials and relationships would then be limited to those the selected elements use; that rule
+belongs to the future contract version.
 
 ## 18. Public specification index
 
@@ -1141,4 +1174,6 @@ case of the case file that is reachable.
 - 2026-10-17: owner decisions Q-1 to Q-11 applied. IFC4 ADD2 TC1; mesh only; stored ProjectId (D1);
   levels (D2); proxies instead of skips; no persisted GlobalId; `Unspecified` materials; declared
   values; Altiro Desktop as the validation gate. Rules and cases were regenerated and renumbered
-  (the first draft was never frozen). Q-12 and Q-13 are new.
+  (the first draft was never frozen).
+- 2026-10-17: Q-12 and Q-13 decided by the owner and moved to the Decisions record; export by
+  selection recorded as an extension point (17.3).

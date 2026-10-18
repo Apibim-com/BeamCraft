@@ -26,6 +26,8 @@ pub(crate) struct Candidate {
     pub meters_per_unit: f64,
     pub up_axis: String,
     pub metadata: BTreeMap<String, Value>,
+    /// Every supplied layer and whether the host selected it as owned.
+    pub layers: BTreeMap<String, bool>,
 }
 
 /// An entirely virtual byte resolver: no default resolver delegation, file or URL opens.
@@ -128,118 +130,9 @@ pub(crate) fn open(request: OpenRequest, control: &Control) -> Result<Candidate,
     }
     let mut parsed = BTreeMap::new();
     let mut graph = BTreeMap::new();
-    let mut decoded = 0usize;
-    let mut values = 0usize;
-    let mut prim_count = 0usize;
+    let mut counters = Counters::default();
     for (name, asset) in &assets {
-        control.check()?;
-        let data: Box<dyn AbstractData> = if name.ends_with(".usda") {
-            preflight::text(&asset.bytes, b, control)?;
-            Box::new(
-                openusd::usda::parse(std::str::from_utf8(&asset.bytes).map_err(|_| corrupt())?)
-                    .map_err(|_| corrupt())?,
-            )
-        } else {
-            preflight::binary(&asset.bytes, b, &mut decoded)?;
-            let file =
-                openusd::usdc::CrateFile::open(asset.bytes.clone()).map_err(|_| corrupt())?;
-            file.validate().map_err(|_| corrupt())?;
-            if file.tokens.iter().any(|s| s.len() > 1024) {
-                return Err(limit());
-            }
-            preflight::binary_values(&file, &asset.bytes, b, &mut decoded)?;
-            Box::new(openusd::usdc::CrateData::from_file(file, true).map_err(|_| corrupt())?)
-        };
-        control.check()?;
-        let mut dependencies = Vec::new();
-        for path in data.spec_paths() {
-            control.check()?;
-            if path.to_string().len() > 1024
-                || path
-                    .to_string()
-                    .split('/')
-                    .filter(|p| !p.is_empty())
-                    .count()
-                    > b.depth
-            {
-                return Err(limit());
-            }
-            match data.spec_type(&path) {
-                Some(sdf::SpecType::Prim) => charge(&mut prim_count, 1, b.prims)?,
-                Some(
-                    sdf::SpecType::PseudoRoot
-                    | sdf::SpecType::Attribute
-                    | sdf::SpecType::Relationship
-                    | sdf::SpecType::RelationshipTarget,
-                ) => (),
-                _ => return Err(unsupported()),
-            }
-            for field in data.list_fields(&path).ok_or_else(corrupt)? {
-                charge(&mut values, 1, b.values)?;
-                let value = data.get_field(&path, &field).map_err(|_| corrupt())?;
-                match field.as_str() {
-                    "payload"
-                    | "inheritPaths"
-                    | "specializes"
-                    | "variantSelection"
-                    | "variantSetNames"
-                    | "variantChildren"
-                    | "relocates"
-                    | "instanceable"
-                    | "clips"
-                    | "timeSamples"
-                    | "expressionVariables" => return Err(unsupported()),
-                    "subLayerOffsets" => {
-                        let sdf::Value::LayerOffsetVec(offsets) = value.as_ref() else {
-                            return Err(corrupt());
-                        };
-                        if offsets.len() > b.array_items {
-                            return Err(limit());
-                        }
-                        for offset in offsets {
-                            number(offset.offset)?;
-                            number(offset.scale)?;
-                            if *offset != sdf::LayerOffset::IDENTITY {
-                                return Err(unsupported());
-                            }
-                        }
-                    }
-                    "subLayers" => {
-                        let sdf::Value::StringVec(names) = value.as_ref() else {
-                            return Err(corrupt());
-                        };
-                        for target in names {
-                            dependencies.push(preflight::anchored(target, name)?);
-                        }
-                    }
-                    "references" => {
-                        let sdf::Value::ReferenceListOp(list) = value.as_ref() else {
-                            return Err(corrupt());
-                        };
-                        // No deleted/reordered references or internal arcs in this read profile.
-                        if !list.deleted_items.is_empty() || !list.ordered_items.is_empty() {
-                            return Err(unsupported());
-                        }
-                        for reference in list
-                            .explicit_items
-                            .iter()
-                            .chain(&list.added_items)
-                            .chain(&list.prepended_items)
-                            .chain(&list.appended_items)
-                        {
-                            if reference.layer_offset != sdf::LayerOffset::IDENTITY
-                                || !reference.custom_data.is_empty()
-                                || reference.prim_path.is_empty()
-                            {
-                                return Err(unsupported());
-                            }
-                            dependencies.push(preflight::anchored(&reference.asset_path, name)?);
-                        }
-                    }
-                    _ => validate(value.as_ref(), b, 0)?,
-                }
-            }
-        }
+        let (data, dependencies) = load_asset(name, asset, b, control, &mut counters)?;
         graph.insert((*name).clone(), dependencies);
         parsed.insert((*name).clone(), data);
     }
@@ -531,7 +424,139 @@ pub(crate) fn open(request: OpenRequest, control: &Control) -> Result<Candidate,
         meters_per_unit,
         up_axis,
         metadata,
+        layers: assets
+            .keys()
+            .map(|n| (n.clone(), request.owned_layers.contains(n)))
+            .collect(),
     })
+}
+
+/// Running totals charged against the stage budgets while layers are loaded.
+#[derive(Default)]
+pub(crate) struct Counters {
+    decoded: usize,
+    values: usize,
+    prim_count: usize,
+}
+
+/// Preflights, parses and scans one layer: the byte-level and field-level admission that every
+/// supplied asset passes, whether it is owned or foreign. Returns the parsed spec data and the
+/// local assets it depends on (sublayers and explicit external references).
+pub(crate) fn load_asset(
+    name: &str,
+    asset: &Asset,
+    b: Budgets,
+    control: &Control,
+    counters: &mut Counters,
+) -> Result<(Box<dyn AbstractData>, Vec<String>), Diagnostic> {
+    control.check()?;
+    let data: Box<dyn AbstractData> = if name.ends_with(".usda") {
+        preflight::text(&asset.bytes, b, control)?;
+        Box::new(
+            openusd::usda::parse(std::str::from_utf8(&asset.bytes).map_err(|_| corrupt())?)
+                .map_err(|_| corrupt())?,
+        )
+    } else {
+        preflight::binary(&asset.bytes, b, &mut counters.decoded)?;
+        let file = openusd::usdc::CrateFile::open(asset.bytes.clone()).map_err(|_| corrupt())?;
+        file.validate().map_err(|_| corrupt())?;
+        if file.tokens.iter().any(|s| s.len() > 1024) {
+            return Err(limit());
+        }
+        preflight::binary_values(&file, &asset.bytes, b, &mut counters.decoded)?;
+        Box::new(openusd::usdc::CrateData::from_file(file, true).map_err(|_| corrupt())?)
+    };
+    control.check()?;
+    let mut dependencies = Vec::new();
+    for path in data.spec_paths() {
+        control.check()?;
+        if path.to_string().len() > 1024
+            || path
+                .to_string()
+                .split('/')
+                .filter(|p| !p.is_empty())
+                .count()
+                > b.depth
+        {
+            return Err(limit());
+        }
+        match data.spec_type(&path) {
+            Some(sdf::SpecType::Prim) => charge(&mut counters.prim_count, 1, b.prims)?,
+            Some(
+                sdf::SpecType::PseudoRoot
+                | sdf::SpecType::Attribute
+                | sdf::SpecType::Relationship
+                | sdf::SpecType::RelationshipTarget,
+            ) => (),
+            _ => return Err(unsupported()),
+        }
+        for field in data.list_fields(&path).ok_or_else(corrupt)? {
+            charge(&mut counters.values, 1, b.values)?;
+            let value = data.get_field(&path, &field).map_err(|_| corrupt())?;
+            match field.as_str() {
+                "payload"
+                | "inheritPaths"
+                | "specializes"
+                | "variantSelection"
+                | "variantSetNames"
+                | "variantChildren"
+                | "relocates"
+                | "instanceable"
+                | "clips"
+                | "timeSamples"
+                | "expressionVariables" => return Err(unsupported()),
+                "subLayerOffsets" => {
+                    let sdf::Value::LayerOffsetVec(offsets) = value.as_ref() else {
+                        return Err(corrupt());
+                    };
+                    if offsets.len() > b.array_items {
+                        return Err(limit());
+                    }
+                    for offset in offsets {
+                        number(offset.offset)?;
+                        number(offset.scale)?;
+                        if *offset != sdf::LayerOffset::IDENTITY {
+                            return Err(unsupported());
+                        }
+                    }
+                }
+                "subLayers" => {
+                    let sdf::Value::StringVec(names) = value.as_ref() else {
+                        return Err(corrupt());
+                    };
+                    for target in names {
+                        dependencies.push(preflight::anchored(target, name)?);
+                    }
+                }
+                "references" => {
+                    let sdf::Value::ReferenceListOp(list) = value.as_ref() else {
+                        return Err(corrupt());
+                    };
+                    // No deleted/reordered references or internal arcs in this read profile.
+                    if !list.deleted_items.is_empty() || !list.ordered_items.is_empty() {
+                        return Err(unsupported());
+                    }
+                    for reference in list
+                        .explicit_items
+                        .iter()
+                        .chain(&list.added_items)
+                        .chain(&list.prepended_items)
+                        .chain(&list.appended_items)
+                    {
+                        if reference.layer_offset != sdf::LayerOffset::IDENTITY
+                            || !reference.custom_data.is_empty()
+                            || reference.prim_path.is_empty()
+                        {
+                            return Err(unsupported());
+                        }
+                        dependencies.push(preflight::anchored(&reference.asset_path, name)?);
+                    }
+                }
+                _ => validate(value.as_ref(), b, 0)?,
+            }
+        }
+    }
+    Ok((data, dependencies))
 }
 
 fn walk(
@@ -775,4 +800,114 @@ fn value_size(v: &Value, bytes: &mut usize, max: usize) -> Result<(), Diagnostic
         _ => (),
     }
     Ok(())
+}
+
+/// What a foreign layer states about itself, read without composing it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ForeignLayer {
+    /// Storage format, decided from the leading bytes.
+    pub format: beamcraft_model::reference::SourceFormat,
+    /// Name of the `defaultPrim`, if the layer states one.
+    pub default_prim: Option<String>,
+    /// `metersPerUnit`, if the layer states one.
+    pub meters_per_unit: Option<f64>,
+    /// `upAxis`, if the layer states one.
+    pub up_axis: Option<String>,
+    /// Prim specs in the layer.
+    pub prim_count: usize,
+}
+
+/// Admits a foreign layer under the same byte, field and budget rules as every stage asset and
+/// reports what it declares. Nothing is composed and nothing is resolved: a layer that names
+/// another asset (a sublayer or an external reference) is `DEPENDENCY_UNAVAILABLE`, a URL or an
+/// escaping asset identifier is `PERMISSION_DENIED`, and an arc outside the static profile is
+/// `UNSUPPORTED_PROPERTY`, all before any stage exists. The layer's own units are reported, not
+/// required: only the project's root layer must be millimetres and Z up.
+pub(crate) fn inspect_foreign(
+    bytes: &[u8],
+    b: Budgets,
+    control: &Control,
+) -> Result<ForeignLayer, Diagnostic> {
+    use beamcraft_model::reference::SourceFormat;
+    b.validate()?;
+    control.check()?;
+    if bytes.is_empty() || bytes.len() > b.layer_bytes {
+        return Err(if bytes.is_empty() { corrupt() } else { limit() });
+    }
+    let (format, name) = if bytes.starts_with(b"#usda 1.0") {
+        (SourceFormat::Usda, "probe.usda")
+    } else if bytes.starts_with(b"PXR-USDC") {
+        (SourceFormat::Usdc, "probe.usdc")
+    } else if bytes.starts_with(b"PK\x03\x04") {
+        return Err(unsupported());
+    } else {
+        return Err(corrupt());
+    };
+    let asset = Asset {
+        name: name.to_owned(),
+        digest: Sha256::digest(bytes).map_err(|_| limit())?,
+        bytes: bytes.to_vec(),
+    };
+    let (data, dependencies) = load_asset(name, &asset, b, control, &mut Counters::default())?;
+    if !dependencies.is_empty() {
+        return Err(fail(
+            ErrorCode::DependencyUnavailable,
+            "foreign layer names other assets; only a single self-contained layer is supported",
+        ));
+    }
+    let root = sdf::Path::abs_root();
+    let field = |key: &str| -> Result<Option<sdf::Value>, Diagnostic> {
+        Ok(data
+            .try_field(&root, key)
+            .map_err(|_| corrupt())?
+            .map(|v| v.as_ref().clone()))
+    };
+    let text_of = |value: Option<sdf::Value>| -> Result<Option<String>, Diagnostic> {
+        match value {
+            None => Ok(None),
+            Some(sdf::Value::Token(s)) => Ok(Some(s.to_string())),
+            Some(sdf::Value::String(s)) => Ok(Some(s)),
+            Some(_) => Err(unsupported()),
+        }
+    };
+    let meters_per_unit = match field("metersPerUnit")? {
+        None => None,
+        Some(sdf::Value::Double(n)) => Some(n),
+        Some(sdf::Value::Float(n)) => Some(f64::from(n)),
+        Some(_) => return Err(unsupported()),
+    };
+    if let Some(n) = meters_per_unit {
+        number(n)?;
+    }
+    let default_prim = text_of(field("defaultPrim")?)?;
+    let up_axis = text_of(field("upAxis")?)?;
+    let mut prim_count = 0usize;
+    for path in data.spec_paths() {
+        if data.spec_type(&path) == Some(sdf::SpecType::Prim) {
+            prim_count = prim_count.saturating_add(1);
+        }
+    }
+    if let Some(prim) = &default_prim {
+        let path = sdf::Path::new(&format!("/{prim}")).map_err(|_| corrupt())?;
+        let defined = data.spec_type(&path) == Some(sdf::SpecType::Prim)
+            && matches!(
+                data.try_field(&path, "specifier")
+                    .map_err(|_| corrupt())?
+                    .as_deref(),
+                Some(sdf::Value::Specifier(sdf::Specifier::Def))
+            );
+        if !defined {
+            return Err(fail(
+                ErrorCode::NotFound,
+                "default prim is not defined in the foreign layer",
+            ));
+        }
+    }
+    Ok(ForeignLayer {
+        format,
+        default_prim,
+        meters_per_unit,
+        up_axis,
+        prim_count,
+    })
 }

@@ -47,6 +47,8 @@ P07 adds `beamcraft_cli::history`, `RevisionStore::info_at`/`open_at` in the hos
 
 P08 adds `Footprint::for_delete` and the placement patch of `UpdateElement` in the engine, `Change::Delete` in the layer engine, `beamcraft_cli::delete` and the CLI command `delete-element`: a move rewrites only the placement and never rebuilds the body, and a delete removes the whole element from both layers and is refused while another element links to it ([design note](design/p08-move-delete.md)).
 
+R01 adds read-only foreign references (`model::reference`, `engine::reference`, `beamcraft_cli::reference` and the CLI commands `reference-attach`, `reference-move`, `reference-correct-units`, `reference-write` and `reference-inspect`): a foreign USDA/USDC layer is stored under its SHA-256 as an `external` layer of the revision and composed below an owned wrapper element whose placement and explicit units correction are stored apart from it; every write to the source or a foreign prim is refused, and a network path is refused before any I/O ([design note](design/r01-readonly-reference.md)).
+
 A01 adds assemblies (`model::command::{CreateAssembly, AttachToAssembly, DetachFromAssembly}`, `engine::assembly`, `Footprint::for_part_of`, `Shape::Assembly` and `Change::PartOf` in the layer engine, `beamcraft_cli::assembly` and the CLI commands `create-assembly`, `assembly-attach`, `assembly-detach` and `assemblies`): an assembly is an element with its own identity and no body, and membership is the one `bim:partOf` relationship authored on the part, validated for kinds, cardinality, self-links and cycles ([design note](design/a01-assemblies.md)).
 
 [Module boundaries (F08)](contracts/module-boundaries-v0.1.md) give the exact crate and module path
@@ -146,7 +148,8 @@ with disposable caches.
 
 ## References, quantities and collaboration
 
-Foreign USD references must remain read-only. Edits and overrides of foreign prims are forbidden,
+Foreign USD references must remain read-only (R01 implements the attachment wrapper for a single
+self-contained layer). Edits and overrides of foreign prims are forbidden,
 including overrides authored in our layers. Our attachment wrapper may have a placement;
 measurements and annotations are separate owned results. Reference updates are explicit and preserve
 the original source bytes. IFC import and native conversion are outside the initial scope; IFC is a

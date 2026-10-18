@@ -581,10 +581,11 @@ impl IndexBuilder {
     /// and retains only the fields the index uses. Ignored property values are neither copied
     /// nor traversed, so no nesting depth or value size can reach the allocator or the stack.
     fn project(&mut self, prim: &Prim) -> Result<Prim, Diagnostic> {
-        const USED: [&str; 5] = [
+        const USED: [&str; 6] = [
             "bim:id",
             "bim:name",
             "bim:elementKind",
+            "bim:geometryMode",
             "bim:lifecycle",
             "bim:contentDigest",
         ];
@@ -944,7 +945,7 @@ fn element_entry(
         label,
         lifecycle,
         usd_active: prim.active,
-        ownership: if owned && !tainted(foreign, &prim.path) {
+        ownership: if owned && !tainted(foreign, &prim.path, shield(prim).as_deref()) {
             Ownership::Owned
         } else {
             Ownership::Foreign
@@ -954,22 +955,39 @@ fn element_entry(
 }
 
 /// A foreign ancestor or descendant also makes an owned prim read-only (LEW-01).
-fn tainted(foreign: &BTreeSet<String>, path: &str) -> bool {
-    if foreign.contains(path) {
+///
+/// `shield` is the one exception: the arc holder of an R01 reference wrapper and everything below
+/// it are foreign by design, and the wrapper above them stays owned (it may be moved or
+/// relabelled without touching them). The holder's own shape is validated separately.
+fn tainted(foreign: &BTreeSet<String>, path: &str, shield: Option<&str>) -> bool {
+    let hidden = |p: &str| {
+        shield.is_some_and(|s| p == s || p.strip_prefix(s).is_some_and(|r| r.starts_with('/')))
+    };
+    if foreign.contains(path) && !hidden(path) {
         return true;
     }
     if path
         .match_indices('/')
         .filter_map(|(i, _)| path.get(..i))
-        .any(|ancestor| !ancestor.is_empty() && foreign.contains(ancestor))
+        .any(|ancestor| !ancestor.is_empty() && foreign.contains(ancestor) && !hidden(ancestor))
     {
         return true;
     }
     let prefix = format!("{path}/");
     foreign
         .range(prefix.clone()..)
-        .next()
-        .is_some_and(|p| p.starts_with(&prefix))
+        .take_while(|p| p.starts_with(&prefix))
+        .any(|p| !hidden(p))
+}
+
+/// The path below which an R01 reference wrapper composes foreign content, if `prim` is one: the
+/// element kind and the geometry mode must both be `reference`. The wrapper's exact shape is
+/// validated by U02 before any write; a prim with only one of the two gets no exception, so its
+/// foreign descendant makes it foreign and it can never be granted an owned write.
+fn shield(prim: &Prim) -> Option<String> {
+    let is = |name: &str| property(prim, name).and_then(text) == Some("reference");
+    (is("bim:elementKind") && is("bim:geometryMode"))
+        .then(|| format!("{}/Correction/Source", prim.path))
 }
 
 fn owner_of(path: &str) -> Option<ElementId> {

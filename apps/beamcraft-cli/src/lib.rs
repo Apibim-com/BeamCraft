@@ -13,4 +13,6 @@ pub mod edit;
 pub mod history;
 pub mod member;
 pub mod plate;
+pub mod reference;
+pub mod source_file;
 pub mod workspace;

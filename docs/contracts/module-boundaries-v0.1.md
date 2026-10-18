@@ -128,6 +128,7 @@ by the named task with real code. Allowed dependencies are those of the owning r
 | USD worker (thin Python/pxr) | F05 s.1 | `workers/usd/`, not a Cargo package | planned, U01 |
 | USD worker (thin Rust wrapper, separate process; no new package) | F11 s.9, U04 owner topology decision | `apps/beamcraft-cli/src/bin/beamcraft-usd-worker.rs` | U04 amendment: experimental read worker; SDK fallback remains unavailable |
 | CLI | AGENTS s.3, F06 s.9 | `apps/beamcraft-cli` | U04 amendment: version, experimental open/read and byte-storage commands; U06: `revision-commit`, `revision-open`; V02: `view-snapshot` and `view-changes` over a synthetic kernel plate scene; P01: `create-plate` and `plate-inspect` over a store (the CLI package also has a library target, `beamcraft_cli`, for its tests) |
+| Read-only foreign reference: source pin, units interpretation, attach/move/correct commands, write refusal; wiring of file read, layer engine and host | F04 s.1, F10 `reference`, LEW-01/04 | `beamcraft_model::reference`, `beamcraft_engine::reference`, `beamcraft_layer_engine::authored` (`Change::AttachReference`, `read_references`, `inspect_foreign_layer`), `apps/beamcraft-cli` (`beamcraft_cli::{reference, source_file}`) | **now**, R01 (experimental; single self-contained layer, in-process layer engine; no new crate and no new edge) |
 | Native UI and viewport | F06 s.9, V-tasks | `apps/beamcraft-ui` | planned, V01 |
 
 The F05 sections 3 and 10 also require SHA-256 verification of attachments. The protocol crate
