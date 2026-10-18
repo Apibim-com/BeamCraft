@@ -36,7 +36,7 @@ use beamcraft_layer_engine::authored::{
     Author, Definition, EditTargets, Prepare, Resource, schema_identity,
 };
 use beamcraft_layer_engine::{Prim, Reader, Value};
-use beamcraft_model::command::CommandError;
+use beamcraft_model::command::{CommandError, label_is_valid};
 use beamcraft_model::definition::{
     MaterialSpec, RectangleProfileSpec, SectionProfileSpec, SectionProperties,
 };
@@ -480,12 +480,17 @@ impl DefinitionRecord {
                 ..
             } => {
                 let density = density_kg_m3.map(|d| format!("{d} kg/m3"));
-                match (grade, density) {
-                    (Some(grade), Some(density)) => format!("{grade} {density}"),
-                    (Some(grade), None) => grade.clone(),
-                    (None, Some(density)) => density,
-                    (None, None) => "Material (density unknown)".to_owned(),
-                }
+                let combined = match (grade, &density) {
+                    (Some(grade), Some(density)) => Some(format!("{grade} {density}")),
+                    _ => None,
+                };
+                // The name is a label too: when grade and density together are longer than a
+                // label may be, the grade alone (or the density alone) is still a valid name.
+                [combined, grade.clone(), density]
+                    .into_iter()
+                    .flatten()
+                    .find(|name| label_is_valid(name))
+                    .unwrap_or_else(|| "Material (density unknown)".to_owned())
             }
             Self::RectangleProfile {
                 width_mm,
@@ -1094,6 +1099,16 @@ mod tests {
         assert_eq!(name(material(Some(2700.5), None)), "2700.5 kg/m3");
         assert_eq!(name(material(None, Some("S355"))), "S355");
         assert_eq!(name(material(None, None)), "Material (density unknown)");
+        // A grade at the label limit keeps its density but loses the suffix from the name.
+        let long = "G".repeat(256);
+        let fitted = name(material(Some(7850.0), Some(&long)));
+        assert_eq!(fitted, long);
+        let record = material(Some(7850.0), Some(&long)).named(None);
+        assert!(record.admit_for_publication().is_ok());
+        assert!(matches!(
+            record,
+            DefinitionRecord::Material { density_kg_m3: Some(d), grade: Some(_), .. } if d == 7850.0
+        ));
         let rectangle = |designation: Option<&str>| DefinitionRecord::RectangleProfile {
             width_mm: 200.0,
             height_mm: 300.5,

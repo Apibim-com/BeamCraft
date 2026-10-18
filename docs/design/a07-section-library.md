@@ -298,7 +298,7 @@ beamcraft create-plate   --store ROOT ... [--material-digest SHA256 | --material
 | Lookup | Exact, case-sensitive designation. An unknown designation is `NOT_FOUND`; nothing is substituted or matched by prefix. |
 | `define-profile --library` | The definition takes every value from the entry and stores them itself (designation, standard, declared numbers, display name = designation unless `--name`), so it never depends on the library file later: the tests delete the library before placing a member. The library provenance (id, version, licence) is reported by `library-list` and `library-show` but is **not** stored in the definition (the design note of section 2 foresaw provenance labels; they would be new definition fields and a new digest input, and are left to a later slice). `library-show` prints the digest that `define-profile --library` would pin. Combining `--library` with explicit dimensions, `--family`, `--standard` or declared numbers is `INVALID_ARGUMENT`. |
 | Display names | `Definition::{Material, RectangleProfile, SectionProfile}` carry an optional readable name, written as USD `displayName` metadata on the definition prim. `define-material` and `define-profile` take `--name TEXT`; the default is the designation, else a generated name: `S355 7850 kg/m3` (grade and density, only what is declared; `Material (density unknown)` otherwise), `RECT 200x300`, `I 200x100`, `RHS 100x60x4`, `CHS 114x5`, `Custom 8 points`. `definitions` lists `display_name`; `plate-inspect` lists `profile_name` and `material_name` of each element (null for a definition without a name). JSON objects are printed with sorted keys by the shared encoder, so "name first" is not a property of the text; the name is the first thing a person looks for, not the first key. |
-| Selection by name | `create-member --profile NAME`, `create-member|create-plate --material NAME` resolve against the **head's** definitions (verified and re-admitted like every read) by display name or by designation (profiles) or grade (materials); profiles and materials are separate namespaces. No match is `NOT_FOUND`; more than one distinct definition is `INVALID_ARGUMENT` with every candidate (digest, kind, display name, names) in `diagnostics` and nothing published or guessed; a name and its digest option together are `INVALID_ARGUMENT`. The digest stays the identity: the command pins the resolved digest. |
+| Selection by name | `create-member --profile NAME`, `create-member|create-plate --material NAME` resolve against the **head's** definitions (verified and re-admitted like every read) by display name or by designation (profiles) or grade (materials); profiles and materials are separate namespaces. No match is `NOT_FOUND`; more than one distinct definition is `INVALID_ARGUMENT` with the candidates (digest, kind, display name, names; the first 16 and the total, see the review follow-up) in `diagnostics` and nothing published or guessed; a name and its digest option together are `INVALID_ARGUMENT`. The digest stays the identity: the command pins the resolved digest. |
 | Declared area (D3) | `engine::member::admit_section_profile` compares a declared area with the net area the kernel's detailed outline extrudes (`section_member` over a 1 m axis, `net_area_mm2`); a gap above 1 percent (`model::limits::DECLARED_SECTION_AREA_TOLERANCE`) is `INVALID_ARGUMENT` naming `area_mm2`. It runs at publication (`define-profile`, library entries), never when a committed definition is read, so stores published before it stay readable. The rectangle keeps its 0.1 percent check. |
 
 ### Digest and schema effect (honest record)
@@ -361,6 +361,30 @@ URL/UNC paths, a bad-entry mix, the 4,096/4,097 entry bound, option conflicts, d
 as part of the digest, ambiguous names with candidates, name and digest together),
 `beamcraft_cli` unit tests of the loader, `cargo test -p beamcraft-model definition`,
 `cargo test -p beamcraft-layer-engine pin_tests`.
+
+### Review follow-up (PR #93)
+
+* **Default names stay valid labels.** A generated material name that would exceed the 256-byte label
+  limit (a 256-byte grade plus the density suffix) falls back to the grade alone, then the density
+  alone; the grade and density themselves are stored unchanged.
+* **Listings are paged.** `library-list` and `definitions` take `--offset` (default 0) and `--limit`
+  (default 64, 1 to 256) and report `entry_count`/`definition_count` (all matches), `rejected_count`,
+  `offset`, `page_size` and `next_offset` (null on the last page). `library-list` pages one position space:
+  the matching entries, then the refused ones. Each page is also checked against the real encoder
+  (1 MiB of text, the parser's token scratch): the page is halved until it encodes, so a page may be
+  shorter than `--limit` (never empty while items remain), and one entry that alone is too large is
+  `LIMIT_EXCEEDED`. `definitions --name NAME` lists the definitions that a name selects.
+* **Ambiguity responses are capped.** The `diagnostics` of an ambiguous name list the first 16
+  candidates and, when there are more, a final object with `candidate_count`, `listed` and the
+  `definitions --name` command that pages the rest. The code stays `INVALID_ARGUMENT`.
+* **Retries by name replay.** For an `--op-id` the host ledger has already committed, a name that
+  still describes the definition the head's element was bound to resolves to that definition
+  (`beamcraft_cli::plate::accepted_binding`), before any name is resolved against the head; the
+  engine's content fingerprint then replays an identical request and returns `OP_ID_REUSE` for a changed one
+  (another name, another size). A name that does not describe the original binding resolves
+  normally, so an ambiguous or unknown name is still `INVALID_ARGUMENT` or `NOT_FOUND`, not a
+  replay. Limit: as for every replay in this adapter, the original binding is read from the head's
+  element, so an element deleted since is not replayed.
 
 ## Provenance
 

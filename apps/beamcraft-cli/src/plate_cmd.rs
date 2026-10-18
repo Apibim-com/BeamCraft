@@ -16,8 +16,8 @@ use beamcraft_cli::history::{Direction, Step, step, timeline};
 use beamcraft_cli::library::load as load_library;
 use beamcraft_cli::member::{CreateMemberRequest, create_member};
 use beamcraft_cli::plate::{
-    CreateRequest, Created, Inspection, PlateError, QuantityReport, RevisionSummary, create_plate,
-    inspect,
+    AcceptedBinding, CreateRequest, Created, Inspection, PlateError, QuantityReport,
+    RevisionSummary, accepted_binding, create_plate, inspect,
 };
 use beamcraft_cli::workspace::{
     CreateWorkspace, WorkspaceStatus, create_workspace, publish_workspace,
@@ -43,6 +43,7 @@ use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use beamcraft_model::section::{CustomSection, ParametricSection, SectionFamily, SectionShape};
 use beamcraft_protocol::json::Json;
+use beamcraft_protocol::message;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 
@@ -255,7 +256,8 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "workspace-history" => &["--workspace-dir"],
         "define-material" => DEFINE_MATERIAL_OPTIONS,
         "define-profile" => DEFINE_PROFILE_OPTIONS,
-        "plate-inspect" | "definitions" => &["--store"],
+        "plate-inspect" => &["--store"],
+        "definitions" => &["--store", "--name", "--offset", "--limit"],
         _ => return Err(invalid("unknown command")),
     };
     if !tail.len().is_multiple_of(2) || tail.len() > 40 {
@@ -292,7 +294,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
             workspace_command(&store, command, &options)
         }
         "define-material" | "define-profile" => define_command(&store, command, &options),
-        "definitions" => definitions_json(&inspect(&store)?),
+        "definitions" => definitions_json(&inspect(&store)?, &options),
         _ => Ok(inspection_json(&inspect(&store)?)?),
     }
 }
@@ -330,15 +332,48 @@ fn digest_option(text: &str) -> Run<ContentDigest> {
         .map_err(|_| invalid("a digest is not 64 lower-case hexadecimal characters"))
 }
 
+/// Most candidates of an ambiguous name that an error response lists; the rest is counted and
+/// listed by `definitions --name NAME --offset N`. Sized so the response stays far inside the
+/// shared JSON encoder budgets whatever the number of definitions.
+const MAX_LISTED_CANDIDATES: usize = 16;
+
+/// The diagnostics of an ambiguous name: at most [`MAX_LISTED_CANDIDATES`] candidates and, when
+/// there are more, a final object with the total and how to list the rest.
+fn ambiguity_diagnostics(found: &[(ContentDigest, DefinitionRecord)]) -> Vec<Json> {
+    let mut diagnostics: Vec<Json> = found
+        .iter()
+        .take(MAX_LISTED_CANDIDATES)
+        .map(|(digest, record)| candidate_json(digest, record))
+        .collect();
+    if found.len() > MAX_LISTED_CANDIDATES {
+        diagnostics.push(Json::object([
+            ("candidate_count", Json::uint(found.len() as u64)),
+            ("listed", Json::uint(MAX_LISTED_CANDIDATES as u64)),
+            (
+                "list_rest",
+                Json::text(format!(
+                    "definitions --store ROOT --name NAME --offset {MAX_LISTED_CANDIDATES}"
+                )),
+            ),
+        ]));
+    }
+    diagnostics
+}
+
 /// A definition chosen by its full digest (`keys.0`) or by a readable name (`keys.1`), never
 /// both. A name is resolved against the definitions of the head revision by display name or
 /// catalogue label; no match is `NOT_FOUND` and a name that matches several definitions is
-/// `INVALID_ARGUMENT` with every candidate in `candidates`, never a guess.
+/// `INVALID_ARGUMENT` with the first candidates in `candidates`, never a guess. For an operation
+/// the ledger already accepted, a name that still describes the definition the element was bound
+/// to resolves to that definition (`replay`), so a retry is a replay even after another
+/// definition with the same name was published; any other name resolves normally and the
+/// engine's content fingerprint rejects the changed request.
 fn selected(
     store: &RevisionStore,
     options: &BTreeMap<&str, &str>,
     keys: (&'static str, &'static str),
     profiles: bool,
+    replay: Option<&AcceptedBinding>,
     candidates: &mut Vec<Json>,
 ) -> Run<Option<ContentDigest>> {
     let (digest_key, name_key) = keys;
@@ -347,6 +382,20 @@ fn selected(
         (Some(text), None) => digest_option(text).map(Some),
         (None, None) => Ok(None),
         (None, Some(name)) => {
+            if let Some(binding) = replay {
+                let original = if profiles {
+                    binding.profile
+                } else {
+                    binding.material
+                };
+                if let Some(digest) = original
+                    && binding.definitions.get(&digest).is_some_and(|record| {
+                        record.is_profile() == profiles && record.selectable_names().contains(name)
+                    })
+                {
+                    return Ok(Some(digest));
+                }
+            }
             let definitions = head_definitions(store)?;
             match resolve_name(&definitions, name, profiles) {
                 NameResolution::Found(digest) => Ok(Some(digest)),
@@ -359,9 +408,7 @@ fn selected(
                     },
                 }),
                 NameResolution::Ambiguous(found) => {
-                    for (digest, record) in &found {
-                        candidates.push(candidate_json(digest, record));
-                    }
+                    candidates.extend(ambiguity_diagnostics(&found));
                     Err(invalid(
                         "the name matches more than one definition; use a unique name or the digest",
                     ))
@@ -615,6 +662,11 @@ fn create(
         Some(text) => WorkspaceId::parse(text).map_err(id_error)?,
         None => WorkspaceId::from_uuid(fresh()?),
     };
+    let replay = if options.contains_key("--op-id") && options.contains_key("--material") {
+        accepted_binding(store, &op_id, &new_id)?
+    } else {
+        None
+    };
     let width = float(options, "--width")?;
     let length = float(options, "--length")?;
     let thickness = float(options, "--thickness")?;
@@ -634,6 +686,7 @@ fn create(
             options,
             ("--material-digest", "--material"),
             false,
+            replay.as_ref(),
             candidates,
         )?,
         holes_mm: holes(options)?,
@@ -1205,11 +1258,19 @@ fn create_member_command(
                 .ok_or_else(|| invalid("--start and --end are required"))?,
         )
     };
+    let replay = if options.contains_key("--op-id")
+        && (options.contains_key("--profile") || options.contains_key("--material"))
+    {
+        accepted_binding(store, &op_id, &new_id)?
+    } else {
+        None
+    };
     let profile_digest = selected(
         store,
         options,
         ("--profile-digest", "--profile"),
         true,
+        replay.as_ref(),
         candidates,
     )?
     .ok_or_else(|| invalid("--profile-digest or --profile is required"))?;
@@ -1218,6 +1279,7 @@ fn create_member_command(
         options,
         ("--material-digest", "--material"),
         false,
+        replay.as_ref(),
         candidates,
     )?;
     let command = CreateStraightMember {
@@ -1466,30 +1528,98 @@ fn defined_json(defined: &Defined) -> Run<Json> {
     ]))
 }
 
-fn definitions_json(inspection: &Inspection) -> Run<Json> {
-    let definitions = inspection
+/// Items per page of a listing when `--limit` is not given.
+pub(crate) const DEFAULT_PAGE: usize = 64;
+/// Largest `--limit` of a listing.
+pub(crate) const MAX_PAGE: usize = 256;
+
+/// `--offset` (default 0) and `--limit` (default 64, at most 256, at least 1) of a listing.
+pub(crate) fn page_of(options: &BTreeMap<&str, &str>) -> Run<(usize, usize)> {
+    let number = |key: &str, default: usize| {
+        options.get(key).map_or(Ok(default), |text| {
+            text.parse::<usize>()
+                .map_err(|_| invalid("--offset and --limit are unsigned integers"))
+        })
+    };
+    let (offset, limit) = (number("--offset", 0)?, number("--limit", DEFAULT_PAGE)?);
+    if limit == 0 || limit > MAX_PAGE {
+        return Err(invalid("--limit is between 1 and 256"));
+    }
+    Ok((offset, limit))
+}
+
+/// The response of a listing page that fits the shared JSON encoder budgets (1 MiB of text and
+/// the token scratch of the parser): `build(count)` makes the complete response for the first
+/// `count` items of the page, and `count` is halved until the response encodes. A page is never
+/// empty while items remain; one item that alone exceeds the budgets is `LIMIT_EXCEEDED`.
+pub(crate) fn fit_page(
+    available: usize,
+    limit: usize,
+    build: impl Fn(usize) -> Run<Json>,
+) -> Run<Json> {
+    let mut count = available.min(limit);
+    loop {
+        let json = build(count)?;
+        if json.encode(&message::read_limits()).is_ok() {
+            return Ok(json);
+        }
+        if count <= 1 {
+            return Err(PlateError {
+                code: ErrorCode::LimitExceeded,
+                message: "one listing entry exceeds the output budget",
+            });
+        }
+        count = count.div_ceil(2);
+    }
+}
+
+fn definitions_json(inspection: &Inspection, options: &BTreeMap<&str, &str>) -> Run<Json> {
+    let (offset, limit) = page_of(options)?;
+    let name = options.get("--name");
+    let matching: Vec<_> = inspection
         .definitions
         .iter()
-        .map(|(digest, record)| {
-            let used_by: Vec<Json> = inspection
-                .plates
-                .iter()
-                .filter(|p| p.authored.material == Some(*digest))
-                .map(|p| Json::text(p.authored.id.to_string()))
-                .collect();
-            let Json::Object(mut object) = definition_json(digest, record)? else {
-                return Err(invalid("definition result is not an object"));
-            };
-            object.insert("used_by".into(), Json::Array(used_by));
-            Ok(Json::Object(object))
-        })
-        .collect::<Run<Vec<_>>>()?;
-    Ok(Json::object([
-        ("outcome", Json::text("definitions")),
-        ("revision", revision_json(&inspection.revision)),
-        ("definition_count", Json::uint(definitions.len() as u64)),
-        ("definitions", Json::Array(definitions)),
-    ]))
+        .filter(|(_, record)| name.is_none_or(|n| record.selectable_names().contains(n)))
+        .collect();
+    let total = matching.len();
+    let available = total.saturating_sub(offset);
+    fit_page(available, limit, |count| {
+        let definitions = matching
+            .iter()
+            .skip(offset)
+            .take(count)
+            .map(|(digest, record)| {
+                let used_by: Vec<Json> = inspection
+                    .plates
+                    .iter()
+                    .filter(|p| p.authored.material == Some(**digest))
+                    .map(|p| Json::text(p.authored.id.to_string()))
+                    .collect();
+                let Json::Object(mut object) = definition_json(digest, record)? else {
+                    return Err(invalid("definition result is not an object"));
+                };
+                object.insert("used_by".into(), Json::Array(used_by));
+                Ok(Json::Object(object))
+            })
+            .collect::<Run<Vec<_>>>()?;
+        let next = offset.saturating_add(count);
+        Ok(Json::object([
+            ("outcome", Json::text("definitions")),
+            ("revision", revision_json(&inspection.revision)),
+            ("definition_count", Json::uint(total as u64)),
+            ("offset", Json::uint(offset as u64)),
+            ("page_size", Json::uint(definitions.len() as u64)),
+            (
+                "next_offset",
+                if next < total {
+                    Json::uint(next as u64)
+                } else {
+                    Json::Null
+                },
+            ),
+            ("definitions", Json::Array(definitions)),
+        ]))
+    })
 }
 
 fn plate_json(record: &PlateRecord) -> Run<Json> {
@@ -1822,4 +1952,69 @@ fn inspection_json(inspection: &Inspection) -> Run<Json> {
             ]),
         ),
     ]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn steel(density: f64) -> (ContentDigest, DefinitionRecord) {
+        let record = DefinitionRecord::Material {
+            density_kg_m3: Some(density),
+            grade: None,
+            standard: None,
+            display_name: Some("Steel".into()),
+        };
+        (record.resource().unwrap().digest, record)
+    }
+
+    #[test]
+    fn a_large_ambiguous_set_is_capped_counted_and_still_encodes_with_its_code() {
+        let found: Vec<_> = (1..=4096).map(|i| steel(f64::from(i))).collect();
+        let diagnostics = ambiguity_diagnostics(&found);
+        assert_eq!(diagnostics.len(), MAX_LISTED_CANDIDATES + 1);
+        let summary = diagnostics.last().unwrap();
+        assert_eq!(summary.get("candidate_count").unwrap().float(), Ok(4096.0));
+        assert_eq!(summary.get("listed").unwrap().float(), Ok(16.0));
+        let (json, exit) = report_with(Err(invalid("ambiguous")), diagnostics);
+        assert_eq!(exit, 2);
+        // The shared encoder accepts it and keeps the error code.
+        let bytes = json.encode(&message::read_limits()).unwrap();
+        let back = beamcraft_protocol::json::decode(&bytes, &message::read_limits()).unwrap();
+        assert_eq!(back.get("code").unwrap().string(), Ok("INVALID_ARGUMENT"));
+        // A small set lists everything and adds no summary.
+        assert_eq!(ambiguity_diagnostics(&found[..3]).len(), 3);
+    }
+
+    #[test]
+    fn a_page_shrinks_until_its_response_fits_the_encoder_budgets() {
+        // 256 strings of 4096 bytes are just over the 1 MiB output limit.
+        let page = |count: usize| {
+            Ok(Json::object([(
+                "items",
+                Json::Array(vec![Json::text("a".repeat(4096)); count]),
+            )]))
+        };
+        let json = fit_page(256, 256, page).unwrap();
+        let shown = json.get("items").unwrap().array().unwrap().len();
+        assert!(shown > 0 && shown < 256, "{shown}");
+        assert!(json.encode(&message::read_limits()).is_ok());
+        let one = fit_page(1, 256, page).unwrap();
+        assert_eq!(one.get("items").unwrap().array().unwrap().len(), 1);
+        let none = fit_page(0, 256, page).unwrap();
+        assert!(none.get("items").unwrap().array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn page_options_are_bounded() {
+        let options = |pairs: &[(&'static str, &'static str)]| pairs.iter().copied().collect();
+        assert_eq!(page_of(&options(&[])).unwrap(), (0, DEFAULT_PAGE));
+        assert_eq!(
+            page_of(&options(&[("--offset", "5"), ("--limit", "256")])).unwrap(),
+            (5, 256)
+        );
+        for bad in [("--limit", "0"), ("--limit", "257"), ("--offset", "-1")] {
+            assert!(page_of(&options(&[bad])).is_err(), "{bad:?}");
+        }
+    }
 }

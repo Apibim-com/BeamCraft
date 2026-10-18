@@ -446,6 +446,248 @@ fn library_options_do_not_combine_with_explicit_values() {
 }
 
 #[test]
+fn a_large_library_is_listed_in_bounded_pages_that_add_up_to_the_whole() {
+    let f = Fixture::new();
+    let bar = "token steel:profile:family = \"rectangle\"\ndouble steel:profile:hMm = 10\ndouble steel:profile:bMm = 10\n";
+    // Half valid entries, half refused ones (no dimensions), 4096 in all.
+    let designations: Vec<String> = (0..4096).map(|i| format!("T-{i:04}")).collect();
+    let prims: Vec<String> = (0..4096).map(|i| format!("E{i}")).collect();
+    let entries: Vec<(&str, &str, &str)> = prims
+        .iter()
+        .zip(&designations)
+        .enumerate()
+        .map(|(i, (p, d))| (p.as_str(), d.as_str(), if i % 2 == 0 { bar } else { "" }))
+        .collect();
+    let path = f.file("large.usda", library_text(&entries).as_bytes());
+    let mut seen = std::collections::BTreeSet::new();
+    let mut rejected = std::collections::BTreeSet::new();
+    let mut offset = 0u64;
+    let mut pages = 0;
+    for limit in ["256", "64"] {
+        seen.clear();
+        rejected.clear();
+        offset = 0;
+        pages = 0;
+        loop {
+            let (code, body) = f.raw(&[
+                "library-list",
+                "--library",
+                &path,
+                "--offset",
+                &offset.to_string(),
+                "--limit",
+                limit,
+            ]);
+            assert_eq!(code, 0, "offset {offset}: {body:?}");
+            pages += 1;
+            assert_eq!(num(&body, &["entry_count"]), 2048.0);
+            assert_eq!(num(&body, &["rejected_count"]), 2048.0);
+            let page = at(&body, &["entries"]).array().unwrap();
+            let refused = at(&body, &["rejected"]).array().unwrap();
+            assert_eq!(
+                (page.len() + refused.len()) as f64,
+                num(&body, &["page_size"])
+            );
+            assert!(page.len() + refused.len() <= limit.parse::<usize>().unwrap());
+            for entry in page {
+                assert!(seen.insert(text(entry, "designation")), "repeated entry");
+            }
+            for entry in refused {
+                assert!(rejected.insert(text(entry, "designation")), "repeated");
+            }
+            match at(&body, &["next_offset"]) {
+                Json::Null => break,
+                next => offset = next.float().unwrap() as u64,
+            }
+        }
+        assert_eq!(seen.len(), 2048, "limit {limit}");
+        assert_eq!(rejected.len(), 2048, "limit {limit}");
+    }
+    assert!(pages >= 64 && offset > 0);
+    // The default page is bounded too, and the limits are checked.
+    let (code, body) = f.raw(&["library-list", "--library", &path]);
+    assert_eq!(code, 0);
+    assert_eq!(num(&body, &["page_size"]), 64.0);
+    assert_eq!(num(&body, &["next_offset"]), 64.0);
+    for limit in ["0", "257", "x"] {
+        assert_eq!(
+            f.library_rejected("library-list", &["--library", &path, "--limit", limit]),
+            "INVALID_ARGUMENT"
+        );
+    }
+}
+
+#[test]
+fn a_retry_by_name_replays_even_after_a_second_definition_has_the_name() {
+    let f = Fixture::new();
+    let steel = digest_of(&f.ok("define-material", &["--density", "7850", "--grade", "S355"]));
+    let profile = digest_of(&f.ok(
+        "define-profile",
+        &["--width", "200", "--height", "300", "--designation", "P1"],
+    ));
+    let (plate_op, plate_id) = (
+        "01900000-0000-7000-8000-00000000a001",
+        "01900000-0000-7000-8000-00000000a002",
+    );
+    let (member_op, member_id) = (
+        "01900000-0000-7000-8000-00000000a003",
+        "01900000-0000-7000-8000-00000000a004",
+    );
+    let plate_args = |material: &'static str| {
+        vec![
+            "--width",
+            "1000",
+            "--length",
+            "500",
+            "--thickness",
+            "10",
+            "--op-id",
+            plate_op,
+            "--new-id",
+            plate_id,
+            "--material",
+            material,
+        ]
+    };
+    let member_args = |profile: &'static str, material: &'static str| {
+        vec![
+            "--start",
+            "0,0,0",
+            "--end",
+            "0,0,3000",
+            "--op-id",
+            member_op,
+            "--new-id",
+            member_id,
+            "--profile",
+            profile,
+            "--material",
+            material,
+        ]
+    };
+    let plate = f.ok("create-plate", &plate_args("S355"));
+    assert_eq!(text(&plate, "outcome"), "plate_created");
+    let member = f.ok("create-member", &member_args("P1", "S355"));
+    assert_eq!(text(&member, "outcome"), "member_created");
+
+    // Another material with the grade and another profile with the designation are published.
+    f.ok("define-material", &["--density", "7800", "--grade", "S355"]);
+    f.ok(
+        "define-profile",
+        &["--width", "100", "--height", "100", "--designation", "P1"],
+    );
+    let sequence_before = sequence(&f.ok("definitions", &[]));
+
+    // A new operation by those names is ambiguous now ...
+    let fresh = f.rejected(
+        "create-plate",
+        &[
+            "--width",
+            "1000",
+            "--length",
+            "500",
+            "--thickness",
+            "10",
+            "--material",
+            "S355",
+        ],
+    );
+    assert_eq!(text(&fresh, "code"), "INVALID_ARGUMENT");
+    // ... but the accepted operations are replayed with their original binding.
+    let again = f.ok("create-plate", &plate_args("S355"));
+    assert_eq!(text(&again, "outcome"), "plate_replayed");
+    assert_eq!(text(at(&again, &["plate"]), "material_digest"), steel);
+    let again = f.ok("create-member", &member_args("P1", "S355"));
+    assert_eq!(text(&again, "outcome"), "member_replayed");
+    assert_eq!(text(at(&again, &["member"]), "profile_digest"), profile);
+    assert_eq!(text(at(&again, &["member"]), "material_digest"), steel);
+    assert_eq!(sequence(&f.ok("definitions", &[])), sequence_before);
+
+    // A changed request under the accepted operation is still reuse, by fingerprint.
+    let other_material = f.rejected("create-plate", &plate_args("S355 7800 kg/m3"));
+    assert_eq!(text(&other_material, "code"), "OP_ID_REUSE");
+    let other_profile = f.rejected("create-member", &member_args("P1", "S355 7800 kg/m3"));
+    assert_eq!(text(&other_profile, "code"), "OP_ID_REUSE");
+    let mut resized = plate_args("S355");
+    resized[1] = "1100";
+    assert_eq!(
+        text(&f.rejected("create-plate", &resized), "code"),
+        "OP_ID_REUSE"
+    );
+}
+
+#[test]
+fn a_large_ambiguity_lists_the_first_candidates_and_the_rest_is_paged() {
+    let f = Fixture::new();
+    let total = 20;
+    let mut digests = std::collections::BTreeSet::new();
+    for density in 1..=total {
+        let reply = f.ok(
+            "define-material",
+            &["--density", &density.to_string(), "--name", "Steel"],
+        );
+        digests.insert(digest_of(&reply));
+    }
+    let body = f.rejected(
+        "create-plate",
+        &[
+            "--width",
+            "10",
+            "--length",
+            "10",
+            "--thickness",
+            "1",
+            "--material",
+            "Steel",
+        ],
+    );
+    assert_eq!(text(&body, "code"), "INVALID_ARGUMENT");
+    let diagnostics = at(&body, &["diagnostics"]).array().unwrap();
+    assert_eq!(diagnostics.len(), 17, "16 candidates and the summary");
+    let summary = diagnostics.last().unwrap();
+    assert_eq!(num(summary, &["candidate_count"]), total as f64);
+    assert_eq!(num(summary, &["listed"]), 16.0);
+    // The rest, and every candidate, can be listed by name in pages.
+    let mut listed = std::collections::BTreeSet::new();
+    let mut offset = 0u64;
+    loop {
+        let page = f.ok(
+            "definitions",
+            &[
+                "--name",
+                "Steel",
+                "--offset",
+                &offset.to_string(),
+                "--limit",
+                "7",
+            ],
+        );
+        assert_eq!(num(&page, &["definition_count"]), total as f64);
+        for definition in at(&page, &["definitions"]).array().unwrap() {
+            assert!(listed.insert(text(definition, "digest")));
+        }
+        match at(&page, &["next_offset"]) {
+            Json::Null => break,
+            next => offset = next.float().unwrap() as u64,
+        }
+    }
+    assert_eq!(listed, digests);
+    let none = f.ok("definitions", &["--name", "Nothing"]);
+    assert_eq!(num(&none, &["definition_count"]), 0.0);
+}
+
+#[test]
+fn a_long_grade_still_gets_a_valid_default_name_and_keeps_its_density() {
+    let f = Fixture::new();
+    let grade = "G".repeat(256);
+    let created = f.ok("define-material", &["--density", "7850", "--grade", &grade]);
+    let definition = at(&created, &["definition"]);
+    assert_eq!(text(definition, "display_name"), grade);
+    assert_eq!(num(definition, &["density_kg_m3"]), 7850.0);
+    assert_eq!(text(definition, "grade"), grade);
+}
+
+#[test]
 fn the_entry_count_of_a_library_is_bounded() {
     let f = Fixture::new();
     let bar = "token steel:profile:family = \"rectangle\"\ndouble steel:profile:hMm = 10\ndouble steel:profile:bMm = 10\n";

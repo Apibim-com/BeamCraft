@@ -5,8 +5,8 @@
 //! on the command line (no hidden global, no environment lookup yet), never a store, and print
 //! one JSON object with the error shape and exit codes of the plate commands.
 
-use crate::plate_cmd::{Run, definition_json, invalid, report};
-use beamcraft_cli::library::{Library, LibraryEntry, LibraryInfo, load};
+use crate::plate_cmd::{Run, definition_json, fit_page, invalid, page_of, report};
+use beamcraft_cli::library::{LibraryEntry, LibraryInfo, RejectedEntry, load};
 use beamcraft_protocol::json::Json;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -47,11 +47,9 @@ fn entry_json(entry: &LibraryEntry) -> Run<Json> {
     Ok(Json::Object(object))
 }
 
-fn rejected_json(library: &Library) -> Json {
+fn rejected_json<'a>(rejected: impl Iterator<Item = &'a RejectedEntry>) -> Json {
     Json::Array(
-        library
-            .rejected
-            .iter()
+        rejected
             .map(|r| {
                 Json::object([
                     ("prim_path", Json::text(r.prim_path.clone())),
@@ -80,11 +78,11 @@ fn run(args: &[OsString]) -> Run<Json> {
         .split_first()
         .ok_or_else(|| invalid("missing command"))?;
     let allowed: &[&str] = match *command {
-        "library-list" => &["--library", "--family", "--filter"],
+        "library-list" => &["--library", "--family", "--filter", "--offset", "--limit"],
         "library-show" => &["--library", "--designation"],
         _ => return Err(invalid("unknown command")),
     };
-    if !tail.len().is_multiple_of(2) || tail.len() > 8 {
+    if !tail.len().is_multiple_of(2) || tail.len() > 10 {
         return Err(invalid("options are KEY VALUE pairs"));
     }
     let mut options = BTreeMap::new();
@@ -111,7 +109,8 @@ fn run(args: &[OsString]) -> Run<Json> {
     }
     let family = options.get("--family");
     let filter = options.get("--filter").map(|f| f.to_ascii_lowercase());
-    let entries = library
+    let (offset, limit) = page_of(&options)?;
+    let matching: Vec<&LibraryEntry> = library
         .entries
         .iter()
         .filter(|e| family.is_none_or(|f| e.record.kind() == *f))
@@ -120,13 +119,43 @@ fn run(args: &[OsString]) -> Run<Json> {
                 .as_ref()
                 .is_none_or(|f| e.designation.to_ascii_lowercase().contains(f.as_str()))
         })
-        .map(entry_json)
-        .collect::<Run<Vec<_>>>()?;
-    Ok(Json::object([
-        ("outcome", Json::text("library")),
-        ("library", info_json(&library.info)),
-        ("entry_count", Json::uint(entries.len() as u64)),
-        ("entries", Json::Array(entries)),
-        ("rejected", rejected_json(&library)),
-    ]))
+        .collect();
+    // One position space: the matching entries, then the refused ones.
+    let (entry_total, rejected_total) = (matching.len(), library.rejected.len());
+    let total = entry_total.saturating_add(rejected_total);
+    fit_page(total.saturating_sub(offset), limit, |count| {
+        let entries_here = entry_total.saturating_sub(offset).min(count);
+        let entries = matching
+            .iter()
+            .skip(offset)
+            .take(entries_here)
+            .map(|e| entry_json(e))
+            .collect::<Run<Vec<_>>>()?;
+        let rejected = rejected_json(
+            library
+                .rejected
+                .iter()
+                .skip(offset.saturating_sub(entry_total))
+                .take(count - entries_here),
+        );
+        let next = offset.saturating_add(count);
+        Ok(Json::object([
+            ("outcome", Json::text("library")),
+            ("library", info_json(&library.info)),
+            ("entry_count", Json::uint(entry_total as u64)),
+            ("rejected_count", Json::uint(rejected_total as u64)),
+            ("offset", Json::uint(offset as u64)),
+            ("page_size", Json::uint(count as u64)),
+            (
+                "next_offset",
+                if next < total {
+                    Json::uint(next as u64)
+                } else {
+                    Json::Null
+                },
+            ),
+            ("entries", Json::Array(entries)),
+            ("rejected", rejected),
+        ]))
+    })
 }
