@@ -7,9 +7,11 @@
 use crate::camera::Camera;
 use crate::render::{Renderer, Uploaded};
 use crate::scene::Scene;
-use crate::{Error, check_font, source};
+use crate::tools::{Choice, Created, MAX_TEXT, MemberKind, ToolError, ToolKind, Tools};
+use crate::{Error, check_font, command, source};
 use beamcraft_engine::{Representation, ViewSnapshot};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Instant;
 
 /// Where the window reads its model from.
@@ -40,6 +42,53 @@ pub struct App {
     adapter: String,
     last: Instant,
     fps: f32,
+    tools: Tools,
+    definitions: crate::tools::Definitions,
+    job: Option<Receiver<Result<Created, ToolError>>>,
+    tool_note: Option<Result<String, String>>,
+}
+
+const RED: egui::Color32 = egui::Color32::from_rgb(230, 80, 60);
+
+/// A drop-down of store definitions; `required` removes the "none" entry.
+fn choice_combo(
+    ui: &mut egui::Ui,
+    id: &str,
+    label: &str,
+    current: &mut Option<String>,
+    choices: &[Choice],
+    required: bool,
+) {
+    let selected = current
+        .as_ref()
+        .and_then(|d| choices.iter().find(|c| &c.digest == d))
+        .map_or_else(
+            || if required { "choose…" } else { "none" }.to_owned(),
+            |c| c.label.clone(),
+        );
+    egui::ComboBox::from_id_salt(id)
+        .width(200.0)
+        .selected_text(selected)
+        .show_ui(ui, |ui| {
+            if !required {
+                ui.selectable_value(current, None, "none");
+            }
+            for choice in choices {
+                ui.selectable_value(current, Some(choice.digest.clone()), &choice.label);
+            }
+        });
+    ui.label(label);
+}
+
+fn field(ui: &mut egui::Ui, label: &str, text: &mut String, width: f32) {
+    ui.horizontal(|ui| {
+        ui.label(label);
+        ui.add(
+            egui::TextEdit::singleline(text)
+                .desired_width(width)
+                .char_limit(MAX_TEXT),
+        );
+    });
 }
 
 /// Inter from the admitted asset directory, validated before egui can panic on it.
@@ -133,12 +182,46 @@ impl App {
             adapter,
             last: Instant::now(),
             fps: 0.0,
+            tools: Tools::default(),
+            definitions: crate::tools::Definitions::default(),
+            job: None,
+            tool_note: None,
         };
         app.reload();
         Ok(app)
     }
 
+    fn reload_definitions(&mut self) {
+        match command::definitions(&self.source.cli, &self.source.store) {
+            Ok(definitions) => self.definitions = definitions,
+            Err(e) => {
+                self.definitions = crate::tools::Definitions::default();
+                // A store without a revision simply has none yet.
+                if e.code != "NOT_FOUND" {
+                    self.tool_note = Some(Err(format!("definitions: {e}")));
+                }
+            }
+        }
+        // A choice that no longer exists must not stay selected.
+        let known = |list: &[Choice], digest: &Option<String>| {
+            digest
+                .as_ref()
+                .is_some_and(|d| list.iter().any(|c| &c.digest == d))
+        };
+        let d = &self.definitions;
+        if !known(&d.profiles, &self.tools.member.profile) {
+            self.tools.member.profile = None;
+        }
+        if !known(&d.materials, &self.tools.member.material) {
+            self.tools.member.material = None;
+        }
+        if !known(&d.materials, &self.tools.plate.material) {
+            self.tools.plate.material = None;
+        }
+    }
+
     fn reload(&mut self) {
+        self.reload_definitions();
         let result = (|| -> Result<Loaded, Error> {
             let snapshot = source::load(&self.source.cli, &self.source.store)?;
             let scene = Scene::from_snapshot(&snapshot, Representation::Full)?;
@@ -186,7 +269,199 @@ impl App {
         Ok(())
     }
 
-    fn panel(&self, ui: &mut egui::Ui) {
+    fn panel(&mut self, ui: &mut egui::Ui) {
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            self.info(ui);
+            ui.separator();
+            self.tools_panel(ui);
+        });
+    }
+
+    fn start_commit(&mut self) {
+        let Some(prepared) = self.tools.begin_commit(&self.source.store) else {
+            return;
+        };
+        let cli = self.source.cli.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.job = Some(rx);
+        self.tool_note = None;
+        let spawned = std::thread::Builder::new()
+            .name("beamcraft-command".into())
+            .spawn(move || {
+                let _ = tx.send(command::commit(&cli, &prepared));
+            });
+        if spawned.is_err() {
+            self.job = None;
+            self.tools.finish();
+            self.tool_note = Some(Err("the command thread could not be started".into()));
+        }
+    }
+
+    fn poll_commit(&mut self) {
+        let Some(rx) = &self.job else { return };
+        let result = match rx.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => Err(ToolError {
+                code: "CLI_FAILED".into(),
+                message: "the command thread ended without a result".into(),
+            }),
+        };
+        self.job = None;
+        self.tools.finish();
+        match result {
+            Ok(created) => {
+                self.reload();
+                let what = match created.kind {
+                    ToolKind::Plate => "plate",
+                    ToolKind::Member => "member",
+                };
+                let volume = created
+                    .volume_mm3
+                    .map_or(String::new(), |v| format!(", volume {:.3} m3", v / 1e9));
+                self.tool_note = Some(Ok(format!(
+                    "Created {what} {} ({}{}). Accepted revision {} (sequence {}).",
+                    created.element_id,
+                    if created.name.is_empty() {
+                        "unnamed"
+                    } else {
+                        &created.name
+                    },
+                    volume,
+                    created
+                        .manifest_digest
+                        .get(..12)
+                        .unwrap_or(&created.manifest_digest),
+                    created.sequence
+                )));
+            }
+            Err(e) => {
+                if e.code == "OUTCOME_UNKNOWN" {
+                    self.reload();
+                }
+                self.tool_note = Some(Err(e.to_string()));
+            }
+        }
+    }
+
+    fn tools_panel(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Create");
+        ui.horizontal(|ui| {
+            ui.selectable_value(&mut self.tools.active, ToolKind::Plate, "Plate");
+            ui.selectable_value(&mut self.tools.active, ToolKind::Member, "Member");
+        });
+        ui.label("Dimensions in mm.");
+        let materials = self.definitions.materials.clone();
+        let profiles = self.definitions.profiles.clone();
+        match self.tools.active {
+            ToolKind::Plate => {
+                let form = &mut self.tools.plate;
+                field(ui, "Width", &mut form.width, 80.0);
+                field(ui, "Length", &mut form.length, 80.0);
+                field(ui, "Thickness", &mut form.thickness, 80.0);
+                field(ui, "Name", &mut form.name, 140.0);
+                choice_combo(
+                    ui,
+                    "plate-material",
+                    "Material",
+                    &mut form.material,
+                    &materials,
+                    false,
+                );
+            }
+            ToolKind::Member => {
+                let form = &mut self.tools.member;
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut form.kind, MemberKind::Beam, "Beam");
+                    ui.selectable_value(&mut form.kind, MemberKind::Column, "Column");
+                });
+                for (label, point) in [("Start", &mut form.start), ("End", &mut form.end)] {
+                    ui.horizontal(|ui| {
+                        ui.label(label);
+                        for (axis, text) in ["X", "Y", "Z"].iter().zip(point.iter_mut()) {
+                            ui.label(*axis);
+                            ui.add(egui::TextEdit::singleline(text).desired_width(56.0));
+                        }
+                    });
+                }
+                field(ui, "Name", &mut form.name, 140.0);
+                choice_combo(
+                    ui,
+                    "member-profile",
+                    "Profile",
+                    &mut form.profile,
+                    &profiles,
+                    true,
+                );
+                choice_combo(
+                    ui,
+                    "member-material",
+                    "Material",
+                    &mut form.material,
+                    &materials,
+                    false,
+                );
+                if profiles.is_empty() {
+                    ui.label("The store has no profile definition yet (beamcraft define-profile).");
+                }
+            }
+        }
+        let store = self.source.store.clone();
+        let busy = self.tools.busy();
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(!busy, egui::Button::new("Preview"))
+                .clicked()
+            {
+                match self.tools.preview(&store) {
+                    Ok(_) => self.tool_note = None,
+                    Err(e) => {
+                        self.tools.cancel();
+                        self.tool_note = Some(Err(e.to_string()));
+                    }
+                }
+            }
+            let can_commit = self.tools.can_commit(&store);
+            if ui
+                .add_enabled(can_commit, egui::Button::new("Commit"))
+                .clicked()
+            {
+                self.start_commit();
+            }
+            if ui
+                .add_enabled(
+                    self.tools.staged().is_some() && !busy,
+                    egui::Button::new("Cancel"),
+                )
+                .clicked()
+            {
+                self.tools.cancel();
+                self.tool_note = Some(Ok("Cancelled; nothing was published.".into()));
+            }
+        });
+        if let Some(staged) = self.tools.staged() {
+            let current = self.tools.can_commit(&store);
+            ui.label("Preview: Commit runs exactly this command; the engine builds the shape then (no geometry preview).");
+            ui.add(egui::Label::new(egui::RichText::new(staged.command_line()).monospace()).wrap());
+            if !current {
+                ui.colored_label(RED, "The parameters changed: preview again.");
+            }
+        }
+        if busy {
+            ui.label("Running…");
+        }
+        match &self.tool_note {
+            Some(Ok(message)) => {
+                ui.label(message);
+            }
+            Some(Err(message)) => {
+                ui.colored_label(RED, message);
+            }
+            None => {}
+        }
+    }
+
+    fn info(&self, ui: &mut egui::Ui) {
         ui.heading("BeamCraft");
         ui.label(format!("{:.0} FPS", self.fps));
         ui.label(&self.adapter);
@@ -236,8 +511,14 @@ impl eframe::App for App {
         if dt > 0.0 {
             self.fps = self.fps * 0.9 + 0.1 / dt;
         }
-        let (fit, reload) =
-            ui.input(|i| (i.key_pressed(egui::Key::F), i.key_pressed(egui::Key::R)));
+        let wants_text = ui.ctx().egui_wants_keyboard_input();
+        let (fit, reload) = ui.input(|i| {
+            (
+                !wants_text && i.key_pressed(egui::Key::F),
+                !wants_text && i.key_pressed(egui::Key::R),
+            )
+        });
+        self.poll_commit();
         if reload {
             self.reload();
         }

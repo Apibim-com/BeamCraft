@@ -1,0 +1,389 @@
+// SPDX-License-Identifier: MPL-2.0
+// SPDX-FileCopyrightText: 2026 Apibim
+// Contributor-original synthetic plates and members, MPL-2.0.
+
+//! V05.1 end to end: the create tools' parameter mapping and reply parsing, driven against the
+//! real `beamcraft` binary, give exactly what running the CLI by hand gives (same volume, same
+//! mesh digest, same world bounds); a cancelled preview publishes nothing; a refusal reaches the
+//! panel with the engine's code and message. Without the CLI binary next to this package's binary
+//! the tests are skipped and say so (`cargo test --workspace` builds it).
+
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
+
+use beamcraft_engine::Representation;
+use beamcraft_protocol::{
+    json::{self, Json},
+    message,
+};
+use beamcraft_ui::scene::Scene;
+use beamcraft_ui::tools::{MemberKind, PlateForm, ToolKind, Tools};
+use beamcraft_ui::{Error, command, source};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT: AtomicU64 = AtomicU64::new(0);
+
+fn cli() -> Option<PathBuf> {
+    let ui = Path::new(env!("CARGO_BIN_EXE_beamcraft-ui"));
+    let cli = ui
+        .parent()?
+        .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+    if cli.is_file() {
+        Some(cli)
+    } else {
+        eprintln!(
+            "SKIP create-tools test: build beamcraft-cli first (cargo test --workspace does)"
+        );
+        None
+    }
+}
+
+struct Stores {
+    root: PathBuf,
+}
+
+impl Stores {
+    fn new() -> Self {
+        let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
+            .join("v05-tests")
+            .join(format!(
+                "run-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("ui")).unwrap();
+        std::fs::create_dir_all(root.join("hand")).unwrap();
+        Self { root }
+    }
+    fn ui(&self) -> PathBuf {
+        self.root.join("ui")
+    }
+    fn hand(&self) -> PathBuf {
+        self.root.join("hand")
+    }
+}
+
+impl Drop for Stores {
+    fn drop(&mut self) {
+        assert!(self.root.is_absolute() && self.root.file_name().is_some());
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+/// Runs the CLI by hand with literal arguments; returns the exit status and the JSON reply.
+fn by_hand(cli: &Path, args: &[&str]) -> (i32, Json) {
+    let output = Command::new(cli).args(args).output().unwrap();
+    let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
+    (output.status.code().unwrap(), body)
+}
+
+fn ok(cli: &Path, args: &[&str]) -> Json {
+    let (code, body) = by_hand(cli, args);
+    assert_eq!(code, 0, "{args:?}: {body:?}");
+    body
+}
+
+fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
+    path.iter().fold(json, |j, k| j.get(k).unwrap())
+}
+
+fn text(json: &Json, path: &[&str]) -> String {
+    at(json, path).string().unwrap().to_owned()
+}
+
+/// The inspected element (`plates` or `members`, the only one) of a store, run by hand.
+fn inspected(cli: &Path, store: &Path, list: &str) -> Json {
+    let reply = ok(cli, &["plate-inspect", "--store", store.to_str().unwrap()]);
+    let items = at(&reply, &[list]).array().unwrap();
+    assert_eq!(items.len(), 1);
+    items[0].clone()
+}
+
+fn bounds(cli: &Path, store: &Path) -> (Json, Json) {
+    let reply = ok(cli, &["plate-inspect", "--store", store.to_str().unwrap()]);
+    let element = &at(&reply, &["snapshot", "elements"]).array().unwrap()[0];
+    (
+        at(element, &["world_min_mm"]).clone(),
+        at(element, &["world_max_mm"]).clone(),
+    )
+}
+
+#[test]
+fn a_plate_from_the_tool_equals_the_plate_made_by_hand() {
+    let Some(cli) = cli() else { return };
+    let stores = Stores::new();
+    let (ui, hand) = (stores.ui(), stores.hand());
+
+    let mut tools = Tools::default();
+    tools.plate = PlateForm {
+        width: "1000".into(),
+        length: "500".into(),
+        thickness: "10".into(),
+        name: "Plate A".into(),
+        material: None,
+    };
+    let prepared = tools.preview(&ui).unwrap().clone();
+    // Preview and cancel publish nothing: the store has no revision at all.
+    tools.cancel();
+    assert!(tools.begin_commit(&ui).is_none());
+    match source::load(&cli, &ui) {
+        Err(Error::Cli(message)) => assert!(message.ends_with("NOT_FOUND"), "{message}"),
+        other => panic!("a cancelled preview must publish nothing, got {other:?}"),
+    }
+
+    tools.preview(&ui).unwrap();
+    assert!(tools.can_commit(&ui));
+    let staged = tools.begin_commit(&ui).unwrap();
+    assert_eq!(staged, prepared);
+    let created = command::commit(&cli, &staged).unwrap();
+    tools.finish();
+
+    let hand_store = hand.to_str().unwrap();
+    let reply = ok(
+        &cli,
+        &[
+            "create-plate",
+            "--store",
+            hand_store,
+            "--width",
+            "1000",
+            "--length",
+            "500",
+            "--thickness",
+            "10",
+            "--name",
+            "Plate A",
+        ],
+    );
+    assert_eq!(created.kind, ToolKind::Plate);
+    assert_eq!(created.mesh_digest, text(&reply, &["plate", "mesh_digest"]));
+    assert_eq!(
+        created.volume_mm3,
+        Some(
+            at(&reply, &["plate", "quantities", "volume", "mm3"])
+                .float()
+                .unwrap()
+        )
+    );
+    assert_eq!(created.volume_mm3, Some(5_000_000.0));
+    assert_eq!(created.name, "Plate A");
+    assert_eq!(created.sequence, 1);
+
+    // The saved results agree when each store is reopened in a fresh process.
+    let (a, b) = (
+        inspected(&cli, &ui, "plates"),
+        inspected(&cli, &hand, "plates"),
+    );
+    for path in [
+        &["mesh_digest"][..],
+        &["quantities", "volume", "mm3"],
+        &["quantities", "volume", "algorithm"],
+        &["dimensions_mm", "width"],
+        &["name"],
+    ] {
+        assert_eq!(at(&a, path), at(&b, path), "{path:?}");
+    }
+    assert_eq!(bounds(&cli, &ui), bounds(&cli, &hand));
+    assert_eq!(text(&a, &["element_id"]), created.element_id);
+
+    // The viewport reload sees the accepted revision the command reported.
+    let snapshot = source::load(&cli, &ui).unwrap();
+    assert_eq!(
+        snapshot.pin().revision().to_string(),
+        created.manifest_digest
+    );
+    let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+    assert_eq!(scene.elements, 1);
+    assert_eq!(scene.counts(), (1, 1));
+}
+
+#[test]
+fn a_member_from_the_tool_equals_the_member_made_by_hand() {
+    let Some(cli) = cli() else { return };
+    let stores = Stores::new();
+    let (ui, hand) = (stores.ui(), stores.hand());
+    for store in [&ui, &hand] {
+        let store = store.to_str().unwrap();
+        ok(
+            &cli,
+            &[
+                "define-profile",
+                "--store",
+                store,
+                "--width",
+                "200",
+                "--height",
+                "300",
+            ],
+        );
+        ok(
+            &cli,
+            &[
+                "define-material",
+                "--store",
+                store,
+                "--density",
+                "7850",
+                "--grade",
+                "S355",
+            ],
+        );
+    }
+
+    // The choices come from the store's definitions, as the panel lists them.
+    let definitions = command::definitions(&cli, &ui).unwrap();
+    assert_eq!(definitions.profiles.len(), 1);
+    assert_eq!(definitions.materials.len(), 1);
+    assert_eq!(
+        definitions.profiles[0].label.split(" (").next(),
+        Some("rectangle 200 x 300 mm")
+    );
+    let profile = definitions.profiles[0].digest.clone();
+    let material = definitions.materials[0].digest.clone();
+
+    let mut tools = Tools::default();
+    tools.active = ToolKind::Member;
+    tools.member.kind = MemberKind::Column;
+    tools.member.start = ["0".into(), "0".into(), "0".into()];
+    tools.member.end = ["0".into(), "0".into(), "3000".into()];
+    tools.member.profile = Some(profile.clone());
+    tools.member.material = Some(material.clone());
+    tools.member.name = "C1".into();
+    tools.preview(&ui).unwrap();
+    let staged = tools.begin_commit(&ui).unwrap();
+    let created = command::commit(&cli, &staged).unwrap();
+    tools.finish();
+
+    let reply = ok(
+        &cli,
+        &[
+            "create-member",
+            "--store",
+            hand.to_str().unwrap(),
+            "--kind",
+            "column",
+            "--start",
+            "0,0,0",
+            "--end",
+            "0,0,3000",
+            "--profile-digest",
+            &profile,
+            "--name",
+            "C1",
+            "--material-digest",
+            &material,
+        ],
+    );
+    assert_eq!(created.kind, ToolKind::Member);
+    assert_eq!(
+        created.mesh_digest,
+        text(&reply, &["member", "mesh_digest"])
+    );
+    assert_eq!(
+        created.volume_mm3,
+        Some(
+            at(&reply, &["member", "quantities", "volume", "mm3"])
+                .float()
+                .unwrap()
+        )
+    );
+    // 200 x 300 mm section over 3000 mm.
+    assert_eq!(created.volume_mm3, Some(180_000_000.0));
+
+    let (a, b) = (
+        inspected(&cli, &ui, "members"),
+        inspected(&cli, &hand, "members"),
+    );
+    for path in [
+        &["mesh_digest"][..],
+        &["quantities", "volume", "mm3"],
+        &["quantities", "mass", "kg"],
+        &["kind"],
+        &["profile_digest"],
+        &["material_digest"],
+    ] {
+        assert_eq!(at(&a, path), at(&b, path), "{path:?}");
+    }
+    assert_eq!(bounds(&cli, &ui), bounds(&cli, &hand));
+    let snapshot = source::load(&cli, &ui).unwrap();
+    assert_eq!(
+        snapshot.pin().revision().to_string(),
+        created.manifest_digest
+    );
+    assert_eq!(
+        Scene::from_snapshot(&snapshot, Representation::Full)
+            .unwrap()
+            .elements,
+        1
+    );
+}
+
+#[test]
+fn an_engine_refusal_reaches_the_panel_and_publishes_nothing() {
+    let Some(cli) = cli() else { return };
+    let stores = Stores::new();
+    let (ui, hand) = (stores.ui(), stores.hand());
+    let mut tools = Tools::default();
+    tools.plate = PlateForm {
+        width: "-5".into(),
+        length: "500".into(),
+        thickness: "10".into(),
+        ..PlateForm::default()
+    };
+    tools.preview(&ui).unwrap();
+    let staged = tools.begin_commit(&ui).unwrap();
+    let error = command::commit(&cli, &staged).unwrap_err();
+    tools.finish();
+    // The same refusal the CLI prints by hand, code and message.
+    let (code, reply) = by_hand(
+        &cli,
+        &[
+            "create-plate",
+            "--store",
+            hand.to_str().unwrap(),
+            "--width",
+            "-5",
+            "--length",
+            "500",
+            "--thickness",
+            "10",
+        ],
+    );
+    assert_eq!(code, 2);
+    assert_eq!(error.code, "INVALID_ARGUMENT");
+    assert_eq!(error.code, text(&reply, &["code"]));
+    assert_eq!(error.message, text(&reply, &["message"]));
+    assert!(matches!(source::load(&cli, &ui), Err(Error::Cli(_))));
+
+    // A member that names a profile the store does not have.
+    let mut member = Tools::default();
+    member.active = ToolKind::Member;
+    member.member.profile = Some("a".repeat(64));
+    member.preview(&ui).unwrap();
+    let staged = member.begin_commit(&ui).unwrap();
+    let error = command::commit(&cli, &staged).unwrap_err();
+    assert_eq!(error.code, "NOT_FOUND", "{error}");
+    assert!(!error.message.is_empty());
+}
+
+#[test]
+fn a_missing_cli_is_an_error_not_a_hang() {
+    let stores = Stores::new();
+    let mut tools = Tools::default();
+    tools.plate = PlateForm {
+        width: "1".into(),
+        length: "1".into(),
+        thickness: "1".into(),
+        ..PlateForm::default()
+    };
+    let staged = tools.preview(&stores.ui()).unwrap().clone();
+    let error = command::commit(&stores.root.join("no-such-beamcraft"), &staged).unwrap_err();
+    assert_eq!(error.code, "CLI_UNAVAILABLE");
+}

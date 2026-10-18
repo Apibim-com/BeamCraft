@@ -15,7 +15,15 @@ beamcraft-ui --synthetic COUNT --metrics FRAMES [--width W] [--height H]
   looked up next to the UI executable unless `--cli` names it.
 - Each distinct mesh is uploaded once and drawn with one instance per element placement.
   Coordinates are millimetres, re-centred on the engineering bounds in f64 before f32 conversion.
-- Controls: primary drag orbits, secondary drag pans, the wheel zooms, F fits, R reloads.
+- Controls: primary drag orbits, secondary drag pans, the wheel zooms, F fits, R reloads (F and R
+  are ignored while a text field has the keyboard).
+- V05.1 Create panel (experimental): a plate (width, length, thickness, optional name and material)
+  or a straight beam/column (start, end, profile and material chosen from the store's definitions,
+  optional name). Preview stages the exact `beamcraft create-plate` / `create-member` command (no
+  geometry preview), Commit runs it in a separate process and reloads the accepted revision,
+  Cancel drops it and publishes nothing; a CLI refusal is shown with its code and message. The
+  parameter mapping and reply parsing are `tools.rs` (pure, unit-tested); the process is
+  `command.rs`. See [the design note](../../docs/design/v05-1-ui-create-tools.md).
 - `--metrics` renders offscreen without a window and prints one JSON object (adapter, scene size,
   upload, per-frame median and p95). `--synthetic` measures synthetic kernel plates for scale.
 - The UI font is the admitted Inter, read at run time from `assets/fonts/inter`; without it the
