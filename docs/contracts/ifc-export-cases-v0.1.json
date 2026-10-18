@@ -1,7 +1,7 @@
 {
  "artifact_version": 1,
  "contract_version": "0.1.0",
- "status": "draft, not frozen; owner decisions Q-1 to Q-11 of 2026-10-17 applied",
+ "status": "draft, not frozen; owner decisions Q-1 to Q-13 of 2026-10-17 applied",
  "role": "original logical acceptance descriptions for the E01 IFC export contract; not an exporter, IFC file or USD fixture",
  "contract": "ifc-export-v0.1.md",
  "f04_contract": "model-and-commands-v0.1.md",
@@ -36,8 +36,8 @@
   {
    "rule_id": "IFCX-SCOPE-001",
    "severity": "warning",
-   "f04_code": "UNSUPPORTED_COMMAND",
-   "text": "An element whose kind has no IFC mapping (every kind except plate, beam and column, reserved or unknown) is exported as IfcBuildingElementProxy and listed. It is never skipped. The code is the one strict mode refuses with."
+   "f04_code": "-",
+   "text": "An element whose kind has no IFC mapping (every kind except plate, beam and column, reserved or unknown) is exported as IfcBuildingElementProxy and listed. It is never skipped, and it is not fatal in strict mode."
   },
   {
    "rule_id": "IFCX-SCOPE-002",
@@ -61,7 +61,7 @@
    "rule_id": "IFCX-SCOPE-005",
    "severity": "info",
    "f04_code": "-",
-   "text": "An element whose lifecycle is deactivated is not exported and is listed (F10 section 3.2; open question Q-12). It is the only element that is not exported."
+   "text": "An element whose lifecycle is deactivated is not exported and is listed (F10 section 3.2; owner decision Q-12). It is the only element that is not exported."
   },
   {
    "rule_id": "IFCX-SCOPE-006",
@@ -361,7 +361,7 @@
    "rule_id": "IFCX-PSET-004",
    "severity": "warning",
    "f04_code": "-",
-   "text": "A label longer than 255 characters is written truncated to 255 characters in IfcRoot.Name, with the full label in the property Label, and the truncation is listed."
+   "text": "A BeamCraft string written into an IfcLabel attribute (IfcRoot.Name of an element, storey or project, IfcObject.ObjectType, IfcMaterial.Name) is limited to 255 characters. A longer text is truncated to 255 code points and the truncation is listed; the full text is kept in an unbounded IfcText: the property Label (element), FullName in BeamCraft_Material (material), IfcRoot.Description (storey, project) or ElementKind in BeamCraft_Element (proxy ObjectType). Other BeamCraft strings are written as IfcText, so no length limit applies to them."
   },
   {
    "rule_id": "IFCX-UNIT-001",
@@ -445,7 +445,13 @@
    "rule_id": "IFCX-ERR-005",
    "severity": "mapping",
    "f04_code": "-",
-   "text": "In strict mode any element exported as a proxy, without a representation or without a placement refuses the export with the code of the first such finding. Omitted quantities and truncated names do not."
+   "text": "In strict mode only an element-level finding that carries an F04 code (IFC_GEOMETRY_ABSENT and IFC_PLACEMENT_ABSENT, code UNSUPPORTED_GEOMETRY) refuses the export, with the code of the first such finding in finding order (F10 section 6.4). Warnings and info without a code (proxies, quantity omissions, truncated names, deactivated elements) are never fatal."
+  },
+  {
+   "rule_id": "IFCX-EMIT-001",
+   "severity": "mapping",
+   "f04_code": "-",
+   "text": "An optional entity is written only when it has content, so no mandatory attribute or relationship is empty: IfcElementQuantity and its IfcRelDefinesByProperties only with at least one quantity; BeamCraft_Declared and its relationship only with a declared value; Pset_MaterialCommon only with a density; IfcMaterial and its IfcRelAssociatesMaterial only with at least one exported element using it; IfcRelContainedInSpatialStructure (of a storey or of the building) only with at least one exported element; the building-to-storeys IfcRelAggregates only with at least one storey; a representation only with a mesh."
   },
   {
    "rule_id": "IFCX-LIM-001",
@@ -648,10 +654,10 @@
   }
  ],
  "case_counts": {
-  "logical_cases": 100,
-  "positive": 50,
-  "negative": 50,
-  "rules": 77
+  "logical_cases": 105,
+  "positive": 52,
+  "negative": 53,
+  "rules": 78
  },
  "cases": [
   {
@@ -1043,7 +1049,10 @@
     "type": "export_ifc"
    },
    "expected": {
-    "status": "ok",
+    "status": "ok_with_losses",
+    "omissions_listed": [
+     "mass unknown"
+    ],
     "entity": "IfcPlate",
     "predefined_type": "NOTDEFINED",
     "representation": {
@@ -1546,7 +1555,10 @@
     "type": "export_ifc"
    },
    "expected": {
-    "status": "ok",
+    "status": "ok_with_losses",
+    "omissions_listed": [
+     "mass unknown"
+    ],
     "entity": "IfcColumn",
     "predefined_type": "COLUMN",
     "representation": {
@@ -1846,13 +1858,20 @@
        ]
       }
      }
-    ]
+    ],
+    "stored_quantities": {
+     "volume_status": "current",
+     "mass_status": "unknown"
+    }
    },
    "action": {
     "type": "export_ifc"
    },
    "expected": {
-    "status": "ok",
+    "status": "ok_with_losses",
+    "omissions_listed": [
+     "mass unknown"
+    ],
     "local_placement": {
      "relative_to": "building placement",
      "location": [
@@ -2247,6 +2266,41 @@
    }
   },
   {
+   "case_id": "E01-POS-51",
+   "title": "255-character material grade, storey name and project name are not truncated",
+   "rules": [
+    "IFCX-PSET-004"
+   ],
+   "polarity": "positive",
+   "given": {
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": [
+      {
+       "level_id": "019a7bf0-0000-7000-8000-000000000101",
+       "name": "LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL",
+       "elevation_mm": 0
+      }
+     ]
+    },
+    "material_grade_characters": 255,
+    "storey_name_characters": 255,
+    "project_name_characters": 255
+   },
+   "action": {
+    "type": "export_ifc"
+   },
+   "expected": {
+    "IfcMaterial.Name_characters": 255,
+    "IfcBuildingStorey.Name_characters": 255,
+    "IfcProject.Name_characters": 255,
+    "FullName_property": "absent",
+    "Description_set_for_truncation": false,
+    "truncation_findings": 0
+   },
+   "needs": "dependency D2 for the storey"
+  },
+  {
    "case_id": "E01-POS-31",
    "title": "A wall is exported as IfcBuildingElementProxy, not skipped",
    "rules": [
@@ -2394,9 +2448,10 @@
     "type": "export_ifc"
    },
    "expected": {
-    "status": "ok",
+    "status": "ok_with_losses",
     "exported": 0,
-    "listed_as": "info"
+    "listed_as": "info",
+    "IfcRelContainedInSpatialStructure": 0
    },
    "needs": "deactivated appears only in loaded content in 0.1.0 (F10 section 3.2)"
   },
@@ -2427,15 +2482,19 @@
      "IfcBuilding"
     ],
     "products": 0,
-    "storeys": 0
+    "storeys": 0,
+    "IfcRelContainedInSpatialStructure": 0,
+    "IfcRelAssociatesMaterial": 0
    }
   },
   {
    "case_id": "E01-POS-34",
-   "title": "Strict mode succeeds when every element has a mapping and a mesh, even with unknown mass",
+   "title": "Strict mode does not refuse proxies, deactivated elements or quantity omissions",
    "rules": [
     "IFCX-ERR-005",
-    "IFCX-QTY-002"
+    "IFCX-QTY-002",
+    "IFCX-SCOPE-001",
+    "IFCX-SCOPE-005"
    ],
    "polarity": "positive",
    "given": {
@@ -2490,6 +2549,53 @@
         1
        ]
       }
+     },
+     {
+      "id": "019a7bf0-0000-7000-8000-000000300040",
+      "kind": "wall",
+      "derived_mesh": "present"
+     },
+     {
+      "id": "019a7bf0-0000-7000-8000-000000300015",
+      "kind": "plate",
+      "name": "Synthetic plate",
+      "contour_points_mm": [
+       [
+        0,
+        0,
+        0
+       ],
+       [
+        1000,
+        0,
+        0
+       ],
+       [
+        1000,
+        500,
+        0
+       ],
+       [
+        0,
+        500,
+        0
+       ]
+      ],
+      "thickness_mm": 10,
+      "placement": {
+       "translation_mm": [
+        0,
+        0,
+        0
+       ],
+       "orientation_xyzw": [
+        0,
+        0,
+        0,
+        1
+       ]
+      },
+      "lifecycle": "deactivated"
      }
     ],
     "stored_quantities": {
@@ -2500,11 +2606,21 @@
     "type": "export_ifc"
    },
    "expected": {
-    "status": "ok",
-    "omissions_listed": [
-     "mass unknown"
+    "status": "ok_with_losses",
+    "exported": 2,
+    "file_written": true,
+    "findings": [
+     "IFC_KIND_PROXY",
+     "IFC_QUANTITY_OMITTED",
+     "IFC_ELEMENT_DEACTIVATED"
+    ],
+    "strict_codes_of_findings": [
+     null,
+     null,
+     null
     ]
-   }
+   },
+   "needs": "the deactivated element appears only in loaded content"
   },
   {
    "case_id": "E01-POS-35",
@@ -2514,7 +2630,8 @@
    ],
    "polarity": "positive",
    "given": {
-    "element_count": 65536
+    "element_count": 65536,
+    "each_element": "has a material with density and current records"
    },
    "action": {
     "type": "export_ifc"
@@ -3389,7 +3506,10 @@
     "type": "export_ifc"
    },
    "expected": {
-    "status": "ok",
+    "status": "ok_with_losses",
+    "omissions_listed": [
+     "mass unknown"
+    ],
     "storeys": [
      {
       "Name": "Level 0",
@@ -3539,7 +3659,10 @@
     "type": "export_ifc"
    },
    "expected": {
-    "status": "ok",
+    "status": "ok_with_losses",
+    "omissions_listed": [
+     "mass unknown"
+    ],
     "containment": {
      "Level 0": [
       "019a7bf0-0000-7000-8000-000000300010"
@@ -3767,6 +3890,101 @@
     "global_ids_equal_report": true
    },
    "needs": "the admission questions of section 17 (local-only operation, licence, oracle role) are open"
+  },
+  {
+   "case_id": "E01-POS-52",
+   "title": "Optional entities are written only with content",
+   "rules": [
+    "IFCX-EMIT-001"
+   ],
+   "polarity": "positive",
+   "given": {
+    "options": {
+     "contract_version": "0.1.0",
+     "schema": "IFC4",
+     "format": "step",
+     "strict": false
+    },
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": [
+      {
+       "level_id": "019a7bf0-0000-7000-8000-000000000101",
+       "name": "Level 0",
+       "elevation_mm": 0
+      },
+      {
+       "level_id": "019a7bf0-0000-7000-8000-000000000102",
+       "name": "Level 1",
+       "elevation_mm": 3000
+      }
+     ]
+    },
+    "elements": [
+     {
+      "id": "019a7bf0-0000-7000-8000-000000300010",
+      "kind": "plate",
+      "name": "Synthetic plate",
+      "contour_points_mm": [
+       [
+        0,
+        0,
+        0
+       ],
+       [
+        1000,
+        0,
+        0
+       ],
+       [
+        1000,
+        500,
+        0
+       ],
+       [
+        0,
+        500,
+        0
+       ]
+      ],
+      "thickness_mm": 10,
+      "placement": {
+       "translation_mm": [
+        0,
+        0,
+        0
+       ],
+       "orientation_xyzw": [
+        0,
+        0,
+        0,
+        1
+       ]
+      },
+      "level": "019a7bf0-0000-7000-8000-000000000101"
+     }
+    ],
+    "stored_quantities": null,
+    "other": "no declared profile values; the second level has no element; the material has no exported element"
+   },
+   "action": {
+    "type": "export_ifc"
+   },
+   "expected": {
+    "storeys": 2,
+    "IfcRelAggregates_building_storeys": 1,
+    "IfcRelContainedInSpatialStructure": 1,
+    "containment_of_the_empty_storey": "absent",
+    "IfcElementQuantity": 0,
+    "quantity_IfcRelDefinesByProperties": 0,
+    "BeamCraft_Declared": 0,
+    "IfcMaterial": 0,
+    "IfcRelAssociatesMaterial": 0,
+    "Pset_MaterialCommon": 0,
+    "empty_lists_in_file": 0
+   },
+   "derivation": "A storey is a model entity and is written even when it holds no element; only the relationship that would have an empty RelatedElements is omitted.",
+   "needs": "dependency D2"
   },
   {
    "case_id": "E01-NEG-01",
@@ -5260,6 +5478,180 @@
      "rule": "IFCX-GEO-004"
     },
     "face_triangulated_by_the_exporter": false
+   }
+  },
+  {
+   "case_id": "E01-NEG-51",
+   "title": "256-character material grade, storey name and project name are truncated and preserved",
+   "rules": [
+    "IFCX-PSET-004"
+   ],
+   "polarity": "negative",
+   "given": {
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": [
+      {
+       "level_id": "019a7bf0-0000-7000-8000-000000000101",
+       "name": "NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN",
+       "elevation_mm": 0
+      }
+     ]
+    },
+    "material_grade_characters": 256,
+    "project_name_characters": 256
+   },
+   "action": {
+    "type": "export_ifc"
+   },
+   "expected": {
+    "status": "ok_with_losses",
+    "IfcMaterial.Name_characters": 255,
+    "BeamCraft_Material.FullName_characters": 256,
+    "IfcBuildingStorey.Name_characters": 255,
+    "IfcBuildingStorey.Description_characters": 256,
+    "IfcProject.Name_characters": 255,
+    "IfcProject.Description_characters": 256,
+    "findings": [
+     "IFC_NAME_TRUNCATED",
+     "IFC_NAME_TRUNCATED",
+     "IFC_NAME_TRUNCATED"
+    ],
+    "file_valid_ifc4_labels": true
+   },
+   "needs": "dependency D2 for the storey"
+  },
+  {
+   "case_id": "E01-NEG-52",
+   "title": "An export where every element is deactivated has no containment relationship",
+   "rules": [
+    "IFCX-EMIT-001",
+    "IFCX-SCOPE-005"
+   ],
+   "polarity": "negative",
+   "given": {
+    "store": {
+     "project_id_stored": "019a7bf0-0000-7000-8000-000000000001",
+     "levels": []
+    },
+    "elements": [
+     {
+      "id": "019a7bf0-0000-7000-8000-000000300010",
+      "kind": "plate",
+      "name": "Synthetic plate",
+      "contour_points_mm": [
+       [
+        0,
+        0,
+        0
+       ],
+       [
+        1000,
+        0,
+        0
+       ],
+       [
+        1000,
+        500,
+        0
+       ],
+       [
+        0,
+        500,
+        0
+       ]
+      ],
+      "thickness_mm": 10,
+      "placement": {
+       "translation_mm": [
+        0,
+        0,
+        0
+       ],
+       "orientation_xyzw": [
+        0,
+        0,
+        0,
+        1
+       ]
+      },
+      "lifecycle": "deactivated"
+     }
+    ]
+   },
+   "action": {
+    "type": "export_ifc"
+   },
+   "expected": {
+    "status": "ok_with_losses",
+    "exported": 0,
+    "IfcRelContainedInSpatialStructure": 0,
+    "file_valid_ifc4": true
+   },
+   "needs": "the deactivated element appears only in loaded content"
+  },
+  {
+   "case_id": "E01-NEG-53",
+   "title": "No quantity is current: no quantity set and no relationship to it",
+   "rules": [
+    "IFCX-EMIT-001",
+    "IFCX-QTY-002"
+   ],
+   "polarity": "negative",
+   "given": {
+    "stored": null,
+    "elements": [
+     {
+      "id": "019a7bf0-0000-7000-8000-000000300010",
+      "kind": "plate",
+      "name": "Synthetic plate",
+      "contour_points_mm": [
+       [
+        0,
+        0,
+        0
+       ],
+       [
+        1000,
+        0,
+        0
+       ],
+       [
+        1000,
+        500,
+        0
+       ],
+       [
+        0,
+        500,
+        0
+       ]
+      ],
+      "thickness_mm": 10,
+      "placement": {
+       "translation_mm": [
+        0,
+        0,
+        0
+       ],
+       "orientation_xyzw": [
+        0,
+        0,
+        0,
+        1
+       ]
+      }
+     }
+    ]
+   },
+   "action": {
+    "type": "export_ifc"
+   },
+   "expected": {
+    "status": "ok_with_losses",
+    "IfcElementQuantity": 0,
+    "quantity_IfcRelDefinesByProperties": 0,
+    "BeamCraft_Element": "written with VolumeStatus missing"
    }
   }
  ]
