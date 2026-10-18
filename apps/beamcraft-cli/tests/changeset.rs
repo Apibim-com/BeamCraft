@@ -1,0 +1,386 @@
+// SPDX-License-Identifier: MPL-2.0
+// SPDX-FileCopyrightText: 2026 Apibim
+// Contributor-original synthetic plates and workspaces, MPL-2.0.
+
+//! C01 end to end through the CLI binary: a workspace's unsent revisions become one changeset
+//! (base, operations, actor, dependencies, USD delta, assets); receiving it publishes the draft
+//! head exactly once. The same payload replays, another payload under the same changeset id is
+//! `OP_ID_REUSE` with nothing written, and the author string in the payload grants nothing.
+
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+
+use beamcraft_host::{revision::RevisionStore, storage::BlobStore};
+use beamcraft_protocol::{
+    json::{self, Json},
+    message,
+};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT: AtomicU64 = AtomicU64::new(0);
+
+const USER: &str = "019a7bf0-0000-7000-8000-00000000c001";
+const STRANGER: &str = "019a7bf0-0000-7000-8000-00000000c002";
+const PLATE: &str = "019a7bf0-0000-7000-8000-000000000010";
+const CHANGESET: &str = "019a7bf0-0000-7000-8000-00000000d001";
+const REVISION: &str = "019a7bf0-0000-7000-8000-00000000d002";
+
+struct Fixture {
+    root: PathBuf,
+}
+impl Fixture {
+    fn new() -> Self {
+        let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("c01-tests");
+        fs::create_dir_all(&base).unwrap();
+        let root = base.join(format!(
+            "e2e-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(root.join("published")).unwrap();
+        Self { root }
+    }
+    fn path(&self, name: &str) -> String {
+        self.root.join(name).to_str().unwrap().to_owned()
+    }
+    fn run(&self, args: &[&str]) -> (i32, Json) {
+        let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
+            .args(args)
+            .output()
+            .unwrap();
+        let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
+        (output.status.code().unwrap(), body)
+    }
+    fn ok(&self, args: &[&str]) -> Json {
+        let (code, body) = self.run(args);
+        assert_eq!(code, 0, "{args:?}: {body:?}");
+        body
+    }
+    fn rejected(&self, args: &[&str]) -> String {
+        let before = self.head();
+        let (code, body) = self.run(args);
+        assert_eq!(code, 2, "{args:?}: {body:?}");
+        assert_eq!(self.head(), before, "a refusal publishes nothing: {args:?}");
+        text(&body, "code")
+    }
+    fn head(&self) -> String {
+        let store = self.path("published");
+        text(
+            &self.ok(&["revision-open", "--store", &store]),
+            "revision_id",
+        )
+    }
+    /// A published plate and a workspace of `USER` forked from it.
+    fn forked(&self, workspace: &str) -> String {
+        let store = self.path("published");
+        if self.run(&["revision-open", "--store", &store]).0 != 0 {
+            self.ok(&[
+                "create-plate",
+                "--store",
+                &store,
+                "--width",
+                "1000",
+                "--length",
+                "500",
+                "--thickness",
+                "10",
+                "--new-id",
+                PLATE,
+            ]);
+        }
+        let dir = self.path(workspace);
+        self.ok(&[
+            "workspace-create",
+            "--store",
+            &store,
+            "--workspace-dir",
+            &dir,
+            "--user-id",
+            USER,
+        ]);
+        dir
+    }
+    fn rename(&self, dir: &str, name: &str) {
+        self.ok(&[
+            "update-element",
+            "--store",
+            dir,
+            "--id",
+            PLATE,
+            "--name",
+            name,
+        ]);
+    }
+    fn create(&self, dir: &str, extra: &[&str]) -> Json {
+        let store = self.path("published");
+        let mut args = vec![
+            "changeset-create",
+            "--store",
+            &store,
+            "--workspace-dir",
+            dir,
+        ];
+        args.extend_from_slice(extra);
+        at(&self.ok(&args), &["changeset"]).clone()
+    }
+    fn apply_args<'a>(
+        &'a self,
+        store: &'a str,
+        dir: &'a str,
+        digest: &'a str,
+        actor: &'a str,
+    ) -> [&'a str; 9] {
+        [
+            "changeset-apply",
+            "--store",
+            store,
+            "--workspace-dir",
+            dir,
+            "--changeset",
+            digest,
+            "--actor-id",
+            actor,
+        ]
+    }
+}
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        assert!(self.root.is_absolute() && self.root.file_name().is_some());
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+fn text(json: &Json, key: &str) -> String {
+    json.get(key).unwrap().string().unwrap().to_owned()
+}
+fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
+    path.iter().fold(json, |j, k| j.get(k).unwrap())
+}
+fn list<'a>(json: &'a Json, key: &str) -> &'a [Json] {
+    at(json, &[key]).array().unwrap()
+}
+fn dependencies(changeset: &Json, target: &str) -> Vec<(String, String)> {
+    list(changeset, "dependencies")
+        .iter()
+        .filter(|d| text(d, "target") == target)
+        .map(|d| (text(d, "group"), text(d, "access")))
+        .collect()
+}
+
+#[test]
+fn a_changeset_carries_base_operations_dependencies_and_delta_and_publishes_once() {
+    let f = Fixture::new();
+    let dir = f.forked("ws");
+    let base = f.head();
+    f.rename(&dir, "Renamed");
+    f.rename(&dir, "Renamed twice");
+    let ids = ["--changeset-id", CHANGESET, "--revision-id", REVISION];
+    let changeset = f.create(&dir, &ids);
+    // Same identities on an unchanged draft: the same canonical bytes.
+    assert_eq!(
+        text(&f.create(&dir, &ids), "digest"),
+        text(&changeset, "digest")
+    );
+    assert_eq!(text(&changeset, "base_revision"), base);
+    assert_eq!(text(&changeset, "actor_id"), USER);
+    assert_eq!(list(&changeset, "operations").len(), 2);
+    // A rename touches the label alone: the derived result is not in the footprint.
+    assert_eq!(
+        dependencies(&changeset, PLATE),
+        [
+            ("label".to_owned(), "read".to_owned()),
+            ("label".to_owned(), "write".to_owned()),
+            ("lifecycle".to_owned(), "read".to_owned()),
+        ]
+    );
+    let changed: Vec<String> = list(&changeset, "layers")
+        .iter()
+        .filter(|l| at(l, &["changed"]) == &Json::Bool(true))
+        .map(|l| text(l, "name"))
+        .collect();
+    assert_eq!(changed, ["authored.usda"]);
+    assert_eq!(list(&changeset, "assets").len(), 1);
+    let digest = text(&changeset, "digest");
+    let inspected = f.ok(&[
+        "changeset-inspect",
+        "--workspace-dir",
+        &dir,
+        "--changeset",
+        &digest,
+    ]);
+    assert_eq!(at(&inspected, &["changeset"]), &changeset);
+
+    let store = f.path("published");
+    let applied = f.ok(&f.apply_args(&store, &dir, &digest, USER));
+    assert_eq!(text(&applied, "outcome"), "changeset_applied");
+    let head = f.ok(&["revision-open", "--store", &store]);
+    assert_eq!(text(&head, "revision_id"), REVISION);
+    assert_eq!(text(&head, "op_id"), CHANGESET);
+    let names: Vec<String> = list(&f.ok(&["plate-inspect", "--store", &store]), "plates")
+        .iter()
+        .map(|p| text(p, "name"))
+        .collect();
+    assert_eq!(names, ["Renamed twice"]);
+    // The workspace base moved: nothing is unsent.
+    let status = f.ok(&[
+        "workspace-status",
+        "--store",
+        &store,
+        "--workspace-dir",
+        &dir,
+    ]);
+    assert_eq!(text(at(&status, &["workspace"]), "unsent_revisions"), "0");
+
+    // A retry of the same payload is a replay that writes nothing.
+    let replay = f.ok(&f.apply_args(&store, &dir, &digest, USER));
+    assert_eq!(text(&replay, "outcome"), "changeset_replayed");
+    assert_eq!(text(at(&replay, &["revision"]), "revision_id"), REVISION);
+    assert_eq!(f.head(), REVISION);
+}
+
+#[test]
+fn the_author_string_grants_nothing_and_another_payload_under_the_id_is_reuse() {
+    let f = Fixture::new();
+    let dir = f.forked("ws");
+    let store = f.path("published");
+    f.rename(&dir, "One");
+    let ids = ["--changeset-id", CHANGESET, "--revision-id", REVISION];
+    let first = text(&f.create(&dir, &ids), "digest");
+    // The caller is not the claimed actor, before and after the id is bound.
+    assert_eq!(
+        f.rejected(&f.apply_args(&store, &dir, &first, STRANGER)),
+        "PERMISSION_DENIED"
+    );
+    // A payload that claims a stranger as its author is refused for the real caller too.
+    let forged = text(
+        &f.create(
+            &dir,
+            &[
+                "--changeset-id",
+                "019a7bf0-0000-7000-8000-00000000d0f0",
+                "--actor-id",
+                STRANGER,
+            ],
+        ),
+        "digest",
+    );
+    assert_eq!(
+        f.rejected(&f.apply_args(&store, &dir, &forged, USER)),
+        "PERMISSION_DENIED"
+    );
+    f.ok(&f.apply_args(&store, &dir, &first, USER));
+    assert_eq!(
+        f.rejected(&f.apply_args(&store, &dir, &first, STRANGER)),
+        "PERMISSION_DENIED"
+    );
+    // The same changeset id with other content: refused, nothing written.
+    f.rename(&dir, "Two");
+    let other = text(
+        &f.create(
+            &dir,
+            &[
+                "--changeset-id",
+                CHANGESET,
+                "--revision-id",
+                "019a7bf0-0000-7000-8000-00000000d003",
+            ],
+        ),
+        "digest",
+    );
+    assert_ne!(other, first);
+    assert_eq!(
+        f.rejected(&f.apply_args(&store, &dir, &other, USER)),
+        "OP_ID_REUSE"
+    );
+}
+
+#[test]
+fn a_moved_head_is_refused_and_the_refused_id_stays_bound() {
+    let f = Fixture::new();
+    let one = f.forked("one");
+    let two = f.forked("two");
+    let store = f.path("published");
+    f.rename(&one, "From one");
+    f.rename(&two, "From two");
+    let first = text(&f.create(&one, &[]), "digest");
+    f.ok(&f.apply_args(&store, &one, &first, USER));
+    let ids = ["--changeset-id", CHANGESET];
+    let second = text(&f.create(&two, &ids), "digest");
+    assert_eq!(
+        f.rejected(&f.apply_args(&store, &two, &second, USER)),
+        "BASE_REVISION_MISMATCH"
+    );
+    // A retry of the same payload is refused the same way, never as reuse.
+    assert_eq!(
+        f.rejected(&f.apply_args(&store, &two, &second, USER)),
+        "BASE_REVISION_MISMATCH"
+    );
+    // The id names that payload forever: new content needs a new changeset id.
+    f.rename(&two, "From two again");
+    let changed = text(&f.create(&two, &ids), "digest");
+    assert_eq!(
+        f.rejected(&f.apply_args(&store, &two, &changed, USER)),
+        "OP_ID_REUSE"
+    );
+    // The unsent draft is untouched.
+    let status = f.ok(&[
+        "workspace-status",
+        "--store",
+        &store,
+        "--workspace-dir",
+        &two,
+    ]);
+    assert_eq!(text(at(&status, &["workspace"]), "unsent_revisions"), "2");
+}
+
+#[test]
+fn bounded_validation_refuses_garbage_missing_and_empty_changesets() {
+    let f = Fixture::new();
+    let dir = f.forked("ws");
+    let store = f.path("published");
+    // Nothing to send.
+    let (code, body) = f.run(&[
+        "changeset-create",
+        "--store",
+        &store,
+        "--workspace-dir",
+        &dir,
+    ]);
+    assert_eq!(
+        (code, text(&body, "code")),
+        (2, "INVALID_ARGUMENT".to_owned())
+    );
+    // A blob that is not a changeset.
+    let workspace = RevisionStore::new(BlobStore::new(&dir).unwrap());
+    let (garbage, _) = workspace.blobs().publish(b"not a changeset").unwrap();
+    assert_eq!(
+        f.rejected(&f.apply_args(&store, &dir, &garbage.to_string(), USER)),
+        "MALFORMED_COMMAND"
+    );
+    let (future, _) = workspace
+        .blobs()
+        .publish(b"BeamCraft/C01/Changeset/v9\0 and a body long enough")
+        .unwrap();
+    assert_eq!(
+        f.rejected(&f.apply_args(&store, &dir, &future.to_string(), USER)),
+        "UNSUPPORTED_VERSION"
+    );
+    // A real changeset with one byte appended is not canonical.
+    f.rename(&dir, "Renamed");
+    let digest = text(&f.create(&dir, &[]), "digest");
+    let mut bytes = workspace.blobs().read(&digest.parse().unwrap()).unwrap();
+    bytes.push(0);
+    let (longer, _) = workspace.blobs().publish(&bytes).unwrap();
+    assert_eq!(
+        f.rejected(&f.apply_args(&store, &dir, &longer.to_string(), USER)),
+        "MALFORMED_COMMAND"
+    );
+    // An unknown digest.
+    assert_eq!(
+        f.rejected(&f.apply_args(&store, &dir, &"ab".repeat(32), USER)),
+        "NOT_FOUND"
+    );
+}

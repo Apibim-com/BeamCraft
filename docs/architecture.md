@@ -47,6 +47,8 @@ P07 adds `beamcraft_cli::history`, `RevisionStore::info_at`/`open_at` in the hos
 
 P08 adds `Footprint::for_delete` and the placement patch of `UpdateElement` in the engine, `Change::Delete` in the layer engine, `beamcraft_cli::delete` and the CLI command `delete-element`: a move rewrites only the placement and never rebuilds the body, and a delete removes the whole element from both layers and is refused while another element links to it ([design note](design/p08-move-delete.md)).
 
+C01 adds changesets (`model::changeset`, `host::changeset` claims, `beamcraft_cli::changeset` and the CLI commands `changeset-create`, `changeset-inspect` and `changeset-apply`): a workspace's unsent revisions become one canonical, digest-addressed message (base, operations, claimed actor, conservative footprint, complete layer set with base digests, required blobs); the receiver checks the actor against the trusted caller, binds the changeset id to the payload before publishing, and publishes fast-forward only ([design note](design/c01-changeset.md)).
+
 [Module boundaries (F08)](contracts/module-boundaries-v0.1.md) give the exact crate and module path
 of every contract area, the allowed dependency edges and which crates are planned. A test and CI
 enforce them.

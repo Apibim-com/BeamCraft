@@ -278,7 +278,7 @@ fn translation(text: &str) -> Run<[f64; 3]> {
         .map_err(|_| invalid("translation is not three numbers"))
 }
 
-fn id_error(error: beamcraft_model::id::IdError) -> PlateError {
+pub(crate) fn id_error(error: beamcraft_model::id::IdError) -> PlateError {
     PlateError {
         code: error.code(),
         message: "identity is not a full canonical UUIDv7",
@@ -1274,7 +1274,7 @@ fn plate_json(record: &PlateRecord) -> Run<Json> {
     ]))
 }
 
-fn revision_json(revision: &RevisionSummary) -> Json {
+pub(crate) fn revision_json(revision: &RevisionSummary) -> Json {
     let details = revision.details.as_ref().map_or(Json::Null, |d| {
         Json::object([
             ("project_id", Json::text(d.project.clone())),

@@ -162,7 +162,7 @@ fn role_of(name: &str) -> LayerRole {
     }
 }
 
-fn open_request(
+pub(crate) fn open_request(
     root: &str,
     project: &str,
     workspace: &str,

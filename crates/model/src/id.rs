@@ -181,6 +181,11 @@ typed_id!(
     OpId
 );
 typed_id!(
+    /// Identity of an acting user, taken from the trusted caller context (F04 section 6). It is
+    /// a recorded author, never a credential.
+    ActorId
+);
+typed_id!(
     /// Identity of one immutable accepted project revision, never a shortened timestamp or an
     /// array index. It is distinct from the content digest of the revision's manifest.
     RevisionId
