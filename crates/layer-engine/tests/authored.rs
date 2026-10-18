@@ -2399,3 +2399,316 @@ fn section_profiles_round_trip_and_tampering_is_refused() {
         ErrorCode::InvalidArgument
     );
 }
+
+const STOREY: &str = "0199e7a0-0000-7000-8000-000000000301";
+const ROOF: &str = "0199e7a0-0000-7000-8000-000000000302";
+fn level(id: &str, name: &str, elevation_mm: f64) -> Change {
+    Change::Create(Element {
+        id: id.into(),
+        name: name.into(),
+        shape: Shape::Level { elevation_mm },
+        placement: Placement {
+            translation_mm: [0.0; 3],
+            orientation_xyzw: [0.0, 0.0, 0.0, 1.0],
+        },
+        material: None,
+    })
+}
+fn on_level(id: &str, level: Option<&str>) -> Change {
+    Change::Level {
+        id: id.into(),
+        level: level.map(str::to_owned),
+    }
+}
+fn level_targets(prims: &[Prim], id: &str) -> Option<Vec<String>> {
+    prim(prims, &path(id))
+        .relationships
+        .iter()
+        .find(|r| r.name == "bim:level")
+        .map(|r| r.targets.clone())
+}
+
+#[test]
+fn levels_and_level_records_are_authored_on_the_element_and_validated() {
+    let (mut a, o) = populated();
+    let (p, o) = installed(
+        &mut a,
+        &o,
+        vec![
+            level(STOREY, "Level 1", 3000.0),
+            level(ROOF, "Roof", -250.5),
+            on_level(PLATE, Some(STOREY)),
+            on_level(MEMBER, Some(STOREY)),
+        ],
+    );
+    let prims = snapshot(&a, &o.context);
+    let storey = prim(&prims, &path(STOREY));
+    assert_eq!(storey.kind.as_deref(), Some("component"));
+    assert_eq!(storey.display_name.as_deref(), Some("Level 1"));
+    assert_eq!(
+        value(&prims, STOREY, "bim:elementKind"),
+        Some(&Value::Text("level".into()))
+    );
+    assert_eq!(
+        value(&prims, STOREY, "bim:elevationMm"),
+        Some(&Value::Number(3000.0))
+    );
+    assert_eq!(
+        value(&prims, ROOF, "bim:elevationMm"),
+        Some(&Value::Number(-250.5))
+    );
+    // No body, no shape inputs, no material: a level is a storey record, not a part.
+    assert!(
+        !prims
+            .iter()
+            .any(|p| p.path == format!("{}/Geometry", path(STOREY)))
+    );
+    assert!(value(&prims, STOREY, "steel:plate:thicknessMm").is_none());
+    assert_eq!(level_targets(&prims, PLATE), Some(vec![path(STOREY)]));
+    assert_eq!(level_targets(&prims, MEMBER), Some(vec![path(STOREY)]));
+    assert_eq!(level_targets(&prims, STOREY), None);
+    // The record lives with its source: only the relationship group of the element is written,
+    // and no derived group, so a level never changes a body.
+    let plate_writes: BTreeSet<_> = p
+        .writes
+        .iter()
+        .filter(|f| f.identity == PLATE)
+        .map(|f| f.group)
+        .collect();
+    assert_eq!(plate_writes, BTreeSet::from([Group::Relationship]));
+    assert!(p.reads.contains(&Footprint {
+        identity: STOREY.into(),
+        group: Group::Lifecycle
+    }));
+    assert!(p.validation.rules.iter().any(|r| r.starts_with("D2-V01")));
+
+    let dangling = "0199e7a0-0000-7000-8000-0000000003ff";
+    for (changes, code) in [
+        // An unknown level, and a target that is not a level.
+        (
+            vec![on_level(PLATE, Some(dangling))],
+            ErrorCode::DanglingRelationship,
+        ),
+        (
+            vec![on_level(PLATE, Some(MEMBER))],
+            ErrorCode::InvalidArgument,
+        ),
+        (
+            vec![on_level(PLATE, Some("not-a-uuid"))],
+            ErrorCode::InvalidId,
+        ),
+        // Only a plate, beam or column is assigned; a level is not.
+        (
+            vec![on_level(STOREY, Some(ROOF))],
+            ErrorCode::UnsupportedProperty,
+        ),
+        // A level has no shape inputs, no body, a bounded finite elevation and the identity pose.
+        (
+            vec![Change::Thickness {
+                id: STOREY.into(),
+                mm: 5.0,
+            }],
+            ErrorCode::UnsupportedProperty,
+        ),
+        (
+            vec![level(
+                "0199e7a0-0000-7000-8000-000000000303",
+                "Bad",
+                f64::NAN,
+            )],
+            ErrorCode::NonFiniteNumber,
+        ),
+        (
+            vec![level(
+                "0199e7a0-0000-7000-8000-000000000303",
+                "Far",
+                1_000_000_000.5,
+            )],
+            ErrorCode::LimitExceeded,
+        ),
+        (
+            vec![level("0199e7a0-0000-7000-8000-000000000303", "", 1.0)],
+            ErrorCode::InvalidArgument,
+        ),
+        (vec![level(STOREY, "Again", 0.0)], ErrorCode::DuplicateId),
+    ] {
+        assert_eq!(
+            refused_code(&mut a, &o, changes.clone()),
+            Some(code),
+            "{changes:?}"
+        );
+    }
+    let mut placed = level("0199e7a0-0000-7000-8000-000000000303", "Moved", 1.0);
+    if let Change::Create(e) = &mut placed {
+        e.placement.translation_mm = [0.0, 0.0, 1.0];
+    }
+    assert_eq!(
+        refused_code(&mut a, &o, vec![placed]),
+        Some(ErrorCode::UnsupportedProperty)
+    );
+    let mut body = mesh();
+    body.id = ROOF.into();
+    assert_eq!(
+        refused_code(&mut a, &o, vec![Change::Mesh(body)]),
+        Some(ErrorCode::UnsupportedProperty)
+    );
+
+    // Loaded content: two targets break the cardinality, a target that is not a level or does
+    // not exist is refused, and so is an elevation beyond the cap.
+    let one = format!("rel bim:level = <{}>", path(STOREY));
+    for (to, code) in [
+        (
+            format!("rel bim:level = [<{}>, <{}>]", path(STOREY), path(ROOF)),
+            ErrorCode::DependencyConflict,
+        ),
+        (
+            format!("rel bim:level = <{}>", path(MEMBER)),
+            ErrorCode::InvalidArgument,
+        ),
+        (
+            format!("rel bim:level = <{}>", path(dangling)),
+            ErrorCode::DanglingRelationship,
+        ),
+    ] {
+        let input = tampered(&a, &o.context, "authored.usda", &one, &to);
+        assert_eq!(
+            validate_layers(input, schema_identity().unwrap(), &control())
+                .err()
+                .map(|e| e.code),
+            Some(code),
+            "{to}"
+        );
+    }
+    let input = tampered(
+        &a,
+        &o.context,
+        "authored.usda",
+        "double bim:elevationMm = 3000.0",
+        "double bim:elevationMm = 3000000000.5",
+    );
+    assert_eq!(
+        validate_layers(input, schema_identity().unwrap(), &control())
+            .err()
+            .map(|e| e.code),
+        Some(ErrorCode::LimitExceeded)
+    );
+
+    // A level that is in use cannot be deleted; an unused one can. A copy of an element keeps
+    // the level link.
+    let index = a.element_index(&o.context, &control()).unwrap();
+    let storey = index::ElementId::parse(STOREY).unwrap();
+    assert_eq!(
+        a.check_delete(&index, &storey, &control())
+            .err()
+            .map(|e| e.code),
+        Some(ErrorCode::DependencyConflict)
+    );
+    a.check_delete(&index, &index::ElementId::parse(ROOF).unwrap(), &control())
+        .unwrap();
+    let fresh = index::ElementId::parse("0199e7a0-0000-7000-8000-0000000003fe").unwrap();
+    let plan = index
+        .copy_plan(&index::ElementId::parse(PLATE).unwrap(), &fresh)
+        .unwrap();
+    assert!(
+        plan.links
+            .iter()
+            .any(|l| l.name == "bim:level" && l.target == index::LinkTarget::Element(storey))
+    );
+
+    // Unassigning authors an explicit empty record, then the level can go.
+    let (_, o) = installed(
+        &mut a,
+        &o,
+        vec![on_level(PLATE, None), on_level(MEMBER, None)],
+    );
+    let prims = snapshot(&a, &o.context);
+    assert_eq!(level_targets(&prims, PLATE), Some(vec![]));
+    let index = a.element_index(&o.context, &control()).unwrap();
+    a.check_delete(&index, &storey, &control()).unwrap();
+    let (_, o) = installed(&mut a, &o, vec![Change::Delete { id: STOREY.into() }]);
+    assert!(
+        !snapshot(&a, &o.context)
+            .iter()
+            .any(|p| p.path == path(STOREY))
+    );
+}
+
+#[test]
+fn the_project_record_is_validated_read_and_kept_through_edits() {
+    const PROJECT: &str = "0199e7a0-0000-7000-8000-000000000001";
+    let with_root = |data: &str| {
+        let mut input = initial();
+        let text = format!(
+            "#usda 1.0\n(metersPerUnit=0.001\nupAxis=\"Z\"\nsubLayers=[@authored.usda@,@derived.usda@,@weak.usda@]\ncustomLayerData={{{data}}})\n"
+        );
+        *input
+            .assets
+            .iter_mut()
+            .find(|a| a.name == "root.usda")
+            .unwrap() = asset("root.usda", text);
+        input.manifest = input.manifest_digest().unwrap();
+        input
+    };
+    let (mut a, o) = open(with_root(&format!(
+        "string bimProjectId=\"{PROJECT}\"\nstring future=\"keep\""
+    )));
+    assert_eq!(
+        project_record(&o.metadata).unwrap().as_deref(),
+        Some(PROJECT)
+    );
+    let mut populate = batch(&o.context, elements());
+    populate.resources = resources();
+    let installed = a
+        .prepare(populate, &control())
+        .and_then(|p| {
+            a.install(
+                &o.context,
+                &p.token,
+                &p.op_id,
+                Decision::Accepted,
+                &control(),
+            )
+        })
+        .unwrap();
+    // The record and the unknown entry survive the rewrite of the root layer, and the record
+    // is the one the reader reports.
+    assert_eq!(
+        project_record(&installed.metadata).unwrap().as_deref(),
+        Some(PROJECT)
+    );
+    let root = a
+        .export(&installed.context, &control())
+        .unwrap()
+        .into_iter()
+        .find(|l| l.name == "root.usda")
+        .unwrap();
+    let text = String::from_utf8(root.bytes).unwrap();
+    assert!(text.contains(PROJECT) && text.contains("future"), "{text}");
+    // A store without a record reports none; it is never invented.
+    let (_, plain) = open(initial());
+    assert_eq!(project_record(&plain.metadata).unwrap(), None);
+    // A record that is not a full UUIDv7 text is refused when the layers are opened.
+    for bad in [
+        "string bimProjectId=\"not-a-uuid\"",
+        "int bimProjectId=7",
+        "string bimProjectId=\"0199E7A0-0000-7000-8000-000000000001\"",
+        "string bimProjectId=\"0199e7a0-0000-4000-8000-000000000001\"",
+    ] {
+        let refused = Author::open(
+            with_root(bad),
+            targets(),
+            schema_identity().unwrap(),
+            &control(),
+        )
+        .err()
+        .map(|e| e.code);
+        assert_eq!(refused, Some(ErrorCode::InvalidId), "{bad}");
+        assert_eq!(
+            validate_layers(with_root(bad), schema_identity().unwrap(), &control())
+                .err()
+                .map(|e| e.code),
+            Some(ErrorCode::InvalidId),
+            "{bad}"
+        );
+    }
+}

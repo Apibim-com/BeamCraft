@@ -34,8 +34,10 @@
 use crate::definition::{
     DefinitionRecord, decode_definitions, definition_digest, material_lookup, profile_lookup,
 };
+use crate::level::levels_of;
 use beamcraft_engine::command::AuthoredPlate;
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
+use beamcraft_engine::level::Levels;
 use beamcraft_engine::member::AuthoredMember;
 use beamcraft_engine::quantity::{
     Assessment, Freshness, QuantityRecord, StoredRecord, assess, member_shape_signature,
@@ -55,8 +57,9 @@ use beamcraft_host::revision::{
     RevisionStore, Uuid7, VerifyRequest,
 };
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, Element, Group as LayerGroup, Placement as LayerPlacement,
-    Prepare, Prepared, SchemaIdentity, Shape, StoredQuantities, schema_identity, validate_layers,
+    Author, Change, EditTargets, Element, Group as LayerGroup, PROJECT_RECORD_KEY,
+    Placement as LayerPlacement, Prepare, Prepared, SchemaIdentity, Shape, StoredQuantities,
+    project_record, schema_identity, validate_layers,
 };
 use beamcraft_layer_engine::index::Completeness;
 use beamcraft_layer_engine::{
@@ -67,6 +70,7 @@ use beamcraft_model::command::{CommandError, CreatePlate, MemberKind};
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
@@ -77,8 +81,16 @@ pub const AUTHORED_LAYER: &str = "authored.usda";
 /// Virtual name of the derived (geometry) layer.
 pub const DERIVED_LAYER: &str = "derived.usda";
 
-const EMPTY_ROOT: &str = "#usda 1.0\n(\n    defaultPrim = \"World\"\n    metersPerUnit = 0.001\n    subLayers = [@authored.usda@, @derived.usda@]\n    upAxis = \"Z\"\n)\n";
 const EMPTY_LAYER: &str = "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n)\n";
+
+/// The root layer of the first revision of a project. It records the ProjectId (D1) in its
+/// `customLayerData`, once: later revisions keep it, because the layer engine preserves the other
+/// entries of that dictionary on every edit and no command writes it.
+fn empty_root(project: &ProjectId) -> String {
+    format!(
+        "#usda 1.0\n(\n    customLayerData = {{\n        string {PROJECT_RECORD_KEY} = \"{project}\"\n    }}\n    defaultPrim = \"World\"\n    metersPerUnit = 0.001\n    subLayers = [@authored.usda@, @derived.usda@]\n    upAxis = \"Z\"\n)\n"
+    )
+}
 
 /// A typed failure: a stable F04 code and a fixed safe message. No paths, no OS text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -236,6 +248,8 @@ pub(crate) struct Decoded {
     pub(crate) members: Vec<(AuthoredMember, Option<DerivedMesh>)>,
     other_elements: usize,
     pub(crate) definitions: BTreeMap<ContentDigest, DefinitionRecord>,
+    /// The levels of the model and the level of every plate, beam and column (D2).
+    pub(crate) levels: Levels,
 }
 
 pub(crate) fn number(value: &Value) -> Option<f64> {
@@ -526,11 +540,13 @@ pub(crate) fn decode(
         }
     }
     let definitions = decode_definitions(&prims)?;
+    let levels = levels_of(&prims)?;
     Ok(Decoded {
         plates,
         members,
         other_elements: other,
         definitions,
+        levels,
     })
 }
 
@@ -816,6 +832,15 @@ impl ContentVerifier for PlateVerifier {
         validate_layers(open.clone(), schema, &control).map_err(reject)?;
         let mut reader = Reader::default();
         let opened = reader.open(open, &control).map_err(reject)?;
+        // D1: a recorded ProjectId is the revision's own, so a stored record can never disagree
+        // with the project of the manifest, nor change between revisions of one project.
+        if let Some(recorded) = project_record(&opened.metadata).map_err(reject)?
+            && recorded != request.project.as_str()
+        {
+            return Err(reject(integrity(
+                "the project record differs from the revision's project",
+            )));
+        }
         let index = reader
             .element_index(&opened.context, &control)
             .map_err(reject)?;
@@ -1160,34 +1185,95 @@ pub(crate) fn base_of(revision: &Revision) -> Result<Base, PlateError> {
 }
 
 /// Opens the head of the store (`None` for a store without a revision) and the base that the next
-/// revision builds on. A store without a revision takes the given identities.
+/// revision builds on. A store without a revision takes the given identities and records the
+/// project (D1); a store with one keeps its own, unless the caller holds a [`ProjectClaim`]: the
+/// claim is compared with the project of the exact head opened here, which is also the base the
+/// revision is committed on, so a store initialised by another writer after an earlier check can
+/// never adopt a claimed project silently. A first revision records the claimed project.
 pub(crate) fn load_base(
     store: &RevisionStore,
     project: &ProjectId,
     workspace: &WorkspaceId,
 ) -> Result<(Option<Revision>, Base), PlateError> {
+    let claim = CLAIMED_PROJECT.with(Cell::get);
     let head = match store.open() {
         Ok(revision) => Some(revision),
         Err(RevisionError::NoRevision) => None,
         Err(error) => return Err(error.into()),
     };
     let base = match &head {
-        Some(revision) => base_of(revision)?,
-        None => Base {
-            project: project.to_string(),
-            workspace: workspace.to_string(),
-            digest: initial_pin()?,
-            generation: 0,
-            assets: vec![
-                asset(ROOT_LAYER, EMPTY_ROOT.as_bytes())?,
-                asset(AUTHORED_LAYER, EMPTY_LAYER.as_bytes())?,
-                asset(DERIVED_LAYER, EMPTY_LAYER.as_bytes())?,
-            ],
-            external: BTreeSet::new(),
-            expected: ExpectedBase::Initial,
-        },
+        Some(revision) => {
+            let base = base_of(revision)?;
+            if claim.is_some_and(|c| c.to_string() != base.project) {
+                return Err(project_mismatch());
+            }
+            base
+        }
+        None => {
+            let project = claim.as_ref().unwrap_or(project);
+            Base {
+                project: project.to_string(),
+                workspace: workspace.to_string(),
+                digest: initial_pin()?,
+                generation: 0,
+                assets: vec![
+                    asset(ROOT_LAYER, empty_root(project).as_bytes())?,
+                    asset(AUTHORED_LAYER, EMPTY_LAYER.as_bytes())?,
+                    asset(DERIVED_LAYER, EMPTY_LAYER.as_bytes())?,
+                ],
+                external: BTreeSet::new(),
+                expected: ExpectedBase::Initial,
+            }
+        }
     };
     Ok((head, base))
+}
+
+fn project_mismatch() -> PlateError {
+    PlateError::new(
+        ErrorCode::InvalidArgument,
+        "the project id differs from the project recorded in the store",
+    )
+}
+
+thread_local! {
+    static CLAIMED_PROJECT: Cell<Option<ProjectId>> = const { Cell::new(None) };
+}
+
+/// D1: an explicit project claim of the current thread, held until dropped. While it is held every
+/// revision this thread authors is built on a base of that project: `load_base` refuses a head
+/// of another project with `INVALID_ARGUMENT` and a first revision records the claimed one. The
+/// CLI holds one per command that names `--project-id`; a library caller that names a project
+/// holds one too. Claims nest and restore the previous one.
+#[must_use = "the claim ends when it is dropped"]
+pub struct ProjectClaim {
+    previous: Option<ProjectId>,
+}
+
+/// Starts a [`ProjectClaim`] on the current thread.
+pub fn claim_project(project: ProjectId) -> ProjectClaim {
+    ProjectClaim {
+        previous: CLAIMED_PROJECT.with(|c| c.replace(Some(project))),
+    }
+}
+
+impl Drop for ProjectClaim {
+    fn drop(&mut self) {
+        CLAIMED_PROJECT.with(|c| c.set(self.previous));
+    }
+}
+
+/// D1: an early, typed check of a project id that the caller names explicitly: a store without a
+/// revision accepts any (the first revision records it); a store with one refuses a different id
+/// with `INVALID_ARGUMENT`. It is advisory: the binding check is the [`ProjectClaim`] that
+/// `load_base` compares with the base it builds on. Callers that give no id take the store's.
+pub fn ensure_project(store: &RevisionStore, claimed: &ProjectId) -> Result<(), PlateError> {
+    match store.open() {
+        Ok(head) if head.manifest().content().project().as_str() == claimed.to_string() => Ok(()),
+        Ok(_) => Err(project_mismatch()),
+        Err(RevisionError::NoRevision) => Ok(()),
+        Err(error) => Err(error.into()),
+    }
 }
 
 /// The pinned stage of a base, opened for reading.
@@ -1432,6 +1518,11 @@ pub struct Inspection {
     pub definitions: BTreeMap<ContentDigest, DefinitionRecord>,
     /// The pinned view snapshot built from committed data.
     pub snapshot: ViewSnapshot,
+    /// D1: the ProjectId recorded in the root layer of the revision, or `None` for a store whose
+    /// first revision predates the record (never invented for it).
+    pub project_record: Option<String>,
+    /// D2: the levels of the revision and the level of every plate, beam and column.
+    pub levels: Levels,
 }
 
 /// Opens the head revision with verification, reads its model and derived layers in a fresh
@@ -1467,8 +1558,20 @@ pub fn inspect(store: &RevisionStore) -> Result<Inspection, PlateError> {
         &external,
     )?;
     let control = control();
+    // The structural rules (D2-V01 among them) run before anything is decoded, so a damaged
+    // level or project record is refused rather than reported.
+    validate_layers(request.clone(), schema_identity()?, &control)?;
     let mut reader = Reader::default();
     let opened = reader.open(request, &control)?;
+    let record = project_record(&opened.metadata)?;
+    if record
+        .as_deref()
+        .is_some_and(|recorded| recorded != content.project().as_str())
+    {
+        return Err(integrity(
+            "the project record differs from the revision's project",
+        ));
+    }
     let index = reader.element_index(&opened.context, &control)?;
     reader.verify_index(&index, &control)?;
     let decoded = decode(&reader, &opened, &control)?;
@@ -1492,6 +1595,8 @@ pub fn inspect(store: &RevisionStore) -> Result<Inspection, PlateError> {
         other_elements: decoded.other_elements,
         definitions: decoded.definitions,
         snapshot,
+        project_record: record,
+        levels: decoded.levels,
     })
 }
 

@@ -305,6 +305,44 @@ impl Footprint {
         Ok(footprint)
     }
 
+    /// The footprint of a level assignment or unassignment (D2): the `bim:level` record lives with
+    /// its source, so only the element's relationship group is written. It reads the element's
+    /// lifecycle and relationships and, for an assignment, the level's lifecycle: its existence and
+    /// kind decide acceptance, so a concurrent delete of the level must conflict. A level change
+    /// has no geometric effect and writes no derived group.
+    pub fn for_level(element: ElementId, level: Option<ElementId>) -> Result<Self, CommandError> {
+        let mut reads = BTreeSet::new();
+        for group in [Group::Lifecycle, Group::Relationship] {
+            reads.insert(Entry {
+                target: Target::Element(element),
+                group,
+            });
+        }
+        if let Some(level) = level {
+            reads.insert(Entry {
+                target: Target::Element(level),
+                group: Group::Lifecycle,
+            });
+        }
+        let footprint = Self {
+            reads,
+            writes: BTreeSet::from([Entry {
+                target: Target::Element(element),
+                group: Group::Relationship,
+            }]),
+        };
+        footprint.check_bound()?;
+        Ok(footprint)
+    }
+
+    /// The footprint of two commands applied as one change: the union of their reads and writes.
+    pub fn union(mut self, other: Self) -> Result<Self, CommandError> {
+        self.reads.extend(other.reads);
+        self.writes.extend(other.writes);
+        self.check_bound()?;
+        Ok(self)
+    }
+
     /// The footprint of publishing one immutable definition (P02): it writes the definition's own
     /// entry and no element. A definition is content-addressed, so two commands that publish the
     /// same digest write identical bytes; the entry is still a write, because another command
@@ -500,5 +538,32 @@ mod tests {
         assert!(!f.conflicts_with(&Footprint::for_part_of(id(9), &[id(6)]).unwrap()));
         // Deleting the target assembly conflicts.
         assert!(f.conflicts_with(&Footprint::for_delete(id(6)).unwrap()));
+    }
+
+    #[test]
+    fn a_level_change_writes_the_element_relationship_and_reads_the_level() {
+        let f = Footprint::for_level(id(5), Some(id(6))).unwrap();
+        assert_eq!(
+            f.writes().iter().copied().collect::<Vec<_>>(),
+            vec![Entry {
+                target: Target::Element(id(5)),
+                group: Group::Relationship,
+            }]
+        );
+        assert!(f.reads().contains(&Entry {
+            target: Target::Element(id(6)),
+            group: Group::Lifecycle,
+        }));
+        // Deleting the level conflicts with the assignment; assigning another element does not.
+        assert!(f.conflicts_with(&Footprint::for_delete(id(6)).unwrap()));
+        assert!(!f.conflicts_with(&Footprint::for_level(id(7), Some(id(6))).unwrap()));
+        // An unassignment reads no level.
+        let clear = Footprint::for_level(id(5), None).unwrap();
+        assert_eq!(clear.reads().len(), 2);
+        // A level change next to a rename is the union of both.
+        let rename = Footprint::for_update(id(5), true, false, false, false, None).unwrap();
+        let both = rename.clone().union(f.clone()).unwrap();
+        assert_eq!(both.writes().len(), 2);
+        assert!(both.covers_writes(f.writes()) && both.covers_writes(rename.writes()));
     }
 }

@@ -3,6 +3,10 @@
 
 //! V03: the native BeamCraft window and viewport.
 //!
+//! V05.1 adds create tools (a plate, a straight member): the window is a command client that
+//! runs the CLI's `create-plate` / `create-member` in a separate process and then reloads the
+//! accepted revision; see [`tools`] (pure parameter mapping and reply parsing) and [`command`].
+//!
 //! The viewport shows the accepted (published) revision of a store. Its input is the engine's
 //! pinned view snapshot, produced by the headless CLI (`beamcraft view-export --out -`) in a
 //! separate process and rebuilt here with [`beamcraft_engine::ViewSnapshot::from_bundle`], which
@@ -16,10 +20,12 @@
 
 pub mod app;
 pub mod camera;
+pub mod command;
 pub mod metrics;
 pub mod render;
 pub mod scene;
 pub mod source;
+pub mod tools;
 
 /// A bounded viewport failure; adapter absence is reported, never replaced by a fake result.
 #[derive(Debug)]

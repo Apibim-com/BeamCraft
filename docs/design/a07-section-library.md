@@ -311,11 +311,14 @@ beamcraft create-plate   --store ROOT ... [--material-digest SHA256 | --material
   published before A07.2 verifies unchanged. Names are labels only: they never select a number
   (a grade does not select a density, a name does not select a section).
 * **Schema descriptor.** One optional line (`definition displayName=prim metadata string(...)`)
-  was added, so the schema digest changes. The previous A07.1 digest
-  (`0311df71b2f7a4bd7b19e87ca7daef1884e989bd099bca24ee165de8e6bc310c`, computed from the descriptor of
-  `origin/master` `5c54c0a`) is accepted next to the current one: it is derived at run time by removing that one line,
-  and a unit test pins it. The earlier accepted descriptors are unchanged. The next edit of an
-  older store rewrites the pin to the current digest.
+  was added after the D1/D2 additions (level, project record), so the schema digest changes. The
+  digest of the D1/D2 descriptor of `origin/master` `85fe294`
+  (`b799ae17004c22a5c2eaf7512367f919aec4b82b9b4b223166310286e1414b5b`, the one every store
+  written before A07.2 carries) is accepted next to the current one: it is derived at run time by
+  removing that one line. The A07.1 digest (`0311df71b2f7a4bd7b19e87ca7daef1884e989bd099bca24ee165de8e6bc310c`)
+  and the earlier ones stay accepted through their descriptors. Unit tests pin the D1/D2 and A07.1
+  digests and check that every previously published pin (A07.1, D1/D2, A06, A01, R01, P02.2, U09)
+  is still accepted. The next edit of an older store rewrites the pin to the current digest.
 * **Existing stores and tests.** Checked with the real pre-change binary (built from `origin/master`
   `5c54c0a`): a store made by it (material with grade, I-section with designation, a plate and a
   member) was listed, inspected and edited by the new binary; its unnamed definitions are selected

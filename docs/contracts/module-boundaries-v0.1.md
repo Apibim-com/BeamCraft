@@ -71,7 +71,7 @@ Dependencies are checked in `[dependencies]`,
 | beamcraft-engine | crates/engine | native | 3 | beamcraft-geom, beamcraft-model, beamcraft-kernel | now | V02 (view snapshot and query slice); P01 (`CreatePlate` application, footprints, transactions, committed-plate queries) |
 | beamcraft-host | crates/host | host | 4 | beamcraft-model, beamcraft-protocol, beamcraft-engine | now | U05 |
 | beamcraft-cli | apps/beamcraft-cli | app | 5 | beamcraft-model, beamcraft-engine, beamcraft-host, beamcraft-protocol, beamcraft-layer-engine | now | U04 amendment: CLI and thin Rust worker binaries |
-| beamcraft-ui | apps/beamcraft-ui | app | 5 | beamcraft-model, beamcraft-engine, beamcraft-host | now | V03 (window and viewport; reads the accepted snapshot from the CLI in a separate process) |
+| beamcraft-ui | apps/beamcraft-ui | app | 5 | beamcraft-model, beamcraft-protocol, beamcraft-engine, beamcraft-host | now | V03 (window and viewport; reads the accepted snapshot from the CLI in a separate process); V05.1 (create tools; decodes the CLI's JSON replies with the protocol crate) |
 | beamcraft-fixtures | tools/fixtures | tool | 9 | - | now | F07 |
 | beamcraft-boundaries | apps/boundaries | tool | 9 | - | now | F08 |
 <!-- module-table:end -->

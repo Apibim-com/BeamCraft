@@ -13,6 +13,7 @@ pub mod definition;
 pub mod delete;
 pub mod edit;
 pub mod history;
+pub mod level;
 pub mod library;
 pub mod member;
 pub mod plate;
