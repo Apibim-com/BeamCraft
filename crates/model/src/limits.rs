@@ -35,6 +35,11 @@ pub const MAX_SURFACE_PER_METER_M2: f64 = 10_000.0;
 /// Relative tolerance between a declared section value and the value the profile family's
 /// own formula gives. A larger gap is refused, never silently resolved to one of the two.
 pub const DECLARED_RELATIVE_TOLERANCE: f64 = 1e-3;
+/// Relative tolerance between a declared area of a section family (A07) and the net area of the
+/// generated outline: 1 percent. It covers the arc polygon of the detailed outline and the
+/// rounding of a published area. An assumption of A07.2 pending owner confirmation (design note
+/// decision D3); the rectangle keeps [`DECLARED_RELATIVE_TOLERANCE`].
+pub const DECLARED_SECTION_AREA_TOLERANCE: f64 = 1e-2;
 /// Most relationship targets of one element.
 pub const MAX_RELATIONSHIP_TARGETS: usize = 1024;
 /// Most derived footprint entries of one command.

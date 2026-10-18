@@ -7,11 +7,13 @@
 
 use beamcraft_cli::copy::{CopiedElement, CopyRequest, copy_element};
 use beamcraft_cli::definition::{
-    DefineRequest, Defined, DefinitionRecord, define, definition_path,
+    DefineRequest, Defined, DefinitionRecord, NameResolution, define, definition_path,
+    head_definitions, resolve_name,
 };
 use beamcraft_cli::delete::{DeleteRequest, DeletedKind, delete_element};
 use beamcraft_cli::edit::{UpdateRequest, UpdatedElement, update_element};
 use beamcraft_cli::history::{Direction, Step, step, timeline};
+use beamcraft_cli::library::load as load_library;
 use beamcraft_cli::member::{CreateMemberRequest, create_member};
 use beamcraft_cli::plate::{
     CreateRequest, Created, Inspection, PlateError, QuantityReport, RevisionSummary, create_plate,
@@ -55,12 +57,20 @@ pub(crate) fn invalid(message: &'static str) -> PlateError {
 
 /// Runs one plate command and returns the JSON result and the process exit code.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
-    report(run(args))
+    let mut candidates = Vec::new();
+    let result = run(args, &mut candidates);
+    report_with(result, candidates)
 }
 
 /// The shared result shape of the store commands: the JSON object and the exit code (0 success,
 /// 2 rejection, 3 backend unavailable, 4 outcome unknown).
 pub(crate) fn report(result: Run<Json>) -> (Json, u8) {
+    report_with(result, Vec::new())
+}
+
+/// [`report`] with the `diagnostics` array of a rejection filled in (the candidates of an
+/// ambiguous name).
+fn report_with(result: Run<Json>, diagnostics: Vec<Json>) -> (Json, u8) {
     match result {
         Ok(json) => (json, 0),
         Err(e) => (
@@ -77,7 +87,7 @@ pub(crate) fn report(result: Run<Json>) -> (Json, u8) {
                 ("message", Json::text(e.message)),
                 ("transport_code", Json::Null),
                 ("observed_context", Json::Null),
-                ("diagnostics", Json::Array(vec![])),
+                ("diagnostics", Json::Array(diagnostics)),
             ]),
             match e.code {
                 ErrorCode::OutcomeUnknown => 4,
@@ -96,6 +106,7 @@ const CREATE_OPTIONS: &[&str] = &[
     "--name",
     "--translation",
     "--material-digest",
+    "--material",
     "--hole-rect",
     "--hole-round",
     "--hole-segments",
@@ -112,6 +123,7 @@ const DEFINE_MATERIAL_OPTIONS: &[&str] = &[
     "--density",
     "--grade",
     "--standard",
+    "--name",
     "--revision-id",
     "--actor-id",
     "--project-id",
@@ -138,6 +150,8 @@ const DEFINE_PROFILE_OPTIONS: &[&str] = &[
     "--area-mm2",
     "--mass-per-meter-kg",
     "--surface-per-meter-m2",
+    "--name",
+    "--library",
     "--revision-id",
     "--actor-id",
     "--project-id",
@@ -156,10 +170,12 @@ const CREATE_MEMBER_OPTIONS: &[&str] = &[
     "--start",
     "--end",
     "--profile-digest",
+    "--profile",
     "--roll",
     "--name",
     "--translation",
     "--material-digest",
+    "--material",
     "--new-id",
     "--op-id",
     "--revision-id",
@@ -216,7 +232,7 @@ const WORKSPACE_OPTIONS: &[&str] = &[
 
 const HISTORY_OPTIONS: &[&str] = &["--workspace-dir", "--revision-id", "--op-id"];
 
-fn run(args: &[OsString]) -> Run<Json> {
+fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
     let args: Vec<&str> = args
         .iter()
         .map(|a| {
@@ -267,8 +283,8 @@ fn run(args: &[OsString]) -> Run<Json> {
     })?;
     let store = RevisionStore::new(blobs);
     match *command {
-        "create-plate" => create(&store, &options),
-        "create-member" => create_member_command(&store, &options),
+        "create-plate" => create(&store, &options, candidates),
+        "create-member" => create_member_command(&store, &options, candidates),
         "update-element" => update_command(&store, &options),
         "delete-element" => delete_command(&store, &options),
         "copy-element" => copy_command(&store, &options),
@@ -312,6 +328,69 @@ pub(crate) fn id_error(error: beamcraft_model::id::IdError) -> PlateError {
 fn digest_option(text: &str) -> Run<ContentDigest> {
     text.parse::<ContentDigest>()
         .map_err(|_| invalid("a digest is not 64 lower-case hexadecimal characters"))
+}
+
+/// A definition chosen by its full digest (`keys.0`) or by a readable name (`keys.1`), never
+/// both. A name is resolved against the definitions of the head revision by display name or
+/// catalogue label; no match is `NOT_FOUND` and a name that matches several definitions is
+/// `INVALID_ARGUMENT` with every candidate in `candidates`, never a guess.
+fn selected(
+    store: &RevisionStore,
+    options: &BTreeMap<&str, &str>,
+    keys: (&'static str, &'static str),
+    profiles: bool,
+    candidates: &mut Vec<Json>,
+) -> Run<Option<ContentDigest>> {
+    let (digest_key, name_key) = keys;
+    match (options.get(digest_key), options.get(name_key)) {
+        (Some(_), Some(_)) => Err(invalid("give the digest or the name, not both")),
+        (Some(text), None) => digest_option(text).map(Some),
+        (None, None) => Ok(None),
+        (None, Some(name)) => {
+            let definitions = head_definitions(store)?;
+            match resolve_name(&definitions, name, profiles) {
+                NameResolution::Found(digest) => Ok(Some(digest)),
+                NameResolution::NotFound => Err(PlateError {
+                    code: ErrorCode::NotFound,
+                    message: if profiles {
+                        "no profile definition in the head has this name"
+                    } else {
+                        "no material definition in the head has this name"
+                    },
+                }),
+                NameResolution::Ambiguous(found) => {
+                    for (digest, record) in &found {
+                        candidates.push(candidate_json(digest, record));
+                    }
+                    Err(invalid(
+                        "the name matches more than one definition; use a unique name or the digest",
+                    ))
+                }
+            }
+        }
+    }
+}
+
+/// One candidate of an ambiguous name.
+fn candidate_json(digest: &ContentDigest, record: &DefinitionRecord) -> Json {
+    Json::object([
+        ("digest", Json::text(digest.to_string())),
+        ("kind", Json::text(record.kind())),
+        (
+            "display_name",
+            record.display_name().map_or(Json::Null, Json::text),
+        ),
+        (
+            "names",
+            Json::Array(
+                record
+                    .selectable_names()
+                    .into_iter()
+                    .map(Json::text)
+                    .collect(),
+            ),
+        ),
+    ])
 }
 
 /// The section shape of `define-profile --family`: a family token with one `--<parameter>` per
@@ -408,7 +487,38 @@ fn define_command(
             density_kg_m3: optional_float("--density")?,
             grade: given("--grade").map(str::to_owned),
             standard: given("--standard").map(str::to_owned),
+            display_name: None,
         }
+        .named(given("--name"))
+    } else if let Some(library_path) = given("--library") {
+        // The definition takes every value from the library entry and stores them itself, so it
+        // never depends on the file afterwards.
+        const OWN_VALUES: &[&str] = &[
+            "--width",
+            "--height",
+            "--family",
+            "--standard",
+            "--area-mm2",
+            "--mass-per-meter-kg",
+            "--surface-per-meter-m2",
+        ];
+        if OWN_VALUES
+            .iter()
+            .chain(SECTION_ONLY_OPTIONS)
+            .any(|option| options.contains_key(option))
+        {
+            return Err(invalid(
+                "--library takes its values from the entry; only --designation and --name combine with it",
+            ));
+        }
+        let designation =
+            given("--designation").ok_or_else(|| invalid("--library needs --designation"))?;
+        let library = load_library(library_path)?;
+        library
+            .entry(designation)?
+            .record
+            .clone()
+            .named(given("--name"))
     } else {
         let section = SectionProperties {
             designation: given("--designation").map(str::to_owned),
@@ -416,6 +526,7 @@ fn define_command(
             area_mm2: optional_float("--area-mm2")?,
             mass_per_meter_kg: optional_float("--mass-per-meter-kg")?,
             surface_per_meter_m2: optional_float("--surface-per-meter-m2")?,
+            display_name: None,
         };
         match given("--family") {
             None if SECTION_ONLY_OPTIONS
@@ -434,6 +545,7 @@ fn define_command(
                 section,
             },
         }
+        .named(given("--name"))
     };
     let revision_id = match given("--revision-id") {
         Some(text) => RevisionId::parse(text).map_err(id_error)?,
@@ -466,7 +578,11 @@ fn define_command(
     defined_json(&defined)
 }
 
-fn create(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Json> {
+fn create(
+    store: &RevisionStore,
+    options: &BTreeMap<&str, &str>,
+    candidates: &mut Vec<Json>,
+) -> Run<Json> {
     let mut source = IdSource::system();
     let mut fresh = || {
         source.next_id().map_err(|_| PlateError {
@@ -513,7 +629,13 @@ fn create(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Json> {
             translation_mm: given("--translation").map_or(Ok([0.0; 3]), translation)?,
             ..Placement::IDENTITY
         },
-        material_digest: given("--material-digest").map(digest_option).transpose()?,
+        material_digest: selected(
+            store,
+            options,
+            ("--material-digest", "--material"),
+            false,
+            candidates,
+        )?,
         holes_mm: holes(options)?,
     };
     let created = create_plate(
@@ -1034,7 +1156,11 @@ fn workspace_command(
     }
 }
 
-fn create_member_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Json> {
+fn create_member_command(
+    store: &RevisionStore,
+    options: &BTreeMap<&str, &str>,
+    candidates: &mut Vec<Json>,
+) -> Run<Json> {
     let mut source = IdSource::system();
     let mut fresh = || {
         source.next_id().map_err(|_| PlateError {
@@ -1079,14 +1205,27 @@ fn create_member_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) 
                 .ok_or_else(|| invalid("--start and --end are required"))?,
         )
     };
+    let profile_digest = selected(
+        store,
+        options,
+        ("--profile-digest", "--profile"),
+        true,
+        candidates,
+    )?
+    .ok_or_else(|| invalid("--profile-digest or --profile is required"))?;
+    let material_digest = selected(
+        store,
+        options,
+        ("--material-digest", "--material"),
+        false,
+        candidates,
+    )?;
     let command = CreateStraightMember {
         new_id,
         kind,
         name: given("--name").unwrap_or(kind.as_str()).to_owned(),
         axis_points_mm: [point("--start")?, point("--end")?],
-        profile_digest: digest_option(
-            given("--profile-digest").ok_or_else(|| invalid("--profile-digest is required"))?,
-        )?,
+        profile_digest,
         placement: Placement {
             translation_mm: given("--translation").map_or(Ok([0.0; 3]), translation)?,
             ..Placement::IDENTITY
@@ -1097,7 +1236,7 @@ fn create_member_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) 
                     .map_err(|_| invalid("a number is malformed"))
             })
             .transpose()?,
-        material_digest: given("--material-digest").map(digest_option).transpose()?,
+        material_digest,
     };
     let created = create_member(
         store,
@@ -1214,19 +1353,24 @@ fn quantities_json(q: &Quantities) -> Run<Json> {
     ]))
 }
 
-fn definition_json(digest: &ContentDigest, record: &DefinitionRecord) -> Run<Json> {
+pub(crate) fn definition_json(digest: &ContentDigest, record: &DefinitionRecord) -> Run<Json> {
     let mut fields = vec![
         ("digest", Json::text(digest.to_string())),
         ("prim_path", Json::text(definition_path(digest))),
         ("kind", Json::text(record.kind())),
         ("units", Json::text("mm")),
         ("schema_version", Json::text("0.1.0")),
+        (
+            "display_name",
+            record.display_name().map_or(Json::Null, Json::text),
+        ),
     ];
     match record {
         DefinitionRecord::Material {
             density_kg_m3,
             grade,
             standard,
+            ..
         } => {
             fields.push(("density_kg_m3", density_kg_m3.map_or(Ok(Json::Null), num)?));
             fields.push(("grade", grade.as_ref().map_or(Json::Null, Json::text)));
@@ -1573,17 +1717,55 @@ fn with_stored(element: Json, id: ElementId, inspection: &Inspection) -> Run<Jso
     Ok(Json::Object(object))
 }
 
+/// Adds the readable names of the definitions an element pins (`profile_name` for a member,
+/// `material_name`), or null when the definition has no name (published before A07.2).
+fn with_names(
+    element: Json,
+    profile: Option<ContentDigest>,
+    material: Option<ContentDigest>,
+    inspection: &Inspection,
+) -> Json {
+    let Json::Object(mut object) = element else {
+        return element;
+    };
+    let name = |digest: Option<ContentDigest>| {
+        digest
+            .and_then(|d| inspection.definitions.get(&d))
+            .and_then(|record| record.display_name())
+            .map_or(Json::Null, Json::text)
+    };
+    if profile.is_some() {
+        object.insert("profile_name".into(), name(profile));
+    }
+    object.insert("material_name".into(), name(material));
+    Json::Object(object)
+}
+
 fn inspection_json(inspection: &Inspection) -> Run<Json> {
     let snapshot = &inspection.snapshot;
     let plates = inspection
         .plates
         .iter()
-        .map(|p| with_stored(plate_json(p)?, p.authored.id, inspection))
+        .map(|p| {
+            Ok(with_names(
+                with_stored(plate_json(p)?, p.authored.id, inspection)?,
+                None,
+                p.authored.material,
+                inspection,
+            ))
+        })
         .collect::<Run<Vec<_>>>()?;
     let members = inspection
         .members
         .iter()
-        .map(|m| with_stored(member_json(m)?, m.authored.id, inspection))
+        .map(|m| {
+            Ok(with_names(
+                with_stored(member_json(m)?, m.authored.id, inspection)?,
+                Some(m.authored.profile),
+                m.authored.material,
+                inspection,
+            ))
+        })
         .collect::<Run<Vec<_>>>()?;
     let meshes = snapshot
         .meshes()

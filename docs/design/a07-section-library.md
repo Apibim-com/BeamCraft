@@ -1,7 +1,10 @@
 # A07 section families, environments and profile libraries
 
-Date: 2026-10-18. Status: **A07.1 implemented as an experimental slice (section 9); A07.2 and
-A07.3 are design only. Owner decisions D1, D2 and D4 of section 7 are taken; D3 is open.** Branch `feat/a07-section-library`, based on `origin/master` `d893f94`.
+Date: 2026-10-18. Status: **A07.1 implemented as an experimental slice (section 9); A07.2 implemented as
+an experimental slice (section 10); A07.3 is design only. Owner decisions D1, D2 and D4 of section 7
+are taken; D3 is applied as an assumption pending owner confirmation (section 10).** Branch
+`feat/a07-section-library`, based on `origin/master` `d893f94`; A07.2 branch `feat/a07-2-libraries`,
+based on `origin/master` `5c54c0a`.
 
 Plan row: A07, the I-section families named by the P02.2 note, widened by the owner on
 2026-10-18. The owner's goals:
@@ -123,8 +126,8 @@ Rules:
   are what a BOM reads, and they are part of the definition's identity.
 * The kernel computes its own area from the generated polygon. A declared area that differs from
   the polygon area by more than the family tolerance is refused, as P02.2 does for the rectangle.
-  The tolerance must cover the radius approximation; the value is decided with the first real
-  data (section 7, D3).
+  The tolerance must cover the radius approximation; the value was left to the first real
+  data (section 7, D3). A07.2 applies 1 percent as an assumption (section 10).
 * No density, grade or mass is ever guessed from a designation.
 
 ## 6. Environments and libraries (A07.2, A07.3)
@@ -216,7 +219,8 @@ the UI "new profile" dialog of V05 calls the same API.
   (`AGENTS.md` section 1.2) and may live outside the open repository.
 * **D2. Radii — decided 2026-10-18.** Store both: a detailed representation with every radius
   and a simplified one without, chosen by an application view setting (section 3).
-* **D3. Declared-area tolerance** for families with radii (section 5).
+* **D3. Declared-area tolerance** for families with radii (section 5). **Open; applied as an
+  assumption in A07.2 (section 10): 1 percent of the outline area, pending owner confirmation.**
 * **D4. Contract amendment — decided 2026-10-18 (applied, section 9).** F04 and F06 0.1.0 name the rectangle as the only initial profile.
   A07.1 needs an amendment (F04 section 4 profile kinds, F06 section 2 member input) recorded
   before or with the implementation, as A04 did for holes.
@@ -257,8 +261,8 @@ Deviations and limits, recorded rather than hidden:
 * **Simplified body not stored yet.** The kernel builds both outlines, but the derived layer still
   stores one mesh per element. Storing the simplified mesh as the second representation and the
   view setting that chooses it follow with V02/V05 work.
-* **Declared area (D3).** For section families, a declared area is admitted as a label-like value
-  and not yet compared with the outline area; the rectangle keeps its P02.2 check.
+* **Declared area (D3).** For section families, a declared area was admitted as a label-like value
+  and not compared with the outline area; A07.2 now compares it (section 10).
 * **Volume status.** A section member's volume is `current` for the polygon it stores; the arcs are
   approximated (flagged in the kernel result), as the A04 round holes are.
 * **Layer budgets.** The U01 first-slice ceilings bounded a revision to 7 detailed I-sections; they
@@ -272,6 +276,91 @@ layer-engine round trip and tamper test, the engine unit test, and `cargo test -
 --test sections` (real binary: define, idempotent redefine, build, reopen in a fresh process,
 world bounds, `definitions`, saved text, cold-formed, CHS and custom members in one revision,
 refusal codes).
+
+## 10. A07.2 as implemented (experimental slice)
+
+Branch `feat/a07-2-libraries`, based on `origin/master` `5c54c0a`.
+
+```text
+beamcraft library-list   --library FILE [--family F] [--filter TEXT]
+beamcraft library-show   --library FILE --designation NAME
+beamcraft define-profile --store ROOT --library FILE --designation NAME [--name TEXT]
+beamcraft define-profile|define-material ... [--name TEXT]
+beamcraft create-member  --store ROOT --start .. --end .. (--profile-digest SHA256 | --profile NAME)
+                         [--material-digest SHA256 | --material NAME]
+beamcraft create-plate   --store ROOT ... [--material-digest SHA256 | --material NAME]
+```
+
+| Area | What exists |
+|---|---|
+| `beamcraft_cli::library` | `load(path)` / `load_bytes`: bounded local read (8 MiB, no network or device path), the layer engine opens the file as one read-only foreign layer under library budgets (1 layer, 8,208 prims, 8,192 array items, 64 MiB decoded), metres per unit 0.001 and Z up are required, sublayers and external references cannot be resolved (the engine is given no other asset). Root `customLayerData` must carry `bim:library:id`; `title`, `version`, `source` and `licence` are reported when present, never inferred. Entries are the direct children of `/Library/Profiles`: `steel:profile:designation`, `steel:profile:family` (`rectangle`, one of the nine families, `custom`), one `steel:profile:<parameter>Mm` per parameter (rectangle: `h` is the height, `b` the width), optional `standard`, `areaMm2`, `massPerMeterKg`, `surfacePerMeterM2`, and for `custom` `outerPointsMm`, `cavityPointsMm`, `cavityVertexCounts`. Each entry is admitted by the same rules as a hand-published definition. |
+| Failure policy | A duplicate designation refuses the whole library (`INVALID_ARGUMENT`); more than 4,096 entries, more than 8 MiB or a stage over the budgets is `LIMIT_EXCEEDED`; unreadable USD, other units, a missing `bim:library:id` is `INVALID_ARGUMENT` (`UNSUPPORTED_PROPERTY` for an encoding the static read profile cannot decode, `PERMISSION_DENIED` for a network path or an uncontained sublayer name); a bad entry is reported in `rejected` (prim, designation, code) and the others load. A designation whose entry was refused reports that entry's code, never `NOT_FOUND` and never another entry. |
+| Lookup | Exact, case-sensitive designation. An unknown designation is `NOT_FOUND`; nothing is substituted or matched by prefix. |
+| `define-profile --library` | The definition takes every value from the entry and stores them itself (designation, standard, declared numbers, display name = designation unless `--name`), so it never depends on the library file later: the tests delete the library before placing a member. The library provenance (id, version, licence) is reported by `library-list` and `library-show` but is **not** stored in the definition (the design note of section 2 foresaw provenance labels; they would be new definition fields and a new digest input, and are left to a later slice). `library-show` prints the digest that `define-profile --library` would pin. Combining `--library` with explicit dimensions, `--family`, `--standard` or declared numbers is `INVALID_ARGUMENT`. |
+| Display names | `Definition::{Material, RectangleProfile, SectionProfile}` carry an optional readable name, written as USD `displayName` metadata on the definition prim. `define-material` and `define-profile` take `--name TEXT`; the default is the designation, else a generated name: `S355 7850 kg/m3` (grade and density, only what is declared; `Material (density unknown)` otherwise), `RECT 200x300`, `I 200x100`, `RHS 100x60x4`, `CHS 114x5`, `Custom 8 points`. `definitions` lists `display_name`; `plate-inspect` lists `profile_name` and `material_name` of each element (null for a definition without a name). JSON objects are printed with sorted keys by the shared encoder, so "name first" is not a property of the text; the name is the first thing a person looks for, not the first key. |
+| Selection by name | `create-member --profile NAME`, `create-member|create-plate --material NAME` resolve against the **head's** definitions (verified and re-admitted like every read) by display name or by designation (profiles) or grade (materials); profiles and materials are separate namespaces. No match is `NOT_FOUND`; more than one distinct definition is `INVALID_ARGUMENT` with every candidate (digest, kind, display name, names) in `diagnostics` and nothing published or guessed; a name and its digest option together are `INVALID_ARGUMENT`. The digest stays the identity: the command pins the resolved digest. |
+| Declared area (D3) | `engine::member::admit_section_profile` compares a declared area with the net area the kernel's detailed outline extrudes (`section_member` over a 1 m axis, `net_area_mm2`); a gap above 1 percent (`model::limits::DECLARED_SECTION_AREA_TOLERANCE`) is `INVALID_ARGUMENT` naming `area_mm2`. It runs at publication (`define-profile`, library entries), never when a committed definition is read, so stores published before it stay readable. The rectangle keeps its 0.1 percent check. |
+
+### Digest and schema effect (honest record)
+
+* **The display name is part of the definition content.** It is stored on the prim and the
+  definition digest is the hash of the canonical isolated definition layer, so a different name is a
+  different digest, and the CLI now names every new definition by default. Consequently
+  publishing the same values as an old unnamed definition creates a second definition; and an
+  unnamed definition (no `displayName`) keeps its old bytes and digest, so every definition
+  published before A07.2 verifies unchanged. Names are labels only: they never select a number
+  (a grade does not select a density, a name does not select a section).
+* **Schema descriptor.** One optional line (`definition displayName=prim metadata string(...)`)
+  was added, so the schema digest changes. The previous A07.1 digest
+  (`0311df71b2f7a4bd7b19e87ca7daef1884e989bd099bca24ee165de8e6bc310c`, computed from the descriptor of
+  `origin/master` `5c54c0a`) is accepted next to the current one: it is derived at run time by removing that one line,
+  and a unit test pins it. The earlier accepted descriptors are unchanged. The next edit of an
+  older store rewrites the pin to the current digest.
+* **Existing stores and tests.** Checked with the real pre-change binary (built from `origin/master`
+  `5c54c0a`): a store made by it (material with grade, I-section with designation, a plate and a
+  member) was listed, inspected and edited by the new binary; its unnamed definitions are selected
+  by their grade and designation; the new binary then published a named definition of the same values
+  as a second definition. **Forward compatibility is not kept:** the old binary refuses a store
+  that holds a named definition (`INTEGRITY_ERROR`, it recomputes the digest without the name).
+  Tests that compared a CLI-published digest with a hand-built `Resource` (`tests/definitions.rs`: the
+  material and the rectangle) now build the `Resource` with the default display name, which is the
+  explanation of the changed expected digest; every other digest check compares the CLI with the
+  CLI or with `library-show`. `Definition::Material` gained a field, so the layer-engine and CLI
+  fixtures that build it gained `display_name: None`.
+* The U02 descriptor is shared with the layer-engine work of other branches; the change is one
+  line in `SCHEMA_DESCRIPTOR`, one constant and one branch in `pin_accepted`, so a later rebase has one
+  place to reconcile.
+
+### Assumptions and limits, recorded rather than hidden
+
+* **D3 is applied, not decided:** 1 percent of the outline area. The note of section 5 gave no
+  number; this value covers the arc polygon (sagitta at most 0.5 percent of a radius, a few
+  hundredths of a percent of the area) and the rounding of a published area, and is looser than the
+  rectangle's 0.1 percent. Pending owner confirmation, with the first real data.
+* **One library file only.** `--library FILE` names it explicitly; the project, user and
+  environment lookup order, `--environment`, environment layers (sublayers of libraries) and shadow
+  reports of section 6 are **design only**. A07.3 (user library, `library-add`) is not started.
+  A library is read only; this slice writes no library (the shipped one is hand-authored text).
+* The prim name of an entry is not required to match the designation (the designation attribute is
+  the identity); an inactive entry is reported as rejected.
+* The library provenance is not stored in definitions (see above). Resolving by name uses
+  the head only, not the library.
+* The layer engine runs in the CLI process (no LEW-03 containment), as for every other command; a
+  hostile library is bounded by the budgets, not isolated.
+* `used_by` in `definitions` still lists plates only (members pinning a profile are not listed there).
+* The synthetic library `assets/libraries/synthetic-sections.usda` has nine invented entries
+  (`SYN-*`, MPL-2.0, listed in `ATTRIBUTION.md`); it follows no standard and contains no national data.
+  The declared areas of its three entries that carry one (5,153, 2,000 and 2,400 mm2) are checked
+  against the kernel outline by the loader.
+
+Evidence: `cargo test -p beamcraft-cli --test libraries` (real binary: list and filter, show,
+self-contained definition with the library deleted, digest equal to the predicted one, every
+shipped entry builds a member, unknown designation `NOT_FOUND` with nothing published, duplicate,
+oversized, garbage, fake binary, sublayer, wrong units, missing id, directory, missing file and
+URL/UNC paths, a bad-entry mix, the 4,096/4,097 entry bound, option conflicts, default names, name
+as part of the digest, ambiguous names with candidates, name and digest together),
+`beamcraft_cli` unit tests of the loader, `cargo test -p beamcraft-model definition`,
+`cargo test -p beamcraft-layer-engine pin_tests`.
 
 ## Provenance
 

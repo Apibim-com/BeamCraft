@@ -106,6 +106,7 @@ fn resources() -> Vec<Resource> {
             density_kg_m3: Some(1000.0),
             grade: None,
             standard: None,
+            display_name: None,
         })
         .unwrap(),
     ]
@@ -1283,11 +1284,63 @@ fn through_hole_polygons_are_authored_as_flat_points_and_counts_and_validated() 
 }
 
 #[test]
+fn a_definition_display_name_is_part_of_the_resource_and_is_checked_before_reuse() {
+    let named = Resource::new(Definition::Material {
+        density_kg_m3: Some(1000.0),
+        grade: None,
+        standard: None,
+        display_name: Some("Steel".into()),
+    })
+    .unwrap();
+    let unnamed = Resource::new(Definition::Material {
+        density_kg_m3: Some(1000.0),
+        grade: None,
+        standard: None,
+        display_name: None,
+    })
+    .unwrap();
+    assert_ne!(named.digest, unnamed.digest);
+    let text = String::from_utf8(named.bytes().unwrap()).unwrap();
+    assert!(text.contains("displayName = \"Steel\""), "{text}");
+    let hex = named.digest.to_string();
+    let stage = |metadata: &str| {
+        let body = format!(
+            "def Xform \"World\" {{ def Scope \"Definitions\" {{ def Scope \"D_{hex}\" {metadata}{{ \
+             custom string bim:schemaVersion = \"0.1.0\"\n custom token bim:units = \"mm\"\n \
+             custom token bim:definitionKind = \"material\"\n custom double bim:densityKgM3 = 1000.0\n \
+             custom string bim:contentDigest = \"{hex}\" }} }} }}"
+        );
+        request(
+            vec![
+                asset(
+                    "root.usda",
+                    "#usda 1.0\n(metersPerUnit=0.001\nupAxis=\"Z\"\nsubLayers=[@authored.usda@,@derived.usda@])\n",
+                ),
+                asset("authored.usda", layer(&body)),
+                asset("derived.usda", layer("")),
+            ],
+            &["root.usda", "authored.usda", "derived.usda"],
+        )
+    };
+    let prepare = |request: OpenRequest| {
+        let (mut a, o) = open(request);
+        let mut input = batch(&o.context, Vec::new());
+        input.resources = vec![named.clone()];
+        a.prepare(input, &control()).map(|p| p.writes.len())
+    };
+    assert_eq!(prepare(stage("(displayName = \"Steel\")\n")).unwrap(), 0);
+    // A changed or removed name no longer matches the pinned content.
+    assert!(prepare(stage("(displayName = \"Other\")\n")).is_err());
+    assert!(prepare(stage("")).is_err());
+}
+
+#[test]
 fn an_existing_definition_must_match_the_resource_before_it_is_reused() {
     let resource = Resource::new(Definition::Material {
         density_kg_m3: Some(1000.0),
         grade: None,
         standard: None,
+        display_name: None,
     })
     .unwrap();
     let hex = resource.digest.to_string();

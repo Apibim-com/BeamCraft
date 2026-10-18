@@ -171,6 +171,7 @@ fn resources() -> Vec<Resource> {
             density_kg_m3: Some(1000.0),
             grade: None,
             standard: None,
+            display_name: None,
         })
         .unwrap(),
     ]

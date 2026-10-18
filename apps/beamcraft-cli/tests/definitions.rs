@@ -12,7 +12,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use beamcraft_layer_engine::authored::{Definition, Resource};
+use beamcraft_layer_engine::authored::{Definition, Resource, SectionProperties};
 use beamcraft_protocol::{
     json::{self, Json},
     message,
@@ -119,15 +119,25 @@ fn a_material_with_density_gives_the_plate_a_current_mass_across_processes() {
     let digest = digest_of(&steel);
     assert_eq!(digest.len(), 64);
     // The digest is the identity of the canonical isolated definition layer of the layer engine.
-    let expected = Resource::new(Definition::Material {
-        density_kg_m3: Some(7850.0),
-        grade: None,
-        standard: None,
-    })
-    .unwrap()
-    .digest
-    .to_string();
-    assert_eq!(digest, expected);
+    // A definition published without --name carries its default display name in that layer, so
+    // the name is part of the digest (A07.2).
+    let named = |display_name: Option<&str>| {
+        Resource::new(Definition::Material {
+            density_kg_m3: Some(7850.0),
+            grade: None,
+            standard: None,
+            display_name: display_name.map(str::to_owned),
+        })
+        .unwrap()
+        .digest
+        .to_string()
+    };
+    assert_eq!(digest, named(Some("7850 kg/m3")));
+    assert_ne!(digest, named(None));
+    assert_eq!(
+        text(at(&steel, &["definition"]), "display_name"),
+        "7850 kg/m3"
+    );
     assert_eq!(text(at(&steel, &["definition"]), "units"), "mm");
     assert_eq!(num(&steel, &["definition", "density_kg_m3"]), 7850.0);
     assert_eq!(sequence(&steel), 1);
@@ -255,10 +265,14 @@ fn a_definition_is_immutable_and_publishing_it_again_writes_nothing() {
     assert_eq!(text(&first, "outcome"), "definition_created");
     assert_eq!(text(at(&first, &["definition"]), "kind"), "rectangle");
     assert_eq!(text(at(&first, &["definition"]), "units"), "mm");
+    // The default display name is part of the content, hence of the digest.
     let expected = Resource::new(Definition::RectangleProfile {
         width_mm: 200.0,
         height_mm: 300.0,
-        section: Default::default(),
+        section: SectionProperties {
+            display_name: Some("RECT 200x300".into()),
+            ..Default::default()
+        },
     })
     .unwrap()
     .digest

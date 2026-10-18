@@ -127,10 +127,12 @@ pub(super) fn definition(d: &Definition) -> Result<(), Diagnostic> {
             density_kg_m3,
             grade,
             standard,
+            display_name,
         } => beamcraft_model::definition::MaterialSpec {
             density_kg_m3: *density_kg_m3,
             grade: grade.clone(),
             standard: standard.clone(),
+            display_name: display_name.clone(),
         }
         .validate()
         .map_err(refused),
@@ -187,6 +189,7 @@ fn section_properties(p: &Prim) -> Result<SectionProperties, Diagnostic> {
         area_mm2: optional_number(p, "steel:profile:areaMm2")?,
         mass_per_meter_kg: optional_number(p, "steel:profile:massPerMeterKg")?,
         surface_per_meter_m2: optional_number(p, "steel:profile:surfacePerMeterM2")?,
+        display_name: p.display_name.clone(),
     })
 }
 /// The authored outline of a custom profile: the outer contour and the optional cavities (both
@@ -266,6 +269,7 @@ fn read_definition(p: &Prim, kind: &str) -> Result<Definition, Diagnostic> {
             density_kg_m3: optional_number(p, "bim:densityKgM3")?,
             grade: optional_text(p, "bim:materialGrade")?,
             standard: optional_text(p, "bim:materialStandard")?,
+            display_name: p.display_name.clone(),
         }),
         _ => Err(unsupported()),
     }

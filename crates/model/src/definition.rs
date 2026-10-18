@@ -12,8 +12,8 @@
 use crate::command::{CommandError, label_is_valid};
 use crate::error::ErrorCode;
 use crate::limits::{
-    DECLARED_RELATIVE_TOLERANCE, DIMENSION_CAP_MM, MAX_AREA_MM2, MAX_DENSITY_KG_M3,
-    MAX_MASS_PER_METER_KG, MAX_SURFACE_PER_METER_M2,
+    DECLARED_RELATIVE_TOLERANCE, DECLARED_SECTION_AREA_TOLERANCE, DIMENSION_CAP_MM, MAX_AREA_MM2,
+    MAX_DENSITY_KG_M3, MAX_MASS_PER_METER_KG, MAX_SURFACE_PER_METER_M2,
 };
 use crate::section::SectionShape;
 use beamcraft_geom::tolerance::ABSOLUTE_FLOOR_MM;
@@ -29,6 +29,9 @@ pub struct MaterialSpec {
     pub grade: Option<String>,
     /// Declared standard of the grade, a label only.
     pub standard: Option<String>,
+    /// Readable name shown in listings and used to select the definition by name (A07.2). Part
+    /// of the definition content, so another name is another digest. A label only.
+    pub display_name: Option<String>,
 }
 
 fn declared_label(value: &Option<String>, field: &'static str) -> Result<(), CommandError> {
@@ -48,6 +51,7 @@ impl MaterialSpec {
     pub fn validate(&self) -> Result<(), CommandError> {
         declared_label(&self.grade, "grade")?;
         declared_label(&self.standard, "standard")?;
+        declared_label(&self.display_name, "display_name")?;
         let Some(density) = self.density_kg_m3 else {
             return Ok(());
         };
@@ -91,12 +95,16 @@ pub struct SectionProperties {
     pub mass_per_meter_kg: Option<f64>,
     /// Declared surface area per metre of length in m2/m.
     pub surface_per_meter_m2: Option<f64>,
+    /// Readable name shown in listings and used to select the definition by name (A07.2). Part
+    /// of the definition content, so another name is another digest. A label only.
+    pub display_name: Option<String>,
 }
 
 impl SectionProperties {
     fn validate(&self) -> Result<(), CommandError> {
         declared_label(&self.designation, "designation")?;
         declared_label(&self.standard, "standard")?;
+        declared_label(&self.display_name, "display_name")?;
         for (value, cap, field) in [
             (self.area_mm2, MAX_AREA_MM2, "area_mm2"),
             (
@@ -220,6 +228,28 @@ impl SectionProfileSpec {
         self.shape.validate()?;
         self.section.validate()
     }
+
+    /// Compares the declared area, if any, with the net area of the generated outline in mm2
+    /// (computed by the caller): a gap above 1 percent (`DECLARED_SECTION_AREA_TOLERANCE`) is
+    /// `INVALID_ARGUMENT`, never resolved silently to one of the two numbers. No declared area
+    /// is always accepted.
+    pub fn check_declared_area(&self, outline_area_mm2: f64) -> Result<(), CommandError> {
+        let Some(declared) = self.section.area_mm2 else {
+            return Ok(());
+        };
+        if !outline_area_mm2.is_finite()
+            || outline_area_mm2 <= 0.0
+            || (declared - outline_area_mm2).abs()
+                > DECLARED_SECTION_AREA_TOLERANCE * outline_area_mm2
+        {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "area_mm2",
+                "declared area differs from the outline area",
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -263,6 +293,7 @@ mod tests {
             area_mm2: Some(60_000.0),
             mass_per_meter_kg: Some(471.0),
             surface_per_meter_m2: Some(1.0),
+            ..SectionProperties::default()
         };
         assert_eq!(declared(ok.clone()), Ok(()));
         let with = |f: fn(&mut SectionProperties)| {
@@ -295,9 +326,43 @@ mod tests {
             Err(ErrorCode::InvalidArgument)
         );
         assert_eq!(
+            with(|s| s.display_name = Some("a\nb".into())),
+            Err(ErrorCode::InvalidArgument)
+        );
+        assert_eq!(
+            with(|s| s.display_name = Some("RECT 200x300".into())),
+            Ok(())
+        );
+        assert_eq!(
             with(|s| s.standard = Some("a\nb".into())),
             Err(ErrorCode::InvalidArgument)
         );
+    }
+
+    #[test]
+    fn declared_section_area_is_compared_with_the_outline_within_one_percent() {
+        use crate::section::{ParametricSection, SectionFamily};
+        let spec = |area: Option<f64>| SectionProfileSpec {
+            shape: SectionShape::Parametric(
+                ParametricSection::new(SectionFamily::Chs, vec![100.0, 5.0]).unwrap(),
+            ),
+            section: SectionProperties {
+                area_mm2: area,
+                ..SectionProperties::default()
+            },
+        };
+        assert_eq!(spec(None).check_declared_area(1000.0), Ok(()));
+        assert_eq!(spec(Some(1009.0)).check_declared_area(1000.0), Ok(()));
+        assert_eq!(spec(Some(991.0)).check_declared_area(1000.0), Ok(()));
+        let refused = |declared, outline| {
+            spec(Some(declared))
+                .check_declared_area(outline)
+                .map_err(|e| e.code)
+        };
+        assert_eq!(refused(1011.0, 1000.0), Err(ErrorCode::InvalidArgument));
+        assert_eq!(refused(989.0, 1000.0), Err(ErrorCode::InvalidArgument));
+        assert_eq!(refused(1000.0, f64::NAN), Err(ErrorCode::InvalidArgument));
+        assert_eq!(refused(1000.0, 0.0), Err(ErrorCode::InvalidArgument));
     }
 
     #[test]

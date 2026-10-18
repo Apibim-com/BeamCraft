@@ -1,0 +1,670 @@
+// SPDX-License-Identifier: MPL-2.0
+// SPDX-FileCopyrightText: 2026 Apibim
+// Contributor-original synthetic libraries and sections that follow no national standard,
+// MPL-2.0. The shipped library is `assets/libraries/synthetic-sections.usda`; the hostile and
+// partial libraries are written by the tests from plain text. Expected masses are the closed form
+// volume * density; the saved layer text is read with plain string matching.
+
+//! A07.2 end to end through the real `beamcraft` binary: a USD profile library is listed and
+//! resolved by designation into a self-contained definition, definitions carry a readable name
+//! that is part of their digest, and members and plates select definitions by name.
+
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+
+use beamcraft_protocol::{
+    json::{self, Json},
+    message,
+};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT: AtomicU64 = AtomicU64::new(0);
+
+const SHIPPED: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../assets/libraries/synthetic-sections.usda"
+);
+
+struct Fixture {
+    root: PathBuf,
+}
+impl Fixture {
+    fn new() -> Self {
+        let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("a07-2-tests");
+        fs::create_dir_all(&base).unwrap();
+        let root = base.join(format!(
+            "e2e-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(root.join("store")).unwrap();
+        Self { root }
+    }
+    fn store(&self) -> String {
+        self.root.join("store").to_str().unwrap().to_owned()
+    }
+    fn file(&self, name: &str, bytes: &[u8]) -> String {
+        let path = self.root.join(name);
+        fs::write(&path, bytes).unwrap();
+        path.to_str().unwrap().to_owned()
+    }
+    fn raw(&self, args: &[&str]) -> (i32, Json) {
+        let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
+            .args(args)
+            .output()
+            .unwrap();
+        let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
+        (output.status.code().unwrap(), body)
+    }
+    fn run(&self, command: &str, extra: &[&str]) -> (i32, Json) {
+        let store = self.store();
+        let mut args = vec![command, "--store", store.as_str()];
+        args.extend_from_slice(extra);
+        self.raw(&args)
+    }
+    fn ok(&self, command: &str, extra: &[&str]) -> Json {
+        let (code, body) = self.run(command, extra);
+        assert_eq!(code, 0, "{command} {extra:?}: {body:?}");
+        body
+    }
+    fn rejected(&self, command: &str, extra: &[&str]) -> Json {
+        let (code, body) = self.run(command, extra);
+        assert_eq!(code, 2, "{command} {extra:?}: {body:?}");
+        assert_eq!(text(&body, "outcome"), "rejected");
+        body
+    }
+    fn library_rejected(&self, command: &str, extra: &[&str]) -> String {
+        let mut args = vec![command];
+        args.extend_from_slice(extra);
+        let (code, body) = self.raw(&args);
+        assert_eq!(code, 2, "{command} {extra:?}: {body:?}");
+        text(&body, "code")
+    }
+    fn authored_text(&self, revision: &Json) -> String {
+        let layers = at(revision, &["revision", "manifest", "layers"])
+            .array()
+            .unwrap();
+        let layer = layers
+            .iter()
+            .find(|l| text(l, "name") == "authored.usda")
+            .unwrap();
+        let digest = text(layer, "digest");
+        let path = self
+            .root
+            .join("store")
+            .join("blobs")
+            .join(&digest[..2])
+            .join(&digest);
+        String::from_utf8(fs::read(path).unwrap()).unwrap()
+    }
+}
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        assert!(self.root.is_absolute() && self.root.file_name().is_some());
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+fn text(json: &Json, key: &str) -> String {
+    json.get(key).unwrap().string().unwrap().to_owned()
+}
+fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
+    path.iter().fold(json, |j, k| j.get(k).unwrap())
+}
+fn num(json: &Json, path: &[&str]) -> f64 {
+    at(json, path).float().unwrap()
+}
+fn digest_of(reply: &Json) -> String {
+    text(at(reply, &["definition"]), "digest")
+}
+fn sequence(json: &Json) -> u64 {
+    text(at(json, &["revision"]), "sequence").parse().unwrap()
+}
+
+const HEADER: &str = "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    customLayerData = {\n        string \"bim:library:id\" = \"t\"\n    }\n)\n";
+const I_BODY: &str = "token steel:profile:family = \"i_shape\"\ndouble steel:profile:hMm = 300\ndouble steel:profile:bMm = 150\ndouble steel:profile:twMm = 7\ndouble steel:profile:tfMm = 10\ndouble steel:profile:rMm = 15\n";
+
+fn library_text(entries: &[(&str, &str, &str)]) -> String {
+    let mut text =
+        format!("{HEADER}def Scope \"Library\"\n{{\n    def Scope \"Profiles\"\n    {{\n");
+    for (prim, designation, body) in entries {
+        text.push_str(&format!(
+            "        def Scope \"{prim}\"\n        {{\nstring steel:profile:designation = \"{designation}\"\n{body}        }}\n"
+        ));
+    }
+    text.push_str("    }\n}\n");
+    text
+}
+
+#[test]
+fn a_library_is_listed_and_an_entry_becomes_a_self_contained_definition() {
+    let f = Fixture::new();
+    let listed = f.raw(&["library-list", "--library", SHIPPED]);
+    assert_eq!(listed.0, 0, "{:?}", listed.1);
+    let listed = listed.1;
+    assert_eq!(text(&listed, "outcome"), "library");
+    assert_eq!(text(at(&listed, &["library"]), "id"), "beamcraft-synthetic");
+    assert_eq!(text(at(&listed, &["library"]), "licence"), "MPL-2.0");
+    assert_eq!(num(&listed, &["entry_count"]), 9.0);
+    assert!(at(&listed, &["rejected"]).array().unwrap().is_empty());
+    let channels = f.raw(&["library-list", "--library", SHIPPED, "--family", "channel"]);
+    assert_eq!(num(&channels.1, &["entry_count"]), 1.0);
+    let found = f.raw(&["library-list", "--library", SHIPPED, "--filter", "i-300"]);
+    assert_eq!(num(&found.1, &["entry_count"]), 1.0);
+    let shown = f.raw(&[
+        "library-show",
+        "--library",
+        SHIPPED,
+        "--designation",
+        "SYN-I-300x150",
+    ]);
+    assert_eq!(shown.0, 0);
+    let predicted = text(at(&shown.1, &["entry"]), "digest");
+
+    // Work from a private copy of the library and delete it: the model must not need it.
+    let copy = f.file("work.usda", &fs::read(SHIPPED).unwrap());
+    let created = f.ok(
+        "define-profile",
+        &["--library", &copy, "--designation", "SYN-I-300x150"],
+    );
+    assert_eq!(text(&created, "outcome"), "definition_created");
+    let digest = digest_of(&created);
+    assert_eq!(digest, predicted, "library-show predicts the pinned digest");
+    let definition = at(&created, &["definition"]);
+    assert_eq!(text(definition, "kind"), "i_shape");
+    assert_eq!(text(definition, "display_name"), "SYN-I-300x150");
+    assert_eq!(text(definition, "designation"), "SYN-I-300x150");
+    assert_eq!(num(definition, &["parameters_mm", "tw"]), 7.0);
+    assert_eq!(num(definition, &["area_mm2"]), 5153.0);
+    assert_eq!(num(definition, &["mass_per_meter_kg"]), 40.45);
+    fs::remove_file(&copy).unwrap();
+    let authored = f.authored_text(&created);
+    assert!(authored.contains("displayName = \"SYN-I-300x150\""));
+    assert!(authored.contains("custom double steel:profile:twMm = 7.0"));
+
+    // The same entry again is the same definition: nothing is written.
+    let again = f.raw(&[
+        "define-profile",
+        "--store",
+        &f.store(),
+        "--library",
+        SHIPPED,
+        "--designation",
+        "SYN-I-300x150",
+    ]);
+    assert_eq!(text(&again.1, "outcome"), "definition_exists");
+    assert_eq!(sequence(&again.1), 1);
+
+    // A fresh process places a member by name with the library gone.
+    let member = f.ok(
+        "create-member",
+        &[
+            "--start",
+            "0,0,0",
+            "--end",
+            "0,0,3000",
+            "--profile",
+            "SYN-I-300x150",
+        ],
+    );
+    assert_eq!(text(at(&member, &["member"]), "profile_digest"), digest);
+    assert_eq!(num(&member, &["member", "section_mm", "width"]), 150.0);
+    let inspected = f.ok("plate-inspect", &[]);
+    let listed_member = at(&inspected, &["members"]).array().unwrap()[0].clone();
+    assert_eq!(text(&listed_member, "profile_name"), "SYN-I-300x150");
+    let definitions = f.ok("definitions", &[]);
+    assert_eq!(num(&definitions, &["definition_count"]), 1.0);
+}
+
+#[test]
+fn every_family_of_the_shipped_library_builds_a_member() {
+    let f = Fixture::new();
+    let listed = f.raw(&["library-list", "--library", SHIPPED]).1;
+    for entry in at(&listed, &["entries"]).array().unwrap() {
+        let designation = text(entry, "designation");
+        let created = f.ok(
+            "define-profile",
+            &["--library", SHIPPED, "--designation", &designation],
+        );
+        assert_eq!(digest_of(&created), text(entry, "digest"), "{designation}");
+        let member = f.ok(
+            "create-member",
+            &[
+                "--start",
+                "0,0,0",
+                "--end",
+                "1000,0,0",
+                "--profile",
+                &designation,
+            ],
+        );
+        assert_eq!(
+            text(at(&member, &["member"]), "profile_digest"),
+            text(entry, "digest")
+        );
+    }
+}
+
+#[test]
+fn an_unknown_designation_is_not_found_and_never_substituted() {
+    let f = Fixture::new();
+    f.ok(
+        "define-profile",
+        &["--library", SHIPPED, "--designation", "SYN-I-200x100"],
+    );
+    for wrong in ["SYN-I-300", "syn-i-200x100", "SYN-I-200x100 ", "", "NOPE"] {
+        let body = f.rejected(
+            "define-profile",
+            &["--library", SHIPPED, "--designation", wrong],
+        );
+        assert_eq!(text(&body, "code"), "NOT_FOUND", "{wrong:?}");
+        let shown = f.library_rejected(
+            "library-show",
+            &["--library", SHIPPED, "--designation", wrong],
+        );
+        assert_eq!(shown, "NOT_FOUND", "{wrong:?}");
+    }
+    // Nothing was published by the refusals: the next revision is the second one.
+    let next = f.ok("define-material", &["--density", "7850"]);
+    assert_eq!(sequence(&next), 2);
+    // A name that no definition has is not found either.
+    let member = f.rejected(
+        "create-member",
+        &[
+            "--start",
+            "0,0,0",
+            "--end",
+            "0,0,1000",
+            "--profile",
+            "SYN-I-300x150",
+        ],
+    );
+    assert_eq!(text(&member, "code"), "NOT_FOUND");
+}
+
+#[test]
+fn hostile_and_damaged_libraries_are_refused_without_a_crash() {
+    let f = Fixture::new();
+    let duplicate = f.file(
+        "dup.usda",
+        library_text(&[("A", "T-1", I_BODY), ("B", "T-1", I_BODY)]).as_bytes(),
+    );
+    assert_eq!(
+        f.library_rejected("library-list", &["--library", &duplicate]),
+        "INVALID_ARGUMENT"
+    );
+    let body = f.rejected(
+        "define-profile",
+        &["--library", &duplicate, "--designation", "T-1"],
+    );
+    assert_eq!(text(&body, "code"), "INVALID_ARGUMENT");
+
+    let huge = f.file("huge.usda", &vec![b'a'; 8 * 1024 * 1024 + 1]);
+    assert_eq!(
+        f.library_rejected("library-list", &["--library", &huge]),
+        "LIMIT_EXCEEDED"
+    );
+    let garbage = f.file("garbage.usda", b"this is not a usd layer \x00\xff\xfe");
+    assert_eq!(
+        f.library_rejected("library-list", &["--library", &garbage]),
+        "INVALID_ARGUMENT"
+    );
+    // A binary layer the static read profile cannot decode is an unsupported encoding.
+    let binary = f.file(
+        "fake.usda",
+        b"PXR-USDC\x00\x01\x02\x03 truncated crate file",
+    );
+    assert_eq!(
+        f.library_rejected("library-list", &["--library", &binary]),
+        "UNSUPPORTED_PROPERTY"
+    );
+    // A sublayer would name another file: it is refused whatever the spelling, never opened.
+    for (name, target) in [("sub1.usda", "other.usda"), ("sub2.usda", "./other.usda")] {
+        let layered = f.file(
+            name,
+            HEADER
+                .replace(")\n", &format!("    subLayers = [@{target}@]\n)\n"))
+                .as_bytes(),
+        );
+        let code = f.library_rejected("library-list", &["--library", &layered]);
+        assert!(
+            code == "INVALID_ARGUMENT" || code == "PERMISSION_DENIED",
+            "{target}: {code}"
+        );
+    }
+    let metres = f.file("metres.usda", HEADER.replace("0.001", "1").as_bytes());
+    assert_eq!(
+        f.library_rejected("library-list", &["--library", &metres]),
+        "INVALID_ARGUMENT"
+    );
+    let anonymous = f.file(
+        "noid.usda",
+        b"#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n)\n",
+    );
+    assert_eq!(
+        f.library_rejected("library-list", &["--library", &anonymous]),
+        "INVALID_ARGUMENT"
+    );
+    let directory = f.root.to_str().unwrap().to_owned();
+    assert_eq!(
+        f.library_rejected("library-list", &["--library", &directory]),
+        "INVALID_ARGUMENT"
+    );
+    let missing = f.root.join("missing.usda").to_str().unwrap().to_owned();
+    assert_eq!(
+        f.library_rejected("library-list", &["--library", &missing]),
+        "NOT_FOUND"
+    );
+    for url in [
+        "https://example.invalid/lib.usda",
+        "\\\\server\\share\\lib.usda",
+    ] {
+        assert_eq!(
+            f.library_rejected("library-list", &["--library", url]),
+            "PERMISSION_DENIED",
+            "{url}"
+        );
+    }
+    // None of the refusals touched the store.
+    assert!(fs::read_dir(f.root.join("store")).unwrap().next().is_none());
+}
+
+#[test]
+fn a_bad_entry_is_reported_and_the_other_entries_still_load() {
+    let f = Fixture::new();
+    let wrong_area = format!("{I_BODY}double steel:profile:areaMm2 = 5000\n");
+    let incomplete = "token steel:profile:family = \"i_shape\"\ndouble steel:profile:hMm = 300\n";
+    let nan = format!("{I_BODY}double steel:profile:massPerMeterKg = -1\n");
+    let unknown_family = "token steel:profile:family = \"banana\"\n";
+    let library = f.file(
+        "mixed.usda",
+        library_text(&[
+            ("GOOD", "T-GOOD", I_BODY),
+            ("AREA", "T-AREA", &wrong_area),
+            ("PART", "T-PART", incomplete),
+            ("MASS", "T-MASS", &nan),
+            ("FAM", "T-FAM", unknown_family),
+        ])
+        .as_bytes(),
+    );
+    let listed = f.raw(&["library-list", "--library", &library]);
+    assert_eq!(listed.0, 0, "{:?}", listed.1);
+    assert_eq!(num(&listed.1, &["entry_count"]), 1.0);
+    let rejected = at(&listed.1, &["rejected"]).array().unwrap();
+    assert_eq!(rejected.len(), 4);
+    for entry in rejected {
+        assert_eq!(text(entry, "code"), "INVALID_ARGUMENT");
+        assert!(text(entry, "prim_path").starts_with("/Library/Profiles/"));
+        assert!(text(entry, "designation").starts_with("T-"));
+    }
+    f.ok(
+        "define-profile",
+        &["--library", &library, "--designation", "T-GOOD"],
+    );
+    for bad in ["T-AREA", "T-PART", "T-MASS", "T-FAM"] {
+        let body = f.rejected(
+            "define-profile",
+            &["--library", &library, "--designation", bad],
+        );
+        assert_eq!(text(&body, "code"), "INVALID_ARGUMENT", "{bad}");
+    }
+    assert_eq!(
+        sequence(&f.ok("define-material", &["--density", "1"])),
+        2,
+        "the refused entries published nothing"
+    );
+}
+
+#[test]
+fn library_options_do_not_combine_with_explicit_values() {
+    let f = Fixture::new();
+    for extra in [
+        vec!["--width", "10"],
+        vec!["--family", "i_shape"],
+        vec!["--h", "10"],
+        vec!["--area-mm2", "10"],
+        vec!["--standard", "X"],
+    ] {
+        let mut args = vec!["--library", SHIPPED, "--designation", "SYN-I-200x100"];
+        args.extend(extra.iter());
+        assert_eq!(
+            text(&f.rejected("define-profile", &args), "code"),
+            "INVALID_ARGUMENT",
+            "{extra:?}"
+        );
+    }
+    assert_eq!(
+        text(
+            &f.rejected("define-profile", &["--library", SHIPPED]),
+            "code"
+        ),
+        "INVALID_ARGUMENT"
+    );
+}
+
+#[test]
+fn the_entry_count_of_a_library_is_bounded() {
+    let f = Fixture::new();
+    let bar = "token steel:profile:family = \"rectangle\"\ndouble steel:profile:hMm = 10\ndouble steel:profile:bMm = 10\n";
+    let many = |count: usize| {
+        let designations: Vec<String> = (0..count).map(|i| format!("T-{i}")).collect();
+        let prims: Vec<String> = (0..count).map(|i| format!("E{i}")).collect();
+        let entries: Vec<(&str, &str, &str)> = prims
+            .iter()
+            .zip(&designations)
+            .map(|(p, d)| (p.as_str(), d.as_str(), bar))
+            .collect();
+        library_text(&entries)
+    };
+    let full = f.file("full.usda", many(4096).as_bytes());
+    let (code, body) = f.raw(&["library-list", "--library", &full, "--filter", "T-4095"]);
+    assert_eq!(code, 0, "{body:?}");
+    assert_eq!(num(&body, &["entry_count"]), 1.0);
+    let over = f.file("over.usda", many(4097).as_bytes());
+    assert_eq!(
+        f.library_rejected("library-list", &["--library", &over]),
+        "LIMIT_EXCEEDED"
+    );
+}
+
+#[test]
+fn definitions_have_readable_names_that_are_part_of_their_digest() {
+    let f = Fixture::new();
+    let steel = f.ok("define-material", &["--density", "7850", "--grade", "S355"]);
+    assert_eq!(
+        text(at(&steel, &["definition"]), "display_name"),
+        "S355 7850 kg/m3"
+    );
+    let plain = f.ok("define-material", &["--density", "2700"]);
+    assert_eq!(
+        text(at(&plain, &["definition"]), "display_name"),
+        "2700 kg/m3"
+    );
+    let unknown = f.ok("define-material", &[]);
+    assert_eq!(
+        text(at(&unknown, &["definition"]), "display_name"),
+        "Material (density unknown)"
+    );
+    let rect = f.ok("define-profile", &["--width", "200", "--height", "300"]);
+    assert_eq!(
+        text(at(&rect, &["definition"]), "display_name"),
+        "RECT 200x300"
+    );
+    let i = f.ok(
+        "define-profile",
+        &[
+            "--family", "i_shape", "--h", "200", "--b", "100", "--tw", "5", "--tf", "8", "--r",
+            "10",
+        ],
+    );
+    assert_eq!(text(at(&i, &["definition"]), "display_name"), "I 200x100");
+    let shs = f.ok(
+        "define-profile",
+        &[
+            "--family", "rhs", "--h", "100", "--b", "60", "--t", "4", "--r", "8",
+        ],
+    );
+    assert_eq!(
+        text(at(&shs, &["definition"]), "display_name"),
+        "RHS 100x60x4"
+    );
+
+    // The same content under another name is another definition.
+    let renamed = f.ok(
+        "define-profile",
+        &["--width", "200", "--height", "300", "--name", "Flat bar"],
+    );
+    assert_eq!(text(&renamed, "outcome"), "definition_created");
+    assert_ne!(digest_of(&renamed), digest_of(&rect));
+    let listed = f.ok("definitions", &[]);
+    let names: Vec<String> = at(&listed, &["definitions"])
+        .array()
+        .unwrap()
+        .iter()
+        .map(|d| text(d, "display_name"))
+        .collect();
+    assert!(names.contains(&"Flat bar".to_owned()));
+    assert!(names.contains(&"RECT 200x300".to_owned()));
+    assert_eq!(names.len(), 7);
+}
+
+#[test]
+fn members_and_plates_select_definitions_by_name_and_refuse_an_ambiguous_name() {
+    let f = Fixture::new();
+    let steel = digest_of(&f.ok("define-material", &["--density", "7850", "--grade", "S355"]));
+    let light = digest_of(&f.ok("define-material", &["--density", "7800", "--grade", "S355"]));
+    // The grade is shared, so the grade alone is ambiguous; the display name is not.
+    let (code, body) = f.run(
+        "create-plate",
+        &[
+            "--width",
+            "1000",
+            "--length",
+            "500",
+            "--thickness",
+            "10",
+            "--material",
+            "S355",
+        ],
+    );
+    assert_eq!(code, 2, "{body:?}");
+    assert_eq!(text(&body, "code"), "INVALID_ARGUMENT");
+    let candidates = at(&body, &["diagnostics"]).array().unwrap();
+    let mut listed: Vec<String> = candidates.iter().map(|c| text(c, "digest")).collect();
+    listed.sort();
+    let mut expected = vec![steel.clone(), light.clone()];
+    expected.sort();
+    assert_eq!(listed, expected, "every candidate is listed");
+    // Nothing was guessed or published.
+    assert_eq!(sequence(&f.ok("definitions", &[])), 2);
+
+    let plate = f.ok(
+        "create-plate",
+        &[
+            "--width",
+            "1000",
+            "--length",
+            "500",
+            "--thickness",
+            "10",
+            "--material",
+            "S355 7850 kg/m3",
+        ],
+    );
+    assert_eq!(text(at(&plate, &["plate"]), "material_digest"), steel);
+    // 0.005 m3 * 7850 kg/m3.
+    assert_eq!(num(&plate, &["plate", "quantities", "mass", "kg"]), 39.25);
+    let inspected = f.ok("plate-inspect", &[]);
+    let listed_plate = at(&inspected, &["plates"]).array().unwrap()[0].clone();
+    assert_eq!(text(&listed_plate, "material_name"), "S355 7850 kg/m3");
+
+    // A digest and a name together, a name of the other kind and an unknown name.
+    for (args, code) in [
+        (
+            vec![
+                "--width",
+                "1000",
+                "--length",
+                "500",
+                "--thickness",
+                "10",
+                "--material",
+                "S355 7850 kg/m3",
+                "--material-digest",
+                steel.as_str(),
+            ],
+            "INVALID_ARGUMENT",
+        ),
+        (
+            vec![
+                "--width",
+                "1000",
+                "--length",
+                "500",
+                "--thickness",
+                "10",
+                "--material",
+                "nope",
+            ],
+            "NOT_FOUND",
+        ),
+    ] {
+        assert_eq!(text(&f.rejected("create-plate", &args), "code"), code);
+    }
+
+    // Two profiles with one designation: ambiguous by that name, still placeable by digest.
+    let first = digest_of(&f.ok(
+        "define-profile",
+        &["--width", "200", "--height", "300", "--designation", "DUP"],
+    ));
+    let second = digest_of(&f.ok(
+        "define-profile",
+        &["--width", "100", "--height", "100", "--designation", "DUP"],
+    ));
+    let member_args = |profile: &'static [&'static str]| {
+        let mut args = vec!["--start", "0,0,0", "--end", "0,0,2000"];
+        args.extend_from_slice(profile);
+        args
+    };
+    let ambiguous = f.rejected("create-member", &member_args(&["--profile", "DUP"]));
+    assert_eq!(text(&ambiguous, "code"), "INVALID_ARGUMENT");
+    assert_eq!(at(&ambiguous, &["diagnostics"]).array().unwrap().len(), 2);
+    // A material is not a profile by name.
+    let wrong_kind = f.rejected("create-member", &member_args(&["--profile", "S355"]));
+    assert_eq!(text(&wrong_kind, "code"), "NOT_FOUND");
+    let by_digest = f.ok(
+        "create-member",
+        &[
+            "--start",
+            "0,0,0",
+            "--end",
+            "0,0,2000",
+            "--profile-digest",
+            &first,
+            "--material",
+            "S355 7800 kg/m3",
+        ],
+    );
+    assert_eq!(text(at(&by_digest, &["member"]), "profile_digest"), first);
+    assert_eq!(text(at(&by_digest, &["member"]), "material_digest"), light);
+    assert_ne!(first, second);
+    let both = f.rejected(
+        "create-member",
+        &[
+            "--start",
+            "0,0,0",
+            "--end",
+            "0,0,2000",
+            "--profile",
+            "DUP",
+            "--profile-digest",
+            &first,
+        ],
+    );
+    assert_eq!(text(&both, "code"), "INVALID_ARGUMENT");
+    let neither = f.rejected("create-member", &["--start", "0,0,0", "--end", "0,0,2000"]);
+    assert_eq!(text(&neither, "code"), "INVALID_ARGUMENT");
+}

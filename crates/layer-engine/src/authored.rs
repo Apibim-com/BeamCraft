@@ -53,6 +53,7 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:profile:cavityPointsMm=double3[](optional,z=0);steel:profile:cavityVertexCounts=int[](optional,>=3 each);",
     "bim:densityKgM3=double(optional);bim:materialGrade=string(optional);",
     "bim:materialStandard=string(optional)\n",
+    "definition displayName=prim metadata string(optional,any definition kind;part of the definition content)\n",
     "derived=<element>/Geometry:Mesh;points=point3f[];faceVertexCounts=int[];faceVertexIndices=int[];",
     "subdivisionScheme=token(none);orientation=token(rightHanded);",
     "extent=float3[](min,max of points);normals=normal3f[](uniform,one unit Newell normal per face);",
@@ -333,10 +334,20 @@ const PREVIOUS_DESCRIPTOR: &str = concat!(
     "discard=(context,token,op_id,Undecided|Rejected);unknown=OUTCOME_UNKNOWN\n",
 );
 
+/// The one descriptor line that A07.2 added; see [`pin_accepted`].
+const A07_2_DISPLAY_NAME_LINE: &str = "definition displayName=prim metadata string(optional,any definition kind;part of the definition content)\n";
+
 /// Whether a layer's saved `bimSchemaDigest` is the current mapping or an earlier one that the
 /// current mapping reads without change.
 pub(crate) fn pin_accepted(pin: &str) -> Result<bool, Diagnostic> {
     if pin == schema_identity()?.digest.to_string() {
+        return Ok(true);
+    }
+    // A07.2 added one optional line (the definition display name) to the A07.1 descriptor and
+    // changed nothing else, so the A07.1 mapping is the current descriptor without that line.
+    let a07_1 = SCHEMA_DESCRIPTOR.replacen(A07_2_DISPLAY_NAME_LINE, "", 1);
+    let digest = Sha256::digest(a07_1.as_bytes()).map_err(|_| limit())?;
+    if pin == digest.to_string() {
         return Ok(true);
     }
     for descriptor in [
@@ -487,6 +498,8 @@ pub enum Definition {
         grade: Option<String>,
         /// Declared standard of the grade, a label only.
         standard: Option<String>,
+        /// Readable name (prim `displayName` metadata), part of the definition content.
+        display_name: Option<String>,
     },
 }
 
@@ -1031,6 +1044,16 @@ pub(super) fn invalid() -> Diagnostic {
 #[cfg(test)]
 mod pin_tests {
     use super::*;
+
+    #[test]
+    fn the_a07_1_mapping_pin_is_accepted_and_is_not_the_current_one() {
+        // Pinned value: the digest of the descriptor of master with A07.1, before A07.2 added the
+        // optional definition display name.
+        let a07_1 = "0311df71b2f7a4bd7b19e87ca7daef1884e989bd099bca24ee165de8e6bc310c";
+        assert!(SCHEMA_DESCRIPTOR.contains(A07_2_DISPLAY_NAME_LINE));
+        assert!(pin_accepted(a07_1).unwrap());
+        assert_ne!(a07_1, schema_identity().unwrap().digest.to_string());
+    }
 
     #[test]
     fn the_a06_mapping_pin_is_accepted_and_is_not_the_current_one() {

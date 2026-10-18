@@ -434,6 +434,7 @@ fn definition(data: &mut sdf::Data, p: &str, value: &Definition) -> Result<(), D
             density_kg_m3,
             grade,
             standard,
+            ..
         } => {
             attr(
                 data,
@@ -446,6 +447,14 @@ fn definition(data: &mut sdf::Data, p: &str, value: &Definition) -> Result<(), D
             optional_text(data, p, "bim:materialGrade", grade)?;
             optional_text(data, p, "bim:materialStandard", standard)?;
         }
+    }
+    let display_name = match value {
+        Definition::RectangleProfile { section, .. }
+        | Definition::SectionProfile { section, .. } => &section.display_name,
+        Definition::Material { display_name, .. } => display_name,
+    };
+    if let Some(name) = display_name {
+        field(data, p, "displayName", sdf::Value::String(name.clone()))?;
     }
     Ok(())
 }

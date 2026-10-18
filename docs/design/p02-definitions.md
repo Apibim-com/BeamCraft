@@ -37,7 +37,8 @@ beamcraft definitions --store ROOT   (fresh process: verified head, every defini
    `definition_exists` means the head already held the same bytes and no revision was written. If
    the owner wants a logical `DefineMaterial` command, it needs an F04 amendment.
 2. **The digest is the layer engine's.** It is the SHA-256 of the canonical isolated definition
-   layer (`Resource::bytes`), which includes units `mm`, schema version `0.1.0`, kind and values.
+   layer (`Resource::bytes`), which includes units `mm`, schema version `0.1.0`, kind and values
+   (and, since A07.2, the optional display name).
    Changing any of them is a different identity. `bim:contentDigest` in the prim is only a label
    that the reader checks against the path and the recomputed bytes.
 3. **Unknown stays unknown.** A material published without `--density` has no density attribute.
