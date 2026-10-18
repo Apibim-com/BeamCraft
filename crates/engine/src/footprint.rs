@@ -238,6 +238,33 @@ impl Footprint {
         Ok(footprint)
     }
 
+    /// The footprint of `AttachToAssembly` and `DetachFromAssembly` (A01): the `part-of` record
+    /// lives with its source, so only the part's relationship group is written. It reads the
+    /// part's lifecycle and relationships and, for an attach, the lifecycle and relationships of
+    /// every assembly on the chain from the target upwards: they decide the target kind and the
+    /// absence of a cycle, so a concurrent change of any of them must conflict. A detach passes
+    /// an empty chain; the former assembly is neither read nor written.
+    pub fn for_part_of(part: ElementId, chain: &[ElementId]) -> Result<Self, CommandError> {
+        let mut reads = BTreeSet::new();
+        for id in core::iter::once(&part).chain(chain) {
+            for group in [Group::Lifecycle, Group::Relationship] {
+                reads.insert(Entry {
+                    target: Target::Element(*id),
+                    group,
+                });
+            }
+        }
+        let footprint = Self {
+            reads,
+            writes: BTreeSet::from([Entry {
+                target: Target::Element(part),
+                group: Group::Relationship,
+            }]),
+        };
+        footprint.check_bound()?;
+        Ok(footprint)
+    }
+
     /// The footprint of publishing one immutable definition (P02): it writes the definition's own
     /// entry and no element. A definition is content-addressed, so two commands that publish the
     /// same digest write identical bytes; the entry is still a write, because another command
@@ -279,7 +306,7 @@ impl Footprint {
         self.writes
             .iter()
             .any(|e| other.writes.contains(e) || other.reads.contains(e))
-            || other.reads.iter().any(|e| self.writes.contains(e))
+            || other.writes.iter().any(|e| self.reads.contains(e))
     }
 
     /// Whether every entry of `observed` is covered by this declared set: the layer engine's
@@ -416,5 +443,22 @@ mod tests {
     fn group_tokens_are_the_f04_names() {
         assert_eq!(Group::ShapeInputs.as_str(), "shape_inputs");
         assert_eq!(Group::MaterialRef.as_str(), "material_ref");
+    }
+    #[test]
+    fn a_part_of_change_writes_only_the_part_relationship_and_reads_the_chain() {
+        let f = Footprint::for_part_of(id(5), &[id(6), id(7)]).unwrap();
+        assert_eq!(
+            f.writes().iter().copied().collect::<Vec<_>>(),
+            vec![Entry {
+                target: Target::Element(id(5)),
+                group: Group::Relationship,
+            }]
+        );
+        assert_eq!(f.reads().len(), 6);
+        // Re-parenting the grandparent conflicts with the attach; an unrelated part does not.
+        assert!(f.conflicts_with(&Footprint::for_part_of(id(7), &[id(8)]).unwrap()));
+        assert!(!f.conflicts_with(&Footprint::for_part_of(id(9), &[id(6)]).unwrap()));
+        // Deleting the target assembly conflicts.
+        assert!(f.conflicts_with(&Footprint::for_delete(id(6)).unwrap()));
     }
 }

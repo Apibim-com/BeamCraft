@@ -47,6 +47,8 @@ P07 adds `beamcraft_cli::history`, `RevisionStore::info_at`/`open_at` in the hos
 
 P08 adds `Footprint::for_delete` and the placement patch of `UpdateElement` in the engine, `Change::Delete` in the layer engine, `beamcraft_cli::delete` and the CLI command `delete-element`: a move rewrites only the placement and never rebuilds the body, and a delete removes the whole element from both layers and is refused while another element links to it ([design note](design/p08-move-delete.md)).
 
+A01 adds assemblies (`model::command::{CreateAssembly, AttachToAssembly, DetachFromAssembly}`, `engine::assembly`, `Footprint::for_part_of`, `Shape::Assembly` and `Change::PartOf` in the layer engine, `beamcraft_cli::assembly` and the CLI commands `create-assembly`, `assembly-attach`, `assembly-detach` and `assemblies`): an assembly is an element with its own identity and no body, and membership is the one `bim:partOf` relationship authored on the part, validated for kinds, cardinality, self-links and cycles ([design note](design/a01-assemblies.md)).
+
 [Module boundaries (F08)](contracts/module-boundaries-v0.1.md) give the exact crate and module path
 of every contract area, the allowed dependency edges and which crates are planned. A test and CI
 enforce them.

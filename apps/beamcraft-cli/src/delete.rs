@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! P08 adapter: `DeleteElement` for a plate or a member, committed as the next revision.
+//! P08 adapter: `DeleteElement` for a plate, a member or an A01 assembly, committed as the next
+//! revision.
 //!
 //! The delete removes the whole element, its authored prim and its result prims, and nothing else:
 //! the other elements, the unknown content and the immutable definitions it pinned stay. Before any
@@ -12,8 +13,9 @@
 //!
 //! Honesty limits: replay of an `op_id` is decided from the head model (the delete is a replay when
 //! the element is already absent and the ledger proves the operation committed), not from a stored
-//! canonical request. Elements author no relationships to each other yet, so today only a link that
-//! some other layer content adds can block a delete. One implicit workspace, in-process layer
+//! canonical request. The element relationship authored today is the A01 `part-of` record, so an
+//! assembly with parts cannot be deleted; deleting a part removes its own record with it. One
+//! implicit workspace, in-process layer
 //! engine, as in `plate`.
 
 use crate::plate::{
@@ -55,6 +57,8 @@ pub enum DeletedKind {
     Plate,
     /// A beam or a column.
     Member,
+    /// An assembly (A01); refused while it still has parts.
+    Assembly,
 }
 
 /// Result of `delete_element`.
@@ -120,6 +124,8 @@ pub fn delete_element(
         Some(DeletedKind::Plate)
     } else if members.iter().any(|r| r.authored.id == command.target_id) {
         Some(DeletedKind::Member)
+    } else if crate::assembly::is_assembly(&base_request, &command.target_id, &control)? {
+        Some(DeletedKind::Assembly)
     } else {
         None
     };

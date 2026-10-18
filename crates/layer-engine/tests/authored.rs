@@ -1724,3 +1724,168 @@ fn a_store_pinned_to_the_previous_mapping_stays_editable_and_is_repinned() {
         Some(ErrorCode::UnsupportedVersion)
     );
 }
+
+const FRAME: &str = "0199e7a0-0000-7000-8000-000000000101";
+const OUTER: &str = "0199e7a0-0000-7000-8000-000000000102";
+fn assembly(id: &str, name: &str) -> Change {
+    Change::Create(Element {
+        id: id.into(),
+        name: name.into(),
+        shape: Shape::Assembly,
+        placement: Placement {
+            translation_mm: [0.0; 3],
+            orientation_xyzw: [0.0, 0.0, 0.0, 1.0],
+        },
+        material: None,
+    })
+}
+fn part_of(id: &str, assembly: Option<&str>) -> Change {
+    Change::PartOf {
+        id: id.into(),
+        assembly: assembly.map(str::to_owned),
+    }
+}
+fn targets_of(prims: &[Prim], id: &str) -> Option<Vec<String>> {
+    prim(prims, &path(id))
+        .relationships
+        .iter()
+        .find(|r| r.name == "bim:partOf")
+        .map(|r| r.targets.clone())
+}
+fn installed(a: &mut Author, o: &Opened, changes: Vec<Change>) -> (Prepared, Opened) {
+    let p = a.prepare(batch(&o.context, changes), &control()).unwrap();
+    let next = a
+        .install(
+            &o.context,
+            &p.token,
+            &p.op_id,
+            Decision::Accepted,
+            &control(),
+        )
+        .unwrap();
+    (p, next)
+}
+
+#[test]
+fn assemblies_and_part_of_records_are_authored_on_the_part_and_validated() {
+    let (mut a, o) = populated();
+    let (p, o) = installed(
+        &mut a,
+        &o,
+        vec![
+            assembly(FRAME, "Frame"),
+            assembly(OUTER, "Outer"),
+            part_of(PLATE, Some(FRAME)),
+            part_of(MEMBER, Some(FRAME)),
+            part_of(FRAME, Some(OUTER)),
+        ],
+    );
+    let prims = snapshot(&a, &o.context);
+    let frame = prim(&prims, &path(FRAME));
+    assert_eq!(frame.kind.as_deref(), Some("assembly"));
+    assert_eq!(frame.display_name.as_deref(), Some("Frame"));
+    assert_eq!(
+        value(&prims, FRAME, "bim:elementKind"),
+        Some(&Value::Text("assembly".into()))
+    );
+    // No body, no shape inputs, no material: an assembly is not a part with geometry.
+    assert!(
+        !prims
+            .iter()
+            .any(|p| p.path == format!("{}/Geometry", path(FRAME)))
+    );
+    assert!(value(&prims, FRAME, "steel:plate:thicknessMm").is_none());
+    assert_eq!(targets_of(&prims, PLATE), Some(vec![path(FRAME)]));
+    assert_eq!(targets_of(&prims, FRAME), Some(vec![path(OUTER)]));
+    assert_eq!(targets_of(&prims, OUTER), None);
+    // The record lives with its source: the part's relationship group is written, the
+    // assembly is only read.
+    let plate_writes: BTreeSet<_> = p
+        .writes
+        .iter()
+        .filter(|f| f.identity == PLATE)
+        .map(|f| f.group)
+        .collect();
+    assert_eq!(plate_writes, BTreeSet::from([Group::Relationship]));
+    assert!(p.validation.rules.iter().any(|r| r.starts_with("A01-V01")));
+
+    let refused = |a: &mut Author, o: &Opened, changes: Vec<Change>| {
+        let digests = |a: &Author| {
+            a.export(&o.context, &control())
+                .unwrap()
+                .iter()
+                .map(|l| l.digest)
+                .collect::<Vec<_>>()
+        };
+        let before = digests(a);
+        let code = a
+            .prepare(batch(&o.context, changes), &control())
+            .err()
+            .map(|e| e.code);
+        assert_eq!(digests(a), before);
+        code
+    };
+    // A cycle of length two (OUTER -> FRAME -> OUTER).
+    assert_eq!(
+        refused(&mut a, &o, vec![part_of(OUTER, Some(FRAME))]),
+        Some(ErrorCode::DependencyConflict)
+    );
+    // A cycle of length one is the self-link rule.
+    assert_eq!(
+        refused(&mut a, &o, vec![part_of(OUTER, Some(OUTER))]),
+        Some(ErrorCode::InvalidArgument)
+    );
+    // The target must be an assembly, and it must exist.
+    assert_eq!(
+        refused(&mut a, &o, vec![part_of(PLATE, Some(MEMBER))]),
+        Some(ErrorCode::InvalidArgument)
+    );
+    assert_eq!(
+        refused(
+            &mut a,
+            &o,
+            vec![part_of(PLATE, Some("0199e7a0-0000-7000-8000-0000000001ff"))]
+        ),
+        Some(ErrorCode::DanglingRelationship)
+    );
+    // An assembly has no shape and no material, and an identity placement in this slice.
+    let unsupported = refused(
+        &mut a,
+        &o,
+        vec![Change::Thickness {
+            id: FRAME.into(),
+            mm: 5.0,
+        }],
+    );
+    assert_eq!(unsupported, Some(ErrorCode::UnsupportedProperty));
+    let mut moved = assembly("0199e7a0-0000-7000-8000-000000000103", "Moved");
+    if let Change::Create(e) = &mut moved {
+        e.placement.translation_mm = [1.0, 0.0, 0.0];
+    }
+    assert_eq!(
+        refused(&mut a, &o, vec![moved]),
+        Some(ErrorCode::UnsupportedProperty)
+    );
+
+    // Two targets on one part break the cardinality of loaded content.
+    let doubled = tampered(
+        &a,
+        &o.context,
+        "authored.usda",
+        &format!("rel bim:partOf = <{}>", path(OUTER)),
+        &format!("rel bim:partOf = [<{}>, <{}>]", path(OUTER), path(OUTER)),
+    );
+    assert_eq!(
+        validate_layers(doubled, schema_identity().unwrap(), &control())
+            .err()
+            .map(|e| e.code),
+        Some(ErrorCode::DependencyConflict)
+    );
+
+    // Detach removes the record; the assembly stays.
+    let (_, o) = installed(&mut a, &o, vec![part_of(PLATE, None)]);
+    let prims = snapshot(&a, &o.context);
+    assert_eq!(targets_of(&prims, PLATE), None);
+    assert_eq!(targets_of(&prims, MEMBER), Some(vec![path(FRAME)]));
+    assert!(prims.iter().any(|p| p.path == path(FRAME)));
+}
