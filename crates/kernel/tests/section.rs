@@ -85,7 +85,7 @@ fn hot_rolled_areas_match_closed_forms_in_both_representations() {
         sharp,
         1e-12,
     );
-    close(
+    within(
         net_area(&outline(&ch, Representation::Detailed).unwrap()),
         sharp + 2.0 * corner(10.0),
         arcs(&[10.0; 2]),
@@ -93,7 +93,7 @@ fn hot_rolled_areas_match_closed_forms_in_both_representations() {
 
     let angle = shape(SectionFamily::Angle, &[100.0, 80.0, 8.0, 10.0]);
     let sharp = 80.0 * 8.0 + 92.0 * 8.0;
-    close(
+    within(
         net_area(&outline(&angle, Representation::Detailed).unwrap()),
         sharp + corner(10.0),
         arcs(&[10.0]),
@@ -353,4 +353,28 @@ fn refusals_carry_the_f04_code_of_their_stage() {
         section_member(&short).unwrap_err().f04_code(),
         ErrorCode::InvalidArgument
     );
+}
+
+#[test]
+fn an_off_origin_custom_outline_is_centred_like_the_families() {
+    // Square (0,0)-(100,100) with a cavity (20,20)-(40,40): the box centre (50,50) moves to the
+    // origin, the cavity with it; the area is unchanged.
+    let custom = SectionShape::Custom(CustomSection {
+        outer: vec![[0.0, 0.0], [100.0, 0.0], [100.0, 100.0], [0.0, 100.0]],
+        cavities: vec![vec![[20.0, 20.0], [20.0, 40.0], [40.0, 40.0], [40.0, 20.0]]],
+    });
+    let o = outline(&custom, Representation::Detailed).unwrap();
+    assert_eq!(o.outer[0], Point2::new(-50.0, -50.0));
+    assert_eq!(o.cavities[0].points()[0], Point2::new(-30.0, -30.0));
+    assert_eq!(net_area(&o), 100.0 * 100.0 - 20.0 * 20.0);
+    let built = section_member(&beam(custom, Representation::Detailed)).unwrap();
+    let (mut lo, mut hi) = ([f64::MAX; 3], [f64::MIN; 3]);
+    for p in built.body().mesh().vertices() {
+        for k in 0..3 {
+            lo[k] = lo[k].min(p[k]);
+            hi[k] = hi[k].max(p[k]);
+        }
+    }
+    // Horizontal member along +X: the section spans Y and Z symmetrically about the axis.
+    assert_eq!((lo[1], hi[1], lo[2], hi[2]), (-50.0, 50.0, -50.0, 50.0));
 }

@@ -240,7 +240,9 @@ section anchor below), P-3a and P-3b, and froze the contract; P-3c is recorded a
   F04 section 8. No new F04 error code is needed.
 - **P-2, member frame.** For axis points `p1 -> p2` in element-local coordinates, the member's local
   `Z_m = unit(p2 - p1)`. The section is a `w x h` rectangle centred on the axis, with the width `w`
-  along `X_m` and the height `h` along `Y_m`. The end faces are perpendicular to the axis through
+  along `X_m` and the height `h` along `Y_m`. Amendment 2026-10-18 (A07.1): any supported profile
+  section is placed the same way, with the centre of its bounding box on the axis, its width along
+  `X_m` and its height along `Y_m`. The end faces are perpendicular to the axis through
   `p1` and `p2`; there are no end extensions.
 - **P-3, roll about the axis.** The command carries no "up" vector. The first direction `Y_m` is the
   element-local +Z direction projected onto the plane normal to `Z_m` and normalized, which makes
@@ -695,3 +697,11 @@ is not passed and nothing is implemented.
   and F06 at 0.1.0. Status lines, section 11 and the cases file status were updated; no case ID, error
   code, limit or meaning changed. The first-scope package update and implementer admission are not
   part of this change.
+
+- 2026-10-18, A07.1 profile amendment (owner decision): the rectangle is no longer the only member
+  profile. The F06 amendment A-1 adds the nine parametric section families and custom outlines of
+  `docs/design/a07-section-library.md` as immutable, content-addressed profile definitions; their
+  values are admitted with the existing section 3 codes (`NON_FINITE_NUMBER`, `LIMIT_EXCEEDED`,
+  `INVALID_ARGUMENT` naming the parameter). P-2 places every section by its bounding-box centre.
+  This is additive: the rectangle, every existing case ID, error code and limit keep their meaning,
+  and `contract_version` stays 0.1.0 with this amendment recorded.

@@ -144,6 +144,12 @@ const DEFINE_PROFILE_OPTIONS: &[&str] = &[
     "--workspace-id",
 ];
 
+/// The `define-profile` options that describe a section family or a custom outline, never a
+/// rectangle: without `--family` they would otherwise be ignored.
+const SECTION_ONLY_OPTIONS: &[&str] = &[
+    "--h", "--b", "--tw", "--tf", "--t", "--r", "--c", "--d", "--outer", "--cavity",
+];
+
 const CREATE_MEMBER_OPTIONS: &[&str] = &[
     "--store",
     "--kind",
@@ -412,6 +418,12 @@ fn define_command(
             surface_per_meter_m2: optional_float("--surface-per-meter-m2")?,
         };
         match given("--family") {
+            None if SECTION_ONLY_OPTIONS
+                .iter()
+                .any(|option| options.contains_key(option)) =>
+            {
+                return Err(invalid("section parameters need --family"));
+            }
             None => DefinitionRecord::RectangleProfile {
                 width_mm: float(options, "--width")?,
                 height_mm: float(options, "--height")?,

@@ -261,6 +261,12 @@ fn bad_section_input_is_refused_with_its_code() {
         f.rejected("define-profile", &["--family", "x_shape", "--h", "1"]),
         "INVALID_ARGUMENT"
     );
+    // Section parameters without --family are refused, not dropped from a rectangle.
+    for extra in [&["--t", "5"][..], &["--outer", "0,0;1,0;0,1"]] {
+        let mut args = vec!["--width", "100", "--height", "100"];
+        args.extend_from_slice(extra);
+        assert_eq!(f.rejected("define-profile", &args), "INVALID_ARGUMENT");
+    }
     // A clockwise custom outline is stored as authored, and the kernel refuses to build it.
     let clockwise = defined(
         &f,

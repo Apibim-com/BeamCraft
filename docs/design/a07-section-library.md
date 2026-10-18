@@ -1,7 +1,7 @@
 # A07 section families, environments and profile libraries
 
 Date: 2026-10-18. Status: **A07.1 implemented as an experimental slice (section 9); A07.2 and
-A07.3 are design only. Owner decisions D1 and D2 of section 7 are taken; D3 and D4 are open.** Branch `feat/a07-section-library`, based on `origin/master` `d893f94`.
+A07.3 are design only. Owner decisions D1, D2 and D4 of section 7 are taken; D3 is open.** Branch `feat/a07-section-library`, based on `origin/master` `d893f94`.
 
 Plan row: A07, the I-section families named by the P02.2 note, widened by the owner on
 2026-10-18. The owner's goals:
@@ -217,7 +217,7 @@ the UI "new profile" dialog of V05 calls the same API.
 * **D2. Radii — decided 2026-10-18.** Store both: a detailed representation with every radius
   and a simplified one without, chosen by an application view setting (section 3).
 * **D3. Declared-area tolerance** for families with radii (section 5).
-* **D4. Contract amendment.** F04 and F06 0.1.0 name the rectangle as the only initial profile.
+* **D4. Contract amendment — decided 2026-10-18 (applied, section 9).** F04 and F06 0.1.0 name the rectangle as the only initial profile.
   A07.1 needs an amendment (F04 section 4 profile kinds, F06 section 2 member input) recorded
   before or with the implementation, as A04 did for holes.
 
@@ -251,8 +251,9 @@ beamcraft create-member  --store ROOT --start X,Y,Z --end X,Y,Z --profile-digest
 
 Deviations and limits, recorded rather than hidden:
 
-* **Contract (D4).** F04/F06 0.1.0 name the rectangle as the only initial profile. A07.1 adds kinds
-  under a recorded deviation, as A04 did for holes; the formal amendment is the owner's decision.
+* **Contract (D4) — decided 2026-10-18.** The owner lifted the first-scope rectangle-only rule:
+  F04 (amendments log, P-2) and F06 (amendment A-1, section 2) now admit the A07.1 families and
+  custom outlines, additively.
 * **Simplified body not stored yet.** The kernel builds both outlines, but the derived layer still
   stores one mesh per element. Storing the simplified mesh as the second representation and the
   view setting that chooses it follow with V02/V05 work.

@@ -352,8 +352,10 @@ fn corners(section: &ParametricSection) -> Result<(Vec<Corner>, f64, f64), Secti
 /// The outline of an admitted section shape in the requested representation.
 ///
 /// The shape is admitted again here (the kernel never trusts a caller's admission), so a refused
-/// value is [`SectionFailure::Shape`] with its F04 code. A custom outline is returned exactly as
-/// authored; G05 decides its winding and simplicity when it is extruded.
+/// value is [`SectionFailure::Shape`] with its F04 code. A custom outline keeps its authored point
+/// order and shape, translated as a whole so that the centre of its outer contour's bounding box
+/// is the origin, like every family (the stored definition is unchanged); G05 decides its winding
+/// and simplicity when it is extruded.
 pub fn outline(
     shape: &SectionShape,
     representation: Representation,
@@ -368,17 +370,18 @@ pub fn outline(
 }
 
 fn custom_outline(custom: &CustomSection) -> SectionOutline {
-    let points = |contour: &[[f64; 2]]| {
-        contour
-            .iter()
-            .map(|[x, y]| Point2::new(*x, *y))
-            .collect::<Vec<_>>()
-    };
     let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]);
     for [x, y] in &custom.outer {
         lo = [lo[0].min(*x), lo[1].min(*y)];
         hi = [hi[0].max(*x), hi[1].max(*y)];
     }
+    let centre = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0];
+    let points = |contour: &[[f64; 2]]| {
+        contour
+            .iter()
+            .map(|[x, y]| Point2::new(*x - centre[0], *y - centre[1]))
+            .collect::<Vec<_>>()
+    };
     SectionOutline {
         outer: points(&custom.outer),
         cavities: custom
