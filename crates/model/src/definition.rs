@@ -15,6 +15,7 @@ use crate::limits::{
     DECLARED_RELATIVE_TOLERANCE, DIMENSION_CAP_MM, MAX_AREA_MM2, MAX_DENSITY_KG_M3,
     MAX_MASS_PER_METER_KG, MAX_SURFACE_PER_METER_M2,
 };
+use crate::section::SectionShape;
 use beamcraft_geom::tolerance::ABSOLUTE_FLOOR_MM;
 
 /// A physical (engineering) material. Display appearance is a separate reference and signature
@@ -199,6 +200,25 @@ impl RectangleProfileSpec {
             ));
         }
         Ok(())
+    }
+}
+
+/// A profile of a section family beyond the rectangle (A07.1): a parametric family or an
+/// authored outline, with optional declared section numbers.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SectionProfileSpec {
+    /// The section shape.
+    pub shape: SectionShape,
+    /// Declared catalogue identity and section numbers; all optional.
+    pub section: SectionProperties,
+}
+
+impl SectionProfileSpec {
+    /// Admits the shape and the declared values. A declared area is compared with the area of
+    /// the generated outline by the engine, which owns the kernel; this crate cannot compute it.
+    pub fn validate(&self) -> Result<(), CommandError> {
+        self.shape.validate()?;
+        self.section.validate()
     }
 }
 

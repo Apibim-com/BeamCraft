@@ -97,7 +97,10 @@ fn round_up_to_four(n: u32) -> u32 {
 }
 
 /// Smallest admissible edge count per full turn whose sagitta bound meets the request.
-fn choose_segments(curvature_radius: f64, spec: CurveSpec) -> Result<(u32, f64), ProfileFailure> {
+pub(crate) fn choose_segments(
+    curvature_radius: f64,
+    spec: CurveSpec,
+) -> Result<(u32, f64), ProfileFailure> {
     if !spec.max_sagitta_mm.is_finite() {
         return Err(fail(ProfileCode::NonFinite, Defect::CurveInput));
     }

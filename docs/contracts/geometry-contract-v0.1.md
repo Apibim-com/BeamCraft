@@ -94,7 +94,9 @@ vertices, volume, area and bounds as the previous dimensions input.
 **Straight member** (P-2 confirmed, P-3 refined): `axis_points_mm` (two element-local points),
 `profile`, and optional `roll_rad` (finite, default 0; absolute cap 6.283185307179586 rad, assumed
 because no earlier angle cap exists). The profile kind `rectangle` has `width_mm` and `height_mm`;
-other kinds remain unsupported. Its section is centred on the axis, width along rolled X_m, height
+amendment A-1 (owner, 2026-10-18) adds the section families and custom outlines of
+[A07.1](../design/a07-section-library.md), centred on their bounding box and built by the kernel's
+`section` module; no other kind is supported. Its section is centred on the axis, width along rolled X_m, height
 along rolled Y_m, perpendicular ends through p1/p2 and no extensions. Section 4 builds the default
 frame first, then applies explicit right-handed roll about +Z_m.
 
@@ -888,6 +890,7 @@ need an owner-approved erratum or a new version.
 | ID | Subject | State |
 |----|---------|-------|
 | E-1 | A5 residual: rounded-mesh cross-checks, subnormal mass, full-domain accuracy for cancellation-heavy inputs | Open; G04 and fixtures |
+| A-1 | Additive amendment (owner, 2026-10-18): member profiles are not limited to the rectangle. The nine A07.1 parametric families and custom outlines are supported, each centred on its section's bounding box (the rectangle rule generalised), with radii as polygons on the arcs and a detailed and a simplified representation. The rectangle's frame, mesh, FeatureIds and bytes are unchanged; FeatureIds for non-box bodies remain undefined, as for A04 holes. No error code changes | Applied with A07.1 |
 | E-2 | Roll jump at the parallel threshold; owner requested black-box observation of reference behaviour (synthetic columns, tilt toward each axis, axis reversal; numeric notes only) | Open; observation pending |
 
 **What later tasks must still decide.**

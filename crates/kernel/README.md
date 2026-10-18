@@ -614,3 +614,14 @@ near-tolerance cut, pinned blob digests), `examples/g07_bench.rs` (timing and de
 `cargo run --release -p beamcraft-kernel --example g07_bench`) and `Code::AxisTooShort`
 (`GEO_AXIS_TOO_SHORT`), which the member builder now reports for an axis below the floor together
 with the contract's stages for a failed frame certificate and a non-finite derived scale.
+
+## A07.1: section outlines and members of any section (`section` module)
+
+`outline(shape, representation)` turns an admitted `model::section::SectionShape` into a G05
+profile centred on the section's bounding box: a detailed outline whose radii are quarter arcs
+(vertices on the arc, the G05 deterministic angular grid, sagitta bound `max(0.25 mm, 0.5 % of
+the radius)`) and a simplified one with sharp corners and a 16-edge circle. `section_member`
+extrudes the outline along the member axis with G05, places it with the `geom::MemberFrame`
+basis (`world = R*local + p1`) and certifies one closed shell with G06. No dependency, asset or
+dimension table is added; family geometry follows public engineering descriptions. Evidence:
+`tests/section.rs`. Details: `docs/design/a07-section-library.md`.

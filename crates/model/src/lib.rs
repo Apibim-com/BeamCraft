@@ -11,6 +11,7 @@ pub mod error;
 pub mod id;
 pub mod limits;
 pub mod reference;
+pub mod section;
 
 pub use error::ErrorCode;
 

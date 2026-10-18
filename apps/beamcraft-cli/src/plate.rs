@@ -36,7 +36,7 @@ use crate::definition::{
 };
 use beamcraft_engine::command::AuthoredPlate;
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
-use beamcraft_engine::member::{AuthoredMember, ProfileInfo};
+use beamcraft_engine::member::AuthoredMember;
 use beamcraft_engine::quantity::{
     Assessment, Freshness, QuantityRecord, StoredRecord, assess, member_shape_signature,
     plate_shape_signature, record_for,
@@ -313,17 +313,30 @@ fn decode_plate(prim: &Prim, id: ElementId) -> Result<AuthoredPlate, PlateError>
 /// The through-hole polygons of a committed plate: the flat point array cut by the vertex counts.
 /// Both attributes or neither; every count is at least three and every `z` is zero.
 fn decode_holes(prim: &Prim) -> Result<Vec<Vec<[f64; 2]>>, PlateError> {
-    let bad = || integrity("committed plate has inconsistent hole attributes");
-    // A declaration without a value is not "no holes": it is a damaged record.
+    decode_polygons(
+        prim,
+        "steel:plate:holePointsMm",
+        "steel:plate:holeVertexCounts",
+        beamcraft_model::command::MAX_HOLES,
+        "committed plate has inconsistent hole attributes",
+    )
+}
+
+/// Planar polygons stored as one flat `double3[]` point array cut by an `int[]` of vertex counts:
+/// both attributes or neither (none is an empty list); every `z` is zero and the counts add up to
+/// the points. `max_groups` only bounds the up-front allocation.
+pub(crate) fn decode_polygons(
+    prim: &Prim,
+    points_name: &str,
+    counts_name: &str,
+    max_groups: usize,
+    message: &'static str,
+) -> Result<Vec<Vec<[f64; 2]>>, PlateError> {
+    let bad = || integrity(message);
+    // A declaration without a value is not "no polygons": it is a damaged record.
     let declared = |name: &str| prim.properties.iter().any(|p| p.name == name);
-    let (points, counts) = match (
-        property(prim, "steel:plate:holePointsMm"),
-        property(prim, "steel:plate:holeVertexCounts"),
-    ) {
-        (None, None)
-            if !declared("steel:plate:holePointsMm")
-                && !declared("steel:plate:holeVertexCounts") =>
-        {
+    let (points, counts) = match (property(prim, points_name), property(prim, counts_name)) {
+        (None, None) if !declared(points_name) && !declared(counts_name) => {
             return Ok(Vec::new());
         }
         (Some(Value::Array(points)), Some(Value::Array(counts))) => (points, counts),
@@ -334,22 +347,42 @@ fn decode_holes(prim: &Prim) -> Result<Vec<Vec<[f64; 2]>>, PlateError> {
         .map(numbers::<3>)
         .collect::<Option<_>>()
         .ok_or_else(bad)?;
-    let mut holes = Vec::with_capacity(counts.len().min(beamcraft_model::command::MAX_HOLES));
+    let mut groups = Vec::with_capacity(counts.len().min(max_groups));
     let mut at = 0usize;
     for count in counts {
         let n = usize::try_from(integer(count).ok_or_else(bad)?).map_err(|_| bad())?;
         let end = at.checked_add(n).ok_or_else(bad)?;
-        let hole = points.get(at..end).ok_or_else(bad)?;
-        if hole.iter().any(|p| p[2] != 0.0) {
+        let group = points.get(at..end).ok_or_else(bad)?;
+        if group.iter().any(|p| p[2] != 0.0) {
             return Err(bad());
         }
-        holes.push(hole.iter().map(|p| [p[0], p[1]]).collect());
+        groups.push(group.iter().map(|p| [p[0], p[1]]).collect());
         at = end;
     }
     if at != points.len() {
         return Err(bad());
     }
-    Ok(holes)
+    Ok(groups)
+}
+
+/// One planar polygon stored as a `double3[]` with every `z` zero.
+pub(crate) fn decode_polygon(
+    prim: &Prim,
+    name: &str,
+    message: &'static str,
+) -> Result<Vec<[f64; 2]>, PlateError> {
+    let bad = || integrity(message);
+    let Some(Value::Array(points)) = property(prim, name) else {
+        return Err(bad());
+    };
+    points
+        .iter()
+        .map(|p| match numbers::<3>(p) {
+            Some([x, y, 0.0]) => Some([x, y]),
+            _ => None,
+        })
+        .collect::<Option<_>>()
+        .ok_or_else(bad)
 }
 
 /// The one pinned material target of an element: none, or exactly one definition path. An
@@ -627,11 +660,11 @@ pub(crate) fn plate_record(record: &PlateRecord) -> QuantityRecord {
 
 /// The quantity record the engine expects for a member.
 pub(crate) fn member_record(record: &MemberRecord) -> QuantityRecord {
-    let profile = ProfileInfo {
-        width_mm: record.body.width_mm,
-        height_mm: record.body.height_mm,
-    };
-    let shape = member_shape_signature(&record.authored, profile, record.quantities.algorithm);
+    let shape = member_shape_signature(
+        &record.authored,
+        &record.body.profile,
+        record.quantities.algorithm,
+    );
     record_for(shape, &record.quantities)
 }
 

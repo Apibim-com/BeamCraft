@@ -223,7 +223,7 @@ mod tests {
         let profile: ContentDigest = Sha256::digest(b"profile").unwrap();
         let profiles = |d: &ContentDigest| {
             if *d == profile {
-                Ok(ProfileInfo {
+                Ok(ProfileInfo::Rectangle {
                     width_mm: 200.0,
                     height_mm: 300.0,
                 })

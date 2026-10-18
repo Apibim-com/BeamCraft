@@ -334,6 +334,15 @@ impl TriMesh {
         })
     }
 
+    /// Places an element-local body mesh inside its element by a rigid transform: the same map as
+    /// [`Self::transformed`], but the result stays in element-local space, because the transform
+    /// is part of building the body (a member's section frame), not a move to world coordinates.
+    pub(crate) fn placed(&self, transform: &RigidTransform) -> Result<Self, MeshError> {
+        let mut placed = self.transformed(transform)?;
+        placed.space = self.space;
+        Ok(placed)
+    }
+
     /// FNV-1a over counts, coordinate bits and indices; ties analyses to a mesh.
     pub(crate) fn fingerprint(&self) -> u64 {
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;

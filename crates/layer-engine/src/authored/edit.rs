@@ -311,6 +311,28 @@ fn units(data: &mut sdf::Data, schema: Option<SchemaIdentity>) -> Result<(), Dia
     }
     Ok(())
 }
+/// The optional declared designation, standard and section numbers of any profile definition.
+fn section_properties(
+    data: &mut sdf::Data,
+    p: &str,
+    section: &SectionProperties,
+) -> Result<(), Diagnostic> {
+    optional_text(data, p, "steel:profile:designation", &section.designation)?;
+    optional_text(data, p, "steel:profile:standard", &section.standard)?;
+    optional_number(data, p, "steel:profile:areaMm2", section.area_mm2)?;
+    optional_number(
+        data,
+        p,
+        "steel:profile:massPerMeterKg",
+        section.mass_per_meter_kg,
+    )?;
+    optional_number(
+        data,
+        p,
+        "steel:profile:surfacePerMeterM2",
+        section.surface_per_meter_m2,
+    )
+}
 fn definition(data: &mut sdf::Data, p: &str, value: &Definition) -> Result<(), Diagnostic> {
     prim(data, p, Some("Scope"), true)?;
     attr(
@@ -348,21 +370,65 @@ fn definition(data: &mut sdf::Data, p: &str, value: &Definition) -> Result<(), D
                 "double",
                 sdf::Value::Double(*height_mm),
             )?;
-            optional_text(data, p, "steel:profile:designation", &section.designation)?;
-            optional_text(data, p, "steel:profile:standard", &section.standard)?;
-            optional_number(data, p, "steel:profile:areaMm2", section.area_mm2)?;
-            optional_number(
+            section_properties(data, p, section)?;
+        }
+        Definition::SectionProfile { shape, section } => {
+            attr(
                 data,
                 p,
-                "steel:profile:massPerMeterKg",
-                section.mass_per_meter_kg,
+                "bim:definitionKind",
+                "token",
+                sdf::Value::token(shape.token()),
             )?;
-            optional_number(
-                data,
-                p,
-                "steel:profile:surfacePerMeterM2",
-                section.surface_per_meter_m2,
-            )?;
+            match shape {
+                SectionShape::Parametric(parametric) => {
+                    let names = parametric.family().parameters();
+                    for (name, value) in names.iter().zip(parametric.values()) {
+                        attr(
+                            data,
+                            p,
+                            &format!("steel:profile:{name}Mm"),
+                            "double",
+                            sdf::Value::Double(*value),
+                        )?;
+                    }
+                }
+                SectionShape::Custom(custom) => {
+                    let flat = |c: &[[f64; 2]]| c.iter().map(|[x, y]| [*x, *y, 0.0]).collect();
+                    let outer: Vec<[f64; 3]> = flat(&custom.outer);
+                    attr(
+                        data,
+                        p,
+                        "steel:profile:outerPointsMm",
+                        "double3[]",
+                        points(&outer),
+                    )?;
+                    if !custom.cavities.is_empty() {
+                        let cavities: Vec<[f64; 3]> =
+                            custom.cavities.iter().flat_map(|c| flat(c)).collect();
+                        let counts = custom
+                            .cavities
+                            .iter()
+                            .map(|c| i32::try_from(c.len()).map_err(|_| limit()))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        attr(
+                            data,
+                            p,
+                            "steel:profile:cavityPointsMm",
+                            "double3[]",
+                            points(&cavities),
+                        )?;
+                        attr(
+                            data,
+                            p,
+                            "steel:profile:cavityVertexCounts",
+                            "int[]",
+                            sdf::Value::IntVec(counts),
+                        )?;
+                    }
+                }
+            }
+            section_properties(data, p, section)?;
         }
         Definition::Material {
             density_kg_m3,

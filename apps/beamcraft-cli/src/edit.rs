@@ -62,9 +62,9 @@ pub struct UpdateRequest {
 #[derive(Debug, Clone, PartialEq)]
 pub enum UpdatedElement {
     /// A plate.
-    Plate(PlateRecord),
+    Plate(Box<PlateRecord>),
     /// A beam or a column.
-    Member(MemberRecord),
+    Member(Box<MemberRecord>),
 }
 
 /// Result of `update_element`.
@@ -162,12 +162,12 @@ pub fn update_element(
             };
             let quantities = body.quantities_for(material)?;
             (
-                UpdatedElement::Plate(head.clone()),
-                UpdatedElement::Plate(PlateRecord {
+                UpdatedElement::Plate(Box::new(head.clone())),
+                UpdatedElement::Plate(Box::new(PlateRecord {
                     authored,
                     body,
                     quantities,
-                }),
+                })),
             )
         }
         Target::Member(head) => {
@@ -175,12 +175,12 @@ pub fn update_element(
             let material = authored.material.as_ref().map(&materials).transpose()?;
             let quantities = member_quantities(&head.body, material)?;
             (
-                UpdatedElement::Member(head.clone()),
-                UpdatedElement::Member(MemberRecord {
+                UpdatedElement::Member(Box::new(head.clone())),
+                UpdatedElement::Member(Box::new(MemberRecord {
                     authored,
                     body: head.body.clone(),
                     quantities,
-                }),
+                })),
             )
         }
     };

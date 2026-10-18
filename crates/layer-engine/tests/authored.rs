@@ -2238,3 +2238,110 @@ fn wrong_weld_inputs_targets_and_loaded_records_are_refused() {
         Some(ErrorCode::InvalidArgument)
     );
 }
+
+#[test]
+fn section_profiles_round_trip_and_tampering_is_refused() {
+    use beamcraft_model::section::{CustomSection, ParametricSection, SectionFamily};
+    let (mut a, mut o) = populated();
+    let i_shape = Resource::new(Definition::SectionProfile {
+        shape: SectionShape::Parametric(
+            ParametricSection::new(SectionFamily::IShape, vec![300.0, 150.0, 7.0, 10.0, 15.0])
+                .unwrap(),
+        ),
+        section: SectionProperties {
+            designation: Some("EX-I300".into()),
+            ..SectionProperties::default()
+        },
+    })
+    .unwrap();
+    let custom = Resource::new(Definition::SectionProfile {
+        shape: SectionShape::Custom(CustomSection {
+            outer: vec![[-50.0, -50.0], [50.0, -50.0], [50.0, 50.0], [-50.0, 50.0]],
+            cavities: vec![vec![
+                [-10.0, -10.0],
+                [-10.0, 10.0],
+                [10.0, 10.0],
+                [10.0, -10.0],
+            ]],
+        }),
+        section: SectionProperties::default(),
+    })
+    .unwrap();
+    // The member ends linked to the custom outline; only linked definitions are validated.
+    for r in [i_shape, custom] {
+        let mut input = batch(
+            &o.context,
+            vec![Change::Profile {
+                id: MEMBER.into(),
+                digest: r.digest,
+            }],
+        );
+        input.resources = vec![r];
+        let p = a.prepare(input, &control()).unwrap();
+        o = a
+            .install(
+                &o.context,
+                &p.token,
+                &p.op_id,
+                Decision::Accepted,
+                &control(),
+            )
+            .unwrap();
+    }
+    let base = a.export(&o.context, &control()).unwrap();
+    let owned = ["root.usda", "authored.usda", "derived.usda", "weak.usda"];
+    let text = |assets: &[Asset]| {
+        String::from_utf8(
+            assets
+                .iter()
+                .find(|a| a.name == "authored.usda")
+                .unwrap()
+                .bytes
+                .clone(),
+        )
+        .unwrap()
+    };
+    let authored = text(&base);
+    for needle in [
+        "bim:definitionKind = \"i_shape\"",
+        "steel:profile:twMm = 7.0",
+        "bim:definitionKind = \"custom\"",
+        "steel:profile:cavityVertexCounts = [4]",
+    ] {
+        assert!(authored.contains(needle), "{needle}");
+    }
+    validate_layers(
+        request(base.clone(), &owned),
+        schema_identity().unwrap(),
+        &control(),
+    )
+    .unwrap();
+    let tampered = |from: &str, to: &str| {
+        let mut assets = base.clone();
+        let own = assets
+            .iter_mut()
+            .find(|a| a.name == "authored.usda")
+            .unwrap();
+        let changed = text(&base).replace(from, to);
+        assert_ne!(changed, text(&base));
+        *own = asset("authored.usda", changed);
+        validate_layers(
+            request(assets, &owned),
+            schema_identity().unwrap(),
+            &control(),
+        )
+        .unwrap_err()
+        .code
+    };
+    assert_eq!(
+        tampered("(-10.0, 10.0, 0.0)", "(-11.0, 10.0, 0.0)"),
+        ErrorCode::IntegrityError
+    );
+    assert_eq!(
+        tampered(
+            "steel:profile:cavityVertexCounts = [4]",
+            "steel:profile:cavityVertexCounts = [5]"
+        ),
+        ErrorCode::InvalidArgument
+    );
+}
