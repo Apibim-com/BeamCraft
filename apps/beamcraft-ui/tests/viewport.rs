@@ -45,7 +45,7 @@ fn gpu() -> Option<Gpu> {
 /// Renders the framed scene; returns a corner pixel, the centre pixel and the lit pixel count.
 fn render(gpu: &Gpu, scene: &Scene) -> ([u8; 4], [u8; 4], usize) {
     let (target, extent) = scene.framing();
-    let view = Camera::new(target, extent).unwrap().view(1.0).unwrap();
+    let view = Camera::new(target, extent, 1.0).unwrap().view(1.0).unwrap();
     let renderer = Renderer::new(&gpu.adapter, &gpu.device, 128, 128).unwrap();
     let uploaded = Uploaded::new(&gpu.device, &gpu.queue, scene).unwrap();
     let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);

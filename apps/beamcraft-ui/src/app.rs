@@ -126,7 +126,7 @@ impl App {
             source,
             renderer,
             texture,
-            camera: Camera::new([0.0; 3], 1000.0)?,
+            camera: Camera::new([0.0; 3], 1000.0, 1.6)?,
             loaded: None,
             error: None,
             text,
@@ -152,14 +152,20 @@ impl App {
         match result {
             Ok(loaded) => {
                 let (target, extent) = loaded.scene.framing();
-                if let Err(e) = self.camera.fit(target, extent) {
+                // A scene the camera cannot frame keeps the previous scene and shows why.
+                if let Err(e) = self.camera.fit(target, extent, self.aspect()) {
                     self.error = Some(e.to_string());
+                    return;
                 }
                 self.loaded = Some(loaded);
                 self.error = None;
             }
             Err(e) => self.error = Some(e.to_string()),
         }
+    }
+
+    fn aspect(&self) -> f32 {
+        (self.renderer.width as f32 / self.renderer.height as f32).clamp(0.05, 20.0)
     }
 
     fn resize(&mut self, width: u32, height: u32) -> Result<(), Error> {
@@ -237,7 +243,7 @@ impl eframe::App for App {
         }
         if fit && let Some(l) = &self.loaded {
             let (target, extent) = l.scene.framing();
-            if let Err(e) = self.camera.fit(target, extent) {
+            if let Err(e) = self.camera.fit(target, extent, self.aspect()) {
                 self.error = Some(e.to_string());
             }
         }
@@ -271,11 +277,11 @@ impl eframe::App for App {
             } else {
                 0.0
             };
-            let aspect = self.renderer.width as f32 / self.renderer.height as f32;
+            let aspect = self.aspect();
             match self
                 .camera
                 .navigate(orbit, pan, zoom)
-                .and_then(|()| self.camera.view(aspect.clamp(0.05, 20.0)))
+                .and_then(|()| self.camera.view(aspect))
             {
                 Ok(view) => {
                     if let Some(l) = &self.loaded {

@@ -41,7 +41,16 @@ beamcraft-ui --synthetic COUNT --metrics FRAMES [--width W] [--height H]
   each distinct mesh is uploaded once and drawn with an instance buffer of translations. Placements
   are translations only in this scope.
 - **Units and precision.** Millimetres throughout; the info panel shows bounds in metres and says so.
-  World coordinates are re-centred on the engineering-bounds centre in f64 before the f32 upload.
+  World coordinates are re-centred on the engineering-bounds centre in f64 before the f32 upload,
+  and each mesh's vertices are made relative to the centre of its own bounds (the anchor, added
+  back to its instance translations in f64), so large element-local coordinates keep their size.
+- **Budgets.** Instancing decouples drawn triangles from uploaded bytes, so the scene refuses
+  more than the snapshot's `max_projected_triangles` per frame. Snapshot meshes share their bytes
+  (`SceneMesh` holds `Arc` storage), so a bundle that references one mesh many times cannot
+  multiply memory before validation.
+- **Framing.** The camera fits the bounding sphere into both the vertical and the horizontal field
+  of view of the actual viewport aspect; a scene it cannot frame keeps the previous one and shows
+  the error.
 - **Never crash.** Window-system libraries are dlopened by third-party crates, which panic when one
   is missing (seen with `libxkbcommon-x11`); the window start is wrapped in `catch_unwind` and
   reported as an error.

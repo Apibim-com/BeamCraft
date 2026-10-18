@@ -29,19 +29,26 @@ fn dot([x, y, z]: [f32; 3], [a, b, c]: [f32; 3]) -> f32 {
     x * a + y * b + z * c
 }
 impl Camera {
-    /// Frames a bounded scene: `extent` is the diagonal of its bounds in millimetres.
-    pub fn new(target: [f32; 3], extent: f32) -> Result<Self, Error> {
+    /// Frames a bounded scene for a viewport of `aspect` (width / height): `extent` is the
+    /// diagonal of its bounds in millimetres. The bounding sphere fits both the vertical and the
+    /// horizontal field of view, so a portrait viewport is framed as well as a landscape one.
+    pub fn new(target: [f32; 3], extent: f32, aspect: f32) -> Result<Self, Error> {
         if !target.iter().all(|x| x.is_finite() && x.abs() <= 1e7)
             || !extent.is_finite()
             || !(1.0..=1e7).contains(&extent)
+            || !aspect.is_finite()
+            || !(0.05..=20.0).contains(&aspect)
         {
             return Err(Error::Input("camera framing"));
         }
+        let vertical = std::f32::consts::PI / 8.0;
+        let horizontal = (vertical.tan() * aspect).atan();
+        let half = vertical.min(horizontal);
         Ok(Self {
             target,
             yaw: -0.8,
             pitch: 0.85,
-            distance: (extent * 1.65).clamp(10.0, 2e7),
+            distance: (extent / 2.0 / half.sin() * 1.05).clamp(10.0, 2e7),
         })
     }
     /// Orbit (radians), pan (screen-relative mm) and logarithmic zoom; reject hostile inputs.
@@ -70,9 +77,9 @@ impl Camera {
         ];
         Ok(())
     }
-    /// Frames new bounds while keeping the viewing direction.
-    pub fn fit(&mut self, target: [f32; 3], extent: f32) -> Result<(), Error> {
-        let framed = Self::new(target, extent)?;
+    /// Frames new bounds for a viewport of `aspect` while keeping the viewing direction.
+    pub fn fit(&mut self, target: [f32; 3], extent: f32, aspect: f32) -> Result<(), Error> {
+        let framed = Self::new(target, extent, aspect)?;
         self.target = framed.target;
         self.distance = framed.distance;
         Ok(())
@@ -144,25 +151,30 @@ mod tests {
     use super::*;
     #[test]
     fn a_fitted_scene_projects_inside_the_view() {
-        let mut c = Camera::new([0.0; 3], 10.0).unwrap();
-        c.navigate([0.7, -0.2], [0.0; 2], 0.0).unwrap();
-        // A 6 m x 3 m x 0.5 m box centred at the origin, in millimetres.
+        // A 6 m x 3 m x 0.5 m box centred at the origin, in millimetres, in landscape and portrait.
         let half = [3000.0f32, 1500.0, 250.0];
         let extent = 2.0 * (half[0] * half[0] + half[1] * half[1] + half[2] * half[2]).sqrt();
-        c.fit([0.0; 3], extent).unwrap();
-        let v = c.view(16.0 / 9.0).unwrap();
-        for sx in [-1.0f32, 1.0] {
-            for sy in [-1.0f32, 1.0] {
-                for sz in [-1.0f32, 1.0] {
-                    let [x, y, z] = v.project([sx * half[0], sy * half[1], sz * half[2]]);
-                    assert!(x.abs() <= 1.0 && y.abs() <= 1.0 && (0.0..1.0).contains(&z));
+        for aspect in [16.0 / 9.0, 1.0, 0.4] {
+            let mut c = Camera::new([0.0; 3], 10.0, aspect).unwrap();
+            c.navigate([0.7, -0.2], [0.0; 2], 0.0).unwrap();
+            c.fit([0.0; 3], extent, aspect).unwrap();
+            let v = c.view(aspect).unwrap();
+            for sx in [-1.0f32, 1.0] {
+                for sy in [-1.0f32, 1.0] {
+                    for sz in [-1.0f32, 1.0] {
+                        let [x, y, z] = v.project([sx * half[0], sy * half[1], sz * half[2]]);
+                        assert!(
+                            x.abs() <= 1.0 && y.abs() <= 1.0 && (0.0..1.0).contains(&z),
+                            "aspect {aspect}: {x} {y} {z}"
+                        );
+                    }
                 }
             }
         }
     }
     #[test]
     fn projection_and_basis() {
-        let c = Camera::new([0.0; 3], 100.0).unwrap();
+        let c = Camera::new([0.0; 3], 100.0, 2.0).unwrap();
         let v = c.view(2.0).unwrap();
         let [x, y, z] = v.project([0.0; 3]);
         assert!(x.abs() < 1e-5 && y.abs() < 1e-5 && (0.0..1.0).contains(&z));
@@ -179,8 +191,9 @@ mod tests {
     }
     #[test]
     fn input_bounds_and_navigation() {
-        assert!(Camera::new([f32::NAN; 3], 1.0).is_err());
-        let mut c = Camera::new([0.0; 3], 100.0).unwrap();
+        assert!(Camera::new([f32::NAN; 3], 1.0, 1.0).is_err());
+        assert!(Camera::new([0.0; 3], 100.0, 0.0).is_err());
+        let mut c = Camera::new([0.0; 3], 100.0, 1.0).unwrap();
         assert!(c.navigate([f32::INFINITY, 0.0], [0.0; 2], 0.0).is_err());
         assert!(c.view(0.0).is_err());
         for _ in 0..100 {

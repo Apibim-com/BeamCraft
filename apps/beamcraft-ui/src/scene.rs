@@ -24,7 +24,10 @@ pub struct DrawMesh {
     pub vertices: Vec<u8>,
     /// Vertex count (three per triangle).
     pub vertex_count: u32,
-    /// Element translations relative to [`Scene::origin_mm`], little-endian f32.
+    /// Element-local point (millimetres) the vertices are relative to: the centre of the mesh's
+    /// own bounds, so large element-local coordinates keep their precision in f32.
+    pub anchor_mm: [f64; 3],
+    /// Element translations plus the anchor, relative to [`Scene::origin_mm`], little-endian f32.
     pub instances: Vec<u8>,
     /// Instance count.
     pub instance_count: u32,
@@ -76,8 +79,14 @@ fn normal(a: [f64; 3], b: [f64; 3], c: [f64; 3]) -> [f32; 3] {
     ]
 }
 
-/// Expands an engine-validated BCMESH01 blob (F06 section 6) into position/normal triangles.
-fn expand(blob: &[u8], vertex_count: u32, triangle_count: u32) -> Result<Vec<u8>, Error> {
+/// Expands an engine-validated BCMESH01 blob (F06 section 6) into position/normal triangles,
+/// positions relative to the centre of the mesh's bounds (computed in f64 before the f32 cast).
+/// Returns the vertex bytes and that centre.
+fn expand(
+    blob: &[u8],
+    vertex_count: u32,
+    triangle_count: u32,
+) -> Result<(Vec<u8>, [f64; 3]), Error> {
     let v = usize::try_from(vertex_count).map_err(|_| Error::Input("mesh size"))?;
     let t = usize::try_from(triangle_count).map_err(|_| Error::Input("mesh size"))?;
     let point = |i: usize| -> Result<[f64; 3], Error> {
@@ -94,6 +103,20 @@ fn expand(blob: &[u8], vertex_count: u32, triangle_count: u32) -> Result<Vec<u8>
         }
         Ok(p)
     };
+    let mut low = [f64::INFINITY; 3];
+    let mut high = [f64::NEG_INFINITY; 3];
+    for i in 0..v {
+        let p = point(i)?;
+        for ((l, h), x) in low.iter_mut().zip(high.iter_mut()).zip(p) {
+            *l = l.min(x);
+            *h = h.max(x);
+        }
+    }
+    let mut anchor = [0.0; 3];
+    for ((a, l), h) in anchor.iter_mut().zip(low).zip(high) {
+        let centre = (l + h) / 2.0;
+        *a = if centre.is_finite() { centre } else { 0.0 };
+    }
     let index_start = v
         .checked_mul(24)
         .and_then(|n| n.checked_add(32))
@@ -116,12 +139,13 @@ fn expand(blob: &[u8], vertex_count: u32, triangle_count: u32) -> Result<Vec<u8>
         let [a, b, c] = corners;
         let n = normal(a, b, c);
         for p in corners {
-            for value in p.map(|x| x as f32).into_iter().chain(n) {
+            let local = sub(p, anchor).map(|x| x as f32);
+            for value in local.into_iter().chain(n) {
                 out.extend_from_slice(&value.to_le_bytes());
             }
         }
     }
-    Ok(out)
+    Ok((out, anchor))
 }
 
 impl Scene {
@@ -157,7 +181,7 @@ impl Scene {
                     let entry = snapshot
                         .mesh_at(reference.mesh_slot)
                         .ok_or(Error::Input("slot"))?;
-                    let vertices =
+                    let (vertices, anchor_mm) =
                         expand(entry.bytes(), entry.vertex_count(), entry.triangle_count())?;
                     total = total
                         .checked_add(vertices.len())
@@ -170,6 +194,7 @@ impl Scene {
                             .checked_mul(3)
                             .ok_or(Error::Input("mesh size"))?,
                         vertices,
+                        anchor_mm,
                         instances: Vec::new(),
                         instance_count: 0,
                     });
@@ -181,7 +206,9 @@ impl Scene {
                 }
             };
             let mesh = meshes.get_mut(at).ok_or(Error::Input("slot"))?;
-            for value in sub(element.placement_mm, origin_mm) {
+            let [px, py, pz] = element.placement_mm;
+            let [ax, ay, az] = mesh.anchor_mm;
+            for value in sub([px + ax, py + ay, pz + az], origin_mm) {
                 let value = value as f32;
                 if !value.is_finite() {
                     return Err(Error::Input("placement"));
@@ -193,6 +220,13 @@ impl Scene {
                 .checked_add(1)
                 .ok_or(Error::Input("instances"))?;
             triangles = triangles.saturating_add(u64::from(mesh.vertex_count / 3));
+            // Instancing makes drawn triangles independent of uploaded bytes: the snapshot's
+            // projection limit bounds what one frame may submit.
+            if triangles > u64::from(snapshot.limits().max_projected_triangles()) {
+                return Err(Error::View(beamcraft_engine::ViewError::new(
+                    beamcraft_engine::ViewCode::BufferLimit,
+                )));
+            }
         }
         meshes.sort_by_key(|m| m.digest);
         Ok(Self {
@@ -272,6 +306,18 @@ mod tests {
     }
 
     #[test]
+    fn drawn_triangles_respect_the_snapshot_projection_limit() {
+        let pin = ViewPin::new(Sha256::digest(b"revision").unwrap(), 1);
+        // Ten 12-triangle plates are 120 triangles; a limit of 100 refuses the scene.
+        let limits = Limits::new(100, usize::MAX, 100, 10);
+        let s = ViewSnapshot::build(pin, plate_scene(10, false).unwrap(), &limits).unwrap();
+        assert!(matches!(
+            Scene::from_snapshot(&s, Representation::Full),
+            Err(Error::View(e)) if e.code() == beamcraft_engine::ViewCode::BufferLimit
+        ));
+    }
+
+    #[test]
     fn flat_normals_are_unit_and_degenerate_triangles_get_up() {
         let n = normal([0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]);
         assert_eq!(n, [0.0, 0.0, 1.0]);
@@ -288,5 +334,46 @@ mod tests {
         let scene = Scene::from_snapshot(&empty, Representation::Full).unwrap();
         assert_eq!(scene.counts(), (0, 0));
         assert_eq!(scene.origin_mm, [0.0; 3]);
+    }
+}
+
+#[cfg(test)]
+mod precision_tests {
+    use super::*;
+
+    /// A minimal valid BCMESH01 blob: one triangle with the given vertices.
+    fn blob(points: [[f64; 3]; 3]) -> Vec<u8> {
+        let mut b = Vec::new();
+        b.extend_from_slice(b"BCMESH01");
+        for n in [1u32, 3, 1, 1, 0, 0] {
+            b.extend_from_slice(&n.to_le_bytes());
+        }
+        for p in points {
+            for x in p {
+                b.extend_from_slice(&x.to_le_bytes());
+            }
+        }
+        for i in [0u32, 1, 2] {
+            b.extend_from_slice(&i.to_le_bytes());
+        }
+        b.extend_from_slice(&[0u8; 4]);
+        b.extend_from_slice(&[0u8; 8]);
+        b
+    }
+
+    #[test]
+    fn far_element_local_coordinates_keep_their_size_in_f32() {
+        // A 20 mm feature near X = 999 999 936 mm: both X values round to one f32 without the anchor.
+        let x = 999_999_936.0;
+        let (bytes, anchor) = expand(
+            &blob([[x - 10.0, 0.0, 0.0], [x + 10.0, 0.0, 0.0], [x, 5.0, 0.0]]),
+            3,
+            1,
+        )
+        .unwrap();
+        assert_eq!(anchor[0], x);
+        let first = f32::from_le_bytes(bytes[0..4].try_into().unwrap());
+        let second = f32::from_le_bytes(bytes[24..28].try_into().unwrap());
+        assert_eq!(second - first, 20.0);
     }
 }

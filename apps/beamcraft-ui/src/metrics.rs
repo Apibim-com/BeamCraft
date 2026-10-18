@@ -69,8 +69,8 @@ pub fn measure(scene: &Scene, frames: u32, size: [u32; 2]) -> Result<Baseline, E
     let renderer = Renderer::new(&gpu.adapter, &gpu.device, size[0], size[1])?;
     let uploaded = Uploaded::new(&gpu.device, &gpu.queue, scene)?;
     let (target, extent) = scene.framing();
-    let mut camera = Camera::new(target, extent)?;
     let aspect = size[0] as f32 / size[1] as f32;
+    let mut camera = Camera::new(target, extent, aspect)?;
     let mut submit = Vec::new();
     let mut complete = Vec::new();
     for frame in 0..frames.saturating_add(10) {
