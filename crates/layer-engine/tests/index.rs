@@ -64,7 +64,7 @@ fn request(root: &str, assets: Vec<Asset>, owned: &[&str], page_items: usize) ->
         profile: Profile::StaticLocal,
         budgets: Budgets {
             page_items,
-            ..Budgets::default()
+            ..Budgets::FIRST_SLICE
         },
     };
     request.manifest = request.manifest_digest().unwrap();

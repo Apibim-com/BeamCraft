@@ -75,7 +75,8 @@ impl std::fmt::Display for Diagnostic {
 }
 impl std::error::Error for Diagnostic {}
 
-/// Explicit experimental stage ceilings; these are distinct from F05 wire budgets.
+/// Explicit stage ceilings; these are distinct from F05 wire budgets. A caller may tighten any of
+/// them, never raise one above [`Budgets::default`].
 #[derive(Debug, Clone, Copy)]
 pub struct Budgets {
     /// Maximum bytes in one layer.
@@ -99,20 +100,58 @@ pub struct Budgets {
     /// Maximum prims per page.
     pub page_items: usize,
 }
+impl Budgets {
+    /// The model profile: the ceilings of a BeamCraft project stage.
+    ///
+    /// Each value is sized from a limit that already binds the same data further along, so no
+    /// stage can accept what a later one refuses, and none refuses what a later one accepts:
+    ///
+    /// * `layer_bytes` 32 MiB: one layer is one host blob (`host::storage::MAX_BLOB_BYTES`).
+    /// * `total_bytes` 64 MiB: the host's content-verification bound for one revision
+    ///   (`host::revision::MAX_CONTENT_VERIFY_BYTES`).
+    /// * `prims` 262,144: four prims per element at the engine's 65,536-element view cap (element,
+    ///   geometry, representation and a definition or relationship target).
+    /// * `values` 4,194,304: 64 fields per element at the same cap.
+    /// * `array_items` 32,768: one element mesh at the engine blob caps (8,192 triangles are
+    ///   24,576 indices; 4,096 vertices are 12,288 scalars).
+    /// * `decoded_bytes` 256 MiB and `snapshot_bytes` 512 MiB: four and eight times the 64 MiB
+    ///   stage, a conservative allowance for the binary expansion and the per-value accounting of
+    ///   the typed snapshot (not measured at the cap).
+    ///
+    /// Layers, depth and page size are unchanged: a project stage has a fixed, shallow layer
+    /// stack. Allocation is still charged against these ceilings before it happens.
+    pub const MODEL: Self = Self {
+        layer_bytes: 32 * 1024 * 1024,
+        total_bytes: 64 * 1024 * 1024,
+        layers: 8,
+        depth: 16,
+        prims: 262_144,
+        values: 4_194_304,
+        array_items: 32_768,
+        decoded_bytes: 256 * 1024 * 1024,
+        snapshot_bytes: 512 * 1024 * 1024,
+        page_items: 64,
+    };
+
+    /// The first-slice profile of U01 (64 KiB per layer, 256 prims, 1024 array items): the
+    /// tightened profile for small untrusted inputs that are not a project stage, such as the
+    /// source layer of a read-only reference (R01).
+    pub const FIRST_SLICE: Self = Self {
+        layer_bytes: 65536,
+        total_bytes: 262144,
+        layers: 8,
+        depth: 16,
+        prims: 256,
+        values: 4096,
+        array_items: 1024,
+        decoded_bytes: 4 * 1024 * 1024,
+        snapshot_bytes: 1024 * 1024,
+        page_items: 64,
+    };
+}
 impl Default for Budgets {
     fn default() -> Self {
-        Self {
-            layer_bytes: 65536,
-            total_bytes: 262144,
-            layers: 8,
-            depth: 16,
-            prims: 256,
-            values: 4096,
-            array_items: 1024,
-            decoded_bytes: 4 * 1024 * 1024,
-            snapshot_bytes: 1024 * 1024,
-            page_items: 64,
-        }
+        Self::MODEL
     }
 }
 impl Budgets {
