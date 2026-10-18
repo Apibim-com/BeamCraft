@@ -1,21 +1,44 @@
 # Roadmap
 
-**Stage:** pre-alpha, foundation. Last updated 2026-10-14.
+**Stage:** pre-alpha, first vertical slices. Last updated 2026-10-18.
 
-The repository still contains a scaffold: points, beam-axis length and CLI version reporting.
-The gates below describe planned acceptance results, not implemented features.
+The CLI authors plates, straight rectangle-section members, definitions, assemblies, minimal
+welds and read-only references into verified USD revisions, with workspaces, undo/redo and a
+local loopback coordinator; the native window shows a revision and supports picking and snaps.
+Most merged slices are marked experimental in their design notes: "slices merged" below means
+code is on `master`, not that the gate's acceptance is claimed.
 
 | Gate | Acceptance result | Packages | Status |
 |------|-------------------|----------|--------|
-| K0 | Verified base, requirements, clean-room boundaries, contracts and original fixtures | F01–F09 | in progress |
-| K1 | CLI creates a plate and atomically saves a complete revision readable by ordinary OpenUSD | U01–U07, G01–G02, P01 | planned |
-| K2 | Straight beam/column, quantities, independent copy, personal workspace and local undo | P02–P08 | planned |
-| K3 | Foreign USD references remain read-only; supported measurements are separate results | R01–R03, G08 | planned |
-| K4 | Two clients safely publish, rebase, detect conflicts, retry and compensate accepted changes | C01–C06 | planned |
-| K5 | Original native UI uses engine commands and saves the same result as the CLI | V01–V06 | planned |
-| K6 | Supported assemblies, cuts, holes, bolts, welds, approved numbering and IFC/BOM export | A01–A09, E01–E03 | planned |
+| K0 | Verified base, requirements, clean-room boundaries, contracts and original fixtures | F01–F09 | in progress; contracts are freeze candidates or drafts |
+| K1 | CLI creates a plate and atomically saves a complete revision readable by ordinary OpenUSD | U01–U07, G01–G02, P01 | slices merged; acceptance open |
+| K2 | Straight beam/column, quantities, independent copy, personal workspace and local undo | P02–P08 | slices merged (rectangle sections only); acceptance open |
+| K3 | Foreign USD references remain read-only; supported measurements are separate results | R01–R03, G08 | R01 merged; R02–R03, G08 open |
+| K4 | Two clients safely publish, rebase, detect conflicts, retry and compensate accepted changes | C01–C06 | C01–C02 merged; C03–C06 open |
+| K5 | Original native UI uses engine commands and saves the same result as the CLI | V01–V06 | V01–V04 merged (view, pick, snap); V05–V06 (tools, properties) open |
+| K6 | Supported assemblies, cuts, holes, bolts, welds, approved numbering and IFC/BOM export | A01–A09, E01–E03 | A01, A06 merged; A04 pilot holes; E01 contract draft; rest open |
 | K7 | Complete alpha scenario and native packaging rehearsal | Q01–Q02 | planned |
 | K8 | First associative drawing projection, dimension and published document version | D01–D03 | planned |
+
+## MVP scope (owner decision 2026-10-18)
+
+The next goal is a free single-user desktop MVP: an engineer models a simple steel frame in the
+native UI and takes it out as IFC and a bill of materials. Work is ordered by this list; package
+boundaries follow the implementation plan and each package keeps its own PR.
+
+1. **Real sections:** I-section families and other rolled shapes as definitions with kernel
+   extrusion (A07, with G05), and contour plates (A02). Profile data stays original or from
+   public standards (`AGENTS.md` §1.2); no commercial catalogue is copied.
+2. **Editing in the UI:** create, select, move and delete through the same engine commands as the
+   CLI (V05), and the properties and publication UI (V06).
+3. **Detailing basics:** plane cuts (A03), holes to A04 acceptance, bolts.
+4. **Output:** numbering (A08/A09), IFC export (E02 on the E01 contract) and BOM/reports (E03).
+5. **Packaging:** the alpha scenario and native installers for Windows, Linux and macOS
+   (Q01–Q02).
+
+Deferred until after the MVP: multi-client rebase, conflicts, retry and compensation (C03–C06),
+drawings (D01–D03) and reference measurements (R02–R03). Which parts later stay open source and
+which become a commercial product is decided after the MVP; until then everything stays MPL-2.0.
 
 ## Next work
 
@@ -59,6 +82,30 @@ desktop-only on Windows, Linux and macOS. Only `beamcraft-geom`, `beamcraft-mode
 `beamcraft-kernel` retain the WASM compatibility requirement as a layering discipline.
 
 ## Progress log
+
+- 2026-10-18: owner set the free single-user desktop MVP scope above (sections, UI editing,
+  cuts/holes/bolts, numbering, IFC/BOM, packaging); C03–C06, D01–D03 and R02–R03 are deferred.
+  Gate statuses were brought up to date with `master` at `d893f94`. Documentation only.
+- 2026-10-18: merged A01 assemblies (PR #80), C01 changesets (PR #81), V03 native window and
+  viewport (PR #82), A06 minimal weld (PR #84), V04 picking and snaps (PR #85), C02 local loopback
+  coordinator (PR #86) and the dev-profile optimisation (PR #87). Each is an experimental slice
+  described in its `docs/design/` note and in `docs/architecture.md`; no gate acceptance is claimed.
+- 2026-10-17: merged P02 definitions (PR #63), P04 quantities and update (PR #66), P03/A04 review
+  fixes (PR #71), P05–P08 copy, workspace, undo/redo, move and delete (PR #72), U09 standard USD
+  metadata (PR #73), P02.2 section properties (PR #74), the G07 kernel first-scope acceptance record
+  (PR #76, accepted with conditions), the E01 IFC export contract draft (PRs #75, #78, #79) and R01
+  read-only references (PR #77). P03 straight members and the A04 pilot plate holes landed through
+  the stacked P02 branch; A04 acceptance is not claimed.
+- 2026-10-16: merged G01 math core (PR #38), G02 rectangular plate (PRs #39, #41), the F11 variant
+  C decision (PR #42), the desktop-first WASM scope (PR #44), U01 bounded read (PR #43), the V01 UI
+  stack audit (PR #45), N04 truck spike (PR #46), U02 authored layers (PR #47), the USD process
+  integration note (PR #48), U04 CLI host (PRs #49, #52), the UI font (PR #50), V01 viewport spike
+  (PR #51), U03 UUID and relationship index (PR #53), V02 view snapshot (PR #54), G05 profile
+  extrusion (PR #55), G06 topology and measurements (PR #56), U06 revision commit (PRs #57, #62),
+  G09 pilot cuts (PR #58) and the zip advisories update (PR #59). U07 journal recovery (PR #60)
+  and P01 first plate (PR #61) landed through the stacked U06 branch.
+- 2026-10-15: merged the G01 math-crates spike (PR #33), N02 IFC-lite spike (PR #34) and the
+  roadmap log rule (PR #35).
 
 - 2026-10-15: N01 option C first slice ran the pure-Rust `openusd` 0.8.0 spike in `spikes/n01-openusd` (isolated workspace,
   stacked on PR #22). On Windows with Rust 1.96.0 it showed USDA/USDC round trip with unknown-field preservation, sublayer/over/active
