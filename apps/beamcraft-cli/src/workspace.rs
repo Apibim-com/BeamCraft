@@ -116,7 +116,7 @@ pub fn read_meta(dir: &Path) -> Result<WorkspaceMeta, PlateError> {
 }
 
 /// Replaces the metadata atomically: a temporary file, synced, then renamed over the old one.
-fn write_meta(dir: &Path, meta: &WorkspaceMeta) -> Result<(), PlateError> {
+pub(crate) fn write_meta(dir: &Path, meta: &WorkspaceMeta) -> Result<(), PlateError> {
     let temporary = dir.join(format!("{META_FILE}.tmp"));
     // Exclusive creation: a leftover or planted entry (even a link) is removed as an entry, never
     // written through.

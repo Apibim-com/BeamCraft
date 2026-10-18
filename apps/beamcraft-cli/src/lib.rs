@@ -6,6 +6,7 @@
 //! application layer.
 
 pub mod assembly;
+pub mod changeset;
 pub mod copy;
 pub mod definition;
 pub mod delete;
