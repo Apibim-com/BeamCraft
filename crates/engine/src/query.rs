@@ -11,6 +11,7 @@
 //! authored plates of a committed revision into the snapshot builder's input.
 
 pub mod bounds;
+pub mod bundle;
 pub mod changes;
 pub mod committed;
 pub mod feature;
