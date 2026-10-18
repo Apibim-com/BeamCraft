@@ -57,9 +57,9 @@ pub struct CopyRequest {
 #[derive(Debug, Clone, PartialEq)]
 pub enum CopiedElement {
     /// A plate.
-    Plate(PlateRecord),
+    Plate(Box<PlateRecord>),
     /// A beam or a column.
-    Member(MemberRecord),
+    Member(Box<MemberRecord>),
 }
 
 /// Result of `copy_element`.
@@ -128,17 +128,17 @@ pub fn copy_element(
     let materials = material_lookup(&definitions);
 
     let copy = if let Some(source) = plates.iter().find(|r| r.authored.id == command.source_id) {
-        CopiedElement::Plate(PlateRecord {
+        CopiedElement::Plate(Box::new(PlateRecord {
             authored: copy_plate(&source.authored, command)?,
             body: source.body.clone(),
             quantities: source.quantities,
-        })
+        }))
     } else if let Some(source) = members.iter().find(|r| r.authored.id == command.source_id) {
-        CopiedElement::Member(MemberRecord {
+        CopiedElement::Member(Box::new(MemberRecord {
             authored: copy_member(&source.authored, command)?,
             body: source.body.clone(),
             quantities: source.quantities,
-        })
+        }))
     } else if crate::weld::is_weld(&base_request, &command.source_id, &control)? {
         // A weld always has element links (its `connects` record), so a single-element copy
         // would drop them (DV-REL-011).
@@ -161,12 +161,12 @@ pub fn copy_element(
     let head_copy = plates
         .iter()
         .find(|r| r.authored.id == command.new_id)
-        .map(|r| CopiedElement::Plate(r.clone()))
+        .map(|r| CopiedElement::Plate(Box::new(r.clone())))
         .or_else(|| {
             members
                 .iter()
                 .find(|r| r.authored.id == command.new_id)
-                .map(|r| CopiedElement::Member(r.clone()))
+                .map(|r| CopiedElement::Member(Box::new(r.clone())))
         });
     let same_state = |a: &CopiedElement, b: &CopiedElement| match (a, b) {
         (CopiedElement::Plate(a), CopiedElement::Plate(b)) => a.authored == b.authored,

@@ -12,6 +12,7 @@ use crate::scene::SceneMesh;
 use beamcraft_geom::Point3;
 use beamcraft_kernel::PlateResult;
 use beamcraft_kernel::ops::OpResult;
+use beamcraft_kernel::section::SectionResult;
 use beamcraft_model::digest::ContentDigest;
 
 /// An evaluated, certified body mesh in element-local millimetres.
@@ -47,6 +48,19 @@ impl SolidMesh {
             blob: result.blob().to_vec(),
             digest: result.mesh_digest(),
             volume_mm3: result.volume_mm3().midpoint(),
+        }
+    }
+
+    /// The mesh of a straight member of an A07.1 section; the volume is the analytic
+    /// `net_area * axis_length` of the extruded outline.
+    pub fn from_section(result: &SectionResult) -> Self {
+        let mesh = result.body().mesh();
+        Self {
+            vertices: mesh.vertices().to_vec(),
+            triangles: mesh.triangles().to_vec(),
+            blob: result.blob().to_vec(),
+            digest: result.mesh_digest(),
+            volume_mm3: result.volume_mm3(),
         }
     }
 

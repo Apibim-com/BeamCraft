@@ -20,6 +20,7 @@ use crate::member::{AuthoredMember, ProfileInfo};
 use beamcraft_geom::canonical_f64_bytes;
 use beamcraft_geom::tolerance::TOLERANCE_POLICY_VERSION;
 use beamcraft_model::digest::{ContentDigest, Sha256};
+use beamcraft_model::section::SectionShape;
 
 /// A quantity record as the engine computes it and as the derived layer stores it.
 #[derive(Debug, Clone, PartialEq)]
@@ -156,7 +157,7 @@ pub fn plate_shape_signature(plate: &AuthoredPlate, algorithm: &str) -> ContentD
 /// algorithm and tolerance policy. The profile digest is not an input; its values are.
 pub fn member_shape_signature(
     member: &AuthoredMember,
-    profile: ProfileInfo,
+    profile: &ProfileInfo,
     algorithm: &str,
 ) -> ContentDigest {
     let mut bytes = Vec::with_capacity(160);
@@ -174,8 +175,33 @@ pub fn member_shape_signature(
         }
         None => bytes.push(0),
     }
-    float(&mut bytes, profile.width_mm);
-    float(&mut bytes, profile.height_mm);
+    match profile {
+        // The P04 bytes of a rectangle are kept, so stored signatures stay current.
+        ProfileInfo::Rectangle {
+            width_mm,
+            height_mm,
+        } => {
+            float(&mut bytes, *width_mm);
+            float(&mut bytes, *height_mm);
+        }
+        ProfileInfo::Section(shape) => {
+            bytes.extend_from_slice(b"section\0");
+            bytes.extend_from_slice(shape.token().as_bytes());
+            bytes.push(0);
+            match shape {
+                SectionShape::Parametric(p) => {
+                    p.values().iter().for_each(|v| float(&mut bytes, *v))
+                }
+                SectionShape::Custom(c) => {
+                    bytes.extend_from_slice(&(c.cavities.len() as u64).to_le_bytes());
+                    for contour in core::iter::once(&c.outer).chain(c.cavities.iter()) {
+                        bytes.extend_from_slice(&(contour.len() as u64).to_le_bytes());
+                        contour.iter().flatten().for_each(|v| float(&mut bytes, *v));
+                    }
+                }
+            }
+        }
+    }
     digest(&bytes)
 }
 

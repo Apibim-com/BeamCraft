@@ -27,6 +27,7 @@ use crate::plate::{
     Base, PlateError, PublishRequest, RevisionSummary, control, decode, host_uuid, integrity,
     load_base, number, open_base, publish_revision, summarize, text,
 };
+use crate::plate::{decode_polygon, decode_polygons};
 use beamcraft_engine::command::MaterialInfo;
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
 use beamcraft_engine::member::ProfileInfo;
@@ -36,10 +37,15 @@ use beamcraft_layer_engine::authored::{
 };
 use beamcraft_layer_engine::{Prim, Reader, Value};
 use beamcraft_model::command::CommandError;
-use beamcraft_model::definition::{MaterialSpec, RectangleProfileSpec, SectionProperties};
+use beamcraft_model::definition::{
+    MaterialSpec, RectangleProfileSpec, SectionProfileSpec, SectionProperties,
+};
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
+use beamcraft_model::section::{
+    CustomSection, MAX_CUSTOM_CAVITIES, ParametricSection, SectionFamily, SectionShape,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Path prefix of an immutable definition prim.
@@ -66,6 +72,13 @@ pub enum DefinitionRecord {
         /// Declared designation, standard and section numbers; absent values stay unknown.
         section: SectionProperties,
     },
+    /// An A07.1 section family or custom outline.
+    SectionProfile {
+        /// The section shape.
+        shape: SectionShape,
+        /// Declared designation, standard and section numbers; absent values stay unknown.
+        section: SectionProperties,
+    },
 }
 
 impl DefinitionRecord {
@@ -74,7 +87,13 @@ impl DefinitionRecord {
         match self {
             Self::Material { .. } => "material",
             Self::RectangleProfile { .. } => "rectangle",
+            Self::SectionProfile { shape, .. } => shape.token(),
         }
+    }
+
+    /// Whether this definition is a profile (of any kind).
+    pub const fn is_profile(&self) -> bool {
+        !matches!(self, Self::Material { .. })
     }
 
     /// Admits the values with the F04 codes and caps.
@@ -97,6 +116,11 @@ impl DefinitionRecord {
             } => RectangleProfileSpec {
                 width_mm: *width_mm,
                 height_mm: *height_mm,
+                section: section.clone(),
+            }
+            .validate(),
+            Self::SectionProfile { shape, section } => SectionProfileSpec {
+                shape: shape.clone(),
                 section: section.clone(),
             }
             .validate(),
@@ -123,6 +147,9 @@ impl DefinitionRecord {
                 height_mm,
                 section,
             },
+            Self::SectionProfile { shape, section } => {
+                Definition::SectionProfile { shape, section }
+            }
         }
     }
 
@@ -171,7 +198,8 @@ fn decode_definition(
     let kind = required("bim:definitionKind", "token")?;
     let kind = text(kind).ok_or_else(bad)?;
     // A newer kind stays inert: it can be listed by an ordinary reader, never used here.
-    if !matches!(kind, "rectangle" | "material") {
+    let family = SectionFamily::from_token(kind);
+    if !matches!(kind, "rectangle" | "material" | "custom") && family.is_none() {
         return Ok(None);
     }
     if !prim.active {
@@ -193,17 +221,45 @@ fn decode_definition(
             .map(|v| text(v).map(str::to_owned).ok_or_else(bad))
             .transpose()
     };
-    let record = if kind == "rectangle" {
+    let section = || -> Result<SectionProperties, PlateError> {
+        Ok(SectionProperties {
+            designation: optional_text("steel:profile:designation")?,
+            standard: optional_text("steel:profile:standard")?,
+            area_mm2: optional_double("steel:profile:areaMm2")?,
+            mass_per_meter_kg: optional_double("steel:profile:massPerMeterKg")?,
+            surface_per_meter_m2: optional_double("steel:profile:surfacePerMeterM2")?,
+        })
+    };
+    let record = if let Some(family) = family {
+        let values = family
+            .parameters()
+            .iter()
+            .map(|name| double(&format!("steel:profile:{name}Mm")))
+            .collect::<Result<Vec<_>, _>>()?;
+        DefinitionRecord::SectionProfile {
+            shape: SectionShape::Parametric(ParametricSection::new(family, values)?),
+            section: section()?,
+        }
+    } else if kind == "custom" {
+        let damaged = "committed custom profile has inconsistent outline attributes";
+        DefinitionRecord::SectionProfile {
+            shape: SectionShape::Custom(CustomSection {
+                outer: decode_polygon(prim, "steel:profile:outerPointsMm", damaged)?,
+                cavities: decode_polygons(
+                    prim,
+                    "steel:profile:cavityPointsMm",
+                    "steel:profile:cavityVertexCounts",
+                    MAX_CUSTOM_CAVITIES,
+                    damaged,
+                )?,
+            }),
+            section: section()?,
+        }
+    } else if kind == "rectangle" {
         DefinitionRecord::RectangleProfile {
             width_mm: double("steel:profile:widthMm")?,
             height_mm: double("steel:profile:heightMm")?,
-            section: SectionProperties {
-                designation: optional_text("steel:profile:designation")?,
-                standard: optional_text("steel:profile:standard")?,
-                area_mm2: optional_double("steel:profile:areaMm2")?,
-                mass_per_meter_kg: optional_double("steel:profile:massPerMeterKg")?,
-                surface_per_meter_m2: optional_double("steel:profile:surfacePerMeterM2")?,
-            },
+            section: section()?,
         }
     } else {
         DefinitionRecord::Material {
@@ -249,7 +305,9 @@ pub(crate) fn material_lookup(
         Some(DefinitionRecord::Material { density_kg_m3, .. }) => Ok(MaterialInfo {
             density_kg_m3: *density_kg_m3,
         }),
-        Some(DefinitionRecord::RectangleProfile { .. }) => Err(CommandError::new(
+        Some(
+            DefinitionRecord::RectangleProfile { .. } | DefinitionRecord::SectionProfile { .. },
+        ) => Err(CommandError::new(
             ErrorCode::InvalidArgument,
             "material_digest",
             "digest names a profile, not a material",
@@ -272,10 +330,13 @@ pub(crate) fn profile_lookup(
             width_mm,
             height_mm,
             ..
-        }) => Ok(ProfileInfo {
+        }) => Ok(ProfileInfo::Rectangle {
             width_mm: *width_mm,
             height_mm: *height_mm,
         }),
+        Some(DefinitionRecord::SectionProfile { shape, .. }) => {
+            Ok(ProfileInfo::Section(shape.clone()))
+        }
         Some(DefinitionRecord::Material { .. }) => Err(CommandError::new(
             ErrorCode::InvalidArgument,
             "profile_digest",

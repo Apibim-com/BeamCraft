@@ -1,7 +1,7 @@
 # A07 section families, environments and profile libraries
 
-Date: 2026-10-18. Status: **design proposal; nothing is implemented. Owner decisions D1 and D2
-of section 7 are taken; D3 and D4 are open.** Branch `feat/a07-section-library`, based on `origin/master` `d893f94`.
+Date: 2026-10-18. Status: **A07.1 implemented as an experimental slice (section 9); A07.2 and
+A07.3 are design only. Owner decisions D1 and D2 of section 7 are taken; D3 and D4 are open.** Branch `feat/a07-section-library`, based on `origin/master` `d893f94`.
 
 Plan row: A07, the I-section families named by the P02.2 note, widened by the owner on
 2026-10-18. The owner's goals:
@@ -84,8 +84,8 @@ Rules:
   the detailed one is the default geometry an ordinary USD reader sees, and a view setting of the
   application chooses which one to load, so a large model can be viewed light. A section without
   radii has one outline referenced by both.
-* Radii in the detailed outline are arcs approximated by a deterministic polygon with the G05
-  sagitta bound, so that geometry is flagged `Approximated` (G05 rule; F06 0.1.0 has no exact
+* Radii in the detailed outline are arcs approximated by a deterministic polygon with its vertices
+  on the arc and a sagitta bound of `max(0.25 mm, 0.5 % of the radius)` (section 9), so that geometry is flagged `Approximated` (G05 rule; F06 0.1.0 has no exact
   curves). The simplified outline is flagged not exact. Volume, mass, BOM and snapping use the
   detailed one only, and the two are never summed (section 5).
 * The point budget is the G05 one (1024 per contour, 2048 total); the generator chooses the arc
@@ -231,6 +231,48 @@ the UI "new profile" dialog of V05 calls the same API.
 | V05 | UI: insert member, pick from the library; new-profile dialog | A07.2, A07.3 |
 
 Each sub-task is its own PR. Completing a sub-task does not complete A07.
+
+## 9. A07.1 as implemented
+
+```text
+beamcraft define-profile --store ROOT --family i_shape --h 300 --b 150 --tw 7 --tf 10 --r 15
+                         [--designation TEXT] [--standard TEXT] [--area-mm2 F] [--mass-per-meter-kg F]
+beamcraft define-profile --store ROOT --family custom --outer "X,Y;..." [--cavity "X,Y;...|..."]
+beamcraft create-member  --store ROOT --start X,Y,Z --end X,Y,Z --profile-digest SHA256 ...
+```
+
+| Area | What exists |
+|---|---|
+| `beamcraft_model::section` | `SectionFamily` (9 families, tokens, parameter order), `ParametricSection` (admission: finite, caps, floor, family consistency, all `INVALID_ARGUMENT` naming the parameter; `without_radius`), `CustomSection` (counts and coordinate caps only), `SectionShape` (`token`, `validate`, `extent_mm`); `definition::SectionProfileSpec`. |
+| `beamcraft_kernel::section` | `outline(shape, Detailed or Simplified)`: corner lists per family, quarter arcs centred at `P - r*d1 + r*d2` on the G05 deterministic angular grid, CHS as two circles; `section_member`: G05 extrusion along the axis length, `RigidTransform` of the F06 member frame, G06 certification of one shell; `SectionFailure::f04_code`. |
+| `beamcraft_layer_engine::authored` | `Definition::SectionProfile`: `bim:definitionKind` is the family token or `custom`, one `steel:profile:<parameter>Mm` per parameter, flat `outerPointsMm`/`cavityPointsMm` + `cavityVertexCounts` for custom outlines; a member's `bim:profile` may target any profile kind; descriptor amended, the A06 descriptor stays accepted. |
+| `beamcraft_engine::member` | `ProfileInfo::{Rectangle, Section}`; a rectangle keeps the P03 box and its bytes, a section is the kernel's detailed outline (`SECTION_VOLUME_ALGORITHM`); `MemberBody` keeps the resolved profile and its volume; the member shape signature of a rectangle is unchanged. |
+| `beamcraft_cli` | `define-profile --family`, section definitions decoded, listed and pinned; `definitions` and member JSON show `parameters_mm` or the outline. |
+
+Deviations and limits, recorded rather than hidden:
+
+* **Contract (D4).** F04/F06 0.1.0 name the rectangle as the only initial profile. A07.1 adds kinds
+  under a recorded deviation, as A04 did for holes; the formal amendment is the owner's decision.
+* **Simplified body not stored yet.** The kernel builds both outlines, but the derived layer still
+  stores one mesh per element. Storing the simplified mesh as the second representation and the
+  view setting that chooses it follow with V02/V05 work.
+* **Declared area (D3).** For section families, a declared area is admitted as a label-like value
+  and not yet compared with the outline area; the rectangle keeps its P02.2 check.
+* **Volume status.** A section member's volume is `current` for the polygon it stores; the arcs are
+  approximated (flagged in the kernel result), as the A04 round holes are.
+* **Layer budgets.** The U01 first-slice ceilings (64 KiB per layer, 1024 items per array) bound
+  model size: a probe stored 7 detailed I-sections 300x150 (or 36 rectangle members) in one
+  revision before `LIMIT_EXCEEDED`. This is not caused by A07.1 but makes it visible; raising the
+  ceilings or storing meshes outside the derived layer text is a separate task.
+* No placement offsets, no rotated placement (P03 rule), no member holes or cuts.
+
+Evidence: `cargo test -p beamcraft-model section`, `cargo test -p beamcraft-kernel --test section`
+(closed-form areas of every family in both representations, bounding-box centring, member bounds
+in the F06 frame, divergence-theorem volume, determinism, custom and refusal codes), the
+layer-engine round trip and tamper test, the engine unit test, and `cargo test -p beamcraft-cli
+--test sections` (real binary: define, idempotent redefine, build, reopen in a fresh process,
+world bounds, `definitions`, saved text, cold-formed, CHS and custom members in one revision,
+refusal codes).
 
 ## Provenance
 

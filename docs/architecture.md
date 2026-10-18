@@ -62,6 +62,8 @@ V04 adds picking and snaps (`engine::query::feature`, `engine::query::pick` and 
 
 C02 adds a local coordinator (`host::coordinator`, `beamcraft_cli::coordinator` and the CLI commands `coordinator-serve`, `coordinator-publish` and `coordinator-head`): started only explicitly, bound to loopback, with clients authenticated by token files that also decide the trusted actor, and one bounded publish queue in which a publication names its expected head and is applied fast-forward through C01, so concurrent publications from one base accept exactly one ([design note](design/c02-coordinator.md)).
 
+A07.1 adds section profiles (`model::section`, `kernel::section`, `Definition::SectionProfile` in the layer engine, `ProfileInfo::Section` in `engine::member` and `define-profile --family`): nine closed parametric families (I, channel, angle, RHS, CHS, lipped C, plain C, lipped Z, omega) and custom outlines are immutable, content-addressed profile definitions; the kernel generates a detailed outline (radii as polygons on the arcs) and a simplified one (sharp corners) centred on the section's bounding box and extrudes the detailed one along the member axis. Only the detailed body is stored so far; profile libraries and environments are A07.2 ([design note](design/a07-section-library.md)).
+
 [Module boundaries (F08)](contracts/module-boundaries-v0.1.md) give the exact crate and module path
 of every contract area, the allowed dependency edges and which crates are planned. A test and CI
 enforce them.

@@ -44,10 +44,13 @@ fn close(actual: f64, expected: f64, relative: f64) {
 }
 
 /// Area bound of quarter arcs approximated with vertices on the arc and the detailed sagitta
-/// bound `s`: every chord region is thinner than `s` and no longer than its arc, so the error of
+/// bound `s = max(0.25 mm, 0.005 r)`: every chord region is thinner than `s` and no longer than its arc, so the error of
 /// one quarter arc of radius `r` is below `s * (pi/2) * r`.
 fn arcs(radii: &[f64]) -> f64 {
-    radii.iter().map(|r| 0.05 * PI / 2.0 * r).sum()
+    radii
+        .iter()
+        .map(|r| 0.25f64.max(0.005 * r) * PI / 2.0 * r)
+        .sum()
 }
 
 fn within(actual: f64, expected: f64, bound: f64) {

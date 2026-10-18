@@ -15,7 +15,7 @@
 //! Two representations come from one shape (owner decision of 2026-10-18):
 //!
 //! * [`Representation::Detailed`]: every radius is a quarter arc, approximated by a polygon with
-//!   its vertices on the arc (the G05 deterministic trigonometry and sagitta bound). The result
+//!   its vertices on the arc (the G05 deterministic trigonometry, [`detailed_arcs`] bound). The result
 //!   is flagged approximated; F06 0.1.0 has no exact curves.
 //! * [`Representation::Simplified`]: every radius is a sharp corner, and a circular hollow
 //!   section is a coarse polygon. It is a lightweight stand-in, never used for quantities.
@@ -45,12 +45,25 @@ pub enum Representation {
     Simplified,
 }
 
-/// Arc approximation of the detailed outline: 0.05 mm sagitta, 16 to 256 edges per full turn.
-pub const DETAILED_ARCS: CurveSpec = CurveSpec {
-    max_sagitta_mm: 0.05,
-    min_segments: 16,
-    max_segments: 256,
-};
+/// Smallest sagitta bound of the detailed outline, in millimetres.
+pub const DETAILED_MIN_SAGITTA_MM: f64 = 0.25;
+/// Sagitta bound of the detailed outline relative to the radius (0.5 percent).
+pub const DETAILED_RELATIVE_SAGITTA: f64 = 0.005;
+
+/// Arc approximation of the detailed outline for a radius `r`: a sagitta bound of
+/// `max(0.25 mm, 0.005 * r)`, with 16 to 128 edges per full turn.
+///
+/// The relative part keeps every circle at or below 32 edges per turn (`2*pi*sqrt(1/(8*0.005))`
+/// is below 32), so a large hollow section stays within the first-slice layer budgets (U01: 1024
+/// items per array, 64 KiB per layer). Quantities that need catalogue accuracy use the declared
+/// section numbers, not the polygon.
+pub fn detailed_arcs(radius_mm: f64) -> CurveSpec {
+    CurveSpec {
+        max_sagitta_mm: DETAILED_MIN_SAGITTA_MM.max(DETAILED_RELATIVE_SAGITTA * radius_mm),
+        min_segments: 16,
+        max_segments: 128,
+    }
+}
 
 /// Edges per full turn of a circular hollow section in the simplified outline.
 pub const SIMPLIFIED_CIRCLE_SEGMENTS: u64 = 16;
@@ -204,9 +217,9 @@ fn circle(radius: f64, n: u64) -> Vec<Point2> {
         .collect()
 }
 
-/// Edges per full turn for the largest radius of a section under [`DETAILED_ARCS`].
+/// Edges per full turn for the largest radius of a section under [`detailed_arcs`].
 fn segments_for(radius: f64) -> Result<u64, SectionFailure> {
-    crate::profile::choose_segments(radius, DETAILED_ARCS)
+    crate::profile::choose_segments(radius, detailed_arcs(radius))
         .map(|(n, _)| u64::from(n))
         .map_err(SectionFailure::Profile)
 }

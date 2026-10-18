@@ -39,6 +39,7 @@ use beamcraft_model::definition::SectionProperties;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use beamcraft_model::section::{CustomSection, ParametricSection, SectionFamily, SectionShape};
 use beamcraft_protocol::json::Json;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -121,6 +122,17 @@ const DEFINE_PROFILE_OPTIONS: &[&str] = &[
     "--store",
     "--width",
     "--height",
+    "--family",
+    "--h",
+    "--b",
+    "--tw",
+    "--tf",
+    "--t",
+    "--r",
+    "--c",
+    "--d",
+    "--outer",
+    "--cavity",
     "--designation",
     "--standard",
     "--area-mm2",
@@ -296,6 +308,74 @@ fn digest_option(text: &str) -> Run<ContentDigest> {
         .map_err(|_| invalid("a digest is not 64 lower-case hexadecimal characters"))
 }
 
+/// The section shape of `define-profile --family`: a family token with one `--<parameter>` per
+/// family parameter (millimetres), or `custom` with `--outer "X,Y;X,Y;..."` (counter-clockwise)
+/// and optional `--cavity "X,Y;...|X,Y;..."` (each clockwise). The rectangle's `--width` and
+/// `--height` do not combine with a family, and no parameter of another family is accepted.
+fn section_shape(family: &str, options: &BTreeMap<&str, &str>) -> Run<SectionShape> {
+    let parameters = ["--h", "--b", "--tw", "--tf", "--t", "--r", "--c", "--d"];
+    if options.contains_key("--width") || options.contains_key("--height") {
+        return Err(invalid(
+            "--width and --height describe a rectangle, not a family",
+        ));
+    }
+    if family == "custom" {
+        if parameters.iter().any(|p| options.contains_key(p)) {
+            return Err(invalid("a custom outline takes --outer and --cavity only"));
+        }
+        let polygon = |text: &str| -> Run<Vec<[f64; 2]>> {
+            text.split(';')
+                .map(|pair| {
+                    let parts: Vec<f64> = pair
+                        .split(',')
+                        .map(|v| v.trim().parse::<f64>())
+                        .collect::<Result<_, _>>()
+                        .map_err(|_| invalid("an outline point is not two numbers"))?;
+                    <[f64; 2]>::try_from(parts)
+                        .map_err(|_| invalid("an outline point is not two numbers"))
+                })
+                .collect()
+        };
+        let outer = polygon(
+            options
+                .get("--outer")
+                .ok_or_else(|| invalid("a custom outline needs --outer"))?,
+        )?;
+        let cavities = match options.get("--cavity") {
+            Some(text) => text.split('|').map(polygon).collect::<Run<Vec<_>>>()?,
+            None => Vec::new(),
+        };
+        return Ok(SectionShape::Custom(CustomSection { outer, cavities }));
+    }
+    if options.contains_key("--outer") || options.contains_key("--cavity") {
+        return Err(invalid("--outer and --cavity belong to a custom outline"));
+    }
+    let family =
+        SectionFamily::from_token(family).ok_or_else(|| invalid("unknown section family"))?;
+    let names = family.parameters();
+    if parameters
+        .iter()
+        .any(|p| options.contains_key(p) && !names.iter().any(|n| p.get(2..) == Some(*n)))
+    {
+        return Err(invalid(
+            "a parameter does not belong to this section family",
+        ));
+    }
+    let values = names
+        .iter()
+        .map(|name| {
+            options
+                .get(format!("--{name}").as_str())
+                .ok_or_else(|| invalid("a required section parameter is missing"))?
+                .parse::<f64>()
+                .map_err(|_| invalid("a number is malformed"))
+        })
+        .collect::<Run<Vec<_>>>()?;
+    Ok(SectionShape::Parametric(ParametricSection::new(
+        family, values,
+    )?))
+}
+
 fn define_command(
     store: &RevisionStore,
     command: &str,
@@ -324,15 +404,22 @@ fn define_command(
             standard: given("--standard").map(str::to_owned),
         }
     } else {
-        DefinitionRecord::RectangleProfile {
-            width_mm: float(options, "--width")?,
-            height_mm: float(options, "--height")?,
-            section: SectionProperties {
-                designation: given("--designation").map(str::to_owned),
-                standard: given("--standard").map(str::to_owned),
-                area_mm2: optional_float("--area-mm2")?,
-                mass_per_meter_kg: optional_float("--mass-per-meter-kg")?,
-                surface_per_meter_m2: optional_float("--surface-per-meter-m2")?,
+        let section = SectionProperties {
+            designation: given("--designation").map(str::to_owned),
+            standard: given("--standard").map(str::to_owned),
+            area_mm2: optional_float("--area-mm2")?,
+            mass_per_meter_kg: optional_float("--mass-per-meter-kg")?,
+            surface_per_meter_m2: optional_float("--surface-per-meter-m2")?,
+        };
+        match given("--family") {
+            None => DefinitionRecord::RectangleProfile {
+                width_mm: float(options, "--width")?,
+                height_mm: float(options, "--height")?,
+                section,
+            },
+            Some(family) => DefinitionRecord::SectionProfile {
+                shape: section_shape(family, options)?,
+                section,
             },
         }
     };
@@ -1140,23 +1227,39 @@ fn definition_json(digest: &ContentDigest, record: &DefinitionRecord) -> Run<Jso
         } => {
             fields.push(("width_mm", num(*width_mm)?));
             fields.push(("height_mm", num(*height_mm)?));
-            fields.push((
-                "designation",
-                section.designation.as_ref().map_or(Json::Null, Json::text),
-            ));
-            fields.push((
-                "standard",
-                section.standard.as_ref().map_or(Json::Null, Json::text),
-            ));
-            fields.push(("area_mm2", section.area_mm2.map_or(Ok(Json::Null), num)?));
-            fields.push((
-                "mass_per_meter_kg",
-                section.mass_per_meter_kg.map_or(Ok(Json::Null), num)?,
-            ));
-            fields.push((
-                "surface_per_meter_m2",
-                section.surface_per_meter_m2.map_or(Ok(Json::Null), num)?,
-            ));
+            section_fields(&mut fields, section)?;
+        }
+        DefinitionRecord::SectionProfile { shape, section } => {
+            let (width, height) = shape.extent_mm();
+            fields.push(("width_mm", num(width)?));
+            fields.push(("height_mm", num(height)?));
+            match shape {
+                SectionShape::Parametric(p) => {
+                    let names = p.family().parameters();
+                    let values = names
+                        .iter()
+                        .zip(p.values())
+                        .map(|(n, v)| Ok(((*n).to_owned(), num(*v)?)))
+                        .collect::<Run<BTreeMap<_, _>>>()?;
+                    fields.push(("parameters_mm", Json::Object(values)));
+                }
+                SectionShape::Custom(c) => {
+                    let polygon = |points: &[[f64; 2]]| -> Run<Json> {
+                        Ok(Json::Array(
+                            points
+                                .iter()
+                                .map(|[x, y]| Ok(Json::Array(vec![num(*x)?, num(*y)?])))
+                                .collect::<Run<_>>()?,
+                        ))
+                    };
+                    fields.push(("outer_mm", polygon(&c.outer)?));
+                    fields.push((
+                        "cavities_mm",
+                        Json::Array(c.cavities.iter().map(|v| polygon(v)).collect::<Run<_>>()?),
+                    ));
+                }
+            }
+            section_fields(&mut fields, section)?;
         }
     }
     Ok(Json::Object(
@@ -1165,6 +1268,28 @@ fn definition_json(digest: &ContentDigest, record: &DefinitionRecord) -> Run<Jso
             .map(|(key, value)| (key.to_owned(), value))
             .collect(),
     ))
+}
+
+/// The declared designation, standard and section numbers of any profile definition.
+fn section_fields(fields: &mut Vec<(&'static str, Json)>, section: &SectionProperties) -> Run<()> {
+    fields.push((
+        "designation",
+        section.designation.as_ref().map_or(Json::Null, Json::text),
+    ));
+    fields.push((
+        "standard",
+        section.standard.as_ref().map_or(Json::Null, Json::text),
+    ));
+    fields.push(("area_mm2", section.area_mm2.map_or(Ok(Json::Null), num)?));
+    fields.push((
+        "mass_per_meter_kg",
+        section.mass_per_meter_kg.map_or(Ok(Json::Null), num)?,
+    ));
+    fields.push((
+        "surface_per_meter_m2",
+        section.surface_per_meter_m2.map_or(Ok(Json::Null), num)?,
+    ));
+    Ok(())
 }
 
 fn defined_json(defined: &Defined) -> Run<Json> {

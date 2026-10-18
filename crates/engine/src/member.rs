@@ -20,23 +20,48 @@ use crate::solid::SolidMesh;
 use crate::transaction::PriorOp;
 use beamcraft_geom::Point3;
 use beamcraft_kernel::diagnostic::{Failure, Field};
-use beamcraft_kernel::{PlateResult, StraightMember, straight_member};
+use beamcraft_kernel::section::{Representation, SectionFailure, SectionMember, section_member};
+use beamcraft_kernel::{StraightMember, straight_member};
 use beamcraft_model::command::{CommandError, CreateStraightMember, MemberKind, Placement};
 use beamcraft_model::definition::RectangleProfileSpec;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId};
+use beamcraft_model::section::SectionShape;
 
 /// Version label of the volume algorithm in a member's [`Quantities`] record.
 pub const MEMBER_VOLUME_ALGORITHM: &str = "kernel-p03-straight-member-volume/1;tolerance-policy-3";
 
+/// Version label of the volume algorithm of a member of an A07.1 section: the net area of the
+/// detailed outline (radii as polygons on the arcs) times the axis length.
+pub const SECTION_VOLUME_ALGORITHM: &str =
+    "kernel-a07-section-member-volume/1;detailed-arcs-max(0.25mm,0.5%r);tolerance-policy-3";
+
 /// The content of a resolved immutable profile definition.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ProfileInfo {
-    /// Section width in millimetres.
-    pub width_mm: f64,
-    /// Section height in millimetres.
-    pub height_mm: f64,
+#[derive(Debug, Clone, PartialEq)]
+pub enum ProfileInfo {
+    /// The first-scope centred rectangle.
+    Rectangle {
+        /// Section width in millimetres.
+        width_mm: f64,
+        /// Section height in millimetres.
+        height_mm: f64,
+    },
+    /// An A07.1 section family or custom outline.
+    Section(SectionShape),
+}
+
+impl ProfileInfo {
+    /// Width and height of the section's bounding box in millimetres.
+    pub fn extent_mm(&self) -> (f64, f64) {
+        match self {
+            Self::Rectangle {
+                width_mm,
+                height_mm,
+            } => (*width_mm, *height_mm),
+            Self::Section(shape) => shape.extent_mm(),
+        }
+    }
 }
 
 /// Resolves a pinned profile digest. A digest with no definition is `NOT_FOUND`; a digest that
@@ -106,14 +131,18 @@ impl AuthoredMember {
 /// A member evaluated by the kernel: the sealed body and its section.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MemberBody {
-    /// Sealed kernel result (mesh, volume, tolerance).
-    pub result: PlateResult,
     /// The certified mesh, as every body offers it to the derived layer and the view.
     pub solid: SolidMesh,
-    /// Section width in millimetres.
+    /// The resolved profile the body was built from.
+    pub profile: ProfileInfo,
+    /// Width of the section's bounding box in millimetres.
     pub width_mm: f64,
-    /// Section height in millimetres.
+    /// Height of the section's bounding box in millimetres.
     pub height_mm: f64,
+    /// Analytic volume in cubic millimetres.
+    pub volume_mm3: f64,
+    /// Version label of the volume algorithm.
+    pub algorithm: &'static str,
 }
 
 fn map_kernel(failure: &Failure) -> CommandError {
@@ -135,32 +164,76 @@ fn map_kernel(failure: &Failure) -> CommandError {
     )
 }
 
+fn map_section(failure: &SectionFailure) -> CommandError {
+    match failure {
+        SectionFailure::Frame(f) => map_kernel(f),
+        other => CommandError::new(other.f04_code(), "profile", "section evaluation failed"),
+    }
+}
+
 /// Evaluates an authored member with its resolved profile. The profile values are re-admitted
-/// because a committed definition is untrusted input.
+/// because a committed definition is untrusted input. A rectangle keeps the P03 box builder (and
+/// its exact bytes); a section family or custom outline is the kernel's detailed A07.1 outline
+/// extruded along the axis.
 pub fn evaluate_member(
     authored: &AuthoredMember,
     profile: ProfileInfo,
 ) -> Result<MemberBody, CommandError> {
-    RectangleProfileSpec {
-        width_mm: profile.width_mm,
-        height_mm: profile.height_mm,
-        ..RectangleProfileSpec::default()
-    }
-    .validate()?;
     let [p1, p2] = authored.axis_points_mm;
-    let result = straight_member(StraightMember {
-        start: Point3::new(p1[0], p1[1], p1[2]),
-        end: Point3::new(p2[0], p2[1], p2[2]),
-        width_mm: profile.width_mm,
-        height_mm: profile.height_mm,
-        roll_rad: authored.roll_rad,
-    })
-    .map_err(|failure| map_kernel(&failure))?;
+    let (start, end) = (
+        Point3::new(p1[0], p1[1], p1[2]),
+        Point3::new(p2[0], p2[1], p2[2]),
+    );
+    let (width_mm, height_mm) = profile.extent_mm();
+    let (solid, volume_mm3, algorithm) = match &profile {
+        ProfileInfo::Rectangle {
+            width_mm,
+            height_mm,
+        } => {
+            RectangleProfileSpec {
+                width_mm: *width_mm,
+                height_mm: *height_mm,
+                ..RectangleProfileSpec::default()
+            }
+            .validate()?;
+            let result = straight_member(StraightMember {
+                start,
+                end,
+                width_mm: *width_mm,
+                height_mm: *height_mm,
+                roll_rad: authored.roll_rad,
+            })
+            .map_err(|failure| map_kernel(&failure))?;
+            (
+                SolidMesh::from_box(&result),
+                result.volume_mm3(),
+                MEMBER_VOLUME_ALGORITHM,
+            )
+        }
+        ProfileInfo::Section(shape) => {
+            shape.validate()?;
+            let result = section_member(&SectionMember {
+                start,
+                end,
+                shape: shape.clone(),
+                representation: Representation::Detailed,
+                roll_rad: authored.roll_rad,
+            })
+            .map_err(|failure| map_section(&failure))?;
+            (
+                SolidMesh::from_section(&result),
+                result.volume_mm3(),
+                SECTION_VOLUME_ALGORITHM,
+            )
+        }
+    };
     Ok(MemberBody {
-        solid: SolidMesh::from_box(&result),
-        result,
-        width_mm: profile.width_mm,
-        height_mm: profile.height_mm,
+        solid,
+        profile,
+        width_mm,
+        height_mm,
+        volume_mm3,
+        algorithm,
     })
 }
 
@@ -169,7 +242,7 @@ pub fn member_quantities(
     body: &MemberBody,
     material: Option<MaterialInfo>,
 ) -> Result<Quantities, CommandError> {
-    quantities_with_material(body.result.volume_mm3(), MEMBER_VOLUME_ALGORITHM, material)
+    quantities_with_material(body.volume_mm3, body.algorithm, material)
 }
 
 /// Everything one accepted `CreateStraightMember` produces for the layers and the host.
@@ -314,13 +387,53 @@ mod tests {
         known: ContentDigest,
     ) -> Result<ProfileInfo, CommandError> {
         if *digest == known {
-            Ok(ProfileInfo {
+            Ok(ProfileInfo::Rectangle {
                 width_mm: 200.0,
                 height_mm: 300.0,
             })
         } else {
             no_profiles(digest)
         }
+    }
+
+    #[test]
+    fn a_section_family_beam_is_the_kernel_detailed_outline_extruded() {
+        use beamcraft_model::section::{ParametricSection, SectionFamily};
+        let profile = digest(b"i-shape 300");
+        let shape = SectionShape::Parametric(
+            ParametricSection::new(SectionFamily::IShape, vec![300.0, 150.0, 7.0, 10.0, 15.0])
+                .unwrap(),
+        );
+        let lookup = |d: &ContentDigest| {
+            if *d == profile {
+                Ok(ProfileInfo::Section(shape.clone()))
+            } else {
+                no_profiles(d)
+            }
+        };
+        let out = create_straight_member(&command(profile), &none, &lookup, &no_materials).unwrap();
+        assert_eq!((out.body.width_mm, out.body.height_mm), (150.0, 300.0));
+        assert_eq!(out.body.algorithm, SECTION_VOLUME_ALGORITHM);
+        assert!(out.body.solid.vertices().len() > 8);
+        // Area of the sharp I plus four root fillets, within the arc approximation bound.
+        let area =
+            2.0 * 150.0 * 10.0 + 280.0 * 7.0 + 4.0 * (1.0 - core::f64::consts::FRAC_PI_4) * 225.0;
+        assert!((out.body.volume_mm3 / 6000.0 - area).abs() < 25.0);
+        assert_eq!(out.quantities.volume_mm3, out.body.volume_mm3);
+        // A bad committed definition is refused by the same admission as a command.
+        let bad = |d: &ContentDigest| {
+            let _ = d;
+            Ok(ProfileInfo::Section(SectionShape::Parametric(
+                ParametricSection::new(SectionFamily::IShape, vec![300.0, 150.0, 7.0, 200.0, 15.0])
+                    .unwrap(),
+            )))
+        };
+        assert_eq!(
+            create_straight_member(&command(profile), &none, &bad, &no_materials)
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidArgument
+        );
     }
 
     #[test]
@@ -414,7 +527,7 @@ mod tests {
             let authored = AuthoredMember::from_command(&command(profile));
             let error = evaluate_member(
                 &authored,
-                ProfileInfo {
+                ProfileInfo::Rectangle {
                     width_mm: w,
                     height_mm: h,
                 },
