@@ -29,13 +29,15 @@ beamcraft changeset-apply   --store PUBLISHED --workspace-dir DIR --changeset SH
   changed (the delta) without a diff format of its own.
 - **Operations.** Every unsent draft revision contributes its operation id and its manifest digest
   (the content identity of its accepted result), in draft order. The order is part of the payload.
-- **Dependencies.** The per-command engine footprints of draft operations are not journaled, so the
-  changeset derives a conservative footprint from the difference between the base model and the
-  draft head, in the F04 section 8 groups: every touched element reads its lifecycle; a changed
-  field reads and writes its group (an unknown field: every group); a changed descendant writes
-  `derived`; created and removed elements write every group; pinned definitions of touched
-  elements are read; new definitions are written. Provenance changes alone are not changes. For
-  a rename this yields exactly what `Footprint::for_update(name)` declares (tested).
+- **Dependencies.** The per-command engine footprints of draft operations are not journaled.
+  Writes come from the difference between the base model and the draft head, in the F04 section 8
+  groups: a changed field writes its group (an unknown field: every group), a placement change
+  also writes `derived`, a changed descendant writes `derived`, created and removed elements write
+  every group, new definitions are written; provenance changes alone are not changes. Reads cannot
+  come from a difference (a copy reads its unchanged source, a move reads the shape), so the
+  changeset reads every group of every element and every definition of the base and the head, a
+  superset of any operation's reads; over 4096 entries it is `LIMIT_EXCEEDED`. Recording
+  per-command footprints would make reads precise.
 - **Idempotency (project-wide).** A changeset id names one payload forever. The receiver binds the
   id to the payload digest durably *before* it publishes anything, so a crash after the binding
   resumes on retry, a retry of the same payload is a replay (the ledger proves the commit), and
@@ -44,12 +46,21 @@ beamcraft changeset-apply   --store PUBLISHED --workspace-dir DIR --changeset SH
   draft rule (an aborted op_id is free again) on purpose: a refused changeset is rebuilt under a
   new id, and an id that once named a payload can never be confused with another. The published
   revision's operation id is the changeset id, so the U06 commit binds it to the exact content
-  as a second line of defence.
+  as a second line of defence. A replay is reported only when the revision committed under the id
+  is exactly this changeset's publication (revision id, base, root layer, every layer's name,
+  role, digest and size); an id already committed for another operation is `OP_ID_REUSE` before
+  anything is claimed. After the claim, a moved head is re-checked against the ledger, so two
+  identical concurrent receipts both return the published result.
+- **Workspace update after publication.** Metadata is validated before publishing; if the update
+  of `workspace.json` still fails afterwards, the result is a successful publication with
+  `workspace_synced: false` (never a rejection of published work), and a retry repairs it.
 - **Authority.** `admit` checks the claimed actor against the trusted caller *before* the replay
   decision (F04 section 8 order), so a mismatched caller learns nothing about an id. The CLI's
   `--actor-id` stands for the trusted context until C02 adds tokens.
 - **Concurrency of claims.** One synced append per claim and no lock file, as in the U07 ledger;
-  racing receivers re-read and the earliest line decides (tested with eight threads).
+  racing receivers re-read and the earliest line decides (tested with eight threads). Records are
+  decoded line by line, so a damaged line hides nothing after it. Size admission is not atomic
+  across writers, so readers accept a 1 MiB headroom beyond the 16 MiB admission cap.
 - **No merge.** The base must be the published head (revision id and manifest digest), otherwise
   `BASE_REVISION_MISMATCH`; rebase is C03, conflicts C04.
 

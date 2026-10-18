@@ -40,6 +40,7 @@ use beamcraft_model::command::CommandError;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ActorId, ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use beamcraft_model::limits::MAX_FOOTPRINT_ENTRIES;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -73,6 +74,10 @@ pub struct Applied {
     pub revision: RevisionSummary,
     /// Digest of the received payload.
     pub digest: ContentDigest,
+    /// Whether the workspace base now names the published revision. `false` after a publication
+    /// whose workspace update failed: the revision is published; a retry of the same changeset
+    /// replays and repairs the workspace.
+    pub workspace_synced: bool,
 }
 
 fn control() -> Control {
@@ -234,12 +239,18 @@ fn definition_targets(state: &ElementState<'_>) -> Vec<ContentDigest> {
         .collect()
 }
 
-/// The conservative footprint of the difference between two models (F04 section 8 groups):
-/// every touched element reads its lifecycle; a created or removed element writes every group;
-/// a changed field writes its group (an unknown field writes every group); a changed result
-/// writes the derived group; pinned definitions of touched elements are read; new definitions
-/// are written.
-fn footprint(base: &[Prim], head: &[Prim]) -> Vec<Dependency> {
+/// The conservative footprint of a changeset (F04 section 8 groups).
+///
+/// Writes come from the difference between the base and the head model: a created or removed
+/// element writes every group; a changed field writes its group (an unknown field: every group); a
+/// placement change also writes `derived` (the world-measurement invalidation); a changed result
+/// writes `derived`; new definitions are written.
+///
+/// Reads cannot come from the difference: an operation may read state it does not change (a copy
+/// reads its unchanged source, a move reads the shape), and per-command footprints are not
+/// journaled. Until they are, the changeset reads every group of every element and every
+/// definition of the base and the head, which is a superset of any operation's reads.
+fn footprint(base: &[Prim], head: &[Prim]) -> Result<Vec<Dependency>, PlateError> {
     let mut set = BTreeSet::new();
     let mut add = |target, group, access| {
         set.insert(Dependency {
@@ -252,11 +263,13 @@ fn footprint(base: &[Prim], head: &[Prim]) -> Vec<Dependency> {
     let ids: BTreeSet<ElementId> = before.keys().chain(after.keys()).copied().collect();
     for id in ids {
         let target = DependencyTarget::Element(id);
+        for group in DependencyGroup::ALL {
+            add(target, group, Access::Read);
+        }
         let (old, new) = (before.get(&id), after.get(&id));
         if old == new {
             continue;
         }
-        add(target, DependencyGroup::Lifecycle, Access::Read);
         let mut groups = BTreeSet::new();
         match (old, new) {
             (Some(old), Some(new)) => {
@@ -305,8 +318,10 @@ fn footprint(base: &[Prim], head: &[Prim]) -> Vec<Dependency> {
             }
             _ => groups.extend(DependencyGroup::ALL),
         }
+        if groups.contains(&DependencyGroup::Placement) {
+            groups.insert(DependencyGroup::Derived);
+        }
         for group in groups {
-            add(target, group, Access::Read);
             add(target, group, Access::Write);
         }
         for digest in old.into_iter().chain(new).flat_map(definition_targets) {
@@ -324,14 +339,28 @@ fn footprint(base: &[Prim], head: &[Prim]) -> Vec<Dependency> {
             .collect()
     };
     let known = definitions(base);
-    for digest in definitions(head).difference(&known) {
+    let current = definitions(head);
+    for digest in known.union(&current) {
+        add(
+            DependencyTarget::Definition(*digest),
+            DependencyGroup::Relationship,
+            Access::Read,
+        );
+    }
+    for digest in current.difference(&known) {
         add(
             DependencyTarget::Definition(*digest),
             DependencyGroup::Relationship,
             Access::Write,
         );
     }
-    set.into_iter().collect()
+    if set.len() > MAX_FOOTPRINT_ENTRIES {
+        return Err(PlateError {
+            code: ErrorCode::LimitExceeded,
+            message: "the conservative changeset footprint exceeds 4096 entries",
+        });
+    }
+    Ok(set.into_iter().collect())
 }
 
 /// Builds the changeset of a workspace's unsent revisions and stores its canonical bytes as a
@@ -348,6 +377,9 @@ pub fn create_changeset(
     let meta = read_meta(dir)?;
     let draft = workspace.open()?;
     let head_sequence = draft.info().sequence();
+    if meta.synced_sequence == 0 {
+        return Err(integrity("workspace metadata names no synced revision"));
+    }
     if head_sequence <= meta.synced_sequence {
         return Err(PlateError {
             code: ErrorCode::InvalidArgument,
@@ -363,7 +395,7 @@ pub fn create_changeset(
     }
     let base = workspace.open_at(meta.synced_sequence)?;
     let mut operations = Vec::new();
-    for sequence in meta.synced_sequence + 1..=head_sequence {
+    for sequence in meta.synced_sequence.saturating_add(1)..=head_sequence {
         let info = workspace.info_at(sequence)?;
         operations.push(Operation {
             op_id: OpId::from_uuid(host_id(info.manifest().content().op())?),
@@ -416,7 +448,7 @@ pub fn create_changeset(
         base_manifest: meta.base_manifest,
         revision: request.revision_id,
         operations,
-        dependencies: footprint(&prims_of(&base)?, &prims_of(&draft)?),
+        dependencies: footprint(&prims_of(&base)?, &prims_of(&draft)?)?,
         layers,
         root_layer: content.root_layer().to_owned(),
         assets: assets.into_iter().collect(),
@@ -468,7 +500,7 @@ fn advance_workspace(
     let head = workspace
         .head()?
         .ok_or_else(|| integrity("the workspace has no revision"))?;
-    for sequence in meta.synced_sequence + 1..=head.sequence() {
+    for sequence in meta.synced_sequence.saturating_add(1)..=head.sequence() {
         let info = workspace.info_at(sequence)?;
         if info.manifest_digest() == last.result {
             return write_meta(
@@ -502,23 +534,28 @@ pub fn apply_changeset(
     let StoredChangeset { changeset, digest } = read_changeset(workspace, digest)?;
     let id = as_host(&changeset.changeset_id.to_string())?;
     let receipt = changeset.admit(trusted_actor, published.changeset_claim(&id)?)?;
+    // The workspace metadata is checked before anything is published, so a later workspace update
+    // can only fail for I/O reasons.
+    let meta = read_meta(dir)?;
+    if workspace
+        .head()?
+        .is_none_or(|head| meta.synced_sequence == 0 || meta.synced_sequence > head.sequence())
+    {
+        return Err(integrity("workspace metadata disagrees with its revisions"));
+    }
+    // An operation id committed for something else is never this changeset's publication.
+    if let Some(info) = published_as(published, &id)? {
+        if !publishes(&info, &changeset) {
+            return Err(reuse());
+        }
+        if receipt == Receipt::Replay {
+            return Ok(replayed(workspace, dir, &changeset, &info, digest));
+        }
+    }
     let head = published.open().map_err(|e| match e {
         RevisionError::NoRevision => integrity("the published store has no revision"),
         other => other.into(),
     })?;
-    // A replay of a payload that was published: the head (or the ledger) proves it.
-    if receipt == Receipt::Replay
-        && let beamcraft_host::ledger::Outcome::Committed { sequence, .. } =
-            published.query_outcome(&id)?
-    {
-        let info = published.info_at(sequence)?;
-        advance_workspace(workspace, dir, read_meta(dir)?, &changeset, &info)?;
-        return Ok(Applied {
-            replayed: true,
-            revision: summarize(&info),
-            digest,
-        });
-    }
     let content = head.manifest().content();
     if changeset.project.to_string() != content.project().as_str() {
         return Err(CommandError::new(
@@ -533,6 +570,12 @@ pub fn apply_changeset(
     if head.info().revision().as_str() != changeset.base_revision.to_string()
         || head.info().manifest_digest() != changeset.base_manifest
     {
+        // A concurrent receipt of the same payload may have published it meanwhile.
+        if let Some(info) = published_as(published, &id)?
+            && publishes(&info, &changeset)
+        {
+            return Ok(replayed(workspace, dir, &changeset, &info, digest));
+        }
         return Err(PlateError {
             code: ErrorCode::BaseRevisionMismatch,
             message: "the published head is not the changeset's base",
@@ -604,10 +647,85 @@ pub fn apply_changeset(
         &ExpectedBase::Revision(head.info().revision().clone()),
         hook,
     )?;
-    advance_workspace(workspace, dir, read_meta(dir)?, &changeset, &committed.info)?;
+    let workspace_synced = sync_workspace(workspace, dir, &changeset, &committed.info);
     Ok(Applied {
         replayed: committed.outcome == CommitOutcome::Replayed,
         revision: summarize(&committed.info),
         digest,
+        workspace_synced,
     })
+}
+
+fn reuse() -> PlateError {
+    CommandError::new(
+        ErrorCode::OpIdReuse,
+        "changeset_id",
+        "the changeset id names another published operation",
+    )
+    .into()
+}
+
+/// The revision the ledger proves was committed under this operation id, if any.
+fn published_as(
+    published: &RevisionStore,
+    id: &Uuid7,
+) -> Result<Option<beamcraft_host::revision::RevisionInfo>, PlateError> {
+    match published.query_outcome(id)? {
+        beamcraft_host::ledger::Outcome::Committed { sequence, .. } => {
+            Ok(Some(published.info_at(sequence)?))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// Whether a committed revision is exactly this changeset's publication: its revision id, base
+/// and complete layer set (names, roles, digests, sizes, root layer).
+fn publishes(info: &beamcraft_host::revision::RevisionInfo, changeset: &Changeset) -> bool {
+    let manifest = info.manifest();
+    let content = manifest.content();
+    let base = manifest.base().map(|b| b.revision.as_str().to_owned());
+    let mut layers: Vec<(String, LayerRole, ContentDigest, u64)> = content
+        .entries()
+        .iter()
+        .map(|e| (e.name().to_owned(), role(e.role()), e.digest(), e.size()))
+        .collect();
+    layers.sort();
+    let mut expected: Vec<(String, LayerRole, ContentDigest, u64)> = changeset
+        .layers
+        .iter()
+        .map(|l| (l.name.clone(), l.role, l.digest, l.size))
+        .collect();
+    expected.sort();
+    info.revision().as_str() == changeset.revision.to_string()
+        && base.as_deref() == Some(changeset.base_revision.to_string().as_str())
+        && content.root_layer() == changeset.root_layer
+        && layers == expected
+}
+
+fn replayed(
+    workspace: &RevisionStore,
+    dir: &Path,
+    changeset: &Changeset,
+    info: &beamcraft_host::revision::RevisionInfo,
+    digest: ContentDigest,
+) -> Applied {
+    Applied {
+        replayed: true,
+        revision: summarize(info),
+        digest,
+        workspace_synced: sync_workspace(workspace, dir, changeset, info),
+    }
+}
+
+/// Advances the workspace after a publication; a failure is reported, never turned into a
+/// rejection of work that is already published.
+fn sync_workspace(
+    workspace: &RevisionStore,
+    dir: &Path,
+    changeset: &Changeset,
+    info: &beamcraft_host::revision::RevisionInfo,
+) -> bool {
+    read_meta(dir)
+        .and_then(|meta| advance_workspace(workspace, dir, meta, changeset, info))
+        .is_ok()
 }

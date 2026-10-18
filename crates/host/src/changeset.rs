@@ -23,8 +23,12 @@ use std::collections::BTreeMap;
 const DIR: &str = "changesets";
 const FILE: &str = "claims.log";
 const VERSION: &str = "beamcraft-changeset-claim/1";
-/// Hard size cap of the claims file (about 90 000 claims).
+/// Size at which new claims are refused (about 90 000 claims).
 pub const MAX_CLAIMS_BYTES: u64 = 16 * 1024 * 1024;
+/// Extra room readers accept beyond [`MAX_CLAIMS_BYTES`]. Admission of an append is not atomic
+/// across writers, so racing appenders can pass the cap together; the headroom (about 5 000
+/// records) keeps every existing binding readable in that case.
+pub const CLAIMS_HEADROOM_BYTES: u64 = 1024 * 1024;
 
 /// What a claim found.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,18 +48,14 @@ fn record(id: &Uuid7, digest: &ContentDigest) -> Result<String, RevisionError> {
     Ok(format!("{body} {}\n", checksum(&body)?))
 }
 
-/// The first valid binding of every id; invalid lines are skipped.
+/// The first valid binding of every id. Records are decoded line by line, so a damaged line
+/// (torn, corrupt or not UTF-8) is skipped without hiding any later record.
 fn parse(bytes: &[u8]) -> BTreeMap<String, ContentDigest> {
     let mut bindings = BTreeMap::new();
-    // A torn multi-byte sequence can only be the last fragment; keep the valid prefix.
-    let text = match std::str::from_utf8(bytes) {
-        Ok(text) => text,
-        Err(e) => bytes
-            .get(..e.valid_up_to())
-            .and_then(|valid| std::str::from_utf8(valid).ok())
-            .unwrap_or_default(),
-    };
-    for line in text.lines() {
+    for line in bytes.split(|b| *b == b'\n') {
+        let Ok(line) = std::str::from_utf8(line) else {
+            continue;
+        };
         let mut parts = line.split(' ');
         let (Some(version), Some(id), Some(digest), Some(sum), None) = (
             parts.next(),
@@ -86,7 +86,8 @@ impl RevisionStore {
             Err(StorageError::NotFound) => return Ok(BTreeMap::new()),
             Err(error) => return Err(RevisionError::Storage(error)),
         };
-        let cap = usize::try_from(MAX_CLAIMS_BYTES).map_err(|_| RevisionError::LimitExceeded)?;
+        let cap = usize::try_from(MAX_CLAIMS_BYTES + CLAIMS_HEADROOM_BYTES)
+            .map_err(|_| RevisionError::LimitExceeded)?;
         match self
             .blobs()
             .read_namespace_exact(&directory, FILE, cap)
@@ -159,5 +160,12 @@ mod tests {
         let bindings = parse(text.as_bytes());
         assert_eq!(bindings.get(id(1).as_str()), Some(&a));
         assert_eq!(bindings.len(), 1);
+        // A line that is not UTF-8 hides nothing after it.
+        let mut bytes = record(&id(5), &a).unwrap().into_bytes();
+        bytes.extend_from_slice(b"\xff\xfe garbage\n");
+        bytes.extend_from_slice(record(&id(6), &b).unwrap().as_bytes());
+        let bindings = parse(&bytes);
+        assert_eq!(bindings.get(id(5).as_str()), Some(&a));
+        assert_eq!(bindings.get(id(6).as_str()), Some(&b));
     }
 }

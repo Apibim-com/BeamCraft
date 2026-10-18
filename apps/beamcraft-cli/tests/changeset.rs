@@ -170,6 +170,21 @@ fn dependencies(changeset: &Json, target: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+fn writes(changeset: &Json, target: &str) -> Vec<String> {
+    dependencies(changeset, target)
+        .into_iter()
+        .filter(|(_, access)| access == "write")
+        .map(|(group, _)| group)
+        .collect()
+}
+fn reads(changeset: &Json, target: &str) -> Vec<String> {
+    dependencies(changeset, target)
+        .into_iter()
+        .filter(|(_, access)| access == "read")
+        .map(|(group, _)| group)
+        .collect()
+}
+
 #[test]
 fn a_changeset_carries_base_operations_dependencies_and_delta_and_publishes_once() {
     let f = Fixture::new();
@@ -187,15 +202,9 @@ fn a_changeset_carries_base_operations_dependencies_and_delta_and_publishes_once
     assert_eq!(text(&changeset, "base_revision"), base);
     assert_eq!(text(&changeset, "actor_id"), USER);
     assert_eq!(list(&changeset, "operations").len(), 2);
-    // A rename touches the label alone: the derived result is not in the footprint.
-    assert_eq!(
-        dependencies(&changeset, PLATE),
-        [
-            ("label".to_owned(), "read".to_owned()),
-            ("label".to_owned(), "write".to_owned()),
-            ("lifecycle".to_owned(), "read".to_owned()),
-        ]
-    );
+    // A rename writes the label alone; reads are conservative: every group of every element.
+    assert_eq!(writes(&changeset, PLATE), ["label"]);
+    assert_eq!(reads(&changeset, PLATE).len(), 7);
     let changed: Vec<String> = list(&changeset, "layers")
         .iter()
         .filter(|l| at(l, &["changed"]) == &Json::Bool(true))
@@ -216,6 +225,7 @@ fn a_changeset_carries_base_operations_dependencies_and_delta_and_publishes_once
     let store = f.path("published");
     let applied = f.ok(&f.apply_args(&store, &dir, &digest, USER));
     assert_eq!(text(&applied, "outcome"), "changeset_applied");
+    assert_eq!(at(&applied, &["workspace_synced"]), &Json::Bool(true));
     let head = f.ok(&["revision-open", "--store", &store]);
     assert_eq!(text(&head, "revision_id"), REVISION);
     assert_eq!(text(&head, "op_id"), CHANGESET);
@@ -383,4 +393,78 @@ fn bounded_validation_refuses_garbage_missing_and_empty_changesets() {
         f.rejected(&f.apply_args(&store, &dir, &"ab".repeat(32), USER)),
         "NOT_FOUND"
     );
+}
+
+#[test]
+fn a_copy_reads_its_unchanged_source_and_a_move_writes_the_derived_invalidation() {
+    let f = Fixture::new();
+    let dir = f.forked("ws");
+    let copy = "019a7bf0-0000-7000-8000-000000000020";
+    f.ok(&[
+        "copy-element",
+        "--store",
+        &dir,
+        "--id",
+        PLATE,
+        "--new-id",
+        copy,
+        "--offset",
+        "2000,0,0",
+    ]);
+    let changeset = f.create(&dir, &[]);
+    // The source is unchanged, yet the copy read all of it (Footprint::for_copy).
+    assert!(writes(&changeset, PLATE).is_empty());
+    assert_eq!(reads(&changeset, PLATE).len(), 7);
+    assert_eq!(writes(&changeset, copy).len(), 7);
+    let dir = f.forked("moved");
+    f.ok(&[
+        "update-element",
+        "--store",
+        &dir,
+        "--id",
+        PLATE,
+        "--translation",
+        "10,20,30",
+    ]);
+    let changeset = f.create(&dir, &[]);
+    assert_eq!(writes(&changeset, PLATE), ["placement", "derived"]);
+}
+
+#[test]
+fn a_changeset_id_that_names_another_committed_operation_is_reuse_every_time() {
+    let f = Fixture::new();
+    let store = f.path("published");
+    let create_op = "019a7bf0-0000-7000-8000-00000000e001";
+    f.ok(&[
+        "create-plate",
+        "--store",
+        &store,
+        "--width",
+        "1000",
+        "--length",
+        "500",
+        "--thickness",
+        "10",
+        "--new-id",
+        PLATE,
+        "--op-id",
+        create_op,
+    ]);
+    let dir = f.forked("ws");
+    f.rename(&dir, "Renamed");
+    let digest = text(&f.create(&dir, &["--changeset-id", create_op]), "digest");
+    for _ in 0..2 {
+        assert_eq!(
+            f.rejected(&f.apply_args(&store, &dir, &digest, USER)),
+            "OP_ID_REUSE"
+        );
+    }
+    let status = f.ok(&[
+        "workspace-status",
+        "--store",
+        &store,
+        "--workspace-dir",
+        &dir,
+    ]);
+    assert_eq!(text(at(&status, &["workspace"]), "unsent_revisions"), "1");
 }

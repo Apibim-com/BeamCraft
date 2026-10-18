@@ -184,6 +184,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             }),
         ),
         ("digest", Json::text(applied.digest.to_string())),
+        ("workspace_synced", Json::Bool(applied.workspace_synced)),
         ("revision", revision_json(&applied.revision)),
     ]))
 }
