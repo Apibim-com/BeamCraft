@@ -53,6 +53,8 @@ A01 adds assemblies (`model::command::{CreateAssembly, AttachToAssembly, DetachF
 
 C01 adds changesets (`model::changeset`, `host::changeset` claims, `beamcraft_cli::changeset` and the CLI commands `changeset-create`, `changeset-inspect` and `changeset-apply`): a workspace's unsent revisions become one canonical, digest-addressed message (base, operations, claimed actor, conservative footprint, complete layer set with base digests, required blobs); the receiver checks the actor against the trusted caller, binds the changeset id to the payload before publishing, and publishes fast-forward only ([design note](design/c01-changeset.md)).
 
+C02 adds a local coordinator (`host::coordinator`, `beamcraft_cli::coordinator` and the CLI commands `coordinator-serve`, `coordinator-publish` and `coordinator-head`): started only explicitly, bound to loopback, with clients authenticated by token files that also decide the trusted actor, and one bounded publish queue in which a publication names its expected head and is applied fast-forward through C01, so concurrent publications from one base accept exactly one ([design note](design/c02-coordinator.md)).
+
 [Module boundaries (F08)](contracts/module-boundaries-v0.1.md) give the exact crate and module path
 of every contract area, the allowed dependency edges and which crates are planned. A test and CI
 enforce them.
