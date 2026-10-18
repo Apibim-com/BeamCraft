@@ -376,6 +376,33 @@ impl SectionShape {
             Self::Custom(c) => c.validate(),
         }
     }
+
+    /// Width and height of the section's bounding box in millimetres: the section size the F06
+    /// member scale uses. A custom outline's box is that of its outer contour. The value is only
+    /// meaningful for an admitted shape.
+    pub fn extent_mm(&self) -> (f64, f64) {
+        match self {
+            Self::Parametric(p) => match (p.family, p.values.as_slice()) {
+                (SectionFamily::Chs, &[d, _]) => (d, d),
+                (SectionFamily::LippedZ, &[h, b, _, t, _]) => (2.0 * b - t, h),
+                (SectionFamily::Omega, &[h, b, c, t, _]) => (b + 2.0 * c - 2.0 * t, h),
+                (_, [h, b, ..]) => (*b, *h),
+                _ => (0.0, 0.0),
+            },
+            Self::Custom(c) => {
+                let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]);
+                for [x, y] in &c.outer {
+                    lo = [lo[0].min(*x), lo[1].min(*y)];
+                    hi = [hi[0].max(*x), hi[1].max(*y)];
+                }
+                if c.outer.is_empty() {
+                    (0.0, 0.0)
+                } else {
+                    (hi[0] - lo[0], hi[1] - lo[1])
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
