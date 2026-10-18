@@ -183,7 +183,7 @@ struct Pending {
 fn world_bounds(mesh: &SceneMesh, placement: Translation3) -> Result<Aabb, ViewError> {
     let numeric = || ViewError::new(ViewCode::NumericUncertain);
     let mut bounds: Option<Aabb> = None;
-    for vertex in &mesh.vertices {
+    for vertex in mesh.vertices.iter() {
         let point = Aabb::at(placement.apply_point(*vertex).map_err(|_| numeric())?);
         bounds = Some(bounds.map_or(point, |b| b.union(point)));
     }
