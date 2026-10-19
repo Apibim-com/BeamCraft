@@ -20,6 +20,7 @@ crates/
   geom              points, vectors, coordinate systems   (no deps)
   model             beam axis, F04 error codes, SHA-256 digest  (-> geom)
   protocol          F05 frame header, limits, IPC codes   (-> model)
+  ifc               IFC4 STEP writer and test reader       (-> model)
   host              native immutable blob storage        (-> model)
 tools/
   fixtures          F07 fixture generator and verifier
@@ -57,6 +58,8 @@ C01 adds changesets (`model::changeset`, `host::changeset` claims, `beamcraft_cl
 V03 adds the native window and viewport (`apps/beamcraft-ui`, `beamcraft_engine::query::bundle`, the CLI command `view-export`): the UI runs `beamcraft view-export` in a separate process, rebuilds and re-validates the engine's snapshot of the accepted revision, and draws each distinct mesh once with one instance per element ([design note](design/v03-viewport.md)).
 
 V05.1 makes the window a command client (`beamcraft_ui::tools`, `beamcraft_ui::command`): a Create panel maps the entered plate or straight-member parameters to the argument list of the CLI's own `create-plate` and `create-member`, shows that command as the preview, and on commit runs it in a separate process, then reloads the accepted revision; a cancelled preview runs nothing, and a refusal is shown with the engine's code and message. The UI checks only that numbers are finite and that required choices are made; every engineering rule stays in the engine. Experimental: no geometry preview and no picking-driven placement ([design note](design/v05-1-ui-create-tools.md)).
+
+E02 adds the minimal IFC4 export (`beamcraft-ifc`, `beamcraft_host::output`, `beamcraft_cli::export` and the CLI commands `export-ifc` and `ifc-guid`): a new pure crate holds the deterministic 22-character GlobalId (the encoding of the UUIDv7 and a SHA-256 construction for entities that are not elements), the STEP lexical rules, the fixed entity templates and a structural reader that only tests use; the adapter opens a verified revision through the same reader as `plate-inspect`, so the kernel has already re-evaluated every plate, beam and column and compared its mesh, then writes plates, beams and columns as tessellated `IfcPlate`, `IfcBeam` and `IfcColumn`, levels as `IfcBuildingStorey`, every other kind (assemblies, welds, references) as `IfcBuildingElementProxy`, the pinned material, the published current quantities (a stale, missing or unknown one is left out and listed, never zero) and two property sets, through an atomic file install that leaves no output on a refusal. The store is only read, the GlobalId is computed and never stored, and the report lists every element with its GlobalId and every loss. Experimental: it has been checked only by the repository's own reader, an independent validation tool is not admitted yet ([design note](design/e02-ifc-export.md)).
 
 A06 adds a minimal weld (`model::command::CreateWeld`, `engine::weld`, `Footprint::for_weld`, `Shape::Weld` in the layer engine, `beamcraft_cli::weld` and the CLI commands `create-weld` and `welds`): a weld is a `connection` element with no body, explicitly authored fillet size, workshop or site and side, and one ordered `bim:connects` record towards two distinct plates, beams or columns; a welded part cannot be deleted under it and a weld cannot be copied ([design note](design/a06-welds.md)).
 

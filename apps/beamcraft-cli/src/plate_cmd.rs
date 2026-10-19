@@ -71,7 +71,7 @@ pub(crate) fn report(result: Run<Json>) -> (Json, u8) {
 
 /// [`report`] with the `diagnostics` array of a rejection filled in (the candidates of an
 /// ambiguous name).
-fn report_with(result: Run<Json>, diagnostics: Vec<Json>) -> (Json, u8) {
+pub(crate) fn report_with(result: Run<Json>, diagnostics: Vec<Json>) -> (Json, u8) {
     match result {
         Ok(json) => (json, 0),
         Err(e) => (
