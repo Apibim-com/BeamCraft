@@ -34,6 +34,7 @@ const LEVEL: &str = "019a7bf0-0000-7000-8000-000000610006";
 const OP_ASSIGN: &str = "019a7bf0-0000-7000-8000-0000006100a1";
 const OP_APPROVE: &str = "019a7bf0-0000-7000-8000-0000006100a2";
 const OP_REVOKE: &str = "019a7bf0-0000-7000-8000-0000006100a3";
+const OP_WITHDRAW: &str = "019a7bf0-0000-7000-8000-0000006100a4";
 
 struct Fixture {
     root: PathBuf,
@@ -467,7 +468,10 @@ fn a_thickness_change_withdraws_the_approval_and_a_copy_carries_no_mark() {
     assert_eq!(f.mark_of(&plate).1, "approved");
 
     // A real thickness change withdraws the approval in the same revision and keeps the value.
-    let changed = f.ok("update-element", &["--id", &plate, "--thickness", "12"]);
+    let changed = f.ok(
+        "update-element",
+        &["--id", &plate, "--thickness", "12", "--op-id", OP_WITHDRAW],
+    );
     let writes = groups(&changed, "writes");
     assert!(
         writes.contains(&(plate.clone(), "mark".to_owned())),
@@ -475,6 +479,22 @@ fn a_thickness_change_withdraws_the_approval_and_a_copy_carries_no_mark() {
     );
     assert!(writes.contains(&(plate.clone(), "shape_inputs".to_owned())));
     assert_eq!(f.mark_of(&plate), ("P/1".to_owned(), "assigned".to_owned()));
+
+    // The documented replay boundary: the withdrawal leaves the same approved-to-assigned pair
+    // a revoke leaves, so a revoke retried under the withdrawal's op id answers replayed (a
+    // real revoke right now is INVALID_ARGUMENT); only the stored canonical request of F05
+    // tells the two apart.
+    assert_eq!(
+        f.rejected("number-assign", &["--id", &plate, "--revoke", "true"]),
+        "INVALID_ARGUMENT"
+    );
+    let replayed = f.ok(
+        "number-assign",
+        &["--id", &plate, "--revoke", "true", "--op-id", OP_WITHDRAW],
+    );
+    assert_eq!(text(&replayed, "outcome"), "mark_changed_replayed");
+    assert_eq!(f.mark_of(&plate).1, "assigned");
+
     // The person approves again after the edit.
     f.ok("number-approve", &["--id", &plate]);
     assert_eq!(f.mark_of(&plate).1, "approved");

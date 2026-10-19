@@ -224,7 +224,9 @@ type MarkChangePair = (Option<Mark>, Option<Mark>);
 /// case where the element did not exist before). The before state is what tells the command
 /// kinds apart on a replay: an assign, a revoke and an approval each move the status between
 /// different pairs, so a different request under the same op id is reuse even when the
-/// resulting state agrees.
+/// resulting state agrees. One collision remains: the thickness withdrawal of `update-element`
+/// leaves the same approved-to-assigned pair a revoke leaves, so a revoke retried under the
+/// withdrawal's op id replays too (the stored canonical request of F05 tells them apart).
 fn changed_by(
     store: &RevisionStore,
     sequence: u64,
@@ -283,8 +285,11 @@ pub fn assign(
     // canonical request of F05 replaces this), so the command kind is recognised from the
     // before-and-after signature of the operation's own revision: an assign leaves `(value,
     // assigned)` over an absent or different assigned mark, a revoke leaves `(value, assigned)`
-    // over the approved one. A different request under the same op id is OP_ID_REUSE, never a
-    // replay, whatever the resulting state agrees with.
+    // over the approved one. A different request under the same op id is OP_ID_REUSE, whatever
+    // the resulting state agrees with — with one boundary: the thickness withdrawal of
+    // `update-element` leaves the same pair as a revoke, so a revoke retried under the
+    // withdrawal's op id answers replayed (the two are told apart only by the stored canonical
+    // request of F05).
     let (prior, recorded) = prior_op_with(store, &op_host, || {
         digest_of(b"the accepted request is decided from the operation's revision")
     })?;
