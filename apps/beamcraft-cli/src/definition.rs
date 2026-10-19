@@ -24,21 +24,21 @@
 //!   replay record.
 
 use crate::plate::{
-    Base, PlateError, PublishRequest, RevisionSummary, control, decode, host_uuid, integrity,
-    load_base, number, open_base, publish_revision, summarize, text,
+    Base, PlateError, PublishRequest, RevisionSummary, base_of, control, decode, host_uuid,
+    integrity, load_base, number, open_base, publish_revision, summarize, text,
 };
 use crate::plate::{decode_polygon, decode_polygons};
 use beamcraft_engine::command::MaterialInfo;
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
-use beamcraft_engine::member::ProfileInfo;
+use beamcraft_engine::member::{ProfileInfo, declared_section_area_warning};
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
     Author, Definition, EditTargets, Prepare, Resource, schema_identity,
 };
 use beamcraft_layer_engine::{Prim, Reader, Value};
-use beamcraft_model::command::CommandError;
+use beamcraft_model::command::{CommandError, label_is_valid};
 use beamcraft_model::definition::{
-    MaterialSpec, RectangleProfileSpec, SectionProfileSpec, SectionProperties,
+    DeclaredAreaWarning, MaterialSpec, RectangleProfileSpec, SectionProfileSpec, SectionProperties,
 };
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
@@ -62,6 +62,8 @@ pub enum DefinitionRecord {
         grade: Option<String>,
         /// Declared standard of the grade, a label only.
         standard: Option<String>,
+        /// Readable name, part of the definition content.
+        display_name: Option<String>,
     },
     /// The first-scope centred rectangle section.
     RectangleProfile {
@@ -96,6 +98,29 @@ impl DefinitionRecord {
         !matches!(self, Self::Material { .. })
     }
 
+    /// The readable name stored in the definition, if it has one (definitions published before
+    /// A07.2 have none).
+    pub fn display_name(&self) -> Option<&str> {
+        match self {
+            Self::Material { display_name, .. } => display_name.as_deref(),
+            Self::RectangleProfile { section, .. } | Self::SectionProfile { section, .. } => {
+                section.display_name.as_deref()
+            }
+        }
+    }
+
+    /// The names a user may select this definition by: its display name and its catalogue label
+    /// (the designation of a profile, the grade of a material). Exact, case-sensitive.
+    pub fn selectable_names(&self) -> Vec<&str> {
+        let label = match self {
+            Self::Material { grade, .. } => grade.as_deref(),
+            Self::RectangleProfile { section, .. } | Self::SectionProfile { section, .. } => {
+                section.designation.as_deref()
+            }
+        };
+        self.display_name().into_iter().chain(label).collect()
+    }
+
     /// Admits the values with the F04 codes and caps.
     pub fn validate(&self) -> Result<(), CommandError> {
         match self {
@@ -103,10 +128,12 @@ impl DefinitionRecord {
                 density_kg_m3,
                 grade,
                 standard,
+                display_name,
             } => MaterialSpec {
                 density_kg_m3: *density_kg_m3,
                 grade: grade.clone(),
                 standard: standard.clone(),
+                display_name: display_name.clone(),
             }
             .validate(),
             Self::RectangleProfile {
@@ -133,10 +160,12 @@ impl DefinitionRecord {
                 density_kg_m3,
                 grade,
                 standard,
+                display_name,
             } => Definition::Material {
                 density_kg_m3,
                 grade,
                 standard,
+                display_name,
             },
             Self::RectangleProfile {
                 width_mm,
@@ -150,6 +179,21 @@ impl DefinitionRecord {
             Self::SectionProfile { shape, section } => {
                 Definition::SectionProfile { shape, section }
             }
+        }
+    }
+
+    /// The warning for a section profile whose declared area differs from the generated outline
+    /// by more than 1 percent (owner decision D3: catalogue values are authoritative, so this
+    /// is reported and never refuses). `None` for every other definition and when it agrees.
+    pub fn declared_area_warning(&self) -> Option<DeclaredAreaWarning> {
+        match self {
+            Self::SectionProfile { shape, section } => {
+                declared_section_area_warning(&SectionProfileSpec {
+                    shape: shape.clone(),
+                    section: section.clone(),
+                })
+            }
+            _ => None,
         }
     }
 
@@ -175,7 +219,11 @@ pub(crate) fn definition_digest(path: &str) -> Option<ContentDigest> {
 /// A required property of an exact USD type with a value. A missing property is `None`; a
 /// property declared with another type, without a value or blocked is an integrity error, so a
 /// value-only match can never accept a field that the layer engine would reject.
-fn field<'a>(prim: &'a Prim, name: &str, ty: &str) -> Result<Option<&'a Value>, PlateError> {
+pub(crate) fn field<'a>(
+    prim: &'a Prim,
+    name: &str,
+    ty: &str,
+) -> Result<Option<&'a Value>, PlateError> {
     let Some(property) = prim.properties.iter().find(|p| p.name == name) else {
         return Ok(None);
     };
@@ -228,6 +276,7 @@ fn decode_definition(
             area_mm2: optional_double("steel:profile:areaMm2")?,
             mass_per_meter_kg: optional_double("steel:profile:massPerMeterKg")?,
             surface_per_meter_m2: optional_double("steel:profile:surfacePerMeterM2")?,
+            display_name: prim.display_name.clone(),
         })
     };
     let record = if let Some(family) = family {
@@ -267,6 +316,7 @@ fn decode_definition(
             density_kg_m3: optional_double("bim:densityKgM3")?,
             grade: optional_text("bim:materialGrade")?,
             standard: optional_text("bim:materialStandard")?,
+            display_name: prim.display_name.clone(),
         }
     };
     record.validate()?;
@@ -347,6 +397,150 @@ pub(crate) fn profile_lookup(
             "profile_digest",
             "profile definition is not in the model",
         )),
+    }
+}
+
+/// What a readable name selected in the definitions of a stage.
+#[derive(Debug, Clone, PartialEq)]
+pub enum NameResolution {
+    /// Exactly one definition of the wanted kind has the name.
+    Found(ContentDigest),
+    /// No definition of the wanted kind has the name.
+    NotFound,
+    /// More than one distinct definition has the name; none is chosen.
+    Ambiguous(Vec<(ContentDigest, DefinitionRecord)>),
+}
+
+/// Selects a definition by name: a profile (`profiles` true) or a material, whose display name or
+/// catalogue label (designation of a profile, grade of a material) equals `name` exactly. The
+/// match is case-sensitive; an ambiguous name is reported with every candidate, never guessed.
+pub fn resolve_name(
+    definitions: &BTreeMap<ContentDigest, DefinitionRecord>,
+    name: &str,
+    profiles: bool,
+) -> NameResolution {
+    let mut found: Vec<(ContentDigest, DefinitionRecord)> = definitions
+        .iter()
+        .filter(|(_, record)| record.is_profile() == profiles)
+        .filter(|(_, record)| record.selectable_names().contains(&name))
+        .map(|(digest, record)| (*digest, record.clone()))
+        .collect();
+    match found.len() {
+        0 => NameResolution::NotFound,
+        1 => found.pop().map_or(NameResolution::NotFound, |(digest, _)| {
+            NameResolution::Found(digest)
+        }),
+        _ => NameResolution::Ambiguous(found),
+    }
+}
+
+/// The definitions of the head revision, verified and re-admitted like every read; empty for a
+/// store without a revision.
+pub fn head_definitions(
+    store: &RevisionStore,
+) -> Result<BTreeMap<ContentDigest, DefinitionRecord>, PlateError> {
+    let revision = match store.open() {
+        Ok(revision) => revision,
+        Err(beamcraft_host::revision::RevisionError::NoRevision) => return Ok(BTreeMap::new()),
+        Err(error) => return Err(error.into()),
+    };
+    let control = control();
+    let request = open_base(&base_of(&revision)?)?;
+    let mut reader = Reader::default();
+    let opened = reader.open(request, &control)?;
+    Ok(decode(&reader, &opened, &control)?.definitions)
+}
+
+/// Dimensions of a section as they appear in a default display name: the leading parameters of
+/// its family, without the thicknesses of an I section or channel and without the radius.
+fn default_dimensions(shape: &SectionShape) -> String {
+    let SectionShape::Parametric(parametric) = shape else {
+        return String::new();
+    };
+    parametric
+        .family()
+        .parameters()
+        .iter()
+        .zip(parametric.values())
+        .filter(|(name, _)| !matches!(**name, "r" | "tw" | "tf"))
+        .map(|(_, value)| value.to_string())
+        .collect::<Vec<_>>()
+        .join("x")
+}
+
+impl DefinitionRecord {
+    /// The display name given to a definition published without `--name`: the designation of a
+    /// profile, else its family and dimensions (`I 200x100`, `RECT 200x300`); a material is its
+    /// grade and density (`S355 7850 kg/m3`). Only what the definition itself declares is used,
+    /// so an unknown density never appears as a number.
+    pub fn default_display_name(&self) -> String {
+        match self {
+            Self::Material {
+                density_kg_m3,
+                grade,
+                ..
+            } => {
+                let density = density_kg_m3.map(|d| format!("{d} kg/m3"));
+                let combined = match (grade, &density) {
+                    (Some(grade), Some(density)) => Some(format!("{grade} {density}")),
+                    _ => None,
+                };
+                // The name is a label too: when grade and density together are longer than a
+                // label may be, the grade alone (or the density alone) is still a valid name.
+                [combined, grade.clone(), density]
+                    .into_iter()
+                    .flatten()
+                    .find(|name| label_is_valid(name))
+                    .unwrap_or_else(|| "Material (density unknown)".to_owned())
+            }
+            Self::RectangleProfile {
+                width_mm,
+                height_mm,
+                section,
+            } => section
+                .designation
+                .clone()
+                .unwrap_or_else(|| format!("RECT {width_mm}x{height_mm}")),
+            Self::SectionProfile { shape, section } => {
+                if let Some(designation) = &section.designation {
+                    return designation.clone();
+                }
+                match shape {
+                    SectionShape::Custom(custom) => {
+                        format!("Custom {} points", custom.outer.len())
+                    }
+                    SectionShape::Parametric(parametric) => {
+                        let prefix = match parametric.family() {
+                            SectionFamily::IShape => "I",
+                            SectionFamily::Channel => "C",
+                            SectionFamily::Angle => "L",
+                            SectionFamily::Rhs => "RHS",
+                            SectionFamily::Chs => "CHS",
+                            SectionFamily::LippedC => "LC",
+                            SectionFamily::PlainC => "PC",
+                            SectionFamily::LippedZ => "LZ",
+                            SectionFamily::Omega => "OM",
+                        };
+                        format!("{prefix} {}", default_dimensions(shape))
+                    }
+                }
+            }
+        }
+    }
+
+    /// This definition with its display name set to `name`, or to the default name when none is
+    /// given. The name is part of the content, so it is part of the digest.
+    pub fn named(mut self, name: Option<&str>) -> Self {
+        let chosen = name
+            .map(str::to_owned)
+            .unwrap_or_else(|| self.default_display_name());
+        match &mut self {
+            Self::Material { display_name, .. } => *display_name = Some(chosen),
+            Self::RectangleProfile { section, .. } | Self::SectionProfile { section, .. } => {
+                section.display_name = Some(chosen);
+            }
+        }
+        self
     }
 }
 
@@ -514,6 +708,7 @@ mod tests {
             density_kg_m3: path_density,
             grade: None,
             standard: None,
+            display_name: None,
         };
         let digest = record.resource().unwrap().digest;
         let mut properties = vec![
@@ -560,12 +755,14 @@ mod tests {
                 area_mm2: Some(60_000.0),
                 mass_per_meter_kg: Some(471.0),
                 surface_per_meter_m2: Some(1.0),
+                display_name: None,
             },
         };
         let material = DefinitionRecord::Material {
             density_kg_m3: Some(7850.0),
             grade: Some("S355".into()),
             standard: Some("EN 10025-2".into()),
+            display_name: None,
         };
         let plain = DefinitionRecord::RectangleProfile {
             width_mm: 200.0,
@@ -675,6 +872,7 @@ mod tests {
             density_kg_m3: Some(1e9),
             grade: None,
             standard: None,
+            display_name: None,
         };
         let digest = beamcraft_model::digest::Sha256::digest(b"forged").unwrap();
         let hostile = prim(
@@ -817,6 +1015,7 @@ mod tests {
             density_kg_m3: Some(7850.0),
             grade: None,
             standard: None,
+            display_name: None,
         };
         let profile = DefinitionRecord::RectangleProfile {
             width_mm: 200.0,
@@ -839,6 +1038,172 @@ mod tests {
     }
 
     #[test]
+    fn a_display_name_is_part_of_the_content_and_is_read_back_from_the_prim() {
+        let material = |display_name: Option<&str>| DefinitionRecord::Material {
+            density_kg_m3: Some(7850.0),
+            grade: Some("S355".into()),
+            standard: None,
+            display_name: display_name.map(str::to_owned),
+        };
+        let digest = |r: &DefinitionRecord| r.resource().unwrap().digest;
+        let named = material(Some("Structural steel"));
+        assert_ne!(digest(&named), digest(&material(None)));
+        let props = vec![
+            ("bim:schemaVersion", "string", text("0.1.0")),
+            ("bim:units", "token", text("mm")),
+            ("bim:definitionKind", "token", text("material")),
+            (
+                "bim:contentDigest",
+                "string",
+                text(&digest(&named).to_string()),
+            ),
+            ("bim:densityKgM3", "double", Value::Number(7850.0)),
+            ("bim:materialGrade", "string", text("S355")),
+        ];
+        let with_name = |name: Option<&str>| {
+            let mut p = prim(definition_path(&digest(&named)), props.clone());
+            p.display_name = name.map(str::to_owned);
+            p
+        };
+        let found = decode_definitions(&[with_name(Some("Structural steel"))]).unwrap();
+        assert_eq!(found.get(&digest(&named)), Some(&named));
+        // A name that was changed, removed or invalid after publication no longer matches.
+        assert_eq!(
+            decode_definitions(&[with_name(Some("Other"))])
+                .unwrap_err()
+                .code,
+            ErrorCode::IntegrityError
+        );
+        assert_eq!(
+            decode_definitions(&[with_name(None)]).unwrap_err().code,
+            ErrorCode::IntegrityError
+        );
+        assert!(decode_definitions(&[with_name(Some("bad\nname"))]).is_err());
+        // A definition published without a name keeps its old digest and verifies as before.
+        assert!(decode_definitions(&[material_prim(Some(7850.0), Some(7850.0))]).is_ok());
+    }
+
+    #[test]
+    fn default_names_use_only_what_the_definition_declares() {
+        let name = |record: DefinitionRecord| record.default_display_name();
+        let material = |density: Option<f64>, grade: Option<&str>| DefinitionRecord::Material {
+            density_kg_m3: density,
+            grade: grade.map(str::to_owned),
+            standard: None,
+            display_name: None,
+        };
+        assert_eq!(
+            name(material(Some(7850.0), Some("S355"))),
+            "S355 7850 kg/m3"
+        );
+        assert_eq!(name(material(Some(2700.5), None)), "2700.5 kg/m3");
+        assert_eq!(name(material(None, Some("S355"))), "S355");
+        assert_eq!(name(material(None, None)), "Material (density unknown)");
+        // A grade at the label limit keeps its density but loses the suffix from the name.
+        let long = "G".repeat(256);
+        let fitted = name(material(Some(7850.0), Some(&long)));
+        assert_eq!(fitted, long);
+        let record = material(Some(7850.0), Some(&long)).named(None);
+        assert!(record.validate().is_ok());
+        assert!(matches!(
+            record,
+            DefinitionRecord::Material { density_kg_m3: Some(d), grade: Some(_), .. } if d == 7850.0
+        ));
+        let rectangle = |designation: Option<&str>| DefinitionRecord::RectangleProfile {
+            width_mm: 200.0,
+            height_mm: 300.5,
+            section: SectionProperties {
+                designation: designation.map(str::to_owned),
+                ..SectionProperties::default()
+            },
+        };
+        assert_eq!(name(rectangle(None)), "RECT 200x300.5");
+        assert_eq!(name(rectangle(Some("FB 200"))), "FB 200");
+        let section = |family, values: Vec<f64>| DefinitionRecord::SectionProfile {
+            shape: SectionShape::Parametric(ParametricSection::new(family, values).unwrap()),
+            section: SectionProperties::default(),
+        };
+        assert_eq!(
+            name(section(
+                SectionFamily::IShape,
+                vec![200.0, 100.0, 5.0, 8.0, 10.0]
+            )),
+            "I 200x100"
+        );
+        assert_eq!(
+            name(section(SectionFamily::Chs, vec![114.0, 5.0])),
+            "CHS 114x5"
+        );
+        assert_eq!(
+            name(section(
+                SectionFamily::LippedC,
+                vec![150.0, 60.0, 20.0, 2.0, 4.0]
+            )),
+            "LC 150x60x20x2"
+        );
+        // Setting a name never changes the other values, and a given name wins.
+        let named = rectangle(None).named(Some("Flat bar"));
+        assert_eq!(named.display_name(), Some("Flat bar"));
+        assert_eq!(
+            rectangle(None).named(None).display_name(),
+            Some("RECT 200x300.5")
+        );
+    }
+
+    #[test]
+    fn names_resolve_exactly_by_kind_and_an_ambiguous_name_names_every_candidate() {
+        let profile = |designation: &str, width: f64| {
+            DefinitionRecord::RectangleProfile {
+                width_mm: width,
+                height_mm: 100.0,
+                section: SectionProperties {
+                    designation: Some(designation.into()),
+                    ..SectionProperties::default()
+                },
+            }
+            .named(None)
+        };
+        let material = |density: f64| {
+            DefinitionRecord::Material {
+                density_kg_m3: Some(density),
+                grade: Some("S355".into()),
+                standard: None,
+                display_name: None,
+            }
+            .named(None)
+        };
+        let records = [
+            profile("A", 10.0),
+            profile("A", 20.0),
+            profile("B", 30.0),
+            material(7850.0),
+            material(7800.0),
+        ];
+        let definitions: BTreeMap<_, _> = records
+            .iter()
+            .map(|r| (r.resource().unwrap().digest, r.clone()))
+            .collect();
+        let resolve = |name: &str, profiles: bool| resolve_name(&definitions, name, profiles);
+        assert!(matches!(resolve("B", true), NameResolution::Found(_)));
+        assert_eq!(resolve("b", true), NameResolution::NotFound);
+        assert_eq!(resolve("B", false), NameResolution::NotFound);
+        assert_eq!(resolve("S355", true), NameResolution::NotFound);
+        assert!(matches!(
+            resolve("S355 7800 kg/m3", false),
+            NameResolution::Found(_)
+        ));
+        let NameResolution::Ambiguous(found) = resolve("A", true) else {
+            panic!("two profiles share the designation A");
+        };
+        assert_eq!(found.len(), 2);
+        let NameResolution::Ambiguous(found) = resolve("S355", false) else {
+            panic!("two materials share the grade S355");
+        };
+        assert_eq!(found.len(), 2);
+        assert_eq!(resolve("", true), NameResolution::NotFound);
+    }
+
+    #[test]
     fn a_definition_value_is_admitted_before_it_is_published() {
         for (record, code) in [
             (
@@ -846,6 +1211,7 @@ mod tests {
                     density_kg_m3: Some(0.0),
                     grade: None,
                     standard: None,
+                    display_name: None,
                 },
                 ErrorCode::InvalidArgument,
             ),

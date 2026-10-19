@@ -23,7 +23,7 @@ use beamcraft_kernel::diagnostic::{Failure, Field};
 use beamcraft_kernel::section::{Representation, SectionFailure, SectionMember, section_member};
 use beamcraft_kernel::{StraightMember, straight_member};
 use beamcraft_model::command::{CommandError, CreateStraightMember, MemberKind, Placement};
-use beamcraft_model::definition::RectangleProfileSpec;
+use beamcraft_model::definition::{DeclaredAreaWarning, RectangleProfileSpec, SectionProfileSpec};
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId};
@@ -169,6 +169,32 @@ fn map_section(failure: &SectionFailure) -> CommandError {
         SectionFailure::Frame(f) => map_kernel(f),
         other => CommandError::new(other.f04_code(), "profile", "section evaluation failed"),
     }
+}
+
+/// Net area in mm2 of the detailed outline of a section shape, as the kernel generates it
+/// (shoelace of the polygon, radii as arcs on the polygon). It is the area every member of this
+/// shape extrudes, so a declared catalogue area can be compared with it.
+pub fn section_outline_area_mm2(shape: &SectionShape) -> Result<f64, CommandError> {
+    let result = section_member(&SectionMember {
+        start: Point3::new(0.0, 0.0, 0.0),
+        end: Point3::new(0.0, 0.0, 1000.0),
+        shape: shape.clone(),
+        representation: Representation::Detailed,
+        roll_rad: None,
+    })
+    .map_err(|failure| map_section(&failure))?;
+    Ok(result.net_area_mm2())
+}
+
+/// The warning for a declared section area that differs from the generated outline by more than
+/// 1 percent (owner decision D3: a warning, never a refusal). `None` when no area is declared,
+/// when it agrees, or when the kernel cannot build the outline (the declared value stays
+/// authoritative and the failure surfaces where the body is built). The kernel is only asked when
+/// an area is declared.
+pub fn declared_section_area_warning(spec: &SectionProfileSpec) -> Option<DeclaredAreaWarning> {
+    spec.section.area_mm2?;
+    let kernel_mm2 = section_outline_area_mm2(&spec.shape).ok()?;
+    spec.declared_area_warning(kernel_mm2)
 }
 
 /// Evaluates an authored member with its resolved profile. The profile values are re-admitted
@@ -393,6 +419,36 @@ mod tests {
             })
         } else {
             no_profiles(digest)
+        }
+    }
+
+    #[test]
+    fn a_declared_section_area_beyond_one_percent_of_the_outline_is_a_warning() {
+        use beamcraft_model::definition::SectionProperties;
+        use beamcraft_model::section::{ParametricSection, SectionFamily};
+        let spec = |area: Option<f64>| SectionProfileSpec {
+            shape: SectionShape::Parametric(
+                ParametricSection::new(SectionFamily::Chs, vec![114.0, 5.0]).unwrap(),
+            ),
+            section: SectionProperties {
+                area_mm2: area,
+                ..SectionProperties::default()
+            },
+        };
+        // The tube is a ring: pi / 4 * (114^2 - 104^2).
+        let ring = std::f64::consts::FRAC_PI_4 * (114.0 * 114.0 - 104.0 * 104.0);
+        let outline = section_outline_area_mm2(&spec(None).shape).unwrap();
+        assert!((outline - ring).abs() < 0.01 * ring, "{outline} vs {ring}");
+        assert_eq!(declared_section_area_warning(&spec(None)), None);
+        assert_eq!(
+            declared_section_area_warning(&spec(Some(ring.round()))),
+            None
+        );
+        for declared in [1.05 * ring, 0.95 * ring] {
+            let warning = declared_section_area_warning(&spec(Some(declared))).unwrap();
+            assert_eq!(warning.declared_mm2, declared);
+            assert_eq!(warning.kernel_mm2, outline);
+            assert!(warning.relative_difference > 0.03 && warning.threshold == 0.01);
         }
     }
 

@@ -1000,6 +1000,67 @@ pub(crate) fn prior_op_with(
     }
 }
 
+/// The definitions an element was bound to by an operation that the host ledger accepted.
+#[derive(Debug, Clone)]
+pub struct AcceptedBinding {
+    /// The profile the element pins (members only).
+    pub profile: Option<ContentDigest>,
+    /// The material the element pins, if any.
+    pub material: Option<ContentDigest>,
+    /// The definitions of the head revision, to read the names of those digests.
+    pub definitions: BTreeMap<ContentDigest, DefinitionRecord>,
+}
+
+/// What an already accepted operation bound its element to, so that a retry by name replays the
+/// original binding instead of resolving the name again (a definition published since may make
+/// the name ambiguous). `None` when the ledger has not committed the operation or the head has no
+/// plate or member with this id; the caller then resolves names normally and the engine's
+/// content fingerprint decides replay or `OP_ID_REUSE`. An uncertain outcome is
+/// `OUTCOME_UNKNOWN`, as for admission.
+pub fn accepted_binding(
+    store: &RevisionStore,
+    op_id: &OpId,
+    element: &ElementId,
+) -> Result<Option<AcceptedBinding>, PlateError> {
+    match store.query_outcome(&host_uuid(&op_id.to_string())?)? {
+        Outcome::Committed { .. } => {}
+        Outcome::Aborted { .. } | Outcome::NotFound => return Ok(None),
+        Outcome::Unknown => {
+            return Err(PlateError::new(
+                ErrorCode::OutcomeUnknown,
+                "the operation id may or may not have been committed; run revision-recover",
+            ));
+        }
+    }
+    let revision = match store.open() {
+        Ok(revision) => revision,
+        Err(RevisionError::NoRevision) => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let control = control();
+    let request = open_base(&base_of(&revision)?)?;
+    let mut reader = Reader::default();
+    let opened = reader.open(request, &control)?;
+    let decoded = decode(&reader, &opened, &control)?;
+    let bound = decoded
+        .plates
+        .iter()
+        .find(|(p, _)| p.id == *element)
+        .map(|(p, _)| (None, p.material))
+        .or_else(|| {
+            decoded
+                .members
+                .iter()
+                .find(|(m, _)| m.id == *element)
+                .map(|(m, _)| (Some(m.profile), m.material))
+        });
+    Ok(bound.map(|(profile, material)| AcceptedBinding {
+        profile,
+        material,
+        definitions: decoded.definitions,
+    }))
+}
+
 /// The revision a replayed operation reports: the head when it is that revision, otherwise the
 /// summary the ledger recorded.
 pub(crate) fn replay_summary(

@@ -56,6 +56,7 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:profile:cavityPointsMm=double3[](optional,z=0);steel:profile:cavityVertexCounts=int[](optional,>=3 each);",
     "bim:densityKgM3=double(optional);bim:materialGrade=string(optional);",
     "bim:materialStandard=string(optional)\n",
+    "definition displayName=prim metadata string(optional,any definition kind;part of the definition content)\n",
     "derived=<element>/Geometry:Mesh;points=point3f[];faceVertexCounts=int[];faceVertexIndices=int[];",
     "subdivisionScheme=token(none);orientation=token(rightHanded);",
     "extent=float3[](min,max of points);normals=normal3f[](uniform,one unit Newell normal per face);",
@@ -396,10 +397,20 @@ const PREVIOUS_DESCRIPTOR: &str = concat!(
     "discard=(context,token,op_id,Undecided|Rejected);unknown=OUTCOME_UNKNOWN\n",
 );
 
+/// The one descriptor line that A07.2 added; see [`pin_accepted`].
+const A07_2_DISPLAY_NAME_LINE: &str = "definition displayName=prim metadata string(optional,any definition kind;part of the definition content)\n";
+
 /// Whether a layer's saved `bimSchemaDigest` is the current mapping or an earlier one that the
 /// current mapping reads without change.
 pub(crate) fn pin_accepted(pin: &str) -> Result<bool, Diagnostic> {
     if pin == schema_identity()?.digest.to_string() {
+        return Ok(true);
+    }
+    // A07.2 added one optional line (the definition display name) to the D1/D2 descriptor and
+    // changed nothing else, so the D1/D2 mapping is the current descriptor without that line.
+    let a07_1 = SCHEMA_DESCRIPTOR.replacen(A07_2_DISPLAY_NAME_LINE, "", 1);
+    let digest = Sha256::digest(a07_1.as_bytes()).map_err(|_| limit())?;
+    if pin == digest.to_string() {
         return Ok(true);
     }
     for descriptor in [
@@ -575,6 +586,8 @@ pub enum Definition {
         grade: Option<String>,
         /// Declared standard of the grade, a label only.
         standard: Option<String>,
+        /// Readable name (prim `displayName` metadata), part of the definition content.
+        display_name: Option<String>,
     },
 }
 
@@ -1142,6 +1155,51 @@ mod pin_tests {
         );
         assert!(pin_accepted(a07_1).unwrap());
         assert_ne!(a07_1, schema_identity().unwrap().digest.to_string());
+    }
+
+    #[test]
+    fn the_d1_d2_mapping_pin_is_accepted_and_is_the_current_one_without_the_display_name_line() {
+        // Pinned value: the digest of the descriptor of master with D1 and D2 (the level and the
+        // project record), before A07.2 added the optional definition display name.
+        let d1_d2 = "b799ae17004c22a5c2eaf7512367f919aec4b82b9b4b223166310286e1414b5b";
+        assert!(SCHEMA_DESCRIPTOR.contains(A07_2_DISPLAY_NAME_LINE));
+        assert!(!A07_1_DESCRIPTOR.contains(A07_2_DISPLAY_NAME_LINE));
+        assert_eq!(
+            Sha256::digest(
+                SCHEMA_DESCRIPTOR
+                    .replacen(A07_2_DISPLAY_NAME_LINE, "", 1)
+                    .as_bytes()
+            )
+            .unwrap()
+            .to_string(),
+            d1_d2
+        );
+        assert!(pin_accepted(d1_d2).unwrap());
+        assert_ne!(d1_d2, schema_identity().unwrap().digest.to_string());
+    }
+
+    #[test]
+    fn every_previously_published_mapping_pin_is_still_accepted() {
+        let current = schema_identity().unwrap().digest.to_string();
+        let pins = [
+            // A07.1, D1/D2 (pre-A07.2), A06, A01, R01, P02.2 and U09 descriptors.
+            "0311df71b2f7a4bd7b19e87ca7daef1884e989bd099bca24ee165de8e6bc310c",
+            "b799ae17004c22a5c2eaf7512367f919aec4b82b9b4b223166310286e1414b5b",
+            "b8c4a0cbfcb62a1bc9662d74965d5cc6f3cb945870a461af3fe8a8bc89352978",
+            "74580523c1bbf5ed0f440d6c054e705586970128feb0bb6b973951f69955cbcd",
+            "960c23cae54987cab86028cde90e360eb44ed64f8b6847f3c4f98b02d630ef56",
+            "70fc49a1d81314a6599284532bd2d45c18f77b4318266238cc6923b25c05f28e",
+        ];
+        for pin in pins {
+            assert!(pin_accepted(pin).unwrap(), "{pin}");
+            assert_ne!(pin, current);
+        }
+        let r01 = Sha256::digest(R01_DESCRIPTOR.as_bytes())
+            .unwrap()
+            .to_string();
+        assert!(pin_accepted(&r01).unwrap());
+        assert!(pin_accepted(&current).unwrap());
+        assert!(!pin_accepted(&"0".repeat(64)).unwrap());
     }
 
     #[test]

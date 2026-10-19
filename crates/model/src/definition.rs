@@ -12,8 +12,8 @@
 use crate::command::{CommandError, label_is_valid};
 use crate::error::ErrorCode;
 use crate::limits::{
-    DECLARED_RELATIVE_TOLERANCE, DIMENSION_CAP_MM, MAX_AREA_MM2, MAX_DENSITY_KG_M3,
-    MAX_MASS_PER_METER_KG, MAX_SURFACE_PER_METER_M2,
+    DECLARED_RELATIVE_TOLERANCE, DECLARED_SECTION_AREA_TOLERANCE, DIMENSION_CAP_MM, MAX_AREA_MM2,
+    MAX_DENSITY_KG_M3, MAX_MASS_PER_METER_KG, MAX_SURFACE_PER_METER_M2,
 };
 use crate::section::SectionShape;
 use beamcraft_geom::tolerance::ABSOLUTE_FLOOR_MM;
@@ -29,6 +29,9 @@ pub struct MaterialSpec {
     pub grade: Option<String>,
     /// Declared standard of the grade, a label only.
     pub standard: Option<String>,
+    /// Readable name shown in listings and used to select the definition by name (A07.2). Part
+    /// of the definition content, so another name is another digest. A label only.
+    pub display_name: Option<String>,
 }
 
 fn declared_label(value: &Option<String>, field: &'static str) -> Result<(), CommandError> {
@@ -48,6 +51,7 @@ impl MaterialSpec {
     pub fn validate(&self) -> Result<(), CommandError> {
         declared_label(&self.grade, "grade")?;
         declared_label(&self.standard, "standard")?;
+        declared_label(&self.display_name, "display_name")?;
         let Some(density) = self.density_kg_m3 else {
             return Ok(());
         };
@@ -91,12 +95,16 @@ pub struct SectionProperties {
     pub mass_per_meter_kg: Option<f64>,
     /// Declared surface area per metre of length in m2/m.
     pub surface_per_meter_m2: Option<f64>,
+    /// Readable name shown in listings and used to select the definition by name (A07.2). Part
+    /// of the definition content, so another name is another digest. A label only.
+    pub display_name: Option<String>,
 }
 
 impl SectionProperties {
     fn validate(&self) -> Result<(), CommandError> {
         declared_label(&self.designation, "designation")?;
         declared_label(&self.standard, "standard")?;
+        declared_label(&self.display_name, "display_name")?;
         for (value, cap, field) in [
             (self.area_mm2, MAX_AREA_MM2, "area_mm2"),
             (
@@ -214,12 +222,45 @@ pub struct SectionProfileSpec {
 }
 
 impl SectionProfileSpec {
-    /// Admits the shape and the declared values. A declared area is compared with the area of
-    /// the generated outline by the engine, which owns the kernel; this crate cannot compute it.
+    /// Admits the shape and the declared values. The declared area is a catalogue value and is
+    /// never refused for disagreeing with the outline; [`Self::declared_area_warning`] reports it.
     pub fn validate(&self) -> Result<(), CommandError> {
         self.shape.validate()?;
         self.section.validate()
     }
+
+    /// Compares the declared area, if any, with the net area of the generated outline in mm2
+    /// (computed by the caller, which owns the kernel). A relative gap above 1 percent
+    /// (`DECLARED_SECTION_AREA_TOLERANCE`) is a warning, never a refusal: owner decision D3
+    /// (2026-10-18), catalogue values are authoritative. No declared area, or an outline area
+    /// that is not a positive finite number, gives no warning.
+    pub fn declared_area_warning(&self, outline_area_mm2: f64) -> Option<DeclaredAreaWarning> {
+        let declared = self.section.area_mm2?;
+        if !outline_area_mm2.is_finite() || outline_area_mm2 <= 0.0 {
+            return None;
+        }
+        let relative_difference = (declared - outline_area_mm2).abs() / outline_area_mm2;
+        (relative_difference > DECLARED_SECTION_AREA_TOLERANCE).then_some(DeclaredAreaWarning {
+            declared_mm2: declared,
+            kernel_mm2: outline_area_mm2,
+            relative_difference,
+            threshold: DECLARED_SECTION_AREA_TOLERANCE,
+        })
+    }
+}
+
+/// A declared section area that differs from the kernel's outline area by more than the
+/// threshold. Informational: the definition is created and keeps the declared value.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DeclaredAreaWarning {
+    /// The declared (catalogue) area in mm2.
+    pub declared_mm2: f64,
+    /// The net area of the generated outline in mm2.
+    pub kernel_mm2: f64,
+    /// `|declared - kernel| / kernel`.
+    pub relative_difference: f64,
+    /// The relative threshold that was exceeded (0.01).
+    pub threshold: f64,
 }
 
 #[cfg(test)]
@@ -263,6 +304,7 @@ mod tests {
             area_mm2: Some(60_000.0),
             mass_per_meter_kg: Some(471.0),
             surface_per_meter_m2: Some(1.0),
+            ..SectionProperties::default()
         };
         assert_eq!(declared(ok.clone()), Ok(()));
         let with = |f: fn(&mut SectionProperties)| {
@@ -295,9 +337,49 @@ mod tests {
             Err(ErrorCode::InvalidArgument)
         );
         assert_eq!(
+            with(|s| s.display_name = Some("a\nb".into())),
+            Err(ErrorCode::InvalidArgument)
+        );
+        assert_eq!(
+            with(|s| s.display_name = Some("RECT 200x300".into())),
+            Ok(())
+        );
+        assert_eq!(
             with(|s| s.standard = Some("a\nb".into())),
             Err(ErrorCode::InvalidArgument)
         );
+    }
+
+    #[test]
+    fn a_declared_section_area_beyond_one_percent_is_a_warning_not_a_refusal() {
+        use crate::section::{ParametricSection, SectionFamily};
+        let spec = |area: Option<f64>| SectionProfileSpec {
+            shape: SectionShape::Parametric(
+                ParametricSection::new(SectionFamily::Chs, vec![100.0, 5.0]).unwrap(),
+            ),
+            section: SectionProperties {
+                area_mm2: area,
+                ..SectionProperties::default()
+            },
+        };
+        // The spec itself is admitted whatever the declared area is.
+        assert!(spec(Some(1.0)).validate().is_ok());
+        assert_eq!(spec(None).declared_area_warning(1000.0), None);
+        assert_eq!(spec(Some(1009.0)).declared_area_warning(1000.0), None);
+        assert_eq!(spec(Some(991.0)).declared_area_warning(1000.0), None);
+        let warning = spec(Some(1100.0)).declared_area_warning(1000.0).unwrap();
+        assert_eq!(warning.declared_mm2, 1100.0);
+        assert_eq!(warning.kernel_mm2, 1000.0);
+        assert!((warning.relative_difference - 0.1).abs() < 1e-12);
+        assert_eq!(warning.threshold, 0.01);
+        assert!(spec(Some(989.0)).declared_area_warning(1000.0).is_some());
+        // An outline area that cannot be compared gives no warning.
+        assert_eq!(spec(Some(1000.0)).declared_area_warning(f64::NAN), None);
+        assert_eq!(spec(Some(1000.0)).declared_area_warning(0.0), None);
+        // Malformed declared values are still refused.
+        for bad in [f64::NAN, 0.0, -5.0, 2e12] {
+            assert!(spec(Some(bad)).validate().is_err(), "{bad}");
+        }
     }
 
     #[test]
