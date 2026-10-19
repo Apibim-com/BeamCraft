@@ -22,7 +22,8 @@ pub mod step;
 pub mod verify;
 
 pub use emit::{
-    EXPORTER_VERSION, Subject, Truncation, WriteError, WriteOutcome, global_id, write_ifc,
+    EXPORTER_VERSION, Subject, Truncation, WriteError, WriteOutcome, global_id, storey_global_id,
+    write_ifc,
 };
 pub use model::{
     Declared, ElementData, Entity, ExportModel, LevelData, Limits, MaterialData, Mesh, Pose,

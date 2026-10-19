@@ -21,7 +21,7 @@ beamcraft ifc-guid --id UUID | --decode GLOBALID
 |---|---|---|
 | Pure writer | new crate `beamcraft-ifc` (`crates/ifc`, native, layer 2, depends on `beamcraft-model` only, no third-party dependency, no file system) | `guid` (the 22-character GlobalId, its decoder and the synthetic ids), `step` (shortest REAL text per type, string escapes, UTC time stamp, bounded hashing sink), `model` (plain input and bounds), `write_ifc` (fixed entity templates in the order of contract section 11.2) |
 | Structural reader | `beamcraft_ifc::verify` | parses a written file and checks gapless instance numbers, resolved references, valid unique GlobalIds, non-empty relationships, and recomputes the volume and closed-shell property of every face set from the file alone. A test harness, not an importer (`IFCX-SCOPE-003`): no command uses it |
-| Atomic output | `beamcraft_host::output::publish_file` | temporary file in the destination directory, `sync_all`, non-replacing hard-link install (rename only with `--overwrite`), refusal of a link or reparse point at the name or its parent, temporary removed on any failure |
+| Atomic output | `beamcraft_host::output` (`stage_file`, `Staged::install`, `publish_file`, `resolve_destination`) | validates the destination (local path only: no UNC or device path on Windows; no symbolic link or reparse point at the name or at any directory above it), writes a temporary file in the destination directory and syncs it, and installs it only on request: a non-replacing hard link (rename only with `--overwrite`). A staged file that is dropped leaves nothing behind; an installed one can be taken back (`Installed::undo`) |
 | Adapter | `beamcraft_cli::export` | opens the head or an explicit revision, runs the existing verified reader (`plate::inspect_revision`: structural validation, kernel re-evaluation of every plate, beam and column, mesh and quantity comparison), resolves the `ExportModel`, applies the strict rule, publishes the file and builds the report |
 | Command | `export-ifc`, `ifc-guid` in `apps/beamcraft-cli` | parsing and JSON only |
 
@@ -79,6 +79,24 @@ elements are not exported; every other kind is an `IfcBuildingElementProxy`.
     plate, beam or column the kernel cannot evaluate, so `IFC_PLACEMENT_ABSENT` and
     `IFC_GEOMETRY_ABSENT` cannot be produced from a real store yet (A02 will add non-rectangular
     plates). Their rule, the strict-mode refusal order and the pose reader have unit tests.
+
+11. **Destinations are checked before anything is created** (Copilot review of the first
+    version). An output, the IFC or the `--report` file, may not lie inside the store it is
+    exported from (a file there can break the revision log and `--overwrite` could replace a
+    record or blob), and the two outputs may not be the same file (compared by canonical
+    directory and name, ignoring case where the file system usually does). The IFC and the report
+    are both staged, then installed; if the report cannot be written the IFC is not installed
+    (and an IFC that was installed an instant earlier by this command is removed again if it was
+    newly created; a replaced file cannot be restored).
+12. **The report's level id is the GlobalId of the written storey** (`storey_global_id`: a
+    synthetic id of the ProjectId and the LevelId), so a consumer can match it to the file.
+13. **Revision lookup reads the head log once** (`RevisionStore::sequence_of`) instead of
+    re-scanning the directory for every sequence.
+14. **A proxy keeps its published mesh.** The mesh of an unmapped kind (valid triangles, valid
+    indices, finite points) is exported with `Closed` unset when the element has a rigid pose,
+    and is not re-verified (the kernel does not know the kind). No store built with the CLI
+    holds such an element yet (every owned kind with a body is a plate, beam or column), so this
+    is covered by the unit tests of the mesh reader and the pose rules, not end to end.
 
 ## Requirement coverage
 

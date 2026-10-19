@@ -8,8 +8,8 @@
 
 use crate::plate_cmd::{id_error, report_with};
 use beamcraft_cli::export::{
-    CONTRACT_VERSION, ExportReport, ExportRequest, export_ifc, ifc_code_of, ifc_guid_decode,
-    ifc_guid_of, validate_request,
+    CONTRACT_VERSION, ExportReport, ExportRequest, check_destinations, ifc_code_of,
+    ifc_guid_decode, ifc_guid_of, prepare_export, validate_request,
 };
 use beamcraft_cli::plate::PlateError;
 use beamcraft_host::{revision::RevisionStore, storage::BlobStore};
@@ -229,22 +229,38 @@ fn export(options: &BTreeMap<&str, &str>) -> Run<Json> {
         message: "store root is not usable",
     })?;
     let store = RevisionStore::new(blobs);
-    let report = export_ifc(&store, &request, Path::new(out))?;
-    let json = report_json(&report)?;
-    if let Some(path) = options.get("--report") {
-        let encoded = render(&json).into_bytes();
-        beamcraft_host::output::publish_file(Path::new(path), request.overwrite, |file| {
-            use std::io::Write;
-            file.write_all(&encoded)
-                .map_err(|_| beamcraft_host::output::OutputError {
-                    code: ErrorCode::BackendUnavailable,
-                    message: "the report could not be written",
-                })
+    let report_path = options.get("--report").map(Path::new);
+    check_destinations(&store, Path::new(out), report_path)?;
+    // Both files are written and synced before either is installed, so a refused report leaves
+    // the destinations as they were.
+    let prepared = prepare_export(&store, &request, Path::new(out))?;
+    let json = report_json(&prepared.report)?;
+    let staged_report = report_path
+        .map(|path| {
+            let encoded = render(&json).into_bytes();
+            beamcraft_host::output::stage_file(path, request.overwrite, |file| {
+                use std::io::Write;
+                file.write_all(&encoded)
+                    .map_err(|_| beamcraft_host::output::OutputError {
+                        code: ErrorCode::BackendUnavailable,
+                        message: "the report could not be written",
+                    })
+            })
+            .map_err(|e| PlateError {
+                code: e.code,
+                message: e.message,
+            })
         })
-        .map_err(|e| PlateError {
+        .transpose()?;
+    let installed = prepared.install()?;
+    if let Some(staged) = staged_report
+        && let Err(e) = staged.install()
+    {
+        installed.undo();
+        return Err(PlateError {
             code: e.code,
             message: e.message,
-        })?;
+        });
     }
     Ok(json)
 }
