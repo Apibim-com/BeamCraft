@@ -14,7 +14,7 @@
 //! The engine never touches USD and never generates a value. The adapter reads the marks and the
 //! markable kinds of the pinned model into a [`Numbering`]; the decision here is pure, bounded
 //! and deterministic. The layer engine re-checks the same rules on the authored candidate, so a
-//! defect in either place fails closed ([`docs/design/a09-marks.md`]).
+//! defect in either place fails closed (docs/design/a09-marks.md).
 
 use crate::footprint::Footprint;
 use beamcraft_model::command::{AssignMark, CommandError, MarkStatus};

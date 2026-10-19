@@ -33,6 +33,7 @@ const WELD: &str = "019a7bf0-0000-7000-8000-000000610005";
 const LEVEL: &str = "019a7bf0-0000-7000-8000-000000610006";
 const OP_ASSIGN: &str = "019a7bf0-0000-7000-8000-0000006100a1";
 const OP_APPROVE: &str = "019a7bf0-0000-7000-8000-0000006100a2";
+const OP_REVOKE: &str = "019a7bf0-0000-7000-8000-0000006100a3";
 
 struct Fixture {
     root: PathBuf,
@@ -325,12 +326,48 @@ fn a_mark_is_assigned_approved_listed_and_replayed() {
     assert_eq!(f.rejected("number-assign", &with_op("B/2")), "OP_ID_REUSE");
     assert_eq!(f.mark_of(&beam), ("B/9".to_owned(), "assigned".to_owned()));
 
+    // A reused id is reuse across commands too, not a replay of the recorded state: the assign
+    // id retried as a revoke (and, below, a revoke id retried as an assign) is OP_ID_REUSE.
+    assert_eq!(
+        f.rejected(
+            "number-assign",
+            &[
+                "--id",
+                beam.as_str(),
+                "--revoke",
+                "true",
+                "--op-id",
+                OP_ASSIGN
+            ]
+        ),
+        "OP_ID_REUSE"
+    );
+
     // An approval replays the same way, under its own operation.
     let approve_op = ["--id", beam.as_str(), "--op-id", OP_APPROVE];
     f.ok("number-approve", &approve_op);
     let replayed = f.ok("number-approve", &approve_op);
     assert_eq!(text(&replayed, "outcome"), "mark_changed_replayed");
     assert_eq!(f.mark_of(&beam).1, "approved");
+
+    // The revoke id retried as an assign of the recorded value is also OP_ID_REUSE.
+    let revoke_op = [
+        "--id",
+        beam.as_str(),
+        "--revoke",
+        "true",
+        "--op-id",
+        OP_REVOKE,
+    ];
+    f.ok("number-assign", &revoke_op);
+    assert_eq!(f.mark_of(&beam).1, "assigned");
+    let mut as_assign = assign_args(&beam, "B/9");
+    as_assign.extend_from_slice(&["--op-id", OP_REVOKE]);
+    assert_eq!(f.rejected("number-assign", &as_assign), "OP_ID_REUSE");
+    assert_eq!(
+        f.rejected("number-approve", &["--id", &beam, "--op-id", OP_REVOKE]),
+        "OP_ID_REUSE"
+    );
 }
 
 #[test]
