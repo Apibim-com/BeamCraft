@@ -11,30 +11,18 @@
 //! the other commands and personal workspaces are not implemented.
 
 pub mod assembly;
-pub mod bolt;
-pub mod bom;
 pub mod command;
 pub mod copy;
-pub mod drawing;
 pub mod element;
 pub mod error;
 pub mod footprint;
-pub mod grid;
-pub mod grid_edit;
-pub mod grid_geometry;
-pub mod grid_query;
-pub mod grid_update;
 pub mod level;
 pub mod limits;
-pub mod measure;
 pub mod member;
 pub mod numbering;
-pub mod numbering_approval;
-pub mod plate_draft;
 pub mod presentation;
 pub mod quantity;
 pub mod query;
-pub mod rebase;
 pub mod reference;
 pub mod scene;
 pub mod solid;
