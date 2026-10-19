@@ -61,6 +61,8 @@ pub enum DeletedKind {
     Assembly,
     /// A weld (A06), a `connection` element; deleting it removes its `connects` record.
     Weld,
+    /// A bolt group (A05), a `connection` element; deleting it removes its `connects` record.
+    Bolt,
     /// A level (D2); refused while a plate, beam or column is assigned to it.
     Level,
 }
@@ -132,6 +134,8 @@ pub fn delete_element(
         Some(DeletedKind::Assembly)
     } else if crate::weld::is_weld(&base_request, &command.target_id, &control)? {
         Some(DeletedKind::Weld)
+    } else if crate::bolt::is_bolt(&base_request, &command.target_id, &control)? {
+        Some(DeletedKind::Bolt)
     } else if crate::level::is_level(&base_request, &command.target_id, &control)? {
         Some(DeletedKind::Level)
     } else {

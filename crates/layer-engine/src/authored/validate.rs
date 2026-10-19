@@ -659,13 +659,25 @@ pub(super) fn snapshot(
                 }
             }
             // An assembly has no shape inputs and no material of its own; a connection is a weld
-            // with its own properties (A06) and no material either.
+            // (A06) or a bolt group (A05) with its own properties and no material either.
             "assembly" | "connection" | "level" => {
                 if relationship(p, "bim:material").is_some_and(|r| !r.targets.is_empty()) {
                     return Err(invalid());
                 }
                 if kind == "connection" {
-                    weld_properties(p)?;
+                    // Exactly one property set: a weld's or a bolt group's. Content with
+                    // neither, or with both, is not something this version reads — refused,
+                    // never guessed.
+                    match (
+                        p.properties.iter().any(|v| v.name == "steel:weld:type"),
+                        p.properties
+                            .iter()
+                            .any(|v| v.name == "steel:bolt:diameterMm"),
+                    ) {
+                        (true, false) => weld_properties(p)?,
+                        (false, true) => bolt_properties(p)?,
+                        _ => return Err(invalid()),
+                    }
                 }
                 if kind == "level" {
                     elevation(number(p, "bim:elevationMm")?)?;
@@ -806,6 +818,7 @@ pub(super) fn snapshot(
             "U02-V06:standard-mesh-buffer-structure",
             "A01-V01:part-of-kinds-cardinality-self-link-and-cycles",
             "A06-V01:weld-properties-and-connects-two-distinct-parts",
+            "A05-V01:bolt-properties-and-connects-two-distinct-parts",
             "D2-V01:level-elevation-and-level-kinds-cardinality-and-dangling",
             "A08-V01:mark-value-status-pairing-kinds-and-uniqueness",
         ],
@@ -988,10 +1001,58 @@ fn weld_size(mm: f64) -> Result<(), Diagnostic> {
     cap([mm], 1000.0)
 }
 
-/// A06 `connects` records (domain vocabulary section 5.1): only a weld carries one, with exactly
-/// two distinct targets (`DV-REL-004`, `DV-REL-007`), never itself (`DV-REL-006`), each an active
-/// owned plate, beam or column (`DV-REL-001` dangling, `DV-REL-003` kind). An assembly is a valid
-/// target in the vocabulary but not for a weld in this slice.
+/// A05 bolt properties of a loaded `connection`: every one is authored, the diameter is finite in
+/// `(0, 1000]`, the count is 1 to 512, the pitch is finite in `(0, 1e6]`, the origin is finite
+/// within the coordinate cap and the direction is a finite unit vector. A connection without them
+/// is not a bolt group this slice can read, so it is refused rather than guessed.
+fn bolt_properties(p: &Prim) -> Result<(), Diagnostic> {
+    let diameter = number(p, "steel:bolt:diameterMm")?;
+    finite([diameter])?;
+    if diameter <= 0.0 {
+        return Err(invalid());
+    }
+    cap([diameter], 1000.0)?;
+    let count = match required(p, "steel:bolt:count", "int")? {
+        Value::Int(n) => *n,
+        _ => return Err(invalid()),
+    };
+    if !(1..=512).contains(&count) {
+        return Err(invalid());
+    }
+    let pitch = number(p, "steel:bolt:pitchMm")?;
+    finite([pitch])?;
+    if pitch <= 0.0 {
+        return Err(invalid());
+    }
+    cap([pitch], 1e6)?;
+    let origin = bolt_vec3(p, "steel:bolt:originMm")?;
+    finite(origin)?;
+    cap(origin, 1e9)?;
+    let direction = bolt_vec3(p, "steel:bolt:directionMm")?;
+    finite(direction)?;
+    let squared = direction.iter().map(|v| v * v).sum::<f64>();
+    if (squared - 1.0).abs() > 1e-6 {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+/// One scalar `double3` property of a prim.
+fn bolt_vec3(p: &Prim, name: &str) -> Result<[f64; 3], Diagnostic> {
+    let Value::Array(values) = required(p, name, "double3")? else {
+        return Err(invalid());
+    };
+    match values.as_slice() {
+        [Value::Number(x), Value::Number(y), Value::Number(z)] => Ok([*x, *y, *z]),
+        _ => Err(invalid()),
+    }
+}
+
+/// A06 and A05 `connects` records (domain vocabulary section 5.1): only a connection — a weld or
+/// a bolt group — carries one, with exactly two distinct targets (`DV-REL-004`, `DV-REL-007`),
+/// never itself (`DV-REL-006`), each an active owned plate, beam or column (`DV-REL-001`
+/// dangling, `DV-REL-003` kind). An assembly is a valid target in the vocabulary but not for a
+/// weld or a bolt group in this slice.
 fn connects(prims: &[Prim]) -> Result<(), Diagnostic> {
     let elements: BTreeMap<&str, (&Prim, &str)> = prims
         .iter()
@@ -1002,7 +1063,7 @@ fn connects(prims: &[Prim]) -> Result<(), Diagnostic> {
             if kind == "connection" {
                 return Err(fail(
                     ErrorCode::DependencyConflict,
-                    "a weld connects exactly two parts",
+                    "a connection connects exactly two parts",
                 ));
             }
             continue;
@@ -1016,20 +1077,20 @@ fn connects(prims: &[Prim]) -> Result<(), Diagnostic> {
         let [first, second] = r.targets.as_slice() else {
             return Err(fail(
                 ErrorCode::DependencyConflict,
-                "a weld connects exactly two parts",
+                "a connection connects exactly two parts",
             ));
         };
         if first == second {
             return Err(fail(
                 ErrorCode::InvalidArgument,
-                "a weld connects two distinct parts",
+                "a connection connects two distinct parts",
             ));
         }
         for target in [first, second] {
             if target == path {
                 return Err(fail(
                     ErrorCode::InvalidArgument,
-                    "a weld cannot connect itself",
+                    "a connection cannot connect itself",
                 ));
             }
             match elements.get(target.as_str()) {
@@ -1551,6 +1612,54 @@ pub(super) fn changes(
                             });
                         }
                     }
+                    Shape::Bolt(b) => {
+                        if e.material.is_some()
+                            || e.placement.translation_mm != [0.0; 3]
+                            || e.placement.orientation_xyzw != [0.0, 0.0, 0.0, 1.0]
+                        {
+                            return Err(unsupported());
+                        }
+                        finite([b.diameter_mm])?;
+                        if b.diameter_mm <= 0.0 {
+                            return Err(invalid());
+                        }
+                        cap([b.diameter_mm], 1000.0)?;
+                        if b.count == 0 || b.count > 512 {
+                            return Err(invalid());
+                        }
+                        finite([b.pitch_mm])?;
+                        if b.pitch_mm <= 0.0 {
+                            return Err(invalid());
+                        }
+                        cap([b.pitch_mm], 1e6)?;
+                        finite(b.origin_mm)?;
+                        cap(b.origin_mm, 1e9)?;
+                        finite(b.direction_mm)?;
+                        let squared = b.direction_mm.iter().map(|v| v * v).sum::<f64>();
+                        if (squared - 1.0).abs() > 1e-6 {
+                            return Err(invalid());
+                        }
+                        let [main, secondary] = &b.connects;
+                        if !uuid7(main) || !uuid7(secondary) {
+                            return Err(fail(
+                                ErrorCode::InvalidId,
+                                "invalid full element identity",
+                            ));
+                        }
+                        if main == secondary || main == &e.id || secondary == &e.id {
+                            return Err(fail(
+                                ErrorCode::InvalidArgument,
+                                "a bolt group connects two distinct other parts",
+                            ));
+                        }
+                        // The parts' existence and kinds decide acceptance; they are only read.
+                        for part in [main, secondary] {
+                            reads.insert(Footprint {
+                                identity: part.clone(),
+                                group: Group::Lifecycle,
+                            });
+                        }
+                    }
                     Shape::Level { elevation_mm } => {
                         if e.material.is_some()
                             || e.placement.translation_mm != [0.0; 3]
@@ -1655,6 +1764,12 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                 ),
                 Shape::Assembly => Ok(()),
                 Shape::Weld(w) => finite([w.size_mm]),
+                Shape::Bolt(b) => finite(
+                    [b.diameter_mm, b.pitch_mm]
+                        .into_iter()
+                        .chain(b.origin_mm)
+                        .chain(b.direction_mm),
+                ),
                 Shape::Level { elevation_mm } => finite([*elevation_mm]),
             }
         }

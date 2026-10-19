@@ -14,9 +14,9 @@ use crate::digest::{ContentDigest, Sha256};
 use crate::error::ErrorCode;
 use crate::id::ElementId;
 use crate::limits::{
-    CONTOUR_POINT_CAP, COORDINATE_CAP_MM, DIMENSION_CAP_MM, MAX_LABEL_BYTES, MAX_MARK_BYTES,
-    MIN_CONTOUR_POINTS, MIN_LABEL_BYTES, ORIENTATION_NORM_TOLERANCE, ROLL_CAP_RAD,
-    WELD_SIZE_CAP_MM,
+    BOLT_DIAMETER_CAP_MM, CONTOUR_POINT_CAP, COORDINATE_CAP_MM, DIMENSION_CAP_MM,
+    MAX_BOLT_GROUP_SIZE, MAX_LABEL_BYTES, MAX_MARK_BYTES, MIN_CONTOUR_POINTS, MIN_LABEL_BYTES,
+    ORIENTATION_NORM_TOLERANCE, ROLL_CAP_RAD, WELD_SIZE_CAP_MM,
 };
 use beamcraft_geom::canonical_f64_bytes;
 use core::fmt;
@@ -1136,12 +1136,10 @@ impl AssignMark {
             }
             _ => {}
         }
-        Ok(())
     }
 
-    /// SHA-256 of a versioned, length-prefixed encoding of the validated request.
+    /// SHA-256 of a versioned encoding of the request.
     pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
-        self.validate_arguments()?;
         let mut bytes = Vec::with_capacity(80);
         bytes.extend_from_slice(b"BeamCraft/A08/AssignMark/v1\0");
         bytes.extend_from_slice(self.target_id.as_bytes());
@@ -1152,6 +1150,172 @@ impl AssignMark {
                 bytes.extend_from_slice(&(mark.len() as u64).to_le_bytes());
                 bytes.extend_from_slice(mark.as_bytes());
             }
+        }
+        Sha256::digest(&bytes).map_err(|_| {
+            CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+        })
+    }
+}
+
+/// The authored properties of one bolt group (A05). The group is `count` bolts in a straight
+/// world line `origin + direction * (pitch * i)`, `i` in `0..count`. No solid geometry is derived
+/// from them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BoltSpec {
+    /// Nominal bolt diameter in millimetres: finite, greater than 0 and at most
+    /// [`BOLT_DIAMETER_CAP_MM`].
+    pub diameter_mm: f64,
+    /// Bolts in the group, 1 to [`MAX_BOLT_GROUP_SIZE`].
+    pub count: usize,
+    /// Centre-to-centre distance along the line in millimetres: finite, greater than 0 and at
+    /// most the dimension cap.
+    pub pitch_mm: f64,
+    /// World position of the first bolt in millimetres, each component within the coordinate cap.
+    pub origin_mm: [f64; 3],
+    /// Unit world direction of the line: finite, squared norm within
+    /// [`ORIENTATION_NORM_TOLERANCE`] of one. Stored normalized; builders pass a unit vector.
+    pub direction_mm: [f64; 3],
+}
+
+/// A05 `CreateBolt`: a new `connection` element (domain vocabulary section 2.3) that is a bolt
+/// group. Its one `connects` record (section 5.1) names exactly two distinct parts in order, the
+/// main part first; the record lives with the group, so the parts are only read. It carries the
+/// common base and the bolt properties; it has no body, material or derived geometry, and its
+/// placement is the identity in this slice.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CreateBolt {
+    /// Identity of the new bolt group.
+    pub new_id: ElementId,
+    /// Explicit user label.
+    pub name: String,
+    /// The main part: a plate, beam or column.
+    pub main_id: ElementId,
+    /// The part bolted to it: a plate, beam or column.
+    pub secondary_id: ElementId,
+    /// The bolt properties.
+    pub bolt: BoltSpec,
+}
+
+impl CreateBolt {
+    /// Admits the request: the label (`DV-BASE-003`), two distinct parts (`DV-REL-006`,
+    /// `DV-REL-007`), a group that is not one of its own parts, a finite diameter in
+    /// `(0, BOLT_DIAMETER_CAP_MM]`, a count of 1 to [`MAX_BOLT_GROUP_SIZE`], a finite pitch in
+    /// `(0, dimension cap]`, a finite origin within the coordinate cap and a finite unit
+    /// direction. Whether the parts exist, their kinds and whether every bolt position lies on
+    /// both parts are the engine's decisions.
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        if !label_is_valid(&self.name) {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "name",
+                "label must be 1 to 256 bytes without control characters",
+            ));
+        }
+        if self.main_id == self.secondary_id {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "secondary_id",
+                "a bolt group connects two distinct parts",
+            ));
+        }
+        if self.new_id == self.main_id || self.new_id == self.secondary_id {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "new_id",
+                "a bolt group cannot connect itself",
+            ));
+        }
+        let bolt = &self.bolt;
+        let scalars = [bolt.diameter_mm, bolt.pitch_mm];
+        if scalars.iter().any(|v| !v.is_finite()) || bolt.origin_mm.iter().any(|v| !v.is_finite()) {
+            return Err(CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "bolt",
+                "bolt diameter, pitch or origin is not finite",
+            ));
+        }
+        if bolt.direction_mm.iter().any(|v| !v.is_finite()) {
+            return Err(CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "direction_mm",
+                "direction is not finite",
+            ));
+        }
+        if bolt.diameter_mm <= 0.0 || bolt.diameter_mm > BOLT_DIAMETER_CAP_MM {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "diameter_mm",
+                "bolt diameter must be greater than 0 and at most 1000 mm",
+            ));
+        }
+        if bolt.count == 0 {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "count",
+                "a bolt group has at least one bolt",
+            ));
+        }
+        if bolt.count > MAX_BOLT_GROUP_SIZE {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "count",
+                "a bolt group has more than 512 bolts",
+            ));
+        }
+        if bolt.pitch_mm <= 0.0 || bolt.pitch_mm > DIMENSION_CAP_MM {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "pitch_mm",
+                "bolt pitch must be greater than 0 and at most the dimension cap",
+            ));
+        }
+        if bolt.origin_mm.iter().any(|v| v.abs() > COORDINATE_CAP_MM) {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "origin_mm",
+                "origin component exceeds the coordinate cap",
+            ));
+        }
+        let squared = bolt.direction_mm.iter().map(|v| v * v).sum::<f64>();
+        if (squared - 1.0).abs() > ORIENTATION_NORM_TOLERANCE {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "direction_mm",
+                "direction must be a unit vector",
+            ));
+        }
+        Ok(())
+    }
+
+    /// SHA-256 of a versioned, length-prefixed encoding of the validated request.
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        self.validate_arguments()?;
+        let bad = || {
+            CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "bolt",
+                "a bolt property cannot be encoded",
+            )
+        };
+        let mut bytes = Vec::with_capacity(160 + self.name.len());
+        bytes.extend_from_slice(b"BeamCraft/A05/CreateBolt/v1\0");
+        bytes.extend_from_slice(self.new_id.as_bytes());
+        bytes.extend_from_slice(&(self.name.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(self.name.as_bytes());
+        bytes.extend_from_slice(self.main_id.as_bytes());
+        bytes.extend_from_slice(self.secondary_id.as_bytes());
+        for v in [self.bolt.diameter_mm, self.bolt.pitch_mm] {
+            bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| bad())?);
+        }
+        bytes.extend_from_slice(&(self.bolt.count as u64).to_le_bytes());
+        for v in self
+            .bolt
+            .origin_mm
+            .iter()
+            .copied()
+            .chain(self.bolt.direction_mm)
+        {
+            bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| bad())?);
         }
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
@@ -1784,10 +1948,28 @@ mod tests {
         assert!(set != other && set != clear && other != clear);
     }
 
+<<<<<<< HEAD
     fn assign(mark: Option<&str>) -> AssignMark {
         AssignMark {
             target_id: id(5),
             mark: mark.map(str::to_owned),
+        }
+    }
+
+    fn bolt() -> CreateBolt {
+        CreateBolt {
+            new_id: id(1),
+            name: "B1".into(),
+            main_id: id(2),
+            secondary_id: id(3),
+            bolt: BoltSpec {
+                diameter_mm: 16.0,
+                count: 4,
+                pitch_mm: 80.0,
+                origin_mm: [100.0, 200.0, 5.0],
+                direction_mm: [1.0, 0.0, 0.0],
+            },
+>>>>>>> ccc94fe (Add minimal bolt groups joining two parts (A05))
         }
     }
 
@@ -1840,5 +2022,186 @@ mod tests {
         );
         assert_eq!(MarkStatus::parse("approved"), Some(MarkStatus::Approved));
         assert_eq!(MarkStatus::parse("open"), None);
+    }
+
+    #[test]
+    fn create_bolt_admits_two_distinct_parts_and_bounded_properties() {
+        let group = bolt();
+        assert!(group.validate_arguments().is_ok());
+        let base = group.content_fingerprint().unwrap();
+        // Every authored property and the part order are part of the content.
+        let variants = [
+            CreateBolt {
+                secondary_id: id(2),
+                main_id: id(3),
+                ..group.clone()
+            },
+            CreateBolt {
+                bolt: BoltSpec {
+                    diameter_mm: 20.0,
+                    ..group.bolt
+                },
+                ..group.clone()
+            },
+            CreateBolt {
+                bolt: BoltSpec {
+                    count: group.bolt.count + 1,
+                    ..group.bolt
+                },
+                ..group.clone()
+            },
+            CreateBolt {
+                bolt: BoltSpec {
+                    pitch_mm: 90.0,
+                    ..group.bolt
+                },
+                ..group.clone()
+            },
+            CreateBolt {
+                bolt: BoltSpec {
+                    origin_mm: [101.0, 200.0, 5.0],
+                    ..group.bolt
+                },
+                ..group.clone()
+            },
+            CreateBolt {
+                bolt: BoltSpec {
+                    direction_mm: [0.0, 1.0, 0.0],
+                    ..group.bolt
+                },
+                ..group.clone()
+            },
+        ];
+        for v in &variants {
+            assert_ne!(v.content_fingerprint().unwrap(), base);
+        }
+        let refused = |b: CreateBolt| b.validate_arguments().unwrap_err();
+        assert_eq!(
+            refused(CreateBolt {
+                secondary_id: id(2),
+                ..group.clone()
+            })
+            .code,
+            ErrorCode::InvalidArgument
+        );
+        assert_eq!(
+            refused(CreateBolt {
+                new_id: id(2),
+                ..group.clone()
+            })
+            .code,
+            ErrorCode::InvalidArgument
+        );
+        for diameter in [0.0, -1.0, 1000.5] {
+            assert_eq!(
+                refused(CreateBolt {
+                    bolt: BoltSpec {
+                        diameter_mm: diameter,
+                        ..group.bolt
+                    },
+                    ..group.clone()
+                })
+                .code,
+                ErrorCode::InvalidArgument
+            );
+        }
+        for (count, expected) in [
+            (0, ErrorCode::InvalidArgument),
+            (MAX_BOLT_GROUP_SIZE + 1, ErrorCode::LimitExceeded),
+        ] {
+            assert_eq!(
+                refused(CreateBolt {
+                    bolt: BoltSpec {
+                        count,
+                        ..group.bolt
+                    },
+                    ..group.clone()
+                })
+                .code,
+                expected
+            );
+        }
+        assert!(
+            CreateBolt {
+                bolt: BoltSpec {
+                    count: MAX_BOLT_GROUP_SIZE,
+                    ..group.bolt
+                },
+                ..group.clone()
+            }
+            .validate_arguments()
+            .is_ok()
+        );
+        assert_eq!(
+            refused(CreateBolt {
+                bolt: BoltSpec {
+                    pitch_mm: 0.0,
+                    ..group.bolt
+                },
+                ..group.clone()
+            })
+            .code,
+            ErrorCode::InvalidArgument
+        );
+        assert_eq!(
+            refused(CreateBolt {
+                bolt: BoltSpec {
+                    pitch_mm: DIMENSION_CAP_MM + 1.0,
+                    ..group.bolt
+                },
+                ..group.clone()
+            })
+            .code,
+            ErrorCode::InvalidArgument
+        );
+        assert_eq!(
+            refused(CreateBolt {
+                bolt: BoltSpec {
+                    origin_mm: [1_000_000_001.0, 0.0, 0.0],
+                    ..group.bolt
+                },
+                ..group.clone()
+            })
+            .code,
+            ErrorCode::LimitExceeded
+        );
+        for field in [
+            BoltSpec {
+                diameter_mm: f64::NAN,
+                ..group.bolt
+            },
+            BoltSpec {
+                origin_mm: [0.0, f64::INFINITY, 0.0],
+                ..group.bolt
+            },
+        ] {
+            let e = refused(CreateBolt {
+                bolt: field,
+                ..group.clone()
+            });
+            assert_eq!(e.code, ErrorCode::NonFiniteNumber, "{}", e.field);
+        }
+        let e = refused(CreateBolt {
+            bolt: BoltSpec {
+                direction_mm: [2.0, 0.0, 0.0],
+                ..group.bolt
+            },
+            ..group.clone()
+        });
+        assert_eq!(e.code, ErrorCode::InvalidArgument);
+        assert_eq!(e.field, "direction_mm");
+        assert_eq!(
+            refused(CreateBolt {
+                name: String::new(),
+                ..group.clone()
+            })
+            .code,
+            ErrorCode::InvalidArgument
+        );
+        // Signed zero and an equivalent unit direction fingerprint the same.
+        let mut zero = bolt();
+        zero.bolt.origin_mm[0] = -0.0;
+        assert_eq!(zero.content_fingerprint().unwrap(), base);
+        assert_eq!(group.clone().content_fingerprint().unwrap(), base);
     }
 }
