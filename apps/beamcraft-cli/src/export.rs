@@ -286,17 +286,13 @@ fn revision_id(revision: &Revision) -> Result<Uuid7, PlateError> {
 fn mesh_of(record: &beamcraft_engine::solid::SolidMesh) -> Result<Mesh, PlateError> {
     let bad = || error(ErrorCode::IntegrityError, "a mesh index is out of range");
     let derived = kernel_mesh(record)?;
+    let index = |v: i64| u32::try_from(v).map_err(|_| bad());
     let triangles = derived
         .indices
-        .chunks_exact(3)
-        .map(|c| {
-            let at = |i: usize| {
-                c.get(i)
-                    .and_then(|v| u32::try_from(*v).ok())
-                    .ok_or_else(bad)
-            };
-            Ok([at(0)?, at(1)?, at(2)?])
-        })
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|&[a, b, c]| Ok([index(a)?, index(b)?, index(c)?]))
         .collect::<Result<Vec<_>, PlateError>>()?;
     Ok(Mesh {
         points: derived.points,
