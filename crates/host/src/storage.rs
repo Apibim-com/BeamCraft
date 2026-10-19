@@ -166,6 +166,12 @@ impl BlobStore {
         Self::with_limit(root, MAX_BLOB_BYTES)
     }
 
+    /// The canonical form of the store's root directory, for deciding whether a path lies inside
+    /// the store.
+    pub fn canonical_root(&self) -> &Path {
+        &self.canonical_root
+    }
+
     /// Opens a store with a smaller blob/read memory cap (zero permits only empty blobs).
     /// Caps above [`MAX_BLOB_BYTES`] are invalid; errors never include the root path.
     pub fn with_limit(root: impl AsRef<Path>, cap: usize) -> Result<Self, StorageError> {
