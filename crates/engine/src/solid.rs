@@ -11,9 +11,9 @@
 use crate::scene::SceneMesh;
 use beamcraft_geom::Point3;
 use beamcraft_kernel::PlateResult;
-use beamcraft_kernel::ops::OpResult;
+use beamcraft_kernel::ops::{Body, OpResult};
 use beamcraft_kernel::section::SectionResult;
-use beamcraft_model::digest::ContentDigest;
+use beamcraft_model::digest::{ContentDigest, Sha256};
 
 /// An evaluated, certified body mesh in element-local millimetres.
 #[derive(Debug, Clone, PartialEq)]
@@ -48,6 +48,24 @@ impl SolidMesh {
             blob: result.blob().to_vec(),
             digest: result.mesh_digest(),
             volume_mm3: result.volume_mm3().midpoint(),
+        }
+    }
+
+    /// The mesh of any certified body with the volume its record reports. Used by the contour
+    /// plate: the blob is the body's canonical BCMESH01 encoding and the digest its SHA-256.
+    pub fn from_body(body: &Body, volume_mm3: f64) -> Self {
+        let mesh = body.mesh();
+        let blob = body.to_blob();
+        let digest = Sha256::digest(&blob)
+            // The blob is bounded by the command caps, far below the digest input limit; the
+            // fallback only makes a stale record visible, it never invents geometry.
+            .unwrap_or_else(|_| ContentDigest::from_bytes([0; 32]));
+        Self {
+            vertices: mesh.vertices().to_vec(),
+            triangles: mesh.triangles().to_vec(),
+            blob,
+            digest,
+            volume_mm3,
         }
     }
 

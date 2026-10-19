@@ -103,6 +103,7 @@ const CREATE_OPTIONS: &[&str] = &[
     "--store",
     "--width",
     "--length",
+    "--outer",
     "--thickness",
     "--name",
     "--translation",
@@ -460,6 +461,21 @@ fn candidate_json(digest: &ContentDigest, record: &DefinitionRecord) -> Json {
     ])
 }
 
+/// One closed polygon from `"X,Y;X,Y;..."`, in millimetres. Winding, simplicity and the caps
+/// are the kernel's and the model's decisions, not the parser's.
+pub(crate) fn parse_polygon(text: &str) -> Run<Vec<[f64; 2]>> {
+    text.split(';')
+        .map(|pair| {
+            let parts: Vec<f64> = pair
+                .split(',')
+                .map(|v| v.trim().parse::<f64>())
+                .collect::<Result<_, _>>()
+                .map_err(|_| invalid("an outline point is not two numbers"))?;
+            <[f64; 2]>::try_from(parts).map_err(|_| invalid("an outline point is not two numbers"))
+        })
+        .collect()
+}
+
 /// The section shape of `define-profile --family`: a family token with one `--<parameter>` per
 /// family parameter (millimetres), or `custom` with `--outer "X,Y;X,Y;..."` (counter-clockwise)
 /// and optional `--cavity "X,Y;...|X,Y;..."` (each clockwise). The rectangle's `--width` and
@@ -475,26 +491,16 @@ fn section_shape(family: &str, options: &BTreeMap<&str, &str>) -> Run<SectionSha
         if parameters.iter().any(|p| options.contains_key(p)) {
             return Err(invalid("a custom outline takes --outer and --cavity only"));
         }
-        let polygon = |text: &str| -> Run<Vec<[f64; 2]>> {
-            text.split(';')
-                .map(|pair| {
-                    let parts: Vec<f64> = pair
-                        .split(',')
-                        .map(|v| v.trim().parse::<f64>())
-                        .collect::<Result<_, _>>()
-                        .map_err(|_| invalid("an outline point is not two numbers"))?;
-                    <[f64; 2]>::try_from(parts)
-                        .map_err(|_| invalid("an outline point is not two numbers"))
-                })
-                .collect()
-        };
-        let outer = polygon(
+        let outer = parse_polygon(
             options
                 .get("--outer")
                 .ok_or_else(|| invalid("a custom outline needs --outer"))?,
         )?;
         let cavities = match options.get("--cavity") {
-            Some(text) => text.split('|').map(polygon).collect::<Run<Vec<_>>>()?,
+            Some(text) => text
+                .split('|')
+                .map(parse_polygon)
+                .collect::<Run<Vec<_>>>()?,
             None => Vec::new(),
         };
         return Ok(SectionShape::Custom(CustomSection { outer, cavities }));
@@ -687,10 +693,32 @@ fn create(
     } else {
         None
     };
-    let width = float(options, "--width")?;
-    let length = float(options, "--length")?;
+    // The outline is either the `--width`/`--length` origin rectangle or an arbitrary closed
+    // `--outer` contour (A02, experimental, counter-clockwise, element-local millimetres). The
+    // parser reads XY pairs; the plate body frame is the z = 0 plane, so the pair becomes a
+    // point with z = 0 and an off-plane input cannot be expressed here at all.
+    let contour: Vec<[f64; 3]> = match (given("--outer"), given("--width"), given("--length")) {
+        (Some(text), None, None) => parse_polygon(text)?
+            .into_iter()
+            .map(|[x, y]| [x, y, 0.0])
+            .collect(),
+        (None, Some(_), Some(_)) => {
+            let width = float(options, "--width")?;
+            let length = float(options, "--length")?;
+            origin_rectangle_contour(width, length).map_err(PlateError::from)?
+        }
+        (Some(_), _, _) => {
+            return Err(invalid(
+                "--outer and --width/--length are two ways of one outline; use one",
+            ));
+        }
+        (None, _, _) => {
+            return Err(invalid(
+                "create-plate needs --width and --length, or --outer",
+            ));
+        }
+    };
     let thickness = float(options, "--thickness")?;
-    let contour = origin_rectangle_contour(width, length).map_err(PlateError::from)?;
     let name = given("--name").unwrap_or("Plate").to_owned();
     let command = CreatePlate {
         new_id,
