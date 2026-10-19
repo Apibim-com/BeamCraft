@@ -63,6 +63,9 @@ pub struct App {
     tool_note: Option<Result<String, String>>,
     /// Why the last definitions refresh failed; kept apart from `tool_note` so neither hides the other.
     refresh_error: Option<String>,
+    /// The scene framing the camera was last fitted to (centre, extent, aspect): a reload that
+    /// reports the same framing keeps the user's view instead of fitting again.
+    framed: Option<([f32; 3], f32, f32)>,
     editor: Editor,
     edit_job: Option<Receiver<Result<Edited, ToolError>>>,
     select_job: Option<SelectJob>,
@@ -143,18 +146,22 @@ fn choice_combo(
             || if required { "choose…" } else { "none" }.to_owned(),
             |c| c.label.clone(),
         );
-    egui::ComboBox::from_id_salt(id)
-        .width(200.0)
-        .selected_text(selected)
-        .show_ui(ui, |ui| {
-            if !required {
-                ui.selectable_value(current, None, "none");
-            }
-            for choice in choices {
-                ui.selectable_value(current, Some(choice.digest.clone()), &choice.label);
-            }
-        });
-    ui.label(label);
+    // The label sits left of the list (as with the text fields): drawn below it, it read as
+    // the label of the next drop-down.
+    ui.horizontal(|ui| {
+        ui.label(label);
+        egui::ComboBox::from_id_salt(id)
+            .width(200.0)
+            .selected_text(selected)
+            .show_ui(ui, |ui| {
+                if !required {
+                    ui.selectable_value(current, None, "none");
+                }
+                for choice in choices {
+                    ui.selectable_value(current, Some(choice.digest.clone()), &choice.label);
+                }
+            });
+    });
 }
 
 fn point_fields(ui: &mut egui::Ui, point: &mut [String; 3]) {
@@ -238,6 +245,46 @@ fn field(ui: &mut egui::Ui, label: &str, text: &mut String, width: f32) {
                 .char_limit(MAX_TEXT),
         );
     });
+}
+
+/// The offscreen render target size in device pixels: the viewport with its longest side clamped
+/// to the renderer's 4096 limit, scaled as a whole. A target that keeps the viewport's aspect
+/// ratio can be drawn over the whole panel without stretching the model (a wide window used to
+/// widen the picture by the clamped-away part).
+fn target_size(size: [f32; 2], scale: f32) -> [u32; 2] {
+    let longest = size.iter().fold(0.0f32, |a, v| a.max(*v)) * scale;
+    let factor = (4096.0 / longest).min(1.0);
+    [
+        ((size[0] * scale * factor) as u32).clamp(1, 4096),
+        ((size[1] * scale * factor) as u32).clamp(1, 4096),
+    ]
+}
+
+/// True when the camera should follow the framing of a reloaded scene: nothing was framed yet,
+/// or the bounds or the viewport changed. An unchanged scene keeps the user's view, so a Commit
+/// or `R` that altered no bounds does not jump back to the whole model.
+fn needs_refit(
+    framed: Option<([f32; 3], f32, f32)>,
+    target: [f32; 3],
+    extent: f32,
+    aspect: f32,
+) -> bool {
+    match framed {
+        Some((old_target, old_extent, old_aspect)) => {
+            old_target != target || old_extent != extent || old_aspect != aspect
+        }
+        None => true,
+    }
+}
+
+/// The volume part of a commit note: cubic millimetres below a thousandth of a cubic metre,
+/// cubic metres from there, so a small plate does not read as `0.000 m3`.
+fn volume_note(volume_mm3: f64) -> String {
+    if volume_mm3 < 1e6 {
+        format!(", volume {volume_mm3:.0} mm3")
+    } else {
+        format!(", volume {:.3} m3", volume_mm3 / 1e9)
+    }
 }
 
 /// Inter from the admitted asset directory, validated before egui can panic on it.
@@ -348,6 +395,7 @@ impl App {
             reload_queued: false,
             tool_note: None,
             refresh_error: None,
+            framed: None,
             editor: Editor::default(),
             edit_job: None,
             select_job: None,
@@ -407,15 +455,30 @@ impl App {
         match result {
             Ok(loaded) => {
                 let (target, extent) = loaded.scene.framing();
-                // A scene the camera cannot frame keeps the previous scene and shows why.
-                match self.camera.fit(target, extent, self.aspect()) {
-                    Ok(()) => {
-                        self.loaded = Some(loaded);
-                        self.error = None;
-                        self.viewport_dirty = true;
+                let aspect = self.aspect();
+                // A scene the camera cannot frame keeps the previous scene and shows why. An
+                // unchanged framing keeps the user's camera and the last rendered frame.
+                if needs_refit(self.framed, target, extent, aspect) {
+                    match self.camera.fit(target, extent, aspect) {
+                        Ok(()) => {
+                            self.loaded = Some(loaded);
+                            self.framed = Some((target, extent, aspect));
+                            self.error = None;
+                            self.viewport_dirty = true;
+                        }
+                        Err(e) => self.error = Some(e.to_string()),
                     }
-                    Err(e) => self.error = Some(e.to_string()),
+                } else {
+                    self.loaded = Some(loaded);
+                    self.error = None;
                 }
+            }
+            // A store with no revision yet is a normal state, not an error: the definitions
+            // listing treats the same NOT_FOUND the same way.
+            Err(e) if source::is_no_revision(&e) => {
+                self.loaded = None;
+                self.framed = None;
+                self.error = None;
             }
             Err(e) => self.error = Some(e.to_string()),
         }
@@ -802,9 +865,7 @@ impl App {
                     ToolKind::Plate => "plate",
                     ToolKind::Member => "member",
                 };
-                let volume = created
-                    .volume_mm3
-                    .map_or(String::new(), |v| format!(", volume {:.3} m3", v / 1e9));
+                let volume = created.volume_mm3.map_or(String::new(), volume_note);
                 self.tool_note = Some(Ok(format!(
                     "Created {what} {} ({}{}). Accepted revision {} (sequence {}).",
                     created.element_id,
@@ -1038,13 +1099,16 @@ impl eframe::App for App {
             self.viewport_dirty = true;
         }
         if self.text {
-            egui::Panel::left("info").show(ui, |ui| self.panel(ui));
+            // A fixed width: the 3D view must not shift sideways when a tab or a chosen
+            // definition name is wider, and the coordinate rows must fit at the default size.
+            egui::Panel::left("info")
+                .exact_size(320.0)
+                .show(ui, |ui| self.panel(ui));
         }
         egui::CentralPanel::default().show(ui, |ui| {
             let size = ui.available_size();
             let scale = ui.ctx().pixels_per_point();
-            let width = ((size.x * scale) as u32).clamp(1, 4096);
-            let height = ((size.y * scale) as u32).clamp(1, 4096);
+            let [width, height] = target_size([size.x, size.y], scale);
             if let Err(e) = self.resize(width, height) {
                 self.error = Some(e.to_string());
             }
@@ -1309,5 +1373,49 @@ mod tests {
             camera.navigate(orbit, pan, zoom).unwrap();
             assert!(camera.distance().is_finite(), "pinch {hostile}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_render_target_is_clamped_as_a_whole() {
+        // Below the limit the viewport passes through unchanged.
+        assert_eq!(target_size([1280.0, 800.0], 1.0), [1280, 800]);
+        // A 5400 px window: both sides shrink by the same factor, so a circle stays a circle.
+        let [w, h] = target_size([5400.0, 900.0], 1.0);
+        assert_eq!(w, 4096);
+        assert!((h as f32 / 900.0 - 4096.0 / 5400.0).abs() < 0.01);
+        // Simulated Retina (2x) reaches the limit at half the point size.
+        let [w, h] = target_size([2560.0, 1300.0], 2.0);
+        assert_eq!((w, h), (4096, 2080));
+        // A degenerate viewport still yields a one-pixel target.
+        assert_eq!(target_size([0.0, 0.0], 1.0), [1, 1]);
+    }
+
+    #[test]
+    fn an_unchanged_framing_keeps_the_camera() {
+        let framing = ([10.0, 20.0, 30.0], 500.0, 1.6);
+        assert!(needs_refit(None, framing.0, framing.1, framing.2));
+        assert!(!needs_refit(Some(framing), framing.0, framing.1, framing.2));
+        // New bounds or a new viewport aspect follow.
+        assert!(needs_refit(
+            Some(framing),
+            [0.0, 20.0, 30.0],
+            framing.1,
+            framing.2
+        ));
+        assert!(needs_refit(Some(framing), framing.0, 600.0, framing.2));
+        assert!(needs_refit(Some(framing), framing.0, framing.1, 1.0));
+    }
+
+    #[test]
+    fn a_small_volume_is_not_zero() {
+        assert_eq!(volume_note(400_000.0), ", volume 400000 mm3");
+        assert_eq!(volume_note(999_999.0), ", volume 999999 mm3");
+        assert_eq!(volume_note(1e6), ", volume 0.001 m3");
+        assert_eq!(volume_note(1.025e9), ", volume 1.025 m3");
     }
 }

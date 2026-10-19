@@ -66,6 +66,12 @@ fn export_error(e: ToolError) -> Error {
         code => Error::Cli(format!("view-export failed: {code}")),
     }
 }
+
+/// True when the failure is only that the store has no published revision yet (`NOT_FOUND`):
+/// a normal state of a new store, not an error to show in red.
+pub fn is_no_revision(error: &Error) -> bool {
+    matches!(error, Error::Cli(m) if m.ends_with("view-export rejected: NOT_FOUND"))
+}
 /// Everything one window refresh reads, gathered without a window or a GPU so it can run on a
 /// worker thread: the accepted snapshot with its scene, and the store's definitions. The two
 /// results are independent; one failing never hides the other.
