@@ -1,25 +1,24 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! A07.2 and A07.3 headless commands: `list-library`, `show-library` and `add-library`. They read
+//! A07.2 and A07.3 headless commands: `library-list`, `library-show` and `library-add`. They read
 //! the files named on the command line (one `--library`, or an `--environment` with its
 //! libraries, and an optional `--user-library` that comes first; never a hidden global), never a
 //! store, and print one JSON object with the error shape and exit codes of the plate commands.
-//! Only `add-library` writes, and only the one library file it names.
+//! Only `library-add` writes, and only the one library file it names.
 
-use crate::plate_cmd::{Run, definition_json, fit_page, invalid, page_of, profile_record};
-use crate::report::report;
+use crate::plate_cmd::{Run, definition_json, fit_page, invalid, page_of, profile_record, report};
 use beamcraft_cli::library::{
-    EnvironmentInfo, LibraryEntry, LibraryInfo, Lookup, NewLibrary, RejectedEntry, Shadowed,
-    Source, add_entry, open_lookup,
+    EnvironmentInfo, LibraryEntry, LibraryInfo, Lookup, NewLibrary, RejectedEntry, Source,
+    add_entry, open_lookup,
 };
-use beamcraft_json::Json;
+use beamcraft_protocol::json::Json;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 
 /// Whether `command` is one of the library commands.
 pub fn handles(command: &OsString) -> bool {
-    command == "list-library" || command == "show-library" || command == "add-library"
+    command == "library-list" || command == "library-show" || command == "library-add"
 }
 
 /// Runs one library command and returns the JSON result and the process exit code.
@@ -104,9 +103,10 @@ fn rejected_json<'a>(rejected: impl Iterator<Item = (&'a str, &'a RejectedEntry)
     )
 }
 
-fn shadow_json(records: impl IntoIterator<Item = Shadowed>) -> Json {
+fn shadowed_json(lookup: &Lookup) -> Json {
     Json::Array(
-        records
+        lookup
+            .shadowed()
             .into_iter()
             .map(|s| {
                 Json::object([
@@ -154,19 +154,13 @@ fn run(args: &[OsString]) -> Run<Json> {
         .ok_or_else(|| invalid("missing command"))?;
     let lookup_options = ["--library", "--environment", "--user-library"];
     let allowed: Vec<&str> = match *command {
-        "list-library" => [
+        "library-list" => [
             &lookup_options[..],
-            &[
-                "--family",
-                "--filter",
-                "--offset",
-                "--limit",
-                "--shadow-offset",
-            ],
+            &["--family", "--filter", "--offset", "--limit"],
         ]
         .concat(),
-        "show-library" => [&lookup_options[..], &["--designation"]].concat(),
-        "add-library" => [
+        "library-show" => [&lookup_options[..], &["--designation"]].concat(),
+        "library-add" => [
             &["--library", "--library-id", "--title"][..],
             PROFILE_OPTIONS,
         ]
@@ -183,7 +177,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             return Err(invalid("unknown or repeated option"));
         }
     }
-    if *command == "add-library" {
+    if *command == "library-add" {
         return add(&options);
     }
     let (lookup, environment) = open_lookup(
@@ -191,7 +185,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         options.get("--environment").copied(),
         options.get("--user-library").copied(),
     )?;
-    if *command == "show-library" {
+    if *command == "library-show" {
         let designation = options
             .get("--designation")
             .ok_or_else(|| invalid("--designation is required"))?;
@@ -201,7 +195,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             ("library", info_json(&source.library.info)),
             ("library_path", Json::text(source.path.clone())),
             ("entry", entry_json(entry, &source.library.info.id)?),
-            ("shadowed", shadow_json(lookup.shadowed_for(designation))),
+            ("shadowed", shadowed_json(&lookup)),
         ]));
     }
     list(&options, &lookup, environment.as_ref())
@@ -235,27 +229,6 @@ fn list(
                 .map(|r| (s.library.info.id.as_str(), r))
         })
         .collect();
-    // The shadow records are paged on their own (`--shadow-offset`, `--limit` of them): a few
-    // overlapping libraries of thousands of entries make tens of thousands of records, which
-    // must not decide whether the entries fit the output budget.
-    let shadows = lookup.shadowed();
-    let shadow_offset = match options.get("--shadow-offset") {
-        Some(text) => text
-            .parse::<usize>()
-            .map_err(|_| invalid("--shadow-offset is not a number"))?,
-        None => 0,
-    };
-    let shadow_end = shadow_offset.saturating_add(limit).min(shadows.len());
-    let shadow_page: Vec<Shadowed> = shadows
-        .get(shadow_offset..shadow_end)
-        .unwrap_or_default()
-        .to_vec();
-    let shadow_next = if shadow_end < shadows.len() {
-        Json::uint(shadow_end as u64)
-    } else {
-        Json::Null
-    };
-    let shadow_total = shadows.len() as u64;
     // One position space: the matching entries, then the refused ones.
     let (entry_total, rejected_total) = (matching.len(), refused.len());
     let total = entry_total.saturating_add(rejected_total);
@@ -298,9 +271,7 @@ fn list(
                 "libraries".to_owned(),
                 Json::Array(lookup.sources().iter().map(source_json).collect()),
             ),
-            ("shadowed".to_owned(), shadow_json(shadow_page.clone())),
-            ("shadowed_count".to_owned(), Json::uint(shadow_total)),
-            ("shadowed_next_offset".to_owned(), shadow_next.clone()),
+            ("shadowed".to_owned(), shadowed_json(lookup)),
         ]);
         if let [only] = lookup.sources()
             && environment.is_none()
@@ -314,7 +285,7 @@ fn list(
     })
 }
 
-/// `add-library`: one profile entry into the library file named by `--library`, creating the file
+/// `library-add`: one profile entry into the library file named by `--library`, creating the file
 /// when `--library-id` is given.
 fn add(options: &BTreeMap<&str, &str>) -> Run<Json> {
     let path = options

@@ -91,9 +91,6 @@ pub struct LibraryInfo {
     pub digest: ContentDigest,
     /// Size of the library file in bytes.
     pub bytes: u64,
-    /// Whether the file is binary USD (`.usdc` content). Such a library is read but never
-    /// rewritten by [`add_entry`].
-    pub binary: bool,
 }
 
 /// One admitted library entry.
@@ -145,13 +142,11 @@ impl Library {
             .find(|r| r.designation.as_deref() == Some(designation))
         {
             return Err(PlateError {
-                rule_id: None,
                 code: refused.code,
                 message: refused.message,
             });
         }
         Err(PlateError {
-            rule_id: None,
             code: ErrorCode::NotFound,
             message: "the designation is not in the library",
         })
@@ -159,7 +154,7 @@ impl Library {
 }
 
 fn refuse(code: ErrorCode, message: &'static str) -> PlateError {
-    PlateError::new(code, message)
+    PlateError { code, message }
 }
 
 fn invalid(message: &'static str) -> PlateError {
@@ -198,7 +193,6 @@ fn read_info(
     metadata: &BTreeMap<String, Value>,
     digest: ContentDigest,
     bytes: u64,
-    binary: bool,
 ) -> Result<LibraryInfo, PlateError> {
     let Some(Value::Dictionary(layer)) = metadata.get("customLayerData") else {
         return Err(invalid("the library declares no bim:library:id"));
@@ -218,7 +212,6 @@ fn read_info(
         licence: get("bim:library:licence")?,
         digest,
         bytes,
-        binary,
     })
 }
 
@@ -400,7 +393,6 @@ pub fn load_bytes(bytes: Vec<u8>) -> Result<Library, PlateError> {
     if bytes.len() > MAX_LIBRARY_BYTES {
         return Err(io_error(ErrorCode::LimitExceeded));
     }
-    let binary = bytes.starts_with(b"PXR-USDC");
     let OpenLayer {
         reader,
         opened,
@@ -411,7 +403,7 @@ pub fn load_bytes(bytes: Vec<u8>) -> Result<Library, PlateError> {
         bytes,
         "the library is not a self-contained USD layer in millimetres, Z up",
     )?;
-    let info = read_info(&opened.metadata, digest, size, binary)?;
+    let info = read_info(&opened.metadata, digest, size)?;
     let prims = read_all(&reader, &opened, &control)?;
     let mut entries = Vec::new();
     let mut rejected = Vec::new();
@@ -591,13 +583,6 @@ impl Lookup {
     pub fn shadowed(&self) -> Vec<Shadowed> {
         self.slots().1
     }
-
-    /// The shadow records of one designation.
-    pub fn shadowed_for(&self, designation: &str) -> Vec<Shadowed> {
-        let mut records = self.slots().1;
-        records.retain(|s| s.designation == designation);
-        records
-    }
 }
 
 /// Largest environment file, in bytes.
@@ -766,43 +751,41 @@ pub fn open_lookup(
     environment: Option<&str>,
     user_library: Option<&str>,
 ) -> Result<(Lookup, Option<EnvironmentInfo>), PlateError> {
+    let mut sources = Vec::new();
     let mut environment_info = None;
-    let base = match (library, environment) {
+    if let Some(path) = user_library {
+        sources.push(Source {
+            path: path.to_owned(),
+            library: load(path)?,
+        });
+    }
+    match (library, environment) {
         (Some(_), Some(_)) => {
             return Err(invalid("--library and --environment are alternatives"));
         }
         (None, None) => {
             return Err(invalid("--library or --environment is required"));
         }
-        (Some(path), None) => vec![Source {
+        (Some(path), None) => sources.push(Source {
             path: path.to_owned(),
             library: load(path)?,
-        }],
+        }),
         (None, Some(path)) => {
             let loaded = load_environment(path)?;
+            if let Some(user) = sources.first()
+                && loaded
+                    .sources
+                    .iter()
+                    .any(|s| s.library.info.id == user.library.info.id)
+            {
+                return Err(invalid(
+                    "the user library has the same bim:library:id as a library of the environment",
+                ));
+            }
+            sources.extend(loaded.sources);
             environment_info = Some(loaded.info);
-            loaded.sources
         }
-    };
-    let mut sources = Vec::with_capacity(base.len().saturating_add(1));
-    if let Some(path) = user_library {
-        let user = Source {
-            path: path.to_owned(),
-            library: load(path)?,
-        };
-        // The same identity twice would make the library ids of entries and shadow records
-        // ambiguous, so it is refused for a single library as it is for an environment.
-        if base
-            .iter()
-            .any(|s| s.library.info.id == user.library.info.id)
-        {
-            return Err(invalid(
-                "the user library has the same bim:library:id as another library of the lookup",
-            ));
-        }
-        sources.push(user);
     }
-    sources.extend(base);
     Ok((Lookup::new(sources), environment_info))
 }
 
@@ -1010,25 +993,13 @@ fn install(path: &str, text: &str, replace: bool) -> Result<(), PlateError> {
         .and_then(|n| n.to_str())
         .ok_or_else(|| invalid("the library path has no file name"))?;
     let temporary = target.with_file_name(format!(".{name}.{}.tmp", std::process::id()));
-    // The replacement keeps the permissions of the file it replaces (a private 0600 library must
-    // not become readable by others). They are set while the temporary file is still empty.
-    let permissions = if replace {
-        Some(
-            std::fs::metadata(target)
-                .map_err(write_failed)?
-                .permissions(),
-        )
-    } else {
-        None
-    };
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&temporary)
         .map_err(write_failed)?;
-    let written = permissions
-        .map_or(Ok(()), |p| file.set_permissions(p))
-        .and_then(|()| file.write_all(text.as_bytes()))
+    let written = file
+        .write_all(text.as_bytes())
         .and_then(|()| file.sync_all());
     drop(file);
     let installed = written.and_then(|()| {
@@ -1061,14 +1032,6 @@ pub fn add_entry(
     new: Option<NewLibrary>,
 ) -> Result<Added, PlateError> {
     check_source_path(path).map_err(command)?;
-    if std::path::Path::new(path)
-        .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("usdc"))
-    {
-        return Err(invalid(
-            "add-library writes USDA text and cannot write a .usdc library",
-        ));
-    }
     if !label_is_valid(designation) {
         return Err(invalid("the designation is not a valid label"));
     }
@@ -1088,11 +1051,6 @@ pub fn add_entry(
             if new.is_some() {
                 return Err(invalid(
                     "the library exists; --library-id and --title only create one",
-                ));
-            }
-            if library.info.binary {
-                return Err(invalid(
-                    "the library is binary USD; add-library rewrites USDA text only",
                 ));
             }
             if !library.rejected.is_empty() {
@@ -1116,7 +1074,6 @@ pub fn add_entry(
                 licence: None,
                 digest: digest_of(b"")?,
                 bytes: 0,
-                binary: false,
             };
             (info, Vec::new(), true)
         }
@@ -1382,7 +1339,6 @@ mod tests {
             licence: Some("MPL-2.0".into()),
             digest: digest_of(b"").unwrap(),
             bytes: 0,
-            binary: false,
         };
         let text = library(&[
             entry("A", "A-1", I_BODY),

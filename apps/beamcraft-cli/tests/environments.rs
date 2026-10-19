@@ -2,15 +2,18 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 // Contributor-original synthetic libraries and sections that follow no national standard,
 // MPL-2.0. Every library and environment is written by the tests from plain text or by
-// `add-library` itself.
+// `library-add` itself.
 
 //! A07.3 end to end through the real `beamcraft` binary: an environment orders libraries and the
 //! strongest one answers a designation, a user library comes first, a hostile environment is
-//! refused, and `add-library` writes admitted entries into a library file that reads back.
+//! refused, and `library-add` writes admitted entries into a library file that reads back.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use beamcraft_json::{Json, Limits};
+use beamcraft_protocol::{
+    json::{self, Json},
+    message,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -47,7 +50,7 @@ impl Fixture {
             .args(args)
             .output()
             .unwrap();
-        let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
+        let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
         (output.status.code().unwrap(), body)
     }
     fn ok(&self, args: &[&str]) -> Json {
@@ -121,7 +124,7 @@ fn the_strongest_library_of_an_environment_answers_and_shadowing_is_reported() {
         &environment("\"libs/strong.usda\", \"libs/weak.usda\""),
     );
 
-    let listed = f.ok(&["list-library", "--environment", &env]);
+    let listed = f.ok(&["library-list", "--environment", &env]);
     assert_eq!(text(&listed, "outcome"), "library");
     assert_eq!(designations(&listed), ["S-ONLY", "W-ONLY", "X-1"]);
     assert_eq!(num(&listed, &["entry_count"]), 3.0);
@@ -143,9 +146,9 @@ fn the_strongest_library_of_an_environment_answers_and_shadowing_is_reported() {
     assert_eq!(text(x1, "library_id"), "strong");
     assert_eq!(num(x1, &["parameters_mm", "h"]), 300.0);
 
-    // `show-library` names the library that answers.
+    // `library-show` names the library that answers.
     let shown = f.ok(&[
-        "show-library",
+        "library-show",
         "--environment",
         &env,
         "--designation",
@@ -154,7 +157,7 @@ fn the_strongest_library_of_an_environment_answers_and_shadowing_is_reported() {
     assert_eq!(text(at(&shown, &["library"]), "id"), "strong");
     assert_eq!(num(&shown, &["entry", "parameters_mm", "h"]), 300.0);
     let weak_only = f.ok(&[
-        "show-library",
+        "library-show",
         "--environment",
         &env,
         "--designation",
@@ -163,7 +166,7 @@ fn the_strongest_library_of_an_environment_answers_and_shadowing_is_reported() {
     assert_eq!(text(at(&weak_only, &["library"]), "id"), "weak");
     assert_eq!(
         f.code(&[
-            "show-library",
+            "library-show",
             "--environment",
             &env,
             "--designation",
@@ -173,7 +176,7 @@ fn the_strongest_library_of_an_environment_answers_and_shadowing_is_reported() {
     );
 
     // A definition built through the environment takes the strongest entry's values and equals
-    // the digest that `show-library` predicted.
+    // the digest that `library-show` predicted.
     let store = f.path("store");
     let created = f.ok(&[
         "define-profile",
@@ -202,7 +205,7 @@ fn a_user_library_comes_first_and_a_refused_entry_is_not_replaced_by_a_weaker_on
     let user = f.write("user.usda", &library("user", &[("X-1", 320.0)]));
 
     let shown = f.ok(&[
-        "show-library",
+        "library-show",
         "--environment",
         &env,
         "--user-library",
@@ -213,7 +216,7 @@ fn a_user_library_comes_first_and_a_refused_entry_is_not_replaced_by_a_weaker_on
     assert_eq!(text(at(&shown, &["library"]), "id"), "user");
     assert_eq!(num(&shown, &["entry", "parameters_mm", "h"]), 320.0);
     let listed = f.ok(&[
-        "list-library",
+        "library-list",
         "--environment",
         &env,
         "--user-library",
@@ -235,7 +238,7 @@ fn a_user_library_comes_first_and_a_refused_entry_is_not_replaced_by_a_weaker_on
     assert_eq!(num(&created, &["definition", "parameters_mm", "h"]), 320.0);
     // The user library alone, with a single --library, works the same way.
     let alone = f.ok(&[
-        "show-library",
+        "library-show",
         "--library",
         &f.path("libs/base.usda"),
         "--user-library",
@@ -251,7 +254,7 @@ fn a_user_library_comes_first_and_a_refused_entry_is_not_replaced_by_a_weaker_on
     let broken = f.write("broken.usda", bad);
     assert_eq!(
         f.code(&[
-            "show-library",
+            "library-show",
             "--environment",
             &env,
             "--user-library",
@@ -262,7 +265,7 @@ fn a_user_library_comes_first_and_a_refused_entry_is_not_replaced_by_a_weaker_on
         "INVALID_ARGUMENT"
     );
     let listed = f.ok(&[
-        "list-library",
+        "library-list",
         "--environment",
         &env,
         "--user-library",
@@ -286,7 +289,7 @@ fn hostile_and_inconsistent_environments_are_refused_without_a_crash() {
     f.write("libs/b.usda", &library("a", &[("B-1", 210.0)]));
     let refused = |name: &str, libraries: &str| {
         let env = f.write(name, &environment(libraries));
-        f.code(&["list-library", "--environment", &env])
+        f.code(&["library-list", "--environment", &env])
     };
     for escaping in [
         "\"../libs/a.usda\"",
@@ -308,7 +311,7 @@ fn hostile_and_inconsistent_environments_are_refused_without_a_crash() {
     // A list of numbers, not strings.
     let numbers = f.write("env3.usda", &environment("5").replace("string[]", "int[]"));
     assert_eq!(
-        f.code(&["list-library", "--environment", &numbers]),
+        f.code(&["library-list", "--environment", &numbers]),
         "INVALID_ARGUMENT"
     );
     assert_eq!(
@@ -329,38 +332,38 @@ fn hostile_and_inconsistent_environments_are_refused_without_a_crash() {
         "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n)\n",
     );
     assert_eq!(
-        f.code(&["list-library", "--environment", &no_id]),
+        f.code(&["library-list", "--environment", &no_id]),
         "INVALID_ARGUMENT"
     );
     let garbage = f.write("env9.usda", "not usd");
     assert_eq!(
-        f.code(&["list-library", "--environment", &garbage]),
+        f.code(&["library-list", "--environment", &garbage]),
         "INVALID_ARGUMENT"
     );
     let sublayer = f.write(
         "env10.usda",
         &environment("\"libs/a.usda\"").replace(")\n", "    subLayers = [@libs/a.usda@]\n)\n"),
     );
-    assert!(f.raw(&["list-library", "--environment", &sublayer]).0 != 0);
+    assert!(f.raw(&["library-list", "--environment", &sublayer]).0 != 0);
     let metres = f.write(
         "env11.usda",
         &environment("\"libs/a.usda\"").replace("0.001", "1"),
     );
     assert_eq!(
-        f.code(&["list-library", "--environment", &metres]),
+        f.code(&["library-list", "--environment", &metres]),
         "INVALID_ARGUMENT"
     );
     assert_eq!(
-        f.code(&["list-library", "--environment", &f.path("libs")]),
+        f.code(&["library-list", "--environment", &f.path("libs")]),
         "INVALID_ARGUMENT"
     );
     assert_eq!(
-        f.code(&["list-library", "--environment", &f.path("nope.usda")]),
+        f.code(&["library-list", "--environment", &f.path("nope.usda")]),
         "NOT_FOUND"
     );
     assert_eq!(
         f.code(&[
-            "list-library",
+            "library-list",
             "--environment",
             "https://example.invalid/e.usda"
         ]),
@@ -369,26 +372,26 @@ fn hostile_and_inconsistent_environments_are_refused_without_a_crash() {
     // A library file named as the environment is not an environment.
     let lib = f.path("libs/a.usda");
     assert_eq!(
-        f.code(&["list-library", "--environment", &lib]),
+        f.code(&["library-list", "--environment", &lib]),
         "INVALID_ARGUMENT"
     );
 
     // Alternatives and missing inputs.
     let ok_env = f.write("ok.usda", &environment("\"libs/a.usda\""));
     assert_eq!(
-        f.code(&["list-library", "--environment", &ok_env, "--library", &lib]),
+        f.code(&["library-list", "--environment", &ok_env, "--library", &lib]),
         "INVALID_ARGUMENT"
     );
-    assert_eq!(f.code(&["list-library"]), "INVALID_ARGUMENT");
+    assert_eq!(f.code(&["library-list"]), "INVALID_ARGUMENT");
     assert_eq!(
-        f.code(&["list-library", "--user-library", &lib]),
+        f.code(&["library-list", "--user-library", &lib]),
         "INVALID_ARGUMENT"
     );
     // The user library may not repeat an environment library's id.
     let same = f.write("same.usda", &library("a", &[("U-1", 190.0)]));
     assert_eq!(
         f.code(&[
-            "list-library",
+            "library-list",
             "--environment",
             &ok_env,
             "--user-library",
@@ -418,7 +421,7 @@ fn library_add_creates_a_library_and_every_kind_of_entry_reads_back() {
     let f = Fixture::new();
     let lib = f.path("user.usda");
     let created = f.ok(&[
-        "add-library",
+        "library-add",
         "--library",
         &lib,
         "--library-id",
@@ -519,14 +522,14 @@ fn library_add_creates_a_library_and_every_kind_of_entry_reads_back() {
         ],
     ];
     for (n, entry) in more.iter().enumerate() {
-        let mut args = vec!["add-library", "--library", lib.as_str()];
+        let mut args = vec!["library-add", "--library", lib.as_str()];
         args.extend_from_slice(entry);
         let added = f.ok(&args);
         assert!(matches!(added.get("created"), Ok(Json::Bool(false))));
         assert_eq!(num(&added, &["entry_count"]), (n + 2) as f64);
     }
 
-    let listed = f.ok(&["list-library", "--library", &lib]);
+    let listed = f.ok(&["library-list", "--library", &lib]);
     assert_eq!(num(&listed, &["entry_count"]), 7.0);
     assert_eq!(num(&listed, &["rejected_count"]), 0.0);
     let found = designations(&listed);
@@ -535,7 +538,7 @@ fn library_add_creates_a_library_and_every_kind_of_entry_reads_back() {
         "{found:?}"
     );
     let shown = f.ok(&[
-        "show-library",
+        "library-show",
         "--library",
         &lib,
         "--designation",
@@ -544,12 +547,12 @@ fn library_add_creates_a_library_and_every_kind_of_entry_reads_back() {
     assert_eq!(text(at(&shown, &["entry"]), "standard"), "own");
     assert_eq!(num(&shown, &["entry", "mass_per_meter_kg"]), 30.5);
     assert_eq!(num(&shown, &["entry", "parameters_mm", "tf"]), 9.0);
-    let boxed = f.ok(&["show-library", "--library", &lib, "--designation", "MY-BOX"]);
+    let boxed = f.ok(&["library-show", "--library", &lib, "--designation", "MY-BOX"]);
     assert_eq!(
         at(&boxed, &["entry", "cavities_mm"]).array().unwrap().len(),
         1
     );
-    let bar = f.ok(&["show-library", "--library", &lib, "--designation", "MY-BAR"]);
+    let bar = f.ok(&["library-show", "--library", &lib, "--designation", "MY-BAR"]);
     assert_eq!(text(at(&bar, &["entry"]), "kind"), "rectangle");
 
     // The predicted digest is the one of an explicit definition with the same name.
@@ -618,7 +621,7 @@ fn library_add_refuses_what_it_cannot_write_faithfully_and_leaves_the_file_alone
         "--family", "i_shape", "--h", "300", "--b", "150", "--tw", "7", "--tf", "10", "--r", "15",
     ];
     let add = |extra: &[&str]| -> Vec<String> {
-        let mut args = vec!["add-library".to_owned(), "--library".into(), lib.clone()];
+        let mut args = vec!["library-add".to_owned(), "--library".into(), lib.clone()];
         args.extend(extra.iter().map(|s| (*s).to_owned()));
         args
     };
@@ -740,7 +743,7 @@ fn library_add_refuses_what_it_cannot_write_faithfully_and_leaves_the_file_alone
     );
     let partial_path = f.write("partial.usda", &partial);
     let mut args = vec![
-        "add-library",
+        "library-add",
         "--library",
         partial_path.as_str(),
         "--designation",
@@ -752,7 +755,7 @@ fn library_add_refuses_what_it_cannot_write_faithfully_and_leaves_the_file_alone
     // A foreign file is not a library, and a URL is never a path.
     let garbage = f.write("garbage.usda", "not usd");
     let mut args = vec![
-        "add-library",
+        "library-add",
         "--library",
         garbage.as_str(),
         "--designation",
@@ -762,7 +765,7 @@ fn library_add_refuses_what_it_cannot_write_faithfully_and_leaves_the_file_alone
     assert_eq!(f.code(&args), "INVALID_ARGUMENT");
     assert_eq!(fs::read_to_string(&garbage).unwrap(), "not usd");
     let mut args = vec![
-        "add-library",
+        "library-add",
         "--library",
         "https://example.invalid/l.usda",
         "--library-id",
@@ -779,7 +782,7 @@ fn an_added_entry_shows_through_an_environment_that_lists_the_library() {
     let f = Fixture::new();
     let lib = f.path("libs/team.usda");
     let args = [
-        "add-library",
+        "library-add",
         "--library",
         lib.as_str(),
         "--library-id",
@@ -793,11 +796,11 @@ fn an_added_entry_shows_through_an_environment_that_lists_the_library() {
     ];
     f.ok(&args);
     let env = f.write("env.usda", &environment("\"libs/team.usda\""));
-    let listed = f.ok(&["list-library", "--environment", &env]);
+    let listed = f.ok(&["library-list", "--environment", &env]);
     assert_eq!(designations(&listed), ["TEAM-PLATE"]);
     // Adding again through the same file keeps the identity and grows the list.
     f.ok(&[
-        "add-library",
+        "library-add",
         "--library",
         &lib,
         "--designation",
@@ -807,146 +810,6 @@ fn an_added_entry_shows_through_an_environment_that_lists_the_library() {
         "--height",
         "400",
     ]);
-    let listed = f.ok(&["list-library", "--environment", &env]);
+    let listed = f.ok(&["library-list", "--environment", &env]);
     assert_eq!(designations(&listed), ["TEAM-PLATE", "TEAM-PLATE-2"]);
-}
-
-#[test]
-fn a_user_library_may_not_repeat_the_id_of_a_single_library_either() {
-    let f = Fixture::new();
-    let base = f.write("base.usda", &library("same", &[("X-1", 200.0)]));
-    let user = f.write("user.usda", &library("same", &[("X-1", 320.0)]));
-    for command in ["list-library", "show-library"] {
-        let mut args = vec![command, "--library", &base, "--user-library", &user];
-        if command == "show-library" {
-            args.extend(["--designation", "X-1"]);
-        }
-        assert_eq!(f.code(&args), "INVALID_ARGUMENT", "{command}");
-    }
-    // The same pair with distinct ids is a lookup.
-    let other = f.write("other.usda", &library("other", &[("X-1", 320.0)]));
-    let shown = f.ok(&[
-        "show-library",
-        "--library",
-        &base,
-        "--user-library",
-        &other,
-        "--designation",
-        "X-1",
-    ]);
-    assert_eq!(text(at(&shown, &["library"]), "id"), "other");
-}
-
-#[cfg(unix)]
-#[test]
-fn replacing_a_library_keeps_its_permissions() {
-    use std::os::unix::fs::PermissionsExt;
-    let f = Fixture::new();
-    let lib = f.path("private.usda");
-    let width = ["--width", "20", "--height", "400"];
-    let mut args = vec!["add-library", "--library", &lib, "--library-id", "mine"];
-    args.extend(["--designation", "A-1"]);
-    args.extend(width);
-    f.ok(&args);
-    fs::set_permissions(&lib, fs::Permissions::from_mode(0o600)).unwrap();
-    let mut args = vec!["add-library", "--library", &lib, "--designation", "A-2"];
-    args.extend(width);
-    f.ok(&args);
-    let mode = fs::metadata(&lib).unwrap().permissions().mode() & 0o777;
-    assert_eq!(mode, 0o600, "a private library stays private");
-    assert_eq!(
-        designations(&f.ok(&["list-library", "--library", &lib])),
-        ["A-1", "A-2"]
-    );
-}
-
-#[test]
-fn library_add_refuses_binary_usd_and_leaves_the_file_alone() {
-    let f = Fixture::new();
-    let width = ["--width", "20", "--height", "400"];
-    // A .usdc destination is refused whether or not it exists; nothing is created.
-    let missing = f.path("new.usdc");
-    let mut args = vec!["add-library", "--library", &missing, "--library-id", "x"];
-    args.extend(["--designation", "A-1"]);
-    args.extend(width);
-    assert_eq!(f.code(&args), "INVALID_ARGUMENT");
-    assert!(!Path::new(&missing).exists());
-    // An existing text library behind a .usdc name is left byte for byte as it was.
-    let text_bytes = library("t", &[("X-1", 200.0)]);
-    let named = f.write("text.USDC", &text_bytes);
-    let mut args = vec!["add-library", "--library", &named, "--designation", "A-1"];
-    args.extend(width);
-    assert_eq!(f.code(&args), "INVALID_ARGUMENT");
-    assert_eq!(fs::read_to_string(&named).unwrap(), text_bytes);
-    // Content that only claims to be binary USD is not a library and is not touched either.
-    let fake = f.path("fake.usda");
-    fs::write(&fake, b"PXR-USDC not really").unwrap();
-    let mut args = vec!["add-library", "--library", &fake, "--designation", "A-1"];
-    args.extend(width);
-    let (code, _) = f.raw(&args);
-    assert_eq!(code, 2);
-    assert_eq!(fs::read(&fake).unwrap(), b"PXR-USDC not really");
-}
-
-#[test]
-fn overlapping_large_libraries_page_their_shadow_records() {
-    let f = Fixture::new();
-    // Four libraries declare the same 1500 long designations: 3 * 1500 = 4500 shadow records of
-    // about 280 bytes, more than the 1 MiB a response may carry. Entries and shadow records page
-    // independently, and `show-library` reports only the shadows of its designation.
-    let designations: Vec<String> = (0..1500)
-        .map(|n| format!("{}{n:04}", "D".repeat(190)))
-        .collect();
-    let entries: Vec<(&str, f64)> = designations.iter().map(|d| (d.as_str(), 200.0)).collect();
-    let mut listed = Vec::new();
-    for n in 0..4 {
-        let name = format!("lib{n}.usda");
-        f.write(&name, &library(&format!("lib{n}"), &entries));
-        listed.push(format!("\"{name}\""));
-    }
-    let env = f.write("big.usda", &environment(&listed.join(", ")));
-
-    let page = f.ok(&["list-library", "--environment", &env, "--limit", "1"]);
-    assert_eq!(num(&page, &["entry_count"]), 1500.0);
-    assert_eq!(num(&page, &["shadowed_count"]), 4500.0);
-    assert_eq!(at(&page, &["shadowed"]).array().unwrap().len(), 1);
-    assert_eq!(num(&page, &["shadowed_next_offset"]), 1.0);
-    let last = f.ok(&[
-        "list-library",
-        "--environment",
-        &env,
-        "--limit",
-        "5",
-        "--shadow-offset",
-        "4497",
-    ]);
-    assert_eq!(at(&last, &["shadowed"]).array().unwrap().len(), 3);
-    assert!(matches!(last.get("shadowed_next_offset"), Ok(Json::Null)));
-    let shown = f.ok(&[
-        "show-library",
-        "--environment",
-        &env,
-        "--designation",
-        &designations[7],
-    ]);
-    let shadows = at(&shown, &["shadowed"]).array().unwrap();
-    assert_eq!(shadows.len(), 3);
-    assert!(
-        shadows
-            .iter()
-            .all(|s| text(s, "designation") == designations[7])
-    );
-}
-
-#[test]
-fn a_malformed_shadow_offset_is_refused() {
-    let f = Fixture::new();
-    let lib = f.write("a.usda", &library("a", &[("X-1", 200.0)]));
-    assert_eq!(
-        f.code(&["list-library", "--library", &lib, "--shadow-offset", "x"]),
-        "INVALID_ARGUMENT"
-    );
-    let listed = f.ok(&["list-library", "--library", &lib, "--shadow-offset", "50"]);
-    assert_eq!(num(&listed, &["shadowed_count"]), 0.0);
-    assert!(at(&listed, &["shadowed"]).array().unwrap().is_empty());
 }
