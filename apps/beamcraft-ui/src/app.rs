@@ -4,7 +4,9 @@
 //! The eframe window: a side panel with the revision, counts, units and adapter, and the viewport
 //! with orbit (primary drag), pan (secondary drag), zoom (wheel), fit (F) and reload (R).
 
-use crate::camera::Camera;
+use crate::camera::{Camera, View};
+use crate::command::Selected;
+use crate::edit::{EditKind, Edited, Editor, Target, ndc_of, ray_through};
 use crate::render::{Renderer, Uploaded};
 use crate::scene::Scene;
 use crate::source::Reloaded;
@@ -22,6 +24,9 @@ pub struct Source {
     pub store: PathBuf,
     /// The `beamcraft` CLI that exports the snapshot.
     pub cli: PathBuf,
+    /// The personal workspace directory when the window was opened on one (`--workspace`): it is
+    /// then also `store`, and undo and redo act on it.
+    pub workspace: Option<PathBuf>,
 }
 
 struct Loaded {
@@ -51,6 +56,12 @@ pub struct App {
     tool_note: Option<Result<String, String>>,
     /// Why the last definitions refresh failed; kept apart from `tool_note` so neither hides the other.
     refresh_error: Option<String>,
+    editor: Editor,
+    edit_action: EditKind,
+    edit_job: Option<Receiver<Result<Edited, ToolError>>>,
+    select_job: Option<Receiver<Result<Option<Selected>, ToolError>>>,
+    /// The result of the last select, edit, undo or redo.
+    edit_note: Option<Result<String, String>>,
 }
 
 const RED: egui::Color32 = egui::Color32::from_rgb(230, 80, 60);
@@ -83,6 +94,78 @@ fn choice_combo(
             }
         });
     ui.label(label);
+}
+
+fn point_fields(ui: &mut egui::Ui, point: &mut [String; 3]) {
+    ui.horizontal(|ui| {
+        for (axis, text) in ["X", "Y", "Z"].iter().zip(point.iter_mut()) {
+            ui.label(*axis);
+            ui.add(
+                egui::TextEdit::singleline(text)
+                    .desired_width(64.0)
+                    .char_limit(MAX_TEXT),
+            );
+        }
+    });
+}
+
+/// The twelve edges of a box as pairs of corner indices (bit 0 = x, bit 1 = y, bit 2 = z).
+const BOX_EDGES: [(usize, usize); 12] = [
+    (0, 1),
+    (2, 3),
+    (4, 5),
+    (6, 7),
+    (0, 2),
+    (1, 3),
+    (4, 6),
+    (5, 7),
+    (0, 4),
+    (1, 5),
+    (2, 6),
+    (3, 7),
+];
+
+/// Draws the selection as the projected box of the engine's world bounds of the element.
+fn draw_selection(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    view: &View,
+    loaded: &Loaded,
+    id: &str,
+) {
+    let Ok(id) = beamcraft_engine::ElementId::parse(id) else {
+        return;
+    };
+    let Ok(bounds) = loaded.snapshot.element_bounds(&id) else {
+        return;
+    };
+    let origin = loaded.scene.origin_mm;
+    let screen: Vec<Option<egui::Pos2>> = (0..8usize)
+        .map(|corner| {
+            let pick = |axis: usize| {
+                let on = corner >> axis & 1 == 1;
+                let edge = if on {
+                    bounds.max.get(axis)
+                } else {
+                    bounds.min.get(axis)
+                };
+                edge.copied().unwrap_or(0.0) - origin.get(axis).copied().unwrap_or(0.0)
+            };
+            let [x, y, z] = view.project([pick(0) as f32, pick(1) as f32, pick(2) as f32]);
+            ((0.0..1.0).contains(&z) && x.is_finite() && y.is_finite()).then(|| {
+                egui::pos2(
+                    rect.min.x + (x * 0.5 + 0.5) * rect.width(),
+                    rect.min.y + (0.5 - y * 0.5) * rect.height(),
+                )
+            })
+        })
+        .collect();
+    let stroke = egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 190, 40));
+    for (a, b) in BOX_EDGES {
+        if let (Some(Some(p)), Some(Some(q))) = (screen.get(a), screen.get(b)) {
+            painter.line_segment([*p, *q], stroke);
+        }
+    }
 }
 
 fn field(ui: &mut egui::Ui, label: &str, text: &mut String, width: f32) {
@@ -193,6 +276,11 @@ impl App {
             reload_queued: false,
             tool_note: None,
             refresh_error: None,
+            editor: Editor::default(),
+            edit_action: EditKind::Move,
+            edit_job: None,
+            select_job: None,
+            edit_note: None,
         };
         app.reload();
         Ok(app)
@@ -285,7 +373,293 @@ impl App {
             self.info(ui);
             ui.separator();
             self.tools_panel(ui);
+            ui.separator();
+            self.edit_panel(ui);
         });
+    }
+
+    fn target(&self) -> Target<'_> {
+        Target {
+            store: &self.source.store,
+            workspace: self.source.workspace.as_deref(),
+        }
+    }
+
+    /// Starts a click selection on a worker: the engine's `pick` along the ray, then the details
+    /// of the element it hit.
+    fn start_select(&mut self, ray: crate::edit::Ray) {
+        if self.select_job.is_some() {
+            return;
+        }
+        let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.select_job = Some(rx);
+        let spawned = std::thread::Builder::new()
+            .name("beamcraft-pick".into())
+            .spawn(move || {
+                let _ = tx.send(command::select_at(&cli, &store, &ray));
+            });
+        if spawned.is_err() {
+            self.select_job = None;
+            self.edit_note = Some(Err("the pick thread could not be started".into()));
+        }
+    }
+
+    fn poll_select(&mut self) {
+        let Some(rx) = &self.select_job else { return };
+        let result = match rx.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => Err(ToolError {
+                code: "CLI_FAILED".into(),
+                message: "the pick thread ended without a result".into(),
+            }),
+        };
+        self.select_job = None;
+        match result {
+            Ok(None) => {
+                self.editor.deselect();
+                self.edit_note = None;
+            }
+            Ok(Some(Selected { id, info })) => match info {
+                Ok(info) => {
+                    self.editor.select(info);
+                    self.edit_note = None;
+                }
+                Err(e) => {
+                    self.editor.select_id(id);
+                    self.edit_note = Some(Err(format!("details: {e}")));
+                }
+            },
+            Err(e) => self.edit_note = Some(Err(e.to_string())),
+        }
+    }
+
+    fn start_edit(&mut self, direct: Option<EditKind>) {
+        let target = Target {
+            store: &self.source.store,
+            workspace: self.source.workspace.as_deref(),
+        };
+        let edit = match direct {
+            Some(kind) => match self.editor.begin_direct(kind, target) {
+                Ok(edit) => edit,
+                Err(e) => {
+                    self.edit_note = Some(Err(e.to_string()));
+                    return;
+                }
+            },
+            None => self.editor.begin_commit(target),
+        };
+        let Some(edit) = edit else { return };
+        let cli = self.source.cli.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.edit_job = Some(rx);
+        self.edit_note = None;
+        let spawned = std::thread::Builder::new()
+            .name("beamcraft-edit".into())
+            .spawn(move || {
+                let _ = tx.send(command::commit_edit(&cli, &edit));
+            });
+        if spawned.is_err() {
+            self.edit_job = None;
+            self.editor.finish();
+            self.edit_note = Some(Err("the edit thread could not be started".into()));
+        }
+    }
+
+    fn poll_edit(&mut self) {
+        let Some(rx) = &self.edit_job else { return };
+        let result = match rx.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => Err(ToolError {
+                code: "CLI_FAILED".into(),
+                message: "the edit thread ended without a result".into(),
+            }),
+        };
+        self.edit_job = None;
+        self.editor.finish();
+        match result {
+            Ok(done) => {
+                self.reload();
+                let subject = match done.kind {
+                    EditKind::Undo | EditKind::Redo => "the workspace".to_owned(),
+                    _ => done.element_id.clone().unwrap_or_default(),
+                };
+                self.edit_note = Some(Ok(format!(
+                    "{} {} (accepted revision {}, sequence {}).",
+                    done.kind.done(),
+                    subject,
+                    done.manifest_digest
+                        .get(..12)
+                        .unwrap_or(&done.manifest_digest),
+                    done.sequence
+                )));
+                match done.kind {
+                    EditKind::Delete => self.editor.deselect(),
+                    // The element may have moved, or the undo may have removed it: ask again.
+                    _ => self.refresh_selection(),
+                }
+            }
+            Err(e) => {
+                if e.code == "OUTCOME_UNKNOWN" {
+                    self.reload();
+                    self.refresh_selection();
+                }
+                self.edit_note = Some(Err(e.to_string()));
+            }
+        }
+    }
+
+    /// Re-reads the selected element from the accepted revision (it may have moved or gone).
+    fn refresh_selection(&mut self) {
+        let Some(id) = self.editor.selected().map(|s| s.id.clone()) else {
+            return;
+        };
+        if self.select_job.is_some() {
+            return;
+        }
+        let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.select_job = Some(rx);
+        let spawned = std::thread::Builder::new()
+            .name("beamcraft-info".into())
+            .spawn(move || {
+                let reply = command::element_info(&cli, &store, &id).map(|info| {
+                    Some(Selected {
+                        id: id.clone(),
+                        info: Ok(info),
+                    })
+                });
+                // An element the revision no longer holds clears the selection.
+                let _ = tx.send(match reply {
+                    Err(e) if e.code == "NOT_FOUND" => Ok(None),
+                    other => other,
+                });
+            });
+        if spawned.is_err() {
+            self.select_job = None;
+        }
+    }
+
+    fn edit_panel(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Edit");
+        ui.label("Click an element in the view to select it. Esc clears the selection.");
+        match self.editor.selected().cloned() {
+            Some(info) => {
+                ui.label(format!(
+                    "Selected: {} {} ({})",
+                    info.kind, info.name, info.id
+                ));
+            }
+            None => {
+                ui.label("Nothing selected.");
+            }
+        }
+        let selected = self.editor.selected().is_some();
+        ui.add_enabled_ui(selected, |ui| {
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.edit_action, EditKind::Move, "Move");
+                ui.selectable_value(&mut self.edit_action, EditKind::Copy, "Copy");
+                ui.selectable_value(&mut self.edit_action, EditKind::Delete, "Delete");
+            });
+            match self.edit_action {
+                EditKind::Move => {
+                    ui.label("New position in mm (absolute):");
+                    point_fields(ui, &mut self.editor.move_to);
+                }
+                EditKind::Copy => {
+                    ui.label("Offset of the copy in mm:");
+                    point_fields(ui, &mut self.editor.copy_offset);
+                }
+                _ => {
+                    ui.label("Deletes the element (refused while another element links to it).");
+                }
+            }
+        });
+        let busy = self.editor.busy();
+        let target = self.target();
+        let can_commit = self.editor.can_commit(target);
+        let staged = self.editor.staged().is_some();
+        let (mut preview, mut commit, mut cancel) = (false, false, false);
+        ui.horizontal(|ui| {
+            preview = ui
+                .add_enabled(selected && !busy, egui::Button::new("Preview"))
+                .clicked();
+            commit = ui
+                .add_enabled(can_commit, egui::Button::new("Commit"))
+                .clicked();
+            cancel = ui
+                .add_enabled(staged && !busy, egui::Button::new("Cancel"))
+                .clicked();
+        });
+        if preview {
+            let action = self.edit_action;
+            let target = Target {
+                store: &self.source.store,
+                workspace: self.source.workspace.as_deref(),
+            };
+            match self.editor.preview(action, target) {
+                Ok(_) => self.edit_note = None,
+                Err(e) => {
+                    self.editor.cancel();
+                    self.edit_note = Some(Err(e.to_string()));
+                }
+            }
+        }
+        if commit {
+            self.start_edit(None);
+        }
+        if cancel {
+            self.editor.cancel();
+            self.edit_note = Some(Ok("Cancelled; nothing was changed.".into()));
+        }
+        if let Some(edit) = self.editor.staged() {
+            ui.label(format!(
+                "Preview: Commit runs `beamcraft` with exactly these {} arguments, one per line (not a shell command line).",
+                edit.args.len()
+            ));
+            ui.add(egui::Label::new(egui::RichText::new(edit.argument_list()).monospace()).wrap());
+            if !self.editor.can_commit(self.target()) {
+                ui.colored_label(RED, "The parameters changed: preview again.");
+            }
+        }
+        let has_workspace = self.source.workspace.is_some();
+        let (mut undo, mut redo) = (false, false);
+        ui.horizontal(|ui| {
+            undo = ui
+                .add_enabled(has_workspace && !busy, egui::Button::new("Undo"))
+                .clicked();
+            redo = ui
+                .add_enabled(has_workspace && !busy, egui::Button::new("Redo"))
+                .clicked();
+        });
+        if undo {
+            self.start_edit(Some(EditKind::Undo));
+        }
+        if redo {
+            self.start_edit(Some(EditKind::Redo));
+        }
+        if !has_workspace {
+            ui.label(
+                "Undo and redo need a personal workspace: open the window with --workspace DIR.",
+            );
+        }
+        if busy {
+            ui.label("Running…");
+        }
+        if self.select_job.is_some() {
+            ui.label("Looking up the element…");
+        }
+        match &self.edit_note {
+            Some(Ok(message)) => {
+                ui.label(message);
+            }
+            Some(Err(message)) => {
+                ui.colored_label(RED, message);
+            }
+            None => {}
+        }
     }
 
     fn start_commit(&mut self) {
@@ -545,7 +919,12 @@ impl eframe::App for App {
             )
         });
         self.poll_commit();
+        self.poll_edit();
+        self.poll_select();
         self.poll_reload();
+        if !wants_text && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.editor.deselect();
+        }
         if reload {
             self.reload();
         }
@@ -567,7 +946,7 @@ impl eframe::App for App {
                 self.error = Some(e.to_string());
             }
             let response =
-                ui.add(egui::Image::new((self.texture, size)).sense(egui::Sense::drag()));
+                ui.add(egui::Image::new((self.texture, size)).sense(egui::Sense::click_and_drag()));
             let delta = ui.input(|i| i.pointer.delta());
             let orbit = if response.dragged_by(egui::PointerButton::Primary) {
                 [delta.x * 0.008, -delta.y * 0.008]
@@ -586,6 +965,7 @@ impl eframe::App for App {
                 0.0
             };
             let aspect = self.aspect();
+            let mut picked = None;
             match self
                 .camera
                 .navigate(orbit, pan, zoom)
@@ -600,8 +980,29 @@ impl eframe::App for App {
                             view,
                         );
                     }
+                    if let Some(l) = &self.loaded {
+                        if let Some(selected) = self.editor.selected() {
+                            let painter = ui.painter_at(response.rect);
+                            draw_selection(&painter, response.rect, &view, l, &selected.id);
+                        }
+                        // A click (not a drag) picks along the ray through the pixel.
+                        if response.clicked_by(egui::PointerButton::Primary)
+                            && let Some(pos) = response.interact_pointer_pos()
+                            && let Some(ndc) = ndc_of(
+                                [pos.x, pos.y],
+                                [response.rect.min.x, response.rect.min.y],
+                                [response.rect.width(), response.rect.height()],
+                            )
+                            && let Some(ray) = ray_through(&view, ndc, l.scene.origin_mm)
+                        {
+                            picked = Some(ray);
+                        }
+                    }
                 }
                 Err(e) => self.error = Some(e.to_string()),
+            }
+            if let Some(ray) = picked {
+                self.start_select(ray);
             }
         });
         ui.ctx().request_repaint();
