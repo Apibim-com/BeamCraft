@@ -9,8 +9,8 @@
 
 use crate::plate_cmd::{Run, definition_json, fit_page, invalid, page_of, profile_record, report};
 use beamcraft_cli::library::{
-    EnvironmentInfo, LibraryEntry, LibraryInfo, Lookup, NewLibrary, RejectedEntry, Source,
-    add_entry, open_lookup,
+    EnvironmentInfo, LibraryEntry, LibraryInfo, Lookup, NewLibrary, RejectedEntry, Shadowed,
+    Source, add_entry, open_lookup,
 };
 use beamcraft_protocol::json::Json;
 use std::collections::BTreeMap;
@@ -103,10 +103,9 @@ fn rejected_json<'a>(rejected: impl Iterator<Item = (&'a str, &'a RejectedEntry)
     )
 }
 
-fn shadowed_json(lookup: &Lookup) -> Json {
+fn shadow_json(records: impl IntoIterator<Item = Shadowed>) -> Json {
     Json::Array(
-        lookup
-            .shadowed()
+        records
             .into_iter()
             .map(|s| {
                 Json::object([
@@ -156,7 +155,13 @@ fn run(args: &[OsString]) -> Run<Json> {
     let allowed: Vec<&str> = match *command {
         "library-list" => [
             &lookup_options[..],
-            &["--family", "--filter", "--offset", "--limit"],
+            &[
+                "--family",
+                "--filter",
+                "--offset",
+                "--limit",
+                "--shadow-offset",
+            ],
         ]
         .concat(),
         "library-show" => [&lookup_options[..], &["--designation"]].concat(),
@@ -195,7 +200,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             ("library", info_json(&source.library.info)),
             ("library_path", Json::text(source.path.clone())),
             ("entry", entry_json(entry, &source.library.info.id)?),
-            ("shadowed", shadowed_json(&lookup)),
+            ("shadowed", shadow_json(lookup.shadowed_for(designation))),
         ]));
     }
     list(&options, &lookup, environment.as_ref())
@@ -229,6 +234,27 @@ fn list(
                 .map(|r| (s.library.info.id.as_str(), r))
         })
         .collect();
+    // The shadow records are paged on their own (`--shadow-offset`, `--limit` of them): a few
+    // overlapping libraries of thousands of entries make tens of thousands of records, which
+    // must not decide whether the entries fit the output budget.
+    let shadows = lookup.shadowed();
+    let shadow_offset = match options.get("--shadow-offset") {
+        Some(text) => text
+            .parse::<usize>()
+            .map_err(|_| invalid("--shadow-offset is not a number"))?,
+        None => 0,
+    };
+    let shadow_end = shadow_offset.saturating_add(limit).min(shadows.len());
+    let shadow_page: Vec<Shadowed> = shadows
+        .get(shadow_offset..shadow_end)
+        .unwrap_or_default()
+        .to_vec();
+    let shadow_next = if shadow_end < shadows.len() {
+        Json::uint(shadow_end as u64)
+    } else {
+        Json::Null
+    };
+    let shadow_total = shadows.len() as u64;
     // One position space: the matching entries, then the refused ones.
     let (entry_total, rejected_total) = (matching.len(), refused.len());
     let total = entry_total.saturating_add(rejected_total);
@@ -271,7 +297,9 @@ fn list(
                 "libraries".to_owned(),
                 Json::Array(lookup.sources().iter().map(source_json).collect()),
             ),
-            ("shadowed".to_owned(), shadowed_json(lookup)),
+            ("shadowed".to_owned(), shadow_json(shadow_page.clone())),
+            ("shadowed_count".to_owned(), Json::uint(shadow_total)),
+            ("shadowed_next_offset".to_owned(), shadow_next.clone()),
         ]);
         if let [only] = lookup.sources()
             && environment.is_none()
