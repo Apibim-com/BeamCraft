@@ -294,9 +294,10 @@ fn point(field: &'static str, parts: &[String; 3]) -> Result<String, FormError> 
 
 /// The edit panel's state: the selection, the two point forms, and the preview / commit state
 /// machine of the destructive and placing actions. Undo and redo run directly.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Editor {
     selected: Option<ElementInfo>,
+    action: EditKind,
     /// `--translation` of a move: the new absolute translation.
     pub move_to: [String; 3],
     /// `--offset` of a copy.
@@ -305,7 +306,34 @@ pub struct Editor {
     busy: bool,
 }
 
+impl Default for Editor {
+    fn default() -> Self {
+        Self {
+            selected: None,
+            action: EditKind::Move,
+            move_to: Default::default(),
+            copy_offset: Default::default(),
+            staged: None,
+            busy: false,
+        }
+    }
+}
+
 impl Editor {
+    /// The action the panel is set to (move, copy or delete).
+    pub fn action(&self) -> EditKind {
+        self.action
+    }
+
+    /// Switches the panel to another action. A staged edit was reviewed for the old action, so
+    /// switching drops it: the new action needs its own preview.
+    pub fn set_action(&mut self, action: EditKind) {
+        if self.action != action {
+            self.staged = None;
+            self.action = action;
+        }
+    }
+
     /// The selected element.
     pub fn selected(&self) -> Option<&ElementInfo> {
         self.selected.as_ref()
@@ -455,6 +483,26 @@ impl Editor {
     /// Ends the running edit.
     pub fn finish(&mut self) {
         self.busy = false;
+    }
+}
+
+/// Tells a worker's lookup result whether it is still wanted. Every new lookup, every
+/// invalidation (Esc, an accepted edit) moves the epoch on; a result carries the epoch it was
+/// asked under and is dropped when that is no longer the current one, so a late reply can neither
+/// bring back a cleared selection nor overwrite a newer one with pre-edit details.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Epoch(u64);
+
+impl Epoch {
+    /// Starts a new generation and returns it; every earlier result is now stale.
+    pub fn advance(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(1);
+        self.0
+    }
+
+    /// Whether a result asked for under `asked` is still the wanted one.
+    pub fn is_current(&self, asked: u64) -> bool {
+        self.0 == asked
     }
 }
 
@@ -800,6 +848,34 @@ mod tests {
         assert!(editor.can_commit(target()));
         editor.cancel();
         assert!(editor.staged().is_none());
+    }
+
+    #[test]
+    fn switching_the_action_drops_the_staged_edit() {
+        let mut editor = Editor::default();
+        editor.select(info());
+        editor.set_action(EditKind::Delete);
+        editor.preview(EditKind::Delete, target()).unwrap();
+        assert!(editor.can_commit(target()));
+        editor.set_action(EditKind::Move);
+        assert!(editor.staged().is_none() && !editor.can_commit(target()));
+        assert!(editor.begin_commit(target()).is_none());
+        // Setting the action it already has keeps the preview.
+        editor.preview(EditKind::Move, target()).unwrap();
+        editor.set_action(EditKind::Move);
+        assert!(editor.can_commit(target()));
+    }
+
+    #[test]
+    fn a_late_lookup_result_is_dropped() {
+        let mut epoch = Epoch::default();
+        let asked = epoch.advance();
+        assert!(epoch.is_current(asked));
+        // Esc, or an accepted edit, invalidates what is in flight.
+        epoch.advance();
+        assert!(!epoch.is_current(asked));
+        let refreshed = epoch.advance();
+        assert!(epoch.is_current(refreshed) && !epoch.is_current(asked));
     }
 
     #[test]
