@@ -238,7 +238,12 @@ fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, PlateErro
         bolts: Vec::new(),
         bounds: BTreeMap::new(),
     };
-    let is_weld = |prim: &beamcraft_layer_engine::Prim| property(prim, "steel:weld:type").is_some();
+    // Same prefix marker as the structural validator: any steel:weld:* attribute is a weld.
+    let is_weld = |prim: &beamcraft_layer_engine::Prim| {
+        prim.properties
+            .iter()
+            .any(|v| v.name.starts_with("steel:weld:"))
+    };
     for prim in &prims {
         let Some(id) = by_path.get(prim.path.as_str()).copied() else {
             continue;
