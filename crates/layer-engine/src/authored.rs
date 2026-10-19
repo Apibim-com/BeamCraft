@@ -1295,7 +1295,9 @@ mod pin_tests {
     fn every_previously_published_mapping_pin_is_still_accepted() {
         let current = schema_identity().unwrap().digest.to_string();
         let pins = [
-            // A07.1, D1/D2 (pre-A07.2), A06, A01, R01, P02.2 and U09 descriptors.
+            // Master with A07.2 (pre-A05), A07.1, D1/D2 (pre-A07.2), A06, A01, R01, P02.2 and
+            // U09 descriptors.
+            "fdaf890401a7bf4d8d17eb84ad1901b461ff21f1e7cec1e93f9e71203b83865b",
             "0311df71b2f7a4bd7b19e87ca7daef1884e989bd099bca24ee165de8e6bc310c",
             "b799ae17004c22a5c2eaf7512367f919aec4b82b9b4b223166310286e1414b5b",
             "b8c4a0cbfcb62a1bc9662d74965d5cc6f3cb945870a461af3fe8a8bc89352978",
