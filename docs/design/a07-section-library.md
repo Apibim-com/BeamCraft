@@ -1,10 +1,11 @@
 # A07 section families, environments and profile libraries
 
 Date: 2026-10-18. Status: **A07.1 implemented as an experimental slice (section 9); A07.2 implemented as
-an experimental slice (section 10); A07.3 is design only. Owner decisions D1, D2 and D4 of section 7
+an experimental slice (section 10); A07.3 is implemented as an experimental slice (section 11). Owner decisions D1, D2 and D4 of section 7
 are taken, and D3 is decided as a warning, not a refusal (section 10).** Branch
 `feat/a07-section-library`, based on `origin/master` `d893f94`; A07.2 branch `feat/a07-2-libraries`,
-based on `origin/master` `5c54c0a`.
+based on `origin/master` `5c54c0a`; A07.3 branch `claude/determined-keller-3r153u`, based on
+`origin/master` `fd6fde9`.
 
 Plan row: A07, the I-section families named by the P02.2 note, widened by the owner on
 2026-10-18. The owner's goals:
@@ -177,7 +178,8 @@ National libraries (AISC, ICHA, EN, ...) are produced separately as their own `.
 their own provenance; the repository ships only the mechanism and one synthetic test library
 that follows no country's standard.
 
-**Environment.** An environment is also a small USD layer: its `subLayers` list the libraries in
+**Environment.** (Implemented in A07.3 with one change: the order is an explicit list in
+`customLayerData`, not `subLayers`; see section 11.) An environment is also a small USD layer: its `subLayers` list the libraries in
 order of strength, and its `customLayerData` carries its id and title. USD sublayer strength is
 exactly the lookup order (stronger first), so no second precedence rule is invented:
 
@@ -241,7 +243,7 @@ the UI "new profile" dialog of V05 calls the same API.
 |---|---|---|
 | A07.1 | Families of section 3 (hot-rolled and cold-formed) and `custom`, detailed and simplified outlines, kernel `section_member`, layer-engine definition, engine, `define-profile --family`, end-to-end test | D4 |
 | A07.2 | USD library and environment layers, loader, `library-list`, `library-show`, `create-member --profile NAME`, synthetic test library, end-to-end test | A07.1 |
-| A07.3 | User library and `library-add` for parametric, cold-formed and custom sections | A07.2 |
+| A07.3 | Environment files and lookup order, user library, `library-add` for parametric, cold-formed and custom sections (section 11) | A07.2 |
 | V05 | UI: insert member, pick from the library; new-profile dialog | A07.2, A07.3 |
 
 Each sub-task is its own PR. Completing a sub-task does not complete A07.
@@ -353,7 +355,7 @@ beamcraft create-plate   --store ROOT ... [--material-digest SHA256 | --material
   a published area. Since P-Mass the reference is the exact area, so the arc polygon no longer
   contributes to the gap. The declared mass per metre will feed the bill of materials in a
   follow-up.
-* **One library file only.** `--library FILE` names it explicitly; the project, user and
+* **(Superseded by A07.3, section 11.)** **One library file only.** `--library FILE` names it explicitly; the project, user and
   environment lookup order, `--environment`, environment layers (sublayers of libraries) and shadow
   reports of section 6 are **design only**. A07.3 (user library, `library-add`) is not started.
   A library is read only; this slice writes no library (the shipped one is hand-authored text).
@@ -401,6 +403,66 @@ as part of the digest, ambiguous names with candidates, name and digest together
   normally, so an ambiguous or unknown name is still `INVALID_ARGUMENT` or `NOT_FOUND`, not a
   replay. Limit: as for every replay in this adapter, the original binding is read from the head's
   element, so an element deleted since is not replayed.
+
+## 11. A07.3 as implemented (experimental slice)
+
+Branch `claude/determined-keller-3r153u`, based on `origin/master` `fd6fde9`.
+
+```text
+beamcraft library-list   (--library FILE | --environment FILE) [--user-library FILE] [--family F] [--filter TEXT] [--offset N] [--limit N]
+beamcraft library-show   (--library FILE | --environment FILE) [--user-library FILE] --designation NAME
+beamcraft define-profile --store ROOT (--library FILE | --environment FILE) [--user-library FILE] --designation NAME [--name TEXT]
+beamcraft library-add    --library FILE [--library-id ID [--title TEXT]] --designation NAME
+                         (--width MM --height MM | --family F --h .. | --family custom --outer .. [--cavity ..])
+                         [--standard TEXT] [--area-mm2 F] [--mass-per-meter-kg F] [--surface-per-meter-m2 F]
+```
+
+| Area | What exists |
+|---|---|
+| Environment file | A USD layer in millimetres, Z up, read by the same bounded loader as a library (one self-contained layer, 1 MiB at most). `customLayerData` carries `bim:environment:id`, an optional `bim:environment:title` and `bim:environment:libraries`: a `string[]` of 1 to 32 relative paths, **strongest first**, resolved against the directory of the environment file. A path that is absolute, has a drive or scheme (`:`), a backslash, an empty, `.` or `..` segment or a control character is `PERMISSION_DENIED` (lexical containment, as for R01 sublayer names); more than 32 is `LIMIT_EXCEEDED`; an empty list, a non-string item or a repeated path is `INVALID_ARGUMENT`. |
+| Lookup | `beamcraft_cli::library::Lookup` holds the libraries in order: the optional `--user-library`, then the environment's libraries (or the single `--library`). The first library that declares a designation answers it. A **refused** entry of a stronger library answers with its refusal; a weaker library is never consulted for that designation, so a corrupted override cannot silently turn into another section. `library-list` lists the effective entries (one per designation, designation order, each with its `library_id`), the refused entries of every library, `libraries` (path, id, counts) and `shadowed` (designation, used and shadowed library id). `library-show` names the library and path that answer. |
+| Whole-library failures | A listed library that cannot be loaded (missing file, duplicate designation, over a budget, wrong units) refuses the whole environment with that library's code, because a silently missing library would change which section a designation selects. Two libraries of one lookup with the same `bim:library:id` (inside an environment, or the user library against an environment library) are `INVALID_ARGUMENT`. `--library` and `--environment` are alternatives; `--user-library` needs one of them; with none the command is `INVALID_ARGUMENT`. |
+| `define-profile` | `--environment` (and `--user-library`) take the place of `--library`; the definition takes every value from the answering entry and stores them itself, exactly as in A07.2, so the model never depends on any library file. Explicit dimensions do not combine with them. |
+| `library-add` | Adds one profile entry (rectangle, any of the nine families, or a custom outline with cavities) to the library file named by `--library`, through the same option parsing and the same F04 admission as `define-profile` (`profile_record`). A missing file is created only when `--library-id` is given (`--title` optional); an identity for a file that exists, a duplicate designation, a library that holds refused entries (a rewrite would lose them), an invalid section, a material, or more than 4096 entries is refused. The designation and the display name of the entry are the one given designation. The prim name is the designation with every character outside `[A-Za-z0-9_]` replaced by `_` (prefixed `E_` when it would start with a digit or be empty) and made unique with a numeric suffix; existing prim names are kept. |
+| Writer | The whole library is rendered again, entries in designation order, from what the loader understood. The text is read back with the loader before anything is written, and the identity, the optional metadata and every entry must come back equal (`INTEGRITY_ERROR` otherwise, nothing written). The file is written to a temporary file beside it, synced and installed atomically: a new file is hard-linked into place (it never replaces a file that appeared meanwhile) and an existing one is renamed over. Numbers are written in Rust's shortest round-trip form, so values read back bit for bit. |
+
+### Deviations and limits, recorded rather than hidden
+
+* **The order is a list, not `subLayers` (deviation from section 6).** The layer engine does not
+  expose composition arcs (root metadata excludes `subLayers`), and composing the libraries as USD
+  sublayers would compose same-path prims across libraries, attribute by attribute, instead of
+  letting the strongest library answer a designation as a whole. An explicit ordered `string[]` in
+  `customLayerData` keeps the "strongest first" meaning, needs no engine change and stays an
+  ordinary USD layer that any USD reader opens. If the owner prefers real sublayers, only
+  `parse_environment` changes.
+* **No hidden global, no settings yet.** The active environment and the user library are command
+  line options. An application data directory, the "active environment" setting and the lookup of
+  a project-level library are V06 work; the UI picker (V05) will call the same functions.
+* **`library-add` rewrites the file.** Comments, `doc` text and attributes the loader does not
+  read are not kept, and two writers of one file at once are not supported (the last rename
+  wins). Refusing a library with refused entries and the read-back check keep it from losing or
+  changing anything the loader understood; an edited-by-hand library with extra content should be
+  kept under version control. There is no `library-remove` or edit command.
+* **Library provenance is still not stored in definitions** (section 10), so "this member's section
+  came from library X, version Y" is not recorded; and `create-member --profile NAME` still
+  resolves against the model's definitions, not a library: define the profile first with
+  `define-profile --environment`, then place members by name. One command for both is a later
+  convenience.
+* **Containment is lexical.** A listed path cannot name a parent directory or an absolute path, but a
+  symbolic link inside the environment directory is followed, as for any `--library` file.
+* The layer engine runs in the CLI process (no LEW-03 containment); a hostile library or
+  environment is bounded by the budgets, not isolated.
+
+Evidence: `cargo test -p beamcraft-cli --test environments` (real binary: ordered lookup and shadow
+report, the digest predicted by `library-show` equals the pinned one, user library first, a refused
+stronger entry not replaced by a weaker one, hostile environments (escaping, absolute, drive,
+scheme, backslash, empty and repeated paths, 33 libraries, no libraries, numbers, missing file,
+duplicate library ids, sublayers, other units, directory, URL, a library used as an environment),
+`library-add` creating a library and adding every family, a rectangle, custom outlines with a
+cavity and awkward characters in the designation, the digest equal to an explicit definition with
+the same name, a member placed with the library deleted, and every refusal leaving the file byte
+for byte unchanged with no temporary file left), and `cargo test -p beamcraft-cli --lib library`
+(lookup, containment, prim names, render and read back, environment parsing).
 
 ## Provenance
 
