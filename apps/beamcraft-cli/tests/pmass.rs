@@ -538,3 +538,41 @@ fn a_record_with_the_current_label_and_a_wrong_value_is_still_refused() {
         "INTEGRITY_ERROR"
     );
 }
+
+#[test]
+fn a_plate_record_with_a_superseded_member_label_is_still_refused() {
+    let f = Fixture::new();
+    f.ok(
+        "create-plate",
+        &["--width", "100", "--length", "100", "--thickness", "5"],
+    );
+    // The label exemption is for member records only: a plate whose stored volume is wrong and
+    // whose algorithm label is one a member used to carry is a wrong record, not a stale one.
+    f.tamper(|name, layer| {
+        if name != "derived.usda" {
+            return layer;
+        }
+        layer
+            .lines()
+            .map(|line| {
+                let trimmed = line.trim_start();
+                if trimmed.starts_with("custom double bim:volumeMm3") {
+                    "        custom double bim:volumeMm3 = 1".to_owned()
+                } else if trimmed.starts_with("custom string bim:quantityAlgorithm") {
+                    "        custom string bim:quantityAlgorithm = \"kernel-p03-straight-member-volume/1;tolerance-policy-3\"".to_owned()
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n"
+    });
+    assert_eq!(
+        f.rejected(
+            "create-plate",
+            &["--width", "200", "--length", "100", "--thickness", "5"]
+        ),
+        "INTEGRITY_ERROR"
+    );
+}

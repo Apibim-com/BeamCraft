@@ -727,14 +727,14 @@ fn verify_derived(
         .collect();
     let expected = records
         .iter()
-        .map(|r| (r.authored.id, &r.body.solid, plate_record(r)))
+        .map(|r| (r.authored.id, &r.body.solid, plate_record(r), false))
         .chain(
             member_records
                 .iter()
-                .map(|r| (r.authored.id, &r.body.solid, member_record(r))),
+                .map(|r| (r.authored.id, &r.body.solid, member_record(r), true)),
         );
     let mut reports = BTreeMap::new();
-    for (id, solid, record) in expected {
+    for (id, solid, record, is_member) in expected {
         let mesh = kernel_mesh(solid)?;
         let Some(Some(actual)) = found.get(&id) else {
             return Err(integrity("element has no derived mesh"));
@@ -744,11 +744,13 @@ fn verify_derived(
         }
         let assessment = assess(actual.stored.as_ref(), &record);
         // A record that an earlier slice wrote for a member (a superseded algorithm label) is a
-        // stale value to recompute, not a layer that cannot be published.
-        let superseded = actual
-            .stored
-            .as_ref()
-            .is_some_and(|s| is_superseded_algorithm(&s.algorithm));
+        // stale value to recompute, not a layer that cannot be published. Plate algorithms did
+        // not change, so a plate carrying such a label is a wrong record like any other.
+        let superseded = is_member
+            && actual
+                .stored
+                .as_ref()
+                .is_some_and(|s| is_superseded_algorithm(&s.algorithm));
         if strict
             && actual.stored.is_some()
             && !superseded
