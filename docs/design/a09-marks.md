@@ -72,9 +72,16 @@ beamcraft marks --store ROOT
    withdrawing writes only the target's mark group and reads its lifecycle and mark group, so a
    mark edit conflicts with another command on the same element and with nothing else. The
    withdrawal of a shape edit extends `UpdateElement`'s footprint by exactly that entry.
-9. **Replay is decided from the operation's revision** (as in A06 and D2): the retry is a replay
-   only when the revision the host ledger recorded for the `op_id` left the target in exactly the
-   requested mark state, whatever the head holds now.
+9. **Replay is decided from the operation's revision** (as in A06 and D2). The host ledger
+   stores no request bytes (the stored canonical request of F05 replaces this), so the command
+   kind is recognised from the before-and-after signature the recorded revision left on the
+   target's mark: an assign leaves `(value, assigned)` over an absent or different assigned
+   mark, a revoke moves `(value, approved)` back to `(value, assigned)`, an approval moves
+   `assigned` to `approved` — whatever the head holds now. One collision is accepted and
+   documented: the thickness withdrawal of `update-element` leaves the same approved-to-assigned
+   pair a revoke leaves, so a revoke retried under the withdrawal's `op_id` answers replayed
+   (a real revoke at that point is `INVALID_ARGUMENT`); only the stored canonical request of F05
+   tells the two apart.
 10. **Damaged records fail closed.** A stored layer whose `bim:markStatus` disagrees with
     `bim:mark`, whose value exceeds the bounds or that repeats a value is refused by the
     structural validator before any command reads or replays over it (rule `A08-V01`).
