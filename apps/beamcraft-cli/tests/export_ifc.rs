@@ -534,8 +534,16 @@ fn a_scene_exports_to_a_structurally_valid_file_with_the_volumes_of_the_store() 
     assert_eq!(from_file.len(), 3);
     for (name, volume) in &from_file {
         let expected = stored[name];
+        // P-Mass: a member's published volume is area x length with the exact section area,
+        // while its mesh keeps the detailed polygon of the fillets, so they differ by the arc
+        // approximation (here the I section, below 0.5 percent). A plate has no such gap.
+        let bound = if name == "Пластина P1" {
+            1e-4
+        } else {
+            5e-3
+        };
         assert!(
-            ((volume - expected) / expected).abs() < 1e-4,
+            ((volume - expected) / expected).abs() < bound,
             "{name}: file {volume} store {expected}"
         );
     }
