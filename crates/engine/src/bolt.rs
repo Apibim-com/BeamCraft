@@ -6,7 +6,8 @@
 //!
 //! A bolt group is a `connection` element whose one `connects` record names exactly two distinct
 //! parts, the main part first. The engine never touches USD: the adapter reads the kinds of the
-//! model's elements into the same [`Parts`] index a weld uses, and the decision here is pure,
+//! model's elements into the same [`crate::weld::Parts`] index a weld uses, and the decision
+//! here is pure,
 //! bounded and deterministic. The layer engine re-checks the structural rules on the authored
 //! candidate, so a defect in either place fails closed.
 //!
