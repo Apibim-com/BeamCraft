@@ -98,7 +98,6 @@ fn run(args: &[OsString]) -> Run<Json> {
         beam: series(options.get("--beam-series"), defaults.beam)?,
         column: series(options.get("--column-series"), defaults.column)?,
         assembly: series(options.get("--assembly-series"), defaults.assembly)?,
-        // Sub-micron differences are floating-point noise, not different parts (F04: 0.001 mm).
         tolerance_mm: options
             .get("--tolerance")
             .map(|t| {
@@ -106,7 +105,7 @@ fn run(args: &[OsString]) -> Run<Json> {
                     .map_err(|_| invalid("a number is malformed"))
             })
             .transpose()?
-            .unwrap_or(0.001),
+            .unwrap_or(defaults.tolerance_mm),
         compare_name: match options.get("--compare-name") {
             None | Some(&"false") => false,
             Some(&"true") => true,

@@ -37,6 +37,12 @@ pub const MAX_START: u64 = 1_000_000_000;
 pub const MAX_TOLERANCE_MM: f64 = 1000.0;
 /// Deepest assembly nesting the walk follows.
 const MAX_DEPTH: usize = 64;
+/// Angles (member roll) closer than this share a number, in radians.
+pub const ANGLE_TOLERANCE_RAD: f64 = 1e-9;
+/// The most part comparisons one preview makes. Parts are looked up by kind, profile, material
+/// and the range of their first dimension, so ordinary models make a handful per part; a model
+/// built to defeat that index is refused instead of taking unbounded time.
+pub const MAX_COMPARISONS: u64 = 50_000_000;
 
 /// The kind of a numbered part.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -73,9 +79,12 @@ pub struct PartFact {
     pub profile: Option<ContentDigest>,
     /// Pinned material.
     pub material: Option<ContentDigest>,
-    /// Dimensions in millimetres, in a fixed order per kind (plate: width, length, thickness;
-    /// member: length, roll in radians).
+    /// Lengths in millimetres, in a fixed order per kind (plate: width, length, thickness;
+    /// member: axis length), compared within the tolerance.
     pub dimensions: Vec<f64>,
+    /// Angles in radians (member: roll), compared within [`ANGLE_TOLERANCE_RAD`], never within
+    /// the length tolerance.
+    pub angles_rad: Vec<f64>,
     /// Through-hole polygons in the part's own frame.
     pub holes: Vec<Vec<[f64; 2]>>,
     /// The assembly the part belongs to.
@@ -131,7 +140,9 @@ impl Default for Settings {
             beam: series("B"),
             column: series("C"),
             assembly: series("A"),
-            tolerance_mm: 0.0,
+            // Sub-micron differences between lengths computed from different coordinates are
+            // floating-point noise, not different parts (the F04 length floor is 0.001 mm).
+            tolerance_mm: 0.001,
             compare_name: false,
         }
     }
@@ -219,17 +230,41 @@ fn close(a: f64, b: f64, tol: f64) -> bool {
     }
 }
 
-fn canonical_holes(holes: &[Vec<[f64; 2]>]) -> Vec<Vec<[f64; 2]>> {
-    let mut out: Vec<Vec<[f64; 2]>> = holes
+/// A hole polygon in a canonical form that keeps its edges: counter-clockwise, starting at its
+/// smallest vertex. Two rings with the same vertices in a different order are different holes.
+fn canonical_polygon(points: &[[f64; 2]]) -> Vec<[f64; 2]> {
+    let mut ring = points.to_vec();
+    let twice_area: f64 = points
         .iter()
-        .map(|polygon| {
-            let mut points = polygon.clone();
-            points.sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
-            points
-        })
-        .collect();
+        .zip(points.iter().cycle().skip(1))
+        .map(|(p, q)| p[0] * q[1] - q[0] * p[1])
+        .sum();
+    if twice_area < 0.0 {
+        ring.reverse();
+    }
+    let start = ring
+        .iter()
+        .enumerate()
+        .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal))
+        .map_or(0, |(i, _)| i);
+    ring.rotate_left(start);
+    ring
+}
+
+fn canonical_holes(holes: &[Vec<[f64; 2]>]) -> Vec<Vec<[f64; 2]>> {
+    let mut out: Vec<Vec<[f64; 2]>> = holes.iter().map(|h| canonical_polygon(h)).collect();
     out.sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
     out
+}
+
+/// An order-preserving key of a finite float, for range lookups.
+fn sortable(v: f64) -> u64 {
+    let bits = (v + 0.0).to_bits();
+    if bits >> 63 == 1 {
+        !bits
+    } else {
+        bits | (1 << 63)
+    }
 }
 
 fn same_part(
@@ -248,6 +283,11 @@ fn same_part(
             .iter()
             .zip(&b.dimensions)
             .all(|(x, y)| close(*x, *y, s.tolerance_mm))
+        && a.angles_rad.len() == b.angles_rad.len()
+        && a.angles_rad
+            .iter()
+            .zip(&b.angles_rad)
+            .all(|(x, y)| close(*x, *y, ANGLE_TOLERANCE_RAD))
         && holes_a.len() == holes_b.len()
         && holes_a.iter().zip(holes_b).all(|(p, q)| {
             p.len() == q.len()
@@ -302,7 +342,10 @@ pub fn preview(
         return Err(NumberingError("an element id appears twice"));
     }
     if parts.iter().any(|p| {
-        p.dimensions.iter().any(|v| !v.is_finite())
+        p.dimensions
+            .iter()
+            .chain(&p.angles_rad)
+            .any(|v| !v.is_finite())
             || p.holes
                 .iter()
                 .flatten()
@@ -310,20 +353,68 @@ pub fn preview(
     }) {
         return Err(NumberingError("a dimension is not finite"));
     }
-    // Part groups: greedy in id order against the reference of each earlier group.
+    // Part groups: in id order, a part joins the earliest group whose reference it matches.
+    // Candidates come from an index on the exact identity fields and the range of the first
+    // dimension, so the work does not grow with the number of unrelated groups.
     struct Building<'a> {
         reference: &'a PartFact,
         holes: Vec<Vec<[f64; 2]>>,
         members: Vec<ElementId>,
     }
+    type Coarse = (
+        PartKind,
+        Option<ContentDigest>,
+        Option<ContentDigest>,
+        Option<String>,
+        usize,
+        usize,
+        usize,
+    );
     let mut buildings: Vec<Building<'_>> = Vec::new();
+    let mut index: BTreeMap<Coarse, BTreeMap<u64, Vec<usize>>> = BTreeMap::new();
+    let mut comparisons: u64 = 0;
     let mut group_of: BTreeMap<ElementId, usize> = BTreeMap::new();
     for part in &ordered {
         let holes = canonical_holes(&part.holes);
-        let found = buildings
-            .iter()
-            .position(|g| same_part(g.reference, part, &g.holes, &holes, settings));
-        let index = match found {
+        let coarse: Coarse = (
+            part.kind,
+            part.profile,
+            part.material,
+            settings.compare_name.then(|| part.name.clone()),
+            part.dimensions.len(),
+            part.angles_rad.len(),
+            holes.len(),
+        );
+        let first = part.dimensions.first().copied().unwrap_or(0.0);
+        let range =
+            sortable(first - settings.tolerance_mm)..=sortable(first + settings.tolerance_mm);
+        let mut candidates: Vec<usize> = index
+            .get(&coarse)
+            .map(|by_first| {
+                by_first
+                    .range(range)
+                    .flat_map(|(_, g)| g.iter().copied())
+                    .collect()
+            })
+            .unwrap_or_default();
+        candidates.sort_unstable();
+        let mut found = None;
+        for candidate in candidates {
+            comparisons += 1;
+            if comparisons > MAX_COMPARISONS {
+                return Err(NumberingError(
+                    "the comparison work exceeds the bound; use a smaller tolerance",
+                ));
+            }
+            if buildings
+                .get(candidate)
+                .is_some_and(|g| same_part(g.reference, part, &g.holes, &holes, settings))
+            {
+                found = Some(candidate);
+                break;
+            }
+        }
+        let at = match found {
             Some(i) => i,
             None => {
                 buildings.push(Building {
@@ -331,13 +422,20 @@ pub fn preview(
                     holes,
                     members: Vec::new(),
                 });
-                buildings.len() - 1
+                let i = buildings.len() - 1;
+                index
+                    .entry(coarse)
+                    .or_default()
+                    .entry(sortable(first))
+                    .or_default()
+                    .push(i);
+                i
             }
         };
-        if let Some(group) = buildings.get_mut(index) {
+        if let Some(group) = buildings.get_mut(at) {
             group.members.push(part.id);
         }
-        group_of.insert(part.id, index);
+        group_of.insert(part.id, at);
     }
     let mut groups: Vec<Group> = Vec::new();
     let mut counters: BTreeMap<PartKind, u64> = BTreeMap::new();
@@ -408,7 +506,8 @@ pub fn preview(
     }
     let mut sorted_assemblies: Vec<&AssemblyFact> = assemblies.iter().collect();
     sorted_assemblies.sort_by_key(|a| a.id);
-    let mut assembly_groups: Vec<(String, ElementId, Vec<ElementId>, String)> = Vec::new();
+    let mut assembly_groups: Vec<(ElementId, Vec<ElementId>, String)> = Vec::new();
+    let mut by_signature: BTreeMap<ContentDigest, usize> = BTreeMap::new();
     for assembly in sorted_assemblies {
         let mut references = signatures.remove(&assembly.id).unwrap_or_default();
         references.sort();
@@ -420,17 +519,26 @@ pub fn preview(
         if settings.compare_name {
             key = format!("{}|{key}", assembly.name);
         }
-        match assembly_groups.iter_mut().find(|g| g.0 == key) {
-            Some(group) => group.2.push(assembly.id),
-            None => assembly_groups.push((
-                key,
-                assembly.id,
-                vec![assembly.id],
-                format!("{} parts", references.len()),
-            )),
+        // The signature of a large assembly is long; its digest is the key.
+        let signature = Sha256::digest(key.as_bytes())
+            .map_err(|_| NumberingError("an assembly signature is too long"))?;
+        match by_signature.get(&signature) {
+            Some(&at) => {
+                if let Some(group) = assembly_groups.get_mut(at) {
+                    group.1.push(assembly.id);
+                }
+            }
+            None => {
+                by_signature.insert(signature, assembly_groups.len());
+                assembly_groups.push((
+                    assembly.id,
+                    vec![assembly.id],
+                    format!("{} parts", references.len()),
+                ));
+            }
         }
     }
-    for (index, (_, reference, members, description)) in assembly_groups.into_iter().enumerate() {
+    for (index, (reference, members, description)) in assembly_groups.into_iter().enumerate() {
         let number = settings
             .assembly
             .start
@@ -462,6 +570,10 @@ pub fn preview(
 fn describe(part: &PartFact, s: &Settings) -> String {
     let dims: Vec<String> = part.dimensions.iter().map(|d| format!("{d}")).collect();
     let mut text = format!("dimensions {}", dims.join(" x "));
+    if part.angles_rad.iter().any(|a| *a != 0.0) {
+        let angles: Vec<String> = part.angles_rad.iter().map(|a| format!("{a}")).collect();
+        text.push_str(&format!(", roll {} rad", angles.join(" ")));
+    }
     if !part.holes.is_empty() {
         text.push_str(&format!(", {} holes", part.holes.len()));
     }
@@ -534,6 +646,7 @@ mod tests {
             profile: None,
             material: Some(digest("s355")),
             dimensions: vec![w, l, t],
+            angles_rad: Vec::new(),
             holes: Vec::new(),
             assembly: None,
         }
@@ -546,7 +659,8 @@ mod tests {
             name: format!("B{n}"),
             profile: Some(digest(profile)),
             material: Some(digest("s355")),
-            dimensions: vec![length, 0.0],
+            dimensions: vec![length],
+            angles_rad: vec![0.0],
             holes: Vec::new(),
             assembly: None,
         }
@@ -856,5 +970,135 @@ mod tests {
         };
         let p = preview(&parts, &[], &s).unwrap();
         assert_eq!(positions(&p), [("1000".into(), 1), ("1001".into(), 1)]);
+    }
+
+    #[test]
+    fn a_roll_is_never_merged_by_the_length_tolerance() {
+        let mut a = beam(1, "ipe200", 3000.0);
+        let mut b = beam(2, "ipe200", 3000.0);
+        a.angles_rad = vec![0.0];
+        b.angles_rad = vec![std::f64::consts::FRAC_PI_2];
+        let loose = Settings {
+            tolerance_mm: 2.0,
+            ..Settings::default()
+        };
+        assert_eq!(
+            preview(&[a.clone(), b.clone()], &[], &loose)
+                .unwrap()
+                .groups
+                .len(),
+            2
+        );
+        b.angles_rad = vec![5e-10];
+        assert_eq!(preview(&[a, b], &[], &loose).unwrap().groups.len(), 1);
+    }
+
+    #[test]
+    fn the_default_tolerance_treats_float_noise_as_the_same_length() {
+        let parts = [beam(1, "ipe200", 3000.0), beam(2, "ipe200", 3000.0005)];
+        let p = preview(&parts, &[], &Settings::default()).unwrap();
+        assert_eq!(p.groups.len(), 1);
+        let exact = Settings {
+            tolerance_mm: 0.0,
+            ..Settings::default()
+        };
+        assert_eq!(preview(&parts, &[], &exact).unwrap().groups.len(), 2);
+    }
+
+    #[test]
+    fn holes_with_the_same_vertices_but_different_edges_are_different() {
+        // Two concave rings through the same five points: areas 1200 and 1100 mm2.
+        let first = vec![
+            [10.0, 10.0],
+            [10.0, 50.0],
+            [25.0, 30.0],
+            [50.0, 50.0],
+            [50.0, 10.0],
+        ];
+        let second = vec![
+            [10.0, 10.0],
+            [10.0, 50.0],
+            [50.0, 50.0],
+            [25.0, 30.0],
+            [50.0, 10.0],
+        ];
+        let mut a = plate(1, 400.0, 300.0, 20.0);
+        let mut b = plate(2, 400.0, 300.0, 20.0);
+        a.holes = vec![first.clone()];
+        b.holes = vec![second];
+        assert_eq!(
+            preview(&[a.clone(), b], &[], &Settings::default())
+                .unwrap()
+                .groups
+                .len(),
+            2
+        );
+        // The same ring started elsewhere, or wound the other way, is the same hole.
+        let mut rotated = first.clone();
+        rotated.rotate_left(2);
+        let mut reversed = first;
+        reversed.reverse();
+        let mut c = plate(3, 400.0, 300.0, 20.0);
+        let mut d = plate(4, 400.0, 300.0, 20.0);
+        c.holes = vec![rotated];
+        d.holes = vec![reversed];
+        assert_eq!(
+            preview(&[a, c, d], &[], &Settings::default())
+                .unwrap()
+                .groups
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn many_distinct_parts_are_grouped_without_comparing_them_all() {
+        let parts: Vec<PartFact> = (0..30_000u16)
+            .map(|n| beam(n + 1, "ipe200", 1000.0 + f64::from(n)))
+            .collect();
+        let started = std::time::Instant::now();
+        let p = preview(&parts, &[], &Settings::default()).unwrap();
+        assert_eq!(p.groups.len(), 30_000);
+        assert!(
+            started.elapsed().as_secs() < 20,
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn a_model_built_to_defeat_the_index_hits_the_work_budget() {
+        // Same first dimension, every other dimension different: all in one bucket.
+        let parts: Vec<PartFact> = (0..11_000u16)
+            .map(|n| plate(n + 1, 400.0, 300.0, 1.0 + f64::from(n)))
+            .collect();
+        let error = preview(&parts, &[], &Settings::default()).unwrap_err();
+        assert!(error.0.contains("comparison work"));
+        // With the tolerance covering nothing extra the same model in smaller size is fine.
+        assert!(preview(&parts[..2000], &[], &Settings::default()).is_ok());
+    }
+
+    #[test]
+    fn many_assemblies_with_different_names_are_grouped_by_signature() {
+        let assemblies: Vec<AssemblyFact> = (0..20_000u16)
+            .map(|n| AssemblyFact {
+                id: id(n + 1),
+                name: format!("A{n}"),
+                parent: None,
+            })
+            .collect();
+        let named = Settings {
+            compare_name: true,
+            ..Settings::default()
+        };
+        let p = preview(&[], &assemblies, &named).unwrap();
+        assert_eq!(p.groups.len(), 20_000);
+        assert_eq!(
+            preview(&[], &assemblies, &Settings::default())
+                .unwrap()
+                .groups
+                .len(),
+            1
+        );
     }
 }
