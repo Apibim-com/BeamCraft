@@ -216,6 +216,9 @@ pub fn marks(store: &RevisionStore) -> Result<Vec<MarkView>, PlateError> {
     Ok(views_of(&numbering, &kinds, &names))
 }
 
+/// The mark of one element before and after the operation's own revision.
+type MarkChangePair = (Option<Mark>, Option<Mark>);
+
 /// What the operation committed at `sequence` did to the mark of `target`: the mark before and
 /// the mark after, or `None` when that revision did not change the mark at all (including the
 /// case where the element did not exist before). The before state is what tells the command
@@ -227,7 +230,7 @@ fn changed_by(
     sequence: u64,
     target: &ElementId,
     control: &Control,
-) -> Result<Option<(Option<Mark>, Option<Mark>)>, PlateError> {
+) -> Result<Option<MarkChangePair>, PlateError> {
     let at = store.open_at(sequence)?;
     let after = model_of(&open_base(&base_of(&at)?)?, control)?
         .mark(target)
@@ -300,7 +303,7 @@ pub fn assign(
                     value: after,
                     status: MarkStatus::Assigned,
                 })
-            )) if before.as_ref().map_or(true, |b| b.value != *value) && after == *value
+            )) if before.as_ref().is_none_or(|b| b.value != *value) && after == *value
         ),
         // A revoke is recognised by the status pair alone: it keeps whatever value it found.
         None => matches!(
