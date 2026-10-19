@@ -23,7 +23,7 @@ use beamcraft_cli::workspace::{
     CreateWorkspace, WorkspaceStatus, create_workspace, publish_workspace,
     status as workspace_status,
 };
-use beamcraft_engine::command::{Quantities, origin_rectangle_contour};
+use beamcraft_engine::command::{Quantities, VOLUME_ALGORITHM, origin_rectangle_contour};
 use beamcraft_engine::footprint::{Entry, Footprint, Target};
 use beamcraft_engine::quantity::{Freshness, is_superseded_algorithm};
 use beamcraft_engine::query::committed::MemberRecord;
@@ -461,9 +461,14 @@ fn candidate_json(digest: &ContentDigest, record: &DefinitionRecord) -> Json {
     ])
 }
 
-/// One closed polygon from `"X,Y;X,Y;..."`, in millimetres. Winding, simplicity and the caps
-/// are the kernel's and the model's decisions, not the parser's.
+/// One closed polygon from `"X,Y;X,Y;..."`, in millimetres. One trailing separator is ignored
+/// (the closure of a contour is implicit); an empty outline is named as such. Winding,
+/// simplicity and the caps are the kernel's and the model's decisions, not the parser's.
 pub(crate) fn parse_polygon(text: &str) -> Run<Vec<[f64; 2]>> {
+    let text = text.strip_suffix(';').unwrap_or(text);
+    if text.is_empty() {
+        return Err(invalid("the outline is empty"));
+    }
     text.split(';')
         .map(|pair| {
             let parts: Vec<f64> = pair
@@ -1720,10 +1725,21 @@ fn definitions_json(inspection: &Inspection, options: &BTreeMap<&str, &str>) -> 
 
 fn plate_json(record: &PlateRecord) -> Run<Json> {
     let mesh = &record.body.solid;
+    // A rectangle's dimensions are its sides; a contour plate has no sides, only a bounding box,
+    // so the record names what it reports and never lets `width * length * thickness` pass for
+    // the size of an arbitrary outline.
+    let rectangle = record.body.volume_algorithm == VOLUME_ALGORITHM;
+    let shape = if rectangle { "rectangle" } else { "contour" };
+    let dimensions = if rectangle {
+        "dimensions_mm"
+    } else {
+        "bounding_box_mm"
+    };
     Ok(Json::object([
         ("element_id", Json::text(record.authored.id.to_string())),
         ("prim_path", Json::text(record.authored.id.prim_path())),
         ("kind", Json::text("plate")),
+        ("shape", Json::text(shape)),
         ("name", Json::text(record.authored.name.clone())),
         (
             "material_digest",
@@ -1733,7 +1749,7 @@ fn plate_json(record: &PlateRecord) -> Run<Json> {
                 .map_or(Json::Null, |d| Json::text(d.to_string())),
         ),
         (
-            "dimensions_mm",
+            dimensions,
             Json::object([
                 ("width", num(record.body.width_mm)?),
                 ("length", num(record.body.length_mm)?),

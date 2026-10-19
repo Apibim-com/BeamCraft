@@ -126,10 +126,13 @@ fn a_contour_plate_has_the_exact_volume_and_mass_and_reopens_verified() {
     assert!((volume - 600_000.0).abs() <= 1e-9, "{volume}");
     let mass = num(plate, &["quantities", "mass", "kg"]);
     assert!((mass - 4.71).abs() <= 1e-9, "{mass}");
-    // The outline's bounding box is reported, not a width/length pair that does not exist.
-    assert_eq!(num(plate, &["dimensions_mm", "width"]), 300.0);
-    assert_eq!(num(plate, &["dimensions_mm", "length"]), 400.0);
-    assert_eq!(num(plate, &["dimensions_mm", "thickness"]), 10.0);
+    // A contour plate reports a bounding box under its own name, never dimensions that a
+    // consumer could multiply into a size, and names its shape.
+    assert_eq!(text(plate, "shape"), "contour");
+    assert!(plate.get("dimensions_mm").is_err());
+    assert_eq!(num(plate, &["bounding_box_mm", "width"]), 300.0);
+    assert_eq!(num(plate, &["bounding_box_mm", "length"]), 400.0);
+    assert_eq!(num(plate, &["bounding_box_mm", "thickness"]), 10.0);
 
     let inspected = f.run("plate-inspect", &[]).1;
     let reopened = &at(&inspected, &["plates"]).array().unwrap()[0];
@@ -138,7 +141,7 @@ fn a_contour_plate_has_the_exact_volume_and_mass_and_reopens_verified() {
         num(reopened, &["quantities", "volume", "mm3"]),
         num(plate, &["quantities", "volume", "mm3"])
     );
-    assert_eq!(num(reopened, &["dimensions_mm", "width"]), 300.0);
+    assert_eq!(num(reopened, &["bounding_box_mm", "width"]), 300.0);
 
     // An ordinary reader of the saved text sees the authored contour as a plain array.
     let authored = f.authored_text(&created);
@@ -161,6 +164,12 @@ fn a_contour_plate_has_the_exact_volume_and_mass_and_reopens_verified() {
     };
     assert_eq!(corner("world_min_mm"), vec![1000.0, 0.0, 0.0]);
     assert_eq!(corner("world_max_mm"), vec![1300.0, 400.0, 10.0]);
+
+    // One trailing separator is ignored: the closure of a contour is implicit.
+    let (code, second) = f.plate(&["--outer", "0,0;300,0;0,400;"]);
+    assert_eq!(code, 0, "{second:?}");
+    let inspected = f.run("plate-inspect", &[]).1;
+    assert_eq!(num(&inspected, &["plate_count"]), 2.0);
 }
 
 #[test]
