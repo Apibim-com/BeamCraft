@@ -6,7 +6,7 @@
 
 use crate::camera::{Camera, View};
 use crate::command::Selected;
-use crate::edit::{EditKind, Edited, Editor, Target, ndc_of, ray_through};
+use crate::edit::{EditKind, Edited, Editor, Epoch, Target, ndc_of, ray_through};
 use crate::render::{Renderer, Uploaded};
 use crate::scene::Scene;
 use crate::source::Reloaded;
@@ -57,12 +57,15 @@ pub struct App {
     /// Why the last definitions refresh failed; kept apart from `tool_note` so neither hides the other.
     refresh_error: Option<String>,
     editor: Editor,
-    edit_action: EditKind,
     edit_job: Option<Receiver<Result<Edited, ToolError>>>,
-    select_job: Option<Receiver<Result<Option<Selected>, ToolError>>>,
+    select_job: Option<SelectJob>,
+    select_epoch: Epoch,
     /// The result of the last select, edit, undo or redo.
     edit_note: Option<Result<String, String>>,
 }
+
+/// A lookup in flight: the epoch it was asked under and its receiver.
+type SelectJob = (u64, Receiver<Result<Option<Selected>, ToolError>>);
 
 const RED: egui::Color32 = egui::Color32::from_rgb(230, 80, 60);
 
@@ -277,9 +280,9 @@ impl App {
             tool_note: None,
             refresh_error: None,
             editor: Editor::default(),
-            edit_action: EditKind::Move,
             edit_job: None,
             select_job: None,
+            select_epoch: Epoch::default(),
             edit_note: None,
         };
         app.reload();
@@ -393,7 +396,7 @@ impl App {
         }
         let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
         let (tx, rx) = std::sync::mpsc::channel();
-        self.select_job = Some(rx);
+        self.select_job = Some((self.select_epoch.advance(), rx));
         let spawned = std::thread::Builder::new()
             .name("beamcraft-pick".into())
             .spawn(move || {
@@ -405,8 +408,17 @@ impl App {
         }
     }
 
+    /// Drops any lookup in flight: its result is no longer wanted (Esc, an accepted edit).
+    fn invalidate_select(&mut self) {
+        self.select_epoch.advance();
+        self.select_job = None;
+    }
+
     fn poll_select(&mut self) {
-        let Some(rx) = &self.select_job else { return };
+        let Some((asked, rx)) = &self.select_job else {
+            return;
+        };
+        let asked = *asked;
         let result = match rx.try_recv() {
             Ok(result) => result,
             Err(TryRecvError::Empty) => return,
@@ -416,6 +428,9 @@ impl App {
             }),
         };
         self.select_job = None;
+        if !self.select_epoch.is_current(asked) {
+            return;
+        }
         match result {
             Ok(None) => {
                 self.editor.deselect();
@@ -481,6 +496,8 @@ impl App {
         self.editor.finish();
         match result {
             Ok(done) => {
+                // A lookup that started before this edit describes the element as it was.
+                self.invalidate_select();
                 self.reload();
                 let subject = match done.kind {
                     EditKind::Undo | EditKind::Redo => "the workspace".to_owned(),
@@ -503,6 +520,7 @@ impl App {
             }
             Err(e) => {
                 if e.code == "OUTCOME_UNKNOWN" {
+                    self.invalidate_select();
                     self.reload();
                     self.refresh_selection();
                 }
@@ -516,26 +534,23 @@ impl App {
         let Some(id) = self.editor.selected().map(|s| s.id.clone()) else {
             return;
         };
-        if self.select_job.is_some() {
-            return;
-        }
         let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
         let (tx, rx) = std::sync::mpsc::channel();
-        self.select_job = Some(rx);
+        self.select_job = Some((self.select_epoch.advance(), rx));
         let spawned = std::thread::Builder::new()
             .name("beamcraft-info".into())
             .spawn(move || {
-                let reply = command::element_info(&cli, &store, &id).map(|info| {
-                    Some(Selected {
+                // An element the revision no longer holds clears the selection; any other
+                // failure keeps it selected without details, so the move form is emptied
+                // rather than left with the position from before the edit.
+                let reply = match command::element_info(&cli, &store, &id) {
+                    Err(e) if e.code == "NOT_FOUND" => None,
+                    info => Some(Selected {
                         id: id.clone(),
-                        info: Ok(info),
-                    })
-                });
-                // An element the revision no longer holds clears the selection.
-                let _ = tx.send(match reply {
-                    Err(e) if e.code == "NOT_FOUND" => Ok(None),
-                    other => other,
-                });
+                        info,
+                    }),
+                };
+                let _ = tx.send(Ok(reply));
             });
         if spawned.is_err() {
             self.select_job = None;
@@ -557,13 +572,14 @@ impl App {
             }
         }
         let selected = self.editor.selected().is_some();
+        let mut action = self.editor.action();
         ui.add_enabled_ui(selected, |ui| {
             ui.horizontal(|ui| {
-                ui.selectable_value(&mut self.edit_action, EditKind::Move, "Move");
-                ui.selectable_value(&mut self.edit_action, EditKind::Copy, "Copy");
-                ui.selectable_value(&mut self.edit_action, EditKind::Delete, "Delete");
+                ui.selectable_value(&mut action, EditKind::Move, "Move");
+                ui.selectable_value(&mut action, EditKind::Copy, "Copy");
+                ui.selectable_value(&mut action, EditKind::Delete, "Delete");
             });
-            match self.edit_action {
+            match action {
                 EditKind::Move => {
                     ui.label("New position in mm (absolute):");
                     point_fields(ui, &mut self.editor.move_to);
@@ -577,6 +593,8 @@ impl App {
                 }
             }
         });
+        // Another action needs its own preview.
+        self.editor.set_action(action);
         let busy = self.editor.busy();
         let target = self.target();
         let can_commit = self.editor.can_commit(target);
@@ -594,7 +612,7 @@ impl App {
                 .clicked();
         });
         if preview {
-            let action = self.edit_action;
+            let action = self.editor.action();
             let target = Target {
                 store: &self.source.store,
                 workspace: self.source.workspace.as_deref(),
@@ -923,6 +941,7 @@ impl eframe::App for App {
         self.poll_select();
         self.poll_reload();
         if !wants_text && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.invalidate_select();
             self.editor.deselect();
         }
         if reload {

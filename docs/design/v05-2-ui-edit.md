@@ -53,7 +53,15 @@ beamcraft workspace-redo  --workspace-dir DIR
    selected element (it may have moved, or an undo may have removed it, in which case the
    selection is cleared). A delete clears the selection. If the details cannot be read the element
    stays selected with an empty move form, never a guessed one.
-7. **The highlight is the engine's bounds.** The box comes from `ViewSnapshot::element_bounds`;
+7. **Late results never win.** Every lookup carries an epoch; Esc and every accepted edit move
+   the epoch on and drop the receiver in flight, so a late `pick` or details reply can neither
+   bring back a cleared selection nor put pre-edit coordinates into the move form
+   (`beamcraft_ui::edit::Epoch`). A details lookup after an edit that fails for any reason other
+   than `NOT_FOUND` keeps the element selected with an empty move form (never the old position);
+   `NOT_FOUND` clears the selection.
+8. **Switching the action drops the preview.** A staged Delete cannot be committed from the Move
+   panel: `Editor::set_action` cancels the staged edit when the action changes.
+9. **The highlight is the engine's bounds.** The box comes from `ViewSnapshot::element_bounds`;
    the renderer is unchanged.
 
 ## Not done (not claimed)
@@ -72,7 +80,7 @@ beamcraft workspace-redo  --workspace-dir DIR
 
 ## Evidence
 
-* Unit tests in `apps/beamcraft-ui/src/edit.rs` (12): pixel to device coordinates inside the view
+* Unit tests in `apps/beamcraft-ui/src/edit.rs` (14, including the epoch rule and the action switch): pixel to device coordinates inside the view
   only; the ray through a projected point hits that point (for a rotated camera and a large scene
   origin); exact `pick` arguments; pick, inspection and edit replies (accepted, forged outcome of
   another command, rejection that a zero exit cannot hide, crash without JSON); the argument lists
