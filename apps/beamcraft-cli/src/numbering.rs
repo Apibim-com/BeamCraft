@@ -39,18 +39,41 @@ fn error(code: ErrorCode, message: &'static str) -> PlateError {
     PlateError { code, message }
 }
 
-/// The outline of a plate whose contour is not the origin rectangle, relative to the minimum of
-/// its bounding box; empty for the origin rectangle (its width and length already say it all).
+/// The minimum corner of the bounding box of a plate's contour. The outline and the holes of a
+/// plate are compared relative to it, so two plates that differ only by where their contour sits
+/// in the element frame are the same part, and two whose holes sit differently from their edges
+/// are not. For the origin rectangle it is the origin, so nothing moves.
+fn contour_origin(record: &PlateRecord) -> [f64; 2] {
+    let points = &record.authored.contour_points_mm;
+    [
+        points.iter().map(|p| p[0]).fold(f64::INFINITY, f64::min),
+        points.iter().map(|p| p[1]).fold(f64::INFINITY, f64::min),
+    ]
+}
+
+/// The outline of a plate whose contour is not the origin rectangle, relative to
+/// [`contour_origin`]; empty for the origin rectangle (its width and length already say it all).
 fn outline_of(record: &PlateRecord) -> Vec<[f64; 2]> {
     if record.body.is_origin_rectangle() {
         return Vec::new();
     }
-    let points = &record.authored.contour_points_mm;
-    let low_x = points.iter().map(|p| p[0]).fold(f64::INFINITY, f64::min);
-    let low_y = points.iter().map(|p| p[1]).fold(f64::INFINITY, f64::min);
-    points
+    let [low_x, low_y] = contour_origin(record);
+    record
+        .authored
+        .contour_points_mm
         .iter()
         .map(|p| [p[0] - low_x, p[1] - low_y])
+        .collect()
+}
+
+/// The through holes of a plate relative to [`contour_origin`], in their authored order.
+fn holes_of(record: &PlateRecord) -> Vec<Vec<[f64; 2]>> {
+    let [low_x, low_y] = contour_origin(record);
+    record
+        .authored
+        .holes_mm
+        .iter()
+        .map(|hole| hole.iter().map(|p| [p[0] - low_x, p[1] - low_y]).collect())
         .collect()
 }
 
@@ -82,7 +105,7 @@ fn facts(store: &RevisionStore) -> Result<(String, Vec<PartFact>, Vec<AssemblyFa
                 material: a.material,
                 dimensions: vec![record.body.width_mm, record.body.length_mm, a.thickness_mm],
                 angles_rad: Vec::new(),
-                holes: a.holes_mm.clone(),
+                holes: holes_of(record),
                 outline: outline_of(record),
                 assembly: holder.get(&a.id).copied(),
             });

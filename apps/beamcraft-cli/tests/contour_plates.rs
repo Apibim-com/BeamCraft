@@ -349,3 +349,55 @@ fn a_wrong_contour_is_refused_and_nothing_is_authored() {
         assert!(at(&body, &["plates"]).array().unwrap().is_empty());
     }
 }
+
+#[test]
+fn holes_are_compared_relative_to_the_contour_not_to_the_element_frame() {
+    let f = Fixture::new();
+    // The same L, the second one 50 mm further along X.
+    let shifted = "50,0;1050,0;1050,300;450,300;450,600;50,600";
+    let hole_at = |x: &str| format!("{x},100,100,100");
+    // Plate 1 and 2: the hole stays at x = 100 in the frame, so it is 100 mm and 50 mm from the
+    // left edge of the two plates. Different parts.
+    f.ok(
+        "create-plate",
+        &[
+            "--contour",
+            L_SHAPE,
+            "--thickness",
+            "10",
+            "--hole-rect",
+            &hole_at("100"),
+        ],
+    );
+    f.ok(
+        "create-plate",
+        &[
+            "--contour",
+            shifted,
+            "--thickness",
+            "10",
+            "--hole-rect",
+            &hole_at("100"),
+        ],
+    );
+    let preview = f.ok("numbering-preview", &[]);
+    assert_eq!(at(&preview, &["groups"]).array().unwrap().len(), 2);
+    // Plate 3: the hole moved by the same 50 mm, so it sits like the hole of plate 1. One group
+    // with plate 1, and plate 2 stays alone.
+    f.ok(
+        "create-plate",
+        &[
+            "--contour",
+            shifted,
+            "--thickness",
+            "10",
+            "--hole-rect",
+            &hole_at("150"),
+        ],
+    );
+    let preview = f.ok("numbering-preview", &[]);
+    let groups = at(&preview, &["groups"]).array().unwrap();
+    let mut sizes: Vec<f64> = groups.iter().map(|g| num(g, &["count"])).collect();
+    sizes.sort_by(f64::total_cmp);
+    assert_eq!(sizes, [1.0, 2.0], "{preview:?}");
+}
