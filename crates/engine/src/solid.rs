@@ -12,8 +12,9 @@ use crate::scene::SceneMesh;
 use beamcraft_geom::Point3;
 use beamcraft_kernel::PlateResult;
 use beamcraft_kernel::ops::OpResult;
+use beamcraft_kernel::profile::Extrusion;
 use beamcraft_kernel::section::SectionResult;
-use beamcraft_model::digest::ContentDigest;
+use beamcraft_model::digest::{ContentDigest, Sha256};
 
 /// An evaluated, certified body mesh in element-local millimetres.
 #[derive(Debug, Clone, PartialEq)]
@@ -49,6 +50,19 @@ impl SolidMesh {
             digest: result.mesh_digest(),
             volume_mm3: result.volume_mm3().midpoint(),
         }
+    }
+
+    /// The mesh of a sealed G05 extrusion of a plate contour. The volume is the analytic
+    /// `net_area * thickness` of the polygonal solid. `None` when the blob is too long to hash.
+    pub fn from_extrusion(extrusion: &Extrusion) -> Option<Self> {
+        let mesh = extrusion.mesh();
+        Some(Self {
+            vertices: mesh.vertices().iter().map(|p| [p.x, p.y, p.z]).collect(),
+            triangles: mesh.triangles().to_vec(),
+            blob: mesh.blob().to_vec(),
+            digest: Sha256::digest(mesh.blob()).ok()?,
+            volume_mm3: extrusion.volume_mm3(),
+        })
     }
 
     /// The mesh of a straight member of an A07.1 section; the volume is the analytic

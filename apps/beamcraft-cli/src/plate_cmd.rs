@@ -103,6 +103,7 @@ const CREATE_OPTIONS: &[&str] = &[
     "--store",
     "--width",
     "--length",
+    "--contour",
     "--thickness",
     "--name",
     "--translation",
@@ -528,6 +529,24 @@ fn section_shape(family: &str, options: &BTreeMap<&str, &str>) -> Run<SectionSha
     )?))
 }
 
+/// The plate contour of `--contour "X,Y;X,Y;..."`: its points in the plane `z = 0`, in the order
+/// given. Winding, simplicity and the size floor are the kernel's to decide.
+fn contour_points(text: &str) -> Run<Vec<[f64; 3]>> {
+    text.split(';')
+        .map(|pair| {
+            let parts: Vec<f64> = pair
+                .split(',')
+                .map(|v| v.trim().parse::<f64>())
+                .collect::<Result<_, _>>()
+                .map_err(|_| invalid("a contour point is not two numbers"))?;
+            match parts.as_slice() {
+                [x, y] => Ok([*x, *y, 0.0]),
+                _ => Err(invalid("a contour point is not two numbers")),
+            }
+        })
+        .collect()
+}
+
 fn define_command(
     store: &RevisionStore,
     command: &str,
@@ -687,10 +706,19 @@ fn create(
     } else {
         None
     };
-    let width = float(options, "--width")?;
-    let length = float(options, "--length")?;
     let thickness = float(options, "--thickness")?;
-    let contour = origin_rectangle_contour(width, length).map_err(PlateError::from)?;
+    let contour = match given("--contour") {
+        Some(text) => {
+            if options.contains_key("--width") || options.contains_key("--length") {
+                return Err(invalid(
+                    "--contour replaces --width and --length; give one or the other",
+                ));
+            }
+            contour_points(text)?
+        }
+        None => origin_rectangle_contour(float(options, "--width")?, float(options, "--length")?)
+            .map_err(PlateError::from)?,
+    };
     let name = given("--name").unwrap_or("Plate").to_owned();
     let command = CreatePlate {
         new_id,
@@ -1711,6 +1739,25 @@ fn plate_json(record: &PlateRecord) -> Run<Json> {
                 ("length", num(record.body.length_mm)?),
                 ("thickness", num(record.body.thickness_mm)?),
             ]),
+        ),
+        (
+            "contour_points_mm",
+            Json::Array(
+                record
+                    .authored
+                    .contour_points_mm
+                    .iter()
+                    .map(|p| triple(*p))
+                    .collect::<Run<Vec<_>>>()?,
+            ),
+        ),
+        (
+            "outline",
+            Json::text(if record.body.is_origin_rectangle() {
+                "rectangle"
+            } else {
+                "contour"
+            }),
         ),
         (
             "placement",
