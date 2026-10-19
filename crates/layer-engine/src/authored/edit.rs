@@ -555,6 +555,7 @@ fn create(data: &mut sdf::Data, e: &Element, actor: &str) -> Result<(), Diagnost
             contour_mm,
             thickness_mm,
             holes,
+            ..
         } => {
             attr(
                 data,
@@ -689,6 +690,26 @@ fn create(data: &mut sdf::Data, e: &Element, actor: &str) -> Result<(), Diagnost
     }
     if let Some(d) = e.material {
         relationship(data, &p, "bim:material", MaterialOpinion::Target(d))?;
+    }
+    // The optional single plane cut of a plate, beam or column (A03): its point and normal, as
+    // authored in element-local millimetres.
+    if let Some(cut) = e.shape.cut() {
+        let [x, y, z] = cut.point_mm;
+        let [nx, ny, nz] = cut.normal;
+        attr(
+            data,
+            &p,
+            "steel:cut:pointMm",
+            "double3",
+            sdf::Value::vec3d(x, y, z),
+        )?;
+        attr(
+            data,
+            &p,
+            "steel:cut:normal",
+            "double3",
+            sdf::Value::vec3d(nx, ny, nz),
+        )?;
     }
     pose(data, &p, &e.placement)
 }
@@ -1159,18 +1180,28 @@ fn capture(
                     add(name, ty, 0);
                 }
                 match e.shape {
-                    Shape::Plate { ref holes, .. } => {
+                    Shape::Plate {
+                        ref holes, ref cut, ..
+                    } => {
                         add("steel:plate:contourPointsMm", "double3[]", 0);
                         add("steel:plate:thicknessMm", "double", 0);
                         if !holes.is_empty() {
                             add("steel:plate:holePointsMm", "double3[]", 0);
                             add("steel:plate:holeVertexCounts", "int[]", 0);
                         }
+                        if cut.is_some() {
+                            add("steel:cut:pointMm", "double3", 0);
+                            add("steel:cut:normal", "double3", 0);
+                        }
                     }
-                    Shape::Member { .. } => {
+                    Shape::Member { ref cut, .. } => {
                         add("bim:axisPointsMm", "double3[]", 0);
                         add("steel:member:rollRad", "double", 0);
                         add("bim:profile", "rel", 0);
+                        if cut.is_some() {
+                            add("steel:cut:pointMm", "double3", 0);
+                            add("steel:cut:normal", "double3", 0);
+                        }
                     }
                     Shape::Assembly => (),
                     Shape::Weld(_) => {
@@ -1219,6 +1250,8 @@ fn capture(
                     ("steel:plate:thicknessMm", "double"),
                     ("steel:plate:holePointsMm", "double3[]"),
                     ("steel:plate:holeVertexCounts", "int[]"),
+                    ("steel:cut:pointMm", "double3"),
+                    ("steel:cut:normal", "double3"),
                     ("bim:axisPointsMm", "double3[]"),
                     ("steel:member:rollRad", "double"),
                     ("bim:profile", "rel"),

@@ -438,6 +438,40 @@ fn plate_holes(prim: &Prim) -> Result<Vec<Vec<[f64; 3]>>, Diagnostic> {
 /// Most through holes of one plate and most points of one hole.
 const MAX_HOLES: usize = 64;
 const MAX_HOLE_POINTS: usize = 1024;
+
+/// The optional single plane cut of a loaded plate, beam or column (A03): both attributes or
+/// neither, one `double3` each, finite, the point within the coordinate cap, the normal not the
+/// zero vector. The kept half-space (the side the normal points away from) and whether the plane
+/// crosses the element are the engine's decision on reload, never re-derived here.
+fn element_cut(prim: &Prim) -> Result<Option<PlaneCut>, Diagnostic> {
+    let present = |name: &str| prim.properties.iter().any(|p| p.name == name);
+    let (has_point, has_normal) = (present("steel:cut:pointMm"), present("steel:cut:normal"));
+    if !has_point && !has_normal {
+        return Ok(None);
+    }
+    if has_point != has_normal {
+        return Err(invalid());
+    }
+    let triple = |name: &str| -> Result<[f64; 3], Diagnostic> {
+        match required(prim, name, "double3")? {
+            Value::Array(v) => match v.as_slice() {
+                [Value::Number(x), Value::Number(y), Value::Number(z)] => Ok([*x, *y, *z]),
+                _ => Err(invalid()),
+            },
+            _ => Err(invalid()),
+        }
+    };
+    let point = triple("steel:cut:pointMm")?;
+    let normal = triple("steel:cut:normal")?;
+    if normal.iter().all(|v| *v == 0.0) {
+        return Err(invalid());
+    }
+    cap(point.into_iter().chain(normal), 1e9)?;
+    Ok(Some(PlaneCut {
+        point_mm: point,
+        normal,
+    }))
+}
 fn resource<'a>(
     prims: &'a [Prim],
     digest: ContentDigest,
@@ -618,6 +652,7 @@ pub(super) fn snapshot(
                     number(p, "steel:plate:thicknessMm")?,
                 )?;
                 plate_holes(p)?;
+                element_cut(p)?;
             }
             "beam" | "column" => {
                 let axis = points(p, "bim:axisPointsMm")?;
@@ -657,6 +692,7 @@ pub(super) fn snapshot(
                 {
                     cap([*n], std::f64::consts::TAU)?;
                 }
+                element_cut(p)?;
             }
             // An assembly has no shape inputs and no material of its own; a connection is a weld
             // (A06) or a bolt group (A05) with its own properties and no material either.
@@ -1542,6 +1578,7 @@ pub(super) fn changes(
                         contour_mm,
                         thickness_mm,
                         holes,
+                        cut,
                     } => {
                         count_points(contour_mm, b)?;
                         cap(contour_mm.iter().flatten().copied(), 1e9)?;
@@ -1558,17 +1595,20 @@ pub(super) fn changes(
                             }
                             cap(hole.iter().flatten().copied(), 1e9)?;
                         }
+                        cut_values(cut)?;
                     }
                     Shape::Member {
                         axis_mm,
                         roll_rad,
                         profile,
+                        cut,
                         ..
                     } => {
                         cap(axis_mm.iter().flatten().copied(), 1e9)?;
                         if let Some(n) = roll_rad {
                             cap([*n], std::f64::consts::TAU)?;
                         }
+                        cut_values(cut)?;
                         reads.insert(Footprint {
                             identity: profile.to_string(),
                             group: Group::Relationship,
@@ -1731,6 +1771,20 @@ fn count_points(points: &[[f64; 3]], b: Budgets) -> Result<(), Diagnostic> {
     }
     Ok(())
 }
+/// The authored plane cut of a created plate or member (A03): finite and within the coordinate
+/// cap, with a non-zero normal. Whether the plane crosses the element is the engine's gate.
+fn cut_values(cut: &Option<PlaneCut>) -> Result<(), Diagnostic> {
+    match cut {
+        None => Ok(()),
+        Some(cut) => {
+            finite(cut.point_mm.into_iter().chain(cut.normal))?;
+            if cut.normal.iter().all(|v| *v == 0.0) {
+                return Err(invalid());
+            }
+            cap(cut.point_mm.into_iter().chain(cut.normal), 1e9)
+        }
+    }
+}
 fn finite_change(c: &Change) -> Result<(), Diagnostic> {
     match c {
         Change::Create(e) => {
@@ -1745,22 +1799,34 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                     contour_mm,
                     thickness_mm,
                     holes,
+                    cut,
                 } => finite(
                     contour_mm
                         .iter()
                         .flatten()
                         .copied()
                         .chain(holes.iter().flatten().flatten().copied())
-                        .chain([*thickness_mm]),
+                        .chain([*thickness_mm])
+                        .chain(
+                            cut.iter()
+                                .flat_map(|c| c.point_mm.into_iter().chain(c.normal)),
+                        ),
                 ),
                 Shape::Member {
-                    axis_mm, roll_rad, ..
+                    axis_mm,
+                    roll_rad,
+                    cut,
+                    ..
                 } => finite(
                     axis_mm
                         .iter()
                         .flatten()
                         .copied()
-                        .chain(roll_rad.iter().copied()),
+                        .chain(roll_rad.iter().copied())
+                        .chain(
+                            cut.iter()
+                                .flat_map(|c| c.point_mm.into_iter().chain(c.normal)),
+                        ),
                 ),
                 Shape::Assembly => Ok(()),
                 Shape::Weld(w) => finite([w.size_mm]),
