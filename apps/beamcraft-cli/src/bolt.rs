@@ -196,9 +196,8 @@ fn world_bounds(
         let reach = 0.5 * (width * width + height * height).sqrt();
         let [ax, ay, az] = authored.axis_points_mm[0];
         let [bx, by, bz] = authored.axis_points_mm[1];
-        let expand = |[x, y, z]: [f64; 3], sign: f64| {
-            [x + sign * reach, y + sign * reach, z + sign * reach]
-        };
+        let expand =
+            |[x, y, z]: [f64; 3], sign: f64| [x + sign * reach, y + sign * reach, z + sign * reach];
         let min = expand(
             [
                 ax.min(bx) + translation[0],
