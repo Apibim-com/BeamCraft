@@ -31,7 +31,7 @@ API. IFC export (E02) is a separate task; plain-text and HTML reports stay open.
 ```text
 beamcraft_engine::bom      pure computation: rows in, sorted element table and grouped
                            summary out; CSV rendering of both (strings, no I/O)
-beamcraft_cli::report      maps an Inspection to engine rows (labels, derived areas)
+beamcraft_cli::bom         maps an Inspection to engine rows (labels, derived areas)
 beamcraft bom-export       CLI command: verified head -> rows -> CSV files
 ```
 
