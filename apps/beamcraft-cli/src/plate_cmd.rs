@@ -103,7 +103,7 @@ const CREATE_OPTIONS: &[&str] = &[
     "--store",
     "--width",
     "--length",
-    "--outer",
+    "--contour",
     "--thickness",
     "--name",
     "--translation",
@@ -729,10 +729,10 @@ fn create(
         None
     };
     // The outline is either the `--width`/`--length` origin rectangle or an arbitrary closed
-    // `--outer` contour (A02, experimental, counter-clockwise, element-local millimetres). The
+    // `--contour` (A02, experimental, counter-clockwise, element-local millimetres). The
     // parser reads XY pairs; the plate body frame is the z = 0 plane, so the pair becomes a
     // point with z = 0 and an off-plane input cannot be expressed here at all.
-    let contour: Vec<[f64; 3]> = match (given("--outer"), given("--width"), given("--length")) {
+    let contour: Vec<[f64; 3]> = match (given("--contour"), given("--width"), given("--length")) {
         (Some(text), None, None) => parse_polygon(text)?
             .into_iter()
             .map(|[x, y]| [x, y, 0.0])
@@ -744,12 +744,12 @@ fn create(
         }
         (Some(_), _, _) => {
             return Err(invalid(
-                "--outer and --width/--length are two ways of one outline; use one",
+                "--contour and --width/--length are two ways of one outline; use one",
             ));
         }
         (None, _, _) => {
             return Err(invalid(
-                "create-plate needs --width and --length, or --outer",
+                "create-plate needs --width and --length, or --contour",
             ));
         }
     };
@@ -1816,6 +1816,17 @@ fn plate_json(record: &PlateRecord) -> Run<Json> {
                 ("length", num(record.body.length_mm)?),
                 ("thickness", num(record.body.thickness_mm)?),
             ]),
+        ),
+        (
+            "contour_points_mm",
+            Json::Array(
+                record
+                    .authored
+                    .contour_points_mm
+                    .iter()
+                    .map(|p| triple(*p))
+                    .collect::<Run<Vec<_>>>()?,
+            ),
         ),
         (
             "placement",

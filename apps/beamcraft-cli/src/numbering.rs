@@ -10,6 +10,7 @@
 use crate::assembly::assemblies;
 use crate::plate::{PlateError, inspect};
 use beamcraft_engine::numbering::{AssemblyFact, PartFact, PartKind, Preview, Settings, preview};
+use beamcraft_engine::query::committed::PlateRecord;
 use beamcraft_host::revision::RevisionStore;
 use beamcraft_model::command::MemberKind;
 use beamcraft_model::digest::ContentDigest;
@@ -36,6 +37,21 @@ pub struct NumberingView {
 
 fn error(code: ErrorCode, message: &'static str) -> PlateError {
     PlateError { code, message }
+}
+
+/// The outline of a plate whose contour is not the origin rectangle, relative to the minimum of
+/// its bounding box; empty for the origin rectangle (its width and length already say it all).
+fn outline_of(record: &PlateRecord) -> Vec<[f64; 2]> {
+    if record.body.is_origin_rectangle() {
+        return Vec::new();
+    }
+    let points = &record.authored.contour_points_mm;
+    let low_x = points.iter().map(|p| p[0]).fold(f64::INFINITY, f64::min);
+    let low_y = points.iter().map(|p| p[1]).fold(f64::INFINITY, f64::min);
+    points
+        .iter()
+        .map(|p| [p[0] - low_x, p[1] - low_y])
+        .collect()
 }
 
 fn facts(store: &RevisionStore) -> Result<(String, Vec<PartFact>, Vec<AssemblyFact>), PlateError> {
@@ -67,6 +83,7 @@ fn facts(store: &RevisionStore) -> Result<(String, Vec<PartFact>, Vec<AssemblyFa
                 dimensions: vec![record.body.width_mm, record.body.length_mm, a.thickness_mm],
                 angles_rad: Vec::new(),
                 holes: a.holes_mm.clone(),
+                outline: outline_of(record),
                 assembly: holder.get(&a.id).copied(),
             });
         }
@@ -87,6 +104,7 @@ fn facts(store: &RevisionStore) -> Result<(String, Vec<PartFact>, Vec<AssemblyFa
                 dimensions: vec![length],
                 angles_rad: vec![a.roll_rad.unwrap_or(0.0)],
                 holes: Vec::new(),
+                outline: Vec::new(),
                 assembly: holder.get(&a.id).copied(),
             });
         }

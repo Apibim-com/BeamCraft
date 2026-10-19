@@ -87,6 +87,11 @@ pub struct PartFact {
     pub angles_rad: Vec<f64>,
     /// Through-hole polygons in the part's own frame.
     pub holes: Vec<Vec<[f64; 2]>>,
+    /// Outline vertices of a plate whose contour is not the origin rectangle (A02), relative to
+    /// the minimum of its bounding box and in the authored order, compared point by point within
+    /// the tolerance; empty for every other part. Two plates are identical only if their
+    /// outlines match, not merely their bounding boxes.
+    pub outline: Vec<[f64; 2]>,
     /// The assembly the part belongs to.
     pub assembly: Option<ElementId>,
 }
@@ -283,6 +288,11 @@ fn same_part(
             .iter()
             .zip(&b.dimensions)
             .all(|(x, y)| close(*x, *y, s.tolerance_mm))
+        && a.outline.len() == b.outline.len()
+        && a.outline
+            .iter()
+            .zip(&b.outline)
+            .all(|(p, q)| close(p[0], q[0], s.tolerance_mm) && close(p[1], q[1], s.tolerance_mm))
         && a.angles_rad.len() == b.angles_rad.len()
         && a.angles_rad
             .iter()
@@ -346,6 +356,9 @@ pub fn preview(
             .iter()
             .chain(&p.angles_rad)
             .any(|v| !v.is_finite())
+            || p.outline
+                .iter()
+                .any(|pt| !pt[0].is_finite() || !pt[1].is_finite())
             || p.holes
                 .iter()
                 .flatten()
@@ -369,6 +382,7 @@ pub fn preview(
         usize,
         usize,
         usize,
+        usize,
     );
     let mut buildings: Vec<Building<'_>> = Vec::new();
     let mut index: BTreeMap<Coarse, BTreeMap<u64, Vec<usize>>> = BTreeMap::new();
@@ -384,6 +398,7 @@ pub fn preview(
             part.dimensions.len(),
             part.angles_rad.len(),
             holes.len(),
+            part.outline.len(),
         );
         let first = part.dimensions.first().copied().unwrap_or(0.0);
         let range =
@@ -574,6 +589,9 @@ fn describe(part: &PartFact, s: &Settings) -> String {
         let angles: Vec<String> = part.angles_rad.iter().map(|a| format!("{a}")).collect();
         text.push_str(&format!(", roll {} rad", angles.join(" ")));
     }
+    if !part.outline.is_empty() {
+        text.push_str(&format!(", contour of {} points", part.outline.len()));
+    }
     if !part.holes.is_empty() {
         text.push_str(&format!(", {} holes", part.holes.len()));
     }
@@ -648,6 +666,7 @@ mod tests {
             dimensions: vec![w, l, t],
             angles_rad: Vec::new(),
             holes: Vec::new(),
+            outline: Vec::new(),
             assembly: None,
         }
     }
@@ -662,8 +681,47 @@ mod tests {
             dimensions: vec![length],
             angles_rad: vec![0.0],
             holes: Vec::new(),
+            outline: Vec::new(),
             assembly: None,
         }
+    }
+
+    #[test]
+    fn plates_with_the_same_bounding_box_but_another_outline_are_not_identical() {
+        let outline = |points: &[[f64; 2]]| points.to_vec();
+        let mut l_shape = plate(1, 1000.0, 600.0, 10.0);
+        l_shape.outline = outline(&[
+            [0.0, 0.0],
+            [1000.0, 0.0],
+            [1000.0, 300.0],
+            [400.0, 300.0],
+            [400.0, 600.0],
+            [0.0, 600.0],
+        ]);
+        let mut same = l_shape.clone();
+        same.id = id(2);
+        same.name = "P2".into();
+        let mut notched = l_shape.clone();
+        notched.id = id(3);
+        notched.name = "P3".into();
+        notched.outline[3] = [500.0, 300.0];
+        let rectangle = plate(4, 1000.0, 600.0, 10.0);
+        let preview = preview(
+            &[l_shape, same, notched, rectangle],
+            &[],
+            &Settings::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            preview
+                .groups
+                .iter()
+                .map(|g| g.members.len())
+                .collect::<Vec<_>>(),
+            [2, 1, 1],
+            "{:?}",
+            positions(&preview)
+        );
     }
 
     fn positions(p: &Preview) -> Vec<(String, usize)> {

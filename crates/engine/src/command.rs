@@ -46,6 +46,10 @@ use beamcraft_model::id::ElementId;
 /// Version label of the volume algorithm in a [`Quantities`] record.
 pub const VOLUME_ALGORITHM: &str = "kernel-g02-rectangular-plate-volume/1;tolerance-policy-3";
 
+/// Version label of the volume algorithm of a plate with a G05 contour and no hole: the analytic
+/// `net_area * thickness` of the extruded simple polygon.
+pub const CONTOUR_VOLUME_ALGORITHM: &str = "kernel-g05-contour-plate-volume/1;tolerance-policy-3";
+
 /// Version label of the volume algorithm of a plate with through holes: the midpoint of the G06
 /// enclosure of the certified result of the G09 hole operation.
 pub const HOLED_VOLUME_ALGORITHM: &str = "kernel-g09-through-hole-volume/1;tolerance-policy-3";
@@ -246,8 +250,19 @@ impl PlateBody {
         } else if self.hole_count == 0 {
             self.volume_algorithm
         } else {
-            HOLED_VOLUME_ALGORITHM
+            CONTOUR_VOLUME_ALGORITHM
         }
+    }
+
+    /// Whether the outline is the origin rectangle of the G02 box rather than a G05 contour.
+    pub const fn is_origin_rectangle(&self) -> bool {
+        self.result.is_some()
+    }
+
+    /// Whether the outline is the origin rectangle evaluated as the G02 box rather than an
+    /// A02 contour extrusion.
+    pub const fn is_origin_rectangle(&self) -> bool {
+        self.volume_algorithm == VOLUME_ALGORITHM
     }
 
     fn volumes(&self) -> Volumes {
@@ -1230,6 +1245,18 @@ mod tests {
         // F04-POS-08: the largest first-scope plate.
         let big = create_plate(&command(rect(1e6, 1e6), 1e6), &none).unwrap();
         assert!((big.quantities.volume_m3 - 1e9).abs() <= 1e-6 * 1e9);
+    }
+
+    fn l_shape() -> Vec<[f64; 3]> {
+        // 1000 x 600 with a 600 x 300 notch at the top right: area 600_000 - 180_000 = 420_000.
+        vec![
+            [0.0, 0.0, 0.0],
+            [1000.0, 0.0, 0.0],
+            [1000.0, 300.0, 0.0],
+            [400.0, 300.0, 0.0],
+            [400.0, 600.0, 0.0],
+            [0.0, 600.0, 0.0],
+        ]
     }
 
     #[test]

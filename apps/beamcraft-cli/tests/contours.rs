@@ -113,7 +113,7 @@ fn a_contour_plate_has_the_exact_volume_and_mass_and_reopens_verified() {
         text(reply.get("definition").unwrap(), "digest")
     };
     let created = f.ok_plate(&[
-        "--outer",
+        "--contour",
         TRIANGLE,
         "--material-digest",
         &steel,
@@ -166,7 +166,7 @@ fn a_contour_plate_has_the_exact_volume_and_mass_and_reopens_verified() {
     assert_eq!(corner("world_max_mm"), vec![1300.0, 400.0, 10.0]);
 
     // One trailing separator is ignored: the closure of a contour is implicit.
-    let (code, second) = f.plate(&["--outer", "0,0;300,0;0,400;"]);
+    let (code, second) = f.plate(&["--contour", "0,0;300,0;0,400;"]);
     assert_eq!(code, 0, "{second:?}");
     let inspected = f.run("plate-inspect", &[]).1;
     assert_eq!(num(&inspected, &["plate_count"]), 2.0);
@@ -179,7 +179,7 @@ fn a_contour_plate_takes_holes_and_survives_update_and_copy() {
     // 600 * 600 - 400 * 400 = 200,000 mm2.
     let l_shape = "0,0;600,0;600,200;200,200;200,600;0,600";
     // The hole sits strictly inside the material, clear of the re-entrant corner at (200,200).
-    let created = f.ok_plate(&["--outer", l_shape, "--hole-rect", "50,50,100,100"]);
+    let created = f.ok_plate(&["--contour", l_shape, "--hole-rect", "50,50,100,100"]);
     let plate = at(&created, &["plate"]);
     // (200,000 - 100 * 100) mm2 * 10 mm = 1,900,000 mm3.
     let volume = num(plate, &["quantities", "volume", "mm3"]);
@@ -217,35 +217,35 @@ fn contour_rejections_use_the_f04_codes_and_publish_nothing() {
     let f = Fixture::new();
     // A clockwise outline is refused by the kernel's winding rule.
     assert_eq!(
-        f.rejected(&["--outer", "0,0;0,400;300,0"]),
+        f.rejected(&["--contour", "0,0;0,400;300,0"]),
         "INVALID_ARGUMENT"
     );
     // A self-intersecting bowtie.
     assert_eq!(
-        f.rejected(&["--outer", "0,0;1000,500;1000,0;0,500"]),
+        f.rejected(&["--contour", "0,0;1000,500;1000,0;0,500"]),
         "INVALID_ARGUMENT"
     );
     // Fewer than three points.
-    assert_eq!(f.rejected(&["--outer", "0,0;300,0"]), "INVALID_ARGUMENT");
+    assert_eq!(f.rejected(&["--contour", "0,0;300,0"]), "INVALID_ARGUMENT");
     // Malformed points.
-    assert_eq!(f.rejected(&["--outer", "0,0;300"]), "INVALID_ARGUMENT");
-    assert_eq!(f.rejected(&["--outer", "0,0;300,0,x"]), "INVALID_ARGUMENT");
+    assert_eq!(f.rejected(&["--contour", "0,0;300"]), "INVALID_ARGUMENT");
+    assert_eq!(f.rejected(&["--contour", "0,0;300,0,x"]), "INVALID_ARGUMENT");
     // Out of the coordinate cap.
-    assert_eq!(f.rejected(&["--outer", "2e9,0;1,0;0,1"]), "LIMIT_EXCEEDED");
+    assert_eq!(f.rejected(&["--contour", "2e9,0;1,0;0,1"]), "LIMIT_EXCEEDED");
     // --outer and --width/--length are two ways of one outline, never both.
     assert_eq!(
-        f.rejected(&["--outer", TRIANGLE, "--width", "1000", "--length", "500"]),
+        f.rejected(&["--contour", TRIANGLE, "--width", "1000", "--length", "500"]),
         "INVALID_ARGUMENT"
     );
     assert_eq!(
-        f.rejected(&["--outer", TRIANGLE, "--length", "500"]),
+        f.rejected(&["--contour", TRIANGLE, "--length", "500"]),
         "INVALID_ARGUMENT"
     );
     // Missing outline entirely.
     assert_eq!(f.rejected(&[]), "INVALID_ARGUMENT");
     // A hole outside the triangle is refused by the kernel, nothing is published.
     assert_eq!(
-        f.rejected(&["--outer", TRIANGLE, "--hole-rect", "200,200,100,100"]),
+        f.rejected(&["--contour", TRIANGLE, "--hole-rect", "200,200,100,100"]),
         "INVALID_ARGUMENT"
     );
     // Nothing was created: there is no revision at all.
@@ -263,7 +263,7 @@ fn a_retry_with_the_same_contour_replays_and_another_contour_is_reuse() {
         "01a00000-0000-7000-8000-000000000032",
     ];
     let create = |outer: &str| {
-        let mut args = vec!["--outer", outer];
+        let mut args = vec!["--contour", outer];
         args.extend_from_slice(&ids);
         f.plate(&args)
     };
