@@ -58,12 +58,18 @@ jobs:
           if [ "${{ matrix.kind }}" = macos ]; then
             codesign --verify BeamCraft.app
             ./BeamCraft.app/Contents/MacOS/beamcraft --version
+            test -f BeamCraft.app/Contents/MacOS/beamcraft-ui
+            test -f BeamCraft.app/Contents/MacOS/beamcraft-usd-worker
             test -f BeamCraft.app/Contents/Resources/assets/fonts/inter/Inter-Regular.ttf
           else
             if [ "${{ matrix.kind }}" = win ]; then
               ./beamcraft.exe --version
+              test -f beamcraft-ui.exe
+              test -f beamcraft-usd-worker.exe
             else
               ./beamcraft --version
+              test -f beamcraft-ui
+              test -f beamcraft-usd-worker
             fi
             test -f assets/fonts/inter/Inter-Regular.ttf
           fi

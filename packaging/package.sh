@@ -30,8 +30,10 @@ if [ "$kind" = win ]; then
     ext=".exe"
 fi
 
-# Documents next to the application in every layout.
+# Documents next to the application in every layout. Drop any archive from an earlier
+# run with the same tag: 7z updates an existing zip instead of replacing it.
 rm -rf "$name"
+rm -f "$name.zip"
 mkdir -p "$name/docs/brand"
 cp README.md LICENSE NOTICE "$name/"
 cp docs/brand/LICENSE-brand.txt "$name/docs/brand/"
