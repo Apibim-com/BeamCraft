@@ -127,7 +127,9 @@ beamcraft bom-export --store ROOT --out ELEMENTS_CSV [--summary SUMMARY_CSV]
 * Reads and verifies the head exactly like `plate-inspect`; a store without a revision is
   refused. The JSON result names the revision, the row and group counts and the files.
 * Files are created new (`create_new`), never overwritten, synced, as `view-export` does;
-  `BackendUnavailable` when writing fails.
+  `BackendUnavailable` when writing fails. Both files are reserved before any bytes are
+  written, so a refusal on either path — an existing or uncreatable summary included, and the
+  same path given twice — leaves nothing on disk; the files reserved so far are removed again.
 * The engine caps rows at the snapshot's element bound (`MAX_ELEMENTS`); a model beyond the
   view contract's own bound is `LIMIT_EXCEEDED` before any file is written.
 

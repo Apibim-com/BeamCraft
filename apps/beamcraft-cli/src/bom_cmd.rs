@@ -60,19 +60,42 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
     }
 }
 
-/// Creates a new file (never overwrites) and writes the bytes, synced.
-fn write_new(path: &str, bytes: &str) -> Run<()> {
-    let mut file = std::fs::OpenOptions::new()
+/// Creates a new file (never overwrites) and returns its handle; nothing is written yet.
+fn reserve(path: &str) -> Run<std::fs::File> {
+    std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(path)
-        .map_err(|_| invalid("the output file exists or cannot be created"))?;
+        .map_err(|_| invalid("an output file exists or cannot be created"))
+}
+
+/// Writes and syncs a reserved file.
+fn write_sync(file: &mut std::fs::File, bytes: &str) -> Run<()> {
     file.write_all(bytes.as_bytes())
         .and_then(|()| file.sync_all())
         .map_err(|_| PlateError {
             code: ErrorCode::BackendUnavailable,
             message: "the report could not be written",
         })
+}
+
+/// Reserves every output file before any bytes are written, so a refusal on any path — an
+/// existing or uncreatable summary included, and the same path given twice — lands while
+/// nothing exists; the files reserved so far are removed again on the way out.
+fn reserve_all(outputs: Vec<(&str, String)>) -> Run<Vec<(String, std::fs::File, String)>> {
+    let mut reserved = Vec::with_capacity(outputs.len());
+    for (path, bytes) in outputs {
+        match reserve(path) {
+            Ok(file) => reserved.push((path.to_owned(), file, bytes)),
+            Err(e) => {
+                for (created, ..) in &reserved {
+                    let _ = std::fs::remove_file(created);
+                }
+                return Err(e);
+            }
+        }
+    }
+    Ok(reserved)
 }
 
 fn run(args: &[OsString]) -> Run<Json> {
@@ -110,14 +133,19 @@ fn run(args: &[OsString]) -> Run<Json> {
     let inspection = inspect(&RevisionStore::new(blobs))?;
     let bom = tables(&rows(&inspection)?, MAX_ELEMENTS)?;
     // Both files are rendered before the first one is created, so a rendering failure writes
-    // nothing.
+    // nothing; both are then reserved before any bytes are written, so a refusal on either
+    // path leaves nothing.
     let elements = elements_csv(&bom);
     let summary = options
         .get("--summary")
         .map(|path| (*path, summary_csv(&bom)));
-    write_new(out, &elements)?;
-    if let Some((path, bytes)) = &summary {
-        write_new(path, bytes)?;
+    let mut outputs = vec![(*out, elements)];
+    outputs.extend(summary);
+    for (path, mut file, bytes) in reserve_all(outputs)? {
+        if let Err(e) = write_sync(&mut file, &bytes) {
+            let _ = std::fs::remove_file(&path);
+            return Err(e);
+        }
     }
     Ok(Json::object([
         ("outcome", Json::text("bom_exported")),

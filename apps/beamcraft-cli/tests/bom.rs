@@ -365,4 +365,20 @@ fn refusals_write_nothing() {
     assert!(!f.root.join("other.csv").exists());
     // At least one output file is required.
     assert_eq!(f.rejected("bom-export", &[]), "INVALID_ARGUMENT");
+    // A refusal on either path leaves nothing, not even the file of the other output: both
+    // files are reserved before any bytes are written.
+    let fresh = f.out("fresh.csv");
+    let taken = f.out("taken.csv");
+    fs::write(&taken, "occupied").unwrap();
+    assert_eq!(
+        f.rejected("bom-export", &["--out", &fresh, "--summary", &taken]),
+        "INVALID_ARGUMENT"
+    );
+    assert!(!f.root.join("fresh.csv").exists());
+    let same = f.out("same.csv");
+    assert_eq!(
+        f.rejected("bom-export", &["--out", &same, "--summary", &same]),
+        "INVALID_ARGUMENT"
+    );
+    assert!(!f.root.join("same.csv").exists());
 }
