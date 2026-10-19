@@ -50,3 +50,7 @@ pub const ORIENTATION_NORM_TOLERANCE: f64 = 1e-6;
 pub const WELD_SIZE_CAP_MM: f64 = 1_000.0;
 /// Longest approved element mark (A08), in UTF-8 bytes.
 pub const MAX_MARK_BYTES: usize = 64;
+/// Largest nominal bolt diameter (A05), in millimetres.
+pub const BOLT_DIAMETER_CAP_MM: f64 = 1_000.0;
+/// Most bolts of one bolt group (A05).
+pub const MAX_BOLT_GROUP_SIZE: usize = 512;

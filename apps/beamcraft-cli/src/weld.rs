@@ -20,11 +20,10 @@
 
 use crate::assembly::read_prims;
 use crate::plate::{
-    AUTHORED_LAYER, DERIVED_LAYER, PlateError, RevisionSummary, base_of, check_footprint, control,
-    digest_of, host_uuid, integrity, load_base, number, open_base, prior_op_with, property,
-    replay_summary, summarize, text,
+    AUTHORED_LAYER, DERIVED_LAYER, PlateError, PublishRequest, RevisionSummary, base_of,
+    check_footprint, control, digest_of, host_uuid, integrity, load_base, number, open_base,
+    prior_op_with, property, publish_revision, replay_summary, summarize, text,
 };
-use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::transaction::PriorOp;
 use beamcraft_engine::weld::{PartKind, Parts};
@@ -160,9 +159,9 @@ fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, PlateErro
         {
             Some("plate" | "beam" | "column") => PartKind::Part,
             Some("assembly") => PartKind::Assembly,
-            Some("connection")
-                if property(prim, "steel:connection:type").and_then(text) != Some("weld") =>
-            {
+            // A connection with bolt properties is an A05 bolt group, never a weld; a
+            // connection with neither property set is refused by the validator before this walk.
+            Some("connection") if property(prim, "steel:bolt:diameterMm").is_some() => {
                 PartKind::Other
             }
             Some("connection") => {
@@ -343,8 +342,6 @@ pub fn create_weld(
     let committed = publish_revision(
         store,
         &PublishRequest {
-            footprint: &footprint,
-            fingerprint: command.content_fingerprint()?,
             prepared: &prepared,
             schema,
             project: &base.project,

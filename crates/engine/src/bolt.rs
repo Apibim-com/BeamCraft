@@ -6,8 +6,7 @@
 //!
 //! A bolt group is a `connection` element whose one `connects` record names exactly two distinct
 //! parts, the main part first. The engine never touches USD: the adapter reads the kinds of the
-//! model's elements into the same [`crate::weld::Parts`] index a weld uses, and the decision
-//! here is pure,
+//! model's elements into the same [`Parts`] index a weld uses, and the decision here is pure,
 //! bounded and deterministic. The layer engine re-checks the structural rules on the authored
 //! candidate, so a defect in either place fails closed.
 //!
@@ -115,8 +114,7 @@ mod tests {
             diameter_mm: 16.0,
             count: 3,
             pitch_mm: 80.0,
-            // On the seam of both bounds: the plate is 0..500 in y, the beam +-60, so y = 0.
-            origin_mm: [100.0, 0.0, 5.0],
+            origin_mm: [100.0, 250.0, 5.0],
             direction_mm: [1.0, 0.0, 0.0],
         }
     }
@@ -205,12 +203,12 @@ mod tests {
         let code = |c: CreateBolt, b: &BTreeMap<ElementId, Bounds>| {
             parts.create_bolt(&c, b).unwrap_err().code
         };
-        // Three bolts at x = 100, 180, 260 fit the 1000 mm plate; a 13th bolt at x = 1060
-        // leaves it, so the whole group is refused.
+        // Three bolts at x = 100, 180, 260 fit the 1000 mm plate; a 940 mm plate loses the last
+        // one, so the whole group is refused.
         assert!(parts.create_bolt(&command(), &bounds(1000.0)).is_ok());
         let short = CreateBolt {
             bolt: BoltSpec {
-                count: 13,
+                count: 12,
                 pitch_mm: 80.0,
                 ..spec()
             },
@@ -219,7 +217,7 @@ mod tests {
         assert_eq!(code(short, &bounds(1000.0)), ErrorCode::InvalidArgument);
         let out_of_plane = CreateBolt {
             bolt: BoltSpec {
-                origin_mm: [100.0, 0.0, 70.0],
+                origin_mm: [100.0, 250.0, 70.0],
                 ..spec()
             },
             ..command()

@@ -7,6 +7,7 @@
 
 pub mod assembly;
 pub mod bom;
+pub mod bolt;
 pub mod changeset;
 pub mod coordinator;
 pub mod copy;
