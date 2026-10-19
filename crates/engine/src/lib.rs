@@ -11,6 +11,7 @@
 //! the other commands and personal workspaces are not implemented.
 
 pub mod assembly;
+pub mod bolt;
 pub mod command;
 pub mod copy;
 pub mod element;

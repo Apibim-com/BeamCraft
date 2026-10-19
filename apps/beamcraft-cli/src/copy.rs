@@ -149,6 +149,14 @@ pub fn copy_element(
             "a weld has element links that a copy does not carry over",
         )
         .into());
+    } else if crate::bolt::is_bolt(&base_request, &command.source_id, &control)? {
+        // Same for a bolt group: its `connects` record is not carried over by a copy.
+        return Err(CommandError::new(
+            ErrorCode::DependencyConflict,
+            "source_id",
+            "a bolt group has element links that a copy does not carry over",
+        )
+        .into());
     } else if crate::level::is_level(&base_request, &command.source_id, &control)? {
         return Err(CommandError::new(
             ErrorCode::UnsupportedProperty,

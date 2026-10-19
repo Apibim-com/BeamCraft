@@ -374,7 +374,7 @@ fn element_meta(
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Decoded {
-    plates: Vec<(AuthoredPlate, Option<DerivedMesh>)>,
+    pub(crate) plates: Vec<(AuthoredPlate, Option<DerivedMesh>)>,
     pub(crate) members: Vec<(AuthoredMember, Option<DerivedMesh>)>,
     other_elements: usize,
     pub(crate) definitions: BTreeMap<ContentDigest, DefinitionRecord>,

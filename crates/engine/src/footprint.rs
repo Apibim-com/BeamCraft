@@ -278,6 +278,15 @@ impl Footprint {
         Ok(footprint)
     }
 
+    /// The footprint of `CreateBolt` (A05): the same shape as [`Self::for_weld`], for a bolt
+    /// group: it writes the group's own lifecycle, every authored group (the bolt properties are
+    /// its shape inputs, the `connects` record its relationships) and the derived group, plus the
+    /// read of each connected part's lifecycle. The record lives with the group, so no part is
+    /// written and a later delete of a part conflicts with a concurrent group creation.
+    pub fn for_bolt(id: ElementId, parts: [ElementId; 2]) -> Result<Self, CommandError> {
+        Self::for_weld(id, parts)
+    }
+
     /// The footprint of `AttachToAssembly` and `DetachFromAssembly` (A01): the `part-of` record
     /// lives with its source, so only the part's relationship group is written. It reads the
     /// part's lifecycle and relationships and, for an attach, the lifecycle and relationships of
