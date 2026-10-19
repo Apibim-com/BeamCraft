@@ -291,12 +291,18 @@ pub fn evaluate_member(
         ProfileInfo::Rectangle {
             width_mm,
             height_mm,
-            ..
+            declared_area_mm2,
         } => {
+            // The declared area is admitted with the rectangle's own rule (it must agree with
+            // width x height within 0.1 percent), so a direct engine caller cannot pair a
+            // rectangle with an area that would give a different volume.
             RectangleProfileSpec {
                 width_mm: *width_mm,
                 height_mm: *height_mm,
-                ..RectangleProfileSpec::default()
+                section: SectionProperties {
+                    area_mm2: *declared_area_mm2,
+                    ..SectionProperties::default()
+                },
             }
             .validate()?;
             let result = straight_member(StraightMember {
@@ -682,6 +688,34 @@ mod tests {
         );
         assert_eq!(declared.quantities.area_source, Some(AreaSource::Catalogue));
         assert_eq!(declared.quantities.volume_mm3, 60_030.0 * 6000.0);
+    }
+
+    #[test]
+    fn a_rectangle_refuses_a_declared_area_that_disagrees_with_width_times_height() {
+        for declared in [1.0, 59_000.0, 61_000.0, 1e9] {
+            let lookup = |_: &ContentDigest| {
+                Ok(ProfileInfo::Rectangle {
+                    width_mm: 200.0,
+                    height_mm: 300.0,
+                    declared_area_mm2: Some(declared),
+                })
+            };
+            let error =
+                create_straight_member(&command(digest(b"p")), &none, &lookup, &no_materials)
+                    .unwrap_err();
+            assert_eq!(error.code, ErrorCode::InvalidArgument, "{declared}");
+        }
+        // Within 0.1 percent it is accepted (the catalogue value wins).
+        let lookup = |_: &ContentDigest| {
+            Ok(ProfileInfo::Rectangle {
+                width_mm: 200.0,
+                height_mm: 300.0,
+                declared_area_mm2: Some(60_030.0),
+            })
+        };
+        assert!(
+            create_straight_member(&command(digest(b"p")), &none, &lookup, &no_materials).is_ok()
+        );
     }
 
     #[test]
