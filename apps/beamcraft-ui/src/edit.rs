@@ -340,9 +340,15 @@ impl Editor {
     }
 
     /// Selects an element and pre-fills the move form with its present translation, as the
-    /// engine reported it. Any staged edit is dropped: it was for another selection.
+    /// engine reported it. Selecting the already selected element again keeps the typed
+    /// coordinates, so a confirming click does not undo the typing. Any staged edit is
+    /// dropped: it was for another selection, or the selection was made again.
     pub fn select(&mut self, info: ElementInfo) {
-        self.move_to = info.translation_mm.map(|v| format!("{v}"));
+        if self.selected.as_ref() != Some(&info) {
+            // Debug formatting: the shortest round-trip form, which stays within the
+            // `number` length cap for every finite value (exponents included).
+            self.move_to = info.translation_mm.map(|v| format!("{v:?}"));
+        }
         if self.copy_offset.iter().all(String::is_empty) {
             self.copy_offset = ["0".into(), "0".into(), "0".into()];
         }
@@ -746,7 +752,7 @@ mod tests {
             "Selection"
         );
         editor.select(info());
-        assert_eq!(editor.move_to, ["100", "-20.5", "0"]);
+        assert_eq!(editor.move_to, ["100.0", "-20.5", "0.0"]);
         editor.move_to[0] = " 250 ".into();
         assert_eq!(
             editor.prepare(EditKind::Move, target()).unwrap().args,
@@ -757,7 +763,7 @@ mod tests {
                 "--id",
                 "019a7bf0-0000-7000-8000-000000000001",
                 "--translation",
-                "250,-20.5,0"
+                "250,-20.5,0.0"
             ]
         );
         editor.copy_offset = ["0".into(), "800".into(), "0".into()];
@@ -817,6 +823,28 @@ mod tests {
         // A huge or negative value is the engine's to judge.
         editor.move_to = ["-1e12".into(), "0".into(), "0".into()];
         assert!(editor.prepare(EditKind::Move, target()).is_ok());
+    }
+
+    #[test]
+    fn a_selection_pre_fills_in_round_trip_form_and_a_reclick_keeps_the_typing() {
+        let mut editor = Editor::default();
+        // A placement with float noise still fits the number length cap and parses back,
+        // because it is written in the shortest round-trip (Debug) form.
+        let noisy = ElementInfo {
+            translation_mm: [5.551115123125783e-17, 1.5e20, 0.0],
+            ..info()
+        };
+        editor.select(noisy.clone());
+        assert_eq!(editor.move_to, ["5.551115123125783e-17", "1.5e20", "0.0"]);
+        assert!(editor.move_to.iter().all(|v| v.len() <= 32));
+        assert!(editor.prepare(EditKind::Move, target()).is_ok());
+        // Selecting the already selected element again keeps the typed coordinates.
+        editor.move_to[0] = "250".into();
+        editor.select(noisy);
+        assert_eq!(editor.move_to[0], "250");
+        // Another selection pre-fills its own translation.
+        editor.select(info());
+        assert_eq!(editor.move_to, ["100.0", "-20.5", "0.0"]);
     }
 
     #[test]
