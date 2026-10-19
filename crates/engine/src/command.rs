@@ -18,8 +18,10 @@
 //! extrusion along `+Z` by the thickness, certified as one closed shell by G06, with the A04
 //! through holes cut by G09 exactly as on the rectangle. A clockwise outline, a self-intersecting
 //! one, one below the area floor or outside the caps is `INVALID_ARGUMENT` or the kernel's own
-//! code; nothing is guessed. Contour points with a nonzero `z` are not in the plate body frame,
-//! so they are `INVALID_ARGUMENT`: a translation belongs to the placement. A placement with a
+//! code; nothing is guessed. A contour at a constant nonzero `z` is valid F04 input in its own
+//! body frame but is not evaluated here: as in the first slice it is `UNSUPPORTED_GEOMETRY`,
+//! because the plate body frame is the local XY plane and the placement carries translations.
+//! A placement with a
 //! rotation other than the identity is valid input but unsupported for evaluation here
 //! (`UNSUPPORTED_GEOMETRY`): the view contract carries translations only.
 
@@ -30,7 +32,7 @@ use beamcraft_geom::{MathError, Point3};
 use beamcraft_kernel::diagnostic::Failure;
 use beamcraft_kernel::measure::analytic_mass_kg;
 use beamcraft_kernel::ops::{Body, HoleCutter, OpCode, OpFailure, OpResult, through_hole};
-use beamcraft_kernel::profile::diagnostic::ProfileFailure;
+use beamcraft_kernel::profile::diagnostic::{Defect, ProfileFailure, ProfileField};
 use beamcraft_kernel::profile::{Cavity, Point2, extrude};
 use beamcraft_kernel::{RectangularPlate, rectangular_plate};
 use beamcraft_model::command::{CommandError, CreatePlate, Placement};
@@ -418,7 +420,23 @@ enum Contour {
 }
 
 fn classify(points: &[[f64; 3]]) -> Contour {
-    let [p0, p1, p2, p3] = match points {
+    // The closure of a contour is implicit, so the origin rectangle may be listed starting at
+    // any of its corners. The cycle is rotated onto the origin corner first, so the same closed
+    // rectangle keeps its G02 evaluation, quantities and mesh digest whatever the cyclic start;
+    // a rotation never changes the polygon the points describe.
+    let start = points
+        .iter()
+        .position(|p| p[0] == 0.0 && p[1] == 0.0 && p[2] == 0.0);
+    let rotated: Vec<[f64; 3]> = match start {
+        Some(start) if start > 0 => points
+            .iter()
+            .skip(start)
+            .chain(points.iter().take(start))
+            .copied()
+            .collect(),
+        _ => points.to_vec(),
+    };
+    let [p0, p1, p2, p3] = match rotated.as_slice() {
         [a, b, c, d] => [*a, *b, *c, *d],
         _ => return Contour::Other,
     };
@@ -511,13 +529,17 @@ pub fn evaluate_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandErro
 /// the A04 through holes, exactly as on the rectangle.
 ///
 /// The analytic volume of the plain outline is `net_area * thickness`; with holes it is the
-/// midpoint of the G06 enclosure of the certified cut result, like on the rectangle.
+/// midpoint of the G06 enclosure of the certified cut result, like on the rectangle. A contour
+/// that touches any nonzero `z` is valid F04 input in its own body frame, but this slice does
+/// not evaluate it (`UNSUPPORTED_GEOMETRY`, as in the first slice, so no valid input gains a
+/// new refusal class): the plate body frame is the local XY plane and the placement carries
+/// translations, and F04's planarity tolerance is the G06 policy, not an argument check here.
 fn evaluate_contour_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandError> {
     if authored.contour_points_mm.iter().any(|[_, _, z]| *z != 0.0) {
         return Err(CommandError::new(
-            ErrorCode::InvalidArgument,
+            ErrorCode::UnsupportedGeometry,
             "contour_points_mm",
-            "contour points must lie in the plate's local XY plane; a translation belongs to the placement",
+            "a contour off the plate's local XY plane is not evaluated in this slice; a translation belongs to the placement",
         ));
     }
     let outer: Vec<Point2> = authored
@@ -527,10 +549,12 @@ fn evaluate_contour_plate(authored: &AuthoredPlate) -> Result<PlateBody, Command
         .collect();
     let extrusion = extrude(&outer, &[], authored.thickness_mm)
         .map_err(|f| map_profile(&f, "contour_points_mm"))?;
-    let body = Body::from_extrusion(&extrusion).map_err(|f| map_operation(&f))?;
     let solid = if authored.holes_mm.is_empty() {
-        SolidMesh::from_body(&body, extrusion.volume_mm3())
+        // The G06 certification of the same shell; the stored bytes are the extrusion's own.
+        Body::from_extrusion(&extrusion).map_err(map_body)?;
+        SolidMesh::from_extrusion(&extrusion)
     } else {
+        let body = Body::from_extrusion(&extrusion).map_err(map_body)?;
         let applied = cut_holes(body, authored.thickness_mm, &authored.holes_mm)?;
         SolidMesh::from_operation(&applied)
     };
@@ -565,18 +589,51 @@ fn map_operation(failure: &OpFailure) -> CommandError {
     CommandError::new(code, "holes_mm", message)
 }
 
-/// Maps the G05 outline admission of a contour plate to a command error. Winding, simplicity
-/// and the floors are the kernel's decisions; a refusal names `contour_points_mm`.
-fn map_profile(failure: &ProfileFailure, field: &'static str) -> CommandError {
-    let code = failure
-        .diagnostics()
-        .first()
-        .map_or(ErrorCode::UnsupportedGeometry, |d| d.code.f04_code());
+/// Maps the G06 body admission of the extruded outline. It is a fault of the outline, never of
+/// a hole, so the field names `contour_points_mm` and not `holes_mm`.
+fn map_body(failure: OpFailure) -> CommandError {
     CommandError::new(
-        code,
-        field,
-        "the outline is not an admissible closed contour",
+        failure.code.f04_code(),
+        "contour_points_mm",
+        "the extruded outline could not be certified as one closed solid",
     )
+}
+
+/// Why the G05 outline admission refused a contour, in the kernel's own words.
+fn contour_message(defect: Defect) -> &'static str {
+    match defect {
+        Defect::TooFewPoints => "the outline has fewer than three points",
+        Defect::EdgeTooShort => "an outline edge is below the geometric floor",
+        Defect::ZeroArea => "the outline has zero area",
+        Defect::AreaTooSmall => "the outline area is below the geometric floor",
+        Defect::WrongWinding => {
+            "the outline is clockwise; it must be counter-clockwise seen from +Z"
+        }
+        Defect::SelfIntersection => "the outline intersects itself",
+        Defect::Backtracking => "two adjacent outline edges fold back onto each other",
+        Defect::NarrowFeature => "two non-adjacent outline edges are closer than the floor",
+        _ => "the outline is not an admissible closed contour",
+    }
+}
+
+/// Maps the G05 outline admission of a contour plate to a command error, keeping the kernel's
+/// own diagnosis: the field names the refused quantity and the message says why.
+fn map_profile(failure: &ProfileFailure, field: &'static str) -> CommandError {
+    let Some(diagnostic) = failure.diagnostics().first() else {
+        return CommandError::new(
+            ErrorCode::UnsupportedGeometry,
+            field,
+            "the outline could not be evaluated",
+        );
+    };
+    let (field, message) = match diagnostic.field {
+        ProfileField::Thickness => (
+            "thickness_mm",
+            "the thickness is not above the outline's geometric floor",
+        ),
+        _ => (field, contour_message(diagnostic.defect)),
+    };
+    CommandError::new(diagnostic.code.f04_code(), field, message)
 }
 
 /// The certified mesh of a plate with its through holes. Each hole is one kernel cutter, in
@@ -1015,8 +1072,8 @@ mod tests {
         assert_eq!(out.body.length_mm, 400.0);
         // The mesh is a certified solid, not a box: two cap triangles and three quad walls.
         assert_eq!(out.body.solid.triangles().len(), 8);
-        // The former F04-POS-20 pentagon (translated rectangles were F04-POS-18 with a nonzero
-        // z, refused below) is now evaluated, not guessed.
+        // The former F04-POS-20 pentagon is now evaluated, not guessed; the off-plane
+        // rectangle of F04-POS-18 stays unsupported (refused in the rejection test below).
         let pentagon = vec![
             [0.0, 0.0, 0.0],
             [1000.0, 0.0, 0.0],
@@ -1028,6 +1085,35 @@ mod tests {
         assert_eq!(out.quantities.algorithm, CONTOUR_VOLUME_ALGORITHM);
         assert_eq!(out.body.width_mm, 1200.0);
         assert_eq!(out.body.length_mm, 600.0);
+    }
+
+    #[test]
+    fn the_origin_rectangle_is_recognised_at_any_cyclic_start() {
+        let canonical = create_plate(&command(rect(1000.0, 500.0), 10.0), &none).unwrap();
+        // The same closed rectangle listed from its second, third and fourth corner: the
+        // rotation changes no geometry, so the G02 evaluation, algorithm label and mesh digest
+        // stay the canonical ones.
+        for shift in 1..4 {
+            let mut rotated = rect(1000.0, 500.0);
+            rotated.rotate_left(shift);
+            let out = create_plate(&command(rotated, 10.0), &none).unwrap();
+            assert_eq!(out.quantities.algorithm, VOLUME_ALGORITHM);
+            assert_eq!(out.quantities.volume_mm3, canonical.quantities.volume_mm3);
+            assert_eq!(out.body.solid.digest(), canonical.body.solid.digest());
+            assert_eq!(out.body.solid.triangles().len(), 12);
+        }
+        // A translated rectangle is a different authored outline, so it stays on the contour
+        // path: its mesh must match the contour as authored, and the placement is the vehicle
+        // for translations.
+        let moved = vec![
+            [10.0, 20.0, 0.0],
+            [1010.0, 20.0, 0.0],
+            [1010.0, 520.0, 0.0],
+            [10.0, 520.0, 0.0],
+        ];
+        let out = create_plate(&command(moved, 10.0), &none).unwrap();
+        assert_eq!(out.quantities.algorithm, CONTOUR_VOLUME_ALGORITHM);
+        assert_eq!(out.body.solid.triangles().len(), 12);
     }
 
     #[test]
@@ -1055,17 +1141,26 @@ mod tests {
             ]),
             ErrorCode::InvalidArgument
         );
-        // Contour points off the local XY plane are not in the plate body frame; a translation
-        // belongs to the placement (the former F04-POS-18 shape).
-        assert_eq!(
-            code_of(vec![
+        // Contour points off the local XY plane are valid F04 input in its own body frame, but
+        // this slice does not evaluate them: `UNSUPPORTED_GEOMETRY`, as before A02 (the former
+        // F04-POS-18 shape, and the non-planar F04-NEG-29 shape, whose exact F04 refusal code
+        // needs the G06 planarity tolerance). A translation belongs to the placement.
+        for off_plane in [
+            vec![
                 [0.0, 0.0, 5.0],
                 [1000.0, 0.0, 5.0],
                 [1000.0, 500.0, 5.0],
                 [0.0, 500.0, 5.0],
-            ]),
-            ErrorCode::InvalidArgument
-        );
+            ],
+            vec![
+                [0.0, 0.0, 0.0],
+                [1000.0, 0.0, 0.0],
+                [1000.0, 500.0, 20.0],
+                [0.0, 500.0, 0.0],
+            ],
+        ] {
+            assert_eq!(code_of(off_plane), ErrorCode::UnsupportedGeometry);
+        }
         // Fewer than three points stays INVALID_ARGUMENT (F04-NEG-31) on the contour path too.
         assert_eq!(
             code_of(vec![[0.0, 0.0, 0.0], [1000.0, 0.0, 0.0]]),
