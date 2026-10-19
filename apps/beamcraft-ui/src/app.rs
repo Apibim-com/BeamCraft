@@ -6,7 +6,7 @@
 
 use crate::camera::{Camera, View};
 use crate::command::Selected;
-use crate::edit::{EditKind, Edited, Editor, Target, ndc_of, ray_through};
+use crate::edit::{EditKind, Edited, Editor, Epoch, Target, ndc_of, ray_through};
 use crate::render::{Renderer, Uploaded};
 use crate::scene::Scene;
 use crate::source::Reloaded;
@@ -38,15 +38,21 @@ struct Loaded {
 /// The window state.
 pub struct App {
     state: eframe::egui_wgpu::RenderState,
+    /// The egui context, cloned into worker threads so a finished job can wake the UI: polling
+    /// alone would idle past a result once the window redraws only on demand.
+    ctx: egui::Context,
     source: Source,
     renderer: Renderer,
     texture: egui::TextureId,
     camera: Camera,
     loaded: Option<Loaded>,
+    /// Whether the 3D image must be redrawn at the next opportunity: the scene, the camera, the
+    /// target size or the renderer changed. Unrelated UI frames reuse the offscreen texture.
+    viewport_dirty: bool,
     error: Option<String>,
     text: bool,
     adapter: String,
-    last: Instant,
+    last_draw: Instant,
     fps: f32,
     tools: Tools,
     job: Option<Receiver<Result<Created, ToolError>>>,
@@ -57,12 +63,15 @@ pub struct App {
     /// Why the last definitions refresh failed; kept apart from `tool_note` so neither hides the other.
     refresh_error: Option<String>,
     editor: Editor,
-    edit_action: EditKind,
     edit_job: Option<Receiver<Result<Edited, ToolError>>>,
-    select_job: Option<Receiver<Result<Option<Selected>, ToolError>>>,
+    select_job: Option<SelectJob>,
+    select_epoch: Epoch,
     /// The result of the last select, edit, undo or redo.
     edit_note: Option<Result<String, String>>,
 }
+
+/// A lookup in flight: the epoch it was asked under and its receiver.
+type SelectJob = (u64, Receiver<Result<Option<Selected>, ToolError>>);
 
 const RED: egui::Color32 = egui::Color32::from_rgb(230, 80, 60);
 
@@ -181,10 +190,19 @@ fn field(ui: &mut egui::Ui, label: &str, text: &mut String, width: f32) {
 
 /// Inter from the admitted asset directory, validated before egui can panic on it.
 fn inter(ctx: &egui::Context) -> bool {
-    let candidates = [
+    // CWD (an extracted package root), the source tree, then next to the executable: the
+    // win/linux package puts assets beside it, the macOS .app bundle under its Resources
+    // directory (Q02 packaging).
+    let mut candidates = vec![
         Path::new("assets/fonts/inter/Inter-Regular.ttf").to_path_buf(),
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/fonts/inter/Inter-Regular.ttf"),
     ];
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        candidates.push(dir.join("assets/fonts/inter/Inter-Regular.ttf"));
+        candidates.push(dir.join("../Resources/assets/fonts/inter/Inter-Regular.ttf"));
+    }
     let bytes = candidates.iter().find(|p| p.is_file()).map(|path| {
         use std::io::Read;
         let file = std::fs::File::open(path)?;
@@ -260,15 +278,17 @@ impl App {
         );
         let mut app = Self {
             state,
+            ctx: cc.egui_ctx.clone(),
             source,
             renderer,
             texture,
             camera: Camera::new([0.0; 3], 1000.0, 1.6)?,
             loaded: None,
+            viewport_dirty: true,
             error: None,
             text,
             adapter,
-            last: Instant::now(),
+            last_draw: Instant::now(),
             fps: 0.0,
             tools: Tools::default(),
             job: None,
@@ -277,9 +297,9 @@ impl App {
             tool_note: None,
             refresh_error: None,
             editor: Editor::default(),
-            edit_action: EditKind::Move,
             edit_job: None,
             select_job: None,
+            select_epoch: Epoch::default(),
             edit_note: None,
         };
         app.reload();
@@ -296,10 +316,13 @@ impl App {
         }
         let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
         let (tx, rx) = std::sync::mpsc::channel();
+        let ctx = self.ctx.clone();
         let spawned = std::thread::Builder::new()
             .name("beamcraft-reload".into())
             .spawn(move || {
                 let _ = tx.send(source::reload(&cli, &store));
+                // The result is only consumed by a UI frame; wake the window for it.
+                ctx.request_repaint();
             });
         match spawned {
             Ok(_) => self.reload_job = Some(rx),
@@ -336,6 +359,7 @@ impl App {
                     Ok(()) => {
                         self.loaded = Some(loaded);
                         self.error = None;
+                        self.viewport_dirty = true;
                     }
                     Err(e) => self.error = Some(e.to_string()),
                 }
@@ -365,6 +389,7 @@ impl App {
                 self.texture,
             );
         self.renderer = renderer;
+        self.viewport_dirty = true;
         Ok(())
     }
 
@@ -393,11 +418,13 @@ impl App {
         }
         let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
         let (tx, rx) = std::sync::mpsc::channel();
-        self.select_job = Some(rx);
+        let ctx = self.ctx.clone();
+        self.select_job = Some((self.select_epoch.advance(), rx));
         let spawned = std::thread::Builder::new()
             .name("beamcraft-pick".into())
             .spawn(move || {
                 let _ = tx.send(command::select_at(&cli, &store, &ray));
+                ctx.request_repaint();
             });
         if spawned.is_err() {
             self.select_job = None;
@@ -405,8 +432,17 @@ impl App {
         }
     }
 
+    /// Drops any lookup in flight: its result is no longer wanted (Esc, an accepted edit).
+    fn invalidate_select(&mut self) {
+        self.select_epoch.advance();
+        self.select_job = None;
+    }
+
     fn poll_select(&mut self) {
-        let Some(rx) = &self.select_job else { return };
+        let Some((asked, rx)) = &self.select_job else {
+            return;
+        };
+        let asked = *asked;
         let result = match rx.try_recv() {
             Ok(result) => result,
             Err(TryRecvError::Empty) => return,
@@ -416,6 +452,9 @@ impl App {
             }),
         };
         self.select_job = None;
+        if !self.select_epoch.is_current(asked) {
+            return;
+        }
         match result {
             Ok(None) => {
                 self.editor.deselect();
@@ -453,12 +492,14 @@ impl App {
         let Some(edit) = edit else { return };
         let cli = self.source.cli.clone();
         let (tx, rx) = std::sync::mpsc::channel();
+        let ctx = self.ctx.clone();
         self.edit_job = Some(rx);
         self.edit_note = None;
         let spawned = std::thread::Builder::new()
             .name("beamcraft-edit".into())
             .spawn(move || {
                 let _ = tx.send(command::commit_edit(&cli, &edit));
+                ctx.request_repaint();
             });
         if spawned.is_err() {
             self.edit_job = None;
@@ -481,6 +522,8 @@ impl App {
         self.editor.finish();
         match result {
             Ok(done) => {
+                // A lookup that started before this edit describes the element as it was.
+                self.invalidate_select();
                 self.reload();
                 let subject = match done.kind {
                     EditKind::Undo | EditKind::Redo => "the workspace".to_owned(),
@@ -503,6 +546,7 @@ impl App {
             }
             Err(e) => {
                 if e.code == "OUTCOME_UNKNOWN" {
+                    self.invalidate_select();
                     self.reload();
                     self.refresh_selection();
                 }
@@ -516,26 +560,25 @@ impl App {
         let Some(id) = self.editor.selected().map(|s| s.id.clone()) else {
             return;
         };
-        if self.select_job.is_some() {
-            return;
-        }
         let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
         let (tx, rx) = std::sync::mpsc::channel();
-        self.select_job = Some(rx);
+        let ctx = self.ctx.clone();
+        self.select_job = Some((self.select_epoch.advance(), rx));
         let spawned = std::thread::Builder::new()
             .name("beamcraft-info".into())
             .spawn(move || {
-                let reply = command::element_info(&cli, &store, &id).map(|info| {
-                    Some(Selected {
+                // An element the revision no longer holds clears the selection; any other
+                // failure keeps it selected without details, so the move form is emptied
+                // rather than left with the position from before the edit.
+                let reply = match command::element_info(&cli, &store, &id) {
+                    Err(e) if e.code == "NOT_FOUND" => None,
+                    info => Some(Selected {
                         id: id.clone(),
-                        info: Ok(info),
-                    })
-                });
-                // An element the revision no longer holds clears the selection.
-                let _ = tx.send(match reply {
-                    Err(e) if e.code == "NOT_FOUND" => Ok(None),
-                    other => other,
-                });
+                        info,
+                    }),
+                };
+                let _ = tx.send(Ok(reply));
+                ctx.request_repaint();
             });
         if spawned.is_err() {
             self.select_job = None;
@@ -557,13 +600,14 @@ impl App {
             }
         }
         let selected = self.editor.selected().is_some();
+        let mut action = self.editor.action();
         ui.add_enabled_ui(selected, |ui| {
             ui.horizontal(|ui| {
-                ui.selectable_value(&mut self.edit_action, EditKind::Move, "Move");
-                ui.selectable_value(&mut self.edit_action, EditKind::Copy, "Copy");
-                ui.selectable_value(&mut self.edit_action, EditKind::Delete, "Delete");
+                ui.selectable_value(&mut action, EditKind::Move, "Move");
+                ui.selectable_value(&mut action, EditKind::Copy, "Copy");
+                ui.selectable_value(&mut action, EditKind::Delete, "Delete");
             });
-            match self.edit_action {
+            match action {
                 EditKind::Move => {
                     ui.label("New position in mm (absolute):");
                     point_fields(ui, &mut self.editor.move_to);
@@ -577,6 +621,8 @@ impl App {
                 }
             }
         });
+        // Another action needs its own preview.
+        self.editor.set_action(action);
         let busy = self.editor.busy();
         let target = self.target();
         let can_commit = self.editor.can_commit(target);
@@ -594,7 +640,7 @@ impl App {
                 .clicked();
         });
         if preview {
-            let action = self.edit_action;
+            let action = self.editor.action();
             let target = Target {
                 store: &self.source.store,
                 workspace: self.source.workspace.as_deref(),
@@ -668,12 +714,14 @@ impl App {
         };
         let cli = self.source.cli.clone();
         let (tx, rx) = std::sync::mpsc::channel();
+        let ctx = self.ctx.clone();
         self.job = Some(rx);
         self.tool_note = None;
         let spawned = std::thread::Builder::new()
             .name("beamcraft-command".into())
             .spawn(move || {
                 let _ = tx.send(command::commit(&cli, &prepared));
+                ctx.request_repaint();
             });
         if spawned.is_err() {
             self.job = None;
@@ -863,7 +911,7 @@ impl App {
 
     fn info(&self, ui: &mut egui::Ui) {
         ui.heading("BeamCraft");
-        ui.label(format!("{:.0} FPS", self.fps));
+        ui.label(format!("{:.0} viewport redraws/s", self.fps));
         ui.label(&self.adapter);
         ui.label(format!("{}x MSAA", self.renderer.samples));
         ui.separator();
@@ -905,12 +953,6 @@ impl App {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let now = Instant::now();
-        let dt = now.duration_since(self.last).as_secs_f32();
-        self.last = now;
-        if dt > 0.0 {
-            self.fps = self.fps * 0.9 + 0.1 / dt;
-        }
         let wants_text = ui.ctx().egui_wants_keyboard_input();
         let (fit, reload) = ui.input(|i| {
             (
@@ -923,6 +965,7 @@ impl eframe::App for App {
         self.poll_select();
         self.poll_reload();
         if !wants_text && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.invalidate_select();
             self.editor.deselect();
         }
         if reload {
@@ -933,6 +976,7 @@ impl eframe::App for App {
             if let Err(e) = self.camera.fit(target, extent, self.aspect()) {
                 self.error = Some(e.to_string());
             }
+            self.viewport_dirty = true;
         }
         if self.text {
             egui::Panel::left("info").show(ui, |ui| self.panel(ui));
@@ -964,6 +1008,7 @@ impl eframe::App for App {
             } else {
                 0.0
             };
+            let moving = orbit != [0.0; 2] || pan != [0.0; 2] || zoom != 0.0;
             let aspect = self.aspect();
             let mut picked = None;
             match self
@@ -972,13 +1017,25 @@ impl eframe::App for App {
                 .and_then(|()| self.camera.view(aspect))
             {
                 Ok(view) => {
-                    if let Some(l) = &self.loaded {
+                    if moving {
+                        self.viewport_dirty = true;
+                    }
+                    if self.viewport_dirty
+                        && let Some(l) = &self.loaded
+                    {
                         self.renderer.draw(
                             &self.state.device,
                             &self.state.queue,
                             &l.uploaded,
                             view,
                         );
+                        self.viewport_dirty = false;
+                        let now = Instant::now();
+                        let dt = now.duration_since(self.last_draw).as_secs_f32();
+                        self.last_draw = now;
+                        if dt > 0.0 && dt < 5.0 {
+                            self.fps = self.fps * 0.9 + 0.1 / dt;
+                        }
                     }
                     if let Some(l) = &self.loaded {
                         if let Some(selected) = self.editor.selected() {
@@ -1005,6 +1062,8 @@ impl eframe::App for App {
                 self.start_select(ray);
             }
         });
-        ui.ctx().request_repaint();
+        // No unconditional repaint request: the window idles until input, a finished background
+        // job (`ctx.request_repaint` from the worker) or an egui animation asks for a frame, and
+        // an unrelated UI frame reuses the last offscreen image.
     }
 }
