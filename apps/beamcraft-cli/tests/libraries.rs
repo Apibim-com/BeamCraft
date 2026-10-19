@@ -481,7 +481,10 @@ fn a_declared_section_area_that_disagrees_with_the_outline_warns_and_malformed_o
     assert_eq!(num(definition, &["area_mm2"]), 2000.0);
     let warning = at(definition, &["declared_area_warning"]);
     assert_eq!(num(warning, &["declared_mm2"]), 2000.0);
-    assert!((num(warning, &["kernel_mm2"]) - 1712.0).abs() < 17.0);
+    // The reference is the exact ring pi * t * (d - t), not the polygon of the mesh.
+    let ring = std::f64::consts::PI * 5.0 * 109.0;
+    assert!((num(warning, &["kernel_mm2"]) - ring).abs() <= 1e-9 * ring);
+    assert_eq!(num(warning, &["exact_mm2"]), num(warning, &["kernel_mm2"]));
     assert!((num(warning, &["relative_difference"]) - 0.168).abs() < 0.01);
     assert_eq!(num(warning, &["threshold"]), 0.01);
     assert_eq!(num(warning, &["threshold_percent"]), 1.0);
