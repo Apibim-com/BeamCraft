@@ -114,7 +114,8 @@ mod tests {
             diameter_mm: 16.0,
             count: 3,
             pitch_mm: 80.0,
-            origin_mm: [100.0, 250.0, 5.0],
+            // On the seam of both bounds: the plate is 0..500 in y, the beam +-60, so y = 0.
+            origin_mm: [100.0, 0.0, 5.0],
             direction_mm: [1.0, 0.0, 0.0],
         }
     }
@@ -203,12 +204,12 @@ mod tests {
         let code = |c: CreateBolt, b: &BTreeMap<ElementId, Bounds>| {
             parts.create_bolt(&c, b).unwrap_err().code
         };
-        // Three bolts at x = 100, 180, 260 fit the 1000 mm plate; a 940 mm plate loses the last
-        // one, so the whole group is refused.
+        // Three bolts at x = 100, 180, 260 fit the 1000 mm plate; a 13th bolt at x = 1060
+        // leaves it, so the whole group is refused.
         assert!(parts.create_bolt(&command(), &bounds(1000.0)).is_ok());
         let short = CreateBolt {
             bolt: BoltSpec {
-                count: 12,
+                count: 13,
                 pitch_mm: 80.0,
                 ..spec()
             },
@@ -217,7 +218,7 @@ mod tests {
         assert_eq!(code(short, &bounds(1000.0)), ErrorCode::InvalidArgument);
         let out_of_plane = CreateBolt {
             bolt: BoltSpec {
-                origin_mm: [100.0, 250.0, 70.0],
+                origin_mm: [100.0, 0.0, 70.0],
                 ..spec()
             },
             ..command()
