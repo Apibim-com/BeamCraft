@@ -65,6 +65,7 @@ fn facts(store: &RevisionStore) -> Result<(String, Vec<PartFact>, Vec<AssemblyFa
                 profile: None,
                 material: a.material,
                 dimensions: vec![record.body.width_mm, record.body.length_mm, a.thickness_mm],
+                angles_rad: Vec::new(),
                 holes: a.holes_mm.clone(),
                 assembly: holder.get(&a.id).copied(),
             });
@@ -83,7 +84,8 @@ fn facts(store: &RevisionStore) -> Result<(String, Vec<PartFact>, Vec<AssemblyFa
                 name: a.name.clone(),
                 profile: Some(a.profile),
                 material: a.material,
-                dimensions: vec![length, a.roll_rad.unwrap_or(0.0)],
+                dimensions: vec![length],
+                angles_rad: vec![a.roll_rad.unwrap_or(0.0)],
                 holes: Vec::new(),
                 assembly: holder.get(&a.id).copied(),
             });

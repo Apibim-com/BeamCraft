@@ -25,9 +25,13 @@ Rules (own wording, from the owner's local numbering notes `24-numbering.md` and
 `08-numbering-assemblies.md`, which stay outside the repository):
 
 * **Equivalent parts** have the same kind, the same pinned profile digest, the same pinned
-  material digest, dimensions within the tolerance (plate: width, length, thickness; member:
-  axis length and roll) and the same holes, compared in the part's own frame within the
-  tolerance after sorting the points of each polygon and the polygons. Placement, level and
+  material digest, lengths within the tolerance (plate: width, length, thickness; member: axis
+  length), a roll within 1e-9 rad (an angle is never compared with the length tolerance) and the
+  same holes, compared in the part's own frame. A hole is its ring, kept with its edges:
+  counter-clockwise, started at its smallest vertex, so the same ring started elsewhere or wound
+  the other way is the same hole while two rings through the same vertices in another order are
+  different holes; the rings of a plate are then sorted and compared point by point within the
+  tolerance. Placement, level and
   assembly membership never matter. The name is compared only with `--compare-name true`.
 * **The oldest part is the reference** (the smallest ElementId, a UUIDv7, so the earliest). A part
   joins the first earlier group of its kind whose reference it matches; groups are numbered in the
@@ -45,8 +49,15 @@ Rules (own wording, from the owner's local numbering notes `24-numbering.md` and
   returns `stale: true` when the present proposal differs. A thickness, material, profile, length
   or hole edit, a copy and a delete change it; a move does not, and a rename does not unless the
   name is compared and the rename splits or joins a group.
-* The tolerance defaults to 0.001 mm (the F04 length floor): sub-micron differences between
-  axis lengths computed from different coordinates are floating-point noise, not different parts.
+* The tolerance defaults to 0.001 mm (the F04 length floor), in the engine and in the command:
+  sub-micron differences between axis lengths computed from different coordinates are
+  floating-point noise, not different parts.
+* **Work bound.** Candidates for a part are looked up by kind, profile, material, the name when
+  compared, the counts of dimensions, angles and holes, and the range of its first dimension, so
+  unrelated groups are never compared. A model that puts tens of thousands of different parts
+  into one such bucket (equal first dimension) exceeds 50,000,000 comparisons and is refused with
+  `INVALID_ARGUMENT` instead of running without bound. Assembly signatures are looked up by their
+  SHA-256, not scanned.
 
 ## Decisions (for the owner)
 
@@ -82,9 +93,9 @@ rename do not.
 * Finish, surface treatment, welds, assembly phase and UDA comparisons (the model has none of them).
 * Deactivated elements are not skipped (lifecycle is read by the E02 adapter, not by this one).
 * No viewport selection sync or preview table UI.
-* The comparison of holes applies the tolerance after sorting, so two holes whose coordinates
-  differ by less than the tolerance in different leading digits could sort differently and not
-  match.
+* The tolerance on holes is applied after the rings are put in canonical form and sorted, so two
+  rings whose smallest vertices differ by less than the tolerance in different leading digits
+  could be started at different vertices and not match.
 * The "main part" of an assembly and its mark when sub-assemblies differ are not modelled.
 
 ## Proposed Roadmap entry
