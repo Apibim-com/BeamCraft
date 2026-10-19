@@ -433,11 +433,16 @@ pub(crate) fn pin_accepted(pin: &str) -> Result<bool, Diagnostic> {
         return Ok(true);
     }
     // A05 added the bolt properties and reworded the connection line, so the master mapping
+<<<<<<< HEAD
     // before A05 (A09) is the current descriptor without those additions.
+=======
+    // before A05 is the current descriptor without those additions.
+>>>>>>> a0c3b43 (Fix the bolt engine tests and accept the pre-A05 mapping pin)
     let pre_a05 = Sha256::digest(pre_a05_descriptor().as_bytes()).map_err(|_| limit())?;
     if pin == pre_a05.to_string() {
         return Ok(true);
     }
+<<<<<<< HEAD
     // A08 added one line (the element mark) and one changes item to the A07.2 descriptor and
     // changed nothing else, so the A07.2 mapping is the pre-A05 descriptor without both.
     let a07_2 = pre_a05_descriptor()
@@ -451,6 +456,12 @@ pub(crate) fn pin_accepted(pin: &str) -> Result<bool, Diagnostic> {
     // changed nothing else, so the D1/D2 mapping is the A07.2 descriptor without that line.
     let d1_d2 = a07_2.replacen(A07_2_DISPLAY_NAME_LINE, "", 1);
     let digest = Sha256::digest(d1_d2.as_bytes()).map_err(|_| limit())?;
+=======
+    // A07.2 added one optional line (the definition display name) to the D1/D2 descriptor and
+    // changed nothing else, so the D1/D2 mapping is the pre-A05 descriptor without that line.
+    let a07_1 = pre_a05_descriptor().replacen(A07_2_DISPLAY_NAME_LINE, "", 1);
+    let digest = Sha256::digest(a07_1.as_bytes()).map_err(|_| limit())?;
+>>>>>>> a0c3b43 (Fix the bolt engine tests and accept the pre-A05 mapping pin)
     if pin == digest.to_string() {
         return Ok(true);
     }
@@ -1224,11 +1235,12 @@ mod pin_tests {
 
     #[test]
     fn the_a07_2_mapping_pin_is_accepted_and_is_not_the_current_one() {
-        // Pinned value: the digest of the descriptor of master with A07.2, before A08.
+        // Pinned value: the digest of the descriptor of master with A07.2, before A08 added the
+        // element mark and before A05 added the bolt properties.
         let a07_2 = "fdaf890401a7bf4d8d17eb84ad1901b461ff21f1e7cec1e93f9e71203b83865b";
         assert_eq!(
             Sha256::digest(
-                SCHEMA_DESCRIPTOR
+                pre_a05_descriptor()
                     .replacen(NUMBERING_DESCRIPTOR_LINE, "", 1)
                     .replacen(NUMBERING_CHANGES_ITEM, "|Level|Delete;", 1)
                     .as_bytes()
@@ -1258,20 +1270,16 @@ mod pin_tests {
     #[test]
     fn the_d1_d2_mapping_pin_is_accepted_and_is_the_current_one_without_the_display_name_line() {
         // Pinned value: the digest of the descriptor of master with D1 and D2 (the level and the
-        // project record), before A07.2 added the optional definition display name and before A05
-        // added the bolt properties.
+        // project record), before A07.2 added the optional definition display name, before A08
+        // added the element mark and before A05 added the bolt properties.
         let d1_d2 = "b799ae17004c22a5c2eaf7512367f919aec4b82b9b4b223166310286e1414b5b";
         assert!(SCHEMA_DESCRIPTOR.contains(A07_2_DISPLAY_NAME_LINE));
         assert!(!A07_1_DESCRIPTOR.contains(A07_2_DISPLAY_NAME_LINE));
         assert_eq!(
             Sha256::digest(
-<<<<<<< HEAD
-                SCHEMA_DESCRIPTOR
+                pre_a05_descriptor()
                     .replacen(NUMBERING_DESCRIPTOR_LINE, "", 1)
                     .replacen(NUMBERING_CHANGES_ITEM, "|Level|Delete;", 1)
-=======
-                pre_a05_descriptor()
->>>>>>> ccc94fe (Add minimal bolt groups joining two parts (A05))
                     .replacen(A07_2_DISPLAY_NAME_LINE, "", 1)
                     .as_bytes()
             )
@@ -1311,7 +1319,9 @@ mod pin_tests {
     fn the_pre_a05_mapping_pin_is_accepted_and_is_not_the_current_one() {
         // Pinned value: the digest of the descriptor of master with A07.2, before A05 added the
         // bolt properties and reworded the connection line.
-        let pre_a05 = "fdaf890401a7bf4d8d17eb84ad1901b461ff21f1e7cec1e93f9e71203b83865b";
+        // Pinned value: the digest of the descriptor of master with A09, before A05 added the
+        // bolt properties and reworded the connection line.
+        let pre_a05 = "PRE_A05_PIN_PLACEHOLDER";
         assert_eq!(
             Sha256::digest(pre_a05_descriptor().as_bytes())
                 .unwrap()
