@@ -47,15 +47,12 @@ impl Fixture {
     fn new(bytes: &[u8]) -> Self {
         // The store rejects links in the root's ancestors; on macOS the temp directory sits
         // behind the /var -> /private/var symlink, so the root is built from the real path.
-        // Elsewhere the plain path is kept, mirroring the ancestor policy in
-        // crates/host/src/storage.rs: on Windows canonicalising yields a verbatim \\?\ path
-        // the store rejects as a root.
+        // Windows canonicalize returns a \\?\-prefixed path the store refuses, and its temp
+        // path has no ancestor links, so the plain directory is used there.
+        #[cfg(windows)]
         let temp = std::env::temp_dir();
-        let temp = if cfg!(target_os = "macos") {
-            temp.canonicalize().unwrap()
-        } else {
-            temp
-        };
+        #[cfg(not(windows))]
+        let temp = std::env::temp_dir().canonicalize().unwrap();
         let root = temp.join(format!(
             "beamcraft-u04-{}-{}",
             std::process::id(),

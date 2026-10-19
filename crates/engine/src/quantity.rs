@@ -171,6 +171,16 @@ pub fn plate_shape_signature(plate: &AuthoredPlate, algorithm: &str) -> ContentD
             float(&mut bytes, *v);
         }
     }
+    match plate.cut {
+        Some(cut) => {
+            bytes.push(1);
+            cut.point_mm
+                .into_iter()
+                .chain(cut.normal)
+                .for_each(|v| float(&mut bytes, v));
+        }
+        None => bytes.push(0),
+    }
     digest(&bytes)
 }
 
@@ -212,6 +222,16 @@ pub fn member_gross_signature(
         Some(roll) => {
             bytes.push(1);
             float(&mut bytes, roll);
+        }
+        None => bytes.push(0),
+    }
+    match member.cut {
+        Some(cut) => {
+            bytes.push(1);
+            cut.point_mm
+                .into_iter()
+                .chain(cut.normal)
+                .for_each(|v| float(&mut bytes, v));
         }
         None => bytes.push(0),
     }
@@ -373,6 +393,7 @@ mod tests {
             placement: Placement::IDENTITY,
             material: None,
             holes_mm: Vec::new(),
+            cut: None,
         }
     }
 
@@ -452,6 +473,7 @@ mod tests {
             roll_rad: None,
             placement: Placement::IDENTITY,
             material: None,
+            cut: None,
         }
     }
 

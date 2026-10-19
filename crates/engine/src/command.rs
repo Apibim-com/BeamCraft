@@ -31,11 +31,13 @@ use beamcraft_geom::tolerance::TOLERANCE_POLICY_VERSION;
 use beamcraft_geom::{MathError, Point3};
 use beamcraft_kernel::diagnostic::Failure;
 use beamcraft_kernel::measure::analytic_mass_kg;
-use beamcraft_kernel::ops::{Body, HoleCutter, OpCode, OpFailure, OpResult, through_hole};
+use beamcraft_kernel::ops::{
+    Body, CutPlane, HoleCutter, Keep, OpCode, OpFailure, OpResult, plane_cut, through_hole,
+};
 use beamcraft_kernel::profile::diagnostic::{Defect, ProfileFailure, ProfileField};
 use beamcraft_kernel::profile::{Cavity, Point2, extrude};
 use beamcraft_kernel::{RectangularPlate, rectangular_plate};
-use beamcraft_model::command::{CommandError, CreatePlate, Placement};
+use beamcraft_model::command::{CommandError, CreatePlate, Placement, PlaneCut};
 use beamcraft_model::definition::MaterialSpec;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
@@ -51,6 +53,10 @@ pub const HOLED_VOLUME_ALGORITHM: &str = "kernel-g09-through-hole-volume/1;toler
 /// Version label of the volume algorithm of a contour plate without holes: the analytic
 /// `net_area * thickness` of the G05 extrusion of the outline (A02, experimental).
 pub const CONTOUR_VOLUME_ALGORITHM: &str = "kernel-g05-contour-plate-volume/1;tolerance-policy-3";
+
+/// Version label of the volume algorithm of an element with a plane cut (A03): the midpoint of
+/// the G06 enclosure of the certified result of the kernel plane cut, taken after any holes.
+pub const CUT_VOLUME_ALGORITHM: &str = "kernel-a03-plane-cut-volume/1;tolerance-policy-3";
 
 const _: () = assert!(TOLERANCE_POLICY_VERSION == 3);
 
@@ -95,6 +101,8 @@ pub struct AuthoredPlate {
     pub material: Option<ContentDigest>,
     /// Through-hole polygons in the plate's local XY, as authored. Empty means a solid plate.
     pub holes_mm: Vec<Vec<[f64; 2]>>,
+    /// The authored plane cut (A03, experimental); `None` means no cut.
+    pub cut: Option<PlaneCut>,
 }
 
 impl AuthoredPlate {
@@ -108,6 +116,7 @@ impl AuthoredPlate {
             placement: command.placement,
             material: command.material_digest,
             holes_mm: command.holes_mm.clone(),
+            cut: command.cut,
         }
     }
 
@@ -121,6 +130,7 @@ impl AuthoredPlate {
             placement: self.placement,
             material_digest: self.material,
             holes_mm: self.holes_mm.clone(),
+            cut: self.cut,
         }
     }
 }
@@ -224,12 +234,16 @@ pub struct PlateBody {
     pub thickness_mm: f64,
     /// Number of through holes applied.
     pub hole_count: usize,
+    /// Whether the authored plane cut was applied after the holes (A03).
+    pub cut_applied: bool,
 }
 
 impl PlateBody {
     /// The algorithm label of this body's volume record.
     pub const fn algorithm(&self) -> &'static str {
-        if self.hole_count == 0 {
+        if self.cut_applied {
+            CUT_VOLUME_ALGORITHM
+        } else if self.hole_count == 0 {
             self.volume_algorithm
         } else {
             HOLED_VOLUME_ALGORITHM
@@ -239,7 +253,8 @@ impl PlateBody {
     fn volumes(&self) -> Volumes {
         // The gross body is the exact outline extrusion (the box or the polygon prism), so the
         // gross volume is its analytic area times the thickness and equals the mesh before the
-        // holes; the holes remove what the two meshes differ by.
+        // holes and the cut; the operations remove what the two meshes differ by, so the net
+        // volume of a cut or holed body is its own certified mesh volume.
         Volumes::measured(
             self.volume_gross_mm3,
             self.volume_gross_mm3,
@@ -502,12 +517,18 @@ pub fn evaluate_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandErro
                 thickness_mm: authored.thickness_mm,
             })
             .map_err(|f| map_kernel(&f))?;
-            let solid = if authored.holes_mm.is_empty() {
-                SolidMesh::from_box(&result)
-            } else {
-                let body = Body::from_plate(&result).map_err(|f| map_operation(&f))?;
-                let applied = cut_holes(body, authored.thickness_mm, &authored.holes_mm)?;
-                SolidMesh::from_operation(&applied)
+            let body = Body::from_plate(&result).map_err(|f| map_operation(&f))?;
+            let solid = match (authored.holes_mm.is_empty(), authored.cut.as_ref()) {
+                (true, None) => SolidMesh::from_box(&result),
+                (true, Some(cut)) => SolidMesh::from_operation(&apply_cut(&body, cut)?),
+                (false, None) => {
+                    let applied = cut_holes(body, authored.thickness_mm, &authored.holes_mm)?;
+                    SolidMesh::from_operation(&applied)
+                }
+                (false, Some(cut)) => {
+                    let applied = cut_holes(body, authored.thickness_mm, &authored.holes_mm)?;
+                    SolidMesh::from_operation(&apply_cut(applied.body(), cut)?)
+                }
             };
             Ok(PlateBody {
                 solid,
@@ -518,6 +539,7 @@ pub fn evaluate_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandErro
                 length_mm: length,
                 thickness_mm: authored.thickness_mm,
                 hole_count: authored.holes_mm.len(),
+                cut_applied: authored.cut.is_some(),
             })
         }
         Contour::Other => evaluate_contour_plate(authored),
@@ -549,14 +571,19 @@ fn evaluate_contour_plate(authored: &AuthoredPlate) -> Result<PlateBody, Command
         .collect();
     let extrusion = extrude(&outer, &[], authored.thickness_mm)
         .map_err(|f| map_profile(&f, "contour_points_mm"))?;
-    let solid = if authored.holes_mm.is_empty() {
+    let body = Body::from_extrusion(&extrusion).map_err(map_body)?;
+    let solid = match (authored.holes_mm.is_empty(), authored.cut.as_ref()) {
         // The G06 certification of the same shell; the stored bytes are the extrusion's own.
-        Body::from_extrusion(&extrusion).map_err(map_body)?;
-        SolidMesh::from_extrusion(&extrusion)
-    } else {
-        let body = Body::from_extrusion(&extrusion).map_err(map_body)?;
-        let applied = cut_holes(body, authored.thickness_mm, &authored.holes_mm)?;
-        SolidMesh::from_operation(&applied)
+        (true, None) => SolidMesh::from_extrusion(&extrusion),
+        (true, Some(cut)) => SolidMesh::from_operation(&apply_cut(&body, cut)?),
+        (false, None) => {
+            let applied = cut_holes(body, authored.thickness_mm, &authored.holes_mm)?;
+            SolidMesh::from_operation(&applied)
+        }
+        (false, Some(cut)) => {
+            let applied = cut_holes(body, authored.thickness_mm, &authored.holes_mm)?;
+            SolidMesh::from_operation(&apply_cut(applied.body(), cut)?)
+        }
     };
     let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]);
     for p in &outer {
@@ -572,6 +599,7 @@ fn evaluate_contour_plate(authored: &AuthoredPlate) -> Result<PlateBody, Command
         length_mm: hi[1] - lo[1],
         thickness_mm: authored.thickness_mm,
         hole_count: authored.holes_mm.len(),
+        cut_applied: authored.cut.is_some(),
     })
 }
 
@@ -587,6 +615,25 @@ fn map_operation(failure: &OpFailure) -> CommandError {
         other => (other.f04_code(), "hole evaluation failed"),
     };
     CommandError::new(code, "holes_mm", message)
+}
+
+/// The engine's typed refusal for a plane cut that the kernel would not apply.
+pub(crate) fn map_cut(failure: &OpFailure) -> CommandError {
+    let message = match failure.code {
+        OpCode::OpNoEffect => "the cutting plane misses the element entirely",
+        OpCode::OpUnsupported => {
+            "the cutting plane is tangent to the element or its scope is unsupported"
+        }
+        _ => "the plane cut failed",
+    };
+    CommandError::new(failure.code.f04_code(), "cut", message)
+}
+
+/// The certified result of one plane cut over `body`, keeping the half-space the normal points
+/// away from. The cap face takes the provisional local id `cut:f.p0`.
+pub(crate) fn apply_cut(body: &Body, cut: &PlaneCut) -> Result<OpResult, CommandError> {
+    let plane = CutPlane::new(cut.point_mm, cut.normal);
+    plane_cut(body, &plane, Keep::Negative, 0).map_err(|f| map_cut(&f))
 }
 
 /// Maps the G06 body admission of the extruded outline. It is a fault of the outline, never of
@@ -765,6 +812,7 @@ mod tests {
             placement: Placement::IDENTITY,
             material_digest: None,
             holes_mm: Vec::new(),
+            cut: None,
         }
     }
 
@@ -931,6 +979,132 @@ mod tests {
             [0.0, 1000.0, 0.0],
         ];
         assert_eq!(code(&command(wide, 10.0)), ErrorCode::LimitExceeded); // F04-NEG-35
+    }
+
+    #[test]
+    fn a_plane_cut_trims_the_plate_with_the_exact_volume_and_mass() {
+        let mut c = command(rect(1000.0, 500.0), 10.0);
+        c.cut = Some(PlaneCut {
+            point_mm: [250.0, 0.0, 0.0],
+            normal: [1.0, 0.0, 0.0],
+        });
+        let out = create_plate(&c, &none).unwrap();
+        // The kept half-space is x <= 250: 250 * 500 * 10 = 1,250,000 mm3 = 0.00125 m3; the
+        // net volume is the certified cut mesh itself (the gross stays the full outline).
+        assert!(
+            (out.quantities.volume_mm3 - 1_250_000.0).abs() <= 1e-6,
+            "{out:?}"
+        );
+        assert_eq!(out.quantities.algorithm, CUT_VOLUME_ALGORITHM);
+        assert!(out.body.cut_applied);
+        assert_eq!(out.authored.cut, c.cut);
+        assert_eq!(out.authored.to_command(), c);
+        // The cut result is a certified body; its mesh is bigger than the box and its volume
+        // agrees with the divergence theorem over the returned triangles.
+        assert!(out.body.solid.triangles().len() > 12);
+        let v = out.body.solid.vertices();
+        let signed: f64 = out
+            .body
+            .solid
+            .triangles()
+            .iter()
+            .map(|[a, b, c]| {
+                let (a, b, c) = (v[*a as usize], v[*b as usize], v[*c as usize]);
+                let cross = [
+                    b[1] * c[2] - b[2] * c[1],
+                    b[2] * c[0] - b[0] * c[2],
+                    b[0] * c[1] - b[1] * c[0],
+                ];
+                (a[0] * cross[0] + a[1] * cross[1] + a[2] * cross[2]) / 6.0
+            })
+            .sum();
+        assert!((signed - 1_250_000.0).abs() <= 1e-3, "{signed}");
+        // A cut after holes keeps both effects: the hole lies inside the kept part.
+        let square = |x: f64, y: f64, s: f64| vec![[x, y], [x, y + s], [x + s, y + s], [x + s, y]];
+        let mut both = command(rect(1000.0, 500.0), 10.0);
+        both.holes_mm = vec![square(100.0, 100.0, 100.0)];
+        both.cut = c.cut;
+        let out = create_plate(&both, &none).unwrap();
+        assert!(
+            (out.quantities.volume_mm3 - 1_150_000.0).abs() <= 1e-6,
+            "{out:?}"
+        );
+        assert_eq!(out.quantities.algorithm, CUT_VOLUME_ALGORITHM);
+        // A scaled normal describes the same plane and the same body.
+        let mut scaled = command(rect(1000.0, 500.0), 10.0);
+        scaled.cut = Some(PlaneCut {
+            point_mm: [250.0, 0.0, 0.0],
+            normal: [1000.0, 0.0, 0.0],
+        });
+        let out = create_plate(&scaled, &none).unwrap();
+        assert!((out.quantities.volume_mm3 - 1_250_000.0).abs() <= 1e-6);
+        // The same cut on a contour plate (A02) trims it the same way. The L outline is
+        // 205,000 mm2; the plane x = 500 (no outline edge lies in it) keeps 500 x 300 plus
+        // 250 x 100 = 175,000 mm2, times the 10 mm thickness.
+        let outline = vec![
+            [0.0, 0.0, 0.0],
+            [600.0, 0.0, 0.0],
+            [600.0, 300.0, 0.0],
+            [250.0, 300.0, 0.0],
+            [250.0, 400.0, 0.0],
+            [0.0, 400.0, 0.0],
+        ];
+        let plain = create_plate(&command(outline.clone(), 10.0), &none).unwrap();
+        let mut contour = command(outline, 10.0);
+        contour.cut = Some(PlaneCut {
+            point_mm: [500.0, 0.0, 0.0],
+            normal: [1.0, 0.0, 0.0],
+        });
+        let out = create_plate(&contour, &none).unwrap();
+        assert_eq!(out.quantities.algorithm, CUT_VOLUME_ALGORITHM);
+        assert!(
+            (out.quantities.volume_mm3 - 1_750_000.0).abs() <= 1e-6,
+            "{out:?}"
+        );
+        // The plain contour plate's gross area is the 205,000 mm2 outline; the cut removed
+        // exactly the 30,000 mm2 strip.
+        assert!((plain.quantities.volume_mm3 - 2_050_000.0).abs() <= 1e-6);
+        assert!((out.quantities.volume_gross_mm3 - 2_050_000.0).abs() <= 1e-6);
+    }
+
+    #[test]
+    fn a_cut_the_kernel_refuses_applies_nothing() {
+        let code_of = |cut: PlaneCut| {
+            let mut c = command(rect(1000.0, 500.0), 10.0);
+            c.cut = Some(cut);
+            create_plate(&c, &none).unwrap_err().code
+        };
+        // The plane misses the body entirely.
+        assert_eq!(
+            code_of(PlaneCut {
+                point_mm: [2000.0, 0.0, 0.0],
+                normal: [1.0, 0.0, 0.0],
+            }),
+            ErrorCode::InvalidArgument
+        );
+        // The plane only touches the bottom face: a tangent cut, not a trim.
+        assert_eq!(
+            code_of(PlaneCut {
+                point_mm: [0.0, 0.0, 0.0],
+                normal: [0.0, 0.0, 1.0],
+            }),
+            ErrorCode::UnsupportedGeometry
+        );
+        // Argument-level failures come first: a zero normal never reaches the kernel.
+        assert_eq!(
+            code_of(PlaneCut {
+                point_mm: [0.0; 3],
+                normal: [0.0; 3],
+            }),
+            ErrorCode::InvalidArgument
+        );
+        assert_eq!(
+            code_of(PlaneCut {
+                point_mm: [f64::NAN, 0.0, 0.0],
+                normal: [1.0, 0.0, 0.0],
+            }),
+            ErrorCode::NonFiniteNumber
+        );
     }
 
     #[test]
@@ -1258,6 +1432,7 @@ mod tests {
                 placement: Placement::IDENTITY,
                 material: None,
                 holes_mm: Vec::new(),
+                cut: None,
             };
             assert!(evaluate_plate(&authored).is_err());
         }

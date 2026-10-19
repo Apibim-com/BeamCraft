@@ -214,6 +214,7 @@ mod tests {
             },
             material: None,
             holes_mm: Vec::new(),
+            cut: None,
         }
     }
 
@@ -241,6 +242,7 @@ mod tests {
             roll_rad: None,
             placement: Placement::IDENTITY,
             material: None,
+            cut: None,
         };
         let members = super::evaluate_committed_members(
             &[member(8, MemberKind::Column), member(3, MemberKind::Beam)],

@@ -15,16 +15,20 @@
 //! carries translations only), so a beam is laid out through its own axis points.
 
 use crate::command::{
-    AreaSource, MaterialInfo, MaterialLookup, Quantities, Volumes, quantities_with_material,
+    AreaSource, CUT_VOLUME_ALGORITHM, MaterialInfo, MaterialLookup, Quantities, Volumes, apply_cut,
+    map_cut, quantities_with_material,
 };
 use crate::footprint::Footprint;
 use crate::solid::SolidMesh;
 use crate::transaction::PriorOp;
 use beamcraft_geom::{MemberFrame, Point3};
 use beamcraft_kernel::diagnostic::{Failure, Field};
+use beamcraft_kernel::ops::{Body, OpFailure};
 use beamcraft_kernel::section::{Representation, SectionFailure, SectionMember, section_member};
 use beamcraft_kernel::{StraightMember, straight_member};
-use beamcraft_model::command::{CommandError, CreateStraightMember, MemberKind, Placement};
+use beamcraft_model::command::{
+    CommandError, CreateStraightMember, MemberKind, Placement, PlaneCut,
+};
 use beamcraft_model::definition::{
     DeclaredAreaWarning, RectangleProfileSpec, SectionProfileSpec, SectionProperties,
 };
@@ -154,6 +158,8 @@ pub struct AuthoredMember {
     pub placement: Placement,
     /// Pinned material definition, if any.
     pub material: Option<ContentDigest>,
+    /// The authored plane cut (A03, experimental); `None` means no cut.
+    pub cut: Option<PlaneCut>,
 }
 
 impl AuthoredMember {
@@ -168,6 +174,7 @@ impl AuthoredMember {
             roll_rad: command.roll_rad,
             placement: command.placement,
             material: command.material_digest,
+            cut: command.cut,
         }
     }
 
@@ -182,6 +189,7 @@ impl AuthoredMember {
             placement: self.placement,
             roll_rad: self.roll_rad,
             material_digest: self.material,
+            cut: self.cut,
         }
     }
 }
@@ -287,7 +295,7 @@ pub fn evaluate_member(
         ..SectionProperties::default()
     }
     .validate()?;
-    let (solid, axis_length_mm, algorithm) = match &profile {
+    let (solid, axis_length_mm, algorithm, cut_volume_mm3) = match &profile {
         ProfileInfo::Rectangle {
             width_mm,
             height_mm,
@@ -322,10 +330,28 @@ pub fn evaluate_member(
                         "member frame could not be built",
                     )
                 })?;
+            // The cut replaces both the mesh and the analytic volume with the certified cut
+            // result; without one the P-Mass `area x length` volume stands.
+            let (solid, cut_volume) = match authored.cut.as_ref() {
+                Some(cut) => {
+                    let body = Body::from_plate(&result).map_err(|f: OpFailure| map_cut(&f))?;
+                    let applied = apply_cut(&body, cut)?;
+                    (
+                        SolidMesh::from_operation(&applied),
+                        Some(applied.volume_mm3().midpoint()),
+                    )
+                }
+                None => (SolidMesh::from_box(&result), None),
+            };
             (
-                SolidMesh::from_box(&result),
+                solid,
                 frame.scale().axis_length_mm(),
-                MEMBER_VOLUME_ALGORITHM,
+                if cut_volume.is_some() {
+                    CUT_VOLUME_ALGORITHM
+                } else {
+                    MEMBER_VOLUME_ALGORITHM
+                },
+                cut_volume,
             )
         }
         ProfileInfo::Section { shape, .. } => {
@@ -338,15 +364,29 @@ pub fn evaluate_member(
                 roll_rad: authored.roll_rad,
             })
             .map_err(|failure| map_section(&failure))?;
-            (
-                SolidMesh::from_section(&result),
-                result.axis_length_mm(),
-                SECTION_VOLUME_ALGORITHM,
-            )
+            match authored.cut.as_ref() {
+                Some(cut) => {
+                    let applied = apply_cut(result.body(), cut)?;
+                    (
+                        SolidMesh::from_operation(&applied),
+                        result.axis_length_mm(),
+                        CUT_VOLUME_ALGORITHM,
+                        Some(applied.volume_mm3().midpoint()),
+                    )
+                }
+                None => (
+                    SolidMesh::from_section(&result),
+                    result.axis_length_mm(),
+                    SECTION_VOLUME_ALGORITHM,
+                    None,
+                ),
+            }
         }
     };
     let (section_area_mm2, area_source) = profile.effective_area();
-    let volume_mm3 = section_area_mm2 * axis_length_mm;
+    // A cut member's volume is the certified cut result (A03); otherwise the P-Mass gross
+    // volume `effective area x axis length` (no operation on an uncut member yet).
+    let volume_mm3 = cut_volume_mm3.unwrap_or(section_area_mm2 * axis_length_mm);
     if !volume_mm3.is_finite() || volume_mm3 <= 0.0 {
         return Err(CommandError::new(
             ErrorCode::UnsupportedGeometry,
@@ -513,6 +553,7 @@ mod tests {
             placement: Placement::IDENTITY,
             roll_rad: None,
             material_digest: None,
+            cut: None,
         }
     }
 
@@ -805,6 +846,69 @@ mod tests {
         assert!(out.footprint.reads().iter().any(|e| {
             e.target == Target::Definition(profile) && e.group == Group::Relationship
         }));
+    }
+
+    #[test]
+    fn a_plane_cut_trims_a_member_of_any_section() {
+        use beamcraft_model::section::{ParametricSection, SectionFamily};
+        let profile = digest(b"rectangle 200x300");
+        let lookup = |d: &ContentDigest| rectangle(d, profile);
+        let mut c = command(profile);
+        c.cut = Some(PlaneCut {
+            point_mm: [3000.0, 0.0, 0.0],
+            normal: [1.0, 0.0, 0.0],
+        });
+        let out = create_straight_member(&c, &none, &lookup, &no_materials).unwrap();
+        // The kept half is 3000 mm long: 3000 * 200 * 300 = 180,000,000 mm3 = 0.18 m3; the cut
+        // result replaces the P-Mass `area x length` volume with the certified cut volume.
+        assert!(
+            (out.quantities.volume_mm3 - 180_000_000.0).abs() <= 1e-6,
+            "{out:?}"
+        );
+        assert_eq!(out.quantities.algorithm, CUT_VOLUME_ALGORITHM);
+        assert_eq!(out.authored.cut, c.cut);
+        assert_eq!(out.authored.to_command(), c);
+        // A cut section member is the certified cut of the detailed outline, about half of it.
+        let shape = SectionShape::Parametric(
+            ParametricSection::new(SectionFamily::IShape, vec![300.0, 150.0, 7.0, 10.0, 15.0])
+                .unwrap(),
+        );
+        let section_lookup = |d: &ContentDigest| {
+            if *d == profile {
+                Ok(ProfileInfo::Section {
+                    shape: shape.clone(),
+                    declared_area_mm2: None,
+                })
+            } else {
+                no_profiles(d)
+            }
+        };
+        let uncut =
+            create_straight_member(&command(profile), &none, &section_lookup, &no_materials)
+                .unwrap();
+        let cut = create_straight_member(&c, &none, &section_lookup, &no_materials).unwrap();
+        assert_eq!(cut.quantities.algorithm, CUT_VOLUME_ALGORITHM);
+        // The uncut quantity is the P-Mass exact-area volume; the cut quantity is the certified
+        // volume of the polygon mesh, whose arc approximation (sagitta at most max(0.25 mm,
+        // 0.5% r)) moves the section area by tens of mm2 (~35 000 mm3 per half here).
+        assert!(
+            (cut.quantities.volume_mm3 - uncut.quantities.volume_mm3 / 2.0).abs() <= 50_000.0,
+            "cut {} vs uncut/2 {}",
+            cut.quantities.volume_mm3,
+            uncut.quantities.volume_mm3 / 2.0
+        );
+        // A plane that misses the member entirely refuses the command.
+        let mut missing = command(profile);
+        missing.cut = Some(PlaneCut {
+            point_mm: [9000.0, 0.0, 0.0],
+            normal: [1.0, 0.0, 0.0],
+        });
+        assert_eq!(
+            create_straight_member(&missing, &none, &lookup, &no_materials)
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidArgument
+        );
     }
 
     #[test]
