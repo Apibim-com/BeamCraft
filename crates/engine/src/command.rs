@@ -137,26 +137,64 @@ impl QuantityStatus {
     }
 }
 
-/// The quantity records of one plate. Mass is `current` only with a resolved material that
-/// authors a density; otherwise it is `unknown` and carries no value: density is never guessed.
-/// The input signature of F06 section 7 is not implemented (`keys` are planned), so no signature
-/// is claimed.
+/// How the cross-section area of a member was obtained (P-Mass).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AreaSource {
+    /// The area the pinned profile definition declares (a library entry or `--area-mm2`).
+    Catalogue,
+    /// The exact area computed from the section's parameters (closed form, true arcs).
+    Computed,
+}
+
+impl AreaSource {
+    /// The wire token.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Catalogue => "catalogue",
+            Self::Computed => "computed",
+        }
+    }
+}
+
+/// The quantity records of one plate or member. Mass is `current` only with a resolved material
+/// that authors a density; otherwise it is `unknown` and carries no value: density is never
+/// guessed. The input signature of F06 section 7 is not implemented (`keys` are planned), so no
+/// signature is claimed.
+///
+/// **Gross and net (P-Mass).** The gross volume is the nominal body before any operation: for a
+/// member the effective section area times the axis length, for a plate the outline area times
+/// the thickness. The net volume is the body after the operations (through holes today). With no
+/// operation the two are the same value. The removed volume is *measured* on the kernel meshes as
+/// the volume before an operation minus the volume after it, so the arc approximation of a
+/// detailed outline cancels between the two meshes; `net = gross - removed`.
+/// `volume_mm3` and `mass_kg` are the NET values, kept under their old names so existing readers
+/// do not change.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Quantities {
-    /// Volume in mm3: `(width * length) * thickness`.
+    /// NET volume in mm3 (the alias the first quantity slices exposed).
     pub volume_mm3: f64,
-    /// Volume in m3: the mm3 value divided by 1e9.
+    /// NET volume in m3: the mm3 value divided by 1e9.
     pub volume_m3: f64,
+    /// GROSS volume in mm3: the nominal body before any operation.
+    pub volume_gross_mm3: f64,
+    /// Volume removed by the operations in mm3, measured on the meshes; `0.0` without operations.
+    pub removed_volume_mm3: f64,
     /// Status of the volume record.
     pub volume_status: QuantityStatus,
     /// Density in kg/m3 used for the mass, when the material authors one.
     pub density_kg_m3: Option<f64>,
-    /// Mass in kg, present exactly when `mass_status` is `current`.
+    /// NET mass in kg, present exactly when `mass_status` is `current`.
     pub mass_kg: Option<f64>,
+    /// GROSS mass in kg, present exactly when `mass_status` is `current`.
+    pub mass_gross_kg: Option<f64>,
     /// Status of the mass record.
     pub mass_status: QuantityStatus,
     /// Algorithm version of the volume record.
     pub algorithm: &'static str,
+    /// Effective section area in mm2 of a member; `None` for a plate.
+    pub section_area_mm2: Option<f64>,
+    /// Where the effective area came from; `None` for a plate.
+    pub area_source: Option<AreaSource>,
 }
 
 /// A plate evaluated by the kernel: the sealed body and its supported dimensions.
@@ -186,9 +224,18 @@ impl PlateBody {
         }
     }
 
+    fn volumes(&self) -> Volumes {
+        // The gross body is the exact box; the holes remove what the two meshes differ by.
+        Volumes::measured(
+            self.result.volume_mm3(),
+            self.result.volume_mm3(),
+            self.solid.volume_mm3(),
+        )
+    }
+
     /// The quantity records of this body with no material: volume only, mass `unknown`.
     pub fn quantities(&self) -> Quantities {
-        quantities_without_material(self.solid.volume_mm3(), self.algorithm())
+        quantities_without_material(self.volumes(), self.algorithm())
     }
 
     /// The quantity records of this body with the physical material of the element.
@@ -199,28 +246,70 @@ impl PlateBody {
         &self,
         material: Option<MaterialInfo>,
     ) -> Result<Quantities, CommandError> {
-        quantities_with_material(self.solid.volume_mm3(), self.algorithm(), material)
+        quantities_with_material(self.volumes(), self.algorithm(), material)
     }
 }
 
-pub(crate) fn quantities_without_material(volume_mm3: f64, algorithm: &'static str) -> Quantities {
+/// The three volumes of a body: nominal (gross), removed by operations and net.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Volumes {
+    pub(crate) gross_mm3: f64,
+    pub(crate) removed_mm3: f64,
+    pub(crate) net_mm3: f64,
+}
+
+impl Volumes {
+    /// A body with no operation: net is gross.
+    pub(crate) const fn unchanged(gross_mm3: f64) -> Self {
+        Self {
+            gross_mm3,
+            removed_mm3: 0.0,
+            net_mm3: gross_mm3,
+        }
+    }
+
+    /// The rule for operations: `removed` is the volume of the mesh before the operations minus
+    /// that of the mesh after them, and `net = gross - removed`. When the gross body is the mesh
+    /// before (a box is exact) the two are the same number, so the measured volume after is used
+    /// as is and no rounding is added.
+    pub(crate) fn measured(gross_mm3: f64, mesh_before_mm3: f64, mesh_after_mm3: f64) -> Self {
+        let removed_mm3 = mesh_before_mm3 - mesh_after_mm3;
+        let net_mm3 = if gross_mm3 == mesh_before_mm3 {
+            mesh_after_mm3
+        } else {
+            gross_mm3 - removed_mm3
+        };
+        Self {
+            gross_mm3,
+            removed_mm3,
+            net_mm3,
+        }
+    }
+}
+
+pub(crate) fn quantities_without_material(volumes: Volumes, algorithm: &'static str) -> Quantities {
     Quantities {
-        volume_mm3,
-        volume_m3: volume_mm3 / 1_000_000_000.0,
+        volume_mm3: volumes.net_mm3,
+        volume_m3: volumes.net_mm3 / 1_000_000_000.0,
+        volume_gross_mm3: volumes.gross_mm3,
+        removed_volume_mm3: volumes.removed_mm3,
         volume_status: QuantityStatus::Current,
         density_kg_m3: None,
         mass_kg: None,
+        mass_gross_kg: None,
         mass_status: QuantityStatus::Unknown,
         algorithm,
+        section_area_mm2: None,
+        area_source: None,
     }
 }
 
 pub(crate) fn quantities_with_material(
-    volume_mm3: f64,
+    volumes: Volumes,
     algorithm: &'static str,
     material: Option<MaterialInfo>,
 ) -> Result<Quantities, CommandError> {
-    let mut quantities = quantities_without_material(volume_mm3, algorithm);
+    let mut quantities = quantities_without_material(volumes, algorithm);
     let Some(density) = material.and_then(|m| m.density_kg_m3) else {
         return Ok(quantities);
     };
@@ -229,16 +318,21 @@ pub(crate) fn quantities_with_material(
         ..MaterialSpec::default()
     }
     .validate()?;
-    let record = analytic_mass_kg(quantities.volume_mm3, Some(density)).map_err(|code| {
-        CommandError::new(
-            code.f04_code(),
-            "density_kg_m3",
-            "mass could not be computed",
-        )
-    })?;
+    let mass = |volume_mm3: f64| {
+        analytic_mass_kg(volume_mm3, Some(density)).map_err(|code| {
+            CommandError::new(
+                code.f04_code(),
+                "density_kg_m3",
+                "mass could not be computed",
+            )
+        })
+    };
+    let net = mass(volumes.net_mm3)?;
+    let gross = mass(volumes.gross_mm3)?;
     quantities.density_kg_m3 = Some(density);
-    quantities.mass_kg = record.kg;
-    quantities.mass_status = if record.kg.is_some() {
+    quantities.mass_kg = net.kg;
+    quantities.mass_gross_kg = gross.kg;
+    quantities.mass_status = if net.kg.is_some() && gross.kg.is_some() {
         QuantityStatus::Current
     } else {
         QuantityStatus::Unknown
@@ -760,6 +854,39 @@ mod tests {
         // The hole does not change the box the dimensions come from.
         assert_eq!(out.body.width_mm, 1000.0);
         assert_eq!(out.body.result.volume_mm3(), 5_000_000.0);
+        // Gross is the outline area times the thickness, exact and without holes; net is the
+        // kernel's result; the removed volume is the difference of the two meshes.
+        let q = out.quantities;
+        assert_eq!(q.volume_gross_mm3, 5_000_000.0);
+        assert!((q.volume_mm3 - 4_875_000.0).abs() <= 1e-6);
+        assert!((q.removed_volume_mm3 - 125_000.0).abs() <= 1e-6);
+        assert!((q.volume_gross_mm3 - q.removed_volume_mm3 - q.volume_mm3).abs() <= 1e-6);
+        assert_eq!(
+            plain.quantities.volume_gross_mm3,
+            plain.quantities.volume_mm3
+        );
+        assert_eq!(plain.quantities.removed_volume_mm3, 0.0);
+        assert_eq!(q.area_source, None);
+    }
+
+    #[test]
+    fn gross_and_net_mass_follow_the_density() {
+        let square = |x: f64, y: f64, s: f64| vec![[x, y], [x, y + s], [x + s, y + s], [x + s, y]];
+        let mut c = command(rect(1000.0, 500.0), 10.0);
+        c.holes_mm = vec![square(100.0, 100.0, 100.0), square(400.0, 200.0, 50.0)];
+        let body = evaluate_plate(&AuthoredPlate::from_command(&c)).unwrap();
+        let q = body
+            .quantities_for(Some(MaterialInfo {
+                density_kg_m3: Some(7850.0),
+            }))
+            .unwrap();
+        // 5e6 mm3 = 0.005 m3 -> 39.25 kg gross; 4.875e6 mm3 -> 38.26875 kg net.
+        assert!((q.mass_gross_kg.unwrap() - 39.25).abs() <= 1e-9);
+        assert!((q.mass_kg.unwrap() - 38.268_75).abs() <= 1e-6);
+        assert_eq!(q.mass_status, QuantityStatus::Current);
+        let none = body.quantities_for(None).unwrap();
+        assert_eq!((none.mass_kg, none.mass_gross_kg), (None, None));
+        assert_eq!(none.volume_gross_mm3, 5_000_000.0);
     }
 
     #[test]

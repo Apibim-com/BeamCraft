@@ -40,8 +40,7 @@ use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
 use beamcraft_engine::level::Levels;
 use beamcraft_engine::member::AuthoredMember;
 use beamcraft_engine::quantity::{
-    Assessment, Freshness, QuantityRecord, StoredRecord, assess, member_shape_signature,
-    plate_shape_signature, record_for,
+    Assessment, Freshness, QuantityRecord, StoredRecord, assess, is_superseded_algorithm,
 };
 use beamcraft_engine::query::committed::{
     MemberRecord, PlateRecord, evaluate_committed, evaluate_committed_members, ids,
@@ -670,18 +669,20 @@ pub(crate) fn evaluate_decoded(
 /// The quantity record the engine expects for a plate: its quantities under the signature of its
 /// shape inputs.
 pub(crate) fn plate_record(record: &PlateRecord) -> QuantityRecord {
-    let shape = plate_shape_signature(&record.authored, record.body.algorithm());
-    record_for(shape, &record.quantities)
+    beamcraft_engine::quantity::plate_record(
+        &record.authored,
+        record.body.algorithm(),
+        &record.quantities,
+    )
 }
 
 /// The quantity record the engine expects for a member.
 pub(crate) fn member_record(record: &MemberRecord) -> QuantityRecord {
-    let shape = member_shape_signature(
+    beamcraft_engine::quantity::member_record(
         &record.authored,
         &record.body.profile,
-        record.quantities.algorithm,
-    );
-    record_for(shape, &record.quantities)
+        &record.quantities,
+    )
 }
 
 /// What the derived layer stores for a quantity record, and what a reader found.
@@ -742,8 +743,15 @@ fn verify_derived(
             return Err(integrity("derived mesh differs from the kernel result"));
         }
         let assessment = assess(actual.stored.as_ref(), &record);
+        // A record that an earlier slice wrote for a member (a superseded algorithm label) is a
+        // stale value to recompute, not a layer that cannot be published.
+        let superseded = actual
+            .stored
+            .as_ref()
+            .is_some_and(|s| is_superseded_algorithm(&s.algorithm));
         if strict
             && actual.stored.is_some()
+            && !superseded
             && (assessment.volume != Freshness::Current || assessment.mass != Freshness::Current)
         {
             return Err(integrity("stored quantities differ from the kernel's"));
