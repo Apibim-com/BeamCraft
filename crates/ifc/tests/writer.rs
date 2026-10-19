@@ -155,6 +155,28 @@ fn write(model: &ExportModel) -> Vec<u8> {
 }
 
 #[test]
+fn a_storey_global_id_is_the_one_in_the_file() {
+    let m = model();
+    let file = verify::parse(&write(&m)).unwrap();
+    let storeys = file.all("IFCBUILDINGSTOREY");
+    for (storey, level) in storeys.iter().zip(&m.levels) {
+        assert_eq!(
+            file.text(storey.args.first()).unwrap(),
+            beamcraft_ifc::storey_global_id(&m.project_id, &level.id).as_str()
+        );
+        assert_ne!(
+            file.text(storey.args.first()).unwrap(),
+            guid::encode(&level.id).as_str(),
+            "the storey id is a synthetic id, not the encoding of the LevelId"
+        );
+    }
+    assert_eq!(
+        beamcraft_ifc::storey_global_id(&uuid(1), &uuid(0x101)).as_str(),
+        "2886jimw3h7h75lUh8nRj7"
+    );
+}
+
+#[test]
 fn the_same_model_gives_the_same_bytes() {
     let m = model();
     let (a, b) = (write(&m), write(&m));

@@ -16,11 +16,12 @@ use crate::plate::{
     ElementMeta, Inspection, PlacementRead, PlateError, inspect_revision, kernel_mesh,
 };
 use beamcraft_engine::quantity::Freshness;
-use beamcraft_host::output::{OutputError, publish_file};
+use beamcraft_host::output::{Installed, OutputError, Staged, resolve_destination, stage_file};
 use beamcraft_host::revision::{Revision, RevisionError, RevisionStore};
 use beamcraft_ifc::{
     Declared, ElementData, Entity, ExportModel, LevelData, Limits, MaterialData, Mesh, Pose,
-    QuantityData, Subject, WriteError, global_id, guid, step::SinkError, write_ifc,
+    QuantityData, Subject, WriteError, global_id, guid, step::SinkError, storey_global_id,
+    write_ifc,
 };
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
@@ -263,19 +264,13 @@ fn open_revision(store: &RevisionStore, wanted: Option<Uuid7>) -> Result<Revisio
             other => PlateError::from(other),
         });
     };
-    let head = store
-        .head()?
-        .ok_or_else(|| error(ErrorCode::NotFound, "the store has no revision"))?;
-    // The log is searched from the head down; the sequence is bounded by the log itself.
-    for sequence in (1..=head.sequence()).rev() {
-        if store.info_at(sequence)?.revision().as_str() == wanted.to_string() {
-            return Ok(store.open_at(sequence)?);
-        }
-    }
-    Err(error(
-        ErrorCode::NotFound,
-        "no committed revision has that id",
-    ))
+    let sequence = store
+        .sequence_of(
+            &beamcraft_host::revision::Uuid7::parse(&wanted.to_string())
+                .map_err(|_| error(ErrorCode::InvalidId, "the revision id is not a UUIDv7"))?,
+        )?
+        .ok_or_else(|| error(ErrorCode::NotFound, "no committed revision has that id"))?;
+    Ok(store.open_at(sequence)?)
 }
 
 fn revision_id(revision: &Revision) -> Result<Uuid7, PlateError> {
@@ -489,7 +484,12 @@ fn build(
     }
     let level_ids = levels
         .iter()
-        .map(|l| (l.id, global_id(&l.id).as_str().to_owned()))
+        .map(|l| {
+            (
+                l.id,
+                storey_global_id(&project_id, &l.id).as_str().to_owned(),
+            )
+        })
         .collect();
     Ok(Built {
         model: ExportModel {
@@ -680,6 +680,22 @@ fn proxy_element(
             None
         }
     };
+    // The published mesh of an unmapped kind is exported as it is (`Closed` unset, never
+    // re-verified: the kernel does not know the kind), but only with a pose to place it by.
+    let mesh = match (&meta.mesh, &pose) {
+        (Some(published), Some(_)) => Some(Mesh {
+            points: published.points.clone(),
+            triangles: published.triangles.clone(),
+            closed: false,
+        }),
+        (Some(_), None) => {
+            if matches!(meta.placement, PlacementRead::Absent) {
+                findings.push(placement_absent(id));
+            }
+            None
+        }
+        (None, _) => None,
+    };
     let (name, schema_version, geometry_mode) = names(meta);
     ElementData {
         id: id.uuid(),
@@ -689,7 +705,7 @@ fn proxy_element(
         schema_version,
         geometry_mode,
         pose,
-        mesh: None,
+        mesh,
         level: level.map(|l| l.uuid()),
         material: None,
         profile: None,
@@ -763,7 +779,77 @@ pub fn export_with_limits(
     out: &Path,
     limits: &Limits,
 ) -> Result<ExportReport, PlateError> {
+    let prepared = prepare_export_with_limits(store, request, out, limits)?;
+    let report = prepared.report.clone();
+    prepared.install()?;
+    Ok(report)
+}
+
+/// An export whose file is complete and synced but not yet installed under its name, with its
+/// report. Dropping it leaves no file; [`PreparedExport::install`] publishes it. Staging first
+/// lets a caller stage further outputs (the report file) and install only when all succeeded.
+pub struct PreparedExport {
+    /// The report of the export.
+    pub report: ExportReport,
+    staged: Staged,
+}
+
+impl PreparedExport {
+    /// Installs the file under its final name.
+    pub fn install(self) -> Result<Installed, PlateError> {
+        self.staged.install().map_err(|e| error(e.code, e.message))
+    }
+}
+
+/// Refuses a destination that lies inside the source store (a file there could shadow or break
+/// the store, and `--overwrite` could replace a record or blob) and two destinations that are
+/// the same file. Run before anything is created.
+pub fn check_destinations(
+    store: &RevisionStore,
+    out: &Path,
+    report: Option<&Path>,
+) -> Result<(), PlateError> {
+    let refuse = |e: OutputError| error(e.code, e.message);
+    let root = store.blobs().canonical_root();
+    let first = resolve_destination(out).map_err(refuse)?;
+    let second = report
+        .map(|path| resolve_destination(path).map_err(refuse))
+        .transpose()?;
+    for destination in std::iter::once(&first).chain(second.as_ref()) {
+        if destination.directory.starts_with(root) {
+            return Err(error(
+                ErrorCode::InvalidArgument,
+                "an output may not be written inside the store it is exported from",
+            ));
+        }
+    }
+    if second.as_ref().is_some_and(|s| s.same_file(&first)) {
+        return Err(error(
+            ErrorCode::InvalidArgument,
+            "the IFC output and the report output are the same file",
+        ));
+    }
+    Ok(())
+}
+
+/// [`export_ifc`] up to, but not including, the install of the file.
+pub fn prepare_export(
+    store: &RevisionStore,
+    request: &ExportRequest,
+    out: &Path,
+) -> Result<PreparedExport, PlateError> {
+    prepare_export_with_limits(store, request, out, &Limits::DEFAULT)
+}
+
+/// [`prepare_export`] with explicit bounds.
+pub fn prepare_export_with_limits(
+    store: &RevisionStore,
+    request: &ExportRequest,
+    out: &Path,
+    limits: &Limits,
+) -> Result<PreparedExport, PlateError> {
     validate_request(request)?;
+    check_destinations(store, out, None)?;
     let revision = open_revision(store, request.revision)?;
     let inspection = inspect_revision(&revision)?;
     let mut built = build(&inspection, request, &revision)?;
@@ -774,7 +860,7 @@ pub fn export_with_limits(
         return Err(error(code, fatal.message));
     }
     let mut outcome = None;
-    publish_file(out, request.overwrite, |file| {
+    let staged = stage_file(out, request.overwrite, |file| {
         match write_ifc(&built.model, limits, &mut *file) {
             Ok((_, written)) => {
                 outcome = Some(written);
@@ -825,24 +911,27 @@ pub fn export_with_limits(
             .count(),
     };
     let lossy = total > 0 || counts.not_exported > 0;
-    Ok(ExportReport {
-        project_id: built.model.project_id,
-        revision_id: revision_id(&revision)?,
-        status: if lossy {
-            Status::OkWithLosses
-        } else {
-            Status::Ok
+    Ok(PreparedExport {
+        staged,
+        report: ExportReport {
+            project_id: built.model.project_id,
+            revision_id: revision_id(&revision)?,
+            status: if lossy {
+                Status::OkWithLosses
+            } else {
+                Status::Ok
+            },
+            truncated: built.findings.len() < total,
+            findings: built.findings,
+            total_findings: total,
+            counts,
+            levels: built.levels,
+            elements: built.report_elements,
+            output: Some(OutputInfo {
+                bytes: written.bytes,
+                sha256: written.sha256,
+            }),
         },
-        truncated: built.findings.len() < total,
-        findings: built.findings,
-        total_findings: total,
-        counts,
-        levels: built.levels,
-        elements: built.report_elements,
-        output: Some(OutputInfo {
-            bytes: written.bytes,
-            sha256: written.sha256,
-        }),
     })
 }
 
@@ -887,6 +976,55 @@ mod tests {
             deactivated: false,
             placement,
             part_of: None,
+            mesh: None,
+        }
+    }
+
+    fn triangle() -> crate::plate::PublishedMesh {
+        crate::plate::PublishedMesh {
+            points: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            triangles: vec![[0, 1, 2]],
+        }
+    }
+
+    fn proxy_with_mesh(placement: PlacementRead) -> (ElementData, Vec<Finding>) {
+        let mut meta = meta(placement);
+        meta.mesh = Some(triangle());
+        let mut row = ElementReport {
+            element_id: id(1),
+            ifc_global_id: None,
+            kind: "weld".into(),
+            exported: false,
+            entity: None,
+            representation: None,
+            volume: None,
+            mass: None,
+            omissions: Vec::new(),
+        };
+        let mut findings = Vec::new();
+        let data = proxy_element(id(1), &meta, None, &mut row, &mut findings);
+        (data, findings)
+    }
+
+    #[test]
+    fn a_proxy_keeps_its_published_mesh_when_it_has_a_pose() {
+        let (data, findings) = proxy_with_mesh(PlacementRead::Rigid(Placement::IDENTITY));
+        let mesh = data.mesh.unwrap();
+        assert_eq!(mesh.triangles, [[0, 1, 2]]);
+        assert!(!mesh.closed, "an unmapped kind is never certified closed");
+        assert!(data.pose.is_some());
+        assert_eq!(
+            findings.iter().map(|f| f.code).collect::<Vec<_>>(),
+            ["IFC_KIND_PROXY"]
+        );
+    }
+
+    #[test]
+    fn a_published_mesh_without_a_pose_is_dropped_and_listed() {
+        for placement in [PlacementRead::Absent, PlacementRead::Other] {
+            let (data, findings) = proxy_with_mesh(placement);
+            assert!(data.mesh.is_none() && data.pose.is_none());
+            assert!(findings.iter().any(|f| f.code == "IFC_PLACEMENT_ABSENT"));
         }
     }
 

@@ -85,6 +85,12 @@ pub fn global_id(id: &Uuid7) -> GlobalId {
     guid::encode(id)
 }
 
+/// The GlobalId of the `IfcBuildingStorey` of a level (`IFCX-GUID-004`, role `storey`): a
+/// function of the stored ProjectId and the LevelId, not the encoding of the LevelId itself.
+pub fn storey_global_id(project: &Uuid7, level: &Uuid7) -> GlobalId {
+    guid::synthetic("storey", &[project.as_bytes(), level.as_bytes()])
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct Ref(u64);
 

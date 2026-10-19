@@ -502,8 +502,14 @@ fn a_scene_exports_to_a_structurally_valid_file_with_the_volumes_of_the_store() 
         let (_, back) = f.run_args(&["ifc-guid", "--decode", &global]);
         assert_eq!(text(&back, "uuid"), *id);
     }
-    assert_eq!(
-        text(&list(&report, "levels")[0], "ifc_global_id"),
+    // The level's id in the report is the GlobalId of its written storey (a synthetic id of the
+    // ProjectId and the LevelId), not the plain encoding of the LevelId.
+    let storey = file.all("IFCBUILDINGSTOREY")[0];
+    let written = str_arg(&file, storey.args.first());
+    assert_eq!(text(&list(&report, "levels")[0], "ifc_global_id"), written);
+    assert_eq!(text(&list(&report, "levels")[0], "level_id"), STOREY);
+    assert_ne!(
+        written,
         f.run_args(&["ifc-guid", "--id", STOREY])
             .1
             .get("ifc_global_id")
@@ -1020,6 +1026,121 @@ fn an_existing_output_is_kept_unless_overwrite_is_asked() {
     f.export(&out, &["--overwrite", "true"]);
     let (_, rejected, _) = f.export_rejected(&["--out", &out, "--overwrite", "false"]);
     assert_eq!(rejected, "INVALID_ARGUMENT");
+}
+
+#[test]
+fn an_output_inside_the_source_store_is_refused() {
+    let f = Fixture::new();
+    f.scene();
+    let store = f.root.join("store");
+    let (head, layers) = (f.head(), f.layer_digests());
+    for inside in [
+        store.join("revisions").join("model.ifc"),
+        store.join("blobs").join("model.ifc"),
+        store.join("model.ifc"),
+    ] {
+        let target = inside.to_str().unwrap();
+        for extra in [
+            vec!["--out", target],
+            vec!["--out", target, "--overwrite"],
+            vec!["--out", &f.path("ok.ifc"), "--report", target],
+        ] {
+            let (code, rejected, _) = f.export_rejected(&extra);
+            assert_eq!(
+                (code, rejected.as_str()),
+                (2, "INVALID_ARGUMENT"),
+                "{extra:?}"
+            );
+            assert!(!inside.exists());
+        }
+    }
+    // Nothing was written next to the store records either, and the store still reads.
+    assert!(!Path::new(&f.path("ok.ifc")).exists());
+    assert_eq!((f.head(), f.layer_digests()), (head, layers));
+    f.export(&f.path("fine.ifc"), &[]);
+}
+
+#[test]
+fn the_ifc_and_the_report_cannot_be_the_same_file() {
+    let f = Fixture::new();
+    f.scene();
+    fs::create_dir(f.path("sub")).unwrap();
+    let out = f.path("model.ifc");
+    for report in [
+        out.clone(),
+        f.path("sub/../model.ifc"),
+        f.path("./model.ifc"),
+    ] {
+        let (code, rejected, _) =
+            f.export_rejected(&["--out", &out, "--report", &report, "--overwrite"]);
+        assert_eq!(
+            (code, rejected.as_str()),
+            (2, "INVALID_ARGUMENT"),
+            "{report}"
+        );
+        assert!(!Path::new(&out).exists(), "{report}");
+    }
+}
+
+#[test]
+fn a_refused_report_leaves_the_ifc_destination_as_it_was() {
+    let f = Fixture::new();
+    f.scene();
+    let (out, report) = (f.path("model.ifc"), f.path("report.json"));
+    fs::write(&report, "keep").unwrap();
+    // The report exists and may not be replaced: no IFC file appears.
+    let (code, rejected, _) = f.export_rejected(&["--out", &out, "--report", &report]);
+    assert_eq!((code, rejected.as_str()), (2, "INVALID_ARGUMENT"));
+    assert!(!Path::new(&out).exists());
+    assert_eq!(fs::read_to_string(&report).unwrap(), "keep");
+    // With an earlier IFC and an unusable report directory, the earlier IFC is not replaced.
+    fs::write(&out, "previous").unwrap();
+    let missing = f.path("nowhere/report.json");
+    let (_, rejected, _) = f.export_rejected(&["--out", &out, "--report", &missing, "--overwrite"]);
+    assert_eq!(rejected, "INVALID_ARGUMENT");
+    assert_eq!(fs::read_to_string(&out).unwrap(), "previous");
+    // Nothing is left behind but the files the caller owns.
+    let mut names: Vec<String> = fs::read_dir(&f.root)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["model.ifc", "report.json", "store"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_above_the_output_directory_is_refused() {
+    let f = Fixture::new();
+    f.scene();
+    fs::create_dir_all(f.path("real/child")).unwrap();
+    std::os::unix::fs::symlink(f.path("real"), f.path("alias")).unwrap();
+    let through = f.path("alias/child/a.ifc");
+    let (_, rejected, _) = f.export_rejected(&["--out", &through]);
+    assert_eq!(rejected, "INVALID_ARGUMENT");
+    assert_eq!(fs::read_dir(f.path("real/child")).unwrap().count(), 0);
+}
+
+#[test]
+fn a_revision_is_found_by_id_among_many() {
+    let f = Fixture::new();
+    let s = f.scene();
+    let first = f.head();
+    for n in 0..6 {
+        f.ok(
+            "update-element",
+            &["--id", &s.plate, "--name", &format!("n{n}")],
+        );
+    }
+    let report = f.export(&f.path("old.ifc"), &["--revision", &first]);
+    assert_eq!(text(&report, "revision_id"), first);
+    let (_, rejected, _) = f.export_rejected(&[
+        "--out",
+        &f.path("none.ifc"),
+        "--revision",
+        "019a7bf0-0000-7000-8000-0000000000ff",
+    ]);
+    assert_eq!(rejected, "NOT_FOUND");
 }
 
 #[cfg(unix)]

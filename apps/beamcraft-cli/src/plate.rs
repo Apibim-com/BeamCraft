@@ -252,6 +252,45 @@ pub enum PlacementRead {
     Other,
 }
 
+/// The published mesh of an element the kernel does not know (E02: kept for its proxy). Triangles
+/// only, indices checked against the points; anything else is not a usable mesh.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PublishedMesh {
+    /// Points in their stored order, element-local millimetres.
+    pub points: Vec<[f32; 3]>,
+    /// Zero-based vertex indices of each triangle in their stored order.
+    pub triangles: Vec<[u32; 3]>,
+}
+
+fn published_mesh(mesh: &DerivedMesh) -> Option<PublishedMesh> {
+    if mesh.points.is_empty()
+        || mesh.counts.is_empty()
+        || mesh.counts.iter().any(|c| *c != 3)
+        || mesh.indices.len() != mesh.counts.len().checked_mul(3)?
+        || mesh.points.iter().flatten().any(|v| !v.is_finite())
+    {
+        return None;
+    }
+    let triangles = mesh
+        .indices
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|&[a, b, c]| {
+            let index = |v: i64| {
+                u32::try_from(v)
+                    .ok()
+                    .filter(|i| usize::try_from(*i).is_ok_and(|i| i < mesh.points.len()))
+            };
+            Some([index(a)?, index(b)?, index(c)?])
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(PublishedMesh {
+        points: mesh.points.clone(),
+        triangles,
+    })
+}
+
 /// The common facts of one element prim, whatever its kind (E02: kinds without a mapping are
 /// exported as proxies and need a name, a pose and the lifecycle). Levels are not listed.
 #[derive(Debug, Clone, PartialEq)]
@@ -270,6 +309,9 @@ pub struct ElementMeta {
     pub placement: PlacementRead,
     /// The assembly this element is a part of (`bim:partOf`).
     pub part_of: Option<ElementId>,
+    /// The published mesh of an element whose kind the kernel does not know, when it has a usable
+    /// one. Plates, beams and columns carry `None`: their mesh is the kernel's.
+    pub mesh: Option<PublishedMesh>,
 }
 
 fn placement_read(prim: &Prim) -> PlacementRead {
@@ -299,7 +341,12 @@ fn placement_read(prim: &Prim) -> PlacementRead {
     }
 }
 
-fn element_meta(prim: &Prim, kind: &str, by_path: &BTreeMap<&str, ElementId>) -> ElementMeta {
+fn element_meta(
+    prim: &Prim,
+    kind: &str,
+    by_path: &BTreeMap<&str, ElementId>,
+    mesh: Option<PublishedMesh>,
+) -> ElementMeta {
     let part_of = prim
         .relationships
         .iter()
@@ -321,6 +368,7 @@ fn element_meta(prim: &Prim, kind: &str, by_path: &BTreeMap<&str, ElementId>) ->
             || property(prim, "bim:lifecycle").and_then(text) == Some("deactivated"),
         placement: placement_read(prim),
         part_of,
+        mesh,
     }
 }
 
@@ -624,7 +672,14 @@ pub(crate) fn decode(
         };
         let kind = property(prim, "bim:elementKind").and_then(text);
         if kind != Some("level") {
-            elements.insert(id, element_meta(prim, kind.unwrap_or("unknown"), &ids));
+            let proxy_mesh = match kind {
+                Some("plate" | "beam" | "column") => None,
+                _ => mesh().as_ref().and_then(published_mesh),
+            };
+            elements.insert(
+                id,
+                element_meta(prim, kind.unwrap_or("unknown"), &ids, proxy_mesh),
+            );
         }
         match kind {
             Some("plate") => plates.push((decode_plate(prim, id)?, mesh())),
@@ -1743,6 +1798,38 @@ mod tests {
             value,
             interpolation: None,
         }
+    }
+
+    fn mesh(points: usize, counts: Vec<i64>, indices: Vec<i64>) -> DerivedMesh {
+        DerivedMesh {
+            points: vec![[0.0, 0.0, 0.0]; points],
+            counts,
+            indices,
+            shape_key: String::new(),
+            orientation: "rightHanded".into(),
+            subdivision: "none".into(),
+            stored: None,
+        }
+    }
+
+    #[test]
+    fn only_a_triangle_mesh_with_valid_indices_is_published() {
+        let good = published_mesh(&mesh(3, vec![3], vec![0, 1, 2])).unwrap();
+        assert_eq!(good.triangles, [[0, 1, 2]]);
+        for bad in [
+            mesh(0, vec![3], vec![0, 1, 2]),
+            mesh(3, vec![], vec![]),
+            mesh(4, vec![4], vec![0, 1, 2, 3]),
+            mesh(3, vec![3], vec![0, 1, 3]),
+            mesh(3, vec![3], vec![0, 1, -1]),
+            mesh(3, vec![3], vec![0, 1]),
+            mesh(3, vec![3, 3], vec![0, 1, 2]),
+        ] {
+            assert!(published_mesh(&bad).is_none());
+        }
+        let mut nan = mesh(3, vec![3], vec![0, 1, 2]);
+        nan.points[0][0] = f32::NAN;
+        assert!(published_mesh(&nan).is_none());
     }
 
     #[test]
