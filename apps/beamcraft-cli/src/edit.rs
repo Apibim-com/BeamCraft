@@ -261,9 +261,9 @@ pub fn update_element(
     if let Some(level) = command.patch.level {
         footprint = footprint.union(levels.assign(command.target_id, level)?.footprint)?;
     }
-    // A08: a shape-input edit withdraws the approval of an approved mark in the same batch. The
+    // A09: a shape-input edit withdraws the approval of an approved mark in the same batch. The
     // value is kept; a person approves the edited geometry again. The engine decision (which
-    // edits withdraw) stays in `beamcraft_engine::numbering`; the call site adds the real value
+    // edits withdraw) stays in `beamcraft_engine::marks`; the call site adds the real value
     // change (a patch that restates the current thickness changes no shape input) and the batch
     // authoring.
     let thickness_changes = match (&command.patch.thickness_mm, &head_element) {

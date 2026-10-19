@@ -216,17 +216,31 @@ pub fn marks(store: &RevisionStore) -> Result<Vec<MarkView>, PlateError> {
     Ok(views_of(&numbering, &kinds, &names))
 }
 
-/// The mark of `target` as the operation committed at `sequence` left it, or `None` when that
-/// revision left the element unmarked.
-fn mark_at(
+/// What the operation committed at `sequence` did to the mark of `target`: the mark before and
+/// the mark after, or `None` when that revision did not change the mark at all (including the
+/// case where the element did not exist before). The before state is what tells the command
+/// kinds apart on a replay: an assign, a revoke and an approval each move the status between
+/// different pairs, so a different request under the same op id is reuse even when the
+/// resulting state agrees.
+fn changed_by(
     store: &RevisionStore,
     sequence: u64,
     target: &ElementId,
     control: &Control,
-) -> Result<Option<Mark>, PlateError> {
+) -> Result<Option<(Option<Mark>, Option<Mark>)>, PlateError> {
     let at = store.open_at(sequence)?;
-    let model = model_of(&open_base(&base_of(&at)?)?, control)?;
-    Ok(model.mark(target).cloned())
+    let after = model_of(&open_base(&base_of(&at)?)?, control)?
+        .mark(target)
+        .cloned();
+    let before = if sequence > 1 {
+        let previous = store.open_at(sequence - 1)?;
+        model_of(&open_base(&base_of(&previous)?)?, control)?
+            .mark(target)
+            .cloned()
+    } else {
+        None
+    };
+    Ok((before != after).then_some((before, after)))
 }
 
 /// Assigns or replaces the mark of one element, or revokes its approval, and publishes the next
@@ -262,25 +276,46 @@ pub fn assign(
     let op_host = host_uuid(&context.op_id.to_string())?;
     // The ledger proves that the operation committed; what it left on the target is read from
     // its own revision, never from the head, so a later change of the same element cannot turn
-    // an unrelated request into a replay.
+    // an unrelated request into a replay. The host ledger stores no request bytes (the stored
+    // canonical request of F05 replaces this), so the command kind is recognised from the
+    // before-and-after signature of the operation's own revision: an assign leaves `(value,
+    // assigned)` over an absent or different assigned mark, a revoke leaves `(value, assigned)`
+    // over the approved one. A different request under the same op id is OP_ID_REUSE, never a
+    // replay, whatever the resulting state agrees with.
     let (prior, recorded) = prior_op_with(store, &op_host, || {
         digest_of(b"the accepted request is decided from the operation's revision")
     })?;
     let accepted = match (&prior, &recorded) {
         (PriorOp::Accepted { .. }, Some((_, sequence, _))) => {
-            mark_at(store, *sequence, &command.target_id, &control)?
+            changed_by(store, *sequence, &command.target_id, &control)?
         }
         _ => None,
     };
     let same = match &command.mark {
-        Some(value) => accepted
-            .as_ref()
-            .is_some_and(|m| m.value == *value && m.status == MarkStatus::Assigned),
-        // A revoke is recognised by the recorded status alone: it keeps whatever value the
-        // operation found.
-        None => accepted
-            .as_ref()
-            .is_some_and(|m| m.status == MarkStatus::Assigned),
+        Some(value) => matches!(
+            accepted,
+            Some((
+                before,
+                Some(Mark {
+                    value: after,
+                    status: MarkStatus::Assigned,
+                })
+            )) if before.as_ref().map_or(true, |b| b.value != *value) && after == *value
+        ),
+        // A revoke is recognised by the status pair alone: it keeps whatever value it found.
+        None => matches!(
+            accepted,
+            Some((
+                Some(Mark {
+                    status: MarkStatus::Approved,
+                    ..
+                }),
+                Some(Mark {
+                    status: MarkStatus::Assigned,
+                    ..
+                })
+            ))
+        ),
     };
     match prior {
         PriorOp::Accepted { .. } if same => {
@@ -387,18 +422,32 @@ pub fn approve(
         ..
     } = base;
     let op_host = host_uuid(&context.op_id.to_string())?;
+    // The host ledger stores no request bytes, so the command kind is recognised from the
+    // before-and-after signature of the operation's own revision: an approval moves the mark
+    // from `assigned` to `approved`. An assign or a revoke under the same op id is
+    // OP_ID_REUSE even when the resulting state agrees.
     let (prior, recorded) = prior_op_with(store, &op_host, || {
         digest_of(b"the accepted request is decided from the operation's revision")
     })?;
     let accepted = match (&prior, &recorded) {
         (PriorOp::Accepted { .. }, Some((_, sequence, _))) => {
-            mark_at(store, *sequence, &command.target_id, &control)?
+            changed_by(store, *sequence, &command.target_id, &control)?
         }
         _ => None,
     };
-    let same = accepted
-        .as_ref()
-        .is_some_and(|m| m.status == MarkStatus::Approved);
+    let same = matches!(
+        accepted,
+        Some((
+            Some(Mark {
+                status: MarkStatus::Assigned,
+                ..
+            }),
+            Some(Mark {
+                status: MarkStatus::Approved,
+                ..
+            })
+        ))
+    );
     match prior {
         PriorOp::Accepted { .. } if same => {
             return Ok(MarkChange {
