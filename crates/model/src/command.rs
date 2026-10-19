@@ -1867,7 +1867,7 @@ mod tests {
                 diameter_mm: 16.0,
                 count: 4,
                 pitch_mm: 80.0,
-                origin_mm: [100.0, 200.0, 5.0],
+                origin_mm: [0.0, 200.0, 5.0],
                 direction_mm: [1.0, 0.0, 0.0],
             },
         }
