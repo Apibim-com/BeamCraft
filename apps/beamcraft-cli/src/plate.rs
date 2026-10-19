@@ -21,31 +21,31 @@
 //! * One implicit personal workspace per store: project and workspace identities are taken from
 //!   the first revision (or supplied for the first one), the generation is the head's plus one.
 //!   `CreatePlate` and `CommitWorkspace` are fused: a successful call is a published revision.
-//!   Explicit personal workspaces, publication and durable undo/redo live in `workspace` and
-//!   `history`; this adapter commits commands to the store supplied by its caller.
-//! * The layer engine runs **in this process**, as every USD read and write does (U17). A
-//!   hostile or corrupt layer is an ordinary refusal under the layer engine's size and depth
-//!   budgets, and the project's own layers are verified by SHA-256 before they are parsed.
-//! * Replay (`op_id`): the host ledger identifies the committed operation. Command adapters
-//!   compare its recorded request or operation revision, so later edits cannot substitute a
-//!   different request for an accepted identity.
-//! * Stored quantities are checked against fresh engine evaluation when a revision is opened.
+//!   Workspaces, drafts and undo (P06, P07) do not exist.
+//! * The layer engine runs **in this process**. The owner decision of 2026-10-16 places it in a
+//!   separate process (LEW-03 containment); there is no authoring message in the frozen U04
+//!   profile, so this path has no process isolation and must not be treated as a hostile-parser
+//!   boundary.
+//! * Replay (`op_id`): an operation the host ledger proves committed is compared with the
+//!   element of that id in the head revision. This is sound only while no command edits or
+//!   deletes elements (true in P01); the stored canonical request of F05 replaces it.
+//! * Quantities are returned, not stored: the pinned U02 schema has no quantity attributes.
 
 use crate::definition::{
     DefinitionRecord, decode_definitions, definition_digest, material_lookup, profile_lookup,
 };
 use crate::level::levels_of;
-use crate::publication::{PublishRequest, publish_revision};
+use crate::marks::marks_of;
 use beamcraft_engine::command::AuthoredPlate;
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
 use beamcraft_engine::level::Levels;
+use beamcraft_engine::marks::Numbering;
 use beamcraft_engine::member::AuthoredMember;
-use beamcraft_engine::plate_draft::{UnsupportedPlate, evaluate_committed_drafts_cached};
 use beamcraft_engine::quantity::{
     Assessment, Freshness, QuantityRecord, StoredRecord, assess, is_superseded_algorithm,
 };
 use beamcraft_engine::query::committed::{
-    BodyCache, MemberRecord, PlateRecord, evaluate_committed_members_cached, ids,
+    MemberRecord, PlateRecord, evaluate_committed, evaluate_committed_members, ids,
     scene_elements_with_members,
 };
 use beamcraft_engine::solid::SolidMesh;
@@ -53,25 +53,25 @@ use beamcraft_engine::transaction::{Admission, PriorOp, admit_create_plate};
 use beamcraft_engine::{Limits, ViewPin, ViewSnapshot};
 use beamcraft_host::ledger::Outcome;
 use beamcraft_host::revision::{
-    CommitHook, CommitOutcome, ContentRejection, ContentVerifier, ExpectedBase, IndexEvidence,
-    LayerRole, Manifest, Revision, RevisionError, RevisionInfo, RevisionStore, Uuid7,
-    VerifyRequest,
+    CommitHook, CommitOutcome, Committed, ContentRejection, ContentVerifier, ExpectedBase,
+    IndexEvidence, LayerEntry, LayerRole, Revision, RevisionDraft, RevisionError, RevisionInfo,
+    RevisionStore, Uuid7, VerifyRequest,
 };
 use beamcraft_layer_engine::authored::{
     Author, Change, EditTargets, Element, Group as LayerGroup, PROJECT_RECORD_KEY,
-    Placement as LayerPlacement, Prepare, Prepared, Shape, StoredQuantities, project_record,
-    schema_identity,
+    Placement as LayerPlacement, Prepare, Prepared, SchemaIdentity, Shape, StoredQuantities,
+    project_record, schema_identity, validate_layers,
 };
 use beamcraft_layer_engine::index::Completeness;
 use beamcraft_layer_engine::{
     Asset, BACKEND, Budgets, Cancellation, Control, Diagnostic, Identity, OpenRequest, Opened,
     Prim, Profile, Reader, Value,
 };
-use beamcraft_model::command::{CommandError, CreatePlate, MemberKind, PlaneCut};
+use beamcraft_model::command::{CommandError, CreatePlate, MemberKind};
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
@@ -96,8 +96,6 @@ fn empty_root(project: &ProjectId) -> String {
 /// A typed failure: a stable F04 code and a fixed safe message. No paths, no OS text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlateError {
-    /// F10 rule for a domain validation finding, absent for other failures.
-    pub rule_id: Option<&'static str>,
     /// Stable F04 code.
     pub code: ErrorCode,
     /// Fixed ASCII explanation.
@@ -105,32 +103,20 @@ pub struct PlateError {
 }
 
 impl PlateError {
-    pub(crate) const fn new(code: ErrorCode, message: &'static str) -> Self {
-        Self {
-            code,
-            message,
-            rule_id: None,
-        }
+    const fn new(code: ErrorCode, message: &'static str) -> Self {
+        Self { code, message }
     }
 }
 
 impl From<CommandError> for PlateError {
     fn from(error: CommandError) -> Self {
-        Self {
-            code: error.code,
-            message: error.message,
-            rule_id: error.rule_id,
-        }
+        Self::new(error.code, error.message)
     }
 }
 
 impl From<Diagnostic> for PlateError {
     fn from(error: Diagnostic) -> Self {
-        Self {
-            code: error.code,
-            message: error.message,
-            rule_id: error.rule_id,
-        }
+        Self::new(error.code, error.message)
     }
 }
 
@@ -179,6 +165,14 @@ pub(crate) fn host_uuid(text: &str) -> Result<Uuid7, PlateError> {
 /// The pin of the context that has no base revision.
 fn initial_pin() -> Result<ContentDigest, PlateError> {
     digest_of(b"beamcraft-p01-initial-base")
+}
+
+fn role_of(name: &str) -> LayerRole {
+    if name == DERIVED_LAYER {
+        LayerRole::Derived
+    } else {
+        LayerRole::Authored
+    }
 }
 
 pub(crate) fn open_request(
@@ -311,7 +305,7 @@ pub struct ElementMeta {
     pub schema_version: Option<String>,
     /// `bim:geometryMode`, when authored.
     pub geometry_mode: Option<String>,
-    /// Whether `bim:isDeactivated` is true or the prim is inactive.
+    /// Whether `bim:lifecycle` is `deactivated` or the prim is inactive.
     pub deactivated: bool,
     /// The authored placement.
     pub placement: PlacementRead,
@@ -373,7 +367,7 @@ fn element_meta(
             .and_then(text)
             .map(str::to_owned),
         deactivated: !prim.active
-            || property(prim, "bim:isDeactivated") == Some(&Value::Bool(true)),
+            || property(prim, "bim:lifecycle").and_then(text) == Some("deactivated"),
         placement: placement_read(prim),
         part_of,
         mesh,
@@ -382,19 +376,16 @@ fn element_meta(
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Decoded {
-    pub(crate) plates: Vec<(AuthoredPlate, Option<DerivedMesh>)>,
+    plates: Vec<(AuthoredPlate, Option<DerivedMesh>)>,
     pub(crate) members: Vec<(AuthoredMember, Option<DerivedMesh>)>,
     other_elements: usize,
     pub(crate) definitions: BTreeMap<ContentDigest, DefinitionRecord>,
     /// The levels of the model and the level of every plate, beam and column (D2).
     pub(crate) levels: Levels,
-    pub(crate) grids: Vec<beamcraft_model::grid::Grid>,
     /// The common facts of every element except levels, by id.
     pub(crate) elements: BTreeMap<ElementId, ElementMeta>,
-    /// Any geometry subtree or derived-value opinion, including malformed/non-mesh prims.
-    pub(crate) derived_elements: BTreeSet<ElementId>,
-    /// Display conversion must not reject otherwise valid R01 attachment or inspection.
-    reference_scene: Result<Vec<beamcraft_engine::SceneElement>, PlateError>,
+    /// The marks of the model and their approval states (A08).
+    pub(crate) marks: Numbering,
 }
 
 pub(crate) fn number(value: &Value) -> Option<f64> {
@@ -466,33 +457,7 @@ fn decode_plate(prim: &Prim, id: ElementId) -> Result<AuthoredPlate, PlateError>
         },
         material,
         holes_mm: decode_holes(prim)?,
-        cut: decode_cut(prim)?,
     })
-}
-
-/// The optional single plane cut of a committed element (A03): both attributes or neither,
-/// exactly one point and one normal. A damaged or half-authored record is an integrity error,
-/// never a default.
-fn decode_cut(prim: &Prim) -> Result<Option<PlaneCut>, PlateError> {
-    let bad = || integrity("committed element has inconsistent cut attributes");
-    let declared = |name: &str| prim.properties.iter().any(|p| p.name == name);
-    let (has_point, has_normal) = (declared("steel:cut:pointMm"), declared("steel:cut:normal"));
-    if !has_point && !has_normal {
-        return Ok(None);
-    }
-    if has_point != has_normal {
-        return Err(bad());
-    }
-    let point = property(prim, "steel:cut:pointMm")
-        .and_then(numbers::<3>)
-        .ok_or_else(bad)?;
-    let normal = property(prim, "steel:cut:normal")
-        .and_then(numbers::<3>)
-        .ok_or_else(bad)?;
-    Ok(Some(PlaneCut {
-        point_mm: point,
-        normal,
-    }))
 }
 
 /// The through-hole polygons of a committed plate: the flat point array cut by the vertex counts.
@@ -701,11 +666,7 @@ pub(crate) fn decode(
             continue;
         };
         let id = ElementId::parse(text_id).map_err(|_| integrity("element id is not a UUIDv7"))?;
-        let category = property(prim, "bim:elementKind")
-            .and_then(text)
-            .and_then(beamcraft_model::prim::ElementCategory::from_kind)
-            .ok_or_else(|| integrity("unknown element category"))?;
-        if prim.path != id.prim_path(category) {
+        if prim.path != id.prim_path() {
             return Err(integrity("element path does not match its id"));
         }
         let mesh = || {
@@ -730,47 +691,22 @@ pub(crate) fn decode(
             Some("column") => {
                 members.push((decode_member(prim, id, MemberKind::Column)?, mesh()));
             }
-            // The read-only reference representation is decoded separately below.
+            // R01 wrappers are decoded by `beamcraft_cli::reference`.
             Some("reference") => {}
             _ => other += 1,
         }
     }
     let definitions = decode_definitions(&prims)?;
     let levels = levels_of(&prims)?;
-    let derived_elements = plates
-        .iter()
-        .filter_map(|(plate, _)| {
-            let path = plate
-                .id
-                .prim_path(beamcraft_model::prim::ElementCategory::Part);
-            let geometry = format!("{path}/Geometry");
-            let prefix = format!("{path}/");
-            let has_geometry = by_path
-                .range(path.as_str()..)
-                .take_while(|(p, _)| **p == path || p.starts_with(&prefix))
-                .any(|(_, p)| {
-                    p.path == geometry
-                        || p.path.starts_with(&format!("{geometry}/"))
-                        || p.type_name.as_deref() == Some("Mesh")
-                        || p.properties.iter().any(|v| {
-                            ["bim:shape", "bim:volume", "bim:mass", "bim:quantity"]
-                                .iter()
-                                .any(|prefix| v.name.starts_with(prefix))
-                        })
-                });
-            has_geometry.then_some(plate.id)
-        })
-        .collect();
+    let marks = marks_of(&prims)?;
     Ok(Decoded {
         plates,
         members,
         other_elements: other,
         definitions,
         levels,
-        grids: beamcraft_layer_engine::authored::grid::read_grids(&prims)?,
         elements,
-        derived_elements,
-        reference_scene: crate::reference_view::scene_elements(&prims),
+        marks,
     })
 }
 
@@ -823,7 +759,6 @@ fn decode_member(
             orientation_xyzw: [x, y, z, w],
         },
         material: decode_material(prim)?,
-        cut: decode_cut(prim)?,
     })
 }
 
@@ -878,91 +813,18 @@ pub(crate) fn kernel_mesh(solid: &SolidMesh) -> Result<DerivedMesh, PlateError> 
     })
 }
 
-thread_local! {
-    /// The kernel bodies this thread has evaluated, by their exact shape inputs (issue 26): the
-    /// head that a command reads and the candidate that its commit verifier re-reads share them,
-    /// as do the copies and repeated parts of one model. Bounded by the cache itself.
-    static BODIES: RefCell<BodyCache> = const { RefCell::new(BodyCache::new()) };
-}
-
 /// Re-evaluates every committed plate and member with the kernel, resolving their pinned
-/// definitions from the same stage. A body this thread already evaluated for bit-identical shape
-/// inputs is reused; the caller still compares every stored mesh with the body returned here.
+/// definitions from the same stage.
 pub(crate) fn evaluate_decoded(
     decoded: &Decoded,
-) -> Result<(Vec<PlateRecord>, Vec<MemberRecord>), PlateError> {
-    let shared = BODIES.try_with(|cache| {
-        cache
-            .try_borrow_mut()
-            .ok()
-            .map(|mut cache| evaluate_with(decoded, &mut cache))
-    });
-    match shared {
-        Ok(Some(result)) => result,
-        // The thread is ending or the cache is in use further up the stack: evaluate with a
-        // cache of this call alone rather than fail.
-        Ok(None) | Err(_) => evaluate_with(decoded, &mut BodyCache::new()),
-    }
-}
-
-/// Hits and misses of this thread's body cache since the thread started: a diagnostic for tests
-/// and measurements, never model data. `None` while the cache is in use or the thread is ending.
-pub fn body_cache_counts() -> Option<(u64, u64)> {
-    BODIES
-        .try_with(|cache| {
-            cache
-                .try_borrow()
-                .ok()
-                .map(|cache| (cache.hits(), cache.misses()))
-        })
-        .ok()
-        .flatten()
-}
-
-fn evaluate_with(
-    decoded: &Decoded,
-    cache: &mut BodyCache,
 ) -> Result<(Vec<PlateRecord>, Vec<MemberRecord>), PlateError> {
     let authored: Vec<AuthoredPlate> = decoded.plates.iter().map(|(a, _)| a.clone()).collect();
     let members: Vec<AuthoredMember> = decoded.members.iter().map(|(a, _)| a.clone()).collect();
     let materials = material_lookup(&decoded.definitions);
-    let (plates, _) = evaluate_committed_drafts_cached(&authored, &materials, cache)?;
-    let members = evaluate_committed_members_cached(
-        &members,
-        &profile_lookup(&decoded.definitions),
-        &materials,
-        cache,
-    )?;
+    let plates = evaluate_committed(&authored, &materials)?;
+    let members =
+        evaluate_committed_members(&members, &profile_lookup(&decoded.definitions), &materials)?;
     Ok((plates, members))
-}
-
-/// The committed plates the kernel cannot evaluate, listed as authored-only records, over this
-/// thread's [`BODIES`] cache: the second pass of an inspection reuses the bodies the first pass
-/// evaluated instead of paying for them twice. The refusals are those of
-/// `beamcraft_engine::plate_draft::evaluate_committed_drafts`.
-pub(crate) fn evaluate_committed_drafts_with_cache(
-    decoded: &Decoded,
-) -> Result<Vec<UnsupportedPlate>, PlateError> {
-    let authored: Vec<AuthoredPlate> = decoded.plates.iter().map(|(a, _)| a.clone()).collect();
-    let materials = material_lookup(&decoded.definitions);
-    let shared = BODIES.try_with(|cache| {
-        cache
-            .try_borrow_mut()
-            .ok()
-            .map(|mut cache| evaluate_committed_drafts_cached(&authored, &materials, &mut cache))
-    });
-    match shared {
-        Ok(Some(result)) => result
-            .map(|(_, unsupported)| unsupported)
-            .map_err(PlateError::from),
-        // The thread is ending or the cache is in use further up the stack: evaluate with a
-        // cache of this call alone rather than fail.
-        Ok(None) | Err(_) => {
-            evaluate_committed_drafts_cached(&authored, &materials, &mut BodyCache::new())
-                .map(|(_, unsupported)| unsupported)
-                .map_err(PlateError::from)
-        }
-    }
 }
 
 /// The quantity record the engine expects for a plate: its quantities under the signature of its
@@ -1012,20 +874,12 @@ pub struct QuantityReport {
 /// authored inputs, and a stored quantity record must be the engine's or, outside `strict` mode,
 /// is reported as stale. Publishing is strict: a layer whose stored quantities disagree with the
 /// kernel cannot become a revision.
-pub(crate) fn verify_derived(
+fn verify_derived(
     records: &[PlateRecord],
     member_records: &[MemberRecord],
     decoded: &Decoded,
     strict: bool,
 ) -> Result<BTreeMap<ElementId, QuantityReport>, PlateError> {
-    let supported: BTreeSet<_> = records.iter().map(|p| p.authored.id).collect();
-    for (authored, mesh) in &decoded.plates {
-        if !supported.contains(&authored.id)
-            && (mesh.is_some() || decoded.derived_elements.contains(&authored.id))
-        {
-            return Err(integrity("unsupported plate has partial derived results"));
-        }
-    }
     let found: BTreeMap<ElementId, &Option<DerivedMesh>> = decoded
         .plates
         .iter()
@@ -1106,7 +960,7 @@ fn reject(error: impl Into<PlateError>) -> ContentRejection {
 
 /// Opens exactly the committed bytes in a fresh reader and derives everything from them, so the
 /// index and the verified plates cannot be stale, partial or foreign.
-pub(crate) struct PlateVerifier;
+struct PlateVerifier;
 
 impl ContentVerifier for PlateVerifier {
     fn verify(&self, request: &VerifyRequest<'_>) -> Result<IndexEvidence, ContentRejection> {
@@ -1146,10 +1000,9 @@ impl ContentVerifier for PlateVerifier {
                 "draft schema is not the admitted U02 schema",
             )));
         }
+        validate_layers(open.clone(), schema, &control).map_err(reject)?;
         let mut reader = Reader::default();
-        let (opened, _) = reader
-            .open_validated(open, schema, &control)
-            .map_err(reject)?;
+        let opened = reader.open(open, &control).map_err(reject)?;
         // D1: a recorded ProjectId is the revision's own, so a stored record can never disagree
         // with the project of the manifest, nor change between revisions of one project.
         if let Some(recorded) = project_record(&opened.metadata).map_err(reject)?
@@ -1214,15 +1067,12 @@ pub struct RevisionDetails {
 }
 
 pub(crate) fn summarize(info: &RevisionInfo) -> RevisionSummary {
-    summarize_manifest(info.manifest(), info.manifest_digest())
-}
-
-fn summarize_manifest(manifest: &Manifest, digest: ContentDigest) -> RevisionSummary {
+    let manifest = info.manifest();
     let content = manifest.content();
     RevisionSummary {
-        revision_id: content.revision().as_str().to_owned(),
-        sequence: manifest.sequence(),
-        manifest_digest: digest,
+        revision_id: info.revision().as_str().to_owned(),
+        sequence: info.sequence(),
+        manifest_digest: info.manifest_digest(),
         details: Some(RevisionDetails {
             project: content.project().as_str().to_owned(),
             workspace: content.workspace().as_str().to_owned(),
@@ -1316,7 +1166,7 @@ pub(crate) fn prior_op_with(
         Outcome::Aborted { .. } | Outcome::NotFound => Ok((PriorOp::Unseen, None)),
         Outcome::Unknown => Err(PlateError::new(
             ErrorCode::OutcomeUnknown,
-            "the operation id may or may not have been committed; run recover-revision",
+            "the operation id may or may not have been committed; run revision-recover",
         )),
     }
 }
@@ -1349,7 +1199,7 @@ pub fn accepted_binding(
         Outcome::Unknown => {
             return Err(PlateError::new(
                 ErrorCode::OutcomeUnknown,
-                "the operation id may or may not have been committed; run recover-revision",
+                "the operation id may or may not have been committed; run revision-recover",
             ));
         }
     }
@@ -1449,6 +1299,7 @@ fn layer_group(group: LayerGroup) -> Group {
         LayerGroup::Material => Group::MaterialRef,
         LayerGroup::Derived => Group::Derived,
         LayerGroup::Relationship => Group::Relationship,
+        LayerGroup::Mark => Group::Mark,
     }
 }
 
@@ -1706,7 +1557,6 @@ pub fn create_plate(
                             .iter()
                             .map(|h| h.iter().map(|[x, y]| [*x, *y, 0.0]).collect())
                             .collect(),
-                        cut: outcome.authored.cut,
                     },
                     placement: LayerPlacement {
                         translation_mm: placement.translation_mm,
@@ -1727,8 +1577,6 @@ pub fn create_plate(
     let committed = publish_revision(
         store,
         &PublishRequest {
-            footprint: &transaction.outcome.footprint,
-            fingerprint: transaction.outcome.fingerprint,
             prepared: &prepared,
             schema,
             project: &project,
@@ -1748,15 +1596,90 @@ pub fn create_plate(
     })
 }
 
+/// What `publish_revision` needs to turn a prepared candidate into a committed revision.
+pub(crate) struct PublishRequest<'a> {
+    pub(crate) prepared: &'a Prepared,
+    pub(crate) schema: SchemaIdentity,
+    pub(crate) project: &'a str,
+    pub(crate) workspace: &'a str,
+    pub(crate) revision_id: &'a RevisionId,
+    pub(crate) op: Uuid7,
+    pub(crate) base_generation: u64,
+    pub(crate) expected: &'a ExpectedBase,
+}
+
+/// Stores the layer blobs of a prepared candidate and commits them as the next revision through
+/// U06/U07, with the content verifier of this module.
+pub(crate) fn publish_revision(
+    store: &RevisionStore,
+    request: &PublishRequest<'_>,
+    hook: &mut dyn CommitHook,
+) -> Result<Committed, PlateError> {
+    let generation = request
+        .base_generation
+        .checked_add(1)
+        .ok_or(PlateError::new(
+            ErrorCode::LimitExceeded,
+            "generation exhausted",
+        ))?;
+    let mut entries = Vec::new();
+    for layer in &request.prepared.layers {
+        store
+            .blobs()
+            .publish(&layer.bytes)
+            .map_err(|e| PlateError::new(e.code(), "layer blob could not be stored"))?;
+        entries.push(LayerEntry::from_bytes(
+            &layer.name,
+            role_of(&layer.name),
+            &layer.bytes,
+        )?);
+    }
+    // Foreign sources are carried into every revision byte for byte as external entries. Their
+    // blob is published if absent (publication compares existing bytes in full) and is never
+    // rewritten.
+    for layer in &request.prepared.retained {
+        store
+            .blobs()
+            .publish(&layer.bytes)
+            .map_err(|e| PlateError::new(e.code(), "foreign layer blob could not be stored"))?;
+        entries.push(LayerEntry::from_bytes(
+            &layer.name,
+            LayerRole::External,
+            &layer.bytes,
+        )?);
+    }
+    let draft = RevisionDraft {
+        project: host_uuid(request.project)?,
+        workspace: host_uuid(request.workspace)?,
+        revision: host_uuid(&request.revision_id.to_string())?,
+        op: request.op.clone(),
+        workspace_generation: generation,
+        schema: request.schema.digest,
+        root_layer: ROOT_LAYER.into(),
+        entries,
+    };
+    Ok(store.commit_with(&draft, request.expected, Some(&PlateVerifier), hook)?)
+}
+
+/// Commits a complete layer set through U06/U07 with the content verifier of this module (U03
+/// index, structural validation, kernel re-evaluation of every element). Used where the layers
+/// already exist as bytes, such as forking and publishing a workspace.
+pub(crate) fn commit_verified(
+    store: &RevisionStore,
+    draft: &RevisionDraft,
+    expected: &ExpectedBase,
+    hook: &mut dyn CommitHook,
+) -> Result<Committed, PlateError> {
+    Ok(store.commit_with(draft, expected, Some(&PlateVerifier), hook)?)
+}
+
 /// A plate as listed from a committed revision.
 #[derive(Debug, Clone)]
 pub struct Inspection {
     /// The verified revision.
     pub revision: RevisionSummary,
-    /// Evaluated committed plates in element-id order; authored-only plates are listed separately.
+    /// Committed plates in element-id order, re-evaluated by the engine.
     pub plates: Vec<PlateRecord>,
-    /// Valid authored plates with explicit unsupported geometry and no derived results.
-    pub unsupported_plates: Vec<UnsupportedPlate>,
     /// Committed beams and columns in element-id order, re-evaluated by the engine.
     pub members: Vec<MemberRecord>,
     /// Stored quantity records against the engine's, by element id.
@@ -1767,33 +1690,13 @@ pub struct Inspection {
     pub definitions: BTreeMap<ContentDigest, DefinitionRecord>,
     /// The pinned view snapshot built from committed data.
     pub snapshot: ViewSnapshot,
-    /// A reference outside the translation-only display profile. Non-view inspection still
-    /// works, but a viewport must refuse the incomplete bundle rather than silently omit it.
-    pub reference_view_error: Option<PlateError>,
     /// D1: the ProjectId recorded in the root layer of the revision, or `None` for a store whose
     /// first revision predates the record (never invented for it).
     pub project_record: Option<String>,
     /// D2: the levels of the revision and the level of every plate, beam and column.
     pub levels: Levels,
-    /// T01: validated project grids, without engineering bodies.
-    pub grids: Vec<beamcraft_model::grid::Grid>,
     /// The common facts of every element except levels, by id (E02).
     pub elements: BTreeMap<ElementId, ElementMeta>,
-}
-
-impl Inspection {
-    /// Refuses consumers that require a complete geometry set instead of silently dropping
-    /// authored unsupported elements from an export, total, numbering or binary view bundle.
-    pub fn require_evaluated_geometry(&self) -> Result<(), PlateError> {
-        if self.unsupported_plates.is_empty() {
-            Ok(())
-        } else {
-            Err(PlateError::new(
-                ErrorCode::DependencyUnavailable,
-                "the revision contains plates with unsupported geometry; inspect their authored inputs",
-            ))
-        }
-    }
 }
 
 /// Opens the head revision with verification, reads its model and derived layers in a fresh
@@ -1817,34 +1720,6 @@ pub fn inspect_revision(revision: &Revision) -> Result<Inspection, PlateError> {
             })
         })
         .collect::<Result<Vec<_>, PlateError>>()?;
-    inspect_manifest_assets(
-        revision.manifest(),
-        revision.info().manifest_digest(),
-        assets,
-    )
-}
-
-// A drawing archive has the exact source manifest and assets, but no fabricated live Revision
-// or head-log record. Share the entire strict reader/kernel path with ordinary model inspection.
-pub(crate) fn inspect_manifest_assets(
-    manifest: &Manifest,
-    digest: ContentDigest,
-    assets: Vec<Asset>,
-) -> Result<Inspection, PlateError> {
-    let content = manifest.content();
-    if Sha256::digest(&manifest.encode()).map_err(|_| integrity("source manifest digest failed"))?
-        != digest
-        || assets.len() != content.entries().len()
-        || assets.iter().zip(content.entries()).any(|(asset, entry)| {
-            asset.name != entry.name()
-                || asset.digest != entry.digest()
-                || asset.bytes.len() as u64 != entry.size()
-        })
-    {
-        return Err(integrity(
-            "source assets disagree with their exact manifest",
-        ));
-    }
     let external = content
         .entries()
         .iter()
@@ -1855,16 +1730,17 @@ pub(crate) fn inspect_manifest_assets(
         content.root_layer(),
         content.project().as_str(),
         content.workspace().as_str(),
-        digest,
+        revision.info().manifest_digest(),
         content.workspace_generation(),
         assets,
         &external,
     )?;
     let control = control();
-    // The structural rules (D2-V01 among them) run on the parsed stage before anything is
-    // decoded, so a damaged level or project record is refused rather than reported.
+    // The structural rules (D2-V01 among them) run before anything is decoded, so a damaged
+    // level or project record is refused rather than reported.
+    validate_layers(request.clone(), schema_identity()?, &control)?;
     let mut reader = Reader::default();
-    let (opened, _) = reader.open_validated(request, schema_identity()?, &control)?;
+    let opened = reader.open(request, &control)?;
     let record = project_record(&opened.metadata)?;
     if record
         .as_deref()
@@ -1878,32 +1754,27 @@ pub(crate) fn inspect_manifest_assets(
     reader.verify_index(&index, &control)?;
     let decoded = decode(&reader, &opened, &control)?;
     let (plates, members) = evaluate_decoded(&decoded)?;
-    let unsupported_plates = evaluate_committed_drafts_with_cache(&decoded)?;
     let quantities = verify_derived(&plates, &members, &decoded, false)?;
-    let pin = ViewPin::new(digest, content.workspace_generation());
-    let mut scene = scene_elements_with_members(&plates, &members)?;
-    let reference_view_error = match decoded.reference_scene {
-        Ok(references) => {
-            scene.extend(references);
-            None
-        }
-        Err(error) => Some(error),
-    };
-    let snapshot = ViewSnapshot::build(pin, scene, &Limits::default())
-        .map_err(|e| PlateError::new(e.f04_code(), "view snapshot could not be built"))?;
+    let pin = ViewPin::new(
+        revision.info().manifest_digest(),
+        content.workspace_generation(),
+    );
+    let snapshot = ViewSnapshot::build(
+        pin,
+        scene_elements_with_members(&plates, &members)?,
+        &Limits::default(),
+    )
+    .map_err(|e| PlateError::new(e.f04_code(), "view snapshot could not be built"))?;
     Ok(Inspection {
-        revision: summarize_manifest(manifest, digest),
+        revision: summarize(revision.info()),
         plates,
-        unsupported_plates,
         members,
         quantities,
         other_elements: decoded.other_elements,
         definitions: decoded.definitions,
         snapshot,
-        reference_view_error,
         project_record: record,
         levels: decoded.levels,
-        grids: decoded.grids,
         elements: decoded.elements,
     })
 }
