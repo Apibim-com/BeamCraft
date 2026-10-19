@@ -126,6 +126,7 @@ fn elements() -> Vec<Change> {
                 ],
                 thickness_mm: 10.123456789012345,
                 holes: Vec::new(),
+                cut: None,
             },
             placement: pose(),
             material: Some(r[1].digest),
@@ -138,6 +139,7 @@ fn elements() -> Vec<Change> {
                 axis_mm: [[0.0, 0.0, 0.0], [0.0, 0.0, 2000.0]],
                 profile: r[0].digest,
                 roll_rad: Some(0.125),
+                cut: None,
             },
             placement: pose(),
             material: None,
@@ -1168,6 +1170,7 @@ fn holed_plate(holes: Vec<Vec<[f64; 3]>>) -> Change {
             ],
             thickness_mm: 10.0,
             holes,
+            cut: None,
         },
         placement: pose(),
         material: None,
@@ -1281,6 +1284,163 @@ fn through_hole_polygons_are_authored_as_flat_points_and_counts_and_validated() 
         ErrorCode::LimitExceeded
     );
     assert_eq!(bad(vec![square(0.0, 0.0); 65]), ErrorCode::LimitExceeded);
+}
+
+#[test]
+fn the_plane_cut_is_authored_as_point_and_normal_and_validated() {
+    let cut = |point: [f64; 3], normal: [f64; 3]| {
+        Some(PlaneCut {
+            point_mm: point,
+            normal,
+        })
+    };
+    let (mut a, o) = open(initial());
+    let p = a
+        .prepare(
+            batch(
+                &o.context,
+                vec![Change::Create(Element {
+                    id: PLATE.into(),
+                    name: "Cut".into(),
+                    shape: Shape::Plate {
+                        contour_mm: vec![
+                            [0.0, 0.0, 0.0],
+                            [1000.0, 0.0, 0.0],
+                            [1000.0, 500.0, 0.0],
+                            [0.0, 500.0, 0.0],
+                        ],
+                        thickness_mm: 10.0,
+                        holes: Vec::new(),
+                        cut: cut([250.0, 0.0, 0.0], [1.0, 0.0, 0.0]),
+                    },
+                    placement: pose(),
+                    material: None,
+                })],
+            ),
+            &control(),
+        )
+        .unwrap();
+    let o = a
+        .install(
+            &o.context,
+            &p.token,
+            &p.op_id,
+            Decision::Accepted,
+            &control(),
+        )
+        .unwrap();
+    let prims = snapshot(&a, &o.context);
+    assert_eq!(
+        value(&prims, PLATE, "steel:cut:pointMm"),
+        Some(&Value::Array(vec![
+            Value::Number(250.0),
+            Value::Number(0.0),
+            Value::Number(0.0)
+        ]))
+    );
+    assert_eq!(
+        value(&prims, PLATE, "steel:cut:normal"),
+        Some(&Value::Array(vec![
+            Value::Number(1.0),
+            Value::Number(0.0),
+            Value::Number(0.0)
+        ]))
+    );
+    // The exported layers pass the structural validator, so a reader can rely on the shape.
+    let layers = a.export(&o.context, &control()).unwrap();
+    let mut request = initial();
+    request.assets = layers;
+    request.manifest = request.manifest_digest().unwrap();
+    validate_layers(request, schema_identity().unwrap(), &control()).unwrap();
+
+    // A cut on a member is authored the same way.
+    let (mut b, ob) = open(initial());
+    let mut member_batch = batch(
+        &ob.context,
+        vec![Change::Create(Element {
+            id: MEMBER.into(),
+            name: "Cut beam".into(),
+            shape: Shape::Member {
+                kind: MemberKind::Beam,
+                axis_mm: [[0.0, 0.0, 0.0], [6000.0, 0.0, 0.0]],
+                profile: resources()[0].digest,
+                roll_rad: None,
+                cut: cut([3000.0, 0.0, 0.0], [1.0, 0.0, 0.0]),
+            },
+            placement: pose(),
+            material: None,
+        })],
+    );
+    member_batch.resources = resources();
+    let p = b.prepare(member_batch, &control()).unwrap();
+    let ob = b
+        .install(
+            &ob.context,
+            &p.token,
+            &p.op_id,
+            Decision::Accepted,
+            &control(),
+        )
+        .unwrap();
+    let prims = snapshot(&b, &ob.context);
+    assert!(value(&prims, MEMBER, "steel:cut:pointMm").is_some());
+    assert!(value(&prims, MEMBER, "steel:cut:normal").is_some());
+
+    // Invalid or half-authored cuts are refused before anything is written.
+    let refuse = |shape: Shape| {
+        let (mut c, oc) = open(initial());
+        c.prepare(
+            batch(
+                &oc.context,
+                vec![Change::Create(Element {
+                    id: PLATE.into(),
+                    name: "Bad".into(),
+                    shape,
+                    placement: pose(),
+                    material: None,
+                })],
+            ),
+            &control(),
+        )
+        .map(|_| ())
+        .unwrap_err()
+        .code
+    };
+    let base = |cut: Option<PlaneCut>| Shape::Plate {
+        contour_mm: vec![
+            [0.0, 0.0, 0.0],
+            [1000.0, 0.0, 0.0],
+            [1000.0, 500.0, 0.0],
+            [0.0, 500.0, 0.0],
+        ],
+        thickness_mm: 10.0,
+        holes: Vec::new(),
+        cut,
+    };
+    // A zero normal is not a plane.
+    assert_eq!(
+        refuse(base(cut([0.0, 0.0, 0.0], [0.0, 0.0, 0.0]))),
+        ErrorCode::InvalidArgument
+    );
+    assert_eq!(
+        refuse(base(cut([f64::NAN, 0.0, 0.0], [1.0, 0.0, 0.0]))),
+        ErrorCode::NonFiniteNumber
+    );
+    assert_eq!(
+        refuse(base(cut([2e9, 0.0, 0.0], [1.0, 0.0, 0.0]))),
+        ErrorCode::LimitExceeded
+    );
+    // Only the point attribute is a damaged record, not "no cut".
+    assert_eq!(
+        refuse(Shape::Member {
+            kind: MemberKind::Beam,
+            axis_mm: [[0.0, 0.0, 0.0], [6000.0, 0.0, 0.0]],
+            profile: resources()[0].digest,
+            roll_rad: None,
+            cut: cut([3000.0, 0.0, 0.0], [0.0, 0.0, 0.0]),
+        }),
+        ErrorCode::InvalidArgument
+    );
 }
 
 #[test]

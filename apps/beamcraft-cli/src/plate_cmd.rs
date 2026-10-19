@@ -35,7 +35,7 @@ use beamcraft_host::{
 };
 use beamcraft_model::command::{
     CopyElement, CreatePlate, CreateStraightMember, DeleteElement, ElementPatch, MAX_HOLES,
-    MemberKind, Placement, UpdateElement,
+    MemberKind, Placement, PlaneCut, UpdateElement,
 };
 use beamcraft_model::definition::SectionProperties;
 use beamcraft_model::digest::ContentDigest;
@@ -112,6 +112,8 @@ const CREATE_OPTIONS: &[&str] = &[
     "--hole-rect",
     "--hole-round",
     "--hole-segments",
+    "--cut-point",
+    "--cut-normal",
     "--new-id",
     "--op-id",
     "--revision-id",
@@ -180,6 +182,8 @@ const CREATE_MEMBER_OPTIONS: &[&str] = &[
     "--translation",
     "--material-digest",
     "--material",
+    "--cut-point",
+    "--cut-normal",
     "--new-id",
     "--op-id",
     "--revision-id",
@@ -764,6 +768,7 @@ fn create(
             candidates,
         )?,
         holes_mm: holes(options)?,
+        cut: cut(options)?,
     };
     let created = create_plate(
         store,
@@ -844,6 +849,22 @@ fn holes(options: &BTreeMap<&str, &str>) -> Run<Vec<Vec<[f64; 2]>>> {
         }
     }
     Ok(result)
+}
+
+/// The optional single plane cut of `create-plate` and `create-member` (A03, experimental):
+/// `--cut-point X,Y,Z --cut-normal X,Y,Z`, both or neither, element-local millimetres. The kept
+/// half-space is the one the normal points *away from*, so the normal points into the trimmed-off
+/// material; whether the plane crosses the element is the kernel's decision, and a scaled normal
+/// describes the same plane.
+fn cut(options: &BTreeMap<&str, &str>) -> Run<Option<PlaneCut>> {
+    match (options.get("--cut-point"), options.get("--cut-normal")) {
+        (None, None) => Ok(None),
+        (Some(point), Some(normal)) => Ok(Some(PlaneCut {
+            point_mm: translation(point)?,
+            normal: translation(normal)?,
+        })),
+        _ => Err(invalid("--cut-point and --cut-normal are given together")),
+    }
 }
 
 fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Json> {
@@ -1382,6 +1403,7 @@ fn create_member_command(
             })
             .transpose()?,
         material_digest,
+        cut: cut(options)?,
     };
     let created = create_member(
         store,
@@ -1459,7 +1481,19 @@ fn member_json(record: &MemberRecord) -> Run<Json> {
         ("mesh_digest", Json::text(mesh.digest().to_string())),
         ("vertices", Json::uint(mesh.vertices().len() as u64)),
         ("triangles", Json::uint(mesh.triangles().len() as u64)),
+        ("cut", cut_json(record.authored.cut.as_ref())?),
     ]))
+}
+
+/// The optional plane cut of an element as JSON, `null` without one.
+fn cut_json(cut: Option<&PlaneCut>) -> Run<Json> {
+    Ok(match cut {
+        None => Json::Null,
+        Some(cut) => Json::object([
+            ("point_mm", triple(cut.point_mm)?),
+            ("normal", triple(cut.normal)?),
+        ]),
+    })
 }
 
 pub(crate) fn num(value: f64) -> Run<Json> {
@@ -1815,6 +1849,7 @@ fn plate_json(record: &PlateRecord) -> Run<Json> {
             "hole_count",
             Json::uint(record.authored.holes_mm.len() as u64),
         ),
+        ("cut", cut_json(record.authored.cut.as_ref())?),
         (
             "holes_mm",
             Json::Array(
