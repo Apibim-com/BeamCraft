@@ -665,14 +665,17 @@ pub(super) fn snapshot(
                     return Err(invalid());
                 }
                 if kind == "connection" {
-                    // Exactly one property set: a weld's or a bolt group's. Content with
-                    // neither, or with both, is not something this version reads — refused,
-                    // never guessed.
+                    // Exactly one property set, decided by the whole prefix: any steel:weld:*
+                    // attribute marks a weld, any steel:bolt:* marks a bolt group. Content
+                    // with neither, or with both, is not something this version reads —
+                    // refused, never guessed.
                     match (
-                        p.properties.iter().any(|v| v.name == "steel:weld:type"),
                         p.properties
                             .iter()
-                            .any(|v| v.name == "steel:bolt:diameterMm"),
+                            .any(|v| v.name.starts_with("steel:weld:")),
+                        p.properties
+                            .iter()
+                            .any(|v| v.name.starts_with("steel:bolt:")),
                     ) {
                         (true, false) => weld_properties(p)?,
                         (false, true) => bolt_properties(p)?,
