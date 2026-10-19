@@ -45,8 +45,9 @@ beamcraft bolts --store ROOT
   assembly target is refused as unsupported (`UNSUPPORTED_GEOMETRY`). The record lives with the
   group (vocabulary section 5.2), so the parts are only read, a concurrent delete of a part
   conflicts, deleting a bolted part is `DEPENDENCY_CONFLICT` while the group connects it
-  (`DV-REL-009`), and copying the group is `DEPENDENCY_CONFLICT` (`DV-REL-011`); copying a
-  bolted part is refused by the copy plan like any linked part.
+  (`DV-REL-009`), and copying the group itself is `DEPENDENCY_CONFLICT` (`DV-REL-011`); copying
+  a bolted part succeeds and carries no bolt record, exactly as the copy of a welded part
+  leaves the weld on the original.
 - **"Face reachable" is a conservative bounds check.** The engine requires every bolt position to
   lie within the world bounding box of both parts, inclusive of the boundary (a bolt on a face is
   reachable). The adapter derives the bounds from the authored inputs without the kernel: a plate

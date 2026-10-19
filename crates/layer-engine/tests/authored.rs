@@ -2532,7 +2532,7 @@ fn wrong_bolt_inputs_targets_and_loaded_records_are_refused() {
         &o.context,
         "authored.usda",
         "int steel:bolt:count = 4",
-        "int steel:bolt:count = 4\ncustom double steel:weld:sizeMm = 5",
+        "int steel:bolt:count = 4\ncustom token steel:weld:type = \"fillet\"",
     );
     assert_eq!(
         validate_layers(input, schema_identity().unwrap(), &control())
