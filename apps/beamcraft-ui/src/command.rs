@@ -5,6 +5,10 @@
 //! through the same command a user types, so the accepted revision is the engine's, never a copy
 //! made here. Output is read with a cap and the process is killed after a deadline.
 
+use crate::edit::{
+    Edit, Edited, ElementInfo, Ray, inspect_args, parse_edited, parse_element_info, parse_pick,
+    pick_args,
+};
 use crate::tools::{
     Created, Definitions, Prepared, ToolError, definitions_args, parse_created, parse_definitions,
 };
@@ -126,4 +130,40 @@ pub fn commit(cli: &Path, prepared: &Prepared) -> Result<Created, ToolError> {
 pub fn definitions(cli: &Path, store: &Path) -> Result<Definitions, ToolError> {
     let output = run(cli, &definitions_args(store), DEADLINE)?;
     parse_definitions(output.code, &output.stdout)
+}
+
+/// Runs a previewed edit (or an undo or redo) and reads its reply.
+pub fn commit_edit(cli: &Path, edit: &Edit) -> Result<Edited, ToolError> {
+    let output = run(cli, &edit.args, DEADLINE)?;
+    parse_edited(edit.kind, output.code, &output.stdout)
+}
+
+/// The most standard output read from `plate-inspect` when one element is looked up.
+const MAX_INSPECT_OUTPUT: usize = 32 * 1024 * 1024;
+
+/// What a click found: the element id the engine's `pick` returned and, apart from it, whether
+/// the element's details could be read (a failure there never loses the selection).
+#[derive(Debug)]
+pub struct Selected {
+    /// The picked element.
+    pub id: String,
+    /// Its kind, name and translation as `plate-inspect` reports them.
+    pub info: Result<ElementInfo, ToolError>,
+}
+
+/// Looks up one element of the accepted revision.
+pub fn element_info(cli: &Path, store: &Path, id: &str) -> Result<ElementInfo, ToolError> {
+    let output = run_capped(cli, &inspect_args(store), DEADLINE, MAX_INSPECT_OUTPUT)?;
+    parse_element_info(id, output.code, &output.stdout)
+}
+
+/// Picks along `ray` with the engine's `pick` and reads the details of what it hit. `None` is
+/// empty space.
+pub fn select_at(cli: &Path, store: &Path, ray: &Ray) -> Result<Option<Selected>, ToolError> {
+    let output = run(cli, &pick_args(store, ray), DEADLINE)?;
+    let Some(id) = parse_pick(output.code, &output.stdout)? else {
+        return Ok(None);
+    };
+    let info = element_info(cli, store, &id);
+    Ok(Some(Selected { id, info }))
 }
