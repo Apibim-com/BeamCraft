@@ -25,7 +25,7 @@ use beamcraft_cli::workspace::{
 };
 use beamcraft_engine::command::{Quantities, origin_rectangle_contour};
 use beamcraft_engine::footprint::{Entry, Footprint, Target};
-use beamcraft_engine::quantity::Freshness;
+use beamcraft_engine::quantity::{Freshness, is_superseded_algorithm};
 use beamcraft_engine::query::committed::MemberRecord;
 use beamcraft_engine::query::committed::PlateRecord;
 use beamcraft_host::{
@@ -1420,8 +1420,21 @@ pub(crate) fn triple(values: [f64; 3]) -> Run<Json> {
     ))
 }
 
+/// A mass rounded to 0.1 kg for display. The stored and exact values are never rounded.
+fn display_kg(kg: f64) -> f64 {
+    (kg * 10.0).round() / 10.0
+}
+
+/// The quantities of a plate or a member.
+///
+/// `volume.mm3`, `volume.m3` and `mass.kg` are the NET values and keep the names of the first
+/// quantity slices, so existing readers do not change. The explicit gross and net figures are
+/// next to them at full precision, and `mass.kg_display` and friends are the same masses rounded
+/// to 0.1 kg for display. `section_area_mm2` and `area_source` describe a member's effective
+/// area.
 fn quantities_json(q: &Quantities) -> Run<Json> {
     let optional = |value: Option<f64>| value.map_or(Ok(Json::Null), num);
+    let display = |value: Option<f64>| value.map(display_kg).map_or(Ok(Json::Null), num);
     Ok(Json::object([
         (
             "volume",
@@ -1436,9 +1449,22 @@ fn quantities_json(q: &Quantities) -> Run<Json> {
             "mass",
             Json::object([
                 ("kg", optional(q.mass_kg)?),
+                ("kg_display", display(q.mass_kg)?),
                 ("density_kg_m3", optional(q.density_kg_m3)?),
                 ("status", Json::text(q.mass_status.as_str())),
             ]),
+        ),
+        ("volume_gross_mm3", num(q.volume_gross_mm3)?),
+        ("volume_net_mm3", num(q.volume_mm3)?),
+        ("removed_volume_mm3", num(q.removed_volume_mm3)?),
+        ("mass_gross_kg", optional(q.mass_gross_kg)?),
+        ("mass_net_kg", optional(q.mass_kg)?),
+        ("mass_gross_kg_display", display(q.mass_gross_kg)?),
+        ("mass_net_kg_display", display(q.mass_kg)?),
+        ("section_area_mm2", optional(q.section_area_mm2)?),
+        (
+            "area_source",
+            q.area_source.map_or(Json::Null, |s| Json::text(s.as_str())),
         ),
     ]))
 }
@@ -1512,6 +1538,7 @@ pub(crate) fn definition_json(digest: &ContentDigest, record: &DefinitionRecord)
                     Some(w) => Json::object([
                         ("declared_mm2", num(w.declared_mm2)?),
                         ("kernel_mm2", num(w.kernel_mm2)?),
+                        ("exact_mm2", num(w.kernel_mm2)?),
                         ("relative_difference", num(w.relative_difference)?),
                         ("threshold", num(w.threshold)?),
                         ("threshold_percent", num(w.threshold * 100.0)?),
@@ -1863,8 +1890,20 @@ fn stored_json(report: &QuantityReport) -> Run<Json> {
             Json::text(report.expected.shape_signature.to_string()),
         ),
         (
+            "expected_gross_signature",
+            Json::text(report.expected.gross_signature.to_string()),
+        ),
+        (
             "expected_mass_signature",
             Json::text(report.expected.mass_signature.to_string()),
+        ),
+        (
+            "stored_algorithm",
+            stored.map_or(Json::Null, |s| Json::text(s.algorithm.as_str())),
+        ),
+        (
+            "superseded_algorithm",
+            Json::Bool(stored.is_some_and(|s| is_superseded_algorithm(&s.algorithm))),
         ),
         (
             "stored_shape_signature",
