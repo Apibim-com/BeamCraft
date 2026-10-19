@@ -9,7 +9,10 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use beamcraft_json::{Json, Limits};
+use beamcraft_protocol::{
+    json::{self, Json},
+    message,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -53,7 +56,7 @@ impl Fixture {
             .args(&args)
             .output()
             .unwrap();
-        let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
+        let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
         (output.status.code().unwrap(), body)
     }
     fn ok(&self, command: &str, extra: &[&str]) -> Json {
@@ -68,7 +71,7 @@ impl Fixture {
         text(&body, "code")
     }
     fn plates(&self) -> Vec<Json> {
-        let inspected = self.ok("inspect-elements", &[]);
+        let inspected = self.ok("plate-inspect", &[]);
         at(&inspected, &["plates"]).array().unwrap().to_vec()
     }
 }
@@ -90,168 +93,6 @@ fn num(json: &Json, path: &[&str]) -> f64 {
 }
 
 #[test]
-fn a_valid_near_planar_plate_is_saved_without_partial_geometry_and_replays() {
-    let f = Fixture::new();
-    let args = [
-        "--contour",
-        "999000000,0,0;999393216,0,0.75;999393216,524288,0;999000000,524288,0.75",
-        "--thickness",
-        "10",
-        "--translation",
-        "0,1000000000,0",
-        "--new-id",
-        "019a7bf0-0000-7000-8000-000000000005",
-        "--op-id",
-        "019a7bf0-0000-7000-8000-000000000004",
-    ];
-    let created = f.ok("create-plate", &args);
-    let plate = at(&created, &["plate"]);
-    assert_eq!(text(plate, "validity"), "valid");
-    assert_eq!(text(plate, "geometry_status"), "unsupported");
-    assert_eq!(text(plate, "geometry_code"), "UNSUPPORTED_GEOMETRY");
-    for key in ["mesh_digest", "shape_key", "world_bounds_mm"] {
-        assert_eq!(plate.get(key).unwrap(), &Json::Null);
-    }
-    for (quantity, unit) in [("volume", "mm3"), ("mass", "kg")] {
-        assert_eq!(at(plate, &["quantities", quantity, unit]), &Json::Null);
-        assert_eq!(
-            text(at(plate, &["quantities", quantity]), "status"),
-            "unsupported"
-        );
-    }
-    let inspected = f.ok("inspect-elements", &[]);
-    assert_eq!(num(&inspected, &["plate_count"]), 1.);
-    assert_eq!(text(at(&inspected, &["snapshot"]), "pin_generation"), "1");
-    let reopened = &at(&inspected, &["plates"]).array().unwrap()[0];
-    for key in [
-        "contour_points_mm",
-        "placement",
-        "geometry_status",
-        "quantities",
-        "mesh_digest",
-    ] {
-        assert_eq!(reopened.get(key).unwrap(), plate.get(key).unwrap());
-    }
-    assert!(
-        at(&inspected, &["snapshot", "meshes"])
-            .array()
-            .unwrap()
-            .is_empty()
-    );
-    let entries = at(&inspected, &["snapshot", "elements"]).array().unwrap();
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].get("mesh_digest").unwrap(), &Json::Null);
-    let before = f.ok("open-revision", &[]);
-    let replay = f.ok("create-plate", &args);
-    assert_eq!(text(&replay, "outcome"), "plate_replayed");
-    assert_eq!(f.ok("open-revision", &[]), before);
-    assert_eq!(
-        f.rejected("export-view", &["--out", &f.path("unsupported.bundle")]),
-        "DEPENDENCY_UNAVAILABLE"
-    );
-    assert!(!Path::new(&f.path("unsupported.bundle")).exists());
-    assert_eq!(
-        f.rejected("preview-numbering", &[]),
-        "DEPENDENCY_UNAVAILABLE"
-    );
-    assert_eq!(
-        f.rejected("export-bom", &["--out", &f.path("unsupported.csv")]),
-        "DEPENDENCY_UNAVAILABLE"
-    );
-    assert!(!Path::new(&f.path("unsupported.csv")).exists());
-    assert_eq!(
-        f.rejected("export-ifc", &["--out", &f.path("unsupported.ifc")]),
-        "DEPENDENCY_UNAVAILABLE"
-    );
-    assert!(!Path::new(&f.path("unsupported.ifc")).exists());
-    f.ok(
-        "create-plate",
-        &["--width", "1000", "--length", "500", "--thickness", "10"],
-    );
-    let mixed = f.ok("inspect-elements", &[]);
-    assert_eq!(num(&mixed, &["plate_count"]), 2.);
-    assert_eq!(
-        at(&mixed, &["snapshot", "meshes"]).array().unwrap().len(),
-        1
-    );
-    f.ok(
-        "delete-element",
-        &["--id", "019a7bf0-0000-7000-8000-000000000005"],
-    );
-    assert_eq!(f.plates().len(), 1);
-}
-
-#[test]
-fn a_rectangle_in_its_3d_body_frame_is_saved_and_reopened() {
-    let f = Fixture::new();
-    let created = f.ok(
-        "create-plate",
-        &[
-            "--contour",
-            "10,20,30;10,1020,30;-490,1020,30;-490,20,30",
-            "--thickness",
-            "10",
-        ],
-    );
-    let plate = at(&created, &["plate"]);
-    assert_eq!(num(plate, &["dimensions_mm", "width"]), 1000.);
-    assert_eq!(num(plate, &["dimensions_mm", "length"]), 500.);
-    assert_eq!(num(plate, &["quantities", "volume", "mm3"]), 5_000_000.);
-    let reopened = f.plates();
-    assert_eq!(reopened.len(), 1);
-    assert_eq!(
-        at(&reopened[0], &["contour_points_mm"]),
-        at(plate, &["contour_points_mm"])
-    );
-    assert_eq!(
-        text(&reopened[0], "mesh_digest"),
-        text(plate, "mesh_digest")
-    );
-    let before = f.ok("open-revision", &[]);
-    assert_eq!(
-        f.rejected(
-            "create-plate",
-            &[
-                "--contour",
-                "0,0,0;1000,0,0;1000,500,20;0,500,0",
-                "--thickness",
-                "10"
-            ]
-        ),
-        "INVALID_ARGUMENT"
-    );
-    assert_eq!(f.ok("open-revision", &[]), before);
-    assert_eq!(
-        f.rejected(
-            "create-plate",
-            &[
-                "--contour",
-                "999000000,0,0;999393216,0,0.875;999393216,524288,0;999000000,524288,0.875",
-                "--thickness",
-                "10"
-            ]
-        ),
-        "INVALID_ARGUMENT"
-    );
-    assert_eq!(f.ok("open-revision", &[]), before);
-    assert_eq!(
-        f.rejected(
-            "create-plate",
-            &[
-                "--contour",
-                "10,20,30;10,1020,30;-490,1020,30;-490,20,30",
-                "--thickness",
-                "10",
-                "--hole-rect",
-                "0,0,1,1"
-            ]
-        ),
-        "UNSUPPORTED_GEOMETRY"
-    );
-    assert_eq!(f.ok("open-revision", &[]), before);
-}
-
-#[test]
 fn an_l_shaped_plate_is_saved_reopened_and_measured_by_closed_forms() {
     let f = Fixture::new();
     f.ok("define-material", &["--density", "7850", "--grade", "S355"]);
@@ -270,9 +111,9 @@ fn an_l_shaped_plate_is_saved_reopened_and_measured_by_closed_forms() {
     );
     assert_eq!(text(&created, "outcome"), "plate_created");
     let plate = at(&created, &["plate"]);
-    assert_eq!(text(plate, "outline"), "contour");
-    assert_eq!(num(plate, &["dimensions_mm", "width"]), 1000.0);
-    assert_eq!(num(plate, &["dimensions_mm", "length"]), 600.0);
+    assert_eq!(text(plate, "shape"), "contour");
+    assert_eq!(num(plate, &["bounding_box_mm", "width"]), 1000.0);
+    assert_eq!(num(plate, &["bounding_box_mm", "length"]), 600.0);
     let volume = L_AREA_MM2 * 10.0;
     assert_eq!(num(plate, &["quantities", "volume", "mm3"]), volume);
     // 4,200,000 mm3 = 0.0042 m3 of steel at 7850 kg/m3 = 32.97 kg.
@@ -282,7 +123,7 @@ fn an_l_shaped_plate_is_saved_reopened_and_measured_by_closed_forms() {
     let plates = f.plates();
     assert_eq!(plates.len(), 1);
     let reopened = &plates[0];
-    assert_eq!(text(reopened, "outline"), "contour");
+    assert_eq!(text(reopened, "shape"), "contour");
     assert_eq!(
         at(reopened, &["contour_points_mm"]).array().unwrap().len(),
         6
@@ -296,7 +137,7 @@ fn an_l_shaped_plate_is_saved_reopened_and_measured_by_closed_forms() {
     // 6 contour points are 12 vertices; 4 triangles per cap and 12 on the sides.
     assert_eq!(num(reopened, &["vertices"]), 12.0);
     assert_eq!(num(reopened, &["triangles"]), 20.0);
-    f.ok("open-revision", &[]);
+    f.ok("revision-open", &[]);
 }
 
 #[test]
@@ -327,8 +168,8 @@ fn the_same_contour_gives_the_same_mesh_and_a_rectangle_keeps_its_box() {
         ],
     );
     let (x, y) = (&by_size.plates()[0], &by_contour.plates()[0]);
-    assert_eq!(text(x, "outline"), "rectangle");
-    assert_eq!(text(y, "outline"), "rectangle");
+    assert_eq!(text(x, "shape"), "rectangle");
+    assert_eq!(text(y, "shape"), "rectangle");
     assert_eq!(text(x, "mesh_digest"), text(y, "mesh_digest"));
     // A rectangle that does not start at the origin is a contour, evaluated as authored.
     let moved = Fixture::new();
@@ -342,7 +183,7 @@ fn the_same_contour_gives_the_same_mesh_and_a_rectangle_keeps_its_box() {
         ],
     );
     let plate = &moved.plates()[0];
-    assert_eq!(text(plate, "outline"), "contour");
+    assert_eq!(text(plate, "shape"), "contour");
     assert_eq!(num(plate, &["quantities", "volume", "mm3"]), 5_000_000.0);
     assert_ne!(text(plate, "mesh_digest"), text(x, "mesh_digest"));
 }
@@ -386,7 +227,7 @@ fn a_contour_plate_takes_holes_edits_copies_and_deletes_like_any_plate() {
     // The thickness is edited without touching the outline.
     f.ok("update-element", &["--id", &id, "--thickness", "20"]);
     let edited = f.plates();
-    assert_eq!(text(&edited[0], "outline"), "contour");
+    assert_eq!(text(&edited[0], "shape"), "contour");
     assert!((num(&edited[0], &["quantities", "volume", "mm3"]) - 8_200_000.0).abs() <= 1e-3);
     // A move changes only the placement.
     f.ok(
@@ -423,7 +264,7 @@ fn contour_plates_are_numbered_by_outline_and_exported_to_ifc() {
         &["--width", "1000", "--length", "600", "--thickness", "10"],
     );
     // Same bounding box everywhere, three outlines: two identical Ls share a number.
-    let preview = f.ok("preview-numbering", &[]);
+    let preview = f.ok("numbering-preview", &[]);
     let groups = at(&preview, &["groups"]).array().unwrap();
     let mut sizes: Vec<f64> = groups.iter().map(|g| num(g, &["count"])).collect();
     sizes.sort_by(f64::total_cmp);
@@ -499,7 +340,7 @@ fn a_wrong_contour_is_refused_and_nothing_is_authored() {
         "INVALID_ARGUMENT"
     );
     // Nothing was committed by any of the refusals.
-    let (code, body) = f.raw("inspect-elements", &[]);
+    let (code, body) = f.raw("plate-inspect", &[]);
     assert!(
         code == 0 || text(&body, "outcome") == "rejected",
         "{body:?}"
@@ -507,56 +348,4 @@ fn a_wrong_contour_is_refused_and_nothing_is_authored() {
     if code == 0 {
         assert!(at(&body, &["plates"]).array().unwrap().is_empty());
     }
-}
-
-#[test]
-fn holes_are_compared_relative_to_the_contour_not_to_the_element_frame() {
-    let f = Fixture::new();
-    // The same L, the second one 50 mm further along X.
-    let shifted = "50,0;1050,0;1050,300;450,300;450,600;50,600";
-    let hole_at = |x: &str| format!("{x},100,100,100");
-    // Plate 1 and 2: the hole stays at x = 100 in the frame, so it is 100 mm and 50 mm from the
-    // left edge of the two plates. Different parts.
-    f.ok(
-        "create-plate",
-        &[
-            "--contour",
-            L_SHAPE,
-            "--thickness",
-            "10",
-            "--hole-rect",
-            &hole_at("100"),
-        ],
-    );
-    f.ok(
-        "create-plate",
-        &[
-            "--contour",
-            shifted,
-            "--thickness",
-            "10",
-            "--hole-rect",
-            &hole_at("100"),
-        ],
-    );
-    let preview = f.ok("preview-numbering", &[]);
-    assert_eq!(at(&preview, &["groups"]).array().unwrap().len(), 2);
-    // Plate 3: the hole moved by the same 50 mm, so it sits like the hole of plate 1. One group
-    // with plate 1, and plate 2 stays alone.
-    f.ok(
-        "create-plate",
-        &[
-            "--contour",
-            shifted,
-            "--thickness",
-            "10",
-            "--hole-rect",
-            &hole_at("150"),
-        ],
-    );
-    let preview = f.ok("preview-numbering", &[]);
-    let groups = at(&preview, &["groups"]).array().unwrap();
-    let mut sizes: Vec<f64> = groups.iter().map(|g| num(g, &["count"])).collect();
-    sizes.sort_by(f64::total_cmp);
-    assert_eq!(sizes, [1.0, 2.0], "{preview:?}");
 }

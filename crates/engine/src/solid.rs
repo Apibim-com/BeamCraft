@@ -14,7 +14,7 @@ use beamcraft_kernel::PlateResult;
 use beamcraft_kernel::ops::OpResult;
 use beamcraft_kernel::profile::Extrusion;
 use beamcraft_kernel::section::SectionResult;
-use beamcraft_model::digest::ContentDigest;
+use beamcraft_model::digest::{ContentDigest, Sha256};
 
 /// An evaluated, certified body mesh in element-local millimetres.
 #[derive(Debug, Clone, PartialEq)]
