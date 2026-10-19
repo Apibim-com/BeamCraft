@@ -2,6 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! `beamcraft-ui --store ROOT [--cli PATH]` opens the window on the published revision.
+//! `beamcraft-ui --workspace DIR [--cli PATH]` opens it on a personal workspace (a store made by
+//! `beamcraft workspace-create`), which also enables undo and redo.
 //! `beamcraft-ui --store ROOT --metrics FRAMES [--width W] [--height H] [--cli PATH]` renders the
 //! same snapshot offscreen, headless, and prints baseline GPU metrics as one JSON object.
 //! `beamcraft-ui --synthetic COUNT --metrics FRAMES [--width W] [--height H]` measures the engine
@@ -20,7 +22,7 @@ use std::process::ExitCode;
 
 fn usage() -> Error {
     Error::Input(
-        "usage: beamcraft-ui --store ROOT [--cli PATH] [--metrics FRAMES [--width W] [--height H]] | --synthetic COUNT --metrics FRAMES",
+        "usage: beamcraft-ui (--store ROOT | --workspace DIR) [--cli PATH] [--metrics FRAMES [--width W] [--height H]] | --synthetic COUNT --metrics FRAMES",
     )
 }
 
@@ -40,7 +42,13 @@ fn options() -> Result<BTreeMap<String, String>, Error> {
         };
         let known = matches!(
             key.as_str(),
-            "--store" | "--cli" | "--metrics" | "--width" | "--height" | "--synthetic"
+            "--store"
+                | "--workspace"
+                | "--cli"
+                | "--metrics"
+                | "--width"
+                | "--height"
+                | "--synthetic"
         );
         if !known || value.len() > 4096 || map.insert(key.clone(), value.clone()).is_some() {
             return Err(usage());
@@ -79,7 +87,13 @@ fn run() -> Result<Option<String>, Error> {
             1,
         )));
     }
-    let store = PathBuf::from(map.get("--store").ok_or_else(usage)?);
+    // A workspace is a store of its own: the window shows and edits it, and undo and redo act on it.
+    let workspace = map.get("--workspace").map(PathBuf::from);
+    let store = match (map.get("--store"), &workspace) {
+        (Some(store), None) => PathBuf::from(store),
+        (None, Some(dir)) => dir.clone(),
+        _ => return Err(usage()),
+    };
     let cli = match map.get("--cli") {
         Some(path) => PathBuf::from(path),
         None => source::default_cli()?,
@@ -109,7 +123,11 @@ fn run() -> Result<Option<String>, Error> {
         },
         ..Default::default()
     };
-    let source = Source { store, cli };
+    let source = Source {
+        store,
+        cli,
+        workspace,
+    };
     // Window-system libraries are loaded at run time by third-party crates, which panic when one
     // is missing; report that as an error instead of crashing.
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
