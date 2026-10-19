@@ -21,6 +21,7 @@
 pub mod app;
 pub mod camera;
 pub mod command;
+pub mod edit;
 pub mod metrics;
 pub mod render;
 pub mod scene;

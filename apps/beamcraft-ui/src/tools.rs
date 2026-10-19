@@ -298,12 +298,12 @@ pub struct Created {
     pub replayed: bool,
 }
 
-fn decode(stdout: &[u8]) -> Result<Json, ToolError> {
+pub(crate) fn decode(stdout: &[u8]) -> Result<Json, ToolError> {
     json::decode(stdout, &message::read_limits())
         .map_err(|_| ToolError::local("UNREADABLE_REPLY", "the CLI reply is not valid JSON"))
 }
 
-fn text(json: &Json, key: &str) -> Option<String> {
+pub(crate) fn text(json: &Json, key: &str) -> Option<String> {
     json.get(key)
         .ok()
         .and_then(|v| v.string().ok())
@@ -311,7 +311,7 @@ fn text(json: &Json, key: &str) -> Option<String> {
 }
 
 /// The refusal in a reply, if the reply is one.
-fn rejection(reply: &Json, exit_code: Option<i32>) -> Option<ToolError> {
+pub(crate) fn rejection(reply: &Json, exit_code: Option<i32>) -> Option<ToolError> {
     let outcome = text(reply, "outcome");
     let rejected = matches!(outcome.as_deref(), Some("rejected" | "outcome_unknown"));
     if !rejected && exit_code == Some(0) {
