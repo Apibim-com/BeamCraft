@@ -6,6 +6,7 @@
 //! application layer.
 
 pub mod assembly;
+pub mod bolt;
 pub mod bom;
 pub mod changeset;
 pub mod coordinator;

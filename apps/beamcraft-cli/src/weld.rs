@@ -159,6 +159,16 @@ fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, PlateErro
         {
             Some("plate" | "beam" | "column") => PartKind::Part,
             Some("assembly") => PartKind::Assembly,
+            // A connection with bolt properties is an A05 bolt group, never a weld; a
+            // connection with neither property set is refused by the validator before this walk.
+            Some("connection")
+                if prim
+                    .properties
+                    .iter()
+                    .any(|v| v.name.starts_with("steel:bolt:")) =>
+            {
+                PartKind::Other
+            }
             Some("connection") => {
                 model.welds.push(weld_of(prim, id, &by_path)?);
                 PartKind::Other
