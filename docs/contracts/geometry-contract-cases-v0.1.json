@@ -1,7 +1,7 @@
 {
   "artifact_version": 1,
   "contract_version": "0.1.0",
-  "status": "frozen 0.1.0 (2026-10-16); nothing implemented",
+  "status": "frozen 0.1.0 (2026-10-16); amendment A-2 applied 2026-10-19 (cases F06-NEG-08 and F06-NEG-39 marked superseded); nothing implemented",
   "role": "original logical acceptance descriptions for the F06 geometry contract; not an engine, mesh or USD fixture",
   "f04_contract_version": "0.1.0",
   "f05_protocol_version": "0.1.0",
@@ -3008,6 +3008,11 @@
         "state_changed": false
       },
       "derivation": "The first scope supports only the rectangle section; a well-formed shape outside the scope is UNSUPPORTED_GEOMETRY, not INVALID_ARGUMENT.",
+      "superseded": {
+        "by": "F06 amendment A-1 (owner, 2026-10-18)",
+        "decided": "2026-10-19 (A-2, decision D-6)",
+        "note": "Round and other A07.1 sections are supported as polygons, so a circle profile is no longer unsupported. The case is kept for history and is not an acceptance target; a true curved surface stays unsupported with a typed result."
+      },
       "assumes": [
         "P-2 (owner decision recorded 2026-10-15)"
       ]
@@ -4964,6 +4969,11 @@
         "partial_geometry_returned": false
       },
       "derivation": "Contour validity succeeds. Five points cannot meet the exactly-four-point rectangle support rule. No shape key or quantities are returned; model input remains valid.",
+      "superseded": {
+        "by": "A02.1 (any simple polygon in the plane z = 0 is supported)",
+        "decided": "2026-10-19 (A-2, decision D-6)",
+        "note": "A valid simple polygon in z = 0, including this pentagon, is evaluated and is no longer GEO_UNSUPPORTED_CONTOUR. GEO_UNSUPPORTED_CONTOUR remains for a valid contour outside that plane. The case is kept for history and is not an acceptance target."
+      },
       "f04_refs": [
         "F04-POS-20"
       ]
