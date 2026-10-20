@@ -1,0 +1,496 @@
+// SPDX-License-Identifier: MPL-2.0
+// SPDX-FileCopyrightText: 2026 Apibim
+// Contributor-original synthetic plates and members, MPL-2.0.
+
+//! V06.1 end to end: a property edit made through the properties editor's command building and
+//! reply parsing, run against the real `beamcraft` binary, saves exactly what the same
+//! `update-element` typed by hand saves; a stale reading is detected against the head the
+//! window reads and is never edited; an engine refusal reaches the panel with the CLI's code and
+//! publishes nothing; Publish is the CLI's `workspace-publish`, and its refusals are shown.
+//! Without the CLI binary next to this package's binary the tests are skipped and say so
+//! (`cargo test --workspace` builds it).
+
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
+
+use beamcraft_protocol::{
+    json::{self, Json},
+    message,
+};
+use beamcraft_ui::command;
+use beamcraft_ui::props::{Properties, State};
+use beamcraft_ui::publish::{Phase, Publisher};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT: AtomicU64 = AtomicU64::new(0);
+
+const PLATE: &str = "019a7bf0-0000-7000-8000-00000000b001";
+const BEAM: &str = "019a7bf0-0000-7000-8000-00000000b002";
+
+fn cli() -> Option<PathBuf> {
+    let ui = Path::new(env!("CARGO_BIN_EXE_beamcraft-ui"));
+    let cli = ui
+        .parent()?
+        .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+    if cli.is_file() {
+        Some(cli)
+    } else {
+        eprintln!("SKIP properties test: build beamcraft-cli first (cargo test --workspace does)");
+        None
+    }
+}
+
+struct Stores {
+    root: PathBuf,
+}
+
+impl Stores {
+    fn new() -> Self {
+        let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
+            .join("v06-1-tests")
+            .join(format!(
+                "run-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("ui")).unwrap();
+        std::fs::create_dir_all(root.join("hand")).unwrap();
+        Self { root }
+    }
+    fn ui(&self) -> PathBuf {
+        self.root.join("ui")
+    }
+    fn hand(&self) -> PathBuf {
+        self.root.join("hand")
+    }
+    fn workspace(&self) -> PathBuf {
+        self.root.join("workspace")
+    }
+}
+
+impl Drop for Stores {
+    fn drop(&mut self) {
+        assert!(self.root.is_absolute() && self.root.file_name().is_some());
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+fn by_hand(cli: &Path, args: &[&str]) -> (i32, Json) {
+    let output = Command::new(cli).args(args).output().unwrap();
+    let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
+    (output.status.code().unwrap(), body)
+}
+
+fn ok(cli: &Path, args: &[&str]) -> Json {
+    let (code, body) = by_hand(cli, args);
+    assert_eq!(code, 0, "{args:?}: {body:?}");
+    body
+}
+
+fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
+    path.iter().fold(json, |j, k| j.get(k).unwrap())
+}
+
+fn text(json: &Json, path: &[&str]) -> String {
+    at(json, path).string().unwrap().to_owned()
+}
+
+fn s(path: &Path) -> &str {
+    path.to_str().unwrap()
+}
+
+/// A plate and a beam with fixed ids, and the digests of a steel and of a heavier material.
+struct Fixture {
+    steel: String,
+    heavy: String,
+}
+
+fn fixture(cli: &Path, store: &Path) -> Fixture {
+    let store = s(store);
+    let steel = text(
+        &ok(
+            cli,
+            &[
+                "define-material",
+                "--store",
+                store,
+                "--density",
+                "7850",
+                "--grade",
+                "S355",
+            ],
+        ),
+        &["definition", "digest"],
+    );
+    let heavy = text(
+        &ok(
+            cli,
+            &[
+                "define-material",
+                "--store",
+                store,
+                "--density",
+                "9000",
+                "--grade",
+                "Heavy",
+            ],
+        ),
+        &["definition", "digest"],
+    );
+    let profile = text(
+        &ok(
+            cli,
+            &[
+                "define-profile",
+                "--store",
+                store,
+                "--width",
+                "200",
+                "--height",
+                "300",
+            ],
+        ),
+        &["definition", "digest"],
+    );
+    ok(
+        cli,
+        &[
+            "create-plate",
+            "--store",
+            store,
+            "--width",
+            "1000",
+            "--length",
+            "500",
+            "--thickness",
+            "10",
+            "--name",
+            "P1",
+            "--material-digest",
+            &steel,
+            "--new-id",
+            PLATE,
+        ],
+    );
+    ok(
+        cli,
+        &[
+            "create-member",
+            "--store",
+            store,
+            "--kind",
+            "beam",
+            "--start",
+            "0,0,0",
+            "--end",
+            "3000,0,0",
+            "--profile-digest",
+            &profile,
+            "--name",
+            "B1",
+            "--new-id",
+            BEAM,
+        ],
+    );
+    Fixture { steel, heavy }
+}
+
+/// One element as `plate-inspect` reports it: every property, quantity and digest of it.
+fn element(cli: &Path, store: &Path, id: &str) -> String {
+    let reply = ok(cli, &["plate-inspect", "--store", s(store)]);
+    for key in ["plates", "members"] {
+        for e in at(&reply, &[key]).array().unwrap() {
+            if text(e, &["element_id"]) == id {
+                return format!("{e:?}");
+            }
+        }
+    }
+    panic!("element {id} not found");
+}
+
+fn head(cli: &Path, store: &Path) -> String {
+    text(
+        &ok(cli, &["revision-open", "--store", s(store)]),
+        &["revision_id"],
+    )
+}
+
+/// What the panel does: read the details, fill the form, preview, commit.
+fn edit_properties(
+    cli: &Path,
+    store: &Path,
+    id: &str,
+    fill: impl FnOnce(&mut Properties),
+) -> (
+    Result<beamcraft_ui::edit::Edited, beamcraft_ui::tools::ToolError>,
+    Vec<String>,
+) {
+    let mut props = Properties::default();
+    props.load(id, command::element_details(cli, store, id));
+    props.observe_head(command::definitions(cli, store).unwrap().head);
+    assert_eq!(props.state(), Some(State::Current));
+    fill(&mut props);
+    props.preview(store).unwrap();
+    let edit = props.begin_commit(store).unwrap();
+    let result = command::commit_property(cli, &edit);
+    props.finish();
+    (result, edit.args)
+}
+
+#[test]
+fn a_property_edit_saves_exactly_what_update_element_by_hand_saves() {
+    let Some(cli) = cli() else { return };
+    let stores = Stores::new();
+    let ui = fixture(&cli, &stores.ui());
+    let hand = fixture(&cli, &stores.hand());
+    assert_eq!((&ui.steel, &ui.heavy), (&hand.steel, &hand.heavy));
+    assert_eq!(
+        element(&cli, &stores.ui(), PLATE),
+        element(&cli, &stores.hand(), PLATE)
+    );
+
+    // A plate: every editable property at once.
+    let (result, args) = edit_properties(&cli, &stores.ui(), PLATE, |p| {
+        p.form.name = "Gusset".into();
+        p.form.material = Some(ui.heavy.clone());
+        p.form.thickness = "12.5".into();
+        p.form.translation = ["100".into(), "-20.5".into(), "300".into()];
+    });
+    let edited = result.unwrap();
+    assert_eq!(edited.element_id.as_deref(), Some(PLATE));
+    // The same command typed by hand, on the other store.
+    let mut by_hand_args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let hand_store = stores.hand();
+    *by_hand_args.get_mut(2).unwrap() = s(&hand_store);
+    let typed = ok(&cli, &by_hand_args);
+    assert_eq!(text(&typed, &["outcome"]), "element_updated");
+    assert_eq!(
+        element(&cli, &stores.ui(), PLATE),
+        element(&cli, &stores.hand(), PLATE)
+    );
+    assert_eq!(
+        edited.sequence.to_string(),
+        text(&typed, &["revision", "sequence"])
+    );
+    // The new values are the engine's, not the form's: read back.
+    let details = command::element_details(&cli, &stores.ui(), PLATE).unwrap();
+    assert_eq!(details.name, "Gusset");
+    assert_eq!(details.thickness_mm, Some(12.5));
+    assert_eq!(details.translation_mm, [100.0, -20.5, 300.0]);
+    assert_eq!(details.material.as_deref(), Some(ui.heavy.as_str()));
+    assert_eq!(details.quantities.mass_status.as_deref(), Some("current"));
+
+    // A member: name, material (none to a definition) and position.
+    let (result, args) = edit_properties(&cli, &stores.ui(), BEAM, |p| {
+        p.form.name = "Beam 7".into();
+        p.form.material = Some(ui.steel.clone());
+        p.form.translation = ["0".into(), "250".into(), "0".into()];
+    });
+    result.unwrap();
+    let mut by_hand_args: Vec<&str> = args.iter().map(String::as_str).collect();
+    *by_hand_args.get_mut(2).unwrap() = s(&hand_store);
+    ok(&cli, &by_hand_args);
+    assert_eq!(
+        element(&cli, &stores.ui(), BEAM),
+        element(&cli, &stores.hand(), BEAM)
+    );
+
+    // Clearing the material is the engine's explicit `none`.
+    let (result, args) = edit_properties(&cli, &stores.ui(), PLATE, |p| p.form.material = None);
+    result.unwrap();
+    assert!(args.windows(2).any(|w| w == ["--material-digest", "none"]));
+    let mut by_hand_args: Vec<&str> = args.iter().map(String::as_str).collect();
+    *by_hand_args.get_mut(2).unwrap() = s(&hand_store);
+    ok(&cli, &by_hand_args);
+    assert_eq!(
+        element(&cli, &stores.ui(), PLATE),
+        element(&cli, &stores.hand(), PLATE)
+    );
+}
+
+#[test]
+fn a_reading_older_than_the_head_is_stale_and_is_never_edited() {
+    let Some(cli) = cli() else { return };
+    let stores = Stores::new();
+    fixture(&cli, &stores.ui());
+    let ui = stores.ui();
+    let mut props = Properties::default();
+    props.load(PLATE, command::element_details(&cli, &ui, PLATE));
+    let listed = command::definitions(&cli, &ui).unwrap().head.unwrap();
+    // The reading and the listing name the same revision.
+    let read = props.details().unwrap().revision.clone();
+    assert_eq!(read, listed);
+    props.observe_head(Some(listed));
+    assert_eq!(props.state(), Some(State::Current));
+    props.form.name = "Late".into();
+    props.preview(&ui).unwrap();
+
+    // Someone else edits another element: the head moves, the reading is stale.
+    ok(
+        &cli,
+        &[
+            "update-element",
+            "--store",
+            s(&ui),
+            "--id",
+            BEAM,
+            "--name",
+            "Elsewhere",
+        ],
+    );
+    props.observe_head(command::definitions(&cli, &ui).unwrap().head);
+    let Some(State::Stale { read, head: newest }) = props.state() else {
+        panic!("expected stale");
+    };
+    assert!(newest.sequence > read.sequence);
+    assert!(
+        !props.can_commit(&ui),
+        "a staged edit is not committed on a stale reading"
+    );
+    assert!(props.preview(&ui).is_err());
+    let before = head(&cli, &ui);
+
+    // Re-reading makes it current again.
+    props.load(PLATE, command::element_details(&cli, &ui, PLATE));
+    assert_eq!(props.state(), Some(State::Current));
+    assert_eq!(head(&cli, &ui), before, "reading publishes nothing");
+}
+
+#[test]
+fn an_unreadable_element_is_unknown_and_an_engine_refusal_publishes_nothing() {
+    let Some(cli) = cli() else { return };
+    let stores = Stores::new();
+    fixture(&cli, &stores.ui());
+    let ui = stores.ui();
+    // An id the revision does not hold, or a store that is not readable, is unknown.
+    let missing = "019a7bf0-0000-7000-8000-00000000b0ff";
+    let mut props = Properties::default();
+    props.load(missing, command::element_details(&cli, &ui, missing));
+    assert!(matches!(props.state(), Some(State::Unknown { .. })));
+    assert!(props.details().is_none());
+    assert!(props.prepare(&ui).is_err());
+    let nowhere = stores.root.join("nowhere");
+    let mut props = Properties::default();
+    props.load(PLATE, command::element_details(&cli, &nowhere, PLATE));
+    assert!(matches!(props.state(), Some(State::Unknown { .. })));
+
+    // A material the store does not define passes the window's checks and is the engine's refusal.
+    let before = head(&cli, &ui);
+    let unknown_material = "0".repeat(64);
+    let (result, args) = edit_properties(&cli, &ui, PLATE, |p| {
+        p.form.material = Some(unknown_material.clone());
+    });
+    let error = result.unwrap_err();
+    let mut by_hand_args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let hand = stores.hand();
+    fixture(&cli, &hand);
+    *by_hand_args.get_mut(2).unwrap() = s(&hand);
+    let (code, body) = by_hand(&cli, &by_hand_args);
+    assert_ne!(code, 0);
+    assert_eq!(error.code, text(&body, &["code"]));
+    assert_eq!(error.message, text(&body, &["message"]));
+    assert_eq!(head(&cli, &ui), before, "a refused edit publishes nothing");
+}
+
+#[test]
+fn publish_is_workspace_publish_and_its_refusals_are_shown() {
+    let Some(cli) = cli() else { return };
+    let stores = Stores::new();
+    let published = stores.ui();
+    fixture(&cli, &published);
+    let workspace = stores.workspace();
+    ok(
+        &cli,
+        &[
+            "workspace-create",
+            "--store",
+            s(&published),
+            "--workspace-dir",
+            s(&workspace),
+        ],
+    );
+    let mut publisher = Publisher::new(Some(published.clone()), Some(workspace.clone()));
+    let status = command::workspace_status(&cli, &published, &workspace).unwrap();
+    assert_eq!(status.unsent_revisions, 0);
+
+    // Nothing to publish is the engine's refusal, shown; the dialog ran the command once.
+    publisher.request().unwrap();
+    let args = publisher.confirm().unwrap();
+    let refused = command::publish(&cli, &args).unwrap_err();
+    assert_eq!(refused.code, "INVALID_ARGUMENT");
+    publisher.finish(Err(refused));
+    assert!(
+        publisher
+            .note
+            .clone()
+            .unwrap()
+            .unwrap_err()
+            .contains("INVALID_ARGUMENT")
+    );
+    assert_eq!(publisher.phase(), Phase::Idle);
+
+    // An edit made in the workspace through the properties editor, then published.
+    let published_before = element(&cli, &published, PLATE);
+    let (result, _) = edit_properties(&cli, &workspace, PLATE, |p| p.form.name = "Edited".into());
+    result.unwrap();
+    assert_eq!(element(&cli, &published, PLATE), published_before);
+    let status = command::workspace_status(&cli, &published, &workspace).unwrap();
+    assert_eq!((status.unsent_revisions, status.base_is_current), (1, true));
+    publisher.request().unwrap();
+    let args = publisher.confirm().unwrap();
+    let done = command::publish(&cli, &args).unwrap();
+    assert!(!done.replayed);
+    publisher.finish(Ok(done.clone()));
+    assert!(publisher.note.clone().unwrap().is_ok());
+    assert_eq!(
+        element(&cli, &published, PLATE),
+        element(&cli, &workspace, PLATE),
+        "the published element is the workspace's"
+    );
+    let published_head = ok(&cli, &["revision-open", "--store", s(&published)]);
+    assert_eq!(
+        text(&published_head, &["revision_id"]),
+        done.revision.revision_id
+    );
+
+    // The published head moves behind the workspace's back: a second publish is refused and only
+    // displayed; nothing is merged and the published head stays where it was.
+    let (result, _) = edit_properties(&cli, &workspace, BEAM, |p| p.form.name = "Mine".into());
+    result.unwrap();
+    ok(
+        &cli,
+        &[
+            "update-element",
+            "--store",
+            s(&published),
+            "--id",
+            BEAM,
+            "--name",
+            "Theirs",
+        ],
+    );
+    let status = command::workspace_status(&cli, &published, &workspace).unwrap();
+    assert!(!status.base_is_current);
+    let before = head(&cli, &published);
+    publisher.request().unwrap();
+    let args = publisher.confirm().unwrap();
+    let refused = command::publish(&cli, &args).unwrap_err();
+    assert_eq!(refused.code, "BASE_REVISION_MISMATCH");
+    publisher.finish(Err(refused));
+    assert!(
+        publisher
+            .note
+            .clone()
+            .unwrap()
+            .unwrap_err()
+            .contains("BASE_REVISION_MISMATCH")
+    );
+    assert_eq!(head(&cli, &published), before);
+}

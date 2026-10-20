@@ -6,9 +6,11 @@
 //! made here. Output is read with a cap and the process is killed after a deadline.
 
 use crate::edit::{
-    Edit, Edited, ElementInfo, Ray, inspect_args, parse_edited, parse_element_info, parse_pick,
-    pick_args,
+    Edit, EditKind, Edited, ElementInfo, Ray, inspect_args, parse_edited, parse_element_info,
+    parse_pick, pick_args,
 };
+use crate::props::{Details, PropertyEdit, parse_details};
+use crate::publish::{Published, Status, parse_published, parse_status, status_args};
 use crate::tools::{
     Created, Definitions, Prepared, ToolError, definitions_args, parse_created, parse_definitions,
 };
@@ -149,12 +151,31 @@ pub struct Selected {
     pub id: String,
     /// Its kind, name and translation as `plate-inspect` reports them.
     pub info: Result<ElementInfo, ToolError>,
+    /// All its reported properties and the revision they were read from.
+    pub details: Result<Details, ToolError>,
+}
+
+impl Selected {
+    /// The selection of `id` from one reading of its details.
+    pub fn from_details(id: String, details: Result<Details, ToolError>) -> Self {
+        Self {
+            id,
+            info: details.clone().map(|d| d.info()),
+            details,
+        }
+    }
 }
 
 /// Looks up one element of the accepted revision.
 pub fn element_info(cli: &Path, store: &Path, id: &str) -> Result<ElementInfo, ToolError> {
     let output = run_capped(cli, &inspect_args(store), DEADLINE, MAX_INSPECT_OUTPUT)?;
     parse_element_info(id, output.code, &output.stdout)
+}
+
+/// Reads the properties of one element of the accepted revision, with the revision they come from.
+pub fn element_details(cli: &Path, store: &Path, id: &str) -> Result<Details, ToolError> {
+    let output = run_capped(cli, &inspect_args(store), DEADLINE, MAX_INSPECT_OUTPUT)?;
+    parse_details(id, output.code, &output.stdout)
 }
 
 /// Picks along `ray` with the engine's `pick` and reads the details of what it hit. `None` is
@@ -164,6 +185,29 @@ pub fn select_at(cli: &Path, store: &Path, ray: &Ray) -> Result<Option<Selected>
     let Some(id) = parse_pick(output.code, &output.stdout)? else {
         return Ok(None);
     };
-    let info = element_info(cli, store, &id);
-    Ok(Some(Selected { id, info }))
+    let details = element_details(cli, store, &id);
+    Ok(Some(Selected::from_details(id, details)))
+}
+
+/// Runs a previewed property edit (`update-element`) and reads its reply.
+pub fn commit_property(cli: &Path, edit: &PropertyEdit) -> Result<Edited, ToolError> {
+    let output = run(cli, &edit.args, DEADLINE)?;
+    // The reply of `update-element` is the one a move reads: outcome `element_updated`.
+    parse_edited(EditKind::Move, output.code, &output.stdout)
+}
+
+/// Runs a confirmed `workspace-publish` and reads its reply.
+pub fn publish(cli: &Path, args: &[String]) -> Result<Published, ToolError> {
+    let output = run(cli, args, DEADLINE)?;
+    parse_published(output.code, &output.stdout)
+}
+
+/// Reads `workspace-status` for a published store and a workspace directory.
+pub fn workspace_status(
+    cli: &Path,
+    published: &Path,
+    workspace: &Path,
+) -> Result<Status, ToolError> {
+    let output = run(cli, &status_args(published, workspace), DEADLINE)?;
+    parse_status(output.code, &output.stdout)
 }
