@@ -46,10 +46,6 @@ use beamcraft_model::id::ElementId;
 /// Version label of the volume algorithm in a [`Quantities`] record.
 pub const VOLUME_ALGORITHM: &str = "kernel-g02-rectangular-plate-volume/1;tolerance-policy-3";
 
-/// Version label of the volume algorithm of a plate with a G05 contour and no hole: the analytic
-/// `net_area * thickness` of the extruded simple polygon.
-pub const CONTOUR_VOLUME_ALGORITHM: &str = "kernel-g05-contour-plate-volume/1;tolerance-policy-3";
-
 /// Version label of the volume algorithm of a plate with through holes: the midpoint of the G06
 /// enclosure of the certified result of the G09 hole operation.
 pub const HOLED_VOLUME_ALGORITHM: &str = "kernel-g09-through-hole-volume/1;tolerance-policy-3";
@@ -250,18 +246,13 @@ impl PlateBody {
         } else if self.hole_count == 0 {
             self.volume_algorithm
         } else {
-            CONTOUR_VOLUME_ALGORITHM
+            HOLED_VOLUME_ALGORITHM
         }
-    }
-
-    /// Whether the outline is the origin rectangle of the G02 box rather than a G05 contour.
-    pub const fn is_origin_rectangle(&self) -> bool {
-        self.result.is_some()
     }
 
     /// Whether the outline is the origin rectangle evaluated as the G02 box rather than an
     /// A02 contour extrusion.
-    pub const fn is_origin_rectangle(&self) -> bool {
+    pub fn is_origin_rectangle(&self) -> bool {
         self.volume_algorithm == VOLUME_ALGORITHM
     }
 
@@ -1257,6 +1248,34 @@ mod tests {
             [400.0, 600.0, 0.0],
             [0.0, 600.0, 0.0],
         ]
+    }
+
+    #[test]
+    fn a_simple_non_convex_contour_is_extruded_with_the_exact_polygon_volume() {
+        let out = create_plate(&command(l_shape(), 10.0), &none).unwrap();
+        // Independent closed form: 420_000 mm2 * 10 mm; the bounding box would say 6_000_000.
+        assert_eq!(out.quantities.volume_mm3, 4_200_000.0);
+        assert_eq!(out.quantities.volume_gross_mm3, 4_200_000.0);
+        assert_eq!(out.quantities.removed_volume_mm3, 0.0);
+        assert_eq!(out.quantities.algorithm, CONTOUR_VOLUME_ALGORITHM);
+        assert_eq!((out.body.width_mm, out.body.length_mm), (1000.0, 600.0));
+        // The mesh is closed: the divergence-theorem volume of the stored triangles agrees.
+        let solid = &out.body.solid;
+        let signed: f64 = solid
+            .triangles()
+            .iter()
+            .map(|t| {
+                let v = |i: u32| solid.vertices()[i as usize];
+                let (a, b, c) = (v(t[0]), v(t[1]), v(t[2]));
+                (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
+                    + a[2] * (b[0] * c[1] - b[1] * c[0]))
+                    / 6.0
+            })
+            .sum();
+        assert!(
+            (signed - 4_200_000.0).abs() <= 1e-6 * 4_200_000.0,
+            "{signed}"
+        );
     }
 
     #[test]

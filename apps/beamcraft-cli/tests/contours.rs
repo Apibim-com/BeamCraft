@@ -229,9 +229,15 @@ fn contour_rejections_use_the_f04_codes_and_publish_nothing() {
     assert_eq!(f.rejected(&["--contour", "0,0;300,0"]), "INVALID_ARGUMENT");
     // Malformed points.
     assert_eq!(f.rejected(&["--contour", "0,0;300"]), "INVALID_ARGUMENT");
-    assert_eq!(f.rejected(&["--contour", "0,0;300,0,x"]), "INVALID_ARGUMENT");
+    assert_eq!(
+        f.rejected(&["--contour", "0,0;300,0,x"]),
+        "INVALID_ARGUMENT"
+    );
     // Out of the coordinate cap.
-    assert_eq!(f.rejected(&["--contour", "2e9,0;1,0;0,1"]), "LIMIT_EXCEEDED");
+    assert_eq!(
+        f.rejected(&["--contour", "2e9,0;1,0;0,1"]),
+        "LIMIT_EXCEEDED"
+    );
     // --outer and --width/--length are two ways of one outline, never both.
     assert_eq!(
         f.rejected(&["--contour", TRIANGLE, "--width", "1000", "--length", "500"]),
