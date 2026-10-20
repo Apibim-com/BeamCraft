@@ -1,5 +1,8 @@
 # F06: geometry and viewport contract, version 0.1.0
 
+Status: **frozen 0.1.0** (2026-10-20). Changes only by a new version; open questions go to the next
+version through the linked issue.
+
 This contract fixes the logical interface between the engine and the geometry kernel, and between
 the engine and any viewport or query consumer: what goes in, what comes out, which numbers are
 bounded, which identifiers are stable and which results may be called current. It describes no
@@ -36,6 +39,20 @@ round hole is a regular polygon (section 2), never an `Approximated` result.
   rule), `subdivisionScheme` and `faceVertexCounts`.
 - [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259.html) for the logical JSON forms and [RFC
   6234](https://www.rfc-editor.org/rfc/rfc6234.html) for SHA-256.
+
+**Units inside are always millimetres.** Whatever units a project shows to its user, metric or
+imperial (inches, feet-and-inches, fractions such as 3/16"), the kernel, the stored model, every
+key, tolerance and quantity work in millimetres, radians, kilograms and cubic metres. Display units
+are a presentation setting of the UI and of reports, never a property of the geometry:
+
+- Input in imperial units is converted once, at the UI or IO edge, with the exact factor
+  1 in = 25.4 mm, to the nearest binary64 millimetre value; nothing downstream sees the original
+  unit.
+- Output is converted at the edge and rounded only for display; the stored value keeps full
+  precision.
+- USD layers keep `metersPerUnit = 0.001`; switching a project between metric and imperial display
+  changes no authored value, no shape key and no quantity.
+- Limits and tolerances (`eps_geom`, the 0.001 mm floor, caps) stay defined in millimetres.
 
 ## 2. Kernel input
 

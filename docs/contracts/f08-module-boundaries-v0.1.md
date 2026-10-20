@@ -1,6 +1,7 @@
 # F08: module boundaries, version 0.1.0
 
-Status: **draft 0.1.0, not frozen**.
+Status: **living document.** The module table changes together with the code; CI checks the two
+against each other.
 
 This document fixes where the code of each contract area lives, which way dependencies point, and
 which crates exist. BeamCraft is desktop-only (Windows, Linux, macOS): only `beamcraft-geom`,

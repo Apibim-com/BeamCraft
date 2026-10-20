@@ -1,5 +1,8 @@
 # F04: model and command contract, version 0.1.0
 
+Status: **frozen 0.1.0** (2026-10-20). Changes only by a new version; open questions go to the next
+version through the linked issue.
+
 This contract fixes the domain semantics of the model and its commands: identities, units and
 limits, authored fields, derived results, the mutation envelope, the command surface, footprints
 and errors. The geometry contract (F06) defines how shapes are evaluated; this contract defines

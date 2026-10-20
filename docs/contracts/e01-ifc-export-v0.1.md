@@ -1,7 +1,7 @@
 # E01: own IFC export contract, version 0.1.0
 
-Version 0.1.0. Implemented by `export-ifc` and `ifc-guid`; the remaining acceptance checks are in
-section 19.
+Status: **draft 0.1.0.** Implemented by `export-ifc` and `ifc-guid`; it is frozen once the checks of
+section 19 pass.
 
 This contract fixes **what BeamCraft writes to an IFC file, how an element becomes an IFC entity,
 how its 22-character GlobalId is derived, what is lost, and how the writer is built and driven.**
@@ -11,7 +11,7 @@ The examples are acceptance descriptions, not APIs or saved files.
 
 ### 1.1 Relation to other contracts
 
-- [F04](f04-model-and-commands-v0.1.md) (frozen 0.1.0): identities (section 2), units and caps
+- [F04](f04-model-and-commands-v0.1.md): identities (section 2), units and caps
   (section 3), quantity statuses (section 5) and the 23 error codes (section 8). E01 changes
   nothing there and adds no error code.
 - [F06](f06-geometry-contract-v0.1.md) (frozen 0.1.0): the canonical box mesh and its face order

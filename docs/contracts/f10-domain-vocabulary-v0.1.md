@@ -1,5 +1,8 @@
 # F10: domain vocabulary and discipline-module contract, version 0.1.0
 
+Status: **frozen 0.1.0** (2026-10-20). Changes only by a new version; open questions go to the next
+version through the linked issue.
+
 This contract fixes **what an element, a relationship and an opening are called and what they
 carry**, so that more than one discipline can read and write the same project without private
 dialects, and it fixes the boundary between the shared application and a discipline module. The
