@@ -1,6 +1,7 @@
 # Architecture
 
-Two parts: how the application is built, and how a project is stored. What each task delivered is
+Three parts: how the application is built, how a project is stored on disk, and how the prims
+inside its USD layers are named and structured. What each task delivered is
 in its note under [`design/`](design/); the plan is in [`plan/`](plan/README.md).
 
 # Part 1. The application
@@ -170,20 +171,48 @@ root.usda        units (metersPerUnit = 0.001, upAxis = Z), ProjectId, schema di
 same element paths, so deleting it loses nothing that cannot be recomputed. A read-only foreign
 model, when attached, is a third role, `external`, stored byte for byte and never written.
 
-## Prim hierarchy
+# Part 3. Prim structure
+
+## Prim hierarchy and naming rule
 
 ```text
-/World                                  Xform, kind = assembly
-  /Definitions                          immutable definitions, one per content digest
-    /D_<sha256>                         material or profile; displayName = "S355", "I 300x150"
-  /Steel                                kind = group
-    /E_<uuid without dashes>            one element; kind = component; displayName = its name
-      /Geometry                         Mesh, kind = subcomponent (in derived.usda)
+/World                                   project root (defaultPrim), kind = assembly
+  /Definitions
+    /Materials/MAT_<sha256>              material
+    /Profiles/PRF_<sha256>               profile
+  /Levels/LVL_<uuid>                     level, shared by every discipline
+  /References/REF_<uuid>                 foreign model, read-only
+  /Steel                                 steel discipline, kind = group
+    /Parts/PRT_<uuid>                    plate, beam or column, kind = component
+      /Geometry                          mesh, kind = subcomponent (derived.usda)
+    /Assemblies/ASM_<uuid>               assembly
+    /Connections/CON_<uuid>              weld or bolt group
 ```
 
-An element's prim name holds all 32 hex digits of its UUIDv7, so the path never changes; a rename
-changes only `bim:name` and `displayName`. Every element kind lives under `/World/Steel`: plates,
-beams, columns, assemblies, connections (welds and bolt groups), levels and reference wrappers.
+The rule:
+
+1. **A path never changes.** It holds only what never changes for an element: its category and
+   its identity. Name, assembly, level and mark change, so they are attributes and relationships.
+   Moving a part to another assembly never touches its path or anything that points to it.
+2. **The folder is the category, the prefix is its three-letter code.** `MAT`, `PRF`, `LVL`, `REF`,
+   `PRT`, `ASM`, `CON`. The kind inside a category is an attribute: `bim:elementKind` is `plate`,
+   `beam` or `column` (a beam may become a column), a connection is a weld or a bolt group.
+3. **The identity is complete.** `<uuid>` is all 32 hex digits of the UUIDv7, `<sha256>` all 64 hex
+   digits of a definition's content; nothing is shortened.
+4. **Disciplines are second-level folders.** `/Steel` holds what belongs to steel detailing; a later
+   discipline sits beside it. Definitions, levels and references are shared and stay outside.
+5. **The readable name is `displayName`** (equal to `bim:name`), which USD viewers show instead of
+   the prim name.
+6. **Child prims have fixed names.** `Geometry` is the full body; later representations get their
+   own fixed names (`Proxy`, `Axis`).
+
+Groupings are relationships, not parents (`bim:partOf`, `bim:level`, `bim:connects`): a part
+belongs to an assembly, a level and later a phase or zone at the same time, and a weld joins parts
+of different assemblies, which a single tree cannot express.
+
+**Status:** the code still writes the earlier layout (`/World/Definitions/D_<sha256>` and every
+element as `/World/Steel/E_<uuid>`) until task U16 applies this rule. Stores written before U16
+are not migrated (pre-alpha).
 
 ## Attributes
 
@@ -218,12 +247,12 @@ All values are explicit attributes, readable without registering a schema.
 **Numbering** (after `numbering-approve`): `steel:numbering:series`, `steel:numbering:number`,
 `steel:numbering:basis` on each part and assembly.
 
-**Definitions** (`/World/Definitions/D_<sha256>`): `bim:definitionKind` (`material`, `i_shape`,
+**Definitions** (`MAT_<sha256>`, `PRF_<sha256>`): `bim:definitionKind` (`material`, `i_shape`,
 `channel`, `rhs`, ...), the values (`bim:densityKgM3`, `steel:profile:hMm`, `:bMm`, `:twMm`, ...),
 `bim:contentDigest`. The prim name is the SHA-256 of the content, so a definition never changes;
 an element pins exactly the definition it was built with.
 
-**Derived data** (`derived.usda`, on `.../E_<uuid>/Geometry`): the mesh (`points`,
+**Derived data** (`derived.usda`, on `.../PRT_<uuid>/Geometry`): the mesh (`points`,
 `faceVertexCounts`, `faceVertexIndices`, `extent`, normals), and the quantities `bim:volumeMm3`,
 `bim:massKg` with `bim:volumeStatus`, `bim:massStatus`, `bim:shapeKey`, `bim:shapeSignature`,
 `bim:massSignature` and `bim:quantityAlgorithm`. A signature is the hash of the inputs a value was
@@ -236,7 +265,7 @@ computed from; when the inputs change, the stored value reads as `stale`.
   edit.
 - Cuts and holes are element attributes; the contract moves them to separate operation records.
 
-## Where to read more
+# Where to read more
 
 - [Model and commands contract](contracts/f04-model-and-commands-v0.1.md): identities, commands,
   errors, limits.

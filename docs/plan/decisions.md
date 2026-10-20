@@ -6,6 +6,15 @@ Open questions are at the end.
 
 ## 2026-10-20
 
+- **Prim naming rule** (recorded in [architecture](../architecture.md#prim-hierarchy-and-naming-rule)):
+  paths hold only category and identity (`/World/Steel/Parts/PRT_<uuid>`, `/World/Levels/LVL_<uuid>`,
+  `/World/Definitions/Profiles/PRF_<sha256>`, ...); disciplines are second-level folders; names,
+  assemblies, levels and marks are attributes and relationships. Compatibility is broken on
+  purpose: stores written before task U16 are not migrated while the project is pre-alpha.
+- **Assemblies are relationships, not parents.** A stable path keeps every link to a part valid
+  when it changes assembly, and a part belongs to several groupings at once. Splitting storage into
+  more files (per assembly, zone or element) is a separate performance decision for U10/U15 and
+  changes no path.
 - **No clean-room process.** BeamCraft is written from scratch with its own logic and nothing is
   reverse-engineered, so the F09 process (implementer admission, exposure records, isolated kernel
   agents) is retired and its documents removed. The asset and provenance rules of `AGENTS.md` §1–2 stay:

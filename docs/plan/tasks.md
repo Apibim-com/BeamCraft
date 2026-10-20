@@ -60,6 +60,7 @@ Time-boxed research with a report; never a production gate.
 | U13 / S | Lighting as a presentation layer | U08, U09 | Optional weakest sublayer with a dome and a distant light outside `defaultPrim` | Light is in no shape or mass key; a reference to our model carries no lamps | open |
 | U14 / M | History compaction and garbage collection | U06, U07, P06, P07 | `history-stats`, `history-compact` with `--dry-run`, `--keep-head`, `--keep N`, backup, journal rotation | Dry run changes nothing; compaction atomic and fault-tolerant; only unreachable blobs removed; refused with a live workspace base or a running coordinator | merged |
 | U15 / M | Per-element derived layers | U06, P04 | Unchanged elements are not rewritten on every edit | Editing one element of 1000 adds about one element's size to the store; measured before and after | open |
+| U16 / M | Prim naming rule | U02, U03 | Paths by the [naming rule](../architecture.md#prim-hierarchy-and-naming-rule): category folders, three-letter prefixes, discipline folders; schema, layer engine, engine, CLI, fixtures | Every element and definition is written and read at its rule path; no store of the old layout is migrated; tests and fixtures regenerated | open |
 
 ## G: geometry kernel
 
