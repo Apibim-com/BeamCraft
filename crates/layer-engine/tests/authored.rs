@@ -2712,3 +2712,203 @@ fn the_project_record_is_validated_read_and_kept_through_edits() {
         );
     }
 }
+
+fn mark(series: &str, number: u32) -> Mark {
+    Mark {
+        series: series.into(),
+        number,
+        basis: "BCNUM1 plate=PL:1 token=abc".into(),
+    }
+}
+fn marked(id: &str, series: &str, number: u32) -> Change {
+    Change::Mark {
+        id: id.into(),
+        mark: mark(series, number),
+    }
+}
+
+#[test]
+fn a_mark_is_three_properties_of_the_element_replaced_whole_and_writes_only_the_label_group() {
+    let (mut a, o) = populated();
+    let (_, o) = installed(&mut a, &o, vec![assembly(FRAME, "Frame")]);
+    let (p, o) = installed(
+        &mut a,
+        &o,
+        vec![
+            marked(PLATE, "PL", 7),
+            marked(MEMBER, "B", 0),
+            marked(FRAME, "A-", 2_147_483_647),
+        ],
+    );
+    let prims = snapshot(&a, &o.context);
+    assert_eq!(
+        value(&prims, PLATE, MARK_SERIES),
+        Some(&Value::Text("PL".into()))
+    );
+    assert_eq!(value(&prims, PLATE, MARK_NUMBER), Some(&Value::Int(7)));
+    assert_eq!(
+        value(&prims, PLATE, MARK_BASIS),
+        Some(&Value::Text("BCNUM1 plate=PL:1 token=abc".into()))
+    );
+    assert_eq!(value(&prims, MEMBER, MARK_NUMBER), Some(&Value::Int(0)));
+    assert_eq!(
+        value(&prims, FRAME, MARK_NUMBER),
+        Some(&Value::Int(i64::from(i32::MAX)))
+    );
+    // A mark touches the label group alone: no shape, placement, relationship or derived group,
+    // so a mark never invalidates a body or a quantity.
+    for id in [PLATE, MEMBER, FRAME] {
+        let writes: BTreeSet<_> = p
+            .writes
+            .iter()
+            .filter(|f| f.identity == id)
+            .map(|f| f.group)
+            .collect();
+        assert_eq!(writes, BTreeSet::from([Group::Label]), "{id}");
+    }
+    assert!(
+        p.opinions
+            .iter()
+            .any(|i| i.element_id == PLATE && i.attribute == MARK_NUMBER && i.type_name == "int")
+    );
+    // The derived mesh and the shape inputs are untouched.
+    assert!(value(&prims, PLATE, "steel:plate:thicknessMm").is_some());
+    assert!(
+        prims
+            .iter()
+            .any(|p| p.path == format!("{}/Geometry", path(PLATE)))
+    );
+    // A second mark replaces the first as a whole; the stage stays valid.
+    let (_, o) = installed(&mut a, &o, vec![marked(PLATE, "P", 8)]);
+    let prims = snapshot(&a, &o.context);
+    assert_eq!(
+        value(&prims, PLATE, MARK_SERIES),
+        Some(&Value::Text("P".into()))
+    );
+    assert_eq!(value(&prims, PLATE, MARK_NUMBER), Some(&Value::Int(8)));
+    validate_layers(
+        export_request(&a, &o.context),
+        schema_identity().unwrap(),
+        &control(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn wrong_marks_targets_and_loaded_mark_records_are_refused_with_nothing_written() {
+    let (mut a, o) = populated();
+    let (_, o) = installed(
+        &mut a,
+        &o,
+        vec![level(STOREY, "Level 1", 3000.0), assembly(FRAME, "Frame")],
+    );
+    let bad = |m: Mark| Change::Mark {
+        id: PLATE.into(),
+        mark: m,
+    };
+    let too_long = "X".repeat(17);
+    for (change, code) in [
+        (marked(PLATE, &too_long, 1), ErrorCode::InvalidArgument),
+        (marked(PLATE, "a b", 1), ErrorCode::InvalidArgument),
+        (marked(PLATE, "Ω", 1), ErrorCode::InvalidArgument),
+        (
+            marked(PLATE, "PL", 2_147_483_648),
+            ErrorCode::InvalidArgument,
+        ),
+        (
+            bad(Mark {
+                basis: String::new(),
+                ..mark("PL", 1)
+            }),
+            ErrorCode::InvalidArgument,
+        ),
+        (
+            bad(Mark {
+                basis: "x".repeat(513),
+                ..mark("PL", 1)
+            }),
+            ErrorCode::InvalidArgument,
+        ),
+        (
+            bad(Mark {
+                basis: "tab\there".into(),
+                ..mark("PL", 1)
+            }),
+            ErrorCode::InvalidArgument,
+        ),
+        // A level is no part; an absent element is NOT_FOUND.
+        (marked(STOREY, "PL", 1), ErrorCode::UnsupportedProperty),
+        (
+            marked("0199e7a0-0000-7000-8000-0000000009ff", "PL", 1),
+            ErrorCode::NotFound,
+        ),
+        (marked("not-an-id", "PL", 1), ErrorCode::InvalidId),
+    ] {
+        let got = refused_code(&mut a, &o, vec![change.clone()]);
+        assert_eq!(got, Some(code), "{change:?}");
+    }
+    // Two marks of one element in a batch are a duplicate key.
+    assert!(
+        refused_code(
+            &mut a,
+            &o,
+            vec![marked(PLATE, "PL", 1), marked(PLATE, "PL", 2)]
+        )
+        .is_some()
+    );
+    // Loaded records: a partial record, a wrong type, an out-of-range number, a mark on a level.
+    let (_, o) = installed(&mut a, &o, vec![marked(PLATE, "PL", 7)]);
+    let number = "int steel:numbering:number = 7";
+    let series = "string steel:numbering:series = \"PL\"";
+    for (from, to) in [
+        (number, "double steel:numbering:number = 7"),
+        (number, "int steel:numbering:number = -1"),
+        (series, "string steel:numbering:series = \"a b\""),
+        (series, "token steel:numbering:series = \"PL\""),
+    ] {
+        let input = tampered(&a, &o.context, "authored.usda", from, to);
+        let verdict = validate_layers(input, schema_identity().unwrap(), &control());
+        assert_eq!(
+            verdict.err().map(|e| e.code),
+            Some(ErrorCode::InvalidArgument),
+            "{to}"
+        );
+    }
+}
+
+#[test]
+fn a_store_pinned_to_the_pre_a09_mapping_stays_editable_and_is_repinned() {
+    let previous = "fdaf890401a7bf4d8d17eb84ad1901b461ff21f1e7cec1e93f9e71203b83865b";
+    let mut input = initial();
+    for name in ["authored.usda", "derived.usda"] {
+        let old = input.assets.iter_mut().find(|a| a.name == name).unwrap();
+        let text = String::from_utf8(old.bytes.clone()).unwrap();
+        let body = text.split_once(")\n").unwrap().1.to_owned();
+        *old = asset(
+            name,
+            format!(
+                "#usda 1.0\n(metersPerUnit=0.001\nupAxis=\"Z\"\ncustomLayerData={{string bimSchemaDigest=\"{previous}\"}})\n{body}\n"
+            ),
+        );
+    }
+    input.manifest = input.manifest_digest().unwrap();
+    let (mut a, o) = open(input);
+    let p = prepare_initial(&mut a, &o.context);
+    let o = a
+        .install(
+            &o.context,
+            &p.token,
+            &p.op_id,
+            Decision::Accepted,
+            &control(),
+        )
+        .unwrap();
+    let (_, o) = installed(&mut a, &o, vec![marked(PLATE, "PL", 1)]);
+    let current = schema_identity().unwrap().digest.to_string();
+    for layer in a.export(&o.context, &control()).unwrap() {
+        if layer.name == "authored.usda" || layer.name == "derived.usda" {
+            let text = String::from_utf8(layer.bytes).unwrap();
+            assert!(text.contains(&current) && !text.contains(previous));
+        }
+    }
+}

@@ -19,6 +19,7 @@ pub mod level;
 pub mod library;
 pub mod member;
 pub mod numbering;
+pub mod numbering_approval;
 pub mod plate;
 pub mod reference;
 pub mod source_file;

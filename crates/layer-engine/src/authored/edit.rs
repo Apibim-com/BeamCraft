@@ -941,6 +941,20 @@ pub(super) fn apply(
                 };
                 relationship_targets(&mut authored, &p, "bim:level", Some(targets))?;
             }
+            Change::Mark { mark, .. } => {
+                let number = i32::try_from(mark.number).map_err(|_| invalid())?;
+                for (name, ty, value) in [
+                    (
+                        MARK_SERIES,
+                        "string",
+                        sdf::Value::String(mark.series.clone()),
+                    ),
+                    (MARK_NUMBER, "int", sdf::Value::Int(number)),
+                    (MARK_BASIS, "string", sdf::Value::String(mark.basis.clone())),
+                ] {
+                    attr(&mut authored, &p, name, ty, value)?;
+                }
+            }
             Change::ReferenceUnits { interpretation, .. } => {
                 let wrapper = prims
                     .iter()
@@ -1146,6 +1160,9 @@ fn capture(
                     ("bim:partOf", "rel"),
                     ("bim:level", "rel"),
                     ("bim:elevationMm", "double"),
+                    (MARK_SERIES, "string"),
+                    (MARK_NUMBER, "int"),
+                    (MARK_BASIS, "string"),
                 ] {
                     add(name, ty, 0);
                 }
@@ -1170,6 +1187,11 @@ fn capture(
             Change::Material { .. } => add("bim:material", "rel", 0),
             Change::PartOf { .. } => add("bim:partOf", "rel", 0),
             Change::Level { .. } => add("bim:level", "rel", 0),
+            Change::Mark { .. } => {
+                add(MARK_SERIES, "string", 0);
+                add(MARK_NUMBER, "int", 0);
+                add(MARK_BASIS, "string", 0);
+            }
             Change::Placement { .. } => {
                 for &(name, ty) in POSE {
                     add(name, ty, 0);
