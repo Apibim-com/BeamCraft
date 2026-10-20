@@ -134,7 +134,7 @@ fn a_plate_from_the_tool_equals_the_plate_made_by_hand() {
     tools.cancel();
     assert!(tools.begin_commit(&ui).is_none());
     match source::load(&cli, &ui) {
-        Err(Error::Cli(message)) => assert!(message.ends_with("NOT_FOUND"), "{message}"),
+        Err(Error::NoRevision) => (),
         other => panic!("a cancelled preview must publish nothing, got {other:?}"),
     }
 
@@ -360,7 +360,7 @@ fn an_engine_refusal_reaches_the_panel_and_publishes_nothing() {
     assert_eq!(error.code, "INVALID_ARGUMENT");
     assert_eq!(error.code, text(&reply, &["code"]));
     assert_eq!(error.message, text(&reply, &["message"]));
-    assert!(matches!(source::load(&cli, &ui), Err(Error::Cli(_))));
+    assert!(matches!(source::load(&cli, &ui), Err(Error::NoRevision)));
 
     // A member that names a profile the store does not have.
     let mut member = Tools::default();
@@ -398,9 +398,10 @@ fn a_refresh_runs_off_the_ui_thread_and_keeps_its_two_results_apart() {
             .join()
             .unwrap()
     };
-    // No revision yet: both queries answer with the CLI's NOT_FOUND on their own.
+    // No revision yet: the scene reports the typed empty state and the definitions listing
+    // answers with the CLI's own NOT_FOUND.
     let empty = refresh(cli.clone(), ui.clone());
-    assert!(matches!(&empty.scene, Err(Error::Cli(m)) if m.ends_with("NOT_FOUND")));
+    assert!(matches!(&empty.scene, Err(Error::NoRevision)));
     assert_eq!(empty.definitions.unwrap_err().code, "NOT_FOUND");
 
     let store = ui.to_str().unwrap();

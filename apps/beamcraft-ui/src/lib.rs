@@ -37,6 +37,8 @@ pub enum Error {
     View(beamcraft_engine::ViewError),
     /// The CLI process failed or answered with a rejection.
     Cli(String),
+    /// The store has no published revision yet: a normal empty state, not a failure.
+    NoRevision,
     /// No native graphics adapter exists.
     NoAdapter,
     /// Graphics device, validation, mapping or completion failure.
@@ -53,6 +55,7 @@ impl std::fmt::Display for Error {
             Self::Input(what) => write!(f, "invalid input: {what}"),
             Self::View(e) => write!(f, "view snapshot refused: {}", e.code().as_str()),
             Self::Cli(message) => write!(f, "beamcraft CLI: {message}"),
+            Self::NoRevision => f.write_str("the store has no revision yet"),
             Self::NoAdapter => f.write_str("no native graphics adapter"),
             Self::Graphics(message) => write!(f, "graphics: {message}"),
             Self::Allocation => f.write_str("allocation refused"),
