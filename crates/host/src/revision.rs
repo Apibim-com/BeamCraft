@@ -25,6 +25,9 @@
 //! * [`RevisionStore::open`] verifies the record, the manifest, the base link and every
 //!   referenced blob again, and refuses missing (for example garbage-collected), corrupt,
 //!   resized or torn state with a typed [`RevisionError`].
+//! * After a U14 compaction the log starts at a floor (see [`crate::compaction`]): the records
+//!   `floor..=head` are the log, the floor's manifest names a base that was removed, and
+//!   `revisions/floor` anchors it. Without that marker the floor is 1 and nothing differs.
 //! * Manifests are canonical: the same draft on the same base is byte-identical whatever order
 //!   its layers were supplied in.
 //!
@@ -37,9 +40,10 @@
 //!   them. U07 recovery ([`crate::ledger`]) removes abandoned temporaries and reports unreferenced
 //!   blobs. A hook failure after the link is [`RevisionError::OutcomeUnknown`], because the new
 //!   root may be visible.
-//! * There is no garbage collection, personal workspace or multi-client coordination. Every
+//! * There is no personal workspace or multi-client coordination in this module. Every
 //!   commit writes an intent and an outcome to the U07 outcome ledger ([`crate::ledger`]); the
-//!   [`CommitHook`] points are where it injects faults.
+//!   [`CommitHook`] points are where it injects faults. Garbage collection and history
+//!   compaction are U14 ([`crate::compaction`]); they move the log's floor, see below.
 //! * The same namespace protection as [`crate::storage`] is required: a hostile writer to the
 //!   store directory can still replace files between a check and its use.
 //! * This module never parses USD. Layer content and U03 index checks are done by an injected
@@ -47,6 +51,7 @@
 //!   link it); a commit without a verifier records no index and says so in the manifest.
 
 mod commit;
+mod floor;
 mod manifest;
 mod read;
 mod root;
@@ -56,6 +61,7 @@ use std::io;
 
 use beamcraft_model::ErrorCode;
 
+use crate::lease::LeaseError;
 use crate::ledger::LedgerError;
 use crate::storage::StorageError;
 
@@ -63,6 +69,7 @@ pub use commit::{
     CommitHook, CommitOutcome, CommitPoint, Committed, ContentRejection, ContentVerifier,
     ExpectedBase, IndexEvidence, Injected, NoFault, VerifiedLayer, VerifyRequest,
 };
+pub(crate) use floor::Span;
 pub use manifest::{BaseRef, Content, IndexRecord, LayerEntry, LayerRole, Manifest, RevisionDraft};
 pub use read::{Revision, RevisionStore};
 pub use root::{RevisionInfo, RootRecord};
@@ -132,6 +139,8 @@ pub enum RevisionError {
     RevisionIdReuse,
     /// No revision has been published.
     NoRevision,
+    /// The revision was removed by history compaction (U14): its sequence is below the floor.
+    Compacted,
     /// The head log is torn: an unknown name, a gap, an unreadable or malformed record.
     TornRoot,
     /// The manifest blob is absent (for example garbage-collected).
@@ -170,6 +179,9 @@ pub enum RevisionError {
     OutcomeUnknown,
     /// Blob storage failed.
     Storage(StorageError),
+    /// Another holder has the store: a history compaction is running (or a commit while this
+    /// call needed the store exclusively). Nothing was written; retry later.
+    StoreBusy,
     /// The outcome ledger failed or contradicts the root. See [`crate::ledger`].
     Ledger(LedgerError),
     /// Filesystem I/O failed; only its safe category is retained.
@@ -186,7 +198,7 @@ impl RevisionError {
             Self::LimitExceeded => ErrorCode::LimitExceeded,
             Self::BaseMismatch => ErrorCode::BaseRevisionMismatch,
             Self::OpIdReuse => ErrorCode::OpIdReuse,
-            Self::NoRevision => ErrorCode::NotFound,
+            Self::NoRevision | Self::Compacted => ErrorCode::NotFound,
             Self::RevisionIdReuse
             | Self::TornRoot
             | Self::ManifestMissing
@@ -201,6 +213,7 @@ impl RevisionError {
             Self::Aborted(_) => ErrorCode::Cancelled,
             Self::OutcomeUnknown => ErrorCode::OutcomeUnknown,
             Self::Storage(error) => error.code(),
+            Self::StoreBusy => ErrorCode::BackendUnavailable,
             Self::Ledger(error) => error.code(),
             Self::Io(io::ErrorKind::PermissionDenied) => ErrorCode::PermissionDenied,
             Self::Io(_) => ErrorCode::BackendUnavailable,
@@ -220,6 +233,7 @@ impl fmt::Display for RevisionError {
             Self::OpIdReuse => "operation id already committed with different content",
             Self::RevisionIdReuse => "revision id already used by different content",
             Self::NoRevision => "no revision is published",
+            Self::Compacted => "the revision was removed by history compaction",
             Self::TornRoot => "revision head log is torn",
             Self::ManifestMissing => "revision manifest blob is missing",
             Self::MalformedManifest => "revision manifest is corrupt or non-canonical",
@@ -233,6 +247,7 @@ impl fmt::Display for RevisionError {
             Self::Aborted(_) => "commit aborted before the root switch",
             Self::OutcomeUnknown => "commit outcome unknown after the root switch",
             Self::Storage(_) => "blob storage failed",
+            Self::StoreBusy => "the store is in use by a history compaction",
             Self::Ledger(error) => match error {
                 LedgerError::RootDisagrees => "ledger records a commit that the root lacks",
                 _ => "outcome ledger failed",
@@ -253,5 +268,14 @@ impl From<StorageError> for RevisionError {
 impl From<LedgerError> for RevisionError {
     fn from(error: LedgerError) -> Self {
         Self::Ledger(error)
+    }
+}
+
+impl From<LeaseError> for RevisionError {
+    fn from(error: LeaseError) -> Self {
+        match error {
+            LeaseError::Busy => Self::StoreBusy,
+            LeaseError::Storage(error) => Self::Storage(error),
+        }
     }
 }

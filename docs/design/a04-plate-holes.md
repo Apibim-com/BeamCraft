@@ -2,7 +2,9 @@
 
 Date: 2026-10-17 (pilot). Acceptance record: 2026-10-19, verified on `origin/master` `11a2139`.
 Status: **implemented and verified as one result with `create-plate`; the contract deviation of
-decision 1 and the cross-target question of decision 2 still need owner review.** The pilot
+decision 1 and the cross-target question of decision 2 still need owner review** (amendment A-2
+below resolves decision 1 at the contract level; the implementation here still carries the two
+plate attributes). The pilot
 landed on `master` through the stacked P02/P03 branch line; this record describes the state on
 `master` at `11a2139`.
 
@@ -54,6 +56,14 @@ FeatureIds undefined); a holed plate and a beam share one pinned snapshot.
 4. **The kernel decides geometry.** Strictly inside the outline, clear of other holes, clockwise,
    simple: a refusal is `INVALID_ARGUMENT` for a bad polygon (the kernel's own code otherwise) and
    nothing is authored.
+
+Update 2026-10-19 (F06/F04 amendment A-2, owner decisions D-2, D-3, D-5): decision 1's deviation is
+replaced by operation records and `AddHole`, `UpdateHole`, `RemoveHole` commands in F04 (the two plate
+attributes are deprecated, migration belongs to the A04 acceptance task); decision 2's N-gon becomes
+the contract rule (chord deviation at most 0.05 mm, `N` 16 to 256, multiple of 4, not a fixed 32);
+decision 3's enclosure midpoint is kept for certified shells, but polygonal holes now have the exact
+polygon volume; a hole count above the kernel's capacity is a distinct kernel-capacity refusal, not
+`INVALID_ARGUMENT`. See [the A-2 notes](g08-f06-a2-notes.md).
 
 ## Still open (not part of this result)
 

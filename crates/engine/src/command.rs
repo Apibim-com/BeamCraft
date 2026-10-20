@@ -250,6 +250,12 @@ impl PlateBody {
         }
     }
 
+    /// Whether the outline is the origin rectangle evaluated as the G02 box rather than an
+    /// A02 contour extrusion.
+    pub fn is_origin_rectangle(&self) -> bool {
+        self.volume_algorithm == VOLUME_ALGORITHM
+    }
+
     fn volumes(&self) -> Volumes {
         // The gross body is the exact outline extrusion (the box or the polygon prism), so the
         // gross volume is its analytic area times the thickness and equals the mesh before the
@@ -1230,6 +1236,46 @@ mod tests {
         // F04-POS-08: the largest first-scope plate.
         let big = create_plate(&command(rect(1e6, 1e6), 1e6), &none).unwrap();
         assert!((big.quantities.volume_m3 - 1e9).abs() <= 1e-6 * 1e9);
+    }
+
+    fn l_shape() -> Vec<[f64; 3]> {
+        // 1000 x 600 with a 600 x 300 notch at the top right: area 600_000 - 180_000 = 420_000.
+        vec![
+            [0.0, 0.0, 0.0],
+            [1000.0, 0.0, 0.0],
+            [1000.0, 300.0, 0.0],
+            [400.0, 300.0, 0.0],
+            [400.0, 600.0, 0.0],
+            [0.0, 600.0, 0.0],
+        ]
+    }
+
+    #[test]
+    fn a_simple_non_convex_contour_is_extruded_with_the_exact_polygon_volume() {
+        let out = create_plate(&command(l_shape(), 10.0), &none).unwrap();
+        // Independent closed form: 420_000 mm2 * 10 mm; the bounding box would say 6_000_000.
+        assert_eq!(out.quantities.volume_mm3, 4_200_000.0);
+        assert_eq!(out.quantities.volume_gross_mm3, 4_200_000.0);
+        assert_eq!(out.quantities.removed_volume_mm3, 0.0);
+        assert_eq!(out.quantities.algorithm, CONTOUR_VOLUME_ALGORITHM);
+        assert_eq!((out.body.width_mm, out.body.length_mm), (1000.0, 600.0));
+        // The mesh is closed: the divergence-theorem volume of the stored triangles agrees.
+        let solid = &out.body.solid;
+        let signed: f64 = solid
+            .triangles()
+            .iter()
+            .map(|t| {
+                let v = |i: u32| solid.vertices()[i as usize];
+                let (a, b, c) = (v(t[0]), v(t[1]), v(t[2]));
+                (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
+                    + a[2] * (b[0] * c[1] - b[1] * c[0]))
+                    / 6.0
+            })
+            .sum();
+        assert!(
+            (signed - 4_200_000.0).abs() <= 1e-6 * 4_200_000.0,
+            "{signed}"
+        );
     }
 
     #[test]
