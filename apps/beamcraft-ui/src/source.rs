@@ -87,14 +87,29 @@ pub struct Reloaded {
     pub definitions: Result<Definitions, ToolError>,
 }
 
-/// Runs the CLI queries of one refresh (blocking; call it off the UI thread).
+/// Runs the CLI queries of one refresh (blocking; call it off the UI thread). The two queries
+/// are independent CLI processes, so they run concurrently and the refresh waits for the slower
+/// one instead of paying both full inspections in sequence (issue 26, finding 2).
 pub fn reload(cli: &Path, store: &Path) -> Reloaded {
-    let scene = load(cli, store).and_then(|snapshot| {
-        let scene = Scene::from_snapshot(&snapshot, Representation::Full)?;
-        Ok((snapshot, scene))
+    let (scene, definitions) = std::thread::scope(|scope| {
+        let scene = scope.spawn(|| {
+            load(cli, store).and_then(|snapshot| {
+                let scene = Scene::from_snapshot(&snapshot, Representation::Full)?;
+                Ok((snapshot, scene))
+            })
+        });
+        let definitions = scope.spawn(|| command::definitions(cli, store));
+        // A panicked worker is a bug, not model data: report it as its typed failure.
+        let scene = scene
+            .join()
+            .unwrap_or_else(|_| Err(Error::Cli("the view-export thread failed".into())));
+        let definitions = definitions.join().unwrap_or_else(|_| {
+            Err(ToolError::local(
+                "CLI_FAILED",
+                "the definitions thread failed",
+            ))
+        });
+        (scene, definitions)
     });
-    Reloaded {
-        scene,
-        definitions: command::definitions(cli, store),
-    }
+    Reloaded { scene, definitions }
 }
