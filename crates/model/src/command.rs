@@ -1136,6 +1136,7 @@ impl AssignMark {
             }
             _ => {}
         }
+        Ok(())
     }
 
     /// SHA-256 of a versioned encoding of the request.
@@ -1948,7 +1949,6 @@ mod tests {
         assert!(set != other && set != clear && other != clear);
     }
 
-<<<<<<< HEAD
     fn assign(mark: Option<&str>) -> AssignMark {
         AssignMark {
             target_id: id(5),
@@ -1969,7 +1969,6 @@ mod tests {
                 origin_mm: [0.0, 200.0, 5.0],
                 direction_mm: [1.0, 0.0, 0.0],
             },
->>>>>>> ccc94fe (Add minimal bolt groups joining two parts (A05))
         }
     }
 
