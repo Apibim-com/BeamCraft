@@ -426,12 +426,17 @@ const A05_CONNECTION_PHRASE: &str = "a weld (A06) or bolt group (A05)";
 /// The connection wording before A05.
 const A05_PREVIOUS_CONNECTION_PHRASE: &str = "a weld only (A06)";
 
+/// The mapping descriptor as it was before A03 added the cut attributes: the current descriptor
+/// without that line — the digest every store created on the released master carries.
+fn pre_a03_descriptor() -> String {
+    SCHEMA_DESCRIPTOR.replacen(A03_CUT_LINE, "", 1)
+}
+
 /// The mapping descriptor as it was before A05 added the bolt properties and reworded the
-/// connection line: the current descriptor without those edits — the numbering mark line of A09
-/// stays, so this is the mapping every store created since A09 carries. A05 added only optional
+/// connection line: the pre-A03 descriptor without those edits. A05 added only optional
 /// content, so layers pinned to that mapping stay readable and editable.
 pub(crate) fn pre_a05_descriptor() -> String {
-    SCHEMA_DESCRIPTOR
+    pre_a03_descriptor()
         .replacen(A05_BOLT_PROPERTIES_LINE, "", 1)
         .replacen(A05_CONNECTION_PHRASE, A05_PREVIOUS_CONNECTION_PHRASE, 1)
 }
@@ -454,31 +459,33 @@ pub(crate) fn pin_accepted(pin: &str) -> Result<bool, Diagnostic> {
     if pin == schema_identity()?.digest.to_string() {
         return Ok(true);
     }
+    // A03 added one optional line (the element cut attributes) and changed nothing else, so the
+    // pre-A03 mapping is the current descriptor without that line — the digest every store
+    // created on the released master carries — and the earlier mappings drop their own later
+    // lines from it.
+    let pre_a03 = pre_a03_descriptor();
+    let digest = Sha256::digest(pre_a03.as_bytes()).map_err(|_| limit())?;
+    if pin == digest.to_string() {
+        return Ok(true);
+    }
     // A05 added the bolt properties and reworded the connection line, so the mapping before A05
-    // is the current descriptor without those edits — the digest every store created since A09
+    // is the pre-A03 descriptor without those edits — the digest every store created since A09
     // carries.
-    let pre_a05 = Sha256::digest(pre_a05_descriptor().as_bytes()).map_err(|_| limit())?;
-    if pin == pre_a05.to_string() {
+    let pre_a05 = pre_a05_descriptor();
+    let digest = Sha256::digest(pre_a05.as_bytes()).map_err(|_| limit())?;
+    if pin == digest.to_string() {
         return Ok(true);
     }
     // A09 added one optional line (the approved mark) and the `Mark` change item and changed
-    // nothing else, so the mapping before A09 is the pre-A05 descriptor without them.
+    // nothing else, so the pre-A09 mapping is the pre-A05 descriptor without them.
     let pre_a09 = pre_a09_descriptor();
     let digest = Sha256::digest(pre_a09.as_bytes()).map_err(|_| limit())?;
     if pin == digest.to_string() {
         return Ok(true);
     }
-    // A03 added one optional line (the element cut attributes) and changed nothing else; the
-    // numbering mark line came later still, so the pre-A03 mapping is the pre-A09 descriptor
-    // without the cut line, and the earlier mappings drop their own later lines from it.
-    let pre_a03 = pre_a09_descriptor().replacen(A03_CUT_LINE, "", 1);
-    let digest = Sha256::digest(pre_a03.as_bytes()).map_err(|_| limit())?;
-    if pin == digest.to_string() {
-        return Ok(true);
-    }
     // A07.2 added one optional line (the definition display name) to the D1/D2 descriptor and
-    // changed nothing else, so the D1/D2 mapping is the pre-A03 descriptor without that line.
-    let a07_1 = pre_a03.replacen(A07_2_DISPLAY_NAME_LINE, "", 1);
+    // changed nothing else, so the D1/D2 mapping is the pre-A09 descriptor without that line.
+    let a07_1 = pre_a09.replacen(A07_2_DISPLAY_NAME_LINE, "", 1);
     let digest = Sha256::digest(a07_1.as_bytes()).map_err(|_| limit())?;
     if pin == digest.to_string() {
         return Ok(true);
@@ -628,7 +635,7 @@ impl Shape {
     pub(crate) fn cut(&self) -> Option<&PlaneCut> {
         match self {
             Self::Plate { cut, .. } | Self::Member { cut, .. } => cut.as_ref(),
-            Self::Assembly | Self::Weld(_) | Self::Level { .. } => None,
+            Self::Assembly | Self::Weld(_) | Self::Bolt(_) | Self::Level { .. } => None,
         }
     }
 }
@@ -1287,21 +1294,21 @@ mod pin_tests {
     use super::*;
 
     #[test]
-    fn the_pre_a09_mapping_pin_is_accepted_and_is_not_the_current_one() {
-        // Pinned value: the digest of the descriptor of master with A03 (the cut line), before
-        // A09 added the numbering mark.
-        let pre_a09 = "fa1b4cdab0785f2bf9f98632f5172c757c6003d7c42c15a42ec226f89e048056";
+    fn the_released_master_mapping_pin_is_accepted_and_is_not_the_current_one() {
+        // Pinned value: the digest of the released master's descriptor (with the A09 numbering
+        // mark and the A05 bolt properties, before this change added the A03 cut line) — the
+        // mapping every store created on the released master carries.
+        let released = Sha256::digest(SCHEMA_DESCRIPTOR.replacen(A03_CUT_LINE, "", 1).as_bytes())
+            .unwrap()
+            .to_string();
+        assert_eq!(
+            released,
+            "cf6afbdfecf652ea85f9b89319a4cda389b64ce3bd71ca63e268ea4c1007ec86"
+        );
         assert!(SCHEMA_DESCRIPTOR.contains(A09_NUMBERING_LINE));
         assert!(SCHEMA_DESCRIPTOR.contains(A09_CHANGES_ITEM));
-        assert!(!pre_a09_descriptor().contains("numbering"));
-        assert_eq!(
-            Sha256::digest(pre_a09_descriptor().as_bytes())
-                .unwrap()
-                .to_string(),
-            pre_a09
-        );
-        assert!(pin_accepted(pre_a09).unwrap());
-        assert_ne!(pre_a09, schema_identity().unwrap().digest.to_string());
+        assert!(pin_accepted(&released).unwrap());
+        assert_ne!(released, schema_identity().unwrap().digest.to_string());
     }
 
     #[test]
@@ -1330,7 +1337,6 @@ mod pin_tests {
         assert_eq!(
             Sha256::digest(
                 pre_a09_descriptor()
-                    .replacen(A03_CUT_LINE, "", 1)
                     .replacen(A07_2_DISPLAY_NAME_LINE, "", 1)
                     .as_bytes()
             )
@@ -1346,13 +1352,9 @@ mod pin_tests {
     fn the_pre_a03_mapping_pin_is_accepted_and_is_the_current_one_without_the_cut_line() {
         // Pinned value: the digest of the descriptor with the A09 numbering mark but before
         // this change added the A03 cut line (the pre-A09 mapping is tested above).
-        let pre_a03 = Sha256::digest(
-            pre_a09_descriptor()
-                .replacen(A03_CUT_LINE, "", 1)
-                .as_bytes(),
-        )
-        .unwrap()
-        .to_string();
+        let pre_a03 = Sha256::digest(SCHEMA_DESCRIPTOR.replacen(A03_CUT_LINE, "", 1).as_bytes())
+            .unwrap()
+            .to_string();
         assert!(SCHEMA_DESCRIPTOR.contains(A03_CUT_LINE));
         assert!(pin_accepted(&pre_a03).unwrap());
         assert_ne!(pre_a03, schema_identity().unwrap().digest.to_string());
