@@ -130,6 +130,7 @@ mod tests {
             placement: Placement::IDENTITY,
             material: None,
             holes_mm: Vec::new(),
+            cut: None,
         }
     }
 
@@ -247,6 +248,7 @@ mod tests {
             roll_rad: None,
             placement: Placement::IDENTITY,
             material: None,
+            cut: None,
         };
         assert_eq!(
             patch_member(
