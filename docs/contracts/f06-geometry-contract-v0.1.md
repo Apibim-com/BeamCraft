@@ -1,6 +1,6 @@
 # F06: geometry and viewport contract, version 0.1.0
 
-Status: **draft 0.1.0.** Frozen once its open questions ([issue #141](https://github.com/Apibim-com/BeamCraft/issues/141)) are closed.
+Status: **frozen 0.1.0** (2026-10-20). Changes only by a new version.
 
 This contract fixes the logical interface between the engine and the geometry kernel, and between
 the engine and any viewport or query consumer: what goes in, what comes out, which numbers are
@@ -13,8 +13,7 @@ are the expected behaviour in machine-readable form.
 The model contract ([F04](f04-model-and-commands-v0.1.md)) defines identities, units, input caps,
 error codes and quantity statuses; this contract never weakens or widens them. It owns the
 geometric tolerance, the minimum dimension, the "parallel" test of the member frame and the logical
-content of a profile definition. Mesh bytes travel as opaque `u8` attachments of the worker
-protocol (F05).
+content of a profile definition.
 
 **Excluded from 0.1.0:** general boolean operations and fit or weld geometry; curved or
 multi-segment members; bent plates; imported meshes; scale, shear and reflection; drawing
@@ -209,8 +208,8 @@ certification performance limit that lives in code (`OpLimits`, `Limits`), not i
 The command layer checks the request against the implementation limits before it runs
 the kernel and refuses it with the distinct result `GEO_KERNEL_CAPACITY`, mapped to the existing
 F04 code `LIMIT_EXCEEDED` (status `limit_exceeded`) with the diagnostic `field` token
-`kernel_capacity`; it publishes nothing (F04). The F06 section 6 mesh caps (4,096
-vertices, 8,192 triangles) are hard validator caps of this contract, not designed hole limits; a
+`kernel_capacity`; it publishes nothing (F04). The section 6 mesh caps (262,144
+vertices, 524,288 triangles) are hard validator caps of this contract, not designed hole limits; a
 request whose derived mesh would exceed them keeps `GEO_BUFFER_LIMIT` or `GEO_TOPOLOGY_LIMIT`
 (also `LIMIT_EXCEEDED`). A call that passes the pre-check but ends on a kernel budget is
 mapped to the same result. A capacity refusal is never `INVALID_ARGUMENT` and never "invalid
@@ -234,7 +233,7 @@ Every kernel call returns one `GeometryResult`:
 mapping), `field` (a fixed schema token of at most 64 ASCII bytes, never an input path or value) and
 `stage` (`support`, `finiteness`, `caps`, `ranges`, `validation`, `build`, `checks` or
 `quantities`). Messages use fixed English text and never echo input values, private paths or
-exceptions. When a host forwards a record through F05 it uses `field`, a null `target_id` and
+exceptions. When a command reports a record it uses `field`, a null `target_id` and
 `reason_code = f04_code`; the `GEO_` code stays in the geometry result body.
 
 **Status mapping.** `ok` has no code. `unsupported` maps to `UNSUPPORTED_GEOMETRY`. `invalid_input`
@@ -565,8 +564,7 @@ triangle-mesh edges (12 box edges and 6 face diagonals), 1 shell; `8 - 18 + 12 =
 = 2` (`F06-POS-01`).
 
 **Mesh blob.** One body's mesh is one blob. All integers are **little-endian**, all positions are
-little-endian binary64 with negative zero normalized. (F05's frame and prefix fields are big-endian;
-they are transport, and this blob is the opaque payload.)
+little-endian binary64 with negative zero normalized.
 
 | Offset | Size (bytes) | Content |
 |--------|--------------|---------|
@@ -583,12 +581,11 @@ they are transport, and this blob is the opaque payload.)
 
 `pad8(n)` rounds `n` up to a multiple of 8. The total is `32 + 24*V + pad8(12*T) + pad8(2*T)`; the
 box body is 392 bytes (`F06-POS-02`). Section starts are multiples of 8 relative to the blob
-start, but an attachment's start in memory is not aligned (F05 prefixes 44 bytes), so consumers read
-with unaligned loads or copy. The face table (an ordered array of at most `K` local ids) travels in
+start, but a blob's start in memory need not be aligned, so consumers read with unaligned loads or
+copy. The face table (an ordered array of at most `K` local ids) travels in
 the JSON descriptor, not in the blob. The encoded descriptor of one body (face table and fields) is
-at most 32,768 bytes of UTF-8; a page's control object also obeys the negotiated F05
-`control_bytes`, `json_tokens` and `string_bytes`, and a page ends when any of its budgets would be
-exceeded (section 10).
+at most 2,097,152 bytes of UTF-8, and a page ends when any of its budgets would be exceeded
+(section 10).
 
 **Primitive limits and general validator limits.** The box builders (plate and member)
 always produce exactly 8 vertices, 12 triangles, 6 faces, 12 topological edges, 18 triangle-mesh
@@ -601,13 +598,15 @@ engineering result (section 8).
 
 | Item | Cap |
 |------|-----|
-| Vertices per body | 4,096 |
-| Triangles per body | 8,192 |
-| Faces per body (topological) | 1,024 |
-| Topological edges per body | 12,288 |
-| Shells per body | 16 (the first scope produces 1) |
-| Features per body | 17,408 (4,096 + 12,288 + 1,024) |
-| Mesh blob size | 213,024 bytes (the value of the formula at the three caps) |
+| Vertices per body | 262,144 |
+| Triangles per body | 524,288 |
+| Faces per body (topological) | 65,535 (the per-triangle face index is a u16) |
+| Topological edges per body | 786,432 (3/2 of the triangle cap) |
+| Shells per body | 16 (box bodies produce 1) |
+| Features per body | 1,114,111 (262,144 + 786,432 + 65,535) |
+| Mesh blob size | 13,631,520 bytes (the value of the formula at the vertex and triangle caps) |
+
+These caps hold a plate with 64 holes of 1024 sides each.
 
 A validator checks the three counts against their caps before computing any size, computes sizes
 with checked 64-bit arithmetic, compares the supplied length with the computed length and only then
@@ -617,18 +616,12 @@ non-finite or negative-zero coordinates, indices out of range and a face index o
 `GEO_TOPOLOGY_LIMIT` (faces, edges, shells, features). Exactly at a cap is accepted (`F06-POS-27`);
 one above is rejected (`F06-NEG-11` to `F06-NEG-14`).
 
-**Chunking over F05.** A mesh blob is **never split**: it is one attachment, whole. A page of a
-snapshot or change delivery holds whole blobs, at most the negotiated `effective_limits`
-`attachments` per bundle, each within `buffer_bytes`, within `bundle_bytes`, and at most
-`batch_items` items per page and `delivery_pages` pages per delivery. Because a blob is at most 213,024 bytes, it
-fits any F05 maximum. If a negotiated limit is smaller than a body needs, the body is not delivered
-and the query fails with `GEO_BUFFER_LIMIT`; it is never fragmented across attachments. `F06-POS-28`
-shows the page arithmetic. Transport element type stays `u8`; the blob is self-describing, so F05's
-open question on element-type negotiation needs no change.
+**Delivery.** A mesh blob is **never split**: a snapshot or change delivery holds whole blobs. If a
+delivery limit is smaller than a body needs, the body is not delivered and the query fails with
+`GEO_BUFFER_LIMIT`; it is never fragmented. `F06-POS-28` shows the page arithmetic.
 
 **Digest rule.** The `mesh_digest` is the SHA-256 (RFC 6234) of the exact blob bytes, as 64
-lowercase hexadecimal digits. For a blob sent as one F05 attachment it equals that attachment's
-`sha256`. The digest identifies bytes; it is not the shape key (F04). The same shape key,
+lowercase hexadecimal digits. The digest identifies bytes; it is not the shape key (F04). The same shape key,
 space and placement give the same bytes under the declared algorithm profile and the same digest
 (`F06-POS-02`). A world blob differs from the local blob and has its own digest.
 
@@ -791,8 +784,8 @@ a union of 1500 mm3, so the sum is never reported; the certificate refuses that 
 ## 9. Query API (logical)
 
 All queries are read-only and bounded. They name no transport, no USD path and no file path. A query
-is pinned to one project, workspace, base revision and workspace generation (the F05 `context`
-tuple) and returns a `snapshot_token`: an opaque string of at most the F05 `cursor_bytes` limit,
+is pinned to one project, workspace, base revision and workspace generation and returns a
+`snapshot_token`: an opaque string of at most 256 bytes,
 compared for equality only (ordering and structure are never inferred). A result is answered at
 exactly one pinned revision; data from two revisions is never mixed. An unknown, expired or
 older-than-retained token is `GEO_STALE_TOKEN` (`STALE_WORKSPACE`). A successful result is `ok`; a
@@ -868,18 +861,18 @@ schemas are closed (unknown field: `UNSUPPORTED_PROPERTY`).
 - *Work and deadline:* a `Pick` considers at most 65,536 elements and at most 26 features
   per element; a model with more elements fails before the scan with `GEO_PICK_LIMIT` and no partial
   hits (`F06-NEG-33`). The scan visits elements in ascending ElementId order and polls the
-  cancellation token and the F05 request deadline every 1,024 elements. A cancelled query returns
-  `CANCELLED` and a missed deadline follows F05; neither returns partial hits. Only a
+  cancellation token and the request deadline every 1,024 elements. A cancelled query returns
+  `CANCELLED` and a missed deadline `OUTCOME_UNKNOWN`; neither returns partial hits. Only a
   completed scan returns hits.
 
-**Incremental update.** `GetChanges` answers from a bounded retained history. It lists at most the
-F05 `batch_items` entries per page and at most `delivery_pages` pages; an entry reports the element,
+**Incremental update.** `GetChanges` answers from a bounded retained history. It lists at most
+4,096 entries per page and at most 1,024 pages per delivery; an entry reports the element,
 the kind of change (`added`, `changed`, `removed`), the three keys and, only when the shape key
 changed, the new blob. A placement-only edit therefore resends no mesh (`F06-POS-34`); a dimension
 edit resends the blob (`F06-POS-35`). A token the engine cannot answer gives the outcome
 `resnapshot_required` with `STALE_WORKSPACE` and no partial list (`F06-POS-36`); the consumer then
-reads a fresh snapshot, as F05's invalidation event requires. A delivery that would exceed the F05
-delivery caps fails before dispatch instead of being truncated silently.
+reads a fresh snapshot. A delivery that would exceed the delivery caps fails before dispatch instead
+of being truncated silently.
 
 **The renderer never computes engineering geometry.** Bounds, quantities, normals used for
 measurement, feature geometry, pick results and FeatureIds come from the engine. A viewport may
@@ -905,9 +898,9 @@ decision of the CLI task; it does not alter the logical result.
 | Input size | At most 3081 numbers for a plate or 17 for a member (section 2); at most 1024 contour points |
 | Operation bodies | No designed limit on holes or cuts per element; counts stay inside the section 6 caps. Kernel budgets (certification, exact-sign, pair and operation limits) are implementation limits whose numeric values live in code; exceeding one is `GEO_KERNEL_CAPACITY` (section 2, "Operations") |
 | Primitive versus validator limits | Primitive counts are exact constants (section 6); the hard caps bound any blob a validator accepts |
-| Descriptor bytes | At most 32,768 encoded bytes per body descriptor; the page budget also obeys F05 `control_bytes`, `json_tokens` and `string_bytes` |
-| Query output and work | At most 64 hits per pick; at most 65,536 elements and 26 features per element considered; cancellation and deadline polled every 1,024 elements; page and delivery bounds from F05 |
-| Negotiated limits | Each cap is a maximum; where F05 `effective_limits` (`buffer_bytes`, `attachments`, `bundle_bytes`, `control_bytes`, `json_tokens`, `string_bytes`, `batch_items`, `delivery_pages`, `request_timeout_ms`) is smaller, the smaller value applies. A body that cannot be delivered whole under it fails with `GEO_BUFFER_LIMIT`; it is never split or truncated (`F06-NEG-34`). F06 never widens a negotiated or F04 limit |
+| Descriptor bytes | At most 2,097,152 encoded bytes per body descriptor |
+| Query output and work | At most 64 hits per pick; at most 65,536 elements and 26 features per element considered; cancellation and deadline polled every 1,024 elements; at most 4,096 entries per page and 1,024 pages per delivery |
+| Delivery limits | A body that cannot be delivered whole fails with `GEO_BUFFER_LIMIT`; it is never split or truncated (`F06-NEG-34`). F06 never widens an F04 limit |
 
 **Cancellation points and deterministic result.** The kernel polls a host-supplied cancellation
 token at these points only: P0 on entry, P1 before the build, P2 before the checks and P3 before the
@@ -918,8 +911,8 @@ operations, so cancellation latency is bounded. A cancellation observed at or be
 `cancelled`, `GEO_CANCELLED`, and no mesh, quantities or key: the partial work is discarded. A
 cancellation after the seal point is a no-op and returns the complete result (`F06-POS-37`). For a
 fixed input and a fixed observing point the outcome is the same every time (`F06-NEG-16`,
-`F06-NEG-17`). Cancellation never changes engineering state; F05 still decides what the
-host may report: `CANCELLED` only when the discard is proven.
+`F06-NEG-17`). Cancellation never changes engineering state; `CANCELLED` is reported only when the discard is
+proven.
 
 ## 11. Acceptance cases
 
@@ -973,4 +966,3 @@ This is version **0.1.0**: `algorithm` 3, `tolerance_policy` 3, `feature_id_rule
 `mesh_layout` 1. A change that alters an output byte, a key or a decision for an input already
 evaluated raises the affected version as section 2 says.
 
-Open questions are tracked in [issue #141](https://github.com/Apibim-com/BeamCraft/issues/141).

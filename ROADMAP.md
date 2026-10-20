@@ -27,7 +27,7 @@ that the gate's acceptance is claimed.
 
 | Gate | Acceptance result | Packages | Status |
 |------|-------------------|----------|--------|
-| K0 | Verified base, requirements, contracts and original fixtures | F01–F11 | in progress; F04 frozen 0.1.0; F06, F10 and E01 drafts, each frozen once its open issue is closed; F08 a living document; F05 retired |
+| K0 | Verified base, requirements, contracts and original fixtures | F01–F11 | in progress; F04 and F06 frozen 0.1.0; F10 and E01 drafts, each frozen once its open issue is closed; F08 a living document; F05 retired |
 | K1 | CLI creates a plate and atomically saves a complete revision readable by ordinary OpenUSD | U01–U07, U09, U14, G01–G02, P01 | slices merged; acceptance open |
 | K2 | Straight beam/column, quantities, independent copy, personal workspace and local undo | P02–P08, A07 | slices merged (rolled, custom and library sections); acceptance open |
 | K3 | Foreign USD references remain read-only; supported measurements are separate results | R01–R03, G08 | R01 merged; R02–R03 deferred |

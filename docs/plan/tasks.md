@@ -20,7 +20,7 @@ Status as of 2026-10-20, `master` at `d456670`. New tasks are added here in a do
 | F03 / M | OpenUSD distribution audit | — | Audit of the SDK version, TOST, dependencies, packaging and platforms | Reproducible delivery option and its conditions; no exception added unasked | done; superseded by F11 variant C, audit removed |
 | F04 / M | [Model and command contract](../contracts/f04-model-and-commands-v0.1.md) | F01, F02, F09 | UUID and path, parameter types, schema version, errors, base revision, read/write dependencies, create/update/delete | Contract and negative cases agreed; no hidden JSON model; units and limits set | frozen 0.1.0 |
 | F05 / M | [Private USD-worker protocol](../contracts/f05-worker-protocol-v0.1.md) | F04 | Versioned requests and responses, capabilities, timeouts, cancellation, limits, revision token | Same contract for CLI and host; private IPC without a listening socket | retired; removed by U17 |
-| F06 / M | [Geometry and viewport contract](../contracts/f06-geometry-contract-v0.1.md) | F04 | Kernel inputs, results and diagnostics, FeatureId, mesh buffers, transforms, query API | Shape, world measurement and presentation have separate keys; topology and bounds bounded | draft; frozen once its open issue is closed |
+| F06 / M | [Geometry and viewport contract](../contracts/f06-geometry-contract-v0.1.md) | F04 | Kernel inputs, results and diagnostics, FeatureId, mesh buffers, transforms, query API | Shape, world measurement and presentation have separate keys; topology and bounds bounded | frozen 0.1.0 |
 | F07 / M | Original synthetic fixtures | — | Generator and manifest of our own test bodies, provenance, analytical references | No vendor asset; references separate from unverified cases; stable fixture IDs | done (`tests/fixtures/f07`) |
 | F08 / M | [Module boundaries](../contracts/f08-module-boundaries-v0.1.md) | F04, F05, F06, F07 | Crate layout and allowed dependencies; CI targets | Pure crates pass the WASM check; native host isolated; checker in CI | living document; checker in CI |
 | F09 / M | Clean-room separation for the kernel | F01, F02 | Admission rules, requirement provenance, a package without source-derived material | Independent review of the specification passed | done, then retired by decision 2026-10-20 |
@@ -77,6 +77,7 @@ Time-boxed research with a report; never a production gate.
 | G08 / M | Kernel integration for the accepted scope | G07 | Bounded API, cancellation and revision checks, engine commands | Real API and CLI end-to-end use our kernel; a failure never damages USD | open; contract amendment A-2 done |
 | G09 / M | Pilot plane cuts and booleans | G05, G06 | Bounded own operations on agreed bodies | Independent fixtures check volume, bounds, topology and failure | merged |
 | G10 / M | Faster kernel certification | G08 | Spatial index instead of a face-pair search; tens of holes per plate or flange | Measured before and after; `OpLimits` revised by measurement | open |
+| G11 / M | Accuracy fixtures | G06, F07 | Fixtures for rounded-mesh cross-checks, subnormal mass, very large coordinates and cancellation-heavy inputs, with references from exact rational arithmetic | The kernel stays within the F06 comparison rule on every fixture, or the constants of F06 section 4 are tightened | open |
 
 ## P: core model
 
