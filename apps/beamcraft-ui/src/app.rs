@@ -1202,7 +1202,7 @@ impl eframe::App for App {
 
 #[cfg(test)]
 mod tests {
-    use super::navigation;
+    use super::{navigation, needs_refit, target_size, volume_note};
     use crate::camera::Camera;
 
     const PLAIN: (egui::Vec2, bool, bool, bool) = (egui::Vec2::ZERO, false, false, false);
@@ -1374,11 +1374,6 @@ mod tests {
             assert!(camera.distance().is_finite(), "pinch {hostile}");
         }
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
 
     #[test]
     fn the_render_target_is_clamped_as_a_whole() {

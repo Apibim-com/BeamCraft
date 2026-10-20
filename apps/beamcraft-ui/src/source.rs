@@ -49,6 +49,11 @@ pub fn load_within(cli: &Path, store: &Path, deadline: Duration) -> Result<ViewS
             .and_then(|rest| rest.split('"').next())
             .filter(|c| c.len() <= 32 && c.bytes().all(|b| b.is_ascii_uppercase() || b == b'_'))
             .unwrap_or("UNKNOWN");
+        if code == "NOT_FOUND" {
+            // A store with no published revision yet: typed, so the empty state cannot drift
+            // apart from the matcher that treats it as normal.
+            return Err(Error::NoRevision);
+        }
         return Err(Error::Cli(format!("view-export rejected: {code}")));
     }
     Ok(ViewSnapshot::from_bundle(&output.stdout, &limits)?)
@@ -67,10 +72,10 @@ fn export_error(e: ToolError) -> Error {
     }
 }
 
-/// True when the failure is only that the store has no published revision yet (`NOT_FOUND`):
-/// a normal state of a new store, not an error to show in red.
+/// True when the failure is only that the store has no published revision yet: a normal state
+/// of a new store, not an error to show in red.
 pub fn is_no_revision(error: &Error) -> bool {
-    matches!(error, Error::Cli(m) if m.ends_with("view-export rejected: NOT_FOUND"))
+    matches!(error, Error::NoRevision)
 }
 /// Everything one window refresh reads, gathered without a window or a GPU so it can run on a
 /// worker thread: the accepted snapshot with its scene, and the store's definitions. The two
