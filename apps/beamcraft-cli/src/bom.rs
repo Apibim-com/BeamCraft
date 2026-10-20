@@ -5,13 +5,16 @@
 //!
 //! Maps the engine's re-evaluated records of [`crate::plate::inspect`] to
 //! [`beamcraft_engine::bom::BomRow`]s: the labels come from the pinned definitions, the derived
-//! areas divide the current volume, and the mark is the element id (the issue's fallback until
-//! A08/A09 numbering exists). No geometry is computed here.
+//! areas divide the current volume, and the mark is the element's approved numbering mark (A09)
+//! read from the stored `steel:numbering:*` properties, falling back to the element id for an
+//! unnumbered element. No geometry is computed here.
 
 use crate::definition::DefinitionRecord;
 use crate::plate::{Inspection, PlateError};
 use beamcraft_engine::bom::BomRow;
 use beamcraft_engine::element::ElementKind;
+use beamcraft_engine::numbering::GroupKind;
+use beamcraft_engine::numbering_approval::StoredMark;
 use beamcraft_engine::query::committed::{MemberRecord, PlateRecord};
 use beamcraft_model::command::MemberKind;
 use beamcraft_model::digest::ContentDigest;
@@ -19,7 +22,7 @@ use beamcraft_model::digest::ContentDigest;
 type Run<T> = Result<T, PlateError>;
 
 /// One report row per plate and member of the verified head.
-pub fn rows(inspection: &Inspection) -> Run<Vec<BomRow>> {
+pub fn rows(inspection: &Inspection, marks: &[StoredMark]) -> Run<Vec<BomRow>> {
     let mut result = Vec::with_capacity(
         inspection
             .plates
@@ -27,21 +30,21 @@ pub fn rows(inspection: &Inspection) -> Run<Vec<BomRow>> {
             .saturating_add(inspection.members.len()),
     );
     for record in &inspection.plates {
-        result.push(plate_row(inspection, record)?);
+        result.push(plate_row(inspection, marks, record)?);
     }
     for record in &inspection.members {
-        result.push(member_row(inspection, record)?);
+        result.push(member_row(inspection, marks, record)?);
     }
     Ok(result)
 }
 
-/// The mark of an element: its assigned or approved mark (A09), else the element id — the
-/// issue's fallback for an element that is not numbered.
-fn mark_of(inspection: &Inspection, id: &beamcraft_model::id::ElementId) -> String {
-    inspection
-        .marks
-        .mark(id)
-        .map(|mark| mark.value.clone())
+/// The mark of an element: its approved numbering mark (A09) as the reader rule renders it,
+/// else the element id — the fallback for an element that is not numbered.
+fn mark_of(marks: &[StoredMark], id: &beamcraft_model::id::ElementId, kind: GroupKind) -> String {
+    marks
+        .iter()
+        .find(|m| &m.id == id)
+        .map(|m| m.mark.text(kind))
         .unwrap_or_else(|| id.to_string())
 }
 
@@ -86,11 +89,15 @@ fn material_label(inspection: &Inspection, digest: Option<ContentDigest>) -> Str
         .unwrap_or_else(|| digest.to_string())
 }
 
-fn plate_row(inspection: &Inspection, record: &PlateRecord) -> Run<BomRow> {
+fn plate_row(inspection: &Inspection, marks: &[StoredMark], record: &PlateRecord) -> Run<BomRow> {
     let thickness = record.body.thickness_mm;
     Ok(BomRow {
         id: record.authored.id,
-        mark: mark_of(inspection, &record.authored.id),
+        mark: mark_of(
+            marks,
+            &record.authored.id,
+            GroupKind::Part(beamcraft_engine::numbering::PartKind::Plate),
+        ),
         kind: ElementKind::Plate,
         name: record.authored.name.clone(),
         profile: format!("PL{thickness}"),
@@ -103,13 +110,20 @@ fn plate_row(inspection: &Inspection, record: &PlateRecord) -> Run<BomRow> {
     })
 }
 
-fn member_row(inspection: &Inspection, record: &MemberRecord) -> Run<BomRow> {
+fn member_row(inspection: &Inspection, marks: &[StoredMark], record: &MemberRecord) -> Run<BomRow> {
     let [p1, p2] = record.authored.axis_points_mm;
     let d = [p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2]];
     let length = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
     Ok(BomRow {
         id: record.authored.id,
-        mark: mark_of(inspection, &record.authored.id),
+        mark: mark_of(
+            marks,
+            &record.authored.id,
+            GroupKind::Part(match record.authored.kind {
+                MemberKind::Beam => beamcraft_engine::numbering::PartKind::Beam,
+                MemberKind::Column => beamcraft_engine::numbering::PartKind::Column,
+            }),
+        ),
         kind: match record.authored.kind {
             MemberKind::Beam => ElementKind::Beam,
             MemberKind::Column => ElementKind::Column,

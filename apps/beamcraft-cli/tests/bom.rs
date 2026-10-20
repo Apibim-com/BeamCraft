@@ -192,7 +192,16 @@ impl Fixture {
             "element_id",
         );
         // A09: the beam is numbered, the column is not, so the report shows both mark sources.
-        self.ok("number-assign", &["--id", &beam, "--mark", "B1"]);
+        // The numbering-approval path: approve only the beam series (B), so the beam carries
+        // the stored mark B1 and every other element stays unnumbered.
+        let token = text(
+            &self.ok("numbering-preview", &["--beam-series", "B:1"]),
+            "preview_token",
+        );
+        self.ok(
+            "numbering-approve",
+            &["--preview-token", &token, "--beam-series", "B:1"],
+        );
         (plate, bare_plate, beam, column)
     }
 }
@@ -222,6 +231,17 @@ fn cells(line: &str) -> Vec<&str> {
 fn the_exported_tables_match_the_verified_revision() {
     let f = Fixture::new();
     let (plate, bare_plate, beam, column) = f.build_model();
+    // A part created after the approval carries no mark: the report falls back to the id.
+    let late = text(
+        at(
+            &f.ok(
+                "create-plate",
+                &["--width", "600", "--length", "300", "--thickness", "10"],
+            ),
+            &["plate"],
+        ),
+        "element_id",
+    );
 
     // The quantities the CSV must repeat come from the verified read of the same head.
     let inspected = f.ok("plate-inspect", &[]);
@@ -252,57 +272,68 @@ fn the_exported_tables_match_the_verified_revision() {
         &["--out", &elements_path, "--summary", &summary_path],
     );
     assert_eq!(text(&exported, "outcome"), "bom_exported");
-    assert_eq!(at(&exported, &["elements"]).float(), Ok(4.0));
+    assert_eq!(at(&exported, &["elements"]).float(), Ok(5.0));
     assert_eq!(at(&exported, &["groups"]).float(), Ok(4.0));
     assert_eq!(text(&exported, "elements_file"), elements_path);
     assert_eq!(text(&exported, "summary_file"), summary_path);
 
     let elements = f.read("elements.csv");
     let lines: Vec<&str> = elements.lines().collect();
-    assert_eq!(lines.len(), 5, "{elements}");
+    assert_eq!(lines.len(), 6, "{elements}");
     assert_eq!(
         lines[0],
         "mark,element_id,kind,name,profile,material,length_mm,area_mm2,volume_mm3,volume_m3,mass_kg"
     );
     // Report order: plates, then beams, then columns; within a kind by profile, then mark.
+    // The approved marks are PL1 (the bare plate), PL2, B1 and C1; the late plate is
+    // unnumbered, so its mark falls back to the element id and sorts before the PL marks.
     let rows: Vec<Vec<&str>> = lines[1..].iter().map(|l| cells(l)).collect();
     assert_eq!(rows[0][2], "plate");
-    assert_eq!(rows[0][0], bare_plate, "mark falls back to the element id");
+    assert_eq!(rows[0][0], late, "an unnumbered mark falls back to the id");
     assert_eq!(rows[0][0], rows[0][1]);
     assert_eq!(
         rows[0][5], "",
         "a plate without a material has no material cell"
     );
     assert_eq!(rows[0][6], "", "a plate has no length cell");
-    assert_eq!(rows[0][7], "320000", "net face area = volume / thickness");
+    assert_eq!(rows[0][7], "180000", "net face area = volume / thickness");
     assert_eq!(
         rows[0][10], "",
         "an unknown mass is an empty cell, never zero"
     );
-    assert_eq!(rows[1][1], plate);
-    assert_eq!(rows[1][5], "S355");
-    assert_eq!(rows[1][7], "500000");
     assert_eq!(
-        rows[1][10],
+        rows[1][0], "PL1",
+        "the approved numbering labels the element"
+    );
+    assert_eq!(rows[1][1], bare_plate);
+    assert_eq!(rows[1][5], "");
+    assert_eq!(rows[1][7], "320000");
+    assert_eq!(rows[1][10], "");
+    assert_eq!(rows[2][0], "PL2");
+    assert_eq!(rows[2][1], plate);
+    assert_eq!(rows[2][5], "S355");
+    assert_eq!(rows[2][7], "500000");
+    assert_eq!(
+        rows[2][10],
         format!("{}", mass_of(&plate)),
         "the CSV mass is the verified mass"
     );
-    assert_eq!(rows[2][2], "beam");
-    assert_eq!(rows[2][0], "B1", "an assigned mark labels the element");
-    assert_eq!(rows[2][1], beam);
+    assert_eq!(rows[3][2], "beam");
+    assert_eq!(rows[3][0], "B1", "an approved mark labels the element");
+    assert_eq!(rows[3][1], beam);
     assert_eq!(
-        rows[2][4], "RECT100x50",
+        rows[3][4], "RECT100x50",
         "the designation labels the profile"
     );
-    assert_eq!(rows[2][6], "3000");
-    assert_eq!(rows[2][7], "5000", "net section area = volume / length");
-    assert_eq!(rows[2][10], format!("{}", mass_of(&beam)));
-    assert_eq!(rows[3][2], "column");
-    assert_eq!(rows[3][1], column);
-    assert_eq!(rows[3][0], column);
-    assert_eq!(rows[3][4], "SYNI300");
-    assert_eq!(rows[3][5], "");
-    assert_eq!(rows[3][10], "");
+    assert_eq!(rows[3][6], "3000");
+    assert_eq!(rows[3][7], "5000", "net section area = volume / length");
+    assert_eq!(rows[3][10], format!("{}", mass_of(&beam)));
+    assert_eq!(rows[4][2], "column");
+    assert_eq!(rows[4][1], column);
+    assert_eq!(rows[4][0], "C1");
+    assert_eq!(rows[4][4], "SYNI300");
+    assert_eq!(rows[4][5], "");
+    assert_eq!(rows[4][10], "");
 
     let summary = f.read("summary.csv");
     let lines: Vec<&str> = summary.lines().collect();
@@ -313,12 +344,15 @@ fn the_exported_tables_match_the_verified_revision() {
     );
     let groups: Vec<Vec<&str>> = lines[1..].iter().map(|l| cells(l)).collect();
     assert_eq!(groups[0][..3], ["plate", "PL10", ""]);
-    assert_eq!(groups[0][3], "1");
+    assert_eq!(
+        groups[0][3], "2",
+        "the bare and the late plate share the group"
+    );
     assert_eq!(groups[0][4], "", "plates have no total length");
     assert_eq!(groups[0][7], "");
     assert_eq!(
-        groups[0][8], "1",
-        "the bare plate is counted as unknown mass"
+        groups[0][8], "2",
+        "both plates without a material are counted as unknown mass"
     );
     assert_eq!(groups[1][..3], ["plate", "PL10", "S355"]);
     assert_eq!(groups[1][7], format!("{}", mass_of(&plate)));

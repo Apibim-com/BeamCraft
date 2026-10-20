@@ -130,8 +130,17 @@ fn run(args: &[OsString]) -> Run<Json> {
         code: e.code(),
         message: "store root is not usable",
     })?;
-    let inspection = inspect(&RevisionStore::new(blobs))?;
-    let bom = tables(&rows(&inspection)?, MAX_ELEMENTS)?;
+    let store = RevisionStore::new(blobs);
+    let inspection = inspect(&store)?;
+    // The approved numbering marks (A09) of the same head; a mark the store does not carry
+    // falls back to the element id in the report.
+    let (mark_revision, marks) = beamcraft_cli::numbering_approval::head_marks(&store)?;
+    if mark_revision != inspection.revision.revision_id {
+        return Err(invalid(
+            "the store head moved while the report was gathered",
+        ));
+    }
+    let bom = tables(&rows(&inspection, &marks)?, MAX_ELEMENTS)?;
     // Both files are rendered before the first one is created, so a rendering failure writes
     // nothing; both are then reserved before any bytes are written, so a refusal on either
     // path leaves nothing.
