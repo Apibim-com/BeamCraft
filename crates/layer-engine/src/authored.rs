@@ -416,15 +416,6 @@ const A09_NUMBERING_LINE: &str = concat!(
 const A09_CHANGES_ITEM: &str = "|Level|Mark|Delete;";
 const PRE_A09_CHANGES_ITEM: &str = "|Level|Delete;";
 
-/// The mapping descriptor as it was before A09 added the numbering mark: the current descriptor
-/// without the numbering line and without `Mark` in the change list. A09 added only optional
-/// content, so layers pinned to that mapping stay readable and editable.
-fn pre_a09_descriptor() -> String {
-    SCHEMA_DESCRIPTOR
-        .replacen(A09_NUMBERING_LINE, "", 1)
-        .replacen(A09_CHANGES_ITEM, PRE_A09_CHANGES_ITEM, 1)
-}
-
 /// The one descriptor line that A05 added (the bolt properties); see [`pin_accepted`].
 const A05_BOLT_PROPERTIES_LINE: &str = "steel:bolt:diameterMm=double(>0,<=1000);steel:bolt:count=int(1..=512);steel:bolt:pitchMm=double(>0,<=1e6);steel:bolt:originMm=double3;steel:bolt:directionMm=double3(unit)\n";
 
@@ -433,13 +424,22 @@ const A05_CONNECTION_PHRASE: &str = "a weld (A06) or bolt group (A05)";
 /// The connection wording before A05.
 const A05_PREVIOUS_CONNECTION_PHRASE: &str = "a weld only (A06)";
 
-/// The descriptor as it was before A05 added the bolt properties and reworded the connection
-/// line: the pre-A09 descriptor without those additions (A05 predates A09, and both added
-/// only optional content).
+/// The mapping descriptor as it was before A05 added the bolt properties and reworded the
+/// connection line: the current descriptor without those edits — the numbering mark line of A09
+/// stays, so this is the mapping every store created since A09 carries. A05 added only optional
+/// content, so layers pinned to that mapping stay readable and editable.
 pub(crate) fn pre_a05_descriptor() -> String {
-    pre_a09_descriptor()
+    SCHEMA_DESCRIPTOR
         .replacen(A05_BOLT_PROPERTIES_LINE, "", 1)
         .replacen(A05_CONNECTION_PHRASE, A05_PREVIOUS_CONNECTION_PHRASE, 1)
+}
+
+/// The mapping descriptor as it was before A09 added the numbering mark: the pre-A05 descriptor
+/// without the numbering line and without `Mark` in the change list.
+fn pre_a09_descriptor() -> String {
+    pre_a05_descriptor()
+        .replacen(A09_NUMBERING_LINE, "", 1)
+        .replacen(A09_CHANGES_ITEM, PRE_A09_CHANGES_ITEM, 1)
 }
 
 /// Whether a layer's saved `bimSchemaDigest` is the current mapping or an earlier one that the
@@ -448,22 +448,23 @@ pub(crate) fn pin_accepted(pin: &str) -> Result<bool, Diagnostic> {
     if pin == schema_identity()?.digest.to_string() {
         return Ok(true);
     }
+    // A05 added the bolt properties and reworded the connection line, so the mapping before A05
+    // is the current descriptor without those edits — the digest every store created since A09
+    // carries.
+    let pre_a05 = Sha256::digest(pre_a05_descriptor().as_bytes()).map_err(|_| limit())?;
+    if pin == pre_a05.to_string() {
+        return Ok(true);
+    }
     // A09 added one optional line (the approved mark) and the `Mark` change item and changed
-    // nothing else, so the previous mapping is the current descriptor without them.
+    // nothing else, so the mapping before A09 is the pre-A05 descriptor without them.
     let pre_a09 = pre_a09_descriptor();
     let digest = Sha256::digest(pre_a09.as_bytes()).map_err(|_| limit())?;
     if pin == digest.to_string() {
         return Ok(true);
     }
-    // A05 added the bolt properties and reworded the connection line, so the mapping before A05
-    // is the pre-A09 descriptor without those additions.
-    let pre_a05 = Sha256::digest(pre_a05_descriptor().as_bytes()).map_err(|_| limit())?;
-    if pin == pre_a05.to_string() {
-        return Ok(true);
-    }
     // A07.2 added one optional line (the definition display name) to the D1/D2 descriptor and
-    // changed nothing else, so the D1/D2 mapping is the pre-A05 descriptor without that line.
-    let a07_1 = pre_a05_descriptor().replacen(A07_2_DISPLAY_NAME_LINE, "", 1);
+    // changed nothing else, so the D1/D2 mapping is the pre-A09 descriptor without that line.
+    let a07_1 = pre_a09.replacen(A07_2_DISPLAY_NAME_LINE, "", 1);
     let digest = Sha256::digest(a07_1.as_bytes()).map_err(|_| limit())?;
     if pin == digest.to_string() {
         return Ok(true);
@@ -1291,14 +1292,14 @@ mod pin_tests {
     #[test]
     fn the_d1_d2_mapping_pin_is_accepted_and_is_the_current_one_without_the_display_name_line() {
         // Pinned value: the digest of the descriptor of master with D1 and D2 (the level and the
-        // project record), before A07.2 added the optional definition display name, before A08
-        // added the element mark and before A05 added the bolt properties.
+        // project record), before A07.2 added the optional definition display name, before the
+        // numbering mark of A09 and before A05 added the bolt properties.
         let d1_d2 = "b799ae17004c22a5c2eaf7512367f919aec4b82b9b4b223166310286e1414b5b";
         assert!(SCHEMA_DESCRIPTOR.contains(A07_2_DISPLAY_NAME_LINE));
         assert!(!A07_1_DESCRIPTOR.contains(A07_2_DISPLAY_NAME_LINE));
         assert_eq!(
             Sha256::digest(
-                pre_a05_descriptor()
+                pre_a09_descriptor()
                     .replacen(A07_2_DISPLAY_NAME_LINE, "", 1)
                     .as_bytes()
             )
@@ -1339,9 +1340,9 @@ mod pin_tests {
 
     #[test]
     fn the_pre_a05_mapping_pin_is_accepted_and_is_not_the_current_one() {
-        // Pinned value: the digest of the descriptor of master with A07.2, before A05 added the
-        // bolt properties and reworded the connection line.
-        let pre_a05 = "fdaf890401a7bf4d8d17eb84ad1901b461ff21f1e7cec1e93f9e71203b83865b";
+        // Pinned value: the digest of the descriptor of the released master with the A09
+        // numbering mark, before A05 added the bolt properties and reworded the connection line.
+        let pre_a05 = "085a4f27db4ba0e60eea1a88630df1ab9984930a8e4e4a9bd4f3eb31f812d012";
         assert_eq!(
             Sha256::digest(pre_a05_descriptor().as_bytes())
                 .unwrap()
