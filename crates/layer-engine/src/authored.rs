@@ -1284,8 +1284,8 @@ mod pin_tests {
     fn every_previously_published_mapping_pin_is_still_accepted() {
         let current = schema_identity().unwrap().digest.to_string();
         let pins = [
-            // Master with A07.2 (pre-A05), A07.1, D1/D2 (pre-A07.2), A06, A01, R01, P02.2 and
-            // U09 descriptors.
+            // Master with A07.2, A07.1, D1/D2 (pre-A07.2), A06, A01, R01, P02.2 and U09
+            // descriptors.
             "fdaf890401a7bf4d8d17eb84ad1901b461ff21f1e7cec1e93f9e71203b83865b",
             "0311df71b2f7a4bd7b19e87ca7daef1884e989bd099bca24ee165de8e6bc310c",
             "b799ae17004c22a5c2eaf7512367f919aec4b82b9b4b223166310286e1414b5b",
@@ -1308,8 +1308,6 @@ mod pin_tests {
 
     #[test]
     fn the_pre_a05_mapping_pin_is_accepted_and_is_not_the_current_one() {
-        // Pinned value: the digest of the descriptor of master with A07.2, before A05 added the
-        // bolt properties and reworded the connection line.
         // Pinned value: the digest of the descriptor of master with A09, before A05 added the
         // bolt properties and reworded the connection line.
         let pre_a05 = "37c3bb7d2a9575e1eeea58acd63cf362bc230184b01f41d54e59a5a63b7121e1";
