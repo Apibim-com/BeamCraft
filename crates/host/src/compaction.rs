@@ -415,12 +415,6 @@ fn walk(store: &RevisionStore) -> Result<Walk, CompactionError> {
                     .entries()
                     .iter()
                     .map(|entry| (entry.digest(), entry.size()))
-                    .chain(
-                        info.manifest()
-                            .content()
-                            .operation_evidence()
-                            .map(|pin| (pin.digest(), pin.size())),
-                    )
                     .collect(),
                 record,
                 error: None,
@@ -447,13 +441,10 @@ fn walk(store: &RevisionStore) -> Result<Walk, CompactionError> {
 
 /// Verifies every layer blob of the given revisions once: present, digest, declared size.
 fn verify_blobs(store: &RevisionStore, items: &[&Item]) -> Result<(), RevisionError> {
-    let mut verified = BTreeMap::new();
+    let mut verified = BTreeSet::new();
     for item in items {
         for (entry, (digest, size)) in item.blobs.iter().enumerate() {
-            if let Some(previous_size) = verified.get(digest) {
-                if previous_size != size {
-                    return Err(RevisionError::SizeMismatch { entry });
-                }
+            if verified.contains(digest) {
                 continue;
             }
             let bytes = store.blobs().read(digest).map_err(|error| match error {
@@ -466,7 +457,7 @@ fn verify_blobs(store: &RevisionStore, items: &[&Item]) -> Result<(), RevisionEr
             if u64::try_from(bytes.len()) != Ok(*size) {
                 return Err(RevisionError::SizeMismatch { entry });
             }
-            verified.insert(*digest, *size);
+            verified.insert(*digest);
         }
     }
     Ok(())

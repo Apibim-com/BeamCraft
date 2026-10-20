@@ -5,12 +5,13 @@
 
 pub mod changeset;
 pub mod compaction;
-pub mod control;
 pub mod coordinator;
+pub mod dispatch;
 pub mod ids;
 pub mod lease;
 pub mod ledger;
 pub mod output;
 pub mod revision;
-pub mod settings;
 pub mod storage;
+pub mod wire;
+pub mod worker;

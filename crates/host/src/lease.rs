@@ -63,14 +63,6 @@ pub struct StoreLease {
     _file: File,
 }
 
-impl Drop for StoreLease {
-    fn drop(&mut self) {
-        // A concurrent fork can retain this open description until exec. Closing only our
-        // descriptor would let that child extend the logical lease; unlock it explicitly first.
-        let _ = self._file.unlock();
-    }
-}
-
 fn lock_error(error: TryLockError) -> LeaseError {
     match error {
         TryLockError::WouldBlock => LeaseError::Busy,
@@ -105,147 +97,9 @@ impl StoreLease {
             return Ok(true);
         };
         match file.try_lock() {
-            Ok(()) => {
-                let _ = file.unlock();
-                Ok(true)
-            }
+            Ok(()) => Ok(true),
             Err(TryLockError::WouldBlock) => Ok(false),
             Err(TryLockError::Error(e)) => Err(LeaseError::Storage(StorageError::Io(e.kind()))),
         }
-    }
-}
-
-/// Exclusive advisory serialization of one personal workspace's metadata transitions.
-/// This is separate from maintenance: a holder may still commit a draft through the ordinary
-/// revision CAS. Modelling commands do not acquire it; their concurrent commits remain guarded
-/// by the revision CAS. The OS releases this lease on process exit or crash.
-#[derive(Debug)]
-pub struct WorkspaceLease {
-    _file: File,
-}
-
-impl Drop for WorkspaceLease {
-    fn drop(&mut self) {
-        // Release the shared open description even while a forked child's exec is in flight.
-        let _ = self._file.unlock();
-    }
-}
-
-impl WorkspaceLease {
-    /// Acquires `workspace-state.lock` without waiting. Another metadata/rebase holder is busy;
-    /// a link or non-regular lock entry is refused by the same storage guards as maintenance.
-    pub fn exclusive(store: &BlobStore) -> Result<Self, LeaseError> {
-        let file = store
-            .open_named_lock_file(crate::storage::LockFile::WorkspaceState, true)?
-            .ok_or(LeaseError::Storage(StorageError::NotFound))?;
-        file.try_lock().map_err(lock_error)?;
-        Ok(Self { _file: file })
-    }
-}
-
-/// Separates concurrent committers from a reader that needs one store's head to stay pinned
-/// while it commits a different store, as for C03 rebase. Ordinary committers share this gate
-/// and still race through the root CAS. An exclusive holder refuses new commits immediately.
-/// A serving coordinator's maintenance lease remains compatible; compaction stays excluded.
-#[derive(Debug)]
-pub struct PublicationLease {
-    _file: File,
-    _maintenance: StoreLease,
-}
-
-impl Drop for PublicationLease {
-    fn drop(&mut self) {
-        // A forked child must not extend the logical pin until its close-on-exec runs.
-        let _ = self._file.unlock();
-    }
-}
-
-impl PublicationLease {
-    fn acquire(store: &BlobStore, exclusive: bool) -> Result<Self, LeaseError> {
-        let maintenance = StoreLease::shared(store)?;
-        let file = store
-            .open_named_lock_file(crate::storage::LockFile::Publication, true)?
-            .ok_or(LeaseError::Storage(StorageError::NotFound))?;
-        if exclusive {
-            file.try_lock().map_err(lock_error)?;
-        } else {
-            file.try_lock_shared().map_err(lock_error)?;
-        }
-        Ok(Self {
-            _file: file,
-            _maintenance: maintenance,
-        })
-    }
-
-    /// Holds the publication gate shared for a commit. Other committers remain concurrent;
-    /// an exclusive publication holder or compaction returns `Busy` without waiting.
-    pub fn shared(store: &BlobStore) -> Result<Self, LeaseError> {
-        Self::acquire(store, false)
-    }
-
-    /// Pins publication without stopping readers or a serving coordinator. Acquire before
-    /// reading the head, retain through the other store's CAS, then drop. This does not merge
-    /// models or authorize a publication, and a commit to this same store is refused while held.
-    pub fn exclusive(store: &BlobStore) -> Result<Self, LeaseError> {
-        Self::acquire(store, true)
-    }
-}
-
-#[cfg(all(test, unix))]
-mod tests {
-    #![allow(clippy::unwrap_used)]
-    use super::*;
-    use std::path::PathBuf;
-
-    fn store(label: &str) -> (PathBuf, BlobStore) {
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "beamcraft-lease-{label}-{}-{stamp}",
-            std::process::id()
-        ));
-        std::fs::create_dir(&root).unwrap();
-        let store = BlobStore::new(&root).unwrap();
-        (root, store)
-    }
-
-    #[test]
-    fn a_cloned_open_description_cannot_extend_a_dropped_workspace_lease() {
-        let (root, store) = store("workspace");
-        // fork inherits the same open description until close-on-exec. A clone deterministically
-        // models that interval without unsafe fork hooks or timing-dependent process races.
-        let inherited = {
-            let guard = WorkspaceLease::exclusive(&store).unwrap();
-            guard._file.try_clone().unwrap()
-        };
-        assert!(WorkspaceLease::exclusive(&store).is_ok());
-        drop(inherited);
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn a_cloned_open_description_cannot_extend_a_dropped_maintenance_lease() {
-        let (root, store) = store("maintenance");
-        let inherited = {
-            let guard = StoreLease::shared(&store).unwrap();
-            guard._file.try_clone().unwrap()
-        };
-        assert!(StoreLease::exclusive(&store).is_ok());
-        drop(inherited);
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn a_cloned_open_description_cannot_extend_a_dropped_publication_pin() {
-        let (root, store) = store("publication");
-        let inherited = {
-            let guard = PublicationLease::exclusive(&store).unwrap();
-            guard._file.try_clone().unwrap()
-        };
-        assert!(PublicationLease::shared(&store).is_ok());
-        drop(inherited);
-        std::fs::remove_dir_all(root).unwrap();
     }
 }

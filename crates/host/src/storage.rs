@@ -31,12 +31,11 @@ use beamcraft_model::ErrorCode;
 use beamcraft_model::digest::{ContentDigest, Sha256};
 
 mod gc;
-pub(crate) use gc::LockFile;
 
 pub(crate) use gc::BlobInfo;
 
-/// Maximum blob and returned byte-buffer length: 32 MiB (33,554,432 bytes). The layer engine's
-/// model profile sizes one layer by this cap.
+/// Maximum blob and returned byte-buffer length: F05 0.1.0 sections 3/4, bundle_bytes
+/// budget of 33,554,432 bytes. This storage cap does not widen attachment wire limits.
 pub const MAX_BLOB_BYTES: usize = 33_554_432;
 
 /// Directory entries one namespace scan inspects before it gives up with `LimitExceeded`.
@@ -183,7 +182,7 @@ pub struct BlobStore {
 }
 
 impl BlobStore {
-    /// Opens an existing absolute directory with the [`MAX_BLOB_BYTES`] cap.
+    /// Opens an existing absolute directory with the F05-derived maximum byte cap.
     /// Does not create the root or accept an asset path/URI.
     pub fn new(root: impl AsRef<Path>) -> Result<Self, StorageError> {
         Self::with_limit(root, MAX_BLOB_BYTES)

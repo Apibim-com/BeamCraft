@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 // Contributor-original synthetic plates and an invented foreign layer, MPL-2.0.
 
-//! U14 end to end: `inspect-history` and `compact-history` through the real binary, one fresh
-//! process per call. The store is built by `create-plate` and `attach-reference` (real revisions
+//! U14 end to end: `history-stats` and `history-compact` through the real binary, one fresh
+//! process per call. The store is built by `create-plate` and `reference-attach` (real revisions
 //! with meshes, quantities and a foreign layer); a compaction must leave the head readable with the
 //! same plates, meshes and quantities, the foreign layer byte for byte, and refuse everything
 //! unsafe without changing a byte.
@@ -14,7 +14,10 @@ use beamcraft_host::{
     revision::{CommitPoint, ExpectedBase, Injected, RevisionDraft, RevisionStore, Uuid7},
     storage::BlobStore,
 };
-use beamcraft_json::{Json, Limits};
+use beamcraft_protocol::{
+    json::{self, Json},
+    message,
+};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
@@ -59,7 +62,7 @@ impl Fixture {
             .args(args)
             .output()
             .unwrap();
-        let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
+        let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
         (output.status.code().unwrap(), body)
     }
     fn ok(&self, args: &[&str]) -> Json {
@@ -95,7 +98,7 @@ impl Fixture {
         let source = self.root.join("sources").join("site.usda");
         fs::write(&source, SITE).unwrap();
         self.ok(&[
-            "attach-reference",
+            "reference-attach",
             "--store",
             &self.published(),
             "--source",
@@ -113,11 +116,11 @@ impl Fixture {
         self.plate("P4");
     }
     fn stats(&self) -> Json {
-        self.ok(&["inspect-history", "--store", &self.published()])
+        self.ok(&["history-stats", "--store", &self.published()])
     }
     fn dry_run(&self, keep: &[&str], extra: &[&str]) -> Json {
         let published = self.published();
-        let mut args = vec!["compact-history", "--store", published.as_str()];
+        let mut args = vec!["history-compact", "--store", published.as_str()];
         args.extend_from_slice(keep);
         args.push("--dry-run");
         args.extend_from_slice(extra);
@@ -197,9 +200,9 @@ fn list(json: &Json, path: &[&str]) -> Vec<Json> {
 fn head_view(fx: &Fixture) -> (Json, Json, Json) {
     let store = fx.published();
     (
-        fx.ok(&["open-revision", "--store", &store]),
-        fx.ok(&["inspect-elements", "--store", &store]),
-        fx.ok(&["inspect-reference", "--store", &store]),
+        fx.ok(&["revision-open", "--store", &store]),
+        fx.ok(&["plate-inspect", "--store", &store]),
+        fx.ok(&["reference-inspect", "--store", &store]),
     )
 }
 
@@ -268,7 +271,7 @@ fn a_compaction_without_confirmation_or_a_backup_decision_is_refused() {
     fx.build();
     let store = fx.published();
     let backup = fx.path("backup");
-    let base = ["compact-history", "--store", store.as_str(), "--keep-head"];
+    let base = ["history-compact", "--store", store.as_str(), "--keep-head"];
     let with = |extra: &[&str]| -> Vec<String> {
         base.iter().chain(extra).map(ToString::to_string).collect()
     };
@@ -303,7 +306,7 @@ fn a_compaction_without_confirmation_or_a_backup_decision_is_refused() {
     refuse(&["--yes", "--backup", "relative-dir", "--no-workspaces"]); // not absolute
     assert!(!Path::new(&backup).exists());
     let (_, code) = fx.refused(&[
-        "compact-history",
+        "history-compact",
         "--store",
         &store,
         "--yes",
@@ -313,7 +316,7 @@ fn a_compaction_without_confirmation_or_a_backup_decision_is_refused() {
     assert_eq!(code, "INVALID_ARGUMENT", "no keep selector");
     for keep in ["0", "100001", "18446744073709551615", "-1", "many", ""] {
         let (_, code) = fx.refused(&[
-            "compact-history",
+            "history-compact",
             "--store",
             &store,
             "--keep",
@@ -324,7 +327,7 @@ fn a_compaction_without_confirmation_or_a_backup_decision_is_refused() {
         ]);
         assert_eq!(code, "INVALID_ARGUMENT", "--keep {keep}");
         let (_, code) = fx.refused(&[
-            "compact-history",
+            "history-compact",
             "--store",
             &store,
             "--keep",
@@ -338,7 +341,7 @@ fn a_compaction_without_confirmation_or_a_backup_decision_is_refused() {
     fs::create_dir(&occupied).unwrap();
     fs::write(occupied.join("keep.txt"), b"mine").unwrap();
     let (_, code) = fx.refused(&[
-        "compact-history",
+        "history-compact",
         "--store",
         &store,
         "--keep-head",
@@ -351,7 +354,7 @@ fn a_compaction_without_confirmation_or_a_backup_decision_is_refused() {
     assert_eq!(fs::read(occupied.join("keep.txt")).unwrap(), b"mine");
     let inside = fx.root.join("published").join("backup");
     let (_, code) = fx.refused(&[
-        "compact-history",
+        "history-compact",
         "--store",
         &store,
         "--keep-head",
@@ -380,7 +383,7 @@ fn compaction_keeps_the_head_meshes_quantities_and_the_foreign_layer() {
 
     let backup = fx.path("backup");
     let done = fx.ok(&[
-        "compact-history",
+        "history-compact",
         "--store",
         &fx.published(),
         "--keep-head",
@@ -411,12 +414,12 @@ fn compaction_keeps_the_head_meshes_quantities_and_the_foreign_layer() {
         fx.snapshot_of("backup").len(),
         store_before.len() - usize::from(store_before.contains_key("maintenance.lock"))
     );
-    let backup_open = fx.ok(&["open-revision", "--store", &backup]);
+    let backup_open = fx.ok(&["revision-open", "--store", &backup]);
     assert_eq!(
         text(&backup_open, "revision_id"),
         text(&open_before, "revision_id")
     );
-    let backup_stats = fx.ok(&["inspect-history", "--store", &backup]);
+    let backup_stats = fx.ok(&["history-stats", "--store", &backup]);
     assert_eq!(num(&backup_stats, &["revisions"]), 5);
 
     // The head is the same revision with the same number and the same content.
@@ -433,7 +436,7 @@ fn compaction_keeps_the_head_meshes_quantities_and_the_foreign_layer() {
     );
     assert!(
         fx.ok(&[
-            "verify-blob",
+            "blob-verify",
             "--store",
             &fx.published(),
             "--digest",
@@ -462,7 +465,7 @@ fn compaction_keeps_the_head_meshes_quantities_and_the_foreign_layer() {
         "op_id",
     );
     let (_, outcome) = fx.run(&[
-        "inspect-revision-outcome",
+        "revision-outcome",
         "--store",
         &fx.published(),
         "--op-id",
@@ -472,10 +475,10 @@ fn compaction_keeps_the_head_meshes_quantities_and_the_foreign_layer() {
 
     // The compacted store keeps taking revisions, and a repeat of the command changes nothing.
     fx.plate("P5");
-    let after_edit = fx.ok(&["open-revision", "--store", &fx.published()]);
+    let after_edit = fx.ok(&["revision-open", "--store", &fx.published()]);
     assert_eq!(text(&after_edit, "sequence"), "6");
     let again = fx.ok(&[
-        "compact-history",
+        "history-compact",
         "--store",
         &fx.published(),
         "--keep",
@@ -489,7 +492,7 @@ fn compaction_keeps_the_head_meshes_quantities_and_the_foreign_layer() {
     assert!(flag(&again, &["backup_declined"]));
     let settled = fx.snapshot();
     let repeat = fx.ok(&[
-        "compact-history",
+        "history-compact",
         "--store",
         &fx.published(),
         "--keep",
@@ -509,7 +512,7 @@ fn a_live_workspace_pins_its_base_revision() {
     let store = fx.published();
     let alice = fx.path("workspaces/alice");
     fx.ok(&[
-        "create-workspace",
+        "workspace-create",
         "--store",
         &store,
         "--workspace-dir",
@@ -531,7 +534,7 @@ fn a_live_workspace_pins_its_base_revision() {
     assert_eq!(num(&pinned[0], &["base_sequence"]), 5);
 
     let (exit, code) = fx.refused(&[
-        "compact-history",
+        "history-compact",
         "--store",
         &store,
         "--keep-head",
@@ -543,7 +546,7 @@ fn a_live_workspace_pins_its_base_revision() {
     assert_eq!((exit, code.as_str()), (2, "DEPENDENCY_CONFLICT"));
     // Statistics show what the workspace holds.
     let s = fx.ok(&[
-        "inspect-history",
+        "history-stats",
         "--store",
         &store,
         "--workspace-dir",
@@ -555,7 +558,7 @@ fn a_live_workspace_pins_its_base_revision() {
     // Keeping enough history lets the compaction through; the workspace is untouched and can
     // still publish (its base is the published revision before P5, which is retained).
     let done = fx.ok(&[
-        "compact-history",
+        "history-compact",
         "--store",
         &store,
         "--keep",
@@ -570,7 +573,7 @@ fn a_live_workspace_pins_its_base_revision() {
 
     // A workspace's own draft store is never compacted.
     let (_, code) = fx.refused(&[
-        "compact-history",
+        "history-compact",
         "--store",
         &alice,
         "--keep-head",
@@ -578,7 +581,7 @@ fn a_live_workspace_pins_its_base_revision() {
     ]);
     assert_eq!(code, "INVALID_ARGUMENT");
     let (_, code) = fx.refused(&[
-        "compact-history",
+        "history-compact",
         "--store",
         &alice,
         "--keep-head",
@@ -592,7 +595,7 @@ fn a_live_workspace_pins_its_base_revision() {
     fs::create_dir(&broken).unwrap();
     fs::write(broken.join("workspace.json"), b"not a workspace").unwrap();
     let (_, code) = fx.refused(&[
-        "compact-history",
+        "history-compact",
         "--store",
         &store,
         "--keep-head",
@@ -644,7 +647,7 @@ fn an_unfinished_intent_blocks_the_compaction_until_recovery_runs() {
         "open_intents"
     );
     let (exit, code) = fx.refused(&[
-        "compact-history",
+        "history-compact",
         "--store",
         &fx.published(),
         "--keep-head",
@@ -654,14 +657,14 @@ fn an_unfinished_intent_blocks_the_compaction_until_recovery_runs() {
     ]);
     assert_eq!((exit, code.as_str()), (2, "DEPENDENCY_CONFLICT"));
     fx.ok(&[
-        "recover-revision",
+        "revision-recover",
         "--store",
         &fx.published(),
         "--min-age-secs",
         "0",
     ]);
     let done = fx.ok(&[
-        "compact-history",
+        "history-compact",
         "--store",
         &fx.published(),
         "--keep-head",
@@ -678,15 +681,10 @@ fn a_running_coordinator_holds_the_store() {
     fx.build();
     let token = fx.root.join("token");
     fs::write(&token, "a-synthetic-token-of-more-than-32-characters").unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&token, fs::Permissions::from_mode(0o600)).unwrap();
-    }
     let client = format!("{USER}:{}", token.to_str().unwrap());
     let mut server = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
         .args([
-            "serve-coordinator",
+            "coordinator-serve",
             "--store",
             &fx.published(),
             "--workspaces-root",
@@ -703,7 +701,7 @@ fn a_running_coordinator_holds_the_store() {
     let mut stdout = BufReader::new(server.stdout.take().unwrap());
     let mut line = String::new();
     stdout.read_line(&mut line).unwrap();
-    let listening = beamcraft_json::decode(line.trim_end().as_bytes(), &Limits::DEFAULT).unwrap();
+    let listening = json::decode(line.trim_end().as_bytes(), &message::read_limits()).unwrap();
     let address = text(&listening, "address");
 
     let report = fx.dry_run(&["--keep-head"], &["--no-workspaces"]);
@@ -713,7 +711,7 @@ fn a_running_coordinator_holds_the_store() {
         "store_in_use"
     );
     let (exit, code) = fx.refused(&[
-        "compact-history",
+        "history-compact",
         "--store",
         &fx.published(),
         "--keep-head",
@@ -725,7 +723,7 @@ fn a_running_coordinator_holds_the_store() {
 
     // One request ends the server; then the store is free again.
     fx.ok(&[
-        "inspect-coordinator-head",
+        "coordinator-head",
         "--address",
         &address,
         "--token-file",
@@ -735,7 +733,7 @@ fn a_running_coordinator_holds_the_store() {
     stdout.read_to_end(&mut rest).unwrap();
     assert_eq!(server.wait().unwrap().code(), Some(0));
     let done = fx.ok(&[
-        "compact-history",
+        "history-compact",
         "--store",
         &fx.published(),
         "--keep-head",
@@ -752,7 +750,7 @@ fn a_damaged_retained_blob_refuses_and_a_restored_backup_serves_the_old_history(
     fx.build();
     let backup = fx.path("backup");
     fx.ok(&[
-        "compact-history",
+        "history-compact",
         "--store",
         &fx.published(),
         "--keep",
@@ -763,16 +761,16 @@ fn a_damaged_retained_blob_refuses_and_a_restored_backup_serves_the_old_history(
         "--no-workspaces",
     ]);
     // The backup still holds the whole history.
-    let old = fx.ok(&["inspect-history", "--store", &backup]);
+    let old = fx.ok(&["history-stats", "--store", &backup]);
     assert_eq!(num(&old, &["revisions"]), 5);
-    let head = fx.ok(&["open-revision", "--store", &fx.published()]);
+    let head = fx.ok(&["revision-open", "--store", &fx.published()]);
     let layers = list(&head, &["layers"]);
     let digest = text(&layers[0], "digest");
     let blob = fx.blob_path(&digest);
     let good = fs::read(&blob).unwrap();
     fs::write(&blob, b"flipped").unwrap();
     let (_, code) = fx.refused(&[
-        "compact-history",
+        "history-compact",
         "--store",
         &fx.published(),
         "--keep-head",
@@ -783,7 +781,7 @@ fn a_damaged_retained_blob_refuses_and_a_restored_backup_serves_the_old_history(
     assert_eq!(code, "INTEGRITY_ERROR");
     fs::remove_file(&blob).unwrap();
     let (_, code) = fx.refused(&[
-        "compact-history",
+        "history-compact",
         "--store",
         &fx.published(),
         "--keep-head",
@@ -792,7 +790,7 @@ fn a_damaged_retained_blob_refuses_and_a_restored_backup_serves_the_old_history(
     assert_eq!(code, "INTEGRITY_ERROR");
     fs::write(&blob, good).unwrap();
     fx.ok(&[
-        "compact-history",
+        "history-compact",
         "--store",
         &fx.published(),
         "--keep-head",

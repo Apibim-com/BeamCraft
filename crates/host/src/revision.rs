@@ -47,8 +47,8 @@
 //! * The same namespace protection as [`crate::storage`] is required: a hostile writer to the
 //!   store directory can still replace files between a check and its use.
 //! * This module never parses USD. Layer content and U03 index checks are done by an injected
-//!   [`ContentVerifier`] (the host does not link the layer engine; the caller supplies the
-//!   verifier); a commit without a verifier records no index and says so in the manifest.
+//!   [`ContentVerifier`] (the layer engine runs in a separate process and the host does not
+//!   link it); a commit without a verifier records no index and says so in the manifest.
 
 mod commit;
 mod floor;
@@ -70,9 +70,7 @@ pub use commit::{
     ExpectedBase, IndexEvidence, Injected, NoFault, VerifiedLayer, VerifyRequest,
 };
 pub(crate) use floor::Span;
-pub use manifest::{
-    BaseRef, Content, EvidencePin, IndexRecord, LayerEntry, LayerRole, Manifest, RevisionDraft,
-};
+pub use manifest::{BaseRef, Content, IndexRecord, LayerEntry, LayerRole, Manifest, RevisionDraft};
 pub use read::{Revision, RevisionStore};
 pub use root::{RevisionInfo, RootRecord};
 
@@ -82,8 +80,6 @@ pub const MAX_ENTRIES: usize = 64;
 pub const MAX_NAME_BYTES: usize = 128;
 /// Largest encoded manifest.
 pub const MAX_MANIFEST_BYTES: usize = 65_536;
-/// Maximum bytes of opaque operation evidence pinned by one revision.
-pub const MAX_OPERATION_EVIDENCE_BYTES: u64 = 1_048_576;
 /// Largest revision sequence number (and head-log length) this store accepts. Every commit reads
 /// all records to prove revision-id uniqueness, so the cap bounds that linear cost.
 pub const MAX_REVISIONS: u64 = 100_000;
@@ -103,7 +99,7 @@ impl Uuid7 {
     /// Validates the complete canonical text; shortened, upper-case or other versions are
     /// [`RevisionError::InvalidId`].
     pub fn parse(text: &str) -> Result<Self, RevisionError> {
-        if canonical_uuid7(text) {
+        if beamcraft_protocol::message::uuid(text) {
             Ok(Self(text.to_owned()))
         } else {
             Err(RevisionError::InvalidId)
@@ -114,22 +110,6 @@ impl Uuid7 {
     pub fn as_str(&self) -> &str {
         &self.0
     }
-}
-
-/// Canonical lowercase UUIDv7 text: `8-4-4-4-12` hex digits, version 7, RFC 9562 variant.
-fn canonical_uuid7(s: &str) -> bool {
-    s.len() == 36
-        && s.bytes().enumerate().all(|(i, b)| {
-            if matches!(i, 8 | 13 | 18 | 23) {
-                b == b'-'
-            } else if i == 14 {
-                b == b'7'
-            } else if i == 19 {
-                matches!(b, b'8' | b'9' | b'a' | b'b')
-            } else {
-                b.is_ascii_digit() || matches!(b, b'a'..=b'f')
-            }
-        })
 }
 
 impl fmt::Display for Uuid7 {
@@ -184,10 +164,6 @@ pub enum RevisionError {
         /// Position in the sorted manifest entry list.
         entry: usize,
     },
-    /// The revision's pinned operation evidence is absent.
-    MissingOperationEvidence,
-    /// Pinned operation evidence has a different digest/size or is not a safe regular blob.
-    CorruptOperationEvidence,
     /// The content verifier rejected the layers (duplicate or short ID, dangling relationship,
     /// foreign override, invalid layer, ...) with its own stable code.
     Content(ContentRejection),
@@ -203,8 +179,8 @@ pub enum RevisionError {
     OutcomeUnknown,
     /// Blob storage failed.
     Storage(StorageError),
-    /// Another holder has the store: maintenance or an exclusive publication pin prevents
-    /// this operation. Nothing was written; retry later.
+    /// Another holder has the store: a history compaction is running (or a commit while this
+    /// call needed the store exclusively). Nothing was written; retry later.
     StoreBusy,
     /// The outcome ledger failed or contradicts the root. See [`crate::ledger`].
     Ledger(LedgerError),
@@ -231,9 +207,6 @@ impl RevisionError {
             | Self::MissingBlob { .. }
             | Self::CorruptBlob { .. }
             | Self::SizeMismatch { .. } => ErrorCode::IntegrityError,
-            Self::MissingOperationEvidence | Self::CorruptOperationEvidence => {
-                ErrorCode::IntegrityError
-            }
             Self::Content(rejection) => rejection.code,
             Self::IndexIncomplete => ErrorCode::DependencyUnavailable,
             Self::IndexMismatch => ErrorCode::StaleWorkspace,
@@ -268,15 +241,13 @@ impl fmt::Display for RevisionError {
             Self::MissingBlob { .. } => "a referenced layer blob is missing",
             Self::CorruptBlob { .. } => "a referenced layer blob is corrupt",
             Self::SizeMismatch { .. } => "a referenced layer blob has an unexpected size",
-            Self::MissingOperationEvidence => "pinned operation evidence is missing",
-            Self::CorruptOperationEvidence => "pinned operation evidence is corrupt",
             Self::Content(rejection) => rejection.message,
             Self::IndexIncomplete => "index evidence is partial",
             Self::IndexMismatch => "index evidence belongs to another context",
             Self::Aborted(_) => "commit aborted before the root switch",
             Self::OutcomeUnknown => "commit outcome unknown after the root switch",
             Self::Storage(_) => "blob storage failed",
-            Self::StoreBusy => "the store is in use by another operation",
+            Self::StoreBusy => "the store is in use by a history compaction",
             Self::Ledger(error) => match error {
                 LedgerError::RootDisagrees => "ledger records a commit that the root lacks",
                 _ => "outcome ledger failed",
