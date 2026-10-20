@@ -1,7 +1,6 @@
 # F06: geometry and viewport contract, version 0.1.0
 
-Status: **frozen 0.1.0** (2026-10-20). Changes only by a new version; open questions go to the next
-version through the linked issue.
+Status: **draft 0.1.0.** Frozen once its open questions ([issue #141](https://github.com/Apibim-com/BeamCraft/issues/141)) are closed.
 
 This contract fixes the logical interface between the engine and the geometry kernel, and between
 the engine and any viewport or query consumer: what goes in, what comes out, which numbers are
@@ -415,7 +414,8 @@ small bodies, and the relative term grows only with the body's own size inside e
    differences there. Frames on distinct finite axes also differ in axis direction, so their
    relative three-dimensional rotation is not solely a roll. For tilts from local -Z, the +Y and -Y
    entries exchange; the +X and -X entries keep their signs. Other tilt directions follow the
-   formula above. Continuity is an open question ([issue #141](https://github.com/Apibim-com/BeamCraft/issues/141)). Optional `roll_rad` is the
+   formula above. The discontinuity is kept by design; the user sets `roll_rad` for another
+   orientation. Optional `roll_rad` is the
    explicit section rotation about that default frame's +Z. Other orientation belongs to the element
    placement. No up-vector or hidden roll preset exists.
 4. The kernel never snaps, welds or merges vertices, and never heals geometry. Vertices are distinct

@@ -1,7 +1,6 @@
 # F04: model and command contract, version 0.1.0
 
-Status: **frozen 0.1.0** (2026-10-20). Changes only by a new version; open questions go to the next
-version through the linked issue.
+Status: **frozen 0.1.0** (2026-10-20). Changes only by a new version.
 
 This contract fixes the domain semantics of the model and its commands: identities, units and
 limits, authored fields, derived results, the mutation envelope, the command surface, footprints
@@ -189,8 +188,10 @@ the same way; an exactly vertical axis keeps `Y_m = +Y`. Then `X_m = normalize(Y
 `X_r = cos(r)*X_m + sin(r)*Y_m`, `Y_r = -sin(r)*X_m + cos(r)*Y_m`. Roll belongs to `shape_inputs`,
 never placement; it is stored as authored, without modulo reduction. Above 2*pi is
 `LIMIT_EXCEEDED`. A plate roll patch is `UNSUPPORTED_PROPERTY`; an omitted create roll means zero,
-an omitted patch roll keeps the old value. The "parallel" tolerance is the geometry contract's;
-the roll is discontinuous at that threshold.
+an omitted patch roll keeps the old value. The "parallel" tolerance is the geometry contract's.
+The default frame is discontinuous at that threshold by design: a member tilted just past it may
+get a section turned by 90 or 180 degrees, and the user sets `roll_rad` when another orientation is
+wanted. The rule stays simple and deterministic.
 
 **Reserved section anchor.** "Centred on the axis" is the default anchor. A future optional
 `section_anchor` places the section by one of nine points (top, middle, bottom by left, centre,
@@ -275,6 +276,8 @@ when the user repairs it, geometry and quantities are computed as for a new elem
 | Repair | An ordinary edit. The result equals creating the repaired element. A repair that makes an existing operation record unfit keeps the element degenerate with a diagnostic naming the record; no record is dropped silently |
 | Queries | `InspectElement` shows validity, diagnostics, inputs and `unknown` quantities. Snapshots report it with null keys and no mesh. A viewport may draw the outline as an error marker; it cannot be picked and has no FeatureId |
 | Numbering, IFC, BOM | No part number, no equivalence group; excluded from IFC export and from BOM and mass totals, which list it with `unknown` quantities, never zero |
+| Never degenerate | A contour with fewer than three points is always refused with `INVALID_ARGUMENT`: a create creates nothing, an update applies nothing, whatever `on_invalid_shape` says |
+| Publication | Publishing a workspace that contains a degenerate element is refused with `INVALID_ARGUMENT`. The diagnostics name every degenerate element (ElementId and label) with its reasons, so the UI can select the part and show what is wrong |
 | Undo | Creating a degenerate element, a failed-state edit and a repair are each one undo unit; undo restores the exact previous state and validity |
 | Other commands | `CopyElement` copies it as degenerate; `DeleteElement` works as usual |
 
@@ -467,6 +470,5 @@ Non-finite quaternion and translation components follow the raw-JSON rules: a ba
 ## 11. Version
 
 This is version **0.1.0**. A change to it is a new version or a recorded correction; implicit changes
-through code or reviews are not allowed. Earlier stores with another prim layout are not read. Open
-questions are tracked in [issue #140](https://github.com/Apibim-com/BeamCraft/issues/140); the CLI renaming to the naming rule in
-[issue #144](https://github.com/Apibim-com/BeamCraft/issues/144).
+through code or reviews are not allowed. Earlier stores with another prim layout are not read. The CLI
+renaming to the naming rule is [issue #144](https://github.com/Apibim-com/BeamCraft/issues/144).

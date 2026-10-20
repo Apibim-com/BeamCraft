@@ -1,7 +1,6 @@
 # F10: domain vocabulary and discipline-module contract, version 0.1.0
 
-Status: **frozen 0.1.0** (2026-10-20). Changes only by a new version; open questions go to the next
-version through the linked issue.
+Status: **draft 0.1.0.** Frozen once its open questions ([issue #143](https://github.com/Apibim-com/BeamCraft/issues/143)) are closed.
 
 This contract fixes **what an element, a relationship and an opening are called and what they
 carry**, so that more than one discipline can read and write the same project without private
@@ -38,14 +37,13 @@ Normative statements carry a rule ID of the form `DV-<FAMILY>-<NNN>`; section 6.
 
 ### 1.3 First slice and reserved vocabulary
 
-- **Implementable in the first slice:** the kinds `plate`, `beam` and `column` (steel), the generic
-  validation layer over them, the module registry, and preservation of unknown content. This is
-  the `now` slice of section 6.5: 42 rules.
-- **Reserved:** `wall`, `slab`, `opening`, `penetration`, `pipe`, `duct`, `support`, `assembly`,
-  `connection`, `reference`. Reserved kinds have names, owners and *proposed* attribute names, and
-  nothing else: no command creates them, no behaviour is attached, and authoring one is rejected
-  (`DV-KIND-004`). The 15 `reserved` rules and their cases are specification for a future
-  module; they are marked `first_slice: false` in the case file and are not implemented work.
+- **Implemented kinds:** `plate`, `beam`, `column`, `assembly`, `connection` (weld or bolt group),
+  `level` and `reference`, with preservation of unknown content. The generic validation layer and
+  the module registry of sections 6 and 7 are specified here and not yet built as such.
+- **Reserved:** `wall`, `slab`, `opening`, `penetration`, `pipe`, `duct`, `support`. Reserved
+  kinds have names, owners and *proposed* attribute names, and nothing else: no command creates
+  them, no behaviour is attached, and authoring one is rejected (`DV-KIND-004`). Their rules and
+  cases are specification for a future module (`first_slice: false` in the case file).
 - Content that already contains a reserved or unknown kind is **loaded, preserved and shown
   read-only** (`DV-KIND-002`, `DV-MOD-001`). It is never rejected on load and never deleted.
 
@@ -66,16 +64,19 @@ list or catalogue is copied. IFC export is a separate adapter (E01).
 ### 2.1 The registry
 
 The registry is **closed** for a vocabulary version. A kind is a lowercase token stored in
-`bim:elementKind` (F04 section 4). F04 fixes the first-slice values `plate`, `beam` and `column`;
-this contract adds the reserved tokens below and changes no F04 value. Adding or removing a kind
+`bim:elementKind` (F04 section 4). Adding or removing a kind
 needs a new vocabulary version (section 4.5). An unknown kind in an authoring request is
 `DV-KIND-001`; in loaded content it is `DV-KIND-002`.
 
 | Kind | Owner | Status | Family |
 |------|-------|--------|--------|
-| `plate` | steel | implemented (first slice) | plate |
-| `beam` | steel | implemented (first slice) | straight member |
-| `column` | steel | implemented (first slice) | straight member |
+| `plate` | steel | implemented | part |
+| `beam` | steel | implemented | part, straight member |
+| `column` | steel | implemented | part, straight member |
+| `assembly` | any | implemented | grouping |
+| `connection` | steel | implemented | connection (weld, bolt group) |
+| `level` | any | implemented | project structure |
+| `reference` | any | implemented | foreign model wrapper |
 | `wall` | arch | reserved | - |
 | `slab` | arch | reserved | - |
 | `opening` | arch | reserved | - |
@@ -83,9 +84,6 @@ needs a new vocabulary version (section 4.5). An unknown kind in an authoring re
 | `pipe` | mep | reserved | - |
 | `duct` | mep | reserved | - |
 | `support` | any | reserved | - |
-| `assembly` | any | reserved | - |
-| `connection` | steel | reserved | - |
-| `reference` | any | reserved | - |
 
 **Owner** is a discipline token. `steel`, `arch` and `mep` are the discipline tokens. An authored discipline or module token outside
 `steel`, `arch`, `mep` is rejected (`DV-KIND-006`). Loaded content with an unknown discipline is
@@ -95,27 +93,54 @@ module that authors the element; it is stored in `bim:discipline` and is then im
 `bim:discipline` must equal the owner (`DV-KIND-005`). A *straight member* is the family of `beam`
 and `column`; F04 treats them as one command with an explicit kind.
 
-### 2.2 Implemented kinds (first slice)
+### 2.2 Implemented kinds
 
-All three carry the common base of section 3. Lengths are millimetres, coordinates are element
-local, angles are radians (F04 section 3).
+All carry the common base of section 3. Lengths are millimetres, coordinates are element local,
+angles are radians (F04 section 3). Prim paths follow F04 section 2.
 
-**`plate`** (owner steel).
+**`plate`** (owner steel, path `/World/Steel/Parts/PRT_<uuid>`).
 
-- Required: `steel:plate:widthMm`, `steel:plate:lengthMm`, `steel:plate:thicknessMm`; each a finite
-  number greater than 0 and at most 1,000,000 (`DV-LIM-001`, `DV-LIM-002`).
-- Optional: `bim:material`.
-- Undefined here: holes, cuts, bevels, grade, numbering, weld preparation, bolt patterns.
+- Required: `steel:plate:contourPointsMm` (3 to 1024 element-local points of a simple
+  counter-clockwise polygon) and `steel:plate:thicknessMm` (finite, greater than 0, at most
+  1,000,000; `DV-LIM-001`, `DV-LIM-002`).
+- Optional: `bim:material`; operation records (holes, plane cuts, F04 section 4).
 
-**`beam`** and **`column`** (owner steel).
+**`beam`** and **`column`** (owner steel, path `/World/Steel/Parts/PRT_<uuid>`).
 
 - Required: `bim:axisPointsMm` (two points of three finite numbers, element local, nonzero distance
-  at most 1,000,000), and `bim:profile`, the ContentDigest of a pinned profile definition.
-- Optional: `bim:material`.
-- Undefined here: section kinds beyond what F06 section 2 admits, end cuts, camber, roll beyond the
-  placement, position presets, catalogue lookup by name.
+  at most 1,000,000) and `bim:profile`, a pinned profile definition (rectangle, one of the section
+  families or a custom outline).
+- Optional: `steel:member:rollRad`, `bim:material`, operation records (plane cuts).
+- Undefined here: camber, position presets, catalogue lookup by name.
 
-The frames, the profile resource and the quantities of both kinds stay in F04 and F06.
+**`assembly`** (owner `any`, path `/World/Steel/Assemblies/ASM_<uuid>`). A grouping with its own
+identity and no body. Required: the common base only. Its members point to it with `part-of`
+(section 5.1); an assembly may itself be part of another assembly, without cycles. An assembly
+that still has parts cannot be deleted. Undefined: assembly types, multi-element copy.
+
+**`connection`** (owner steel, path `/World/Steel/Connections/CON_<uuid>`). An element with no
+body that joins parts with one ordered `connects` record: exactly two distinct parts (plate, beam
+or column), the main part first. The parts are only read. A connected part cannot be deleted while
+the connection exists. A connection is either a weld or a bolt group, told apart by its attribute
+group:
+
+- **Weld:** `steel:weld:type` (`fillet`), `steel:weld:sizeMm`, `steel:weld:location` (`workshop` or
+  `site`), `steel:weld:side` (`arrow`, `other` or `both`). No value has a default.
+- **Bolt group:** `steel:bolt:count`, `steel:bolt:pitchMm`, `steel:bolt:diameterMm`,
+  `steel:bolt:originMm`, `steel:bolt:directionMm` (unit vector): `count` bolts on a straight line
+  from the origin along the direction, `pitch` apart, each inside both parts' bounds. No value has
+  a default. Holes for the bolts are not generated yet.
+
+**`level`** (owner `any`, path `/World/Levels/LVL_<uuid>`). A storey: required `bim:elevationMm`
+(finite, absolute value at most 1,000,000,000). It has no body and moves nothing. Parts point to it
+with `level` (section 5.1); a level in use cannot be deleted.
+
+**`reference`** (owner `any`, path `/World/References/REF_<uuid>`). The owned wrapper of a foreign
+read-only model: its placement, an explicit units and up-axis correction, and the pinned source
+(digest, size, format, default prim). The foreign content is composed below it and is never
+written.
+
+The frames, the profile resource and the quantities stay in F04 and F06.
 
 ### 2.3 Reserved kinds
 
@@ -141,12 +166,6 @@ ones. "Undefined" lists what this contract deliberately does not say.
   `mep:duct:sizeAMm`, `sizeBMm` for `rect`. Undefined: fittings, flow, insulation, systems.
 - **`support`** (any). Required: the common base only. Optional: one `hosted-in` record.
   Undefined: loads, support types, spacing.
-- **`assembly`** (any). A grouping target of `part-of`. Required: the common base only.
-  Undefined: numbering, nesting depth limit, assembly types, multi-element copy (F04 section 7).
-- **`connection`** (steel). Required: one `connects` record with 2 to 1024 targets. Undefined:
-  bolts, welds, connection rules, design checks.
-- **`reference`** (any). The wrapper of a foreign read-only source (F04 section 1). Undefined:
-  everything; R01 defines attachment commands after this contract.
 
 ## 3. Common base
 
@@ -291,9 +310,11 @@ and are not covered here.
 - `penetrates`. Source: `penetration`. Target: `wall`, `slab`, `plate`, `beam`, `column`.
   Per source: exactly 1.
 - `references`. Source: any kind. Target: any kind. Per source: 0 to 1024; role optional.
-- `part-of`. Source: member kinds, see below. Target: `assembly`. Per source: 0 or 1.
-- `connects`. Source: `connection`. Target: `beam`, `column`, `plate`, `assembly`.
-  Per source: 2 to 1024 distinct targets.
+- `part-of` (`bim:partOf`). Source: member kinds, see below. Target: `assembly`. Per source: 0
+  or 1.
+- `connects` (`bim:connects`). Source: `connection`. Target: `plate`, `beam`, `column`. Per
+  source: exactly 2 distinct targets, ordered, the main part first.
+- `level` (`bim:level`). Source: `plate`, `beam`, `column`. Target: `level`. Per source: 0 or 1.
 
 For `part-of` the source may be `plate`, `beam`, `column`, `pipe`, `duct`, `support`,
 `connection` or `assembly`. Targets are unlimited in number except for the 1024-target cap of
@@ -733,9 +754,10 @@ only through shared kinds and records: relationships (section 5) and the penetra
 
 ### 7.6 The first slice
 
-Exactly one module is in scope: **steel**. Its manifest would declare the kinds `plate`, `beam`,
-`column`; the F04 commands `CreatePlate` and `CreateStraightMember`; and no collision class, panel
-or discipline rule. `UpdateElement`, `CopyElement` and `DeleteElement` are generic engine commands
+Exactly one module is in scope: **steel**. Its manifest declares the kinds `plate`, `beam`,
+`column` and `connection`, and the commands that create them (`CreatePlate`, `CreateStraightMember`,
+`CreateWeld`, `CreateBolt`, the operation commands); no collision class, panel or discipline rule.
+`assembly`, `level` and `reference` are shared kinds of the application. `UpdateElement`, `CopyElement` and `DeleteElement` are generic engine commands
 that dispatch on the element's kind. The module and the registry are specification until their
 tasks create code.
 
