@@ -16,7 +16,9 @@
 //! Installation uses a same-filesystem hard link, which fails if a destination already exists.
 //! Filesystems without hard-link support return an error; there is no replacing fallback.
 //! Temp bytes are flushed and synced before installation. No directory-sync durability,
-//! crash-atomic multi-file commit, garbage collection or collision impossibility is claimed.
+//! crash-atomic multi-file commit or collision impossibility is claimed; garbage collection is
+//! U14's compaction (`crate::compaction`), which uses the maintenance primitives of the private
+//! `gc` submodule.
 //! A crash can leave a temporary file; U07 recovery (`crate::ledger`) removes abandoned ones.
 
 use std::fmt;
@@ -27,6 +29,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use beamcraft_model::ErrorCode;
 use beamcraft_model::digest::{ContentDigest, Sha256};
+
+mod gc;
+
+pub(crate) use gc::BlobInfo;
 
 /// Maximum blob and returned byte-buffer length: F05 0.1.0 sections 3/4, bundle_bytes
 /// budget of 33,554,432 bytes. This storage cap does not widen attachment wire limits.
