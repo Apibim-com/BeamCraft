@@ -1,6 +1,6 @@
 # Progress log, 2026-10-14 to 2026-10-18
 
-This log was kept at the end of `ROADMAP.md` until 2026-10-20 and is preserved here unchanged.
+This log was kept at the end of `ROADMAP.md` until 2026-10-20 and is preserved here unchanged, except that its links are relative to this folder.
 It is closed: no entries are added. Project history now lives in git, in the pull request
 descriptions and in the package notes under `docs/design/`; release notes are generated from the
 merged pull requests when a version is tagged.
@@ -184,7 +184,7 @@ merged pull requests when a version is tagged.
 - 2026-10-14: F03 pinned and statically audited three `usd-core` 26.8 CPython 3.12 wheels.
   Added an offline inventory tool with seven passing synthetic tests. SDK admission remains open:
   TOST/resource policy, missing native notices, runtime/native closure and platform smoke tests.
-  See [the audit](docs/audits/openusd-26.8.md); no runtime dependency or policy exception was added.
+  See [the audit](../audits/openusd-26.8.md); no runtime dependency or policy exception was added.
 
 - 2026-10-14: F01 aligned the roadmap, architecture and development documentation with the
   accepted USD direction. Implementation base: `c6a1e73aea9c41bf88db96281040043471b80d0a`
