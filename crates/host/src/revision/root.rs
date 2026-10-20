@@ -17,8 +17,8 @@ use super::{MAX_REVISIONS, RevisionError, Uuid7, manifest::Manifest};
 pub(super) const DIR: &str = "revisions";
 /// Longest record file the reader accepts.
 pub(super) const MAX_RECORD_BYTES: usize = 512;
-const TEMP_PREFIX: &str = ".tmp-";
-const MAGIC: &str = "beamcraft-revision-root 1";
+pub(super) const TEMP_PREFIX: &str = ".tmp-";
+pub(super) const MAGIC: &str = "beamcraft-revision-root 1";
 /// Directory entries inspected by one scan: the log plus a bounded allowance for leftovers.
 const MAX_SCANNED: u64 = MAX_REVISIONS + 4096;
 
@@ -156,11 +156,22 @@ fn parse_record_name(name: &str) -> Option<u64> {
         .filter(|s| (1..=MAX_REVISIONS).contains(s))
 }
 
-/// Finds the highest record sequence after checking the whole log shape: only record names or
-/// `.tmp-*` leftovers, and records `1..=head` without gaps. Does not open the records.
-pub(super) fn scan(directory: &Path) -> Result<Option<u64>, RevisionError> {
+/// The names of a head-log directory: record sequences (ascending), whether the U14 floor marker
+/// is present, and the `.tmp-*` leftovers that readers ignore.
+pub(super) struct Listing {
+    pub(super) sequences: Vec<u64>,
+    pub(super) marker: bool,
+}
+
+/// Lists the head-log directory after checking that it holds only record names, the floor
+/// marker and `.tmp-*` leftovers. Does not open the records.
+pub(super) fn list(directory: &Path) -> Result<Listing, RevisionError> {
     let io_err = |e: io::Error| RevisionError::Io(e.kind());
-    let (mut inspected, mut count, mut head) = (0u64, 0u64, 0u64);
+    let mut inspected = 0u64;
+    let mut listing = Listing {
+        sequences: Vec::new(),
+        marker: false,
+    };
     for entry in fs::read_dir(directory).map_err(io_err)? {
         let entry = entry.map_err(io_err)?;
         inspected = inspected
@@ -172,15 +183,16 @@ pub(super) fn scan(directory: &Path) -> Result<Option<u64>, RevisionError> {
         if name.starts_with(TEMP_PREFIX) {
             continue;
         }
-        let sequence = parse_record_name(name).ok_or(RevisionError::TornRoot)?;
-        count += 1;
-        head = head.max(sequence);
+        if name == super::floor::FILE {
+            listing.marker = true;
+            continue;
+        }
+        listing
+            .sequences
+            .push(parse_record_name(name).ok_or(RevisionError::TornRoot)?);
     }
-    match (count, head) {
-        (0, _) => Ok(None),
-        (c, h) if c == h => Ok(Some(h)),
-        _ => Err(RevisionError::TornRoot),
-    }
+    listing.sequences.sort_unstable();
+    Ok(listing)
 }
 
 /// A fully written, synced temporary record that is removed unless installed and dropped.

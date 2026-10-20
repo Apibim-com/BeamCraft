@@ -8,6 +8,7 @@ use std::path::Path;
 
 use beamcraft_model::{ErrorCode, digest::ContentDigest};
 
+use crate::lease::StoreLease;
 use crate::ledger::{
     AbortReason, CommittedRecord, Intent, OpStatus, Record, new_attempt, now_secs,
 };
@@ -267,6 +268,8 @@ impl RevisionStore {
         verifier: Option<&dyn ContentVerifier>,
         hook: &mut dyn CommitHook,
     ) -> Result<Committed, RevisionError> {
+        // Compaction holds the store exclusively; a commit never runs beside it.
+        let _lease = StoreLease::shared(&self.blobs)?;
         let content = Content::from_draft(draft)?;
         let fingerprint = content.fingerprint()?;
         let directory = self.head_dir()?;
@@ -300,6 +303,13 @@ impl RevisionStore {
             return Err(RevisionError::OpIdReuse);
         }
         if let OpStatus::Committed(record) = scan.status(content.op()) {
+            // The ledger keeps a record of a compacted revision only as a tombstone: the op was
+            // accepted, but its revision is gone, so a retry cannot be compared and is refused.
+            if let Some(directory) = &directory
+                && record.sequence < self.floor_of(directory)?
+            {
+                return Err(RevisionError::OpIdReuse);
+            }
             let info = self.load_committed(directory.as_deref(), &record)?;
             return replay_of(info, &content, expected).map(|info| Committed {
                 outcome: CommitOutcome::Replayed,
@@ -512,7 +522,7 @@ impl RevisionStore {
                 Err(_) => break,
             }
         }
-        for sequence in 1..=head.sequence() {
+        for sequence in self.floor_of(directory)?..=head.sequence() {
             if self.load_record(directory, sequence)?.revision() != content.revision() {
                 continue;
             }
