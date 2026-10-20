@@ -53,6 +53,29 @@ decision 3's enclosure midpoint is kept for certified shells, but polygonal hole
 polygon volume; a hole count above the kernel's capacity is a distinct kernel-capacity refusal, not
 `INVALID_ARGUMENT`. See [the A-2 notes](g08-f06-a2-notes.md).
 
+## Verification evidence (2026-10-19, re-run on the integrated master)
+
+The behaviour above was verified end to end on the integrated master; the storage and the
+command surface remain as described (two plate attributes, deprecated by A-2 above, with the
+operation-record migration still open):
+
+* `cargo test -p beamcraft-cli --test holes` (real binary, 5 tests): the exact volume
+  `(1000*500 - 100*100 - 50*50)*10 = 4,875,000 mm3` and mass 38.26875 kg at 7850 kg/m3, a
+  64-gon hole with the polygon-area volume and the clockwise signed area, the saved layer
+  text carrying the polygon arrays, a holed plate next to a beam in one pinned snapshot,
+  every rejection code, replay and `OP_ID_REUSE`.
+* Through the later slices: `--test update` (a thickness change of a holed plate gives the
+  exact new volume and mass with the stored record current), `--test copy` (an independent
+  copy shares the body and mesh digest), and `--test undo`, `--test relocate` and `--test
+  pick` run holed plates through workspace undo, move, delete and picking (a holed plate is
+  never a pick hit; F06 amendment A-1 leaves hole FeatureIds undefined).
+* Engine tests: the divergence-theorem volume of the returned mesh, the refusals
+  (counter-clockwise, outside, crossing, touching, overlapping), and the layer-engine
+  validator on the two attributes.
+* The pxr oracle (local, opt-in, usd-core 25.11) reads the hole arrays and the cut mesh,
+  derives the volume from its own mesh and matches the closed form, with `ComplianceChecker`
+  reporting nothing.
+
 ## Not done (not claimed)
 
 * No `AddHole`/edit/remove command, no operation records, no hole features in the FeatureId table
