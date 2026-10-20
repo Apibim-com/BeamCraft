@@ -9,9 +9,10 @@ their code or assets. Targets desktop-only use on Windows, Linux and macOS.
 1. Read `AGENTS.md` (it wins over this file) and `ROADMAP.md` (current stage and next tasks).
 2. Read `docs/architecture.md` and the README of the crate you are touching.
 3. Work in small steps: orient → plan → implement + test → verify → record → commit.
-4. Do not edit the progress log in `ROADMAP.md` in a feature PR. Put the proposed dated
-   one-line entry (existing log format) under "Roadmap entry" in the PR description. Entries
-   are appended in a separate docs-only change after merges.
+4. There is no progress log to append to: the history is git and the PR descriptions, and what a
+   package does is recorded in its note under `docs/design/`. Do not edit `ROADMAP.md` in a
+   feature PR; it changes only in a docs-only PR when a gate status or the scope changes.
+   A PR description goes into the PR itself, never into a file in the repository.
 
 ## Non-negotiables
 
