@@ -1,7 +1,7 @@
 <h1 align="center">BeamCraft™</h1>
 
 <p align="center">
-  <b>An open-source, clean-room structural steel detailing workbench, written in Rust.</b><br>
+  <b>An open-source structural steel detailing workbench, written from scratch in Rust.</b><br>
   Model, detail and document steel structures in a fast, native app, built from public standards.<br>
   Windows · Linux · macOS
 </p>
@@ -42,12 +42,12 @@ to be an open, scriptable alternative with a native, fast core:
   agents can drive it as easily as a person can.
 - **Yours.** No account, no telemetry, no cloud. It works offline.
 
-## Clean-room
+## Independent
 
 BeamCraft targets the workflows of professional steel detailing tools such as Tekla Structures, but
-it is **not** derived from any of them. Behaviour comes only from public standards (IFC, DSTV, EN
-1993, AISC, ...), public documentation and black-box observation of synthetic fixtures. No code,
-assets or profile databases are taken from any commercial product. The rules are in
+it is **not** derived from any of them: it is written from scratch with its own logic, and its
+engineering rules come from public standards (IFC, DSTV, EN 1993, AISC, ...) or are our own. No
+code, assets or profile databases are taken from any commercial product. The rules are in
 [`AGENTS.md`](AGENTS.md).
 
 BeamCraft is an independent project. It is not affiliated with, endorsed by or sponsored by Trimble

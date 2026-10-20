@@ -11,9 +11,9 @@ validation prevents independently verifying HEAD. This is neither a contract fre
 The inputs are [F06 0.1.0](../contracts/geometry-contract-v0.1.md), its
 [83 acceptance descriptions](../contracts/geometry-contract-cases-v0.1.json),
 [F04 0.1.0](../contracts/model-and-commands-v0.1.md), the
-[first-scope package 0.1.0](../clean-room/handoff/first-scope-v0.1.md), its
-[cases](../clean-room/handoff/first-scope-cases-v0.1.json), and the
-[admission policy](../clean-room/admission-policy.md). F04 and F06 were frozen at 0.1.0 on 2026-10-16 (P-1, P-2 and P-3 confirmed by the owner;
+[first-scope package 0.1.0](../history/clean-room/handoff/first-scope-v0.1.md), its
+[cases](../history/clean-room/handoff/first-scope-cases-v0.1.json), and the
+[admission policy](../history/clean-room/admission-policy.md). F04 and F06 were frozen at 0.1.0 on 2026-10-16 (P-1, P-2 and P-3 confirmed by the owner;
 P-3c is erratum E-2); renewed admission is still pending.
 This design identifies contradictions; it does not silently repair those contracts.
 
@@ -815,7 +815,7 @@ An issuer may give a fresh implementer only an explicit allowlist of reviewed ve
 to actual repository commits: admitted first-scope package/cases, owner-confirmed F04/F06,
 independently admitted portions of this draft/matrix, named public mathematical references and
 explicitly listed BeamCraft source. Follow admission-policy sections 4, 5 and 8 and the
-[task template](../clean-room/implementation-task-template.md). No private observations,
+[task template](../history/clean-room/implementation-task-template.md). No private observations,
 restricted summaries, oracle outputs or third-party kernel material may cross the boundary.
 This draft is not yet an admitted implementation handoff. No person's eligibility is decided.
 

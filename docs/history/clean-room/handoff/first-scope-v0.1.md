@@ -12,10 +12,10 @@ Everything else is **pending, unsupported or outside the geometry handoff**, wha
 documents may suggest. Approval of this limited package says nothing about broader requirements.
 
 The package is not an engine, not a frozen geometry specification and not evidence that any
-behaviour is implemented. The [F04 contract](../../contracts/model-and-commands-v0.1.md) it cites is a **review draft**
+behaviour is implemented. The [F04 contract](../../../contracts/model-and-commands-v0.1.md) it cites is a **review draft**
 (version 0.1.0; reviewed at PR #6 head `b378d7b339dc5319b77892c5f95ed9ae168ae943`, now on the
 default branch with identical content); this package does not freeze it. Case IDs such as
-`F04-NEG-04` refer to its [case file](../../contracts/model-command-cases-v0.1.json).
+`F04-NEG-04` refer to its [case file](../../../contracts/model-command-cases-v0.1.json).
 Source-exposure admission of a person or agent is separate and is decided under the
 [admission policy](../admission-policy.md), never by reading this package.
 

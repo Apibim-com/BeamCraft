@@ -1,5 +1,10 @@
 # Clean-room admission
 
+> **Retired on 2026-10-20 by owner decision** ([decisions](../../plan/decisions.md)): BeamCraft is
+> written from scratch and nothing is reverse-engineered, so this process no longer applies. The
+> files stay here because the frozen F04 and F06 contracts link the first-scope package. The asset
+> and provenance rules of `AGENTS.md` sections 1 and 2 still apply.
+
 Contributor-original documents under MPL-2.0 that control which requirements and which people
 or agents may feed BeamCraft's own geometry and engineering kernel. They apply `AGENTS.md`
 section 2. Nothing here is legal advice or a proof of independence.
@@ -19,6 +24,6 @@ Key rules in one place:
 - Implementers receive only what an issued task lists. Restricted material, summaries of it
   and vendor numerical results are never inputs; vendor numbers are oracle-only.
 - A new chat does not erase earlier exposure. Unknown exposure stays unknown.
-- The package refers to the [F04 contract](../contracts/model-and-commands-v0.1.md) by case ID.
+- The package refers to the [F04 contract](../../contracts/model-and-commands-v0.1.md) by case ID.
   That contract is frozen at 0.1.0 (owner, 2026-10-16).
 - Admitted today: the first-scope package only. K0 is not passed and no kernel exists yet.

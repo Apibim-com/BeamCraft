@@ -53,8 +53,8 @@ only conflicts were the shared attribution and roadmap entries, and all existing
 
 ## Findings on the F04 draft handoff (reviewed at PR #6 head `b378d7b339dc5319b77892c5f95ed9ae168ae943`)
 
-The reviewed [contract](../contracts/model-and-commands-v0.1.md) and
-[cases](../contracts/model-command-cases-v0.1.json) are byte-identical to the versions now on the
+The reviewed [contract](../../contracts/model-and-commands-v0.1.md) and
+[cases](../../contracts/model-command-cases-v0.1.json) are byte-identical to the versions now on the
 default branch (compared by digest). The text and cases contain no private identifiers, product wording or catalogue
 values. Its worked numbers (1000 x 500 x 10 mm gives 0.005 m3; width 750 gives 0.00375 m3; mass
 5 kg at 1000 kg/m3) were recomputed and are correct.

@@ -125,8 +125,8 @@ predicates, preferably pure Rust; write own algorithms only where no suitable cr
 dependency needs the AGENTS.md section 5 audit, deny.toml checks and any F08 allowlist amendment
 before integration. Copyleft or weak-copyleft third-party crates, including MPL-2.0, need an
 explicit owner exception for each package. No code is copied from other projects; audited dependency
-use is distinct from copying implementation text. The restricted commercial-material and clean-room
-rules remain unchanged. The layer-engine choice is recorded in F11; this paragraph admits no
+use is distinct from copying implementation text. The asset and provenance
+rules (`AGENTS.md` §1–2) remain unchanged. The layer-engine choice is recorded in F11; this paragraph admits no
 additional math dependency. Start with bounded primitives and original fixtures, expanding through
 reviewed scopes.
 

@@ -13,7 +13,7 @@ the owner as first-slice values; draft, to be validated by fixtures**.
 
 This report consumes [F04](../contracts/model-and-commands-v0.1.md),
 [F06](../contracts/geometry-contract-v0.1.md), the read-only [first-scope
-package](../clean-room/handoff/first-scope-v0.1.md) and [kernel design](kernel-design-v0.1.md). The
+package](../history/clean-room/handoff/first-scope-v0.1.md) and [kernel design](kernel-design-v0.1.md). The
 package and design retain their earlier policies. Only the two contracts and their cases apply the
 owner amendment here.
 

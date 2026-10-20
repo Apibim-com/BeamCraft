@@ -6,6 +6,11 @@ Open questions are at the end.
 
 ## 2026-10-20
 
+- **No clean-room process.** BeamCraft is written from scratch with its own logic and nothing is
+  reverse-engineered, so the F09 process (implementer admission, exposure records, isolated kernel
+  agents) is retired; its documents move to `docs/history/clean-room/`, where the frozen contracts
+  still link the first-scope package. The asset and provenance rules of `AGENTS.md` §1–2 stay:
+  nothing from Tekla or Trimble, no decompiling, no copied documentation, tables or GPL code.
 - **The plan lives in the repository.** The implementation plan, task list and decisions move
   from the owner's local document into `docs/plan/` (English, no observation notes of commercial
   products). This reverses the 2026-10-14 decision to keep detailed plans outside the repository.
@@ -99,7 +104,7 @@ Open questions are at the end.
 ## 2026-10-15
 
 - **Own kernel.** IFC-lite, Manifold, truck and OCCT are not production backends and are not
-  copied or ported; the kernel is ours, built through the clean room (F09).
+  copied or ported; the kernel is ours.
 - **MSRV 1.96** (required by `openusd`).
 - **OpenUSD-derived TOST-1.0 material** in the `openusd` crate stays under its upstream licence;
   BeamCraft's own code stays MPL-2.0 (`AGENTS.md` §1.2).

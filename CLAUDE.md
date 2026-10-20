@@ -1,6 +1,6 @@
 # BeamCraft — instructions for agents
 
-BeamCraft is a clean-room, open-source, Rust-native structural steel detailing application,
+BeamCraft is an open-source, Rust-native structural steel detailing application written from scratch,
 developed by Apibim. It targets the workflows of tools like Tekla Structures without using any of
 their code or assets. Targets desktop-only use on Windows, Linux and macOS.
 
@@ -18,7 +18,7 @@ their code or assets. Targets desktop-only use on Windows, Linux and macOS.
 
 ## Non-negotiables
 
-- **Clean-room and assets: `AGENTS.md` §1 and §2.** Nothing from Tekla/Trimble, ever.
+- **Assets and provenance: `AGENTS.md` §1 and §2.** Nothing from Tekla/Trimble, ever.
 - **Never crash on input:** `AGENTS.md` §4. Clippy denies `unwrap`/`expect`/`panic`/indexing in
   non-test code.
 - **Headless first:** every feature has an engine API and a CLI command (`AGENTS.md` §3).

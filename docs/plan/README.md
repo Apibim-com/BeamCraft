@@ -41,8 +41,8 @@ Fixed constraints:
 - Own code is MPL-2.0; the dependency, asset and `unsafe` rules of `AGENTS.md` hold.
 - Synchronisation is opt-in, loopback-only and token-authenticated. No cloud and no IFC import by
   default.
-- Clean room: nothing from Tekla Structures or any other commercial detailing product
-  (`AGENTS.md` §1).
+- Written from scratch with our own logic: nothing from Tekla Structures or any other commercial
+  detailing product (`AGENTS.md` §1–2).
 
 ## 2. Principles
 
@@ -60,13 +60,10 @@ Fixed constraints:
 | IFC | Own Rust writer of a chosen IFC4 subset (E01) | Export only; import needs a new scope decision |
 | Platforms | Desktop only: Windows, Linux, macOS | Only `geom`, `model` and `kernel` keep the WASM requirement, as a layering discipline |
 
-### Clean room
+### Own logic
 
-The engineering and geometry kernel is our own. Observation and implementation are separated
-(F09): the observing side writes a behaviour contract on our own synthetic inputs (result, error,
-tolerance, limits, source of each requirement); the implementer receives approved requirements,
-independent tests and public mathematical sources, never another kernel's source, a retelling of
-it, its internal structures or copied fixtures. Ready-made tools may serve as black-box oracles on
+The engineering and geometry kernel is our own, built from public mathematical sources and our own
+fixtures, never from another kernel's source. Ready-made tools may serve as black-box oracles on
 our inputs only, after their licence allows it; their results are checked against analytical
 references and independent invariants.
 
@@ -93,7 +90,7 @@ triangles, not only the element count).
 
 | Gate | Verified result | Main tasks |
 |------|-----------------|------------|
-| K0 | Current base, clean-room separation, requirement map, contracts and fixtures | F01–F11 |
+| K0 | Current base, requirement map, contracts and fixtures | F01–F11 |
 | K1 | The CLI creates and atomically saves a complete USD plate; a reader without BeamCraft opens it | U01–U07, G01–G02, P01 |
 | K2 | Beam and column, quantities, independent copy, own workspace and local undo | P02–P08 |
 | K3 | A supported foreign USD model, read-only, with separate measurements | R01–R03, G08 |
