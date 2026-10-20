@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use beamcraft_model::digest::ContentDigest;
 
+use crate::lease::StoreLease;
 use crate::revision::{
     REPLAY_LOOKBACK, Revision, RevisionError, RevisionInfo, RevisionStore, Uuid7,
 };
@@ -114,6 +115,8 @@ impl RevisionStore {
     /// appended; if the root cannot be verified the intent stays open and is reported. A
     /// second call finds nothing open and changes nothing.
     pub fn recover(&self, policy: RecoveryPolicy) -> Result<RecoveryReport, RevisionError> {
+        // Recovery appends to the ledger, so it never runs beside a history compaction.
+        let _lease = StoreLease::shared(&self.blobs)?;
         let ledger = self.ledger();
         let scan = ledger.scan()?;
         let directory = self.head_dir()?;
@@ -229,6 +232,18 @@ impl RevisionStore {
         };
         match scan.status(op) {
             OpStatus::Committed(record) => {
+                // A record below the compaction floor is a tombstone: the revision is gone, the
+                // acceptance was proven by the root before it was compacted.
+                if let Some(directory) = directory.as_deref()
+                    && record.sequence < self.floor_of(directory)?
+                {
+                    return Ok(Outcome::Committed {
+                        revision: record.revision,
+                        sequence: record.sequence,
+                        manifest: record.manifest,
+                        source: OutcomeSource::Ledger,
+                    });
+                }
                 match self.load_committed(directory.as_deref(), &record) {
                     Ok(_) => Ok(Outcome::Committed {
                         revision: record.revision,
@@ -310,14 +325,22 @@ impl RevisionStore {
                 // Revisions that predate the ledger were never journaled, and a ledger cut at a
                 // record boundary looks intact: absence from the ledger is a proof only when the
                 // ledger began before any revision existed and accounts for every sequence of
-                // the root.
+                // the root. After a U14 compaction the root starts at its floor: the ledger must
+                // account for every retained sequence, and an operation of the removed history
+                // is, by decision, no longer recognised (so not finding it proves nothing was
+                // lost and nothing new is pending).
                 let head_sequence = head.sequence();
-                let covered = scan.covered(0, head_sequence) == head_sequence;
-                Ok(if intact && scan.genesis_head() == Some(0) && covered {
-                    Outcome::NotFound
-                } else {
-                    Outcome::Unknown
-                })
+                let before = self.floor_of(directory)?.saturating_sub(1);
+                let covered =
+                    scan.covered(before, head_sequence) == head_sequence.saturating_sub(before);
+                Ok(
+                    if intact && scan.genesis_head().is_some_and(|first| first <= before) && covered
+                    {
+                        Outcome::NotFound
+                    } else {
+                        Outcome::Unknown
+                    },
+                )
             }
         }
     }
@@ -394,6 +417,13 @@ impl RevisionStore {
         if record.sequence > head.sequence() {
             return true;
         }
+        // Compacted away on purpose (U14): nothing in the log can contradict it.
+        if self
+            .floor_of(directory)
+            .is_ok_and(|floor| record.sequence < floor)
+        {
+            return false;
+        }
         self.load_at(directory, record.sequence)
             .map_or(true, |info| {
                 info.revision() != &record.revision
@@ -418,7 +448,11 @@ impl RevisionStore {
 
     fn remove_temporaries(&self, min_age: Duration) -> Result<usize, RevisionError> {
         let mut removed = 0usize;
-        for (name, prefix) in [("revisions", ".tmp-"), ("blobs", ".publish-")] {
+        for (name, prefix) in [
+            ("revisions", ".tmp-"),
+            ("blobs", ".publish-"),
+            ("ledger", ".tmp-"),
+        ] {
             let directory = match self.blobs.namespace_dir(name, false) {
                 Ok(directory) => directory,
                 Err(StorageError::NotFound) => continue,
@@ -444,10 +478,11 @@ impl RevisionStore {
             let Some(directory) = directory else {
                 return Ok(None);
             };
-            if head.sequence() > MAX_REFERENCE_SCAN {
+            let floor = self.floor_of(directory)?;
+            if head.sequence().saturating_sub(floor) >= MAX_REFERENCE_SCAN {
                 return Ok(None);
             }
-            for sequence in 1..=head.sequence() {
+            for sequence in floor..=head.sequence() {
                 let Ok(info) = self.load_at(directory, sequence) else {
                     return Ok(None);
                 };
