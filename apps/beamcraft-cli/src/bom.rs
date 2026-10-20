@@ -5,8 +5,9 @@
 //!
 //! Maps the engine's re-evaluated records of [`crate::plate::inspect`] to
 //! [`beamcraft_engine::bom::BomRow`]s: the labels come from the pinned definitions, the derived
-//! areas divide the current volume, and the mark is the element id (the issue's fallback until
-//! A08/A09 numbering exists). No geometry is computed here.
+//! areas divide the current volume, and the mark is the element's assigned or approved mark
+//! (A09), falling back to the element id for an unnumbered element. No geometry is computed
+//! here.
 
 use crate::definition::DefinitionRecord;
 use crate::plate::{Inspection, PlateError};
