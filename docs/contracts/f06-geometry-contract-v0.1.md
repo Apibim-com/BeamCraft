@@ -1,62 +1,30 @@
 # F06: geometry and viewport contract, version 0.1.0
 
-Status: **frozen 0.1.0** by the owner on 2026-10-16; nothing implemented; K0 not passed. Date:
-2026-10-15. Base:
-`9d40abc34b8a5686358b78adee5f9c52b9c830bd`. Additive owner-approved amendment **A-2** of
-2026-10-19 (holes, plane cuts, polygonal cavities; section 12) is applied on top of the freeze; the
-version string stays `0.1.0` (section 12 says why). A-2 records what the contract admits; it does not
-claim kernel acceptance or K0.
-
-This original contract fixes the logical interface between the engine and any geometry kernel, and
-between the engine and any viewport or query consumer. It defines what goes in, what comes out,
-which numbers are bounded, which identifiers are stable and which results may be called current. It
-describes no algorithm and no code. [Acceptance descriptions](../../tests/fixtures/contracts/f06-geometry-contract-cases-v0.1.json) are
-future tests, not runnable fixtures. No kernel, mesh, query or viewport exists, and no statement
-here is verified by a test.
+This contract fixes the logical interface between the engine and the geometry kernel, and between
+the engine and any viewport or query consumer: what goes in, what comes out, which numbers are
+bounded, which identifiers are stable and which results may be called current. It describes no
+algorithm and no code. The [acceptance cases](../../tests/fixtures/contracts/f06-geometry-contract-cases-v0.1.json)
+are the expected behaviour in machine-readable form.
 
 ## 1. Scope and status
 
-**What this is.** A frozen logical contract for the tasks G01-G09, P03, V01-V03 and D01. They can
-work against the interfaces below without choosing an implementation. A change that conflicts with
-it needs a reviewed amendment (section 12), not a local workaround.
-
-**Relation to other documents.**
-
-- [F04 model and command contract 0.1.0](f04-model-and-commands-v0.1.md) (frozen) owns
-  identities, units, input caps, error codes (its section 8), quantity statuses (its section 5) and
-  the open items this contract takes over (section 4 here). F06 never weakens an F04 invariant and
-  never widens an F04 cap.
-- [F05 worker protocol 0.1.0](f05-worker-protocol-v0.1.md) (draft) is consumed only for the host
-  boundary: attachments, limits and cancellation semantics. F06 does not change it. Mesh bytes
-  travel as opaque `u8` attachments, so no typed element negotiation is needed (section 6).
-- The first-scope requirements 0.1.0 (PR #10) cover a rectangular plate, a straight member,
-  identities, units, rigid placement and declared failures. This contract retains rectangular
-  evaluation.
-
-**Assumptions recorded here (not hidden).**
-
-- The owner replaced P-1 with contour input, confirmed P-2 unchanged and refined P-3 to explicit
-  axial roll on 2026-10-15. F04 section 3 states the assumptions for contour validation and the
-  missing angle cap. Amendment A-2 (section 12) supersedes the "A02 remains necessary" wording of
-  the original text: a simple polygon in the plane z = 0 is supported (A02.1).
-- F06 accepts ownership of G-06 (minimum nonzero dimension, geometric tolerance, the "parallel" test
-  of P-3) and of the profile-resource-format question (F06/P02). Their policies in section 4 are
-  marked draft until G04 and fixture validation; the owner froze them with this contract on
-  2026-10-16, so validation outcomes are errata (section 12).
+The model contract ([F04](f04-model-and-commands-v0.1.md)) defines identities, units, input caps,
+error codes and quantity statuses; this contract never weakens or widens them. It owns the
+geometric tolerance, the minimum dimension, the "parallel" test of the member frame and the logical
+content of a profile definition. Mesh bytes travel as opaque `u8` attachments of the worker
+protocol (F05).
 
 **Excluded from 0.1.0:** general boolean operations and fit or weld geometry; curved or
 multi-segment members; bent plates; imported meshes; scale, shear and reflection; drawing
 projection and dimensions; rendering style, shading and
-lighting; persisted storage formats (USD encoding belongs to the U-tasks, and this contract defines
+lighting; persisted storage formats (the USD encoding is not defined here, and this contract defines
 no second persisted model format); and any claim of numerical accuracy beyond determinism (section
-2). Amendment A-2 (owner, 2026-10-19) brings into scope exactly three operation classes: through
-holes, plane cuts and the extrusion of a contour with polygonal cavities (section 2, "Operations").
+2). In scope are exactly three operation classes: through holes, plane cuts and the extrusion of a
+contour with polygonal cavities (section 2, "Operations").
 True curved surfaces (analytic cylinders, arcs, splines) stay unsupported with typed results: a
 round hole is a regular polygon (section 2), never an `Approximated` result.
 
-**Sources and provenance.** Contributor-original text, MPL-2.0. Behaviour comes only from F04, F05,
-the first-scope package, repository documents and these public references (rules are referenced, not
-implementations copied):
+**Public references** (rules are referenced, not implementations copied):
 
 - [IEEE 754-2019](https://standards.ieee.org/ieee/754/6210/) binary64 arithmetic and correctly
   rounded square root.
@@ -69,9 +37,6 @@ implementations copied):
 - [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259.html) for the logical JSON forms and [RFC
   6234](https://www.rfc-editor.org/rfc/rfc6234.html) for SHA-256.
 
-No commercial-product material, catalogue, third-party kernel code or test, or observation note is
-used. Constants are proposed original BeamCraft rules, not vendor behaviour.
-
 ## 2. Kernel input
 
 A kernel call takes one closed, finite, bounded `GeometryInput`. Unknown fields are rejected
@@ -82,56 +47,50 @@ random seed: the result depends on this input only.
 |-------|------|
 | `contract_version` | Exactly `0.1.0`; otherwise `UNSUPPORTED_VERSION` |
 | `body` | Exactly one of the two bodies below |
-| `placement` | `translation_mm` (3 numbers) and `orientation_xyzw` (4 numbers), F04 section 3 |
+| `placement` | `translation_mm` (3 numbers) and `orientation_xyzw` (4 numbers), F04 |
 | `density_kg_m3` | Optional; a number or null. Absent or null means unknown (F04) |
 | `outputs` | Nonempty set drawn from `mesh` and `quantities`, no duplicates |
 
-**Plate** (owner replacement P-1): `contour_points_mm` and `thickness_mm`, using the frame, normal
-sign, bottom face, bounds and validation of F04 section 3. `width=|p1-p0|`, `length=|p2-p1|` are
+**Plate**: `contour_points_mm` and `thickness_mm`, using the frame, normal
+sign, bottom face, bounds and validation of F04. `width=|p1-p0|`, `length=|p2-p1|` are
 derived only for an exact four-point rectangle. A valid simple polygon in the plane `z = 0` is
-supported (amendment A-2, A02.1): it is extruded along `+Z` by the thickness, exactly as authored,
+supported: it is extruded along `+Z` by the thickness, exactly as authored,
 without reordering, merging or repair; the origin rectangle keeps the box body, mesh and bytes below.
 A valid contour outside that plane is `unsupported`, `GEO_UNSUPPORTED_CONTOUR`, mapped to existing
-`UNSUPPORTED_GEOMETRY` until the plate-frame derivation of F04 section 3 exists for it. An invalid
-contour
-is `GEO_CONTOUR_INVALID`, mapped to `INVALID_ARGUMENT`. These two GEO codes are necessary to
+`UNSUPPORTED_GEOMETRY`. An invalid contour is `GEO_CONTOUR_INVALID`, mapped to `INVALID_ARGUMENT`. These two GEO codes are necessary to
 distinguish unsupported scope from invalid authored geometry; no F04 code is added. For a rectangle,
 `o=p0`, `e1=p1-p0`, `e2=p3-p0`, `e3=thickness*Z_p`. The origin rectangle retains the same body, mesh
 vertices, volume, area and bounds as the previous dimensions input.
 
-**Straight member** (P-2 confirmed, P-3 refined): `axis_points_mm` (two element-local points),
-`profile`, and optional `roll_rad` (finite, default 0; absolute cap 6.283185307179586 rad, assumed
-because no earlier angle cap exists). The profile kind `rectangle` has `width_mm` and `height_mm`;
-amendment A-1 (owner, 2026-10-18) adds the section families and custom outlines of
-[A07.1](../design/a07-section-library.md), centred on their bounding box and built by the kernel's
-`section` module; no other kind is supported. Its section is centred on the axis, width along rolled X_m, height
+**Straight member**: `axis_points_mm` (two element-local points),
+`profile`, and optional `roll_rad` (finite, default 0; absolute cap 6.283185307179586 rad). The
+profile kind `rectangle` has `width_mm` and `height_mm`; the nine parametric section families and
+custom outlines are centred on their bounding box and built by the kernel's `section` module; no
+other kind is supported. Its section is centred on the axis, width along rolled X_m, height
 along rolled Y_m, perpendicular ends through p1/p2 and no extensions. Section 4 builds the default
 frame first, then applies explicit right-handed roll about +Z_m.
 
-**Profile resource (draft, F06/P02, to be validated by G04 and fixtures).** The kernel consumes the
+**Profile resource.** The kernel consumes the
 logical content of a profile definition, not its file format. For `rectangle` that content is the
 section kind, `width_mm`, `height_mm` and units `mm`, carried by an immutable definition with a full
-content digest as F04 section 4 requires. The persisted encoding of that definition is a USD/U02
-decision. This contract defines no second persisted format and no catalogue.
+content digest as F04 requires. Its persisted encoding is not defined here. This contract defines no second persisted format and no catalogue.
 
-**Caps (taken from F04, never widened; F06 additions marked).**
+**Caps (from F04, never widened; F06 additions marked).**
 
 | Input | Rule | Origin |
 |-------|------|--------|
-| Plate thickness/edge, member axis length | greater than zero, at most 1,000,000 mm | F04 section 3 |
-| Contour/axis point coordinates, translation components | absolute value at most 1,000,000,000 mm | F04 section 3 |
-| Contour D / count | at most 2,000,000 mm / 1024 points | F04 assumption |
-| Roll | absolute value at most 6.283185307179586 rad | F04 assumption |
-| Density | greater than zero, at most 1,000,000 kg/m3, when present | F04 section 3 |
-| Quaternion | components in [-1, 1]; squared norm within 1e-6 of one | F04 section 3 |
-| Section `width_mm`, `height_mm` | at most 1,000,000 mm | F06 addition (draft) |
-| Local size L | plate D <= 2,000,000 mm; member max(axis length, section half-diagonal) <= 1,000,000 mm | F04 section 3 |
-| Minimum nonzero dimension | at least eps_geom (section 4), inclusive | F06 addition (draft) |
+| Plate thickness/edge, member axis length | greater than zero, at most 1,000,000 mm | F04 |
+| Contour/axis point coordinates, translation components | absolute value at most 1,000,000,000 mm | F04 |
+| Contour D / count | at most 2,000,000 mm / 1024 points | F04 |
+| Roll | absolute value at most 6.283185307179586 rad | F04 |
+| Density | greater than zero, at most 1,000,000 kg/m3, when present | F04 |
+| Quaternion | components in [-1, 1]; squared norm within 1e-6 of one | F04 |
+| Section `width_mm`, `height_mm` | at most 1,000,000 mm | F06 |
+| Local size L | plate D <= 2,000,000 mm; member max(axis length, section half-diagonal) <= 1,000,000 mm | F04 |
+| Minimum nonzero dimension | at least eps_geom (section 4), inclusive | F06 |
 
-The owner confirmed these first-slice values on 2026-10-15 and froze them on 2026-10-16; fixture
-validation yields errata only.
 The geometric floor is eps_geom, with an absolute minimum of 0.001 mm = 1e-6 m. Contours contain
-at most 1024 points; roll has the F04 section 3 cap. A maximum plate call has 3081 numeric scalars
+at most 1024 points; roll has the F04 cap. A maximum plate call has 3081 numeric scalars
 (3072 coordinates, thickness, seven
 pose components and density); a member has 17 including explicit roll. Bound counts before any
 allocation and simplicity work to at most 523,776 non-adjacent/pair candidates (1024*1023/2); no
@@ -148,8 +107,8 @@ that reports a failure; it reports all failures of that stage (at most 32) in in
    cap excess is `LIMIT_EXCEEDED`; a non-finite derived intermediate is
    `GEO_NUMERIC_UNCERTAIN` (`UNSUPPORTED_GEOMETRY`), without a substituted floor.
 4. **Ranges and contour validity**: greater than zero, minimum dimensions, axis length, density,
-   quaternion and F04 section 3 contour validation (`INVALID_ARGUMENT`). Then decide contour
-   support (A-2): a valid contour that is not a simple polygon in the plane `z = 0` is
+   quaternion and F04 contour validation (`INVALID_ARGUMENT`). Then decide contour
+   support: a valid contour that is not a simple polygon in the plane `z = 0` is
    `unsupported`. The stage-1 body check admits every plate contour
    to these bounded checks; it never skips invalid-input validation.
 5. **Build** (derive frame, certify it, derive vertices, tables), **checks** (section 6 self-checks)
@@ -163,7 +122,7 @@ environment variable influences a result. The selected audited math crate, its v
 evaluation profile are part of the algorithm version. Omitted roll and explicit zero bypass
 trigonometry. Nonzero roll needs cross-target conformance evidence before identical bytes can be
 claimed; no libm choice or dependency is made by this document. This is a determinism rule, not an
-accuracy promise; accuracy bounds are for G04 and fixtures.
+accuracy promise; accuracy bounds come from fixtures.
 
 **Order of evaluation for quantities and dot products.** Call the three box edge lengths `a`, `b`,
 `c` (plate `width, length, thickness`; member `w, h, ell`). Then `V_mm3 = (a*b)*c`,
@@ -181,15 +140,14 @@ carries a numeric certificate (for example the frame certificate of section 4, r
 mesh or query result whose certificate fails is `GEO_NUMERIC_UNCERTAIN` (`UNSUPPORTED_GEOMETRY`) and
 is never returned as a partial or current result. The parallel test needs no band because both of
 its branches give a certified frame on either side of the threshold. The claim of identical bytes
-and decisions on every platform is a rule to be demonstrated, not a verified property: G04 and the
+and decisions on every platform is a rule to be demonstrated, not a verified property: the
 fixtures must supply conformance evidence on each target, including `wasm32`. Any change that alters
 output bytes or a decision for some admitted input raises `algorithm` and, with it, every key
 (section 7).
 
-### Operations on a plate or extrusion body (amendment A-2)
+### Operations on a plate or extrusion body
 
-Owner-approved on 2026-10-19 (section 12, A-2). Additive: no input, byte, key or code of a box body
-changes. An operation takes one sealed body and returns one new sealed body or a typed failure;
+An operation takes one sealed body and returns one new sealed body or a typed failure;
 like any kernel call it returns no partial geometry and mutates no authored state (section 3). The
 engine always evaluates a body as base shape plus its operations replayed in ascending ordinal
 order, never incrementally from a stored mesh, so the result depends on the authored inputs only.
@@ -204,21 +162,19 @@ Every result is re-certified (closed, outward, manifold, free of self-intersecti
 certificate, section 6) before sealing. A result that cannot be certified is `GEO_NUMERIC_UNCERTAIN`
 or `GEO_MESH_NOT_CERTIFIED`, never a current result.
 
-**Round holes (owner decision D-2, first-slice values).** A round hole of radius `r` is the regular
+**Round holes.** A round hole of radius `r` is the regular
 `N`-gon inscribed in its circle. `N` is the smallest multiple of 4 with `N >= 16` such that the chord
 deviation (the sagitta) `r * (1 - cos(pi / N))` is at most 0.05 mm, computed from the radius; `N` is
 at most 256. For example diameters up to about 5.2 mm give `N = 16`, 100 mm gives 72, 500 mm gives
 160 and about 1328 mm gives 256. A radius that needs `N > 256` is refused as `GEO_OP_UNSUPPORTED`
-(field token `hole.radius`; proposal for owner review, because no `Approximated` status exists). The
+(field token `hole.radius`, because no `Approximated` status exists). The
 decision of `N` compares `r` with a fixed threshold table of the algorithm version, so no `cos`
 result decides it; vertex coordinates use the platform `sin` and `cos` at the input edge and are
 authored as the doubles they round to (the cross-target question of roll, section 2, applies).
-The stored polygon, not the circle, is the geometry. These numbers are first-slice values like the
-other policy constants of section 4; fixture validation yields errata. No `Approximated` status
-exists in 0.1.x: the kernel's curve-approximation entry points and their `Approximated` volume are
+The stored polygon, not the circle, is the geometry. No `Approximated` status exists in 0.1.x: the kernel's curve-approximation entry points and their `Approximated` volume are
 not part of this contract and an engine does not use them.
 
-**Failures.** A cutter or cavity polygon that is invalid under F04 section 3 is
+**Failures.** A cutter or cavity polygon that is invalid under F04 is
 `GEO_CONTOUR_INVALID`. A well-formed request outside the supported scope (a hole touching or
 crossing the outline or another hole, nested islands, oblique, curved or simultaneous cutters,
 blind holes, a body that is not a prism, a plane that is tangent, coplanar with a face, or makes
@@ -231,22 +187,16 @@ input value. Kernel work budgets (certification, exact-sign and pair budgets) th
 are `GEO_NUMERIC_UNCERTAIN` at kernel level and are reported by the command layer as the capacity
 result below, never as invalid geometry.
 
-**Capacity is an implementation limit, not a product limit (owner decision D-5).** There is no
-designed limit on the number of holes of a plate or beam. The capacity the kernel measured in G07
-(a plate took 16 holes of 16 edges, 9 of 32 or 5 of 64 before certification budgets ended;
-the CLI took two holes of 32 edges) is a certification performance defect owned by task G10. It is
-informative only: this contract freezes no numeric capacity, and any such number is an
-"implementation limit, to be lifted by G10" that lives in code (`OpLimits`, `Limits`), not here.
-Until G10, the command layer checks the request against the implementation limits before it runs
+**Capacity is an implementation limit, not a product limit.** There is no
+designed limit on the number of holes of a plate or beam. The kernel's present capacity is a
+certification performance limit that lives in code (`OpLimits`, `Limits`), not in this contract.
+The command layer checks the request against the implementation limits before it runs
 the kernel and refuses it with the distinct result `GEO_KERNEL_CAPACITY`, mapped to the existing
 F04 code `LIMIT_EXCEEDED` (status `limit_exceeded`) with the diagnostic `field` token
-`kernel_capacity`; it publishes nothing (F04 section 8). The F06 section 6 mesh caps (4,096
+`kernel_capacity`; it publishes nothing (F04). The F06 section 6 mesh caps (4,096
 vertices, 8,192 triangles) are hard validator caps of this contract, not designed hole limits; a
 request whose derived mesh would exceed them keeps `GEO_BUFFER_LIMIT` or `GEO_TOPOLOGY_LIMIT`
-(also `LIMIT_EXCEEDED`); whether the owner raises those draft caps is open (A-2 notes).
-`GEO_KERNEL_CAPACITY` is a new
-GEO token and F04 gets no new code; naming it `LIMIT_EXCEEDED` rather than `UNSUPPORTED_GEOMETRY`
-is a proposal for owner review. A call that passes the pre-check but ends on a kernel budget is
+(also `LIMIT_EXCEEDED`). A call that passes the pre-check but ends on a kernel budget is
 mapped to the same result. A capacity refusal is never `INVALID_ARGUMENT` and never "invalid
 geometry".
 
@@ -264,7 +214,7 @@ Every kernel call returns one `GeometryResult`:
 | `mesh` | Descriptor and blob of section 6; present only when `ok` and requested |
 | `quantities` | Records of section 8; present only when `ok` and requested |
 
-**Diagnostic record.** Exactly `code` (a stable `GEO_` code below), `f04_code` (its F04 section 8
+**Diagnostic record.** Exactly `code` (a stable `GEO_` code below), `f04_code` (its F04
 mapping), `field` (a fixed schema token of at most 64 ASCII bytes, never an input path or value) and
 `stage` (`support`, `finiteness`, `caps`, `ranges`, `validation`, `build`, `checks` or
 `quantities`). Messages use fixed English text and never echo input values, private paths or
@@ -278,13 +228,13 @@ the status of the first diagnostic.
 
 | `GEO_` code | F04 code | Meaning |
 |-------------|----------|---------|
-| `GEO_CONTOUR_INVALID` | `INVALID_ARGUMENT` | Invalid contour under F04 section 3 |
-| `GEO_UNSUPPORTED_CONTOUR` | `UNSUPPORTED_GEOMETRY` | Valid contour outside the supported evaluation (not a simple polygon in the plane `z = 0`; A-2 supersedes "outside rectangle-only evaluation") |
+| `GEO_CONTOUR_INVALID` | `INVALID_ARGUMENT` | Invalid contour under F04 |
+| `GEO_UNSUPPORTED_CONTOUR` | `UNSUPPORTED_GEOMETRY` | Valid contour outside the supported evaluation (not a simple polygon in the plane `z = 0`) |
 | `GEO_NON_FINITE` | `NON_FINITE_NUMBER` | NaN or infinity in any number |
 | `GEO_NOT_POSITIVE` | `INVALID_ARGUMENT` | Dimension, density or similar not greater than zero |
 | `GEO_BELOW_MINIMUM` | `INVALID_ARGUMENT` | Dimension greater than zero but below the minimum |
 | `GEO_ABOVE_LIMIT` | `LIMIT_EXCEEDED` | Input above its cap |
-| `GEO_AXIS_TOO_SHORT` | `INVALID_ARGUMENT` | Axis length zero or below the minimum (G-03) |
+| `GEO_AXIS_TOO_SHORT` | `INVALID_ARGUMENT` | Axis length zero or below the minimum |
 | `GEO_QUATERNION_INVALID` | `INVALID_ARGUMENT` | Component range or norm rule violated |
 | `GEO_UNSUPPORTED_PROFILE` | `UNSUPPORTED_GEOMETRY` | Profile kind other than `rectangle` |
 | `GEO_UNSUPPORTED_TRANSFORM` | `UNSUPPORTED_GEOMETRY` | Scale, shear, reflection or a matrix form |
@@ -305,45 +255,43 @@ the status of the first diagnostic.
 | `GEO_STALE_TOKEN` | `STALE_WORKSPACE` | Snapshot token older than the retained history |
 | `GEO_PICK_INPUT_INVALID` | `INVALID_ARGUMENT` | Bad ray or point query input |
 | `GEO_PICK_LIMIT` | `LIMIT_EXCEEDED` | Hit count or radius above its cap |
-| `GEO_OP_UNSUPPORTED` | `UNSUPPORTED_GEOMETRY` | Valid operation request outside the supported scope (A-2); status `unsupported` |
-| `GEO_OP_NO_EFFECT` | `INVALID_ARGUMENT` | Operation that would leave the body unchanged or empty (A-2); status `invalid_input` |
-| `GEO_KERNEL_CAPACITY` | `LIMIT_EXCEEDED` | Request above the kernel's implementation capacity, refused before or after the kernel run (A-2, proposal for owner review); status `limit_exceeded`; never invalid geometry |
+| `GEO_OP_UNSUPPORTED` | `UNSUPPORTED_GEOMETRY` | Valid operation request outside the supported scope; status `unsupported` |
+| `GEO_OP_NO_EFFECT` | `INVALID_ARGUMENT` | Operation that would leave the body unchanged or empty; status `invalid_input` |
+| `GEO_KERNEL_CAPACITY` | `LIMIT_EXCEEDED` | Request above the kernel's implementation capacity, refused before or after the kernel run; status `limit_exceeded`; never invalid geometry |
 
 The first 21 codes belong to the kernel and blob stages (`GEO_NON_FINITE` and
 `GEO_NUMERIC_UNCERTAIN` also occur in queries); the next six to queries (section 9); the last three
-to operations (amendment A-2; failures of an operation use stage `build`, or `checks` for a failed
-re-certification). Every F04 code used here exists in F04 section 8.
+to operations (failures of an operation use stage `build`, or `checks` for a failed
+re-certification). Every F04 code used here exists in F04.
 
 **Failure never returns partial geometry as current.** A result whose status is not `ok` has no
 `mesh`, `quantities` or `shape_key`. A kernel call alone never mutates authored state. A rejected
-mutation or cancelled build retains the previous result and generation (F04 section 8). A separately
+mutation or cancelled build retains the previous result and generation (F04). A separately
 accepted valid contour outside the supported evaluation (for example not in the plane `z = 0`)
 create/update commits authored input with geometry and quantities
 `unsupported`; an old result cannot remain current under changed shape inputs. This is model
 admission, not partial geometry returned by a failed evaluation. An element whose authored shape
-is invalid is a separate state of the engine, `degenerate` (F04 amendment A-2, proposal for owner
-review): it has no kernel result, and its derived data are `unknown`, never guessed. A mesh that
+is invalid is a separate state of the engine, `degenerate` (F04): it has no kernel result, and its derived data are `unknown`, never guessed. A mesh that
 fails self-checks or a
 numeric certificate is discarded, never displayed as current. A mesh that is not a sealed result
-of the analytic builders or of the operations of section 2 (amendment A-2) may be shown by a viewport
+of the analytic builders or of the operations of section 2 may be shown by a viewport
 only if the host flags it "not exact"; it never receives engineering quantities.
 
-## 4. Tolerance and degeneracy policy (G-06, draft)
+## 4. Tolerance and degeneracy policy
 
-**Confirmed by the owner on 2026-10-15 as first-slice values and frozen on 2026-10-16; validation by
-fixtures yields errata only.** All constants carry integer `tolerance_policy` version 3. The algorithm version is 3
+All constants carry integer `tolerance_policy` version 3. The algorithm version is 3
 because local-size scaling changes geometry admission; feature and mesh layout versions stay
 1. Changing any constant raises that version and therefore every shape key (section 7).
 
 | Constant | Value | Use |
 |----------|-------|-----|
 | Geometric length floor `eps_geom`; minimum `eps_dim = eps_geom` | max(0.001 mm, 2^-22 * L), inclusive for minima | Plate thickness/edges, section dimensions, axis length; local L below |
-| Parallel threshold `eps_par` | 1e-6, strict | The parallel test of P-3 |
-| Planarity `eps_plane` | eps_geom + 1e-6*D | Contour admission; F04 section 3 |
+| Parallel threshold `eps_par` | 1e-6, strict | The parallel test of the member frame |
+| Planarity `eps_plane` | eps_geom + 1e-6*D | Contour admission; F04 |
 | Frame/quaternion certificate/admission | 1e-6, dimensionless | Absolute deviations from unit identities |
 | Coincidence | Two points coincide when their distance is below `eps_geom` (strict) | Axis endpoints; contour edge minima reject close consecutive points without merging |
 
-**Geometric length floor (owner decision, 2026-10-15).** `eps_geom = max(0.001 mm, 2^-22 * L)`.
+**Geometric length floor.** `eps_geom = max(0.001 mm, 2^-22 * L)`.
 Here `L` is an element-local body size in mm, evaluated before placement: for a plate `L = D`,
 the maximum distance from contour point p0 to any contour point; for a member `L = max(ell, H)`,
 where `ell` is the axis length and `H` is the section half-diagonal. World coordinates and
@@ -381,7 +329,6 @@ as `scaled_relative = binary64(1e-6) * D`, then `eps_plane = eps_geom + scaled_r
 It is inclusive. A geometric distance to a boundary at most eps_geom is in the boundary band;
 a greater distance is outside that band. This band classifies distance only: it cannot change
 an exact sign, identity, intersection or topology, and it does not authorize snapping or healing.
-No additional boundary query or solid operation is introduced by this amendment.
 
 Parallel/orthogonality checks expressed as a length or distance use eps_geom as their absolute
 length floor. Dimensionless relative tests keep their existing bounds: in particular member
@@ -391,24 +338,22 @@ and relative comparison term; it never uses eps_geom. Pick inclusion, its bounda
 distance buckets and the exact ray parameter interval remain governed solely by section 9:
 eps_pick and the tie quantum stay absolute 0.001 mm even on a large body. Exact winding,
 simplicity, rectangle closure/orthogonality, identities, topology, hashes and cap checks remain
-exact. A valid near-planar contour outside the plane `z = 0` still has unsupported evaluation (A-2).
+exact. A valid near-planar contour outside the plane `z = 0` still has unsupported evaluation.
 
-**Why this scale.** The owner adopted local body size rather than world-origin magnitude on
-2026-10-15. This closes only A5's large-coordinate policy item; it supplies no runtime accuracy
-proof. Rounded-mesh cross-checks and subnormal mass remain open. The absolute floor protects
+**Why this scale.** The floor follows the body's own size, never its distance from the world
+origin. It supplies no runtime accuracy proof. The absolute floor protects
 small bodies, and the relative term grows only with the body's own size inside existing caps.
 
 **Rules.**
 
 1. A dimension (plate thickness, section width/height, axis length) of zero or less is
    `GEO_NOT_POSITIVE`; a value above zero and below `eps_dim` is `GEO_BELOW_MINIMUM`; a value equal
-   to `eps_dim` is accepted. A zero or too-short axis is `GEO_AXIS_TOO_SHORT` (`INVALID_ARGUMENT`,
-   as G-03 requires). The axis length is `ell = sqrt((dx*dx + dy*dy) + dz*dz)`, subtracting
+   to `eps_dim` is accepted. A zero or too-short axis is `GEO_AXIS_TOO_SHORT` (`INVALID_ARGUMENT`). The axis length is `ell = sqrt((dx*dx + dy*dy) + dz*dz)`, subtracting
    `d = p2 - p1` per component before taking the norm.
    Contour edges below eps_geom, including zero edges, retain `GEO_CONTOUR_INVALID` under
-   F04 section 3; they are never merged or reordered. A supported rectangle's width and length
+   F04; they are never merged or reordered. A supported rectangle's width and length
    are its already validated contour edge lengths.
-2. **Default zero-roll frame and parallel test (P-3, owner refined).** Let `d = p2 - p1`, `hh =
+2. **Default zero-roll frame and parallel test.** Let `d = p2 - p1`, `hh =
    dx*dx + dy*dy`, `LL = hh + dz*dz`, `ell = sqrt(LL)`. Here ell is axis length,
    distinct from the tolerance scale L = max(ell, H). The frame is built in this order:
    - a. `Z = (dx/ell, dy/ell, dz/ell)`.
@@ -419,7 +364,7 @@ small bodies, and the relative term grows only with the body's own size inside e
      rule) when `hh < 1e-12 * LL` (strict; anti-parallel counts; an exactly vertical axis is
      included): with `U = (0, 1, 0)` and `c = Z_y`, the vector `P = (-Z_x*c, 1 - Z_y*c, -Z_z*c)` is
      `U - Z*(U . Z)`, and `Y = P / |P|` with `|P| = sqrt((P_x*P_x + P_y*P_y) + P_z*P_z)`. An exactly
-     vertical axis gives `c = 0` and `Y = (0, 1, 0)`, as P-3 states. For a tilted near-vertical axis
+     vertical axis gives `c = 0` and `Y = (0, 1, 0)`. For a tilted near-vertical axis
      `Y` stays perpendicular to `Z`; a fixed `(0, 1, 0)` would not be (it would leave the section
      off perpendicular by the tilt toward Y).
    - c. `X0 = Y x Z`, `X = X0 / |X0|`, then `Y = Z x X`. The cross product is `(a2*b3 - a3*b2, a3*b1
@@ -453,13 +398,13 @@ small bodies, and the relative term grows only with the body's own size inside e
    differences there. Frames on distinct finite axes also differ in axis direction, so their
    relative three-dimensional rotation is not solely a roll. For tilts from local -Z, the +Y and -Y
    entries exchange; the +X and -X entries keep their signs. Other tilt directions follow the
-   formula above. Continuity stays an open owner decision (section 12). Optional `roll_rad` is the
+   formula above. Continuity is an open question ([issue #141](https://github.com/Apibim-com/BeamCraft/issues/141)). Optional `roll_rad` is the
    explicit section rotation about that default frame's +Z. Other orientation belongs to the element
    placement. No up-vector or hidden roll preset exists.
 4. The kernel never snaps, welds or merges vertices, and never heals geometry. Vertices are distinct
    by construction, not by a tolerance test, and every box edge is at least `eps_dim` long after the
    range checks.
-5. **Quaternion handling (F04 section 3 left this to F06).** The accepted quaternion is normalized:
+5. **Quaternion handling (F04 left this to F06).** The accepted quaternion is normalized:
    `n = ((x*x + y*y) + z*z) + w*w`, `r = sqrt(n)`, each component divided by `r`. The rotation
    matrix uses only products and sums of those components: `R00 = 1 - 2*(y*y + z*z)`, `R01 = 2*(x*y
    - z*w)`, `R02 = 2*(x*z + y*w)`, `R10 = 2*(x*y + z*w)`, `R11 = 1 - 2*(x*x + z*z)`, `R12 = 2*(y*z -
@@ -471,20 +416,20 @@ small bodies, and the relative term grows only with the body's own size inside e
 6. **Tolerances in signatures.** The first scope has no caller-supplied tolerance. The
    `tolerance_policy` version is an input of the shape key and the world-measurement key (section
    7). A policy change is never silent and never leaves a current result keyed by the old policy.
-7. **Separate from test comparison.** The comparison rule CR-TOL-001 (F04 section 10, G-05) is a
+7. **Separate from test comparison.** The test comparison rule (F04 section 10) is a
    rule for comparing test results only. The kernel never reads it, no signature contains it, and
    sharing a numeric value does not turn the test rule into a geometric decision rule. A test that
    needs "equal" for a decision (a branch, a status, a FeatureId) compares exactly.
 
 ## 5. FeatureId
 
-A FeatureId is a stable semantic name for a face, edge or vertex of a first-scope body. It replaces
+A FeatureId is a stable semantic name for a face, edge or vertex of a body. It replaces
 triangle, vertex and buffer indices as the only address that persists outside a mesh buffer.
 
-**Form (rule version `fid1`; owner decisions P-1, P-2).** A qualified FeatureId is `fid1:` +
+**Form.** A qualified FeatureId is `fid1:` +
 ElementId + `:` + local id, with the ElementId in its canonical lowercase 36-character form (F04
 section 2). The local id is `kind:token`, where `kind` is `plate`, `member`, `extrusion` or `cut`
-(the last two by amendment A-2, below), and `token` is one
+(the last two below), and `token` is one
 of:
 
 - face: `f.` + axis role, where the role is one of `x0`, `x1`, `y0`, `y1`, `z0`, `z1`;
@@ -499,10 +444,9 @@ and 8 vertices: 26 features. Allowed characters are `a-z`, `0-9`, `:`, `.` and `
 form, a member vertex, is 59 bytes; the maximum length is **64 bytes**. The kernel produces local
 ids; the engine prepends `fid1:` and the ElementId.
 
-**Kinds `extrusion` and `cut` (amendment A-2; owner decision D-4; stable under `fid1`).** Both are
+**Kinds `extrusion` and `cut`.** Both are
 role-based, like the box kinds, and name features by authored order and operation ordinal, never by
-triangle, vertex or buffer index. No persisted `extrusion` or `cut` id existed before this
-amendment (the kernel's provisional ids were never stored), so `fid1` stays and no old id changes.
+triangle, vertex or buffer index.
 A contour point is addressed by its position `k` in the authored contour; the contour token `<t>` is
 `o<k>` for point `k` of the outer contour and `c<j>.<k>` for point `k` of cavity `j`.
 
@@ -514,7 +458,7 @@ A contour point is addressed by its position `k` in the authored contour; the co
 - `cut` (a face created by an operation with ordinal `n`, section 2): `f.h<n>.s<k>` (wall on edge
   `k` of the polygon of hole `n`) and `f.p<n>` (the planar cap of plane cut `n`). Edges and
   vertices created by an operation have no FeatureId in 0.1.x: they are not addressable until a
-  later erratum, and a lookup of one is `GEO_FEATURE_NOT_FOUND`.
+  later version, and a lookup of one is `GEO_FEATURE_NOT_FOUND`.
 - The origin rectangle plate keeps the `plate` ids of the box above, also after operations: the
   faces of the base body keep their ids when an operation is added, changed or removed, and an
   operation adds or removes only its own `cut` faces.
@@ -529,8 +473,7 @@ A contour point is addressed by its position `k` in the authored contour; the co
 - The 64-byte maximum of the qualified form stays: `cut` ids fit up to ordinal 999 and `k` up to
   1023 (58 bytes). An `extrusion` edge or vertex id of a cavity with large indices can exceed it
   (for example `extrusion:e.z0.c255.1023` gives 66); the implementing task must then refuse the
-  build with `GEO_TOPOLOGY_LIMIT` (an implementation limit; whether to lengthen ids is open, A-2
-  notes).
+  build with `GEO_TOPOLOGY_LIMIT` (an implementation limit).
 
 **Rules.**
 
@@ -559,7 +502,7 @@ A contour point is addressed by its position `k` in the authored contour; the co
 9. **Contour start and roll.** Plate roles follow p0 and the first edge, not world positions. A
    cyclic start change can move physical face roles; no promise of a physical-face reference
    surviving that edit exists. Roll moves member roles with the section. Bodies that are not boxes
-   use the kinds `extrusion` and `cut` defined above (A-2); no `fid1` box roles are invented for them.
+   use the kinds `extrusion` and `cut` defined above; no `fid1` box roles are invented for them.
 10. **Mapping inside a snapshot.** The face table (section 6) maps a triangle to the local id of its
     face; vertex index `i = xb + 2*yb + 4*zb` maps to the vertex role bits. Edge geometry comes from
     `LookupFeature` (section 9), not from the buffer.
@@ -579,12 +522,11 @@ vertex index is in range; every triangle has three distinct indices and nonzero 
 undirected edge belongs to exactly two triangles, used once in each direction; the signed volume
 `(1/6) * sum(v0 . (v1 x v2))` is positive (outward). For one genus-0 shell `V - E + F = 2`; for `k`
 such shells it is `2k`. Euler's formula alone is not a closure test (`F06-NEG-18` has `V - E + F =
-1`, `F06-NEG-19` has 4 for two shells, and an inward mesh has 2). The first-scope analytic builders
-also self-check this before sealing (`GEO_SELF_CHECK_FAILED`). The results of the operations of section 2
-(amendment A-2) are additionally certified free of self-intersection by the numeric certificate
+1`, `F06-NEG-19` has 4 for two shells, and an inward mesh has 2). The box builders
+also self-check this before sealing (`GEO_SELF_CHECK_FAILED`). The results of the operations of section 2 are additionally certified free of self-intersection by the numeric certificate
 before they are sealed; for them genus may exceed zero and the shell count stays 1.
 
-**Canonical box mesh (owner decisions P-1, P-2, P-3).** Both bodies are boxes in a right-handed body
+**Canonical box mesh.** Both bodies are boxes in a right-handed body
 frame with origin corner `o` and edge vectors `e1, e2, e3` (`e1 x e2` along `e3`): plate `o = p0`,
 `e1 = p1-p0`, `e2 = p3-p0`, `e3 = thickness*Z_p`; member `o = (p1 - (w/2)*X_m) - (h/2)*Y_m`, `e1 =
 w*X_m`, `e2 = h*Y_m`, `e3 = p2 - p1`. Vertex `i` (`xb = i & 1`, `yb = (i >> 1) & 1`, `zb = i >> 2`)
@@ -623,7 +565,7 @@ they are transport, and this blob is the opaque payload.)
 | next | `pad8(2*T)` | per-triangle face index (u16, an index into the face table), zero padding |
 
 `pad8(n)` rounds `n` up to a multiple of 8. The total is `32 + 24*V + pad8(12*T) + pad8(2*T)`; the
-first-scope body is 392 bytes (`F06-POS-02`). Section starts are multiples of 8 relative to the blob
+box body is 392 bytes (`F06-POS-02`). Section starts are multiples of 8 relative to the blob
 start, but an attachment's start in memory is not aligned (F05 prefixes 44 bytes), so consumers read
 with unaligned loads or copy. The face table (an ordered array of at most `K` local ids) travels in
 the JSON descriptor, not in the blob. The encoded descriptor of one body (face table and fields) is
@@ -631,14 +573,14 @@ at most 32,768 bytes of UTF-8; a page's control object also obeys the negotiated
 `control_bytes`, `json_tokens` and `string_bytes`, and a page ends when any of its budgets would be
 exceeded (section 10).
 
-**Primitive limits and general validator limits.** The first-scope builders (plate and member)
+**Primitive limits and general validator limits.** The box builders (plate and member)
 always produce exactly 8 vertices, 12 triangles, 6 faces, 12 topological edges, 18 triangle-mesh
 edges, 1 shell and 26 features. These **primitive limits** are constants of the builders, not caps.
 The **hard caps** below are the general structural-validator limits for any blob (including a future
 body or a blob received from outside); a blob inside them is structurally valid, not thereby an
 engineering result (section 8).
 
-**Hard caps (draft).**
+**Hard caps.**
 
 | Item | Cap |
 |------|-----|
@@ -661,16 +603,15 @@ one above is rejected (`F06-NEG-11` to `F06-NEG-14`).
 **Chunking over F05.** A mesh blob is **never split**: it is one attachment, whole. A page of a
 snapshot or change delivery holds whole blobs, at most the negotiated `effective_limits`
 `attachments` per bundle, each within `buffer_bytes`, within `bundle_bytes`, and at most
-`batch_items` items per page and `delivery_pages` pages per delivery (F05 sections 4, 5 and 10; the
-numbers are those of F05 and are not restated here). Because a blob is at most 213,024 bytes, it
+`batch_items` items per page and `delivery_pages` pages per delivery. Because a blob is at most 213,024 bytes, it
 fits any F05 maximum. If a negotiated limit is smaller than a body needs, the body is not delivered
 and the query fails with `GEO_BUFFER_LIMIT`; it is never fragmented across attachments. `F06-POS-28`
 shows the page arithmetic. Transport element type stays `u8`; the blob is self-describing, so F05's
-open question on element-type negotiation (F05 section 12) needs no change.
+open question on element-type negotiation needs no change.
 
 **Digest rule.** The `mesh_digest` is the SHA-256 (RFC 6234) of the exact blob bytes, as 64
 lowercase hexadecimal digits. For a blob sent as one F05 attachment it equals that attachment's
-`sha256`. The digest identifies bytes; it is not the shape key (F04 section 5). The same shape key,
+`sha256`. The digest identifies bytes; it is not the shape key (F04). The same shape key,
 space and placement give the same bytes under the declared algorithm profile and the same digest
 (`F06-POS-02`). A world blob differs from the local blob and has its own digest.
 
@@ -688,7 +629,7 @@ measurements and picks come from the engine.
 |-------|------------|
 | Body | The box frame of section 6 where the body is axis-aligned from `o` |
 | Element-local | F04 element-local coordinates; kernel meshes are in this space. Plate: `p_local = p0 + [X_p Y_p Z_p]*p_body`. Member: `p_local = o + B * p_body`, with `B = [X_m Y_m Z_m]` |
-| World | `p_world = R(q) * p_local + translation_mm` (rotate, then translate; F04 section 3) |
+| World | `p_world = R(q) * p_local + translation_mm` (rotate, then translate; F04) |
 | Unit | Lengths in mm, areas mm2, volumes mm3 internally; reports use m2 and m3 by division by 1e6 and 1e9 (section 2) |
 
 The transform is a rigid pose and nothing else: a unit quaternion and a translation, with
@@ -699,47 +640,43 @@ meshes with another `metersPerUnit` or `upAxis` are unsupported until the R-task
 (`GEO_UNSUPPORTED_STAGE_FRAME`); in 0.1.0 no imported mesh is accepted as kernel input at all
 (`GEO_UNSUPPORTED_MESH_SOURCE`), and the kernel never guesses a conversion.
 
-**Canonical numeric encoding for keys (draft; F04 left it to F06/P04).** Key preimages are byte
+**Canonical numeric encoding for keys.** Key preimages are byte
 strings: ASCII tags, unsigned integers big-endian, and every f64 as 8 bytes big-endian binary64
 after normalizing negative zero. NaN and infinity never occur (rejected earlier). Decimal text,
 locale and JSON formatting are never part of a preimage. Keys are SHA-256 digests shown as 64
 lowercase hexadecimal digits; they are not content digests of stored bytes.
 
 **Three separate dependency keys.** The shape and world-measurement preimages share the `algorithm`
-and `tolerance_policy` fields (`00 03 00 03` for their two u16 values after the local-size
-amendment). Changing either version intentionally invalidates both keys. Their remaining fields
+and `tolerance_policy` fields (`00 03 00 03` for their two u16 values). Changing either version intentionally invalidates both keys. Their remaining fields
 are disjoint: shape has body kind, ordered plate contour/thickness or member axis, roll, section
 kind and dimensions, `feature_id_rule` and `mesh_layout`; world has the shape-key digest,
 translation and canonical quaternion. World therefore also depends transitively on every shape
 input. Their existing domain tags, `BCGEO-SHAPE` + `0x00` and `BCGEO-WORLD` + `0x00`, make the
 complete preimage byte strings distinct across these two domains; this does not promise that SHA-256
 itself is collision-free. Presentation inputs (resolved appearance digest, visibility and camera)
-are disjoint from the geometry inputs; V01 still owns its preimage encoding.
+are disjoint from the geometry inputs; their preimage is the viewport's.
 
 1. **Shape key**: the element-local geometry. Preimage: `BCGEO-SHAPE` + `0x00`, a body kind byte (1
    plate, 2 member), then for a plate a u16 point count, each ordered point's three f64 components
    and f64 thickness; for a member the six f64 of `p1, p2`, f64 `roll_rad` (omitted means zero), a
    section kind byte (1 rectangle) and f64 width/height; then four u16 big-endian: `algorithm`,
-   `tolerance_policy`, `feature_id_rule`, `mesh_layout` (3, 3, 1, 1 after the local-size amendment).
+   `tolerance_policy`, `feature_id_rule`, `mesh_layout` (3, 3, 1, 1).
    It excludes placement, density, material, label, appearance, camera, ElementId and the profile
    resource digest (two profiles with the same dimensions give the same geometry; the digest stays
-   in the F04 footprint instead). Amendment A-2: a body without operation records keeps this
-   preimage byte for byte, so no existing key changes and `algorithm`, `tolerance_policy`,
-   `feature_id_rule` and `mesh_layout` stay (3, 3, 1, 1). A body with operation records uses a
-   distinct body kind byte and appends its operations in ascending ordinal order (kind byte, u16
-   ordinal, canonical f64 parameters); the byte-exact layout is fixed by the implementing task
-   (A03/A04) and recorded as an erratum before any such key is stored.
+   in the F04 footprint instead). A body with operation records uses a distinct body kind byte and
+   appends its operations in ascending ordinal order (kind byte, u16 ordinal, canonical f64
+   parameters); its byte-exact layout is fixed and recorded here before any such key is stored.
 2. **World-measurement key**: everything measured in world space. Preimage: `BCGEO-WORLD` + `0x00`,
    the 32 raw bytes of the shape key, the three f64 of `translation_mm`, the four f64 of the
    canonical quaternion (section 4), then u16 `algorithm` and `tolerance_policy`. The version pair
    is (3, 3). It excludes density, label, appearance and camera.
 3. **Presentation key**: how an element is shown. Inputs: the resolved display appearance reference
    (digest), visibility and the camera description of the view. It contains no shape, placement or
-   physical-material input. It is computed by the presentation layer (V01 fixes its preimage) and
+   physical-material input. It is computed by the presentation layer and
    never by the kernel. Selection and hover are viewport state outside all three keys and are never
    engineering input.
 
-**Mass signature.** Mass is a quantity with its own input signature (F04 section 5), not a fourth
+**Mass signature.** Mass is a quantity with its own input signature (F04), not a fourth
 key: SHA-256 of `BCGEO-MASS` + `0x00`, the shape key, a presence byte (0 or 1) and the f64 density
 (0 when absent), then u16 `algorithm` (3). L and eps_geom are deterministically derived from
 shape inputs; no independent scale field is added to any preimage.
@@ -755,18 +692,17 @@ shape inputs; no independent scale field is added to any preimage.
 | Density value change | - | - | - | Inval. | - | - |
 | Placement change | - | Inval. | - | - | - | Inval. |
 | Contour/thickness, axis, roll or profile-dimension change | Inval. | Inval. | - | Inval. | Inval. | Inval. |
-| Hole or plane-cut operation added, changed, removed (A-2) | Inval. | Inval. | - | Inval. | Inval. | Inval. |
+| Hole or plane-cut operation added, changed, removed | Inval. | Inval. | - | Inval. | Inval. | Inval. |
 | Copy (new ElementId, same inputs) | - | - | - | - | - | - |
 | Algorithm or tolerance-policy version change | Inval. | Inval. | - | Inval. | Inval. | Inval. |
 
-Reading the rows: a rename or a camera change does not invalidate shape (F04 section 5); a density
+Reading the rows: a rename or a camera change does not invalidate shape (F04); a density
 change invalidates mass only; a placement change invalidates world measurements but not shape
 (`F06-POS-19` to `F06-POS-24`). A copy has the same keys as its source; only its FeatureIds differ
 (`F06-POS-26`). Changing the material reference to a definition with the same density and the same
 resolved display appearance changes nothing visible; changing only the density value changes the
 mass signature and not the presentation key, because the presentation key holds the resolved display
-reference, not the material. F04's wording "material-dependent appearance" is read this way
-(clarification already applied by F04.3).
+reference, not the material. F04's wording "material-dependent appearance" is read this way.
 
 **Quantity signatures.** Volume, surface area, member length and local bounds carry the shape key.
 World bounds carry the world-measurement key. Mass carries the mass signature. A quantity is
@@ -775,25 +711,25 @@ World bounds carry the world-measurement key. Mass carries the mass signature. A
 ## 8. Quantities
 
 Each quantity record has value (if any), unit, status, input signature and algorithm version (F04
-section 5) and, for a volume taken from an enclosure (amendment A-2), the `enclosure_width`. Status values are exactly F04's: `current`, `stale`, `unknown`, `unsupported`.
+section 5) and, for a volume taken from an enclosure, the `enclosure_width`. Status values are exactly F04's: `current`, `stale`, `unknown`, `unsupported`.
 
 | Quantity | Unit | Definition for the first scope | Required inputs |
 |----------|------|--------------------------------|-----------------|
-| Volume | m3 (mm3 internally) | Rectangle contour `width*length*t` with width=norm(p1-p0), length=norm(p2-p1); member `w*h*ell`. Amendment A-2: other supported contours and bodies with polygonal holes or cavities: net polygon area times thickness (exact); a sealed plane-cut or other certified closed shell: the midpoint of the enclosure (see the A-2 rules below) | Valid shape |
-| Surface area | m2 (mm2 internally) | `2*(a*b + a*c + b*c)` over the three box edge lengths (box bodies only; not defined for operation bodies in 0.1.x, A-2) | Valid shape |
+| Volume | m3 (mm3 internally) | Rectangle contour `width*length*t` with width=norm(p1-p0), length=norm(p2-p1); member `w*h*ell`. Other supported contours and bodies with polygonal holes or cavities: net polygon area times thickness (exact); a sealed plane-cut or other certified closed shell: the midpoint of the enclosure (below) | Valid shape |
+| Surface area | m2 (mm2 internally) | `2*(a*b + a*c + b*c)` over the three box edge lengths (box bodies only; not defined for operation bodies in 0.1.x) | Valid shape |
 | Local bounds | mm | Minimum and maximum of the eight vertices in element-local space (plate: p0 plus the contour-derived box vectors); box bodies only | Valid shape |
 | World bounds | mm | Minimum and maximum of the eight vertices after the rigid transform; box bodies only | Shape and placement |
 | Member length | mm | `ell = sqrt((dx*dx + dy*dy) + dz*dz)` of `d = p2 - p1` (members only); distinct from tolerance L | Valid shape |
 | Mass | kg | Volume in m3 times density in kg/m3 | Current volume and an explicit density |
 
-Bounds and vertices follow the owner decisions P-1 to P-3. A valid contour outside the supported
+Bounds and vertices follow the element-local frames of F04. A valid contour outside the supported
 evaluation (not in the plane `z = 0`) returns unsupported without quantities or partial geometry;
 it does not receive bounding-box volume, mass, box features or a shape key. The authored element
 remains valid.
 
 **Status rules.**
 
-- `current`: computed analytically by the first-scope builders, or (amendment A-2) by the sealed
+- `current`: computed analytically by the box builders, or by the sealed
   operations and extrusions of section 2 under the rule below, from a sealed build whose signature
   matches the current authored inputs.
 - `stale`: authored inputs changed and the rebuild is not complete; the previous value may be
@@ -801,8 +737,8 @@ remains valid.
 - `unknown`: a required input is absent or unavailable. **Unknown density keeps mass unknown** even
   when volume is current; density is never defaulted, guessed from a catalogue or taken as zero
   (`F06-POS-03`, `F06-POS-13`). A dependency that cannot be read gives `unknown`
-  (`DEPENDENCY_UNAVAILABLE` at the command level). An element in the `degenerate` state (F04
-  amendment A-2, proposal for owner review) has every derived quantity `unknown`.
+  (`DEPENDENCY_UNAVAILABLE` at the command level). An element in the `degenerate` state has every
+  derived quantity `unknown`.
 - `unsupported`: geometry outside the scope (a true curved surface, a body of no supported class) or
   a mesh that is open, wound inward
   or not certified free of self-intersection (`F06-NEG-18` to `F06-NEG-20`). No value.
@@ -810,9 +746,9 @@ remains valid.
   else `stale` if volume or density is stale; else `current`. Mass of an unsupported body is
   `unsupported` even when density is absent, because `unsupported` describes the geometry and
   supplying a density could never make the mass current; this keeps F04's statuses unchanged and is
-  why `F06-NEG-18` expects mass `unsupported` (corrected in the 2026-10-15 amendment).
+  why `F06-NEG-18` expects mass `unsupported`.
 
-**Volume of a certified closed shell (amendment A-2; owner decision D-3).** For a closed shell that
+**Volume of a certified closed shell.** For a closed shell that
 is certified (closed, outward, manifold, free of self-intersection, numeric certificate passed) the
 kernel computes an enclosure `[lo, hi]` of the exact signed-volume sum `(1/6) * sum(v0 . (v1 x
 v2))` of its triangles. The volume is the midpoint of that enclosure, with status `current`, and
@@ -828,7 +764,7 @@ sealed results only, the 0.1.0 rule that no mesh quantity is exact.
 even when it happens to have the same size as an axis-aligned body.
 
 **Open or self-intersecting meshes never receive exact status.** Every engineering quantity comes
-from the analytic builders or (amendment A-2) from a sealed result of the operations of section 2
+from the analytic builders or from a sealed result of the operations of section 2
 whose shell passed the certificate. A blob from any other source gets no engineering quantity at all,
 whether or not it passes structural validation; the certificate exists only inside the kernel's own
 sealing step and is never applied to a received blob. (`F06-NEG-19`: two closed boxes overlapping
@@ -851,7 +787,7 @@ schemas are closed (unknown field: `UNSUPPORTED_PROPERTY`).
 | `QueryBounds` | `scope` (`element` with an ElementId, or `all`), `space` (`local` for one element or `world`) | Bounds with status and key; with scope `all`, paged like `ListElements` |
 | `ListElements` | `cursor` (null or string), `page_size` | Elements in ascending canonical ElementId order: id, kind, shape key, world key, presentation key, mesh digest, counts, blob size |
 | `GetMeshSnapshot` | `cursor`, `space` | Pages of whole blobs plus descriptors with face tables, and the `snapshot_token` |
-| `LookupFeature` | `feature_id` | Feature kind, owning ElementId, role, geometry in local and world space (face: outward unit normal and four vertex ids; edge: two vertex ids; vertex: position). For the kinds `extrusion` and `cut` (amendment A-2) a face reports its outward unit normal and the ordered vertex ids of its polygon, and `LookupFeature` of an operation-created edge or vertex is `GEO_FEATURE_NOT_FOUND` |
+| `LookupFeature` | `feature_id` | Feature kind, owning ElementId, role, geometry in local and world space (face: outward unit normal and four vertex ids; edge: two vertex ids; vertex: position). For the kinds `extrusion` and `cut` a face reports its outward unit normal and the ordered vertex ids of its polygon, and `LookupFeature` of an operation-created edge or vertex is `GEO_FEATURE_NOT_FOUND` |
 | `Pick` | Ray form or point form below | Ordered hits |
 | `GetChanges` | `since_token` | Changed, added and removed elements with their keys; blobs for those whose shape key changed; new token; or `resnapshot_required` |
 
@@ -866,7 +802,7 @@ schemas are closed (unknown field: `UNSUPPORTED_PROPERTY`).
   at most 1e9, so each world component stays below 3.5e9.
 - *Point form:* `point_mm` (as `origin_mm`), `radius_mm`, `targets`, `max_hits`.
 - *Face hits (ray):* faces are closed rectangles in their planes, enlarged by the pick band
-  `eps_pick = 0.001 mm` (one micrometre, draft) in each in-plane direction. With the unit ray
+  `eps_pick = 0.001 mm` (one micrometre) in each in-plane direction. With the unit ray
   direction `u` and the outward unit normal `n`, a face is **parallel** to the ray, and not hit,
   when `|u . n| < 1e-6`. Otherwise `t = ((p0 - o) . n) / (u . n)` for a point `p0` of the face and
   the ray origin `o`; the face is hit when `0 <= t <= t_max` and the in-plane coordinates of the hit
@@ -898,7 +834,7 @@ schemas are closed (unknown field: `UNSUPPORTED_PROPERTY`).
   (distance to the feature; 0 for a ray hit on a face), `point_world_mm` (the hit or closest point),
   `normal_world` (outward unit normal for a face, null otherwise), `back_facing` and `boundary`
   (faces; false otherwise). A hit never contains a triangle, vertex or buffer index.
-- *Ordering and tie-breaking (draft, to be validated by G04):* sort ascending by the tuple (`k`,
+- *Ordering and tie-breaking:* sort ascending by the tuple (`k`,
   ElementId, kind rank, local id, `t_mm`), where `k = floor(t_mm / 0.001)` for the ray form
   (`floor(distance_mm / 0.001)` for the point form), the ElementId and local id compare as ASCII
   strings and the kind ranks are face 0, edge 1, vertex 2. Quantizing first makes the order a pure
@@ -912,11 +848,11 @@ schemas are closed (unknown field: `UNSUPPORTED_PROPERTY`).
 - *Limits:* `max_hits` above 64 or `radius_mm` above 1,000,000 is `GEO_PICK_LIMIT`; a zero or
   too-short direction, an empty or duplicated `targets`, a negative radius or `t_max_mm` is
   `GEO_PICK_INPUT_INVALID`; a non-finite number is `GEO_NON_FINITE`.
-- *Work and deadline (draft):* a `Pick` considers at most 65,536 elements and at most 26 features
+- *Work and deadline:* a `Pick` considers at most 65,536 elements and at most 26 features
   per element; a model with more elements fails before the scan with `GEO_PICK_LIMIT` and no partial
   hits (`F06-NEG-33`). The scan visits elements in ascending ElementId order and polls the
   cancellation token and the F05 request deadline every 1,024 elements. A cancelled query returns
-  `CANCELLED` and a missed deadline follows F05 section 8; neither returns partial hits. Only a
+  `CANCELLED` and a missed deadline follows F05; neither returns partial hits. Only a
   completed scan returns hits.
 
 **Incremental update.** `GetChanges` answers from a bounded retained history. It lists at most the
@@ -947,10 +883,10 @@ decision of the CLI task; it does not alter the logical result.
 |------|------|
 | Counts | Vertices, triangles, faces, topological edges, shells and features are capped by the table in section 6 |
 | Arithmetic | Counts are compared with their caps before any product; sizes use checked 64-bit arithmetic; any overflow is `GEO_BUFFER_LIMIT` |
-| Allocation | Sized only by validated input: the first-scope builders allocate for exactly 8 vertices, 12 triangles and 6 faces; a blob validator allocates only after the length check |
-| Recursion | None in the first scope. A later traversal must state its own depth bound, at most 16 (the depth used elsewhere in F04 and F05), in an amendment |
+| Allocation | Sized only by validated input: the box builders allocate for exactly 8 vertices, 12 triangles and 6 faces; a blob validator allocates only after the length check |
+| Recursion | None. A later traversal states its own depth bound, at most 16 |
 | Input size | At most 3081 numbers for a plate or 17 for a member (section 2); at most 1024 contour points |
-| Operation bodies (A-2) | No designed limit on holes or cuts per element; counts stay inside the section 6 caps. Kernel budgets (certification, exact-sign, pair and operation limits) are implementation limits, to be lifted by G10, and their numeric values live in code; exceeding one is `GEO_KERNEL_CAPACITY` (section 2, "Operations") |
+| Operation bodies | No designed limit on holes or cuts per element; counts stay inside the section 6 caps. Kernel budgets (certification, exact-sign, pair and operation limits) are implementation limits whose numeric values live in code; exceeding one is `GEO_KERNEL_CAPACITY` (section 2, "Operations") |
 | Primitive versus validator limits | Primitive counts are exact constants (section 6); the hard caps bound any blob a validator accepts |
 | Descriptor bytes | At most 32,768 encoded bytes per body descriptor; the page budget also obeys F05 `control_bytes`, `json_tokens` and `string_bytes` |
 | Query output and work | At most 64 hits per pick; at most 65,536 elements and 26 features per element considered; cancellation and deadline polled every 1,024 elements; page and delivery bounds from F05 |
@@ -965,273 +901,59 @@ operations, so cancellation latency is bounded. A cancellation observed at or be
 `cancelled`, `GEO_CANCELLED`, and no mesh, quantities or key: the partial work is discarded. A
 cancellation after the seal point is a no-op and returns the complete result (`F06-POS-37`). For a
 fixed input and a fixed observing point the outcome is the same every time (`F06-NEG-16`,
-`F06-NEG-17`). Cancellation never changes engineering state; F05 section 8 still decides what the
+`F06-NEG-17`). Cancellation never changes engineering state; F05 still decides what the
 host may report: `CANCELLED` only when the discard is proven.
 
 ## 11. Acceptance cases
 
-The [case file](../../tests/fixtures/contracts/f06-geometry-contract-cases-v0.1.json) holds 112 logical cases: 59 positive
-(`F06-POS-01` to `F06-POS-59`) and 53 negative (`F06-NEG-01` to `F06-NEG-53`). These are future
-tests;
-acceptance needs a real kernel, real buffers and independent readers. Numeric expectations use exact
-forms or decimal approximations checked with rational arithmetic and high-precision square roots;
-round-3 checks use a throwaway script under ignored `target/`. The derivation text is in each case.
-Numeric comparison in tests follows CR-TOL-001 (F04 section 10); statuses, codes, counts, FeatureIds
-and digests compare exactly. Cases that depend on P-1 to P-3 list those recorded decisions in
-`assumes` (legacy field name). Existing F04 and first-scope IDs are referenced, not duplicated, and
-no existing ID is changed.
+The [case file](../../tests/fixtures/contracts/f06-geometry-contract-cases-v0.1.json) holds 112
+logical cases: 59 positive (`F06-POS-01` to `F06-POS-59`) and 53 negative (`F06-NEG-01` to
+`F06-NEG-53`). Acceptance needs a real kernel, real buffers and independent readers. Numeric
+expectations use exact forms or decimal approximations checked with rational arithmetic; the
+derivation is in each case. Numeric comparison follows the test rule of F04 section 10; statuses,
+codes, counts, FeatureIds and digests compare exactly. F04 cases are referenced, not duplicated.
 
 | Topic | F06 cases | Existing cases referenced |
 |-------|-----------|---------------------------|
-| Plate and member meshes: counts, Euler, closed shell, orientation | `F06-POS-01`, `F06-POS-04` to `F06-POS-08` | `FS-PLATE-A`, `FS-MEMBER-A`, `F04-POS-14` to `F04-POS-16` |
+| Plate and member meshes: counts, Euler, closed shell, orientation | `F06-POS-01`, `F06-POS-04` to `F06-POS-08` | `F04-POS-14` to `F04-POS-16` |
 | Blob bytes and digest | `F06-POS-02` | none |
-| Quantities, mass, unknown density | `F06-POS-03`, `F06-POS-13`, `F06-POS-38` | `F04-POS-01`, `FS-PLATE-A-MASS` |
-| Rotated placement | `F06-POS-11`, `F06-POS-12` | `F04-POS-10`, `FS-POSE-A` |
+| Quantities, mass, unknown density | `F06-POS-03`, `F06-POS-13`, `F06-POS-38` | `F04-POS-01` |
+| Rotated placement | `F06-POS-11`, `F06-POS-12` | `F04-POS-10` |
 | FeatureId stability, uniqueness, grammar | `F06-POS-16` to `F06-POS-18` | `F04-POS-03` |
 | Three keys and invalidation matrix | `F06-POS-19` to `F06-POS-26` | `F04-POS-02`, `F04-POS-06` |
-| Cap boundaries, exactly at limit accepted | `F06-POS-14`, `F06-POS-15`, `F06-POS-27` | `F04-POS-08`, `F04-POS-13`, `FS-PLATE-C`, `FS-MEMBER-B` |
-| Cap boundaries, just above rejected | `F06-NEG-06`, `F06-NEG-11` to `F06-NEG-14` | `F04-NEG-19`, `F04-NEG-21`, `FS-NEG-PLATE-BOUND`, `FS-NEG-AXIS-BOUND` |
-| Degenerate axis, minimum dimension | `F06-NEG-03` to `F06-NEG-05` | `F04-NEG-20`, `FS-NEG-AXIS-ZERO` |
+| Cap boundaries, exactly at limit accepted | `F06-POS-14`, `F06-POS-15`, `F06-POS-27` | `F04-POS-08`, `F04-POS-13` |
+| Cap boundaries, just above rejected | `F06-NEG-06`, `F06-NEG-11` to `F06-NEG-14` | `F04-NEG-19`, `F04-NEG-21` |
+| Degenerate axis, minimum dimension | `F06-NEG-03` to `F06-NEG-05` | `F04-NEG-20` |
 | Parallel-up boundary, near-vertical frame, frame certificate | `F06-POS-05`, `F06-POS-06`, `F06-POS-09`, `F06-POS-10`, `F06-POS-41`, `F06-POS-42`, `F06-POS-46`, `F06-NEG-31`, `F06-NEG-35` | `F04-POS-16` |
 | Non-finite input | `F06-NEG-01`, `F06-NEG-02`, `F06-NEG-27` | `F04-RAW-01`, `F04-RAW-02`, `F04-RAW-04` to `F04-RAW-06` |
 | Buffer cap exceeded, invalid blob | `F06-NEG-11` to `F06-NEG-15`, `F06-NEG-30` | none |
 | Cancellation | `F06-POS-37`, `F06-NEG-16`, `F06-NEG-17` | none |
-| Unsupported profile, transform, stage frame (`F06-NEG-08` superseded by A-1, see below) | `F06-NEG-08` to `F06-NEG-10` | `FS-NEG-SECTION` |
+| Unsupported profile, transform, stage frame (`F06-NEG-08` superseded, see below) | `F06-NEG-08` to `F06-NEG-10` | none |
 | Open, self-intersecting, inward mesh not exact | `F06-NEG-18` to `F06-NEG-20` | none |
 | Failure keeps previous result | `F06-NEG-21` | `F04-NEG-14` |
 | Queries: pick, lookup, incremental, chunking | `F06-POS-28` to `F06-POS-36`, `F06-POS-39`, `F06-POS-40`, `F06-POS-43` to `F06-POS-45`, `F06-NEG-22` to `F06-NEG-29`, `F06-NEG-32` to `F06-NEG-34` | `F04-NEG-09`, `F04-NEG-15` |
 | Finite pick segment: endpoint hit and short-horizon rejection | `F06-POS-47`, `F06-NEG-36` | none |
 | Contour rectangle rotation/start | `F06-POS-48`, `F06-POS-49` | `F04-POS-18`, `F04-POS-19` |
-| Invalid contours and valid unsupported pentagon (`F06-NEG-39` superseded by A-2, see below) | `F06-NEG-37` to `F06-NEG-42` | `F04-NEG-28` to `F04-NEG-32`, `F04-POS-20` |
+| Invalid contours and valid unsupported pentagon (`F06-NEG-39` superseded, see below) | `F06-NEG-37` to `F06-NEG-42` | `F04-NEG-28` to `F04-NEG-32`, `F04-POS-20` |
 | Explicit axial roll, default and near-vertical | `F06-POS-50` to `F06-POS-52` | `F04-POS-21` to `F04-POS-24` |
 | Non-finite/out-of-cap roll | `F06-NEG-43`, `F06-NEG-44` | `F04-RAW-07`, `F04-NEG-33` |
 | Local-size floor, small-body invariance, planarity, cap/fault and absolute pick band | `F06-POS-53` to `F06-POS-59`, `F06-NEG-45` to `F06-NEG-53` | `F04-POS-25` to `F04-POS-30`, `F04-NEG-34` to `F04-NEG-39` |
 
 The invalid-quaternion, translation-limit and density cases are already covered by `F04-NEG-22` to
-`F04-NEG-26` and `FS-NEG-QUAT`, `FS-NEG-DENSITY`, and are not repeated. The file also carries a
+`F04-NEG-26` and are not repeated. The file also carries a
 `cross_references` list of these topics.
 
-**Superseded cases (amendment A-2, owner decision D-6).** `F06-NEG-39` (a valid pentagon must be
-`GEO_UNSUPPORTED_CONTOUR`) is superseded by A02.1: any simple polygon in the plane `z = 0` is
-supported. `F06-NEG-08` (a curved profile is `GEO_UNSUPPORTED_PROFILE`) is superseded by amendment
-A-1: the A07.1 families, including round ones, are supported as polygons. Both case IDs, their
-inputs and their text stay in the file (no ID is removed or reused) and carry a `superseded` marker;
-they are no longer acceptance targets. The counts above (112, 59, 53) are unchanged. New acceptance
-cases for holes, plane cuts, polygonal cavities, round-hole polygons, the `extrusion` and `cut`
-FeatureIds, the volume enclosure and `GEO_KERNEL_CAPACITY` are written by the implementing tasks
-(A03, A04 acceptance, G10); this amendment adds none.
+**Superseded cases.** `F06-NEG-39` (a valid pentagon must be `GEO_UNSUPPORTED_CONTOUR`) no longer
+holds: any simple polygon in the plane `z = 0` is supported. `F06-NEG-08` (a curved profile is
+`GEO_UNSUPPORTED_PROFILE`) no longer holds: the section families, including round ones, are
+supported as polygons. Both stay in the file with a `superseded` marker and are not acceptance
+targets. Cases for holes, plane cuts, polygonal cavities, round-hole polygons, the `extrusion` and
+`cut` FeatureIds, the volume enclosure and `GEO_KERNEL_CAPACITY` are still to be written.
 
-## 12. Freeze status and open questions
+## 12. Version
 
-**Status.** Frozen 0.1.0 (owner, 2026-10-16), with the owner-approved additive amendment A-2 of
-2026-10-19 (errata register below). Nothing is implemented as contract-verified, K0 is not passed and
-no geometry implementer is declared eligible; A-2 records what the contract admits and claims no
-kernel acceptance. The owner froze F04 and F06 together on 2026-10-16. Changes
-need an owner-approved erratum or a new version.
+This is version **0.1.0**: `algorithm` 3, `tolerance_policy` 3, `feature_id_rule` `fid1`,
+`mesh_layout` 1. A change that alters an output byte, a key or a decision for an input already
+evaluated raises the affected version as section 2 says.
 
-**Version decision for A-2.** The version string stays `0.1.0`. A-2 is additive: it adds scope
-(operations, polygon contours in `z = 0`), tokens and FeatureId kinds, and it supersedes two
-negative cases, but it changes no input, output byte, key preimage or decision for any input that
-0.1.0 admitted and evaluated (box plates and members, their meshes, ids and keys). The one decision
-that does change is that of a valid polygon other than the origin rectangle: it was
-`unsupported` and is now evaluated. An `unsupported` result carries no shape key, mesh or quantity,
-so no key, byte or stored value of the old decision exists to invalidate; for that reason A-2
-raises no version. A strict reading of section 2 ("a decision for some admitted input raises
-`algorithm`") could instead require `algorithm` 4 (and so new keys for box bodies); this is
-flagged for owner confirmation in the A-2 notes. A-2 is an erratum (0.1.x) under F04 section 11, like A-1; it raises none of `algorithm` (3),
-`tolerance_policy` (3), `feature_id_rule` (`fid1`) or `mesh_layout` (1), and `contract_version` in
-`GeometryInput` stays exactly `0.1.0`. A change that later alters those bytes or decisions raises
-them as section 2 says.
-
-**Owner decisions of 2026-10-16.**
-
-| Item | Decision |
-|------|----------|
-| P-1, P-2, P-3 | P-1a to P-1d, P-2, P-3a, P-3b confirmed; P-3c accepted (E-2). `section_anchor` reserved in F04 section 3 |
-| Policy constants | Frozen as first-slice values; fixture validation (G03/G04) yields errata only |
-| Roll discontinuity | Accepted for 0.1.0; black-box observation requested; change = E-2 with an algorithm version bump |
-| FeatureId on axis reversal | Accepted: ids follow roles, not world faces (section 5, rule 6) |
-| Open item A5 | Large-coordinate part closed; rounded-mesh cross-checks and subnormal mass move to erratum E-1, not a freeze blocker |
-
-**Owner decisions of 2026-10-19 (amendment A-2).**
-
-| ID | Decision | Where in this contract |
-|----|----------|------------------------|
-| D-1 | F06 covers holes, plane cuts and the extrusion of a contour with polygonal cavities; true curved surfaces stay unsupported with typed results | Section 1 (exclusions), section 2 "Operations", section 8 |
-| D-2 | A round hole is a regular inscribed `N`-gon, chord deviation at most 0.05 mm from the radius, `N` from 16 to 256, a multiple of 4; no `Approximated` status in 0.1.x | Section 2 "Operations" (round holes) |
-| D-3 | A certified closed shell has the midpoint of the enclosure of the exact signed-volume sum as `current` volume, with the width reported; polygonal holes have the exact polygon volume | Section 8 |
-| D-4 | FeatureId kinds `extrusion` and `cut` are stable and role-based; `GEO_OP_UNSUPPORTED` and `GEO_OP_NO_EFFECT` are accepted | Section 5, section 3 |
-| D-5 | No designed limit on holes; measured kernel capacity is a certification performance defect (G10); until then the command layer checks capacity first and refuses with a distinct result | Section 2 "Operations" (capacity), section 3, section 10 |
-| D-6 | `F06-NEG-39` and `F06-NEG-08` are superseded by A02.1 and A-1 | Section 11, case file |
-| D-7 | An invalid user-authored part is kept as a degenerate element without derived data; repair computes everything | F04 amendment A-2 (F04 section 4); F06 section 3 and 8 only cross-refer |
-
-**Errata register.**
-
-| ID | Subject | State |
-|----|---------|-------|
-| E-1 | A5 residual: rounded-mesh cross-checks, subnormal mass, full-domain accuracy for cancellation-heavy inputs | Open; G04 and fixtures |
-| A-1 | Additive amendment (owner, 2026-10-18): member profiles are not limited to the rectangle. The nine A07.1 parametric families and custom outlines are supported, each centred on its section's bounding box (the rectangle rule generalised), with radii as polygons on the arcs and a detailed and a simplified representation. The rectangle's frame, mesh, FeatureIds and bytes are unchanged; FeatureIds for non-box bodies remain undefined, as for A04 holes. No error code changes | Applied with A07.1 |
-| E-2 | Roll jump at the parallel threshold; owner requested black-box observation of reference behaviour (synthetic columns, tilt toward each axis, axis reversal; numeric notes only) | Open; observation pending |
-| A-2 | Additive amendment (owner, 2026-10-19; decisions D-1 to D-7 above): holes, plane cuts and the extrusion of a contour with polygonal cavities are in scope (section 2 "Operations"); a simple polygon in `z = 0` is supported (A02.1); true curved surfaces stay unsupported and a round hole is a regular `N`-gon with chord deviation at most 0.05 mm (`N` 16 to 256, multiple of 4), with no `Approximated` status; a certified closed shell has `current` volume equal to the midpoint of the enclosure of the exact signed-volume sum with `enclosure_width` reported, polygon volumes are exact (section 8); FeatureId kinds `extrusion` and `cut` are stable and role-based, with no edge or vertex ids for operation-created features (section 5); tokens `GEO_OP_UNSUPPORTED` (`UNSUPPORTED_GEOMETRY`) and `GEO_OP_NO_EFFECT` (`INVALID_ARGUMENT`) are accepted, and `GEO_KERNEL_CAPACITY` (`LIMIT_EXCEEDED`) is proposed for the capacity refusal (section 3); no designed hole limit, capacity is an implementation limit to be lifted by G10; `F06-NEG-39` and `F06-NEG-08` are superseded (section 11). Box bodies, their bytes, keys, ids and every existing code are unchanged; `0.1.0`, `algorithm` 3, `tolerance_policy` 3, `fid1` and `mesh_layout` 1 stay. F04 carries the matching text (operation records, `AddHole`, `UpdateHole`, `RemoveHole`, `CutByPlane`, the `degenerate` element state, a proposal for owner review) | Applied by the G08 documentation task; proposals marked in the text await owner review; implementation is A03, A04 acceptance and G10 |
-
-**What later tasks must still decide.**
-
-| Task | Decision left open here |
-|------|-------------------------|
-| F08 | Where the kernel, query and blob code live (module paths) within the one-way dependency rule |
-| G01 | The kernel API in Rust types for section 2, the builders and the self-checks of section 6 |
-| G04 | Validation of every draft constant with fixtures: accuracy bounds, thresholds, tie quantum 0.001 mm |
-| G02, G03 and other G-tasks | Mesh operations beyond holes, plane cuts and polygonal extrusions (settled by A-2); other operations need a new contract version. G10 lifts the capacity limits of A-2 by measurement |
-| P02 | The persisted encoding of the profile definition (section 2 fixes only its logical content) and any section kinds beyond `rectangle` |
-| P04 | Dependency-signature storage, including how the keys of section 7 are authored and compared |
-| V01 | The presentation-key preimage, GPU upload, display-only picking and the pixel-to-radius conversion |
-| U-tasks | The USD authoring of meshes (`orientation`, `subdivisionScheme`, `faceVertexCounts`), layer placement and the `metersPerUnit`/`upAxis` handling |
-| R-tasks | Imported meshes, unit and up-axis conversion, and measurement support for foreign geometry |
-| D01 | Drawing projection built on FeatureIds (section 5, rule 8) |
-
-**Earlier proposed amendments (history; items 1–4 applied by F04.3, then refined above).**
-
-1. F04 section 3: add the minimum nonzero dimension 0.001 mm (draft) as a lower limit for plate
-   dimensions, section dimensions and member-axis length, with `INVALID_ARGUMENT` for values between
-   zero and the minimum, and add a section-dimension cap of 1,000,000 mm.
-2. F04 section 5: clarify "material-dependent appearance" as the resolved display reference (section
-   7), so that a density change alone invalidates mass only. Also record that F06 defines the
-   canonical numeric encoding and the key preimages (section 7).
-3. F04 section 11: mark G-06 and the profile-resource-format question as accepted by F06 with the
-   draft policy of sections 2 and 4.
-4. F04 section 3, P-3 (joint amendment; the owner decides): replace the fixed `+Y` fallback of the
-   near-vertical case by the projection of `(0, 1, 0)` onto the plane normal to the axis,
-   normalized, followed by the re-orthogonalization of section 4, rule 2. An exactly vertical axis
-   keeps `+Y`; `F04-POS-16` and the other exact examples are unchanged.
-5. F05 section 12: record that F06 keeps the transport element type `u8` with a self-describing
-   blob, so no element-type negotiation is required. F05 itself needs no change.
-
-**Amendments log.**
-
-- 2026-10-15, F06 0.1.0: first draft on base `9d40abc34b8a5686358b78adee5f9c52b9c830bd` (F04 0.1.0
-  freeze candidate, F05 0.1.0 draft, first-scope package 0.1.0). No existing F04, F05 or first-scope
-  ID, code, limit or case was changed.
-- 2026-10-15, F06 0.1.0 correction round 1, after the independent kernel-design review (G04).
-  Existing case IDs keep their meaning; the case count rises from 70 to 80 (46 positive, 34
-  negative).
-  - A1 (defect, resolved): the near-vertical roll fallback is now the normalized projection of `(0,
-    1, 0)` onto the plane normal to the axis, re-orthogonalized and certified (section 4, rule 2;
-    `F06-POS-41`, `F06-POS-42`, `F06-NEG-31`). F04 P-3 needs a joint amendment (proposed amendment
-    4). The roll discontinuity stays an open owner decision.
-  - A2 (clarified): evaluation order for quantities and dot products, written binary64 decisions
-    with no rounding band, conformance evidence and version bumps (section 2; `F06-POS-46`).
-  - A3 (inconsistency, resolved): mass of an unsupported body is `unsupported` (section 8 precedence
-    kept); `F06-NEG-18` changed from mass `unknown` to `unsupported` and now removes the ninth
-    triangle `(0, 2, 3)` of `F06-POS-01`, as its text says. New diagnostic `GEO_NUMERIC_UNCERTAIN`
-    (`UNSUPPORTED_GEOMETRY`) for failed numeric certificates.
-  - A4 (clarified): the tie quantum `1e-6 mm` is one nanometre; closed faces enlarged by the pick
-    band, parallel threshold `1e-12`, point-to-face distance and zero-radius behaviour are defined
-    (section 9; `F06-POS-43` to `F06-POS-45`).
-  - A5 (open, not fixed): full-domain accuracy for cancellation-heavy inputs, subnormal mass and
-    rounded-mesh cross-checks; see the open owner decisions above.
-  - A6 (clarified): primitive limits versus validator caps, descriptor byte bound, pick work and
-    deadline bounds, negotiated limits (sections 6 and 10; `F06-NEG-33`, `F06-NEG-34`).
-- 2026-10-15, F06 0.1.0 correction round 2, after the Copilot review of PR #20. The frame
-  certificate of section 4, rule 2, step d bounds the absolute value of each pairwise dot product (a
-  signed bound accepted `X . Y = -1e-9`); `F06-NEG-35` is added beside `F06-NEG-31` so both signs of
-  an injected error fail. The case count rises from 80 to 81 (46 positive, 35 negative).
-- 2026-10-15, F06 0.1.0 correction round 3, after an independent exact-arithmetic review of A7 and
-  A8. The contract stays a draft; all 81 IDs and meanings remain (46 positive, 35 negative).
-  - A7 (defect, resolved with a qualification): the branch rotation depends on tilt direction. From
-    +Z, +Y gives 180 degrees, -Y gives 0 degrees, and +X/-X give +90/-90 degrees from the
-    near-vertical to the horizontal frame. Section 4, rule 3 now gives the exact formula and
-    distinguishes a branch comparison on one axis from frames on distinct axes. `F06-POS-10` and
-    `F06-POS-42` prose is corrected; `F06-POS-41` frame mathematics is unchanged. The roll rule is
-    unchanged and continuity stays an open owner decision. A half turn for every Y-directed tilt is
-    not confirmed: -Y from +Z has no roll jump.
-  - A8 (defect, resolved): `F06-POS-10` and `F06-POS-42` now use `L = sqrt(250000000001)/500 ~
-    1000.0000000020000000`; their small normalized components and the `F06-POS-10` horizontal ratio
-    have sufficient digits for CR-TOL-001. `F06-POS-45` uses `sqrt(10025) ~ 100.12492197250392864`
-    for all four equal distances. The numeric scan also corrects the `F06-POS-41` squared horizontal
-    ratio to `2.4999987500001562502e-13`; its exact rational frame and adequate decimals are
-    retained. Other square-root, rotation and division expectations were checked; no other
-    insufficient precision was found. These example corrections establish no full-domain accuracy
-    bound and do not close A5.
-- 2026-10-15, F06 0.1.0 correction round 4, after independent exact-arithmetic checks of A10 and
-  A11. Still draft, not frozen; 83 cases (47 positive, 36 negative).
-  - A10 (omission, resolved): edge and vertex distances use the closed finite pick segment, with the
-    inclusive distance band at both ends and no extension of the parameter interval (section 9). For
-    origin `(0, -100, 10)`, direction `(0, 1, 0)` and vertex `(0, 0, 10)`, the unbounded closest
-    parameter is 100. At `t_max = 50` the closest segment point is `(0, -50, 10)`, distance 50 mm;
-    radius 0 rejects it. At `t_max = 100` it is an endpoint hit, distance 0. New `F06-POS-47` and
-    `F06-NEG-36` cover edges and vertices. Descriptions of `F06-POS-29` to `F06-POS-33`,
-    `F06-POS-43` to `F06-POS-45` clarify dependence; `F06-POS-34` to `F06-POS-40` do not depend on
-    the pick horizon. All existing IDs, meanings and expected values are retained.
-  - A11 (wording defect, resolved): section 7 now lists the shared algorithm/tolerance-policy
-    versions, the otherwise disjoint directly encoded fields and the transitive shape dependency of
-    world measurements. Both version fields equal 1, encoded `00 01 00 01`. Existing domain tags
-    differ at byte offset 6 (`S` versus `W`); complete preimages cannot be identical across these
-    domains, without a claim of impossible SHA-256 collisions. No encoding, version, test vector or
-    digest changes.
-
-- 2026-10-15, owner-decision record (stack intended on PR #23; Git ownership prevented branch
-  verification). P-1 replaced by contour input; P-2 confirmed unchanged; P-3 retains the default
-  frame and adds finite, bounded axial roll. Clockwise rejection against the positive dominant
-  normal, 1024-point cap, 2,000,000 mm contour radius, planarity band and 2*pi roll cap are explicit
-  assumptions. Nonrectangles are valid authored input with unsupported evaluation until A02.
-  Relative comparison/certificate bounds become 1e-6; length comparison/pick floor becomes 0.001
-  mm=1e-6 m, equal to the unchanged minimum dimension. Member parallel threshold remains 1e-6
-  (squared multiplier 1e-12); exact topology/identities and rational references are unchanged. The
-  ray/face angular parallel threshold becomes 1e-6; direction minimum becomes 1e-6 (dimensionless).
-  Draft constants are confirmed by the owner for the first slice, still to be validated by fixtures.
-  The numeric comparison with the public ifc-lite kernel is in the [tolerance
-  report](../design/tolerance-comparison-v0.1.md). No runtime feature is implemented.
-
-  - Rectangular width/length inputs become ordered four-point contours throughout; width edits
-    replace the contour. Mesh layout, all analytic expected values, feature tokens and the 392-byte
-    baseline mesh digest remain unchanged. `assumes` now names recorded owner decisions; it no
-    longer says they await confirmation.
-  - Existing outcome flips without input correction: F06-NEG-31/35 would accept injected +/-1e-9
-    frame dots under the 1e-6 certificate. They now inject +/-2e-6; the negative frame's
-    squared-norm deviation is 4e-12, still inside the bound, isolating the dot failure. Member
-    parallel cases POS-09/10/41/42/46 keep their exact inputs/decisions: the 1e-12 squared
-    multiplier is the square of the retained 1e-6 threshold, not a loosened certificate.
-  - POS-25 regenerates all seven shape/world/mass digests and the antipodal equality assertion for
-    ordered contour encoding, algorithm=2 and tolerance_policy=2; feature_id_rule=1 and
-    mesh_layout=1 stay unchanged. Pick explanatory denominators and angular thresholds change, with
-    no existing hit-set or order expectation changing. Other existing numerical expectations are
-    retained exactly.
-  - Added POS-48/49 (rotated/start-corner rectangle), POS-50 to POS-52 (roll zero, pi/2 and
-    near-vertical), NEG-37/38 (clockwise/non-planar), NEG-39 (valid unsupported pentagon), NEG-40 to
-    NEG-42 (self-intersection, fewer than three, repeated point), NEG-43/44 (non-finite/out-of-range
-    roll). Counts: 96 logical, 52 positive, 44 negative. F06 stays draft 0.1.0, not frozen; no
-    implementation/admission gate is closed.
-
-- 2026-10-15, tolerance-magnitude amendment (intended branch
-  `docs/tolerance-magnitude-scaling`, stacked on PR #26; Git ownership blocks verification):
-  sections 2 and 4 adopt local-size eps_geom and ordered binary64 derivation from F04 section 3.
-  Plate L is D; member L is max(axis length, section half-diagonal). Minimum dimensions,
-  coincidence, degeneracy, planarity and geometric distance bands use the scaled floor;
-  dimensionless relative/certificate bounds, CR-TOL-001, pick band and exact checks do not change.
-  Section 7 raises algorithm/tolerance versions from 2/2 to 3/3 and POS-25 regenerates all seven
-  digests plus antipodal equality. Feature/layout versions and the baseline mesh digest stay 1
-  and unchanged respectively. Added POS-53 to POS-59 and NEG-45 to NEG-51: 110 cases (59 positive,
-  51 negative). No existing outcome flips or input rewrites are necessary; small-body minimum
-  cases remain on the absolute floor. Only the large-coordinate part of A5 is closed;
-  rounded-mesh cross-checks and subnormal mass remain open. F06 stays draft 0.1.0, not frozen.
-- 2026-10-15, review fix (Copilot thread on the tolerance amendment): sections 2 and 4 and F04
-  section 3 state that a nonpositive section dimension contributes 0 to H, so negative widths or
-  heights always report `GEO_NOT_POSITIVE`/`INVALID_ARGUMENT` and never `GEO_ABOVE_LIMIT` or
-  `GEO_NUMERIC_UNCERTAIN`. Added NEG-52 and NEG-53: 112 cases (59 positive, 53 negative).
-- 2026-10-16, F06 freeze: frozen at 0.1.0 together with F04 (owner decision). Status lines and section 12
-  updated; errata E-1 and E-2 registered; `section_anchor` reserved in F04 section 3 (F06 kernel input
-  stays centred, no new input). No case ID, code, limit or meaning changed.
-- 2026-10-19, F06 amendment A-2 (owner decisions D-1 to D-7; task G08-docs, docs only). Scope: through
-  holes, plane cuts and the extrusion of a polygonal contour with polygonal cavities (section 2
-  "Operations"); round holes as regular polygons; implementation capacity limits instead of
-  designed limits (G10); volume enclosure rule and `enclosure_width` (section 8); FeatureId kinds
-  `extrusion` and `cut` (section 5); tokens `GEO_OP_UNSUPPORTED`, `GEO_OP_NO_EFFECT` and the proposed
-  `GEO_KERNEL_CAPACITY` (section 3); `F06-NEG-39` and `F06-NEG-08` marked superseded in section 11 and
-  the case file (no case added, removed or renumbered; counts stay 112, 59, 53). Edited body
-  places: header status, section 1 (exclusions, assumption), section 2 (plate, stage 4, new
-  subsection), section 3 (three codes, failure paragraph), section 4 (one sentence), section 5 (kinds,
-  rule 9), section 6 (self-check sentence), section 7 (shape-key note, matrix row), section 8
-  (volume, status rules, certified shells), section 9 (`LookupFeature`), section 10 (operation row),
-  section 11 and this section. Version string, `algorithm`, `tolerance_policy`, `feature_id_rule`,
-  `mesh_layout`, all box bytes, keys and ids are unchanged. Open points for owner review are listed
-  in the A-2 notes (`docs/design/g08-f06-a2-notes.md`).
+Open questions are tracked in [issue #141](https://github.com/Apibim-com/BeamCraft/issues/141).

@@ -29,7 +29,7 @@ Dependencies point one way, down the table. `beamcraft-boundaries` checks this i
 | 1 | `model` | Identities (UUIDv7, SHA-256), commands and their validation, definitions, section families, error codes, limits |
 | 2 | `kernel` | Geometry kernel: plate and member bodies, profile extrusion, plane cuts, through holes, meshes, exact volumes and measurements |
 | 2 | `layer-engine` | Our wrapper over `openusd`: reads and writes the project's USD layers, the schema, validation and the UUID index |
-| 2 | `protocol` | Wire rules (frames, limits, codes) for a separate USD process; no I/O |
+| 2 | `protocol` | Bounded JSON reading and shared limits; its worker wire rules go with the worker ([issue #146](https://github.com/Apibim-com/BeamCraft/issues/146)) |
 | 2 | `ifc` | IFC4 STEP writer and GlobalId encoding; no file system |
 | 3 | `engine` | Applies commands: builds the new authored state, asks the kernel for bodies, computes quantities, footprints, numbering, picking and the view snapshot |
 | 4 | `host` | Disk: content-addressed blobs, atomic revision commit, journal and recovery, workspaces' storage, coordinator, compaction |
@@ -56,7 +56,7 @@ flowchart TD
     engine["engine<br/>applies commands"] --> kernel
     le["layer-engine<br/>USD read/write"] --> model
     ifc["ifc<br/>IFC4 writer"] --> model
-    protocol["protocol<br/>process wire rules"] --> model
+    protocol["protocol<br/>bounded JSON, limits"] --> model
     kernel["kernel<br/>geometry"] --> model
     engine --> model
     model["model<br/>ids, commands, rules"] --> geom["geom<br/>math"]

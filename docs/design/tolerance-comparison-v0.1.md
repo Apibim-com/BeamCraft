@@ -412,9 +412,9 @@ contour or roll kernel. Tables and code blocks are exempt from prose wrapping.
 
 Owner decision: "Scale the tolerance by coordinate magnitude." This accepts round-2 open item 2
 for the large-coordinate part of A5 only. The exact operative definition is in
-[F04 section 3](../contracts/f04-model-and-commands-v0.1.md#3-units-types-and-initial-limits) and
+[F04 section 3](../contracts/f04-model-and-commands-v0.1.md#3-units-types-and-limits) and
 [F06 section
-4](../contracts/f06-geometry-contract-v0.1.md#4-tolerance-and-degeneracy-policy-g-06-draft):
+4](../contracts/f06-geometry-contract-v0.1.md#4-tolerance-and-degeneracy-policy):
 
 > `eps_geom = max(0.001 mm, 2^-22 * L)`.
 

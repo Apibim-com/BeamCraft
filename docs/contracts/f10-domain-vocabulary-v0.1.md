@@ -1,18 +1,11 @@
 # F10: domain vocabulary and discipline-module contract, version 0.1.0
 
-Status: **draft 0.1.0, not frozen; K0 not passed**. Date: 2026-10-15.
-Base: `20d26cfb107d51e7a2c76c25ca0191b8115ec301`, the head of the F08 module-boundary branch
-(PR #17), which already contains the F06 correction commits. `origin/master` is
-`7833df02f31922e050d8f84c351fbe458e242080`. This document is stacked on F08 and is retargeted when
-F08 merges.
-
-This is an original, implementation-independent contract. It fixes **what an element, a
-relationship and an opening are called and what they carry**, so that more than one discipline can
-read and write the same project without private dialects, and it fixes the boundary between the
-shared application and a discipline module. **Nothing here is implemented.** No registry, rule,
-module or command exists in code; the examples are acceptance descriptions, not APIs or saved
-models. Only the **steel** module is in scope for implementation (sections 1.3 and 7.6). Every
-other element kind is `reserved` vocabulary: a name and a promise of shape, with no behaviour.
+This contract fixes **what an element, a relationship and an opening are called and what they
+carry**, so that more than one discipline can read and write the same project without private
+dialects, and it fixes the boundary between the shared application and a discipline module. The
+examples are acceptance descriptions, not APIs or saved models. Only the **steel** module is in
+scope (sections 1.3 and 7.6); every other element kind is `reserved` vocabulary: a name and a
+promise of shape, with no behaviour.
 
 ## 1. Status and scope
 
@@ -23,8 +16,7 @@ other element kind is `reserved` vocabulary: a name and a promise of shape, with
   no identity, limit, command or code is changed or added.
 - [F06](f06-geometry-contract-v0.1.md): F10 takes `ElementId` as the root of every FeatureId
   (section 5). Geometry stays in the kernel. It changes nothing and adds no collision evaluation.
-- [F08](f08-module-boundaries-v0.1.md): F10 takes the crate layers and the one-way dependency rule. It
-  applies nothing; section 10 lists proposed edits.
+- [F08](f08-module-boundaries-v0.1.md): F10 takes the crate layers and the one-way dependency rule.
 
 F05 (worker protocol) is not an input. Real-time synchronisation is **not designed here**: section 6
 only says what is checked again after a merge.
@@ -61,19 +53,10 @@ second persisted model format (JSON here describes messages and acceptance cases
 geometry, clash or collision *evaluation*; UI types; permissions and authentication beyond F04
 section 8; profile, material or product catalogues; numbering; export formats.
 
-### 1.5 Provenance
+### 1.5 Sources
 
-Contributor-original BeamCraft text, MPL-2.0, derived from the owner's architecture direction
-(one shared shell, discipline modules, a shared domain schema, a validation layer that runs on the
-client and again on the server), from F04, F06 and F08, and from the repository
-[architecture](../architecture.md). The vocabulary uses generic engineering words. No commercial
-product, IFC-library or vendor schema, naming list or catalogue is copied. The public
-[buildingSMART IFC overview][ifc] is *informative only*: it motivated the general idea that
-element types, relationships and properties are separate concepts. It is not normative for this
-contract, and no name, schema or list is taken from it. IFC export is a later adapter
-(architecture document) and is not specified.
-
-[ifc]: https://www.buildingsmart.org/standards/bsi-standards/industry-foundation-classes/
+The vocabulary uses generic engineering words; no product, IFC-library or vendor schema, naming
+list or catalogue is copied. IFC export is a separate adapter (E01).
 
 ## 2. Element kinds
 
@@ -101,8 +84,7 @@ needs a new vocabulary version (section 4.5). An unknown kind in an authoring re
 | `connection` | steel | reserved | - |
 | `reference` | any | reserved | - |
 
-**Owner** is a discipline token. `steel`, `arch` and `mep` are the discipline tokens fixed by this
-draft, confirmed by the owner on 2026-10-15. An authored discipline or module token outside
+**Owner** is a discipline token. `steel`, `arch` and `mep` are the discipline tokens. An authored discipline or module token outside
 `steel`, `arch`, `mep` is rejected (`DV-KIND-006`). Loaded content with an unknown discipline is
 preserved read-only under section 7.4, not rejected on load. `any` means the discipline of the
 module that authors the element; it is stored in `bim:discipline` and is then immutable
@@ -193,7 +175,7 @@ element, its identity and its relationships stay in the project, and derived res
 as absent. It is not `deleted`; delete is the F04 `DeleteElement` command and removes the element.
 A relationship whose target is `deactivated` stays valid and is reported (`DV-REL-012`). F04 has no
 command that changes `bim:lifecycle`, so in 0.1.0 a steel element is always created `active` and
-`deactivated` appears only in loaded content (proposed amendment F04-A2, section 10).
+`deactivated` appears only in loaded content.
 
 ### 3.3 What only a discipline may add
 
@@ -347,7 +329,7 @@ requested hole the same way. It is `reserved`: the table below is specification 
 first slice creates or changes one. The opening/penetration lifecycle belongs in the common
 vocabulary; modules must use the shared states and transition rules (`DV-PEN-001` to
 `DV-PEN-007`). `opening` is a host-owned void without a request; `penetration` is a request.
-They remain separate kinds under the owner decision of 2026-10-15.
+They remain separate kinds until a module needs to merge them.
 
 **Fields** (shared namespace; case files use the short names in brackets).
 
@@ -754,24 +736,18 @@ or discipline rule. `UpdateElement`, `CopyElement` and `DeleteElement` are gener
 that dispatch on the element's kind. The module and the registry are specification until their
 tasks create code.
 
-## 8. Mapping to plan tasks
+## 8. Where the rules apply
 
-- **U02** (USD schema and adapter): sections 2 to 4, the registry, base attributes, namespaces and
-  preservation. Rules `DV-NS-*`, `DV-VER-*`, `DV-KIND-*`.
-- **U03** (identity): section 3.1 identity and label rules. Rules `DV-BASE-001` to `DV-BASE-004`.
-- **P02** (profile and material): the material reference and the profile digest of straight
-  members. Rules `DV-BASE-005`, `DV-BASE-006`.
-- **P03** (straight member): the `beam` and `column` kinds, attributes and limits. Rules
-  `DV-ATTR-*`, `DV-LIM-*`, `DV-KIND-004`.
-- **P09**: module enable/disable and the validation report surface (sections 6 and 7). Plan
-  revision 1.2 is not in the repository, so this mapping is the task card's assignment and is
-  to be confirmed. Rules `DV-MOD-*`.
-- **A01** (assemblies): `assembly`, `part-of` and `connects`, all reserved until A01. Rules
-  `DV-REL-003` to `DV-REL-005`.
-- **C04** (collaboration): the post-merge re-check and penetration conflicts. Rules `DV-MRG-001`,
-  `DV-PEN-003`, `DV-BASE-002`.
-- **E01** (export): the registry is the set of exportable kinds; reserved and unknown content is
-  not exported. Rules `DV-KIND-002`, `DV-NS-002`.
+| Area | Sections | Rules |
+|------|----------|-------|
+| USD schema and adapter (U02) | 2 to 4: registry, base attributes, namespaces, preservation | `DV-NS-*`, `DV-VER-*`, `DV-KIND-*` |
+| Identity (U03) | 3.1 identity and label | `DV-BASE-001` to `DV-BASE-004` |
+| Profile and material (P02) | material reference, profile digest | `DV-BASE-005`, `DV-BASE-006` |
+| Straight member (P03) | `beam`, `column` kinds, attributes, limits | `DV-ATTR-*`, `DV-LIM-*`, `DV-KIND-004` |
+| Validation layer (P09) | modules and the validation report (6 and 7) | `DV-MOD-*` |
+| Assemblies (A01) | `assembly`, `part-of`, `connects` | `DV-REL-003` to `DV-REL-005` |
+| Collaboration (C04) | post-merge re-check, penetration conflicts | `DV-MRG-001`, `DV-PEN-003`, `DV-BASE-002` |
+| IFC export (E01) | the registry is the set of exportable kinds | `DV-KIND-002`, `DV-NS-002` |
 
 F05 and U02 define how the validation report and the negotiation travel; F06 owns geometry and any
 collision evaluation.
@@ -809,131 +785,6 @@ F04 cases referenced:
 `F04-NEG-01`, `F04-NEG-03`, `F04-NEG-04`, `F04-NEG-07`, `F04-NEG-11`, `F04-NEG-12`, `F04-NEG-13`,
 `F04-NEG-15`, `F04-NEG-19`, `F04-NEG-22`, `F04-POS-03`, `F04-POS-05`, `F04-POS-08`, `F04-RAW-02`.
 
-## 10. Accepted decisions and amendments log
+## 10. Open questions
 
-### 10.1 Owner decisions accepted on 2026-10-15
-
-The owner answered "OK" to the orchestrator's recommendations on 2026-10-15. All eight decisions
-below are accepted; the contract remains draft 0.1.0, not frozen. Acceptance adds no runtime work.
-
-- **D-1 - accepted on 2026-10-15.** The opening/penetration lifecycle belongs in the common
-  vocabulary (section 5.4); both disciplines use the shared state and transition rules.
-- **D-2 - accepted on 2026-10-15.** Keep two kinds, `opening` (host-owned, no request) and
-  `penetration` (request), until a module needs to merge them (sections 2.3 and 5.4).
-- **D-3 - accepted on 2026-10-15.** The discipline tokens `steel`, `arch`, `mep` are confirmed
-  (section 2.1); authoring with an unknown discipline token is rejected (`DV-KIND-006`).
-- **D-4 - accepted on 2026-10-15.** Editing elements of a newer patch version on the same
-  compatibility line is forbidden until a migration story exists (section 4.6, `DV-VER-002`).
-- **D-5 - accepted on 2026-10-15.** Only the host discipline may accept a penetration, and an
-  `accepted` penetration must be `withdrawn` before deletion (section 5.4, `DV-PEN-002/007`).
-- **D-6 - accepted on 2026-10-15.** Keep compatibility line `0.MINOR` while `MAJOR` is 0;
-  moving to `1.0` is an explicit step (section 4.6, `DV-VER-001`).
-- **D-7 - accepted on 2026-10-15.** U02 defines storage and authoring of the project's
-  enabled-module list; changing it requires owner-level permission (section 7.4, `DV-MOD-005`).
-  Its storage location remains a U02 decision; this contract does not implement it.
-- **D-8 - accepted on 2026-10-15.** Impose no closed role list for `references` beyond `subject`
-  yet; any role matching the token syntax is accepted (section 5.1, `DV-REL-013`).
-
-### 10.2 Amendments proposed to other contracts (not applied)
-
-- **F04-A1 (section 4).** State that kind tokens other than `plate`, `beam`, `column` are reserved
-  by F10 and rejected with `UNSUPPORTED_COMMAND`.
-- **F04-A2 (sections 7 and 8).** Add a `lifecycle` property to `UpdateElement`, using the existing
-  footprint group `lifecycle`, only if separately approved for steel deactivation authoring.
-  D-1/D-5 accept the penetration request lifecycle, not a general steel deactivation setter;
-  F04-A2 is unnecessary for recording these decisions and remains a separate optional proposal.
-- **F04-A3 (section 8).** Name `rule_id` as a standard field of the diagnostics.
-- **F04-A4 (section 4).** State that `bim:schemaVersion` is the vocabulary version and define the
-  compatibility line of section 4.6. D-4/D-6 now require `0.MINOR` before 1.0, an explicit
-  migration across lines, and rejection of edits to newer-patch elements on the same line.
-- **F04-A5 (section 7).** Name `DEPENDENCY_CONFLICT` as the code for a refused copy of an element
-  with relationships (`DV-REL-011`).
-- **F04-A6 (sections 7 and 8).** For future penetration authoring, require host-only acceptance
-  and reject deletion while `accepted` until the proposer withdraws it (`DV-PEN-002/007`), using
-  existing codes. This does not add a penetration command to the first steel slice.
-- **F04-A7 (sections 1 and 8).** Point project module-list changes to U02 and require owner-level
-  permission from trusted context (`DV-MOD-005`), with existing `PERMISSION_DENIED`.
-- **F08-A1 (sections 2 and 4).** Add planned rows: the registry and rule types in
-  `beamcraft_model::{vocabulary, validation}`; the module interface in
-  `beamcraft_engine::module`; and a `beamcraft-steel` domain crate (`crates/steel`) above the
-  engine, with the host and apps renumbered. The alternative, steel code inside
-  `beamcraft_engine`, breaks `module -> engine`.
-- **F08-A2 (section 1).** No change to the dependency rule is needed: each module row lists only
-  `model`, `geom`, `kernel` and `engine`, so the existing manifest check already forbids a
-  module-to-module edge.
-- **F08-A3 (section 2).** An `app` row would list the module crates it registers. Whether this
-  conflicts with "the shell never depends on a module's internals" is for the owner to decide.
-
-D-1/D-2/D-3/D-8 require the vocabulary and validation rows proposed in F08-A1 to cover the
-shared lifecycle, separate kinds, confirmed tokens and open reference roles. No separate
-role-registry crate, new dependency rule or module-to-module call is necessary. F08-A1 remains
-necessary; F08-A2 still needs no dependency-rule change. F08-A3's shell-registration question
-remains open; D-1 to D-8 do not decide it. D-7's storage location belongs to U02, not an F08
-storage amendment. F04-A1/A3/A5 remain proposed as before. No F04 or F08 amendment is applied
-here.
-
-### 10.3 Log
-
-- 2026-10-15: initial draft 0.1.0 (F10).
-
-- 2026-10-15: F10 review fixes, round 1; draft 0.1.0 remains not frozen.
-  1. Finding 1 confirmed: `requires_vocabulary` is a minimum, not set membership. Sections 4.7,
-     7.1 and 7.4 and DV-VER-003 now require the selected version to share the minimum's line and
-     be at least the minimum. DVC-X-VERSION-04 accepts `0.1.1` for a `0.1.0` minimum;
-     DVC-X-VERSION-05 rejects a same-line version below the minimum. The original pair retains
-     its exact-version positive and off-line negative meanings.
-  2. Finding 2 confirmed: retained live host records contradicted dangling-target validation.
-     Sections 5.3 and 5.4 and DV-REL-001/009 now classify only `penetrates` from `rejected` or
-     `withdrawn` sources as historical; their unchanged host IDs need not resolve. Cardinality
-     is retained, DV-REL-003/012 target checks apply only to live links, other records stay live,
-     and re-proposing requires the host again.
-     DVC-X-REL-04 now asserts retained records and valid post-delete state; DVC-X-REL-06 to
-     DVC-X-REL-10 cover missing historical/live hosts, live subject deletion, reactivation and
-     rejected-host deletion. DVC-X-REL-04 keeps its accepted outcome.
-  3. Finding 3 confirmed: error-first aggregation hid incomplete validation. Sections 6.3/6.4
-     now specify `incomplete` before `fail` before `pass`, an explicit `incomplete` flag and
-     `DEPENDENCY_UNAVAILABLE` primary precedence even with definite errors. `truncated` records
-     omitted findings only. DVC-REL-010-P/N gain explicit envelope expectations;
-     DVC-X-VALIDATION-01/02 cover unavailable-only and mixed-error reports. The original
-     outcomes and primary codes are unchanged. DV-MRG-001 distinguishes definite violations
-     from unavailable inputs without overriding the incomplete aggregate status.
-  4. Finding 4 confirmed: DV-PEN-003 omitted M despite section 5.4. It now checks competing
-     transitions in merge provenance at M even when the final state is valid.
-     DVC-X-CONFLICT-02 retains its conflict result with explicit provenance; new
-     DVC-X-CONFLICT-03 supplies the conflict-free M counterpart. The complete run-list audit
-     adds M to every other omitted rule, applying operation checks to recorded writes and
-     shared structural checks to disabled-module content (sections 6.1 and 7.4):
-     - DV-VER-002, DV-VER-003: version mutation and module minimum checks.
-     - DV-KIND-001, DV-KIND-003, DV-KIND-004, DV-KIND-005: authored kind and owner checks.
-     - DV-BASE-003, DV-BASE-005: label and material-digest checks.
-     - DV-ATTR-004, DV-ATTR-005: authored attribute and kind checks.
-     - DV-OWN-003, DV-NS-001: immutable fields and authored name syntax.
-     - DV-REL-002, DV-REL-009, DV-REL-010, DV-REL-011: relationship authoring, delete inputs
-       and copy checks.
-     - DV-PEN-002, DV-PEN-004, DV-PEN-005, DV-PEN-006: transition rights, host state, field
-       ownership and rejection reasons.
-     - DV-COL-001, DV-COL-002: collision declarations and their use.
-     - DV-MOD-002, DV-MOD-003, DV-MOD-004: preservation, dependencies and namespace registration.
-  All 52 rule IDs and 139 existing case IDs are retained. Existing cases keep their meanings
-  and expected values; only assertions and input detail are added. Ten new case IDs continue the
-  VERSION, REL and CONFLICT sequences and start VALIDATION. Totals are 149 cases: 73 positive,
-  76 negative; 104 rule-pair cases and 45 extras; 93 first-slice and 56 reserved cases.
-
-- 2026-10-15: recorded owner acceptance of D-1 to D-8; draft 0.1.0 remains not frozen.
-  Sections 2.1/2.3, 4.6, 5.1/5.3/5.4 and 7.4 now state the accepted decisions normatively.
-  Existing rules DV-VER-001/002, DV-KIND-005, DV-PEN-001 to DV-PEN-006, DV-REL-001 to
-  DV-REL-012 and DV-MOD-001/002 remain consistent; DV-PEN-002 explicitly states host-only
-  acceptance. No existing case changes outcome, code, polarity or first-slice classification.
-  DVC-VER-002-P/N already cover D-4, and DVC-PEN-002-P/N already cover D-5 acceptance;
-  their expectations remain unchanged, as do all lifecycle, conflict and historical-host cases.
-  New paired rules/cases: DV-KIND-006 / DVC-KIND-006-P/N (confirmed discipline/module tokens),
-  DV-REL-013 / DVC-REL-013-P/N (open reference roles with syntax checks), DV-REL-014 /
-  DVC-REL-014-P/N (host-owned opening without a request), DV-PEN-007 / DVC-PEN-007-P/N
-  (delete after withdrawal versus accepted-delete rejection), and DV-MOD-005 / DVC-MOD-005-P/N
-  (owner-level module-list permission). All new rules run at C/H/M; reserved behaviour stays
-  specification only. DVC-X-VERSION-06/07 cover distinct 0.MINOR lines and compatible 1.x minors.
-  DVC-VER-003-P/N, DVC-MOD-002-P/N and DVC-X-VERSION-04/05 gain trusted owner-permission
-  context so their existing version/preservation checks remain isolated. No expected value changes.
-  Section 10.2 records necessary, unchanged and unnecessary F04/F08 proposals without applying
-  them; D-7 remains a U02 pointer. Totals: 57 rules (42 now, 15 reserved); 161 cases
-  (79 positive, 82 negative), 114 rule-pair cases and 47 extras; 101 first-slice and 60 reserved.
+Tracked in [issue #143](https://github.com/Apibim-com/BeamCraft/issues/143).

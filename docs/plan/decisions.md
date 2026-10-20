@@ -6,7 +6,12 @@ Open questions are at the end.
 
 ## 2026-10-20
 
-- **Prim naming rule** (recorded in [architecture](../architecture.md#prim-hierarchy-and-naming-rule)):
+- **No separate USD worker process.** USD is read and written in the main process by the pure-Rust
+  layer engine. The worker existed to isolate the C++ SDK, whose crashes cannot be caught; with
+  `openusd` a bad file is an ordinary error, own project files are verified by SHA-256 before
+  parsing, and foreign files are read under size and depth budgets. The worker binary, its host
+  supervision and the F05 protocol are removed (task U17, [issue #146](https://github.com/Apibim-com/BeamCraft/issues/146)). This replaces OD-1.
+- **Prim naming rule** (F04 amendment A-3; [architecture](../architecture.md#prim-hierarchy-and-naming-rule)):
   paths hold only category and identity (`/World/Steel/Parts/PRT_<uuid>`, `/World/Levels/LVL_<uuid>`,
   `/World/Definitions/Profiles/PRF_<sha256>`, ...); disciplines are second-level folders; names,
   assemblies, levels and marks are attributes and relationships. Compatibility is broken on
@@ -104,7 +109,7 @@ Open questions are at the end.
   requirement.
 - **F04 and F06 frozen** at 0.1.0.
 - **OD-1 to OD-4** ([`usd-process-integration-v0.1.md`](../design/usd-process-integration-v0.1.md)):
-  the layer engine runs in a separate process (OD-1); holes and cuts are our own implementation
+  the layer engine runs in a separate process (OD-1, replaced on 2026-10-20); holes and cuts are our own implementation
   without third-party kernels (OD-2, scope widened by A-2 D-1); member roll uses `f64::sin`/`cos`
   (OD-3); spike evidence policy: the repository holds the report, the decision and a minimal
   harness, bulky raw output stays local (OD-4).

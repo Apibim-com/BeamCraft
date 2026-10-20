@@ -1,19 +1,23 @@
 # F05: private USD-worker protocol, version 0.1.0
 
+> **Retired.** The separate USD worker process is removed: USD is read in the main process. This
+> contract is deleted together with the worker code ([issue #146](https://github.com/Apibim-com/BeamCraft/issues/146)).
+
 ## 1. Status and scope
 
-Status: **draft 0.1.0, not frozen; nothing implemented**. Date: 2026-10-14.
-This original contract consumes [F04 version 0.1.0](f04-model-and-commands-v0.1.md), specifically
-sections 2, 3, 6, 7 and 8. The same contract serves the CLI and native engine host.
-[Acceptance descriptions](../../tests/fixtures/contracts/f05-worker-protocol-cases-v0.1.json) are future tests, not runnable fixtures.
+Status: **draft 0.1.0, not frozen**. Consumes [F04](f04-model-and-commands-v0.1.md) sections 2, 3,
+6, 7 and 8. The [acceptance cases](../../tests/fixtures/contracts/f05-worker-protocol-cases-v0.1.json)
+are the expected behaviour in machine-readable form.
 
-The Rust host owns engineering validation, authorization, transactions and recorded outcomes.
-One local worker owns one live USD stage and performs composition and serialization only.
-The initial worker is thin Python/pxr, subject to runtime admission. This text integrates no SDK.
+This is the private protocol between the BeamCraft host and a separate local process that reads
+USD. The Rust host owns engineering validation, authorization, transactions and recorded outcomes;
+the worker owns one live USD stage and does composition and serialization only. The worker today is
+`beamcraft-usd-worker`, a Rust process on the pure-Rust layer engine (`beamcraft-protocol` holds the
+wire rules); the official SDK is only an optional fallback behind the same protocol.
 
 Out of scope: implementation, new dependencies, schema properties (U02), mesh layout/topology
 (F06), journal/storage mechanisms (U06/U07), geometry algorithms, remote or multi-client
-operation, user-facing control servers and a later worker-language decision.
+operation and user-facing control servers.
 
 ## 2. Process and channels
 
@@ -519,47 +523,21 @@ accuracy bounds belong to F06; opaque byte limits do not grant permission for an
 All work iterates over bounded frames/items/pages or stops at a deadline. Session service may
 idle only under bounded liveness checks; there is no unbounded recursion, queue or retry policy.
 
-## 11. Acceptance handoff
+## 11. Acceptance
 
-| Future task | Required verification |
-|-------------|-----------------------|
-| F08 | Keep protocol/domain/native-host boundaries independent; bounded decoders on both sides, malformed input isolation and canonical-byte comparison |
-| U01 | Spawn/sanitize/handshake, no socket, package-pinned plugin loading, open/read, stream splits, bounds, liveness and process loss |
-| U04 | CLI and native client use the same contract, correlation, deadlines/cancel, snapshots and safe diagnostics |
-| U02 | Closed composition/snapshot bodies, verified schema digest, inert model metadata and schema/package mismatch rejection |
-| U06 | Serialized revision/generation checks, candidate composition, host acceptance point, exactly-once draft replay and complete publication |
-| U07 | Crash/restart token invalidation, preserved drafts, recorded outcomes and uncertainty resolution |
+Acceptance needs synthetic inputs, real pipes and processes, and API -> CLI -> USD ->
+independent-reader checks. A skipped or unavailable check is **not run**, never passed. Malformed
+framing is tested before allocation and before stage dispatch, at every boundary split, maximum and
+maximum-plus-one.
 
-Descriptions alone pass no runtime gate. Future acceptance needs synthetic original inputs,
-real pipes/processes and API -> CLI -> USD -> independent-reader checks. A skipped or unavailable
-check is **not run**, never passed. Malformed framing must be tested before allocation and before
-stage dispatch, including every boundary split, maximum and maximum-plus-one.
+## 12. Open questions
 
-## 12. Open questions and unresolved decisions
+Tracked in [issue #142](https://github.com/Apibim-com/BeamCraft/issues/142). A later F04 change that conflicts with this profile needs a joint
+review; F04 is never weakened.
 
-- Final numeric caps and timing values need measurement; values here are explicit draft defaults,
-  not performance claims. No peer may silently raise them before review.
-- Whether a later C++ worker preserves this framing is unresolved; no C++ FFI is authorized.
-- SHA-256 cost for large buffers needs measurement; draft hashing is mandatory until reviewed.
-- F06 must define mesh layouts/topology and any later element-type negotiation.
-- U02/F08 must publish the schema-specific change/snapshot item fields and opaque cursor encoding
-  before implementing those payloads. Transport envelopes, method names and limit keys are fixed
-  here; unknown names remain rejected in this draft.
-- U06/U07 must prove coordination between provisional stage results and host-recorded acceptance,
-  including post-apply loss. This contract fixes outcomes, not journal/storage mechanics.
-- F04 remains a draft. Its geometry/frame/quaternion/tolerance review does not change this
-  transport profile. No conflict with the consumed F04 sections was identified. A later F04
-  change that conflicts with this profile requires explicit joint review; do not weaken F04.
+## 13. Public references
 
-## 13. Provenance
-
-Contributor-original BeamCraft contract and synthetic acceptance descriptions, licensed MPL-2.0.
-Protocol layout, limits and process rules are original project decisions from the task card and
-the repository [architecture](../architecture.md), [development guide](../development.md) and
-F04 draft. No commercial-product material, catalogue data, third-party kernel code/tests or
-copied implementation is used. No runtime asset is added.
-
-Public specification references (rules are referenced, not copied implementations):
+Rules are referenced, not copied implementations:
 
 - [RFC 8259 sections 4, 6, 8 and 9](https://www.rfc-editor.org/rfc/rfc8259.html):
   JSON syntax and interoperability; F04/F05 impose stricter bounded decoding.
@@ -568,4 +546,3 @@ Public specification references (rules are referenced, not copied implementation
 - [RFC 6234 sections 4–6](https://www.rfc-editor.org/rfc/rfc6234.html#section-4):
   SHA-256 algorithm specification for attachment integrity; no source code is incorporated.
 
-The optional candidate-runtime audit was not needed and is not represented as integrated.
