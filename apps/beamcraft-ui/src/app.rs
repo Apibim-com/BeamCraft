@@ -245,10 +245,19 @@ fn volume_note(volume_mm3: f64) -> String {
 
 /// Inter from the admitted asset directory, validated before egui can panic on it.
 fn inter(ctx: &egui::Context) -> bool {
-    let candidates = [
+    // CWD (an extracted package root), the source tree, then next to the executable: the
+    // win/linux package puts assets beside it, the macOS .app bundle under its Resources
+    // directory (Q02 packaging).
+    let mut candidates = vec![
         Path::new("assets/fonts/inter/Inter-Regular.ttf").to_path_buf(),
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/fonts/inter/Inter-Regular.ttf"),
     ];
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        candidates.push(dir.join("assets/fonts/inter/Inter-Regular.ttf"));
+        candidates.push(dir.join("../Resources/assets/fonts/inter/Inter-Regular.ttf"));
+    }
     let bytes = candidates.iter().find(|p| p.is_file()).map(|path| {
         use std::io::Read;
         let file = std::fs::File::open(path)?;
