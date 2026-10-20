@@ -296,10 +296,11 @@ fn bad_section_input_is_refused_with_its_code() {
 #[test]
 fn more_detailed_members_fit_one_revision_than_the_first_slice_allowed() {
     // The U01 first-slice layer ceilings stopped at 7 such I-sections; the model profile
-    // keeps going. Twelve stay cheap for a debug test run.
+    // keeps going. Eight prove it; every new member re-verifies the whole revision, so a
+    // longer run adds quadratic kernel work without a new property.
     let f = Fixture::new();
     let profile = defined(&f, I300);
-    for n in 0..12 {
+    for n in 0..8 {
         let y = format!("{}", n * 1000);
         member(
             &f,
@@ -310,5 +311,5 @@ fn more_detailed_members_fit_one_revision_than_the_first_slice_allowed() {
         );
     }
     let inspected = f.ok("plate-inspect", &[]);
-    assert_eq!(num(&inspected, &["member_count"]), 12.0);
+    assert_eq!(num(&inspected, &["member_count"]), 8.0);
 }
