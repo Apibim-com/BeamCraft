@@ -45,20 +45,15 @@ const SKIPPED: &[(&str, &str)] = &[
     ),
 ];
 
-/// Accepted by F04, refused by P01 with UNSUPPORTED_GEOMETRY: the kernel evaluates only the
-/// origin rectangle (no body frame, no contour-plate solid).
-const UNSUPPORTED_BY_P01: &[&str] = &[
-    "F04-POS-18",
-    "F04-POS-19",
-    "F04-POS-20",
-    "F04-POS-25",
-    "F04-POS-26",
-    "F04-POS-28",
-];
+/// Accepted by F04, refused with UNSUPPORTED_GEOMETRY: the contour is not in the plane `z = 0`
+/// (it needs the body-frame adapter, which A02.1 does not implement). Contours in the plane
+/// `z = 0` (F04-POS-19, F04-POS-20, ...) are evaluated since A02.1.
+const UNSUPPORTED_BY_P01: &[&str] = &["F04-POS-18", "F04-POS-28"];
 
-/// Rejected by F04 with INVALID_ARGUMENT (non-planar or self-intersecting contour) but reported
-/// by P01 as UNSUPPORTED_GEOMETRY: exact planarity and simplicity are not implemented.
-const WRONG_CODE_IN_P01: &[&str] = &["F04-NEG-29", "F04-NEG-30", "F04-NEG-38"];
+/// Rejected by F04 with INVALID_ARGUMENT (non-planar contour) but reported as
+/// UNSUPPORTED_GEOMETRY: exact planarity of a contour outside the plane `z = 0` is not
+/// implemented. A self-intersecting contour in that plane (F04-NEG-30) is INVALID_ARGUMENT.
+const WRONG_CODE_IN_P01: &[&str] = &["F04-NEG-29", "F04-NEG-38"];
 
 fn code_of(name: &str) -> ErrorCode {
     ErrorCode::parse(name).unwrap()
