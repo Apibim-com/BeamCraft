@@ -45,6 +45,14 @@ beamcraft create-plate ... [--hole-rect "X,Y,W,H;..."] [--hole-round "X,Y,D;..."
    simple: a refusal is `INVALID_ARGUMENT` for a bad polygon (the kernel's own code otherwise) and
    nothing is authored.
 
+Update 2026-10-19 (F06/F04 amendment A-2, owner decisions D-2, D-3, D-5): decision 1's deviation is
+replaced by operation records and `AddHole`, `UpdateHole`, `RemoveHole` commands in F04 (the two plate
+attributes are deprecated, migration belongs to the A04 acceptance task); decision 2's N-gon becomes
+the contract rule (chord deviation at most 0.05 mm, `N` 16 to 256, multiple of 4, not a fixed 32);
+decision 3's enclosure midpoint is kept for certified shells, but polygonal holes now have the exact
+polygon volume; a hole count above the kernel's capacity is a distinct kernel-capacity refusal, not
+`INVALID_ARGUMENT`. See [the A-2 notes](g08-f06-a2-notes.md).
+
 ## Not done (not claimed)
 
 * No `AddHole`/edit/remove command, no operation records, no hole features in the FeatureId table

@@ -65,23 +65,26 @@ impl RevisionStore {
     /// sequence of zero or beyond the head is [`RevisionError::NoRevision`].
     pub fn info_at(&self, sequence: u64) -> Result<RevisionInfo, RevisionError> {
         let directory = self.head_dir()?.ok_or(RevisionError::NoRevision)?;
-        match root::scan(&directory)? {
-            Some(head) if sequence > 0 && sequence <= head => self.load_at(&directory, sequence),
+        match self.span(&directory)? {
+            Some(span) if sequence > 0 && sequence < span.floor => Err(RevisionError::Compacted),
+            Some(span) if sequence > 0 && sequence <= span.head => {
+                self.load_at(&directory, sequence)
+            }
             _ => Err(RevisionError::NoRevision),
         }
     }
 
     /// The log sequence of the revision with this id, found by reading each head-log record once
-    /// from the head down (the directory is scanned a single time). `Ok(None)` when no committed
-    /// revision has that id.
+    /// from the head down to the floor (the directory is scanned a single time). `Ok(None)` when
+    /// no revision still in the log has that id.
     pub fn sequence_of(&self, revision: &Uuid7) -> Result<Option<u64>, RevisionError> {
         let Some(directory) = self.head_dir()? else {
             return Ok(None);
         };
-        let Some(head) = root::scan(&directory)? else {
+        let Some(span) = self.span(&directory)? else {
             return Ok(None);
         };
-        for sequence in (1..=head).rev() {
+        for sequence in (span.floor..=span.head).rev() {
             if self.load_record(&directory, sequence)?.revision() == revision {
                 return Ok(Some(sequence));
             }
@@ -115,13 +118,13 @@ impl RevisionStore {
         &self,
         directory: &Path,
     ) -> Result<Option<RevisionInfo>, RevisionError> {
-        match root::scan(directory)? {
-            Some(sequence) => self.load_at(directory, sequence).map(Some),
+        match self.span(directory)? {
+            Some(span) => self.load_at(directory, span.head).map(Some),
             None => Ok(None),
         }
     }
 
-    pub(super) fn load_record(
+    pub(crate) fn load_record(
         &self,
         directory: &Path,
         sequence: u64,
@@ -143,13 +146,22 @@ impl RevisionStore {
     }
 
     /// Loads one log record with its manifest and checks that the record, the manifest and the
-    /// previous record agree.
+    /// previous record agree. At the compaction floor the previous record is gone: the floor
+    /// marker must equal the record and the manifest must still name a base.
     pub(crate) fn load_at(
         &self,
         directory: &Path,
         sequence: u64,
     ) -> Result<RevisionInfo, RevisionError> {
+        let marker = self.floor_marker(directory)?;
+        let floor = marker.as_ref().map_or(1, RootRecord::sequence);
+        if sequence < floor {
+            return Err(RevisionError::Compacted);
+        }
         let record = self.load_record(directory, sequence)?;
+        if sequence == floor && marker.as_ref().is_some_and(|m| *m != record) {
+            return Err(RevisionError::RootMismatch);
+        }
         let bytes = self
             .blobs
             .read_capped(&record.manifest(), MAX_MANIFEST_BYTES)
@@ -164,12 +176,14 @@ impl RevisionStore {
         }
         match (sequence.checked_sub(1).filter(|s| *s > 0), manifest.base()) {
             (None, None) => {}
-            (Some(previous), Some(base)) => {
+            (Some(previous), Some(base)) if previous >= floor => {
                 let before = self.load_record(directory, previous)?;
                 if before.revision() != &base.revision || before.manifest() != base.manifest {
                     return Err(RevisionError::RootMismatch);
                 }
             }
+            // The floor of a compacted log: its base was removed on purpose.
+            (Some(_), Some(_)) => {}
             _ => return Err(RevisionError::RootMismatch),
         }
         Ok(RevisionInfo { record, manifest })

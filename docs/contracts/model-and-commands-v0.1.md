@@ -1,6 +1,9 @@
 # F04: model and command contract, version 0.1.0
 
-Status: **frozen 0.1.0** by the owner on 2026-10-16 (see [section 11](#11-freeze-status)). Nothing in it
+Status: **frozen 0.1.0** by the owner on 2026-10-16 (see [section 11](#11-freeze-status)), with the
+owner-approved additive amendment A-2 of 2026-10-19 (operation records, hole and plane-cut
+commands, section 12), whose element validity state (`degenerate`) and the command arguments
+beyond the owner's decisions are marked "proposal for owner review". Nothing in it
 is implemented. Draft base: `b34205281ab8a1f95052c4dc7d84f0995633e179`.
 Freeze-candidate amendments (task F04.2) are made on `478f330e15819b574c62227bc23009729adb4fdc`; the
 F06 amendments (task F04.3) are made on `b996c58fe850642f12b92b25b23c441fbd41ed47`; see [section
@@ -222,9 +225,11 @@ section anchor below), P-3a and P-3b, and froze the contract; P-3c is recorded a
   is body z = thickness. Element-local z need not be zero. First-slice solid evaluation supports
   exactly four points with e0=p1-p0, e1=p2-p1, p3=p0+e1 and e0 dot e1=0, all in the contour plane.
   Thus its edges are parallel to the derived plate X/Y axes, width=|p1-p0| and length=|p2-p1|. The
-  old origin rectangle produces exactly the old box. Other valid polygons (including a pentagon) are
-  accepted authored inputs with geometry status `unsupported`, mapped to existing
-  `UNSUPPORTED_GEOMETRY`; they are not invalid models. Task A02 adds contour-plate solid support.
+  old origin rectangle produces exactly the old box. Amendment A-2 (owner, 2026-10-19; A02.1):
+  any other simple polygon (including a pentagon) lying in the plane `z = 0` is evaluated as the
+  prism extruded along +Z as authored (F06 section 2). A valid polygon outside that plane, or
+  within the planarity band but not exactly planar, is an accepted authored input with geometry
+  status `unsupported`, mapped to existing `UNSUPPORTED_GEOMETRY`; it is not an invalid model.
   Within engineering validation, check types/count and caps before allocation, finiteness,
   coordinate/dimension/L caps, eps_geom, thickness and edge minima, repeated points, zero N,
   planarity, winding, then simplicity, in that order. For simplicity, drop the dominant coordinate
@@ -314,7 +319,7 @@ first-scope requirements until that step is done.
 | Straight member axis | Explicit two `bim:axisPointsMm` points in element-local coordinates |
 | Profile / material | `bim:profile` / `bim:material` relationships resolve to pinned immutable definitions |
 | Placement | Standard USD Xform operations on the owned element root, in authored content layers |
-| Engineering operations | Explicit owned operation records and relationships; initial create has no cuts/holes/welds |
+| Engineering operations | Explicit owned operation records and relationships (amendment A-2 below: holes and plane cuts). A create command carries no operations; they are added by their own commands |
 
 Immutable profile/material definitions carry their full content digest and explicit units/schema
 version. A member's profile is required; material is optional. Plate shape does not require a
@@ -327,6 +332,74 @@ implement their behavior from unapproved source notes. Preserve unknown USD name
 and relationships when editing supported fields. Unsupported schema versions may be
 inspected/preserved, but cannot be mutated without an explicit reviewed migration.
 
+### Operation records (amendment A-2)
+
+Owner-approved 2026-10-19 (decisions D-1, D-4, D-5; [F06 A-2](geometry-contract-v0.1.md#12-freeze-status-and-open-questions)).
+Text marked **proposal for owner review** goes beyond what the owner decided.
+
+An engineering operation of a plate is an owned **operation record**, replacing the A04 pilot's two
+plate attributes (`steel:plate:holePointsMm`, `steel:plate:holeVertexCounts`), which were a recorded
+deviation from the rule above and are deprecated by this amendment; stores written with them need
+an explicit reviewed migration before they can be mutated (section 4 above), owned by the A04
+acceptance task. A record has:
+
+| Field | Rule |
+|-------|------|
+| `operation_id` | Full UUIDv7 of the record, unused in the project (`DUPLICATE_ID`); proposal for owner review: a new identity type of the same form as ElementId |
+| `kind` | `hole` or `plane_cut` (first slice) |
+| `ordinal` | Assigned by the engine from a per-element counter in creation order; never reused after a removal, never renumbered, never caller supplied. It names the operation's FeatureIds (`cut:f.h<ordinal>...`, F06 section 5). The kernel's present limit of 999 on it is an implementation limit (G10) |
+| parameters | `hole`: the clockwise polygon in plate-local XY, 3 to 1024 points, finite, within the coordinate cap, plus optional generator parameters (`round`: centre and diameter; `rectangle`: corner, width, height) kept for editing (proposal for owner review: the polygon is authoritative and the generator is informative). `plane_cut`: a point and a normal in element-local coordinates and the kept side (`positive` or `negative`) |
+
+The operation records of one element are ordered by ordinal and are always replayed from the base
+shape in that order (F06 section 2, "Operations"); there is no stored intermediate mesh that an edit
+could leave stale. A round hole is stored as its regular `N`-gon (F06 section 2, D-2). There is no
+designed limit on the number of operations of an element (D-5); the only limits are the F06
+section 6 mesh caps and the implementation capacity of F06 section 2, enforced as below.
+
+**Capacity before the kernel (D-5).** Before an operation command runs the kernel, the engine checks
+the request against the kernel's implementation limits (hole and edge counts, triangle and
+certification budget estimates). Above them the command is refused with the existing code
+`LIMIT_EXCEEDED`, diagnostic `field` token `kernel_capacity` and the F06 diagnostic
+`GEO_KERNEL_CAPACITY` (a new GEO token, no new F04 code; naming `LIMIT_EXCEEDED` rather than
+`UNSUPPORTED_GEOMETRY` is a proposal for owner review). It is not `INVALID_ARGUMENT` and not
+"invalid geometry". It changes no authored state, derived state or generation and publishes
+nothing (section 8). A kernel budget refusal that passes the pre-check maps to the same result. The
+numeric limits are not part of this contract ("implementation limit, to be lifted by G10").
+
+**Geometry refusals.** `GEO_OP_UNSUPPORTED` maps to `UNSUPPORTED_GEOMETRY` and `GEO_OP_NO_EFFECT`
+to `INVALID_ARGUMENT`; an invalid hole polygon is `INVALID_ARGUMENT` (`GEO_CONTOUR_INVALID`),
+as the A04 pilot already does. No new F04 code is added.
+
+### Element validity state (D-7; proposal for owner review)
+
+The owner decided (2026-10-19, D-7): a part wrongly created by the user (for example contour points
+in the wrong order, so the polygon is clockwise, self-intersecting or invalid) is kept as a
+degenerate or invalid element without derived data, and when the user repairs it, geometry is
+evaluated and volume and quantities are computed and recorded as for a normally created element.
+Everything below, apart from that decision, is a proposal for the owner to review and amend; the
+existing refusals of this contract stay in force until the owner accepts it.
+
+| Topic | Proposal |
+|-------|----------|
+| State | Every owned element has a lifecycle validity `valid` or `degenerate`. A `degenerate` element keeps its authored inputs exactly as submitted (nothing reordered, merged, snapped or repaired) and carries up to 32 diagnostics (code and fixed field token) that say why. `valid` is the only state that has derived data |
+| Derived data | A degenerate element has no mesh, shape key, FeatureIds, volume, surface area, bounds or mass. Each quantity record has status `unknown` with reason `shape_degenerate` and no value; nothing is computed from a guess, a bounding box or a partial shape |
+| Which defects qualify | Only a geometric validity failure of well-typed, finite, in-cap shape inputs: a clockwise, self-intersecting, repeated-point, zero-area or non-planar contour (`INVALID_ARGUMENT`), a thickness, edge, section or axis below its minimum, a zero-length axis, an operation record that no longer fits after an edit. Never eligible, always rejected as today: malformed commands, non-finite numbers (`NON_FINITE_NUMBER`), cap violations (`LIMIT_EXCEEDED`), unknown or missing targets and definitions, permission and revision failures. Whether a contour with fewer than 3 points qualifies is an open detail (owner) |
+| Creation | The refusal of section 7 stays the default: `CreatePlate` and `CreateStraightMember` with an invalid shape return `INVALID_ARGUMENT` and create nothing. They gain an optional argument `on_invalid_shape` with values `reject` (default, today's behaviour) and `keep_degenerate`; with the second the element is created in the `degenerate` state, one transaction, one undo unit. Interactive tools pass `keep_degenerate`; scripted callers keep the default unless they ask. Whether the default should change is an owner decision |
+| Update | `UpdateElement` takes the same argument. On a valid element `reject` is the default as today; on a `degenerate` element a patch that leaves it degenerate is accepted (so a user can repair step by step), and a patch that makes it valid evaluates geometry and quantities in the same transaction, as for a new element. Rename, placement and material patches are always allowed. A patch never applies a valid half (section 7) |
+| Operations on it | `AddHole`, `UpdateHole`, `RemoveHole`, `CutByPlane` on a degenerate target are refused with the existing `DEPENDENCY_UNAVAILABLE` (the base shape is not available). `RemoveHole` of an existing record is allowed so that a user can clean up |
+| Repair | Repair is an ordinary edit. The result is exactly what creating the repaired element would give, with the same quantities, keys and FeatureIds; no history of the defect remains in them. If a repair makes an existing operation record unfit (a hole now outside the outline) the element stays degenerate with a diagnostic that names the record; no record is dropped silently |
+| Queries | `InspectElement` shows `validity`, the diagnostics, the explicit inputs and `unknown` quantities. List and snapshot queries report the element with null keys, digest and counts and deliver no mesh blob. A viewport may draw the authored outline as an error marker; that is a presentation, not geometry, and cannot be picked as a solid. No FeatureId exists for it (`NOT_FOUND`) |
+| Numbering | A degenerate element gets no part number, joins no equivalence group and holds no approved number; becoming valid enters it into numbering like any new element (A08/A09 own the mechanics) |
+| IFC and BOM | Excluded from IFC export (reported as an omitted element with its reason, never exported as an empty or approximate solid) and from BOM and mass totals, whose reports state the number of excluded elements and list them with `unknown` quantities; a quantity is never reported as zero |
+| Undo and redo | Creating a degenerate element, a failed-state edit and a repair are each one undo unit (section 8). Undo restores the exact previous state and validity: undoing a repair returns to `degenerate` with no derived data, never to a stale result. Derived data always follow the validity state |
+| Publication | Open detail for the owner. The A04/P01 publish-time verifier re-evaluates each plate and today refuses a revision with an invalid one. Proposal: `CommitWorkspace` keeps refusing a workspace that contains a `degenerate` element, with an existing code to be chosen by the owner, until the owner decides otherwise |
+| Other commands | `CopyElement` copies a degenerate element as degenerate; `DeleteElement` works as for any element; relationships to a degenerate element follow the existing dependency rules |
+| Footprint | Validity is a lifecycle fact: commands that can change it read and write the lifecycle and shape-input groups (section 8) |
+
+This state does not turn an invalid model into a supported one: a valid contour that the geometry
+cannot evaluate (for example outside the plane `z = 0`) stays `valid` with geometry `unsupported`,
+as in section 3.
+
 ## 5. Derived results and signatures
 
 Each quantity has its own record: value (if any), unit, status, input signature and algorithm
@@ -334,7 +407,10 @@ version. Status is `current`, `stale`, `unknown` or `unsupported`. `current` req
 computation over matching authored inputs and dependencies. `stale` may retain a clearly marked
 previous value; consumers cannot treat it as current. `unknown`/`unsupported` have no calculated
 value. A declared external value is a separate record. No bounding-box volume, approximate mesh or
-missing density is promoted to exact mass/volume.
+missing density is promoted to exact mass/volume. Amendment A-2: a volume taken from a certified
+closed shell is `current` and carries its enclosure width ([F06 section
+8](geometry-contract-v0.1.md#8-quantities)); an element in the `degenerate` state (section 4,
+proposal for owner review) has every quantity `unknown`.
 
 | Change | Dependencies and invalidation |
 |--------|-------------------------------|
@@ -388,11 +464,15 @@ additionally defines project-wide publication idempotency; this draft rule is no
 
 | Command / arguments | Atomic behavior | Planned feature owner |
 |---------------------|-----------------|-----------------------|
-| `CreatePlate`: new_id, name, contour_points_mm, thickness_mm, placement, optional material_digest | Validate contour/thickness and unused ID; author one parametric owned plate; valid nonrectangles evaluate as unsupported | P01 |
+| `CreatePlate`: new_id, name, contour_points_mm, thickness_mm, placement, optional material_digest | Validate contour/thickness and unused ID; author one parametric owned plate; a simple polygon in `z = 0` is evaluated, other valid contours evaluate as unsupported (A-2); a shape that fails validation is refused (default) or kept `degenerate` (D-7 proposal) | P01 |
 | `CreateStraightMember`: new_id, element_kind, name, axis_points_mm, profile_digest, placement, optional roll_rad, optional material_digest | Validate nonzero supported local axis and pinned profile; beam/column is an explicit kind | P03 |
 | `UpdateElement`: target_id, changes | Typed patch of supported name/contour_points_mm/thickness_mm/axis_points_mm/roll_rad/profile_digest/material_digest/placement; no raw USD attribute/path setter | P04/P08 |
 | `CopyElement`: source_id, new_id, name | Create an independent owned root with a fresh ID; share immutable definitions/shape until an edit | P05 |
 | `DeleteElement`: target_id | Reject unresolved incoming dependencies; no implicit cascade or foreign-source mutation | P08 |
+| `AddHole`: target_id, operation_id, hole (`polygon_points_mm`, or a `round` or `rectangle` generator) | A-2. Validate a valid plate target, a clockwise simple polygon and an unused operation_id; assign the next ordinal; check capacity (section 4); replay the base shape and all operation records through the kernel; on success append the record and update derived data in one transaction | A04 |
+| `UpdateHole`: target_id, operation_id, changes (`polygon_points_mm` or generator parameters) | A-2. Replace the parameters of one existing hole record, keeping its ordinal and `operation_id`; the whole replay must succeed or nothing changes | A04 |
+| `RemoveHole`: target_id, operation_id | A-2. Remove one hole record; its ordinal is retired and its FeatureIds become dangling (F06 section 5); the remaining records are replayed | A04 |
+| `CutByPlane`: target_id, operation_id, plane (`point_mm`, `normal`), `keep` (`positive` or `negative`) | A-2. Add one `plane_cut` record to a valid target; a plane that is tangent, coplanar with a face, makes several section loops or misses the body is refused (`UNSUPPORTED_GEOMETRY` or `INVALID_ARGUMENT`, section 4) and changes nothing | A03 |
 
 Plate `width_mm` and `length_mm` are no longer command or patch fields; derive them only for a
 supported rectangle. No compatibility alias or silent persisted-schema migration is defined.
@@ -402,6 +482,18 @@ form one transaction. `material_digest=null` explicitly clears a material refere
 patch leaves the material unchanged. Clearing a required profile is invalid. No caller-supplied
 `bim:id`, generated path, derived mesh, quantity, actor, revision or numbering approval can be
 patched through this API. A diagnostic never applies the valid half of a patch.
+
+**Notes on the A-2 commands.** Each is one atomic command and one undo unit regardless of the
+number of records it touches, with the footprints of section 8. `UpdateElement` of a contour or
+thickness replays every operation record and is refused (or, for the D-7 proposal, kept
+`degenerate`) if one no longer fits. `CopyElement` copies the operation records with fresh
+`operation_id`s and the same ordinals. Proposals for owner review: (a) the pilot's optional
+`CreatePlate.holes_mm` becomes shorthand for `CreatePlate` followed by ordered `AddHole` records in
+one transaction, decided by the A04 acceptance task; (b) `AddHole` targets plates in the first
+slice, and a hole in a beam flange or web is refused with `UNSUPPORTED_GEOMETRY` until the kernel
+supports it (the kernel's through hole needs a prism along the cutter direction); (c) update and
+removal of a plane cut follow the same pattern as `UpdateHole` and `RemoveHole` and are defined by
+A03. The command names and argument names above are the logical surface; F05 framing is unchanged.
 
 The first `CopyElement` takes one source. Internal self/owned operation-record relationships remap
 to fresh destination entity IDs; shared external immutable references remain shared. Local geometry
@@ -430,6 +522,8 @@ label, shape_inputs, placement, material_ref, relationship, lifecycle or derived
 | Update placement | Read local shape and placement; write placement and world-measurement invalidation |
 | Copy | Read source lifecycle, full supported authored state, copy-set relationships and definitions; write new lifecycle and remapped owned state |
 | Delete | Read lifecycle and complete incoming-relationship index at the expected generation; write lifecycle only if all dependencies permit deletion |
+| Add/update/remove hole, cut by plane (A-2) | Read target lifecycle and validity, the complete shape-input group, all operation records of the target and the pinned definitions; write the operation records and the shape-input group, invalidate shape, quantities, features and mass signature, and re-evaluate derived data. A capacity refusal writes nothing |
+| Change of validity (D-7 proposal) | Read and write lifecycle (validity) and the shape-input group; derived data are written or cleared together with the state |
 
 Different property names alone do not prove independence. A later cut/bolt command must declare its
 dependencies on related element shape/profile/placement. If an index or required payload is
@@ -462,6 +556,17 @@ outcome or `OUTCOME_UNKNOWN`; a timeout is not proof of rollback. U07/F05 define
 
 A zero-length member axis returns `INVALID_ARGUMENT` (G-03, adopted by the owner 2026-10-15; see
 [section 3](#3-units-types-and-initial-limits)).
+
+**Operation-command failures (amendment A-2).** The geometry diagnostics of the operation commands
+map to the existing codes above and no code is added: `GEO_OP_UNSUPPORTED` and a body outside the
+kernel's supported class are `UNSUPPORTED_GEOMETRY`; `GEO_OP_NO_EFFECT`, an invalid hole polygon
+(`GEO_CONTOUR_INVALID`) and a plane that leaves the body unchanged or empty are `INVALID_ARGUMENT`;
+`GEO_BUFFER_LIMIT` and `GEO_TOPOLOGY_LIMIT` are `LIMIT_EXCEEDED`. **Kernel capacity exceeded**
+(`GEO_KERNEL_CAPACITY`, F06 section 2 "Operations") is `LIMIT_EXCEEDED` with the `field` token
+`kernel_capacity`, checked in the engineering-validation step before the kernel runs (and
+reported the same if a kernel budget ends the run). It is distinct from `INVALID_ARGUMENT` and
+from invalid geometry, applies no change and publishes nothing; the choice of `LIMIT_EXCEEDED` is a
+proposal for owner review. A budget refusal is never worded as an invalid shape.
 
 Errors return code, safe message, field/target diagnostics and the observed workspace token when
 known. Never include credentials, private paths or client data. Multiple failures follow this
@@ -537,7 +642,7 @@ F04-only cases with no first-scope counterpart and carry no `first_scope_refs`.
 | `q` and `-q` | `F04-POS-12` | none (F04-only case) |
 | Plate and member local frames (P-1 to P-3) | `F04-POS-14`, `F04-POS-15`, `F04-POS-16` | none (F04-only cases; the package lists G-01 and G-02 as open). Tilted near-vertical axes: F06 `F06-POS-41`, `F06-POS-42` |
 | Minimum nonzero dimension (draft): exactly 0.001 mm accepted / just below, rejected | `F04-POS-17` / `F04-NEG-27` (zero: `F04-NEG-04`) | none (F04-only cases). F06: `F06-POS-14` / `F06-NEG-03`; member axis `F06-NEG-04`, `F04-NEG-20` |
-| Contour rectangle rotation/start and valid pentagon | `F04-POS-18` to `F04-POS-20` | none; F06 `F06-POS-48`, `F06-POS-49`, `F06-NEG-39` |
+| Contour rectangle rotation/start and valid pentagon | `F04-POS-18` to `F04-POS-20` | none; F06 `F06-POS-48`, `F06-POS-49`, `F06-NEG-39` (superseded by F06 A-2; `F04-POS-20` keeps its case text, see section 12) |
 | Clockwise, non-planar, self-intersection, count, repetition | `F04-NEG-28` to `F04-NEG-32` | none; F06 `F06-NEG-37`, `F06-NEG-38`, `F06-NEG-40` to `F06-NEG-42` |
 | Zero, quarter-turn and near-vertical roll; shape footprint | `F04-POS-21` to `F04-POS-24` | none; F06 `F06-POS-50` to `F06-POS-52` |
 | Roll cap and non-finite input | `F04-NEG-33`, `F04-RAW-07` | none; F06 `F06-NEG-43`, `F06-NEG-44` |
@@ -589,7 +694,7 @@ Decided by the owner on 2026-10-15:
 
 | Item | Recorded resolution | Status |
 |------|---------------------|--------|
-| G-01 / P-1 | Contour plate; X along first edge, Z thickness/normal, Y=Z x X; rectangle-only evaluation until A02 | Replaced; confirmed 2026-10-16 (P-1a to P-1d) |
+| G-01 / P-1 | Contour plate; X along first edge, Z thickness/normal, Y=Z x X; rectangle-only evaluation until A02 (a simple polygon in `z = 0` is evaluated since A02.1, amendment A-2) | Replaced; confirmed 2026-10-16 (P-1a to P-1d) |
 | G-02 / P-2 | Centred member section and perpendicular ends, Y through a cross product | Confirmed unchanged; `section_anchor` reserved (section 3) |
 | P-3 | Deterministic zero-roll frame followed by optional roll about local +Z | P-3a and P-3b confirmed 2026-10-16; P-3c accepted, erratum E-2 |
 | G-06 | Constants confirmed for the first slice; relative 1e-6 and geometric floor eps_geom | Frozen 2026-10-16; fixture validation yields errata only; 15-value comparison recorded in the [tolerance report](../design/tolerance-comparison-v0.1.md); A5 large-coordinate part closed by local-size scaling; rounded-mesh cross-checks and subnormal mass open |
@@ -705,3 +810,23 @@ is not passed and nothing is implemented.
   `INVALID_ARGUMENT` naming the parameter). P-2 places every section by its bounding-box centre.
   This is additive: the rectangle, every existing case ID, error code and limit keep their meaning,
   and `contract_version` stays 0.1.0 with this amendment recorded.
+
+- 2026-10-19, F04 side of F06 amendment A-2 (owner decisions D-1 to D-7; task G08-docs, docs only).
+  Owner-decided: holes, plane cuts and polygonal cavities are in scope; a simple polygon in `z = 0`
+  is evaluated (section 3, A02.1); no designed limit on holes, with a capacity check before the
+  kernel and a distinct refusal (D-5); an invalid user-authored part is kept as a degenerate element
+  without derived data and is computed on repair (D-7). Edited: header status, section 3 (contour
+  support), section 4 (operation records replacing the A04 plate-attribute deviation; element
+  validity state), section 5 (one sentence), section 7 (`AddHole`, `UpdateHole`, `RemoveHole`,
+  `CutByPlane`, notes, `CreatePlate` row), section 8 (footprints, operation-command failure
+  mapping), section 10 (one reference note) and this log. No existing error code, limit, case ID or
+  meaning is changed; no F04 code is added (`GEO_KERNEL_CAPACITY` is an F06 token mapped to
+  `LIMIT_EXCEEDED`); `contract_version` stays 0.1.0. **Proposals for owner review** (everything
+  outside D-1 to D-7 as worded): the `operation_id` identity, the generator parameters, the
+  `on_invalid_shape` argument and its defaults, the degenerate-state rules for operations, queries,
+  numbering, IFC, BOM, undo and publication, the choice of `LIMIT_EXCEEDED` for the capacity
+  refusal, beam holes being refused until the kernel supports them, and the shorthand
+  `CreatePlate.holes_mm`. Case-file edits needed and not made here (the case file is read by
+  `apps/beamcraft-cli/tests/f04_cases.rs`): `F04-POS-20` still expects `geometry_status:
+  unsupported` for the pentagon, which A02.1 now evaluates; new cases for the A-2 commands and the
+  degenerate state come with A04 acceptance and P-Degenerate. No runtime change is made.

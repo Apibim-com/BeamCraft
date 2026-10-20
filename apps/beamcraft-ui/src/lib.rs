@@ -7,6 +7,10 @@
 //! runs the CLI's `create-plate` / `create-member` in a separate process and then reloads the
 //! accepted revision; see [`tools`] (pure parameter mapping and reply parsing) and [`command`].
 //!
+//! V06.1 adds a properties panel for the selected plate or straight member (what the engine
+//! reports, labelled current, stale or unknown; edits are the CLI's `update-element`) and a
+//! Publish action (`workspace-publish`); see [`props`] and [`publish`].
+//!
 //! The viewport shows the accepted (published) revision of a store. Its input is the engine's
 //! pinned view snapshot, produced by the headless CLI (`beamcraft view-export --out -`) in a
 //! separate process and rebuilt here with [`beamcraft_engine::ViewSnapshot::from_bundle`], which
@@ -23,6 +27,8 @@ pub mod camera;
 pub mod command;
 pub mod edit;
 pub mod metrics;
+pub mod props;
+pub mod publish;
 pub mod render;
 pub mod scene;
 pub mod source;

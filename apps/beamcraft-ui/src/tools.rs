@@ -16,6 +16,8 @@ use beamcraft_protocol::message;
 use std::fmt;
 use std::path::Path;
 
+use crate::props::RevisionStamp;
+
 /// The longest accepted text field, in characters.
 pub const MAX_TEXT: usize = 256;
 
@@ -402,6 +404,8 @@ pub struct Definitions {
     pub profiles: Vec<Choice>,
     /// Materials, for `--material-digest`.
     pub materials: Vec<Choice>,
+    /// The revision the listing was read from: the store's head at that moment.
+    pub head: Option<RevisionStamp>,
 }
 
 /// The arguments of the command that lists the definitions of `store`.
@@ -436,7 +440,13 @@ pub fn parse_definitions(exit_code: Option<i32>, stdout: &[u8]) -> Result<Defini
         return Err(error);
     }
     let unreadable = || ToolError::local("UNREADABLE_REPLY", "the CLI reply lacks a field");
-    let mut out = Definitions::default();
+    let mut out = Definitions {
+        head: reply
+            .get("revision")
+            .ok()
+            .and_then(RevisionStamp::from_json),
+        ..Definitions::default()
+    };
     for definition in reply
         .get("definitions")
         .and_then(Json::array)
@@ -698,6 +708,7 @@ mod tests {
         let listed = Definitions {
             profiles: vec![choice("p")],
             materials: vec![choice("m")],
+            ..Definitions::default()
         };
         let mut tools = Tools::default();
         tools.member.profile = Some("p".into());
@@ -832,6 +843,14 @@ mod tests {
         .unwrap_err();
         assert_eq!(error.code, "NOT_FOUND");
         assert_eq!(definitions_args(store()), ["definitions", "--store", "S"]);
+        // No revision object in the reply: the head is unknown, not invented.
+        assert_eq!(definitions.head, None);
+        let with_head = r#"{"definitions":[],"outcome":"definitions","revision":{"revision_id":"r9","sequence":"9","manifest_digest":"abc"}}"#;
+        let head = parse_definitions(Some(0), with_head.as_bytes())
+            .unwrap()
+            .head
+            .unwrap();
+        assert_eq!((head.sequence, head.manifest_digest.as_str()), (9, "abc"));
     }
 
     #[test]

@@ -7,6 +7,8 @@
 use crate::camera::{Camera, View};
 use crate::command::Selected;
 use crate::edit::{EditKind, Edited, Editor, Epoch, Target, ndc_of, ray_through};
+use crate::props::{Properties, State};
+use crate::publish::{Phase, Published, Publisher, Status};
 use crate::render::{Renderer, Uploaded};
 use crate::scene::Scene;
 use crate::source::Reloaded;
@@ -27,6 +29,8 @@ pub struct Source {
     /// The personal workspace directory when the window was opened on one (`--workspace`): it is
     /// then also `store`, and undo and redo act on it.
     pub workspace: Option<PathBuf>,
+    /// The published store the workspace was forked from (`--published`), the target of Publish.
+    pub published: Option<PathBuf>,
 }
 
 struct Loaded {
@@ -62,6 +66,14 @@ pub struct App {
     select_epoch: Epoch,
     /// The result of the last select, edit, undo or redo.
     edit_note: Option<Result<String, String>>,
+    props: Properties,
+    props_job: Option<Receiver<Result<Edited, ToolError>>>,
+    /// The result of the last property Preview, Cancel or Commit.
+    props_note: Option<Result<String, String>>,
+    publisher: Publisher,
+    publish_job: Option<Receiver<Result<Published, ToolError>>>,
+    status_job: Option<Receiver<Result<Status, ToolError>>>,
+    status_queued: bool,
 }
 
 /// A lookup in flight: the epoch it was asked under and its receiver.
@@ -80,11 +92,13 @@ fn choice_combo(
 ) {
     let selected = current
         .as_ref()
-        .and_then(|d| choices.iter().find(|c| &c.digest == d))
-        .map_or_else(
-            || if required { "choose…" } else { "none" }.to_owned(),
-            |c| c.label.clone(),
-        );
+        .map(|digest| {
+            choices.iter().find(|c| &c.digest == digest).map_or_else(
+                || format!("unlisted definition {}", digest.get(..8).unwrap_or(digest)),
+                |c| c.label.clone(),
+            )
+        })
+        .unwrap_or_else(|| if required { "choose…" } else { "none" }.to_owned());
     egui::ComboBox::from_id_salt(id)
         .width(200.0)
         .selected_text(selected)
@@ -261,6 +275,7 @@ impl App {
             "{} / {:?} / {:?}",
             info.name, info.device_type, info.backend
         );
+        let publisher = Publisher::new(source.published.clone(), source.workspace.clone());
         let mut app = Self {
             state,
             source,
@@ -284,8 +299,16 @@ impl App {
             select_job: None,
             select_epoch: Epoch::default(),
             edit_note: None,
+            props: Properties::default(),
+            props_job: None,
+            props_note: None,
+            publisher,
+            publish_job: None,
+            status_job: None,
+            status_queued: false,
         };
         app.reload();
+        app.refresh_status();
         Ok(app)
     }
 
@@ -322,6 +345,14 @@ impl App {
             }
         };
         self.reload_job = None;
+        // The listing carries the head it was read from; an unreadable listing leaves it unknown.
+        self.props.observe_head(
+            reloaded
+                .definitions
+                .as_ref()
+                .ok()
+                .and_then(|d| d.head.clone()),
+        );
         self.refresh_error = self.tools.apply_definitions(reloaded.definitions);
         let result = reloaded.scene.and_then(|(snapshot, scene)| {
             let uploaded = Uploaded::new(&self.state.device, &self.state.queue, &scene)?;
@@ -378,6 +409,10 @@ impl App {
             self.tools_panel(ui);
             ui.separator();
             self.edit_panel(ui);
+            ui.separator();
+            self.props_panel(ui);
+            ui.separator();
+            self.publish_panel(ui);
         });
     }
 
@@ -434,23 +469,36 @@ impl App {
         match result {
             Ok(None) => {
                 self.editor.deselect();
+                self.props.clear();
                 self.edit_note = None;
             }
-            Ok(Some(Selected { id, info })) => match info {
-                Ok(info) => {
-                    self.editor.select(info);
-                    self.edit_note = None;
+            Ok(Some(Selected { id, info, details })) => {
+                match info {
+                    Ok(info) => {
+                        self.editor.select(info);
+                        self.edit_note = None;
+                    }
+                    Err(e) => {
+                        self.editor.select_id(id.clone());
+                        self.edit_note = Some(Err(format!("details: {e}")));
+                    }
                 }
-                Err(e) => {
-                    self.editor.select_id(id);
-                    self.edit_note = Some(Err(format!("details: {e}")));
+                if self.props.selected() != Some(id.as_str()) {
+                    self.props_note = None;
                 }
-            },
+                self.props.load(&id, details);
+            }
             Err(e) => self.edit_note = Some(Err(e.to_string())),
         }
     }
 
     fn start_edit(&mut self, direct: Option<EditKind>) {
+        if self.other_command_running() {
+            self.edit_note = Some(Err(
+                "another command is running; wait for it to finish.".into()
+            ));
+            return;
+        }
         let target = Target {
             store: &self.source.store,
             workspace: self.source.workspace.as_deref(),
@@ -513,16 +561,21 @@ impl App {
                     done.sequence
                 )));
                 match done.kind {
-                    EditKind::Delete => self.editor.deselect(),
+                    EditKind::Delete => {
+                        self.editor.deselect();
+                        self.props.clear();
+                    }
                     // The element may have moved, or the undo may have removed it: ask again.
                     _ => self.refresh_selection(),
                 }
+                self.refresh_status();
             }
             Err(e) => {
                 if e.code == "OUTCOME_UNKNOWN" {
                     self.invalidate_select();
                     self.reload();
                     self.refresh_selection();
+                    self.refresh_status();
                 }
                 self.edit_note = Some(Err(e.to_string()));
             }
@@ -543,17 +596,381 @@ impl App {
                 // An element the revision no longer holds clears the selection; any other
                 // failure keeps it selected without details, so the move form is emptied
                 // rather than left with the position from before the edit.
-                let reply = match command::element_info(&cli, &store, &id) {
+                let reply = match command::element_details(&cli, &store, &id) {
                     Err(e) if e.code == "NOT_FOUND" => None,
-                    info => Some(Selected {
-                        id: id.clone(),
-                        info,
-                    }),
+                    details => Some(Selected::from_details(id.clone(), details)),
                 };
                 let _ = tx.send(Ok(reply));
             });
         if spawned.is_err() {
             self.select_job = None;
+        }
+    }
+
+    /// True while a command that writes to the store (or publishes it) is running: the property,
+    /// publish and edit actions never run at the same time.
+    fn other_command_running(&self) -> bool {
+        self.props_job.is_some()
+            || self.publish_job.is_some()
+            || self.edit_job.is_some()
+            || self.job.is_some()
+    }
+
+    /// Starts the committed property edit on a worker: the same `update-element` the CLI runs.
+    fn start_property_commit(&mut self) {
+        if self.other_command_running() {
+            self.props_note = Some(Err(
+                "another command is running; wait for it to finish.".into()
+            ));
+            return;
+        }
+        let Some(edit) = self.props.begin_commit(&self.source.store) else {
+            return;
+        };
+        let cli = self.source.cli.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.props_job = Some(rx);
+        self.props_note = None;
+        let spawned = std::thread::Builder::new()
+            .name("beamcraft-properties".into())
+            .spawn(move || {
+                let _ = tx.send(command::commit_property(&cli, &edit));
+            });
+        if spawned.is_err() {
+            self.props_job = None;
+            self.props.finish();
+            self.props_note = Some(Err("the command thread could not be started".into()));
+        }
+    }
+
+    fn poll_props(&mut self) {
+        let Some(rx) = &self.props_job else { return };
+        let result = match rx.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => Err(ToolError {
+                code: "CLI_FAILED".into(),
+                message: "the command thread ended without a result".into(),
+            }),
+        };
+        self.props_job = None;
+        self.props.finish();
+        match result {
+            Ok(done) => {
+                self.invalidate_select();
+                self.reload();
+                self.props_note = Some(Ok(format!(
+                    "Updated {} (accepted revision {}, sequence {}).",
+                    done.element_id.as_deref().unwrap_or("the element"),
+                    done.manifest_digest
+                        .get(..12)
+                        .unwrap_or(&done.manifest_digest),
+                    done.sequence
+                )));
+                self.refresh_selection();
+                self.refresh_status();
+            }
+            Err(e) => {
+                if e.code == "OUTCOME_UNKNOWN" {
+                    self.invalidate_select();
+                    self.reload();
+                    self.refresh_selection();
+                    self.refresh_status();
+                }
+                self.props_note = Some(Err(e.to_string()));
+            }
+        }
+    }
+
+    /// Reads the workspace status on a worker when the window can publish.
+    fn refresh_status(&mut self) {
+        let Ok((published, workspace)) = self.publisher.target() else {
+            return;
+        };
+        if self.status_job.is_some() {
+            self.status_queued = true;
+            return;
+        }
+        let (published, workspace) = (published.to_path_buf(), workspace.to_path_buf());
+        let cli = self.source.cli.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name("beamcraft-status".into())
+            .spawn(move || {
+                let _ = tx.send(command::workspace_status(&cli, &published, &workspace));
+            });
+        if spawned.is_ok() {
+            self.status_job = Some(rx);
+        }
+    }
+
+    fn poll_status(&mut self) {
+        let Some(rx) = &self.status_job else { return };
+        let result = match rx.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => Err(ToolError {
+                code: "CLI_FAILED".into(),
+                message: "the status thread ended without a result".into(),
+            }),
+        };
+        self.status_job = None;
+        self.publisher.set_status(result);
+        if std::mem::take(&mut self.status_queued) {
+            self.refresh_status();
+        }
+    }
+
+    /// Runs the confirmed `workspace-publish` on a worker.
+    fn start_publish(&mut self) {
+        if self.other_command_running() {
+            self.publisher.cancel();
+            self.publisher.note = Some(Err(
+                "another command is running; wait for it to finish.".into()
+            ));
+            return;
+        }
+        let Some(args) = self.publisher.confirm() else {
+            return;
+        };
+        let cli = self.source.cli.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.publish_job = Some(rx);
+        let spawned = std::thread::Builder::new()
+            .name("beamcraft-publish".into())
+            .spawn(move || {
+                let _ = tx.send(command::publish(&cli, &args));
+            });
+        if spawned.is_err() {
+            self.publish_job = None;
+            self.publisher.finish(Err(ToolError::local(
+                "CLI_UNAVAILABLE",
+                "the publish thread could not be started",
+            )));
+        }
+    }
+
+    fn poll_publish(&mut self) {
+        let Some(rx) = &self.publish_job else { return };
+        let result = match rx.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => Err(ToolError {
+                code: "CLI_FAILED".into(),
+                message: "the publish thread ended without a result".into(),
+            }),
+        };
+        self.publish_job = None;
+        self.publisher.finish(result);
+        self.refresh_status();
+    }
+
+    /// Re-reads the selected element and the head, so a stale reading becomes current.
+    fn reread(&mut self) {
+        self.invalidate_select();
+        self.reload();
+        self.refresh_selection();
+    }
+
+    fn props_panel(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Properties");
+        let Some(id) = self.props.selected().map(str::to_owned) else {
+            ui.label("Select a plate or straight member to see its properties.");
+            return;
+        };
+        ui.label(format!("Element {id}"));
+        let state = self.props.state();
+        match &state {
+            Some(State::Current) if self.props.head_known() => {
+                ui.label("State: current");
+            }
+            Some(State::Current) => {
+                ui.label("State: current (the head revision could not be checked)");
+            }
+            Some(other) => {
+                ui.colored_label(RED, format!("State: {}", other.label()));
+            }
+            None => {}
+        }
+        let editable = matches!(state, Some(State::Current));
+        let busy = self.props.busy() || self.other_command_running();
+        if let Some(details) = self.props.details().cloned() {
+            ui.label(format!(
+                "{} read from revision {}.",
+                details.kind,
+                details.revision.label()
+            ));
+            egui::Grid::new("props-readonly").show(ui, |ui| {
+                for (label, value) in details.read_only_rows() {
+                    ui.label(label);
+                    ui.label(value);
+                    ui.end_row();
+                }
+            });
+            let materials = self.tools.definitions.materials.clone();
+            ui.add_enabled_ui(editable && !busy, |ui| {
+                ui.label("Editable, in mm:");
+                field(ui, "Name", &mut self.props.form.name, 140.0);
+                choice_combo(
+                    ui,
+                    "props-material",
+                    "Material",
+                    &mut self.props.form.material,
+                    &materials,
+                    false,
+                );
+                if details.is_plate() {
+                    field(ui, "Thickness", &mut self.props.form.thickness, 80.0);
+                }
+                ui.label("Position (absolute):");
+                point_fields(ui, &mut self.props.form.translation);
+            });
+            if !editable {
+                ui.label("Editing is off until the properties are current.");
+            }
+        } else if matches!(state, Some(State::Unknown { .. })) {
+            ui.label("No property value is shown: none could be read.");
+        }
+        let store = self.source.store.clone();
+        let can_commit = self.props.can_commit(&store);
+        let staged = self.props.staged().is_some();
+        let (mut preview, mut commit, mut cancel, mut reread) = (false, false, false, false);
+        ui.horizontal(|ui| {
+            preview = ui
+                .add_enabled(editable && !busy, egui::Button::new("Preview"))
+                .clicked();
+            commit = ui
+                .add_enabled(can_commit && !busy, egui::Button::new("Commit"))
+                .clicked();
+            cancel = ui
+                .add_enabled(staged && !busy, egui::Button::new("Cancel"))
+                .clicked();
+            reread = ui
+                .add_enabled(!busy, egui::Button::new("Re-read"))
+                .clicked();
+        });
+        if preview {
+            match self.props.preview(&store) {
+                Ok(_) => self.props_note = None,
+                Err(e) => {
+                    self.props.cancel();
+                    self.props_note = Some(Err(e.to_string()));
+                }
+            }
+        }
+        if commit {
+            self.start_property_commit();
+        }
+        if cancel {
+            self.props.cancel();
+            self.props_note = Some(Ok("Cancelled; nothing was changed.".into()));
+        }
+        if reread {
+            self.reread();
+        }
+        if let Some(edit) = self.props.staged() {
+            ui.label(format!(
+                "Preview: Commit runs `beamcraft` with exactly these {} arguments, one per line (not a shell command line). It changes: {}.",
+                edit.args.len(),
+                edit.changed.join(", ")
+            ));
+            ui.add(egui::Label::new(egui::RichText::new(edit.argument_list()).monospace()).wrap());
+            if !self.props.can_commit(&store) {
+                ui.colored_label(
+                    RED,
+                    "The parameters or the revision changed: preview again.",
+                );
+            }
+        }
+        if self.props.busy() {
+            ui.label("Running…");
+        }
+        match &self.props_note {
+            Some(Ok(message)) => {
+                ui.label(message);
+            }
+            Some(Err(message)) => {
+                ui.colored_label(RED, message);
+            }
+            None => {}
+        }
+    }
+
+    fn publish_panel(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Publish");
+        match self.publisher.target() {
+            Err(why) => {
+                ui.label(why);
+            }
+            Ok((published, workspace)) => {
+                ui.label(format!(
+                    "Workspace {} to published store {}.",
+                    workspace.display(),
+                    published.display()
+                ));
+                if let Some(status) = &self.publisher.status {
+                    ui.label(status.summary());
+                }
+                let enabled =
+                    self.publisher.phase() == Phase::Idle && !self.other_command_running();
+                if ui
+                    .add_enabled(enabled, egui::Button::new("Publish…"))
+                    .clicked()
+                    && let Err(why) = self.publisher.request()
+                {
+                    self.publisher.note = Some(Err(why.into()));
+                }
+                if self.publisher.phase() == Phase::Running {
+                    ui.label("Publishing…");
+                }
+            }
+        }
+        match &self.publisher.note {
+            Some(Ok(message)) => {
+                ui.label(message);
+            }
+            Some(Err(message)) => {
+                ui.colored_label(RED, message);
+            }
+            None => {}
+        }
+    }
+
+    /// The confirm dialog of Publish: nothing runs until Publish is pressed in it.
+    fn publish_dialog(&mut self, ctx: &egui::Context) {
+        if self.publisher.phase() != Phase::Confirming {
+            return;
+        }
+        let list = self
+            .publisher
+            .args()
+            .map(|args| {
+                args.iter()
+                    .map(|a| crate::json_string(a))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_default();
+        let (mut confirm, mut cancel) = (false, false);
+        egui::Window::new("Publish the workspace?")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label(
+                    "The draft head becomes the next published revision. The engine refuses it when the published head moved since the workspace was forked or when there is nothing to publish; there is no merge or conflict resolution.",
+                );
+                ui.label("Runs `beamcraft` with exactly these arguments, one per line:");
+                ui.add(egui::Label::new(egui::RichText::new(list).monospace()).wrap());
+                ui.horizontal(|ui| {
+                    confirm = ui.button("Publish").clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+            });
+        if confirm {
+            self.start_publish();
+        } else if cancel {
+            self.publisher.cancel();
         }
     }
 
@@ -681,6 +1098,12 @@ impl App {
     }
 
     fn start_commit(&mut self) {
+        if self.other_command_running() {
+            self.tool_note = Some(Err(
+                "another command is running; wait for it to finish.".into()
+            ));
+            return;
+        }
         let Some(prepared) = self.tools.begin_commit(&self.source.store) else {
             return;
         };
@@ -938,11 +1361,20 @@ impl eframe::App for App {
         });
         self.poll_commit();
         self.poll_edit();
+        self.poll_props();
+        self.poll_publish();
+        self.poll_status();
         self.poll_select();
         self.poll_reload();
         if !wants_text && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.invalidate_select();
-            self.editor.deselect();
+            // Esc closes the publish dialog first; it clears the selection only when none is open.
+            if self.publisher.phase() == Phase::Confirming {
+                self.publisher.cancel();
+            } else {
+                self.invalidate_select();
+                self.editor.deselect();
+                self.props.clear();
+            }
         }
         if reload {
             self.reload();
@@ -955,6 +1387,7 @@ impl eframe::App for App {
         }
         if self.text {
             egui::Panel::left("info").show(ui, |ui| self.panel(ui));
+            self.publish_dialog(&ui.ctx().clone());
         }
         egui::CentralPanel::default().show(ui, |ui| {
             let size = ui.available_size();

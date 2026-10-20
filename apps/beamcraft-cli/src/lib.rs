@@ -14,6 +14,7 @@ pub mod delete;
 pub mod edit;
 pub mod export;
 pub mod history;
+pub mod history_compact;
 pub mod level;
 pub mod library;
 pub mod member;

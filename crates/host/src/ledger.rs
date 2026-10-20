@@ -71,17 +71,21 @@
 //!   with an integrity error instead of being trusted.
 //! * Protection from a hostile writer to the store directory: the per-record SHA-256 detects
 //!   accidents, it does not authenticate the writer.
-//! * Ledger rotation or compaction: new commits are admitted only below [`MAX_LEDGER_BYTES`]
+//! * Ledger rotation by the commit path: new commits are admitted only below [`MAX_LEDGER_BYTES`]
 //!   (and the line and open-intent limits), with room reserved to close every open intent; a
-//!   full ledger refuses a commit with `LIMIT_EXCEEDED` before it writes anything. The length
-//!   check and the append are not atomic across processes, so appenders that race each other
+//!   full ledger refuses a commit with `LIMIT_EXCEEDED` before it writes anything. U14 rotates
+//!   the ledger as part of a history compaction ([`crate::compaction`]): the records of removed
+//!   revisions are dropped (their operation ids are no longer recognised), those of retained
+//!   revisions are kept, and a record below the compaction floor is a tombstone answered
+//!   `Committed` without a root cross-check. The length check and the append are not atomic across processes, so appenders that race each other
 //!   can overshoot; the reader and closing records accept [`LEDGER_HEADROOM_BYTES`] more (and
 //!   proportional line and intent headroom) for that. More simultaneous racing attempts than
 //!   the headroom holds is not promised: the ledger then fails closed (every read is
 //!   `LIMIT_EXCEEDED`) rather than being trusted partially.
 //! * Garbage collection: recovery removes only abandoned temporary files and *reports*
 //!   unreferenced blobs. It deletes no blob, because drafts, personal workspaces and retained
-//!   revisions (not yet implemented) may still need them.
+//!   revisions may still need them. Blob collection is U14's compaction, which has the exclusive
+//!   store lease, the declared workspaces and the retained revisions in hand.
 
 mod record;
 mod recover;
@@ -297,6 +301,31 @@ impl<'a> Ledger<'a> {
             return Err(LedgerError::LimitExceeded);
         }
         Ok(())
+    }
+
+    /// The raw ledger bytes, for U14 rotation. An absent ledger is `None`.
+    pub(crate) fn read_raw(&self) -> Result<Option<Vec<u8>>, LedgerError> {
+        let Some(directory) = self.dir(false)? else {
+            return Ok(None);
+        };
+        let hard = MAX_LEDGER_BYTES + LEDGER_HEADROOM_BYTES;
+        let cap = usize::try_from(hard).map_err(|_| LedgerError::LimitExceeded)?;
+        Ok(self.blobs.read_namespace_exact(&directory, FILE, cap)?)
+    }
+
+    /// Writes a complete replacement ledger to a synced temporary file and returns its name.
+    /// Nothing is visible until [`Self::install_replacement`].
+    pub(crate) fn stage_replacement(&self, bytes: &[u8]) -> Result<String, LedgerError> {
+        let directory = self.dir(true)?.ok_or(StorageError::NotFound)?;
+        Ok(self
+            .blobs
+            .stage_namespace_file(&directory, ".tmp-outcomes-", bytes)?)
+    }
+
+    /// Replaces the ledger with a staged file in one atomic rename.
+    pub(crate) fn install_replacement(&self, staged: &str) -> Result<(), LedgerError> {
+        let directory = self.dir(true)?.ok_or(StorageError::NotFound)?;
+        Ok(self.blobs.install_over(&directory, staged, FILE)?)
     }
 
     /// Appends records in one synced write. `genesis_head` adds the genesis record first, for a
