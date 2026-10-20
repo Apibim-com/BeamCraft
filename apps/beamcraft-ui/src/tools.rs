@@ -18,7 +18,8 @@ use std::path::Path;
 
 use crate::props::RevisionStamp;
 
-/// The longest accepted text field, in characters.
+/// The longest accepted text field: the engine counts label bytes, so the same limit is
+/// checked in bytes before anything runs (the fields' character limit stays a soft affordance).
 pub const MAX_TEXT: usize = 256;
 
 /// The tools of this slice.
@@ -161,9 +162,15 @@ fn number(field: &'static str, text: &str) -> Result<String, FormError> {
     }
     match text.parse::<f64>() {
         Ok(value) if value.is_finite() => Ok(text.to_owned()),
-        _ => Err(FormError {
+        // Say why the text does not parse: a decimal comma is the usual reason, and the value
+        // itself may well be finite.
+        Ok(_) => Err(FormError {
             field,
             message: format!("\"{text}\" is not a finite number"),
+        }),
+        Err(_) => Err(FormError {
+            field,
+            message: format!("\"{text}\" is not a number; use a period as the decimal separator"),
         }),
     }
 }
@@ -180,10 +187,12 @@ fn point(field: &'static str, parts: &[String; 3]) -> Result<String, FormError> 
 
 fn push_name(args: &mut Vec<String>, name: &str) -> Result<(), FormError> {
     let name = name.trim();
-    if name.chars().count() > MAX_TEXT {
+    // The engine admits labels by byte length; counting characters let a Cyrillic name pass
+    // the field and Preview and fail at Commit.
+    if name.len() > MAX_TEXT {
         return Err(FormError {
             field: "Name",
-            message: format!("at most {MAX_TEXT} characters"),
+            message: format!("at most {MAX_TEXT} bytes"),
         });
     }
     if !name.is_empty() {
@@ -685,6 +694,12 @@ mod tests {
             let error = form.prepare(store()).unwrap_err();
             assert_eq!(error.field, "Width", "{bad:?}");
         }
+        // A decimal comma parses to nothing: the message says what to use, not that the value
+        // is infinite.
+        let mut form = plate();
+        form.thickness = "12,5".into();
+        let error = form.prepare(store()).unwrap_err();
+        assert!(error.message.contains("period"), "{}", error.message);
         let mut member = MemberForm {
             profile: Some(DIGEST.into()),
             ..MemberForm::default()
@@ -697,6 +712,12 @@ mod tests {
         assert!(form.prepare(store()).is_ok());
         form.name = "n".repeat(MAX_TEXT + 1);
         assert_eq!(form.prepare(store()).unwrap_err().field, "Name");
+        // The engine counts bytes: 150 Cyrillic letters are 150 characters but 300 bytes.
+        form.name = "ы".repeat(MAX_TEXT / 2 + 1);
+        assert_eq!(form.prepare(store()).unwrap_err().field, "Name");
+        assert!(form.prepare(store()).unwrap_err().message.contains("bytes"));
+        form.name = "ы".repeat(100);
+        assert!(form.prepare(store()).is_ok());
     }
 
     #[test]
