@@ -65,7 +65,7 @@ use beamcraft_layer_engine::{
     Asset, BACKEND, Budgets, Cancellation, Control, Diagnostic, Identity, OpenRequest, Opened,
     Prim, Profile, Reader, Value,
 };
-use beamcraft_model::command::{CommandError, CreatePlate, MemberKind};
+use beamcraft_model::command::{CommandError, CreatePlate, MemberKind, PlaneCut};
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
@@ -453,7 +453,33 @@ fn decode_plate(prim: &Prim, id: ElementId) -> Result<AuthoredPlate, PlateError>
         },
         material,
         holes_mm: decode_holes(prim)?,
+        cut: decode_cut(prim)?,
     })
+}
+
+/// The optional single plane cut of a committed element (A03): both attributes or neither,
+/// exactly one point and one normal. A damaged or half-authored record is an integrity error,
+/// never a default.
+fn decode_cut(prim: &Prim) -> Result<Option<PlaneCut>, PlateError> {
+    let bad = || integrity("committed element has inconsistent cut attributes");
+    let declared = |name: &str| prim.properties.iter().any(|p| p.name == name);
+    let (has_point, has_normal) = (declared("steel:cut:pointMm"), declared("steel:cut:normal"));
+    if !has_point && !has_normal {
+        return Ok(None);
+    }
+    if has_point != has_normal {
+        return Err(bad());
+    }
+    let point = property(prim, "steel:cut:pointMm")
+        .and_then(numbers::<3>)
+        .ok_or_else(bad)?;
+    let normal = property(prim, "steel:cut:normal")
+        .and_then(numbers::<3>)
+        .ok_or_else(bad)?;
+    Ok(Some(PlaneCut {
+        point_mm: point,
+        normal,
+    }))
 }
 
 /// The through-hole polygons of a committed plate: the flat point array cut by the vertex counts.
@@ -753,6 +779,7 @@ fn decode_member(
             orientation_xyzw: [x, y, z, w],
         },
         material: decode_material(prim)?,
+        cut: decode_cut(prim)?,
     })
 }
 
@@ -1550,6 +1577,7 @@ pub fn create_plate(
                             .iter()
                             .map(|h| h.iter().map(|[x, y]| [*x, *y, 0.0]).collect())
                             .collect(),
+                        cut: outcome.authored.cut,
                     },
                     placement: LayerPlacement {
                         translation_mm: placement.translation_mm,

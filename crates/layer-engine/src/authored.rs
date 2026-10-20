@@ -17,6 +17,7 @@ pub use reference::{
 };
 
 use crate::*;
+pub use beamcraft_model::command::PlaneCut;
 pub use beamcraft_model::definition::SectionProperties;
 pub use beamcraft_model::section::SectionShape;
 use std::collections::BTreeMap;
@@ -32,6 +33,7 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "bim:schemaVersion=string(0.1.0);bim:createdBy=string(uuid7);bim:revision=string(uuid7,optional)\n",
     "steel:plate:contourPointsMm=double3[];steel:plate:thicknessMm=double;",
     "steel:plate:holePointsMm=double3[](optional,z=0);steel:plate:holeVertexCounts=int[](optional,>=3 each);",
+    "steel:cut:pointMm=double3(optional);steel:cut:normal=double3(optional,nonzero,both or neither)\n",
     "bim:axisPointsMm=double3[];steel:member:rollRad=double(optional)\n",
     "assembly=element;bim:elementKind=assembly;kind=assembly;no shape inputs, material or Geometry;placement=identity\n",
     "bim:partOf=rel(0..1 element target of kind assembly;source plate|beam|column|assembly;no self;acyclic)\n",
@@ -424,12 +426,17 @@ const A05_CONNECTION_PHRASE: &str = "a weld (A06) or bolt group (A05)";
 /// The connection wording before A05.
 const A05_PREVIOUS_CONNECTION_PHRASE: &str = "a weld only (A06)";
 
+/// The mapping descriptor as it was before A03 added the cut attributes: the current descriptor
+/// without that line — the digest every store created on the released master carries.
+fn pre_a03_descriptor() -> String {
+    SCHEMA_DESCRIPTOR.replacen(A03_CUT_LINE, "", 1)
+}
+
 /// The mapping descriptor as it was before A05 added the bolt properties and reworded the
-/// connection line: the current descriptor without those edits — the numbering mark line of A09
-/// stays, so this is the mapping every store created since A09 carries. A05 added only optional
+/// connection line: the pre-A03 descriptor without those edits. A05 added only optional
 /// content, so layers pinned to that mapping stay readable and editable.
 pub(crate) fn pre_a05_descriptor() -> String {
-    SCHEMA_DESCRIPTOR
+    pre_a03_descriptor()
         .replacen(A05_BOLT_PROPERTIES_LINE, "", 1)
         .replacen(A05_CONNECTION_PHRASE, A05_PREVIOUS_CONNECTION_PHRASE, 1)
 }
@@ -442,21 +449,35 @@ fn pre_a09_descriptor() -> String {
         .replacen(A09_CHANGES_ITEM, PRE_A09_CHANGES_ITEM, 1)
 }
 
+/// The one descriptor line that A03 added (the optional element cut attributes); see
+/// [`pin_accepted`].
+const A03_CUT_LINE: &str = "steel:cut:pointMm=double3(optional);steel:cut:normal=double3(optional,nonzero,both or neither)\n";
+
 /// Whether a layer's saved `bimSchemaDigest` is the current mapping or an earlier one that the
 /// current mapping reads without change.
 pub(crate) fn pin_accepted(pin: &str) -> Result<bool, Diagnostic> {
     if pin == schema_identity()?.digest.to_string() {
         return Ok(true);
     }
+    // A03 added one optional line (the element cut attributes) and changed nothing else, so the
+    // pre-A03 mapping is the current descriptor without that line — the digest every store
+    // created on the released master carries — and the earlier mappings drop their own later
+    // lines from it.
+    let pre_a03 = pre_a03_descriptor();
+    let digest = Sha256::digest(pre_a03.as_bytes()).map_err(|_| limit())?;
+    if pin == digest.to_string() {
+        return Ok(true);
+    }
     // A05 added the bolt properties and reworded the connection line, so the mapping before A05
-    // is the current descriptor without those edits — the digest every store created since A09
+    // is the pre-A03 descriptor without those edits — the digest every store created since A09
     // carries.
-    let pre_a05 = Sha256::digest(pre_a05_descriptor().as_bytes()).map_err(|_| limit())?;
-    if pin == pre_a05.to_string() {
+    let pre_a05 = pre_a05_descriptor();
+    let digest = Sha256::digest(pre_a05.as_bytes()).map_err(|_| limit())?;
+    if pin == digest.to_string() {
         return Ok(true);
     }
     // A09 added one optional line (the approved mark) and the `Mark` change item and changed
-    // nothing else, so the mapping before A09 is the pre-A05 descriptor without them.
+    // nothing else, so the pre-A09 mapping is the pre-A05 descriptor without them.
     let pre_a09 = pre_a09_descriptor();
     let digest = Sha256::digest(pre_a09.as_bytes()).map_err(|_| limit())?;
     if pin == digest.to_string() {
@@ -573,6 +594,8 @@ pub enum Shape {
         /// Through-hole polygons in plate-local XY (`z` is zero), each at least three points,
         /// stored as one flat point array plus the vertex counts. Empty means a solid plate.
         holes: Vec<Vec<[f64; 3]>>,
+        /// Optional single plane cut (A03, experimental), stored as its point and normal.
+        cut: Option<PlaneCut>,
     },
     /// Straight member, with a required pinned rectangular profile.
     Member {
@@ -584,6 +607,8 @@ pub enum Shape {
         profile: ContentDigest,
         /// Missing roll has no authored default; engineering default is zero.
         roll_rad: Option<f64>,
+        /// Optional single plane cut (A03, experimental), stored as its point and normal.
+        cut: Option<PlaneCut>,
     },
     /// A01 assembly: a grouping target of `bim:partOf` with no shape inputs, no material and no
     /// derived body. Its placement must be the identity in this slice.
@@ -603,6 +628,16 @@ pub enum Shape {
         /// Elevation in millimetres, finite and at most 1,000,000,000 in magnitude.
         elevation_mm: f64,
     },
+}
+
+impl Shape {
+    /// The optional single plane cut of a plate, beam or column (A03); other kinds have none.
+    pub(crate) fn cut(&self) -> Option<&PlaneCut> {
+        match self {
+            Self::Plate { cut, .. } | Self::Member { cut, .. } => cut.as_ref(),
+            Self::Assembly | Self::Weld(_) | Self::Bolt(_) | Self::Level { .. } => None,
+        }
+    }
 }
 
 /// The authored inputs of a weld (A06). Tokens are the exact stored values.
@@ -1259,20 +1294,21 @@ mod pin_tests {
     use super::*;
 
     #[test]
-    fn the_pre_a09_mapping_pin_is_accepted_and_is_not_the_current_one() {
-        // Pinned value: the digest of the descriptor of master e2d5df2, before A09.
-        let pre_a09 = "fdaf890401a7bf4d8d17eb84ad1901b461ff21f1e7cec1e93f9e71203b83865b";
+    fn the_released_master_mapping_pin_is_accepted_and_is_not_the_current_one() {
+        // Pinned value: the digest of the released master's descriptor (with the A09 numbering
+        // mark and the A05 bolt properties, before this change added the A03 cut line) — the
+        // mapping every store created on the released master carries.
+        let released = Sha256::digest(SCHEMA_DESCRIPTOR.replacen(A03_CUT_LINE, "", 1).as_bytes())
+            .unwrap()
+            .to_string();
+        assert_eq!(
+            released,
+            "cf6afbdfecf652ea85f9b89319a4cda389b64ce3bd71ca63e268ea4c1007ec86"
+        );
         assert!(SCHEMA_DESCRIPTOR.contains(A09_NUMBERING_LINE));
         assert!(SCHEMA_DESCRIPTOR.contains(A09_CHANGES_ITEM));
-        assert!(!pre_a09_descriptor().contains("numbering"));
-        assert_eq!(
-            Sha256::digest(pre_a09_descriptor().as_bytes())
-                .unwrap()
-                .to_string(),
-            pre_a09
-        );
-        assert!(pin_accepted(pre_a09).unwrap());
-        assert_ne!(pre_a09, schema_identity().unwrap().digest.to_string());
+        assert!(pin_accepted(&released).unwrap());
+        assert_ne!(released, schema_identity().unwrap().digest.to_string());
     }
 
     #[test]
@@ -1290,10 +1326,11 @@ mod pin_tests {
     }
 
     #[test]
-    fn the_d1_d2_mapping_pin_is_accepted_and_is_the_current_one_without_the_display_name_line() {
+    fn the_d1_d2_mapping_pin_is_accepted_and_is_the_current_one_without_the_added_optional_lines() {
         // Pinned value: the digest of the descriptor of master with D1 and D2 (the level and the
-        // project record), before A07.2 added the optional definition display name, before the
-        // numbering mark of A09 and before A05 added the bolt properties.
+        // project record), before A07.2 added the optional definition display name, before A03
+        // added the optional element cut attributes, and before the bolt properties (A05) and the
+        // numbering mark (A09), which the pre-A09 descriptor already excludes.
         let d1_d2 = "b799ae17004c22a5c2eaf7512367f919aec4b82b9b4b223166310286e1414b5b";
         assert!(SCHEMA_DESCRIPTOR.contains(A07_2_DISPLAY_NAME_LINE));
         assert!(!A07_1_DESCRIPTOR.contains(A07_2_DISPLAY_NAME_LINE));
@@ -1309,6 +1346,18 @@ mod pin_tests {
         );
         assert!(pin_accepted(d1_d2).unwrap());
         assert_ne!(d1_d2, schema_identity().unwrap().digest.to_string());
+    }
+
+    #[test]
+    fn the_pre_a03_mapping_pin_is_accepted_and_is_the_current_one_without_the_cut_line() {
+        // Pinned value: the digest of the descriptor with the A09 numbering mark but before
+        // this change added the A03 cut line (the pre-A09 mapping is tested above).
+        let pre_a03 = Sha256::digest(SCHEMA_DESCRIPTOR.replacen(A03_CUT_LINE, "", 1).as_bytes())
+            .unwrap()
+            .to_string();
+        assert!(SCHEMA_DESCRIPTOR.contains(A03_CUT_LINE));
+        assert!(pin_accepted(&pre_a03).unwrap());
+        assert_ne!(pre_a03, schema_identity().unwrap().digest.to_string());
     }
 
     #[test]

@@ -86,6 +86,7 @@ mod tests {
             },
             material: None,
             holes_mm: Vec::new(),
+            cut: None,
         }
     }
 
