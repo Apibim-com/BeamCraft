@@ -1,13 +1,18 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! Running a `beamcraft` CLI command in a separate process for the create tools. The UI commits
-//! through the same command a user types, so the accepted revision is the engine's, never a copy
-//! made here. Output is read with a cap and the process is killed after a deadline.
+//! Running a `beamcraft` CLI command in a separate process: the create tools (V05.1), the edit
+//! tools (V05.2) and the properties and publication queries of V06. The UI commits through the
+//! same command a user types, so the accepted revision is the engine's, never a copy made here.
+//! Output is read with a cap and the process is killed after a deadline.
 
 use crate::edit::{
     Edit, Edited, ElementInfo, Ray, inspect_args, parse_edited, parse_element_info, parse_pick,
     pick_args,
+};
+use crate::props::{
+    Change, Properties, WorkspaceState, history_args, parse_change, parse_element, parse_history,
+    parse_workspace_state, workspace_args,
 };
 use crate::tools::{
     Created, Definitions, Prepared, ToolError, definitions_args, parse_created, parse_definitions,
@@ -166,4 +171,39 @@ pub fn select_at(cli: &Path, store: &Path, ray: &Ray) -> Result<Option<Selected>
     };
     let info = element_info(cli, store, &id);
     Ok(Some(Selected { id, info }))
+}
+
+/// Reads the full properties of one element from the store's inspection; `None` when the store
+/// has no such element. The properties panel's report; the editor's lighter lookup is
+/// [`element_info`].
+pub fn properties(cli: &Path, store: &Path, id: &str) -> Result<Option<Properties>, ToolError> {
+    let output = run_capped(cli, &inspect_args(store), DEADLINE, MAX_INSPECT_OUTPUT)?;
+    parse_element(output.code, &output.stdout, id)
+}
+
+/// Runs one argument list that changes something the edit panel does not stage (`update-element`
+/// with a property patch, `workspace-publish`) and reads its reply.
+pub fn run_change(cli: &Path, args: &[String]) -> Result<Change, ToolError> {
+    let output = run(cli, args, DEADLINE)?;
+    parse_change(output.code, &output.stdout)
+}
+
+/// Reads where the draft stands against the published head.
+pub fn workspace_state(
+    cli: &Path,
+    published: &Path,
+    dir: &Path,
+) -> Result<WorkspaceState, ToolError> {
+    let output = run(
+        cli,
+        &workspace_args("workspace-status", published, dir),
+        DEADLINE,
+    )?;
+    parse_workspace_state(output.code, &output.stdout)
+}
+
+/// Reads the draft's undo and redo units.
+pub fn workspace_history(cli: &Path, dir: &Path) -> Result<(u64, u64), ToolError> {
+    let output = run(cli, &history_args(dir), DEADLINE)?;
+    parse_history(output.code, &output.stdout)
 }
