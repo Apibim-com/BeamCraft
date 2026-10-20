@@ -1,7 +1,7 @@
 # Architecture
 
-Three parts: how the application is built, how a project is stored on disk, and how the prims
-inside its USD layers are named and structured. What each task delivered is
+Four parts: how the application is built, how a project is stored on disk, how the prims inside
+its USD layers are named and structured, and how several engineers work on one project. What each task delivered is
 in its note under [`design/`](design/); the plan is in [`plan/`](plan/README.md).
 
 # Part 1. The application
@@ -156,7 +156,8 @@ removes them; identical files are stored once.
 
 A **workspace** (personal draft) is a store of its own, forked from a published revision, with a
 `workspace.json` naming its base. Edits go to the workspace; `workspace-publish` moves them to the
-published store fast-forward only. Undo and redo add new revisions that restore earlier layers.
+published store. Undo and redo add new revisions that restore earlier layers. How drafts of several
+people come together is Part 4.
 
 ## The layers
 
@@ -264,6 +265,76 @@ computed from; when the inputs change, the stored value reads as `stale`.
 - Payloads and instancing: every mesh is written into `derived.usda`, which is rewritten on every
   edit.
 - Cuts and holes are element attributes; the contract moves them to separate operation records.
+
+# Part 4. Collaboration
+
+Several engineers work on one project at the same time, each building different beams and columns
+in different places. All elements live in one `authored.usda`, but that does not make every edit a
+conflict: a conflict is decided by **what** was changed, element by element, never by which file
+or which lines changed.
+
+## A draft per person
+
+Each engineer works in a **workspace**: their own copy of the project, forked from a published
+revision (its **base**), with its own history, undo and redo. Nobody edits the published project
+directly. It works like a branch in git, but for the model.
+
+## Publishing and merging
+
+```mermaid
+gitGraph
+    commit id: "R10"
+    branch A
+    commit id: "A: beam B7"
+    checkout main
+    branch B
+    commit id: "B: column C9"
+    checkout main
+    merge A id: "R11 fast-forward"
+    merge B id: "R12 rebase"
+```
+
+1. **A and B both start from R10.** Each creates a workspace; each edits only their own draft.
+2. **A publishes first.** The published head is still R10, A's base, so A's draft simply becomes
+   R11 (fast-forward). Nothing is merged.
+3. **B publishes second.** The head is now R11, B's base is R10: B's work must be merged.
+4. **Merging replays operations, never files.** B's operations, as B issued them ("create column
+   C9 with these parameters"), are run again on top of R11. The engine validates them again, the
+   kernel rebuilds the geometry and quantities are recomputed, so the result R12 is consistent
+   with the new base. Text or layer diffs are never merged.
+5. **Footprints decide whether a replay is safe.** Every command declares which elements and which
+   property groups it reads and writes. B wrote {C9}; A, between R10 and R11, wrote {B7}. No
+   overlap: the replay is automatic.
+6. **An overlap is a conflict, shown to a person.** Both changed the same property of the same
+   element; A deleted a part B welded to; A approved numbering and B then changed a profile. Both
+   versions are kept and the engineer decides. There is never a silent "last writer wins".
+
+One local coordinator (`coordinator-serve`, loopback only, token per person) holds the single
+publish queue, so two publications can never overwrite each other.
+
+## Why not a USD layer per person
+
+USD can give each person a sublayer, but then the stronger layer's opinion simply hides the other
+one: a conflicting edit disappears silently. Splitting storage into more files (per zone or per
+element, task U15) helps performance, not conflicts.
+
+## What exists and what does not
+
+| Step | Task | Status |
+|------|------|--------|
+| Workspace per person | P06 | done |
+| Changeset: a workspace's unsent work as one message | C01 | done |
+| Local coordinator with one publish queue | C02 | done |
+| **Rebase of independent edits** | **C03** | **open**: today the second publisher gets `BASE_REVISION_MISMATCH` |
+| **Semantic conflicts** | **C04** | **open** |
+| Two-client end-to-end harness | C05 | open |
+| Undo of a published operation | C06 | open |
+
+So today only one person can publish from a given base; real parallel work needs C03 and C04.
+C03 also changes the changeset: it carries a USD layer difference and a footprint derived from it,
+which is coarse. To replay operations, a workspace must keep the list of its commands with their
+arguments and each command's exact footprint. Later: soft leases on zones, frequent autosync and
+access between computers (the coordinator is loopback-only today).
 
 # Where to read more
 

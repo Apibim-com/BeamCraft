@@ -92,6 +92,7 @@ Time-boxed research with a report; never a production gate.
 | P09 / M | Validation layer | F10, U03 | One validator (dangling links, duplicates, module rules) for client and post-merge | Each rule has a positive and a negative case; bounded and deterministic | open |
 | P-Mass / M | Mass from the section area | A07 | Mass = area × length × density; area from the catalogue or computed exactly | Source of the area visible; see decision 2026-10-18 | merged |
 | P-Degenerate / M | Degenerate element state | G08, F04 amendment | A wrongly built element is kept without derived data and recomputed once fixed (decision A-2 D-7) | — | open |
+| P10 / M | Rotated placement | G08 | Engine and kernel accept any rigid placement (translation and rotation); world bounds, picking, snaps, quantities and IFC use it; the view snapshot carries the full transform (F06 amendment); cut points of every element in its local frame | A plate with a rotated placement is created, measured, picked and exported end to end; a rotation never changes shape or mass keys | open |
 
 ## R: references
 
@@ -127,6 +128,9 @@ Time-boxed research with a report; never a production gate.
 | V05 / M | Create and edit tools | V03, V04, P07 | V05.1 create plate and member; V05.2 select, move, copy, delete, undo | The UI calls the same commands; cancel publishes nothing; saved result equals the CLI's | merged |
 | V06 / M | Properties and publication | V05, C05 | Property editor, local/accepted/stale states, publish (V06.1 without conflicts) | Unknown mass and unsupported states visible | merged (V06.1) |
 | V07 / M | Discipline view presets | V03, R01, W01, U12 | Presets: reference visibility and underlay, kind filter, representation, colours, enabled options | Switching never changes the model or the snapshot token | open |
+| V08 / M | Work plane | P10, V04 | Session work plane (origin, X and Y axes): parallel to XY/XZ/YZ with an offset, by three points, by a picked face, vertical through two points; tools enter 2D points in it; the CLI takes `--plane ORIGIN,XDIR,YDIR` | A plate drawn in any work plane gets the matching placement; the work plane is never stored in the model | open |
+| V09 / M | Views by two points and by plane | V08, W01 | A view looking across a line or onto a plane, with depth clipping and its work plane; switch between views | A view never changes the model or the snapshot token; saved views restore it | open |
+| V10 / M | Ribbon | V05, V06 | Own ribbon of tabs and command buttons replacing the side panels; own icons only | Every button runs the same engine command as the CLI; nothing taken from other products | open |
 
 ## A: fabrication operations
 
