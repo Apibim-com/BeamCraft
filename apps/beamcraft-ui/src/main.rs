@@ -3,7 +3,8 @@
 
 //! `beamcraft-ui --store ROOT [--cli PATH]` opens the window on the published revision.
 //! `beamcraft-ui --workspace DIR [--cli PATH]` opens it on a personal workspace (a store made by
-//! `beamcraft workspace-create`), which also enables undo and redo.
+//! `beamcraft workspace-create`), which also enables undo and redo. Adding `--published ROOT`
+//! (the store the workspace was forked from) enables Publish (`beamcraft workspace-publish`).
 //! `beamcraft-ui --store ROOT --metrics FRAMES [--width W] [--height H] [--cli PATH]` renders the
 //! same snapshot offscreen, headless, and prints baseline GPU metrics as one JSON object.
 //! `beamcraft-ui --synthetic COUNT --metrics FRAMES [--width W] [--height H]` measures the engine
@@ -22,17 +23,17 @@ use std::process::ExitCode;
 
 fn usage() -> Error {
     Error::Input(
-        "usage: beamcraft-ui (--store ROOT | --workspace DIR) [--cli PATH] [--metrics FRAMES [--width W] [--height H]] | --synthetic COUNT --metrics FRAMES",
+        "usage: beamcraft-ui (--store ROOT | --workspace DIR [--published ROOT]) [--cli PATH] [--metrics FRAMES [--width W] [--height H]] | --synthetic COUNT --metrics FRAMES",
     )
 }
 
 fn options() -> Result<BTreeMap<String, String>, Error> {
     let args: Vec<String> = std::env::args_os()
         .skip(1)
-        .take(13)
+        .take(15)
         .map(|a| a.into_string().map_err(|_| usage()))
         .collect::<Result<_, _>>()?;
-    if !args.len().is_multiple_of(2) || args.len() > 12 {
+    if !args.len().is_multiple_of(2) || args.len() > 14 {
         return Err(usage());
     }
     let mut map = BTreeMap::new();
@@ -44,6 +45,7 @@ fn options() -> Result<BTreeMap<String, String>, Error> {
             key.as_str(),
             "--store"
                 | "--workspace"
+                | "--published"
                 | "--cli"
                 | "--metrics"
                 | "--width"
@@ -89,6 +91,10 @@ fn run() -> Result<Option<String>, Error> {
     }
     // A workspace is a store of its own: the window shows and edits it, and undo and redo act on it.
     let workspace = map.get("--workspace").map(PathBuf::from);
+    let published = map.get("--published").map(PathBuf::from);
+    if published.is_some() && workspace.is_none() {
+        return Err(usage());
+    }
     let store = match (map.get("--store"), &workspace) {
         (Some(store), None) => PathBuf::from(store),
         (None, Some(dir)) => dir.clone(),
@@ -127,6 +133,7 @@ fn run() -> Result<Option<String>, Error> {
         store,
         cli,
         workspace,
+        published,
     };
     // Window-system libraries are loaded at run time by third-party crates, which panic when one
     // is missing; report that as an error instead of crashing.

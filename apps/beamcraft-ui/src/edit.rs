@@ -521,7 +521,7 @@ pub struct Edited {
     pub replayed: bool,
 }
 
-fn sequence_of(revision: &Json) -> Option<u64> {
+pub(crate) fn sequence_of(revision: &Json) -> Option<u64> {
     let value = revision.get("sequence").ok()?;
     value
         .string()
