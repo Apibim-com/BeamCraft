@@ -681,6 +681,11 @@ fn a_running_coordinator_holds_the_store() {
     fx.build();
     let token = fx.root.join("token");
     fs::write(&token, "a-synthetic-token-of-more-than-32-characters").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&token, fs::Permissions::from_mode(0o600)).unwrap();
+    }
     let client = format!("{USER}:{}", token.to_str().unwrap());
     let mut server = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
         .args([
