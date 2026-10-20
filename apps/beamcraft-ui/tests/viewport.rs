@@ -177,12 +177,12 @@ fn the_accepted_revision_of_a_store_is_the_viewport_scene() {
     assert!((size[1] - 2300.0).abs() < 1e-3, "{size:?}");
     assert!((size[2] - 20.0).abs() < 1e-3, "{size:?}");
     assert_eq!(scene.origin_mm, [3500.0, 1150.0, 10.0]);
-    // A store without a revision is refused with the CLI's stable code.
+    // A store without a revision is the typed empty state, not a failure.
     let empty = root.join("empty");
     std::fs::create_dir_all(&empty).unwrap();
     match source::load(&cli, &empty) {
-        Err(Error::Cli(message)) => assert!(message.ends_with("NOT_FOUND"), "{message}"),
-        other => panic!("expected a CLI rejection, got {other:?}"),
+        Err(Error::NoRevision) => (),
+        other => panic!("expected the empty-store state, got {other:?}"),
     }
     let Some(gpu) = gpu() else { return };
     let (corner, _, lit) = render(&gpu, &scene);
