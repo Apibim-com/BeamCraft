@@ -145,5 +145,6 @@ beamcraft bom-export --store ROOT --out ELEMENTS_CSV [--summary SUMMARY_CSV]
 quoting), `cargo test -p beamcraft-cli --test bom` (real binary: a store with a material, an
 I-section with designation, plates and members exports both files; the rows match
 `plate-inspect`; the mass of an element without a material is an empty cell, counted in
-`mass_unknown`, and excluded from totals; the id fallback fills `mark` equal to `element_id`;
-refusals: no revision, existing output file, unknown option).
+`mass_unknown`, and excluded from totals; a beam numbered by `number-assign` reports its mark,
+an unnumbered column falls back to `mark` equal to `element_id`; refusals: no revision,
+existing output file, unknown option, a colliding or identical summary path).
