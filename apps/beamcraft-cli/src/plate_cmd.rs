@@ -13,7 +13,7 @@ use beamcraft_cli::definition::{
 use beamcraft_cli::delete::{DeleteRequest, DeletedKind, delete_element};
 use beamcraft_cli::edit::{UpdateRequest, UpdatedElement, update_element};
 use beamcraft_cli::history::{Direction, Step, step, timeline};
-use beamcraft_cli::library::load as load_library;
+use beamcraft_cli::library::open_lookup;
 use beamcraft_cli::member::{CreateMemberRequest, create_member};
 use beamcraft_cli::plate::{
     AcceptedBinding, CreateRequest, Created, Inspection, PlateError, ProjectClaim, QuantityReport,
@@ -154,6 +154,8 @@ const DEFINE_PROFILE_OPTIONS: &[&str] = &[
     "--surface-per-meter-m2",
     "--name",
     "--library",
+    "--environment",
+    "--user-library",
     "--revision-id",
     "--actor-id",
     "--project-id",
@@ -547,6 +549,47 @@ fn contour_points(text: &str) -> Run<Vec<[f64; 3]>> {
         .collect()
 }
 
+/// The profile definition that explicit `define-profile`-style options describe: a rectangle from
+/// `--width` and `--height`, a family from `--family` and its parameters, or a custom outline,
+/// with the optional `--designation`, `--standard` and declared section numbers. Shared by
+/// `define-profile` and `library-add`; the display name is left to the caller.
+pub(crate) fn profile_record(options: &BTreeMap<&str, &str>) -> Run<DefinitionRecord> {
+    let given = |key: &str| options.get(key).copied();
+    let optional_float = |key: &str| {
+        given(key)
+            .map(|text| {
+                text.parse::<f64>()
+                    .map_err(|_| invalid("a number is malformed"))
+            })
+            .transpose()
+    };
+    let section = SectionProperties {
+        designation: given("--designation").map(str::to_owned),
+        standard: given("--standard").map(str::to_owned),
+        area_mm2: optional_float("--area-mm2")?,
+        mass_per_meter_kg: optional_float("--mass-per-meter-kg")?,
+        surface_per_meter_m2: optional_float("--surface-per-meter-m2")?,
+        display_name: None,
+    };
+    Ok(match given("--family") {
+        None if SECTION_ONLY_OPTIONS
+            .iter()
+            .any(|option| options.contains_key(option)) =>
+        {
+            return Err(invalid("section parameters need --family"));
+        }
+        None => DefinitionRecord::RectangleProfile {
+            width_mm: float(options, "--width")?,
+            height_mm: float(options, "--height")?,
+            section,
+        },
+        Some(family) => DefinitionRecord::SectionProfile {
+            shape: section_shape(family, options)?,
+            section,
+        },
+    })
+}
+
 fn define_command(
     store: &RevisionStore,
     command: &str,
@@ -576,7 +619,10 @@ fn define_command(
             display_name: None,
         }
         .named(given("--name"))
-    } else if let Some(library_path) = given("--library") {
+    } else if ["--library", "--environment", "--user-library"]
+        .iter()
+        .any(|option| options.contains_key(option))
+    {
         // The definition takes every value from the library entry and stores them itself, so it
         // never depends on the file afterwards.
         const OWN_VALUES: &[&str] = &[
@@ -594,44 +640,24 @@ fn define_command(
             .any(|option| options.contains_key(option))
         {
             return Err(invalid(
-                "--library takes its values from the entry; only --designation and --name combine with it",
+                "--library and --environment take their values from the entry; only --designation, --user-library and --name combine with them",
             ));
         }
-        let designation =
-            given("--designation").ok_or_else(|| invalid("--library needs --designation"))?;
-        let library = load_library(library_path)?;
-        library
-            .entry(designation)?
+        let designation = given("--designation")
+            .ok_or_else(|| invalid("a library or environment needs --designation"))?;
+        let (lookup, _) = open_lookup(
+            given("--library"),
+            given("--environment"),
+            given("--user-library"),
+        )?;
+        lookup
+            .find(designation)?
+            .1
             .record
             .clone()
             .named(given("--name"))
     } else {
-        let section = SectionProperties {
-            designation: given("--designation").map(str::to_owned),
-            standard: given("--standard").map(str::to_owned),
-            area_mm2: optional_float("--area-mm2")?,
-            mass_per_meter_kg: optional_float("--mass-per-meter-kg")?,
-            surface_per_meter_m2: optional_float("--surface-per-meter-m2")?,
-            display_name: None,
-        };
-        match given("--family") {
-            None if SECTION_ONLY_OPTIONS
-                .iter()
-                .any(|option| options.contains_key(option)) =>
-            {
-                return Err(invalid("section parameters need --family"));
-            }
-            None => DefinitionRecord::RectangleProfile {
-                width_mm: float(options, "--width")?,
-                height_mm: float(options, "--height")?,
-                section,
-            },
-            Some(family) => DefinitionRecord::SectionProfile {
-                shape: section_shape(family, options)?,
-                section,
-            },
-        }
-        .named(given("--name"))
+        profile_record(options)?.named(given("--name"))
     };
     let revision_id = match given("--revision-id") {
         Some(text) => RevisionId::parse(text).map_err(id_error)?,
