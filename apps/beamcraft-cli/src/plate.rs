@@ -1690,6 +1690,8 @@ pub struct Inspection {
     pub levels: Levels,
     /// The common facts of every element except levels, by id (E02).
     pub elements: BTreeMap<ElementId, ElementMeta>,
+    /// The marks of the model and their approval states (A08).
+    pub marks: Numbering,
 }
 
 /// Opens the head revision with verification, reads its model and derived layers in a fresh
@@ -1769,6 +1771,7 @@ pub fn inspect_revision(revision: &Revision) -> Result<Inspection, PlateError> {
         project_record: record,
         levels: decoded.levels,
         elements: decoded.elements,
+        marks: decoded.marks,
     })
 }
 
