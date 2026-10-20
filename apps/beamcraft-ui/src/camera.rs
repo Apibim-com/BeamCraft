@@ -100,6 +100,11 @@ impl Camera {
         let up = [-cy * sp, -sy * sp, cp, 0.0];
         let [x, y, z] = self.target;
         let [bx, by, bz, _] = back;
+        // The near plane follows the camera distance. A fixed 1 mm near plane leaves a
+        // `Depth32Float` buffer too little resolution over a long model (far is at least
+        // 1e7 mm), so hidden parts showed through; one percent of the distance keeps
+        // precision where the orbit camera can be anyway.
+        let near = (self.distance * 0.01).clamp(0.1, 1e5);
         Ok(View {
             right,
             up,
@@ -113,7 +118,7 @@ impl Camera {
             params: [
                 (std::f32::consts::PI / 8.0).tan(),
                 aspect,
-                1.0,
+                near,
                 self.distance * 5.0 + 1e7,
             ],
         })
@@ -201,5 +206,22 @@ mod tests {
         }
         assert!(c.view(1.0).unwrap().bytes().len() == 80);
         assert!(c.distance().is_finite());
+    }
+    #[test]
+    fn the_near_plane_follows_the_distance_and_stays_inside_the_depth_range() {
+        for extent in [10.0f32, 1000.0, 1e6] {
+            let c = Camera::new([0.0; 3], extent, 1.6).unwrap();
+            let v = c.view(1.6).unwrap();
+            let near = v.params[2];
+            let far = v.params[3];
+            assert!((near - c.distance() * 0.01).abs() < near * 1e-4);
+            assert!(near > 0.0 && near < far);
+        }
+        // Every zoom extreme keeps a valid depth range.
+        let mut c = Camera::new([0.0; 3], 1000.0, 1.6).unwrap();
+        c.navigate([0.0, 0.0], [0.0; 2], -10.0).unwrap();
+        c.navigate([0.0, 0.0], [0.0; 2], 10.0).unwrap();
+        let v = c.view(1.6).unwrap();
+        assert!(v.params[2] > 0.0 && v.params[2] < v.params[3]);
     }
 }
