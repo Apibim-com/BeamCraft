@@ -1339,8 +1339,6 @@ mod pin_tests {
 
     #[test]
     fn the_pre_a05_mapping_pin_is_accepted_and_is_not_the_current_one() {
-        // Pinned value: the digest of the descriptor of master with A07.2, before A05 added the
-        // bolt properties and reworded the connection line.
         // Pinned value: the digest of the descriptor of master with A09, before A05 added the
         // bolt properties and reworded the connection line.
         let pre_a05 = "PRE_A05_PIN_PLACEHOLDER";

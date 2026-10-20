@@ -22,6 +22,7 @@ use std::{
 
 mod assembly_cmd;
 mod bolt_cmd;
+mod bom_cmd;
 mod changeset_cmd;
 mod coordinator_cmd;
 mod export_cmd;
