@@ -270,9 +270,9 @@ Owner wish of 2026-10-16, to be planned with A03/A04 (cuts, holes), U02 (USD aut
 ## Decision provenance
 
 This original design summary follows the owner's local `architecture-proposal.md` dated 2026-10-14
-(§1, §3–7, §9–17) and `implementation-plan.md` revision 1.1 (§1–4, §5–7, §14). Detailed Russian
-plans and observation materials remain outside the repository. Those local plans describe intended
-acceptance, not completed features. See [the roadmap](../ROADMAP.md) for gates and
+(§1, §3–7, §9–17). The implementation plan, its tasks and the owner decisions are in
+[`plan/`](plan/README.md) since 2026-10-20; observation materials remain outside the repository.
+The plan describes intended acceptance, not completed features. See [the roadmap](../ROADMAP.md) for gates and
 [development](development.md) for the verified F01 baseline and remaining checks.
 
 The [F04 model and command contract](contracts/model-and-commands-v0.1.md) is a review draft of

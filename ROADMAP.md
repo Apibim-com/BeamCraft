@@ -2,8 +2,11 @@
 
 **Stage:** pre-alpha. Last updated 2026-10-20 (`master` at `d456670`).
 
-This file holds only what changes rarely: the stage, the acceptance gates, the MVP scope and the
-next work. It is updated when a gate or the scope changes, not for every merge. What each merged
+This file is the short summary of the [implementation plan](docs/plan/README.md): the stage, the
+acceptance gates, the MVP scope and the next work. Every task ID (F04, U06, A03, ...) is in
+[`docs/plan/tasks.md`](docs/plan/tasks.md) and the owner decisions are in
+[`docs/plan/decisions.md`](docs/plan/decisions.md). It is updated when a gate or the scope changes,
+not for every merge. What each merged
 package does is in its note under [`docs/design/`](docs/design/) and in
 [`docs/architecture.md`](docs/architecture.md); the history is git and the pull requests. The
 progress log kept here until 2026-10-18 is preserved in
@@ -59,6 +62,8 @@ drawings (D01–D03) and reference measurements (R02–R03). Which parts later s
 which become a commercial product is decided after the MVP; until then everything stays MPL-2.0.
 
 ## Next work
+
+In this order; the task cards are in [`docs/plan/tasks.md`](docs/plan/tasks.md).
 
 1. **A03/A04 to the contract:** `CutByPlane` and `AddHole` as owned operation records with the
    role-based FeatureIds (F06 amendment A-2), replacing the `steel:cut:*` and hole attributes, with

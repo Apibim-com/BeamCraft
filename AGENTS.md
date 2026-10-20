@@ -132,6 +132,8 @@ New outbound network access is the owner's decision, not an agent's.
 
 ## 7. Implementation plan and pull requests
 
+- The implementation plan is `docs/plan/`: tasks and their acceptance in `docs/plan/tasks.md`,
+  owner decisions in `docs/plan/decisions.md`. A new task or a changed status is a docs-only PR.
 - Each implementation-plan task (for example F01 or F03) gets its own focused pull request.
   Do not combine independent task IDs into one PR. Split a large task into named sub-tasks when
   needed; completing a sub-task does not complete its parent acceptance gate.
