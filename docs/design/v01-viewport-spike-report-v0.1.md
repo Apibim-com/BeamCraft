@@ -122,7 +122,7 @@ or separately measured by V01. A real workload must measure them once they exist
 
 ## F06 engine-to-renderer mapping
 
-This maps frozen [F06 sections 5, 6, 7 and 9](../contracts/geometry-contract-v0.1.md).
+This maps frozen [F06 sections 5, 6, 7 and 9](../contracts/f06-geometry-contract-v0.1.md).
 It does not change those contracts or add an engine query implementation.
 
 | Engine input | Spike mapping | Production implication |
@@ -151,7 +151,6 @@ and contract review remain open; this report does not freeze that proposal.
 
 ## Fonts, assets and licences
 
-The [V01.0 audit](../audits/ui-stack-audit-v0.1.md) remains the prerequisite.
 Pins here: eframe/egui 0.36.2, wgpu 30.0.1; craft-ui and craft-quit only at
 `83bf4cb25c01ed46e7645c4172974239868aaf06`. No PdfCraft winit, egui-wgpu or
 vello_common vendor patch is applied. `craft-ui` is compiled as an admitted dependency;

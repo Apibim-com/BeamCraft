@@ -145,7 +145,7 @@ material `update-element`). There is no dedicated "recompute quantities" command
 - The declared mass per metre and the declared surface are still not read; mass uses the area.
 - A rectangle's `kernel_mm2`-style D3 warning is not added (the rectangle keeps its refusing P02.2
   0.1 % check).
-- The IFC contract ([ifc-export-v0.1](../contracts/ifc-export-v0.1.md)) maps one volume to both
+- The IFC contract ([e01-ifc-export-v0.1](../contracts/e01-ifc-export-v0.1.md)) maps one volume to both
   `NetVolume` and, only for elements without operations, `GrossVolume`; it is not changed here.
   With explicit gross and net figures a plate with holes could also publish `GrossVolume` (open).
 

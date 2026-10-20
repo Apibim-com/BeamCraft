@@ -13,9 +13,9 @@ notes and public specifications; nothing from any commercial product is used.
 
 | File | Change |
 |---|---|
-| `docs/contracts/geometry-contract-v0.1.md` (F06) | Amendment A-2 in the errata register (section 12), owner decisions table, amendments log, version decision; new subsection "Operations on a plate or extrusion body" in section 2; three tokens in section 3; FeatureId kinds `extrusion` and `cut` in section 5; volume rule in section 8; edits to the scope list, plate input, stage 4, status text, section 4 (one sentence), section 6, section 7, section 9, section 10 and section 11 |
-| `docs/contracts/geometry-contract-cases-v0.1.json` | `F06-NEG-08` and `F06-NEG-39` carry a `superseded` marker; top-level `status` says A-2 is applied. No case added, removed or renumbered; counts stay 112, 59, 53 |
-| `docs/contracts/model-and-commands-v0.1.md` (F04) | Operation records (section 4) replacing the A04 attribute deviation; `degenerate` element state (section 4, proposal); commands `AddHole`, `UpdateHole`, `RemoveHole`, `CutByPlane` and notes (section 7); footprints and the failure mapping incl. kernel capacity (section 8); section 3 contour support; header, sections 5, 10, 11 and the log (section 12) |
+| `docs/contracts/f06-geometry-contract-v0.1.md` (F06) | Amendment A-2 in the errata register (section 12), owner decisions table, amendments log, version decision; new subsection "Operations on a plate or extrusion body" in section 2; three tokens in section 3; FeatureId kinds `extrusion` and `cut` in section 5; volume rule in section 8; edits to the scope list, plate input, stage 4, status text, section 4 (one sentence), section 6, section 7, section 9, section 10 and section 11 |
+| `tests/fixtures/contracts/f06-geometry-contract-cases-v0.1.json` | `F06-NEG-08` and `F06-NEG-39` carry a `superseded` marker; top-level `status` says A-2 is applied. No case added, removed or renumbered; counts stay 112, 59, 53 |
+| `docs/contracts/f04-model-and-commands-v0.1.md` (F04) | Operation records (section 4) replacing the A04 attribute deviation; `degenerate` element state (section 4, proposal); commands `AddHole`, `UpdateHole`, `RemoveHole`, `CutByPlane` and notes (section 7); footprints and the failure mapping incl. kernel capacity (section 8); section 3 contour support; header, sections 5, 10, 11 and the log (section 12) |
 | `docs/design/g07-kernel-first-scope-acceptance.md` | Dated "Update 2026-10-19" notes in the traceability rows of NEG-39 and NEG-08 and in the state of findings F2 and F3 |
 | `docs/design/a04-plate-holes.md` | One dated update paragraph after the decisions |
 | `docs/design/g08-f06-a2-notes.md` | This note |
@@ -77,7 +77,7 @@ Marked "proposal for owner review" in the text; nothing here changes an existing
 
 ## 4. Edits recorded but not made
 
-* `docs/contracts/model-command-cases-v0.1.json`: `F04-POS-20` still expects `geometry_status:
+* `tests/fixtures/contracts/f04-model-command-cases-v0.1.json`: `F04-POS-20` still expects `geometry_status:
   unsupported` for the pentagon and cites `F06-NEG-39`. The file is read by
   `apps/beamcraft-cli/tests/f04_cases.rs`, which declares deviations, so changing the expectation
   belongs with a code change. Needed edit: mark the geometry expectation as evaluated for a z = 0

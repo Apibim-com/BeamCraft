@@ -31,7 +31,7 @@ beamcraft definitions   --store ROOT
    process; the revision that results is the engine's, not a copy made in the window. The only
    new dependency edge is `beamcraft-ui` -> `beamcraft-protocol` (already a workspace crate, layer
    2 < 5), to decode the CLI's JSON reply with the project's bounded decoder instead of ad-hoc
-   string matching. The module table in `docs/contracts/module-boundaries-v0.1.md` is updated
+   string matching. The module table in `docs/contracts/f08-module-boundaries-v0.1.md` is updated
    with it. No third-party dependency was added.
 2. **The UI computes no engineering geometry.** It checks only that a number is a finite decimal
    and that required choices (profile) are made, then forwards the trimmed text. Positive sizes,

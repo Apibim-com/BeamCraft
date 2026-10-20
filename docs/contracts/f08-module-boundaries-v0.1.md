@@ -11,9 +11,9 @@ changes F08 portability policy only; frozen F04/F06 contracts are not edited.
 
 This document fixes where the code of each contract area lives, which way dependencies point,
 which crates exist now and which are created later by their own tasks. It consumes the
-[F04 model and command contract](model-and-commands-v0.1.md) (freeze candidate), the
-[F05 worker protocol](worker-protocol-v0.1.md) and the
-[F06 geometry and viewport contract](geometry-contract-v0.1.md) (both drafts) and the F07
+[F04 model and command contract](f04-model-and-commands-v0.1.md) (freeze candidate), the
+[F05 worker protocol](f05-worker-protocol-v0.1.md) and the
+[F06 geometry and viewport contract](f06-geometry-contract-v0.1.md) (both drafts) and the F07
 fixtures. It changes none of their semantics. U05 now adds immutable byte storage and its pure
 digest module; paths marked `planned` remain reservations created by their named tasks.
 

@@ -15,6 +15,7 @@ Thanks for helping. Humans and AI agents follow the same rules.
    cargo clippy --workspace --all-targets -- -D warnings
    cargo test --workspace
    ```
+   The full list of CI checks is in [`docs/development.md`](docs/development.md).
 4. Add a test for new behaviour. For a bug fix, confirm the test fails without the fix.
 5. Open a PR with the template filled in. CI must be green.
 

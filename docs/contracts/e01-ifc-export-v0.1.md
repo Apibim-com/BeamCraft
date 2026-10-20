@@ -16,17 +16,17 @@ a Level concept) are specified in section 19.
 
 ### 1.1 Relation to other contracts
 
-- [F04](model-and-commands-v0.1.md) (frozen 0.1.0): identities (section 2), units and caps
+- [F04](f04-model-and-commands-v0.1.md) (frozen 0.1.0): identities (section 2), units and caps
   (section 3), quantity statuses (section 5) and the 23 error codes (section 8). E01 changes
   nothing there and adds no error code. Dependencies D1 and D2 (section 19) need F04 amendments
   that are proposed there, not applied.
-- [F06](geometry-contract-v0.1.md) (frozen 0.1.0): the canonical box mesh and its face order
+- [F06](f06-geometry-contract-v0.1.md) (frozen 0.1.0): the canonical box mesh and its face order
   (section 6), the quantity definitions (section 8), the key and signature rules (section 7) and
   the `GEO_` code table, which is the model for the `IFC_` table of section 13.
-- [F10](domain-vocabulary-v0.1.md) (draft): the closed element registry (`plate`, `beam`, `column`
+- [F10](f10-domain-vocabulary-v0.1.md) (draft): the closed element registry (`plate`, `beam`, `column`
   implemented, ten kinds reserved), unknown-content preservation, the validation envelope and
   its ordering (sections 6.3 and 6.4). Its section 8 already names E01.
-- [Module boundaries (F08)](module-boundaries-v0.1.md): the layering that section 15.1 extends with
+- [Module boundaries (F08)](f08-module-boundaries-v0.1.md): the layering that section 15.1 extends with
   proposed rows (not applied).
 - P03 ([design](../design/p03-straight-member.md)), P04 ([design](../design/p04-quantities-update.md))
   and P02.2 ([design](../design/p02-2-section-properties.md)): the committed members, the stored
@@ -880,7 +880,7 @@ outputs; the exit code follows the existing CLI convention.
 
 ## 16. Acceptance cases
 
-[The case file](ifc-export-cases-v0.1.json) holds 105 original logical acceptance
+[The case file](../../tests/fixtures/contracts/e01-ifc-export-cases-v0.1.json) holds 105 original logical acceptance
 descriptions: 52 positive and 53 negative, with stable IDs `E01-POS-nn` and `E01-NEG-nn`, and
 78 rules `IFCX-<FAMILY>-<NNN>` of which every one is exercised by at least one case. A
 negative case is one where the rule fires: an element is exported with a listed loss, a warning is

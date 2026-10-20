@@ -14,9 +14,8 @@ publish = false
 name = "beamcraft-ui"
 path = "src/main.rs"
 
-# Pins follow docs/audits/ui-stack-audit-v0.1.md: default features off, so `default_fonts`
-# (Ubuntu/Bitstream licences) is never enabled; the UI font is the admitted Inter read at run
-# time from assets/fonts/inter. The PdfCraft vendor patches and craft-libs are not used.
+# Exact pins. Default features off, so egui's `default_fonts` (Ubuntu/Bitstream licences) is
+# never enabled; the UI font is the admitted Inter read at run time from assets/fonts/inter.
 # `accesskit` is off: on Linux it pulls zbus 5 crates (zbus_names, zvariant, zvariant_derive)
 # that RustSec now flags as unmaintained; re-enabling it is an owner decision on those advisories.
 [dependencies]

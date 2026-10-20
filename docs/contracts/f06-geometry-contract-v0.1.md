@@ -10,7 +10,7 @@ claim kernel acceptance or K0.
 This original contract fixes the logical interface between the engine and any geometry kernel, and
 between the engine and any viewport or query consumer. It defines what goes in, what comes out,
 which numbers are bounded, which identifiers are stable and which results may be called current. It
-describes no algorithm and no code. [Acceptance descriptions](geometry-contract-cases-v0.1.json) are
+describes no algorithm and no code. [Acceptance descriptions](../../tests/fixtures/contracts/f06-geometry-contract-cases-v0.1.json) are
 future tests, not runnable fixtures. No kernel, mesh, query or viewport exists, and no statement
 here is verified by a test.
 
@@ -22,11 +22,11 @@ it needs a reviewed amendment (section 12), not a local workaround.
 
 **Relation to other documents.**
 
-- [F04 model and command contract 0.1.0](model-and-commands-v0.1.md) (frozen) owns
+- [F04 model and command contract 0.1.0](f04-model-and-commands-v0.1.md) (frozen) owns
   identities, units, input caps, error codes (its section 8), quantity statuses (its section 5) and
   the open items this contract takes over (section 4 here). F06 never weakens an F04 invariant and
   never widens an F04 cap.
-- [F05 worker protocol 0.1.0](worker-protocol-v0.1.md) (draft) is consumed only for the host
+- [F05 worker protocol 0.1.0](f05-worker-protocol-v0.1.md) (draft) is consumed only for the host
   boundary: attachments, limits and cancellation semantics. F06 does not change it. Mesh bytes
   travel as opaque `u8` attachments, so no typed element negotiation is needed (section 6).
 - The first-scope requirements 0.1.0 (PR #10) cover a rectangular plate, a straight member,
@@ -970,7 +970,7 @@ host may report: `CANCELLED` only when the discard is proven.
 
 ## 11. Acceptance cases
 
-The [case file](geometry-contract-cases-v0.1.json) holds 112 logical cases: 59 positive
+The [case file](../../tests/fixtures/contracts/f06-geometry-contract-cases-v0.1.json) holds 112 logical cases: 59 positive
 (`F06-POS-01` to `F06-POS-59`) and 53 negative (`F06-NEG-01` to `F06-NEG-53`). These are future
 tests;
 acceptance needs a real kernel, real buffers and independent readers. Numeric expectations use exact

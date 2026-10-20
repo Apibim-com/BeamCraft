@@ -35,7 +35,8 @@ cargo run -p beamcraft-cli -- --version
 
 CI (`.github/workflows/ci.yml`) runs the same on Windows and Linux, plus a wasm32 check of the
 three pure crates (`beamcraft-geom`, `beamcraft-model`, `beamcraft-kernel`) and `cargo deny`.
-A change is not done until these pass.
+A change is not done until these pass. The full list, with tools and PowerShell notes, is in
+`docs/development.md`.
 
 ## Conventions
 

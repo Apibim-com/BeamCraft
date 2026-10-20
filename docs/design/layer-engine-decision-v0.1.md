@@ -13,11 +13,11 @@ The product-path aim is no Python and no C++. Variant A, the official SDK worker
 an explicitly selected fallback and an external test oracle where available. Selection does not
 admit a production dependency or establish runtime readiness.
 
-The [architecture](../architecture.md) records this direction. The [F03 SDK
-audit](../audits/openusd-26.8.md) stays conditional for fallback/oracle use; its package is not
+The [architecture](../architecture.md) records this direction. The F03 SDK
+audit (since removed) was conditional for fallback/oracle use; its package was not
 production-approved. F04 and F06 were frozen at 0.1.0 on 2026-10-16. The [F05
-protocol](../contracts/worker-protocol-v0.1.md) and [F08
-boundaries](../contracts/module-boundaries-v0.1.md) need reviewed alignment before integration;
+protocol](../contracts/f05-worker-protocol-v0.1.md) and [F08
+boundaries](../contracts/f08-module-boundaries-v0.1.md) need reviewed alignment before integration;
 this documentation task changes neither contract. **Topology decided by the owner on 2026-10-16:**
 the layer engine runs in a separate Rust process under F05 (section 9; integration rules in the
 [USD process integration addendum](usd-process-integration-v0.1.md)).

@@ -3,8 +3,8 @@
  "contract_version": "0.1.0",
  "status": "draft, not frozen",
  "role": "original logical acceptance descriptions; not an engine, USD or module fixture",
- "contract": "domain-vocabulary-v0.1.md",
- "f04_contract": "model-and-commands-v0.1.md",
+ "contract": "f10-domain-vocabulary-v0.1.md",
+ "f04_contract": "f04-model-and-commands-v0.1.md",
  "stages": {
   "C": "client, before send",
   "H": "host, on apply",

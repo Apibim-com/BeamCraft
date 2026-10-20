@@ -99,13 +99,6 @@ allow-wildcard-paths = true
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
-# V01.0 (docs/audits/ui-stack-audit-v0.1.md): admit storytold/craft-libs only at
-# rev 83bf4cb25c01ed46e7645c4172974239868aaf06, and only for craft-ui and craft-quit.
-# cargo-deny 0.20.2 matches this URL, not the revision. required-git-spec forces a
-# rev pin; it does not bind the URL to that commit. Do not depend on craft-print,
-# craft-pdf, craft-cms, or this repo's vendored PDF trees under this entry.
-allow-git = ["https://github.com/storytold/craft-libs"]
-required-git-spec = "rev"
 
 [advisories]
 yanked = "warn"

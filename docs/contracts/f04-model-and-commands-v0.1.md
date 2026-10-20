@@ -12,7 +12,7 @@ and 156 unique IDs; source hashes were independently checked against its pinned 
 an input to this contract's amendments. The first-scope requirements 0.1.0
 (rectangular plate, straight member, identities, units, rigid placement, declared failures) were
 integrated in PR #10. K0 is not passed. The [F06 geometry
-contract](geometry-contract-v0.1.md) is frozen 0.1.0 and nothing in it is implemented; task
+contract](f06-geometry-contract-v0.1.md) is frozen 0.1.0 and nothing in it is implemented; task
 F04.3 applied the amendments it proposed to this contract (section 12).
 
 This specifies domain semantics before F05 transport, F06 geometry and F08 module implementation. No
@@ -82,7 +82,7 @@ These are original initial operating caps, not vendor tolerances or promises of 
 | Single string | At most 4096 UTF-8 bytes unless a narrower field cap applies |
 | Element label | 1–256 UTF-8 bytes; reject control characters U+0000–001F and U+007F |
 | Plate thickness/edge / supported member-axis length | Greater than zero and at most 1,000,000 mm |
-| Minimum nonzero dimension (draft, to be validated by G04 and fixtures) | Plate thickness/edge lengths, section dimensions and member-axis length are at least `eps_geom = max(0.001 mm, 2^-22 * L)`, inclusive; a value above zero and below eps_geom is `INVALID_ARGUMENT` ([F06 section 4](geometry-contract-v0.1.md#4-tolerance-and-degeneracy-policy-g-06-draft)) |
+| Minimum nonzero dimension (draft, to be validated by G04 and fixtures) | Plate thickness/edge lengths, section dimensions and member-axis length are at least `eps_geom = max(0.001 mm, 2^-22 * L)`, inclusive; a value above zero and below eps_geom is `INVALID_ARGUMENT` ([F06 section 4](f06-geometry-contract-v0.1.md#4-tolerance-and-degeneracy-policy-g-06-draft)) |
 | Section dimensions (draft, to be validated by G04 and fixtures) | At most 1,000,000 mm; above that is `LIMIT_EXCEEDED` (F06 section 2) |
 | Local size L / contour radius D | Plate L = D <= 2,000,000 mm; member L = max(axis length, section half-diagonal) <= 1,000,000 mm; see definition below |
 | Plate contour count / roll angle (assumptions) | 3–1024 points; `abs(roll_rad) <= 6.283185307179586` rad |
@@ -262,7 +262,7 @@ section anchor below), P-3a and P-3b, and froze the contract; P-3c is recorded a
   `UNSUPPORTED_PROPERTY`. An omitted create roll means zero; an omitted patch roll leaves the old
   value unchanged. Authored roll is preserved, without modulo reduction or hidden orientation
   presets. The tolerance for "parallel" is F06's draft policy ([F06 section
-  4](geometry-contract-v0.1.md#4-tolerance-and-degeneracy-policy-g-06-draft), rule 2); an exactly
+  4](f06-geometry-contract-v0.1.md#4-tolerance-and-degeneracy-policy-g-06-draft), rule 2); an exactly
   vertical axis always uses the column rule. The roll is discontinuous at that threshold, which is
   retained as the default-frame rule; continuity remains open in F06.
 - **Owner confirmation, 2026-10-16.** P-1a to P-1d (contour limits, winding rejection without
@@ -329,7 +329,7 @@ inspected/preserved, but cannot be mutated without an explicit reviewed migratio
 
 ### Operation records (amendment A-2)
 
-Owner-approved 2026-10-19 (decisions D-1, D-4, D-5; [F06 A-2](geometry-contract-v0.1.md#12-freeze-status-and-open-questions)).
+Owner-approved 2026-10-19 (decisions D-1, D-4, D-5; [F06 A-2](f06-geometry-contract-v0.1.md#12-freeze-status-and-open-questions)).
 Text marked **proposal for owner review** goes beyond what the owner decided.
 
 An engineering operation of a plate is an owned **operation record**, replacing the A04 pilot's two
@@ -404,7 +404,7 @@ previous value; consumers cannot treat it as current. `unknown`/`unsupported` ha
 value. A declared external value is a separate record. No bounding-box volume, approximate mesh or
 missing density is promoted to exact mass/volume. Amendment A-2: a volume taken from a certified
 closed shell is `current` and carries its enclosure width ([F06 section
-8](geometry-contract-v0.1.md#8-quantities)); an element in the `degenerate` state (section 4,
+8](f06-geometry-contract-v0.1.md#8-quantities)); an element in the `degenerate` state (section 4,
 proposal for owner review) has every quantity `unknown`.
 
 | Change | Dependencies and invalidation |
@@ -420,7 +420,7 @@ the physical material: a change of density value alone invalidates mass only, an
 presentation input. Display references and physical-material references stay separate (section 4).
 
 F06 defines the canonical numeric encoding and the key preimages ([F06 section
-7](geometry-contract-v0.1.md#7-transforms-and-measurement-keys), frozen 0.1.0); P04 still owns
+7](f06-geometry-contract-v0.1.md#7-transforms-and-measurement-keys), frozen 0.1.0); P04 still owns
 signature storage. A blob digest identifies saved bytes; it is not the signature of normalized
 engineering inputs. No arbitrary dimension rounding is allowed to manufacture shared hashes.
 
@@ -584,7 +584,7 @@ first.
 
 ## 10. Acceptance handoff and provenance
 
-[Original command cases](model-command-cases-v0.1.json) define positive and negative acceptance
+[Original command cases](../../tests/fixtures/contracts/f04-model-command-cases-v0.1.json) define positive and negative acceptance
 descriptions. They are not a runnable model, geometry fixture, engine mock or evidence of a working
 command dispatcher. No placeholder blob is offered as an actual saved resource. Case IDs are
 proposed future tests; acceptance requires real API -> CLI -> USD -> independent reader. There are

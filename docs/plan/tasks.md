@@ -17,14 +17,14 @@ Status as of 2026-10-20, `master` at `d456670`. New tasks are added here in a do
 |----|------|------------|--------|------------|--------|
 | F01 / S | Integration baseline | — | Audit of the base commit, licence and rules; list of roadmap discrepancies | Exact base SHA, clean state, discrepancy matrix | done |
 | F02 / M | Requirements map | — | Index requirement → source → gate → test; owner decisions above the specification | Every source classified; unknowns marked; IFC import not in the MVP | done, kept outside the repo |
-| F03 / M | OpenUSD distribution audit | — | Audit of the SDK version, TOST, dependencies, packaging and platforms | Reproducible delivery option and its conditions; no exception added unasked | done ([audit](../audits/openusd-26.8.md)) |
-| F04 / M | [Model and command contract](../contracts/model-and-commands-v0.1.md) | F01, F02, F09 | UUID and path, parameter types, schema version, errors, base revision, read/write dependencies, create/update/delete | Contract and negative cases agreed; no hidden JSON model; units and limits set | frozen 0.1.0 |
-| F05 / M | [Private USD-worker protocol](../contracts/worker-protocol-v0.1.md) | F04 | Versioned requests and responses, capabilities, timeouts, cancellation, limits, revision token | Same contract for CLI and host; private IPC without a listening socket | draft (SDK fallback path) |
-| F06 / M | [Geometry and viewport contract](../contracts/geometry-contract-v0.1.md) | F04 | Kernel inputs, results and diagnostics, FeatureId, mesh buffers, transforms, query API | Shape, world measurement and presentation have separate keys; topology and bounds bounded | frozen 0.1.0, amendment A-2 |
+| F03 / M | OpenUSD distribution audit | — | Audit of the SDK version, TOST, dependencies, packaging and platforms | Reproducible delivery option and its conditions; no exception added unasked | done; superseded by F11 variant C, audit removed |
+| F04 / M | [Model and command contract](../contracts/f04-model-and-commands-v0.1.md) | F01, F02, F09 | UUID and path, parameter types, schema version, errors, base revision, read/write dependencies, create/update/delete | Contract and negative cases agreed; no hidden JSON model; units and limits set | frozen 0.1.0 |
+| F05 / M | [Private USD-worker protocol](../contracts/f05-worker-protocol-v0.1.md) | F04 | Versioned requests and responses, capabilities, timeouts, cancellation, limits, revision token | Same contract for CLI and host; private IPC without a listening socket | draft (SDK fallback path) |
+| F06 / M | [Geometry and viewport contract](../contracts/f06-geometry-contract-v0.1.md) | F04 | Kernel inputs, results and diagnostics, FeatureId, mesh buffers, transforms, query API | Shape, world measurement and presentation have separate keys; topology and bounds bounded | frozen 0.1.0, amendment A-2 |
 | F07 / M | Original synthetic fixtures | — | Generator and manifest of our own test bodies, provenance, analytical references | No vendor asset; references separate from unverified cases; stable fixture IDs | done (`tests/fixtures/f07`) |
-| F08 / M | [Module boundaries](../contracts/module-boundaries-v0.1.md) | F04, F05, F06, F07 | Crate layout and allowed dependencies; CI targets | Pure crates pass the WASM check; native host isolated; checker in CI | draft; checker in CI |
+| F08 / M | [Module boundaries](../contracts/f08-module-boundaries-v0.1.md) | F04, F05, F06, F07 | Crate layout and allowed dependencies; CI targets | Pure crates pass the WASM check; native host isolated; checker in CI | draft; checker in CI |
 | F09 / M | Clean-room separation for the kernel | F01, F02 | Admission rules, requirement provenance, a package without source-derived material | Independent review of the specification passed | done, then retired by decision 2026-10-20 |
-| F10 / M | [Domain vocabulary and discipline modules](../contracts/domain-vocabulary-v0.1.md) | F04, F08 | Common element types and attributes, namespaces, ownership, Opening/hosted-in relations, rule catalogue, discipline-module contract | Steel is the only implemented module; every rule has a positive and a negative case | draft |
+| F10 / M | [Domain vocabulary and discipline modules](../contracts/f10-domain-vocabulary-v0.1.md) | F04, F08 | Common element types and attributes, namespaces, ownership, Opening/hosted-in relations, rule catalogue, discipline-module contract | Steel is the only implemented module; every rule has a positive and a negative case | draft |
 | F11 / M | [USD layer-engine decision](../design/layer-engine-decision-v0.1.md) | F03, F05, F08 | Comparison of SDK worker, own subset, `openusd` crate and hybrid | Recommendation marked as a proposal to the owner | done: variant C chosen |
 
 ## N: spikes and evaluations
@@ -145,7 +145,7 @@ Time-boxed research with a report; never a production gate.
 
 | ID | Task | Depends on | Result | Acceptance | Status |
 |----|------|------------|--------|------------|--------|
-| E01 / M | [Own IFC export contract](../contracts/ifc-export-v0.1.md) | F02, P03, P04 | IFC version and subset, stable GlobalId mapping, own Rust writer | Mapping to the public specification and a list of losses | draft |
+| E01 / M | [Own IFC export contract](../contracts/e01-ifc-export-v0.1.md) | F02, P03, P04 | IFC version and subset, stable GlobalId mapping, own Rust writer | Mapping to the public specification and a list of losses | draft |
 | E02 / M | Minimal IFC exporter | E01, P03, P04 | Beams, columns and plates with placement, material, shape and a loss report | End to end; independent schema and geometry validation | merged; independent validation open |
 | E03 / M | BOM and reports | A01, P04, A09 | BOM of the accepted revision for supported parts | No double count; unknown and stale shown; reproducible | merged |
 | E04 / S | IFC import study | F02, E01 | Import options and the boundary with read-only references | No conversion without an owner decision | open |

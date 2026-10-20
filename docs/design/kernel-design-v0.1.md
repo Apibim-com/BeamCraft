@@ -8,9 +8,9 @@ validation prevents independently verifying HEAD. This is neither a contract fre
 
 ## 1. Scope and status
 
-The inputs are [F06 0.1.0](../contracts/geometry-contract-v0.1.md), its
-[83 acceptance descriptions](../contracts/geometry-contract-cases-v0.1.json),
-[F04 0.1.0](../contracts/model-and-commands-v0.1.md) and the first-scope requirements 0.1.0 with
+The inputs are [F06 0.1.0](../contracts/f06-geometry-contract-v0.1.md), its
+[83 acceptance descriptions](../../tests/fixtures/contracts/f06-geometry-contract-cases-v0.1.json),
+[F04 0.1.0](../contracts/f04-model-and-commands-v0.1.md) and the first-scope requirements 0.1.0 with
 their cases (PR #10). F04 and F06 were frozen at 0.1.0 on 2026-10-16 (P-1, P-2 and P-3 confirmed by
 the owner; P-3c is erratum E-2).
 This design identifies contradictions; it does not silently repair those contracts.

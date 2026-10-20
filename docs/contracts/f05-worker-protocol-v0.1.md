@@ -3,9 +3,9 @@
 ## 1. Status and scope
 
 Status: **draft 0.1.0, not frozen; nothing implemented**. Date: 2026-10-14.
-This original contract consumes [F04 version 0.1.0](model-and-commands-v0.1.md), specifically
+This original contract consumes [F04 version 0.1.0](f04-model-and-commands-v0.1.md), specifically
 sections 2, 3, 6, 7 and 8. The same contract serves the CLI and native engine host.
-[Acceptance descriptions](worker-protocol-cases-v0.1.json) are future tests, not runnable fixtures.
+[Acceptance descriptions](../../tests/fixtures/contracts/f05-worker-protocol-cases-v0.1.json) are future tests, not runnable fixtures.
 
 The Rust host owns engineering validation, authorization, transactions and recorded outcomes.
 One local worker owns one live USD stage and performs composition and serialization only.

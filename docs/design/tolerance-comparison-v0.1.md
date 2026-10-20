@@ -11,8 +11,8 @@ Status: documentation only, 2026-10-15. F04 remains a freeze candidate at contra
 F06 remains a draft. Nothing is implemented or admitted by this report. Constants are **confirmed by
 the owner as first-slice values; draft, to be validated by fixtures**.
 
-This report consumes [F04](../contracts/model-and-commands-v0.1.md),
-[F06](../contracts/geometry-contract-v0.1.md), the first-scope requirements 0.1.0 (PR #10) and [kernel design](kernel-design-v0.1.md). The
+This report consumes [F04](../contracts/f04-model-and-commands-v0.1.md),
+[F06](../contracts/f06-geometry-contract-v0.1.md), the first-scope requirements 0.1.0 (PR #10) and [kernel design](kernel-design-v0.1.md). The
 requirements and design retain their earlier policies. Only the two contracts and their cases apply the
 owner amendment here.
 
@@ -325,7 +325,7 @@ crate exists. Copyleft and weak-copyleft third-party packages, including MPL-2.0
 explicit owner exception for each package. Audited dependency use does not authorize copying
 implementation text or restricted commercial-product material.
 
-**module-boundaries-v0.1.md section 3, after the empty-list statement:**
+**f08-module-boundaries-v0.1.md section 3, after the empty-list statement:**
 
 > The owner decision of 2026-10-15 prefers suitable audited permissive Rust math and geometry
 crates. It does not populate this allowlist. Add each approved domain dependency here and update
@@ -412,9 +412,9 @@ contour or roll kernel. Tables and code blocks are exempt from prose wrapping.
 
 Owner decision: "Scale the tolerance by coordinate magnitude." This accepts round-2 open item 2
 for the large-coordinate part of A5 only. The exact operative definition is in
-[F04 section 3](../contracts/model-and-commands-v0.1.md#3-units-types-and-initial-limits) and
+[F04 section 3](../contracts/f04-model-and-commands-v0.1.md#3-units-types-and-initial-limits) and
 [F06 section
-4](../contracts/geometry-contract-v0.1.md#4-tolerance-and-degeneracy-policy-g-06-draft):
+4](../contracts/f06-geometry-contract-v0.1.md#4-tolerance-and-degeneracy-policy-g-06-draft):
 
 > `eps_geom = max(0.001 mm, 2^-22 * L)`.
 
@@ -489,7 +489,7 @@ not execution of the logical acceptance descriptions or evidence of a working ge
 
 | Command | Exact result |
 |---------|--------------|
-| `python -c "import json; [json.load(open(p, encoding='utf-8')) for p in ('docs/contracts/model-command-cases-v0.1.json','docs/contracts/geometry-contract-cases-v0.1.json')]; print('json ok')"` | Exit 0; `json ok` |
+| `python -c "import json; [json.load(open(p, encoding='utf-8')) for p in ('tests/fixtures/contracts/f04-model-command-cases-v0.1.json','tests/fixtures/contracts/f06-geometry-contract-cases-v0.1.json')]; print('json ok')"` | Exit 0; `json ok` |
 | `git diff --check` | Exit 129; `warning: Not a git repository. Use --no-index to compare two paths outside a working tree`; no usable diff check. Earlier `git status` refused dubious ownership; no workaround attempted |
 | `cargo fmt --all -- --check` | Exit 0; no output |
 | `cargo clippy --workspace --all-targets -- -D warnings` | Exit 0; no warnings |

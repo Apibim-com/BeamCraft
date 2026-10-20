@@ -27,7 +27,7 @@ Open questions are at the end.
 
 ## 2026-10-19
 
-**F06 amendment A-2** (recorded in the [F06 contract](../contracts/geometry-contract-v0.1.md) and
+**F06 amendment A-2** (recorded in the [F06 contract](../contracts/f06-geometry-contract-v0.1.md) and
 [`g08-f06-a2-notes.md`](../design/g08-f06-a2-notes.md)):
 
 | # | Decision |

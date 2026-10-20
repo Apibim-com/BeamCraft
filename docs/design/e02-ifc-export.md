@@ -4,7 +4,7 @@ Date: 2026-10-19. Status: **experimental vertical slice; E02 acceptance is limit
 below.** Branch `feat/e02-ifc-export`, based on `origin/master` `11a2139`.
 
 This implements the writer, the headless command and the report of the E01 contract
-([`docs/contracts/ifc-export-v0.1.md`](../contracts/ifc-export-v0.1.md), decisions Q-1 to Q-13
+([`docs/contracts/e01-ifc-export-v0.1.md`](../contracts/e01-ifc-export-v0.1.md), decisions Q-1 to Q-13
 accepted, dependencies D1 and D2 in `master`). Behaviour comes only from that contract and the
 public buildingSMART IFC4 specification; no code, schema listing, example file or naming list of
 any IFC library or commercial product was used (`AGENTS.md` sections 1 and 2).

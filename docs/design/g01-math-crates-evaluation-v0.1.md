@@ -355,7 +355,7 @@ robust.workspace = true
 other exception is proposed. Integration must update root Cargo.lock normally and repeat
 cargo-deny/target checks; this spike deliberately did not apply those changes.
 
-In docs/contracts/module-boundaries-v0.1.md section 3, replace the paragraph after its heading
+In docs/contracts/f08-module-boundaries-v0.1.md section 3, replace the paragraph after its heading
 and empty table with this exact text:
 
 ```markdown

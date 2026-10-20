@@ -3,7 +3,7 @@
 Date: 2026-10-18. Status: **experimental vertical slice; D1 and D2 acceptance is limited as listed
 below.** Branch `feat/d1-d2-project-level`, based on `origin/master` `5c54c0a`.
 
-These are the two model prerequisites of the IFC export (`docs/contracts/ifc-export-v0.1.md`
+These are the two model prerequisites of the IFC export (`docs/contracts/e01-ifc-export-v0.1.md`
 section 19, owner decisions Q-3 and Q-7). The export itself (E02) is out of scope: nothing here
 writes IFC.
 

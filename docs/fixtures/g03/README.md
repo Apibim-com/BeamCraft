@@ -59,7 +59,7 @@ numerical values or diagnostics for an API that does not exist.
 ## Derivations and citations for every expectation
 
 `F06:N` in a row cites section N of the frozen
-[F06 geometry contract](../../contracts/geometry-contract-v0.1.md); the following table resolves
+[F06 geometry contract](../../contracts/f06-geometry-contract-v0.1.md); the following table resolves
 the mathematical formula labels in the same row. The normative order is F06, including when older
 G04 design examples retain superseded tolerances. No production output is used as an expectation.
 

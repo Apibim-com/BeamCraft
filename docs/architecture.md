@@ -38,17 +38,32 @@ Dependencies point one way, down the table. `beamcraft-boundaries` checks this i
 `geom`, `model` and `kernel` are pure: no file system, OS or runtime, and they build for WASM. The
 rest is desktop-native.
 
-```text
-                    beamcraft-ui ──runs──> beamcraft (CLI) <── scripts, agents, the user
-                                               │
-           ┌───────────────┬──────────────┬────┴─────────┬─────────────┐
-           ▼               ▼              ▼              ▼             ▼
-         host           engine       layer-engine       ifc        protocol
-           │               │              │
-           │               ├──> kernel    │
-           ▼               ▼      │       ▼
-         model <───────────┴──────┴─── model ──> geom
+```mermaid
+flowchart TD
+    user(["user, scripts, agents"]) --> cli
+    ui["beamcraft-ui<br/>window"] -. "runs as a process" .-> cli
+    cli["beamcraft-cli<br/>every command"]
+
+    cli --> host
+    cli --> engine
+    cli --> le
+    cli --> ifc
+    ui --> engine
+
+    host["host<br/>store, commit, journal"] --> engine
+    host --> protocol
+    engine["engine<br/>applies commands"] --> kernel
+    le["layer-engine<br/>USD read/write"] --> model
+    ifc["ifc<br/>IFC4 writer"] --> model
+    protocol["protocol<br/>process wire rules"] --> model
+    kernel["kernel<br/>geometry"] --> model
+    engine --> model
+    model["model<br/>ids, commands, rules"] --> geom["geom<br/>math"]
 ```
+
+Arrows point from a crate to what it uses.
+Some direct edges to `model` and `geom` are left out for readability; the exact table is in the
+[module boundaries](contracts/f08-module-boundaries-v0.1.md).
 
 ## What happens on a command
 
@@ -223,10 +238,10 @@ computed from; when the inputs change, the stored value reads as `stale`.
 
 ## Where to read more
 
-- [Model and commands contract](contracts/model-and-commands-v0.1.md): identities, commands,
+- [Model and commands contract](contracts/f04-model-and-commands-v0.1.md): identities, commands,
   errors, limits.
-- [Geometry and viewport contract](contracts/geometry-contract-v0.1.md): kernel inputs, meshes,
+- [Geometry and viewport contract](contracts/f06-geometry-contract-v0.1.md): kernel inputs, meshes,
   frames, keys, picking.
-- [Module boundaries](contracts/module-boundaries-v0.1.md): the exact crate table CI enforces.
-- [IFC export contract](contracts/ifc-export-v0.1.md): what goes to IFC and what is lost.
+- [Module boundaries](contracts/f08-module-boundaries-v0.1.md): the exact crate table CI enforces.
+- [IFC export contract](contracts/e01-ifc-export-v0.1.md): what goes to IFC and what is lost.
 - [`docs/development.md`](development.md): building and testing.

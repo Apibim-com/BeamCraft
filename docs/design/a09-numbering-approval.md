@@ -184,10 +184,10 @@ Tests (all through real code, the CLI tests through the binary):
 
 ## Contract amendments proposed (not edited, F04 is frozen 0.1.0)
 
-* `docs/contracts/module-boundaries-v0.1.md` row "Numbering preview": add the `numbering-approve`
+* `docs/contracts/f08-module-boundaries-v0.1.md` row "Numbering preview": add the `numbering-approve`
   and `numbering-status` commands, `beamcraft_engine::numbering_approval` and
   `beamcraft_cli::numbering_approval`, and replace "no stored numbers" by "approved marks stored as
   `steel:numbering:*` properties (A09, experimental)".
-* `docs/contracts/model-and-commands-v0.1.md` section 9 names approved-number invalidation as open:
+* `docs/contracts/f04-model-and-commands-v0.1.md` section 9 names approved-number invalidation as open:
   this note is the A09 resolution (stale = the proposal would differ; move, rename without name
   comparison and view changes never invalidate); section 4's change list gains `Mark`.

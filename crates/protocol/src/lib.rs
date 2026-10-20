@@ -7,7 +7,7 @@
 //! the 44-byte binary attachment prefix, the negotiable limits with their maxima, the bundle size
 //! budget and the `IPC_` transport codes with their F04 mapping. It performs no I/O, owns no
 //! process or pipe, parses no JSON and spawns nothing; the native host does that (see
-//! `docs/contracts/module-boundaries-v0.1.md`). Every decoder validates before it trusts a length,
+//! `docs/contracts/f08-module-boundaries-v0.1.md`). Every decoder validates before it trusts a length,
 //! uses checked arithmetic and never indexes or slices by an input-derived position.
 //!
 //! U04 addition: the original framing-only description above predates `json` and `message`,

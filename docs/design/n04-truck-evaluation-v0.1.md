@@ -31,7 +31,7 @@ Expected behaviour comes from public mathematics: OpenStax Calculus Volume 3
 [5.4, triple integrals](https://openstax.org/books/calculus-volume-3/pages/5-4-triple-integrals),
 [6.8, divergence theorem](https://openstax.org/books/calculus-volume-3/pages/6-8-the-divergence-theorem),
 and [Euler characteristic](https://mathworld.wolfram.com/EulerCharacteristic.html).
-[F06 sections 3, 4, 6 and 10](../contracts/geometry-contract-v0.1.md) supply result,
+[F06 sections 3, 4, 6 and 10](../contracts/f06-geometry-contract-v0.1.md) supply result,
 tolerance, mesh and resource policies. Original G03 rational references are only
 cross-checks of the same box formulas. Public truck API documentation was used to
 call the library, never as a source of expected geometry. No third-party source,

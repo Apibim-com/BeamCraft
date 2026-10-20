@@ -3,10 +3,10 @@
  "contract_version": "0.1.0",
  "status": "draft, not frozen; owner decisions Q-1 to Q-13 of 2026-10-17 applied",
  "role": "original logical acceptance descriptions for the E01 IFC export contract; not an exporter, IFC file or USD fixture",
- "contract": "ifc-export-v0.1.md",
- "f04_contract": "model-and-commands-v0.1.md",
- "f06_contract": "geometry-contract-v0.1.md",
- "f10_contract": "domain-vocabulary-v0.1.md",
+ "contract": "e01-ifc-export-v0.1.md",
+ "f04_contract": "f04-model-and-commands-v0.1.md",
+ "f06_contract": "f06-geometry-contract-v0.1.md",
+ "f10_contract": "f10-domain-vocabulary-v0.1.md",
  "polarity": {
   "positive": "the rule is satisfied or the described export succeeds as stated",
   "negative": "the rule fires: an element is exported with a listed loss, a warning is raised, or the request is refused with the listed code"

@@ -18,12 +18,12 @@ other element kind is `reserved` vocabulary: a name and a promise of shape, with
 
 ### 1.1 Relation to other contracts
 
-- [F04](model-and-commands-v0.1.md): F10 takes identity (section 2), limits (section 3), authored
+- [F04](f04-model-and-commands-v0.1.md): F10 takes identity (section 2), limits (section 3), authored
   fields (section 4), commands (section 7) and the 23 error codes (section 8). It changes nothing:
   no identity, limit, command or code is changed or added.
-- [F06](geometry-contract-v0.1.md): F10 takes `ElementId` as the root of every FeatureId
+- [F06](f06-geometry-contract-v0.1.md): F10 takes `ElementId` as the root of every FeatureId
   (section 5). Geometry stays in the kernel. It changes nothing and adds no collision evaluation.
-- [F08](module-boundaries-v0.1.md): F10 takes the crate layers and the one-way dependency rule. It
+- [F08](f08-module-boundaries-v0.1.md): F10 takes the crate layers and the one-way dependency rule. It
   applies nothing; section 10 lists proposed edits.
 
 F05 (worker protocol) is not an input. Real-time synchronisation is **not designed here**: section 6
@@ -778,7 +778,7 @@ collision evaluation.
 
 ## 9. Acceptance cases
 
-[The case file](domain-vocabulary-cases-v0.1.json) holds original acceptance descriptions. They
+[The case file](../../tests/fixtures/contracts/f10-domain-vocabulary-cases-v0.1.json) holds original acceptance descriptions. They
 are proposed future tests, **not** a runnable engine, USD fixture or module mock.
 
 There are 161 logical cases: 79 positive and 82 negative. 114 are
@@ -802,7 +802,7 @@ code; `primary_code` follows the unavailable-input precedence of sections 6.3 an
 file uses short logical keys (`kind`, `discipline`, `state`, `stateSeq`, `reason`, `attrs`);
 they stand for the attributes named in sections 2 to 5 and are not USD names. Cases that name an
 `f04_refs` entry
-refer to the [F04 case file](model-command-cases-v0.1.json) and agree with its code.
+refer to the [F04 case file](../../tests/fixtures/contracts/f04-model-command-cases-v0.1.json) and agree with its code.
 
 F04 cases referenced:
 
