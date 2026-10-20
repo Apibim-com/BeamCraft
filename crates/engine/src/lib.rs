@@ -12,7 +12,6 @@
 
 pub mod assembly;
 pub mod bolt;
-pub mod bom;
 pub mod command;
 pub mod copy;
 pub mod element;

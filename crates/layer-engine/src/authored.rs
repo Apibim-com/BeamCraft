@@ -1339,9 +1339,9 @@ mod pin_tests {
 
     #[test]
     fn the_pre_a05_mapping_pin_is_accepted_and_is_not_the_current_one() {
-        // Pinned value: the digest of the descriptor of master with A09, before A05 added the
+        // Pinned value: the digest of the descriptor of master with A07.2, before A05 added the
         // bolt properties and reworded the connection line.
-        let pre_a05 = "PRE_A05_PIN_PLACEHOLDER";
+        let pre_a05 = "fdaf890401a7bf4d8d17eb84ad1901b461ff21f1e7cec1e93f9e71203b83865b";
         assert_eq!(
             Sha256::digest(pre_a05_descriptor().as_bytes())
                 .unwrap()

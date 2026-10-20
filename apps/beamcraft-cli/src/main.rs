@@ -22,7 +22,6 @@ use std::{
 
 mod assembly_cmd;
 mod bolt_cmd;
-mod bom_cmd;
 mod changeset_cmd;
 mod coordinator_cmd;
 mod export_cmd;
@@ -104,6 +103,8 @@ fn main() -> std::process::ExitCode {
         pick_cmd::execute(&args)
     } else if args.first().is_some_and(weld_cmd::handles) {
         weld_cmd::execute(&args)
+    } else if args.first().is_some_and(bolt_cmd::handles) {
+        bolt_cmd::execute(&args)
     } else if args.first().is_some_and(library_cmd::handles) {
         library_cmd::execute(&args)
     } else if args.first().is_some_and(level_cmd::handles) {
