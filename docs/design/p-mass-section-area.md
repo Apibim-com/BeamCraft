@@ -178,10 +178,3 @@ the finished part weighs). Both are available now; the BOM chooses by use.
   (catalogue and computed entries), a plate with holes, a store from before this slice (stale,
   usable, refreshed by an edit) and a wrong record under the current label (still
   `INTEGRITY_ERROR`).
-
-## Roadmap entry (proposed, not applied)
-
-- 2026-10-18: P-Mass: member volume and mass are `area x axis length x density` with the area from
-  the declared catalogue value or the exact closed-form section area; quantities report gross and
-  net (net = gross - measured removed volume; old keys are net); signatures cover the area
-  source; earlier member records read as stale. Experimental slice.

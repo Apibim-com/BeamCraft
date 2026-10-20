@@ -54,7 +54,3 @@ rules, the fingerprint and `engine::copy`.
 - Replay is decided from the head state, not from a stored canonical request (as P04).
 - A rotated placement of a copied member is carried over, not re-validated for the member kernel
   beyond what the source already passed.
-
-## Proposed Roadmap entry
-
-`2026-10-18 P05: copy-element (plates and members; fresh id, shared pinned definitions, same body and mesh digest, optional offset); experimental slice, PR stacked on #66.`

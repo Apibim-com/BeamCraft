@@ -12,9 +12,8 @@ F06 remains a draft. Nothing is implemented or admitted by this report. Constant
 the owner as first-slice values; draft, to be validated by fixtures**.
 
 This report consumes [F04](../contracts/model-and-commands-v0.1.md),
-[F06](../contracts/geometry-contract-v0.1.md), the read-only [first-scope
-package](../history/clean-room/handoff/first-scope-v0.1.md) and [kernel design](kernel-design-v0.1.md). The
-package and design retain their earlier policies. Only the two contracts and their cases apply the
+[F06](../contracts/geometry-contract-v0.1.md), the first-scope requirements 0.1.0 (PR #10) and [kernel design](kernel-design-v0.1.md). The
+requirements and design retain their earlier policies. Only the two contracts and their cases apply the
 owner amendment here.
 
 ## Interpretation and classification
@@ -312,8 +311,7 @@ baseline mesh digest do not change.
   trig; no backend, crate, Git revision or vendor patch is selected in this record.
 - The ifc-lite numbers are supplied facts, not read by this worker. The floor is read as 1e-6 m
   (0.001 mm); the owner should confirm it against the millimetre-file reading (1e-6 mm).
-  Source-exposure admission, contract freeze, fixture validation and design reconciliation
-  remain separate gates.
+  Contract freeze, fixture validation and design reconciliation remain separate gates.
 
 ## Proposed edits to read-only files (not applied)
 
@@ -385,10 +383,8 @@ length floor. Preserve exact rational results; rewrite FS-NEG-QUAT's fourth quat
 w=0.999999 so it remains rejected. Raise the package version and review admission before relying
 on those changes; no current 0.1.0 entry is silently amended.
 
-The earlier ROADMAP progress-log entry and ATTRIBUTION row were applied directly in round 2.
-This local-size amendment does not edit those files; its ROADMAP proposal follows below. UI asset
-and patch
-rows wait for their own original-source audits; the architecture paragraph adds no dependency.
+UI asset and patch rows wait for their own original-source audits; the architecture paragraph adds
+no dependency.
 
 ## Earlier-round checks and delivery (historical)
 
@@ -479,21 +475,6 @@ lists exact digests and actual check results; scratch verification is in ignored
   (W10) remain open. Keep original counterexample arithmetic and conformance/admission gates.
   Update the read-only validation matrix in its own reviewed task, not by this amendment.
 
-### Proposed ROADMAP progress-log entry (exact text, not applied)
-
-```text
-- 2026-10-15: applied the owner local-size tolerance decision to F04/F06, stacked on PR #26:
-  eps_geom = max(0.001 mm, 2^-22 * L), with plate L=D and member L=max(axis length, section
-  half-diagonal), evaluated in the element-local frame under ordered binary64 arithmetic and
-  existing caps. Geometric length minima, coincidence, degeneracy, planarity and distance bands
-  use the scaled floor; CR-TOL-001, absolute pick bands, exact checks and relative 1e-6 bounds
-  remain unchanged. Algorithm/tolerance versions are 3/3 and seven dependency-key digests are
-  regenerated. F04 has 69 logical cases (30 positive, 39 negative), seven raw; F06 has 112 cases
-  (59 positive, 53 negative). Only A5's large-coordinate part is closed; rounded-mesh
-  cross-checks and subnormal mass remain open. F04 stays a freeze candidate 0.1.0, F06 a draft;
-  no runtime feature, admission, freeze or K0 gate is passed.
-```
-
 ### Amendments log
 
 - 2026-10-15: recorded the owner's local-size decision; resolved round-2 open item 2 only for
@@ -519,7 +500,7 @@ not execution of the logical acceptance descriptions or evidence of a working ge
 
 The independent before/after text comparison confirms no whole-file rewrite. Git branch, HEAD and
 the PR #26 stack cannot be verified under the ownership block. Status is **uncommitted**; no Git
-write command was run. The design and ROADMAP proposals above remain unapplied.
+write command was run. The design proposals above remain unapplied.
 
 ## Technical reservations
 
@@ -530,22 +511,3 @@ scaling resolves only the owner-selected large-coordinate policy part. The desig
 rounded-mesh and subnormal counterexamples remain unresolved. Exact expected values, topology and
 identity checks remain intact. The winding hemisphere and missing roll cap are reviewable
 assumptions; neither should be mistaken for a verbatim owner decision.
-
-## Exposure note
-
-Round 1 read this worktree's AGENTS.md, CLAUDE.md, ROADMAP.md, architecture, F04 and F06 with their
-case files, the first-scope package and case file, the kernel design, the domain vocabulary and
-module boundaries. Round 2 read this report, ROADMAP.md, ATTRIBUTION.md and the contract passages
-that mention the comparison. The ifc-lite numbers in this report were supplied by the orchestrator;
-the worker did not read, fetch or open the ifc-lite repository in round 2. Round 1 saw only search
-excerpts and listings of that repository, and no source file; no code, structure, comment, fixture
-or asset was copied. PdfCraft and craft-libs facts come from the orchestrator's supplied Cargo.toml
-facts. No commercial-product material, oracle process or client project was accessed.
-
-The local-size amendment read only authorized repository documents/cases and scratch files in
-this worktree, including the read-only first-scope package/cases and kernel design. It accessed
-no network, other checkout, commercial-product material or external oracle. Cargo checks may
-read installed toolchain/dependency files. No external code or asset is adopted.
-
-Earlier training or prior exposure that cannot be established remains unknown. This documentation
-task does not declare any implementer eligible or amend the source-exposure admission policy.

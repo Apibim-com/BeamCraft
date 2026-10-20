@@ -156,7 +156,3 @@ not written by this task.
 * The schema descriptor changed (`bimProjectId` line, `level` element, `bim:level`, `Level`
   change): other open PRs that also edit it (for example A07.2) will conflict; the earlier
   descriptor list needs both entries.
-
-## Proposed Roadmap entry
-
-`2026-10-18 D1/D2: ProjectId recorded in the root layer by the first revision (explicit different --project-id refused, plate-inspect reports project_id_record) and levels (create-level, levels, update-element --level; Shape::Level and Change::Level with bim:level validation in the layer engine, delete refused while used, copy keeps the level); experimental slice, IFC export not started.`

@@ -259,10 +259,6 @@ Entry HEAD remains `5a154b95758284f9854860f074766979e290462c`.
 The local origin/master ref is now `64655c353371cab8c8b7ac3944cd00543c18ab21`;
 no remote refresh, rebase or change to the existing PR branch was attempted.
 
-Proposed roadmap entry (unapplied): 2026-10-16: N04T reduced the rejected truck
-route to its report and offline harness, corrected partial-run and byte-comparison
-claims, and removed generated evidence with SHA-256/size references. Circular/oval
-holes and cuts remain our own implementation; no production feature is adopted.
 
 ## Archived locally, not in the repository
 

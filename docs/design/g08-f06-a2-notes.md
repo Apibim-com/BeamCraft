@@ -147,17 +147,7 @@ capacity pre-check and `GEO_KERNEL_CAPACITY` result before G10; ordinals never r
 base shape; undo of each command as one unit; F04 and F06 cases added; the A04 pilot's evidence
 re-run unchanged for the supported inputs.
 
-## 6. Proposed Roadmap entry
-
-- 2026-10-19: owner approved F06 amendment A-2 and the matching F04 text (docs only): holes, plane
-  cuts and polygonal cavities are in scope, round holes are inscribed N-gons, certified shells give a
-  `current` volume with its enclosure width, `extrusion` and `cut` FeatureIds and `GEO_OP_*` tokens
-  are accepted, capacity is an implementation limit with a distinct refusal until G10, F06-NEG-39
-  and NEG-08 are superseded, and invalid user parts are kept as degenerate elements (F04 proposal).
-  Contract version stays 0.1.0. New tasks G10 and P-Degenerate; A03 and A04 acceptance follow.
-  Nothing implemented.
-
-## 7. Verification
+## 6. Verification
 
 `cargo fmt --all -- --check`, a JSON validity and unique-case-id check of the edited case file, and
 `cargo test --workspace` (the F04 case file is read by `f04_cases.rs`; it was not edited). Results

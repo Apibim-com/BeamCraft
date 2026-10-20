@@ -191,7 +191,3 @@ Tests (all through real code, the CLI tests through the binary):
 * `docs/contracts/model-and-commands-v0.1.md` section 9 names approved-number invalidation as open:
   this note is the A09 resolution (stale = the proposal would differ; move, rename without name
   comparison and view changes never invalidate); section 4's change list gains `Mark`.
-
-## Proposed Roadmap entry
-
-`2026-10-19 A09: numbering approval (beamcraft_engine::numbering_approval, beamcraft_layer_engine Change::Mark + steel:numbering:* properties, beamcraft_cli::numbering_approval, CLI numbering-approve and numbering-status): stores the approved part and assembly marks as authored data in one undoable revision, refuses a stale token, overlapping series and an empty model, reports the approval current or stale (fabrication edits, copy and delete make it stale, a move or a rename does not); single-user form, schema digest changed with every earlier pin still accepted; experimental slice.`

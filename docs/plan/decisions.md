@@ -8,8 +8,7 @@ Open questions are at the end.
 
 - **No clean-room process.** BeamCraft is written from scratch with its own logic and nothing is
   reverse-engineered, so the F09 process (implementer admission, exposure records, isolated kernel
-  agents) is retired; its documents move to `docs/history/clean-room/`, where the frozen contracts
-  still link the first-scope package. The asset and provenance rules of `AGENTS.md` §1–2 stay:
+  agents) is retired and its documents removed. The asset and provenance rules of `AGENTS.md` §1–2 stay:
   nothing from Tekla or Trimble, no decompiling, no copied documentation, tables or GPL code.
 - **The plan lives in the repository.** The implementation plan, task list and decisions move
   from the owner's local document into `docs/plan/` (English, no observation notes of commercial

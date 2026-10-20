@@ -95,10 +95,3 @@ operation-record migration still open):
 * pxr oracle (local, opt-in, usd-core 25.11): reads the hole arrays and the cut mesh, derives the
   volume from its own mesh and matches the closed form (rectangle plus 32-gon), and
   `ComplianceChecker` reports nothing.
-
-## Roadmap entry (proposed, not applied)
-
-- 2026-10-17: A04 pilot let `create-plate` author through holes (`--hole-rect`, `--hole-round`) as
-  clockwise polygons cut by the G09 kernel, stored as two plate attributes under an amended U02
-  schema (a recorded deviation from the F04 operation-record rule). Exact polygon volume and mass,
-  verified at publish and reopen. No hole command, edit or feature ids. A04 is not complete.

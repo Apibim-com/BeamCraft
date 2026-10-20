@@ -8,9 +8,7 @@ acceptance gates, the MVP scope and the next work. Every task ID (F04, U06, A03,
 [`docs/plan/decisions.md`](docs/plan/decisions.md). It is updated when a gate or the scope changes,
 not for every merge. What each merged
 package does is in its note under [`docs/design/`](docs/design/) and in
-[`docs/architecture.md`](docs/architecture.md); the history is git and the pull requests. The
-progress log kept here until 2026-10-18 is preserved in
-[`docs/history/progress-log-2026-10.md`](docs/history/progress-log-2026-10.md).
+[`docs/architecture.md`](docs/architecture.md); the history is git and the pull requests.
 
 ## Where the product is
 
@@ -29,7 +27,7 @@ that the gate's acceptance is claimed.
 
 | Gate | Acceptance result | Packages | Status |
 |------|-------------------|----------|--------|
-| K0 | Verified base, requirements, clean-room boundaries, contracts and original fixtures | F01–F11 | in progress; F04 and F06 frozen 0.1.0 (F06 amendment A-2 applied), F05, F08 and F10 drafts |
+| K0 | Verified base, requirements, contracts and original fixtures | F01–F11 | in progress; F04 and F06 frozen 0.1.0 (F06 amendment A-2 applied), F05, F08 and F10 drafts |
 | K1 | CLI creates a plate and atomically saves a complete revision readable by ordinary OpenUSD | U01–U07, U09, U14, G01–G02, P01 | slices merged; acceptance open |
 | K2 | Straight beam/column, quantities, independent copy, personal workspace and local undo | P02–P08, A07 | slices merged (rolled, custom and library sections); acceptance open |
 | K3 | Foreign USD references remain read-only; supported measurements are separate results | R01–R03, G08 | R01 merged; R02–R03 deferred |

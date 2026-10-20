@@ -624,6 +624,5 @@ surfaces; frozen contracts and their cases are untouched here.
 Provenance: contributor-original F11D documentation, MPL-2.0, based on the owner's 2026-10-16
 card, the repository contracts/designs and N01's original synthetic observations. Public-source
 links above retain the original research provenance; no new upstream code, fixture or runtime
-resource is included. Proposed attribution rows, frozen-contract amendments and the dated roadmap
-progress entry belong only in the F11D PR body. This task leaves ATTRIBUTION and the progress log
-unchanged.
+resource is included. Proposed attribution rows and frozen-contract amendments belong only in the
+F11D PR body.

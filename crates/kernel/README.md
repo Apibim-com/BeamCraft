@@ -581,8 +581,8 @@ static rounding-error filter derived in the code, the shoelace area, the diverge
 signed volume, the Euler-Poincare relation `V - E + F = 2 - 2g`, inclusion-exclusion for the
 volume of a box cut by a half-space (tests only), and the G05/G06 mathematics of this crate. No
 third-party code, crate, test or data and no commercial-product material was consulted; there is
-no copied asset. The clean-room input list of this task is the repository's own kernel code and
-documents named in the task, and the public mathematics above.
+no copied asset. Its inputs were the repository's own kernel code and documents named in the
+task, and the public mathematics above.
 
 ## P03: straight member (`member` module)
 

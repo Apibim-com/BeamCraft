@@ -168,12 +168,3 @@ the F10 `reference` kind; the U01 wrapper requirements LEW-01 and LEW-04. The fo
 tests are invented text written by the tests; nothing of the NVIDIA, Autodesk or any other sample
 is used or reproduced, and no third-party model, asset or code is added (`ATTRIBUTION.md` lists
 the oracle scripts only). No new dependency.
-
-## Proposed Roadmap entry
-
-- 2026-10-17: R01 added a read-only USD reference: `reference-attach` stores a foreign USDA/USDC
-  layer by SHA-256 as an `external` revision layer composed below an owned wrapper (placement and
-  an explicit units/up-axis correction stored apart from the foreign content), `reference-write`
-  and the layer engine refuse every write to the source or a foreign prim, a URL or network path is
-  refused before any I/O, and `pxr` places the foreign points as the engine says. Experimental:
-  single layers up to 64 KiB, in-process parser, no update (R03) or measurement (R02).

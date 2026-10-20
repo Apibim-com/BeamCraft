@@ -146,15 +146,6 @@ untrusted lengths are checked and allocations capped. No new mathematical algori
 policy is implemented: public math provenance and F06 sections 2/4/7/10 remain exactly as admitted.
 Transport behavior derives from repository F05; USD behavior stays behind the existing U01 API.
 
-## Roadmap entry
-
-- 2026-10-16: U04 added an experimental shared native CLI/host read dispatcher and a separate
-  Rust worker using bounded private-pipe control and U05 digest-verified byte grants on base
-  bca89e23671470ba0633497b82d38a83fb5cc11d. Real-process read/failure tests cover bounded pages,
-  cancellation, deadlines and reconstruction at a retained nonzero generation. Full F05/LEW
-  admission, OS memory containment, mutation/save/replay and durable outcomes remain open;
-  U04 and K1 are not complete.
-
 ## Delivery state
 
 Uncommitted: `git add` could not create

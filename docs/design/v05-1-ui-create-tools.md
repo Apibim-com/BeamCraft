@@ -114,7 +114,3 @@ beamcraft definitions   --store ROOT
     definitions each fail on their own with `NOT_FOUND`; with a revision both succeed.
 - The window (`beamcraft-ui --store ROOT`) was started on Windows (adapter not recorded) and stayed
   up; it was then stopped.
-
-## Proposed Roadmap entry
-
-`2026-10-18 V05.1: UI create tools (apps/beamcraft-ui: Create panel for a plate and a straight member with preview of the exact command, cancel and commit that runs the CLI's create-plate / create-member in a separate process and reloads the accepted revision; pure parameter mapping and reply parsing, end-to-end test equal to the CLI by hand); experimental, no geometry preview or picking placement.`

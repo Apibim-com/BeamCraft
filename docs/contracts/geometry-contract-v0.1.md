@@ -29,12 +29,9 @@ it needs a reviewed amendment (section 12), not a local workaround.
 - [F05 worker protocol 0.1.0](worker-protocol-v0.1.md) (draft) is consumed only for the host
   boundary: attachments, limits and cancellation semantics. F06 does not change it. Mesh bytes
   travel as opaque `u8` attachments, so no typed element negotiation is needed (section 6).
-- The [first-scope package 0.1.0](../history/clean-room/handoff/first-scope-v0.1.md) admits a rectangular
-  plate, a straight member, identities, units, rigid placement and declared failures. This contract
-  retains rectangular evaluation; contour model admission and amended tolerances need a separate
-  first-scope package update. This document does not widen that package. Source-exposure admission
-  of any implementer is a separate decision under the [admission
-  policy](../history/clean-room/admission-policy.md).
+- The first-scope requirements 0.1.0 (PR #10) cover a rectangular plate, a straight member,
+  identities, units, rigid placement and declared failures. This contract retains rectangular
+  evaluation.
 
 **Assumptions recorded here (not hidden).**
 

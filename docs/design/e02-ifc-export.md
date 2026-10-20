@@ -132,7 +132,3 @@ full text in `Label`; the report equals the `--report` file and is bounded by no
   the tests, and the rest (limits at their real sizes, a 300-proxy store, cancellation) are not.
   The size bounds are tested with small limits.
 * `IFC_CANCELLED` and `IFCX-ERR-004` are not implemented: the command has no cancellation point.
-
-## Proposed Roadmap entry
-
-`2026-10-19 E02: minimal IFC4 export (new crate beamcraft-ifc with the GlobalId, STEP lexical rules, fixed entity templates and a structural reader; beamcraft_host::output atomic file; beamcraft_cli::export; CLI export-ifc and ifc-guid): plates, beams, columns as tessellated IfcPlate/IfcBeam/IfcColumn, levels as IfcBuildingStorey, other kinds (assemblies, welds, references) as proxies, published current quantities, losses reported; experimental slice, independent validation not run.`

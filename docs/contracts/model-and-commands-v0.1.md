@@ -9,12 +9,9 @@ Freeze-candidate amendments (task F04.2) are made on `478f330e15819b574c62227bc2
 F06 amendments (task F04.3) are made on `b996c58fe850642f12b92b25b23c441fbd41ed47`; see [section
 12](#12-amendments-log). F01 is merged. F02 is available locally: 35 source files, 160 occurrences
 and 156 unique IDs; source hashes were independently checked against its pinned manifest. F02 is not
-an input to this contract's amendments. The F09 review result 0.1.0 and the first-scope handoff
-package 0.1.0 are integrated (PR #10): see the [review result](../history/clean-room/review-result.md) and
-the [package](../history/clean-room/handoff/first-scope-v0.1.md). Requirement admission covers only that
-package's scope (rectangular plate, straight member, identities, units, rigid placement, declared
-failures). Source-exposure admission and eligible implementers are separate and undecided. K0 is not
-passed. This document does not close any of these. The [F06 geometry
+an input to this contract's amendments. The first-scope requirements 0.1.0
+(rectangular plate, straight member, identities, units, rigid placement, declared failures) were
+integrated in PR #10. K0 is not passed. The [F06 geometry
 contract](geometry-contract-v0.1.md) is frozen 0.1.0 and nothing in it is implemented; task
 F04.3 applied the amendments it proposed to this contract (section 12).
 
@@ -298,10 +295,8 @@ For the horizontal member the width 200 lies along `X_m = (0, 1, 0)`, hence the 
 height 300 along `Y_m = (0, 0, 1)`, hence the z extent. The F07 fixture format orients members with
 an explicit `up` vector; that is a different input and is not an input of this command.
 
-The [first-scope package 0.1.0](../history/clean-room/handoff/first-scope-v0.1.md) still lists G-01 and G-02
-as open gaps and admits only frame-independent quantities. Updating that package is a separate
-admission step; this contract does not edit it, and the frames above are not part of the admitted
-first-scope requirements until that step is done.
+The first-scope requirements 0.1.0 (PR #10) listed G-01 and G-02 as open gaps; the frames above
+close them.
 
 ## 4. Authored model fields
 

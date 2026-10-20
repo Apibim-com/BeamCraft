@@ -114,7 +114,3 @@ axis points, the level, volume, mass and density.
   Publish refused for nothing to publish, succeeding with the published element equal to the
   workspace's, and refused with `BASE_REVISION_MISMATCH` after the published head moved, the
   published head unchanged.
-
-## Proposed Roadmap entry
-
-`2026-10-19 V06.1: UI properties editor and Publish (apps/beamcraft-ui: the selected plate or straight member's properties as plate-inspect reports them, labelled current, stale or unknown, edited as the CLI's own update-element (label, material, plate thickness, position) with preview / cancel / commit, and workspace-publish behind a confirm dialog with refusals displayed; --published ROOT names the store; end-to-end tests equal to the CLI by hand); experimental, no multi-selection, no width / length / profile / level editing, no conflict resolution.`

@@ -195,25 +195,11 @@ tests.
 - The SHA-256 implementation follows the public FIPS 180-4 standard and is tested against
   published example digests. Python `hashlib` also confirms every fixture digest.
 
-## Provenance and exposure
+## Provenance
 
 All inputs were chosen for this set. Densities are a round synthetic value. Mathematical sources
 are public: elementary vector algebra, Rodrigues' rotation formula, RFC 8259 (JSON), RFC 3629
 (UTF-8) and FIPS 180-4 (SHA-256).
-
-During this task the author did not open any of the following: commercial manuals or
-installations; source code of another geometry kernel; dirty-room specification files 01–35;
-screenshots; vendor catalogues; or F02 work files. Local planning material was limited to:
-
-- the F07 handoff card;
-- the F07/F09 registry lines;
-- excerpts of `implementation-plan.md` (§3, §4 and §7 and the F07 table row);
-- the repository documentation.
-
-The author has general prior knowledge of public mathematics and widely published algorithms,
-including the SHA-256 standard. This agent's session store holds no earlier BeamCraft session,
-and therefore no record of earlier exposure to third-party kernel code. Earlier F02 work was
-not part of this task's context.
 
 ## Verification results (2026-10-14, Windows x64, Rust 1.96.0, Python 3.14.3)
 

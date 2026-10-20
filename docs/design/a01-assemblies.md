@@ -95,7 +95,3 @@ membership decisions and `for_part_of`.
   specified and records that decision as open.
 - The schema descriptor changed: other open PRs that also edit it (for example R01) will conflict
   and need the earlier-descriptor list extended.
-
-## Proposed Roadmap entry
-
-`2026-10-18 A01: assemblies (create-assembly, assembly-attach, assembly-detach, assemblies; Shape::Assembly and Change::PartOf in the layer engine with kind/cardinality/self-link/cycle validation; Footprint::conflicts_with made symmetric); experimental slice.`

@@ -59,10 +59,3 @@ beamcraft plate-inspect --store ROOT   (plates and members, one pinned view snap
 * pxr oracle (local, opt-in, usd-core 25.11): pxr reads the beam and the rolled column, their
   `bim:profile` target and definition, the axis and roll, derives the volume from its own mesh and
   matches the hand-derived closed forms and bounds, and `ComplianceChecker` reports nothing.
-
-## Roadmap entry (proposed, not applied)
-
-- 2026-10-17: P03 added the straight beam and column (`create-member`): a kernel box builder in
-  the F06 member frame, a `CreateStraightMember` command that pins a rectangle profile and an
-  optional material, and re-evaluation of members at publish and reopen. Placement rotation, other
-  profiles, edits and stored quantities are not done. K2 is not complete.
