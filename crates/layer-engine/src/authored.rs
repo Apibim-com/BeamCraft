@@ -433,16 +433,11 @@ pub(crate) fn pin_accepted(pin: &str) -> Result<bool, Diagnostic> {
         return Ok(true);
     }
     // A05 added the bolt properties and reworded the connection line, so the master mapping
-<<<<<<< HEAD
     // before A05 (A09) is the current descriptor without those additions.
-=======
-    // before A05 is the current descriptor without those additions.
->>>>>>> a0c3b43 (Fix the bolt engine tests and accept the pre-A05 mapping pin)
     let pre_a05 = Sha256::digest(pre_a05_descriptor().as_bytes()).map_err(|_| limit())?;
     if pin == pre_a05.to_string() {
         return Ok(true);
     }
-<<<<<<< HEAD
     // A08 added one line (the element mark) and one changes item to the A07.2 descriptor and
     // changed nothing else, so the A07.2 mapping is the pre-A05 descriptor without both.
     let a07_2 = pre_a05_descriptor()
@@ -456,12 +451,6 @@ pub(crate) fn pin_accepted(pin: &str) -> Result<bool, Diagnostic> {
     // changed nothing else, so the D1/D2 mapping is the A07.2 descriptor without that line.
     let d1_d2 = a07_2.replacen(A07_2_DISPLAY_NAME_LINE, "", 1);
     let digest = Sha256::digest(d1_d2.as_bytes()).map_err(|_| limit())?;
-=======
-    // A07.2 added one optional line (the definition display name) to the D1/D2 descriptor and
-    // changed nothing else, so the D1/D2 mapping is the pre-A05 descriptor without that line.
-    let a07_1 = pre_a05_descriptor().replacen(A07_2_DISPLAY_NAME_LINE, "", 1);
-    let digest = Sha256::digest(a07_1.as_bytes()).map_err(|_| limit())?;
->>>>>>> a0c3b43 (Fix the bolt engine tests and accept the pre-A05 mapping pin)
     if pin == digest.to_string() {
         return Ok(true);
     }
@@ -1323,7 +1312,7 @@ mod pin_tests {
         // bolt properties and reworded the connection line.
         // Pinned value: the digest of the descriptor of master with A09, before A05 added the
         // bolt properties and reworded the connection line.
-        let pre_a05 = "PRE_A05_PIN_PLACEHOLDER";
+        let pre_a05 = "37c3bb7d2a9575e1eeea58acd63cf362bc230184b01f41d54e59a5a63b7121e1";
         assert_eq!(
             Sha256::digest(pre_a05_descriptor().as_bytes())
                 .unwrap()
