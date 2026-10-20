@@ -140,6 +140,7 @@ impl View {
             far / (far - near) - far * near / ((far - near) * depth),
         ]
     }
+
     pub(crate) fn bytes(self) -> Vec<u8> {
         self.right
             .into_iter()

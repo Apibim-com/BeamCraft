@@ -5,6 +5,7 @@
 //! (`beamcraft view-export --store ROOT --out -`) and the engine rebuilds and re-validates it.
 //! The viewport never opens USD itself and never trusts the bytes it receives.
 
+use crate::props::{Properties, WorkspacePanel};
 use crate::scene::Scene;
 use crate::tools::{Definitions, ToolError};
 use crate::{Error, command};
@@ -78,20 +79,32 @@ pub fn is_no_revision(error: &Error) -> bool {
     matches!(error, Error::NoRevision)
 }
 /// Everything one window refresh reads, gathered without a window or a GPU so it can run on a
-/// worker thread: the accepted snapshot with its scene, and the store's definitions. The two
-/// results are independent; one failing never hides the other.
+/// worker thread: the accepted snapshot with its scene, the store's definitions, the selected
+/// element's properties and the workspace panel. The results are independent; one failing never
+/// hides another.
 pub struct Reloaded {
     /// The accepted snapshot and the scene built from it.
     pub scene: Result<(ViewSnapshot, Scene), Error>,
     /// The profile and material definitions of the same store.
     pub definitions: Result<Definitions, ToolError>,
+    /// The selected element's properties as of this refresh; `Some(Ok(None))` when the selected
+    /// element is no longer in the store. `None` when nothing is selected.
+    pub properties: Option<Result<Option<Properties>, ToolError>>,
+    /// The publication panel, when the window edits a personal workspace.
+    pub workspace: Option<Result<WorkspacePanel, ToolError>>,
 }
 
-/// Runs the CLI queries of one refresh (blocking; call it off the UI thread). The two queries
-/// are independent CLI processes, so they run concurrently and the refresh waits for the slower
-/// one instead of paying both full inspections in sequence (issue 26, finding 2).
-pub fn reload(cli: &Path, store: &Path) -> Reloaded {
-    let (scene, definitions) = std::thread::scope(|scope| {
+/// Runs the CLI queries of one refresh (blocking; call it off the UI thread). The queries are
+/// independent CLI processes, so they run concurrently and the refresh waits for the slowest
+/// one instead of paying the full inspections in sequence (issue 26, finding 2). `selected` is
+/// the selected element's id, `workspace` the published store and the workspace directory.
+pub fn reload(
+    cli: &Path,
+    store: &Path,
+    selected: Option<&str>,
+    workspace: Option<(&Path, &Path)>,
+) -> Reloaded {
+    std::thread::scope(|scope| {
         let scene = scope.spawn(|| {
             load(cli, store).and_then(|snapshot| {
                 let scene = Scene::from_snapshot(&snapshot, Representation::Full)?;
@@ -99,6 +112,18 @@ pub fn reload(cli: &Path, store: &Path) -> Reloaded {
             })
         });
         let definitions = scope.spawn(|| command::definitions(cli, store));
+        let properties = scope.spawn(|| selected.map(|id| command::properties(cli, store, id)));
+        let workspace = scope.spawn(|| {
+            workspace.map(|(published, dir)| {
+                let state = command::workspace_state(cli, published, dir)?;
+                let (undo_units, redo_units) = command::workspace_history(cli, dir)?;
+                Ok(WorkspacePanel {
+                    state,
+                    undo_units,
+                    redo_units,
+                })
+            })
+        });
         // A panicked worker is a bug, not model data: report it as its typed failure.
         let scene = scene
             .join()
@@ -109,7 +134,23 @@ pub fn reload(cli: &Path, store: &Path) -> Reloaded {
                 "the definitions thread failed",
             ))
         });
-        (scene, definitions)
-    });
-    Reloaded { scene, definitions }
+        let properties = properties.join().unwrap_or_else(|_| {
+            Some(Err(ToolError::local(
+                "CLI_FAILED",
+                "the properties thread failed",
+            )))
+        });
+        let workspace = workspace.join().unwrap_or_else(|_| {
+            Some(Err(ToolError::local(
+                "CLI_FAILED",
+                "the workspace thread failed",
+            )))
+        });
+        Reloaded {
+            scene,
+            definitions,
+            properties,
+            workspace,
+        }
+    })
 }

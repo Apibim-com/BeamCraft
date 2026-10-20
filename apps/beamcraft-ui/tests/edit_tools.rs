@@ -492,15 +492,35 @@ fn undo_and_redo_run_in_a_workspace_and_never_touch_the_published_store() {
 }
 
 #[test]
-fn the_window_binary_accepts_a_workspace_and_refuses_both_options() {
+fn the_window_binary_accepts_a_workspace_alone_and_as_publication_mode() {
     let ui = env!("CARGO_BIN_EXE_beamcraft-ui");
-    // Both a store and a workspace is a usage error (the workspace is the store).
-    let output = Command::new(ui)
-        .args(["--store", "S", "--workspace", "W"])
-        .output()
-        .unwrap();
-    assert_eq!(output.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&output.stdout).contains("usage: beamcraft-ui"));
+    // No options at all is still a usage error.
     let output = Command::new(ui).output().unwrap();
     assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("usage: beamcraft-ui"));
+
+    // Naming the published store together with the workspace is the V06 publication mode: the
+    // pair passes option parsing and reaches the store logic. Proven without a GPU: with a CLI
+    // that cannot start, the run stops at the first query with the runner's error, not with the
+    // usage text.
+    let missing = "nonexistent-cli-for-tests";
+    for args in [
+        vec!["--workspace", "W", "--metrics", "1", "--cli", missing],
+        vec![
+            "--store",
+            "PUB",
+            "--workspace",
+            "W",
+            "--metrics",
+            "1",
+            "--cli",
+            missing,
+        ],
+    ] {
+        let output = Command::new(ui).args(&args).output().unwrap();
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        let body = String::from_utf8_lossy(&output.stdout);
+        assert!(body.contains("rejected"), "{args:?}: {body}");
+        assert!(!body.contains("usage:"), "{args:?}: {body}");
+    }
 }
