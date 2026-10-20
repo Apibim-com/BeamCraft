@@ -48,6 +48,7 @@ pub(super) fn input_bounds(input: &Prepare, b: Budgets) -> Result<(), Diagnostic
                 }
             }
             Change::Label { name, .. } if name.len() > 256 => return Err(limit()),
+            Change::Mark { mark: m, .. } => mark(m)?,
             Change::AttachReference(r) if r.name.len() > 256 => return Err(limit()),
             Change::Contour { points_mm, .. } => {
                 count(points_mm.len().checked_mul(3).ok_or_else(limit)?, 8)?
@@ -694,6 +695,7 @@ pub(super) fn snapshot(
     part_of(prims)?;
     connects(prims)?;
     level_links(prims)?;
+    marks(prims)?;
     for p in prims
         .iter()
         .filter(|p| p.type_name.as_deref() == Some("Mesh") && p.sources.iter().all(|s| s.owned))
@@ -832,6 +834,58 @@ fn supported_kind(p: &Prim) -> Option<&str> {
             "plate" | "beam" | "column" | "assembly" | "connection" | "level"
         )
     })
+}
+
+/// The values of an A09 mark: a series of at most 16 letters, digits, `_` and `-`, a number in
+/// `0..=i32::MAX` and a non-empty printable-ASCII approval record of at most 512 bytes.
+fn mark_values(series: &str, number: i64, basis: &str) -> Result<(), Diagnostic> {
+    if series.chars().count() > MARK_MAX_SERIES
+        || !series
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        || !(0..=i64::from(i32::MAX)).contains(&number)
+        || basis.is_empty()
+        || basis.len() > MARK_MAX_BASIS
+        || !basis.bytes().all(|b| (0x20..=0x7e).contains(&b))
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+/// Checks a mark about to be authored.
+pub(super) fn mark(m: &Mark) -> Result<(), Diagnostic> {
+    mark_values(&m.series, i64::from(m.number), &m.basis)
+}
+
+/// A09 marks on loaded or authored elements: only a plate, beam, column or assembly carries one,
+/// and it carries all three properties with their exact types, or none. A partial or malformed
+/// record is refused, never read as "unnumbered".
+fn marks(prims: &[Prim]) -> Result<(), Diagnostic> {
+    for p in prims {
+        let Some(kind) = supported_kind(p) else {
+            continue;
+        };
+        let series = optional(p, MARK_SERIES, "string")?;
+        let number = optional(p, MARK_NUMBER, "int")?;
+        let basis = optional(p, MARK_BASIS, "string")?;
+        match (series, number, basis) {
+            (None, None, None) => {}
+            (Some(Value::Text(series)), Some(number), Some(Value::Text(basis))) => {
+                if !matches!(kind, "plate" | "beam" | "column" | "assembly") {
+                    return Err(unsupported());
+                }
+                let number = match number {
+                    Value::Int(n) => *n,
+                    Value::Uint(n) => i64::try_from(*n).map_err(|_| invalid())?,
+                    _ => return Err(invalid()),
+                };
+                mark_values(series, number, basis)?;
+            }
+            _ => return Err(invalid()),
+        }
+    }
+    Ok(())
 }
 
 /// The elevation of a loaded or authored level: finite and within the coordinate cap.
@@ -1237,6 +1291,9 @@ pub(super) fn changes(
                         matches!(kind, "plate" | "beam" | "column" | "assembly")
                     }
                     Change::Level { .. } => matches!(kind, "plate" | "beam" | "column"),
+                    Change::Mark { .. } => {
+                        matches!(kind, "plate" | "beam" | "column" | "assembly")
+                    }
                     _ => matches!(kind, "plate" | "beam" | "column"),
                 };
                 if !valid {
@@ -1266,6 +1323,9 @@ pub(super) fn changes(
                     Group::Placement,
                 ],
             ),
+            // A mark is stored with the label's group: it conflicts with a rename or another
+            // mark of the element and with nothing derived.
+            Change::Mark { .. } => (&[Group::Lifecycle, Group::Label], &[Group::Label]),
             Change::Label { .. } => (&[Group::Lifecycle, Group::Label], &[Group::Label]),
             Change::Material { .. } => (
                 &[Group::Lifecycle, Group::Derived],
@@ -1349,6 +1409,7 @@ pub(super) fn changes(
                 | Change::Delete { .. }
                 | Change::PartOf { .. }
                 | Change::Level { .. }
+                | Change::Mark { .. }
         ) && let Some(p) = existing
         {
             for target in p

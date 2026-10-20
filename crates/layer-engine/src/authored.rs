@@ -41,6 +41,9 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "bim:connects=rel(2 distinct ordered element targets of kind plate|beam|column, main part first;source connection)\n",
     "level=element;bim:elementKind=level;kind=component;bim:elevationMm=double(finite,abs<=1e9);no material or Geometry;placement=identity\n",
     "bim:level=rel(0..1 element target of kind level;source plate|beam|column)\n",
+    "numbering=approved mark of a plate|beam|column|assembly (A09);steel:numbering:series=string(<=16 of A-Z a-z 0-9 _ -);",
+    "steel:numbering:number=int(0..=2147483647);steel:numbering:basis=string(printable ASCII,<=512);",
+    "all three or none;never on a connection, level or reference\n",
     "xformOp:translate=double3;xformOp:orient=quatd;xformOpOrder=token[](translate,orient)\n",
     "kind:/World=assembly;/World/Steel=group;element=component;element/Geometry=subcomponent;",
     "displayName(element)=bim:name\n",
@@ -72,7 +75,7 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "bim:reference:correctionSourceDigest=string(sha256);xformOp:rotateX:bimUpAxis=double(degrees,Y up only);",
     "xformOp:scale:bimUnits=double3(metersPerUnit*1000);xformOpOrder=token[](rotateX,scale;empty without correction)\n",
     "reference/Correction/Source=def without type;references=@external/<sha256>.<usda|usdc>@</defaultPrim>;nothing else owned at or below\n",
-    "changes=Create|Label|Contour|Thickness|Axis|Roll|Profile|Material|Placement|Mesh|AttachReference|ReferenceUnits|PartOf|Level|Delete;",
+    "changes=Create|Label|Contour|Thickness|Axis|Roll|Profile|Material|Placement|Mesh|AttachReference|ReferenceUnits|PartOf|Level|Mark|Delete;",
     "opinion=Absent|Block|Value|Remove;relationship=Targets|Empty|Remove\n",
     "snapshot=Prim(path,element_id,type_name,active,properties,relationships,sources);",
     "property=(name,type_name,optional-value);relationship=(name,ordered-targets)\n",
@@ -400,15 +403,42 @@ const PREVIOUS_DESCRIPTOR: &str = concat!(
 /// The one descriptor line that A07.2 added; see [`pin_accepted`].
 const A07_2_DISPLAY_NAME_LINE: &str = "definition displayName=prim metadata string(optional,any definition kind;part of the definition content)\n";
 
+/// The descriptor line that A09 added (the approved mark); see [`pin_accepted`]. It must be the
+/// exact text of the line in [`SCHEMA_DESCRIPTOR`].
+const A09_NUMBERING_LINE: &str = concat!(
+    "numbering=approved mark of a plate|beam|column|assembly (A09);steel:numbering:series=string(<=16 of A-Z a-z 0-9 _ -);",
+    "steel:numbering:number=int(0..=2147483647);steel:numbering:basis=string(printable ASCII,<=512);",
+    "all three or none;never on a connection, level or reference\n",
+);
+/// The change list as A09 wrote it and as it was before.
+const A09_CHANGES_ITEM: &str = "|Level|Mark|Delete;";
+const PRE_A09_CHANGES_ITEM: &str = "|Level|Delete;";
+
+/// The mapping descriptor as it was before A09 added the numbering mark: the current descriptor
+/// without the numbering line and without `Mark` in the change list. A09 added only optional
+/// content, so layers pinned to that mapping stay readable and editable.
+fn pre_a09_descriptor() -> String {
+    SCHEMA_DESCRIPTOR
+        .replacen(A09_NUMBERING_LINE, "", 1)
+        .replacen(A09_CHANGES_ITEM, PRE_A09_CHANGES_ITEM, 1)
+}
+
 /// Whether a layer's saved `bimSchemaDigest` is the current mapping or an earlier one that the
 /// current mapping reads without change.
 pub(crate) fn pin_accepted(pin: &str) -> Result<bool, Diagnostic> {
     if pin == schema_identity()?.digest.to_string() {
         return Ok(true);
     }
+    // A09 added one optional line (the approved mark) and the `Mark` change item and changed
+    // nothing else, so the previous mapping is the current descriptor without them.
+    let pre_a09 = pre_a09_descriptor();
+    let digest = Sha256::digest(pre_a09.as_bytes()).map_err(|_| limit())?;
+    if pin == digest.to_string() {
+        return Ok(true);
+    }
     // A07.2 added one optional line (the definition display name) to the D1/D2 descriptor and
-    // changed nothing else, so the D1/D2 mapping is the current descriptor without that line.
-    let a07_1 = SCHEMA_DESCRIPTOR.replacen(A07_2_DISPLAY_NAME_LINE, "", 1);
+    // changed nothing else, so the D1/D2 mapping is the pre-A09 descriptor without that line.
+    let a07_1 = pre_a09.replacen(A07_2_DISPLAY_NAME_LINE, "", 1);
     let digest = Sha256::digest(a07_1.as_bytes()).map_err(|_| limit())?;
     if pin == digest.to_string() {
         return Ok(true);
@@ -457,6 +487,32 @@ pub enum Opinion<T> {
     Value(T),
     /// Remove the property spec from the selected layer (reveals weaker opinions).
     Remove,
+}
+
+/// Names of the A09 numbering properties of a plate, beam, column or assembly. A reader outside
+/// this crate (IFC and BOM export) reads exactly these three: the mark of an element is its
+/// series prefix followed by its number, with a `-` between them for an assembly.
+pub const MARK_SERIES: &str = "steel:numbering:series";
+/// See [`MARK_SERIES`].
+pub const MARK_NUMBER: &str = "steel:numbering:number";
+/// The record of the approval that wrote the mark (settings and preview token), stored with every
+/// mark so a later read can tell whether the model still matches what was approved.
+pub const MARK_BASIS: &str = "steel:numbering:basis";
+/// Longest series prefix in characters.
+pub const MARK_MAX_SERIES: usize = 16;
+/// Longest approval record in bytes.
+pub const MARK_MAX_BASIS: usize = 512;
+
+/// The approved mark of one element (A09): where it stands in its numbering series and the
+/// record of the approval. The engine decides the values; this library stores and bounds them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Mark {
+    /// Series prefix: at most 16 of letters, digits, `_` and `-`. May be empty.
+    pub series: String,
+    /// Number in the series, at most `i32::MAX`.
+    pub number: u32,
+    /// Approval record: printable ASCII, at most 512 bytes.
+    pub basis: String,
 }
 
 /// Explicit optional material relationship edit; omission of a change means no edit.
@@ -755,6 +811,15 @@ pub enum Change {
         /// Full UUIDv7 of the level, or `None` for an explicit empty record (an unassignment).
         level: Option<String>,
     },
+    /// Write the approved mark of a plate, beam, column or assembly (A09): three optional
+    /// properties of the element in the authored layer, replaced as a whole. Nothing derived
+    /// depends on a mark, so no result is invalidated.
+    Mark {
+        /// Full target UUIDv7.
+        id: String,
+        /// The mark to store.
+        mark: Mark,
+    },
 }
 impl Change {
     pub(super) fn key(&self) -> (&str, &'static str) {
@@ -774,6 +839,7 @@ impl Change {
             Self::ReferenceUnits { id, .. } => (id, "reference:units"),
             Self::PartOf { id, .. } => (id, "bim:partOf"),
             Self::Level { id, .. } => (id, "bim:level"),
+            Self::Mark { id, .. } => (id, "steel:numbering"),
         }
     }
 }
@@ -1144,6 +1210,23 @@ mod pin_tests {
     use super::*;
 
     #[test]
+    fn the_pre_a09_mapping_pin_is_accepted_and_is_not_the_current_one() {
+        // Pinned value: the digest of the descriptor of master e2d5df2, before A09.
+        let pre_a09 = "fdaf890401a7bf4d8d17eb84ad1901b461ff21f1e7cec1e93f9e71203b83865b";
+        assert!(SCHEMA_DESCRIPTOR.contains(A09_NUMBERING_LINE));
+        assert!(SCHEMA_DESCRIPTOR.contains(A09_CHANGES_ITEM));
+        assert!(!pre_a09_descriptor().contains("numbering"));
+        assert_eq!(
+            Sha256::digest(pre_a09_descriptor().as_bytes())
+                .unwrap()
+                .to_string(),
+            pre_a09
+        );
+        assert!(pin_accepted(pre_a09).unwrap());
+        assert_ne!(pre_a09, schema_identity().unwrap().digest.to_string());
+    }
+
+    #[test]
     fn the_a07_1_mapping_pin_is_accepted_and_is_not_the_current_one() {
         // Pinned value: the digest of the descriptor of master with A07.1, before D1 and D2.
         let a07_1 = "0311df71b2f7a4bd7b19e87ca7daef1884e989bd099bca24ee165de8e6bc310c";
@@ -1166,7 +1249,7 @@ mod pin_tests {
         assert!(!A07_1_DESCRIPTOR.contains(A07_2_DISPLAY_NAME_LINE));
         assert_eq!(
             Sha256::digest(
-                SCHEMA_DESCRIPTOR
+                pre_a09_descriptor()
                     .replacen(A07_2_DISPLAY_NAME_LINE, "", 1)
                     .as_bytes()
             )
@@ -1182,13 +1265,14 @@ mod pin_tests {
     fn every_previously_published_mapping_pin_is_still_accepted() {
         let current = schema_identity().unwrap().digest.to_string();
         let pins = [
-            // A07.1, D1/D2 (pre-A07.2), A06, A01, R01, P02.2 and U09 descriptors.
+            // A07.1, D1/D2 (pre-A07.2), A06, A01, R01, P02.2, U09 and pre-A09 descriptors.
             "0311df71b2f7a4bd7b19e87ca7daef1884e989bd099bca24ee165de8e6bc310c",
             "b799ae17004c22a5c2eaf7512367f919aec4b82b9b4b223166310286e1414b5b",
             "b8c4a0cbfcb62a1bc9662d74965d5cc6f3cb945870a461af3fe8a8bc89352978",
             "74580523c1bbf5ed0f440d6c054e705586970128feb0bb6b973951f69955cbcd",
             "960c23cae54987cab86028cde90e360eb44ed64f8b6847f3c4f98b02d630ef56",
             "70fc49a1d81314a6599284532bd2d45c18f77b4318266238cc6923b25c05f28e",
+            "fdaf890401a7bf4d8d17eb84ad1901b461ff21f1e7cec1e93f9e71203b83865b",
         ];
         for pin in pins {
             assert!(pin_accepted(pin).unwrap(), "{pin}");
