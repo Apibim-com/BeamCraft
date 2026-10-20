@@ -179,7 +179,9 @@ fn marks_of(
 }
 
 /// The revision id of the verified head and the marks stored on it.
-pub(crate) fn head_marks(store: &RevisionStore) -> Result<(String, Vec<StoredMark>), PlateError> {
+/// The revision id of the verified head and the marks stored on it. Public for the readers of
+/// the mark named in the module docs (the IFC and BOM exports).
+pub fn head_marks(store: &RevisionStore) -> Result<(String, Vec<StoredMark>), PlateError> {
     let revision = store.open()?;
     let base = base_of(&revision)?;
     let marks = marks_of(&open_base(&base)?, false, &control())?;
