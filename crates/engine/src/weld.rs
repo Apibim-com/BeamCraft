@@ -34,7 +34,7 @@ pub enum PartKind {
 /// The elements of a model and their kinds.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Parts {
-    kinds: BTreeMap<ElementId, PartKind>,
+    pub(crate) kinds: BTreeMap<ElementId, PartKind>,
 }
 
 fn error(code: ErrorCode, field: &'static str, message: &'static str) -> CommandError {

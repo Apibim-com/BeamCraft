@@ -524,7 +524,7 @@ fn create(data: &mut sdf::Data, e: &Element, actor: &str) -> Result<(), Diagnost
     field(data, &p, "displayName", sdf::Value::String(e.name.clone()))?;
     let kind = match e.shape {
         Shape::Assembly => "assembly",
-        Shape::Weld(_) => "connection",
+        Shape::Weld(_) | Shape::Bolt(_) => "connection",
         Shape::Level { .. } => "level",
         Shape::Plate { .. } => "plate",
         Shape::Member {
@@ -627,6 +627,52 @@ fn create(data: &mut sdf::Data, e: &Element, actor: &str) -> Result<(), Diagnost
                 sdf::Value::Double(w.size_mm),
             )?;
             let targets = w
+                .connects
+                .iter()
+                .map(|id| path(&element_path(id)?))
+                .collect::<Result<Vec<_>, _>>()?;
+            relationship_targets(data, &p, "bim:connects", Some(targets))?;
+        }
+        Shape::Bolt(b) => {
+            attr(
+                data,
+                &p,
+                "steel:bolt:diameterMm",
+                "double",
+                sdf::Value::Double(b.diameter_mm),
+            )?;
+            // The engine admits 1 to 512 bolts, so the count always fits an int.
+            attr(
+                data,
+                &p,
+                "steel:bolt:count",
+                "int",
+                sdf::Value::Int(i32::try_from(b.count).map_err(|_| limit())?),
+            )?;
+            attr(
+                data,
+                &p,
+                "steel:bolt:pitchMm",
+                "double",
+                sdf::Value::Double(b.pitch_mm),
+            )?;
+            let [ox, oy, oz] = b.origin_mm;
+            attr(
+                data,
+                &p,
+                "steel:bolt:originMm",
+                "double3",
+                sdf::Value::vec3d(ox, oy, oz),
+            )?;
+            let [dx, dy, dz] = b.direction_mm;
+            attr(
+                data,
+                &p,
+                "steel:bolt:directionMm",
+                "double3",
+                sdf::Value::vec3d(dx, dy, dz),
+            )?;
+            let targets = b
                 .connects
                 .iter()
                 .map(|id| path(&element_path(id)?))
@@ -1065,6 +1111,14 @@ fn capture(
         ("steel:weld:side", "token"),
         ("bim:connects", "rel"),
     ];
+    const BOLT: &[(&str, &str)] = &[
+        ("steel:bolt:diameterMm", "double"),
+        ("steel:bolt:count", "int"),
+        ("steel:bolt:pitchMm", "double"),
+        ("steel:bolt:originMm", "double3"),
+        ("steel:bolt:directionMm", "double3"),
+        ("bim:connects", "rel"),
+    ];
     const MESH: &[(&str, &str)] = &[
         ("points", "point3f[]"),
         ("faceVertexCounts", "int[]"),
@@ -1118,6 +1172,11 @@ fn capture(
                             add(name, ty, 0);
                         }
                     }
+                    Shape::Bolt(_) => {
+                        for &(name, ty) in BOLT {
+                            add(name, ty, 0);
+                        }
+                    }
                     Shape::Level { .. } => add("bim:elevationMm", "double", 0),
                 }
             }
@@ -1167,6 +1226,9 @@ fn capture(
                     add(name, ty, 0);
                 }
                 for &(name, ty) in WELD {
+                    add(name, ty, 0);
+                }
+                for &(name, ty) in BOLT {
                     add(name, ty, 0);
                 }
                 for &(name, ty) in POSE {

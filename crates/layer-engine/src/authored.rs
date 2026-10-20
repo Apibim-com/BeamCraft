@@ -35,9 +35,11 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "bim:axisPointsMm=double3[];steel:member:rollRad=double(optional)\n",
     "assembly=element;bim:elementKind=assembly;kind=assembly;no shape inputs, material or Geometry;placement=identity\n",
     "bim:partOf=rel(0..1 element target of kind assembly;source plate|beam|column|assembly;no self;acyclic)\n",
-    "connection=element;bim:elementKind=connection;kind=component;a weld only (A06);no material or Geometry;placement=identity\n",
+    "connection=element;bim:elementKind=connection;kind=component;a weld (A06) or bolt group (A05);no material or Geometry;placement=identity\n",
     "steel:weld:type=token(fillet);steel:weld:sizeMm=double(>0,<=1000);steel:weld:location=token(workshop|site);",
     "steel:weld:side=token(arrow|other|both)\n",
+    "steel:bolt:diameterMm=double(>0,<=1000);steel:bolt:count=int(1..=512);steel:bolt:pitchMm=double(>0,<=1e6);",
+    "steel:bolt:originMm=double3;steel:bolt:directionMm=double3(unit)\n",
     "bim:connects=rel(2 distinct ordered element targets of kind plate|beam|column, main part first;source connection)\n",
     "level=element;bim:elementKind=level;kind=component;bim:elevationMm=double(finite,abs<=1e9);no material or Geometry;placement=identity\n",
     "bim:level=rel(0..1 element target of kind level;source plate|beam|column)\n",
@@ -414,11 +416,28 @@ const A09_NUMBERING_LINE: &str = concat!(
 const A09_CHANGES_ITEM: &str = "|Level|Mark|Delete;";
 const PRE_A09_CHANGES_ITEM: &str = "|Level|Delete;";
 
-/// The mapping descriptor as it was before A09 added the numbering mark: the current descriptor
-/// without the numbering line and without `Mark` in the change list. A09 added only optional
+/// The one descriptor line that A05 added (the bolt properties); see [`pin_accepted`].
+const A05_BOLT_PROPERTIES_LINE: &str = "steel:bolt:diameterMm=double(>0,<=1000);steel:bolt:count=int(1..=512);steel:bolt:pitchMm=double(>0,<=1e6);steel:bolt:originMm=double3;steel:bolt:directionMm=double3(unit)\n";
+
+/// The connection wording that A05 replaced; see [`pin_accepted`].
+const A05_CONNECTION_PHRASE: &str = "a weld (A06) or bolt group (A05)";
+/// The connection wording before A05.
+const A05_PREVIOUS_CONNECTION_PHRASE: &str = "a weld only (A06)";
+
+/// The mapping descriptor as it was before A05 added the bolt properties and reworded the
+/// connection line: the current descriptor without those edits — the numbering mark line of A09
+/// stays, so this is the mapping every store created since A09 carries. A05 added only optional
 /// content, so layers pinned to that mapping stay readable and editable.
-fn pre_a09_descriptor() -> String {
+pub(crate) fn pre_a05_descriptor() -> String {
     SCHEMA_DESCRIPTOR
+        .replacen(A05_BOLT_PROPERTIES_LINE, "", 1)
+        .replacen(A05_CONNECTION_PHRASE, A05_PREVIOUS_CONNECTION_PHRASE, 1)
+}
+
+/// The mapping descriptor as it was before A09 added the numbering mark: the pre-A05 descriptor
+/// without the numbering line and without `Mark` in the change list.
+fn pre_a09_descriptor() -> String {
+    pre_a05_descriptor()
         .replacen(A09_NUMBERING_LINE, "", 1)
         .replacen(A09_CHANGES_ITEM, PRE_A09_CHANGES_ITEM, 1)
 }
@@ -429,8 +448,15 @@ pub(crate) fn pin_accepted(pin: &str) -> Result<bool, Diagnostic> {
     if pin == schema_identity()?.digest.to_string() {
         return Ok(true);
     }
+    // A05 added the bolt properties and reworded the connection line, so the mapping before A05
+    // is the current descriptor without those edits — the digest every store created since A09
+    // carries.
+    let pre_a05 = Sha256::digest(pre_a05_descriptor().as_bytes()).map_err(|_| limit())?;
+    if pin == pre_a05.to_string() {
+        return Ok(true);
+    }
     // A09 added one optional line (the approved mark) and the `Mark` change item and changed
-    // nothing else, so the previous mapping is the current descriptor without them.
+    // nothing else, so the mapping before A09 is the pre-A05 descriptor without them.
     let pre_a09 = pre_a09_descriptor();
     let digest = Sha256::digest(pre_a09.as_bytes()).map_err(|_| limit())?;
     if pin == digest.to_string() {
@@ -566,6 +592,10 @@ pub enum Shape {
     /// `bim:connects` record towards two distinct parts. No material and no derived body; its
     /// placement must be the identity in this slice.
     Weld(Weld),
+    /// A05 bolt group: a `connection` element with explicitly authored bolt properties and one
+    /// `bim:connects` record towards two distinct parts. Like a weld it has no material, no
+    /// derived body and the identity placement in this slice.
+    Bolt(Bolt),
     /// D2 level (a storey): an element of kind `level` with a stored elevation, no material and no
     /// derived body. Plates, beams and columns are assigned to it by [`Change::Level`]. Its
     /// placement must be the identity: the elevation is a value, never a pose.
@@ -589,6 +619,25 @@ pub struct Weld {
     pub location: String,
     /// `arrow`, `other` or `both`.
     pub side: String,
+}
+
+/// The authored inputs of a bolt group (A05). The group is `count` bolts in a straight world line
+/// `origin + direction * (pitch * i)`; the direction is a stored unit vector.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Bolt {
+    /// Full UUIDv7 of the main part, then of the part bolted to it. Distinct, each a plate, beam
+    /// or column; the order is significant.
+    pub connects: [String; 2],
+    /// Nominal bolt diameter in millimetres, in `(0, 1000]`.
+    pub diameter_mm: f64,
+    /// Bolts in the group, 1 to 512.
+    pub count: usize,
+    /// Centre-to-centre distance along the line in millimetres, in `(0, 1000000]`.
+    pub pitch_mm: f64,
+    /// World position of the first bolt in millimetres, each component within the coordinate cap.
+    pub origin_mm: [f64; 3],
+    /// Unit world direction of the line: finite, squared norm within 1e-6 of one.
+    pub direction_mm: [f64; 3],
 }
 
 /// Closed initial member vocabulary.
@@ -1243,7 +1292,8 @@ mod pin_tests {
     #[test]
     fn the_d1_d2_mapping_pin_is_accepted_and_is_the_current_one_without_the_display_name_line() {
         // Pinned value: the digest of the descriptor of master with D1 and D2 (the level and the
-        // project record), before A07.2 added the optional definition display name.
+        // project record), before A07.2 added the optional definition display name, before the
+        // numbering mark of A09 and before A05 added the bolt properties.
         let d1_d2 = "b799ae17004c22a5c2eaf7512367f919aec4b82b9b4b223166310286e1414b5b";
         assert!(SCHEMA_DESCRIPTOR.contains(A07_2_DISPLAY_NAME_LINE));
         assert!(!A07_1_DESCRIPTOR.contains(A07_2_DISPLAY_NAME_LINE));
@@ -1265,7 +1315,9 @@ mod pin_tests {
     fn every_previously_published_mapping_pin_is_still_accepted() {
         let current = schema_identity().unwrap().digest.to_string();
         let pins = [
-            // A07.1, D1/D2 (pre-A07.2), A06, A01, R01, P02.2, U09 and pre-A09 descriptors.
+            // Master with A07.2 (pre-A05), A07.1, D1/D2 (pre-A07.2), A06, A01, R01, P02.2, U09
+            // and pre-A09 descriptors.
+            "fdaf890401a7bf4d8d17eb84ad1901b461ff21f1e7cec1e93f9e71203b83865b",
             "0311df71b2f7a4bd7b19e87ca7daef1884e989bd099bca24ee165de8e6bc310c",
             "b799ae17004c22a5c2eaf7512367f919aec4b82b9b4b223166310286e1414b5b",
             "b8c4a0cbfcb62a1bc9662d74965d5cc6f3cb945870a461af3fe8a8bc89352978",
@@ -1284,6 +1336,21 @@ mod pin_tests {
         assert!(pin_accepted(&r01).unwrap());
         assert!(pin_accepted(&current).unwrap());
         assert!(!pin_accepted(&"0".repeat(64)).unwrap());
+    }
+
+    #[test]
+    fn the_pre_a05_mapping_pin_is_accepted_and_is_not_the_current_one() {
+        // Pinned value: the digest of the descriptor of the released master with the A09
+        // numbering mark, before A05 added the bolt properties and reworded the connection line.
+        let pre_a05 = "085a4f27db4ba0e60eea1a88630df1ab9984930a8e4e4a9bd4f3eb31f812d012";
+        assert_eq!(
+            Sha256::digest(pre_a05_descriptor().as_bytes())
+                .unwrap()
+                .to_string(),
+            pre_a05
+        );
+        assert!(pin_accepted(pre_a05).unwrap());
+        assert_ne!(pre_a05, schema_identity().unwrap().digest.to_string());
     }
 
     #[test]

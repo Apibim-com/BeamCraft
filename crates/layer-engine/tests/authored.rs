@@ -2293,6 +2293,255 @@ fn wrong_weld_inputs_targets_and_loaded_records_are_refused() {
     );
 }
 
+const BOLT: &str = "0199e7a0-0000-7000-8000-000000000301";
+fn bolt(main: &str, secondary: &str) -> Bolt {
+    Bolt {
+        connects: [main.into(), secondary.into()],
+        diameter_mm: 16.0,
+        count: 4,
+        pitch_mm: 80.0,
+        origin_mm: [100.0, 250.0, 5.0],
+        direction_mm: [1.0, 0.0, 0.0],
+    }
+}
+fn create_bolt(id: &str, b: Bolt) -> Change {
+    Change::Create(Element {
+        id: id.into(),
+        name: "B1".into(),
+        shape: Shape::Bolt(b),
+        placement: Placement {
+            translation_mm: [0.0; 3],
+            orientation_xyzw: [0.0, 0.0, 0.0, 1.0],
+        },
+        material: None,
+    })
+}
+
+#[test]
+fn a_bolt_group_authors_its_properties_and_connects_record_and_writes_only_itself() {
+    let (mut a, o) = populated();
+    let (p, o) = installed(&mut a, &o, vec![create_bolt(BOLT, bolt(PLATE, MEMBER))]);
+    let prims = snapshot(&a, &o.context);
+    let b = prim(&prims, &path(BOLT));
+    assert_eq!(b.kind.as_deref(), Some("component"));
+    assert_eq!(
+        value(&prims, BOLT, "bim:elementKind"),
+        Some(&Value::Text("connection".into()))
+    );
+    assert_eq!(
+        value(&prims, BOLT, "steel:bolt:diameterMm"),
+        Some(&Value::Number(16.0))
+    );
+    assert_eq!(
+        value(&prims, BOLT, "steel:bolt:count"),
+        Some(&Value::Int(4))
+    );
+    assert_eq!(
+        value(&prims, BOLT, "steel:bolt:pitchMm"),
+        Some(&Value::Number(80.0))
+    );
+    assert_eq!(
+        value(&prims, BOLT, "steel:bolt:originMm"),
+        Some(&Value::Array(vec![
+            Value::Number(100.0),
+            Value::Number(250.0),
+            Value::Number(5.0)
+        ]))
+    );
+    assert_eq!(
+        value(&prims, BOLT, "steel:bolt:directionMm"),
+        Some(&Value::Array(vec![
+            Value::Number(1.0),
+            Value::Number(0.0),
+            Value::Number(0.0)
+        ]))
+    );
+    // The record lives with the group, in order: main part first.
+    let connects = b
+        .relationships
+        .iter()
+        .find(|r| r.name == "bim:connects")
+        .map(|r| r.targets.clone());
+    assert_eq!(connects, Some(vec![path(PLATE), path(MEMBER)]));
+    // No body: a bolt group is an annotation in this slice.
+    assert!(
+        !prims
+            .iter()
+            .any(|p| p.path == format!("{}/Geometry", path(BOLT)))
+    );
+    // Only the group is written; both parts are read (existence and kind).
+    assert!(p.writes.iter().all(|f| f.identity == BOLT));
+    for part in [PLATE, MEMBER] {
+        assert!(p.reads.contains(&Footprint {
+            identity: part.into(),
+            group: Group::Lifecycle,
+        }));
+    }
+    assert!(p.validation.rules.iter().any(|r| r.starts_with("A05-V01")));
+    // Every authored bolt field is reported.
+    for name in [
+        "steel:bolt:diameterMm",
+        "steel:bolt:count",
+        "steel:bolt:pitchMm",
+        "steel:bolt:originMm",
+        "steel:bolt:directionMm",
+        "bim:connects",
+    ] {
+        assert!(
+            p.opinions
+                .iter()
+                .any(|i| i.element_id == BOLT && i.attribute == name),
+            "{name}"
+        );
+    }
+
+    // A bolted part cannot be deleted while the group connects it (DV-REL-009); the group
+    // itself can, and then the part can. A group has links, so it is not copied (DV-REL-011).
+    let index = a.element_index(&o.context, &control()).unwrap();
+    let plate = index::ElementId::parse(PLATE).unwrap();
+    assert_eq!(
+        a.check_delete(&index, &plate, &control())
+            .err()
+            .map(|e| e.code),
+        Some(ErrorCode::DependencyConflict)
+    );
+    let fresh = index::ElementId::parse("0199e7a0-0000-7000-8000-0000000003ff").unwrap();
+    assert_eq!(
+        index
+            .copy_plan(&index::ElementId::parse(BOLT).unwrap(), &fresh)
+            .err()
+            .map(|e| e.code),
+        Some(ErrorCode::DependencyConflict)
+    );
+    assert!(index.copy_plan(&plate, &fresh).is_ok());
+    let (_, o) = installed(&mut a, &o, vec![Change::Delete { id: BOLT.into() }]);
+    let index = a.element_index(&o.context, &control()).unwrap();
+    a.check_delete(&index, &plate, &control()).unwrap();
+}
+
+#[test]
+fn wrong_bolt_inputs_targets_and_loaded_records_are_refused() {
+    let (mut a, o) = populated();
+    let (_, o) = installed(&mut a, &o, vec![assembly(FRAME, "Frame")]);
+    let with = |f: &dyn Fn(&mut Bolt)| {
+        let mut b = bolt(PLATE, MEMBER);
+        f(&mut b);
+        vec![create_bolt(BOLT, b)]
+    };
+    let cases: Vec<(Vec<Change>, ErrorCode)> = vec![
+        (
+            with(&|b| b.connects[1] = PLATE.into()),
+            ErrorCode::InvalidArgument,
+        ),
+        (
+            with(&|b| b.connects[0] = BOLT.into()),
+            ErrorCode::InvalidArgument,
+        ),
+        (
+            with(&|b| b.connects[1] = FRAME.into()),
+            ErrorCode::UnsupportedProperty,
+        ),
+        (
+            with(&|b| b.connects[1] = "not-a-uuid".into()),
+            ErrorCode::InvalidId,
+        ),
+        (with(&|b| b.diameter_mm = 0.0), ErrorCode::InvalidArgument),
+        (with(&|b| b.diameter_mm = 1000.5), ErrorCode::LimitExceeded),
+        (
+            with(&|b| b.diameter_mm = f64::NAN),
+            ErrorCode::NonFiniteNumber,
+        ),
+        (with(&|b| b.count = 0), ErrorCode::InvalidArgument),
+        (with(&|b| b.count = 513), ErrorCode::InvalidArgument),
+        (with(&|b| b.pitch_mm = 0.0), ErrorCode::InvalidArgument),
+        (with(&|b| b.pitch_mm = 1e12), ErrorCode::LimitExceeded),
+        (
+            with(&|b| b.origin_mm = [1e10, 0.0, 0.0]),
+            ErrorCode::LimitExceeded,
+        ),
+        (
+            with(&|b| b.direction_mm = [2.0, 0.0, 0.0]),
+            ErrorCode::InvalidArgument,
+        ),
+    ];
+    for (changes, code) in cases {
+        assert_eq!(
+            refused_code(&mut a, &o, changes.clone()),
+            Some(code),
+            "{changes:?}"
+        );
+    }
+    // A group has no material and no body; its placement is the identity.
+    let mut placed = create_bolt(BOLT, bolt(PLATE, MEMBER));
+    if let Change::Create(e) = &mut placed {
+        e.placement.translation_mm = [0.0, 0.0, 1.0];
+    }
+    assert_eq!(
+        refused_code(&mut a, &o, vec![placed]),
+        Some(ErrorCode::UnsupportedProperty)
+    );
+    let mut body = mesh();
+    body.id = BOLT.into();
+    assert_eq!(
+        refused_code(
+            &mut a,
+            &o,
+            vec![create_bolt(BOLT, bolt(PLATE, MEMBER)), Change::Mesh(body)]
+        ),
+        Some(ErrorCode::UnsupportedProperty)
+    );
+
+    // Loaded content: one target breaks the cardinality, a count outside the range and a
+    // connection with both property sets are refused, never guessed.
+    let (_, o) = installed(&mut a, &o, vec![create_bolt(BOLT, bolt(PLATE, MEMBER))]);
+    let from = format!("rel bim:connects = [<{}>, <{}>]", path(PLATE), path(MEMBER));
+    for (to, code) in [
+        (
+            format!("rel bim:connects = <{}>", path(PLATE)),
+            ErrorCode::DependencyConflict,
+        ),
+        (
+            format!("rel bim:connects = [<{}>, <{}>]", path(PLATE), path(PLATE)),
+            ErrorCode::InvalidArgument,
+        ),
+    ] {
+        let input = tampered(&a, &o.context, "authored.usda", &from, &to);
+        assert_eq!(
+            validate_layers(input, schema_identity().unwrap(), &control())
+                .err()
+                .map(|e| e.code),
+            Some(code),
+            "{to}"
+        );
+    }
+    let input = tampered(
+        &a,
+        &o.context,
+        "authored.usda",
+        "int steel:bolt:count = 4",
+        "int steel:bolt:count = 513",
+    );
+    assert_eq!(
+        validate_layers(input, schema_identity().unwrap(), &control())
+            .err()
+            .map(|e| e.code),
+        Some(ErrorCode::InvalidArgument)
+    );
+    let input = tampered(
+        &a,
+        &o.context,
+        "authored.usda",
+        "int steel:bolt:count = 4",
+        "int steel:bolt:count = 4\ncustom double steel:weld:sizeMm = 5",
+    );
+    assert_eq!(
+        validate_layers(input, schema_identity().unwrap(), &control())
+            .err()
+            .map(|e| e.code),
+        Some(ErrorCode::InvalidArgument)
+    );
+}
+
 #[test]
 fn section_profiles_round_trip_and_tampering_is_refused() {
     use beamcraft_model::section::{CustomSection, ParametricSection, SectionFamily};
