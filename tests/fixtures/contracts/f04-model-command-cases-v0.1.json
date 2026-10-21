@@ -2345,7 +2345,7 @@
     },
     {
       "case_id": "F04-POS-20",
-      "title": "Pentagon is valid authored input; evaluation unsupported",
+      "title": "Pentagon in the plane z = 0 is evaluated",
       "given": [
         "Authorized context; unused ID; current base/generation."
       ],
@@ -2399,14 +2399,12 @@
       "expected": {
         "outcome": "accepted_draft",
         "code": null,
-        "geometry_status": "unsupported",
-        "geometry_code": "UNSUPPORTED_GEOMETRY",
-        "no_partial_geometry": true
+        "geometry_status": "current",
+        "geometry_code": null,
+        "volume_m3": "0.005475"
       },
-      "derivation": "The simple planar five-point positive-winding contour is valid; A02 owns its solid evaluation. No quantity is claimed.",
-      "f06_refs": [
-        "F06-NEG-39"
-      ]
+      "derivation": "The simple planar five-point counter-clockwise contour lies in z = 0 and is extruded by its thickness. Shoelace area 547500 mm2, times 10 mm = 5475000 mm3 = 0.005475 m3.",
+      "f06_refs": []
     },
     {
       "case_id": "F04-NEG-28",

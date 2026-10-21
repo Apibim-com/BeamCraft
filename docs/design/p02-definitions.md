@@ -83,11 +83,3 @@ beamcraft definitions --store ROOT   (fresh process: verified head, every defini
 * Engine, model and layer-engine unit and integration tests for admission, footprints (a
   publication conflicts with a plate that pins the digest, never with another), the resource-only
   batch and the mass rules.
-
-## Roadmap entry (proposed, not applied)
-
-- 2026-10-17: P02 published immutable profile and material definitions as content-addressed USD
-  prims (`define-material`, `define-profile`, `definitions`), let `create-plate` pin a material by
-  digest and made mass `current` only with a stored density; unknown density stays unknown. Mass is
-  not stored in USD, profiles have no consumer until P03, and definitions are an adapter operation,
-  not an F04 command. K2 is not complete.

@@ -85,7 +85,3 @@ single-byte flips, caps before allocation, ordering, duplicates and the admissio
 - Changesets travel inside the workspace store (the receiver reads the workspace's blobs); there is
   no transport or bundle format yet (F05 frames would carry them).
 - Claims are never garbage-collected; the claims file is capped at 16 MiB.
-
-## Proposed Roadmap entry
-
-`2026-10-18 C01: changesets (model::changeset canonical bytes and admission, host changeset claims, CLI changeset-create/inspect/apply; same payload replays, another payload under the id is OP_ID_REUSE, the claimed actor must be the caller); experimental slice.`

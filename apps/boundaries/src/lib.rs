@@ -3,7 +3,7 @@
 
 //! Module-boundary checker for the BeamCraft workspace (task F08).
 //!
-//! The module table in `docs/contracts/module-boundaries-v0.1.md` is the single source of truth
+//! The module table in `docs/contracts/f08-module-boundaries-v0.1.md` is the single source of truth
 //! for which packages exist, which way their dependencies may point and which of them must build
 //! for `wasm32-unknown-unknown`. This development tool reads that table and the workspace
 //! manifests with the standard library only, reports every broken rule and prints the portable

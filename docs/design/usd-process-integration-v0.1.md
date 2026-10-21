@@ -11,10 +11,10 @@ separate process that hosts the pinned Rust layer engine (F11 variant C, `openus
 `beamcraft-layer-engine` wrapper). "The application" means the desktop process that holds the
 session model, the engine and the in-process kernel.
 
-Contract references: [F04](../contracts/model-and-commands-v0.1.md),
-[F05](../contracts/worker-protocol-v0.1.md), [F06](../contracts/geometry-contract-v0.1.md),
-[F08](../contracts/module-boundaries-v0.1.md),
-[F10](../contracts/domain-vocabulary-v0.1.md),
+Contract references: [F04](../contracts/f04-model-and-commands-v0.1.md),
+[F05](../contracts/f05-worker-protocol-v0.1.md), [F06](../contracts/f06-geometry-contract-v0.1.md),
+[F08](../contracts/f08-module-boundaries-v0.1.md),
+[F10](../contracts/f10-domain-vocabulary-v0.1.md),
 [F11 decision](layer-engine-decision-v0.1.md),
 [F11 wrapper requirements](layer-engine-wrapper-requirements-v0.1.md) (LEW-nn),
 [U01 placement record](u01-placement-containment.md).
@@ -49,7 +49,7 @@ the listed documents for the concept returned nothing.
 Contradictions found with OD-1 to OD-3 (handled in section 8): F11 decision sections 1 and 9
 call the topology open; F08 layer-engine row says "pending owner review"; wrapper requirements
 and the architecture also call the topology open (outside this task's allowlist). The roll
-question appears as "OPEN owner decision" in `g01-math-core-pr.md` and as an unresolved math
+question appeared as "OPEN owner decision" in the G01 math-core PR description (PR #38) and as an unresolved math
 choice in `g01-math-crates-evaluation-v0.1.md` and `tolerance-comparison-v0.1.md` (also outside
 the allowlist). No document in this task's allowlist names a hole shape other than circular or
 oval; `kernel-design-v0.1.md` lists holes and cuts only as `unsupported` and needs no edit.
@@ -390,10 +390,10 @@ The cards are in the plan, not files. These rows are added to them; existing cri
 ## 8. Statements elsewhere that need follow-up
 
 Changed in this task: `layer-engine-decision-v0.1.md` (topology decided) and the layer-engine
-rows of `module-boundaries-v0.1.md`. Outside this task's allowlist and left unchanged, to be
+rows of `f08-module-boundaries-v0.1.md`. Outside this task's allowlist and left unchanged, to be
 proposed in the PR body: topology statements in `architecture.md`,
 `layer-engine-wrapper-requirements-v0.1.md`, `u01-placement-containment.md` and ROADMAP.md;
-roll wording in `g01-math-core-pr.md`, `g01-math-crates-evaluation-v0.1.md` and
+roll wording in the G01 PR description (PR #38), `g01-math-crates-evaluation-v0.1.md` and
 `tolerance-comparison-v0.1.md`. Frozen-contract amendments (F04, F05, F06, F10) are in the PR
 body only.
 

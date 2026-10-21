@@ -212,17 +212,6 @@ reads establish self-consistency only; independently produced USDC/oracle eviden
 U04 API-to-CLI E2E and N03 Linux/WASM/admitted SDK evidence were not run and remain required.
 No production safety, full LEW acceptance, F05 real transport or K1 completion is claimed.
 
-## Roadmap entry
-
-Proposed dated entry only; ROADMAP.md was not edited:
-
-- 2026-10-16: U01 added an experimental native openusd 0.8.0 read wrapper on base
-  adbc407e09476a803de07c31f3a5adcaabad1304, with verified byte manifests, conservative
-  USDA/USDC preflight, static reference provenance, pinned bounded pages and cancellation
-  install gating. Windows workspace checks and 18 wrapper tests passed. Placement and
-  separate-process containment remain proposed for owner review; aggregate parser bounds,
-  hard cancellation, cargo-deny, U04 E2E and N03 evidence remain open. U01/K1 are not complete.
-
 ## Delivery state
 
 Uncommitted: sandbox Git metadata writes are denied (index.lock creation failed in this

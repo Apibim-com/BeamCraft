@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 // Contributor-original harness for the frozen original acceptance descriptions of F04 0.1.0
-// (`docs/contracts/model-command-cases-v0.1.json`); no third-party material.
+// (`tests/fixtures/contracts/f04-model-command-cases-v0.1.json`); no third-party material.
 
 //! Drives every F04 `CreatePlate` case that can be decided without a workspace through the real
 //! engine admission (`admit_create_plate`) and checks the expected code or outcome. The case file
@@ -172,7 +172,7 @@ fn run_case(case_id: &str, arguments: &Json, accepted: &BTreeMap<String, CreateP
 fn every_decidable_create_plate_case_matches_f04_or_is_a_declared_deviation() {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../docs/contracts/model-command-cases-v0.1.json"
+        "/../../tests/fixtures/contracts/f04-model-command-cases-v0.1.json"
     );
     let bytes = std::fs::read(path).unwrap();
     let file = json::decode(&bytes, &MAXIMA).unwrap();

@@ -2,9 +2,9 @@
 
 Thanks for helping. Humans and AI agents follow the same rules.
 
-1. Read [`AGENTS.md`](AGENTS.md). The clean-room and asset rules are absolute: nothing from Tekla
-   Structures or any Trimble product may enter this repository, and behaviour must come from public
-   standards or black-box observation of synthetic fixtures.
+1. Read [`AGENTS.md`](AGENTS.md). The asset and provenance rules are absolute: nothing from Tekla
+   Structures or any Trimble product may enter this repository; engineering rules come from public
+   standards or are our own.
 2. Branch from the verified current `origin/master`, keep the change small and focused.
    Use `<type>/<short-description>` with lowercase hyphenated words: `feat/`, `bug/`, `docs/`,
    `chore/`, `refactor/` or `test/`, as defined in `AGENTS.md` section 6. Include the task ID when
@@ -15,6 +15,7 @@ Thanks for helping. Humans and AI agents follow the same rules.
    cargo clippy --workspace --all-targets -- -D warnings
    cargo test --workspace
    ```
+   The full list of CI checks is in [`docs/development.md`](docs/development.md).
 4. Add a test for new behaviour. For a bug fix, confirm the test fails without the fix.
 5. Open a PR with the template filled in. CI must be green.
 

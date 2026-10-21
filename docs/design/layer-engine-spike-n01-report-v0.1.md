@@ -421,18 +421,3 @@ head `8957c40`). All Cargo commands used `--offline`.
 | Rust 1.95 build, Linux, macOS | **Not run** |
 | `cargo deny` on the spike | **Not run** (spike is outside the repository CI) |
 | Official OpenUSD tooling | **Not run** (not available) |
-
-## Exposure note
-
-Exposure was limited to repository instructions, design and contract documents, the local
-toolchain and Cargo cache, the `openusd 0.8.0` package manifest and README licence statement and
-bundled notice file (for the licence finding), and the dependency metadata. No Tekla/Trimble or
-other commercial detailing assets, personal data, client projects or other checkouts were
-accessed. No upstream source or tests were copied. No network access was used; no service,
-worker or plugin was started other than the spike's own child processes. All new material is
-contributor-original and MPL-2.0.
-
-## ROADMAP and ATTRIBUTION text
-
-Applied in this change: one `ROADMAP.md` progress-log entry at the top of the log and one
-`ATTRIBUTION.md` row, with LF endings. PR URL: none (the orchestrator publishes).

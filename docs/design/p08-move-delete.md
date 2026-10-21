@@ -65,7 +65,3 @@ patch. `apps/beamcraft-cli/tests/undo.rs` undoes a move and a delete.
 - Replay is decided from the head state (a retry after a later edit of the same element is
   `OP_ID_REUSE`), as in P04 and P05.
 - Deleting does not garbage-collect blobs or definitions.
-
-## Proposed Roadmap entry
-
-`2026-10-18 P08: move (placement patch of update-element, no body rebuild) and delete-element (whole element from both layers, refused while linked; Change::Delete in the layer engine); experimental slice, PR stacked on #69.`

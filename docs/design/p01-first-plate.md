@@ -97,8 +97,7 @@ beamcraft plate-inspect --store ROOT
   the checker does not flag it. No float32 incompatibility appeared (volumes agree to 1e-6). The
   test skips with an explicit message when no interpreter with pxr exists (CI); a skip is not
   evidence. Limits: one Windows machine and one OpenUSD version, 25.11, which is **not** the
-  F03-audited 26.8 release (`docs/audits/openusd-26.8.md` still requires an audited tool
-  distribution before the U02 independent-reader gate counts as closed). usd-core is a local test
+  F03-audited 26.8 release. usd-core is a local test
   oracle only (not vendored, not a dependency, nothing committed from it); its TOST-1.0 terms apply
   to the installed wheel and `ATTRIBUTION.md` lists it as an external oracle, not redistributed.
 * **Failure injection with real process death**: a child re-executes the test binary and

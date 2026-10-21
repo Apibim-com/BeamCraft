@@ -102,7 +102,3 @@ These are software-rasterizer numbers on one machine, not hardware GPU results; 
 - Windows and macOS builds and runs, and the Rust 1.96 MSRV build of this stack, were not run here.
 - The window was run only under Xvfb with a software adapter; no interactive acceptance on a
   physical display.
-
-## Proposed Roadmap entry
-
-`2026-10-18 V03: native window and viewport (apps/beamcraft-ui: orbit camera, instanced wgpu offscreen viewport of the accepted snapshot received from the new view-export CLI command as an engine bundle, headless baseline metrics); experimental slice, run under Xvfb on llvmpipe.`

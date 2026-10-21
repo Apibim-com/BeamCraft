@@ -97,7 +97,3 @@ C01; no external product material was used. No third-party dependency is added (
 - The handler runs C01's receipt synchronously; a very slow store blocks the queue up to the
   120-second answer deadline.
 - Windows access control on the token file is not checked (only the Unix mode is).
-
-## Proposed Roadmap entry
-
-`2026-10-18 C02: local coordinator (coordinator-serve, coordinator-publish, coordinator-head; loopback-only, token files authenticate the actor, one bounded publish queue, expected head equal to the changeset base, fast-forward publication with BASE_REVISION_MISMATCH and replay); experimental slice.`

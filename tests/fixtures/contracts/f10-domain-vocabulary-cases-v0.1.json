@@ -3,8 +3,8 @@
  "contract_version": "0.1.0",
  "status": "draft, not frozen",
  "role": "original logical acceptance descriptions; not an engine, USD or module fixture",
- "contract": "domain-vocabulary-v0.1.md",
- "f04_contract": "model-and-commands-v0.1.md",
+ "contract": "f10-domain-vocabulary-v0.1.md",
+ "f04_contract": "f04-model-and-commands-v0.1.md",
  "stages": {
   "C": "client, before send",
   "H": "host, on apply",
@@ -19,7 +19,7 @@
   "false": "reserved vocabulary: specification only, no behaviour"
  },
  "element_defaults": {
-  "lifecycle": "active",
+  "is_deactivated": false,
   "schema_version": "0.1.0",
   "name": "synthetic",
   "attrs": "none unless listed"
@@ -76,8 +76,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -116,8 +115,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       },
       "schema_version": "1.0.0"
@@ -166,8 +164,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -208,8 +205,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       },
       "schema_version": "0.1.1",
@@ -356,8 +352,7 @@
      "kind": "plate",
      "discipline": "steel",
      "attrs": {
-      "steel:plate:widthMm": 1000,
-      "steel:plate:lengthMm": 500,
+      "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
       "steel:plate:thicknessMm": 10
      }
     }
@@ -426,8 +421,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -509,8 +503,7 @@
      "kind": "plate",
      "discipline": "steel",
      "attrs": {
-      "steel:plate:widthMm": 1000,
-      "steel:plate:lengthMm": 500,
+      "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
       "steel:plate:thicknessMm": 10
      }
     }
@@ -544,8 +537,7 @@
      "kind": "plate",
      "discipline": "steel",
      "attrs": {
-      "steel:plate:widthMm": 1000,
-      "steel:plate:lengthMm": 500,
+      "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
       "steel:plate:thicknessMm": 10
      }
     }
@@ -611,7 +603,7 @@
   },
   {
    "case_id": "DVC-KIND-004-N",
-   "title": "Steel enabled authors the reserved kind connection",
+   "title": "Steel enabled authors the reserved kind support",
    "rules": [
     "DV-KIND-004"
    ],
@@ -631,7 +623,7 @@
     "module": "steel",
     "element": {
      "id": "019a7bf0-0000-7000-8000-000000200001",
-     "kind": "connection",
+     "kind": "support",
      "discipline": "steel"
     }
    },
@@ -672,8 +664,7 @@
      "kind": "plate",
      "discipline": "steel",
      "attrs": {
-      "steel:plate:widthMm": 1000,
-      "steel:plate:lengthMm": 500,
+      "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
       "steel:plate:thicknessMm": 10
      }
     }
@@ -709,8 +700,7 @@
      "kind": "plate",
      "discipline": "mep",
      "attrs": {
-      "steel:plate:widthMm": 1000,
-      "steel:plate:lengthMm": 500,
+      "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
       "steel:plate:thicknessMm": 10
      }
     }
@@ -752,8 +742,7 @@
      "kind": "plate",
      "discipline": "steel",
      "attrs": {
-      "steel:plate:widthMm": 1000,
-      "steel:plate:lengthMm": 500,
+      "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
       "steel:plate:thicknessMm": 10
      }
     }
@@ -791,8 +780,7 @@
      "kind": "plate",
      "discipline": "steel",
      "attrs": {
-      "steel:plate:widthMm": 1000,
-      "steel:plate:lengthMm": 500,
+      "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
       "steel:plate:thicknessMm": 10
      }
     }
@@ -829,8 +817,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      },
@@ -839,8 +826,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -879,8 +865,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      },
@@ -889,8 +874,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -938,8 +922,7 @@
      "kind": "plate",
      "discipline": "steel",
      "attrs": {
-      "steel:plate:widthMm": 1000,
-      "steel:plate:lengthMm": 500,
+      "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
       "steel:plate:thicknessMm": 10
      },
      "name": "Plate A"
@@ -976,8 +959,7 @@
      "kind": "plate",
      "discipline": "steel",
      "attrs": {
-      "steel:plate:widthMm": 1000,
-      "steel:plate:lengthMm": 500,
+      "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
       "steel:plate:thicknessMm": 10
      },
      "name": "A\u0007B"
@@ -1015,11 +997,10 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       },
-      "lifecycle": "deactivated"
+      "is_deactivated": true
      }
     ],
     "relationships": []
@@ -1036,7 +1017,7 @@
   },
   {
    "case_id": "DVC-BASE-004-N",
-   "title": "Lifecycle value outside the closed list",
+   "title": "isDeactivated value that is not a boolean",
    "rules": [
     "DV-BASE-004"
    ],
@@ -1054,11 +1035,10 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       },
-      "lifecycle": "hidden"
+      "is_deactivated": "hidden"
      }
     ],
     "relationships": []
@@ -1107,8 +1087,7 @@
      "kind": "plate",
      "discipline": "steel",
      "attrs": {
-      "steel:plate:widthMm": 1000,
-      "steel:plate:lengthMm": 500,
+      "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
       "steel:plate:thicknessMm": 10
      },
      "material": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -1145,8 +1124,7 @@
      "kind": "plate",
      "discipline": "steel",
      "attrs": {
-      "steel:plate:widthMm": 1000,
-      "steel:plate:lengthMm": 500,
+      "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
       "steel:plate:thicknessMm": 10
      },
      "material": "abc123"
@@ -1192,8 +1170,7 @@
      "kind": "plate",
      "discipline": "steel",
      "attrs": {
-      "steel:plate:widthMm": 1000,
-      "steel:plate:lengthMm": 500,
+      "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
       "steel:plate:thicknessMm": 10
      },
      "material": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -1233,8 +1210,7 @@
      "kind": "plate",
      "discipline": "steel",
      "attrs": {
-      "steel:plate:widthMm": 1000,
-      "steel:plate:lengthMm": 500,
+      "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
       "steel:plate:thicknessMm": 10
      },
      "material": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -1277,8 +1253,7 @@
      "kind": "plate",
      "discipline": "steel",
      "attrs": {
-      "steel:plate:widthMm": 1000,
-      "steel:plate:lengthMm": 500,
+      "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
       "steel:plate:thicknessMm": 10
      }
     }
@@ -1314,8 +1289,7 @@
      "kind": "plate",
      "discipline": "steel",
      "attrs": {
-      "steel:plate:widthMm": 1000,
-      "steel:plate:lengthMm": 500
+      "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]]
      }
     }
    },
@@ -1356,8 +1330,7 @@
      "kind": "plate",
      "discipline": "steel",
      "attrs": {
-      "steel:plate:widthMm": 1000,
-      "steel:plate:lengthMm": 500,
+      "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
       "steel:plate:thicknessMm": 10
      }
     }
@@ -1393,9 +1366,7 @@
      "kind": "plate",
      "discipline": "steel",
      "attrs": {
-      "steel:plate:widthMm": "1000",
-      "steel:plate:lengthMm": 500,
-      "steel:plate:thicknessMm": 10
+      "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]], "steel:plate:thicknessMm": "10"
      }
     }
    },
@@ -1436,8 +1407,7 @@
      "kind": "plate",
      "discipline": "steel",
      "attrs": {
-      "steel:plate:widthMm": 1000,
-      "steel:plate:lengthMm": 500,
+      "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
       "steel:plate:thicknessMm": 10
      }
     }
@@ -1475,11 +1445,7 @@
      "kind": "plate",
      "discipline": "steel",
      "attrs": {
-      "steel:plate:widthMm": {
-       "raw_literal": "1e400"
-      },
-      "steel:plate:lengthMm": 500,
-      "steel:plate:thicknessMm": 10
+      "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]], "steel:plate:thicknessMm": {"raw_literal": "1e400"}
      }
     }
    },
@@ -1515,8 +1481,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -1564,8 +1529,7 @@
      "kind": "plate",
      "discipline": "steel",
      "attrs": {
-      "steel:plate:widthMm": 1000,
-      "steel:plate:lengthMm": 500,
+      "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
       "steel:plate:thicknessMm": 10,
       "steel:plate:colour": "red"
      }
@@ -1667,7 +1631,7 @@
         0
        ]
       ],
-      "steel:plate:widthMm": 100
+      "steel:plate:thicknessMm": 100
      },
      "profile": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     }
@@ -1711,8 +1675,7 @@
      "kind": "plate",
      "discipline": "steel",
      "attrs": {
-      "steel:plate:widthMm": 1000000,
-      "steel:plate:lengthMm": 500,
+      "steel:plate:contourPointsMm": [[0, 0, 0], [1000000, 0, 0], [1000000, 500, 0], [0, 500, 0]],
       "steel:plate:thicknessMm": 10
      }
     }
@@ -1750,8 +1713,7 @@
      "kind": "plate",
      "discipline": "steel",
      "attrs": {
-      "steel:plate:widthMm": 1000000.001,
-      "steel:plate:lengthMm": 500,
+      "steel:plate:contourPointsMm": [[0, 0, 0], [1000000.001, 0, 0], [1000000.001, 500, 0], [0, 500, 0]],
       "steel:plate:thicknessMm": 10
      }
     }
@@ -1793,8 +1755,7 @@
      "kind": "plate",
      "discipline": "steel",
      "attrs": {
-      "steel:plate:widthMm": 1000,
-      "steel:plate:lengthMm": 500,
+      "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
       "steel:plate:thicknessMm": 10
      }
     }
@@ -1832,8 +1793,7 @@
      "kind": "plate",
      "discipline": "steel",
      "attrs": {
-      "steel:plate:widthMm": 1000,
-      "steel:plate:lengthMm": 500,
+      "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
       "steel:plate:thicknessMm": 0
      }
     }
@@ -1875,8 +1835,7 @@
      "kind": "plate",
      "discipline": "steel",
      "attrs": {
-      "steel:plate:widthMm": 1000,
-      "steel:plate:lengthMm": 500,
+      "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
       "steel:plate:thicknessMm": 10
      },
      "placement": {
@@ -1927,8 +1886,7 @@
      "kind": "plate",
      "discipline": "steel",
      "attrs": {
-      "steel:plate:widthMm": 1000,
-      "steel:plate:lengthMm": 500,
+      "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
       "steel:plate:thicknessMm": 10
      },
      "placement": {
@@ -1978,8 +1936,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -2066,8 +2023,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -2079,7 +2035,7 @@
     "module": "steel",
     "target": "019a7bf0-0000-7000-8000-000000200001",
     "changes": {
-     "steel:plate:widthMm": 900
+     "steel:plate:thicknessMm": 12
     }
    },
    "expected": {
@@ -2108,8 +2064,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -2156,8 +2111,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -2198,8 +2152,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -2251,8 +2204,7 @@
      "kind": "plate",
      "discipline": "steel",
      "attrs": {
-      "steel:plate:widthMm": 1000,
-      "steel:plate:lengthMm": 500,
+      "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
       "steel:plate:thicknessMm": 10
      }
     }
@@ -2288,8 +2240,7 @@
      "kind": "plate",
      "discipline": "steel",
      "attrs": {
-      "steel:plate:widthMm": 1000,
-      "steel:plate:lengthMm": 500,
+      "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
       "steel:plate:thicknessMm": 10,
       "Steel Plate!:x": 1
      }
@@ -2327,8 +2278,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       },
       "unknown_attrs": {
@@ -2377,8 +2327,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       },
       "unknown_attrs": {
@@ -2428,8 +2377,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      },
@@ -2438,8 +2386,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -2483,8 +2430,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -2534,8 +2480,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      },
@@ -2544,8 +2489,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -2587,8 +2531,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      },
@@ -2597,8 +2540,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -2831,7 +2773,7 @@
     "DV-REL-005"
    ],
    "polarity": "positive",
-   "first_slice": false,
+   "first_slice": true,
    "f04_refs": [],
    "given": {
     "modules": [
@@ -2875,7 +2817,7 @@
     "DV-REL-005"
    ],
    "polarity": "negative",
-   "first_slice": false,
+   "first_slice": true,
    "f04_refs": [],
    "given": {
     "modules": [
@@ -2943,8 +2885,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      },
@@ -2953,8 +2894,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -2997,8 +2937,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -3047,8 +2986,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      },
@@ -3057,8 +2995,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -3102,8 +3039,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      },
@@ -3112,8 +3048,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -3265,8 +3200,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -3306,8 +3240,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      },
@@ -3316,8 +3249,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -3367,8 +3299,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -3413,8 +3344,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -3465,8 +3395,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -3505,8 +3434,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      },
@@ -3515,8 +3443,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -3567,8 +3494,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      },
@@ -3577,8 +3503,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -3621,8 +3546,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      },
@@ -3631,11 +3555,10 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       },
-      "lifecycle": "deactivated"
+      "is_deactivated": true
      }
     ],
     "relationships": [
@@ -4134,7 +4057,7 @@
       "id": "019a7bf0-0000-7000-8000-000000200001",
       "kind": "wall",
       "discipline": "arch",
-      "lifecycle": "deactivated"
+      "is_deactivated": true
      },
      {
       "id": "019a7bf0-0000-7000-8000-000000200002",
@@ -4648,8 +4571,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -4690,8 +4612,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -4739,8 +4660,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -4781,8 +4701,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -4959,8 +4878,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      },
@@ -4969,8 +4887,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -5011,8 +4928,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      },
@@ -5021,8 +4937,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -5084,8 +4999,7 @@
      "kind": "plate",
      "discipline": "steel",
      "attrs": {
-      "steel:plate:widthMm": 1000,
-      "steel:plate:lengthMm": 500,
+      "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
       "steel:plate:thicknessMm": 10
      },
      "material": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -5095,7 +5009,7 @@
     "outcome": "accepted",
     "findings": [],
     "primary_code": null,
-    "lifecycle_after": "active"
+    "is_deactivated_after": false
    }
   },
   {
@@ -5300,8 +5214,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -5347,8 +5260,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      },
@@ -5393,8 +5305,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       },
       "unknown_attrs": {
@@ -5619,7 +5530,7 @@
     "DV-REL-005"
    ],
    "polarity": "negative",
-   "first_slice": false,
+   "first_slice": true,
    "f04_refs": [],
    "given": {
     "modules": [
@@ -7608,8 +7519,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -7661,8 +7571,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      },
@@ -7671,8 +7580,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -7878,8 +7786,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      },
@@ -7888,8 +7795,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -7932,8 +7838,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      },
@@ -7942,8 +7847,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -8043,8 +7947,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      },
@@ -8253,8 +8156,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -8298,8 +8200,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       }
      }
@@ -8352,8 +8253,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       },
       "schema_version": "0.2.0"
@@ -8403,8 +8303,7 @@
       "kind": "plate",
       "discipline": "steel",
       "attrs": {
-       "steel:plate:widthMm": 1000,
-       "steel:plate:lengthMm": 500,
+       "steel:plate:contourPointsMm": [[0, 0, 0], [1000, 0, 0], [1000, 500, 0], [0, 500, 0]],
        "steel:plate:thicknessMm": 10
       },
       "schema_version": "1.1.0"

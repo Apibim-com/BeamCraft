@@ -1,38 +1,30 @@
 # E01: own IFC export contract, version 0.1.0
 
-Status: **draft 0.1.0, not frozen; K6 not started**. Date: 2026-10-17 (owner decisions applied the
-same day, section 17). Base: `43026e26e631c0999dec55d56917981adb8c30a6` (`origin/master`).
+Status: **draft 0.1.0.** Implemented by `export-ifc` and `ifc-guid`; it is frozen once the checks of
+section 19 pass.
 
-This is an original, implementation-independent contract. It fixes **what BeamCraft writes to an IFC
-file, how an element becomes an IFC entity, how its 22-character GlobalId is derived, what is lost,
-and how the writer is built and driven.** It is written before the exporter (E02) so that E02 has a
-public mapping to implement and a loss list to report. **Nothing here is implemented.** No writer,
-GlobalId function, export command, project record or level exists in code. The examples are
-acceptance descriptions, not APIs or saved files. The owner's decisions on the first draft's
-questions are recorded in section 17; two model tasks that E02 now depends on (a stored ProjectId and
-a Level concept) are specified in section 19.
+This contract fixes **what BeamCraft writes to an IFC file, how an element becomes an IFC entity,
+how its 22-character GlobalId is derived, what is lost, and how the writer is built and driven.**
+The examples are acceptance descriptions, not APIs or saved files.
 
 ## 1. Status, scope and provenance
 
 ### 1.1 Relation to other contracts
 
-- [F04](model-and-commands-v0.1.md) (frozen 0.1.0): identities (section 2), units and caps
+- [F04](f04-model-and-commands-v0.1.md): identities (section 2), units and caps
   (section 3), quantity statuses (section 5) and the 23 error codes (section 8). E01 changes
-  nothing there and adds no error code. Dependencies D1 and D2 (section 19) need F04 amendments
-  that are proposed there, not applied.
-- [F06](geometry-contract-v0.1.md) (frozen 0.1.0): the canonical box mesh and its face order
+  nothing there and adds no error code.
+- [F06](f06-geometry-contract-v0.1.md) (frozen 0.1.0): the canonical box mesh and its face order
   (section 6), the quantity definitions (section 8), the key and signature rules (section 7) and
   the `GEO_` code table, which is the model for the `IFC_` table of section 13.
-- [F10](domain-vocabulary-v0.1.md) (draft): the closed element registry (`plate`, `beam`, `column`
+- [F10](f10-domain-vocabulary-v0.1.md) (draft): the closed element registry (`plate`, `beam`, `column`
   implemented, ten kinds reserved), unknown-content preservation, the validation envelope and
-  its ordering (sections 6.3 and 6.4). Its section 8 already names E01.
-- [Module boundaries (F08)](module-boundaries-v0.1.md): the layering that section 15.1 extends with
-  proposed rows (not applied).
-- P03 ([design](../design/p03-straight-member.md)), P04 ([design](../design/p04-quantities-update.md))
-  and P02.2 ([design](../design/p02-2-section-properties.md)): the committed members, the stored
-  quantity records and their freshness, and the declared section values. Only what those slices
-  publish today is exported (section 8). The A04 plate holes ([design](../design/a04-plate-holes.md))
-  are an experimental pilot that this contract covers because they exist in stores today.
+  its ordering (sections 6.3 and 6.4).
+- [Module boundaries (F08)](f08-module-boundaries-v0.1.md): where the writer and the adapter live
+  (section 15.1).
+- The stored model: committed members and plates (with their holes), the stored quantity records
+  and their freshness, and the declared section values of profile definitions. Only what is
+  published is exported (section 8).
 
 ### 1.2 What the document decides
 
@@ -49,35 +41,20 @@ a Level concept) are specified in section 19.
 ### 1.3 Excluded
 
 - **IFC import and conversion of foreign models.** Reading IFC, and turning IFC into BeamCraft
-  elements or read-only references, needs a separate scope decision (plan task E04). This contract
+  elements or read-only references, needs a separate scope decision. This contract
   defines no reading API (`IFCX-SCOPE-003`). A test harness may parse a written file to check it;
   that is not a product feature.
-- The exporter itself (E02), BOM and reports (E03) and drawings (D tasks).
-- The two model tasks D1 and D2 of section 19: this contract specifies what the export needs from
-  them, not how they are built.
+- BOM and reports, and drawings.
 - Any IFC feature outside the subset of section 2, including model view definition conformance,
   classification, structural analysis, connections, assemblies, bolts, welds and reinforcement.
 - Remote, collaborative or networked export. Export is a local, read-only operation.
 
-### 1.4 Provenance
+### 1.4 Sources
 
-Contributor-original BeamCraft text, MPL-2.0, derived from the owner's architecture direction (IFC
-is an isolated export adapter of an explicitly supported subset, built on the engine API), from
-F04, F06, F10 and F08, from the repository documents above and from the owner's decisions of
-2026-10-17. The plan card (E01) and its 2026-10-17 amendment (a deterministic 22-character GlobalId
-derived from the UUIDv7 and published in derived/export data) are the task statement.
-
-**Behaviour comes only from the public buildingSMART IFC specification** (entity definitions,
-property and quantity set definitions, the GlobalId type and the STEP physical file format as
-described there). Section 18 lists every page used. **No code, schema listing, example file,
-naming list or algorithm is taken from ifc-lite, IfcOpenShell, any other IFC library or any
-commercial product** (`AGENTS.md` sections 1 and 2). The ifc-lite crates were evaluated in
-[N02](../design/n02-ifc-lite-evaluation-v0.1.md) as a possible geometry dependency; E01 neither
-depends on them nor reuses anything from that evaluation. The GlobalId encoding of section 3 is
-derived from the public type definition and checked by hand (section 3.2); the test vectors are
-BeamCraft's own. All examples in this document and the case file were written for it. The owner's
-validation tool (Q-8) is named only as an acceptance gate; no code or output of it is part of this
-repository.
+Behaviour comes only from the public buildingSMART IFC specification (entity definitions,
+property and quantity sets, the GlobalId type and the STEP physical file format); section 18 lists
+every page used. No code, schema listing, example file or algorithm is taken from any IFC library
+or commercial product. The GlobalId test vectors of section 3.2 are BeamCraft's own.
 
 ## 2. IFC version and supported subset
 
@@ -85,9 +62,9 @@ repository.
 
 | Item | Value | Source |
 |------|-------|--------|
-| Schema identifier in `FILE_SCHEMA` | `IFC4` (the IFC4 ADD2 TC1 edition) | S01. Owner decision Q-1, 2026-10-17 |
+| Schema identifier in `FILE_SCHEMA` | `IFC4` (the IFC4 ADD2 TC1 edition) | S01 |
 | File format | Clear-text STEP physical file (`.ifc`), 7-bit ASCII, LF line ends | S02. `ifcXML`, `ifcJSON` and `ifcZIP` are not produced (`IFCX-VER-002`) |
-| Model view definition | **None claimed** (`IFCX-VER-003`) | Q-2 |
+| Model view definition | **None claimed** (`IFCX-VER-003`) | - |
 | Contract version in requests | Exactly `0.1.0` (`IFCX-VER-001`) | F04 section 6 pattern |
 
 IFC4 is read by more tools than IFC 4.3 and has every entity the subset needs. Its consequences,
@@ -98,8 +75,8 @@ and the enumeration values of the three product types are those of IFC4 (section
 View is built around, so that view is a candidate. The contract does not claim it: the Reference
 View's complete requirements were not available to the author, and a header that names a view
 asserts conformance to all of it. Whether the written file satisfies the published Reference View
-definition is an E02 check (section 19); only then may `FILE_DESCRIPTION` name it, by a contract
-amendment.
+definition is an acceptance check (section 19); only then may `FILE_DESCRIPTION` name it, in a
+later version.
 
 ### 2.2 Entity subset
 
@@ -110,7 +87,7 @@ object model. The spec column cites section 18.
 |----|--------|----------|------|
 | E-01 | `IfcProject` | One per file; units and representation context | S10 |
 | E-02 | `IfcSite`, `IfcBuilding` | One synthetic site and one synthetic building above the stored levels | S11, S12 |
-| E-03 | `IfcBuildingStorey` | One per stored Level (dependency D2) | S13 |
+| E-03 | `IfcBuildingStorey` | One per stored Level | S13 |
 | E-04 | `IfcRelAggregates` | Project to site, site to building, building to storeys | S14 |
 | E-05 | `IfcRelContainedInSpatialStructure` | Elements in their storey, or in the building when they have no level | S15 |
 | E-06 | `IfcBeam`, `IfcColumn`, `IfcPlate` | One per element of kind `beam`, `column`, `plate` | S16, S17, S18 |
@@ -129,7 +106,7 @@ Predefined types (IFC4 enumerations, S45 to S48): `IfcBeam` gets `.BEAM.`, `IfcC
 `.COLUMN.`, `IfcPlate` and `IfcBuildingElementProxy` get `.NOTDEFINED.`. (The IFC4 plate
 enumeration is curtain panel, sheet, user defined and not defined; BeamCraft has no purpose
 attribute, so it claims none.) `IfcRoot.OwnerHistory` is written as unset (`$`); whether the
-validation tool requires it is an E02 finding.
+validation tool requires it is checked at acceptance.
 
 ### 2.3 Not in the subset
 
@@ -224,14 +201,13 @@ ElementId unless it also passes `Uuid7::from_bytes`.
 ### 3.5 Synthetic GlobalIds
 
 Entities that are not elements but are `IfcRoot` subtypes (project, site, building, storeys,
-relationships, property sets, quantity sets) need a GlobalId too (`IFCX-GUID-004`). The owner
-accepted this construction (Q-11):
+relationships, property sets, quantity sets) need a GlobalId too (`IFCX-GUID-004`). They use this construction:
 
 `G(role, keys) = E( first 16 bytes of SHA-256( "BCIFC-GUID" 0x00 role 0x00 key_1 ... key_k ) )`
 
 with SHA-256 as in `beamcraft_model::digest` (FIPS 180-4), `role` the ASCII token below and each
 key a fixed-width byte string, so the preimage is unambiguous. The ProjectId is the one **stored in
-the project entry** (dependency D1, `IFCX-PRJ-001`, `IFCX-PRJ-002`).
+the project entry** (`IFCX-PRJ-001`, `IFCX-PRJ-002`).
 
 | Entity | Role token | Keys |
 |--------|-----------|------|
@@ -273,8 +249,8 @@ lists both identifiers for every element, so a downstream program can map either
 
 ### 3.7 Publication
 
-The amendment asks that external programs match BeamCraft elements by GlobalId. The owner decided
-(Q-6) that the value is **computed at export and not persisted** (`IFCX-GUID-008`):
+External programs match BeamCraft elements by GlobalId. The value is **computed at export and not
+persisted** (`IFCX-GUID-008`):
 
 1. The IFC file carries it as `IfcRoot.GlobalId` of every exported element.
 2. The export report lists `element_id` and `ifc_global_id` for every element (section 15.4).
@@ -282,7 +258,7 @@ The amendment asks that external programs match BeamCraft elements by GlobalId. 
    `ifc_global_id` field in element inspection, section 15.4), so a program can obtain the value for
    an element without exporting.
 
-No attribute is added to the authored or derived layer and the U02 schema descriptor and its digest
+No attribute is added to the authored or derived layer and the schema descriptor and its digest
 do not change. Because the function is pure, every one of these values is reproducible from the
 ElementId alone. A layer that already holds an attribute named `bim:ifcGlobalId` is carrying
 unknown content: it is preserved, ignored and never trusted (F10 `DV-NS-002`).
@@ -291,8 +267,8 @@ unknown content: it is preserved, ignored and never trusted (F10 `DV-NS-002`).
 
 ### 4.1 What is read
 
-`IFCX-SCOPE-002`. The export reads one verified committed revision through the host's verified reader
-(U06): by default the published head, optionally an explicit RevisionId. Layers and blobs are
+`IFCX-SCOPE-002`. The export reads one verified committed revision through the host's verified reader:
+by default the published head, optionally an explicit RevisionId. Layers and blobs are
 verified; a revision that cannot be read completely is refused with `DEPENDENCY_UNAVAILABLE`. A
 pinned snapshot of the revision is the only input (the same snapshot the F06 queries use), so all
 data of one export comes from one revision. A personal workspace draft revision is exportable, if the
@@ -307,7 +283,7 @@ or invented.
 
 ### 4.2 Handling of every element
 
-**No element is skipped** (`IFCX-SCOPE-006`) except a deactivated one (`IFCX-SCOPE-005`; Q-12 decided). Each
+**No element is skipped** (`IFCX-SCOPE-006`) except a deactivated one (`IFCX-SCOPE-005`). Each
 element goes through the checks below in this order; a failure of a request-level check refuses the
 export, the others only degrade the element and are listed.
 
@@ -341,9 +317,8 @@ ContentDigest order (`IFCX-DET-001`).
 The file holds one `IfcProject` (Name from the optional `project_name` argument, otherwise unset),
 one synthetic `IfcSite` and one synthetic `IfcBuilding` (fixed names `Site` and `Building`, placements
 at the world origin with identity axes) and one `IfcBuildingStorey` per stored Level
-(`IFCX-LVL-001`), aggregated project to site, site to building, building to storeys. The owner
-decided (Q-7) that levels belong to the model before the export; the synthetic site and building
-sit above them.
+(`IFCX-LVL-001`), aggregated project to site, site to building, building to storeys. Levels belong to the model; the synthetic site and
+building sit above them.
 
 | Level attribute | IfcBuildingStorey attribute |
 |-----------------|-----------------------------|
@@ -379,18 +354,18 @@ beam or column outside the F04 caps refuses the export (`IFCX-PLC-003`); a proxy
 not a rigid pose is exported without placement and representation (`IFCX-PLC-002`). Nothing is baked
 into the geometry: the mesh is written in element-local coordinates and the placement moves it.
 
-Note: the P01/P03/A04 slices refuse a placement rotation other than the identity today
-(`UNSUPPORTED_GEOMETRY`), so exported files of today have identity axes. The rule is specified now
-so that it does not change when the limit is lifted.
+Note: the engine refuses a placement rotation other than the identity today
+(`UNSUPPORTED_GEOMETRY`), so exported files have identity axes. The rule is specified now so that
+it does not change when rotation is supported.
 
 ## 6. Geometry: the published mesh
 
 ### 6.1 Choice: the tessellated mesh only
 
-The owner decided (Q-2) that the geometry is the tessellated mesh and nothing else. The first draft
-proposed an extruded solid with a profile; that proposal is withdrawn.
+The geometry is the tessellated mesh and nothing else; an extruded solid with a profile is not
+written.
 
-| Criterion | Tessellated face set (chosen) | Extruded solid (withdrawn) |
+| Criterion | Tessellated face set (chosen) | Extruded solid (not used) |
 |-----------|-------------------------------|----------------------------|
 | Source | The mesh BeamCraft already publishes and verifies in the derived layer; the file shows what a USD reader shows | A second description derived from authored parameters |
 | Holes and later operations | Part of the mesh with no extra entity | Profile voids now, booleans or openings later |
@@ -426,14 +401,13 @@ normal points out of the body, which is the orientation the IFC4 definition requ
 face set. Vertex order and triangle order are not changed, merged, welded or re-sorted; the order of
 the F06 canonical box (vertex `i = xb + 2*yb + 4*zb`, face quads in the F06 table order, quad
 `(a,b,c,d)` as triangles `(a,b,c)` and `(a,c,d)`) is therefore the order of the file for plate, beam
-and column without holes, assuming P01 stores it (case `E01-POS-16`).
+and column without holes (case `E01-POS-16`).
 
-**Number text.** The derived layer stores mesh points as binary32 (`point3f`), a precision policy P04
-lists as open. The exporter writes each coordinate as the **shortest decimal text that parses back
+**Number text.** The derived layer stores mesh points as binary32 (`point3f`). The exporter writes each coordinate as the **shortest decimal text that parses back
 to the same binary32** (section 11.3), not as the longer text of the binary32 value widened to
 binary64. A reader that parses the text as a double obtains a value within one binary32 unit of the
-stored one. For integer millimetre coordinates the value is exact. The owner decided (Q-13) to keep binary32
-mesh coordinates; export does not wait for a binary64 derived mesh.
+stored one. For integer millimetre coordinates the value is exact. Mesh coordinates stay binary32, the
+precision of the derived layer.
 
 A face with a vertex count other than 3, a mesh with no faces or an element with no derived mesh
 (valid non-rectangular plates, members with another profile kind, kinds the kernel does not know)
@@ -455,31 +429,30 @@ Counts are bounded by `IFCX-LIM-005`.
 (every edge in exactly two triangles, once in each direction) and compares the volume with the
 published volume. The bound is the CR-TOL-001 quantity bound (relative 1e-6) when all coordinates
 are exactly representable in binary32, as in the examples of the case file. For a general mesh the
-bound is the one implied by half a binary32 unit per coordinate and is stated per case by E02; it
-is not claimed to be 1e-6 in general (binary32 coordinates, Q-13 decided). `IFCX-GEO-007`: no profile, extrusion, boolean or
+bound is the one implied by half a binary32 unit per coordinate and is stated per case; it
+is not claimed to be 1e-6 in general (binary32 coordinates). `IFCX-GEO-007`: no profile, extrusion, boolean or
 opening entity exists in the file.
 
 ## 7. Material and profile
 
 **Material** (`IFCX-MAT-001` to `IFCX-MAT-003`). A pinned material definition (`bim:material`) used
 by at least one exported element becomes one `IfcMaterial` (S30). `Name` is the declared grade
-(P02.2) or, when none is declared, the text `Unspecified`; `Description` is the declared standard
-when present (owner decision Q-9). A grade over 255 characters is truncated to 255 in `Name`, listed, and
+or, when none is declared, the text `Unspecified`; `Description` is the declared standard
+when present. A grade over 255 characters is truncated to 255 in `Name`, listed, and
 the full grade is the property `FullName` (`IfcText`) of `BeamCraft_Material` (`IFCX-PSET-004`). Two different materials with no grade therefore have the same
 name and are told apart by the property **`MaterialDigest`** (`IfcIdentifier`, the full 64 lowercase
 hexadecimal digits) in an `IfcMaterialProperties` named `BeamCraft_Material` (S32), which every
 material has. One `IfcRelAssociatesMaterial` (S31) links the material to all its exported elements
 in ElementId order. A declared density becomes `IfcMaterialProperties` named `Pset_MaterialCommon`
 with the property `MassDensity` (`IfcMassDensityMeasure`, kg/m3, S32 and S49). An absent density writes
-no property: it is never zero and never a catalogue value. A grade never selects a density (P02.2).
+no property: it is never zero and never a catalogue value. A grade never selects a density.
 An element with no pinned material gets no association.
 
 **Profile.** No profile entity is written: the geometry is the mesh. A member's profile ContentDigest
 is the property `ProfileDigest` (section 9). The profile definition is nevertheless resolved
 (`IFCX-MAT-004`): an unresolvable digest refuses the export, because the declared values below read
-from it. Its **declared section values** (P02.2: designation, standard, area, mass per metre,
-surface per metre) are exported in the separate set `BeamCraft_Declared` (section 9.2, owner decision
-Q-10), never in a quantity set.
+from it. Its **declared section values** (designation, standard, area, mass per metre,
+surface per metre) are exported in the separate set `BeamCraft_Declared` (section 9.2), never in a quantity set.
 
 ## 8. Quantities
 
@@ -488,11 +461,11 @@ Q-10), never in a quantity set.
 `IFCX-QTY-001`. Only **published current quantities** are exported. A quantity is written only when
 its stored record exists, its signature equals the one the engine computes from the present authored
 inputs, the stored value and status equal the engine's own computation and the status is `current`
-(the `assess` rule of P04; a forged value under a matching signature is stale). Nothing is
+(a forged value under a matching signature is stale). Nothing is
 recomputed at export time. The exporter may call the kernel to verify a mesh (section 6.3) but never
 to produce a quantity the store lacks.
 
-| Freshness | Meaning (F04 section 5, P04) | Written? |
+| Freshness | Meaning (F04 section 5) | Written? |
 |-----------|-----------------------------|----------|
 | `current` | Record present, signature and value match | yes |
 | `stale` | Record present, signature or value differ | no value; status in `BeamCraft_Element`; omission listed |
@@ -501,13 +474,13 @@ to produce a quantity the store lacks.
 | `unsupported` | Geometry outside the scope | no value; status `unsupported`; omission listed |
 
 A quantity omission is a **warning** (`IFCX-QTY-002`) and does not fail the export, including in
-strict mode (owner decision Q-5). A `current` record with a non-finite value, or a volume that is
+strict mode. A `current` record with a non-finite value, or a volume that is
 not greater than zero, is `INTEGRITY_ERROR` and refuses the export (`IFCX-QTY-005`). A proxy has no
 quantity set.
 
 ### 8.2 Mapping of the published quantities (IFC4)
 
-Published today (P04): `volume_mm3` and `mass_kg` with their statuses, shape and mass signatures
+Published today: `volume_mm3` and `mass_kg` with their statuses, shape and mass signatures
 and an algorithm label. Units: volume is divided by `1e9` to cubic metres, as F06 section 2 does;
 mass is already kilograms.
 
@@ -526,16 +499,16 @@ a published record and the exporter does not recompute it.
 
 Not published today and therefore not exported (L-06): beam `Length`, `CrossSectionArea`,
 `OuterSurfaceArea`, `GrossSurfaceArea`, `NetSurfaceArea`, plate `Width`, `Perimeter`, `GrossArea`,
-`NetArea`, and the amended P04 fields `lengthMm`, `cutLengthMm`, `nominalMassKg`, `surfaceAreaM2`.
-When P04 publishes one of them as a current record, a contract version adds its row; the rule
+`NetArea`, and the fields `lengthMm`, `cutLengthMm`, `nominalMassKg`, `surfaceAreaM2`.
+When the store publishes one of them as a current record, a contract version adds its row; the rule
 "published current only" does not change.
 
 ### 8.3 Provenance
 
 `IFCX-QTY-006`. `BeamCraft_Element` carries the volume and mass statuses, the shape and mass
 signatures (64 lowercase hex digits) and the algorithm label of the records, so a reader can
-compare the file with the derived layer. These signatures are P04's own, not the F06 section 7
-keys.
+compare the file with the derived layer. These signatures are the quantity records' own, not the
+geometry keys.
 
 ## 9. Property sets
 
@@ -578,7 +551,7 @@ RevisionId, contract and exporter versions) go in the report, not in a property 
 
 ### 9.2 `BeamCraft_Declared`
 
-For a member whose profile definition carries declared section values (P02.2), one more
+For a member whose profile definition carries declared section values, one more
 `IfcPropertySet` with its `IfcRelDefinesByProperties` (`IFCX-DECL-001`, `-002`). It is absent when
 the definition declares nothing. Values are written **as authored**, without conversion or check
 against any formula; the unit is in the property name, and every property has a `Description`
@@ -677,7 +650,7 @@ a backslash is doubled. Each maximal run of non-ASCII characters is one segment:
 four upper-case hex digits per UTF-16 unit and `\X0\` when the run is all in the basic multilingual
 plane, otherwise `\X4\` followed by eight upper-case hex digits per code point and `\X0\`. Control
 characters cannot occur (F04 label rule). These are the escapes of the STEP physical file as
-described for IFC (S02); E02 must confirm them against an independent reader (L-14).
+described for IFC (S02); acceptance confirms them against an independent reader (L-14).
 
 ### 11.5 Header
 
@@ -693,8 +666,7 @@ ENDSEC;
 ```
 
 `T` is the UTC calendar time of the 48-bit millisecond timestamp inside the RevisionId, truncated to
-whole seconds, in the form `YYYY-MM-DDTHH:MM:SS` (a pure function of the revision; owner decision
-Q-4). `FILE_NAME`'s file name is the fixed text shown, not the real path. `V` is the exporter's crate
+whole seconds, in the form `YYYY-MM-DDTHH:MM:SS` (a pure function of the revision). `FILE_NAME`'s file name is the fixed text shown, not the real path. `V` is the exporter's crate
 version, so byte identity is claimed per exporter version. `FILE_DESCRIPTION` names no model view
 (section 2.1). The project-level provenance (ProjectId, RevisionId, contract version) is the
 report's, not the file's.
@@ -703,7 +675,7 @@ report's, not the file's.
 
 `IFCX-DET-007`. The exporter uses only `+ - * /` and `sqrt` except where the kernel derived a mesh
 with a nonzero member roll, which uses `sin` and `cos`. Cross-target byte identity for rolled members
-is therefore not claimed until the sin/cos reproducibility question of P03 and F06 section 2 is
+is therefore not claimed until the sin/cos reproducibility question of the member frame is
 resolved. For all other elements it is claimed, as in F06 for the meshes.
 
 ## 12. Losses
@@ -782,9 +754,9 @@ a quantity omission and therefore a warning.
 | Item | Bound | Origin |
 |------|-------|--------|
 | Elements per file | 65,536 (`IFCX-LIM-001`), checked before any output | the Pick scan bound of F06 section 9 |
-| Levels per project | 1,024 (`IFCX-LIM-005`) | draft proposal |
-| One mesh | 262,144 vertices and 524,288 triangles (`IFCX-LIM-005`) | draft proposal; covers a plate of 64 holes of 1024 points |
-| Output size | 268,435,456 bytes (256 MiB), checked before each write with checked arithmetic (`IFCX-LIM-002`) | draft proposal |
+| Levels per project | 1,024 (`IFCX-LIM-005`) | own limit |
+| One mesh | 262,144 vertices and 524,288 triangles (`IFCX-LIM-005`) | own limit; covers a plate of 64 holes of 1024 points |
+| Output size | 268,435,456 bytes (256 MiB), checked before each write with checked arithmetic (`IFCX-LIM-002`) | own limit |
 | Findings in the report | 256 listed, total counted up to 1,000,000 | F10 section 6.3 |
 | Label | 1 to 256 bytes at input (F04); 255 characters in an `IfcLabel` attribute, the rest preserved in an `IfcText` | F04 section 3, S04 |
 | Strings | at most 4096 bytes before escaping (F04); the escaped text counts toward the output cap | F04 section 3 |
@@ -798,28 +770,18 @@ degraded element never panics; a request failure leaves no file.
 checks the running size against the cap, flushes and syncs it, and installs it under the final name
 only after every check passed. An existing file is not replaced unless the caller asks for it, and
 a symbolic link or Windows reparse point at the output name or its parent is refused, as the byte
-storage of U05 refuses them (`IFCX-ERR-002`, `IFCX-ERR-003`). A failure removes the temporary file.
+storage refuses them (`IFCX-ERR-002`, `IFCX-ERR-003`). A failure removes the temporary file.
 No network access is involved; the output path is a local I/O-edge argument and authorises nothing.
 
 ## 15. Headless surface and writer design
 
-E02 implements this section. Names are proposals that E02 may refine through a contract amendment.
+### 15.1 Where it lives
 
-### 15.1 Placement in the workspace (proposal, not applied)
-
-| Piece | Path | Kind | Layer | Allowed dependencies |
-|-------|------|------|-------|---------------------|
-| Pure IFC writer: GlobalId, STEP lexical rules, entity templates, bounded sink | `crates/ifc` (`beamcraft-ifc`) | native | 2 | `beamcraft-geom`, `beamcraft-model` |
-| Export model builder and use case: `beamcraft_engine::export` | `crates/engine` | native | 3 | adds `beamcraft-ifc` |
-| Atomic output sink (temporary file, sync, non-replacing install) | `crates/host` | host | 4 | existing edges |
-| CLI command `export-ifc` and helper `ifc-guid` | `apps/beamcraft-cli` | app | 5 | existing edges (calls the engine) |
-
-`beamcraft-ifc` is not one of the three WASM crates and needs no WASM check. It has no third-party
-dependency (SHA-256 comes from `beamcraft_model::digest`); a dependency would need the `AGENTS.md`
-section 5 audit. It has no file system access: it writes to a `std::io::Write` sink supplied by the
-caller. Placing the writer at layer 2 lets the engine (layer 3) depend on it without a same-layer
-edge, which the boundary checker would reject. These rows are a proposed amendment to F08
-sections 2 and 4 (section 19) and are not applied here.
+| Piece | Path |
+|-------|------|
+| Pure IFC writer: GlobalId, STEP lexical rules, entity templates, bounded sink | `crates/ifc` (`beamcraft-ifc`, layer 2, no file system, no third-party dependency) |
+| Atomic output (temporary file, sync, non-replacing install) | `beamcraft_host::output` |
+| Export adapter and the commands `export-ifc` and `ifc-guid` | `beamcraft_cli::export` |
 
 ### 15.2 Writer design
 
@@ -838,7 +800,7 @@ sections 2 and 4 (section 19) and are not applied here.
    writer's element results.
 
 Tests are the case file plus unit tests of `guid` and `step`. The independent check of a produced
-file is a gate of E02 (owner decision Q-8, section 17).
+file is an acceptance check (section 19).
 
 ### 15.3 Engine API (logical)
 
@@ -858,7 +820,6 @@ beamcraft export-ifc --store ROOT --out FILE
   [--strict] [--overwrite] [--report FILE]
 beamcraft ifc-guid --id UUID          prints the GlobalId (INVALID_ID for a malformed id)
 beamcraft ifc-guid --decode GLOBALID  prints the UUID text, or INVALID_ARGUMENT
-beamcraft plate-inspect --store ROOT  gains ifc_global_id per element (proposal)
 ```
 
 There is no `--project-id`: it is read from the project entry (`IFCX-REQ-002`, case `E01-NEG-34`).
@@ -880,14 +841,13 @@ outputs; the exit code follows the existing CLI convention.
 
 ## 16. Acceptance cases
 
-[The case file](ifc-export-cases-v0.1.json) holds 105 original logical acceptance
+[The case file](../../tests/fixtures/contracts/e01-ifc-export-cases-v0.1.json) holds 105 original logical acceptance
 descriptions: 52 positive and 53 negative, with stable IDs `E01-POS-nn` and `E01-NEG-nn`, and
 78 rules `IFCX-<FAMILY>-<NNN>` of which every one is exercised by at least one case. A
 negative case is one where the rule fires: an element is exported with a listed loss, a warning is
 raised, or the request is refused with the stated F04 code. A case with a `needs` field depends on
-a limit that is not yet lifted, a harness hook, or the dependencies D1 and D2 of section 19. They are
-proposed future tests; acceptance needs a real exporter, a real store and an independent check of
-the written file.
+a limit that is not yet lifted or a harness hook. Acceptance runs them against the real exporter
+and a real store, with an independent check of the written file.
 
 | Topic | Cases |
 |-------|-------|
@@ -912,7 +872,7 @@ diagnostic and are checked by the acceptance cases. Counts: 78 rules, 26 error, 
 | IFCX-SCOPE-002 | error | DEPENDENCY_UNAVAILABLE | The export reads exactly one verified committed revision, the published head by default or an explicit RevisionId. A revision that cannot be read and verified completely is refused; there is no partial export. |
 | IFCX-SCOPE-003 | error | UNSUPPORTED_COMMAND | IFC import, and any reading of IFC by BeamCraft, is outside this contract. A request to import is refused. |
 | IFCX-SCOPE-004 | error | INTEGRITY_ERROR | Export is read-only: it changes no authored state, derived state, revision or generation, and writes no attribute into the store. |
-| IFCX-SCOPE-005 | info | - | An element whose lifecycle is deactivated is not exported and is listed (F10 section 3.2; owner decision Q-12). It is the only element that is not exported. |
+| IFCX-SCOPE-005 | info | - | An element with `bim:isDeactivated = true` is not exported and is listed (F10 section 3.2). It is the only element that is not exported. |
 | IFCX-SCOPE-006 | mapping | - | Every other element of the revision is exported. An element without usable geometry is exported without a representation and listed; nothing else is skipped. |
 | IFCX-VER-001 | error | UNSUPPORTED_VERSION | contract_version is exactly 0.1.0 and the requested schema identifier is IFC4 (IFC4 ADD2 TC1), the only supported one. |
 | IFCX-VER-002 | error | UNSUPPORTED_PROPERTY | The only output format is the clear-text STEP physical file. Any other requested format is refused. |
@@ -928,9 +888,9 @@ diagnostic and are checked by the acceptance cases. Counts: 78 rules, 26 error, 
 | IFCX-REQ-001 | error | INVALID_ID | An explicit revision_id is a full canonical UUIDv7 text. |
 | IFCX-REQ-002 | error | INVALID_ARGUMENT | A required option is missing, an option is unknown or repeated, or a value is out of range. There is no project-id option: the ProjectId is read from the project entry. |
 | IFCX-REQ-003 | error | NOT_FOUND | An explicit revision_id names no committed revision of the store. |
-| IFCX-PRJ-001 | error | DEPENDENCY_UNAVAILABLE | The project entry of the revision must record a ProjectId (dependency D1, section 19). A revision without one is refused; no ProjectId is invented or taken from an option. |
+| IFCX-PRJ-001 | error | DEPENDENCY_UNAVAILABLE | The project entry of the revision must record a ProjectId. A revision without one is refused; no ProjectId is invented or taken from an option. |
 | IFCX-PRJ-002 | mapping | - | The GlobalIds of the project, site, building, storeys and relationships derive from the stored ProjectId, so two exports of the same project agree and two projects never share them. |
-| IFCX-LVL-001 | mapping | - | Each stored Level (dependency D2, section 19) becomes one IfcBuildingStorey with its name and elevation; the elements assigned to it are contained in it by one IfcRelContainedInSpatialStructure. |
+| IFCX-LVL-001 | mapping | - | Each stored Level becomes one IfcBuildingStorey with its name and elevation; the elements assigned to it are contained in it by one IfcRelContainedInSpatialStructure. |
 | IFCX-LVL-002 | error | DANGLING_RELATIONSHIP | An element assigned to a LevelId that no Level of the revision carries refuses the export. |
 | IFCX-LVL-003 | mapping | - | An element with no level is contained in the IfcBuilding. A project with no Level has no storey. |
 | IFCX-LVL-004 | mapping | - | A storey placement is the point (0, 0, elevation) relative to the building placement. Element placements stay relative to the building placement, so a level adds no arithmetic to any element number. |
@@ -969,7 +929,7 @@ diagnostic and are checked by the acceptance cases. Counts: 78 rules, 26 error, 
 | IFCX-DET-002 | mapping | - | STEP instance numbers are assigned by a counter in the fixed emission order of section 11.2. |
 | IFCX-DET-003 | mapping | - | A binary64 REAL and a binary32 REAL are each written as the shortest decimal text that parses back to the same value of its own type, in the notation of section 11.3. |
 | IFCX-DET-004 | mapping | - | Strings are escaped as in section 11.4. The whole file is 7-bit ASCII with LF line ends. |
-| IFCX-DET-005 | mapping | - | Header fields are the fixed values of section 11.5; the only variable one is the time stamp derived from the RevisionId (owner decision Q-4). |
+| IFCX-DET-005 | mapping | - | Header fields are the fixed values of section 11.5; the only variable one is the time stamp derived from the RevisionId. |
 | IFCX-DET-006 | mapping | - | The same revision, options and exporter version give a byte-identical file and report. No clock, random source, locale, thread count, hash-map order, environment variable or path influences them. |
 | IFCX-DET-007 | info | - | Cross-platform byte identity is claimed only when no member has a nonzero roll; with a nonzero roll it depends on the unresolved sin/cos reproducibility question (F06 section 2). |
 | IFCX-ERR-001 | error | DEPENDENCY_UNAVAILABLE | The export result uses the F10 section 6.3 envelope precedence: an unavailable input makes the status incomplete and the primary code DEPENDENCY_UNAVAILABLE, before any other error. |
@@ -983,60 +943,38 @@ diagnostic and are checked by the acceptance cases. Counts: 78 rules, 26 error, 
 | IFCX-LIM-003 | mapping | - | Every count in the writer is bounded by a cap enforced upstream or by LIM-001, 002 and 005; no allocation is sized by an unchecked input, no recursion is used and no input-derived index is used. |
 | IFCX-LIM-004 | mapping | - | The report keeps at most 256 findings in the F10 order and states total_findings and truncated; the per-element table is complete. |
 | IFCX-LIM-005 | error | LIMIT_EXCEEDED | A single mesh of more than 262,144 vertices or 524,288 triangles, or a project of more than 1,024 levels, refuses the export. |
-| IFCX-VAL-001 | mapping | - | Acceptance of E02 includes validating a written file with the owner's chosen independent tool, Altiro Desktop (owner decision Q-8), run locally as a separate process with no upload of the file; its admission is an open E02 gate (section 17). |
+| IFCX-VAL-001 | mapping | - | Acceptance includes validating a written file with an independent IFC tool, run locally as a separate process with no upload of the file; it is a remaining acceptance check (section 19). |
 | IFCX-SURF-001 | mapping | - | Every export is an engine API call first; the CLI command adds no computation and no private path (AGENTS.md section 3). |
 | IFCX-SURF-002 | mapping | - | The export report of section 15.4 is deterministic, lists every element's GlobalId, representation, quantity freshness and omissions, and carries the SHA-256 of the file. |
 
 
-## 17. Decisions of the owner
+## 17. Design choices and extension points
 
-### 17.1 Decisions (2026-10-17, owner)
+| Choice | Where |
+|--------|-------|
+| Target IFC4 (ADD2 TC1), not IFC 4.3; no model view is claimed | 2.1, 2.2, 8.2, 11.5, 18 |
+| Geometry is the tessellated mesh only, in binary32 coordinates | 2.1, 6 |
+| The ProjectId is stored in the project, never an export argument | 3.5, 4.1 |
+| The header time stamp comes from the RevisionId | 11.5 |
+| Every element is exported; a kind without an IFC mapping becomes `IfcBuildingElementProxy`; only deactivated elements are left out | 4.2, 13 |
+| Stale, missing and unknown quantities are omitted and reported, never zero | 8 |
+| The GlobalId is computed at export, never stored | 3.7 |
+| Levels map to `IfcBuildingStorey` under a synthetic site and building | 5 |
+| A material without a grade is named `Unspecified`, with its digest in a property | 7 |
+| Declared section values are a labelled property set, never a quantity set | 9.2 |
+| Non-element entities get GlobalIds from the SHA-256 construction | 3.5 |
 
-The owner answered the eleven questions of the first draft in one session and the two that followed (Q-12, Q-13) the same day. The draft proposals they
-replace are withdrawn.
+**Extension point: IFCX.** A later version adds export to IFCX, the JSON-based successor format of
+buildingSMART (IFC5), next to IFC4 STEP. The mapping of section 4 (which elements, in which order,
+with which GlobalId, quantities and losses) is independent of the file format, so IFCX reuses it;
+only the writer and the format-specific rules change. Version 0.1.0 writes IFC4 STEP only
+(`IFCX-VER-002`). The rule prefix `IFCX-` of this contract means "IFC export" and is unrelated to
+the format name.
 
-| Q | Decision | Where applied |
-|---|----------|---------------|
-| Q-1 | Target **IFC4 (ADD2 TC1)**, not IFC 4.3. | 2.1, 2.2, 8.2, 11.5, 18 |
-| Q-2 | Geometry is **the tessellated mesh only**. The swept-solid choice is withdrawn. A model view is named only if the public specification supports it; it was not supported from the material available, so none is claimed. | 2.1, 6 |
-| Q-3 | The **ProjectId is stored in the project entry**, not an export argument. A separate model task (D1) is an E02 dependency; project-level GlobalIds derive from the stored value. | 3.5, 4.1, 19 |
-| Q-4 | The header time stamp is **derived from the RevisionId timestamp**. | 11.5 |
-| Q-5 | **All supported elements export as meshes; an element whose kind has no IFC mapping becomes `IfcBuildingElementProxy` and is never skipped.** Strict stays as an optional flag. Stale, missing and unknown quantities are omitted and reported, never zero. | 4.2, 13 |
-| Q-6 | `GlobalId` is **computed at export only**; nothing is persisted in the derived layer, and the U02 schema does not change. | 3.7 |
-| Q-7 | **Levels (storeys) are added to the model before export** (D2); elements map to `IfcBuildingStorey`; a synthetic site and building stay above the stored levels. | 5, 19 |
-| Q-8 | **Independent validation of E02's output is done with the owner's Altiro Desktop.** | below, 19 |
-| Q-9 | A material without a grade is named **`Unspecified`**, with the definition digest in a property. | 7 |
-| Q-10 | **Declared** area, mass per metre and surface per metre are exported as clearly labelled declared properties, never in a quantity set. | 9.2 |
-| Q-11 | The **SHA-256 construction** for the GlobalIds of project, site, building, storeys and relationships is accepted. | 3.5 |
-| Q-12 | **Deactivated elements are not exported; every other element is.** Export by a user-defined filter or selection is a planned future extension: an extension point, out of scope for 0.1.0, with no behaviour and no case here. | 4.2, 17.3 |
-| Q-13 | **Binary32 mesh coordinates are kept** as drafted (the derived layer's precision); export does not wait for a binary64 derived mesh. | 6.2, 6.4 |
-
-**Q-8, what is recorded and what is not.** The owner's own IFC tool, Altiro Desktop, is the chosen
-independent check of E02's output (`IFCX-VAL-001`). A connector for it also exists in the author's
-tooling environment; that connector is not a project dependency and nothing here depends on it. No
-hosted validator is named or allowed by this contract. The following are **unverified** and make
-the tool an open E02 gate, not an admitted oracle:
-
-1. whether it runs **locally as a separate process** and reads the file **without uploading** it or
-   any part of it over a network (`AGENTS.md` section 5: new outbound network access is the owner's
-   decision);
-2. its **licence and its role as an oracle** under `AGENTS.md` section 2 (an external process only,
-   no code or output copied into the repository) and the admission record that implies;
-3. whether it validates against the IFC4 schema and reports the checks the cases need (volume of the
-   mesh, closed shell, element count and GlobalIds).
-
-### 17.2 Open questions
-
-None. Q-8's unverified items (17.1) are an E02 gate, not a question.
-
-### 17.3 Extension point: export by selection
-
-The owner plans a future export of a user-defined filter or selection of elements. It is **not part
-of 0.1.0** and this contract defines no option, behaviour or case for it. The only commitment is
-that the element set of an export is chosen in one place (the engine's pinned-snapshot element list
-of section 4.3), so that a later version can restrict it without changing the mapping rules. Levels,
-materials and relationships would then be limited to those the selected elements use; that rule
-belongs to the future contract version.
+**Extension point: export by selection.** A later version may export a user-defined filter or
+selection of elements. Version 0.1.0 defines no option or behaviour for it; the element set is
+chosen in one place (the pinned-snapshot element list of section 4.3), so a later version can
+restrict it without changing the mapping rules.
 
 ## 18. Public specification index
 
@@ -1045,12 +983,9 @@ Section numbers are not quoted because the editions number them differently; the
 definition name identifies the page. URLs follow the pattern
 `https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/<schema>/lexical/<lowercase name>.htm`
 (quantity sets under `.../<schema>/qset/`, property sets under `.../<schema>/pset/`).
-**Verification status:** in the session that wrote this draft, direct fetches of buildingSMART pages
-returned HTTP 403. Content was taken from web search excerpts of the same or neighbouring editions
-(marked "excerpt") and from the author's knowledge of the public schema (marked "not seen"); the IFC4
-ADD2 TC1 URLs below are built from the edition's pattern and none was opened. A reviewer must open
-every link before the contract is frozen; a row whose description proves wrong is a defect of this
-document, not of the specification.
+**Verification status:** the URLs below follow the edition's pattern. Rows marked "excerpt" were
+checked against published excerpts, rows marked "not seen" are not yet checked against the page; a
+row whose description proves wrong is a defect of this document, not of the specification.
 
 | ID | Definition | URL | Used for | State |
 |----|------------|-----|----------|-------|
@@ -1102,84 +1037,13 @@ document, not of the specification.
 | S48 | IfcBuildingElementProxyTypeEnum | <https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifcproductextension/lexical/ifcbuildingelementproxytypeenum.htm> | Value NOTDEFINED | not seen |
 | S49 | Pset_MaterialCommon and IfcMassDensityMeasure | <https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifcmaterialresource/pset/pset_materialcommon.htm> | MassDensity property of a material | not seen |
 
-## 19. Dependencies, E02 gates, plan mapping and proposed amendments
+## 19. Remaining acceptance checks
 
-### 19.1 Dependency D1: the ProjectId record (model task, before E02)
-
-**Need.** The export derives project-level GlobalIds from a stable ProjectId (section 3.5), and F04
-section 2 already defines ProjectId as a full UUIDv7. No store records one: the experimental stores
-hold a manifest, layers and a head log only.
-
-**Result.** The project entry records exactly one ProjectId, written once when the project is
-created, immutable afterwards, preserved by copy of the store layers, workspace forks and revision
-publication, and readable through the engine API and the CLI. How it is encoded in USD or the
-manifest is a U-task decision; this contract fixes only the content and the acceptance.
-
-**Acceptance.** (1) A new store records a valid UUIDv7 ProjectId; (2) every later revision of the
-store reports the same one; (3) a workspace fork reports its parent's; (4) it cannot be changed by
-any command (`UNSUPPORTED_PROPERTY`); (5) an existing experimental store without one is not
-silently given one: the export refuses it (`DEPENDENCY_UNAVAILABLE`), and an explicit, reviewed
-assignment command is the only way to add it; (6) an invalid stored value is `INVALID_ID` when read;
-(7) engine API, CLI and an end-to-end test exist (`AGENTS.md` section 3). Needs an F04 amendment
-for the read and the assignment command (proposed, not applied).
-
-### 19.2 Dependency D2: the Level concept (model task, before E02)
-
-**Need.** The model has no level. The export maps elements to `IfcBuildingStorey` (section 5).
-
-**Result.** A **Level** is a project-owned record, not an element kind: a LevelId (full UUIDv7), a
-name (label rule, F04 section 3) and an `elevation_mm` (finite, absolute value at most
-1,000,000,000 mm, the F04 coordinate cap), stored in the project entry. An element may carry at most
-one optional level assignment (an attribute naming a LevelId); an element without one is legal. A
-level has no geometric effect: changing a level's name or elevation does not change any element's
-placement, shape, key or quantity. Commands (create level, update level name or elevation, delete
-level, and assignment through the existing update path) follow F04: typed arguments, full ids,
-derived footprint, one undo unit. Deleting a level that an element references is refused
-(`DEPENDENCY_CONFLICT`, F10 `DV-REL-009` pattern). A copy keeps the source's level. Levels are
-listed in ascending LevelId order everywhere.
-
-**Acceptance.** (1) Create, rename, change elevation, assign, unassign and delete (refused while
-referenced) each have an engine API, a CLI command and an end-to-end test; (2) a level change leaves
-every element's shape key, mass signature and mesh bytes unchanged; (3) an assignment to an unknown
-LevelId is `DANGLING_RELATIONSHIP`; (4) a project with no level and elements with no level reopen
-unchanged; (5) levels, assignments and unknown namespaces survive an edit of anything else (F10
-`DV-NS-002`); (6) the cases `E01-POS-45`, `E01-POS-46` and `E01-NEG-49` become reachable. Needs F04
-amendments (new commands, the assignment attribute and the footprint group) and an F10 note that a
-level is not an element kind; both are proposed, not applied.
-
-### 19.3 E02 gates
-
-E02 depends on E01, D1 and D2. In addition to the plan acceptance (API/CLI end-to-end test), its
-acceptance includes: (a) the independent check with the owner's tool (section 17.1, three open
-items, `IFCX-VAL-001`); (b) the vectors of section 3.2, the synthetic vectors reproduced with the
-in-repo SHA-256, and the REAL and string vectors; (c) a check of the written file against the
-published IFC4 Reference View definition, after which a contract amendment may name the view
-(section 2.1); (d) confirmation of the escapes of 11.4 against the independent reader; (e) every
-case of the case file that is reachable.
-
-### 19.4 Plan mapping and proposed amendments
-
-- **E03** (BOM and reports) reads published current quantities by the same rule as section 8.
-- **E04** (IFC import research) may reuse section 3's decoder only; it may not widen this contract.
-- **F08 amendment (proposed, not applied):** add the rows of section 15.1 to the module table and to
-  the contract-area table (writer, engine export, host sink), with `beamcraft-engine` allowed to
-  depend on `beamcraft-ifc`.
-- **F04 and F10 amendments (proposed, not applied):** the ProjectId and Level commands and attribute
-  of D1 and D2, and a note in F10 that a level is not an element kind.
-- **Plan (proposed):** E02 gains D1 and D2 as dependencies; the plan change is the owner's.
-
-### 19.5 Log
-
-- 2026-10-19: E02 implemented as an experimental slice (`docs/design/e02-ifc-export.md`): writer
-  crate `beamcraft-ifc`, atomic output in `beamcraft_host::output`, adapter `beamcraft_cli::export`,
-  commands `export-ifc` and `ifc-guid`. Decisions and deviations are listed there (assemblies,
-  welds and references as proxies; the adapter in the CLI rather than the engine; the additive
-  `AssemblyId` property). The contract text above is unchanged and stays a draft.
-
-- 2026-10-17: initial draft 0.1.0 (E01), with a swept-solid proposal.
-- 2026-10-17: owner decisions Q-1 to Q-11 applied. IFC4 ADD2 TC1; mesh only; stored ProjectId (D1);
-  levels (D2); proxies instead of skips; no persisted GlobalId; `Unspecified` materials; declared
-  values; Altiro Desktop as the validation gate. Rules and cases were regenerated and renumbered
-  (the first draft was never frozen).
-- 2026-10-17: Q-12 and Q-13 decided by the owner and moved to the Decisions record; export by
-  selection recorded as an extension point (17.3).
+Acceptance of the exporter still needs: (a) an independent check of a written file
+with an IFC tool that runs locally as a separate process, reads the file without uploading it, has a
+licence that allows that use, and validates against the IFC4 schema with the checks the cases need
+(`IFCX-VAL-001`); (b) the vectors of section 3.2, the
+synthetic vectors reproduced with the in-repo SHA-256, and the REAL and string vectors; (c) a check
+of the written file against the published IFC4 Reference View definition, after which a later version
+may name the view (section 2.1); (d) confirmation of the escapes of 11.4 against the independent
+reader; (e) every reachable case of the case file.

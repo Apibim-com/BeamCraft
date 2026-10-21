@@ -99,7 +99,7 @@ Newer element schemas/kinds/modes remain inert and cannot be edited. This checke
 from external `usdchecker` (**not run**, no offline executable found), the F10 module-rule
 catalogue and the F06 engineering validator. It does not certify contour topology,
 planarity, support, mesh solidness, exact quantities, F06 result freshness or signatures.
-Those remain engine prerequisites. See [the U02 validation report](U02-VALIDATION.md).
+Those remain engine prerequisites. See [the U02 validation report](../../docs/design/u02-validation.md).
 
 ## Read-only foreign references (R01)
 
@@ -156,4 +156,4 @@ read profile advertises `relationships=false`, omits relationships from its clos
 has no index method; carrying them changes the frozen profile and F05 schema), a persisted
 index, copy/delete commands (P05/P08), typed element-to-element relationship records and their
 vocabulary rules (F10/vocabulary section 5), and USDC relationship evidence (the restricted binary
-profile refuses relationship specs and U02 element layers). See [the U03 report](U03-INDEX.md).
+profile refuses relationship specs and U02 element layers). See [the U03 report](../../docs/design/u03-index.md).

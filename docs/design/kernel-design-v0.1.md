@@ -1,6 +1,6 @@
 # G04: first-scope kernel design, version 0.1.0
 
-Date: 2026-10-15. Status: **draft; nothing implemented; no implementer declared eligible**.
+Date: 2026-10-15. Status: **draft; nothing implemented**.
 Contributor-original design, MPL-2.0. Task-card base:
 `29d962e790ffd21ecd9a45143f052d4b4d53d3f7`, originally stacked on F06 PR #16. Round 4 consumes
 F06 0.1.0 after correction round 4, task-supplied head `172f4b1`, with 83 cases. Git ownership
@@ -8,13 +8,11 @@ validation prevents independently verifying HEAD. This is neither a contract fre
 
 ## 1. Scope and status
 
-The inputs are [F06 0.1.0](../contracts/geometry-contract-v0.1.md), its
-[83 acceptance descriptions](../contracts/geometry-contract-cases-v0.1.json),
-[F04 0.1.0](../contracts/model-and-commands-v0.1.md), the
-[first-scope package 0.1.0](../clean-room/handoff/first-scope-v0.1.md), its
-[cases](../clean-room/handoff/first-scope-cases-v0.1.json), and the
-[admission policy](../clean-room/admission-policy.md). F04 and F06 were frozen at 0.1.0 on 2026-10-16 (P-1, P-2 and P-3 confirmed by the owner;
-P-3c is erratum E-2); renewed admission is still pending.
+The inputs are [F06 0.1.0](../contracts/f06-geometry-contract-v0.1.md), its
+[83 acceptance descriptions](../../tests/fixtures/contracts/f06-geometry-contract-cases-v0.1.json),
+[F04 0.1.0](../contracts/f04-model-and-commands-v0.1.md) and the first-scope requirements 0.1.0 with
+their cases (PR #10). F04 and F06 were frozen at 0.1.0 on 2026-10-16 (P-1, P-2 and P-3 confirmed by
+the owner; P-3c is erratum E-2).
 This design identifies contradictions; it does not silently repair those contracts.
 
 The only solids considered are a rectangular plate and a straight rectangular prism member,
@@ -37,7 +35,6 @@ This is **not an exact B-rep**. The proposed shell is a bounded derived represen
 - **S4: pilot cuts.** Adds: A later, separately admitted experiment may add one plane clipping one
   convex box and a planar cap. Gate and exclusions: Not authorized by this draft; new topology,
   naming, bounds and cases required.
-
 
 S4 is a boundary for planning, not an operation specified here. It must define coplanar/tangent
 and empty results, orientation, volume conservation, work limits and FeatureId loss before code.
@@ -334,7 +331,6 @@ or general point-in-polyhedron routines for this scope.
   comparison decides; a squared-distance enclosure is an auxiliary check, not a replacement
   operation order or a silently changed boundary decision.
 
-
 For a box face ray intersection solve F06's plane equation, restrict to `[0,t_max]`, and test
 both closed in-plane intervals enlarged by eps_pick in each direction. Flag `boundary` when
 on the original boundary or in the enlargement. Report every qualifying non-parallel face;
@@ -437,7 +433,6 @@ Structural validation is not permission for a primitive builder to emit larger s
 - **213024 blob bytes.** Verdict: supported, exact simultaneous count ceiling. Worked resource
   evidence: `32+98304+98304+16384=213024` (W24).
 
-
 W25: first-scope blob is `32+192+144+24=392 bytes`. Corrected F06 sections 6 and 10 distinguish
 these exact primitive counts from general structural caps. W26's `17408*64=1114112` is only a
 hypothetical all-feature-string payload, not the actual six-face descriptor. F06 now bounds
@@ -488,7 +483,6 @@ fitting a blob does not establish delivery feasibility.
 - **Coordinate absolute `1e-9 mm` plus relative `1e-12`.** Verdict: supported for listed small
   examples, tight across the full admitted domain. Numeric or resource evidence: W33 gives about
   `2.22e-7 mm` at an ideal zero after cancellation.
-
 
 W31 uses `1e-6` as exact decimal for the spacing ratio; the contract's f64 divisor is slightly
 different. Bucket computation must specify `floor(fl(t / f64(1e-6)))`, not claim equality with
@@ -703,7 +697,6 @@ unsupported variants before numerical work. Never allocate from an unvalidated c
 - **S4 pilot.** Proposed bound per body/call: no admitted work/allocation budget. Cancellation:
   unsupported until amended.
 
-
 W36: directed edges at the generic triangle cap are `3*8192=24576`. If topology validation is
 later admitted at that cap, an ordered edge-record sort uses at most 15 bottom-up merge passes
 (`24576<32768=2^15`), with checked iterative indices and fallible allocation. This is only a
@@ -811,15 +804,7 @@ inputs. The exact allocation between their future cards needs the orchestrator's
   query/E2E validation and determinism evidence; no claim from mock-only checks.
 
 
-An issuer may give a fresh implementer only an explicit allowlist of reviewed versions pinned
-to actual repository commits: admitted first-scope package/cases, owner-confirmed F04/F06,
-independently admitted portions of this draft/matrix, named public mathematical references and
-explicitly listed BeamCraft source. Follow admission-policy sections 4, 5 and 8 and the
-[task template](../clean-room/implementation-task-template.md). No private observations,
-restricted summaries, oracle outputs or third-party kernel material may cross the boundary.
-This draft is not yet an admitted implementation handoff. No person's eligibility is decided.
-
-## 9. Open decisions, limitations and exposure
+## 9. Open decisions and limitations
 
 ### Reconciliation of A1 through A11
 
@@ -901,42 +886,5 @@ remain open; applied amendments do not close them.
 
 Open gates: owner confirmation/admission of frames; independent design review; numeric-budget
 implementation proof; resource-budget instrumentation; matrix materialization as tests; real
-API/CLI E2E evidence; compiler/target reproducibility; F06 freeze; source-exposure admission.
+API/CLI E2E evidence; compiler/target reproducibility; F06 freeze.
 No software dependency, network service, asset catalogue or persisted model definition is added.
-
-### Exposure note
-
-Round 4 re-read F06 sections 4, 7, 9, 11 and 12 and the 83-case file, including the corrected
-POS-10/POS-41/POS-42/POS-45 and new POS-47/NEG-36. It read the existing design/matrix, local
-checker and repository rules/roadmap/architecture. No new external sources or other checkouts
-were read. Earlier rounds read their then-current F06 inputs, the same authorized design
-inputs and local scratch checker. F08 boundaries are integrated; this reconciliation does not
-select or change module paths or manually read implementation sources. The following earlier
-exposure history is retained, not attributed anew to round 4.
-
-The original design run read the task card, AGENTS.md, CLAUDE.md, ROADMAP.md, docs/architecture.md,
-F06 draft
-and its entire case file, F04's scope/limits/frames/quantities/errors/comparison sections,
-every public file under docs/clean-room (README, policy, templates, review result, first-scope
-package and cases), and docs/fixtures/README.md and expectations.md. Some initial combined
-tool output was truncated; relevant inputs were then read in smaller sections. It enumerated
-input filenames and attempted read-only Git status/branch/HEAD. It read only this worktree's
-repository inputs and its own two outputs/scratch verification. Prescribed Cargo checks may
-read toolchain/dependency files as part of the tools; no other checkout was opened as input.
-
-Public browser reads were the mathematical reference pages listed in section 1, plus failed
-attempts to retrieve the robust-predicates paper as PDF/PostScript and a LibreTexts mirror of
-the divergence theorem. These failed retrievals are not claimed as read. The academic
-publication page includes links to software; none was followed. No third-party kernel source,
-tests or documentation, commercial detailing material, private folder or observation note was
-opened, copied or summarized during this run. Existing document links to such material were
-not followed. No external oracle software was run.
-
-Earlier model training and any prior exposure that cannot be established are **unknown (EU)**
-for all kernel areas. A fresh task context does not prove independence. No implementer is
-declared eligible; no private exposure record was filed outside the assigned worktree, since
-that was not authorized. The public note records the limitation; independent admission and any
-owner risk acceptance remain separate decisions under the policy. This task is design only.
-
-[goldberg]: https://docs.oracle.com/cd/E19957-01/806-3568/ncg_goldberg.html
-[divergence]: https://openstax.org/books/calculus-volume-3/pages/6-8-the-divergence-theorem

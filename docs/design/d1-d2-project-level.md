@@ -3,7 +3,7 @@
 Date: 2026-10-18. Status: **experimental vertical slice; D1 and D2 acceptance is limited as listed
 below.** Branch `feat/d1-d2-project-level`, based on `origin/master` `5c54c0a`.
 
-These are the two model prerequisites of the IFC export (`docs/contracts/ifc-export-v0.1.md`
+These are the two model prerequisites of the IFC export (`docs/contracts/e01-ifc-export-v0.1.md`
 section 19, owner decisions Q-3 and Q-7). The export itself (E02) is out of scope: nothing here
 writes IFC.
 
@@ -156,7 +156,3 @@ not written by this task.
 * The schema descriptor changed (`bimProjectId` line, `level` element, `bim:level`, `Level`
   change): other open PRs that also edit it (for example A07.2) will conflict; the earlier
   descriptor list needs both entries.
-
-## Proposed Roadmap entry
-
-`2026-10-18 D1/D2: ProjectId recorded in the root layer by the first revision (explicit different --project-id refused, plate-inspect reports project_id_record) and levels (create-level, levels, update-element --level; Shape::Level and Change::Level with bim:level validation in the layer engine, delete refused while used, copy keeps the level); experimental slice, IFC export not started.`

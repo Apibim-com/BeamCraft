@@ -80,15 +80,18 @@ and tell the user at once.
 
 ---
 
-## 2. Clean-room rules
+## 2. Provenance
+
+BeamCraft is written from scratch with its own logic. Knowing how other detailing programs work
+is fine; copying from them is not.
 
 - Never decompile, disassemble or copy anything from a Tekla/Trimble installation. Never copy code
-  from the Tekla Open API samples, reference assemblies or documentation examples.
-- Behaviour comes only from **public specifications** (buildingSMART IFC, DSTV, EN 1993, AISC, ...),
-  public documentation and **black-box observation** of synthetic fixtures.
+  from the Tekla Open API samples, reference assemblies or documentation examples, and never copy
+  text or tables from their documentation.
+- Engineering rules come from **public specifications** (buildingSMART IFC, DSTV, EN 1993, AISC,
+  ...) or are our own; cite the specification section in the PR when a behaviour follows one.
 - Never copy GPL/AGPL code. Copyleft tools may run only as external oracle processes.
-- Never capture personal data, client projects or licensed files when observing other software.
-- Document where each behaviour came from (spec section or observation note) in the PR.
+- Never capture personal data, client projects or licensed files when looking at other software.
 
 ## 3. Agent control (automation)
 
@@ -132,6 +135,8 @@ New outbound network access is the owner's decision, not an agent's.
 
 ## 7. Implementation plan and pull requests
 
+- The implementation plan is `docs/plan/`: tasks and their acceptance in `docs/plan/tasks.md`,
+  owner decisions in `docs/plan/decisions.md`. A new task or a changed status is a docs-only PR.
 - Each implementation-plan task (for example F01 or F03) gets its own focused pull request.
   Do not combine independent task IDs into one PR. Split a large task into named sub-tasks when
   needed; completing a sub-task does not complete its parent acceptance gate.

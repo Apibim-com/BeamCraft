@@ -7,8 +7,8 @@ remains open. Runtime evidence is Windows x64, Rust 1.96.0, cached dependencies,
 Verification: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --
 -D warnings` and `cargo test --workspace` all passed offline (236 workspace tests, 31 in
 layer-engine, including 11 new U02 tests). Git staging failed with permission denied when
-creating the shared worktree index lock. Changes are **uncommitted**; the orchestrator
-must commit/push and open a draft using [the full PR body](U02-PR.md).
+creating the shared worktree index lock. The changes were committed later
+by the orchestrator and merged as PR #47, whose description holds the full PR body.
 
 ## Provenance and scope
 

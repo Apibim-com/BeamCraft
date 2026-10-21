@@ -20,7 +20,7 @@ document.
 | Speed and bounded work | ACCEPTED WITH CONDITIONS | Section 7. Every measured workload, including inputs at the F06 caps and adversarial ones, ended with a result or a typed refusal in under about 0.6 s per kernel call on the measuring machine; no hang was seen. Condition: certification dominates the cost and its default budgets end it at a few thousand triangles at most (a 2,496-triangle slab certifies, a 4,352-triangle one does not; a plate stops after 5 holes of 64 edges, 1,312 triangles; finding F2); no performance promise is made |
 | List of supported operations with exact input classes | ACCEPTED | Section 3 |
 | Everything unknown is explicitly unsupported | ACCEPTED WITH CONDITIONS | Section 4. Open, non-manifold, misoriented, inward, degenerate, self-intersecting, overlapping and undecidable meshes never receive an exact status or an engineering quantity (tests in section 5). Condition: queries, keys, placement and analytic area have no code path at all; they are unsupported by absence, and G08 must keep returning typed unsupported results for them |
-| No third-party backend is chosen | ACCEPTED | Dependency tree above; no geometry crate in `Cargo.lock`; no copied third-party string found in the kernel sources, tests or example. Exposure of the human or agent implementers cannot be established from the repository (see the exposure note of the G04 design) and is not assessed here |
+| No third-party backend is chosen | ACCEPTED | Dependency tree above; no geometry crate in `Cargo.lock`; no copied third-party string found in the kernel sources, tests or example. |
 | Contract coverage of holes, cuts and curved cavities | NOT ACCEPTED | These operations are outside the frozen F06 0.1.0 contract (finding F3). They are accepted as a tested pilot only, not as a contracted feature, until an amendment exists |
 | Identical bytes on every target | NOT ACCEPTED as a claim | Evidence exists for one target (Windows x86_64) only; the wasm32 and `cargo deny` checks were not available (finding F5) |
 
@@ -303,7 +303,7 @@ vertices, hostile planes and cutters, maximum-size inputs) found nothing besides
 * The tests I added are independent of production geometry code but share the repository's test
   helper readers (`common`, `common_mesh`, `common_ops`), which earlier tasks wrote.
 * "No third-party code" is based on the dependency tree and a string search of the kernel sources,
-  tests and example; no code-similarity analysis was done and implementer exposure is not assessed.
+  tests and example; no code-similarity analysis was done.
 * Speed numbers are from one machine under shared load. They show order of magnitude and bounded
   work, not a guarantee or a regression threshold.
 * Nothing here validates the engine, the host or the CLI beyond the single observation in section 7.

@@ -3,7 +3,7 @@
   "contract_version": "0.1.0",
   "status": "draft",
   "role": "Contributor-original abstract acceptance descriptions; not executable fixtures or implemented features; MPL-2.0",
-  "contract": "worker-protocol-v0.1.md",
+  "contract": "f05-worker-protocol-v0.1.md",
   "assembly_rule": "The future harness supplies original synthetic bytes, verified digests, valid identities and authorized stage contexts. Inputs are abstract message/stream descriptions unless marked raw_fragment or header_hex. Raw fragments intentionally bypass normal JSON construction. Success uses code null; every non-null code, transport_code and service_code is defined by F05 section 9 or F04 section 8. Each independent variation is a separate future test. Descriptions do not assert checks have run.",
   "cases": [
     {

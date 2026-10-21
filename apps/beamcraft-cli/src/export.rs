@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! E02: IFC4 export of one committed revision (contract `docs/contracts/ifc-export-v0.1.md`).
+//! E02: IFC4 export of one committed revision (contract `docs/contracts/e01-ifc-export-v0.1.md`).
 //!
 //! The adapter opens a verified revision through [`inspect_revision`] (so the kernel has already
 //! re-evaluated every plate, beam and column and compared its mesh with the stored one,

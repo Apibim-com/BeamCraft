@@ -1,21 +1,12 @@
 # F08: module boundaries, version 0.1.0
 
-Status: **draft 0.1.0, not frozen; K0 not passed**. Date: 2026-10-15.
-Base: `29d962e790ffd21ecd9a45143f052d4b4d53d3f7` (stacked on the F06 draft).
+Status: **living document.** The module table changes together with the code; CI checks the two
+against each other.
 
-**WS amendment, owner decision of 2026-10-16:** BeamCraft is desktop-only on Windows, Linux
-and macOS. Only `beamcraft-geom`, `beamcraft-model` and `beamcraft-kernel` retain WASM
-compatibility as a layering discipline. Every other crate, including protocol, USD layer engine,
-host, IO, CLI, UI and later crates, is desktop-native with no WASM requirement. This amendment
-changes F08 portability policy only; frozen F04/F06 contracts are not edited.
-
-This document fixes where the code of each contract area lives, which way dependencies point,
-which crates exist now and which are created later by their own tasks. It consumes the
-[F04 model and command contract](model-and-commands-v0.1.md) (freeze candidate), the
-[F05 worker protocol](worker-protocol-v0.1.md) and the
-[F06 geometry and viewport contract](geometry-contract-v0.1.md) (both drafts) and the F07
-fixtures. It changes none of their semantics. U05 now adds immutable byte storage and its pure
-digest module; paths marked `planned` remain reservations created by their named tasks.
+This document fixes where the code of each contract area lives, which way dependencies point, and
+which crates exist. BeamCraft is desktop-only (Windows, Linux, macOS): only `beamcraft-geom`,
+`beamcraft-model` and `beamcraft-kernel` must also build for WASM, as a layering discipline; every
+other crate is desktop-native. It changes none of the semantics of F04, F05 or F06.
 
 The module table in section 2 is **machine-read**. The `beamcraft-boundaries` tool and its test
 (section 6) check the real workspace manifests against it, and CI derives its list of portable
@@ -66,12 +57,12 @@ Dependencies are checked in `[dependencies]`,
 | beamcraft-geom | crates/geom | domain | 0 | - | now | G01 |
 | beamcraft-model | crates/model | domain | 1 | beamcraft-geom | now | P01 |
 | beamcraft-protocol | crates/protocol | native | 2 | beamcraft-model | now | U01 |
-| beamcraft-layer-engine | crates/layer-engine | host | 2 | beamcraft-model | now | U01/U02/U03; separate process, owner decision 2026-10-16 |
+| beamcraft-layer-engine | crates/layer-engine | host | 2 | beamcraft-model | now | U01/U02/U03; separate process |
 | beamcraft-kernel | crates/kernel | domain | 2 | beamcraft-geom, beamcraft-model | now | G02 |
 | beamcraft-ifc | crates/ifc | native | 2 | beamcraft-model | now | E02 (IFC4 STEP writer and structural reader; std only, no file system) |
 | beamcraft-engine | crates/engine | native | 3 | beamcraft-geom, beamcraft-model, beamcraft-kernel | now | V02 (view snapshot and query slice); P01 (`CreatePlate` application, footprints, transactions, committed-plate queries) |
 | beamcraft-host | crates/host | host | 4 | beamcraft-model, beamcraft-protocol, beamcraft-engine | now | U05 |
-| beamcraft-cli | apps/beamcraft-cli | app | 5 | beamcraft-model, beamcraft-engine, beamcraft-host, beamcraft-protocol, beamcraft-layer-engine, beamcraft-ifc | now | U04 amendment: CLI and thin Rust worker binaries; E02 (`export-ifc` adapter) |
+| beamcraft-cli | apps/beamcraft-cli | app | 5 | beamcraft-model, beamcraft-engine, beamcraft-host, beamcraft-protocol, beamcraft-layer-engine, beamcraft-ifc | now | U04: CLI and thin Rust worker binaries; E02 (`export-ifc` adapter) |
 | beamcraft-ui | apps/beamcraft-ui | app | 5 | beamcraft-model, beamcraft-protocol, beamcraft-engine, beamcraft-host | now | V03 (window and viewport; reads the accepted snapshot from the CLI in a separate process); V05.1 (create tools; decodes the CLI's JSON replies with the protocol crate); V05.2 (edit tools; same edges) |
 | beamcraft-fixtures | tools/fixtures | tool | 9 | - | now | F07 |
 | beamcraft-boundaries | apps/boundaries | tool | 9 | - | now | F08 |
@@ -120,17 +111,17 @@ by the named task with real code. Allowed dependencies are those of the owning r
 | Frame header, binary prefix, bundle budget | F05 s.3, 10 | `beamcraft_protocol::frame` | **now** (tested, bounded) |
 | Negotiable limits and their maxima | F05 s.4, 10 | `beamcraft_protocol::limits` | **now** |
 | Transport `IPC_` codes and their F04 mapping | F05 s.9 | `beamcraft_protocol::code::TransportCode` | **now** |
-| Bounded JSON and closed read-profile messages (pure, no I/O); mutation/event schemas remain unavailable | F05 s.3-7 | `beamcraft_protocol::{json, message}` | U04 amendment: experimental Rust read profile |
-| Worker supervision, pipes, deadlines, restart limits, diagnostic drain; shared command dispatcher | F05 s.2, 8 | `beamcraft_host::{wire, worker, dispatch}` | U04 amendment: experimental native read client |
+| Bounded JSON and closed read-profile messages (pure, no I/O); mutation/event schemas remain unavailable | F05 s.3-7 | `beamcraft_protocol::{json, message}` | U04: experimental Rust read profile |
+| Worker supervision, pipes, deadlines, restart limits, diagnostic drain; shared command dispatcher | F05 s.2, 8 | `beamcraft_host::{wire, worker, dispatch}` | U04: experimental native read client |
 | Immutable byte storage, publish-if-absent and verified retrieval | F04 s.2, U05 | `beamcraft_host::storage` | **now**, U05 |
 | Revision manifest, atomic root (head log), expected-base commit, verified reader, commit hook seam | F04 s.2, 6, 8, U06 | `beamcraft_host::revision` | **now**, U06 (experimental; content verifier is injected, host links no layer engine); personal workspace remains planned, U07 |
 | Durable outcome ledger (write-ahead intent, committed/aborted records), recovery of an unfinished commit, host-ledger QueryOutcome | F05 s.7, 8, U07 | `beamcraft_host::ledger` | **now**, U07 (experimental; personal workspaces, collaboration, ledger rotation and garbage collection are not implemented) |
-| Rust USD read wrapper (no host edge; separate process, owner decision 2026-10-16; process containment still requires implementation) | F11 s.9, LEW-01/02/03/04/07 | `beamcraft_layer_engine` | experimental native read slice, U01 |
+| Rust USD read wrapper (no host edge; separate process; process containment still requires implementation) | F11 s.9, LEW-01/02/03/04/07 | `beamcraft_layer_engine` | experimental native read slice, U01 |
 | USD worker (thin Python/pxr) | F05 s.1 | `workers/usd/`, not a Cargo package | planned, U01 |
-| USD worker (thin Rust wrapper, separate process; no new package) | F11 s.9, U04 owner topology decision | `apps/beamcraft-cli/src/bin/beamcraft-usd-worker.rs` | U04 amendment: experimental read worker; SDK fallback remains unavailable |
-| CLI | AGENTS s.3, F06 s.9 | `apps/beamcraft-cli` | U04 amendment: version, experimental open/read and byte-storage commands; U06: `revision-commit`, `revision-open`; V02: `view-snapshot` and `view-changes` over a synthetic kernel plate scene; P01: `create-plate` and `plate-inspect` over a store (the CLI package also has a library target, `beamcraft_cli`, for its tests) |
+| USD worker (thin Rust wrapper, separate process; no new package) | F11 s.9, U04 | `apps/beamcraft-cli/src/bin/beamcraft-usd-worker.rs` | U04: experimental read worker; SDK fallback remains unavailable |
+| CLI | AGENTS s.3, F06 s.9 | `apps/beamcraft-cli` | U04: version, experimental open/read and byte-storage commands; U06: `revision-commit`, `revision-open`; V02: `view-snapshot` and `view-changes` over a synthetic kernel plate scene; P01: `create-plate` and `plate-inspect` over a store (the CLI package also has a library target, `beamcraft_cli`, for its tests) |
 | Read-only foreign reference: source pin, units interpretation, attach/move/correct commands, write refusal; wiring of file read, layer engine and host | F04 s.1, F10 `reference`, LEW-01/04 | `beamcraft_model::reference`, `beamcraft_engine::reference`, `beamcraft_layer_engine::authored` (`Change::AttachReference`, `read_references`, `inspect_foreign_layer`), `apps/beamcraft-cli` (`beamcraft_cli::{reference, source_file}`) | **now**, R01 (experimental; single self-contained layer, in-process layer engine; no new crate and no new edge) |
-| Numbering preview: grouping rules, series, overlaps, staleness token | owner numbering notes (outside the repository), A08 | `beamcraft_engine::numbering` (rules), `beamcraft_cli::numbering` (adapter), `numbering-preview` | **now**, A08 (experimental; read-only, no stored numbers) |
+| Numbering preview: grouping rules, series, overlaps, staleness token | A08 | `beamcraft_engine::numbering` (rules), `beamcraft_cli::numbering` (adapter), `numbering-preview` | **now**, A08 (experimental; read-only, no stored numbers) |
 | IFC4 export: GlobalId, STEP lexical rules, entity templates, bounded sink, structural reader for tests | E01 s.3, 11, 15 | `beamcraft_ifc::{guid, step, model, verify}` and `write_ifc` | **now**, E02 (experimental; std only, no I/O of its own; `verify` is a test harness, not an importer) |
 | Export adapter: committed revision to `ExportModel`, report, atomic output | E01 s.4, 8, 13, 15.4 | `apps/beamcraft-cli` (`beamcraft_cli::export`), `beamcraft_host::output` | **now**, E02 (the contract proposed `beamcraft_engine::export`; the adapter sits with the other P/A-slice adapters and the engine gains no edge to `beamcraft-ifc`) |
 | Native UI and viewport | F06 s.9, V-tasks | `apps/beamcraft-ui` | **now, partial**, V03: window, orbit camera, instanced offscreen viewport of the accepted snapshot (received as `beamcraft_engine::query::bundle` from `beamcraft view-export`), headless baseline metrics. Selection, snapping and tools are V04/V05 |
@@ -227,31 +218,13 @@ keeps its key as the name (Cargo itself rejects such a manifest). The wasm check
 cover what a lexical scan cannot.
 
 The failing paths are proved by tests on an in-memory model (a synthetic manifest set), so no
-broken manifest is committed. Under the WS amendment, the WASM check lists exactly
+broken manifest is committed. The WASM check lists exactly
 `beamcraft-geom`, `beamcraft-model` and `beamcraft-kernel`. Tests prove that a domain crate
 cannot acquire a native-only dependency and that desktop-native crates may use native APIs and
 audited dependencies without joining the WASM list. Real-workspace and CLI tests assert the
 exact list so an accidental scope expansion fails.
 
-## 7. Amendments proposed to other contracts
+## 7. Public references
 
-WS proposes a separate F06 section 4 clarification: target conformance, including `wasm32`,
-applies to geom/model/kernel only; engine/query/viewport consumers are desktop-native. The
-frozen F06 text is unchanged. Two earlier clarifications remain proposed for F05:
-
-- F05 section 11, row F08: the "canonical-byte comparison" obligation is placed at
-  `beamcraft_model::canonical` (pure) with the host as its only caller; it is not implemented yet.
-- F05 section 12, open item "U02/F08 must publish the schema-specific change and snapshot item
-  fields": F08 leaves this to U02. The message schemas will live in
-  `beamcraft_protocol::message`, and the item fields in `beamcraft_engine`, not in the host.
-
-## 8. Provenance
-
-Contributor-original BeamCraft text, MPL-2.0, derived from F04, F05, F06 and the repository
-[architecture](../architecture.md) and [development guide](../development.md). No third-party
-material is used. The code it describes is original and implements only byte layouts, numbers and
-code tables stated in F04 section 8 and F05 sections 3, 4, 9 and 10, plus U05 byte storage.
-The original SHA-256 implementation follows public FIPS PUB 180-4 (August 2015), sections
-4.1.2, 4.2.2, 5 and 6.2 (https://doi.org/10.6028/NIST.FIPS.180-4); no implementation was copied.
-Padding-boundary expected digests were independently computed with Windows .NET SHA256.
-The separate fixture-tool SHA-256 remains untouched; consolidating it is outside U05.
+The SHA-256 implementation follows FIPS PUB 180-4 (August 2015), sections 4.1.2, 4.2.2, 5 and 6.2
+(https://doi.org/10.6028/NIST.FIPS.180-4); no implementation was copied.
