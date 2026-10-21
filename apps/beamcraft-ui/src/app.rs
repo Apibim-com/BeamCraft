@@ -2025,7 +2025,6 @@ mod tests {
             queue: gpu.queue,
             target_format: format,
             renderer: std::sync::Arc::new(egui::mutex::RwLock::new(renderer)),
-            surface_config: egui_wgpu::SurfaceConfig::LOW_LATENCY,
         });
         let missing = std::env::temp_dir().join("beamcraft-window-test-no-cli");
         let source = Source {

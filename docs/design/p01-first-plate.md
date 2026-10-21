@@ -99,7 +99,7 @@ beamcraft plate-inspect --store ROOT
   evidence. Limits: one Windows machine and one OpenUSD version, 25.11, which is **not** the
   F03-audited 26.8 release. usd-core is a local test
   oracle only (not vendored, not a dependency, nothing committed from it); its TOST-1.0 terms apply
-  to the installed wheel and `ATTRIBUTION.md` lists it as an external oracle, not redistributed.
+  to the installed wheel, which is not redistributed.
 * **Failure injection with real process death**: a child re-executes the test binary and
   `abort()`s inside the commit hook at each of the seven U06/U07 commit points, with and without a
   base revision. After each, a fresh `plate-inspect` sees one complete revision (old before the

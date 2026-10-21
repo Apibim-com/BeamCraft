@@ -99,12 +99,12 @@ allow-wildcard-paths = true
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
-# Issue #149: admit the BeamCraft patch fork of eframe 0.36.2 (the unattributed default
+# Issue #149: admit the BeamCraft patch fork of eframe 0.37.0 (the unattributed default
 # icon removed, AGENTS.md §1). The exact rev is pinned in the root Cargo.toml
 # [patch.crates-io]; the provenance and the diff against the crates.io archive are
-# recorded in ATTRIBUTION.md. required-git-spec forces a rev pin; cargo-deny matches
+# recorded in the fork's PATCH.md. required-git-spec forces a rev pin; cargo-deny matches
 # the URL, not the revision.
-allow-git = ["https://github.com/axisrow/eframe"]
+allow-git = ["https://github.com/Apibim-com/eframe"]
 required-git-spec = "rev"
 
 [advisories]

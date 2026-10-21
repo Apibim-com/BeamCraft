@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 // Contributor-original generated synthetic fixtures, MPL-2.0; covered by ATTRIBUTION.md's
-// crates/layer-engine/** row. Expectations follow F04 sections 2-4/8 and F06 sections 2/4.
+// test-data row. Expectations follow F04 sections 2-4/8 and F06 sections 2/4.
 
 //! U02 real-backend authoring regressions with original in-memory fixtures.
 
