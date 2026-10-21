@@ -1047,8 +1047,8 @@ fn changed_input_bounds_are_inclusive_and_rejections_keep_the_entire_patch_atomi
         )
         .unwrap();
     let mut bad = mesh();
-    // One point above the array ceiling: 10,923 * 3 scalars > 32,768.
-    bad.points_mm = vec![[0.0; 3]; 10_923];
+    // One point above the array ceiling: (MODEL.array_items / 3 + 1) * 3 scalars.
+    bad.points_mm = vec![[0.0; 3]; Budgets::MODEL.array_items / 3 + 1];
     assert_eq!(
         a.prepare(batch(&o.context, vec![Change::Mesh(bad)]), &control())
             .unwrap_err()

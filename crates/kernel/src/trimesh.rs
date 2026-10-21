@@ -13,15 +13,15 @@ use beamcraft_geom::tolerance::Tolerance;
 use beamcraft_geom::{Point3, RigidTransform};
 
 /// Vertices per body (F06 section 6).
-pub const MAX_VERTICES: usize = 4096;
+pub const MAX_VERTICES: usize = 262_144;
 /// Triangles per body.
-pub const MAX_TRIANGLES: usize = 8192;
+pub const MAX_TRIANGLES: usize = 524_288;
 /// Face-table entries per body.
-pub const MAX_FACE_TABLE: usize = 1024;
+pub const MAX_FACE_TABLE: usize = 65_535;
 /// Shells per body.
 pub const MAX_SHELLS: usize = 16;
-/// Mesh blob size: `32 + 24*4096 + pad8(12*8192) + pad8(2*8192)`.
-pub const MAX_BLOB_BYTES: usize = 213_024;
+/// Mesh blob size: `32 + 24*262144 + pad8(12*524288) + pad8(2*524288)`.
+pub const MAX_BLOB_BYTES: usize = 13_631_520;
 /// Largest absolute coordinate, the F06 section 9 world-coordinate bound.
 pub const MAX_COORDINATE_MM: f64 = 4_000_000_000.0;
 

@@ -47,9 +47,9 @@ use beamcraft_geom::tolerance::Tolerance;
 
 /// Largest number of points of one contour (F06 section 2).
 pub const MAX_CONTOUR_POINTS: usize = 1024;
-/// Largest total number of points of one profile: the F06 section 6 vertex cap (4096)
+/// Largest total number of points of one profile: the F06 section 6 vertex cap (262,144)
 /// holds two copies of every point in the extruded mesh.
-pub const MAX_TOTAL_POINTS: usize = 2048;
+pub const MAX_TOTAL_POINTS: usize = 131_072;
 /// Largest number of cavities of one profile (G05 bound, below the F06 face cap).
 pub const MAX_CAVITIES: usize = 256;
 

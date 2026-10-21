@@ -27,6 +27,11 @@ members** (A07.1 probe), and a circular hollow section above about 110 mm exceed
 | `snapshot_bytes` | 1 MiB | 512 MiB | 8x the stage (typed snapshot accounting allowance, not measured at the cap) |
 | `layers`, `depth`, `page_items` | 8, 16, 64 | unchanged | fixed shallow project layer stack |
 
+> 2026-10-21 amendment: the engine mesh caps rose with F06 section 6 (decision on #141), and the
+> model `array_items` grew with the same bound: one element mesh at the new caps is 524,288
+> triangles = 1,572,864 indices per array (262,144 vertices = 786,432 scalars). Every other row
+> and the first-slice profile are unchanged.
+
 * Every new value is taken from a limit that already binds the same data further along (host
   blobs and verification, engine view caps), so no stage accepts what a later one refuses.
 * Ceilings stay ceilings: `Budgets::validate` still refuses any value above the default, every cap
