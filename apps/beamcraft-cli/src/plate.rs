@@ -43,7 +43,8 @@ use beamcraft_engine::quantity::{
     Assessment, Freshness, QuantityRecord, StoredRecord, assess, is_superseded_algorithm,
 };
 use beamcraft_engine::query::committed::{
-    MemberRecord, PlateRecord, evaluate_committed_members, ids, scene_elements_with_members,
+    BodyCache, MemberRecord, PlateRecord, evaluate_committed_cached,
+    evaluate_committed_members_cached, ids, scene_elements_with_members,
 };
 use beamcraft_engine::solid::SolidMesh;
 use beamcraft_engine::transaction::{Admission, PriorOp, admit_create_plate};
@@ -68,7 +69,7 @@ use beamcraft_model::command::{CommandError, CreatePlate, MemberKind, PlaneCut};
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
@@ -864,17 +865,61 @@ pub(crate) fn kernel_mesh(solid: &SolidMesh) -> Result<DerivedMesh, PlateError> 
     })
 }
 
+thread_local! {
+    /// The kernel bodies this thread has evaluated, by their exact shape inputs (issue 26): the
+    /// head that a command reads and the candidate that its commit verifier re-reads share them,
+    /// as do the copies and repeated parts of one model. Bounded by the cache itself.
+    static BODIES: RefCell<BodyCache> = const { RefCell::new(BodyCache::new()) };
+}
+
 /// Re-evaluates every committed plate and member with the kernel, resolving their pinned
-/// definitions from the same stage.
+/// definitions from the same stage. A body this thread already evaluated for bit-identical shape
+/// inputs is reused; the caller still compares every stored mesh with the body returned here.
 pub(crate) fn evaluate_decoded(
     decoded: &Decoded,
+) -> Result<(Vec<PlateRecord>, Vec<MemberRecord>), PlateError> {
+    let shared = BODIES.try_with(|cache| {
+        cache
+            .try_borrow_mut()
+            .ok()
+            .map(|mut cache| evaluate_with(decoded, &mut cache))
+    });
+    match shared {
+        Ok(Some(result)) => result,
+        // The thread is ending or the cache is in use further up the stack: evaluate with a
+        // cache of this call alone rather than fail.
+        Ok(None) | Err(_) => evaluate_with(decoded, &mut BodyCache::new()),
+    }
+}
+
+/// Hits and misses of this thread's body cache since the thread started: a diagnostic for tests
+/// and measurements, never model data. `None` while the cache is in use or the thread is ending.
+pub fn body_cache_counts() -> Option<(u64, u64)> {
+    BODIES
+        .try_with(|cache| {
+            cache
+                .try_borrow()
+                .ok()
+                .map(|cache| (cache.hits(), cache.misses()))
+        })
+        .ok()
+        .flatten()
+}
+
+fn evaluate_with(
+    decoded: &Decoded,
+    cache: &mut BodyCache,
 ) -> Result<(Vec<PlateRecord>, Vec<MemberRecord>), PlateError> {
     let authored: Vec<AuthoredPlate> = decoded.plates.iter().map(|(a, _)| a.clone()).collect();
     let members: Vec<AuthoredMember> = decoded.members.iter().map(|(a, _)| a.clone()).collect();
     let materials = material_lookup(&decoded.definitions);
-    let (plates, _) = evaluate_committed_drafts(&authored, &materials)?;
-    let members =
-        evaluate_committed_members(&members, &profile_lookup(&decoded.definitions), &materials)?;
+    let plates = evaluate_committed_cached(&authored, &materials, cache)?;
+    let members = evaluate_committed_members_cached(
+        &members,
+        &profile_lookup(&decoded.definitions),
+        &materials,
+        cache,
+    )?;
     Ok((plates, members))
 }
 
