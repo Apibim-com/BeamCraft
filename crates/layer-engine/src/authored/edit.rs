@@ -540,7 +540,7 @@ fn create(
         .rsplit_once('/')
         .map(|(parent, _)| parent)
         .ok_or_else(corrupt)?;
-    container(data, folder, "Scope", None)?;
+    container(data, folder, "Scope", Some("group"))?;
     prim(data, &p, Some("Xform"), true)?;
     let model_kind = match e.shape {
         Shape::Assembly => "assembly",

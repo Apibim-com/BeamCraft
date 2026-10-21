@@ -52,7 +52,7 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:numbering:number=int(0..=2147483647);steel:numbering:basis=string(printable ASCII,<=512);",
     "all three or none;never on a connection, level or reference\n",
     "xformOp:translate=double3;xformOp:orient=quatd;xformOpOrder=token[](translate,orient)\n",
-    "kind:/World=assembly;/World/Steel=group;element=component;element/Geometry=subcomponent;",
+    "kind:/World=assembly;/World/Steel=group;element category folders=group;element=component;element/Geometry=subcomponent;",
     "displayName(element)=bim:name\n",
     "bim:profile=rel;bim:material=rel;material=/World/Definitions/Materials/MAT_<sha256-64>;profile=/World/Definitions/Profiles/PRF_<sha256-64>\n",
     "definition:bim:contentDigest=string;bim:schemaVersion=string(0.1.0);bim:units=token(mm);",

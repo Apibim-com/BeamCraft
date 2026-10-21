@@ -292,6 +292,8 @@ The rule:
    the prim name.
 6. **Child prims have fixed names.** `Geometry` is the full body; later representations get their
    own fixed names (`Proxy`, `Axis`).
+7. **Element category folders have `kind = group`.** This keeps the USD model hierarchy intact
+   between the project root and its components or assemblies.
 
 Groupings are relationships, not parents (`bim:partOf`, `bim:level`, `bim:connects`): a part
 belongs to an assembly, a level and later a phase or zone at the same time, and a weld joins parts

@@ -585,7 +585,15 @@ pub(super) fn snapshot(
     metadata: &BTreeMap<String, Value>,
 ) -> Result<Validation, Diagnostic> {
     reference::stray_holders(prims)?;
-    for (path, kind) in [("/World", "assembly"), ("/World/Steel", "group")] {
+    for (path, kind) in [
+        ("/World", "assembly"),
+        ("/World/Steel", "group"),
+        ("/World/Steel/Parts", "group"),
+        ("/World/Steel/Assemblies", "group"),
+        ("/World/Steel/Connections", "group"),
+        ("/World/Levels", "group"),
+        ("/World/References", "group"),
+    ] {
         if let Some(p) = prims
             .iter()
             .find(|p| p.path == path && p.sources.iter().all(|s| s.owned))

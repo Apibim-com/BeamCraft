@@ -123,7 +123,7 @@ pub(super) fn check_source_asset(
 pub(super) fn attach(data: &mut sdf::Data, r: &Reference, actor: &str) -> Result<(), Diagnostic> {
     let p = element_path(&r.id, ElementCategory::Reference)?;
     container(data, "/World", "Xform", Some("assembly"))?;
-    container(data, "/World/References", "Scope", None)?;
+    container(data, "/World/References", "Scope", Some("group"))?;
     prim(data, &p, Some("Xform"), true)?;
     field(data, &p, "kind", sdf::Value::token("group"))?;
     field(data, &p, "displayName", sdf::Value::String(r.name.clone()))?;

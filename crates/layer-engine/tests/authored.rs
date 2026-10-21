@@ -1793,6 +1793,10 @@ fn standard_usd_metadata_kind_display_name_extent_and_flat_normals() {
     let all = snapshot(&a, &o.context);
     assert_eq!(prim(&all, "/World").kind.as_deref(), Some("assembly"));
     assert_eq!(prim(&all, "/World/Steel").kind.as_deref(), Some("group"));
+    assert_eq!(
+        prim(&all, "/World/Steel/Parts").kind.as_deref(),
+        Some("group")
+    );
     let plate = prim(&all, &path(PLATE));
     assert_eq!(plate.kind.as_deref(), Some("component"));
     assert_eq!(plate.display_name.as_deref(), Some("Plate Ω"));

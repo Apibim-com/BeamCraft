@@ -258,6 +258,15 @@ fn all_categories_reopen_at_rule_paths_and_keep_identity_through_edits_and_view_
     );
 
     let before = f.prims();
+    for folder in [
+        "/World/Steel/Parts",
+        "/World/Steel/Assemblies",
+        "/World/Steel/Connections",
+        "/World/Levels",
+        "/World/References",
+    ] {
+        assert_eq!(prim(&before, folder).kind.as_deref(), Some("group"));
+    }
     for (id, prefix) in [
         (PLATE, "/World/Steel/Parts/PRT_"),
         (BEAM, "/World/Steel/Parts/PRT_"),

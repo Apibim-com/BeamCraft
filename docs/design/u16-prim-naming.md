@@ -7,7 +7,9 @@ of whether their kind is plate, beam or column; welds and bolt groups share the 
 
 Authoring creates category folders in the authored layer and adds derived `Geometry` opinions
 under the same element path. Relationships resolve identities to their actual paths before
-semantic kind validation. The UUID index checks category against known kind, rejects duplicate
+semantic kind validation. Element category folders carry `kind = group` so the added ancestors
+preserve the standard USD model hierarchy and parts remain components in ordinary OpenUSD.
+The UUID index checks category against known kind, rejects duplicate
 UUIDs across categories and resolves targets by their exact path. Copy plans retain the source's
 category. Delete removes the element from its actual category folder in both layers.
 
