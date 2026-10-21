@@ -2,8 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! The eframe window: a side panel with the revision, counts, units and adapter, and the viewport
-//! with orbit (primary drag), pan (Shift + primary drag, or secondary drag), zoom (wheel or
-//! trackpad scroll, pinch, `+` and `-`, toward the cursor), fit (F) and reload (R).
+//! navigated through one of two input presets: `Mouse` (the default: wheel-button drag pans,
+//! Ctrl + wheel-button drag orbits, the left button stays free for selection) or `Trackpad`
+//! (primary drag orbits, Shift + primary drag pans, pinch zooms). In both the wheel zooms toward
+//! the cursor, F fits and R reloads.
 
 use crate::camera::{Camera, View};
 use crate::command::Selected;
@@ -1794,7 +1796,7 @@ impl App {
         });
         ui.label(match self.preset {
             Preset::Mouse => {
-                "Left drag: select, no camera move | Middle drag: pan | Ctrl + middle drag: orbit | Wheel: zoom toward the cursor | +/-: zoom | F: fit | R: reload"
+                "Left button: selection only | Middle drag: pan | Ctrl + middle drag: orbit | Wheel: zoom toward the cursor | +/-: zoom | F: fit | R: reload"
             }
             Preset::Trackpad => {
                 "Drag: orbit | Shift+drag or secondary drag: pan | wheel, two-finger scroll or pinch: zoom toward the cursor | +/-: zoom | F: fit | R: reload"
