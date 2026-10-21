@@ -23,6 +23,7 @@ use beamcraft_ui::edit::Ray;
 use beamcraft_ui::props::{Properties, State};
 use beamcraft_ui::publish::{Phase, Publisher};
 use beamcraft_ui::source;
+use beamcraft_ui::stats::Stats;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -232,13 +233,20 @@ fn edit_properties(
     Vec<String>,
 ) {
     let mut props = Properties::default();
-    props.load(id, command::element_details(cli, store, id));
-    props.observe_head(command::definitions(cli, store).unwrap().head);
+    props.load(
+        id,
+        command::element_details(cli, store, id, &Stats::default()),
+    );
+    props.observe_head(
+        command::definitions(cli, store, &Stats::default())
+            .unwrap()
+            .head,
+    );
     assert_eq!(props.state(), Some(State::Current));
     fill(&mut props);
     props.preview(store).unwrap();
     let edit = props.begin_commit(store).unwrap();
-    let result = command::commit_property(cli, &edit);
+    let result = command::commit_property(cli, &edit, &Stats::default());
     props.finish();
     (result, edit.args)
 }
@@ -266,7 +274,8 @@ fn a_click_selects_what_is_on_screen_with_one_element_lookup() {
     let max = corner(at(element, &["world_max_mm"]));
     let centre = [(min[0] + max[0]) / 2.0, (min[1] + max[1]) / 2.0];
     let ray = |origin: [f64; 3], direction: [f64; 3]| Ray { origin, direction };
-    let snapshot = source::load(&cli, &store).unwrap();
+    let stats = Stats::default();
+    let snapshot = source::load(&cli, &store, &stats).unwrap();
     let cancel = AtomicBool::new(false);
     let selected = command::select(
         &cli,
@@ -274,6 +283,7 @@ fn a_click_selects_what_is_on_screen_with_one_element_lookup() {
         &snapshot,
         &ray([centre[0], centre[1], max[2] + 1000.0], [0.0, 0.0, -1.0]),
         &cancel,
+        &stats,
     )
     .unwrap()
     .unwrap();
@@ -283,7 +293,7 @@ fn a_click_selects_what_is_on_screen_with_one_element_lookup() {
     // The two halves of the lookup read one reply and agree with a separate lookup.
     assert_eq!(
         selected.details,
-        command::element_details(&cli, &store, PLATE)
+        command::element_details(&cli, &store, PLATE, &Stats::default())
     );
     assert_eq!(selected.details.unwrap().info(), info);
     // A ray into the sky hits nothing.
@@ -294,16 +304,22 @@ fn a_click_selects_what_is_on_screen_with_one_element_lookup() {
             &snapshot,
             &ray([centre[0], centre[1], max[2] + 1000.0], [0.0, 0.0, 1.0]),
             &cancel,
+            &stats,
         )
         .unwrap()
         .is_none()
     );
     // A missing element is NOT_FOUND for both halves of the lookup, for an id no revision can
     // hold alike.
-    let gone = command::element_details(&cli, &store, "019a7bf0-0000-7000-8000-0000000000ff");
+    let gone = command::element_details(
+        &cli,
+        &store,
+        "019a7bf0-0000-7000-8000-0000000000ff",
+        &Stats::default(),
+    );
     assert_eq!(gone.unwrap_err().code, "NOT_FOUND");
     assert_eq!(
-        command::element_info(&cli, &store, "gone")
+        command::element_info(&cli, &store, "gone", &Stats::default())
             .unwrap_err()
             .code,
         "NOT_FOUND"
@@ -346,7 +362,7 @@ fn a_property_edit_saves_exactly_what_update_element_by_hand_saves() {
         text(&typed, &["revision", "sequence"])
     );
     // The new values are the engine's, not the form's: read back.
-    let details = command::element_details(&cli, &stores.ui(), PLATE).unwrap();
+    let details = command::element_details(&cli, &stores.ui(), PLATE, &Stats::default()).unwrap();
     assert_eq!(details.name, "Gusset");
     assert_eq!(details.thickness_mm, Some(12.5));
     assert_eq!(details.translation_mm, [100.0, -20.5, 300.0]);
@@ -388,8 +404,14 @@ fn a_reading_older_than_the_head_is_stale_and_is_never_edited() {
     fixture(&cli, &stores.ui());
     let ui = stores.ui();
     let mut props = Properties::default();
-    props.load(PLATE, command::element_details(&cli, &ui, PLATE));
-    let listed = command::definitions(&cli, &ui).unwrap().head.unwrap();
+    props.load(
+        PLATE,
+        command::element_details(&cli, &ui, PLATE, &Stats::default()),
+    );
+    let listed = command::definitions(&cli, &ui, &Stats::default())
+        .unwrap()
+        .head
+        .unwrap();
     // The reading and the listing name the same revision.
     let read = props.details().unwrap().revision.clone();
     assert_eq!(read, listed);
@@ -411,7 +433,11 @@ fn a_reading_older_than_the_head_is_stale_and_is_never_edited() {
             "Elsewhere",
         ],
     );
-    props.observe_head(command::definitions(&cli, &ui).unwrap().head);
+    props.observe_head(
+        command::definitions(&cli, &ui, &Stats::default())
+            .unwrap()
+            .head,
+    );
     let Some(State::Stale { read, head: newest }) = props.state() else {
         panic!("expected stale");
     };
@@ -424,7 +450,10 @@ fn a_reading_older_than_the_head_is_stale_and_is_never_edited() {
     let before = head(&cli, &ui);
 
     // Re-reading makes it current again.
-    props.load(PLATE, command::element_details(&cli, &ui, PLATE));
+    props.load(
+        PLATE,
+        command::element_details(&cli, &ui, PLATE, &Stats::default()),
+    );
     assert_eq!(props.state(), Some(State::Current));
     assert_eq!(head(&cli, &ui), before, "reading publishes nothing");
 }
@@ -438,13 +467,19 @@ fn an_unreadable_element_is_unknown_and_an_engine_refusal_publishes_nothing() {
     // An id the revision does not hold, or a store that is not readable, is unknown.
     let missing = "019a7bf0-0000-7000-8000-00000000b0ff";
     let mut props = Properties::default();
-    props.load(missing, command::element_details(&cli, &ui, missing));
+    props.load(
+        missing,
+        command::element_details(&cli, &ui, missing, &Stats::default()),
+    );
     assert!(matches!(props.state(), Some(State::Unknown { .. })));
     assert!(props.details().is_none());
     assert!(props.prepare(&ui).is_err());
     let nowhere = stores.root.join("nowhere");
     let mut props = Properties::default();
-    props.load(PLATE, command::element_details(&cli, &nowhere, PLATE));
+    props.load(
+        PLATE,
+        command::element_details(&cli, &nowhere, PLATE, &Stats::default()),
+    );
     assert!(matches!(props.state(), Some(State::Unknown { .. })));
 
     // A material the store does not define passes the window's checks and is the engine's refusal.
@@ -483,13 +518,14 @@ fn publish_is_workspace_publish_and_its_refusals_are_shown() {
         ],
     );
     let mut publisher = Publisher::new(Some(published.clone()), Some(workspace.clone()));
-    let status = command::workspace_status(&cli, &published, &workspace).unwrap();
+    let status =
+        command::workspace_status(&cli, &published, &workspace, &Stats::default()).unwrap();
     assert_eq!(status.unsent_revisions, 0);
 
     // Nothing to publish is the engine's refusal, shown; the dialog ran the command once.
     publisher.request().unwrap();
     let args = publisher.confirm().unwrap();
-    let refused = command::publish(&cli, &args).unwrap_err();
+    let refused = command::publish(&cli, &args, &Stats::default()).unwrap_err();
     assert_eq!(refused.code, "INVALID_ARGUMENT");
     publisher.finish(Err(refused));
     assert!(
@@ -507,11 +543,12 @@ fn publish_is_workspace_publish_and_its_refusals_are_shown() {
     let (result, _) = edit_properties(&cli, &workspace, PLATE, |p| p.form.name = "Edited".into());
     result.unwrap();
     assert_eq!(element(&cli, &published, PLATE), published_before);
-    let status = command::workspace_status(&cli, &published, &workspace).unwrap();
+    let status =
+        command::workspace_status(&cli, &published, &workspace, &Stats::default()).unwrap();
     assert_eq!((status.unsent_revisions, status.base_is_current), (1, true));
     publisher.request().unwrap();
     let args = publisher.confirm().unwrap();
-    let done = command::publish(&cli, &args).unwrap();
+    let done = command::publish(&cli, &args, &Stats::default()).unwrap();
     assert!(!done.replayed);
     publisher.finish(Ok(done.clone()));
     assert!(publisher.note.clone().unwrap().is_ok());
@@ -542,12 +579,13 @@ fn publish_is_workspace_publish_and_its_refusals_are_shown() {
             "Theirs",
         ],
     );
-    let status = command::workspace_status(&cli, &published, &workspace).unwrap();
+    let status =
+        command::workspace_status(&cli, &published, &workspace, &Stats::default()).unwrap();
     assert!(!status.base_is_current);
     let before = head(&cli, &published);
     publisher.request().unwrap();
     let args = publisher.confirm().unwrap();
-    let refused = command::publish(&cli, &args).unwrap_err();
+    let refused = command::publish(&cli, &args, &Stats::default()).unwrap_err();
     assert_eq!(refused.code, "BASE_REVISION_MISMATCH");
     publisher.finish(Err(refused));
     assert!(

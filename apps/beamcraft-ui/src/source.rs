@@ -11,6 +11,7 @@
 
 use crate::perf::RefreshTiming;
 use crate::scene::Scene;
+use crate::stats::Stats;
 use crate::tools::{Definitions, ToolError, parse_definitions};
 use crate::{Error, command};
 use beamcraft_engine::query::bundle::max_bundle_bytes;
@@ -32,12 +33,17 @@ pub fn default_cli() -> Result<PathBuf, Error> {
 
 /// The pinned view snapshot of the published head of `store`. The CLI runs under the same
 /// deadline ([`command::DEADLINE`]) as the create commands, so a hung CLI ends in a typed error.
-pub fn load(cli: &Path, store: &Path) -> Result<ViewSnapshot, Error> {
-    load_within(cli, store, command::DEADLINE)
+pub fn load(cli: &Path, store: &Path, stats: &Stats) -> Result<ViewSnapshot, Error> {
+    load_within(cli, store, command::DEADLINE, stats)
 }
 
 /// [`load`] with an explicit deadline.
-pub fn load_within(cli: &Path, store: &Path, deadline: Duration) -> Result<ViewSnapshot, Error> {
+pub fn load_within(
+    cli: &Path,
+    store: &Path,
+    deadline: Duration,
+    stats: &Stats,
+) -> Result<ViewSnapshot, Error> {
     let limits = Limits::default();
     let cap = max_bundle_bytes(&limits);
     let args = [
@@ -47,7 +53,7 @@ pub fn load_within(cli: &Path, store: &Path, deadline: Duration) -> Result<ViewS
         "--out".into(),
         "-".into(),
     ];
-    let output = command::run_capped(cli, &args, deadline, cap).map_err(export_error)?;
+    let output = command::run_capped(cli, &args, deadline, cap, stats).map_err(export_error)?;
     if output.code != Some(0) {
         return Err(rejected(&output.stdout));
     }
@@ -115,6 +121,7 @@ fn export_framed(
     store: &Path,
     selected: Option<&str>,
     deadline: Duration,
+    stats: &Stats,
 ) -> Result<Vec<u8>, Error> {
     let cap = FRAME_MAGIC
         .len()
@@ -133,7 +140,7 @@ fn export_framed(
     if let Some(id) = selected.filter(|id| ElementId::parse(id).is_ok()) {
         args.extend(["--with-element".into(), id.to_owned()]);
     }
-    let output = command::run_capped(cli, &args, deadline, cap).map_err(export_error)?;
+    let output = command::run_capped(cli, &args, deadline, cap, stats).map_err(export_error)?;
     if output.code != Some(0) {
         return Err(rejected(&output.stdout));
     }
@@ -216,17 +223,17 @@ pub struct Reloaded {
 /// inspection of one revision; only when that export fails is the definitions listing asked on
 /// its own, so a failing snapshot never hides it (issue 26, finding 2). `known` is what the
 /// window already shows: the same snapshot again is reported as [`Refreshed::Unchanged`].
-pub fn reload(cli: &Path, store: &Path, known: &Known) -> Reloaded {
+pub fn reload(cli: &Path, store: &Path, known: &Known, stats: &Stats) -> Reloaded {
     let started = Instant::now();
     // The framed export; on its failure, the definitions listing on its own.
     let mut processes = 1;
-    let framed = export_framed(cli, store, None, command::DEADLINE)
+    let framed = export_framed(cli, store, None, command::DEADLINE, stats)
         .and_then(|bytes| Ok(frame_parts(&split_frame(&bytes)?, known)));
     let (scene, definitions) = match framed {
         Ok(parts) => parts,
         Err(e) => {
             processes += 1;
-            (Err(e), command::definitions(cli, store))
+            (Err(e), command::definitions(cli, store, stats))
         }
     };
     Reloaded {

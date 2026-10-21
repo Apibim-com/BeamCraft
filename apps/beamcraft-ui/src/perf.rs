@@ -25,7 +25,7 @@
 //! takes a shortcut the window would not take. It is a pure state machine so it can be tested
 //! without a window.
 
-use crate::stats::{Process, STATS, Sample};
+use crate::stats::{Process, Sample};
 use crate::{Error, json_string};
 use std::fmt::Write as _;
 use std::time::{Duration, Instant};
@@ -181,6 +181,8 @@ pub struct Observed<'a> {
     pub target: [u32; 2],
     /// CPU seconds eframe measured for the previous frame.
     pub frame_cpu: Option<f32>,
+    /// The window's counters, sampled this frame.
+    pub stats: Sample,
     /// Worker timings of every refresh consumed so far, oldest first.
     pub refresh_timings: &'a [RefreshTiming],
 }
@@ -249,10 +251,10 @@ struct Running {
 }
 
 impl Running {
-    fn new(now: Instant, timings_seen: usize) -> Self {
+    fn new(now: Instant, timings_seen: usize, stats: Sample) -> Self {
         Self {
             started: now,
-            stats: STATS.sample(),
+            stats,
             process: crate::stats::process(),
             timings_seen,
             frame_cpu_s: 0.0,
@@ -327,8 +329,7 @@ impl PerfRun {
         let now = Instant::now();
         // A leading load phase starts with the process: its counters count from zero.
         let running = (phases.first() == Some(&Phase::Load)).then(|| {
-            let mut running = Running::new(now, 0);
-            running.stats = Sample::default();
+            let mut running = Running::new(now, 0, Sample::default());
             running.process = None;
             running
         });
@@ -354,8 +355,9 @@ impl PerfRun {
         running: &Running,
         now: Instant,
         timings: &[RefreshTiming],
+        stats: &Sample,
     ) -> String {
-        let delta = STATS.sample().since(&running.stats);
+        let delta = stats.since(&running.stats);
         let process = crate::stats::process();
         let cpu = |f: fn(&Process) -> u64| {
             process.map(|p| f(&p).saturating_sub(running.process.as_ref().map_or(0, f)))
@@ -441,7 +443,7 @@ impl PerfRun {
         };
         let mut running = match self.running.take() {
             Some(running) => running,
-            None => Running::new(now, observed.refresh_timings.len()),
+            None => Running::new(now, observed.refresh_timings.len(), observed.stats),
         };
         // eframe reports the previous frame, which already belonged to this phase.
         running.frame_cpu_s += f64::from(observed.frame_cpu.unwrap_or(0.0));
@@ -474,7 +476,13 @@ impl PerfRun {
                         Ok(Some(next)) => request = next,
                         Ok(None) => {}
                         Err(message) => {
-                            self.reports.push(self.report(phase, &running, now, &[]));
+                            self.reports.push(self.report(
+                                phase,
+                                &running,
+                                now,
+                                &[],
+                                &observed.stats,
+                            ));
                             return self.finish(false, Some(message));
                         }
                     }
@@ -513,12 +521,16 @@ impl PerfRun {
             .get(running.timings_seen..)
             .unwrap_or_default();
         self.reports
-            .push(self.report(phase, &running, now, timings));
+            .push(self.report(phase, &running, now, timings, &observed.stats));
         self.index += 1;
         // The next phase starts now, so no frame falls between two phases. It acts from the next
         // frame on; an idle phase asks only for the frame that ends it.
         if self.index < self.phases.len() {
-            self.running = Some(Running::new(now, observed.refresh_timings.len()));
+            self.running = Some(Running::new(
+                now,
+                observed.refresh_timings.len(),
+                observed.stats,
+            ));
         }
         match self.phases.get(self.index) {
             Some(Phase::Idle(length)) => Request {
@@ -546,7 +558,7 @@ impl PerfRun {
             if let Pending::CancelClick { finished } = pending {
                 // Esc once the lookup has started a CLI process (or has already answered), the
                 // way a user gives up a lookup that takes too long; then the next click.
-                if STATS.cli_active.get() > 0 || observed.selects_finished > finished {
+                if observed.stats.cli_active > 0 || observed.selects_finished > finished {
                     running.pending = Some((
                         Pending::Cancel {
                             finished: observed.selects_finished,
@@ -574,7 +586,7 @@ impl PerfRun {
                 Pending::Cancel { finished } => {
                     observed.selects_finished > finished
                         && !observed.select_busy
-                        && STATS.cli_active.get() == 0
+                        && observed.stats.cli_active == 0
                 }
                 Pending::CancelClick { .. } => false,
                 Pending::Edit { commits, reloads } => {
@@ -685,6 +697,7 @@ mod tests {
             select_busy: false,
             target: [800, 600],
             frame_cpu: Some(0.001),
+            stats: Sample::default(),
             refresh_timings: &[],
         }
     }
@@ -806,15 +819,18 @@ mod tests {
         assert_eq!(run.step(&selected).select, Some(0));
         let waiting = run.step(&selected);
         assert!(waiting.cancel.is_none() && waiting.wake_after.is_some());
-        STATS.cli_active.add(1);
-        assert_eq!(run.step(&selected).cancel, Some(0));
+        let mut looking = observed(t0);
+        looking.stats.cli_active = 1;
+        assert_eq!(run.step(&looking).cancel, Some(0));
         let mut answered = observed(t0);
         answered.selects_finished = 2;
+        answered.stats.cli_active = 1;
         // An abandoned lookup's process is still running: the step waits for it.
         let waiting = run.step(&answered);
-        STATS.cli_active.decrement();
         assert!(!waiting.repaint_now && waiting.wake_after.is_some());
-        assert!(run.step(&answered).repaint_now, "now it is over");
+        let mut over = observed(t0);
+        over.selects_finished = 2;
+        assert!(run.step(&over).repaint_now, "now it is over");
     }
 
     #[test]

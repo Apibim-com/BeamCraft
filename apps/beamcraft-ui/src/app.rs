@@ -16,7 +16,7 @@ use crate::publish::{Phase, Published, Publisher, Status};
 use crate::render::{Renderer, Uploaded};
 use crate::scene::SceneSummary;
 use crate::source::{Known, Refreshed, Reloaded};
-use crate::stats::STATS;
+use crate::stats::Stats;
 use crate::tools::{Choice, Created, MAX_TEXT, MemberKind, ToolError, ToolKind, Tools};
 use crate::{Error, check_font, command, json_string, source};
 use beamcraft_engine::ViewSnapshot;
@@ -62,6 +62,9 @@ pub struct App {
     source: Source,
     renderer: Renderer,
     texture: egui::TextureId,
+    /// The counters of the work this window does, shared with its worker threads (see
+    /// [`crate::stats`]). One per window, so tests never count into each other.
+    stats: Arc<Stats>,
     camera: Camera,
     loaded: Option<Loaded>,
     error: Option<String>,
@@ -113,11 +116,11 @@ pub struct App {
 
 /// Records a scene swap in the perf counters: the CPU display bytes and the snapshot mesh bytes
 /// the window keeps from now on.
-fn note_loaded(loaded: &Loaded) {
-    STATS.reloads_applied.add(1);
+fn note_loaded(stats: &Stats, loaded: &Loaded) {
+    stats.reloads_applied.add(1);
     // `Loaded` keeps no display buffer.
-    STATS.retained_display_bytes.set(0);
-    STATS.snapshot_mesh_bytes.set(
+    stats.retained_display_bytes.set(0);
+    stats.snapshot_mesh_bytes.set(
         loaded
             .snapshot
             .meshes()
@@ -461,8 +464,12 @@ pub fn load_icon() -> egui::IconData {
 
 impl App {
     /// Creates the window state and loads the accepted snapshot.
-    pub fn new(cc: &eframe::CreationContext<'_>, source: Source) -> Result<Self, Error> {
-        Self::with_perf_run(cc, source, None)
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        source: Source,
+        stats: Arc<Stats>,
+    ) -> Result<Self, Error> {
+        Self::with_perf_run(cc, source, None, stats)
     }
 
     /// [`App::new`] that also runs a `--perf-run` plan and sends its report (JSON, success).
@@ -470,14 +477,21 @@ impl App {
         cc: &eframe::CreationContext<'_>,
         source: Source,
         perf: Option<(Vec<PerfPhase>, PerfReport)>,
+        stats: Arc<Stats>,
     ) -> Result<Self, Error> {
         let state = cc
             .wgpu_render_state
             .clone()
             .ok_or(Error::Input("eframe requires wgpu"))?;
         let text = inter(&cc.egui_ctx);
-        let renderer =
-            Renderer::with_samples(&state.adapter, &state.device, 1280, 800, source.samples)?;
+        let renderer = Renderer::with_samples(
+            &state.adapter,
+            &state.device,
+            1280,
+            800,
+            source.samples,
+            &stats,
+        )?;
         let texture = state.renderer.write().register_native_texture(
             &state.device,
             &renderer.view,
@@ -505,6 +519,7 @@ impl App {
             source,
             renderer,
             texture,
+            stats,
             camera: Camera::new([0.0; 3], 1000.0, 1.6)?,
             loaded: None,
             error: None,
@@ -560,10 +575,11 @@ impl App {
             resident: l.uploaded.resident(),
         });
         let (tx, rx) = std::sync::mpsc::channel();
+        let stats = Arc::clone(&self.stats);
         let spawned = std::thread::Builder::new()
             .name("beamcraft-reload".into())
             .spawn(move || {
-                let _ = tx.send(source::reload(&cli, &store, &known));
+                let _ = tx.send(source::reload(&cli, &store, &known, &stats));
             });
         match spawned {
             Ok(_) => self.reload_job = Some(rx),
@@ -606,9 +622,9 @@ impl App {
                 let previous = self.loaded.as_ref().map(|l| &l.uploaded);
                 let uploaded =
                     Uploaded::upload(&self.state.device, &self.state.queue, &scene, previous)?;
-                STATS.upload_ui_ns.add_duration(started.elapsed());
-                STATS.uploads.add(1);
-                STATS.upload_bytes.add(uploaded.bytes);
+                self.stats.upload_ui_ns.add_duration(started.elapsed());
+                self.stats.uploads.add(1);
+                self.stats.upload_bytes.add(uploaded.bytes);
                 // The display buffers are on the device now: keep the summary, drop the rest.
                 Ok(Some(Loaded {
                     snapshot: Arc::new(snapshot),
@@ -670,7 +686,7 @@ impl App {
     /// every frame): a scene whose bounds did not change (an edit inside them, a rename, an undo)
     /// can still differ from the last image.
     fn show(&mut self, loaded: Loaded) {
-        note_loaded(&loaded);
+        note_loaded(&self.stats, &loaded);
         self.loaded = Some(loaded);
         self.error = None;
     }
@@ -685,7 +701,8 @@ impl App {
         }
         let started = Instant::now();
         // Only the targets follow the size; the shader and the pipeline stay.
-        self.renderer.resize(&self.state.device, width, height)?;
+        self.renderer
+            .resize(&self.state.device, width, height, &self.stats)?;
         self.state
             .renderer
             .write()
@@ -695,7 +712,7 @@ impl App {
                 wgpu::FilterMode::Linear,
                 self.texture,
             );
-        STATS.resize_ns.add_duration(started.elapsed());
+        self.stats.resize_ns.add_duration(started.elapsed());
         Ok(())
     }
 
@@ -747,10 +764,13 @@ impl App {
         let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
         let (tx, rx) = std::sync::mpsc::channel();
         let cancel = self.begin_select(rx);
+        let stats = Arc::clone(&self.stats);
         let spawned = std::thread::Builder::new()
             .name("beamcraft-pick".into())
             .spawn(move || {
-                let _ = tx.send(command::select(&cli, &store, &snapshot, &ray, &cancel));
+                let _ = tx.send(command::select(
+                    &cli, &store, &snapshot, &ray, &cancel, &stats,
+                ));
             });
         if spawned.is_err() {
             self.select_job = None;
@@ -791,7 +811,7 @@ impl App {
             Err(_) => true,
         };
         if failed {
-            STATS.select_errors.add(1);
+            self.stats.select_errors.add(1);
         }
         match result {
             Ok(None) => {
@@ -845,10 +865,11 @@ impl App {
         let (tx, rx) = std::sync::mpsc::channel();
         self.edit_job = Some(rx);
         self.edit_note = None;
+        let stats = Arc::clone(&self.stats);
         let spawned = std::thread::Builder::new()
             .name("beamcraft-edit".into())
             .spawn(move || {
-                let _ = tx.send(command::commit_edit(&cli, &edit));
+                let _ = tx.send(command::commit_edit(&cli, &edit, &stats));
             });
         if spawned.is_err() {
             self.edit_job = None;
@@ -919,10 +940,11 @@ impl App {
         let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
         let (tx, rx) = std::sync::mpsc::channel();
         let cancel = self.begin_select(rx);
+        let stats = Arc::clone(&self.stats);
         let spawned = std::thread::Builder::new()
             .name("beamcraft-info".into())
             .spawn(move || {
-                let (info, details) = command::lookup(&cli, &store, &id, &cancel);
+                let (info, details) = command::lookup(&cli, &store, &id, &cancel, &stats);
                 // An element the revision no longer holds clears the selection; any other
                 // failure keeps it selected without details, so the move form is emptied
                 // rather than left with the position from before the edit.
@@ -965,10 +987,11 @@ impl App {
         let (tx, rx) = std::sync::mpsc::channel();
         self.props_job = Some(rx);
         self.props_note = None;
+        let stats = Arc::clone(&self.stats);
         let spawned = std::thread::Builder::new()
             .name("beamcraft-properties".into())
             .spawn(move || {
-                let _ = tx.send(command::commit_property(&cli, &edit));
+                let _ = tx.send(command::commit_property(&cli, &edit, &stats));
             });
         if spawned.is_err() {
             self.props_job = None;
@@ -1028,10 +1051,13 @@ impl App {
         let (published, workspace) = (published.to_path_buf(), workspace.to_path_buf());
         let cli = self.source.cli.clone();
         let (tx, rx) = std::sync::mpsc::channel();
+        let stats = Arc::clone(&self.stats);
         let spawned = std::thread::Builder::new()
             .name("beamcraft-status".into())
             .spawn(move || {
-                let _ = tx.send(command::workspace_status(&cli, &published, &workspace));
+                let _ = tx.send(command::workspace_status(
+                    &cli, &published, &workspace, &stats,
+                ));
             });
         if spawned.is_ok() {
             self.status_job = Some(rx);
@@ -1070,10 +1096,11 @@ impl App {
         let cli = self.source.cli.clone();
         let (tx, rx) = std::sync::mpsc::channel();
         self.publish_job = Some(rx);
+        let stats = Arc::clone(&self.stats);
         let spawned = std::thread::Builder::new()
             .name("beamcraft-publish".into())
             .spawn(move || {
-                let _ = tx.send(command::publish(&cli, &args));
+                let _ = tx.send(command::publish(&cli, &args, &stats));
             });
         if spawned.is_err() {
             self.publish_job = None;
@@ -1453,10 +1480,11 @@ impl App {
         let (tx, rx) = std::sync::mpsc::channel();
         self.job = Some(rx);
         self.tool_note = None;
+        let stats = Arc::clone(&self.stats);
         let spawned = std::thread::Builder::new()
             .name("beamcraft-command".into())
             .spawn(move || {
-                let _ = tx.send(command::commit(&cli, &prepared));
+                let _ = tx.send(command::commit(&cli, &prepared, &stats));
             });
         if spawned.is_err() {
             self.job = None;
@@ -1576,6 +1604,7 @@ impl App {
             select_busy: self.select_job.is_some(),
             target: [self.renderer.width, self.renderer.height],
             frame_cpu,
+            stats: self.stats.sample(),
             refresh_timings: &self.refresh_timings,
         });
         if request.reload {
@@ -1830,7 +1859,7 @@ impl App {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        STATS.frames.add(1);
+        self.stats.frames.add(1);
         let now = Instant::now();
         let dt = now.duration_since(self.last).as_secs_f32();
         self.last = now;
@@ -1953,6 +1982,7 @@ impl eframe::App for App {
                             &self.state.queue,
                             &l.uploaded,
                             view,
+                            &self.stats,
                         );
                     }
                     if let Some(l) = &self.loaded {
@@ -1992,17 +2022,18 @@ mod tests {
     use crate::render::Gpu;
     use crate::scene::Scene;
     use crate::source::{Refreshed, Reloaded};
-    use crate::stats::STATS;
     use crate::tools::ToolError;
     use beamcraft_engine::synthetic::plate_scene;
     use beamcraft_engine::{Limits, Representation, ViewPin, ViewSnapshot};
     use beamcraft_model::digest::Sha256;
     use eframe::egui_wgpu;
+    use std::sync::Arc;
     use std::sync::atomic::Ordering;
 
     /// The window state on the headless adapter, with no window and no CLI behind it: the
     /// refresh it starts fails and is never read, and a test hands it results itself. `None`,
-    /// saying so, without a native adapter.
+    /// saying so, without a native adapter. The counters are this test's own, so parallel tests
+    /// never count into each other (issue 167).
     fn headless() -> Option<App> {
         let gpu = match pollster::block_on(Gpu::headless()) {
             Ok(gpu) => gpu,
@@ -2034,7 +2065,8 @@ mod tests {
             published: None,
             samples: None,
         };
-        Some(App::new(&cc, source).unwrap())
+        let stats = Arc::new(crate::stats::Stats::default());
+        Some(App::new(&cc, source, stats).unwrap())
     }
 
     /// A refresh that read `scene`.
@@ -2081,16 +2113,16 @@ mod tests {
         let Some(mut app) = headless() else { return };
         deliver(&mut app, refreshed(2));
         let token = app.loaded.as_ref().map(|l| l.snapshot.token().clone());
-        let swaps = STATS.reloads_applied.get();
-        let uploads = STATS.uploads.get();
+        let swaps = app.stats.reloads_applied.get();
+        let uploads = app.stats.uploads.get();
         deliver(&mut app, reloaded(Ok(Refreshed::Unchanged)));
         assert_eq!(
             app.loaded.as_ref().map(|l| l.snapshot.token().clone()),
             token
         );
         // Nothing was built, uploaded or swapped for the snapshot already on screen.
-        assert_eq!(STATS.reloads_applied.get(), swaps);
-        assert_eq!(STATS.uploads.get(), uploads);
+        assert_eq!(app.stats.reloads_applied.get(), swaps);
+        assert_eq!(app.stats.uploads.get(), uploads);
         // The scene keeps no display buffer once it is on the device.
         assert!(app.loaded.is_some());
     }
@@ -2101,13 +2133,13 @@ mod tests {
         deliver(&mut app, refreshed(2));
         assert!(app.loaded.is_some());
         let framed = app.framed;
-        let swaps = STATS.reloads_applied.get();
+        let swaps = app.stats.reloads_applied.get();
         // The same bounds again, as after an edit inside them: the camera stays where the user
         // left it, and the new scene still replaces the old one.
         deliver(&mut app, refreshed(2));
         assert_eq!(app.framed, framed);
         assert_eq!(
-            STATS.reloads_applied.get(),
+            app.stats.reloads_applied.get(),
             swaps + 1,
             "the new scene must replace the old image"
         );
