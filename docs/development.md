@@ -38,6 +38,13 @@ cargo deny check
 - **Offline.** Add `--offline --locked` to Cargo commands to work without downloads; never update
   `Cargo.lock` as a side effect.
 
+For K1 acceptance, set `BEAMCRAFT_REQUIRE_PXR=1` and run
+`cargo test -p beamcraft-cli --test pxr_oracle -- --nocapture`. Optionally set
+`BEAMCRAFT_PXR_PYTHON` to the installed Python interpreter with `pxr`. This mode fails if the
+independent reader is unavailable; the default developer mode prints an explicit skip instead.
+No interpreter or SDK is installed by the tests. The exact contract case inventory, asserted
+fields and remaining deviations are in [K1 acceptance evidence](design/k1-contract-acceptance.md).
+
 ## Releases
 
 Push a tag such as `v0.1.0`, or run `.github/workflows/release.yml` by hand. It builds unsigned
