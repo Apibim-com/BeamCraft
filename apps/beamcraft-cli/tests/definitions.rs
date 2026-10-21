@@ -259,6 +259,71 @@ fn the_material_changes_the_mass_and_not_the_shape() {
 }
 
 #[test]
+fn used_by_lists_the_plates_that_pin_a_material_in_element_order_on_every_page() {
+    let f = Fixture::new();
+    let a = digest_of(&f.ok("define-material", &["--density", STEEL, "--name", "A"]));
+    let b = digest_of(&f.ok("define-material", &["--density", "7800", "--name", "B"]));
+    let unused = digest_of(&f.ok("define-material", &["--density", "2700", "--name", "U"]));
+    let profile = digest_of(&f.ok("define-profile", &["--width", "200", "--height", "300"]));
+    // Created out of id order: the lists follow the element ids, not the creation order.
+    let id = |n: u8| format!("019a7bf0-0000-7000-8000-0000000000{n:02x}");
+    for (n, material) in [
+        (0x30, Some(&a)),
+        (0x10, Some(&b)),
+        (0x20, Some(&a)),
+        (0x40, None),
+    ] {
+        let mut args = vec!["--new-id".to_owned(), id(n)];
+        if let Some(material) = material {
+            args.extend(["--material-digest".to_owned(), material.clone()]);
+        }
+        f.plate(&args.iter().map(String::as_str).collect::<Vec<_>>());
+    }
+    // A member that pins a material and a profile is not listed: `used_by` names plates.
+    f.ok(
+        "create-member",
+        &[
+            "--start",
+            "0,0,0",
+            "--end",
+            "3000,0,0",
+            "--profile-digest",
+            &profile,
+            "--material-digest",
+            &a,
+        ],
+    );
+    let users = |listed: &Json| -> Vec<(String, Vec<String>)> {
+        at(listed, &["definitions"])
+            .array()
+            .unwrap()
+            .iter()
+            .map(|d| {
+                let ids = at(d, &["used_by"]).array().unwrap();
+                let ids = ids.iter().map(|i| i.string().unwrap().to_owned()).collect();
+                (text(d, "digest"), ids)
+            })
+            .collect()
+    };
+    let all = users(&f.ok("definitions", &[]));
+    let expected = |digest: &String| -> Vec<String> {
+        match digest {
+            d if *d == a => vec![id(0x20), id(0x30)],
+            d if *d == b => vec![id(0x10)],
+            _ => Vec::new(),
+        }
+    };
+    assert_eq!(all.len(), 4);
+    for (digest, ids) in &all {
+        assert_eq!(ids, &expected(digest), "{digest}");
+    }
+    assert!(all.iter().any(|(d, _)| *d == unused));
+    // A page lists the same users for each definition it shows.
+    let page = users(&f.ok("definitions", &["--offset", "1", "--limit", "2"]));
+    assert_eq!(page, all[1..3].to_vec());
+}
+
+#[test]
 fn a_definition_is_immutable_and_publishing_it_again_writes_nothing() {
     let f = Fixture::new();
     let first = f.ok("define-profile", &["--width", "200", "--height", "300"]);
