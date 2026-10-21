@@ -443,6 +443,22 @@ pub fn icon() -> egui::IconData {
     }
 }
 
+/// The window/application icon. In the macOS bundle the official logo ships as
+/// `Contents/Resources/beamcraft-icon.png`, and eframe applies it to the Dock at run time
+/// (`setApplicationIconImage`): while the app runs, the Dock shows the process icon and
+/// ignores the bundle's ICNS. Outside a bundle, or when the resource is missing, the coded
+/// [`icon`] is used, so no asset bytes are compiled into the binary.
+pub fn load_icon() -> egui::IconData {
+    let png = std::env::current_exe().ok().and_then(|exe| {
+        let dir = exe.parent()?;
+        std::fs::read(dir.join("../Resources/beamcraft-icon.png")).ok()
+    });
+    match png.as_deref().map(eframe::icon_data::from_png_bytes) {
+        Some(Ok(icon)) => icon,
+        _ => icon(),
+    }
+}
+
 impl App {
     /// Creates the window state and loads the accepted snapshot.
     pub fn new(cc: &eframe::CreationContext<'_>, source: Source) -> Result<Self, Error> {
@@ -1970,7 +1986,7 @@ impl eframe::App for App {
 
 #[cfg(test)]
 mod tests {
-    use super::{App, Source, needs_refit, target_size, volume_note};
+    use super::{App, Source, load_icon, needs_refit, target_size, volume_note};
     use crate::Error;
     use crate::perf::RefreshTiming;
     use crate::render::Gpu;
@@ -2135,6 +2151,15 @@ mod tests {
         assert_eq!(volume_note(999_999.0), ", volume 999999 mm3");
         assert_eq!(volume_note(1e6), ", volume 0.001 m3");
         assert_eq!(volume_note(1.025e9), ", volume 1.025 m3");
+    }
+
+    /// The test binary has no `../Resources` next to it, so the loader falls back to the
+    /// coded icon instead of panicking or returning an empty icon.
+    #[test]
+    fn the_icon_loader_falls_back_to_the_coded_icon() {
+        let icon = load_icon();
+        assert_eq!((icon.width, icon.height), (32, 32));
+        assert_eq!(icon.rgba.len(), 32 * 32 * 4);
     }
 }
 
