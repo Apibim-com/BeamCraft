@@ -1854,7 +1854,9 @@ impl eframe::App for App {
             let pan = if zoom == 0.0 {
                 pan
             } else {
-                let ndc = response.interact_pointer_pos().and_then(|pos| {
+                // hover_pos (not interact_pointer_pos): egui fills the latter only while a
+                // button is down on this widget, so wheel and pinch zoom need the hover point.
+                let ndc = response.hover_pos().and_then(|pos| {
                     ndc_of(
                         [pos.x, pos.y],
                         [response.rect.min.x, response.rect.min.y],

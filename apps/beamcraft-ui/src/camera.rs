@@ -114,7 +114,12 @@ impl Camera {
         let s = reached / d;
         let nx = ndc[0].clamp(-1.0, 1.0);
         let ny = ndc[1].clamp(-1.0, 1.0);
-        Ok([(1.0 - s) * d * nx * tan * aspect, (1.0 - s) * d * ny * tan])
+        // Clamp each component into what navigate accepts: near the distance bounds the raw
+        // compensation (up to d * tan * aspect) would get the whole frame rejected.
+        Ok([
+            ((1.0 - s) * d * nx * tan * aspect).clamp(-1e6, 1e6),
+            ((1.0 - s) * d * ny * tan).clamp(-1e6, 1e6),
+        ])
     }
     /// Perspective basis with depth range `[0, 1]`, vertical FOV 45 degrees.
     pub fn view(&self, aspect: f32) -> Result<View, Error> {
@@ -288,6 +293,12 @@ mod tests {
             (want[0] - got[0]).abs() < 1e-3 && (want[1] - got[1]).abs() < 1e-3,
             "clamped: {want:?} -> {got:?}"
         );
+        // The compensation is clamped into what navigate accepts: at the distance bounds it
+        // would otherwise exceed the 1e6 input limit and get the whole frame rejected.
+        let mut big = Camera::new([0.0; 3], 1e7, aspect).unwrap();
+        let pan = big.cursor_zoom_pan([1.0, 1.0], aspect, 0.4).unwrap();
+        assert!(pan[0].abs() <= 1e6 && pan[1].abs() <= 1e6, "{pan:?}");
+        assert!(big.navigate([0.0; 2], pan, 0.4).is_ok());
         assert!(c.cursor_zoom_pan([f32::NAN, 0.0], aspect, 1.0).is_err());
         assert!(c.cursor_zoom_pan([2.0, 0.0], aspect, 1.0).is_err());
         assert!(c.cursor_zoom_pan([0.0, 0.0], aspect, f32::NAN).is_err());
