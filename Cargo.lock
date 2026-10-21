@@ -594,6 +594,7 @@ dependencies = [
 [[package]]
 name = "eframe"
 version = "0.36.2"
+source = "git+https://github.com/axisrow/eframe?rev=47ec420e7c54201ec07e2df6fd45b22095342cfd#47ec420e7c54201ec07e2df6fd45b22095342cfd"
 dependencies = [
  "ahash",
  "bytemuck",
