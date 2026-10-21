@@ -223,6 +223,7 @@ dependencies = [
  "pollster",
  "skrifa",
  "wgpu",
+ "winit",
 ]
 
 [[package]]
