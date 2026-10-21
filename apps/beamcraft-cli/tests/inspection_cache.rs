@@ -15,8 +15,11 @@ use beamcraft_host::{
     revision::{ExpectedBase, LayerEntry, NoFault, RevisionDraft, RevisionStore, Uuid7},
     storage::BlobStore,
 };
-use beamcraft_json::{Json, Limits};
-use beamcraft_model::{error::ErrorCode, id::ElementId, prim::ElementCategory};
+use beamcraft_model::error::ErrorCode;
+use beamcraft_protocol::{
+    json::{self, Json},
+    message,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -58,7 +61,7 @@ impl Fixture {
             .args(&args)
             .output()
             .unwrap();
-        let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
+        let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
         (output.status.code().unwrap(), body)
     }
 
@@ -135,6 +138,7 @@ fn assert_same(a: &Inspection, b: &Inspection) {
     assert_eq!(a.project_record, b.project_record);
     assert_eq!(a.levels, b.levels);
     assert_eq!(a.elements, b.elements);
+    assert_eq!(a.marks, b.marks);
 }
 
 /// Cache hits and misses of this thread so far.
@@ -232,15 +236,14 @@ fn a_warm_cache_returns_what_a_cold_evaluation_returns() {
     let before = counts();
     let first = inspect(&store).unwrap();
     let after_first = counts();
-    // Eight elements, five distinct shapes: three copies share a body within the first call,
-    // and the unsupported-listing pass rides the same cache, so every evaluated body hits again.
+    // Eight elements, five distinct shapes: three copies share a body within the first call.
     assert_eq!(after_first.1 - before.1, 5);
-    assert_eq!(after_first.0 - before.0, 8);
+    assert_eq!(after_first.0 - before.0, 3);
     let second = inspect(&store).unwrap();
     let after_second = counts();
     // The second call evaluates nothing.
     assert_eq!(after_second.1, after_first.1);
-    assert_eq!(after_second.0 - after_first.0, 13);
+    assert_eq!(after_second.0 - after_first.0, 8);
     assert_same(&cold, &first);
     assert_same(&first, &second);
     assert_eq!(first.plates.len() + first.members.len(), 8);
@@ -272,10 +275,7 @@ fn a_warm_cache_still_refuses_a_tampered_derived_mesh() {
     // The copy's stored box is stretched from 10 to 12 mm while its authored inputs stay those
     // of the source. Points and extent change together and an axis-aligned box keeps its face
     // normals, so the layer passes every structural rule: only the kernel comparison can tell.
-    let path = ElementId::parse(PLATE_COPY)
-        .unwrap()
-        .prim_path(ElementCategory::Part);
-    let marker = format!("\"{}\"", path.rsplit('/').next().unwrap());
+    let marker = format!("\"E_{}\"", PLATE_COPY.replace('-', ""));
     f.tamper(|name, mut text| {
         if name == "derived.usda" {
             let block = text.find(&marker).unwrap();
@@ -306,7 +306,7 @@ fn a_warm_cache_still_refuses_a_tampered_derived_mesh() {
             .unwrap()
     };
     assert_eq!(cold, refused);
-    let (code, body) = f.run("inspect-elements", &[]);
+    let (code, body) = f.run("plate-inspect", &[]);
     assert_eq!(code, 2);
     assert_eq!(
         body.get("code").unwrap().string().unwrap(),

@@ -231,8 +231,7 @@ fn plate_key(plate: &AuthoredPlate) -> Vec<u8> {
 
 /// The key of a member body with its resolved profile. Every field of [`AuthoredMember`] and of
 /// the profile is named, as for [`plate_key`]; the pinned profile digest is not an input, its
-/// resolved values are. The placement rotation is a shape input (it composes into the member
-/// mesh); the translation is not.
+/// resolved values are.
 fn member_key(member: &AuthoredMember, profile: &ProfileInfo) -> Vec<u8> {
     let AuthoredMember {
         id: _,
@@ -241,7 +240,7 @@ fn member_key(member: &AuthoredMember, profile: &ProfileInfo) -> Vec<u8> {
         axis_points_mm,
         profile: _,
         roll_rad,
-        placement,
+        placement: _,
         material: _,
         cut,
     } = member;
@@ -250,11 +249,6 @@ fn member_key(member: &AuthoredMember, profile: &ProfileInfo) -> Vec<u8> {
     push_points(&mut key, axis_points_mm);
     push_option(&mut key, *roll_rad);
     push_cut(&mut key, cut.as_ref());
-    let [qx, qy, qz, qw] = placement.orientation_xyzw;
-    push_f64(&mut key, qx);
-    push_f64(&mut key, qy);
-    push_f64(&mut key, qz);
-    push_f64(&mut key, qw);
     match profile {
         ProfileInfo::Rectangle {
             width_mm,
@@ -427,17 +421,14 @@ pub fn evaluate_committed_members_cached(
     Ok(records)
 }
 
-/// The snapshot-builder input for committed plates. Plate placement remains translation-only in
-/// this slice.
+/// The snapshot-builder input for committed plates. Each placement must be a pure translation
+/// (identity rotation); another rotation is `UNSUPPORTED_GEOMETRY`, because the view contract
+/// carries translations only.
 pub fn scene_elements(records: &[PlateRecord]) -> Result<Vec<SceneElement>, CommandError> {
     scene_elements_with_members(records, &[])
 }
 
 /// The snapshot-builder input for committed plates and members, in element-id order.
-///
-/// A scene placement is a translation for both kinds: a member's placement rotation is already
-/// composed into its body mesh (the section frame), and a plate keeps the identity-rotation
-/// refusal, so no scene element carries an orientation.
 pub fn scene_elements_with_members(
     plates: &[PlateRecord],
     members: &[MemberRecord],
@@ -447,7 +438,7 @@ pub fn scene_elements_with_members(
             return Err(CommandError::new(
                 ErrorCode::UnsupportedGeometry,
                 "placement.orientation_xyzw",
-                "rotated plate placement is not evaluated in this slice",
+                "rotated placement is not evaluated in this slice",
             ));
         }
         let [x, y, z] = placement.translation_mm;
@@ -473,19 +464,10 @@ pub fn scene_elements_with_members(
             MemberKind::Beam => ElementKind::Beam,
             MemberKind::Column => ElementKind::Column,
         };
-        // The member mesh carries the composed section frame; only the translation remains.
-        let [x, y, z] = r.authored.placement.translation_mm;
-        let translation = Translation3::new(x, y, z).map_err(|_| {
-            CommandError::new(
-                ErrorCode::NonFiniteNumber,
-                "placement.translation_mm",
-                "value is not finite",
-            )
-        })?;
         elements.push(SceneElement::new(
             r.authored.id,
             kind,
-            translation,
+            translation(&r.authored.placement)?,
             r.body.solid.scene_mesh(),
         ));
     }
@@ -581,62 +563,6 @@ mod tests {
                 .code,
             ErrorCode::NotFound
         );
-    }
-
-    #[test]
-    fn committed_rotated_member_has_f06_pos_12_world_bounds_and_keeps_shape_quantities() {
-        use crate::member::ProfileInfo;
-        use crate::{Limits, ViewPin, ViewSnapshot};
-        let profile = Sha256::digest(b"profile").unwrap();
-        let profiles = |d: &ContentDigest| {
-            if *d == profile {
-                Ok(ProfileInfo::Rectangle {
-                    width_mm: 200.0,
-                    height_mm: 300.0,
-                    declared_area_mm2: None,
-                })
-            } else {
-                crate::member::no_profiles(d)
-            }
-        };
-        let half = core::f64::consts::FRAC_1_SQRT_2;
-        let mut member = AuthoredMember {
-            id: ElementId::parse("019a7bf0-0000-7000-8000-000000001102").unwrap(),
-            kind: MemberKind::Beam,
-            name: "F06 POS-12".into(),
-            axis_points_mm: [[0.0; 3], [4000.0, 0.0, 0.0]],
-            profile,
-            roll_rad: None,
-            placement: Placement {
-                translation_mm: [-50.0, 70.0, 1000.0],
-                orientation_xyzw: [0.0, 0.0, half, half],
-            },
-            material: None,
-            cut: None,
-        };
-        let records =
-            super::evaluate_committed_members(&[member.clone()], &profiles, &no_materials).unwrap();
-        assert_eq!(records[0].quantities.volume_mm3, 240_000_000.0);
-        let identity = {
-            member.placement = Placement::IDENTITY;
-            super::evaluate_committed_members(&[member], &profiles, &no_materials).unwrap()
-        };
-        // The rotation composes into the mesh (same triangles, rotated vertices), so the body
-        // differs from the identity one while the quantities stay the same.
-        assert_eq!(records[0].quantities, identity[0].quantities);
-        assert_ne!(records[0].body.solid, identity[0].body.solid);
-        let elements = scene_elements_with_members(&[], &records).unwrap();
-        let pin = ViewPin::new(Sha256::digest(b"revision").unwrap(), 1);
-        let snapshot = ViewSnapshot::build(pin, elements, &Limits::default()).unwrap();
-        let bounds = snapshot.element_bounds(&records[0].authored.id).unwrap();
-        for (actual, expected) in bounds
-            .min
-            .into_iter()
-            .chain(bounds.max)
-            .zip([-150.0, 70.0, 850.0, 50.0, 4070.0, 1150.0])
-        {
-            assert!((actual - expected).abs() <= 0.001, "{actual} != {expected}");
-        }
     }
 
     #[test]
