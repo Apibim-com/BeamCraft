@@ -60,7 +60,7 @@ use beamcraft_host::revision::{
 use beamcraft_layer_engine::authored::{
     Author, Change, EditTargets, Element, Group as LayerGroup, PROJECT_RECORD_KEY,
     Placement as LayerPlacement, Prepare, Prepared, SchemaIdentity, Shape, StoredQuantities,
-    project_record, schema_identity, validate_layers,
+    project_record, schema_identity,
 };
 use beamcraft_layer_engine::index::Completeness;
 use beamcraft_layer_engine::{
@@ -1071,9 +1071,10 @@ impl ContentVerifier for PlateVerifier {
                 "draft schema is not the admitted U02 schema",
             )));
         }
-        validate_layers(open.clone(), schema, &control).map_err(reject)?;
         let mut reader = Reader::default();
-        let opened = reader.open(open, &control).map_err(reject)?;
+        let (opened, _) = reader
+            .open_validated(open, schema, &control)
+            .map_err(reject)?;
         // D1: a recorded ProjectId is the revision's own, so a stored record can never disagree
         // with the project of the manifest, nor change between revisions of one project.
         if let Some(recorded) = project_record(&opened.metadata).map_err(reject)?
@@ -1810,11 +1811,10 @@ pub fn inspect_revision(revision: &Revision) -> Result<Inspection, PlateError> {
         &external,
     )?;
     let control = control();
-    // The structural rules (D2-V01 among them) run before anything is decoded, so a damaged
-    // level or project record is refused rather than reported.
-    validate_layers(request.clone(), schema_identity()?, &control)?;
+    // The structural rules (D2-V01 among them) run on the parsed stage before anything is
+    // decoded, so a damaged level or project record is refused rather than reported.
     let mut reader = Reader::default();
-    let opened = reader.open(request, &control)?;
+    let (opened, _) = reader.open_validated(request, schema_identity()?, &control)?;
     let record = project_record(&opened.metadata)?;
     if record
         .as_deref()

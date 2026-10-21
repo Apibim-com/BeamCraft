@@ -1751,6 +1751,70 @@ fn delete_removes_the_whole_element_in_both_layers_and_nothing_else() {
     );
 }
 
+#[test]
+fn one_pass_open_validated_answers_like_validate_layers_then_open() {
+    let (a, o) = populated();
+    let schema = schema_identity().unwrap();
+    let separate = |input: &OpenRequest| {
+        validate_layers(input.clone(), schema, &control())?;
+        Reader::default().open(input.clone(), &control())
+    };
+    // A valid stage: the same composed snapshot.
+    let valid = export_request(&a, &o.context);
+    let mut reader = Reader::default();
+    let (joined, validation) = reader
+        .open_validated(valid.clone(), schema, &control())
+        .unwrap();
+    let alone = separate(&valid).unwrap();
+    assert_eq!(
+        validation,
+        validate_layers(valid.clone(), schema, &control()).unwrap()
+    );
+    assert_eq!(
+        (joined.prim_count, &joined.metadata),
+        (alone.prim_count, &alone.metadata)
+    );
+    let page = |reader: &Reader, context: &Context| {
+        reader
+            .read(context, None, &control())
+            .unwrap()
+            .items
+            .into_iter()
+            .map(|p| p.path)
+            .collect::<Vec<_>>()
+    };
+    let paths = page(&reader, &joined.context);
+    // Broken stages: the same code and message, and the live view stays the earlier one.
+    let digest_text = schema.digest.to_string();
+    let incorrect = digest(b"incorrect schema").to_string();
+    for (layer, from, to) in [
+        (
+            "authored.usda",
+            "steel:profile:widthMm = 100.0",
+            "steel:profile:widthMm = 101.0",
+        ),
+        ("derived.usda", "[0, 1, 2, 3]", "[0, 1, 2, 999]"),
+        ("root.usda", digest_text.as_str(), incorrect.as_str()),
+        ("authored.usda", "#usda 1.0", "#usda 9.9"),
+    ] {
+        let input = tampered(&a, &o.context, layer, from, to);
+        let refused = reader
+            .open_validated(input.clone(), schema, &control())
+            .unwrap_err();
+        assert_eq!(refused, separate(&input).unwrap_err(), "{layer}: {from}");
+        assert_eq!(page(&reader, &joined.context), paths);
+    }
+    // A schema pin that is not admitted is refused before anything is parsed, as by the checker.
+    let mut unknown = schema;
+    unknown.digest = digest(b"another schema");
+    assert_eq!(
+        reader
+            .open_validated(valid.clone(), unknown, &control())
+            .unwrap_err(),
+        validate_layers(valid, unknown, &control()).unwrap_err()
+    );
+}
+
 fn prim<'a>(prims: &'a [Prim], path: &str) -> &'a Prim {
     prims.iter().find(|p| p.path == path).unwrap()
 }
