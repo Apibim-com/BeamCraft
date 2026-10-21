@@ -35,44 +35,61 @@ that the gate's acceptance is claimed.
 | K5 | Original native UI uses engine commands and saves the same result as the CLI | V01–V06 | V01–V04, V05.1–V05.2 and V06.1 merged; acceptance open |
 | K6 | Supported assemblies, cuts, holes, bolts, welds, approved numbering and IFC/BOM export | A01–A09, E01–E03 | slices merged for all; A03 cuts and A04 holes still use element attributes instead of the A-2 operation records; E01 contract draft; acceptance open |
 | K7 | Complete alpha scenario and native packaging rehearsal | Q01–Q02 | Q02 packaging merged, release rehearsal not run; Q01 open |
-| K8 | First associative drawing projection, dimension and published document version | D01–D03 | deferred |
+| K8 | Associative drawings, dimensions and marks, drafting, a published document version | D01–D08 | in the MVP; open |
+| K9 | Full manual steel modelling: polybeams, curved members, complex plates, fits and cuts, bolts, welds, nested assemblies | P12–P15, G12–G13, A10–A16 | open |
+| K10 | Model tools, views, filters, cut plane, render modes, colour by filter, selection and snap panels | T01–T04, V11–V17 | open |
+| K11 | User attributes and schedules | I04, I05 | open; items I01–I03 deferred |
 
 ## MVP scope
 
-A free single-user desktop MVP: an engineer models a simple steel frame in the native UI and takes
-it out as a bill of materials; the model itself is ordinary USD that other USD tools open. Package boundaries follow the implementation plan and each
-package keeps its own PR.
+A free single-user desktop product for manual steel detailing without automation (no parametric
+connections or macros). The model is ordinary USD that other USD tools open. The scope was widened
+on 2026-10-21 ([decisions](docs/plan/decisions.md)); package boundaries follow the implementation
+plan and each package keeps its own PR.
 
-1. **Real sections:** rolled and custom section definitions with kernel extrusion and libraries
-   (A07), contour plates (A02). Merged. Profile data stays original or from public standards
-   (`AGENTS.md` §1.2); no commercial catalogue is copied.
-2. **Editing in the UI:** create, select, move, copy and delete (V05), properties and publication
-   (V06.1). Merged as slices.
-3. **Detailing basics:** plane cuts (A03), holes (A04), bolts (A05). Merged as slices; cuts and
-   holes still need the A-2 operation-record form.
-4. **Output:** numbering (A08/A09) and BOM (E03). Merged as slices.
-5. **Packaging:** the alpha scenario (Q01) and native installers for Windows, Linux and macOS
-   (Q02). Q02 merged; Q01 open.
+1. **Modelling:** columns, beams, polybeams, curved beams, plates, bent and lofted plates and
+   other plates of complex contour; full section placement; fits, cuts, chamfers, split and
+   combine; part classes. Rolled and custom sections, contour plates, plane cuts and holes are
+   merged as slices (A02, A03, A04, A07).
+2. **Connections and assemblies:** bolt groups with holes in all connected parts, welds, nested
+   assemblies, explode, numbering (A05, A06, A08, A09 merged as slices; A14 to A16 open).
+3. **Attributes and schedules:** user attributes on any element, schedules from them (I04, I05).
+4. **Model tools:** copy, move, rotate, mirror, arrays, grids, construction objects, numeric input
+   (T01 to T04).
+5. **Views and display:** named views, filters, cut plane, five render modes on Ctrl+1 to Ctrl+5,
+   colour by filter or class, a bottom bar of selection switches, a snap panel, an orthographic and
+   perspective switch (V11 to V17).
+6. **Drawings, all manual:** views taken from model views and filters, sheets, hand-placed
+   dimensions, marks and leaders, configurable view titles, drafting tools, PDF and print (D01 to D08).
+7. **Output and packaging:** numbering, schedules and BOM (E03), the alpha scenario (Q01) and
+   native installers for Windows, Linux and macOS (Q02; Q02 merged, Q01 open).
 
-Deferred until after the MVP: IFC export (E01 contract, E02 exporter; the experimental `export-ifc`
-stays in the code but is not part of the MVP), multi-client rebase, conflicts, retry and
-compensation (C03–C06), drawings (D01–D03) and reference measurements (R02–R03). Which parts later stay open source and
-which become a commercial product is decided after the MVP; until then everything stays MPL-2.0.
+Profile and class data stay original or from public standards (`AGENTS.md` §1.2); no commercial
+catalogue, palette or text of another product is copied.
+
+Deferred until after the MVP: items (I01 to I03: the item contract and reading GLB and IFC geometry), IFC export (E01, E02; the experimental `export-ifc` stays in the code
+but is not part of the MVP), multi-client rebase, conflicts, retry and compensation (C03–C06),
+reference measurements (R02–R03), DSTV NC and DXF output, parametric connections and macros.
+Which parts later stay open source and which become a commercial product is decided after the MVP;
+until then everything stays MPL-2.0.
 
 ## Next work
 
-In this order; the task cards are in [`docs/plan/tasks.md`](docs/plan/tasks.md).
+In this order (milestones M1 to M5 of the decision of 2026-10-21); the task cards are in
+[`docs/plan/tasks.md`](docs/plan/tasks.md).
 
-1. **A03/A04 to the contract:** `CutByPlane` and `AddHole` as owned operation records with the
-   role-based FeatureIds (F06 amendment A-2), replacing the `steel:cut:*` and hole attributes, with
-   migration of stores written before.
-2. **UI without the CLI:** open and create a project, choose sections from a library, numbering and
-   export actions, and a loading indicator in the native window.
-3. **Q01 alpha scenario** end to end, and a first manual run of the release workflow to rehearse
-   the Q02 installers.
-4. **Gate acceptance:** turn the merged slices of K1, K2, K5 and K6 into accepted gates.
+1. **M1, modelling and the UI shell:** A03/A04 to the operation records (A-2); kernel sweep and
+   ruled surfaces (G12, G13); polybeams, curved beams, section placement, complex, bent and lofted
+   plates (P12 to P14, A10 to A13); complete bolts, welds and nested assemblies (A14 to A16);
+   selection bar, snap panel, projection switch and render modes (V11, V13, V16).
+2. **M2, tools and views:** grids, construction objects, copy and arrays, numeric input (T01 to
+   T04); views, filters, cut plane, colour by filter, classes (V12, V14, V15, V17, P15).
+3. **M3, attributes and schedules:** I04, I05.
+4. **M4, drawings:** D01 to D08.
+5. **M5, alpha scenario and packaging:** Q01 over the whole scope and a first run of the release
+   workflow (Q02); acceptance of the gates K1, K2, K5, K6 and K8 to K11.
 
-Later work expands supported operations, licensed data packs, drawings and DSTV NC export. IFC
+Later work expands supported operations, licensed data packs and DSTV NC export. IFC
 import and foreign-to-native conversion require a new scope decision. BeamCraft is desktop-only on
 Windows, Linux and macOS; only `beamcraft-geom`, `beamcraft-model` and `beamcraft-kernel` keep the
 WASM compatibility requirement as a layering discipline.
