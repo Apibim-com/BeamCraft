@@ -1230,12 +1230,13 @@ fn half_faked_wrappers_are_refused_and_never_owned() {
         index.element(&id).unwrap().ownership,
         beamcraft_layer_engine::index::Ownership::Foreign
     );
-    // Reference mode with another kind: not a wrapper, so its holder is stray.
+    // A part kind at a reference path is rejected by the reader's U16 category check,
+    // before the wrapper ownership validator runs.
     for (name, value) in [("bim:elementKind", "plate"), ("bim:elementKind", "beam")] {
         let bad = tamper(&assets, "authored.usda", |d| set(d, name, value));
         assert_eq!(
             validate(bad).unwrap_err().code,
-            ErrorCode::ForeignReadOnly,
+            ErrorCode::InvalidId,
             "{value}"
         );
     }

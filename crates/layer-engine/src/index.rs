@@ -592,13 +592,14 @@ impl IndexBuilder {
     /// and retains only the fields the index uses. Ignored property values are neither copied
     /// nor traversed, so no nesting depth or value size can reach the allocator or the stack.
     fn project(&mut self, prim: &Prim) -> Result<Prim, Diagnostic> {
-        const USED: [&str; 6] = [
+        const USED: [&str; 7] = [
             "bim:id",
             "bim:name",
             "bim:elementKind",
             "bim:geometryMode",
             "bim:lifecycle",
             "bim:contentDigest",
+            "bim:definitionKind",
         ];
         let b = self.budgets;
         let long = |s: &str| s.len() > MAX_PATH_BYTES;

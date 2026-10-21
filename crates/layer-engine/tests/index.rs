@@ -172,8 +172,9 @@ fn category_paths_are_checked_against_kinds_and_relationships_resolve_exact_path
         ErrorCode::InvalidId
     );
     let digest = digest(b"synthetic material");
-    let wrong_kind =
-        format!("def Scope \"PRF_{digest}\" {{ custom token bim:definitionKind = \"material\" }}");
+    let wrong_kind = format!(
+        "def Scope \"PRF_{digest}\" {{\n custom token bim:definitionKind = \"material\"\n }}"
+    );
     assert_eq!(
         code(built(world("", &wrong_kind, ""))),
         ErrorCode::InvalidId
