@@ -77,6 +77,29 @@ above records the state on 2026-10-14, when the minimum was 1.95, and is left un
 on Windows and Linux, the module-boundary check, docs, a wasm32 check of `beamcraft-geom`,
 `beamcraft-model` and `beamcraft-kernel` (listed by the boundary tool), and `cargo deny`.
 
+## Build profiles
+
+`cargo build --release` is the optimized build for development: every crate at optimization level
+3, with 16 codegen units and no LTO, so a large crate is code-generated on several cores and no
+binary is optimized again as a whole when it is linked. Release packages are built with
+`--profile dist` into `target/<triple>/dist/`: ThinLTO across crates and one codegen unit per
+crate, the settings `release` had until 2026-10-21. They give the smallest and fastest binaries,
+but the largest dependency, `openusd`, is then code-generated on a single core and the build ends
+with the slow, mostly serial link of each binary. Compare performance measurements only between
+builds of the same profile.
+
+Add `--timings` to see where a build spends its time; Cargo writes a per-crate report to
+`target/cargo-timings/cargo-timing.html`.
+
+A build with `--target` writes to `target/<triple>/` and reuses nothing from a build without it, so
+keep to one form in a dev loop. A new worktree or `cargo clean` starts cold. A local compiler cache
+such as [sccache](https://github.com/mozilla/sccache) serves repeated compilations from disk:
+install it and set `RUSTC_WRAPPER=sccache` in your shell, or `build.rustc-wrapper = "sccache"` in
+your own `~/.cargo/config.toml` (the repository does not require it). Its key includes the source
+paths and the `CARGO_*` environment, so a rebuild after `cargo clean` comes almost entirely from
+the cache, a new worktree still compiles the workspace crates, and a changed `CARGO_TARGET_DIR`
+misses everything.
+
 ## Releases
 
 Push a tag such as `v0.1.0`. `.github/workflows/release.yml` builds unsigned packages and
@@ -90,7 +113,7 @@ attaches them to a GitHub release (Q02 rehearsal):
 
 Every package carries `beamcraft`, `beamcraft-ui` and `beamcraft-usd-worker`, the admitted
 Inter font with its `OFL-1.1-Inter.txt` licence (in the .app under `Contents/Resources/`),
-and the project documents. `packaging/package.sh` builds one package from a release build;
+and the project documents. `packaging/package.sh` builds one package from a `dist` build;
 `packaging/Info.plist` is the .app template. CI extracts each archive into a fresh directory
 and runs `beamcraft --version` from it.
 

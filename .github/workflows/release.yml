@@ -34,7 +34,7 @@ jobs:
           key: release-${{ matrix.target }}
 
       - name: Build
-        run: cargo build --release --locked --target ${{ matrix.target }} -p beamcraft-cli -p beamcraft-ui
+        run: cargo build --profile dist --locked --target ${{ matrix.target }} -p beamcraft-cli -p beamcraft-ui
 
       - name: Package
         shell: bash
