@@ -1735,6 +1735,19 @@ pub(crate) fn fit_page(
     }
 }
 
+/// The plates that pin each material, in the order of `plates` (element-id order): the
+/// `used_by` list of `definitions`, built once instead of scanning every plate for every listed
+/// definition. Members are not listed, as before.
+fn plate_users(plates: &[PlateRecord]) -> BTreeMap<ContentDigest, Vec<ElementId>> {
+    let mut users: BTreeMap<ContentDigest, Vec<ElementId>> = BTreeMap::new();
+    for plate in plates {
+        if let Some(material) = plate.authored.material {
+            users.entry(material).or_default().push(plate.authored.id);
+        }
+    }
+    users
+}
+
 fn definitions_json(inspection: &Inspection, options: &BTreeMap<&str, &str>) -> Run<Json> {
     let (offset, limit) = page_of(options)?;
     let name = options.get("--name");
@@ -1745,17 +1758,18 @@ fn definitions_json(inspection: &Inspection, options: &BTreeMap<&str, &str>) -> 
         .collect();
     let total = matching.len();
     let available = total.saturating_sub(offset);
+    let users = plate_users(&inspection.plates);
     fit_page(available, limit, |count| {
         let definitions = matching
             .iter()
             .skip(offset)
             .take(count)
             .map(|(digest, record)| {
-                let used_by: Vec<Json> = inspection
-                    .plates
+                let used_by: Vec<Json> = users
+                    .get(*digest)
+                    .map_or(&[][..], Vec::as_slice)
                     .iter()
-                    .filter(|p| p.authored.material == Some(**digest))
-                    .map(|p| Json::text(p.authored.id.to_string()))
+                    .map(|id| Json::text(id.to_string()))
                     .collect();
                 let Json::Object(mut object) = definition_json(digest, record)? else {
                     return Err(invalid("definition result is not an object"));
