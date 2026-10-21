@@ -16,6 +16,13 @@ beamcraft-geom = { path = "crates/geom", version = "0.0.1" }
 beamcraft-model = { path = "crates/model", version = "0.0.1" }
 beamcraft-protocol = { path = "crates/protocol", version = "0.0.1" }
 
+# Patched eframe 0.36.2 (issue #149): upstream embeds its default `data/icon.png` (unknown
+# author and licence) into every binary via `include_bytes!`, which `AGENTS.md` §1 forbids.
+# `vendor/eframe` is that exact crates.io release with the icon bytes removed and the fallback
+# replaced by a generated placeholder; provenance and the diff are recorded in ATTRIBUTION.md.
+[patch.crates-io]
+eframe = { path = "vendor/eframe" }
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 missing_docs = "warn"
