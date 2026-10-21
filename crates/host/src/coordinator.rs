@@ -22,10 +22,9 @@
 //! the handler never runs two requests at once. This is the "one publish queue" of C02: the
 //! publication rules themselves (expected head, changesets) belong to the handler.
 
+use beamcraft_json::{Json, Limits};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ActorId;
-use beamcraft_protocol::json::{self, Json};
-use beamcraft_protocol::message;
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, Shutdown, SocketAddr, SocketAddrV4, TcpListener, TcpStream};
@@ -181,7 +180,7 @@ pub fn rejection(code: ErrorCode, message: &str) -> Json {
 
 fn write_frame(stream: &mut TcpStream, body: &Json) -> Result<(), CoordinatorError> {
     let bytes = body
-        .encode(&message::read_limits())
+        .encode(&Limits::DEFAULT)
         .map_err(|_| error(ErrorCode::LimitExceeded, "frame cannot be encoded"))?;
     if bytes.len() > MAX_FRAME_BYTES {
         return Err(error(ErrorCode::LimitExceeded, "frame is too large"));
@@ -234,7 +233,7 @@ fn read_frame(stream: &mut TcpStream, budget: Duration) -> Result<Json, Coordina
     }
     let mut body = vec![0u8; length];
     read_exact_by(stream, &mut body, deadline)?;
-    json::decode(&body, &message::read_limits()).map_err(|_| {
+    beamcraft_json::decode(&body, &Limits::DEFAULT).map_err(|_| {
         error(
             ErrorCode::MalformedCommand,
             "frame is not a bounded JSON object",

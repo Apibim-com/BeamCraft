@@ -59,7 +59,7 @@ version = "0.0.1"
 allow = ["MPL-2.0"]
 
 [[licenses.exceptions]]
-name = "beamcraft-protocol"
+name = "beamcraft-json"
 version = "0.0.1"
 allow = ["MPL-2.0"]
 

@@ -75,7 +75,7 @@ inputs cannot reach it through `ViewSnapshot::build`.
   Selection by display hint (instance or triangle index from a GPU pick) is supported as a hint
   only; anything selecting for engineering use must come from the engine's `Pick`.
 - **No keys, statuses or local-space bounds** (P01), no presentation-key preimage (V01/V03),
-  no cancellation or deadline polling, no transport schema for deltas (U02/F05), no transform
+  no cancellation or deadline polling, no transport schema for deltas (U02), no transform
   other than translation (the first-scope placement).
 - **No mesh export from the CLI.** The CLI reports digests, sizes and counts; delivering blob
   bytes is an I/O-edge decision for the UI/host tasks.

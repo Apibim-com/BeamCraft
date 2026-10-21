@@ -18,10 +18,9 @@
 use crate::plate_cmd::{definitions_json, id_error, inspection_json, report};
 use beamcraft_cli::plate::{PlateError, inspect};
 use beamcraft_host::{revision::RevisionStore, storage::BlobStore};
+use beamcraft_json::Json;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
-use beamcraft_protocol::json::Json;
-use beamcraft_protocol::message;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::io::Write;
@@ -48,10 +47,11 @@ pub enum Output {
 /// A reply exactly as the command that owns it prints it (the CLI's `print_json`).
 fn printed(result: Result<Json, PlateError>) -> Vec<u8> {
     let (json, _) = report(result);
-    json.encode(&message::read_limits()).unwrap_or_else(|_| {
-        // What `print_json` prints when a reply exceeds the encoder budget.
-        b"{\"outcome\":\"rejected\",\"code\":\"LIMIT_EXCEEDED\"}\n".to_vec()
-    })
+    json.encode(&beamcraft_json::Limits::DEFAULT)
+        .unwrap_or_else(|_| {
+            // What `print_json` prints when a reply exceeds the encoder budget.
+            b"{\"outcome\":\"rejected\",\"code\":\"LIMIT_EXCEEDED\"}\n".to_vec()
+        })
 }
 
 /// Appends `reply` with its length; `None` is a reply that was not asked for.
@@ -82,7 +82,6 @@ pub fn execute(args: &[OsString]) -> Output {
                 ("outcome", Json::text("rejected")),
                 ("code", Json::text(e.code.as_str())),
                 ("message", Json::text(e.message)),
-                ("transport_code", Json::Null),
                 ("observed_context", Json::Null),
                 ("diagnostics", Json::Array(vec![])),
             ]),

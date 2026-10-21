@@ -22,13 +22,10 @@ use beamcraft_host::{
     revision::{CommitPoint, Injected, NoFault, RevisionStore, Uuid7},
     storage::BlobStore,
 };
+use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::{CreatePlate, Placement};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
-use beamcraft_protocol::{
-    json::{self, Json},
-    message,
-};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -85,7 +82,7 @@ fn run_binary(args: &[&str]) -> (i32, Json) {
         .args(args)
         .output()
         .unwrap();
-    let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
+    let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
     (output.status.code().unwrap(), body)
 }
 
@@ -674,7 +671,7 @@ fn concurrent_creates_publish_only_complete_revisions_with_distinct_ids() {
     let mut losers = 0;
     for child in children {
         let output = child.wait_with_output().unwrap();
-        let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
+        let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
         match output.status.code().unwrap() {
             0 => {
                 assert!(created.insert(text(at(&body, &["plate"]), "element_id")));

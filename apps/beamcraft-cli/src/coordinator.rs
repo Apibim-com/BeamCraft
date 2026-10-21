@@ -31,9 +31,9 @@ use crate::plate::PlateError;
 use beamcraft_host::coordinator::{Handler, Request, rejection};
 use beamcraft_host::revision::{NoFault, RevisionError, RevisionStore};
 use beamcraft_host::storage::BlobStore;
+use beamcraft_json::Json;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
-use beamcraft_protocol::json::Json;
 use std::path::{Path, PathBuf};
 
 /// The publish handler of one coordinator.

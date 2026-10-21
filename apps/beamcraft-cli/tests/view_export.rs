@@ -12,10 +12,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use beamcraft_engine::{Limits, ViewSnapshot};
-use beamcraft_protocol::{
-    json::{self, Json},
-    message,
-};
+use beamcraft_json::Json;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -38,7 +35,7 @@ fn run(args: &[&str]) -> (i32, Vec<u8>) {
 }
 
 fn json_of(bytes: &[u8]) -> Json {
-    json::decode(bytes, &message::read_limits()).unwrap()
+    beamcraft_json::decode(bytes, &beamcraft_json::Limits::DEFAULT).unwrap()
 }
 
 fn text(json: &Json, key: &str) -> String {

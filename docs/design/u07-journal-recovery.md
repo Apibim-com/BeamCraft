@@ -63,10 +63,8 @@ table. Every `revision-commit` goes through the ledger.
    `OP_ID_REUSE`. A closed (`aborted`) attempt had no effect, so a corrected retry under the same id is allowed,
    as in U06 before the ledger. This is the one place where the ledger could be stricter; it is
    not, to keep U06's behaviour for a rejected-then-fixed command.
-7. **`query-outcome` is untouched.** The frozen U04 stage-profile command still returns
-   `OUTCOME_UNKNOWN`; it has no recorded-result message and its identity tuple is not an op-id
-   ledger key. The ledger answer is the new `revision-outcome`. Integrating both into one
-   host-facing QueryOutcome is a protocol decision (F05), not made here.
+7. **`revision-outcome` is the QueryOutcome.** The ledger answers it; U17 removed the older
+   `query-outcome` command, which could only return `OUTCOME_UNKNOWN`.
 
 ## Crash points and what recovery yields
 
@@ -110,13 +108,11 @@ switch, so the answer is `NotFound`; the whole intent is `Unknown` until recover
   garbage collection of blobs (needs
   retained revisions and drafts accounted for); personal workspaces and preserved drafts across
   restart; multi-client collaboration; a CLI switch that injects faults (the E2E tests produce the
-  interrupted commit through the host hook and then run the real binary); wiring the host
-  QueryOutcome into the worker protocol.
-* The worker protocol is unchanged.
+  interrupted commit through the host hook and then run the real binary).
 
 ## Provenance and limits
 
-Original code and fixtures; formats derived from F04 section 8, F05 section 7 and the plan, and
+Original code and fixtures; formats derived from F04 section 8 and the plan, and
 the head-log design of U06. No asset, no third-party dependency, no Tekla/Trimble material.
 Caps: record line 8 KiB; a new attempt is admitted only below 16 MiB, 131,072 lines and 4,096 open
 intents, with room reserved to close every open intent; the reader and closing records accept

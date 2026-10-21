@@ -25,10 +25,9 @@ over one retained stage; they never reopen or recompose it.
 Cancellation is cooperative before/after upstream synchronous calls and during wrapper
 loops. Upstream allocation, panic-abort, stack overflow, and hard deadlines cannot be
 contained in-process. The declared/decompressed preflight and output caps are not an
-aggregate heap/work proof. A separate Rust process was selected by the owner on 2026-10-16.
-U04 owns its executable, F05 transport and host client; this crate contains library logic
-only. This slice must not be integrated as an untrusted production parser until
-LEW-03 containment is reviewed and proved. See [the U01 placement/containment review](../../docs/design/u01-placement-containment.md).
+aggregate heap/work proof. The engine runs in the calling process (owner decision of
+2026-10-20, U17): a refusal is an ordinary `Diagnostic`, the project's own layers are verified
+by SHA-256 before they are parsed, and foreign files are read under these budgets. See [the U01 placement/containment review](../../docs/design/u01-placement-containment.md).
 
 Tests use contributor-original synthetic USDA and binary output of those fixtures.
 Same-crate binary generation is not independent-reader evidence; U04 and N03 remain open.
@@ -151,9 +150,8 @@ relationship query and cannot prove absence. `Author::authorize_write`, `check_d
 `certify_dependent_reads` first call `verify_index`, which requires the index's own context to
 be live (`STALE_WORKSPACE` after any install/reopen), complete, and equal to a fresh rebuild
 (`INTEGRITY_ERROR` for a forged or tampered page set). The grant names the owned authored layer
-but is not host authorization or F04/F06 validation. Not implemented: a CLI/host command (the U04
-read profile advertises `relationships=false`, omits relationships from its closed page body and
-has no index method; carrying them changes the frozen profile and F05 schema), a persisted
+but is not host authorization or F04/F06 validation. Not implemented: a CLI/host command that
+reports the index, a persisted
 index, copy/delete commands (P05/P08), typed element-to-element relationship records and their
 vocabulary rules (F10/vocabulary section 5), and USDC relationship evidence (the restricted binary
 profile refuses relationship specs and U02 element layers). See [the U03 report](../../docs/design/u03-index.md).

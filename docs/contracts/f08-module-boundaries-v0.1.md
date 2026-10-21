@@ -6,7 +6,7 @@ against each other.
 This document fixes where the code of each contract area lives, which way dependencies point, and
 which crates exist. BeamCraft is desktop-only (Windows, Linux, macOS): only `beamcraft-geom`,
 `beamcraft-model` and `beamcraft-kernel` must also build for WASM, as a layering discipline; every
-other crate is desktop-native. It changes none of the semantics of F04, F05 or F06.
+other crate is desktop-native. It changes none of the semantics of F04 or F06.
 
 The module table in section 2 is **machine-read**. The `beamcraft-boundaries` tool and its test
 (section 6) check the real workspace manifests against it, and CI derives its list of portable
@@ -23,12 +23,12 @@ crates from it. Change the table and the manifests together.
      filesystem, process, network or async-runtime dependency, and no use of `std::fs`,
      `std::process`, `std::net`, `std::thread`, `std::env` or `std::os` outside test code. May
      depend only on other `domain` crates and on the third-party crates of section 3 (none today).
-   - `native`: desktop-native library (protocol, USD layer engine, IO and later crates). No
+   - `native`: desktop-native library (bounded JSON, USD layer engine, IO and later crates). No
      WASM requirement or WASM-clean dependency/source restriction. Internal edges and lower
      layers still follow the table; third-party dependencies still need the `AGENTS.md` section 5
      audit. A domain crate may never depend on a native crate.
-   - `host`: native engine host. Owns process supervision, pipes, deadlines, filesystem access,
-     storage, the outcome ledger and the worker client. Depends on domain crates, never the
+   - `host`: native engine host. Owns deadlines, filesystem access, storage, the outcome ledger
+     and the local coordinator. Depends on domain crates, never the
      reverse. Third-party dependencies need the audit that `AGENTS.md` section 5 requires.
    - `app`: a binary entry point (CLI, later UI). Calls the host and the engine API. Nothing
      depends on an app.
@@ -56,14 +56,14 @@ Dependencies are checked in `[dependencies]`,
 |---------|------|------|-------|----------------------|--------|------------|
 | beamcraft-geom | crates/geom | domain | 0 | - | now | G01 |
 | beamcraft-model | crates/model | domain | 1 | beamcraft-geom | now | P01 |
-| beamcraft-protocol | crates/protocol | native | 2 | beamcraft-model | now | U01 |
-| beamcraft-layer-engine | crates/layer-engine | host | 2 | beamcraft-model | now | U01/U02/U03; separate process |
+| beamcraft-json | crates/json | native | 2 | beamcraft-model | now | U17 (bounded JSON of the CLI output) |
+| beamcraft-layer-engine | crates/layer-engine | host | 2 | beamcraft-model | now | U01/U02/U03; in-process |
 | beamcraft-kernel | crates/kernel | domain | 2 | beamcraft-geom, beamcraft-model | now | G02 |
 | beamcraft-ifc | crates/ifc | native | 2 | beamcraft-model | now | E02 (IFC4 STEP writer and structural reader; std only, no file system) |
 | beamcraft-engine | crates/engine | native | 3 | beamcraft-geom, beamcraft-model, beamcraft-kernel | now | V02 (view snapshot and query slice); P01 (`CreatePlate` application, footprints, transactions, committed-plate queries) |
-| beamcraft-host | crates/host | host | 4 | beamcraft-model, beamcraft-protocol, beamcraft-engine | now | U05 |
-| beamcraft-cli | apps/beamcraft-cli | app | 5 | beamcraft-model, beamcraft-engine, beamcraft-host, beamcraft-protocol, beamcraft-layer-engine, beamcraft-ifc | now | U04: CLI and thin Rust worker binaries; E02 (`export-ifc` adapter) |
-| beamcraft-ui | apps/beamcraft-ui | app | 5 | beamcraft-model, beamcraft-protocol, beamcraft-engine, beamcraft-host | now | V03 (window and viewport; reads the accepted snapshot from the CLI in a separate process); V05.1 (create tools; decodes the CLI's JSON replies with the protocol crate); V05.2 (edit tools; same edges) |
+| beamcraft-host | crates/host | host | 4 | beamcraft-model, beamcraft-json, beamcraft-engine | now | U05 |
+| beamcraft-cli | apps/beamcraft-cli | app | 5 | beamcraft-model, beamcraft-engine, beamcraft-host, beamcraft-json, beamcraft-layer-engine, beamcraft-ifc | now | U04: CLI binary; E02 (`export-ifc` adapter) |
+| beamcraft-ui | apps/beamcraft-ui | app | 5 | beamcraft-model, beamcraft-json, beamcraft-engine, beamcraft-host | now | V03 (window and viewport; reads the accepted snapshot from the CLI in a separate process); V05.1 (create tools; decodes the CLI's JSON replies with the JSON crate); V05.2 (edit tools; same edges) |
 | beamcraft-fixtures | tools/fixtures | tool | 9 | - | now | F07 |
 | beamcraft-boundaries | apps/boundaries | tool | 9 | - | now | F08 |
 <!-- module-table:end -->
@@ -101,52 +101,41 @@ by the named task with real code. Allowed dependencies are those of the owning r
 | View settings (element-kind filter, representation selector), read-time projection, instance/triangle id tables | architecture "Part representations and view filters", F06 s.9 | `beamcraft_engine::presentation` | **now**, V02 |
 | Presentation key preimage | F06 s.7 | `beamcraft_engine::presentation` (V01 may move it to the UI if it needs no engine state; never into the kernel) | planned, V01 |
 | Identity (UUIDv7 `ElementId`), units, input limits | F04 s.2, 3 | `beamcraft_model::{id, limits}` | **now**, P01 (`Uuid7`, typed ids, deterministic UUIDv7 generator with injected clock and entropy; F04 section 3 caps) |
-| SHA-256 digest type and hasher, for F04 resources, F06 keys and F05 buffers | F04 s.2, F06 s.6, 7, F05 s.3 | `beamcraft_model::digest` | **now**, U05 (full digest, incremental FIPS 180-4 SHA-256) |
+| SHA-256 digest type and hasher, for F04 resources and F06 keys | F04 s.2, F06 s.6, 7 | `beamcraft_model::digest` | **now**, U05 (full digest, incremental FIPS 180-4 SHA-256) |
 | F04 command and envelope types | F04 s.6, 7 | `beamcraft_model::command` | **now, partial**, P01: `CreatePlate` arguments, `Placement`, label/contour/placement admission, typed `CommandError`, argument content fingerprint. The envelope and the other commands are planned |
 | F04 stable error codes | F04 s.8 | `beamcraft_model::error::ErrorCode` | **now** (23 codes, tested) |
-| Bounded JSON decoder and RFC 8785 canonical bytes of the validated envelope | F04 s.3, F05 s.6 | `beamcraft_model::{json, canonical}` | planned, P01 |
-| Command application, footprints, transactions, replay decisions | F04 s.8, F05 s.7 | `beamcraft_engine::{command, footprint, transaction}` | **now, partial**, P01: `CreatePlate` only (origin rectangle), the Create footprint, op_id replay/reuse decision; no canonical F05 bytes |
+| RFC 8785 canonical bytes of the validated command envelope | F04 s.3 | `beamcraft_model::{json, canonical}` | planned, P01 |
+| Command application, footprints, transactions, replay decisions | F04 s.8 | `beamcraft_engine::{command, footprint, transaction}` | **now, partial**, P01: `CreatePlate` only (origin rectangle), the Create footprint, op_id replay/reuse decision; no canonical command bytes |
 | Production UUIDv7 source (system clock, per-process OS-seeded entropy; uniqueness, not secrecy) | F04 s.2 | `beamcraft_host::ids` | **now**, P01 |
 | P01 adapter: engine command to U02 authoring to U06/U07 commit, and reopen through U01/U03 to the engine query | AGENTS s.3 | `apps/beamcraft-cli` (`beamcraft_cli::plate`, in-process layer engine) | **now**, P01 (experimental; no process isolation) |
-| Frame header, binary prefix, bundle budget | F05 s.3, 10 | `beamcraft_protocol::frame` | **now** (tested, bounded) |
-| Negotiable limits and their maxima | F05 s.4, 10 | `beamcraft_protocol::limits` | **now** |
-| Transport `IPC_` codes and their F04 mapping | F05 s.9 | `beamcraft_protocol::code::TransportCode` | **now** |
-| Bounded JSON and closed read-profile messages (pure, no I/O); mutation/event schemas remain unavailable | F05 s.3-7 | `beamcraft_protocol::{json, message}` | U04: experimental Rust read profile |
-| Worker supervision, pipes, deadlines, restart limits, diagnostic drain; shared command dispatcher | F05 s.2, 8 | `beamcraft_host::{wire, worker, dispatch}` | U04: experimental native read client |
+| Bounded JSON of the CLI output (decode, encode, limits, refusal codes; pure, no I/O) | F04 s.8 | `beamcraft_json` | **now**, U17 |
+| Host error with its CLI exit code, deadline and cancellation of a host operation | F04 s.8 | `beamcraft_host::control` | **now**, U17 |
 | Immutable byte storage, publish-if-absent and verified retrieval | F04 s.2, U05 | `beamcraft_host::storage` | **now**, U05 |
 | Revision manifest, atomic root (head log), expected-base commit, verified reader, commit hook seam | F04 s.2, 6, 8, U06 | `beamcraft_host::revision` | **now**, U06 (experimental; content verifier is injected, host links no layer engine); personal workspace remains planned, U07 |
-| Durable outcome ledger (write-ahead intent, committed/aborted records), recovery of an unfinished commit, host-ledger QueryOutcome | F05 s.7, 8, U07 | `beamcraft_host::ledger` | **now**, U07 (experimental; personal workspaces, collaboration, ledger rotation and garbage collection are not implemented) |
-| Rust USD read wrapper (no host edge; separate process; process containment still requires implementation) | F11 s.9, LEW-01/02/03/04/07 | `beamcraft_layer_engine` | experimental native read slice, U01 |
-| USD worker (thin Python/pxr) | F05 s.1 | `workers/usd/`, not a Cargo package | planned, U01 |
-| USD worker (thin Rust wrapper, separate process; no new package) | F11 s.9, U04 | `apps/beamcraft-cli/src/bin/beamcraft-usd-worker.rs` | U04: experimental read worker; SDK fallback remains unavailable |
-| CLI | AGENTS s.3, F06 s.9 | `apps/beamcraft-cli` | U04: version, experimental open/read and byte-storage commands; U06: `revision-commit`, `revision-open`; V02: `view-snapshot` and `view-changes` over a synthetic kernel plate scene; P01: `create-plate` and `plate-inspect` over a store (the CLI package also has a library target, `beamcraft_cli`, for its tests) |
+| Durable outcome ledger (write-ahead intent, committed/aborted records), recovery of an unfinished commit, host-ledger QueryOutcome | U07 | `beamcraft_host::ledger` | **now**, U07 (experimental; personal workspaces, collaboration, ledger rotation and garbage collection are not implemented) |
+| Rust USD layer engine (no host edge; runs in the calling process under its size and depth budgets) | F11 s.9, LEW-01/02/03/04/07 | `beamcraft_layer_engine` | experimental native slice, U01 |
+| CLI | AGENTS s.3, F06 s.9 | `apps/beamcraft-cli` | U04: version and byte-storage commands; U06: `revision-commit`, `revision-open`; V02: `view-snapshot` and `view-changes` over a synthetic kernel plate scene; P01: `create-plate` and `plate-inspect` over a store (the CLI package also has a library target, `beamcraft_cli`, for its tests) |
 | Read-only foreign reference: source pin, units interpretation, attach/move/correct commands, write refusal; wiring of file read, layer engine and host | F04 s.1, F10 `reference`, LEW-01/04 | `beamcraft_model::reference`, `beamcraft_engine::reference`, `beamcraft_layer_engine::authored` (`Change::AttachReference`, `read_references`, `inspect_foreign_layer`), `apps/beamcraft-cli` (`beamcraft_cli::{reference, source_file}`) | **now**, R01 (experimental; single self-contained layer, in-process layer engine; no new crate and no new edge) |
 | Numbering preview: grouping rules, series, overlaps, staleness token | A08 | `beamcraft_engine::numbering` (rules), `beamcraft_cli::numbering` (adapter), `numbering-preview` | **now**, A08 (experimental; read-only, no stored numbers) |
 | IFC4 export: GlobalId, STEP lexical rules, entity templates, bounded sink, structural reader for tests | E01 s.3, 11, 15 | `beamcraft_ifc::{guid, step, model, verify}` and `write_ifc` | **now**, E02 (experimental; std only, no I/O of its own; `verify` is a test harness, not an importer) |
 | Export adapter: committed revision to `ExportModel`, report, atomic output | E01 s.4, 8, 13, 15.4 | `apps/beamcraft-cli` (`beamcraft_cli::export`), `beamcraft_host::output` | **now**, E02 (the contract proposed `beamcraft_engine::export`; the adapter sits with the other P/A-slice adapters and the engine gains no edge to `beamcraft-ifc`) |
 | Native UI and viewport | F06 s.9, V-tasks | `apps/beamcraft-ui` | **now, partial**, V03: window, orbit camera, instanced offscreen viewport of the accepted snapshot (received as `beamcraft_engine::query::bundle` from `beamcraft view-export`), headless baseline metrics. Selection, snapping and tools are V04/V05 |
 
-The F05 sections 3 and 10 also require SHA-256 verification of attachments. The protocol crate
-checks the declared lengths, counts, indices and prefix fields and exposes the claimed digest; the
-streaming digest comparison can now use `model::digest`; protocol session integration remains U01.
-
 ## 5. Crates created now, and why
 
-- **`beamcraft-protocol` (`crates/protocol`, native library).** Created because it holds real, tested code
-  taken directly from F05 sections 3, 4, 9 and 10: the 16-byte header and 44-byte binary prefix
-  with bounded encode and decode, the 14 negotiable limits with their maxima and the
-  per-field minimum, a bundle size budget and the 16 transport codes with their F04 mapping. It
-  depends on `model` only for `ErrorCode`, and has no I/O. Every decoder validates before it
-  trusts a length, uses checked arithmetic, never slices by an input-derived position and has a
-  regression test for each rejected input class.
+- **`beamcraft-json` (`crates/json`, native library).** The bounded JSON value, decoder and
+  encoder of the CLI output, which the UI and the local coordinator read back. It depends on
+  `model` only for `ErrorCode`, and has no I/O. The decoder scans the whole input under its byte,
+  depth, token, string and scratch limits before it builds a tree, never slices by an
+  input-derived position and has a regression test for each rejected input class.
 - **`beamcraft_model::error::ErrorCode`** (a module in the existing crate, not a new crate): the
-  23 stable codes of F04 section 8, shared by F05 and, later, F06.
+  23 stable codes of F04 section 8, shared with F06.
 - **`beamcraft_model::digest`**, added by U05: dependency-free, incremental SHA-256 with
   a bounded length counter, full lowercase `ContentDigest` and independent vector tests.
 - **`beamcraft-host` (`crates/host`, native host)**, created by U05 with real storage code:
   `BlobStore` publishes full digest filenames without replacement, compares complete existing
   bytes and verifies every read. Only `model` is used today; allowed edges are unchanged.
-  The F05 32 MiB bundle budget bounds each blob and returned buffer. The root namespace must
+  A 32 MiB budget bounds each blob and returned buffer. The root namespace must
   be protected from hostile concurrent filesystem mutation: safe portable std containment checks
   cannot close directory replacement races. See the storage module's documented platform limits.
 - **`beamcraft-engine` (`crates/engine`, native library)**, created by V02 with the real, tested

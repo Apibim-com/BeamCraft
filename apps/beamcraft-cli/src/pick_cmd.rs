@@ -20,8 +20,8 @@ use beamcraft_engine::query::pick::{
     DEFAULT_MAX_HITS, Hit, MAX_T_MM, PickQuery, PointPick, RayPick, SnapKind, SnapQuery, pick, snap,
 };
 use beamcraft_host::{revision::RevisionStore, storage::BlobStore};
+use beamcraft_json::Json;
 use beamcraft_model::error::ErrorCode;
-use beamcraft_protocol::json::Json;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 
@@ -77,7 +77,6 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
                 ("code", Json::text(e.code.as_str())),
                 ("reason", e.reason.map_or(Json::Null, Json::text)),
                 ("message", Json::text(e.message)),
-                ("transport_code", Json::Null),
                 ("observed_context", Json::Null),
                 ("diagnostics", Json::Array(vec![])),
             ]),

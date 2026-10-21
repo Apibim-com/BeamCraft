@@ -128,7 +128,7 @@ calls the generic structural limits loose for boxes but supported as validator l
 | Shape key encoding | kind byte 1/2, u16 contour count, f64 coordinates/thickness or axis/roll/profile; four u16 versions | Ordered authored contour is part of shape, not placement |
 | Digests / mass signature | SHA-256, 32 raw bytes / 64 lowercase hex digits; density presence byte 0/1 | Exact identities; never compare with tolerance |
 | World/mass tags and space | BCGEO-SHAPE, BCGEO-WORLD, BCGEO-MASS plus zero byte; mesh space 0 local / 1 world | Exact domain separation |
-| Host transport limits referenced by F06 | negotiated F05 limits, smaller applicable bound wins | No F05 number is changed or restated as a geometry tolerance |
+| Host transport limits referenced by F06 | the host's delivery limits, smaller applicable bound wins | No host limit is changed or restated as a geometry tolerance |
 | Design dyadic fallback proposal | <1107/1108/3330 bits; proposed 4096-bit buffer; degree <=3 | Analysis/proposal only, not a required homemade integer library |
 | Design resource proposals | 24576 directed edges; <=15 merge passes; <=10000000 limb-pair steps | Separate design proposal, not implemented or admitted here |
 
@@ -333,14 +333,6 @@ its manifest and dependency audit together. Keep the PdfCraft frontend stack in 
 beamcraft-ui app; craft-libs requires a pinned revision, licence verification and a deny.toml
 unknown-git-source exception before integration. The domain/host/app edges and engine independence
 remain unchanged.
-
-**F05 section 12 clarification:**
-
-> F04/F06 owner amendments of 2026-10-15 replace plate width/length with contour_points_mm and add
-member roll_rad. Model commands keep their existing transport envelope; numeric overflow,
-duplicate-key and logical control bounds remain enforced. Geometry blobs remain opaque u8
-attachments. Algorithm and tolerance versions are 3 after the local-size amendment; mesh layout
-remains 1.
 
 **F10 sections 2.2 and 6.5 (replacing the corresponding old fields/rules):**
 

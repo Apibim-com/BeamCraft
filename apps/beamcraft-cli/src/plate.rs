@@ -22,13 +22,12 @@
 //!   the first revision (or supplied for the first one), the generation is the head's plus one.
 //!   `CreatePlate` and `CommitWorkspace` are fused: a successful call is a published revision.
 //!   Workspaces, drafts and undo (P06, P07) do not exist.
-//! * The layer engine runs **in this process**. The owner decision of 2026-10-16 places it in a
-//!   separate process (LEW-03 containment); there is no authoring message in the frozen U04
-//!   profile, so this path has no process isolation and must not be treated as a hostile-parser
-//!   boundary.
+//! * The layer engine runs **in this process**, as every USD read and write does (U17). A
+//!   hostile or corrupt layer is an ordinary refusal under the layer engine's size and depth
+//!   budgets, and the project's own layers are verified by SHA-256 before they are parsed.
 //! * Replay (`op_id`): an operation the host ledger proves committed is compared with the
 //!   element of that id in the head revision. This is sound only while no command edits or
-//!   deletes elements (true in P01); the stored canonical request of F05 replaces it.
+//!   deletes elements (true in P01); a stored canonical request (F04 section 3) replaces it.
 //! * Quantities are returned, not stored: the pinned U02 schema has no quantity attributes.
 
 use crate::definition::{

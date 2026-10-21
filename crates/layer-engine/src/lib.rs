@@ -75,7 +75,7 @@ impl std::fmt::Display for Diagnostic {
 }
 impl std::error::Error for Diagnostic {}
 
-/// Explicit stage ceilings; these are distinct from F05 wire budgets. A caller may tighten any of
+/// Explicit stage ceilings. A caller may tighten any of
 /// them, never raise one above [`Budgets::default`].
 #[derive(Debug, Clone, Copy)]
 pub struct Budgets {
@@ -177,7 +177,7 @@ impl Budgets {
     }
 }
 
-/// Thread-safe request cancellation flag. No worker or control service is started.
+/// Thread-safe request cancellation flag. No thread, process or control service is started.
 #[derive(Debug, Default, Clone)]
 pub struct Cancellation(Arc<AtomicBool>);
 impl Cancellation {
@@ -398,7 +398,7 @@ pub struct Capabilities {
     /// Static composed relationships are delivered, including inert unknown names.
     pub relationships: bool,
 }
-/// Opaque in-process incarnation handle; cannot be manufactured or serialized as F05 wire tokens.
+/// Opaque in-process incarnation handle; it cannot be manufactured or serialized.
 #[derive(Debug, Clone)]
 pub struct Context {
     marker: Arc<()>,

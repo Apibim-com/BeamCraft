@@ -93,7 +93,7 @@ rounded/translated contours remains with G03/G04 and the F06 E-1 erratum.
 ## Integration and provenance
 
 The kernel call is the headless API. The CLI command and engine/CLI end-to-end
-gate are owned by P01, not G02. No worker protocol, USD, UI, hole, cut, contour
+gate are owned by P01, not G02. No USD, UI, hole, cut, contour
 evaluation, member or quaternion is implemented. Member sin/cos reproducibility
 remains OPEN and is not needed here. Native tests alone do not demonstrate
 cross-target byte conformance. K0 and the complete geometry feature remain open.

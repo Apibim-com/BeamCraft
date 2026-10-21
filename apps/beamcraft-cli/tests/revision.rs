@@ -17,6 +17,7 @@ use beamcraft_host::{
     },
     storage::BlobStore,
 };
+use beamcraft_json::{Json, Limits};
 use beamcraft_layer_engine::{
     authored::{
         Author, Change, Decision, Definition, EditTargets, Element, MemberKind, Mesh, Placement,
@@ -28,10 +29,6 @@ use beamcraft_layer_engine::{
 use beamcraft_model::{
     ErrorCode,
     digest::{ContentDigest, Sha256},
-};
-use beamcraft_protocol::{
-    json::{self, Json},
-    message,
 };
 use std::{
     fs,
@@ -526,7 +523,7 @@ fn real_binary_commits_u02_layers_and_a_fresh_process_and_reader_verify_them() {
             .args(args)
             .output()
             .unwrap();
-        let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
+        let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
         (output.status.code().unwrap(), body)
     };
     let text = |j: &Json, key: &str| j.get(key).unwrap().string().unwrap().to_owned();

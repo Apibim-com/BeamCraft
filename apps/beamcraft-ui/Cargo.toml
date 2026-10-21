@@ -24,7 +24,7 @@ path = "src/main.rs"
 # its own icon (`app::icon`).
 [dependencies]
 beamcraft-model.workspace = true
-beamcraft-protocol.workspace = true
+beamcraft-json.workspace = true
 beamcraft-engine = { path = "../../crates/engine", version = "0.0.1" }
 egui = { version = "=0.36.2", default-features = false }
 eframe = { version = "=0.36.2", default-features = false, features = ["wgpu_no_default_features", "links", "wayland", "x11"] }

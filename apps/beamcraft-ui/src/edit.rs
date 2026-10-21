@@ -20,7 +20,7 @@ use crate::tools::{FormError, ToolError, decode, rejection, text};
 use beamcraft_engine::ViewSnapshot;
 use beamcraft_engine::query::feature::FeatureKind;
 use beamcraft_engine::query::pick::{PickQuery, RayPick, pick};
-use beamcraft_protocol::json::Json;
+use beamcraft_json::Json;
 use std::path::Path;
 
 /// A world-space ray in millimetres.

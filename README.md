@@ -36,8 +36,8 @@ Steel detailing software is expensive, closed and tied to one vendor's file form
 to be an open, scriptable alternative with a native, fast core:
 
 - **Fast.** An original Rust engineering core and a planned native GPU-accelerated UI.
-- **Open formats first.** USD is the planned authoritative project format, served by an isolated
-  OpenUSD worker. IFC export and DSTV NC are later milestones.
+- **Open formats first.** USD is the authoritative project format, read and written by an
+  original Rust layer engine. IFC export and DSTV NC are later milestones.
 - **Scriptable by design.** Every feature is reachable headlessly from the CLI, so scripts and AI
   agents can drive it as easily as a person can.
 - **Yours.** No account, no telemetry, no cloud. It works offline.
@@ -69,7 +69,7 @@ More in [`docs/development.md`](docs/development.md) and [`docs/architecture.md`
 
 ## What's next
 
-First, establish model, worker and geometry contracts plus original fixtures. Then demonstrate
+First, establish model and geometry contracts plus original fixtures. Then demonstrate
 headless plate creation and atomic saving of a complete revision that ordinary OpenUSD can open.
 See [`ROADMAP.md`](ROADMAP.md) for acceptance gates.
 

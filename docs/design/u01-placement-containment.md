@@ -1,5 +1,11 @@
 # U01 placement, containment evidence and proposed draft PR body
 
+> **Superseded in part by U17 (owner decision of 2026-10-20).** The separate USD worker
+> process and the private worker protocol (F05) were removed: USD is read and written in the
+> calling process by the layer engine, under its size and depth budgets. Mentions of the worker,
+> of a separate process and of F05 below are the history of this analysis, not the current
+> design; see [`architecture.md`](../architecture.md) and [`decisions.md`](../plan/decisions.md).
+
 Date: 2026-10-16. Status: **PARTIAL experimental read slice; U01 acceptance remains open**.
 Base and current HEAD: `adbc407e09476a803de07c31f3a5adcaabad1304`.
 Branch: `feat/u01-open-read`; proposed PR target: `master`; keep draft.

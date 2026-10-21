@@ -18,10 +18,7 @@
 )]
 
 use beamcraft_engine::Representation;
-use beamcraft_protocol::{
-    json::{self, Json},
-    message,
-};
+use beamcraft_json::{Json, Limits};
 use beamcraft_ui::camera::Camera;
 use beamcraft_ui::edit::{
     EditKind, Editor, Target, ndc_of, parse_pick, pick_args, pick_in, ray_through,
@@ -88,7 +85,7 @@ impl Drop for Stores {
 
 fn by_hand(cli: &Path, args: &[&str]) -> (i32, Json) {
     let output = Command::new(cli).args(args).output().unwrap();
-    let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
+    let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
     (output.status.code().unwrap(), body)
 }
 

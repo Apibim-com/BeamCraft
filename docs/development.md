@@ -49,7 +49,7 @@ packages and attaches them to a GitHub release:
 | Linux | `x86_64-unknown-linux-gnu` | the same layout as a `tar.gz` |
 | macOS | `aarch64-apple-darwin` | `BeamCraft.app` in a `tar.gz`, ad-hoc signed; Gatekeeper warns on a fresh download |
 
-Every package holds `beamcraft`, `beamcraft-ui`, `beamcraft-usd-worker`, the Inter font with its
+Every package holds `beamcraft`, `beamcraft-ui`, the Inter font with its
 OFL-1.1 licence (in the .app under `Contents/Resources/`) and the project documents.
 `packaging/package.sh` builds one package from a release build; `packaging/Info.plist` is the .app
 template. CI extracts each archive into a fresh directory and runs `beamcraft --version` from it.

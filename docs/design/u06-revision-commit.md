@@ -64,16 +64,14 @@ existing table. `revision-commit` takes already stored blobs (`blob-put`) and do
 * Not implemented in U06 (U07 adds the journal, intent record, recovery and the durable op-id
   ledger, see its record; this document's `CommitHook` gained the `IntentRecorded` and `Recorded`
   points): personal workspaces; multi-client collaboration; a CLI path that runs the
-  layer-engine verifier (needs an F05 profile with an index/verify message; the frozen U04
-  profile has none). The replay window of 64 records is the head log's own (older retries
+  layer-engine verifier. The replay window of 64 records is the head log's own (older retries
   resolve through their revision id); with the U07 ledger an older op id is also recognised
   directly.
-* The worker protocol is unchanged: no mutation schema was added and the worker cannot publish a
-  root; only the host does.
+* Only the host publishes a root.
 
 ## Provenance and limits
 
-Original code and fixtures; formats derived from F04 sections 2, 6, 8, F05 section 7 and the
+Original code and fixtures; formats derived from F04 sections 2, 6, 8 and the
 plan. No asset, no third-party dependency, no Tekla/Trimble material. Caps: 64 entries, 128-byte
 names, 64 KiB manifest, 256 MiB declared layer bytes, 64 MiB in memory for a verifier, 100,000
 revisions (every commit reads all records to prove revision-id uniqueness), 512-byte records.

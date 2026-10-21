@@ -1,5 +1,11 @@
 # F11: USD layer-engine decision record
 
+> **Superseded in part by U17 (owner decision of 2026-10-20).** The separate USD worker
+> process and the private worker protocol (F05) were removed: USD is read and written in the
+> calling process by the layer engine, under its size and depth budgets. Mentions of the worker,
+> of a separate process and of F05 below are the history of this analysis, not the current
+> design; see [`architecture.md`](../architecture.md) and [`decisions.md`](../plan/decisions.md).
+
 ## 1. Status and scope
 
 **WS amendment, owner decision of 2026-10-16:** desktop-only on Windows, Linux and macOS.
@@ -15,12 +21,13 @@ admit a production dependency or establish runtime readiness.
 
 The [architecture](../architecture.md) records this direction. The F03 SDK
 audit (since removed) was conditional for fallback/oracle use; its package was not
-production-approved. F04 and F06 were frozen at 0.1.0 on 2026-10-16. The [F05
-protocol](../contracts/f05-worker-protocol-v0.1.md) and [F08
+production-approved. F04 and F06 were frozen at 0.1.0 on 2026-10-16. The F05
+protocol (since removed by U17) and [F08
 boundaries](../contracts/f08-module-boundaries-v0.1.md) need reviewed alignment before integration;
 this documentation task changes neither contract. **Topology decided by the owner on 2026-10-16:**
 the layer engine runs in a separate Rust process under F05 (section 9; integration rules in the
-[USD process integration addendum](usd-process-integration-v0.1.md)).
+[USD process integration addendum](usd-process-integration-v0.1.md)). **Replaced on 2026-10-20
+(U17):** the layer engine runs in the calling process and F05 is removed.
 
 F11 depends on F03/F05/F08. U01-U07 retain runtime, schema, identity, client, resources,
 publication and recovery acceptance. C-tasks retain collaboration semantics. This record does

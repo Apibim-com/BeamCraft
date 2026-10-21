@@ -47,7 +47,7 @@ beamcraft plate-inspect --store ROOT
 4. **Replay.** The host's U07 ledger proves an op committed; the engine then compares the request
    with the element of that id in the head revision (reconstructed fingerprint). That is sound only
    while nothing edits or deletes elements (true in P01). P04/P08 must replace it with the stored
-   canonical request (F05 section 6, `model::canonical`, planned).
+   canonical request (F04 section 3, `model::canonical`, planned).
 5. **Verifier at publish.** The host's `ContentVerifier` is implemented in the CLI with the real
    engine: U02 structural validation, U03 `verify_index`, then every plate in the layers is
    re-evaluated by the kernel and its committed mesh must equal the kernel mesh (bit-exact float32
@@ -65,7 +65,7 @@ beamcraft plate-inspect --store ROOT
 | F04 section 5: published revisions include quantities | Volume is returned by the command and recomputed by `plate-inspect`; **not stored in USD**: the pinned U02 schema has no quantity attributes and the F06 keys are absent. | U02 schema amendment plus P04 signatures. |
 | Mesh `extent` | The U02 Mesh has `points`, topology, `orientation`, `subdivisionScheme`, `bim:shapeKey` and no `extent`. Readers compute it. | U02 schema amendment. |
 | Mesh precision | USD `point3f` is float32; the kernel blob is float64. The committed mesh equals the float32 cast; volumes agree within 1e-6 for the first-scope sizes. | Decide the F06/U02 precision policy (or double-precision points) before large coordinates matter. |
-| F04 section 6 envelope, `OpId` canonical bytes, `CommitWorkspace` | Not implemented (see decision 3). | P06, F05 `canonical`. |
+| F04 section 6 envelope, `OpId` canonical bytes, `CommitWorkspace` | Not implemented (see decision 3). | P06, `model::canonical`. |
 | F04 section 8 validation order | Implemented: arguments, replay, ID uniqueness, footprint, engineering validation; trusted context, workspace, base and generation preconditions are only partly covered by the host commit (base). | P06. |
 
 ## Evidence

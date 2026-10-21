@@ -33,6 +33,7 @@ use beamcraft_host::{
     revision::{NoFault, RevisionStore, Uuid7},
     storage::BlobStore,
 };
+use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::{
     CopyElement, CreatePlate, CreateStraightMember, DeleteElement, ElementPatch, MAX_HOLES,
     MemberKind, Placement, PlaneCut, UpdateElement,
@@ -42,8 +43,6 @@ use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use beamcraft_model::section::{CustomSection, ParametricSection, SectionFamily, SectionShape};
-use beamcraft_protocol::json::Json;
-use beamcraft_protocol::message;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 
@@ -86,7 +85,6 @@ pub(crate) fn report_with(result: Run<Json>, diagnostics: Vec<Json>) -> (Json, u
                 ),
                 ("code", Json::text(e.code.as_str())),
                 ("message", Json::text(e.message)),
-                ("transport_code", Json::Null),
                 ("observed_context", Json::Null),
                 ("diagnostics", Json::Array(diagnostics)),
             ]),
@@ -1722,7 +1720,7 @@ pub(crate) fn fit_page(
     let mut count = available.min(limit);
     loop {
         let json = build(count)?;
-        if json.encode(&message::read_limits()).is_ok() {
+        if json.encode(&Limits::DEFAULT).is_ok() {
             return Ok(json);
         }
         if count <= 1 {
@@ -2216,8 +2214,8 @@ mod tests {
         let (json, exit) = report_with(Err(invalid("ambiguous")), diagnostics);
         assert_eq!(exit, 2);
         // The shared encoder accepts it and keeps the error code.
-        let bytes = json.encode(&message::read_limits()).unwrap();
-        let back = beamcraft_protocol::json::decode(&bytes, &message::read_limits()).unwrap();
+        let bytes = json.encode(&Limits::DEFAULT).unwrap();
+        let back = beamcraft_json::decode(&bytes, &Limits::DEFAULT).unwrap();
         assert_eq!(back.get("code").unwrap().string(), Ok("INVALID_ARGUMENT"));
         // A small set lists everything and adds no summary.
         assert_eq!(ambiguity_diagnostics(&found[..3]).len(), 3);
@@ -2235,7 +2233,7 @@ mod tests {
         let json = fit_page(256, 256, page).unwrap();
         let shown = json.get("items").unwrap().array().unwrap().len();
         assert!(shown > 0 && shown < 256, "{shown}");
-        assert!(json.encode(&message::read_limits()).is_ok());
+        assert!(json.encode(&Limits::DEFAULT).is_ok());
         let one = fit_page(1, 256, page).unwrap();
         assert_eq!(one.get("items").unwrap().array().unwrap().len(), 1);
         let none = fit_page(0, 256, page).unwrap();

@@ -225,4 +225,4 @@ are public: elementary vector algebra, Rodrigues' rotation formula, RFC 8259 (JS
 - The Python oracle runs on Linux CI only, because the existing workflow installs no Python on
   Windows. It was also run locally on Windows.
 - The validator checks this test format. It does not replace future engine validation, which
-  must define its own contract (F04/F05/F06).
+  must define its own contract (F04/F06).

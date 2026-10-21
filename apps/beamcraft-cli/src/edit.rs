@@ -14,8 +14,9 @@
 //!
 //! Honesty limits: replay of an `op_id` is decided from the head model (the update is a replay
 //! when the head already holds the patched state), not from a stored canonical request; a later
-//! edit of the same element therefore turns a retry into `OP_ID_REUSE`. The stored canonical
-//! request of F05 replaces this. One implicit workspace, in-process layer engine, as in `plate`.
+//! edit of the same element therefore turns a retry into `OP_ID_REUSE`. A stored canonical
+//! request (F04 section 3) replaces this. One implicit workspace, in-process layer engine, as in
+//! `plate`.
 
 use crate::definition::material_lookup;
 use crate::plate::{

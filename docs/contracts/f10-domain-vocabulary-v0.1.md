@@ -20,7 +20,7 @@ promise of shape, with no behaviour.
   (section 5). Geometry stays in the kernel. It changes nothing and adds no collision evaluation.
 - [F08](f08-module-boundaries-v0.1.md): F10 takes the crate layers and the one-way dependency rule.
 
-F05 (worker protocol) is not an input. Real-time synchronisation is **not designed here**: section 6
+Real-time synchronisation is **not designed here**: section 6
 only says what is checked again after a merge.
 
 ### 1.2 What the document decides
@@ -295,7 +295,7 @@ The minimum need not appear in either peer's advertised set: peers advertising o
 enable a module requiring `0.1.0`. No common selected version, a different line, or a selected
 version below the minimum leaves the module disabled. The host's answer is authoritative.
 The client validates before sending with the negotiated version only. The carrying message belongs
-to F05/U02; this contract fixes the content.
+to U02; this contract fixes the content.
 
 ## 5. Cross-discipline relationships
 
@@ -785,7 +785,7 @@ tasks create code.
 | Collaboration (C04) | post-merge re-check, penetration conflicts | `DV-MRG-001`, `DV-PEN-003`, `DV-BASE-002` |
 | IFC export (E01) | the registry is the set of exportable kinds | `DV-KIND-002`, `DV-NS-002` |
 
-F05 and U02 define how the validation report and the negotiation travel; F06 owns geometry and any
+U02 defines how the validation report and the negotiation travel; F06 owns geometry and any
 collision evaluation.
 
 ## 9. Acceptance cases

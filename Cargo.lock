@@ -143,9 +143,9 @@ dependencies = [
  "beamcraft-engine",
  "beamcraft-host",
  "beamcraft-ifc",
+ "beamcraft-json",
  "beamcraft-layer-engine",
  "beamcraft-model",
- "beamcraft-protocol",
 ]
 
 [[package]]
@@ -169,12 +169,19 @@ version = "0.0.1"
 name = "beamcraft-host"
 version = "0.0.1"
 dependencies = [
+ "beamcraft-json",
  "beamcraft-model",
- "beamcraft-protocol",
 ]
 
 [[package]]
 name = "beamcraft-ifc"
+version = "0.0.1"
+dependencies = [
+ "beamcraft-model",
+]
+
+[[package]]
+name = "beamcraft-json"
 version = "0.0.1"
 dependencies = [
  "beamcraft-model",
@@ -204,19 +211,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "beamcraft-protocol"
-version = "0.0.1"
-dependencies = [
- "beamcraft-model",
-]
-
-[[package]]
 name = "beamcraft-ui"
 version = "0.0.1"
 dependencies = [
  "beamcraft-engine",
+ "beamcraft-json",
  "beamcraft-model",
- "beamcraft-protocol",
  "eframe",
  "egui",
  "pollster",

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! Codeless U02 schema and isolated layer authoring for a trusted command engine.
-//! This is a worker-library boundary, not an F04 command validator or acceptance ledger.
+//! This is a library boundary, not an F04 command validator or acceptance ledger.
 
 mod derive;
 mod edit;
@@ -797,7 +797,7 @@ pub struct Mesh {
     pub quantities: Option<StoredQuantities>,
 }
 
-/// Closed worker-facing batch items, produced by a trusted engine, never raw USD setters.
+/// Closed batch items, produced by a trusted engine, never raw USD setters.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Change {
     /// Author a new complete element.

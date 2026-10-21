@@ -7,11 +7,8 @@
 
 use beamcraft_engine::synthetic::plate_scene;
 use beamcraft_engine::{Limits, ViewPin, ViewSnapshot};
+use beamcraft_json::{Json, decode};
 use beamcraft_model::digest::Sha256;
-use beamcraft_protocol::{
-    json::{Json, decode},
-    message::read_limits,
-};
 use std::process::Command;
 
 fn run(args: &[&str]) -> (Json, i32) {
@@ -19,7 +16,8 @@ fn run(args: &[&str]) -> (Json, i32) {
         .args(args)
         .output()
         .expect("run beamcraft");
-    let json = decode(&out.stdout, &read_limits()).expect("stdout is bounded JSON");
+    let json =
+        decode(&out.stdout, &beamcraft_json::Limits::DEFAULT).expect("stdout is bounded JSON");
     (json, out.status.code().expect("exit code"))
 }
 

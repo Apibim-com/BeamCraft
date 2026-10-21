@@ -14,9 +14,9 @@ use beamcraft_cli::export::{
 use beamcraft_cli::plate::PlateError;
 use beamcraft_host::{revision::RevisionStore, storage::BlobStore};
 use beamcraft_ifc::EXPORTER_VERSION;
+use beamcraft_json::Json;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::Uuid7;
-use beamcraft_protocol::json::Json;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::Path;
@@ -378,11 +378,7 @@ mod tests {
             })
             .collect();
         let report = Json::object([("elements", Json::Array(rows))]);
-        assert!(
-            report
-                .encode(&beamcraft_protocol::message::read_limits())
-                .is_err()
-        );
+        assert!(report.encode(&beamcraft_json::Limits::DEFAULT).is_err());
         let text = render(&report);
         assert!(text.starts_with("{\"elements\":[{\"a\":1,\"b\":2,\"element_id\":\"id-0\""));
         assert!(text.len() > 1_000_000);

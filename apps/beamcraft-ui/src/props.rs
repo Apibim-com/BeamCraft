@@ -17,8 +17,8 @@
 
 use crate::edit::sequence_of;
 use crate::tools::{FormError, MAX_TEXT, ToolError, decode, rejection, text};
+use beamcraft_json::Json;
 use beamcraft_model::limits::{COORDINATE_CAP_MM, DIMENSION_CAP_MM};
-use beamcraft_protocol::json::Json;
 use std::path::Path;
 
 /// One accepted revision, as an engine reply names it.

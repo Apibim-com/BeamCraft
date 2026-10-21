@@ -23,6 +23,7 @@ use beamcraft_host::{
     revision::{NoFault, RevisionStore, Uuid7},
     storage::BlobStore,
 };
+use beamcraft_json::Json;
 use beamcraft_model::command::Placement;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
@@ -30,7 +31,6 @@ use beamcraft_model::reference::{
     CorrectReferenceUnits, ForeignTarget, MoveReference, UnitsInterpretation, UpAxis, WriteForeign,
     check_source_path,
 };
-use beamcraft_protocol::json::Json;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 

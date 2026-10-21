@@ -14,11 +14,10 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use beamcraft_engine::transaction::{Admission, PriorOp, admit_create_plate};
+use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::{CreatePlate, Placement};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId};
-use beamcraft_protocol::json::{self, Json};
-use beamcraft_protocol::limits::MAXIMA;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Cases that need the F04 envelope, a workspace or a trusted caller: not implemented in P01.
@@ -175,7 +174,7 @@ fn every_decidable_create_plate_case_matches_f04_or_is_a_declared_deviation() {
         "/../../tests/fixtures/contracts/f04-model-command-cases-v0.1.json"
     );
     let bytes = std::fs::read(path).unwrap();
-    let file = json::decode(&bytes, &MAXIMA).unwrap();
+    let file = beamcraft_json::decode(&bytes, &Limits::DEFAULT).unwrap();
     assert_eq!(
         file.get("contract_version").unwrap().string().unwrap(),
         "0.1.0"
