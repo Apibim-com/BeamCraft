@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/brand/beamcraft-logo.svg" alt="The BeamCraft logo: an isometric steel I-beam on a blueprint grid" width="192">
+</p>
+
 <h1 align="center">BeamCraft™</h1>
 
 <p align="center">

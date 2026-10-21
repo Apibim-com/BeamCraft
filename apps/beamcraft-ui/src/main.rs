@@ -19,7 +19,7 @@
 use beamcraft_engine::synthetic::plate_scene;
 use beamcraft_engine::{Limits, Representation, ViewPin, ViewSnapshot};
 use beamcraft_model::digest::Sha256;
-use beamcraft_ui::app::{App, Source, icon};
+use beamcraft_ui::app::{App, Source, load_icon};
 use beamcraft_ui::scene::Scene;
 use beamcraft_ui::{Error, json_string, metrics, perf, source};
 use std::collections::BTreeMap;
@@ -145,11 +145,12 @@ fn run() -> Result<Option<(String, u8)>, Error> {
     let mut setup = eframe::egui_wgpu::WgpuSetupCreateNew::without_display_handle();
     setup.instance_descriptor.backends =
         wgpu::Backends::DX12 | wgpu::Backends::VULKAN | wgpu::Backends::METAL;
+    let viewport = egui::ViewportBuilder::default()
+        .with_inner_size([1400.0, 900.0])
+        .with_title("BeamCraft")
+        .with_icon(load_icon());
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1400.0, 900.0])
-            .with_title("BeamCraft")
-            .with_icon(icon()),
+        viewport,
         renderer: eframe::Renderer::Wgpu,
         wgpu_options: eframe::WgpuConfiguration {
             wgpu_setup: setup.into(),
