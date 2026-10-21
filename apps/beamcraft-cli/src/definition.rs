@@ -3,7 +3,8 @@
 
 //! P02 adapter: immutable profile and material definitions as USD assets of a committed revision.
 //!
-//! A definition is a content-addressed `Scope` prim `/World/Definitions/D_<sha256>` in the model
+//! A definition is a content-addressed `Scope` prim under `/World/Definitions/Materials/MAT_`
+//! or `/World/Definitions/Profiles/PRF_`, followed by its full SHA-256, in the model
 //! layer. Its digest is the full SHA-256 of the canonical isolated definition layer that the layer
 //! engine writes (`Resource::bytes`), so a digest pins values, units (`mm`) and schema version
 //! (`0.1.0`) together. Publishing writes the definition and no element; an element then pins it
@@ -48,8 +49,9 @@ use beamcraft_model::section::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Path prefix of an immutable definition prim.
-const DEFINITION_PREFIX: &str = "/World/Definitions/D_";
+/// Path prefix used by the synthetic profile fixtures.
+#[cfg(test)]
+const DEFINITION_PREFIX: &str = "/World/Definitions/Profiles/PRF_";
 
 /// The logical content of one published definition.
 #[derive(Debug, Clone, PartialEq)]
@@ -205,15 +207,19 @@ impl DefinitionRecord {
 }
 
 /// The USD path of the definition with this digest.
-pub fn definition_path(digest: &ContentDigest) -> String {
-    format!("{DEFINITION_PREFIX}{digest}")
+pub fn definition_path(digest: &ContentDigest, kind: &str) -> String {
+    let category = if kind == "material" {
+        beamcraft_model::prim::DefinitionCategory::Material
+    } else {
+        beamcraft_model::prim::DefinitionCategory::Profile
+    };
+    category.path(*digest)
 }
 
 /// The digest named by a definition path, or `None` for any other path (including a descendant of
 /// a definition and a short or upper-case digest).
 pub(crate) fn definition_digest(path: &str) -> Option<ContentDigest> {
-    let digest: ContentDigest = path.strip_prefix(DEFINITION_PREFIX)?.parse().ok()?;
-    (definition_path(&digest) == path).then_some(digest)
+    beamcraft_model::prim::DefinitionCategory::parse_path(path).map(|(_, digest)| digest)
 }
 
 /// A required property of an exact USD type with a value. A missing property is `None`; a
@@ -340,6 +346,9 @@ pub(crate) fn decode_definitions(
             continue;
         };
         if let Some(record) = decode_definition(prim, digest)? {
+            if prim.path != definition_path(&digest, record.kind()) {
+                return Err(integrity("definition path does not match its kind"));
+            }
             definitions.insert(digest, record);
         }
     }
@@ -722,7 +731,7 @@ mod tests {
         if let Some(density) = layer_density {
             properties.push(("bim:densityKgM3", "double", Value::Number(density)));
         }
-        prim(definition_path(&digest), properties)
+        prim(definition_path(&digest, "material"), properties)
     }
 
     #[test]
@@ -800,7 +809,7 @@ mod tests {
             ("steel:profile:standard", "string", text("Synthetic")),
         ];
         let found = decode_definitions(&[prim(
-            definition_path(&digest(&profile)),
+            definition_path(&digest(&profile), profile.kind()),
             profile_props.clone(),
         )])
         .unwrap();
@@ -808,13 +817,16 @@ mod tests {
         // Dropping the designation from the layer no longer matches the pinned content.
         profile_props.retain(|p| p.0 != "steel:profile:designation");
         assert_eq!(
-            decode_definitions(&[prim(definition_path(&digest(&profile)), profile_props)])
-                .unwrap_err()
-                .code,
+            decode_definitions(&[prim(
+                definition_path(&digest(&profile), profile.kind()),
+                profile_props
+            )])
+            .unwrap_err()
+            .code,
             ErrorCode::IntegrityError
         );
         let found = decode_definitions(&[prim(
-            definition_path(&digest(&material)),
+            definition_path(&digest(&material), material.kind()),
             vec![
                 ("bim:schemaVersion", "string", text("0.1.0")),
                 ("bim:units", "token", text("mm")),
@@ -878,7 +890,7 @@ mod tests {
         };
         let digest = beamcraft_model::digest::Sha256::digest(b"forged").unwrap();
         let hostile = prim(
-            definition_path(&digest),
+            definition_path(&digest, "rectangle"),
             vec![
                 ("bim:schemaVersion", "string", text("0.1.0")),
                 ("bim:units", "token", text("mm")),
@@ -989,14 +1001,17 @@ mod tests {
     fn unknown_kinds_and_other_paths_stay_inert() {
         let digest = beamcraft_model::digest::Sha256::digest(b"future").unwrap();
         let future = prim(
-            definition_path(&digest),
+            definition_path(&digest, "rectangle"),
             vec![
                 ("bim:schemaVersion", "string", text("0.1.0")),
                 ("bim:units", "token", text("mm")),
                 ("bim:definitionKind", "token", text("catalogue")),
             ],
         );
-        let child = prim(format!("{}/Child", definition_path(&digest)), Vec::new());
+        let child = prim(
+            format!("{}/Child", definition_path(&digest, "rectangle")),
+            Vec::new(),
+        );
         let upper = prim(
             format!("{DEFINITION_PREFIX}{}", digest.to_string().to_uppercase()),
             Vec::new(),
@@ -1007,7 +1022,10 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
-        assert_eq!(definition_digest(&definition_path(&digest)), Some(digest));
+        assert_eq!(
+            definition_digest(&definition_path(&digest, "rectangle")),
+            Some(digest)
+        );
         assert_eq!(definition_digest("/World/Definitions/D_abc"), None);
     }
 
@@ -1063,7 +1081,10 @@ mod tests {
             ("bim:materialGrade", "string", text("S355")),
         ];
         let with_name = |name: Option<&str>| {
-            let mut p = prim(definition_path(&digest(&named)), props.clone());
+            let mut p = prim(
+                definition_path(&digest(&named), named.kind()),
+                props.clone(),
+            );
             p.display_name = name.map(str::to_owned);
             p
         };

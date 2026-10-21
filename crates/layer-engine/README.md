@@ -121,8 +121,8 @@ field and budget rules as every stage asset, without composing or resolving it; 
 identifier in it is `PERMISSION_DENIED`, an arc outside the static profile
 `UNSUPPORTED_PROPERTY`, another local asset `DEPENDENCY_UNAVAILABLE`. `authored::read_references`
 reads the wrappers back (after the same validation). A foreign prim that carries an element
-identity (`bim:id`, or a name starting `E_`) makes the stage fail with `INVALID_ID`. The schema
-descriptor lists the wrapper; layers pinned to the P02.2 mapping are still accepted. See the
+identity (`bim:id`, or a reserved element prefix) makes the stage fail with `INVALID_ID`. The schema
+descriptor lists the wrapper; pre-U16 schema pins are refused. See the
 [R01 design note](../../docs/design/r01-readonly-reference.md).
 
 ## UUID and relationship index (U03)
@@ -133,7 +133,7 @@ of one context: `Reader::element_index` / `Author::element_index` page the froze
 cap-plus-one pages and any item whose identity, path or provenance fails re-validation. The key
 is the full 128-bit UUIDv7 (`ElementId`); same-millisecond IDs are never shortened or merged and
 prefix, upper-case, unhyphenated, wrong-version/variant text is `INVALID_ID`. Element prims must
-be exactly `/World/Steel/E_<32 hex>` with agreeing snapshot identity and `bim:id`; duplicates are
+follow the category folders and three-letter prefixes of the [prim naming rule](../../docs/architecture.md#prim-hierarchy-and-naming-rule), with the full 32-digit UUIDv7 with agreeing snapshot identity and `bim:id`; duplicates are
 `DUPLICATE_ID`. Labels are never identity: rename keeps ID, path and the label-free
 `structure_digest`. Entries carry lifecycle (`bim:lifecycle`, absent means active), the USD
 `active` flag, composition provenance and an ownership verdict that includes foreign ancestors
@@ -155,3 +155,8 @@ reports the index, a persisted
 index, copy/delete commands (P05/P08), typed element-to-element relationship records and their
 vocabulary rules (F10/vocabulary section 5), and USDC relationship evidence (the restricted binary
 profile refuses relationship specs and U02 element layers). See [the U03 report](../../docs/design/u03-index.md).
+
+U16 makes an intentional pre-alpha compatibility break: no old-layout store or schema pin is
+accepted or migrated. Definitions live under `Definitions/Materials/MAT_<sha256>` or
+`Definitions/Profiles/PRF_<sha256>`; levels and reference wrappers live outside `/World/Steel`.
+See the [U16 design note](../../docs/design/u16-prim-naming.md).

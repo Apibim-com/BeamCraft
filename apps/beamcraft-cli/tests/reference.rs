@@ -792,7 +792,7 @@ fn sources_outside_the_static_profile_are_refused_with_an_explicit_diagnostic() 
         ),
         (
             "element-like name without identity",
-            b"#usda 1.0\n(defaultPrim = \"A\")\ndef Scope \"A\"\n{\n    def Scope \"E_beam\" {}\n}\n".to_vec(),
+            b"#usda 1.0\n(defaultPrim = \"A\")\ndef Scope \"A\"\n{\n    def Scope \"PRT_beam\" {}\n}\n".to_vec(),
             "INVALID_ID",
         ),
         ("too large", big.into_bytes(), "LIMIT_EXCEEDED"),

@@ -173,7 +173,7 @@ fn a_beam_pins_its_profile_and_material_and_reopens_in_a_fresh_process() {
     // An ordinary reader of the saved text sees a standard Xform with explicit inputs and links.
     let authored = f.authored_text(&created);
     let prim = format!(
-        "def Xform \"E_{}\"",
+        "def Xform \"PRT_{}\"",
         text(member, "element_id").replace('-', "")
     );
     assert!(authored.contains(&prim), "{authored}");
@@ -184,10 +184,10 @@ fn a_beam_pins_its_profile_and_material_and_reopens_in_a_fresh_process() {
         assert!(authored.contains(line), "{line}\n{authored}");
     }
     assert!(authored.contains(&format!(
-        "custom rel bim:profile = </World/Definitions/D_{profile}>"
+        "custom rel bim:profile = </World/Definitions/Profiles/PRF_{profile}>"
     )));
     assert!(authored.contains(&format!(
-        "custom rel bim:material = </World/Definitions/D_{steel}>"
+        "custom rel bim:material = </World/Definitions/Materials/MAT_{steel}>"
     )));
 }
 

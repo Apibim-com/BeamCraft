@@ -193,7 +193,16 @@ fn populated() -> (Author, Opened) {
     (a, installed)
 }
 fn path(id: &str) -> String {
-    format!("/World/Steel/E_{}", id.replace('-', ""))
+    use beamcraft_model::prim::ElementCategory;
+    let category = match id {
+        FRAME | OUTER => ElementCategory::Assembly,
+        WELD | BOLT => ElementCategory::Connection,
+        STOREY | ROOF => ElementCategory::Level,
+        _ => ElementCategory::Part,
+    };
+    beamcraft_model::id::ElementId::parse(id)
+        .unwrap()
+        .prim_path(category)
 }
 fn snapshot(author: &Author, context: &Context) -> Vec<Prim> {
     let mut result = Vec::new();
@@ -347,7 +356,7 @@ fn absence_block_removal_reveal_weaker_defaults_without_flattening() {
     *weak = asset(
         "weak.usda",
         layer(&format!(
-            "over \"World\" {{ over \"Steel\" {{ over \"E_{}\" {{ custom double steel:member:rollRad=0.75 }} }} }}",
+            "over \"World\" {{ over \"Steel\" {{ over \"Parts\" {{ over \"PRT_{}\" {{ custom double steel:member:rollRad=0.75 }} }} }} }}",
             MEMBER.replace('-', "")
         )),
     );
@@ -432,7 +441,7 @@ fn foreign_reference_overrides_and_foreign_ancestor_writes_fail_atomically() {
     let foreign = layer("def Xform \"Source\" { custom double future:value=23 }");
     input.assets.push(asset("foreign.usda", foreign));
     let body = layer(&format!(
-        "over \"World\" {{ over \"Steel\" {{ def Xform \"E_{}\" (references=@foreign.usda@</Source>) {{ custom string bim:id=\"{PLATE}\" }} }} }}",
+        "over \"World\" {{ over \"Steel\" {{ over \"Parts\" {{ def Xform \"PRT_{}\" (references=@foreign.usda@</Source>) {{ custom string bim:id=\"{PLATE}\" }} }} }} }}",
         PLATE.replace('-', "")
     ));
     *input
@@ -1135,7 +1144,15 @@ fn a_definition_only_batch_publishes_immutable_definitions_and_an_empty_batch_is
     for d in &definitions {
         let definition = prims
             .iter()
-            .find(|p| p.path == format!("/World/Definitions/D_{}", d.digest))
+            .find(|p| {
+                p.path
+                    == (if matches!(d.definition, Definition::Material { .. }) {
+                        beamcraft_model::prim::DefinitionCategory::Material
+                    } else {
+                        beamcraft_model::prim::DefinitionCategory::Profile
+                    })
+                    .path(d.digest)
+            })
             .unwrap();
         let property = |name: &str| {
             definition
@@ -1465,10 +1482,10 @@ fn a_definition_display_name_is_part_of_the_resource_and_is_checked_before_reuse
     let hex = named.digest.to_string();
     let stage = |metadata: &str| {
         let body = format!(
-            "def Xform \"World\" {{ def Scope \"Definitions\" {{ def Scope \"D_{hex}\" {metadata}{{ \
+            "def Xform \"World\" {{ def Scope \"Definitions\" {{ def Scope \"Materials\" {{ def Scope \"MAT_{hex}\" {metadata}{{ \
              custom string bim:schemaVersion = \"0.1.0\"\n custom token bim:units = \"mm\"\n \
              custom token bim:definitionKind = \"material\"\n custom double bim:densityKgM3 = 1000.0\n \
-             custom string bim:contentDigest = \"{hex}\" }} }} }}"
+             custom string bim:contentDigest = \"{hex}\" }} }} }} }}"
         );
         request(
             vec![
@@ -1506,10 +1523,10 @@ fn an_existing_definition_must_match_the_resource_before_it_is_reused() {
     let hex = resource.digest.to_string();
     let stage = |density: &str, active: &str| {
         let body = format!(
-            "def Xform \"World\" {{ def Scope \"Definitions\" {{ def Scope \"D_{hex}\" {active}{{ \
+            "def Xform \"World\" {{ def Scope \"Definitions\" {{ def Scope \"Materials\" {{ def Scope \"MAT_{hex}\" {active}{{ \
              custom string bim:schemaVersion = \"0.1.0\"\n custom token bim:units = \"mm\"\n \
              custom token bim:definitionKind = \"material\"\n {density}\n \
-             custom string bim:contentDigest = \"{hex}\" }} }} }}"
+             custom string bim:contentDigest = \"{hex}\" }} }} }} }}"
         );
         request(
             vec![
@@ -1776,6 +1793,10 @@ fn standard_usd_metadata_kind_display_name_extent_and_flat_normals() {
     let all = snapshot(&a, &o.context);
     assert_eq!(prim(&all, "/World").kind.as_deref(), Some("assembly"));
     assert_eq!(prim(&all, "/World/Steel").kind.as_deref(), Some("group"));
+    assert_eq!(
+        prim(&all, "/World/Steel/Parts").kind.as_deref(),
+        Some("group")
+    );
     let plate = prim(&all, &path(PLATE));
     assert_eq!(plate.kind.as_deref(), Some("component"));
     assert_eq!(plate.display_name.as_deref(), Some("Plate Ω"));
@@ -1884,7 +1905,7 @@ fn value_at<'a>(prim: &'a Prim, name: &str) -> Option<&'a Value> {
 }
 
 #[test]
-fn a_store_pinned_to_the_previous_mapping_stays_editable_and_is_repinned() {
+fn a_store_pinned_to_the_previous_mapping_is_refused() {
     let previous = "70fc49a1d81314a6599284532bd2d45c18f77b4318266238cc6923b25c05f28e";
     let pinned = |body: &str| {
         format!(
@@ -1899,40 +1920,8 @@ fn a_store_pinned_to_the_previous_mapping_stays_editable_and_is_repinned() {
         *old = asset(name, pinned(&body));
     }
     input.manifest = input.manifest_digest().unwrap();
-    let (mut a, o) = open(input);
-    let p = prepare_initial(&mut a, &o.context);
-    let installed = a
-        .install(
-            &o.context,
-            &p.token,
-            &p.op_id,
-            Decision::Accepted,
-            &control(),
-        )
-        .unwrap();
-    let exported = a.export(&installed.context, &control()).unwrap();
-    let current = schema_identity().unwrap().digest.to_string();
-    for name in ["authored.usda", "derived.usda"] {
-        let layer = exported.iter().find(|l| l.name == name).unwrap();
-        let text = String::from_utf8(layer.bytes.clone()).unwrap();
-        assert!(
-            text.contains(&current) && !text.contains(previous),
-            "{name}"
-        );
-    }
-    let mut other = initial();
-    let old = other
-        .assets
-        .iter_mut()
-        .find(|a| a.name == "authored.usda")
-        .unwrap();
-    *old = asset(
-        "authored.usda",
-        pinned("").replace(previous, &"0".repeat(64)),
-    );
-    other.manifest = other.manifest_digest().unwrap();
     assert_eq!(
-        Author::open(other, targets(), schema_identity().unwrap(), &control())
+        Author::open(input, targets(), schema_identity().unwrap(), &control())
             .err()
             .map(|e| e.code),
         Some(ErrorCode::UnsupportedVersion)
@@ -2162,7 +2151,7 @@ fn an_assembly_never_gets_a_body_reads_cover_the_chain_and_detach_masks_weaker_r
     // A weaker owned layer supplies the membership; a detach must still end it.
     let mut weak = export_request(&a, &o.context);
     let text = format!(
-        "over \"World\" {{ over \"Steel\" {{ over \"E_{}\" {{ custom rel bim:partOf = <{}> }} }} }}",
+        "over \"World\" {{ over \"Steel\" {{ over \"Parts\" {{ over \"PRT_{}\" {{ custom rel bim:partOf = <{}> }} }} }} }}",
         PLATE.replace('-', ""),
         path(FRAME)
     );
@@ -2809,8 +2798,8 @@ fn section_profiles_round_trip_and_tampering_is_refused() {
     );
 }
 
-const STOREY: &str = "0199e7a0-0000-7000-8000-000000000301";
-const ROOF: &str = "0199e7a0-0000-7000-8000-000000000302";
+const STOREY: &str = "0199e7a0-0000-7000-8000-000000000401";
+const ROOF: &str = "0199e7a0-0000-7000-8000-000000000402";
 fn level(id: &str, name: &str, elevation_mm: f64) -> Change {
     Change::Create(Element {
         id: id.into(),
@@ -3286,7 +3275,7 @@ fn wrong_marks_targets_and_loaded_mark_records_are_refused_with_nothing_written(
 }
 
 #[test]
-fn a_store_pinned_to_the_pre_a09_mapping_stays_editable_and_is_repinned() {
+fn a_store_pinned_to_the_pre_a09_mapping_is_refused() {
     let previous = "fdaf890401a7bf4d8d17eb84ad1901b461ff21f1e7cec1e93f9e71203b83865b";
     let mut input = initial();
     for name in ["authored.usda", "derived.usda"] {
@@ -3301,23 +3290,10 @@ fn a_store_pinned_to_the_pre_a09_mapping_stays_editable_and_is_repinned() {
         );
     }
     input.manifest = input.manifest_digest().unwrap();
-    let (mut a, o) = open(input);
-    let p = prepare_initial(&mut a, &o.context);
-    let o = a
-        .install(
-            &o.context,
-            &p.token,
-            &p.op_id,
-            Decision::Accepted,
-            &control(),
-        )
-        .unwrap();
-    let (_, o) = installed(&mut a, &o, vec![marked(PLATE, "PL", 1)]);
-    let current = schema_identity().unwrap().digest.to_string();
-    for layer in a.export(&o.context, &control()).unwrap() {
-        if layer.name == "authored.usda" || layer.name == "derived.usda" {
-            let text = String::from_utf8(layer.bytes).unwrap();
-            assert!(text.contains(&current) && !text.contains(previous));
-        }
-    }
+    assert_eq!(
+        Author::open(input, targets(), schema_identity().unwrap(), &control())
+            .err()
+            .map(|e| e.code),
+        Some(ErrorCode::UnsupportedVersion)
+    );
 }

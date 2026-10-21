@@ -373,7 +373,14 @@ fn wrapper_json(wrapper: &Wrapper) -> Run<Json> {
     let optional = |value: Option<f64>| value.map_or(Ok(Json::Null), num);
     Ok(Json::object([
         ("id", Json::text(record.id.to_string())),
-        ("path", Json::text(record.id.prim_path())),
+        (
+            "path",
+            Json::text(
+                record
+                    .id
+                    .prim_path(beamcraft_model::prim::ElementCategory::Reference),
+            ),
+        ),
         ("name", Json::text(record.name.clone())),
         (
             "placement",
