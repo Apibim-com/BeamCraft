@@ -141,9 +141,8 @@ fn every_budget_succeeds_at_its_value_and_fails_one_below_without_a_result() {
 #[test]
 fn a_body_beyond_the_certification_budget_is_refused_at_admission() {
     // 16 holes of 120 edges: 12 + 484 * 16 = 7756 triangles, below the F06 cap of 524,288, but
-    // the
-    // long cap triangles overlap so many boxes that the default G06 pair budget cannot certify
-    // the shell. It is refused as not certified; it is never treated as exact.
+    // the long cap triangles overlap so many boxes that the default G06 pair budget cannot
+    // certify the shell. It is refused as not certified; it is never treated as exact.
     let spec = CurveSpec {
         max_sagitta_mm: 1.0e9,
         min_segments: 120,
