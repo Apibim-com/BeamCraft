@@ -12,6 +12,7 @@
 //! variable, `py -3.11`, then `%LOCALAPPDATA%\Programs\Python\Python311\python.exe`. If none can
 //! `import pxr` it prints an explicit SKIP message and passes without running anything: CI has no
 //! pxr. A skip is never evidence. Nothing is downloaded or installed.
+//! Set `BEAMCRAFT_REQUIRE_PXR=1` for acceptance: a missing oracle then fails the tests.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
@@ -36,16 +37,23 @@ fn probe(program: &str, args: &[&str]) -> Option<(String, Vec<String>)> {
 }
 
 fn find_python() -> Option<(String, Vec<String>)> {
-    if let Ok(path) = std::env::var("BEAMCRAFT_PXR_PYTHON") {
-        return probe(&path, &[]);
-    }
-    probe("py", &["-3.11"]).or_else(|| {
-        let local = std::env::var("LOCALAPPDATA").ok()?;
-        let path: PathBuf = [&local, "Programs", "Python", "Python311", "python.exe"]
-            .iter()
-            .collect();
-        probe(path.to_str()?, &[])
-    })
+    let found = if let Ok(path) = std::env::var("BEAMCRAFT_PXR_PYTHON") {
+        probe(&path, &[])
+    } else {
+        probe("py", &["-3.11"]).or_else(|| {
+            let local = std::env::var("LOCALAPPDATA").ok()?;
+            let path: PathBuf = [&local, "Programs", "Python", "Python311", "python.exe"]
+                .iter()
+                .collect();
+            probe(path.to_str()?, &[])
+        })
+    };
+    assert!(
+        std::env::var("BEAMCRAFT_REQUIRE_PXR").as_deref() != Ok("1") || found.is_some(),
+        "K1 independent reader NOT RUN: BEAMCRAFT_REQUIRE_PXR=1 requires a Python with pxr; \
+         set BEAMCRAFT_PXR_PYTHON to that interpreter"
+    );
+    found
 }
 
 fn run_binary(args: &[&str]) -> Json {

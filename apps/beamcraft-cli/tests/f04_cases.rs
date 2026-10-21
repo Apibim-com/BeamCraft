@@ -20,7 +20,7 @@ use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Cases that need the F04 envelope, a workspace or a trusted caller: not implemented in P01.
+/// Cases not decided by this typed admission adapter; workspaces have separate runtime tests.
 const SKIPPED: &[(&str, &str)] = &[
     (
         "F04-NEG-07",
@@ -28,11 +28,11 @@ const SKIPPED: &[(&str, &str)] = &[
     ),
     (
         "F04-NEG-08",
-        "base_revision precondition (needs P06 workspaces)",
+        "base_revision precondition (typed admission has no workspace/envelope context)",
     ),
     (
         "F04-NEG-09",
-        "workspace generation precondition (needs P06 workspaces)",
+        "workspace generation precondition (typed admission has no workspace/envelope context)",
     ),
     (
         "F04-NEG-17",
@@ -53,6 +53,63 @@ const UNSUPPORTED_BY_P01: &[&str] = &["F04-POS-18", "F04-POS-28"];
 /// UNSUPPORTED_GEOMETRY: exact planarity of a contour outside the plane `z = 0` is not
 /// implemented. A self-intersecting contour in that plane (F04-NEG-30) is INVALID_ARGUMENT.
 const WRONG_CODE_IN_P01: &[&str] = &["F04-NEG-29", "F04-NEG-38"];
+
+#[test]
+fn the_k1_inventory_accounts_for_the_other_commands_and_raw_envelopes() {
+    let bytes = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/contracts/f04-model-command-cases-v0.1.json"
+    ))
+    .unwrap();
+    let file = beamcraft_json::decode(&bytes, &Limits::DEFAULT).unwrap();
+    let cases = file.get("cases").unwrap().array().unwrap();
+    assert_eq!(cases.len(), 69);
+    let omitted = [
+        ("UpdateElement", "POS-02 POS-06 NEG-11 NEG-14 NEG-15 POS-24"),
+        ("CopyElement", "POS-03"),
+        ("DeleteElement", "POS-05 NEG-12 NEG-13"),
+        (
+            "CreateStraightMember",
+            "POS-07 NEG-16 POS-10 POS-13 NEG-20 NEG-21 POS-15 POS-16 POS-21 POS-22 POS-23 NEG-33 POS-29 POS-30 NEG-36 NEG-37 NEG-39",
+        ),
+    ];
+    let mut seen = BTreeSet::new();
+    for (command, ids) in omitted {
+        let expected: BTreeSet<_> = ids
+            .split_whitespace()
+            .map(|id| format!("F04-{id}"))
+            .collect();
+        let actual: BTreeSet<_> = cases
+            .iter()
+            .filter(|c| c.get("command").unwrap().string().unwrap() == command)
+            .map(|c| c.get("case_id").unwrap().string().unwrap().to_owned())
+            .collect();
+        assert_eq!(actual, expected, "{command}: update the evidence inventory");
+        for id in actual {
+            assert!(seen.insert(id.clone()));
+            println!("NOT RUN by K1 admission adapter: {id} ({command})");
+        }
+    }
+    for case in cases
+        .iter()
+        .filter(|c| c.get("command").unwrap().string().unwrap() == "CreatePlate")
+    {
+        assert!(seen.insert(case.get("case_id").unwrap().string().unwrap().to_owned()));
+    }
+    assert_eq!(
+        seen.len(),
+        cases.len(),
+        "new/duplicate command or case needs a disposition"
+    );
+    let raw = file.get("raw_json_cases").unwrap().array().unwrap();
+    let ids: BTreeSet<_> = raw
+        .iter()
+        .map(|c| c.get("case_id").unwrap().string().unwrap().to_owned())
+        .collect();
+    assert_eq!(raw.len(), 7);
+    assert_eq!(ids, (1..=7).map(|n| format!("F04-RAW-{n:02}")).collect());
+    println!("NOT RUN by K1 admission adapter (raw F04 envelope decoder): {ids:?}");
+}
 
 fn code_of(name: &str) -> ErrorCode {
     ErrorCode::parse(name).unwrap()
@@ -184,7 +241,11 @@ fn every_decidable_create_plate_case_matches_f04_or_is_a_declared_deviation() {
         .iter()
         .filter(|c| c.get("command").unwrap().string().unwrap() == "CreatePlate")
         .collect();
-    assert!(plate_cases.len() >= 40, "{}", plate_cases.len());
+    assert_eq!(
+        plate_cases.len(),
+        42,
+        "update the K1 inventory for changed cases"
+    );
 
     let mut accepted = BTreeMap::new();
     let pos01 = plate_cases

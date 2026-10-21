@@ -135,11 +135,19 @@ layers with a fresh reader, re-evaluates every plate and checks its committed me
 kernel's, and prints the plates, the pinned snapshot token, the element table and the meshes a
 viewer must load (`synthetic: false`).
 
-Limits: rectangular origin plate only (other contours are `UNSUPPORTED_GEOMETRY`);
-the layer engine runs in-process (no process isolation, LEW-03 open); no workspace, undo or
-envelope/JSON command; quantities are printed, not stored in USD (the pinned schema has none).
+Plate geometry currently supports simple counter-clockwise contours in `z=0`; contours outside
+that plane and rotated placements remain `UNSUPPORTED_GEOMETRY`. The layer engine runs in
+process by the U17 decision. Workspace and undo commands have their own sections below; a full
+F04 envelope/JSON command adapter remains absent. Quantities are printed, not stored in USD
+(the pinned schema has none).
 A library target (`beamcraft_cli::plate`) exposes the same path with a commit hook for fault
-injection in tests. `tests/pxr_oracle.rs` (opt-in; skips without a Python that can `import pxr`, honours `BEAMCRAFT_PXR_PYTHON`) reads the saved layers with the OpenUSD reference implementation and runs `UsdUtils.ComplianceChecker`; see the design note for the version and result. See the [design note](../../docs/design/p01-first-plate.md).
+injection in tests. `tests/pxr_oracle.rs` reads the saved layers with the OpenUSD reference
+implementation and runs `UsdUtils.ComplianceChecker`. It honours `BEAMCRAFT_PXR_PYTHON` and
+normally skips explicitly without a Python that can `import pxr`; set `BEAMCRAFT_REQUIRE_PXR=1`
+for acceptance to fail when the oracle is missing. `tests/f04_cases.rs` and `tests/f06_cases.rs`
+read the frozen contract fixtures and report their projections, deviations and omissions. See
+the [P01 design note](../../docs/design/p01-first-plate.md) and the current
+[K1 evidence and case inventory](../../docs/design/k1-contract-acceptance.md).
 
 ## P02 profile and material definitions
 
