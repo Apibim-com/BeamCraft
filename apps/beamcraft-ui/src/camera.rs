@@ -88,6 +88,32 @@ impl Camera {
     pub fn distance(&self) -> f32 {
         self.distance
     }
+    /// The pan (millimetres) that keeps the point under the cursor fixed while zooming: `ndc` is
+    /// the cursor in normalized device coordinates (`edit::ndc_of`, y up, inside `[-1, 1]`) and
+    /// `zoom` the same logarithmic input `navigate` takes. On the target plane the view scales
+    /// by `exp(-zoom)`, so moving the target by `(1 - s)` of the cursor's offset from the target
+    /// keeps the anchor still; zero zoom gives zero pan.
+    pub fn cursor_zoom_pan(
+        &self,
+        ndc: [f32; 2],
+        aspect: f32,
+        zoom: f32,
+    ) -> Result<[f32; 2], Error> {
+        if !ndc.into_iter().all(|x| x.is_finite())
+            || ndc[0].abs() > 1.0
+            || ndc[1].abs() > 1.0
+            || !zoom.is_finite()
+        {
+            return Err(Error::Input("camera cursor zoom"));
+        }
+        let view = self.view(aspect)?;
+        let [tan, aspect, _, _] = view.params;
+        let s = (-zoom.clamp(-10.0, 10.0)).exp();
+        let d = self.distance;
+        let nx = ndc[0].clamp(-1.0, 1.0);
+        let ny = ndc[1].clamp(-1.0, 1.0);
+        Ok([(1.0 - s) * d * nx * tan * aspect, (1.0 - s) * d * ny * tan])
+    }
     /// Perspective basis with depth range `[0, 1]`, vertical FOV 45 degrees.
     pub fn view(&self, aspect: f32) -> Result<View, Error> {
         if !aspect.is_finite() || !(0.05..=20.0).contains(&aspect) {
@@ -206,6 +232,41 @@ mod tests {
         }
         assert!(c.view(1.0).unwrap().bytes().len() == 80);
         assert!(c.distance().is_finite());
+    }
+    #[test]
+    fn zoom_toward_the_cursor_keeps_the_point_under_the_cursor_still() {
+        let aspect = 1.6;
+        let mut c = Camera::new([0.0; 3], 1000.0, aspect).unwrap();
+        for ndc in [[0.5f32, 0.3], [-0.7, -0.4], [0.9, -0.8], [0.0, 0.0]] {
+            for zoom in [0.7f32, -0.9, 2.0] {
+                let v = c.view(aspect).unwrap();
+                let [tan, va, _, _] = v.params;
+                let d = c.distance();
+                // The anchor is where the cursor ray crosses the plane through the target.
+                let anchor = [
+                    v.eye[0] - v.back[0] * d
+                        + v.right[0] * ndc[0] * tan * va * d
+                        + v.up[0] * ndc[1] * tan * d,
+                    v.eye[1] - v.back[1] * d
+                        + v.right[1] * ndc[0] * tan * va * d
+                        + v.up[1] * ndc[1] * tan * d,
+                    v.eye[2] - v.back[2] * d
+                        + v.right[2] * ndc[0] * tan * va * d
+                        + v.up[2] * ndc[1] * tan * d,
+                ];
+                let want = v.project(anchor);
+                let pan = c.cursor_zoom_pan(ndc, aspect, zoom).unwrap();
+                c.navigate([0.0; 2], pan, zoom).unwrap();
+                let got = c.view(aspect).unwrap().project(anchor);
+                assert!(
+                    (want[0] - got[0]).abs() < 1e-3 && (want[1] - got[1]).abs() < 1e-3,
+                    "ndc {ndc:?} zoom {zoom}: {want:?} -> {got:?}"
+                );
+            }
+        }
+        assert!(c.cursor_zoom_pan([f32::NAN, 0.0], aspect, 1.0).is_err());
+        assert!(c.cursor_zoom_pan([2.0, 0.0], aspect, 1.0).is_err());
+        assert!(c.cursor_zoom_pan([0.0, 0.0], aspect, f32::NAN).is_err());
     }
     #[test]
     fn the_near_plane_follows_the_distance_and_stays_inside_the_depth_range() {
