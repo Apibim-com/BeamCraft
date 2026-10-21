@@ -157,8 +157,8 @@ Time-boxed research with a report; never a production gate.
 
 | ID | Task | Depends on | Result | Acceptance | Status |
 |----|------|------------|--------|------------|--------|
-| E01 / M | [Own IFC export contract](../contracts/e01-ifc-export-v0.1.md) | F02, P03, P04 | IFC version and subset, stable GlobalId mapping, own Rust writer | Mapping to the public specification and a list of losses | draft; frozen after the E02 checks |
-| E02 / M | Minimal IFC exporter | E01, P03, P04 | Beams, columns and plates with placement, material, shape and a loss report | End to end; independent schema and geometry validation | merged; independent validation open |
+| E01 / M | [Own IFC export contract](../contracts/e01-ifc-export-v0.1.md) | F02, P03, P04 | IFC version and subset, stable GlobalId mapping, own Rust writer | Mapping to the public specification and a list of losses | draft; deferred after the MVP |
+| E02 / M | Minimal IFC exporter | E01, P03, P04 | Beams, columns and plates with placement, material, shape and a loss report | End to end; independent schema and geometry validation | merged; acceptance deferred after the MVP |
 | E03 / M | BOM and reports | A01, P04, A09 | BOM of the accepted revision for supported parts | No double count; unknown and stale shown; reproducible | merged |
 | E04 / S | IFC import study | F02, E01 | Import options and the boundary with read-only references | No conversion without an owner decision | open |
 | D01 / M | Drawing contract and FeatureIds | F02, F06, P03, A01 | Drawing IDs, model revision, views, dimensions, marks, stale states | A dimension never addresses a triangle index | deferred |
@@ -170,7 +170,7 @@ Time-boxed research with a report; never a production gate.
 
 | ID | Task | Depends on | Result | Acceptance | Status |
 |----|------|------------|--------|------------|--------|
-| Q01 / M | End-to-end alpha | V06, A09, E02, E03 (for the MVP without C06 and R03) | Frame → numbering → IFC and BOM, in the UI and the CLI | Invalid files and crash regressions; OS and GPU matrix not replaced by mocks | open |
+| Q01 / M | End-to-end alpha | V06, A09, E03 (for the MVP without E02, C06 and R03) | Frame → numbering → BOM, in the UI and the CLI | Invalid files and crash regressions; OS and GPU matrix not replaced by mocks | open |
 | Q02 / M | Packaging and release rehearsal | Q01 | Reproducible native packages of CLI, UI and licences | A clean machine opens a complete USD project; attribution checked | merged; rehearsal not run |
 
 ## W, O: views, review and design options

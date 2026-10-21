@@ -24,7 +24,7 @@ Drawings have a milestone of their own.
 
 The current target is the free single-user desktop MVP set by the owner on 2026-10-18 (see
 [decisions](decisions.md)): an engineer models a simple steel frame in the native UI and takes it
-out as IFC and a bill of materials.
+out as a bill of materials; IFC export follows after the MVP.
 
 The first alpha demonstrates the architecture on a limited subset. It does not mean that every
 requirement is met, that any arbitrary USD file can be measured exactly, or that fabrication

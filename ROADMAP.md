@@ -27,7 +27,7 @@ that the gate's acceptance is claimed.
 
 | Gate | Acceptance result | Packages | Status |
 |------|-------------------|----------|--------|
-| K0 | Verified base, requirements, contracts and original fixtures | F01–F11 | in progress; F04, F06 and F10 frozen 0.1.0; E01 draft until its checks pass; F08 a living document; F05 retired |
+| K0 | Verified base, requirements, contracts and original fixtures | F01–F11 | in progress; F04, F06 and F10 frozen 0.1.0; E01 draft, deferred after the MVP; F08 a living document; F05 retired |
 | K1 | CLI creates a plate and atomically saves a complete revision readable by ordinary OpenUSD | U01–U07, U09, U14, G01–G02, P01 | slices merged; acceptance open |
 | K2 | Straight beam/column, quantities, independent copy, personal workspace and local undo | P02–P08, A07 | slices merged (rolled, custom and library sections); acceptance open |
 | K3 | Foreign USD references remain read-only; supported measurements are separate results | R01–R03, G08 | R01 merged; R02–R03 deferred |
@@ -37,10 +37,10 @@ that the gate's acceptance is claimed.
 | K7 | Complete alpha scenario and native packaging rehearsal | Q01–Q02 | Q02 packaging merged, release rehearsal not run; Q01 open |
 | K8 | First associative drawing projection, dimension and published document version | D01–D03 | deferred |
 
-## MVP scope (owner decision 2026-10-18)
+## MVP scope
 
 A free single-user desktop MVP: an engineer models a simple steel frame in the native UI and takes
-it out as IFC and a bill of materials. Package boundaries follow the implementation plan and each
+it out as a bill of materials; the model itself is ordinary USD that other USD tools open. Package boundaries follow the implementation plan and each
 package keeps its own PR.
 
 1. **Real sections:** rolled and custom section definitions with kernel extrusion and libraries
@@ -50,13 +50,13 @@ package keeps its own PR.
    (V06.1). Merged as slices.
 3. **Detailing basics:** plane cuts (A03), holes (A04), bolts (A05). Merged as slices; cuts and
    holes still need the A-2 operation-record form.
-4. **Output:** numbering (A08/A09), IFC export (E02 on the E01 contract) and BOM (E03). Merged as
-   slices.
+4. **Output:** numbering (A08/A09) and BOM (E03). Merged as slices.
 5. **Packaging:** the alpha scenario (Q01) and native installers for Windows, Linux and macOS
    (Q02). Q02 merged; Q01 open.
 
-Deferred until after the MVP: multi-client rebase, conflicts, retry and compensation (C03–C06),
-drawings (D01–D03) and reference measurements (R02–R03). Which parts later stay open source and
+Deferred until after the MVP: IFC export (E01 contract, E02 exporter; the experimental `export-ifc`
+stays in the code but is not part of the MVP), multi-client rebase, conflicts, retry and
+compensation (C03–C06), drawings (D01–D03) and reference measurements (R02–R03). Which parts later stay open source and
 which become a commercial product is decided after the MVP; until then everything stays MPL-2.0.
 
 ## Next work

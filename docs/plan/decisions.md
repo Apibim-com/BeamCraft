@@ -6,6 +6,10 @@ Open questions are at the end.
 
 ## 2026-10-20
 
+- **IFC export after the MVP.** IFC needs independent validation and has many details of its own;
+  the MVP takes the model out as a bill of materials, and the model itself is ordinary USD. The E01
+  contract stays a draft and the experimental `export-ifc` stays in the code; their acceptance moves
+  after the MVP. This changes the MVP scope of 2026-10-18.
 - **KM to KMD.** Steel detailing is built from steel design: KMD starts as a copy of KM elements
   linked by `bim:builtFrom` to the KM element and revision; KM is read-only for the detailer, and a
   KM change marks affected KMD elements for checking without rewriting them (task R06).
