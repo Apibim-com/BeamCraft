@@ -7,17 +7,24 @@
 use crate::camera::{Camera, View};
 use crate::command::Selected;
 use crate::edit::{EditKind, Edited, Editor, Epoch, Target, ndc_of, ray_through};
+use crate::perf::{Observed, PerfRun, Phase as PerfPhase, RefreshTiming, Request};
 use crate::props::{Properties, State};
 use crate::publish::{Phase, Published, Publisher, Status};
 use crate::render::{Renderer, Uploaded};
-use crate::scene::Scene;
-use crate::source::Reloaded;
+use crate::scene::SceneSummary;
+use crate::source::{Known, Refreshed, Reloaded};
+use crate::stats::STATS;
 use crate::tools::{Choice, Created, MAX_TEXT, MemberKind, ToolError, ToolKind, Tools};
-use crate::{Error, check_font, command, source};
+use crate::{Error, check_font, command, json_string, source};
 use beamcraft_engine::ViewSnapshot;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Receiver, TryRecvError};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::time::Instant;
+
+/// Where a `--perf-run` report goes: the JSON object and whether every phase succeeded.
+pub type PerfReport = Sender<(String, bool)>;
 
 /// Where the window reads its model from.
 #[derive(Debug, Clone)]
@@ -31,11 +38,18 @@ pub struct Source {
     pub workspace: Option<PathBuf>,
     /// The published store the workspace was forked from (`--published`), the target of Publish.
     pub published: Option<PathBuf>,
+    /// The viewport's MSAA sample count, 1 or 4; `None` is the adapter's default
+    /// ([`crate::render::samples_for`]).
+    pub samples: Option<u32>,
 }
 
+/// The scene on screen: the pinned snapshot, its buffers on the device and what the window
+/// needs of the rest (origin, framing, counts). The expanded display buffers are not kept once
+/// they are on the device (issue 26, finding 3).
 struct Loaded {
-    snapshot: ViewSnapshot,
-    scene: Scene,
+    /// Shared with the selection worker, which picks on what the window shows.
+    snapshot: Arc<ViewSnapshot>,
+    summary: SceneSummary,
     uploaded: Uploaded,
 }
 
@@ -77,10 +91,41 @@ pub struct App {
     publish_job: Option<Receiver<Result<Published, ToolError>>>,
     status_job: Option<Receiver<Result<Status, ToolError>>>,
     status_queued: bool,
+    /// The `--perf-run` driver and where its report goes, when one runs.
+    perf: Option<(PerfRun, PerfReport)>,
+    /// Refresh results consumed, whatever their outcome (read by the perf driver).
+    reloads_finished: u64,
+    /// Commit results consumed, and whether the last one succeeded (read by the perf driver).
+    commits_finished: u64,
+    last_commit_ok: bool,
+    /// Selection results consumed, a stale one too (read by the perf driver).
+    selects_finished: u64,
+    /// Worker timings of the refreshes consumed while a perf run is active.
+    refresh_timings: Vec<RefreshTiming>,
 }
 
-/// A lookup in flight: the epoch it was asked under and its receiver.
-type SelectJob = (u64, Receiver<Result<Option<Selected>, ToolError>>);
+/// Records a scene swap in the perf counters: the CPU display bytes and the snapshot mesh bytes
+/// the window keeps from now on.
+fn note_loaded(loaded: &Loaded) {
+    STATS.reloads_applied.add(1);
+    // `Loaded` keeps no display buffer.
+    STATS.retained_display_bytes.set(0);
+    STATS.snapshot_mesh_bytes.set(
+        loaded
+            .snapshot
+            .meshes()
+            .iter()
+            .map(|m| m.bytes().len() as u64)
+            .fold(0, u64::saturating_add),
+    );
+}
+
+/// A lookup in flight: the epoch it was asked under, its receiver and the flag that gives it up.
+struct SelectJob {
+    asked: u64,
+    rx: Receiver<Result<Option<Selected>, ToolError>>,
+    cancel: Arc<AtomicBool>,
+}
 
 const RED: egui::Color32 = egui::Color32::from_rgb(230, 80, 60);
 
@@ -163,7 +208,7 @@ fn draw_selection(
     let Ok(bounds) = loaded.snapshot.element_bounds(&id) else {
         return;
     };
-    let origin = loaded.scene.origin_mm;
+    let origin = loaded.summary.origin_mm;
     let screen: Vec<Option<egui::Pos2>> = (0..8usize)
         .map(|corner| {
             let pick = |axis: usize| {
@@ -315,12 +360,22 @@ pub fn icon() -> egui::IconData {
 impl App {
     /// Creates the window state and loads the accepted snapshot.
     pub fn new(cc: &eframe::CreationContext<'_>, source: Source) -> Result<Self, Error> {
+        Self::with_perf_run(cc, source, None)
+    }
+
+    /// [`App::new`] that also runs a `--perf-run` plan and sends its report (JSON, success).
+    pub fn with_perf_run(
+        cc: &eframe::CreationContext<'_>,
+        source: Source,
+        perf: Option<(Vec<PerfPhase>, PerfReport)>,
+    ) -> Result<Self, Error> {
         let state = cc
             .wgpu_render_state
             .clone()
             .ok_or(Error::Input("eframe requires wgpu"))?;
         let text = inter(&cc.egui_ctx);
-        let renderer = Renderer::new(&state.adapter, &state.device, 1280, 800)?;
+        let renderer =
+            Renderer::with_samples(&state.adapter, &state.device, 1280, 800, source.samples)?;
         let texture = state.renderer.write().register_native_texture(
             &state.device,
             &renderer.view,
@@ -332,6 +387,17 @@ impl App {
             info.name, info.device_type, info.backend
         );
         let publisher = Publisher::new(source.published.clone(), source.workspace.clone());
+        let perf = perf.map(|(phases, report)| {
+            let header = format!(
+                "\"adapter\":{},\"device_type\":{},\"backend\":{},\"samples\":{},\"text\":{}",
+                json_string(&info.name),
+                json_string(&format!("{:?}", info.device_type)),
+                json_string(&format!("{:?}", info.backend)),
+                renderer.samples,
+                text
+            );
+            (PerfRun::new(phases, header), report)
+        });
         let mut app = Self {
             state,
             source,
@@ -363,6 +429,12 @@ impl App {
             publish_job: None,
             status_job: None,
             status_queued: false,
+            perf,
+            reloads_finished: 0,
+            commits_finished: 0,
+            last_commit_ok: true,
+            selects_finished: 0,
+            refresh_timings: Vec::new(),
         };
         app.reload();
         app.refresh_status();
@@ -378,11 +450,16 @@ impl App {
             return;
         }
         let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
+        // Only this refresh replaces `loaded`, so what it knows stays true until it is applied.
+        let known = self.loaded.as_ref().map_or_else(Known::default, |l| Known {
+            token: Some(l.snapshot.token().clone()),
+            resident: l.uploaded.resident(),
+        });
         let (tx, rx) = std::sync::mpsc::channel();
         let spawned = std::thread::Builder::new()
             .name("beamcraft-reload".into())
             .spawn(move || {
-                let _ = tx.send(source::reload(&cli, &store));
+                let _ = tx.send(source::reload(&cli, &store, &known));
             });
         match spawned {
             Ok(_) => self.reload_job = Some(rx),
@@ -410,33 +487,66 @@ impl App {
                 .ok()
                 .and_then(|d| d.head.clone()),
         );
+        self.reloads_finished += 1;
+        if self.perf.is_some() {
+            self.refresh_timings.push(reloaded.timing);
+        }
         self.refresh_error = self.tools.apply_definitions(reloaded.definitions);
-        let result = reloaded.scene.and_then(|(snapshot, scene)| {
-            let uploaded = Uploaded::new(&self.state.device, &self.state.queue, &scene)?;
-            Ok(Loaded {
-                snapshot,
-                scene,
-                uploaded,
-            })
+        let result = reloaded.scene.and_then(|refreshed| match refreshed {
+            Refreshed::Unchanged => Ok(None),
+            Refreshed::New(new) => {
+                let (snapshot, scene) = *new;
+                let started = Instant::now();
+                // Meshes the device holds are reused, and nothing waits for the device: the
+                // queue orders the writes before the next draw.
+                let previous = self.loaded.as_ref().map(|l| &l.uploaded);
+                let uploaded =
+                    Uploaded::upload(&self.state.device, &self.state.queue, &scene, previous)?;
+                STATS.upload_ui_ns.add_duration(started.elapsed());
+                STATS.uploads.add(1);
+                STATS.upload_bytes.add(uploaded.bytes);
+                // The display buffers are on the device now: keep the summary, drop the rest.
+                Ok(Some(Loaded {
+                    snapshot: Arc::new(snapshot),
+                    summary: scene.summary(),
+                    uploaded,
+                }))
+            }
         });
         match result {
-            Ok(loaded) => {
-                let (target, extent) = loaded.scene.framing();
+            // The snapshot on screen again: nothing to build, upload or draw, unless the
+            // viewport changed since it was framed.
+            Ok(None) => {
+                if let Some((target, extent)) = self.loaded.as_ref().map(|l| l.summary.framing()) {
+                    let aspect = self.aspect();
+                    if needs_refit(self.framed, target, extent, aspect) {
+                        match self.camera.fit(target, extent, aspect) {
+                            Ok(()) => {
+                                self.framed = Some((target, extent, aspect));
+                                self.error = None;
+                            }
+                            Err(e) => self.error = Some(e.to_string()),
+                        }
+                    } else {
+                        self.error = None;
+                    }
+                }
+            }
+            Ok(Some(loaded)) => {
+                let (target, extent) = loaded.summary.framing();
                 let aspect = self.aspect();
                 // A scene the camera cannot frame keeps the previous scene and shows why. An
-                // unchanged framing keeps the user's camera and the last rendered frame.
+                // unchanged framing keeps the user's camera.
                 if needs_refit(self.framed, target, extent, aspect) {
                     match self.camera.fit(target, extent, aspect) {
                         Ok(()) => {
-                            self.loaded = Some(loaded);
                             self.framed = Some((target, extent, aspect));
-                            self.error = None;
+                            self.show(loaded);
                         }
                         Err(e) => self.error = Some(e.to_string()),
                     }
                 } else {
-                    self.loaded = Some(loaded);
-                    self.error = None;
+                    self.show(loaded);
                 }
             }
             // A store with no revision yet is a normal state, not an error: the definitions
@@ -452,6 +562,15 @@ impl App {
             self.reload();
         }
     }
+    /// Puts a refreshed scene on screen. Its image is drawn again either way (the window draws
+    /// every frame): a scene whose bounds did not change (an edit inside them, a rename, an undo)
+    /// can still differ from the last image.
+    fn show(&mut self, loaded: Loaded) {
+        note_loaded(&loaded);
+        self.loaded = Some(loaded);
+        self.error = None;
+    }
+
     fn aspect(&self) -> f32 {
         (self.renderer.width as f32 / self.renderer.height as f32).clamp(0.05, 20.0)
     }
@@ -460,17 +579,19 @@ impl App {
         if width == self.renderer.width && height == self.renderer.height {
             return Ok(());
         }
-        let renderer = Renderer::new(&self.state.adapter, &self.state.device, width, height)?;
+        let started = Instant::now();
+        // Only the targets follow the size; the shader and the pipeline stay.
+        self.renderer.resize(&self.state.device, width, height)?;
         self.state
             .renderer
             .write()
             .update_egui_texture_from_wgpu_texture(
                 &self.state.device,
-                &renderer.view,
+                &self.renderer.view,
                 wgpu::FilterMode::Linear,
                 self.texture,
             );
-        self.renderer = renderer;
+        STATS.resize_ns.add_duration(started.elapsed());
         Ok(())
     }
 
@@ -495,19 +616,37 @@ impl App {
         }
     }
 
+    /// Registers a lookup under a new epoch; returns the flag that gives it up.
+    fn begin_select(
+        &mut self,
+        rx: Receiver<Result<Option<Selected>, ToolError>>,
+    ) -> Arc<AtomicBool> {
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.select_job = Some(SelectJob {
+            asked: self.select_epoch.advance(),
+            rx,
+            cancel: Arc::clone(&cancel),
+        });
+        cancel
+    }
+
     /// Starts a click selection on a worker: the engine's `pick` along the ray, then the details
-    /// of the element it hit.
+    /// of the element it hit, from one lookup ([`command::select`]) on the snapshot on screen.
     fn start_select(&mut self, ray: crate::edit::Ray) {
         if self.select_job.is_some() {
             return;
         }
+        // The pick runs on the snapshot on screen, so a click selects what the user sees.
+        let Some(snapshot) = self.loaded.as_ref().map(|l| Arc::clone(&l.snapshot)) else {
+            return;
+        };
         let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
         let (tx, rx) = std::sync::mpsc::channel();
-        self.select_job = Some((self.select_epoch.advance(), rx));
+        let cancel = self.begin_select(rx);
         let spawned = std::thread::Builder::new()
             .name("beamcraft-pick".into())
             .spawn(move || {
-                let _ = tx.send(command::select_at(&cli, &store, &ray));
+                let _ = tx.send(command::select(&cli, &store, &snapshot, &ray, &cancel));
             });
         if spawned.is_err() {
             self.select_job = None;
@@ -515,14 +654,17 @@ impl App {
         }
     }
 
-    /// Drops any lookup in flight: its result is no longer wanted (Esc, an accepted edit).
+    /// Drops any lookup in flight: its result is no longer wanted (Esc, an accepted edit, a
+    /// newer lookup), so its CLI process is stopped as well (issue 26, finding 9).
     fn invalidate_select(&mut self) {
         self.select_epoch.advance();
-        self.select_job = None;
+        if let Some(job) = self.select_job.take() {
+            job.cancel.store(true, Ordering::Relaxed);
+        }
     }
 
     fn poll_select(&mut self) {
-        let Some((asked, rx)) = &self.select_job else {
+        let Some(SelectJob { asked, rx, .. }) = &self.select_job else {
             return;
         };
         let asked = *asked;
@@ -535,8 +677,17 @@ impl App {
             }),
         };
         self.select_job = None;
+        self.selects_finished += 1;
         if !self.select_epoch.is_current(asked) {
             return;
+        }
+        let failed = match &result {
+            Ok(None) => false,
+            Ok(Some(selected)) => selected.info.is_err() || selected.details.is_err(),
+            Err(_) => true,
+        };
+        if failed {
+            STATS.select_errors.add(1);
         }
         match result {
             Ok(None) => {
@@ -659,18 +810,25 @@ impl App {
         let Some(id) = self.editor.selected().map(|s| s.id.clone()) else {
             return;
         };
+        // This lookup replaces any one in flight.
+        self.invalidate_select();
         let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
         let (tx, rx) = std::sync::mpsc::channel();
-        self.select_job = Some((self.select_epoch.advance(), rx));
+        let cancel = self.begin_select(rx);
         let spawned = std::thread::Builder::new()
             .name("beamcraft-info".into())
             .spawn(move || {
+                let (info, details) = command::lookup(&cli, &store, &id, &cancel);
                 // An element the revision no longer holds clears the selection; any other
                 // failure keeps it selected without details, so the move form is emptied
                 // rather than left with the position from before the edit.
-                let reply = match command::element_details(&cli, &store, &id) {
+                let reply = match info {
                     Err(e) if e.code == "NOT_FOUND" => None,
-                    details => Some(Selected::from_details(id.clone(), details)),
+                    info => Some(Selected {
+                        id: id.clone(),
+                        info,
+                        details,
+                    }),
                 };
                 let _ = tx.send(Ok(reply));
             });
@@ -879,7 +1037,9 @@ impl App {
                     ui.end_row();
                 }
             });
-            let materials = self.tools.definitions.materials.clone();
+            // Borrowed beside the form (disjoint fields), never copied: the panel is laid out in
+            // every frame the window draws.
+            let materials = &self.tools.definitions.materials;
             ui.add_enabled_ui(editable && !busy, |ui| {
                 ui.label("Editable, in mm:");
                 field(ui, "Name", &mut self.props.form.name, 140.0);
@@ -888,7 +1048,7 @@ impl App {
                     "props-material",
                     "Material",
                     &mut self.props.form.material,
-                    &materials,
+                    materials,
                     false,
                 );
                 if details.is_plate() {
@@ -903,8 +1063,9 @@ impl App {
         } else if matches!(state, Some(State::Unknown { .. })) {
             ui.label("No property value is shown: none could be read.");
         }
-        let store = self.source.store.clone();
-        let can_commit = self.props.can_commit(&store);
+        // Whether the staged patch is still what the form produces; preparing it builds the whole
+        // argument list, so it is asked once per frame unless a button acted.
+        let fresh = self.props.can_commit(&self.source.store);
         let staged = self.props.staged().is_some();
         let (mut preview, mut commit, mut cancel, mut reread) = (false, false, false, false);
         ui.horizontal(|ui| {
@@ -912,7 +1073,7 @@ impl App {
                 .add_enabled(editable && !busy, egui::Button::new("Preview"))
                 .clicked();
             commit = ui
-                .add_enabled(can_commit && !busy, egui::Button::new("Commit"))
+                .add_enabled(fresh && !busy, egui::Button::new("Commit"))
                 .clicked();
             cancel = ui
                 .add_enabled(staged && !busy, egui::Button::new("Cancel"))
@@ -922,7 +1083,7 @@ impl App {
                 .clicked();
         });
         if preview {
-            match self.props.preview(&store) {
+            match self.props.preview(&self.source.store) {
                 Ok(_) => self.props_note = None,
                 Err(e) => {
                     self.props.cancel();
@@ -947,7 +1108,12 @@ impl App {
                 edit.changed.join(", ")
             ));
             ui.add(egui::Label::new(egui::RichText::new(edit.argument_list()).monospace()).wrap());
-            if !self.props.can_commit(&store) {
+            let current = if preview || commit || cancel || reread {
+                self.props.can_commit(&self.source.store)
+            } else {
+                fresh
+            };
+            if !current {
                 ui.colored_label(
                     RED,
                     "The parameters or the revision changed: preview again.",
@@ -1049,7 +1215,7 @@ impl App {
     fn edit_panel(&mut self, ui: &mut egui::Ui) {
         ui.heading("Edit");
         ui.label("Click an element in the view to select it. Esc clears the selection.");
-        match self.editor.selected().cloned() {
+        match self.editor.selected() {
             Some(info) => {
                 ui.label(format!(
                     "Selected: {} {} ({})",
@@ -1207,6 +1373,8 @@ impl App {
         };
         self.job = None;
         self.tools.finish();
+        self.commits_finished += 1;
+        self.last_commit_ok = result.is_ok();
         match result {
             Ok(created) => {
                 self.reload();
@@ -1240,6 +1408,117 @@ impl App {
         }
     }
 
+    /// Creates plate number `ordinal` of a perf `edit` phase through the Create panel's own
+    /// path: fill the form, preview, commit.
+    fn perf_commit(&mut self, ordinal: u32) {
+        self.tools.active = ToolKind::Plate;
+        let form = &mut self.tools.plate;
+        form.width = (100 + ordinal % 1000).to_string();
+        form.length = "200".into();
+        form.thickness = "10".into();
+        form.name = format!("perf-edit-{ordinal}");
+        form.material = None;
+        let store = self.source.store.clone();
+        let started = self.tools.preview(&store).is_ok() && {
+            self.start_commit();
+            self.job.is_some()
+        };
+        if !started {
+            self.commits_finished += 1;
+            self.last_commit_ok = false;
+        }
+    }
+
+    /// The ray a click straight onto box element number `ordinal` of the loaded snapshot looks
+    /// through: from above the centre of its bounds, straight down (box bodies are the ones a
+    /// pick can hit).
+    fn perf_ray(&self, ordinal: u32) -> Option<crate::edit::Ray> {
+        let snapshot = &self.loaded.as_ref()?.snapshot;
+        let boxes: Vec<_> = snapshot
+            .elements()
+            .iter()
+            .filter(|e| {
+                snapshot
+                    .mesh_at(e.full.mesh_slot)
+                    .is_some_and(|m| m.vertex_count() == 8 && m.triangle_count() == 12)
+            })
+            .collect();
+        let count = u32::try_from(boxes.len()).ok().filter(|n| *n > 0)?;
+        let element = boxes.get(usize::try_from(ordinal % count).ok()?)?;
+        let b = element.full.world_bounds;
+        Some(crate::edit::Ray {
+            origin: [
+                (b.min[0] + b.max[0]) / 2.0,
+                (b.min[1] + b.max[1]) / 2.0,
+                b.max[2] + 1000.0,
+            ],
+            direction: [0.0, 0.0, -1.0],
+        })
+    }
+
+    /// One frame of the perf driver, if a run is active.
+    fn perf_step(&mut self, ctx: &egui::Context, frame_cpu: Option<f32>) {
+        let Some((mut run, report)) = self.perf.take() else {
+            return;
+        };
+        let request: Request = run.step(&Observed {
+            now: Instant::now(),
+            reloads_finished: self.reloads_finished,
+            reload_busy: self.reload_job.is_some() || self.reload_queued,
+            commits_finished: self.commits_finished,
+            commit_busy: self.job.is_some(),
+            last_commit_ok: self.last_commit_ok,
+            selects_finished: self.selects_finished,
+            select_busy: self.select_job.is_some(),
+            target: [self.renderer.width, self.renderer.height],
+            frame_cpu,
+            refresh_timings: &self.refresh_timings,
+        });
+        if request.reload {
+            self.reload();
+        }
+        if let Some(ordinal) = request.commit {
+            self.perf_commit(ordinal);
+        }
+        if let Some(ordinal) = request.select {
+            match self.perf_ray(ordinal) {
+                Some(ray) => self.start_select(ray),
+                // Nothing to click on: count it as answered so the run goes on.
+                None => self.selects_finished += 1,
+            }
+        }
+        if let Some(ordinal) = request.cancel {
+            // What Esc does, then the next click.
+            self.invalidate_select();
+            self.editor.deselect();
+            self.props.clear();
+            match self.perf_ray(ordinal + 1) {
+                Some(ray) => self.start_select(ray),
+                None => self.selects_finished += 1,
+            }
+        }
+        if request.orbit
+            && let Err(e) = self.camera.navigate([0.01, 0.0], [0.0; 2], 0.0)
+        {
+            self.error = Some(e.to_string());
+        }
+        if let Some([width, height]) = request.resize {
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(width, height)));
+        }
+        if request.repaint_now {
+            ctx.request_repaint();
+        }
+        if let Some(after) = request.wake_after {
+            ctx.request_repaint_after(after);
+        }
+        if let Some(finished) = request.finished {
+            let _ = report.send(finished);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
+        self.perf = Some((run, report));
+    }
+
     fn tools_panel(&mut self, ui: &mut egui::Ui) {
         ui.heading("Create");
         ui.horizontal(|ui| {
@@ -1247,8 +1526,9 @@ impl App {
             ui.selectable_value(&mut self.tools.active, ToolKind::Member, "Member");
         });
         ui.label("Dimensions in mm.");
-        let materials = self.tools.definitions.materials.clone();
-        let profiles = self.tools.definitions.profiles.clone();
+        // Borrowed beside the form (disjoint fields), never copied: the panel is laid out in every
+        // frame the window draws.
+        let definitions = &self.tools.definitions;
         match self.tools.active {
             ToolKind::Plate => {
                 let form = &mut self.tools.plate;
@@ -1261,7 +1541,7 @@ impl App {
                     "plate-material",
                     "Material",
                     &mut form.material,
-                    &materials,
+                    &definitions.materials,
                     false,
                 );
             }
@@ -1290,7 +1570,7 @@ impl App {
                     "member-profile",
                     "Profile",
                     &mut form.profile,
-                    &profiles,
+                    &definitions.profiles,
                     true,
                 );
                 choice_combo(
@@ -1298,22 +1578,26 @@ impl App {
                     "member-material",
                     "Material",
                     &mut form.material,
-                    &materials,
+                    &definitions.materials,
                     false,
                 );
-                if profiles.is_empty() {
+                if definitions.profiles.is_empty() {
                     ui.label("The store has no profile definition yet (beamcraft define-profile).");
                 }
             }
         }
-        let store = self.source.store.clone();
         let busy = self.tools.busy();
+        let store = &self.source.store;
+        // Whether the staged command is still what the form produces; preparing it builds the
+        // whole argument list, so it is asked once per frame unless a button acted.
+        let mut fresh = false;
+        let (mut commit, mut cancelled) = (false, false);
         ui.horizontal(|ui| {
             if ui
                 .add_enabled(!busy, egui::Button::new("Preview"))
                 .clicked()
             {
-                match self.tools.preview(&store) {
+                match self.tools.preview(store) {
                     Ok(_) => self.tool_note = None,
                     Err(e) => {
                         self.tools.cancel();
@@ -1321,13 +1605,8 @@ impl App {
                     }
                 }
             }
-            let can_commit = self.tools.can_commit(&store);
-            if ui
-                .add_enabled(can_commit, egui::Button::new("Commit"))
-                .clicked()
-            {
-                self.start_commit();
-            }
+            fresh = self.tools.can_commit(store);
+            commit = ui.add_enabled(fresh, egui::Button::new("Commit")).clicked();
             if ui
                 .add_enabled(
                     self.tools.staged().is_some() && !busy,
@@ -1337,10 +1616,18 @@ impl App {
             {
                 self.tools.cancel();
                 self.tool_note = Some(Ok("Cancelled; nothing was published.".into()));
+                cancelled = true;
             }
         });
+        if commit {
+            self.start_commit();
+        }
         if let Some(staged) = self.tools.staged() {
-            let current = self.tools.can_commit(&store);
+            let current = if commit || cancelled {
+                self.tools.can_commit(&self.source.store)
+            } else {
+                fresh
+            };
             ui.label(format!(
                 "Preview: Commit runs `beamcraft` with exactly these {} arguments, one per line (not a shell command line). The engine builds the shape then; there is no geometry preview.",
                 staged.args.len()
@@ -1381,19 +1668,19 @@ impl App {
         match &self.loaded {
             Some(l) => {
                 let pin = l.snapshot.pin();
-                let (meshes, instances) = l.scene.counts();
+                let (meshes, instances) = l.summary.counts();
                 let revision = pin.revision().to_string();
                 ui.label(format!(
                     "Revision {}… generation {}",
                     revision.get(..12).unwrap_or(&revision),
                     pin.generation()
                 ));
-                ui.label(format!("Elements: {}", l.scene.elements));
+                ui.label(format!("Elements: {}", l.summary.elements));
                 ui.label(format!("Meshes: {meshes} (instances: {instances})"));
-                ui.label(format!("Triangles: {}", l.scene.triangles));
+                ui.label(format!("Triangles: {}", l.summary.triangles));
                 let size = [0, 1, 2].map(|a| {
-                    f64::from(l.scene.max.get(a).copied().unwrap_or(0.0))
-                        - f64::from(l.scene.min.get(a).copied().unwrap_or(0.0))
+                    f64::from(l.summary.max.get(a).copied().unwrap_or(0.0))
+                        - f64::from(l.summary.min.get(a).copied().unwrap_or(0.0))
                 });
                 ui.label(format!(
                     "Bounds: {:.3} x {:.3} x {:.3} m (model units: mm)",
@@ -1415,7 +1702,8 @@ impl App {
 }
 
 impl eframe::App for App {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        STATS.frames.add(1);
         let now = Instant::now();
         let dt = now.duration_since(self.last).as_secs_f32();
         self.last = now;
@@ -1436,6 +1724,7 @@ impl eframe::App for App {
         self.poll_status();
         self.poll_select();
         self.poll_reload();
+        self.perf_step(ui.ctx(), frame.info().cpu_usage);
         if !wants_text && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             // Esc closes the publish dialog first; it clears the selection only when none is open.
             if self.publisher.phase() == Phase::Confirming {
@@ -1450,7 +1739,7 @@ impl eframe::App for App {
             self.reload();
         }
         if fit && let Some(l) = &self.loaded {
-            let (target, extent) = l.scene.framing();
+            let (target, extent) = l.summary.framing();
             if let Err(e) = self.camera.fit(target, extent, self.aspect()) {
                 self.error = Some(e.to_string());
             }
@@ -1518,7 +1807,7 @@ impl eframe::App for App {
                                 [response.rect.min.x, response.rect.min.y],
                                 [response.rect.width(), response.rect.height()],
                             )
-                            && let Some(ray) = ray_through(&view, ndc, l.scene.origin_mm)
+                            && let Some(ray) = ray_through(&view, ndc, l.summary.origin_mm)
                         {
                             picked = Some(ray);
                         }
@@ -1536,7 +1825,133 @@ impl eframe::App for App {
 
 #[cfg(test)]
 mod tests {
-    use super::{needs_refit, target_size, volume_note};
+    use super::{App, Source, needs_refit, target_size, volume_note};
+    use crate::Error;
+    use crate::perf::RefreshTiming;
+    use crate::render::Gpu;
+    use crate::scene::Scene;
+    use crate::source::{Refreshed, Reloaded};
+    use crate::stats::STATS;
+    use crate::tools::ToolError;
+    use beamcraft_engine::synthetic::plate_scene;
+    use beamcraft_engine::{Limits, Representation, ViewPin, ViewSnapshot};
+    use beamcraft_model::digest::Sha256;
+    use eframe::egui_wgpu;
+    use std::sync::atomic::Ordering;
+
+    /// The window state on the headless adapter, with no window and no CLI behind it: the
+    /// refresh it starts fails and is never read, and a test hands it results itself. `None`,
+    /// saying so, without a native adapter.
+    fn headless() -> Option<App> {
+        let gpu = match pollster::block_on(Gpu::headless()) {
+            Ok(gpu) => gpu,
+            Err(Error::NoAdapter) => {
+                eprintln!("SKIP window test: no native wgpu adapter");
+                return None;
+            }
+            Err(e) => panic!("adapter or device failed: {e}"),
+        };
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let renderer =
+            egui_wgpu::Renderer::new(&gpu.device, format, egui_wgpu::RendererOptions::default());
+        // eframe's own constructor for windowless tests (doc-hidden; eframe is pinned).
+        let mut cc = eframe::CreationContext::_new_kittest(egui::Context::default());
+        cc.wgpu_render_state = Some(egui_wgpu::RenderState {
+            adapter: gpu.adapter,
+            available_adapters: Vec::new(),
+            instance: wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle()),
+            device: gpu.device,
+            queue: gpu.queue,
+            target_format: format,
+            renderer: std::sync::Arc::new(egui::mutex::RwLock::new(renderer)),
+            surface_config: egui_wgpu::SurfaceConfig::LOW_LATENCY,
+        });
+        let missing = std::env::temp_dir().join("beamcraft-window-test-no-cli");
+        let source = Source {
+            store: missing.clone(),
+            cli: missing,
+            workspace: None,
+            published: None,
+            samples: None,
+        };
+        Some(App::new(&cc, source).unwrap())
+    }
+
+    /// A refresh that read `scene`.
+    fn reloaded(scene: Result<Refreshed, Error>) -> Reloaded {
+        Reloaded {
+            scene,
+            definitions: Err(ToolError::local("NOT_FOUND", "no store in this test")),
+            timing: RefreshTiming::default(),
+        }
+    }
+
+    /// A refresh whose scene is `plates` synthetic kernel plates.
+    fn refreshed(plates: u32) -> Reloaded {
+        let pin = ViewPin::new(Sha256::digest(b"revision").unwrap(), 1);
+        let snapshot =
+            ViewSnapshot::build(pin, plate_scene(plates, false).unwrap(), &Limits::default())
+                .unwrap();
+        let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+        reloaded(Ok(Refreshed::New(Box::new((snapshot, scene)))))
+    }
+
+    /// Hands `reloaded` to the window as the result of the refresh in flight.
+    fn deliver(app: &mut App, reloaded: Reloaded) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(reloaded).unwrap();
+        app.reload_job = Some(rx);
+        app.poll_reload();
+    }
+
+    #[test]
+    fn a_lookup_that_is_given_up_is_told_to_stop() {
+        let Some(mut app) = headless() else { return };
+        let (_tx, rx) = std::sync::mpsc::channel();
+        let cancel = app.begin_select(rx);
+        assert!(!cancel.load(Ordering::Relaxed));
+        // What Esc, an accepted edit and a newer lookup do.
+        app.invalidate_select();
+        assert!(cancel.load(Ordering::Relaxed), "its CLI process is stopped");
+        assert!(app.select_job.is_none());
+    }
+
+    #[test]
+    fn the_snapshot_on_screen_again_is_neither_uploaded_nor_drawn() {
+        let Some(mut app) = headless() else { return };
+        deliver(&mut app, refreshed(2));
+        let token = app.loaded.as_ref().map(|l| l.snapshot.token().clone());
+        let swaps = STATS.reloads_applied.get();
+        let uploads = STATS.uploads.get();
+        deliver(&mut app, reloaded(Ok(Refreshed::Unchanged)));
+        assert_eq!(
+            app.loaded.as_ref().map(|l| l.snapshot.token().clone()),
+            token
+        );
+        // Nothing was built, uploaded or swapped for the snapshot already on screen.
+        assert_eq!(STATS.reloads_applied.get(), swaps);
+        assert_eq!(STATS.uploads.get(), uploads);
+        // The scene keeps no display buffer once it is on the device.
+        assert!(app.loaded.is_some());
+    }
+
+    #[test]
+    fn a_refreshed_scene_is_drawn_again_even_when_its_framing_is_unchanged() {
+        let Some(mut app) = headless() else { return };
+        deliver(&mut app, refreshed(2));
+        assert!(app.loaded.is_some());
+        let framed = app.framed;
+        let swaps = STATS.reloads_applied.get();
+        // The same bounds again, as after an edit inside them: the camera stays where the user
+        // left it, and the new scene still replaces the old one.
+        deliver(&mut app, refreshed(2));
+        assert_eq!(app.framed, framed);
+        assert_eq!(
+            STATS.reloads_applied.get(),
+            swaps + 1,
+            "the new scene must replace the old image"
+        );
+    }
 
     #[test]
     fn the_render_target_is_clamped_as_a_whole() {

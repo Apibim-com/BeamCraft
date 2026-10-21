@@ -97,9 +97,15 @@ an interrupted commit. Read commands (`plate-inspect`, `definitions`, `numbering
 
 `beamcraft-ui` does not open USD. It starts `beamcraft view-export` as a separate process, receives
 a bundle (element-local meshes, placements, bounds, ids), re-validates it, and draws each distinct
-mesh once with one instance per element. A click becomes a ray, and `beamcraft pick` decides what
-was hit. Create, move, copy, delete, property edits, undo and publish run the same CLI commands a
-user would type; the window shows the result or the engine's refusal as it is.
+mesh once with one instance per element. Since the issue 26 follow-up one refresh is one process
+and one verified inspection: `--with-definitions true` frames the store's definitions of that
+inspection before the bundle, the window keeps the scene's summary instead of its expanded display
+buffers and reuses the meshes the device already holds, and a click runs the engine's pick in this
+process on the snapshot on screen, reading the element's details from one
+`plate-inspect --element ID` ([issue 26
+follow-up](design/issue-26-viewport-performance.md)). Create, move, copy, delete, property edits,
+undo and publish run the same CLI commands a user would type; the window shows the result or the
+engine's refusal as it is.
 
 ## Geometry
 
