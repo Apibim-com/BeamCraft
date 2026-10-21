@@ -36,7 +36,19 @@ indexing_slicing = "warn"
 [profile.dev.package.beamcraft-model]
 opt-level = 3
 
+# Release builds for development: 16 codegen units per crate and no LTO, not even within a
+# crate, so a large crate is code-generated on several cores and no binary is optimized again as
+# a whole when it is linked. With one codegen unit and ThinLTO across crates (the `dist` settings
+# below), the largest dependency, `openusd`, is code-generated on a single core, and a cold build
+# of both apps needs 25 to 30 percent more CPU time and ends with slow, mostly serial links.
 [profile.release]
+codegen-units = 16
+lto = "off"
+strip = "symbols"
+
+# Release packages (`.github/workflows/release.yml`, `packaging/package.sh`): ThinLTO across
+# crates and one codegen unit per crate, for the smallest and fastest binaries.
+[profile.dist]
+inherits = "release"
 lto = "thin"
 codegen-units = 1
-strip = "symbols"
