@@ -6,6 +6,13 @@ Open questions are at the end.
 
 ## 2026-10-20
 
+- **Project organization.** Layers are split by discipline and optional zone, named
+  `<code>[_<zone>]_<discipline>.usda` with the discipline codes `Coord`, `Grids`, `KM`, `KMD`, `KR`, `AR`,
+  `AI`, `GP`, `EOM`, `VK`, `OV`, `SS`, `TH`, each present only when the project has that discipline;
+  no program version in names. The coordination layer is
+  the root and carries the project code, name, organization and zones. A team may instead keep one
+  project per zone and coordinate them from a project on top. Levels are elements in the `Grids`
+  layer, not layers of their own. Recorded in the architecture note; tasks U19 to U21.
 - **No separate USD worker process.** USD is read and written in the main process by the pure-Rust
   layer engine. The worker existed to isolate the C++ SDK, whose crashes cannot be caught; with
   `openusd` a bad file is an ordinary error, own project files are verified by SHA-256 before

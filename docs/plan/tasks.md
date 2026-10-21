@@ -24,7 +24,7 @@ Status as of 2026-10-20, `master` at `d456670`. New tasks are added here in a do
 | F07 / M | Original synthetic fixtures | — | Generator and manifest of our own test bodies, provenance, analytical references | No vendor asset; references separate from unverified cases; stable fixture IDs | done (`tests/fixtures/f07`) |
 | F08 / M | [Module boundaries](../contracts/f08-module-boundaries-v0.1.md) | F04, F05, F06, F07 | Crate layout and allowed dependencies; CI targets | Pure crates pass the WASM check; native host isolated; checker in CI | living document; checker in CI |
 | F09 / M | Clean-room separation for the kernel | F01, F02 | Admission rules, requirement provenance, a package without source-derived material | Independent review of the specification passed | done, then retired by decision 2026-10-20 |
-| F10 / M | [Domain vocabulary and discipline modules](../contracts/f10-domain-vocabulary-v0.1.md) | F04, F08 | Common element types and attributes, namespaces, ownership, Opening/hosted-in relations, rule catalogue, discipline-module contract | Steel is the only implemented module; every rule has a positive and a negative case | draft; frozen once its open issue is closed |
+| F10 / M | [Domain vocabulary and discipline modules](../contracts/f10-domain-vocabulary-v0.1.md) | F04, F08 | Common element types and attributes, namespaces, ownership, Opening/hosted-in relations, rule catalogue, discipline-module contract | Steel is the only implemented module; every rule has a positive and a negative case | frozen 0.1.0 |
 | F11 / M | [USD layer-engine decision](../design/layer-engine-decision-v0.1.md) | F03, F05, F08 | Comparison of SDK worker, own subset, `openusd` crate and hybrid | Recommendation marked as a proposal to the owner | done: variant C chosen |
 
 ## N: spikes and evaluations
@@ -62,6 +62,10 @@ Time-boxed research with a report; never a production gate.
 | U15 / M | Per-element derived layers | U06, P04 | Unchanged elements are not rewritten on every edit | Editing one element of 1000 adds about one element's size to the store; measured before and after | open |
 | U16 / M | Prim naming rule | U02, U03 | Paths by the [naming rule](../architecture.md#prim-hierarchy-and-naming-rule): category folders, three-letter prefixes, discipline folders; schema, layer engine, engine, CLI, fixtures | Every element and definition is written and read at its rule path; no store of the old layout is migrated; tests and fixtures regenerated | open |
 | U17 / M | Remove the USD worker process | U01, U04 | Delete `beamcraft-usd-worker`, its host supervision, the F05 wire rules and contract; USD is read in the main process ([issue #146](https://github.com/Apibim-com/BeamCraft/issues/146)) | No process is spawned to read USD; a corrupt or hostile file gives a stable error code, never a panic or hang | open |
+| U18 / M | Project upgrade | U06 | Explicit "import into the current version" of a project written on an older vocabulary line; the result is a new revision, the original stays in the history (F10 section 4.6) | Older projects open read-only; upgrade migrates every element; nothing is upgraded silently | open |
+| U19 / M | Discipline and zone layers, active discipline | U02, P06 | One authored layer per discipline and zone, named `<code>[_<zone>]_<discipline>.usda`; each workspace reads any of them read-only and edits one active discipline; publishing writes only that layer (F10 section 7.4, `DV-MOD-005`) | A publication that touches another discipline is refused with `FOREIGN_READ_ONLY` | open |
+| U20 / S | Project metadata and zones | U06, D1 | `bim:projectCode`, `bim:projectName`, `bim:organization`, `bim:zones` in the coordination layer; a part's zone decides its layer; CLI to set and show them | Metadata survive every revision and workspace fork; checkout writes files named by the rule | open |
+| U21 / M | Coordination of several projects | U20, R01 | A coordination project composes other projects' coordination layers read-only (one project per zone) | Opening the coordination project shows every zone; nothing in a composed project is written | open |
 
 ## G: geometry kernel
 
@@ -95,6 +99,7 @@ Time-boxed research with a report; never a production gate.
 | P-Mass / M | Mass from the section area | A07 | Mass = area × length × density; area from the catalogue or computed exactly | Source of the area visible; see decision 2026-10-18 | merged |
 | P-Degenerate / M | Degenerate element state | G08, F04 amendment | A wrongly built element is kept without derived data and recomputed once fixed (decision A-2 D-7) | — | open |
 | P10 / M | Rotated placement | G08 | Engine and kernel accept any rigid placement (translation and rotation); world bounds, picking, snaps, quantities and IFC use it; the view snapshot carries the full transform (F06 amendment); cut points of every element in its local frame | A plate with a rotated placement is created, measured, picked and exported end to end; a rotation never changes shape or mass keys | open |
+| P11 / M | Instance copy | P05, F04 next version | A copy that shares the source's definition (shape inputs, profile, material, operations); editing it changes every instance; each instance keeps its own ID, placement, level and relationships (F10 section 5.3) | Editing the shared definition updates all instances in one transaction; a duplicate stays independent | open |
 
 ## R: references
 

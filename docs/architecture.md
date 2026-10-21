@@ -161,16 +161,86 @@ people come together is Part 4.
 
 ## The layers
 
+Today:
+
 ```text
-root.usda        units (metersPerUnit = 0.001, upAxis = Z), ProjectId, schema digest,
-  │              subLayers = [authored.usda, derived.usda]
-  ├─ authored.usda   what the user decided: elements, parameters, placements, relationships
-  └─ derived.usda    what the program computed: meshes, volumes, masses, their signatures
+root.usda                   units (metersPerUnit = 0.001, upAxis = Z), ProjectId, schema digest
+├─ authored.usda            what the user decided: elements, parameters, placements, relationships
+├─ derived.usda             what the program computed: meshes, volumes, masses, their signatures
+└─ external/<sha256>.usda   a foreign model, read-only, one file per attached source
 ```
 
 `authored.usda` is stronger than `derived.usda`. `derived.usda` only adds `over` opinions under the
-same element paths, so deleting it loses nothing that cannot be recomputed. A read-only foreign
-model, when attached, is a third role, `external`, stored byte for byte and never written.
+same element paths, so deleting it loses nothing that cannot be recomputed. A foreign model is
+stored byte for byte and never written; our reference wrapper composes it below its own prim.
+
+**Rule for splitting into layers.** A layer is a boundary of **who may write** (a discipline, a
+design option, views), of **origin** (authored by a person or computed by the program) and of
+**weight** (heavy geometry kept apart). The structure of the model (assembly, level, mark) is data
+and relationships inside the layers and never becomes a file: it changes all the time, and one
+part belongs to several groupings at once.
+
+Planned:
+
+```text
+<code>_Coord.usda                  coordination root (see "Project organization" below)
+├─ <code>[_<zone>]_<discipline>.usda  one authored layer per discipline and zone; a workspace
+│                                  writes only its active discipline (U19)
+├─ options/<option>.usda           design options as delta layers over the base (O01–O04)
+├─ derived/<element or group>.usda derived data in parts, so one edit does not rewrite all (U15),
+│                                  heavy geometry as payloads loaded on demand (U10)
+├─ assets/<sha256>.usda            shared geometry of instances, stored once (U11)
+├─ views.usda, review.usda         saved views and review notes (W01, W02)
+├─ lighting.usda                   optional lighting for USD viewers (U13)
+└─ external/<sha256>.usda          foreign models, read-only
+```
+
+## Project organization and layer names
+
+A project is organized the way its team works: by discipline, and optionally by zone (a building,
+block or section such as `K1`, `K2`). Each discipline of each zone is its own authored layer, owned
+by one team; the coordination layer composes them. Zones are optional: a small project has none,
+and a large one may instead be split into one project per zone with a coordination project on top.
+
+**Names.** `<code>[_<zone>]_<discipline>.usda`, with the project code, the optional zone and the
+discipline code. No program version is part of a name; the format version is stored inside. A
+project has layers only for the disciplines it contains: a concrete building without steel has no
+`KM` or `KMD` layer.
+
+| Code | Content |
+|------|---------|
+| `Coord` | Coordination: the root layer with the project metadata and the list of all layers |
+| `Grids` | Axes and levels |
+| `KM`, `KMD` | Steel structures, design or detailing; written by BeamCraft |
+| `KR` | Reinforced concrete |
+| `AR`, `AI`, `GP` | Architecture, interiors, site plan |
+| `EOM`, `VK`, `OV`, `SS`, `TH` | Electrical, water and drainage, HVAC, low-current systems, process |
+
+Example, project `2401-DEMO` with two zones:
+
+```text
+2401-DEMO_Coord.usda             coordination: metadata, list of every layer
+├─ 2401-DEMO_K1_Grids.usda       axes and levels of K1
+├─ 2401-DEMO_K2_Grids.usda       axes and levels of K2
+├─ 2401-DEMO_K1_KM.usda          steel of K1, written by BeamCraft
+├─ 2401-DEMO_K1_KM.derived.usda  meshes and quantities computed for it
+├─ 2401-DEMO_K2_KM.usda          steel of K2
+├─ 2401-DEMO_K1_AR.usda          architecture of K1, read-only
+└─ …
+```
+
+The same split as one project per zone: `2401-DEMO-K1_Coord.usda` and `2401-DEMO-K2_Coord.usda` are
+complete projects, and a coordination project `2401-DEMO_Coord.usda` composes both read-only.
+
+**Project metadata** in the coordination layer (`customLayerData`): `bim:projectId`,
+`bim:projectCode` (`2401-DEMO`), `bim:projectName` (`Demo warehouse`), `bim:organization` (`ACME`) and
+`bim:zones` (`["K1", "K2"]`, empty for a project without zones).
+
+Inside the store, layers are still blobs named by their SHA-256; these names are the names the
+manifest gives them and the names a checkout of a revision writes to disk.
+
+**Status:** the code still writes `root.usda`, `authored.usda` and `derived.usda` without zones,
+codes or metadata other than the ProjectId (tasks U19, U20, U21).
 
 # Part 3. Prim structure
 

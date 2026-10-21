@@ -1,6 +1,6 @@
 # F10: domain vocabulary and discipline-module contract, version 0.1.0
 
-Status: **draft 0.1.0.** Frozen once its open questions ([issue #143](https://github.com/Apibim-com/BeamCraft/issues/143)) are closed.
+Status: **frozen 0.1.0** (2026-10-20). Changes only by a new version.
 
 This contract fixes **what an element, a relationship and an opening are called and what they
 carry**, so that more than one discipline can read and write the same project without private
@@ -65,8 +65,9 @@ list or catalogue is copied. IFC export is a separate adapter (E01).
 
 The registry is **closed** for a vocabulary version. A kind is a lowercase token stored in
 `bim:elementKind` (F04 section 4). Adding or removing a kind
-needs a new vocabulary version (section 4.5). An unknown kind in an authoring request is
-`DV-KIND-001`; in loaded content it is `DV-KIND-002`.
+needs a new vocabulary version (section 4.5). Commands are typed per kind, so BeamCraft offers no
+way to author an unknown kind; `DV-KIND-001` only guards the API against a malformed request. An
+unknown kind in loaded content is `DV-KIND-002`.
 
 | Kind | Owner | Status | Family |
 |------|-------|--------|--------|
@@ -121,8 +122,8 @@ that still has parts cannot be deleted. Undefined: assembly types, multi-element
 **`connection`** (owner steel, path `/World/Steel/Connections/CON_<uuid>`). An element with no
 body that joins parts with one ordered `connects` record: exactly two distinct parts (plate, beam
 or column), the main part first. The parts are only read. A connected part cannot be deleted while
-the connection exists. A connection is either a weld or a bolt group, told apart by its attribute
-group:
+the connection exists. Required `steel:connection:type`: `weld` or `bolt_group`, which also
+names its attribute group:
 
 - **Weld:** `steel:weld:type` (`fillet`), `steel:weld:sizeMm`, `steel:weld:location` (`workshop` or
   `site`), `steel:weld:side` (`arrow`, `other` or `both`). No value has a default.
@@ -177,7 +178,7 @@ ones. "Undefined" lists what this contract deliberately does not say.
 | `bim:name` | Label, 1 to 256 bytes, no control characters | owning module |
 | `bim:elementKind` | Kind token of section 2.1, immutable | owning module, at creation |
 | `bim:discipline` | Owner token, immutable (new) | engine, from the authoring module |
-| `bim:lifecycle` | `active` or `deactivated` (new) | owning module |
+| `bim:isDeactivated` | Boolean, `false` when absent | owning module |
 | `bim:schemaVersion` | Vocabulary version that wrote the element, `0.1.0` here | engine |
 | `bim:geometryMode` | As F04 section 4 | owning module |
 | `bim:createdBy` | As F04 section 4, from trusted context | engine |
@@ -185,19 +186,19 @@ ones. "Undefined" lists what this contract deliberately does not say.
 | Placement | Rigid pose, F04 section 3 | owning module |
 | `bim:material` | Optional ContentDigest of a pinned immutable definition | owning module |
 
-Rules: identity `DV-BASE-001`, `DV-BASE-002`; label `DV-BASE-003`, `DV-LIM-001`; lifecycle
+Rules: identity `DV-BASE-001`, `DV-BASE-002`; label `DV-BASE-003`, `DV-LIM-001`; deactivation
 `DV-BASE-004`; material `DV-BASE-005`, `DV-BASE-006`; placement `DV-LIM-002`, `DV-LIM-003`;
 a missing required attribute `DV-ATTR-001`. An element label is never an identity: renaming keeps
 the ID and the prim path (F04 section 2).
 
-### 3.2 Lifecycle
+### 3.2 Deactivation
 
-`active` is the state of every new element. `deactivated` means *retained but out of play*: the
-element, its identity and its relationships stay in the project, and derived results may treat it
-as absent. It is not `deleted`; delete is the F04 `DeleteElement` command and removes the element.
-A relationship whose target is `deactivated` stays valid and is reported (`DV-REL-012`). F04 has no
-command that changes `bim:lifecycle`, so in 0.1.0 a steel element is always created `active` and
-`deactivated` appears only in loaded content.
+Every new element has `bim:isDeactivated = false`. A deactivated element (`true`) is *retained but
+out of play*: the element, its identity and its relationships stay in the project, and derived
+results (numbering, IFC, BOM) leave it out. It is not deleted; delete is the F04 `DeleteElement`
+command and removes the element. A relationship whose target is deactivated stays valid and is
+reported (`DV-REL-012`). The property is set through `UpdateElement` (`is_deactivated`) in a later
+command version; until then it appears only in loaded content.
 
 ### 3.3 What only a discipline may add
 
@@ -272,6 +273,10 @@ The vocabulary version is `MAJOR.MINOR.PATCH`, stored per element in `bim:schema
   removed only with the next line. Policy only; 0.1.0 deprecates nothing.
 - **Migration.** Moving content to another line is an explicit, reviewed step. No reader rewrites
   `bim:schemaVersion` on its own.
+- **Project upgrade.** A project written on an older line is opened read-only and can be upgraded
+  explicitly ("import into the current version"): the program migrates every element to its own
+  line and publishes the result as a new revision. The original revision stays untouched in the
+  history; nothing is upgraded silently.
 
 A reader mutates an element only if the element's version is on the reader's line and is not newer
 than the reader's own (`DV-VER-002`). A newer element is read-only and its unknown attributes are
@@ -342,8 +347,14 @@ the decision fields of section 5.4.
   live. If the incoming index cannot be completed the answer is `DV-REL-010`, never "no links".
   Deleting an element removes its own outgoing records with it. Deleting an `accepted`
   penetration is rejected; the proposer must withdraw it first (`DV-PEN-007`).
-- **Copy.** The first F04 `CopyElement` takes one source. A source that has element-to-element
-  relationships is refused rather than copied incompletely (`DV-REL-011`).
+- **Copy.** There are two kinds of copy:
+  - **Duplicate** (F04 `CopyElement`): an independent element with a fresh ID and the source's
+    inputs; editing either never changes the other. It keeps the source's `level`; it does not join
+    the source's assembly and gets none of its connections (`DV-REL-011`).
+  - **Instance:** a new element that shares the source's definition (shape inputs, profile,
+    material and operations); editing the shared definition changes every instance. Each instance
+    keeps its own ID, placement, level and relationships. The command comes with a later command
+    version.
 - **Deactivated targets** are reported, not rejected (`DV-REL-012`).
 
 ### 5.4 The shared penetration request
@@ -386,7 +397,7 @@ discipline is `DV-PEN-002`.
 | From | To | Actor | Condition |
 |------|----|-------|-----------|
 | (creation) | `proposed` | proposer | request fields complete |
-| `proposed` | `accepted` | host | host exists and is `active` (`DV-PEN-004`) |
+| `proposed` | `accepted` | host | host exists and is not deactivated (`DV-PEN-004`) |
 | `proposed` | `rejected` | host | reason code from the closed list (`DV-PEN-006`) |
 | `proposed` | `withdrawn` | proposer | none |
 | `rejected` | `proposed` | proposer | revised request, `stateSeq` rises |
@@ -559,7 +570,7 @@ when its triggering content or operation is present, as defined in 6.1.
 | DV-MOD-002 | error | model | H M | INTEGRITY_ERROR | now |
 | DV-MOD-003 | error | model | H M | INVALID_ARGUMENT | now |
 | DV-MOD-004 | error | model | H M | INVALID_ARGUMENT | now |
-| DV-MOD-005 | error | model | C H M | PERMISSION_DENIED | now |
+| DV-MOD-005 | error | model | C H M | FOREIGN_READ_ONLY | now |
 | DV-MRG-001 | error | post_merge | M | DEPENDENCY_CONFLICT | now |
 
 Rule text:
@@ -589,8 +600,8 @@ Rule text:
 - **DV-BASE-002** Two placed elements in one model carry the same `bim:id`.
 - **DV-BASE-003** `bim:name` is empty or contains a control character U+0000-001F or U+007F (F04
   section 3).
-- **DV-BASE-004** `bim:lifecycle` is not `active` or `deactivated`. A new element is created
-  `active`.
+- **DV-BASE-004** `bim:isDeactivated` is present and not a boolean. A new element is created with
+  `false`.
 - **DV-BASE-005** A material reference is not a ContentDigest: 64 lowercase hexadecimal digits
   (F04 section 2).
 - **DV-BASE-006** A well-formed material ContentDigest does not resolve to a pinned immutable
@@ -640,9 +651,9 @@ Rule text:
   No cascade or cross-discipline record edit is implicit.
 - **DV-REL-010** The incoming-relationship index needed to decide a delete is incomplete or
   unavailable.
-- **DV-REL-011** A copy source has element-to-element relationships. The first copy supports none
-  (F04 section 7).
-- **DV-REL-012** A live relationship target is `deactivated`. The record stays valid; the target is
+- **DV-REL-011** A duplicate copies a relationship other than `level`: it never joins the source's
+  assembly and never takes its connections.
+- **DV-REL-012** A live relationship target is deactivated. The record stays valid; the target is
   listed.
 - **DV-REL-013** An authored relationship role is present but does not match
   `[a-z][a-z0-9_]{0,31}`. A syntactically valid `references` role is accepted even when unknown.
@@ -654,7 +665,7 @@ Rule text:
 - **DV-PEN-003** The transition's expected `stateSeq` differs from the stored value (a concurrent
   change), or merge provenance contains competing transitions from the same sequence. Check at
   C, H and M; a valid-looking final state does not erase a sequence conflict.
-- **DV-PEN-004** `accepted` is requested while the host element is missing or `deactivated`.
+- **DV-PEN-004** `accepted` is requested while the host element is missing or deactivated.
 - **DV-PEN-005** The host discipline edits a request field, or the proposer edits a decision
   field.
 - **DV-PEN-006** A transition to `rejected` has no reason code, or a code outside the closed list.
@@ -671,9 +682,8 @@ Rule text:
 - **DV-MOD-003** A module manifest declares a dependency on another module.
 - **DV-MOD-004** A module manifest registers the shared namespace `bim`, a reserved token, or a
   namespace that another module already registered.
-- **DV-MOD-005** A change to the project's enabled-module list lacks owner-level permission
-  from trusted context. A discipline token or module ownership does not grant that permission.
-  U02 defines storage and authoring; this rule specifies permission only, not an implementation.
+- **DV-MOD-005** A publication changes content of a discipline other than the workspace's active
+  discipline.
 - **DV-MRG-001** A merged result or its recorded operations violate a definite error-severity
   rule. The host re-runs all applicable catalogue rules and ignores any client-reported pass.
   Unavailable inputs alone do not prove a violation; they block acceptance as `incomplete` under
@@ -690,7 +700,7 @@ defines no geometry and no evaluation; clash checks are a later task on top of F
 
 ### 7.1 What a module provides
 
-A module is a unit of one application, not a separate program. It provides a **manifest**:
+A module is a unit of one application inside the core crates, not a separate program or crate. It provides a **manifest**:
 
 1. `module`: its token, equal to its discipline and namespace token (section 4.2).
 2. `version` of the module, and `requires_vocabulary`: the lowest vocabulary version it needs
@@ -720,18 +730,19 @@ format, filesystem, process or network access; or accept raw USD paths or attrib
 `module -> engine -> model -> geom` (and `kernel` where F08 places it). Modules never depend on
 each other. The shell (the application binary and later the UI) never depends on a module's
 internals: it reaches a module only through the module interface that the engine defines, and
-learns its panels and tools from the manifest. Concretely this needs a module crate above the
-engine layer; section 10 proposes the F08 edit and flags that it is not applied.
+learns its panels and tools from the manifest. Modules live inside the core crates (`model`,
+`kernel`, `engine`); a module is a boundary of namespaces, kinds, commands and rules, not a
+separate crate.
 
 ### 7.4 Enabled and disabled
 
-A module is **enabled** for a project when the project's module list includes it and the host has
-it installed, and the selected vocabulary version is on the compatibility line of its minimum and
-at least that minimum (`DV-VER-003`). U02 defines the authoring design and storage location of
-the project's enabled-module list. Changing that list requires owner-level permission from trusted
-context (`DV-MOD-005`); neither a discipline token nor module ownership grants it. This is a U02
-contract pointer, not a storage design or implemented permission mechanism. A module that is
-absent, not installed or refused by negotiation is **disabled**.
+Disciplines are chosen per person, not per project. Each person's workspace takes any of the
+project's disciplines, all of them read-only except one **active discipline**, the one that person
+edits. Publishing a workspace changes only the content of its active discipline; content of other
+disciplines is never written by it (`DV-MOD-005`). A module is **enabled** in a workspace when the
+host has it installed and the selected vocabulary version is on the compatibility line of its
+minimum and at least that minimum (`DV-VER-003`). A module that is absent, not installed or
+refused by negotiation is **disabled**.
 
 For a project that contains elements of a disabled module:
 
@@ -809,7 +820,3 @@ F04 cases referenced:
 
 `F04-NEG-01`, `F04-NEG-03`, `F04-NEG-04`, `F04-NEG-07`, `F04-NEG-11`, `F04-NEG-12`, `F04-NEG-13`,
 `F04-NEG-15`, `F04-NEG-19`, `F04-NEG-22`, `F04-POS-03`, `F04-POS-05`, `F04-POS-08`, `F04-RAW-02`.
-
-## 10. Open questions
-
-Tracked in [issue #143](https://github.com/Apibim-com/BeamCraft/issues/143).
