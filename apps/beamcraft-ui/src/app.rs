@@ -2064,6 +2064,13 @@ mod tests {
         app.poll_reload();
     }
 
+    /// Serializes the tests that measure deltas of the process-global `STATS` counters:
+    /// stepped by parallel tests, a delta would count the other test's refreshes.
+    fn stats_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock().unwrap()
+    }
+
     #[test]
     fn a_lookup_that_is_given_up_is_told_to_stop() {
         let Some(mut app) = headless() else { return };
@@ -2078,6 +2085,7 @@ mod tests {
 
     #[test]
     fn the_snapshot_on_screen_again_is_neither_uploaded_nor_drawn() {
+        let _stats = stats_lock();
         let Some(mut app) = headless() else { return };
         deliver(&mut app, refreshed(2));
         let token = app.loaded.as_ref().map(|l| l.snapshot.token().clone());
@@ -2097,6 +2105,7 @@ mod tests {
 
     #[test]
     fn a_refreshed_scene_is_drawn_again_even_when_its_framing_is_unchanged() {
+        let _stats = stats_lock();
         let Some(mut app) = headless() else { return };
         deliver(&mut app, refreshed(2));
         assert!(app.loaded.is_some());
