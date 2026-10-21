@@ -3,20 +3,25 @@
 
 //! Running a `beamcraft` CLI command in a separate process for the create tools. The UI commits
 //! through the same command a user types, so the accepted revision is the engine's, never a copy
-//! made here. Output is read with a cap and the process is killed after a deadline.
+//! made here. Output is read with a cap and the process is killed after a deadline; a read-only
+//! lookup is also killed as soon as its answer is no longer wanted.
 
 use crate::edit::{
-    Edit, EditKind, Edited, ElementInfo, Ray, inspect_args, parse_edited, parse_element_info,
-    parse_pick, pick_args,
+    Edit, EditKind, Edited, ElementInfo, Ray, inspect_element_args, parse_edited,
+    parse_element_info, pick_in,
 };
 use crate::props::{Details, PropertyEdit, parse_details};
 use crate::publish::{Published, Status, parse_published, parse_status, status_args};
+use crate::stats::STATS;
 use crate::tools::{
     Created, Definitions, Prepared, ToolError, definitions_args, parse_created, parse_definitions,
 };
+use beamcraft_engine::ViewSnapshot;
+use beamcraft_model::id::ElementId;
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 /// The longest a command may run before it is killed.
@@ -25,6 +30,9 @@ pub const DEADLINE: Duration = Duration::from_secs(120);
 /// The most standard output read from one command.
 pub const MAX_OUTPUT: usize = 4 * 1024 * 1024;
 
+/// The cancel flag of a query nobody gives up.
+static NEVER: AtomicBool = AtomicBool::new(false);
+
 /// A finished process: its exit status (`None` when it was ended by a signal) and its output.
 #[derive(Debug)]
 pub struct Output {
@@ -32,6 +40,23 @@ pub struct Output {
     pub code: Option<i32>,
     /// Standard output, capped at [`MAX_OUTPUT`].
     pub stdout: Vec<u8>,
+}
+
+/// Counts a running CLI process for the perf counters until it is dropped.
+struct Active;
+
+impl Active {
+    fn new() -> Self {
+        STATS.cli_runs.add(1);
+        STATS.cli_active.add(1);
+        Self
+    }
+}
+
+impl Drop for Active {
+    fn drop(&mut self) {
+        STATS.cli_active.decrement();
+    }
 }
 
 fn drain(
@@ -65,6 +90,28 @@ pub fn run_capped(
     deadline: Duration,
     cap: usize,
 ) -> Result<Output, ToolError> {
+    run_cancellable(cli, args, deadline, cap, &NEVER)
+}
+
+/// Like [`run_capped`], and given up as soon as `cancel` is set: the process is killed (or never
+/// started) and the answer is `CANCELLED`. Only for read-only queries, whose answer can simply be
+/// dropped; a change command is never cancelled.
+pub fn run_cancellable(
+    cli: &Path,
+    args: &[String],
+    deadline: Duration,
+    cap: usize,
+    cancel: &AtomicBool,
+) -> Result<Output, ToolError> {
+    let cancelled = || {
+        ToolError::local(
+            "CANCELLED",
+            "the lookup was no longer wanted and was stopped",
+        )
+    };
+    if cancel.load(Ordering::Relaxed) {
+        return Err(cancelled());
+    }
     let mut command = Command::new(cli);
     command
         .args(args)
@@ -83,17 +130,30 @@ pub fn run_capped(
             format!("the beamcraft CLI could not be started ({})", e.kind()),
         )
     })?;
+    let _active = Active::new();
     let reader = drain(child.stdout.take(), cap);
     let started = Instant::now();
     let status = loop {
         match child.try_wait() {
-            Ok(Some(status)) => break status,
+            Ok(Some(status)) => {
+                STATS.cli_ns.add_duration(started.elapsed());
+                break status;
+            }
+            Ok(None) if cancel.load(Ordering::Relaxed) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                STATS.cli_ns.add_duration(started.elapsed());
+                STATS.cli_killed.add(1);
+                let _ = reader.join();
+                return Err(cancelled());
+            }
             Ok(None) if started.elapsed() < deadline => {
                 std::thread::sleep(Duration::from_millis(10));
             }
             Ok(None) => {
                 let _ = child.kill();
                 let _ = child.wait();
+                STATS.cli_ns.add_duration(started.elapsed());
                 let _ = reader.join();
                 return Err(ToolError::local(
                     "OUTCOME_UNKNOWN",
@@ -140,9 +200,6 @@ pub fn commit_edit(cli: &Path, edit: &Edit) -> Result<Edited, ToolError> {
     parse_edited(edit.kind, output.code, &output.stdout)
 }
 
-/// The most standard output read from `plate-inspect` when one element is looked up.
-const MAX_INSPECT_OUTPUT: usize = 32 * 1024 * 1024;
-
 /// What a click found: the element id the engine's `pick` returned and, apart from it, whether
 /// the element's details could be read (a failure there never loses the selection).
 #[derive(Debug)]
@@ -168,25 +225,58 @@ impl Selected {
 
 /// Looks up one element of the accepted revision.
 pub fn element_info(cli: &Path, store: &Path, id: &str) -> Result<ElementInfo, ToolError> {
-    let output = run_capped(cli, &inspect_args(store), DEADLINE, MAX_INSPECT_OUTPUT)?;
-    parse_element_info(id, output.code, &output.stdout)
+    lookup(cli, store, id, &NEVER).0
 }
 
 /// Reads the properties of one element of the accepted revision, with the revision they come from.
 pub fn element_details(cli: &Path, store: &Path, id: &str) -> Result<Details, ToolError> {
-    let output = run_capped(cli, &inspect_args(store), DEADLINE, MAX_INSPECT_OUTPUT)?;
-    parse_details(id, output.code, &output.stdout)
+    lookup(cli, store, id, &NEVER).1
 }
 
-/// Picks along `ray` with the engine's `pick` and reads the details of what it hit. `None` is
-/// empty space.
-pub fn select_at(cli: &Path, store: &Path, ray: &Ray) -> Result<Option<Selected>, ToolError> {
-    let output = run(cli, &pick_args(store, ray), DEADLINE)?;
-    let Some(id) = parse_pick(output.code, &output.stdout)? else {
+/// [`element_info`] and [`element_details`] of one element from one `plate-inspect --element ID`:
+/// one process and one inspection, with a reply of one element whatever the size of the model.
+/// `cancel` gives it up ([`run_cancellable`]).
+pub fn lookup(
+    cli: &Path,
+    store: &Path,
+    id: &str,
+    cancel: &AtomicBool,
+) -> (Result<ElementInfo, ToolError>, Result<Details, ToolError>) {
+    // An id no revision can hold is not in this one (the CLI would refuse it as malformed).
+    if ElementId::parse(id).is_err() {
+        let gone = ToolError::local("NOT_FOUND", "the element is not in the accepted revision");
+        return (Err(gone.clone()), Err(gone));
+    }
+    match run_cancellable(
+        cli,
+        &inspect_element_args(store, id),
+        DEADLINE,
+        MAX_OUTPUT,
+        cancel,
+    ) {
+        Ok(output) => (
+            parse_element_info(id, output.code, &output.stdout),
+            parse_details(id, output.code, &output.stdout),
+        ),
+        Err(e) => (Err(e.clone()), Err(e)),
+    }
+}
+
+/// Selects along `ray`: the engine's pick on `snapshot`, the snapshot the window shows, in this
+/// process ([`pick_in`]), then [`lookup`] of the element it hit. A click costs one CLI process
+/// and one inspection; `cancel` gives the lookup up.
+pub fn select(
+    cli: &Path,
+    store: &Path,
+    snapshot: &ViewSnapshot,
+    ray: &Ray,
+    cancel: &AtomicBool,
+) -> Result<Option<Selected>, ToolError> {
+    let Some(id) = pick_in(snapshot, ray)? else {
         return Ok(None);
     };
-    let details = element_details(cli, store, &id);
-    Ok(Some(Selected::from_details(id, details)))
+    let (info, details) = lookup(cli, store, &id, cancel);
+    Ok(Some(Selected { id, info, details }))
 }
 
 /// Runs a previewed property edit (`update-element`) and reads its reply.

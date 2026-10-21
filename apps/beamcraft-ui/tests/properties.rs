@@ -19,11 +19,13 @@
 
 use beamcraft_json::{Json, Limits};
 use beamcraft_ui::command;
+use beamcraft_ui::edit::Ray;
 use beamcraft_ui::props::{Properties, State};
 use beamcraft_ui::publish::{Phase, Publisher};
+use beamcraft_ui::source;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
@@ -239,6 +241,73 @@ fn edit_properties(
     let result = command::commit_property(cli, &edit);
     props.finish();
     (result, edit.args)
+}
+
+#[test]
+fn a_click_selects_what_is_on_screen_with_one_element_lookup() {
+    let Some(cli) = cli() else { return };
+    let stores = Stores::new();
+    let store = stores.ui();
+    fixture(&cli, &store);
+    // A pick through the plate's centre from above hits it; a ray into the sky does not. The
+    // window's own path is `select`: the engine's pick on the snapshot it shows, then one
+    // `plate-inspect --element` for the editor's light report and the panel's full properties.
+    let reply = ok(&cli, &["plate-inspect", "--store", s(&store)]);
+    let element = &at(&reply, &["snapshot", "elements"]).array().unwrap()[0];
+    let corner = |json: &Json| -> [f64; 3] {
+        let axis = json.array().unwrap();
+        [
+            axis[0].float().unwrap(),
+            axis[1].float().unwrap(),
+            axis[2].float().unwrap(),
+        ]
+    };
+    let min = corner(at(element, &["world_min_mm"]));
+    let max = corner(at(element, &["world_max_mm"]));
+    let centre = [(min[0] + max[0]) / 2.0, (min[1] + max[1]) / 2.0];
+    let ray = |origin: [f64; 3], direction: [f64; 3]| Ray { origin, direction };
+    let snapshot = source::load(&cli, &store).unwrap();
+    let cancel = AtomicBool::new(false);
+    let selected = command::select(
+        &cli,
+        &store,
+        &snapshot,
+        &ray([centre[0], centre[1], max[2] + 1000.0], [0.0, 0.0, -1.0]),
+        &cancel,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(selected.id, PLATE);
+    let info = selected.info.unwrap();
+    assert_eq!(info.name, "P1");
+    // The two halves of the lookup read one reply and agree with a separate lookup.
+    assert_eq!(
+        selected.details,
+        command::element_details(&cli, &store, PLATE)
+    );
+    assert_eq!(selected.details.unwrap().info(), info);
+    // A ray into the sky hits nothing.
+    assert!(
+        command::select(
+            &cli,
+            &store,
+            &snapshot,
+            &ray([centre[0], centre[1], max[2] + 1000.0], [0.0, 0.0, 1.0]),
+            &cancel,
+        )
+        .unwrap()
+        .is_none()
+    );
+    // A missing element is NOT_FOUND for both halves of the lookup, for an id no revision can
+    // hold alike.
+    let gone = command::element_details(&cli, &store, "019a7bf0-0000-7000-8000-0000000000ff");
+    assert_eq!(gone.unwrap_err().code, "NOT_FOUND");
+    assert_eq!(
+        command::element_info(&cli, &store, "gone")
+            .unwrap_err()
+            .code,
+        "NOT_FOUND"
+    );
 }
 
 #[test]
