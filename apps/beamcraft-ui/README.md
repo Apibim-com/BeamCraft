@@ -26,11 +26,14 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
 - The window draws the 3D image every frame. A resize rebuilds the targets, never the shader or
   the pipeline. MSAA is 4x on a hardware adapter that supports it and 1x on a software (CPU)
   adapter; `--samples 1|4` overrides it.
-- Controls: primary drag orbits, Shift + primary drag or secondary drag pans, the wheel or a
-  trackpad two-finger scroll or pinch zooms toward the cursor (the side panel toggle inverts the
-  scroll direction for macOS natural scrolling; pinch and keys keep theirs), `+` and `-` zoom from
-  the keyboard, F fits, R reloads (`+`, `-`, F and R are ignored while a text field has the
-  keyboard). A click selects, Esc clears the selection.
+- Controls, `Mouse` preset (the default): the left button is reserved for selection and never
+  moves the camera, middle-button drag pans, Ctrl + middle-button drag orbits, the wheel zooms
+  toward the cursor. `Trackpad (macOS)` preset (side panel): primary drag orbits, Shift +
+  primary drag or secondary drag pans, the wheel or a two-finger scroll or pinch zooms toward
+  the cursor (the "Invert zoom" toggle flips the scroll direction for macOS natural scrolling;
+  pinch and keys keep theirs). Both presets: `+` and `-` zoom from the keyboard, F fits, R
+  reloads (`+`, `-`, F and R are ignored while a text field has the keyboard). A click selects,
+  Esc clears the selection.
 - V05.1 Create panel (experimental): a plate (width, length, thickness, optional name and material)
   or a straight beam/column (start, end, profile and material chosen from the store's definitions,
   optional name). Preview stages the exact `create-plate` / `create-member` argument list (one per line, not a shell
