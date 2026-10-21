@@ -504,7 +504,7 @@ fn hand_built(elements: &str, other: &str) -> Vec<Asset> {
         asset(
             "root.usda",
             layer(&format!(
-                "def Xform \"World\" {{\n def Scope \"Steel\" {{\n{elements}\n}}\n def Scope \"Definitions\" {{\n}}\n{other}\n}}"
+                "def Xform \"World\" {{\n def Scope \"Steel\" {{\n def Scope \"Parts\" {{\n{elements}\n}}\n}}\n def Scope \"Definitions\" {{\n}}\n{other}\n}}"
             )),
         ),
         asset("derived.usda", layer("")),
@@ -756,7 +756,12 @@ fn duplicate_short_and_dangling_identities_abort_the_commit_with_the_root_unchan
     let fx = Fixture::new();
     let store = fx.revisions();
     let id = seq(0x30);
-    let other = format!("def Scope \"Other\" {{ {} }}", el(&id, ""));
+    // The duplicate is at another valid category path, so the index checks UUID uniqueness
+    // rather than the reader rejecting a misplaced prim first.
+    let other = format!(
+        "def Scope \"Levels\" {{ {} }}",
+        el(&id, "").replace("PRT_", "LVL_")
+    );
     let dangling = format!(
         "custom rel bim:profile = </World/Steel/Parts/PRT_{}>",
         hex(&seq(0x99))
