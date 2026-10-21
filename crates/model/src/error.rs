@@ -4,8 +4,7 @@
 //! The stable error codes of the F04 model and command contract (section 8).
 //!
 //! Only the code vocabulary lives here. Messages, diagnostics and the validation order belong to
-//! the command engine. Other contracts (F05 transport, F06 geometry) map their own codes onto
-//! these.
+//! the command engine. Other contracts (F06 geometry) map their own codes onto these.
 
 use core::fmt;
 
@@ -88,8 +87,7 @@ impl ErrorCode {
         Self::BackendUnavailable,
     ];
 
-    /// The stable wire name, for example `"STALE_WORKSPACE"`. At most 32 ASCII bytes, which is
-    /// the F05 `reason_code` bound.
+    /// The stable wire name, for example `"STALE_WORKSPACE"`. At most 32 ASCII bytes.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::MalformedCommand => "MALFORMED_COMMAND",
@@ -161,7 +159,7 @@ mod tests {
             " STALE_WORKSPACE",
             "STALE_WORKSPACE ",
             "STALE_WORKSPACE\0",
-            "IPC_FRAME",
+            "NOT_A_CODE",
             "NOPE",
         ] {
             assert_eq!(ErrorCode::parse(bad), None, "{bad:?}");

@@ -37,9 +37,7 @@ members** (A07.1 probe), and a circular hollow section above about 110 mm exceed
 * Ceilings stay ceilings: `Budgets::validate` still refuses any value above the default, every cap
   is still charged before allocation, and callers may tighten.
 * The first-slice profile stays for small untrusted inputs that are not a project stage: the R01
-  reference source inspection and the U04 USD worker use it explicitly, so their behaviour is
-  unchanged (the worker's results cross the host read protocol, whose arrays hold at most 1024
-  entries, so a larger input is refused at open rather than failing the read). The hostile-input
+  reference source inspection uses it explicitly, so its behaviour is unchanged. The hostile-input
   tests of the layer engine (index paging, USDC declared counts, foreign inspection) run on it too,
   because they test that a cap holds, not its size; new tests check the model profile's own caps
   at the boundary and plus one (array at 1,572,864 and 1,572,865 entries, a layer of 32 MiB + 1
@@ -70,8 +68,8 @@ Storing meshes as blobs outside the derived layer text would further raise the b
 
 ## Not changed
 
-Host limits (32 MiB blob, 64 MiB verification, 256 MiB revision), engine view caps, F05 wire
-budgets, the CLI deadline and R01's 64 KiB source limit.
+Host limits (32 MiB blob, 64 MiB verification, 256 MiB revision), engine view caps, the CLI
+deadline and R01's 64 KiB source limit.
 
 ## Evidence
 

@@ -54,13 +54,8 @@ Error mapping: `INVALID_ID` (DV-BASE-001), `DUPLICATE_ID` (DV-BASE-002), `INVALI
 
 ## Not implemented / limits
 
-- **CLI/host wiring is not done.** The U04 profile `u04-rust-read-v1` is closed: the worker
-  advertises `relationships=false` and the host rejects `true`; the page body has no
-  `relationships` member; its schema commitment is the profile string; the dispatcher exposes
-  only open/read/close/query-outcome. Carrying the index needs a new profile (page body with
-  relationships, capability flag, host validation, an index method or result) and an F05 schema
-  amendment. This PR does not change that frozen protocol, so the end-to-end evidence here is
-  in-process over real USDA files written to disk by the U02 authoring layer.
+- **CLI/host wiring is not done.** No command reports the index; the end-to-end evidence here
+  is in-process over real USDA files written to disk by the U02 authoring layer.
 - USDC: the restricted binary profile refuses relationship specs and U02 element layers
   (`UNSUPPORTED_PROPERTY`), so USDC evidence covers identities only
   (`binary_and_text_encodings_index_the_same_identities`).

@@ -11,8 +11,8 @@ use beamcraft_cli::plate::inspect;
 use beamcraft_engine::bom::{elements_csv, summary_csv, tables};
 use beamcraft_engine::limits::MAX_ELEMENTS;
 use beamcraft_host::{revision::RevisionStore, storage::BlobStore};
+use beamcraft_json::Json;
 use beamcraft_model::error::ErrorCode;
-use beamcraft_protocol::json::Json;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::io::Write;
@@ -47,7 +47,6 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
                 ),
                 ("code", Json::text(e.code.as_str())),
                 ("message", Json::text(e.message)),
-                ("transport_code", Json::Null),
                 ("observed_context", Json::Null),
                 ("diagnostics", Json::Array(vec![])),
             ]),

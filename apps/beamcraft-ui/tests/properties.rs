@@ -17,10 +17,7 @@
     clippy::panic
 )]
 
-use beamcraft_protocol::{
-    json::{self, Json},
-    message,
-};
+use beamcraft_json::{Json, Limits};
 use beamcraft_ui::command;
 use beamcraft_ui::props::{Properties, State};
 use beamcraft_ui::publish::{Phase, Publisher};
@@ -84,7 +81,7 @@ impl Drop for Stores {
 
 fn by_hand(cli: &Path, args: &[&str]) -> (i32, Json) {
     let output = Command::new(cli).args(args).output().unwrap();
-    let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
+    let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
     (output.status.code().unwrap(), body)
 }
 

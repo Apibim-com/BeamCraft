@@ -22,8 +22,8 @@ use std::collections::BTreeMap;
 
 /// The pinned context of a snapshot: the base revision and the workspace generation.
 ///
-/// The project and workspace identities of the F05 context tuple belong to the host session that
-/// owns the pin; they are not part of the engine's data.
+/// The project and workspace identities belong to the host that owns the pin; they are not part
+/// of the engine's data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ViewPin {
     revision: ContentDigest,

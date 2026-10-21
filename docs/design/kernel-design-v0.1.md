@@ -437,7 +437,7 @@ W25: first-scope blob is `32+192+144+24=392 bytes`. Corrected F06 sections 6 and
 these exact primitive counts from general structural caps. W26's `17408*64=1114112` is only a
 hypothetical all-feature-string payload, not the actual six-face descriptor. F06 now bounds
 that descriptor at 32768 encoded UTF-8 bytes; the derivation and verdict are W44 below. Page
-control bytes, tokens and strings are checked separately against negotiated F05 budgets;
+control bytes, tokens and strings are checked separately against the host's delivery budgets;
 fitting a blob does not establish delivery feasibility.
 
 ### 5.3 Pick constants and comparison
@@ -615,7 +615,7 @@ Passing that check alone does not pass descriptor/control/token/string/attachmen
 page-count, batch or timeout budgets. Eight maximum-size descriptors already contribute
 `8*32768=262144` bytes before page JSON overhead; eight 392-byte blobs contribute `3136` bytes.
 Whole-body delivery either satisfies every smaller applicable effective limit or fails before
-dispatch with no split/truncation. A smaller deadline remains subject to F05's deadline outcome,
+dispatch with no split/truncation. A smaller deadline remains subject to the host's deadline outcome,
 not an invented byte comparison. **Changed verdict:** the missing negotiated-page accounting
 finding is resolved by F06 sections 6 and 10; runtime budget enforcement still needs tests.
 
@@ -841,7 +841,7 @@ F06's adopted part is unimplemented contract text. All runtime behavior remains 
    validator caps and bound descriptors to 32768 bytes. Sections 9 and 10 bound Pick work and
    polling; section 10 applies smaller negotiated buffer, attachment, bundle, control, token,
    string, batch, delivery and request-timeout limits. Bodies remain whole or fail with
-   GEO_BUFFER_LIMIT; cancellation/deadline behavior still follows F05. W44..W46 check the limits.
+   GEO_BUFFER_LIMIT; cancellation/deadline behavior follows the host. W44..W46 check the limits.
 
 7. **A7, roll-jump wording: applied with a qualification.** F06 section 4 rule 3 gives the
    signed branch-angle formula and corrects POS-10/POS-42 prose (sections 11 and 12). From +Z,

@@ -14,10 +14,9 @@ use beamcraft_cli::plate::PlateError;
 use beamcraft_host::coordinator::{Client, Coordinator, CoordinatorError, Token, call};
 use beamcraft_host::revision::RevisionStore;
 use beamcraft_host::storage::BlobStore;
+use beamcraft_json::{Json, Limits};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ActorId;
-use beamcraft_protocol::json::Json;
-use beamcraft_protocol::message;
 use std::ffi::OsString;
 use std::io::Write;
 use std::net::SocketAddr;
@@ -97,7 +96,6 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
                 ),
                 ("code", Json::text(e.code.as_str())),
                 ("message", Json::text(e.message)),
-                ("transport_code", Json::Null),
                 ("observed_context", Json::Null),
                 ("diagnostics", Json::Array(vec![])),
             ]),
@@ -241,7 +239,7 @@ fn run(args: &[OsString]) -> Run<Json> {
 /// Prints one JSON line and flushes it, so a supervisor can read the address at once.
 fn announce(json: &Json) -> Run<()> {
     let bytes = json
-        .encode(&message::read_limits())
+        .encode(&Limits::DEFAULT)
         .map_err(|_| invalid("announcement cannot be encoded"))?;
     let mut out = std::io::stdout().lock();
     out.write_all(&bytes)

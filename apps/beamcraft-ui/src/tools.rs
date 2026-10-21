@@ -11,8 +11,7 @@
 //! profiles and materials stays in the engine, and its refusal (a stable code and a message) is
 //! shown as it is.
 
-use beamcraft_protocol::json::{self, Json};
-use beamcraft_protocol::message;
+use beamcraft_json::{Json, Limits};
 use std::fmt;
 use std::path::Path;
 
@@ -310,7 +309,7 @@ pub struct Created {
 }
 
 pub(crate) fn decode(stdout: &[u8]) -> Result<Json, ToolError> {
-    json::decode(stdout, &message::read_limits())
+    beamcraft_json::decode(stdout, &Limits::DEFAULT)
         .map_err(|_| ToolError::local("UNREADABLE_REPLY", "the CLI reply is not valid JSON"))
 }
 
@@ -770,7 +769,7 @@ mod tests {
         let shown = prepared.argument_list();
         assert_eq!(shown.lines().count(), prepared.args.len());
         let array = format!("[{}]", shown.replace('\n', ","));
-        let decoded = json::decode(array.as_bytes(), &message::read_limits()).unwrap();
+        let decoded = beamcraft_json::decode(array.as_bytes(), &Limits::DEFAULT).unwrap();
         let back: Vec<&str> = decoded
             .array()
             .unwrap()
@@ -808,7 +807,7 @@ mod tests {
 
     #[test]
     fn a_refusal_keeps_the_code_and_message() {
-        let reply = r#"{"code":"INVALID_ARGUMENT","diagnostics":[],"message":"dimension is not positive","observed_context":null,"outcome":"rejected","transport_code":null}"#;
+        let reply = r#"{"code":"INVALID_ARGUMENT","diagnostics":[],"message":"dimension is not positive","observed_context":null,"outcome":"rejected"}"#;
         let error = parse_created(ToolKind::Plate, Some(2), reply.as_bytes()).unwrap_err();
         assert_eq!(error.code, "INVALID_ARGUMENT");
         assert_eq!(error.message, "dimension is not positive");

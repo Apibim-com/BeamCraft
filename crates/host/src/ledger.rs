@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! U07: the durable outcome ledger and crash recovery of the revision commit (F05 sections 7
-//! and 8, F04 section 8).
+//! U07: the durable outcome ledger and crash recovery of the revision commit (F04 section 8).
 //!
 //! The ledger is one append-only file, `ledger/outcomes.log`, of checksummed text lines (see
 //! [`Record`]). [`RevisionStore::commit_with`] writes an [`Intent`] and syncs it **before** it

@@ -10,10 +10,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use beamcraft_protocol::{
-    json::{self, Json},
-    message,
-};
+use beamcraft_json::{Json, Limits};
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -51,7 +48,7 @@ impl Fixture {
             .args(args)
             .output()
             .unwrap();
-        let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
+        let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
         (output.status.code().unwrap(), body)
     }
     fn ok(&self, args: &[&str]) -> Json {
@@ -163,7 +160,7 @@ impl Fixture {
         let mut stdout = BufReader::new(child.stdout.take().unwrap());
         let mut line = String::new();
         stdout.read_line(&mut line).unwrap();
-        let listening = json::decode(line.trim_end().as_bytes(), &message::read_limits())
+        let listening = beamcraft_json::decode(line.trim_end().as_bytes(), &Limits::DEFAULT)
             .unwrap_or_else(|_| not_json(&line));
         assert_eq!(text(&listening, "outcome"), "listening", "{line}");
         Server {
@@ -195,7 +192,10 @@ impl Server {
         let mut rest = Vec::new();
         self.stdout.read_to_end(&mut rest).unwrap();
         let code = self.child.wait().unwrap().code().unwrap();
-        (code, json::decode(&rest, &message::read_limits()).unwrap())
+        (
+            code,
+            beamcraft_json::decode(&rest, &Limits::DEFAULT).unwrap(),
+        )
     }
 }
 impl Drop for Server {

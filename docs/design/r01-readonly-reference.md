@@ -154,8 +154,6 @@ rewrites.
   updates the source (the version counter and the stored statement are ready for it), W03 stores
   measurements.
 - Replay of an operation id is decided from the head state, as in P04 to P08.
-- The U04 read profile (`open`, `read` over the worker) is not extended and was not exercised with
-  external layers.
 - Windows only; `cargo deny` and the wasm32 check of the three pure crates were not run (tool and
   target not installed). USDC sources are covered by layer-engine tests only (no CLI or `pxr`
   run). Older stores pinned before P02.2 are not covered.

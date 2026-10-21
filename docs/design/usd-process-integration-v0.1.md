@@ -1,5 +1,12 @@
 # UPI: USD process integration addendum, version 0.1.0
 
+> **Superseded in part by U17 (owner decision of 2026-10-20).** OD-1, UPI-001, UPI-002,
+> UPI-011 and sections 3 and 6 (the separate USD process, its IPC data path and its crash
+> states) are replaced: USD is read and written in the calling process by the layer engine, and
+> the private worker protocol (F05) was removed. OD-2 to OD-4 and UPI-003 to UPI-005 stay in
+> force. UPI-006 to UPI-010 keep their intent; where they speak of the USD process, pages or IPC
+> codes, read the in-process layer engine and its F04 codes. Mentions of F05 below are history.
+
 Status: **draft 0.1.0; documentation only; nothing implemented**. Date: 2026-10-16.
 Task: DR. Base: `bca89e23671470ba0633497b82d38a83fb5cc11d`.
 
@@ -12,7 +19,7 @@ separate process that hosts the pinned Rust layer engine (F11 variant C, `openus
 session model, the engine and the in-process kernel.
 
 Contract references: [F04](../contracts/f04-model-and-commands-v0.1.md),
-[F05](../contracts/f05-worker-protocol-v0.1.md), [F06](../contracts/f06-geometry-contract-v0.1.md),
+F05 (removed by U17), [F06](../contracts/f06-geometry-contract-v0.1.md),
 [F08](../contracts/f08-module-boundaries-v0.1.md),
 [F10](../contracts/f10-domain-vocabulary-v0.1.md),
 [F11 decision](layer-engine-decision-v0.1.md),

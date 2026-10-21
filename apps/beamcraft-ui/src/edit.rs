@@ -15,7 +15,7 @@
 
 use crate::camera::View;
 use crate::tools::{FormError, ToolError, decode, rejection, text};
-use beamcraft_protocol::json::Json;
+use beamcraft_json::Json;
 use std::path::Path;
 
 /// A world-space ray in millimetres.

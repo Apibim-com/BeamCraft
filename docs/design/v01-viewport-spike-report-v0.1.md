@@ -38,8 +38,7 @@ The implementation consists of:
 
 No geometry computation is delegated to a UI library. The session owns G02 results;
 the renderer serializes them and applies display transforms. The USD layer engine
-is absent from the dependency graph and interactive path, following the
-[UPI section 3 data path](usd-process-integration-v0.1.md#3-ui-data-path-state-description).
+is absent from the dependency graph and interactive path.
 
 ## Measurement environment and method
 

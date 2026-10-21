@@ -14,7 +14,7 @@
 use crate::edit::sequence_of;
 use crate::props::RevisionStamp;
 use crate::tools::{ToolError, decode, rejection, text};
-use beamcraft_protocol::json::Json;
+use beamcraft_json::Json;
 use std::path::{Path, PathBuf};
 
 /// The arguments of `workspace-publish` for a published store and a workspace directory.

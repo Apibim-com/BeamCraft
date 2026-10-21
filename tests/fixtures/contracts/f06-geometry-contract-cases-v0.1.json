@@ -4,7 +4,6 @@
   "status": "frozen 0.1.0 (2026-10-16); amendment A-2 applied 2026-10-19 (cases F06-NEG-08 and F06-NEG-39 marked superseded); nothing implemented",
   "role": "original logical acceptance descriptions for the F06 geometry contract; not an engine, mesh or USD fixture",
   "f04_contract_version": "0.1.0",
-  "f05_protocol_version": "0.1.0",
   "first_scope_package": "0.1.0",
   "comparison": "Owner amendment 2026-10-15 to CR-TOL-001: quantities use relative 1e-6; lengths and coordinates use 0.001 mm + 1e-6*abs(expected); dimensionless frame values use absolute 1e-6 at zero and relative 1e-6 otherwise. Exact rational references are unchanged. IDs, codes, statuses, counts, strings and digests compare exactly. This is test comparison only, separate from geometry decisions/certificates. The read-only first-scope package 0.1.0 retains its older rule pending review. Decimal strings are exact references unless marked approximate; JSON numbers are nearest binary64 inputs.",
   "assumptions": "P-1 replaced by contour input, P-2 confirmed unchanged and P-3 refined by the owner on 2026-10-15. The legacy assumes field identifies these decisions. Contour caps/winding/planarity and the missing angle cap are assumptions in F04 section 3. Constants are owner-confirmed first-slice draft values, to be validated by fixtures; the ifc-lite numeric comparison is recorded in docs/design/tolerance-comparison-v0.1.md.",
@@ -2075,14 +2074,14 @@
     },
     {
       "case_id": "F06-POS-28",
-      "title": "Snapshot chunking: twenty bodies in whole-blob pages under the F05 attachment limit",
+      "title": "Snapshot chunking: twenty bodies in whole-blob pages under the host attachment limit",
       "given": [
-        "Twenty plate bodies (392-byte blobs each); negotiated attachments per bundle and buffer size at the F05 maxima"
+        "Twenty plate bodies (392-byte blobs each); negotiated attachments per bundle and buffer size at the host maxima"
       ],
       "input": {
         "body_count": 20,
         "blob_bytes_each": 392,
-        "negotiated_attachments_per_bundle": "F05 effective_limits.attachments"
+        "negotiated_attachments_per_bundle": "host effective attachment limit"
       },
       "expected": {
         "page_count": 3,
@@ -2095,7 +2094,7 @@
         "every_blob_within_buffer_bytes": true,
         "attachment_digest_equals_mesh_digest": true
       },
-      "derivation": "F05 allows at most 8 attachments per bundle (F05 sections 3 and 10) and each blob (392 bytes, at most 13,631,520) is far below the per-attachment cap. Whole blobs only: ceil(20 / 8) = 3 pages holding 8, 8 and 4 blobs. If a smaller attachment limit is negotiated, the page count follows from the same rule."
+      "derivation": "The host allows at most 8 attachments per bundle and each blob (392 bytes, at most 13,631,520) is far below the per-attachment cap. Whole blobs only: ceil(20 / 8) = 3 pages holding 8, 8 and 4 blobs. If a smaller attachment limit is negotiated, the page count follows from the same rule."
     },
     {
       "case_id": "F06-POS-29",
@@ -2411,7 +2410,7 @@
         "f04_code": "STALE_WORKSPACE",
         "partial_changes_returned": false
       },
-      "derivation": "The engine retains a bounded history; a token it cannot answer incrementally gets the F05 invalidation semantics (no partial list) and the consumer must read a fresh snapshot."
+      "derivation": "The engine retains a bounded history; a token it cannot answer incrementally gets the host's invalidation semantics (no partial list) and the consumer must read a fresh snapshot."
     },
     {
       "case_id": "F06-POS-37",
@@ -4185,7 +4184,7 @@
       "case_id": "F06-NEG-34",
       "title": "Negotiated buffer limit smaller than the blob: no splitting",
       "given": [
-        "F05 effective_limits.buffer_bytes negotiated as 391; the plate blob of F06-POS-02 is 392 bytes"
+        "host effective buffer limit negotiated as 391 bytes; the plate blob of F06-POS-02 is 392 bytes"
       ],
       "input": {
         "blob_bytes": 392,

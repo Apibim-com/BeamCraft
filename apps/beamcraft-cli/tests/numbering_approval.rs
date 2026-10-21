@@ -22,10 +22,7 @@ use beamcraft_host::{
     revision::{ExpectedBase, LayerEntry, NoFault, RevisionDraft, RevisionStore, Uuid7},
     storage::BlobStore,
 };
-use beamcraft_protocol::{
-    json::{self, Json},
-    message,
-};
+use beamcraft_json::{Json, Limits};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -71,7 +68,7 @@ impl Fixture {
             .args(&args)
             .output()
             .unwrap();
-        let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
+        let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
         (output.status.code().unwrap(), body)
     }
     fn run(&self, command: &str, extra: &[&str]) -> (i32, Json) {
@@ -627,7 +624,7 @@ fn an_undo_of_an_approval_restores_the_earlier_marks() {
             .output()
             .unwrap();
         assert_eq!(output.status.code(), Some(0), "{op}");
-        json::decode(&output.stdout, &message::read_limits()).unwrap()
+        beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap()
     };
     let layers = || {
         list(
@@ -830,9 +827,9 @@ fn pxr_reads_the_stored_marks() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let report = json::decode(
+    let report = beamcraft_json::decode(
         String::from_utf8_lossy(&output.stdout).trim().as_bytes(),
-        &message::read_limits(),
+        &Limits::DEFAULT,
     )
     .unwrap();
     // pxr and the CLI agree on every mark: series, number and the approval record.

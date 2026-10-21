@@ -14,7 +14,7 @@ authors = ["Apibim"]
 # internal
 beamcraft-geom = { path = "crates/geom", version = "0.0.1" }
 beamcraft-model = { path = "crates/model", version = "0.0.1" }
-beamcraft-protocol = { path = "crates/protocol", version = "0.0.1" }
+beamcraft-json = { path = "crates/json", version = "0.0.1" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -28,13 +28,6 @@ panic = "warn"
 todo = "warn"
 unreachable = "warn"
 indexing_slicing = "warn"
-
-# Tests hash whole worker binaries (about 110 MB in a debug build) with the model's SHA-256
-# before every spawn; unoptimized, that takes about 12 s each and parallel tests on a small CI
-# runner exceed the 30 s worker deadline. Optimizing this one pure crate keeps debug assertions
-# and overflow checks and makes the hash about 15 times faster.
-[profile.dev.package.beamcraft-model]
-opt-level = 3
 
 [profile.release]
 lto = "thin"

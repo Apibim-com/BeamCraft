@@ -6,8 +6,8 @@
 //! P01 implements `CreatePlate` only. This module holds what is true of the arguments
 //! regardless of geometry: identity, label, finiteness, caps and the rigid placement. Contour
 //! and thickness *geometry* (floor, winding, supported shapes) is evaluated by the engine with
-//! the kernel. No JSON, envelope or canonical-byte form lives here yet: F04 section 6 and F05
-//! section 6 (`canonical`) remain planned, and [`CreatePlate::content_fingerprint`] is a
+//! the kernel. No JSON, envelope or canonical-byte form lives here yet: F04 sections 3 and 6
+//! (`canonical`) remain planned, and [`CreatePlate::content_fingerprint`] is a
 //! deterministic digest of the typed arguments, not RFC 8785 canonical bytes.
 
 use crate::digest::{ContentDigest, Sha256};
@@ -307,7 +307,7 @@ impl CreateStraightMember {
     }
 
     /// SHA-256 of a versioned, length-prefixed binary encoding of the validated arguments, with
-    /// signed zero normalized; like [`CreatePlate::content_fingerprint`] it is not the F05
+    /// signed zero normalized; like [`CreatePlate::content_fingerprint`] it is not the F04
     /// canonical form.
     pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
         self.validate_arguments()?;
@@ -482,7 +482,7 @@ impl CreatePlate {
 
     /// SHA-256 of a versioned, length-prefixed binary encoding of the validated arguments, with
     /// signed zero normalized. Two commands with the same fingerprint have identical content;
-    /// it is *not* the F05 canonical form and must not be sent over a wire.
+    /// it is *not* the F04 canonical form and must not be sent over a wire.
     ///
     /// Fails (`LIMIT_EXCEEDED`, `NON_FINITE_NUMBER`) on arguments that do not validate, so a
     /// fingerprint exists only for admissible content.
