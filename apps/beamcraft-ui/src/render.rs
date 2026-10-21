@@ -6,7 +6,7 @@ use crate::{
     Error,
     camera::View,
     scene::{DrawMesh, INSTANCE_BYTES, Scene, VERTEX_BYTES},
-    stats::STATS,
+    stats::Stats,
 };
 use beamcraft_model::digest::ContentDigest;
 use std::collections::{BTreeMap, BTreeSet};
@@ -141,11 +141,16 @@ fn check(mesh: &DrawMesh, vertices: bool, limit: u64) -> Result<(), Error> {
 impl Uploaded {
     /// Uploads every mesh of the scene and its instances, then waits for completion: the
     /// measured upload of `--metrics` and the render tests. The window uses [`Uploaded::upload`].
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, scene: &Scene) -> Result<Self, Error> {
+    pub fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        scene: &Scene,
+        stats: &Stats,
+    ) -> Result<Self, Error> {
         let start = Instant::now();
         let scopes = error_scopes(device);
         let uploaded = Self::write(device, queue, scene, None);
-        STATS.submits.add(1);
+        stats.submits.add(1);
         let completion = wait(device, queue.submit([]));
         finish_scopes(scopes)?;
         completion?;
@@ -250,7 +255,13 @@ struct Targets {
     msaa: Option<wgpu::TextureView>,
 }
 
-fn targets(device: &wgpu::Device, width: u32, height: u32, samples: u32) -> Result<Targets, Error> {
+fn targets(
+    device: &wgpu::Device,
+    width: u32,
+    height: u32,
+    samples: u32,
+    stats: &Stats,
+) -> Result<Targets, Error> {
     if width == 0
         || height == 0
         || width > 4096
@@ -292,7 +303,7 @@ fn targets(device: &wgpu::Device, width: u32, height: u32, samples: u32) -> Resu
             .create_view(&Default::default())
     });
     finish_scopes(scopes)?;
-    STATS.target_builds.add(1);
+    stats.target_builds.add(1);
     Ok(Targets {
         view,
         texture,
@@ -306,6 +317,7 @@ fn targets(device: &wgpu::Device, width: u32, height: u32, samples: u32) -> Resu
 fn pipeline(
     device: &wgpu::Device,
     samples: u32,
+    stats: &Stats,
 ) -> Result<(wgpu::RenderPipeline, wgpu::Buffer, wgpu::BindGroup), Error> {
     let scopes = error_scopes(device);
     let camera = device.create_buffer(&wgpu::BufferDescriptor {
@@ -399,7 +411,7 @@ fn pipeline(
     };
     let instanced = pipeline("instanced", &[vertex_layout(), instance_layout]);
     finish_scopes(scopes)?;
-    STATS.pipeline_builds.add(1);
+    stats.pipeline_builds.add(1);
     Ok((instanced, camera, bind))
 }
 
@@ -429,8 +441,9 @@ impl Renderer {
         device: &wgpu::Device,
         width: u32,
         height: u32,
+        stats: &Stats,
     ) -> Result<Self, Error> {
-        Self::with_samples(adapter, device, width, height, None)
+        Self::with_samples(adapter, device, width, height, None, stats)
     }
 
     /// [`Renderer::new`] with an explicit sample count, 1 or 4; `None` is the adapter's default.
@@ -441,6 +454,7 @@ impl Renderer {
         width: u32,
         height: u32,
         samples: Option<u32>,
+        stats: &Stats,
     ) -> Result<Self, Error> {
         let supports_4x = [FORMAT, DEPTH].into_iter().all(|f| {
             adapter
@@ -460,8 +474,8 @@ impl Renderer {
             texture,
             depth,
             msaa,
-        } = targets(device, width, height, samples)?;
-        let (instanced, camera, bind) = pipeline(device, samples)?;
+        } = targets(device, width, height, samples, stats)?;
+        let (instanced, camera, bind) = pipeline(device, samples, stats)?;
         Ok(Self {
             view,
             texture,
@@ -484,6 +498,7 @@ impl Renderer {
         device: &wgpu::Device,
         width: u32,
         height: u32,
+        stats: &Stats,
     ) -> Result<bool, Error> {
         if width == self.width && height == self.height {
             return Ok(false);
@@ -493,7 +508,7 @@ impl Renderer {
             texture,
             depth,
             msaa,
-        } = targets(device, width, height, self.samples)?;
+        } = targets(device, width, height, self.samples, stats)?;
         self.view = view;
         self.texture = texture;
         self.depth = depth;
@@ -510,9 +525,10 @@ impl Renderer {
         queue: &wgpu::Queue,
         uploaded: &Uploaded,
         camera: View,
+        stats: &Stats,
     ) -> wgpu::SubmissionIndex {
-        STATS.viewport_draws.add(1);
-        STATS.submits.add(1);
+        stats.viewport_draws.add(1);
+        stats.submits.add(1);
         queue.write_buffer(&self.camera, 0, &camera.bytes());
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("BeamCraft frame"),
@@ -647,16 +663,21 @@ mod tests {
                 .sample_count_supported(4)
         });
         let samples = if supports_4x { 4 } else { 1 };
+        let stats = Stats::default();
         let mut renderer =
-            Renderer::with_samples(&gpu.adapter, &gpu.device, 64, 48, Some(samples)).unwrap();
+            Renderer::with_samples(&gpu.adapter, &gpu.device, 64, 48, Some(samples), &stats)
+                .unwrap();
         assert_eq!(renderer.samples, samples);
         assert_eq!(renderer.msaa.is_some(), samples == 4);
         let pipeline = renderer.instanced.clone();
         let bind = renderer.bind.clone();
         let texture = renderer.texture.clone();
-        assert!(!renderer.resize(&gpu.device, 64, 48).unwrap(), "same size");
+        assert!(
+            !renderer.resize(&gpu.device, 64, 48, &stats).unwrap(),
+            "same size"
+        );
         assert!(renderer.texture == texture);
-        assert!(renderer.resize(&gpu.device, 96, 80).unwrap());
+        assert!(renderer.resize(&gpu.device, 96, 80, &stats).unwrap());
         assert_eq!((renderer.width, renderer.height), (96, 80));
         assert!(renderer.texture != texture, "new targets");
         assert!(
@@ -676,19 +697,19 @@ mod tests {
         .unwrap();
         let scene =
             Scene::from_snapshot(&snapshot, beamcraft_engine::Representation::Full).unwrap();
-        let uploaded = Uploaded::new(&gpu.device, &gpu.queue, &scene).unwrap();
+        let uploaded = Uploaded::new(&gpu.device, &gpu.queue, &scene, &stats).unwrap();
         let (target, extent) = scene.framing();
         let view = crate::camera::Camera::new(target, extent, 1.2)
             .unwrap()
             .view(1.2)
             .unwrap();
-        let index = renderer.draw(&gpu.device, &gpu.queue, &uploaded, view);
+        let index = renderer.draw(&gpu.device, &gpu.queue, &uploaded, view, &stats);
         wait(&gpu.device, index).unwrap();
         let (pixels, row) = renderer.readback(&gpu.device, &gpu.queue).unwrap();
         assert_eq!(pixels.len(), row as usize * 80);
         // A bad size keeps the previous targets; a bad sample count is refused.
-        assert!(renderer.resize(&gpu.device, 0, 80).is_err());
+        assert!(renderer.resize(&gpu.device, 0, 80, &stats).is_err());
         assert_eq!((renderer.width, renderer.height), (96, 80));
-        assert!(Renderer::with_samples(&gpu.adapter, &gpu.device, 8, 8, Some(2)).is_err());
+        assert!(Renderer::with_samples(&gpu.adapter, &gpu.device, 8, 8, Some(2), &stats).is_err());
     }
 }

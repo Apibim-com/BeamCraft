@@ -24,6 +24,7 @@ use beamcraft_ui::edit::{
     EditKind, Editor, Target, ndc_of, parse_pick, pick_args, pick_in, ray_through,
 };
 use beamcraft_ui::scene::Scene;
+use beamcraft_ui::stats::Stats;
 use beamcraft_ui::{command, source};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -205,7 +206,7 @@ fn target(store: &Path) -> Target<'_> {
 
 /// Selects `id` the way the window does after a click: the details from the engine's inspection.
 fn select(cli: &Path, store: &Path, editor: &mut Editor, id: &str) {
-    editor.select(command::element_info(cli, store, id).unwrap());
+    editor.select(command::element_info(cli, store, id, &Stats::default()).unwrap());
 }
 
 /// Runs a staged edit exactly as the window's Commit does.
@@ -217,7 +218,7 @@ fn commit(
 ) -> Result<beamcraft_ui::edit::Edited, beamcraft_ui::tools::ToolError> {
     editor.preview(kind, target).unwrap();
     let edit = editor.begin_commit(target).unwrap();
-    let result = command::commit_edit(cli, &edit);
+    let result = command::commit_edit(cli, &edit, &Stats::default());
     editor.finish();
     result
 }
@@ -227,7 +228,7 @@ fn a_click_selects_what_the_engine_picks() {
     let Some(cli) = cli() else { return };
     let stores = Stores::new();
     two_plates(&cli, &stores.ui());
-    let snapshot = source::load(&cli, &stores.ui()).unwrap();
+    let snapshot = source::load(&cli, &stores.ui(), &Stats::default()).unwrap();
     let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
     let (framing_target, extent) = scene.framing();
     let aspect = 1.6;
@@ -244,10 +245,16 @@ fn a_click_selects_what_the_engine_picks() {
         // The window picks in its own process on the snapshot it shows; the CLI's `pick` on
         // the store's head answers the same.
         assert_eq!(cli_pick(&cli, &stores.ui(), &ray).as_deref(), Some(id));
-        let selected =
-            command::select(&cli, &stores.ui(), &snapshot, &ray, &AtomicBool::new(false))
-                .unwrap()
-                .unwrap();
+        let selected = command::select(
+            &cli,
+            &stores.ui(),
+            &snapshot,
+            &ray,
+            &AtomicBool::new(false),
+            &Stats::default(),
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(selected.id, id);
         let info = selected.info.unwrap();
         // The details of the same one-element reply agree with the light report.
@@ -267,8 +274,15 @@ fn a_click_selects_what_the_engine_picks() {
     let ray = ray_through(&view, [-0.99, 0.99], scene.origin_mm).unwrap();
     assert_eq!(cli_pick(&cli, &stores.ui(), &ray), None);
     assert_eq!(pick_in(&snapshot, &ray).unwrap(), None);
-    let picked =
-        command::select(&cli, &stores.ui(), &snapshot, &ray, &AtomicBool::new(false)).unwrap();
+    let picked = command::select(
+        &cli,
+        &stores.ui(),
+        &snapshot,
+        &ray,
+        &AtomicBool::new(false),
+        &Stats::default(),
+    )
+    .unwrap();
     assert!(picked.is_none());
     // A click that is not inside the view is not a click.
     assert!(ndc_of([1700.0, 10.0], [0.0, 0.0], size).is_none());
@@ -367,7 +381,9 @@ fn a_copy_and_a_delete_from_the_tool_equal_the_same_by_hand() {
     assert_eq!(state(&cli, &ui).len(), 2);
     // The deleted element is gone from the accepted revision.
     assert_eq!(
-        command::element_info(&cli, &ui, &copy_id).unwrap_err().code,
+        command::element_info(&cli, &ui, &copy_id, &Stats::default())
+            .unwrap_err()
+            .code,
         "NOT_FOUND"
     );
 }
@@ -483,18 +499,18 @@ fn undo_and_redo_run_in_a_workspace_and_never_touch_the_published_store() {
     assert_ne!(moved, published_state);
     // Undo restores the earlier state, redo the edit again.
     let undo = editor.begin_direct(EditKind::Undo, work).unwrap().unwrap();
-    let undone = command::commit_edit(&cli, &undo).unwrap();
+    let undone = command::commit_edit(&cli, &undo, &Stats::default()).unwrap();
     editor.finish();
     assert_eq!(undone.kind, EditKind::Undo);
     assert_eq!(state(&cli, &workspace), published_state);
     let redo = editor.begin_direct(EditKind::Redo, work).unwrap().unwrap();
-    command::commit_edit(&cli, &redo).unwrap();
+    command::commit_edit(&cli, &redo, &Stats::default()).unwrap();
     editor.finish();
     assert_eq!(state(&cli, &workspace), moved);
     // Nothing to undo any more after undoing everything: the engine's refusal is shown.
     for _ in 0..3 {
         let undo = editor.begin_direct(EditKind::Undo, work).unwrap().unwrap();
-        let result = command::commit_edit(&cli, &undo);
+        let result = command::commit_edit(&cli, &undo, &Stats::default());
         editor.finish();
         if let Err(e) = result {
             assert_eq!(e.code, "INVALID_ARGUMENT");

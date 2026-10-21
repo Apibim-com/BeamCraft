@@ -12,7 +12,7 @@ use crate::edit::{
 };
 use crate::props::{Details, PropertyEdit, parse_details};
 use crate::publish::{Published, Status, parse_published, parse_status, status_args};
-use crate::stats::STATS;
+use crate::stats::Stats;
 use crate::tools::{
     Created, Definitions, Prepared, ToolError, definitions_args, parse_created, parse_definitions,
 };
@@ -43,19 +43,19 @@ pub struct Output {
 }
 
 /// Counts a running CLI process for the perf counters until it is dropped.
-struct Active;
+struct Active<'a>(&'a Stats);
 
-impl Active {
-    fn new() -> Self {
-        STATS.cli_runs.add(1);
-        STATS.cli_active.add(1);
-        Self
+impl<'a> Active<'a> {
+    fn new(stats: &'a Stats) -> Self {
+        stats.cli_runs.add(1);
+        stats.cli_active.add(1);
+        Self(stats)
     }
 }
 
-impl Drop for Active {
+impl Drop for Active<'_> {
     fn drop(&mut self) {
-        STATS.cli_active.decrement();
+        self.0.cli_active.decrement();
     }
 }
 
@@ -79,8 +79,13 @@ fn drain(
 }
 
 /// Runs `cli args...` and waits for it, at most `deadline`; output is capped at [`MAX_OUTPUT`].
-pub fn run(cli: &Path, args: &[String], deadline: Duration) -> Result<Output, ToolError> {
-    run_capped(cli, args, deadline, MAX_OUTPUT)
+pub fn run(
+    cli: &Path,
+    args: &[String],
+    deadline: Duration,
+    stats: &Stats,
+) -> Result<Output, ToolError> {
+    run_capped(cli, args, deadline, MAX_OUTPUT, stats)
 }
 
 /// Like [`run`] with an explicit output cap (more than `cap` bytes of output is an error).
@@ -89,19 +94,22 @@ pub fn run_capped(
     args: &[String],
     deadline: Duration,
     cap: usize,
+    stats: &Stats,
 ) -> Result<Output, ToolError> {
-    run_cancellable(cli, args, deadline, cap, &NEVER)
+    run_cancellable(cli, args, deadline, cap, &NEVER, stats)
 }
 
 /// Like [`run_capped`], and given up as soon as `cancel` is set: the process is killed (or never
 /// started) and the answer is `CANCELLED`. Only for read-only queries, whose answer can simply be
 /// dropped; a change command is never cancelled.
+#[allow(clippy::too_many_arguments)]
 pub fn run_cancellable(
     cli: &Path,
     args: &[String],
     deadline: Duration,
     cap: usize,
     cancel: &AtomicBool,
+    stats: &Stats,
 ) -> Result<Output, ToolError> {
     let cancelled = || {
         ToolError::local(
@@ -130,20 +138,20 @@ pub fn run_cancellable(
             format!("the beamcraft CLI could not be started ({})", e.kind()),
         )
     })?;
-    let _active = Active::new();
+    let _active = Active::new(stats);
     let reader = drain(child.stdout.take(), cap);
     let started = Instant::now();
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                STATS.cli_ns.add_duration(started.elapsed());
+                stats.cli_ns.add_duration(started.elapsed());
                 break status;
             }
             Ok(None) if cancel.load(Ordering::Relaxed) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                STATS.cli_ns.add_duration(started.elapsed());
-                STATS.cli_killed.add(1);
+                stats.cli_ns.add_duration(started.elapsed());
+                stats.cli_killed.add(1);
                 let _ = reader.join();
                 return Err(cancelled());
             }
@@ -153,7 +161,7 @@ pub fn run_cancellable(
             Ok(None) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                STATS.cli_ns.add_duration(started.elapsed());
+                stats.cli_ns.add_duration(started.elapsed());
                 let _ = reader.join();
                 return Err(ToolError::local(
                     "OUTCOME_UNKNOWN",
@@ -183,20 +191,20 @@ pub fn run_cancellable(
 }
 
 /// Runs a previewed create command and reads its reply.
-pub fn commit(cli: &Path, prepared: &Prepared) -> Result<Created, ToolError> {
-    let output = run(cli, &prepared.args, DEADLINE)?;
+pub fn commit(cli: &Path, prepared: &Prepared, stats: &Stats) -> Result<Created, ToolError> {
+    let output = run(cli, &prepared.args, DEADLINE, stats)?;
     parse_created(prepared.kind, output.code, &output.stdout)
 }
 
 /// Lists the profile and material definitions of the store's accepted revision.
-pub fn definitions(cli: &Path, store: &Path) -> Result<Definitions, ToolError> {
-    let output = run(cli, &definitions_args(store), DEADLINE)?;
+pub fn definitions(cli: &Path, store: &Path, stats: &Stats) -> Result<Definitions, ToolError> {
+    let output = run(cli, &definitions_args(store), DEADLINE, stats)?;
     parse_definitions(output.code, &output.stdout)
 }
 
 /// Runs a previewed edit (or an undo or redo) and reads its reply.
-pub fn commit_edit(cli: &Path, edit: &Edit) -> Result<Edited, ToolError> {
-    let output = run(cli, &edit.args, DEADLINE)?;
+pub fn commit_edit(cli: &Path, edit: &Edit, stats: &Stats) -> Result<Edited, ToolError> {
+    let output = run(cli, &edit.args, DEADLINE, stats)?;
     parse_edited(edit.kind, output.code, &output.stdout)
 }
 
@@ -224,13 +232,23 @@ impl Selected {
 }
 
 /// Looks up one element of the accepted revision.
-pub fn element_info(cli: &Path, store: &Path, id: &str) -> Result<ElementInfo, ToolError> {
-    lookup(cli, store, id, &NEVER).0
+pub fn element_info(
+    cli: &Path,
+    store: &Path,
+    id: &str,
+    stats: &Stats,
+) -> Result<ElementInfo, ToolError> {
+    lookup(cli, store, id, &NEVER, stats).0
 }
 
 /// Reads the properties of one element of the accepted revision, with the revision they come from.
-pub fn element_details(cli: &Path, store: &Path, id: &str) -> Result<Details, ToolError> {
-    lookup(cli, store, id, &NEVER).1
+pub fn element_details(
+    cli: &Path,
+    store: &Path,
+    id: &str,
+    stats: &Stats,
+) -> Result<Details, ToolError> {
+    lookup(cli, store, id, &NEVER, stats).1
 }
 
 /// [`element_info`] and [`element_details`] of one element from one `plate-inspect --element ID`:
@@ -241,6 +259,7 @@ pub fn lookup(
     store: &Path,
     id: &str,
     cancel: &AtomicBool,
+    stats: &Stats,
 ) -> (Result<ElementInfo, ToolError>, Result<Details, ToolError>) {
     // An id no revision can hold is not in this one (the CLI would refuse it as malformed).
     if ElementId::parse(id).is_err() {
@@ -253,6 +272,7 @@ pub fn lookup(
         DEADLINE,
         MAX_OUTPUT,
         cancel,
+        stats,
     ) {
         Ok(output) => (
             parse_element_info(id, output.code, &output.stdout),
@@ -271,24 +291,29 @@ pub fn select(
     snapshot: &ViewSnapshot,
     ray: &Ray,
     cancel: &AtomicBool,
+    stats: &Stats,
 ) -> Result<Option<Selected>, ToolError> {
     let Some(id) = pick_in(snapshot, ray)? else {
         return Ok(None);
     };
-    let (info, details) = lookup(cli, store, &id, cancel);
+    let (info, details) = lookup(cli, store, &id, cancel, stats);
     Ok(Some(Selected { id, info, details }))
 }
 
 /// Runs a previewed property edit (`update-element`) and reads its reply.
-pub fn commit_property(cli: &Path, edit: &PropertyEdit) -> Result<Edited, ToolError> {
-    let output = run(cli, &edit.args, DEADLINE)?;
+pub fn commit_property(
+    cli: &Path,
+    edit: &PropertyEdit,
+    stats: &Stats,
+) -> Result<Edited, ToolError> {
+    let output = run(cli, &edit.args, DEADLINE, stats)?;
     // The reply of `update-element` is the one a move reads: outcome `element_updated`.
     parse_edited(EditKind::Move, output.code, &output.stdout)
 }
 
 /// Runs a confirmed `workspace-publish` and reads its reply.
-pub fn publish(cli: &Path, args: &[String]) -> Result<Published, ToolError> {
-    let output = run(cli, args, DEADLINE)?;
+pub fn publish(cli: &Path, args: &[String], stats: &Stats) -> Result<Published, ToolError> {
+    let output = run(cli, args, DEADLINE, stats)?;
     parse_published(output.code, &output.stdout)
 }
 
@@ -297,7 +322,8 @@ pub fn workspace_status(
     cli: &Path,
     published: &Path,
     workspace: &Path,
+    stats: &Stats,
 ) -> Result<Status, ToolError> {
-    let output = run(cli, &status_args(published, workspace), DEADLINE)?;
+    let output = run(cli, &status_args(published, workspace), DEADLINE, stats)?;
     parse_status(output.code, &output.stdout)
 }

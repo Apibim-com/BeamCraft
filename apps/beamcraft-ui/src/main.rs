@@ -21,10 +21,12 @@ use beamcraft_engine::{Limits, Representation, ViewPin, ViewSnapshot};
 use beamcraft_model::digest::Sha256;
 use beamcraft_ui::app::{App, Source, icon};
 use beamcraft_ui::scene::Scene;
+use beamcraft_ui::stats::Stats;
 use beamcraft_ui::{Error, json_string, metrics, perf, source};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 
 fn usage() -> Error {
     Error::Input(
@@ -74,6 +76,8 @@ fn number(map: &BTreeMap<String, String>, key: &str, default: u32) -> Result<u32
 /// What a run printed and its exit status, or `None` for a window that just closed.
 fn run() -> Result<Option<(String, u8)>, Error> {
     let map = options()?;
+    // One window, one set of counters; shared with its worker threads (see beamcraft_ui::stats).
+    let stats = Arc::new(Stats::default());
     let samples = map
         .get("--samples")
         .map(|v| match v.as_str() {
@@ -101,7 +105,7 @@ fn run() -> Result<Option<(String, u8)>, Error> {
         );
         let snapshot = ViewSnapshot::build(pin, plate_scene(count, false)?, &Limits::default())?;
         let scene = Scene::from_snapshot(&snapshot, Representation::Full)?;
-        let json = metrics::measure(&scene, frames, size, samples)?.to_json();
+        let json = metrics::measure(&scene, frames, size, samples, &stats)?.to_json();
         let json = json.replacen(
             "\"outcome\":\"viewport_metrics\"",
             "\"outcome\":\"viewport_metrics\",\"source\":\"synthetic\"",
@@ -133,10 +137,10 @@ fn run() -> Result<Option<(String, u8)>, Error> {
             number(&map, "--width", 1280)?,
             number(&map, "--height", 800)?,
         ];
-        let snapshot = source::load(&cli, &store)?;
+        let snapshot = source::load(&cli, &store, &stats)?;
         let scene = Scene::from_snapshot(&snapshot, Representation::Full)?;
         return Ok(Some((
-            metrics::measure(&scene, frames, size, samples)?.to_json(),
+            metrics::measure(&scene, frames, size, samples, &stats)?.to_json(),
             0,
         )));
     }
@@ -173,7 +177,7 @@ fn run() -> Result<Option<(String, u8)>, Error> {
             options,
             Box::new(move |cc| {
                 let perf = plan.map(|phases| (phases, report));
-                Ok(Box::new(App::with_perf_run(cc, source, perf)?))
+                Ok(Box::new(App::with_perf_run(cc, source, perf, stats)?))
             }),
         )
     }))

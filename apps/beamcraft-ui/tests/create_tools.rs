@@ -18,6 +18,7 @@
 use beamcraft_engine::Representation;
 use beamcraft_json::{Json, Limits};
 use beamcraft_ui::scene::Scene;
+use beamcraft_ui::stats::Stats;
 use beamcraft_ui::tools::{MemberKind, PlateForm, ToolKind, Tools};
 use beamcraft_ui::{Error, command, source};
 use std::path::{Path, PathBuf};
@@ -130,7 +131,7 @@ fn a_plate_from_the_tool_equals_the_plate_made_by_hand() {
     // Preview and cancel publish nothing: the store has no revision at all.
     tools.cancel();
     assert!(tools.begin_commit(&ui).is_none());
-    match source::load(&cli, &ui) {
+    match source::load(&cli, &ui, &Stats::default()) {
         Err(Error::NoRevision) => (),
         other => panic!("a cancelled preview must publish nothing, got {other:?}"),
     }
@@ -139,7 +140,7 @@ fn a_plate_from_the_tool_equals_the_plate_made_by_hand() {
     assert!(tools.can_commit(&ui));
     let staged = tools.begin_commit(&ui).unwrap();
     assert_eq!(staged, prepared);
-    let created = command::commit(&cli, &staged).unwrap();
+    let created = command::commit(&cli, &staged, &Stats::default()).unwrap();
     tools.finish();
 
     let hand_store = hand.to_str().unwrap();
@@ -191,7 +192,7 @@ fn a_plate_from_the_tool_equals_the_plate_made_by_hand() {
     assert_eq!(text(&a, &["element_id"]), created.element_id);
 
     // The viewport reload sees the accepted revision the command reported.
-    let snapshot = source::load(&cli, &ui).unwrap();
+    let snapshot = source::load(&cli, &ui, &Stats::default()).unwrap();
     assert_eq!(
         snapshot.pin().revision().to_string(),
         created.manifest_digest
@@ -236,7 +237,7 @@ fn a_member_from_the_tool_equals_the_member_made_by_hand() {
 
     // The choices come from the store's definitions, as the panel lists them: the generated
     // display name (A07.2) leads, the dimensions follow.
-    let definitions = command::definitions(&cli, &ui).unwrap();
+    let definitions = command::definitions(&cli, &ui, &Stats::default()).unwrap();
     assert_eq!(definitions.profiles.len(), 1);
     assert_eq!(definitions.materials.len(), 1);
     assert_eq!(
@@ -256,7 +257,7 @@ fn a_member_from_the_tool_equals_the_member_made_by_hand() {
     tools.member.name = "C1".into();
     tools.preview(&ui).unwrap();
     let staged = tools.begin_commit(&ui).unwrap();
-    let created = command::commit(&cli, &staged).unwrap();
+    let created = command::commit(&cli, &staged, &Stats::default()).unwrap();
     tools.finish();
 
     let reply = ok(
@@ -310,7 +311,7 @@ fn a_member_from_the_tool_equals_the_member_made_by_hand() {
         assert_eq!(at(&a, path), at(&b, path), "{path:?}");
     }
     assert_eq!(bounds(&cli, &ui), bounds(&cli, &hand));
-    let snapshot = source::load(&cli, &ui).unwrap();
+    let snapshot = source::load(&cli, &ui, &Stats::default()).unwrap();
     assert_eq!(
         snapshot.pin().revision().to_string(),
         created.manifest_digest
@@ -337,7 +338,7 @@ fn an_engine_refusal_reaches_the_panel_and_publishes_nothing() {
     };
     tools.preview(&ui).unwrap();
     let staged = tools.begin_commit(&ui).unwrap();
-    let error = command::commit(&cli, &staged).unwrap_err();
+    let error = command::commit(&cli, &staged, &Stats::default()).unwrap_err();
     tools.finish();
     // The same refusal the CLI prints by hand, code and message.
     let (code, reply) = by_hand(
@@ -358,7 +359,10 @@ fn an_engine_refusal_reaches_the_panel_and_publishes_nothing() {
     assert_eq!(error.code, "INVALID_ARGUMENT");
     assert_eq!(error.code, text(&reply, &["code"]));
     assert_eq!(error.message, text(&reply, &["message"]));
-    assert!(matches!(source::load(&cli, &ui), Err(Error::NoRevision)));
+    assert!(matches!(
+        source::load(&cli, &ui, &Stats::default()),
+        Err(Error::NoRevision)
+    ));
 
     // A member that names a profile the store does not have.
     let mut member = Tools::default();
@@ -366,7 +370,7 @@ fn an_engine_refusal_reaches_the_panel_and_publishes_nothing() {
     member.member.profile = Some("a".repeat(64));
     member.preview(&ui).unwrap();
     let staged = member.begin_commit(&ui).unwrap();
-    let error = command::commit(&cli, &staged).unwrap_err();
+    let error = command::commit(&cli, &staged, &Stats::default()).unwrap_err();
     assert_eq!(error.code, "NOT_FOUND", "{error}");
     assert!(!error.message.is_empty());
 }
@@ -382,7 +386,12 @@ fn a_missing_cli_is_an_error_not_a_hang() {
         ..PlateForm::default()
     };
     let staged = tools.preview(&stores.ui()).unwrap().clone();
-    let error = command::commit(&stores.root.join("no-such-beamcraft"), &staged).unwrap_err();
+    let error = command::commit(
+        &stores.root.join("no-such-beamcraft"),
+        &staged,
+        &Stats::default(),
+    )
+    .unwrap_err();
     assert_eq!(error.code, "CLI_UNAVAILABLE");
 }
 
@@ -392,9 +401,11 @@ fn a_refresh_runs_off_the_ui_thread_and_keeps_its_two_results_apart() {
     let stores = Stores::new();
     let ui = stores.ui();
     let refresh = |cli: PathBuf, store: PathBuf| {
-        std::thread::spawn(move || source::reload(&cli, &store, &source::Known::default()))
-            .join()
-            .unwrap()
+        std::thread::spawn(move || {
+            source::reload(&cli, &store, &source::Known::default(), &Stats::default())
+        })
+        .join()
+        .unwrap()
     };
     // No revision yet: the scene reports the typed empty state and the definitions listing
     // answers with the CLI's own NOT_FOUND.
@@ -448,7 +459,8 @@ fn a_refresh_runs_off_the_ui_thread_and_keeps_its_two_results_apart() {
         token: Some(snapshot.token().clone()),
         resident: scene.meshes.iter().map(|m| m.digest).collect(),
     };
-    let again = std::thread::spawn(move || source::reload(&cli, &ui, &known))
+    let stats = Stats::default();
+    let again = std::thread::spawn(move || source::reload(&cli, &ui, &known, &stats))
         .join()
         .unwrap();
     assert!(matches!(again.scene, Ok(source::Refreshed::Unchanged)));
@@ -475,14 +487,18 @@ fn a_snapshot_export_that_misses_its_deadline_is_a_typed_error() {
         ],
     );
     // A zero deadline cannot be met by a process that has just started: it is stopped.
-    match source::load_within(&cli, &ui, std::time::Duration::ZERO) {
+    match source::load_within(&cli, &ui, std::time::Duration::ZERO, &Stats::default()) {
         Err(Error::Cli(message)) => {
             assert!(message.contains("did not finish in time"), "{message}")
         }
         other => panic!("expected a deadline error, got {other:?}"),
     }
     // The same call within the default deadline succeeds.
-    assert!(source::load(&cli, &ui).is_ok());
-    let missing = source::load(&stores.root.join("no-such-beamcraft"), &ui);
+    assert!(source::load(&cli, &ui, &Stats::default()).is_ok());
+    let missing = source::load(
+        &stores.root.join("no-such-beamcraft"),
+        &ui,
+        &Stats::default(),
+    );
     assert!(matches!(missing, Err(Error::Cli(m)) if m.contains("CLI_UNAVAILABLE")));
 }

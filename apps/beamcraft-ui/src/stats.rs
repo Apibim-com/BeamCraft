@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! Process-wide counters of the work the window does: frames, viewport draws, GPU uploads,
-//! pipeline and target builds, CLI processes. They are plain relaxed atomics, always on and too
-//! cheap to measure; only `--perf-run` reads them (see [`crate::perf`]). They count work, they
-//! never decide it.
+//! Counters of the work a window does: frames, viewport draws, GPU uploads, pipeline and target
+//! builds, CLI processes. They are plain relaxed atomics, always on and too cheap to measure;
+//! only `--perf-run` reads them (see [`crate::perf`]). They count work, they never decide it.
+//! The window owns one [`Stats`] and shares it with its worker threads, so a test's window
+//! never counts into another test's counters.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -53,7 +54,7 @@ impl Default for Counter {
     }
 }
 
-/// Every counter of the process.
+/// Every counter of one window and its workers.
 #[derive(Debug, Default)]
 pub struct Stats {
     /// Window frames (`App::ui` calls).
@@ -91,27 +92,6 @@ pub struct Stats {
     /// Gauge: mesh blob bytes of the loaded view snapshot.
     pub snapshot_mesh_bytes: Counter,
 }
-
-/// The counters of this process.
-pub static STATS: Stats = Stats {
-    frames: Counter::new(),
-    viewport_draws: Counter::new(),
-    submits: Counter::new(),
-    uploads: Counter::new(),
-    upload_bytes: Counter::new(),
-    upload_ui_ns: Counter::new(),
-    pipeline_builds: Counter::new(),
-    target_builds: Counter::new(),
-    resize_ns: Counter::new(),
-    cli_runs: Counter::new(),
-    cli_ns: Counter::new(),
-    cli_killed: Counter::new(),
-    cli_active: Counter::new(),
-    reloads_applied: Counter::new(),
-    select_errors: Counter::new(),
-    retained_display_bytes: Counter::new(),
-    snapshot_mesh_bytes: Counter::new(),
-};
 
 /// The counters' values at one moment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

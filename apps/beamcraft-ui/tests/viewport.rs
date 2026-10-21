@@ -20,6 +20,7 @@ use beamcraft_model::digest::Sha256;
 use beamcraft_ui::camera::Camera;
 use beamcraft_ui::render::{Gpu, Renderer, Uploaded, wait};
 use beamcraft_ui::scene::Scene;
+use beamcraft_ui::stats::Stats;
 use beamcraft_ui::{Error, source};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -46,10 +47,11 @@ fn gpu() -> Option<Gpu> {
 fn render(gpu: &Gpu, scene: &Scene) -> ([u8; 4], [u8; 4], usize) {
     let (target, extent) = scene.framing();
     let view = Camera::new(target, extent, 1.0).unwrap().view(1.0).unwrap();
-    let renderer = Renderer::new(&gpu.adapter, &gpu.device, 128, 128).unwrap();
-    let uploaded = Uploaded::new(&gpu.device, &gpu.queue, scene).unwrap();
+    let stats = Stats::default();
+    let renderer = Renderer::new(&gpu.adapter, &gpu.device, 128, 128, &stats).unwrap();
+    let uploaded = Uploaded::new(&gpu.device, &gpu.queue, scene, &stats).unwrap();
     let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
-    let index = renderer.draw(&gpu.device, &gpu.queue, &uploaded, view);
+    let index = renderer.draw(&gpu.device, &gpu.queue, &uploaded, view, &stats);
     wait(&gpu.device, index).unwrap();
     let (pixels, row) = renderer.readback(&gpu.device, &gpu.queue).unwrap();
     assert!(pollster::block_on(scope.pop()).is_none());
@@ -88,9 +90,9 @@ fn an_engine_snapshot_renders_lit_geometry_on_a_background() {
 fn lit_pixels(gpu: &Gpu, scene: &Scene, uploaded: &Uploaded) -> usize {
     let (target, extent) = scene.framing();
     let view = Camera::new(target, extent, 1.0).unwrap().view(1.0).unwrap();
-    let renderer = Renderer::new(&gpu.adapter, &gpu.device, 128, 128).unwrap();
+    let renderer = Renderer::new(&gpu.adapter, &gpu.device, 128, 128, &Stats::default()).unwrap();
     let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
-    let index = renderer.draw(&gpu.device, &gpu.queue, uploaded, view);
+    let index = renderer.draw(&gpu.device, &gpu.queue, uploaded, view, &Stats::default());
     wait(&gpu.device, index).unwrap();
     let (pixels, row) = renderer.readback(&gpu.device, &gpu.queue).unwrap();
     assert!(pollster::block_on(scope.pop()).is_none());
@@ -137,7 +139,7 @@ fn a_refresh_reuses_the_meshes_on_the_device_and_still_draws_them() {
         .sum();
     assert_eq!(new.bytes, sent as u64);
     // The reused buffers draw the same image as a fresh upload of the whole scene.
-    let fresh = Uploaded::new(&gpu.device, &gpu.queue, &full).unwrap();
+    let fresh = Uploaded::new(&gpu.device, &gpu.queue, &full, &Stats::default()).unwrap();
     let lit = lit_pixels(&gpu, &full, &new);
     assert!(lit > 0);
     assert_eq!(lit, lit_pixels(&gpu, &full, &fresh));
@@ -221,7 +223,8 @@ fn the_accepted_revision_of_a_store_is_the_viewport_scene() {
             "0,2000,0",
         ],
     );
-    let snapshot = source::load(&cli, &root).unwrap();
+    let stats = Stats::default();
+    let snapshot = source::load(&cli, &root, &stats).unwrap();
     // The viewport sees the engine's snapshot of the head: the same token plate-inspect reports.
     let inspect = run(&cli, &["plate-inspect", "--store", store]);
     assert!(inspect.contains(snapshot.token().as_str()));
@@ -241,7 +244,7 @@ fn the_accepted_revision_of_a_store_is_the_viewport_scene() {
     // A store without a revision is the typed empty state, not a failure.
     let empty = root.join("empty");
     std::fs::create_dir_all(&empty).unwrap();
-    match source::load(&cli, &empty) {
+    match source::load(&cli, &empty, &stats) {
         Err(Error::NoRevision) => (),
         other => panic!("expected the empty-store state, got {other:?}"),
     }
