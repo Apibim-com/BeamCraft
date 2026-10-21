@@ -163,7 +163,8 @@ density. The numbers are plain USD attributes (`steel:profile:areaMm2`, `steel:p
 `bim:materialGrade`, `bim:materialStandard`).
 
 `define-material` and `define-profile` publish one immutable definition as the next revision: a
-`/World/Definitions/D_<sha256>` prim in the model layer, with units `mm` and schema version
+`/World/Definitions/Materials/MAT_<sha256>` or
+`/World/Definitions/Profiles/PRF_<sha256>` prim in the model layer, with units `mm` and schema version
 `0.1.0`. The digest is the full SHA-256 of the canonical isolated definition layer that the layer
 engine writes, so it pins the values, the units and the version together; the output is
 `definition_created` with that digest, or `definition_exists` (no new revision, nothing written)
@@ -317,3 +318,7 @@ nothing is written. `reference-inspect` opens the verified head (every blob re-h
 the wrappers, their pinned source, the foreign prims and the external layers. Every other command
 (`create-plate`, `update-element`, `workspace-publish`, `workspace-undo`, ...) carries the external
 layer into its revision unchanged. See the [design note](../../docs/design/r01-readonly-reference.md).
+
+U16 uses the [category-based prim paths](../../docs/architecture.md#prim-hierarchy-and-naming-rule)
+in saved layers and `prim_path` output. Stores with earlier paths or schema pins are refused;
+there is no migration during this pre-alpha compatibility break.

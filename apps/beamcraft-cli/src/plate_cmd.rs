@@ -1441,7 +1441,10 @@ fn member_json(record: &MemberRecord) -> Run<Json> {
     let a = &record.authored;
     Ok(Json::object([
         ("element_id", Json::text(a.id.to_string())),
-        ("prim_path", Json::text(a.id.prim_path())),
+        (
+            "prim_path",
+            Json::text(a.id.prim_path(beamcraft_model::prim::ElementCategory::Part)),
+        ),
         ("kind", Json::text(a.kind.as_str())),
         ("name", Json::text(a.name.clone())),
         ("profile_digest", Json::text(a.profile.to_string())),
@@ -1564,7 +1567,10 @@ fn quantities_json(q: &Quantities) -> Run<Json> {
 pub(crate) fn definition_json(digest: &ContentDigest, record: &DefinitionRecord) -> Run<Json> {
     let mut fields = vec![
         ("digest", Json::text(digest.to_string())),
-        ("prim_path", Json::text(definition_path(digest))),
+        (
+            "prim_path",
+            Json::text(definition_path(digest, record.kind())),
+        ),
         ("kind", Json::text(record.kind())),
         ("units", Json::text("mm")),
         ("schema_version", Json::text("0.1.0")),
@@ -1790,7 +1796,15 @@ fn plate_json(record: &PlateRecord) -> Run<Json> {
     let mesh = &record.body.solid;
     Ok(Json::object([
         ("element_id", Json::text(record.authored.id.to_string())),
-        ("prim_path", Json::text(record.authored.id.prim_path())),
+        (
+            "prim_path",
+            Json::text(
+                record
+                    .authored
+                    .id
+                    .prim_path(beamcraft_model::prim::ElementCategory::Part),
+            ),
+        ),
         ("kind", Json::text("plate")),
         ("name", Json::text(record.authored.name.clone())),
         (

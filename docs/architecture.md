@@ -297,9 +297,8 @@ Groupings are relationships, not parents (`bim:partOf`, `bim:level`, `bim:connec
 belongs to an assembly, a level and later a phase or zone at the same time, and a weld joins parts
 of different assemblies, which a single tree cannot express.
 
-**Status:** the code still writes the earlier layout (`/World/Definitions/D_<sha256>` and every
-element as `/World/Steel/E_<uuid>`) until task U16 applies this rule. Stores written before U16
-are not migrated (pre-alpha).
+**Compatibility:** U16 writes and reads only this layout. Stores written before U16 and their
+schema pins are refused, with no migration (pre-alpha).
 
 ## Attributes
 

@@ -494,7 +494,7 @@ fn seq(n: u32) -> String {
 }
 fn el(id: &str, extra: &str) -> String {
     format!(
-        "def Xform \"E_{}\" {{\n custom string bim:id = \"{id}\"\n custom string bim:name = \"label\"\n{extra}\n}}\n",
+        "def Xform \"PRT_{}\" {{\n custom string bim:id = \"{id}\"\n custom string bim:name = \"label\"\n{extra}\n}}\n",
         hex(id)
     )
 }
@@ -758,7 +758,7 @@ fn duplicate_short_and_dangling_identities_abort_the_commit_with_the_root_unchan
     let id = seq(0x30);
     let other = format!("def Scope \"Other\" {{ {} }}", el(&id, ""));
     let dangling = format!(
-        "custom rel bim:profile = </World/Steel/E_{}>",
+        "custom rel bim:profile = </World/Steel/Parts/PRT_{}>",
         hex(&seq(0x99))
     );
     let cases: [(&str, Vec<Asset>, ErrorCode); 3] = [
@@ -770,7 +770,7 @@ fn duplicate_short_and_dangling_identities_abort_the_commit_with_the_root_unchan
         (
             "short",
             hand_built(
-                "def Xform \"E_0199e7a0\" { custom string bim:id = \"0199e7a0\" }",
+                "def Xform \"PRT_0199e7a0\" { custom string bim:id = \"0199e7a0\" }",
                 "",
             ),
             ErrorCode::InvalidId,

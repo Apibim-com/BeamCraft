@@ -687,7 +687,11 @@ pub(crate) fn decode(
             continue;
         };
         let id = ElementId::parse(text_id).map_err(|_| integrity("element id is not a UUIDv7"))?;
-        if prim.path != id.prim_path() {
+        let category = property(prim, "bim:elementKind")
+            .and_then(text)
+            .and_then(beamcraft_model::prim::ElementCategory::from_kind)
+            .ok_or_else(|| integrity("unknown element category"))?;
+        if prim.path != id.prim_path(category) {
             return Err(integrity("element path does not match its id"));
         }
         let mesh = || {

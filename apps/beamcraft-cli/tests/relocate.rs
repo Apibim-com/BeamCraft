@@ -375,11 +375,11 @@ fn a_delete_is_refused_while_another_element_links_to_it() {
     let hex = |id: &str| id.replace('-', "");
     f.tamper(|name, mut text| {
         if name == "authored.usda" {
-            let marker = format!("\"E_{}\"", hex(&plate));
+            let marker = format!("\"PRT_{}\"", hex(&plate));
             let start = text.find(&marker).unwrap();
             let brace = start + text[start..].find('{').unwrap() + 1;
             let link = format!(
-                "\ncustom rel bim:test:supports = </World/Steel/E_{}>\n",
+                "\ncustom rel bim:test:supports = </World/Steel/Parts/PRT_{}>\n",
                 hex(&beam)
             );
             text.insert_str(brace, &link);

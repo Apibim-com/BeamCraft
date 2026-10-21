@@ -360,7 +360,7 @@ fn a_damaged_connects_record_is_refused_not_reported() {
     let plate = f.plate();
     let beam = f.beam();
     f.bolt(BOLT, &plate, &beam);
-    let path = |id: &str| format!("</World/Steel/E_{}>", id.replace('-', ""));
+    let path = |id: &str| format!("</World/Steel/Parts/PRT_{}>", id.replace('-', ""));
     let full = format!("rel bim:connects = [{}, {}]", path(&plate), path(&beam));
     let single = format!("rel bim:connects = {}", path(&plate));
     f.tamper(|name, text| {

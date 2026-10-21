@@ -186,7 +186,7 @@ fn snapshot(author: &Author, context: &Context) -> Vec<Prim> {
     result
 }
 fn path(id: &str) -> String {
-    format!("/World/Steel/E_{}", id.replace('-', ""))
+    format!("/World/References/REF_{}", id.replace('-', ""))
 }
 fn source_path(id: &str) -> String {
     format!("{}/Correction/Source", path(id))
@@ -1132,7 +1132,7 @@ fn a_binary_layer_outside_the_restricted_profile_fails_closed_with_a_diagnostic(
 }
 
 #[test]
-fn layers_pinned_to_the_p02_2_mapping_stay_editable_and_get_the_current_pin() {
+fn layers_pinned_to_the_p02_2_mapping_are_refused() {
     // The digest of the P02.2 descriptor (master before R01): R01 only adds the wrapper.
     let old = "960c23cae54987cab86028cde90e360eb44ed64f8b6847f3c4f98b02d630ef56";
     let pinned = |name: &str, pin: &str| asset(name, pinned_text(pin));
@@ -1142,15 +1142,19 @@ fn layers_pinned_to_the_p02_2_mapping_stay_editable_and_get_the_current_pin() {
         input.assets.push(pinned(name, old));
     }
     input.manifest = input.manifest_digest().unwrap();
-    assert!(validate_layers(input.clone(), schema_identity().unwrap(), &control()).is_ok());
-    let (mut a, o) = open(input);
-    let p = a
-        .prepare(batch(&o.context, vec![attach(WRAPPER)]), &control())
-        .unwrap();
-    let authored = p.layers.iter().find(|l| l.name == "authored.usda").unwrap();
-    let text = std::str::from_utf8(&authored.bytes).unwrap();
-    assert!(text.contains(&schema_identity().unwrap().digest.to_string()));
-    assert!(!text.contains(old));
+    assert_eq!(
+        validate_layers(input.clone(), schema_identity().unwrap(), &control())
+            .unwrap_err()
+            .code,
+        ErrorCode::UnsupportedVersion
+    );
+    assert_eq!(
+        Author::open(input, targets(), schema_identity().unwrap(), &control())
+            .err()
+            .unwrap()
+            .code,
+        ErrorCode::UnsupportedVersion
+    );
     // An unknown pin is still refused.
     let mut input = initial();
     input.assets.retain(|a| a.name != "authored.usda");

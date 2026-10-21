@@ -337,13 +337,13 @@ fn a_copy_refuses_element_links_it_cannot_carry_over() {
     let hex = |id: &str| id.replace('-', "");
     f.tamper(|name, mut text| {
         if name == "authored.usda" {
-            let marker = format!("\"E_{}\"", hex(&holder));
+            let marker = format!("\"PRT_{}\"", hex(&holder));
             let start = text.find(&marker).unwrap();
             let brace = start + text[start..].find('{').unwrap() + 1;
             text.insert_str(
                 brace,
                 &format!(
-                    "\ncustom rel bim:test:supports = </World/Steel/E_{}>\n",
+                    "\ncustom rel bim:test:supports = </World/Steel/Parts/PRT_{}>\n",
                     hex(&target)
                 ),
             );

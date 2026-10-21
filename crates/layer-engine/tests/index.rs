@@ -84,12 +84,12 @@ fn hex(id: &str) -> String {
 
 fn world(elements: &str, definitions: &str, other: &str) -> String {
     layer(&format!(
-        "def Xform \"World\" {{\n def Scope \"Steel\" {{\n{elements}\n}}\n def Scope \"Definitions\" {{\n{definitions}\n}}\n{other}\n}}"
+        "def Xform \"World\" {{\n def Scope \"Steel\" {{\n def Scope \"Parts\" {{\n{elements}\n}}\n}}\n def Scope \"Definitions\" {{\n def Scope \"Profiles\" {{\n{definitions}\n}}\n}}\n{other}\n}}"
     ))
 }
 fn el(id: &str, extra: &str) -> String {
     format!(
-        "def Xform \"E_{}\" {{\n custom string bim:id = \"{id}\"\n custom string bim:name = \"label\"\n{extra}\n}}\n",
+        "def Xform \"PRT_{}\" {{\n custom string bim:id = \"{id}\"\n custom string bim:name = \"label\"\n{extra}\n}}\n",
         hex(id)
     )
 }
@@ -97,7 +97,7 @@ fn seq(n: u32) -> String {
     format!("0199e7a0-0000-7000-8000-{n:012x}")
 }
 fn link(name: &str, id: &str) -> String {
-    format!("custom rel {name} = </World/Steel/E_{}>\n", hex(id))
+    format!("custom rel {name} = </World/Steel/Parts/PRT_{}>\n", hex(id))
 }
 fn reader(assets: Vec<Asset>, owned: &[&str], page_items: usize) -> (Reader, Opened) {
     let root = assets[0].name.clone();
@@ -111,7 +111,16 @@ fn single(body: String) -> (Reader, Opened) {
     reader(vec![asset("root.usda", body)], &["root.usda"], 64)
 }
 fn built(body: String) -> Result<ElementIndex, Diagnostic> {
-    let (r, o) = single(body);
+    let mut r = Reader::default();
+    let o = r.open(
+        request(
+            "root.usda",
+            vec![asset("root.usda", body)],
+            &["root.usda"],
+            64,
+        ),
+        &control(),
+    )?;
     r.element_index(&o.context, &control())
 }
 fn reader_pages(r: &Reader, context: &Context) -> Vec<Page> {
@@ -127,6 +136,60 @@ fn reader_pages(r: &Reader, context: &Context) -> Vec<Page> {
     }
     pages
 }
+
+#[test]
+fn category_paths_are_checked_against_kinds_and_relationships_resolve_exact_paths() {
+    let id = seq(0x139);
+    let index = built(world(
+        &el(&id, "custom token bim:elementKind = \"beam\""),
+        "",
+        "",
+    ))
+    .unwrap();
+    let other_category = format!("/World/Steel/Assemblies/ASM_{}", hex(&id));
+    assert_eq!(
+        code(index.lookup_path(&other_category)),
+        ErrorCode::NotFound
+    );
+    assert_eq!(
+        code(built(world(
+            &el(&id, "custom token bim:elementKind = \"assembly\""),
+            "",
+            ""
+        ))),
+        ErrorCode::InvalidId
+    );
+    assert_eq!(
+        code(built(world(
+            &el(&id, &format!("custom rel bim:test:to = <{other_category}>")),
+            "",
+            ""
+        ))),
+        ErrorCode::DanglingRelationship
+    );
+    assert_eq!(
+        code(built(world(&el(&id, "").replace("PRT_", "E_"), "", ""))),
+        ErrorCode::InvalidId
+    );
+    let digest = digest(b"synthetic material");
+    let wrong_kind =
+        format!("def Scope \"PRF_{digest}\" {{ custom token bim:definitionKind = \"material\" }}");
+    assert_eq!(
+        code(built(world("", &wrong_kind, ""))),
+        ErrorCode::InvalidId
+    );
+    for definition in [
+        "def Scope \"PRF_abc\" {}".to_owned(),
+        format!(
+            "def Scope \"D_{digest}\" {{ custom string bim:contentDigest = \"{digest}\"\n custom token bim:definitionKind = \"rectangle\" }}"
+        ),
+    ] {
+        assert_eq!(
+            code(built(world("", &definition, ""))),
+            ErrorCode::InvalidId
+        );
+    }
+}
 fn assemble(opened: &Opened, pages: &[Page]) -> Result<ElementIndex, Diagnostic> {
     let mut builder = IndexBuilder::new(opened)?;
     for page in pages {
@@ -140,8 +203,14 @@ fn ids_are_full_uuidv7_and_same_millisecond_ids_are_never_shortened() {
     let good = "0199e7a0-1234-7abc-8def-0123456789ab";
     let id = eid(good);
     assert_eq!(id.to_string(), good);
-    assert_eq!(id.path(), format!("/World/Steel/E_{}", hex(good)));
-    assert_eq!(ElementId::from_path(&id.path()).unwrap(), id);
+    assert_eq!(
+        id.path(beamcraft_model::prim::ElementCategory::Part),
+        format!("/World/Steel/Parts/PRT_{}", hex(good))
+    );
+    assert_eq!(
+        ElementId::from_path(&id.path(beamcraft_model::prim::ElementCategory::Part)).unwrap(),
+        id
+    );
     for bad in [
         "",
         "0199e7a0",
@@ -159,12 +228,12 @@ fn ids_are_full_uuidv7_and_same_millisecond_ids_are_never_shortened() {
     ] {
         assert_eq!(code(ElementId::parse(bad)), ErrorCode::InvalidId, "{bad:?}");
     }
-    let path = id.path();
+    let path = id.path(beamcraft_model::prim::ElementCategory::Part);
     for bad in [
-        "/World/Steel/E_0199e7a0",
-        "/World/Steel/E_0199e7a012347abc8def0123456789a",
-        "/World/Steel/E_0199E7A012347ABC8DEF0123456789AB",
-        "/World/Steel/E_0199e7a0-1234-7abc-8def-0123456789ab",
+        "/World/Steel/Parts/PRT_0199e7a0",
+        "/World/Steel/Parts/PRT_0199e7a012347abc8def0123456789a",
+        "/World/Steel/Parts/PRT_0199E7A012347ABC8DEF0123456789AB",
+        "/World/Steel/Parts/PRT_0199e7a0-1234-7abc-8def-0123456789ab",
         "/World/Other/E_0199e7a012347abc8def0123456789ab",
         "/World/Steel/0199e7a012347abc8def0123456789ab",
         &format!("{path}/Geometry"),
@@ -194,7 +263,7 @@ fn ids_are_full_uuidv7_and_same_millisecond_ids_are_never_shortened() {
     for text in &ids {
         let entry = index.lookup(text).unwrap();
         assert_eq!(entry.id.to_string(), *text);
-        assert_eq!(entry.path, format!("/World/Steel/E_{}", hex(text)));
+        assert_eq!(entry.path, format!("/World/Steel/Parts/PRT_{}", hex(text)));
         assert_eq!(index.lookup_path(&entry.path).unwrap().id, entry.id);
     }
     // A timestamp or any other prefix never resolves.
@@ -202,7 +271,7 @@ fn ids_are_full_uuidv7_and_same_millisecond_ids_are_never_shortened() {
         assert_eq!(code(index.lookup(prefix)), ErrorCode::InvalidId);
     }
     assert_eq!(
-        code(index.lookup_path("/World/Steel/E_0199e7a01234")),
+        code(index.lookup_path("/World/Steel/Parts/PRT_0199e7a01234")),
         ErrorCode::InvalidId
     );
     assert_eq!(
@@ -221,13 +290,14 @@ fn reader_index_resolves_ids_provenance_and_typed_relationships() {
     })
     .unwrap()
     .digest;
-    let definition =
-        format!("def Xform \"D_{profile}\" {{ custom string bim:contentDigest = \"{profile}\" }}");
+    let definition = format!(
+        "def Xform \"PRF_{profile}\" {{ custom string bim:contentDigest = \"{profile}\" }}"
+    );
     let body = world(
         &(el(
             &a,
             &format!(
-                "custom rel bim:profile = </World/Definitions/D_{profile}>\n{}",
+                "custom rel bim:profile = </World/Definitions/Profiles/PRF_{profile}>\n{}",
                 link("bim:test:supports", &b)
             ),
         ) + &el(&b, "")),
@@ -286,11 +356,11 @@ fn foreign_ancestors_descendants_and_dangling_foreign_links_stay_inert_and_read_
     let refs = "(references = @foreign.usda@</Source>)";
     let elements = el(&own, &link("bim:test:to", &foreign))
         + &format!(
-            "def Xform \"E_{}\" {refs} {{ custom string bim:id = \"{foreign}\" }}\n",
+            "def Xform \"PRT_{}\" {refs} {{ custom string bim:id = \"{foreign}\" }}\n",
             hex(&foreign)
         )
         + &format!(
-            "def Xform \"E_{}\" {{ custom string bim:id = \"{ghost}\"\n def Xform \"Child\" {refs} {{ }} }}\n",
+            "def Xform \"PRT_{}\" {{ custom string bim:id = \"{ghost}\"\n def Xform \"Child\" {refs} {{ }} }}\n",
             hex(&ghost)
         )
         + &el(&deep, "");
@@ -337,15 +407,25 @@ fn foreign_ancestors_descendants_and_dangling_foreign_links_stay_inert_and_read_
 fn duplicate_malformed_misplaced_and_mismatched_identities_are_rejected() {
     let id = seq(0x30);
     // Same bim:id at two parents: duplicate, whichever is visited first.
-    let other = format!("def Scope \"Other\" {{ {} }}", el(&id, ""));
+    let other = format!(
+        "def Scope \"Levels\" {{ {} }}",
+        el(&id, "").replace("PRT_", "LVL_")
+    );
     assert_eq!(
         code(built(world(&el(&id, ""), "", &other))),
         ErrorCode::DuplicateId
     );
-    // An element away from /World/Steel/E_<32 hex> has no canonical path.
-    assert_eq!(code(built(world("", "", &other))), ErrorCode::InvalidId);
+    // An element away from /World/Steel/Parts/PRT_<32 hex> has no canonical path.
+    assert_eq!(
+        code(built(world(
+            "",
+            "",
+            &format!("def Scope \"Other\" {{ {} }}", el(&id, ""))
+        ))),
+        ErrorCode::InvalidId
+    );
     // Short, upper-case and mismatched identities fail even before an index exists.
-    let short = "def Xform \"E_0199e7a0\" { custom string bim:id = \"0199e7a0\" }";
+    let short = "def Xform \"PRT_0199e7a0\" { custom string bim:id = \"0199e7a0\" }";
     let open = |elements: String| {
         let (mut r, _) = (Reader::default(), ());
         code(r.open(
@@ -361,7 +441,7 @@ fn duplicate_malformed_misplaced_and_mismatched_identities_are_rejected() {
     assert_eq!(open(short.into()), ErrorCode::InvalidId);
     assert_eq!(
         open(format!(
-            "def Xform \"E_{}\" {{ custom string bim:id = \"{}\" }}",
+            "def Xform \"PRT_{}\" {{ custom string bim:id = \"{}\" }}",
             hex(&seq(0x31)),
             seq(0x32)
         )),
@@ -370,7 +450,7 @@ fn duplicate_malformed_misplaced_and_mismatched_identities_are_rejected() {
     let upper = id.to_uppercase();
     assert_eq!(
         open(format!(
-            "def Xform \"E_{}\" {{ custom string bim:id = \"{upper}\" }}",
+            "def Xform \"PRT_{}\" {{ custom string bim:id = \"{upper}\" }}",
             hex(&upper)
         )),
         ErrorCode::InvalidId
@@ -379,7 +459,7 @@ fn duplicate_malformed_misplaced_and_mismatched_identities_are_rejected() {
     let labelled = |label: &str| {
         built(world(
             &format!(
-                "def Xform \"E_{}\" {{ custom string bim:id = \"{id}\"\n custom string bim:name = \"{label}\" }}",
+                "def Xform \"PRT_{}\" {{ custom string bim:id = \"{id}\"\n custom string bim:name = \"{label}\" }}",
                 hex(&id)
             ),
             "",
@@ -464,14 +544,14 @@ fn dangling_short_and_unsupported_targets_of_owned_prims_are_rejected() {
     let absent = "0".repeat(64);
     assert_eq!(
         code(with(
-            &format!("custom rel bim:profile = </World/Definitions/D_{absent}>"),
+            &format!("custom rel bim:profile = </World/Definitions/Profiles/PRF_{absent}>"),
             ""
         )),
         ErrorCode::DanglingRelationship
     );
     assert_eq!(
         code(with(
-            "custom rel bim:test:to = </World/Steel/E_0199e7a0>",
+            "custom rel bim:test:to = </World/Steel/Parts/PRT_0199e7a0>",
             ""
         )),
         ErrorCode::InvalidId
@@ -479,7 +559,7 @@ fn dangling_short_and_unsupported_targets_of_owned_prims_are_rejected() {
     assert_eq!(
         code(with(
             &format!(
-                "custom rel bim:test:to = </World/Steel/E_{}>",
+                "custom rel bim:test:to = </World/Steel/Parts/PRT_{}>",
                 hex(&b).to_uppercase()
             ),
             ""
@@ -488,7 +568,7 @@ fn dangling_short_and_unsupported_targets_of_owned_prims_are_rejected() {
     );
     assert_eq!(
         code(with(
-            "custom rel bim:profile = </World/Definitions/D_abc>",
+            "custom rel bim:profile = </World/Definitions/Profiles/PRF_abc>",
             ""
         )),
         ErrorCode::InvalidId
@@ -500,7 +580,7 @@ fn dangling_short_and_unsupported_targets_of_owned_prims_are_rejected() {
     assert_eq!(
         code(with(
             &format!(
-                "custom rel bim:test:to = </World/Steel/E_{}.bim:name>",
+                "custom rel bim:test:to = </World/Steel/Parts/PRT_{}.bim:name>",
                 hex(&b)
             ),
             ""
@@ -510,7 +590,7 @@ fn dangling_short_and_unsupported_targets_of_owned_prims_are_rejected() {
     // Existing non-element targets resolve as plain prims; self links are recorded.
     let ok = with(
         &format!(
-            "custom rel bim:test:to = [</World/Steel>, </World/Steel/E_{0}>]",
+            "custom rel bim:test:to = [</World/Steel>, </World/Steel/Parts/PRT_{0}>]",
             hex(&a)
         ),
         "",
@@ -530,7 +610,7 @@ fn lifecycle_is_indexed_deactivated_targets_are_reported_and_reactivation_keeps_
             &(el(&a, &link("bim:test:to", &b))
                 + &el(&b, &format!("custom token bim:lifecycle = \"{state}\""))
                 + &format!(
-                    "def Xform \"E_{}\" (active = false) {{ custom string bim:id = \"{c}\" }}",
+                    "def Xform \"PRT_{}\" (active = false) {{ custom string bim:id = \"{c}\" }}",
                     hex(&c)
                 )),
             "",
@@ -585,12 +665,13 @@ fn partial_gapped_replayed_and_mixed_context_deliveries_are_never_complete() {
     let assets = || vec![asset("root.usda", body.clone())];
     let (r, o) = reader(assets(), &["root.usda"], 2);
     let pages = reader_pages(&r, &o.context);
-    assert_eq!(pages.len(), 3);
+    assert_eq!(pages.len(), 4);
 
     // Missing tail: strict finish refuses; the explicit partial result proves nothing.
     let mut builder = IndexBuilder::new(&o).unwrap();
     builder.push(&pages[0], &control()).unwrap();
     builder.push(&pages[1], &control()).unwrap();
+    builder.push(&pages[2], &control()).unwrap();
     assert_eq!(
         code(IndexBuilder::new(&o).and_then(|mut b| {
             b.push(&pages[0], &control())?;
@@ -810,7 +891,7 @@ fn populated() -> (Author, Opened) {
 }
 fn over(element: &str, text: &str) -> String {
     format!(
-        "over \"World\" {{ over \"Steel\" {{ over \"E_{}\" {{ {text} }} }} }}\n",
+        "over \"World\" {{ over \"Steel\" {{ over \"Parts\" {{ over \"PRT_{}\" {{ {text} }} }} }} }}\n",
         hex(element)
     )
 }
@@ -843,7 +924,10 @@ fn rename_preserves_id_path_and_structure_and_invalidates_the_previous_index() {
     );
     let grant = a.authorize_write(&before, &eid(PLATE), &control()).unwrap();
     assert_eq!(grant.write_layer, "authored.usda");
-    assert_eq!(grant.path, eid(PLATE).path());
+    assert_eq!(
+        grant.path,
+        eid(PLATE).path(beamcraft_model::prim::ElementCategory::Part)
+    );
     assert_eq!(grant.generation, 42 + 1);
 
     let renamed = apply(
@@ -896,7 +980,7 @@ fn authorized_writes_need_a_live_complete_owned_untampered_index() {
         let fid = seq(0x80);
         assets.push(foreign);
         let weak = layer(&format!(
-            "over \"World\" {{ over \"Steel\" {{ def Xform \"E_{}\" (references = @foreign.usda@</Source>) {{ custom string bim:id = \"{fid}\" }} }} }}",
+            "over \"World\" {{ over \"Steel\" {{ over \"Parts\" {{ def Xform \"PRT_{}\" (references = @foreign.usda@</Source>) {{ custom string bim:id = \"{fid}\" }} }} }} }}",
             hex(&fid)
         ));
         *assets.iter_mut().find(|x| x.name == "weak.usda").unwrap() = asset("weak.usda", weak);
@@ -1094,7 +1178,7 @@ fn delete_and_dependent_reads_collide_and_missing_link_evidence_is_unavailable()
 fn copy_gets_a_fresh_id_remaps_owned_links_and_leaves_the_source_unchanged() {
     let (a, o) = populated();
     let own = format!(
-        "custom rel bim:copy:self = </World/Steel/E_{}>\n",
+        "custom rel bim:copy:self = </World/Steel/Parts/PRT_{}>\n",
         hex(MEMBER)
     );
     let (mut a, o) = relayer(&a, &o.context, &over(MEMBER, &own));
@@ -1118,7 +1202,10 @@ fn copy_gets_a_fresh_id_remaps_owned_links_and_leaves_the_source_unchanged() {
     );
     let plan = index.copy_plan(&source, &fresh).unwrap();
     assert_eq!(plan.source, source);
-    assert_eq!(plan.path, fresh.path());
+    assert_eq!(
+        plan.path,
+        fresh.path(beamcraft_model::prim::ElementCategory::Part)
+    );
     let profile = resources()[0].digest;
     assert_eq!(plan.links.len(), 2);
     assert!(
@@ -1141,7 +1228,7 @@ fn copy_gets_a_fresh_id_remaps_owned_links_and_leaves_the_source_unchanged() {
         .unwrap();
     let copied = apply(&mut a, &o.context, vec![member(FRESH, "Copy")]);
     let remap = format!(
-        "custom rel bim:copy:self = </World/Steel/E_{}>\n",
+        "custom rel bim:copy:self = </World/Steel/Parts/PRT_{}>\n",
         hex(FRESH)
     );
     let weak = over(MEMBER, &own) + &over(FRESH, &remap);
@@ -1199,7 +1286,7 @@ fn foreign_sources_cannot_be_copied() {
                 "root.usda",
                 world(
                     &format!(
-                        "def Xform \"E_{}\" (references = @foreign.usda@</Source>) {{ custom string bim:id = \"{}\" }}",
+                        "def Xform \"PRT_{}\" (references = @foreign.usda@</Source>) {{ custom string bim:id = \"{}\" }}",
                         hex(&seq(0xa0)),
                         seq(0xa0)
                     ),
@@ -1426,13 +1513,13 @@ fn binary_and_text_encodings_index_the_same_identities() {
 #[test]
 fn links_to_descendant_prims_are_dependencies_of_the_containing_element() {
     let (a, b) = (seq(0xd0), seq(0xd1));
-    let child = format!("</World/Steel/E_{}/Geometry>", hex(&b));
+    let child = format!("</World/Steel/Parts/PRT_{}/Geometry>", hex(&b));
     let body = world(
         &(el(&a, &format!("custom rel bim:test:to = {child}"))
             + &el(
                 &b,
                 &format!(
-                    "def Scope \"Geometry\" {{ custom rel bim:test:self = </World/Steel/E_{}/Geometry> }}",
+                    "def Scope \"Geometry\" {{ custom rel bim:test:self = </World/Steel/Parts/PRT_{}/Geometry> }}",
                     hex(&b)
                 ),
             )),
@@ -1460,7 +1547,7 @@ fn descendant_links_block_delete_and_collide_with_reads_through_the_author_guard
         + &over(
             PLATE,
             &format!(
-                "custom rel bim:test:to = </World/Steel/E_{}/Geometry>\n",
+                "custom rel bim:test:to = </World/Steel/Parts/PRT_{}/Geometry>\n",
                 hex(MEMBER)
             ),
         );
@@ -1515,7 +1602,7 @@ fn copy_plan_refuses_relationships_carried_by_descendant_prims() {
     let weak = over(
         MEMBER,
         &format!(
-            "def Scope \"Child\" {{ custom rel bim:test:to = </World/Steel/E_{}> }}\n",
+            "def Scope \"Child\" {{ custom rel bim:test:to = </World/Steel/Parts/PRT_{}> }}\n",
             hex(PLATE)
         ),
     );
@@ -1548,7 +1635,7 @@ fn labels_that_authoring_accepts_are_always_indexable() {
     for bad in ["", "\u{1f}", "\u{7f}"] {
         let result = built(world(
             &format!(
-                "def Xform \"E_{0}\" {{ custom string bim:id = \"{1}\"\n custom string bim:name = \"x{bad}\" }}",
+                "def Xform \"PRT_{0}\" {{ custom string bim:id = \"{1}\"\n custom string bim:name = \"x{bad}\" }}",
                 hex(&seq(0xf0)),
                 seq(0xf0)
             ),

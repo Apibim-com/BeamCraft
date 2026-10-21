@@ -6,7 +6,7 @@
 //! A wrapper is an owned element of kind `reference` with a fixed three-level shape:
 //!
 //! ```text
-//! /World/Steel/E_<id>                    owned: label, rigid placement, source pin (group)
+//! /World/References/REF_<id>                    owned: label, rigid placement, source pin (group)
 //!   /Correction                          owned: optional units / up-axis interpretation (group)
 //!     /Source                            typeless def: the reference arc and nothing else
 //!       ...                              foreign: composed from the pinned layer, never written
@@ -121,9 +121,9 @@ pub(super) fn check_source_asset(
 
 /// Authors a new wrapper: the element, its pin, the owned units level and the arc.
 pub(super) fn attach(data: &mut sdf::Data, r: &Reference, actor: &str) -> Result<(), Diagnostic> {
-    let p = element_path(&r.id)?;
+    let p = element_path(&r.id, ElementCategory::Reference)?;
     container(data, "/World", "Xform", Some("assembly"))?;
-    container(data, "/World/Steel", "Scope", Some("group"))?;
+    container(data, "/World/References", "Scope", None)?;
     prim(data, &p, Some("Xform"), true)?;
     field(data, &p, "kind", sdf::Value::token("group"))?;
     field(data, &p, "displayName", sdf::Value::String(r.name.clone()))?;
@@ -231,7 +231,10 @@ pub(super) fn units(
     interpretation: &Option<UnitsInterpretation>,
     source_digest: ContentDigest,
 ) -> Result<(), Diagnostic> {
-    let c = format!("{}/{CORRECTION}", element_path(id)?);
+    let c = format!(
+        "{}/{CORRECTION}",
+        element_path(id, ElementCategory::Reference)?
+    );
     for (name, ty) in [
         (CORRECTION_UNITS, "double"),
         (CORRECTION_UP_AXIS, "token"),
@@ -437,7 +440,7 @@ fn check_source(source: &Prim, pin: &SourcePin, prims: &[Prim]) -> Result<(), Di
 /// opinion below `Source`, is refused.
 pub(super) fn element(p: &Prim, prims: &[Prim]) -> Result<(), Diagnostic> {
     let id = p.element_id.as_deref().ok_or_else(invalid)?;
-    if p.path != element_path(id)? {
+    if p.path != element_path(id, ElementCategory::Reference)? {
         return Err(fail(
             ErrorCode::InvalidId,
             "invalid canonical owned element path",

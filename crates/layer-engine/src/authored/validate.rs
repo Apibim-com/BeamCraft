@@ -477,7 +477,14 @@ fn resource<'a>(
     digest: ContentDigest,
     kinds: &[&str],
 ) -> Result<&'a Prim, Diagnostic> {
-    let path = definition_path(digest);
+    let path = definition_path(
+        digest,
+        if kinds == ["material"] {
+            DefinitionCategory::Material
+        } else {
+            DefinitionCategory::Profile
+        },
+    );
     let p = prims
         .iter()
         .find(|p| p.path == path && p.active)
@@ -514,10 +521,19 @@ fn link<'a>(
     match targets {
         [] if !required => Ok(None),
         [target] => {
-            let Some(hex) = target.strip_prefix("/World/Definitions/D_") else {
+            let Some((category, digest)) = DefinitionCategory::parse_path(target) else {
                 return Err(invalid());
             };
-            let digest = hex.parse::<ContentDigest>().map_err(|_| invalid())?;
+            if target != &definition_path(digest, category)
+                || category
+                    != if name == "bim:material" {
+                        DefinitionCategory::Material
+                    } else {
+                        DefinitionCategory::Profile
+                    }
+            {
+                return Err(invalid());
+            }
             Ok(Some(resource(prims, digest, kinds)?))
         }
         _ => Err(fail(
@@ -622,7 +638,13 @@ pub(super) fn snapshot(
         ) {
             continue;
         }
-        if p.path != element_path(id)? {
+        if p.path
+            != element_path(
+                id,
+                ElementCategory::from_kind(text(p, "bim:elementKind", "token")?)
+                    .ok_or_else(invalid)?,
+            )?
+        {
             return Err(fail(
                 ErrorCode::InvalidId,
                 "invalid canonical owned element path",
@@ -1311,7 +1333,7 @@ pub(super) fn changes(
     let mut writes = BTreeSet::new();
     for change in &input.changes {
         let (id, _) = change.key();
-        let path = element_path(id)?;
+        let path = change_path(id, input, prims)?;
         let existing = prims.iter().find(|p| p.path == path);
         // A wrapper is owned although its `Source` descendant is foreign: only the wrapper's own
         // levels are checked here, and the loaded shape (`reference::element`) refuses every
@@ -1518,10 +1540,7 @@ pub(super) fn changes(
                 .filter(|r| matches!(r.name.as_str(), "bim:profile" | "bim:material"))
                 .flat_map(|r| &r.targets)
             {
-                let hex = target
-                    .strip_prefix("/World/Definitions/D_")
-                    .ok_or_else(invalid)?;
-                let digest = hex.parse::<ContentDigest>().map_err(|_| invalid())?;
+                let (_, digest) = DefinitionCategory::parse_path(target).ok_or_else(invalid)?;
                 reads.insert(Footprint {
                     identity: digest.to_string(),
                     group: Group::Relationship,
@@ -1546,10 +1565,9 @@ pub(super) fn changes(
         // A definition that is not in the stage yet is created; an existing one is immutable and
         // must already be exactly this content, active and owned (kind, fields, types, label and
         // the recomputed digest), or the batch is refused instead of treating it as a no-op.
-        if prims
-            .iter()
-            .any(|p| p.path == definition_path(resource.digest))
-        {
+        if prims.iter().any(|p| {
+            p.path == definition_path(resource.digest, definition_category(&resource.definition))
+        }) {
             let kind = match &resource.definition {
                 Definition::RectangleProfile { .. } => "rectangle",
                 Definition::SectionProfile { shape, .. } => shape.token(),

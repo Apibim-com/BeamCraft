@@ -359,17 +359,56 @@ pub(crate) fn open(request: OpenRequest, control: &Control) -> Result<Candidate,
             })
             .transpose()?;
         let leaf = path.rsplit('/').next().ok_or_else(corrupt)?;
+        let reserved_leaf =
+            beamcraft_model::prim::ElementCategory::ALL
+                .into_iter()
+                .any(|category| {
+                    category
+                        .prefix()
+                        .rsplit_once('/')
+                        .is_some_and(|(_, code)| leaf.starts_with(code))
+                });
         if let Some(id) = &element_id {
-            if leaf != format!("E_{}", id.replace('-', "")) {
+            if crate::index::ElementId::from_path(&path).ok()
+                != crate::index::ElementId::parse(id).ok()
+                || properties
+                    .iter()
+                    .find(|p| p.name == "bim:elementKind")
+                    .and_then(|p| match &p.value {
+                        Some(Value::Text(kind)) => {
+                            beamcraft_model::prim::ElementCategory::from_kind(kind)
+                        }
+                        _ => None,
+                    })
+                    .is_some_and(|category| !path.starts_with(category.prefix()))
+            {
                 return Err(fail(
                     ErrorCode::InvalidId,
                     "element path and identity differ",
                 ));
             }
-        } else if leaf.starts_with("E_") {
+        } else if reserved_leaf || leaf.starts_with("E_") {
             return Err(fail(
                 ErrorCode::InvalidId,
                 "element path lacks full identity",
+            ));
+        }
+        let definition_leaf = [
+            beamcraft_model::prim::DefinitionCategory::Material,
+            beamcraft_model::prim::DefinitionCategory::Profile,
+        ]
+        .into_iter()
+        .any(|category| {
+            path.strip_prefix(category.prefix())
+                .is_some_and(|rest| !rest.contains('/'))
+        });
+        if path.starts_with("/World/Definitions/D_")
+            || (definition_leaf
+                && beamcraft_model::prim::DefinitionCategory::parse_path(&path).is_none())
+        {
+            return Err(fail(
+                ErrorCode::InvalidId,
+                "definition path lacks its category and full SHA-256",
             ));
         }
         let display_name = match prim

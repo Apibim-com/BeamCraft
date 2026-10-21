@@ -309,7 +309,7 @@ fn two_plates_in_two_commits_are_independent_complete_revisions_readable_without
     }
     assert_eq!(
         text(at(&first, &["plate"]), "prim_path"),
-        format!("/World/Steel/E_{}", id1.replace('-', ""))
+        format!("/World/Steel/Parts/PRT_{}", id1.replace('-', ""))
     );
 
     // Two atomic revisions in one project: sequence, generation and base chain.
@@ -443,7 +443,7 @@ fn two_plates_in_two_commits_are_independent_complete_revisions_readable_without
             [2000.0, -150.5, 25.0],
         ),
     ] {
-        let path = format!("/World/Steel/E_{}", id.replace('-', ""));
+        let path = format!("/World/Steel/Parts/PRT_{}", id.replace('-', ""));
         let prim = &stage.prims[&path];
         assert_eq!(prim["bim:id"], format!("\"{id}\""));
         assert_eq!(prim["bim:name"], format!("\"{name}\""));
