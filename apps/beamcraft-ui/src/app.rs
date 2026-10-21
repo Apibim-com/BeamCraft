@@ -2,7 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! The eframe window: a side panel with the revision, counts, units and adapter, and the viewport
-//! with orbit (primary drag), pan (secondary drag), zoom (wheel), fit (F) and reload (R).
+//! navigated through one of two input presets: `Mouse` (the default: wheel-button drag pans,
+//! Ctrl + wheel-button drag orbits, the left button stays free for selection) or `Trackpad`
+//! (primary drag orbits, Shift + primary drag pans, pinch zooms). In both the wheel zooms toward
+//! the cursor, F fits and R reloads.
 
 use crate::camera::{Camera, View};
 use crate::command::Selected;
@@ -83,6 +86,10 @@ pub struct App {
     select_epoch: Epoch,
     /// The result of the last select, edit, undo or redo.
     edit_note: Option<Result<String, String>>,
+    /// Flips the scroll zoom direction (macOS natural scrolling inverts it); pinch and keys keep theirs.
+    invert_zoom: bool,
+    /// The active viewport input binding preset; `Mouse` is the default.
+    preset: Preset,
     props: Properties,
     props_job: Option<Receiver<Result<Edited, ToolError>>>,
     /// The result of the last property Preview, Cancel or Commit.
@@ -125,6 +132,85 @@ struct SelectJob {
     asked: u64,
     rx: Receiver<Result<Option<Selected>, ToolError>>,
     cancel: Arc<AtomicBool>,
+}
+
+/// The viewport input binding preset. `Mouse` keeps the left button free for selection: the
+/// camera moves with the wheel button only. `Trackpad` is the laptop mapping for users without
+/// a wheel: primary drag orbits, Shift + primary drag or secondary drag pans, pinch zooms.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum Preset {
+    /// Default mouse bindings: wheel zooms toward the cursor, wheel-button drag pans,
+    /// Ctrl + wheel-button drag orbits, and the left button never moves the camera.
+    #[default]
+    Mouse,
+    /// Trackpad (macOS) bindings, selected in the side panel.
+    Trackpad,
+}
+
+/// One frame of viewport navigation in `Camera::navigate` argument space: orbit radians, a
+/// screen-relative pan in millimetres and logarithmic zoom, mapped by the active `preset`.
+/// `Mouse`: middle drag pans, Ctrl + middle drag orbits, a primary drag never moves the camera.
+/// `Trackpad`: Shift + primary drag or secondary drag pans, primary drag orbits. The scroll
+/// zoom sign follows `invert_zoom`; pinch zoom and the `+`/`-` keys keep their direction.
+/// Scroll and pinch only count while the viewport is hovered. A hostile pinch factor is
+/// dropped, not propagated, so what comes back is always finite and inside what `navigate`
+/// accepts.
+#[allow(clippy::too_many_arguments)] // one flat mapping from one frame of input to navigate's arguments
+fn navigation(
+    preset: Preset,
+    pointer_delta: egui::Vec2,
+    primary: bool,
+    secondary: bool,
+    middle: bool,
+    ctrl: bool,
+    shift: bool,
+    distance: f32,
+    hovered: bool,
+    scroll_y: f32,
+    pinch: f32,
+    zoom_in: bool,
+    zoom_out: bool,
+    invert_zoom: bool,
+) -> ([f32; 2], [f32; 2], f32) {
+    let sign = if invert_zoom { -1.0 } else { 1.0 };
+    let factor = distance * 0.0008;
+    let pan = [-pointer_delta.x * factor, pointer_delta.y * factor];
+    let orbit = [pointer_delta.x * 0.008, -pointer_delta.y * 0.008];
+    let (orbit, pan) = match preset {
+        // The left button is reserved for selection: a primary drag never moves the camera.
+        Preset::Mouse => {
+            if middle && ctrl {
+                (orbit, [0.0; 2])
+            } else if middle {
+                ([0.0; 2], pan)
+            } else {
+                ([0.0; 2], [0.0; 2])
+            }
+        }
+        Preset::Trackpad => {
+            if (primary && shift) || secondary {
+                ([0.0; 2], pan)
+            } else if primary {
+                (orbit, [0.0; 2])
+            } else {
+                ([0.0; 2], [0.0; 2])
+            }
+        }
+    };
+    let scroll = if hovered {
+        scroll_y * 0.002 * sign
+    } else {
+        0.0
+    };
+    // A pinch arrives as a multiplicative factor; the camera takes logarithmic zoom.
+    let pinch = if hovered && pinch.is_finite() && pinch > 0.0 {
+        pinch.ln()
+    } else {
+        0.0
+    };
+    const KEY_STEP: f32 = 0.25;
+    let keys = KEY_STEP * (i32::from(zoom_in) - i32::from(zoom_out)) as f32;
+    (orbit, pan, scroll + pinch + keys)
 }
 
 const RED: egui::Color32 = egui::Color32::from_rgb(230, 80, 60);
@@ -357,6 +443,22 @@ pub fn icon() -> egui::IconData {
     }
 }
 
+/// The window/application icon. In the macOS bundle the official logo ships as
+/// `Contents/Resources/beamcraft-icon.png`, and eframe applies it to the Dock at run time
+/// (`setApplicationIconImage`): while the app runs, the Dock shows the process icon and
+/// ignores the bundle's ICNS. Outside a bundle, or when the resource is missing, the coded
+/// [`icon`] is used, so no asset bytes are compiled into the binary.
+pub fn load_icon() -> egui::IconData {
+    let png = std::env::current_exe().ok().and_then(|exe| {
+        let dir = exe.parent()?;
+        std::fs::read(dir.join("../Resources/beamcraft-icon.png")).ok()
+    });
+    match png.as_deref().map(eframe::icon_data::from_png_bytes) {
+        Some(Ok(icon)) => icon,
+        _ => icon(),
+    }
+}
+
 impl App {
     /// Creates the window state and loads the accepted snapshot.
     pub fn new(cc: &eframe::CreationContext<'_>, source: Source) -> Result<Self, Error> {
@@ -422,6 +524,8 @@ impl App {
             select_job: None,
             select_epoch: Epoch::default(),
             edit_note: None,
+            invert_zoom: false,
+            preset: Preset::default(),
             props: Properties::default(),
             props_job: None,
             props_note: None,
@@ -1659,7 +1763,7 @@ impl App {
         }
     }
 
-    fn info(&self, ui: &mut egui::Ui) {
+    fn info(&mut self, ui: &mut egui::Ui) {
         ui.heading("BeamCraft");
         ui.label(format!("{:.0} FPS", self.fps));
         ui.label(&self.adapter);
@@ -1694,7 +1798,30 @@ impl App {
             }
         }
         ui.separator();
-        ui.label("Drag: orbit | secondary drag: pan | wheel: zoom | F: fit | R: reload");
+        ui.horizontal(|ui| {
+            ui.label("Navigation:");
+            if ui.radio(self.preset == Preset::Mouse, "Mouse").clicked() {
+                self.preset = Preset::Mouse;
+            }
+            if ui
+                .radio(self.preset == Preset::Trackpad, "Trackpad (macOS)")
+                .clicked()
+            {
+                self.preset = Preset::Trackpad;
+            }
+        });
+        ui.label(match self.preset {
+            Preset::Mouse => {
+                "Left button: selection only | Middle drag: pan | Ctrl + middle drag: orbit | Wheel: zoom toward the cursor | +/-: zoom | F: fit | R: reload"
+            }
+            Preset::Trackpad => {
+                "Drag: orbit | Shift+drag or secondary drag: pan | wheel, two-finger scroll or pinch: zoom toward the cursor | +/-: zoom | F: fit | R: reload"
+            }
+        });
+        ui.checkbox(
+            &mut self.invert_zoom,
+            "Invert zoom (trackpad natural scrolling)",
+        );
         if let Some(error) = &self.error {
             ui.colored_label(egui::Color32::from_rgb(230, 80, 60), error);
         }
@@ -1711,10 +1838,12 @@ impl eframe::App for App {
             self.fps = self.fps * 0.9 + 0.1 / dt;
         }
         let wants_text = ui.ctx().egui_wants_keyboard_input();
-        let (fit, reload) = ui.input(|i| {
+        let (fit, reload, zoom_in, zoom_out) = ui.input(|i| {
             (
                 !wants_text && i.key_pressed(egui::Key::F),
                 !wants_text && i.key_pressed(egui::Key::R),
+                !wants_text && (i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals)),
+                !wants_text && i.key_pressed(egui::Key::Minus),
             )
         });
         self.poll_commit();
@@ -1761,24 +1890,56 @@ impl eframe::App for App {
             }
             let response =
                 ui.add(egui::Image::new((self.texture, size)).sense(egui::Sense::click_and_drag()));
-            let delta = ui.input(|i| i.pointer.delta());
-            let orbit = if response.dragged_by(egui::PointerButton::Primary) {
-                [delta.x * 0.008, -delta.y * 0.008]
-            } else {
-                [0.0; 2]
-            };
-            let pan = if response.dragged_by(egui::PointerButton::Secondary) {
-                let factor = self.camera.distance() * 0.0008;
-                [-delta.x * factor, delta.y * factor]
-            } else {
-                [0.0; 2]
-            };
-            let zoom = if response.hovered() {
-                ui.input(|i| i.smooth_scroll_delta.y * 0.002)
-            } else {
-                0.0
-            };
+            let hovered = response.hovered();
+            let (delta, shift, ctrl, scroll_y, pinch) = ui.input(|i| {
+                (
+                    i.pointer.delta(),
+                    i.modifiers.shift,
+                    i.modifiers.ctrl,
+                    if hovered {
+                        i.smooth_scroll_delta.y
+                    } else {
+                        0.0
+                    },
+                    if hovered { i.zoom_delta() } else { 1.0 },
+                )
+            });
+            let (orbit, pan, zoom) = navigation(
+                self.preset,
+                delta,
+                response.dragged_by(egui::PointerButton::Primary),
+                response.dragged_by(egui::PointerButton::Secondary),
+                response.dragged_by(egui::PointerButton::Middle),
+                ctrl,
+                shift,
+                self.camera.distance(),
+                hovered,
+                scroll_y,
+                pinch,
+                zoom_in,
+                zoom_out,
+                self.invert_zoom,
+            );
             let aspect = self.aspect();
+            // Zoom toward the cursor: keep the point under the pointer still while zooming. A
+            // hostile cursor or an extreme distance falls back to the view centre.
+            let pan = if zoom == 0.0 {
+                pan
+            } else {
+                // hover_pos (not interact_pointer_pos): egui fills the latter only while a
+                // button is down on this widget, so wheel and pinch zoom need the hover point.
+                let ndc = response.hover_pos().and_then(|pos| {
+                    ndc_of(
+                        [pos.x, pos.y],
+                        [response.rect.min.x, response.rect.min.y],
+                        [response.rect.width(), response.rect.height()],
+                    )
+                });
+                match ndc.map(|n| self.camera.cursor_zoom_pan(n, aspect, zoom)) {
+                    Some(Ok(extra)) => [pan[0] + extra[0], pan[1] + extra[1]],
+                    _ => pan,
+                }
+            };
             let mut picked = None;
             match self
                 .camera
@@ -1825,7 +1986,7 @@ impl eframe::App for App {
 
 #[cfg(test)]
 mod tests {
-    use super::{App, Source, needs_refit, target_size, volume_note};
+    use super::{App, Source, load_icon, needs_refit, target_size, volume_note};
     use crate::Error;
     use crate::perf::RefreshTiming;
     use crate::render::Gpu;
@@ -1989,5 +2150,338 @@ mod tests {
         assert_eq!(volume_note(999_999.0), ", volume 999999 mm3");
         assert_eq!(volume_note(1e6), ", volume 0.001 m3");
         assert_eq!(volume_note(1.025e9), ", volume 1.025 m3");
+    }
+
+    /// The test binary has no `../Resources` next to it, so the loader falls back to the
+    /// coded icon instead of panicking or returning an empty icon.
+    #[test]
+    fn the_icon_loader_falls_back_to_the_coded_icon() {
+        let icon = load_icon();
+        assert_eq!((icon.width, icon.height), (32, 32));
+        assert_eq!(icon.rgba.len(), 32 * 32 * 4);
+    }
+}
+
+#[cfg(test)]
+mod navigation_tests {
+    use super::{Preset, navigation};
+    use crate::camera::Camera;
+
+    const KEYS_NONE: (bool, bool) = (false, false);
+    const NO_BUTTON: (bool, bool, bool) = (false, false, false);
+
+    /// One `navigation` call with the flat argument list folded into tuples.
+    #[allow(clippy::too_many_arguments)] // test wrapper over the already flat mapping
+    fn navigate(
+        preset: Preset,
+        delta: egui::Vec2,
+        buttons: (bool, bool, bool),
+        ctrl: bool,
+        shift: bool,
+        distance: f32,
+        hovered: bool,
+        scroll_y: f32,
+        pinch: f32,
+        keys: (bool, bool),
+        invert: bool,
+    ) -> ([f32; 2], [f32; 2], f32) {
+        navigation(
+            preset, delta, buttons.0, buttons.1, buttons.2, ctrl, shift, distance, hovered,
+            scroll_y, pinch, keys.0, keys.1, invert,
+        )
+    }
+
+    /// The zoom argument for key-only input at the given toggle state.
+    fn key_zoom(zoom_in: bool, zoom_out: bool, invert: bool) -> f32 {
+        navigate(
+            Preset::Mouse,
+            egui::Vec2::ZERO,
+            NO_BUTTON,
+            false,
+            false,
+            1000.0,
+            false,
+            0.0,
+            1.0,
+            (zoom_in, zoom_out),
+            invert,
+        )
+        .2
+    }
+
+    #[test]
+    fn mouse_left_drag_never_moves_the_camera() {
+        let delta = egui::Vec2::new(10.0, -20.0);
+        for shift in [false, true] {
+            for ctrl in [false, true] {
+                let (orbit, pan, zoom) = navigate(
+                    Preset::Mouse,
+                    delta,
+                    (true, false, false),
+                    ctrl,
+                    shift,
+                    1000.0,
+                    false,
+                    0.0,
+                    1.0,
+                    KEYS_NONE,
+                    false,
+                );
+                assert_eq!((orbit, pan, zoom), ([0.0; 2], [0.0; 2], 0.0));
+            }
+        }
+    }
+
+    #[test]
+    fn mouse_middle_drag_pans_and_ctrl_middle_drag_orbits() {
+        let delta = egui::Vec2::new(10.0, -20.0);
+        let (orbit, pan, _) = navigate(
+            Preset::Mouse,
+            delta,
+            (false, false, true),
+            false,
+            false,
+            1000.0,
+            false,
+            0.0,
+            1.0,
+            KEYS_NONE,
+            false,
+        );
+        assert_eq!(orbit, [0.0; 2]);
+        // The pan factor is distance * 0.0008; 0.0008 is not exact in f32.
+        assert!(
+            (pan[0] + 8.0).abs() < 1e-4 && (pan[1] + 16.0).abs() < 1e-4,
+            "{pan:?}"
+        );
+        let (orbit, pan, _) = navigate(
+            Preset::Mouse,
+            delta,
+            (false, false, true),
+            true,
+            false,
+            1000.0,
+            false,
+            0.0,
+            1.0,
+            KEYS_NONE,
+            false,
+        );
+        assert!(
+            (orbit[0] - 0.08).abs() < 1e-6 && (orbit[1] - 0.16).abs() < 1e-6,
+            "{orbit:?}"
+        );
+        assert_eq!(pan, [0.0; 2]);
+    }
+
+    #[test]
+    fn mouse_scroll_zooms_like_the_trackpad_scroll() {
+        let wheel = navigate(
+            Preset::Mouse,
+            egui::Vec2::ZERO,
+            NO_BUTTON,
+            false,
+            false,
+            1000.0,
+            true,
+            50.0,
+            1.0,
+            KEYS_NONE,
+            false,
+        )
+        .2;
+        let trackpad = navigate(
+            Preset::Trackpad,
+            egui::Vec2::ZERO,
+            NO_BUTTON,
+            false,
+            false,
+            1000.0,
+            true,
+            50.0,
+            1.0,
+            KEYS_NONE,
+            false,
+        )
+        .2;
+        assert!((wheel - 0.1).abs() < 1e-6, "{wheel}");
+        assert_eq!(wheel, trackpad);
+    }
+
+    #[test]
+    fn shift_turns_the_trackpad_primary_drag_into_a_pan() {
+        let delta = egui::Vec2::new(10.0, -20.0);
+        let (orbit, pan, _) = navigate(
+            Preset::Trackpad,
+            delta,
+            (true, false, false),
+            false,
+            false,
+            1000.0,
+            false,
+            0.0,
+            1.0,
+            KEYS_NONE,
+            false,
+        );
+        assert!(
+            (orbit[0] - 0.08).abs() < 1e-6 && (orbit[1] - 0.16).abs() < 1e-6,
+            "{orbit:?}"
+        );
+        assert_eq!(pan, [0.0; 2]);
+        // A Shift + primary drag pans exactly like a secondary drag.
+        let (_, shifted, _) = navigate(
+            Preset::Trackpad,
+            delta,
+            (true, false, false),
+            false,
+            true,
+            1000.0,
+            false,
+            0.0,
+            1.0,
+            KEYS_NONE,
+            false,
+        );
+        let (_, secondary, _) = navigate(
+            Preset::Trackpad,
+            delta,
+            (false, true, false),
+            false,
+            false,
+            1000.0,
+            false,
+            0.0,
+            1.0,
+            KEYS_NONE,
+            false,
+        );
+        assert_eq!(shifted, secondary);
+    }
+
+    #[test]
+    fn the_invert_toggle_flips_only_the_scroll_sign() {
+        let scroll = |invert: bool| {
+            navigate(
+                Preset::Trackpad,
+                egui::Vec2::ZERO,
+                NO_BUTTON,
+                false,
+                false,
+                1000.0,
+                true,
+                50.0,
+                1.0,
+                KEYS_NONE,
+                invert,
+            )
+            .2
+        };
+        assert!((scroll(false) - 0.1).abs() < 1e-6, "{}", scroll(false));
+        assert!((scroll(true) + 0.1).abs() < 1e-6, "{}", scroll(true));
+        // Pinch and keys keep their direction under the toggle.
+        let pinch = |invert: bool| {
+            navigate(
+                Preset::Trackpad,
+                egui::Vec2::ZERO,
+                NO_BUTTON,
+                false,
+                false,
+                1000.0,
+                true,
+                0.0,
+                2.0,
+                KEYS_NONE,
+                invert,
+            )
+            .2
+        };
+        assert!((pinch(false) - std::f32::consts::LN_2).abs() < 1e-6);
+        assert!((pinch(true) - std::f32::consts::LN_2).abs() < 1e-6);
+        assert!((key_zoom(true, false, false) - 0.25).abs() < 1e-6);
+        assert!((key_zoom(true, false, true) - 0.25).abs() < 1e-6);
+        assert!(key_zoom(true, true, false).abs() < 1e-6);
+        assert!((key_zoom(false, true, false) + 0.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn scroll_and_pinch_need_a_hovered_viewport() {
+        for preset in [Preset::Mouse, Preset::Trackpad] {
+            let (orbit, pan, zoom) = navigate(
+                preset,
+                egui::Vec2::ZERO,
+                NO_BUTTON,
+                false,
+                false,
+                1000.0,
+                false,
+                50.0,
+                2.0,
+                KEYS_NONE,
+                false,
+            );
+            assert_eq!((orbit, pan, zoom), ([0.0; 2], [0.0; 2], 0.0));
+        }
+    }
+
+    #[test]
+    fn navigation_output_stays_inside_the_camera_bounds() {
+        let mut camera = Camera::new([0.0; 3], 100.0, 1.0).unwrap();
+        let before = camera.distance();
+        // A spread pinch (factor 2) halves the distance through the logarithmic path.
+        let (orbit, pan, zoom) = navigate(
+            Preset::Trackpad,
+            egui::Vec2::ZERO,
+            NO_BUTTON,
+            false,
+            false,
+            1000.0,
+            true,
+            0.0,
+            2.0,
+            KEYS_NONE,
+            false,
+        );
+        camera.navigate(orbit, pan, zoom).unwrap();
+        assert!(
+            (camera.distance() - before * 0.5).abs() < 1e-3,
+            "{}",
+            camera.distance()
+        );
+        // Untrusted gesture factors are dropped, never propagated into the camera.
+        for hostile in [0.0, -2.0, f32::NAN, f32::INFINITY, 1.0e30] {
+            let (orbit, pan, zoom) = navigate(
+                Preset::Trackpad,
+                egui::Vec2::ZERO,
+                NO_BUTTON,
+                false,
+                false,
+                1000.0,
+                true,
+                0.0,
+                hostile,
+                KEYS_NONE,
+                false,
+            );
+            camera.navigate(orbit, pan, zoom).unwrap();
+            assert!(camera.distance().is_finite(), "pinch {hostile}");
+        }
+        // The same holds for a mouse pan with an absurd pointer delta: the bounded navigate
+        // rejects the frame outright.
+        let (orbit, pan, zoom) = navigate(
+            Preset::Mouse,
+            egui::Vec2::new(-1.0e9, 1.0e9),
+            (false, false, true),
+            false,
+            false,
+            2e7,
+            false,
+            0.0,
+            1.0,
+            KEYS_NONE,
+            false,
+        );
+        assert!(camera.navigate(orbit, pan, zoom).is_err());
+        assert!(camera.distance().is_finite(), "mouse pan");
     }
 }
