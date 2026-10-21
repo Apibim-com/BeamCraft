@@ -19,19 +19,20 @@ path = "src/main.rs"
 # `accesskit` is off: on Linux it pulls zbus 5 crates (zbus_names, zvariant, zvariant_derive)
 # that RustSec now flags as unmaintained; re-enabling it is an owner decision on those advisories.
 # eframe builds from the patched fork branch pinned by the root `[patch.crates-io]`
-# (https://github.com/axisrow/eframe, `patch/remove-default-icon`), which keeps eframe's
-# own unattributed default icon out of the binary (issue #149); this crate always sets
-# its own icon (`app::icon`).
+# (https://github.com/Apibim-com/eframe, `patch/remove-default-icon-0.37.0`), which keeps
+# eframe's own unattributed default icon out of the binary (issue #149); this crate always
+# sets its own icon (`app::icon`).
 [dependencies]
 beamcraft-model.workspace = true
 beamcraft-json.workspace = true
 beamcraft-engine = { path = "../../crates/engine", version = "0.0.1" }
-egui = { version = "=0.36.2", default-features = false }
-eframe = { version = "=0.36.2", default-features = false, features = ["wgpu_no_default_features", "links", "wayland", "x11"] }
+egui = { version = "=0.37.0", default-features = false }
+eframe = { version = "=0.37.0", default-features = false, features = ["wgpu_no_default_features", "links", "wayland", "x11"] }
 wgpu = { version = "=30.0.1", default-features = false, features = ["std", "wgsl", "dx12", "vulkan", "metal"] }
 pollster = "=1.0.1"
-# The parser epaint 0.36.2 uses at font init; validates Inter before egui can panic on it.
-skrifa = "=0.48.0"
+# The parser epaint 0.37.0 uses at font init; validates Inter before egui can panic on it.
+# Keep it on epaint's exact version, or the check can accept a file epaint then rejects.
+skrifa = "=0.44.0"
 
 [lints]
 workspace = true

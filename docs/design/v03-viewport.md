@@ -24,12 +24,12 @@ beamcraft-ui --synthetic COUNT --metrics FRAMES [--width W] [--height H]
 
 ## Decisions
 
-- **Viewport stack.** The V01 spike's choice: wgpu 30.0.1 with eframe/egui 0.36.2, default features
-  off (no `default_fonts`), Inter at run time. PdfCraft vendor patches and craft-libs are not used;
-  `craft-quit` is not needed yet. `accesskit` is **off**: on Linux it pulls zbus 5 crates that
-  RustSec now marks unmaintained (zbus_names, zvariant, zvariant_derive), which fails `cargo deny`
-  advisories. Re-enabling accessibility (and ignoring or upgrading those advisories) is an owner
-  decision; no ignore entry was added.
+- **Viewport stack.** The V01 spike's choice: wgpu 30.0.1 with eframe/egui (the spike pinned 0.36.2;
+  now 0.37.0), default features off (no `default_fonts`), Inter at run time. PdfCraft vendor patches
+  and craft-libs are not used; `craft-quit` is not needed yet. `accesskit` is **off**: on Linux it
+  pulls zbus 5 crates that RustSec now marks unmaintained (zbus_names, zvariant, zvariant_derive),
+  which fails `cargo deny` advisories. Re-enabling accessibility (and ignoring or upgrading those
+  advisories) is an owner decision; no ignore entry was added.
 - **Process boundary instead of a crate edge.** F08 forbids an app depending on an app, and only the
   CLI links the layer engine. The UI therefore runs `beamcraft view-export` and receives the
   engine's snapshot as bytes; the engine re-validates them. The renderer computes no engineering
