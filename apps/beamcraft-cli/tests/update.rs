@@ -459,11 +459,15 @@ fn a_stored_record_that_no_longer_matches_is_stale_never_current() {
     assert_eq!(record.stored.as_ref().unwrap().mass_kg, Some(99.0));
 
     // The material reference edited outside BeamCraft: the stored mass signature is now stale.
-    let steel_path = format!("PRF_{steel}");
-    let light_path = format!("PRF_{light}");
+    let steel_path = format!("MAT_{steel}");
+    let light_path = format!("MAT_{light}");
     f.tamper(|name, text| {
         if name == "authored.usda" {
             let (before, after) = text.split_once("custom rel bim:material").unwrap();
+            assert!(
+                after.contains(&steel_path),
+                "material target must be present before tampering"
+            );
             format!(
                 "{before}custom rel bim:material{}",
                 after.replacen(&steel_path, &light_path, 1)
