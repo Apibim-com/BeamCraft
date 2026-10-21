@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 // Contributor-original generated synthetic fixtures, MPL-2.0; covered by ATTRIBUTION.md's
-// crates/layer-engine/** row. Expectations follow F04 sections 1 and 8, F10 `reference` and the
+// test-data row. Expectations follow F04 sections 1 and 8, F10 `reference` and the
 // R01 design note; the fixture "foreign source" is invented text, not third-party content.
 
 //! R01 real-backend regressions: reference wrappers and the foreign read-only rule.

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 // Contributor-original generated synthetic fixtures, MPL-2.0; covered by ATTRIBUTION.md's
-// crates/layer-engine/** row. Expectations follow F04 section 2/7/8 and vocabulary 3.1/5.3.
+// test-data row. Expectations follow F04 section 2/7/8 and vocabulary 3.1/5.3.
 
 //! U03 UUID and relationship index regressions over the real bounded reader and the U02
 //! authoring layer. No SDK or independent reader is involved.

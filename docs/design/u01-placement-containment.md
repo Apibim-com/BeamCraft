@@ -182,9 +182,8 @@ Its VCS metadata records `9c007a00fd2ca243a7b6812dd0bf34eca01ee878`, path `crate
 The task authorizes an exact cached version; no git download or inferred fork pin was used.
 Cargo.lock records 51 third-party packages, matching the cached N01 closure. All 51 archives
 matched their lockfile SHA-256s; every extracted archive member matched the corresponding
-cached source file. ATTRIBUTION records exact versions, original repository URLs, authors,
-declared licences and archive hashes. Hash verification proves provenance/immutability,
-not licence completeness or parser safety. A full redistribution/notice review remains open.
+cached source file. `cargo deny` checks their declared licences. Hash verification proves
+provenance/immutability, not licence completeness or parser safety. A full redistribution/notice review remains open.
 
 openusd's MIT-covered code remains MIT; src/usd/core_schemas.rs remains under the scoped
 LicenseRef-TOST-1.0 exception. Existing licenses/TOST-1.0-openusd.txt and NOTICE are preserved;
