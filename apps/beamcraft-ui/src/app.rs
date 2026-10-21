@@ -11,8 +11,8 @@ use crate::perf::{Observed, PerfRun, Phase as PerfPhase, RefreshTiming, Request}
 use crate::props::{Properties, State};
 use crate::publish::{Phase, Published, Publisher, Status};
 use crate::render::{Renderer, Uploaded};
-use crate::scene::Scene;
-use crate::source::Reloaded;
+use crate::scene::SceneSummary;
+use crate::source::{Known, Refreshed, Reloaded};
 use crate::stats::STATS;
 use crate::tools::{Choice, Created, MAX_TEXT, MemberKind, ToolError, ToolKind, Tools};
 use crate::{Error, check_font, command, json_string, source};
@@ -40,10 +40,13 @@ pub struct Source {
     pub published: Option<PathBuf>,
 }
 
+/// The scene on screen: the pinned snapshot, its buffers on the device and what the window
+/// needs of the rest (origin, framing, counts). The expanded display buffers are not kept once
+/// they are on the device (issue 26, finding 3).
 struct Loaded {
     /// Shared with the selection worker, which picks on what the window shows.
     snapshot: Arc<ViewSnapshot>,
-    scene: Scene,
+    summary: SceneSummary,
     uploaded: Uploaded,
 }
 
@@ -102,14 +105,8 @@ pub struct App {
 /// the window keeps from now on.
 fn note_loaded(loaded: &Loaded) {
     STATS.reloads_applied.add(1);
-    STATS.retained_display_bytes.set(
-        loaded
-            .scene
-            .meshes
-            .iter()
-            .map(|m| (m.vertices.capacity() as u64).saturating_add(m.instances.capacity() as u64))
-            .fold(0, u64::saturating_add),
-    );
+    // `Loaded` keeps no display buffer.
+    STATS.retained_display_bytes.set(0);
     STATS.snapshot_mesh_bytes.set(
         loaded
             .snapshot
@@ -208,7 +205,7 @@ fn draw_selection(
     let Ok(bounds) = loaded.snapshot.element_bounds(&id) else {
         return;
     };
-    let origin = loaded.scene.origin_mm;
+    let origin = loaded.summary.origin_mm;
     let screen: Vec<Option<egui::Pos2>> = (0..8usize)
         .map(|corner| {
             let pick = |axis: usize| {
@@ -449,11 +446,16 @@ impl App {
             return;
         }
         let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
+        // Only this refresh replaces `loaded`, so what it knows stays true until it is applied.
+        let known = self.loaded.as_ref().map_or_else(Known::default, |l| Known {
+            token: Some(l.snapshot.token().clone()),
+            resident: l.uploaded.resident(),
+        });
         let (tx, rx) = std::sync::mpsc::channel();
         let spawned = std::thread::Builder::new()
             .name("beamcraft-reload".into())
             .spawn(move || {
-                let _ = tx.send(source::reload(&cli, &store));
+                let _ = tx.send(source::reload(&cli, &store, &known));
             });
         match spawned {
             Ok(_) => self.reload_job = Some(rx),
@@ -486,21 +488,48 @@ impl App {
             self.refresh_timings.push(reloaded.timing);
         }
         self.refresh_error = self.tools.apply_definitions(reloaded.definitions);
-        let result = reloaded.scene.and_then(|(snapshot, scene)| {
-            let started = Instant::now();
-            let uploaded = Uploaded::new(&self.state.device, &self.state.queue, &scene)?;
-            STATS.upload_ui_ns.add_duration(started.elapsed());
-            STATS.uploads.add(1);
-            STATS.upload_bytes.add(uploaded.bytes);
-            Ok(Loaded {
-                snapshot: Arc::new(snapshot),
-                scene,
-                uploaded,
-            })
+        let result = reloaded.scene.and_then(|refreshed| match refreshed {
+            Refreshed::Unchanged => Ok(None),
+            Refreshed::New(new) => {
+                let (snapshot, scene) = *new;
+                let started = Instant::now();
+                // Meshes the device holds are reused, and nothing waits for the device: the
+                // queue orders the writes before the next draw.
+                let previous = self.loaded.as_ref().map(|l| &l.uploaded);
+                let uploaded =
+                    Uploaded::upload(&self.state.device, &self.state.queue, &scene, previous)?;
+                STATS.upload_ui_ns.add_duration(started.elapsed());
+                STATS.uploads.add(1);
+                STATS.upload_bytes.add(uploaded.bytes);
+                // The display buffers are on the device now: keep the summary, drop the rest.
+                Ok(Some(Loaded {
+                    snapshot: Arc::new(snapshot),
+                    summary: scene.summary(),
+                    uploaded,
+                }))
+            }
         });
         match result {
-            Ok(loaded) => {
-                let (target, extent) = loaded.scene.framing();
+            // The snapshot on screen again: nothing to build, upload or draw, unless the
+            // viewport changed since it was framed.
+            Ok(None) => {
+                if let Some((target, extent)) = self.loaded.as_ref().map(|l| l.summary.framing()) {
+                    let aspect = self.aspect();
+                    if needs_refit(self.framed, target, extent, aspect) {
+                        match self.camera.fit(target, extent, aspect) {
+                            Ok(()) => {
+                                self.framed = Some((target, extent, aspect));
+                                self.error = None;
+                            }
+                            Err(e) => self.error = Some(e.to_string()),
+                        }
+                    } else {
+                        self.error = None;
+                    }
+                }
+            }
+            Ok(Some(loaded)) => {
+                let (target, extent) = loaded.summary.framing();
                 let aspect = self.aspect();
                 // A scene the camera cannot frame keeps the previous scene and shows why. An
                 // unchanged framing keeps the user's camera.
@@ -1616,19 +1645,19 @@ impl App {
         match &self.loaded {
             Some(l) => {
                 let pin = l.snapshot.pin();
-                let (meshes, instances) = l.scene.counts();
+                let (meshes, instances) = l.summary.counts();
                 let revision = pin.revision().to_string();
                 ui.label(format!(
                     "Revision {}… generation {}",
                     revision.get(..12).unwrap_or(&revision),
                     pin.generation()
                 ));
-                ui.label(format!("Elements: {}", l.scene.elements));
+                ui.label(format!("Elements: {}", l.summary.elements));
                 ui.label(format!("Meshes: {meshes} (instances: {instances})"));
-                ui.label(format!("Triangles: {}", l.scene.triangles));
+                ui.label(format!("Triangles: {}", l.summary.triangles));
                 let size = [0, 1, 2].map(|a| {
-                    f64::from(l.scene.max.get(a).copied().unwrap_or(0.0))
-                        - f64::from(l.scene.min.get(a).copied().unwrap_or(0.0))
+                    f64::from(l.summary.max.get(a).copied().unwrap_or(0.0))
+                        - f64::from(l.summary.min.get(a).copied().unwrap_or(0.0))
                 });
                 ui.label(format!(
                     "Bounds: {:.3} x {:.3} x {:.3} m (model units: mm)",
@@ -1687,7 +1716,7 @@ impl eframe::App for App {
             self.reload();
         }
         if fit && let Some(l) = &self.loaded {
-            let (target, extent) = l.scene.framing();
+            let (target, extent) = l.summary.framing();
             if let Err(e) = self.camera.fit(target, extent, self.aspect()) {
                 self.error = Some(e.to_string());
             }
@@ -1755,7 +1784,7 @@ impl eframe::App for App {
                                 [response.rect.min.x, response.rect.min.y],
                                 [response.rect.width(), response.rect.height()],
                             )
-                            && let Some(ray) = ray_through(&view, ndc, l.scene.origin_mm)
+                            && let Some(ray) = ray_through(&view, ndc, l.summary.origin_mm)
                         {
                             picked = Some(ray);
                         }
@@ -1778,7 +1807,7 @@ mod tests {
     use crate::perf::RefreshTiming;
     use crate::render::Gpu;
     use crate::scene::Scene;
-    use crate::source::Reloaded;
+    use crate::source::{Refreshed, Reloaded};
     use crate::stats::STATS;
     use crate::tools::ToolError;
     use beamcraft_engine::synthetic::plate_scene;
@@ -1824,6 +1853,15 @@ mod tests {
         Some(App::new(&cc, source).unwrap())
     }
 
+    /// A refresh that read `scene`.
+    fn reloaded(scene: Result<Refreshed, Error>) -> Reloaded {
+        Reloaded {
+            scene,
+            definitions: Err(ToolError::local("NOT_FOUND", "no store in this test")),
+            timing: RefreshTiming::default(),
+        }
+    }
+
     /// A refresh whose scene is `plates` synthetic kernel plates.
     fn refreshed(plates: u32) -> Reloaded {
         let pin = ViewPin::new(Sha256::digest(b"revision").unwrap(), 1);
@@ -1831,11 +1869,7 @@ mod tests {
             ViewSnapshot::build(pin, plate_scene(plates, false).unwrap(), &Limits::default())
                 .unwrap();
         let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
-        Reloaded {
-            scene: Ok((snapshot, scene)),
-            definitions: Err(ToolError::local("NOT_FOUND", "no store in this test")),
-            timing: RefreshTiming::default(),
-        }
+        reloaded(Ok(Refreshed::New(Box::new((snapshot, scene)))))
     }
 
     /// Hands `reloaded` to the window as the result of the refresh in flight.
@@ -1856,6 +1890,25 @@ mod tests {
         app.invalidate_select();
         assert!(cancel.load(Ordering::Relaxed), "its CLI process is stopped");
         assert!(app.select_job.is_none());
+    }
+
+    #[test]
+    fn the_snapshot_on_screen_again_is_neither_uploaded_nor_drawn() {
+        let Some(mut app) = headless() else { return };
+        deliver(&mut app, refreshed(2));
+        let token = app.loaded.as_ref().map(|l| l.snapshot.token().clone());
+        let swaps = STATS.reloads_applied.get();
+        let uploads = STATS.uploads.get();
+        deliver(&mut app, reloaded(Ok(Refreshed::Unchanged)));
+        assert_eq!(
+            app.loaded.as_ref().map(|l| l.snapshot.token().clone()),
+            token
+        );
+        // Nothing was built, uploaded or swapped for the snapshot already on screen.
+        assert_eq!(STATS.reloads_applied.get(), swaps);
+        assert_eq!(STATS.uploads.get(), uploads);
+        // The scene keeps no display buffer once it is on the device.
+        assert!(app.loaded.is_some());
     }
 
     #[test]

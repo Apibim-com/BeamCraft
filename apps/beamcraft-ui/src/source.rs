@@ -14,8 +14,10 @@ use crate::scene::Scene;
 use crate::tools::{Definitions, ToolError, parse_definitions};
 use crate::{Error, command};
 use beamcraft_engine::query::bundle::max_bundle_bytes;
-use beamcraft_engine::{Limits, Representation, ViewSnapshot};
+use beamcraft_engine::{Limits, Representation, SnapshotToken, ViewSnapshot};
+use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::id::ElementId;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -138,19 +140,45 @@ fn export_framed(
     Ok(output.stdout)
 }
 
-/// What one refresh reads about the model: the snapshot with its scene and the definitions.
+/// What the window already shows, so a refresh skips the work it would only repeat: the token
+/// of the loaded snapshot and the meshes the device already holds (issue 26, finding 3).
+#[derive(Debug, Clone, Default)]
+pub struct Known {
+    /// The token of the loaded snapshot.
+    pub token: Option<SnapshotToken>,
+    /// Digests of the meshes on the device (see [`crate::render::Uploaded::resident`]).
+    pub resident: BTreeSet<ContentDigest>,
+}
+
+/// The snapshot one refresh read.
+#[derive(Debug)]
+pub enum Refreshed {
+    /// Another snapshot than the loaded one, and its scene; meshes the device already holds are
+    /// not expanded again ([`Scene::from_snapshot_reusing`]).
+    New(Box<(ViewSnapshot, Scene)>),
+    /// The loaded snapshot again (the same token): there is nothing to build or upload.
+    Unchanged,
+}
+
+/// What one refresh reads about the model: the snapshot as far as it differs from what the
+/// window shows, and the definitions.
 type Parts = (
-    Result<(ViewSnapshot, Scene), Error>,
+    Result<Refreshed, Error>,
     Result<Definitions, ToolError>,
 );
 
-fn frame_parts(frame: &Frame<'_>) -> Parts {
+fn frame_parts(frame: &Frame<'_>, known: &Known) -> Parts {
     let definitions = parse_definitions(Some(0), frame.definitions);
     let scene = ViewSnapshot::from_bundle(frame.bundle, &Limits::default())
         .map_err(Error::from)
         .and_then(|snapshot| {
-            let scene = Scene::from_snapshot(&snapshot, Representation::Full)?;
-            Ok((snapshot, scene))
+            // The token covers the pin and every element, kind, placement and mesh digest.
+            if known.token.as_ref() == Some(snapshot.token()) {
+                return Ok(Refreshed::Unchanged);
+            }
+            let scene =
+                Scene::from_snapshot_reusing(&snapshot, Representation::Full, &known.resident)?;
+            Ok(Refreshed::New(Box::new((snapshot, scene))))
         });
     (scene, definitions)
 }
@@ -177,8 +205,9 @@ pub fn is_no_revision(error: &Error) -> bool {
 /// worker thread: the accepted snapshot with its scene, and the store's definitions. The two
 /// results are independent; one failing never hides the other.
 pub struct Reloaded {
-    /// The accepted snapshot and the scene built from it.
-    pub scene: Result<(ViewSnapshot, Scene), Error>,
+    /// The accepted snapshot and the scene built from it, as far as it differs from what the
+    /// window shows.
+    pub scene: Result<Refreshed, Error>,
     /// The profile and material definitions of the same store.
     pub definitions: Result<Definitions, ToolError>,
     /// The CLI processes this refresh started and its wall time on the worker.
@@ -188,13 +217,14 @@ pub struct Reloaded {
 /// Runs the CLI queries of one refresh (blocking; call it off the UI thread). The model is read
 /// by one framed `view-export`, so the snapshot and the definitions come from one verified
 /// inspection of one revision; only when that export fails is the definitions listing asked on
-/// its own, so a failing snapshot never hides it (issue 26, finding 2).
-pub fn reload(cli: &Path, store: &Path) -> Reloaded {
+/// its own, so a failing snapshot never hides it (issue 26, finding 2). `known` is what the
+/// window already shows: the same snapshot again is reported as [`Refreshed::Unchanged`].
+pub fn reload(cli: &Path, store: &Path, known: &Known) -> Reloaded {
     let started = Instant::now();
     // The framed export; on its failure, the definitions listing on its own.
     let mut processes = 1;
     let framed = export_framed(cli, store, None, command::DEADLINE)
-        .and_then(|bytes| Ok(frame_parts(&split_frame(&bytes)?)));
+        .and_then(|bytes| Ok(frame_parts(&split_frame(&bytes)?, known)));
     let (scene, definitions) = match framed {
         Ok(parts) => parts,
         Err(e) => {
@@ -278,11 +308,58 @@ mod tests {
     }
 
     #[test]
+    fn a_refresh_builds_nothing_for_the_snapshot_on_screen_and_reuses_resident_meshes() {
+        use beamcraft_engine::ViewPin;
+        use beamcraft_engine::synthetic::plate_scene;
+        use beamcraft_model::digest::Sha256;
+        let pin = ViewPin::new(Sha256::digest(b"revision").unwrap(), 1);
+        let snapshot =
+            ViewSnapshot::build(pin, plate_scene(6, false).unwrap(), &Limits::default()).unwrap();
+        let bytes = frame(b"{}", b"", &snapshot.to_bundle().unwrap());
+        let frame = split_frame(&bytes).unwrap();
+        // Nothing on screen yet: a new scene with every mesh expanded.
+        let Ok(Refreshed::New(first)) = frame_parts(&frame, &Known::default()).0 else {
+            panic!("a first refresh builds the scene");
+        };
+        assert!(
+            first
+                .1
+                .meshes
+                .iter()
+                .all(|m| !m.resident && !m.vertices.is_empty())
+        );
+        // The same snapshot again: nothing to build or upload.
+        let known = Known {
+            token: Some(snapshot.token().clone()),
+            resident: first.1.meshes.iter().map(|m| m.digest).collect(),
+        };
+        assert!(matches!(
+            frame_parts(&frame, &known).0,
+            Ok(Refreshed::Unchanged)
+        ));
+        // Another snapshot whose meshes the device holds: built, but nothing expanded again.
+        let known = Known {
+            token: None,
+            ..known
+        };
+        let Ok(Refreshed::New(again)) = frame_parts(&frame, &known).0 else {
+            panic!("another token builds the scene");
+        };
+        assert!(
+            again
+                .1
+                .meshes
+                .iter()
+                .all(|m| m.resident && m.vertices.is_empty())
+        );
+    }
+
+    #[test]
     fn a_frame_gives_the_definitions_and_the_scene() {
         let definitions = br#"{"outcome":"definitions","definitions":[]}"#;
         let bytes = frame(definitions, b"", b"not a bundle");
         let frame = split_frame(&bytes).unwrap();
-        let (scene, definitions) = frame_parts(&frame);
+        let (scene, definitions) = frame_parts(&frame, &Known::default());
         // A bundle the engine refuses fails the scene alone.
         assert!(scene.is_err());
         assert!(definitions.is_ok());
