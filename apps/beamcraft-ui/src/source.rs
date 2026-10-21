@@ -5,13 +5,14 @@
 //! (`beamcraft view-export --store ROOT --out -`) and the engine rebuilds and re-validates it.
 //! The viewport never opens USD itself and never trusts the bytes it receives.
 
+use crate::perf::RefreshTiming;
 use crate::scene::Scene;
 use crate::tools::{Definitions, ToolError};
 use crate::{Error, command};
 use beamcraft_engine::query::bundle::max_bundle_bytes;
 use beamcraft_engine::{Limits, Representation, ViewSnapshot};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The `beamcraft` CLI next to the running executable.
 pub fn default_cli() -> Result<PathBuf, Error> {
@@ -85,12 +86,17 @@ pub struct Reloaded {
     pub scene: Result<(ViewSnapshot, Scene), Error>,
     /// The profile and material definitions of the same store.
     pub definitions: Result<Definitions, ToolError>,
+    /// The CLI processes this refresh started and its wall time on the worker.
+    pub timing: RefreshTiming,
 }
 
 /// Runs the CLI queries of one refresh (blocking; call it off the UI thread). The two queries
 /// are independent CLI processes, so they run concurrently and the refresh waits for the slower
 /// one instead of paying both full inspections in sequence (issue 26, finding 2).
 pub fn reload(cli: &Path, store: &Path) -> Reloaded {
+    let started = Instant::now();
+    // view-export and definitions.
+    let processes = 2;
     let (scene, definitions) = std::thread::scope(|scope| {
         let scene = scope.spawn(|| {
             load(cli, store).and_then(|snapshot| {
@@ -111,5 +117,12 @@ pub fn reload(cli: &Path, store: &Path) -> Reloaded {
         });
         (scene, definitions)
     });
-    Reloaded { scene, definitions }
+    Reloaded {
+        scene,
+        definitions,
+        timing: RefreshTiming {
+            processes,
+            total_ms: started.elapsed().as_secs_f64() * 1000.0,
+        },
+    }
 }
