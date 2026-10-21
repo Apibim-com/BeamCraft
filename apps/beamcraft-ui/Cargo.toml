@@ -18,6 +18,10 @@ path = "src/main.rs"
 # never enabled; the UI font is the admitted Inter read at run time from assets/fonts/inter.
 # `accesskit` is off: on Linux it pulls zbus 5 crates (zbus_names, zvariant, zvariant_derive)
 # that RustSec now flags as unmaintained; re-enabling it is an owner decision on those advisories.
+# eframe builds from the patched fork branch pinned by the root `[patch.crates-io]`
+# (https://github.com/axisrow/eframe, `patch/remove-default-icon`), which keeps eframe's
+# own unattributed default icon out of the binary (issue #149); this crate always sets
+# its own icon (`app::icon`).
 [dependencies]
 beamcraft-model.workspace = true
 beamcraft-protocol.workspace = true
