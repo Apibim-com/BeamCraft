@@ -241,16 +241,10 @@ pub fn lookup(
     store: &Path,
     id: &str,
     cancel: &AtomicBool,
-) -> (
-    Result<ElementInfo, ToolError>,
-    Result<Details, ToolError>,
-) {
+) -> (Result<ElementInfo, ToolError>, Result<Details, ToolError>) {
     // An id no revision can hold is not in this one (the CLI would refuse it as malformed).
     if ElementId::parse(id).is_err() {
-        let gone = ToolError::local(
-            "NOT_FOUND",
-            "the element is not in the accepted revision",
-        );
+        let gone = ToolError::local("NOT_FOUND", "the element is not in the accepted revision");
         return (Err(gone.clone()), Err(gone));
     }
     match run_cancellable(

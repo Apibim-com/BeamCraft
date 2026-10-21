@@ -617,7 +617,10 @@ impl App {
     }
 
     /// Registers a lookup under a new epoch; returns the flag that gives it up.
-    fn begin_select(&mut self, rx: Receiver<Result<Option<Selected>, ToolError>>) -> Arc<AtomicBool> {
+    fn begin_select(
+        &mut self,
+        rx: Receiver<Result<Option<Selected>, ToolError>>,
+    ) -> Arc<AtomicBool> {
         let cancel = Arc::new(AtomicBool::new(false));
         self.select_job = Some(SelectJob {
             asked: self.select_epoch.advance(),
@@ -1045,7 +1048,7 @@ impl App {
                     "props-material",
                     "Material",
                     &mut self.props.form.material,
-                    &materials,
+                    materials,
                     false,
                 );
                 if details.is_plate() {
@@ -1494,10 +1497,10 @@ impl App {
                 None => self.selects_finished += 1,
             }
         }
-        if request.orbit {
-            if let Err(e) = self.camera.navigate([0.01, 0.0], [0.0; 2], 0.0) {
-                self.error = Some(e.to_string());
-            }
+        if request.orbit
+            && let Err(e) = self.camera.navigate([0.01, 0.0], [0.0; 2], 0.0)
+        {
+            self.error = Some(e.to_string());
         }
         if let Some([width, height]) = request.resize {
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(width, height)));

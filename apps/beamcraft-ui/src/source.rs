@@ -162,10 +162,7 @@ pub enum Refreshed {
 
 /// What one refresh reads about the model: the snapshot as far as it differs from what the
 /// window shows, and the definitions.
-type Parts = (
-    Result<Refreshed, Error>,
-    Result<Definitions, ToolError>,
-);
+type Parts = (Result<Refreshed, Error>, Result<Definitions, ToolError>);
 
 fn frame_parts(frame: &Frame<'_>, known: &Known) -> Parts {
     let definitions = parse_definitions(Some(0), frame.definitions);
