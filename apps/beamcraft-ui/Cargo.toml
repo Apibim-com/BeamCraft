@@ -31,7 +31,7 @@ eframe = { version = "=0.36.2", default-features = false, features = ["wgpu_no_d
 wgpu = { version = "=30.0.1", default-features = false, features = ["std", "wgsl", "dx12", "vulkan", "metal"] }
 pollster = "=1.0.1"
 # The parser epaint 0.36.2 uses at font init; validates Inter before egui can panic on it.
-skrifa = "=0.44.0"
+skrifa = "=0.48.0"
 
 [lints]
 workspace = true

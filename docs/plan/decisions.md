@@ -4,6 +4,61 @@ Decisions that shape the plan, newest first. Each names its date and, where one 
 document that records it in detail. A later decision overrides an earlier one where they differ.
 Open questions are at the end.
 
+## 2026-10-21
+
+- **MVP scope widened.** The first version is a full manual steel-modelling tool with views,
+  display control, attributes and drawings, not only a frame with a bill of materials. Still
+  a free single-user desktop product, still no automation: no parametric connections, macros or
+  automatic detailing. The scope of 2026-10-18 and 2026-10-20 is replaced by the list below.
+  1. **Modelling:** columns, beams, polybeams, curved beams, plates, bent plates, lofted plates and
+     other plates of complex contour; fits, cuts, chamfers, split and combine; the full section
+     placement (plane, depth, rotation, offsets); part classes.
+  2. **Connection objects and assemblies:** bolt groups with holes in all connected parts, welds,
+     assemblies, nested assemblies, explode an assembly, numbering.
+  3. **Attributes and schedules:** user-defined attributes on any element; schedules built from
+     them. Items (elements with foreign or own mesh geometry) are after the MVP (see below).
+  4. **Model tools:** copy, move, rotate, mirror, arrays; grids; construction points, lines and
+     circles; numeric input and direction lock.
+  5. **Views and display:** named 3D and plane views, filters, cut plane, five render modes on
+     Ctrl+1 to Ctrl+5, colour by filter or class (saved representation sets and a temporary
+     overlay that never changes the model), the bottom bar of selection switches, the snap panel,
+     the orthographic and perspective switch.
+  6. **Drawings and drafting, all manual:** the user places views on a sheet; a drawing view shows
+     what the chosen model view and its filters show (a view of the columns shows the columns).
+     Dimensions, marks and leaders are placed by hand; the view title is configurable. Dimensions
+     and marks stay bound to model features. No automatic views, dimensioning or mark placement.
+     Drafting tools, PDF and print.
+  Order of work (milestones, each its own set of PRs): M1 modelling and the UI shell (selection
+  bar, snap panel, projection switch, render modes); M2 model tools, views, filters, cut plane,
+  colour by filter, classes; M3 attributes and schedules; M4 drawings; M5 the alpha scenario
+  and packaging over the whole scope (Q01, Q02). Gates K9 to K11 are added; K8 (drawings) is no
+  longer deferred. The task cards are in [`tasks.md`](tasks.md).
+- **Still after the MVP:** items (I01 to I03: the item contract and reading GLB and IFC geometry), IFC export (E01, E02), multi-client rebase and conflicts (C03–C06),
+  reference measurements (R02–R03), DSTV NC and DXF output, parametric connections and macros,
+  concrete and reinforcement, analysis.
+- **Items after the MVP.** Items (I01), and with them reading GLB (I02) and IFC geometry (I03),
+  are deferred whole. When they come back, only the geometry of a product becomes an item, no IFC
+  model is converted into native elements, and files are untrusted input (`AGENTS.md` §4).
+- **Own palette and shortcuts data.** The class colour palette, render-mode set and shortcut
+  map are our own design and user-remappable presets (environment data). The Ctrl+1 to Ctrl+5
+  habit is kept as a usability choice; no colour table, label or text of another product is
+  copied (`AGENTS.md` §1–2). The owner's private functional notes stay outside the repository.
+- **Explode means dissolve.** Exploding an assembly deletes the assembly and leaves its parts as
+  loose, unlinked elements; geometry, placement and attributes of the parts do not change. It is not
+  a display-only exploded view. Exploding acts on one level: the sub-assemblies of an exploded
+  assembly stay assemblies. It is undoable; numbering becomes stale.
+- **Curved geometry stays faceted.** Bent, lofted and curved parts are meshes built to a stated
+  chord deviation, like holes (amendment A-2, D-2); no analytical curved-surface kernel for the
+  MVP. The deviation is reported with the result.
+
+### Defaults fixed for this scope
+
+- Plates: only the kinds listed above (contours with arcs, chamfers and rounded corners, bent and
+  lofted plates); nothing further in the MVP.
+- Drawing views default to scale 1:100; the scale is a property of each view and can be changed.
+  Further sheet defaults (sizes, title-block fields) are settled in task D05 and are presets the
+  user can change.
+
 ## 2026-10-20
 
 - **K0 passed.** Every foundation task is done or retired by decision: F04, F06 and F10 frozen at

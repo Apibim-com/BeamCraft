@@ -82,6 +82,8 @@ Time-boxed research with a report; never a production gate.
 | G09 / M | Pilot plane cuts and booleans | G05, G06 | Bounded own operations on agreed bodies | Independent fixtures check volume, bounds, topology and failure | merged |
 | G10 / M | Faster kernel certification | G08 | Spatial index instead of a face-pair search; tens of holes per plate or flange | Measured before and after; `OpLimits` revised by measurement | open |
 | G11 / M | Accuracy fixtures | G06, F07 | Fixtures for rounded-mesh cross-checks, subnormal mass, very large coordinates and cancellation-heavy inputs, with references from exact rational arithmetic | The kernel stays within the F06 comparison rule on every fixture, or the constants of F06 section 4 are tightened | open |
+| G12 / M | Sweep along a path | G05, G09 | A section swept along a polyline or an arc, mitred at corners, curves faceted to a stated chord deviation | Volume against the analytical (Pappus) value within the stated deviation; bad path refused | open |
+| G13 / M | Ruled and bent surfaces | G12, G09 | Ruled surface between two contours, cylinder and cone patches, fold lines, with thickness | Closed certified mesh; area and volume against analytical references; deviation reported | open |
 
 ## P: core model
 
@@ -100,6 +102,10 @@ Time-boxed research with a report; never a production gate.
 | P-Degenerate / M | Degenerate element state | G08, F04 amendment | A wrongly built element is kept without derived data and recomputed once fixed (decision A-2 D-7) | — | open |
 | P10 / M | Rotated placement | G08 | Engine and kernel accept any rigid placement (translation and rotation); world bounds, picking, snaps, quantities and IFC use it; the view snapshot carries the full transform (F06 amendment); cut points of every element in its local frame | A plate with a rotated placement is created, measured, picked and exported end to end; a rotation never changes shape or mass keys | open |
 | P11 / M | Instance copy | P05, F04 next version | A copy that shares the source's definition (shape inputs, profile, material, operations); editing it changes every instance; each instance keeps its own ID, placement, level and relationships (F10 section 5.3) | Editing the shared definition updates all instances in one transaction; a duplicate stays independent | open |
+| P12 / M | Polybeam | P03, P10, G12 | A member along a polyline path with one section, corner treatment and point editing | Constant section along the path; mitre volume checked analytically | open |
+| P13 / M | Curved beam | G12, P12 | A member along an arc (start, end and radius, or three points) | Length and volume against analytical values within the stated deviation | open |
+| P14 / M | Section placement | P10, P03 | Position of the section about the member axis: plane, depth, rotation, offsets at both ends; columns | Own fixtures per combination; the default placement unchanged | open |
+| P15 / S | Part classes | P01 | An integer class on every part, our own palette as an environment preset, filter and display by class | The palette is our own data; the class is an authored attribute | open |
 
 ## R: references
 
@@ -138,6 +144,13 @@ Time-boxed research with a report; never a production gate.
 | V08 / M | Work plane | P10, V04 | Session work plane (origin, X and Y axes): parallel to XY/XZ/YZ with an offset, by three points, by a picked face, vertical through two points; tools enter 2D points in it; the CLI takes `--plane ORIGIN,XDIR,YDIR` | A plate drawn in any work plane gets the matching placement; the work plane is never stored in the model | open |
 | V09 / M | Views by two points and by plane | V08, W01 | A view looking across a line or onto a plane, with depth clipping and its work plane; switch between views | A view never changes the model or the snapshot token; saved views restore it | open |
 | V10 / M | Ribbon | V05, V06 | Own ribbon of tabs and command buttons replacing the side panels; own icons only | Every button runs the same engine command as the CLI; nothing taken from other products | open |
+| V11 / M | Selection switches and snap panel | V04 | A bottom bar of selection switches (parts, assemblies, bolts, welds, holes, grids, construction objects, items) and a snap panel | A switch changes picking only, never the model or the snapshot token | open |
+| V12 / M | Views | V08, V09, W01 | Named 3D and plane views (by grid line, level or two points), several windows, view properties, work area | A view never changes the model; saved views restore it | open |
+| V13 / S | Projection switch | V03 | Orthographic and perspective camera in one window | Picking and snaps stay correct in both | open |
+| V14 / M | Filters | I04, P15 | A rule engine on type, name, class and attributes with AND/OR groups, saved sets; object filters and view filters | Same result through API, CLI and UI; unknown attribute never matches silently | open |
+| V15 / M | Cut plane | V12 | Clip planes and a work-area box per view | Non-destructive; no change to the model or measurements | open |
+| V16 / M | Render modes | V03, U12 | Five modes on Ctrl+1 to Ctrl+5 (own set, user-remappable): wireframe, transparent, grey, shaded, selected only | One engine query; frame time baseline; shortcuts configurable | open |
+| V17 / M | Colour by filter and class | V14, V16, P15 | Saved representation sets (ordered filter rules with colour and transparency) and a temporary colouring overlay | The overlay is never stored in the model; a saved set lives in the views layer | open |
 
 ## A: fabrication operations
 
@@ -152,6 +165,13 @@ Time-boxed research with a report; never a production gate.
 | A07 / M | Section families and libraries | P02, G08 | A07.1 nine families and custom outlines; A07.2 names and libraries; A07.3 environments | Analytical references; unknown designations never substituted | merged |
 | A08 / M | Numbering preview | A01, P04, P05 | Equivalence of supported parts, series and overlap, stale tracking | Preview approves nothing; material and operations counted | merged |
 | A09 / M | Numbering approval | A08, A03–A06 | Serialisable approval over the current revision; single-user for the MVP | A fabrication change makes it stale; a camera change does not | merged |
+| A10 / M | Bent plate | G13, A12 | A plate folded along lines or rolled to a cylinder or cone section, with thickness and bend radii | Analytical area and volume; the unfolded outline is reported | open |
+| A11 / M | Lofted plate | G13, A12 | A plate between two contours that need not be coplanar | Closed certified mesh; refusal for twisted or self-intersecting input | open |
+| A12 / M | Complex plate contours | A02, G12 | Contours with arcs, chamfered and rounded corners, plates in any plane, point editing | Replaces the z = 0 limit of A02; arc deviation reported | open |
+| A13 / M | Fits, cuts, chamfers, split and combine | A03, A12 | Line, polygon and part cuts, fit an end to another part, chamfers, split a part in two, combine two parts, as A-2 operation records | Volume, mass and stable features; undo of every operation | open |
+| A14 / M | Complete bolt groups | A05, A04, A12 | Rectangular, circular and free-point patterns; round, slotted and oversized holes generated in every connected part; length, washers and nuts | Holes match in all parts; deleting a part conflicts as in A05 | open |
+| A15 / M | Weld geometry | A06, G05 | Weld types and sizes along an edge or polyline, an optional solid shape, symbol data | Workshop/site and side kept; solid volume against analytical values | open |
+| A16 / M | Nested assemblies and explode | A01, P08 | Sub-assemblies at any depth, a main part, add and remove parts, explode (dissolve one level into loose, unlinked parts, no change to the parts) | Cycle and ownership checks; explode and its undo leave the parts unchanged; numbering and BOM count nested parts once | open |
 
 ## E, D: exchange, reports and drawings
 
@@ -161,16 +181,40 @@ Time-boxed research with a report; never a production gate.
 | E02 / M | Minimal IFC exporter | E01, P03, P04 | Beams, columns and plates with placement, material, shape and a loss report | End to end; independent schema and geometry validation | merged; acceptance deferred after the MVP |
 | E03 / M | BOM and reports | A01, P04, A09 | BOM of the accepted revision for supported parts | No double count; unknown and stale shown; reproducible | merged |
 | E04 / S | IFC import study | F02, E01 | Import options and the boundary with read-only references | No conversion without an owner decision | open |
-| D01 / M | Drawing contract and FeatureIds | F02, F06, P03, A01 | Drawing IDs, model revision, views, dimensions, marks, stale states | A dimension never addresses a triangle index | deferred |
-| D02 / M | First projection and dimension | D01, A03, A04, V04 | One view, one dimension with a stable reference, headless output | A lost feature is explicitly unresolved | deferred |
-| D03 / M | Drawing manager and publication | D02, A09 | Document version, freshness, minimal print/export | Publication bound to a snapshot | deferred |
+| D01 / M | Drawing contract and FeatureIds | F02, F06, P03, A01 | Drawing IDs, model revision, views, dimensions, marks, stale states | A dimension never addresses a triangle index | open |
+| D02 / M | First projection and dimension | D01, A03, A04, V04 | One view, one dimension with a stable reference, headless output | A lost feature is explicitly unresolved | open |
+| D03 / M | Drawing manager and publication | D02, A09 | Document version, freshness, minimal print/export | Publication bound to a snapshot | open |
+| D04 / M | Drawing views | D02, V12, V14 | The user places views on a sheet: a view from a model view with its filters, cut plane and direction, or of a chosen part or assembly; scale per view (default 1:100, set in the view properties); section and detail views by hand; a configurable view title | A view shows exactly what the model view shows; a model change marks it stale; nothing is placed automatically | open |
+| D05 / M | Drawing sheets | D04 | Sheets of a chosen size, frame and title block fields filled from attributes, several views per sheet, moving and aligning views by hand | The same sheet reproduces the same output; unsupported sizes refused | open |
+| D06 / M | Dimensions, marks and leaders | D01, D02, I04 | Dimensions, marks and leader callouts placed by hand and bound to FeatureIds; mark text from attributes | A lost feature is unresolved, never silently re-bound | open |
+| D07 / M | Drafting tools | D03 | Lines, polylines, arcs, circles, rectangles, text, hatching, symbols, free dimensions, layers and line types | Drawn objects belong to the drawing only, never to the model | open |
+| D08 / M | PDF and print output | D03 | A published drawing version to PDF and to the printer | Output is bound to a document version; fonts and symbols are our own | open |
 | D1, D2 / S | Project ID and levels | P06 | ProjectId in the root layer; levels (storeys) in the model | Needed by E02 | merged |
+
+## I: items and attributes
+
+| ID | Task | Depends on | Result | Acceptance | Status |
+|----|------|------------|--------|------------|--------|
+| I01 / M | Item contract | F04, F06, U05 | An element with its own mesh geometry: an immutable mesh asset (full SHA-256), placement, units, own attributes; the geometry is read-only, the placement editable | Copy, move, delete and undo like any element; the asset is never rewritten | deferred |
+| I02 / M | GLB items | I01 | A bounded reader of glTF 2.0 / GLB (public specification) into an item | Hostile files refused within size and depth budgets; units and axes explicit | deferred |
+| I03 / M | IFC items | I01, E04 | Geometry of IFC4 products (extrusions and tessellations) read by our own reader into items; IFC class and name kept as attributes | No IFC model is converted into native elements; unsupported geometry is reported | deferred |
+| I04 / M | User attributes | F04, U02 | Defined attributes (text, number, integer, boolean, choice, with units) on any element, attribute sets, property editor | Stored in USD; an unknown attribute is shown, never dropped | open |
+| I05 / M | Schedules by attributes | I04, E03 | Schedule templates: columns from standard and user attributes, filters, grouping, totals; CSV and HTML | Unknown and stale shown; reproducible | open |
+
+## T: model tools
+
+| ID | Task | Depends on | Result | Acceptance | Status |
+|----|------|------------|--------|------------|--------|
+| T01 / M | Grids | U19, V04 | Rectangular and radial grids and single lines with labels, snaps and per-view visibility, in the `Grids` layer | Snaps on grid lines; hiding a grid never changes the model | open |
+| T02 / M | Construction objects | V08, V04 | Helper points, lines, circles and planes as snap targets | Excluded from schedules and numbering; stored as helper elements | open |
+| T03 / M | Copy, move, rotate, mirror, arrays | V05, P10, P11 | By vector or two points, linear and polar arrays, mirror about a plane | One undo step per operation; links and quantities remapped | open |
+| T04 / S | Numeric input and direction lock | V04 | Typed absolute, relative and polar coordinates, axis lock | The same values give the same result in the CLI and the UI | open |
 
 ## Q: integration and delivery
 
 | ID | Task | Depends on | Result | Acceptance | Status |
 |----|------|------------|--------|------------|--------|
-| Q01 / M | End-to-end alpha | V06, A09, E03 (for the MVP without E02, C06 and R03) | Frame → numbering → BOM, in the UI and the CLI | Invalid files and crash regressions; OS and GPU matrix not replaced by mocks | open |
+| Q01 / M | End-to-end alpha | V06, A09, E03, and the K9 to K11 tasks (for the MVP without E02, C06 and R03) | Model a frame with plates, bolts, welds and an item, view and filter it, number it, take a schedule and a drawing, in the UI and the CLI | Invalid files and crash regressions; OS and GPU matrix not replaced by mocks | open |
 | Q02 / M | Packaging and release rehearsal | Q01 | Reproducible native packages of CLI, UI and licences | A clean machine opens a complete USD project; attribution checked | merged; rehearsal not run |
 
 ## W, O: views, review and design options

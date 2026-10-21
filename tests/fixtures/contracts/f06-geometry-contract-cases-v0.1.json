@@ -2054,24 +2054,24 @@
       "case_id": "F06-POS-27",
       "title": "Mesh blob header exactly at the caps is accepted by structural validation",
       "given": [
-        "Header-only structural validation of a blob declaring 4096 vertices, 8192 triangles and 1024 faces; no allocation before the checks"
+        "Header-only structural validation of a blob declaring 262144 vertices, 524288 triangles and 65535 faces; no allocation before the checks"
       ],
       "input": {
         "header": {
-          "vertex_count": 4096,
-          "triangle_count": 8192,
-          "face_count": 1024,
+          "vertex_count": 262144,
+          "triangle_count": 524288,
+          "face_count": 65535,
           "space": 0,
           "layout_version": 1
         },
-        "declared_total_bytes": 213024
+        "declared_total_bytes": 13631520
       },
       "expected": {
         "status": "ok",
-        "computed_total_bytes": 213024,
-        "max_blob_bytes_cap": 213024
+        "computed_total_bytes": 13631520,
+        "max_blob_bytes_cap": 13631520
       },
-      "derivation": "32 + 24*4096 + pad8(12*8192) + pad8(2*8192) = 32 + 98,304 + 98,304 + 16,384 = 213,024 bytes. All three counts equal their caps and are accepted; this checks length and counts only, not topology."
+      "derivation": "32 + 24*262144 + pad8(12*524288) + pad8(2*524288) = 32 + 6,291,456 + 6,291,456 + 1,048,576 = 13,631,520 bytes. All three counts equal their caps and are accepted; this checks length and counts only, not topology."
     },
     {
       "case_id": "F06-POS-28",
@@ -2095,7 +2095,7 @@
         "every_blob_within_buffer_bytes": true,
         "attachment_digest_equals_mesh_digest": true
       },
-      "derivation": "F05 allows at most 8 attachments per bundle (F05 sections 3 and 10) and each blob (392 bytes, at most 213,024) is far below the per-attachment cap. Whole blobs only: ceil(20 / 8) = 3 pages holding 8, 8 and 4 blobs. If a smaller attachment limit is negotiated, the page count follows from the same rule."
+      "derivation": "F05 allows at most 8 attachments per bundle (F05 sections 3 and 10) and each blob (392 bytes, at most 13,631,520) is far below the per-attachment cap. Whole blobs only: ceil(20 / 8) = 3 pages holding 8, 8 and 4 blobs. If a smaller attachment limit is negotiated, the page count follows from the same rule."
     },
     {
       "case_id": "F06-POS-29",
@@ -3112,11 +3112,11 @@
       "case_id": "F06-NEG-11",
       "title": "Vertex count above the cap",
       "given": [
-        "Blob header declaring 4097 vertices"
+        "Blob header declaring 262145 vertices"
       ],
       "input": {
         "header": {
-          "vertex_count": 4097,
+          "vertex_count": 262145,
           "triangle_count": 12,
           "face_count": 6,
           "space": 0,
@@ -3130,18 +3130,18 @@
         "partial_geometry_returned": false,
         "state_changed": false
       },
-      "derivation": "One above the 4096-vertex cap (F06-POS-27); rejected from the header, before any size computation or allocation."
+      "derivation": "One above the 262144-vertex cap (F06-POS-27); rejected from the header, before any size computation or allocation."
     },
     {
       "case_id": "F06-NEG-12",
       "title": "Triangle count above the cap",
       "given": [
-        "Blob header declaring 8193 triangles"
+        "Blob header declaring 524289 triangles"
       ],
       "input": {
         "header": {
           "vertex_count": 8,
-          "triangle_count": 8193,
+          "triangle_count": 524289,
           "face_count": 6,
           "space": 0,
           "layout_version": 1
@@ -3154,19 +3154,19 @@
         "partial_geometry_returned": false,
         "state_changed": false
       },
-      "derivation": "One above the 8192-triangle cap."
+      "derivation": "One above the 524288-triangle cap."
     },
     {
       "case_id": "F06-NEG-13",
       "title": "Face count above the cap",
       "given": [
-        "Blob header declaring 1025 faces"
+        "Blob header declaring 65536 faces"
       ],
       "input": {
         "header": {
           "vertex_count": 8,
           "triangle_count": 12,
-          "face_count": 1025,
+          "face_count": 65536,
           "space": 0,
           "layout_version": 1
         }
@@ -3178,7 +3178,7 @@
         "partial_geometry_returned": false,
         "state_changed": false
       },
-      "derivation": "One above the 1024-face cap."
+      "derivation": "One above the 65535-face cap."
     },
     {
       "case_id": "F06-NEG-14",
@@ -4198,7 +4198,7 @@
         "blob_split": false,
         "accepted_when_buffer_bytes_is": 392
       },
-      "derivation": "A blob is one attachment and is never fragmented; 392 > 391 fails, 392 <= 392 fits. The contract cap (213,024) is a maximum, the negotiated limit applies when smaller."
+      "derivation": "A blob is one attachment and is never fragmented; 392 > 391 fails, 392 <= 392 fits. The contract cap (13,631,520) is a maximum, the negotiated limit applies when smaller."
     },
     {
       "case_id": "F06-NEG-35",

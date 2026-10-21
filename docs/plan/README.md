@@ -22,9 +22,11 @@ workspaces, read-only references, collaboration and the native UI follow. The ne
 an agreed subset of fabrication operations, numbering, IFC export and a bill of materials.
 Drawings have a milestone of their own.
 
-The current target is the free single-user desktop MVP set by the owner on 2026-10-18 (see
-[decisions](decisions.md)): an engineer models a simple steel frame in the native UI and takes it
-out as a bill of materials; IFC export follows after the MVP.
+The current target is the free single-user desktop MVP widened by the owner on 2026-10-21 (see
+[decisions](decisions.md)): full manual steel modelling without automation, connection objects and
+nested assemblies, user attributes and schedules, model tools, views, filters and
+render modes, and drawings with drafting tools. Items (GLB and IFC), IFC export, multi-client conflicts and parametric
+connections follow after the MVP.
 
 The first alpha demonstrates the architecture on a limited subset. It does not mean that every
 requirement is met, that any arbitrary USD file can be measured exactly, or that fabrication
@@ -98,7 +100,10 @@ triangles, not only the element count).
 | K5 | Own UI uses the real commands; the saved result equals the CLI's | V01–V06 |
 | K6 | Limited assemblies, cuts, holes, bolts, welds, approved numbering, IFC and BOM | A01–A09, E01–E03 |
 | K7 | End-to-end alpha and a native packaging rehearsal | Q01–Q02 |
-| K8 | First associative projection and dimension, and a drawing document version | D01–D03 |
+| K8 | Associative drawings, dimensions and marks, drafting, a published document version | D01–D08 |
+| K9 | Full manual steel modelling | P12–P15, G12–G13, A10–A16 |
+| K10 | Model tools, views, filters, render modes, selection and snap panels | T01–T04, V11–V17 |
+| K11 | User attributes and schedules | I04, I05 |
 
 K0 does not hold back mathematical or UI research: a blocker stops only the track that depends on
 it. K3, K4 and K5 run partly in parallel; a gate is not a single global step. A research report
@@ -174,13 +179,13 @@ Each area below is an epic, split into small verifiable tasks before work starts
 
 | Area | Later work |
 |------|------------|
-| Parts and operations | Polybeams and curved members, full position matrix, bent and lofted parts, chamfers, split and combine, grids |
+| Parts and operations | Parametric and library connections, further part types |
 | Catalogues and environments | Licensed profile, material and bolt data packs; firm, project and user resolution; aliases and migrations |
 | Connections | Full bolt, hole and weld coverage, modifiers and feature dependencies, parametric joints |
-| Measurement and checking | Complex closed meshes, sections, clash detection, filters, supported reference comparisons |
-| UI | Work planes, numeric input, snap modes, arrays and mirror, display filters, large models, accessibility |
+| Measurement and checking | Complex closed meshes, clash detection, supported reference comparisons |
+| UI | Large models, accessibility, further display options |
 | Numbering | Further series, settings and control numbers |
-| Drawings | General arrangement and assembly drawings, views and layout, associative marks and dimensions, PDF and print |
+| Drawings | Automatic dimensioning and layout rules beyond the first drawings, further output formats |
 | Fabrication output | DSTV NC to a public specification; DXF and other formats after a scope and licence audit |
 | Synchronisation | Soft leases with expiry, frequent autosync, access between computers, permissions by discipline |
 | Exchange | IFC import and native conversion only by a new owner decision |

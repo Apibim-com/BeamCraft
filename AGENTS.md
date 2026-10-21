@@ -150,4 +150,7 @@ New outbound network access is the owner's decision, not an agent's.
 - Fill in the PR template with the concrete result, provenance, checks actually run and remaining
   limitations. Keep PRs as drafts while required checks, acceptance or dependency gates are open.
   Do not claim a runtime feature is complete from a research report or mock-only tests.
+- If a PR resolves an issue, put `Fixes #N` in the PR description (one keyword per issue, for
+  example `Fixes #1, fixes #2`) so merging into `master` closes it. Use `Refs #N` when the PR only
+  relates to an issue.
 - Creating a PR does not authorize merging it. Merge and integration follow the owner's instructions.
