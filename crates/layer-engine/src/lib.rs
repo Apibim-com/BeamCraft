@@ -112,8 +112,8 @@ impl Budgets {
     /// * `prims` 262,144: four prims per element at the engine's 65,536-element view cap (element,
     ///   geometry, representation and a definition or relationship target).
     /// * `values` 4,194,304: 64 fields per element at the same cap.
-    /// * `array_items` 32,768: one element mesh at the engine blob caps (8,192 triangles are
-    ///   24,576 indices; 4,096 vertices are 12,288 scalars).
+    /// * `array_items` 1,572,864: one element mesh at the engine blob caps (524,288 triangles
+    ///   are 1,572,864 indices; 262,144 vertices are 786,432 scalars).
     /// * `decoded_bytes` 256 MiB and `snapshot_bytes` 512 MiB: four and eight times the 64 MiB
     ///   stage, a conservative allowance for the binary expansion and the per-value accounting of
     ///   the typed snapshot (not measured at the cap).
@@ -127,7 +127,7 @@ impl Budgets {
         depth: 16,
         prims: 262_144,
         values: 4_194_304,
-        array_items: 32_768,
+        array_items: 1_572_864,
         decoded_bytes: 256 * 1024 * 1024,
         snapshot_bytes: 512 * 1024 * 1024,
         page_items: 64,

@@ -27,6 +27,11 @@ members** (A07.1 probe), and a circular hollow section above about 110 mm exceed
 | `snapshot_bytes` | 1 MiB | 512 MiB | 8x the stage (typed snapshot accounting allowance, not measured at the cap) |
 | `layers`, `depth`, `page_items` | 8, 16, 64 | unchanged | fixed shallow project layer stack |
 
+> 2026-10-21 amendment: the engine mesh caps rose with F06 section 6 (decision on #141), and the
+> model `array_items` grew with the same bound: one element mesh at the new caps is 524,288
+> triangles = 1,572,864 indices per array (262,144 vertices = 786,432 scalars). Every other row
+> and the first-slice profile are unchanged.
+
 * Every new value is taken from a limit that already binds the same data further along (host
   blobs and verification, engine view caps), so no stage accepts what a later one refuses.
 * Ceilings stay ceilings: `Budgets::validate` still refuses any value above the default, every cap
@@ -37,8 +42,8 @@ members** (A07.1 probe), and a circular hollow section above about 110 mm exceed
   entries, so a larger input is refused at open rather than failing the read). The hostile-input
   tests of the layer engine (index paging, USDC declared counts, foreign inspection) run on it too,
   because they test that a cap holds, not its size; new tests check the model profile's own caps
-  at the boundary and plus one (array at 32,768 and 32,769 scalars, a layer of 32 MiB + 1 byte,
-  a raised budget refused).
+  at the boundary and plus one (array at 1,572,864 and 1,572,865 entries, a layer of 32 MiB + 1
+  byte, a raised budget refused).
 
 ## Measurements (release build, Linux container, one synthetic 300x150 I-section per member)
 
@@ -71,7 +76,8 @@ budgets, the CLI deadline and R01's 64 KiB source limit.
 ## Evidence
 
 `cargo test -p beamcraft-layer-engine` (new `the_model_profile_is_the_default_ceiling_and_its_caps_hold_at_plus_one`,
-the existing hostile-input tests on the first-slice profile, the authored input bound at
-10,923 points), `cargo test -p beamcraft-cli --test sections`
+the existing hostile-input tests on the first-slice profile, the authored input bound one point
+above the array cap, 524,289 points since the 2026-10-21 amendment),
+`cargo test -p beamcraft-cli --test sections`
 (`more_detailed_members_fit_one_revision_than_the_first_slice_allowed`: 12 detailed I-sections in
 one revision through the real binary), and the probe above.
