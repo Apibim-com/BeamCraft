@@ -6,6 +6,9 @@ Open questions are at the end.
 
 ## 2026-10-20
 
+- **K0 passed.** Every foundation task is done or retired by decision: F04, F06 and F10 frozen at
+  0.1.0, F08 a living document checked by CI, F01, F07 and F11 done, F03, F05 and F09 retired, and
+  the F02 requirements map kept outside the repository.
 - **IFC export after the MVP.** IFC needs independent validation and has many details of its own;
   the MVP takes the model out as a bill of materials, and the model itself is ordinary USD. The E01
   contract stays a draft and the experimental `export-ifc` stays in the code; their acceptance moves
