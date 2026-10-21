@@ -6,6 +6,9 @@ Open questions are at the end.
 
 ## 2026-10-20
 
+- **KM to KMD.** Steel detailing is built from steel design: KMD starts as a copy of KM elements
+  linked by `bim:builtFrom` to the KM element and revision; KM is read-only for the detailer, and a
+  KM change marks affected KMD elements for checking without rewriting them (task R06).
 - **Project organization.** Layers are split by discipline and optional zone, named
   `<code>[_<zone>]_<discipline>.usda` with the discipline codes `Coord`, `Grids`, `KM`, `KMD`, `KR`, `AR`,
   `AI`, `GP`, `EOM`, `VK`, `OV`, `SS`, `TH`, each present only when the project has that discipline;

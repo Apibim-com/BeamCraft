@@ -236,6 +236,16 @@ complete projects, and a coordination project `2401-DEMO_Coord.usda` composes bo
 `bim:projectCode` (`2401-DEMO`), `bim:projectName` (`Demo warehouse`), `bim:organization` (`ACME`) and
 `bim:zones` (`["K1", "K2"]`, empty for a project without zones).
 
+**From KM to KMD.** Steel design (`KM`) and steel detailing (`KMD`) are a chain, not two
+independent disciplines. `KM` is its own layer, made in BeamCraft or arriving read-only from
+another program. Detailing starts from it: a "create KMD from KM" command carries the KM elements
+into the `KMD` layer as the starting point, and each carried element gets a `bim:builtFrom`
+relationship naming the KM element and the KM revision it came from. From then on `KMD` lives on
+its own (connections, bolts, welds, cuts, numbering), and the KM layer is read-only in the
+detailer's workspace. When KM changes, the program compares the new KM revision with the one each
+KMD element was built from and marks the affected KMD elements "source changed, check"; it never
+rewrites KMD by itself.
+
 Inside the store, layers are still blobs named by their SHA-256; these names are the names the
 manifest gives them and the names a checkout of a revision writes to disk.
 

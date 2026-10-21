@@ -109,7 +109,7 @@ Time-boxed research with a report; never a production gate.
 | R02 / M | Measurements of a foreign model | R01, P04, G08 | Supported mesh measurements as our own result objects (W03) | Units and transform respected; open or self-intersecting meshes never exact; mass never invented | deferred |
 | R03 / M | Explicit reference update | R02, U05 | Source versions and comparison of supported properties and geometry | No automatic update; nothing written to foreign prims | deferred |
 | R05 / M | BIM properties of foreign models | R01 | Read-only "declared properties" from common USD BIM conventions; external IDs for R03 | Own synthetic fixtures; strings with units never become exact values | open |
-| R06 / M | "Built from" link | R01, R05, R03 | Relation from our element to a reference element with source revision | Never writes foreign prims; a changed source gives an explicit status | open |
+| R06 / M | "Built from" link, KM to KMD | U19, R01 | `bim:builtFrom` from an element to its source element and source revision: KMD elements to KM elements in one project, and own elements to elements of a foreign reference; a "create KMD from KM" command; a "source changed" status after the source moves on | Never writes the source; a changed or deleted source element gives an explicit status, not a dangling link; nothing in KMD is rewritten automatically | open |
 
 ## C: collaboration
 
