@@ -91,8 +91,9 @@ impl Camera {
     /// The pan (millimetres) that keeps the point under the cursor fixed while zooming: `ndc` is
     /// the cursor in normalized device coordinates (`edit::ndc_of`, y up, inside `[-1, 1]`) and
     /// `zoom` the same logarithmic input `navigate` takes. On the target plane the view scales
-    /// by `exp(-zoom)`, so moving the target by `(1 - s)` of the cursor's offset from the target
-    /// keeps the anchor still; zero zoom gives zero pan.
+    /// from the distance `navigate` will actually reach (including its clamps), so moving the
+    /// target by `(1 - s)` of the cursor's offset from the target keeps the anchor still even at
+    /// the zoom bounds; zero zoom gives zero pan.
     pub fn cursor_zoom_pan(
         &self,
         ndc: [f32; 2],
@@ -108,8 +109,9 @@ impl Camera {
         }
         let view = self.view(aspect)?;
         let [tan, aspect, _, _] = view.params;
-        let s = (-zoom.clamp(-10.0, 10.0)).exp();
         let d = self.distance;
+        let reached = (d * (-zoom.clamp(-10.0, 10.0)).exp()).clamp(10.0, 2e7);
+        let s = reached / d;
         let nx = ndc[0].clamp(-1.0, 1.0);
         let ny = ndc[1].clamp(-1.0, 1.0);
         Ok([(1.0 - s) * d * nx * tan * aspect, (1.0 - s) * d * ny * tan])
@@ -236,9 +238,10 @@ mod tests {
     #[test]
     fn zoom_toward_the_cursor_keeps_the_point_under_the_cursor_still() {
         let aspect = 1.6;
-        let mut c = Camera::new([0.0; 3], 1000.0, aspect).unwrap();
+        // A fresh camera per case: the invariant must not depend on navigation history.
         for ndc in [[0.5f32, 0.3], [-0.7, -0.4], [0.9, -0.8], [0.0, 0.0]] {
             for zoom in [0.7f32, -0.9, 2.0] {
+                let mut c = Camera::new([0.0; 3], 1000.0, aspect).unwrap();
                 let v = c.view(aspect).unwrap();
                 let [tan, va, _, _] = v.params;
                 let d = c.distance();
@@ -264,6 +267,27 @@ mod tests {
                 );
             }
         }
+        // At the zoom bounds navigate clamps the distance; the compensation follows the clamped
+        // distance, so the anchor still stays still (a raw exponential here would miss).
+        let mut c = Camera::new([0.0; 3], 1000.0, aspect).unwrap();
+        let zoom = 6.0f32;
+        let v = c.view(aspect).unwrap();
+        let [tan, va, _, _] = v.params;
+        let d = c.distance();
+        let anchor = [
+            v.eye[0] - v.back[0] * d + v.right[0] * 0.5 * tan * va * d + v.up[0] * 0.3 * tan * d,
+            v.eye[1] - v.back[1] * d + v.right[1] * 0.5 * tan * va * d + v.up[1] * 0.3 * tan * d,
+            v.eye[2] - v.back[2] * d + v.right[2] * 0.5 * tan * va * d + v.up[2] * 0.3 * tan * d,
+        ];
+        let want = v.project(anchor);
+        let pan = c.cursor_zoom_pan([0.5, 0.3], aspect, zoom).unwrap();
+        c.navigate([0.0; 2], pan, zoom).unwrap();
+        assert_eq!(c.distance(), 10.0); // the raw exponential would have gone to 3.4
+        let got = c.view(aspect).unwrap().project(anchor);
+        assert!(
+            (want[0] - got[0]).abs() < 1e-3 && (want[1] - got[1]).abs() < 1e-3,
+            "clamped: {want:?} -> {got:?}"
+        );
         assert!(c.cursor_zoom_pan([f32::NAN, 0.0], aspect, 1.0).is_err());
         assert!(c.cursor_zoom_pan([2.0, 0.0], aspect, 1.0).is_err());
         assert!(c.cursor_zoom_pan([0.0, 0.0], aspect, f32::NAN).is_err());
