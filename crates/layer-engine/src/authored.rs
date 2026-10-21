@@ -1233,6 +1233,35 @@ pub fn validate_layers(
     validate::snapshot(&candidate.prims, &candidate.metadata)
 }
 
+impl Reader {
+    /// [`validate_layers`] and then [`Reader::open`] of the same request, in one pass: the
+    /// structural rules run on the very candidate that is then installed, so the stage is parsed
+    /// and composed once instead of twice. The checks, their order, codes and messages are those
+    /// of the two calls in sequence, and nothing is installed unless every rule passed.
+    pub fn open_validated(
+        &mut self,
+        request: OpenRequest,
+        schema: SchemaIdentity,
+        control: &Control,
+    ) -> Result<(Opened, Validation), Diagnostic> {
+        validate::schema(schema)?;
+        let candidate = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let candidate = backend::open(request.clone(), control)?;
+            reference::layers(&request, &candidate.prims)?;
+            Ok::<_, Diagnostic>(candidate)
+        }))
+        .map_err(|_| {
+            fail(
+                ErrorCode::BackendUnavailable,
+                "backend unwound during validation",
+            )
+        })??;
+        let validation = validate::snapshot(&candidate.prims, &candidate.metadata)?;
+        let opened = self.install(candidate, control)?;
+        Ok((opened, validation))
+    }
+}
+
 pub(super) fn element_path(id: &str) -> Result<String, Diagnostic> {
     if !uuid7(id) {
         return Err(fail(ErrorCode::InvalidId, "invalid full element identity"));
