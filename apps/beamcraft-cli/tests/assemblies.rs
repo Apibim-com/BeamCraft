@@ -376,3 +376,65 @@ fn a_cycle_stored_outside_beamcraft_is_refused_when_read() {
     assert_eq!(code, 2, "{body:?}");
     assert_eq!(text(&body, "code"), "DEPENDENCY_CONFLICT");
 }
+
+/// An operation id that committed one request is not a replay of another request whose result
+/// the head happens to hold through a different operation (#145).
+#[test]
+fn a_different_request_under_an_accepted_op_id_is_reuse_not_a_replay() {
+    let f = Fixture::new();
+    let op = |n: u32| format!("019a7bf0-0000-7000-8000-00000000b{n:03}");
+    let name_args = |name: &'static str, id: &'static str, op: String| {
+        move || {
+            vec![
+                "--name".to_owned(),
+                name.to_owned(),
+                "--new-id".to_owned(),
+                id.to_owned(),
+                "--op-id".to_owned(),
+                op.clone(),
+            ]
+        }
+    };
+    let run_create = |args: Vec<String>| {
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        f.run("create-assembly", &refs)
+    };
+    let (code, _) = run_create(name_args("A", FRAME, op(1))());
+    assert_eq!(code, 0);
+    let (code, _) = run_create(name_args("B", OUTER, op(2))());
+    assert_eq!(code, 0);
+    let before = f.head();
+    // B exists in the head, but operation 1 created A.
+    let (code, body) = run_create(name_args("B", OUTER, op(1))());
+    assert_eq!((code, text(&body, "code").as_str()), (2, "OP_ID_REUSE"));
+    assert_eq!(f.head(), before);
+    // The original request still replays.
+    let (code, body) = run_create(name_args("A", FRAME, op(1))());
+    assert_eq!(code, 0);
+    assert_eq!(text(&body, "outcome"), "assembly_created_replayed");
+
+    // The same holds for attach and detach.
+    let (one, two) = (f.plate(), f.plate());
+    let attach = |part: &str, o: String| {
+        f.run(
+            "assembly-attach",
+            &["--id", part, "--assembly-id", FRAME, "--op-id", &o],
+        )
+    };
+    assert_eq!(attach(&one, op(3)).0, 0);
+    assert_eq!(attach(&two, op(4)).0, 0);
+    let (code, body) = attach(&two, op(3));
+    assert_eq!((code, text(&body, "code").as_str()), (2, "OP_ID_REUSE"));
+    let (code, body) = attach(&one, op(3));
+    assert_eq!(code, 0);
+    assert_eq!(text(&body, "outcome"), "part_attached_replayed");
+
+    let detach = |part: &str, o: String| f.run("assembly-detach", &["--id", part, "--op-id", &o]);
+    assert_eq!(detach(&one, op(5)).0, 0);
+    assert_eq!(detach(&two, op(6)).0, 0);
+    let (code, body) = detach(&two, op(5));
+    assert_eq!((code, text(&body, "code").as_str()), (2, "OP_ID_REUSE"));
+    let (code, body) = detach(&one, op(5));
+    assert_eq!(code, 0);
+    assert_eq!(text(&body, "outcome"), "part_detached_replayed");
+}
