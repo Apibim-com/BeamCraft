@@ -124,7 +124,7 @@ CI wall time is about 15 minutes today (14–17 minutes across the runs of 2026-
 path is the `test (windows)` job at roughly 13–14 minutes; every other job finishes in under
 3 minutes. Each job carries an explicit `timeout-minutes` sized at about three times the longest
 observed runtime of that job, so a hung job fails within the hour instead of at GitHub's 6-hour
-run-level default, while a cold-cache rebuild is not killed and re-queued onto scarce runners.
+per-job default, while a cold-cache rebuild is not killed and re-queued onto scarce runners.
 
 Windows jobs queue for runners that the account shares across all of its repositories and
 workflows, and hosted Windows runners are the scarcest standard tier: each Windows minute is
@@ -141,7 +141,9 @@ account quota:
 - The `concurrency` group `ci-<ref>` with `cancel-in-progress` keeps at most one active CI run per
   branch or pull request; a new push cancels that ref's superseded run instead of queueing it.
 - Per-job `timeout-minutes` fail fast when a job hangs after it starts. They do not bound queue
-  time: a job waiting for a runner is still limited only by the run-level 6-hour default.
+  time, and no workflow setting does: the 6-hour default is itself a per-job execution timeout
+  that starts when a runner picks the job up. Run 39648960935 finished green after 6 hours
+  4 minutes of wall time, queue included.
 
 When CI looks stuck, first check whether the Windows job is queued rather than running, then look
 for a burst across the account's Actions runs, cancel superseded runs and re-run the starved job
