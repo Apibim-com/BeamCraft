@@ -103,3 +103,24 @@ impl StoreLease {
         }
     }
 }
+
+/// Exclusive advisory serialization of one personal workspace's metadata transitions.
+/// This is separate from maintenance: a holder may still commit a draft through the ordinary
+/// revision CAS. Modelling commands do not acquire it; their concurrent commits remain guarded
+/// by the revision CAS. The OS releases this lease on process exit or crash.
+#[derive(Debug)]
+pub struct WorkspaceLease {
+    _file: File,
+}
+
+impl WorkspaceLease {
+    /// Acquires `workspace-state.lock` without waiting. Another metadata/rebase holder is busy;
+    /// a link or non-regular lock entry is refused by the same storage guards as maintenance.
+    pub fn exclusive(store: &BlobStore) -> Result<Self, LeaseError> {
+        let file = store
+            .open_named_lock_file(crate::storage::LockFile::WorkspaceState, true)?
+            .ok_or(LeaseError::Storage(StorageError::NotFound))?;
+        file.try_lock().map_err(lock_error)?;
+        Ok(Self { _file: file })
+    }
+}
