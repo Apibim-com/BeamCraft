@@ -15,6 +15,7 @@ pub mod feature_id;
 pub mod input;
 pub mod member;
 pub mod mesh;
+pub mod plate_contour;
 pub mod profile;
 pub mod result;
 pub mod section;

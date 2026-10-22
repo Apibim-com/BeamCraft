@@ -135,8 +135,12 @@ layers with a fresh reader, re-evaluates every plate and checks its committed me
 kernel's, and prints the plates, the pinned snapshot token, the element table and the meshes a
 viewer must load (`synthetic: false`).
 
-Plate geometry currently supports simple counter-clockwise contours in `z=0`; contours outside
-that plane and rotated placements remain `UNSUPPORTED_GEOMETRY`. The layer engine runs in
+`--contour "X,Y[,Z];..."` accepts two or three components per point (omitted Z is zero).
+Plate geometry supports simple counter-clockwise contours in `z=0` and exactly rectangular
+contours in other planes. A framed rectangle extrudes along its ordered normal; holes on this
+new path are unsupported. Nonplanarity beyond the scaled band, clockwise winding and touching
+are `INVALID_ARGUMENT`. Valid near-planar contours, other polygons outside `z=0` and rotated
+placements remain `UNSUPPORTED_GEOMETRY` at command application. The layer engine runs in
 process by the U17 decision. Workspace and undo commands have their own sections below; a full
 F04 envelope/JSON command adapter remains absent. Quantities are printed, not stored in USD
 (the pinned schema has none).

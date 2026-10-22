@@ -31,7 +31,7 @@ mod admit;
 mod curve;
 mod exact;
 mod extrude;
-mod predicates;
+pub(crate) mod predicates;
 mod triangulate;
 
 pub mod diagnostic;

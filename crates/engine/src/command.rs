@@ -12,7 +12,7 @@
 //! # What P01 supports, and what it does not
 //!
 //! F04 section 3 (P-1) admits any planar contour and evaluates a four-point rectangle in its own
-//! body frame. Two paths evaluate a contour here:
+//! body frame. Three paths evaluate a contour here:
 //!
 //! * The origin rectangle of F04-POS-01, `(0,0,0), (w,0,0), (w,l,0), (0,l,0)`, is the G02 box
 //!   (its bytes and digests are unchanged since P01). Its clockwise mirror is `INVALID_ARGUMENT`.
@@ -21,19 +21,20 @@
 //!   clockwise or self-crossing outline is `INVALID_ARGUMENT` and any simple counter-clockwise
 //!   polygon is evaluated as authored (nothing reordered, merged or repaired).
 //!
-//! A contour that is not in the plane `z = 0` (a non-zero or varying `z`) would need the F04
-//! body-frame adapter and is still rejected as `UNSUPPORTED_GEOMETRY`: F04 would *accept* it with
-//! an `unsupported` geometry status, which this slice cannot record, so it authors nothing. The
-//! same holds for a placement with a rotation other than the identity (the view contract
-//! carries translations only).
+//! * An exactly rectangular contour outside `z = 0` is evaluated in its ordered body frame,
+//!   with canonical box vertices in element-local coordinates. Holes on this path are unsupported.
 //!
-//! Through holes (A04) apply to both bodies. `width_mm` and `length_mm` of a [`PlateBody`] are the
-//! extents of the outline along local X and Y; for a contour they are its bounding box.
+//! Ordered 3D validity is checked before support: outside-band nonplanarity, clockwise winding,
+//! intersections and touches are `INVALID_ARGUMENT`. Other contours outside `z = 0`, including
+//! valid near-planar input, remain `UNSUPPORTED_GEOMETRY` at command application: the persisted
+//! authored-only unsupported state is still absent. Rotated element placements remain P10 work.
+//!
+//! Through holes (A04) apply to the existing `z = 0` bodies. A box reports width and length in
+//! its body frame; a G05 contour reports its element-local XY bounding-box extents.
 
 use crate::footprint::Footprint;
 use crate::solid::SolidMesh;
 use beamcraft_geom::tolerance::TOLERANCE_POLICY_VERSION;
-use beamcraft_geom::{MathError, Point3};
 use beamcraft_kernel::diagnostic::Failure;
 use beamcraft_kernel::measure::analytic_mass_kg;
 use beamcraft_kernel::ops::{
@@ -222,21 +223,19 @@ pub struct Quantities {
 /// A plate evaluated by the kernel: the sealed body and its supported dimensions.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlateBody {
-    /// The sealed kernel box of the outline and thickness, before any hole. Only the origin
-    /// rectangle of F04-POS-01 is a G02 box; any other contour is a G05 extrusion and has none.
+    /// The sealed canonical box of an origin or framed rectangle, before any operation.
+    /// Existing non-origin contours in `z = 0` retain their G05 extrusion and have none.
     pub result: Option<PlateResult>,
     /// The certified mesh of the plate as authored: the body, or the body with its through holes.
     pub solid: SolidMesh,
     /// Volume of the plate before any hole, in cubic millimetres: the exact box, or the analytic
     /// `net_area * thickness` of the contour polygon.
     pub gross_volume_mm3: f64,
-    /// Extent of the outline along local X, in millimetres (the width of the origin rectangle,
-    /// the bounding-box extent of any other contour).
+    /// Width along body X for a box; element-local X bounding-box extent for a G05 contour.
     pub width_mm: f64,
-    /// Extent of the outline along local Y, in millimetres (the length of the origin rectangle,
-    /// the bounding-box extent of any other contour).
+    /// Length along body Y for a box; element-local Y bounding-box extent for a G05 contour.
     pub length_mm: f64,
-    /// Thickness along local Z, in millimetres.
+    /// Thickness along body Z, in millimetres.
     pub thickness_mm: f64,
     /// Number of through holes applied.
     pub hole_count: usize,
@@ -258,9 +257,14 @@ impl PlateBody {
         }
     }
 
-    /// Whether the outline is the origin rectangle of the G02 box rather than a G05 contour.
-    pub const fn is_origin_rectangle(&self) -> bool {
+    /// Whether the outline uses a canonical rectangular box rather than a G05 contour.
+    pub const fn is_rectangular_box(&self) -> bool {
         self.result.is_some()
+    }
+
+    /// Historical alias for [`Self::is_rectangular_box`]; also true for a framed rectangle.
+    pub const fn is_origin_rectangle(&self) -> bool {
+        self.is_rectangular_box()
     }
 
     fn volumes(&self) -> Volumes {
@@ -397,29 +401,6 @@ pub struct CreatePlateOutcome {
     pub fingerprint: ContentDigest,
 }
 
-fn map_math(error: MathError, field: &'static str) -> CommandError {
-    let (code, message) = match error {
-        MathError::NonFinite => (ErrorCode::NonFiniteNumber, "value is not finite"),
-        MathError::AboveLimit => (ErrorCode::LimitExceeded, "value exceeds its limit"),
-        MathError::InvalidPointCount => (
-            ErrorCode::InvalidArgument,
-            "contour needs at least 3 points",
-        ),
-        MathError::NotPositive | MathError::BelowMinimum => (
-            ErrorCode::InvalidArgument,
-            "dimension is not above the geometric floor",
-        ),
-        MathError::AxisTooShort | MathError::ZeroAxis | MathError::InvalidFrame => {
-            (ErrorCode::InvalidArgument, "degenerate geometry")
-        }
-        MathError::NumericUncertain => (
-            ErrorCode::UnsupportedGeometry,
-            "numeric result is uncertain",
-        ),
-    };
-    CommandError::new(code, field, message)
-}
-
 fn map_kernel(failure: &Failure) -> CommandError {
     failure.diagnostics().next().map_or(
         CommandError::new(
@@ -479,39 +460,14 @@ fn classify(points: &[[f64; 3]]) -> Contour {
 /// Evaluates an authored plate with the kernel: engineering validation in the F04 order that
 /// P01 implements, then the sealed rectangular body.
 ///
-/// Order: count and finiteness and coordinate caps (`contour_points_mm`), local size `D` and its
-/// cap, thickness range and floor, repeated consecutive points, then the supported shape (see
+/// Order: count, finiteness, coordinate and dimension caps, local size, minima, ordered area,
+/// planarity, winding and exact projected simplicity, then the supported shape (see
 /// the module documentation). The caller is expected to have run
 /// [`CreatePlate::validate_arguments`] for label, placement and the argument-level caps; this
 /// function repeats the checks it depends on and never panics on any input.
 pub fn evaluate_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandError> {
     let points = &authored.contour_points_mm;
-    let raw: Vec<Point3> = points
-        .iter()
-        .map(|[x, y, z]| Point3::new(*x, *y, *z))
-        .collect();
-    let tolerance = beamcraft_geom::tolerance::Tolerance::for_plate(&raw)
-        .map_err(|e| map_math(e, "contour_points_mm"))?;
-    tolerance
-        .check_dimension(authored.thickness_mm)
-        .map_err(|e| map_math(e, "thickness_mm"))?;
-    for (index, a) in raw.iter().enumerate() {
-        let b = raw
-            .get(index.saturating_add(1))
-            .or_else(|| raw.first())
-            .copied()
-            .unwrap_or(*a);
-        if tolerance
-            .coincident(*a, b)
-            .map_err(|e| map_math(e, "contour_points_mm"))?
-        {
-            return Err(CommandError::new(
-                ErrorCode::InvalidArgument,
-                "contour_points_mm",
-                "repeated consecutive contour points",
-            ));
-        }
-    }
+    let contour = beamcraft_kernel::plate_contour::admit(points, authored.thickness_mm)?;
     match classify(points) {
         Contour::OriginRectangle { width, length } => {
             let result = rectangular_plate(RectangularPlate {
@@ -544,6 +500,44 @@ pub fn evaluate_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandErro
             "contour_points_mm",
             "contour winding is clockwise",
         )),
+        Contour::Other if points.iter().any(|p| p[2] != 0.0) => {
+            let [width, length] = contour.rectangle_mm.ok_or_else(|| {
+                CommandError::new(
+                    ErrorCode::UnsupportedGeometry,
+                    "contour_points_mm",
+                    "only exactly rectangular contours outside z = 0 are evaluated",
+                )
+            })?;
+            // Existing hole coordinates are element-local XY, not the new body frame.
+            // Refuse rather than silently rotate or relocate the authored cutters.
+            if !authored.holes_mm.is_empty() {
+                return Err(CommandError::new(
+                    ErrorCode::UnsupportedGeometry,
+                    "holes_mm",
+                    "holes on a framed plate are not evaluated",
+                ));
+            }
+            let result =
+                beamcraft_kernel::plate_contour::rectangular_body(points, authored.thickness_mm)?;
+            let base = SolidMesh::from_box(&result);
+            let solid = apply_holes_and_cut(
+                || Body::from_plate(&result),
+                base,
+                authored.thickness_mm,
+                &[],
+                authored.cut.as_ref(),
+            )?;
+            Ok(PlateBody {
+                gross_volume_mm3: result.volume_mm3(),
+                result: Some(result),
+                solid,
+                width_mm: width,
+                length_mm: length,
+                thickness_mm: authored.thickness_mm,
+                hole_count: 0,
+                cut_applied: authored.cut.is_some(),
+            })
+        }
         Contour::Other => evaluate_contour(authored),
     }
 }
@@ -570,9 +564,8 @@ fn map_profile(failure: &ProfileFailure) -> CommandError {
 ///
 /// The contour is used exactly as authored (F04 P-1): nothing is reordered, merged or repaired,
 /// and the kernel decides winding, self-intersection and touching with exact predicates, so a
-/// clockwise, self-crossing or backtracking outline is `INVALID_ARGUMENT`. A contour in another
-/// plane (a non-zero or varying `z`) would need the body-frame adapter and is
-/// `UNSUPPORTED_GEOMETRY`.
+/// clockwise, self-crossing or backtracking outline is `INVALID_ARGUMENT`. Rectangles outside
+/// `z = 0` take the separate framed-box path in `evaluate_plate`.
 fn evaluate_contour(authored: &AuthoredPlate) -> Result<PlateBody, CommandError> {
     if authored.contour_points_mm.iter().any(|p| p[2] != 0.0) {
         return Err(CommandError::new(
@@ -1224,28 +1217,31 @@ mod tests {
     }
 
     #[test]
-    fn a_contour_in_another_plane_is_unsupported_not_guessed() {
+    fn a_rectangular_contour_in_another_plane_is_evaluated_and_nonplanarity_is_invalid() {
         let moved = vec![
             [10.0, 20.0, 30.0],
             [10.0, 1020.0, 30.0],
             [-490.0, 1020.0, 30.0],
             [-490.0, 20.0, 30.0],
         ];
-        assert_eq!(code(&command(moved, 10.0)), ErrorCode::UnsupportedGeometry); // F04-POS-18
+        let out = create_plate(&command(moved, 10.0), &none).unwrap(); // F04-POS-18
+        assert_eq!(out.body.width_mm, 1000.0);
+        assert_eq!(out.body.length_mm, 500.0);
+        assert_eq!(out.quantities.volume_mm3, 5_000_000.0);
         let tilted = vec![
             [0.0, 0.0, 0.0],
             [1000.0, 0.0, 0.0],
             [1000.0, 500.0, 20.0],
             [0.0, 500.0, 0.0],
         ];
-        assert_eq!(code(&command(tilted, 10.0)), ErrorCode::UnsupportedGeometry);
+        assert_eq!(code(&command(tilted, 10.0)), ErrorCode::InvalidArgument);
     }
 
     #[test]
     fn a_simple_contour_is_extruded_with_the_exact_polygon_volume() {
         let out = create_plate(&command(l_shape(), 10.0), &none).unwrap();
         assert!(out.body.result.is_none());
-        assert!(!out.body.is_origin_rectangle());
+        assert!(!out.body.is_rectangular_box());
         // Independent closed form: 420_000 mm2 * 10 mm.
         assert_eq!(out.quantities.volume_mm3, 4_200_000.0);
         assert_eq!(out.quantities.volume_gross_mm3, 4_200_000.0);
@@ -1298,7 +1294,7 @@ mod tests {
             [100.0, 600.0, 0.0],
         ];
         let out = create_plate(&command(shifted, 10.0), &none).unwrap();
-        assert!(!out.body.is_origin_rectangle());
+        assert!(!out.body.is_rectangular_box());
         assert_eq!(out.quantities.volume_mm3, 5_000_000.0);
     }
 

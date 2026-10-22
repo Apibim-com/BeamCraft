@@ -36,7 +36,7 @@ const PROTOCOL: &str = "POS-16 POS-17 POS-18 POS-19 POS-20 POS-21 POS-22 POS-23 
     NEG-33 NEG-34 NEG-36";
 const INJECTION: &str = "POS-37 NEG-16 NEG-17 NEG-31 NEG-32 NEG-35 NEG-50";
 const SUPERSEDED: &str = "NEG-08 NEG-39";
-const DEVIATIONS: &[&str] = &["POS-11", "POS-48", "NEG-38", "NEG-49"];
+const DEVIATIONS: &[&str] = &["POS-11"];
 
 fn fixture() -> Json {
     let bytes = std::fs::read(concat!(
@@ -411,7 +411,7 @@ fn check_success(
             );
             // Area/status are not exposed by this engine API and are NOT claimed here.
         }
-        "POS-49" => {
+        "POS-48" | "POS-49" => {
             check_bounds(
                 out.body.solid.vertices(),
                 expected.get("local_bounds_mm").unwrap(),
@@ -421,6 +421,20 @@ fn check_success(
             check_number(out.quantities.volume_m3, expected, "volume_m3");
             check_count(out.body.solid.vertices().len(), expected, "vertex_count");
             check_count(out.body.solid.triangles().len(), expected, "triangle_count");
+            if id == "POS-48" {
+                let normals = out.body.result.as_ref().unwrap().mesh().face_normals();
+                let expected_frame = expected.get("plate_frame").unwrap();
+                for (actual, name) in [
+                    (normals[1], "X_p"),
+                    (normals[3], "Y_p"),
+                    (normals[5], "Z_p"),
+                ] {
+                    assert_eq!(
+                        actual.components(),
+                        vector::<3>(expected_frame.get(name).unwrap())
+                    );
+                }
+            }
         }
         "POS-53" | "POS-54" | "POS-55" => {
             // These are admission projections; the tolerance values themselves still have

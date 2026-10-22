@@ -87,7 +87,7 @@ impl Big {
         self.mag.get(..self.len).unwrap_or(&[])
     }
 
-    fn cmp_mag(&self, other: &Self) -> core::cmp::Ordering {
+    pub(crate) fn cmp_mag(&self, other: &Self) -> core::cmp::Ordering {
         self.len.cmp(&other.len).then_with(|| {
             self.limbs()
                 .iter()

@@ -90,6 +90,76 @@ fn num(json: &Json, path: &[&str]) -> f64 {
 }
 
 #[test]
+fn a_rectangle_in_its_3d_body_frame_is_saved_and_reopened() {
+    let f = Fixture::new();
+    let created = f.ok(
+        "create-plate",
+        &[
+            "--contour",
+            "10,20,30;10,1020,30;-490,1020,30;-490,20,30",
+            "--thickness",
+            "10",
+        ],
+    );
+    let plate = at(&created, &["plate"]);
+    assert_eq!(num(plate, &["dimensions_mm", "width"]), 1000.);
+    assert_eq!(num(plate, &["dimensions_mm", "length"]), 500.);
+    assert_eq!(num(plate, &["quantities", "volume", "mm3"]), 5_000_000.);
+    let reopened = f.plates();
+    assert_eq!(reopened.len(), 1);
+    assert_eq!(
+        at(&reopened[0], &["contour_points_mm"]),
+        at(plate, &["contour_points_mm"])
+    );
+    assert_eq!(
+        text(&reopened[0], "mesh_digest"),
+        text(plate, "mesh_digest")
+    );
+    let before = f.ok("revision-open", &[]);
+    assert_eq!(
+        f.rejected(
+            "create-plate",
+            &[
+                "--contour",
+                "0,0,0;1000,0,0;1000,500,20;0,500,0",
+                "--thickness",
+                "10"
+            ]
+        ),
+        "INVALID_ARGUMENT"
+    );
+    assert_eq!(f.ok("revision-open", &[]), before);
+    assert_eq!(
+        f.rejected(
+            "create-plate",
+            &[
+                "--contour",
+                "999000000,0,0;999393216,0,0.875;999393216,524288,0;999000000,524288,0.875",
+                "--thickness",
+                "10"
+            ]
+        ),
+        "INVALID_ARGUMENT"
+    );
+    assert_eq!(f.ok("revision-open", &[]), before);
+    assert_eq!(
+        f.rejected(
+            "create-plate",
+            &[
+                "--contour",
+                "10,20,30;10,1020,30;-490,1020,30;-490,20,30",
+                "--thickness",
+                "10",
+                "--hole-rect",
+                "0,0,1,1"
+            ]
+        ),
+        "UNSUPPORTED_GEOMETRY"
+    );
+    assert_eq!(f.ok("revision-open", &[]), before);
+}
+
+#[test]
 fn an_l_shaped_plate_is_saved_reopened_and_measured_by_closed_forms() {
     let f = Fixture::new();
     f.ok("define-material", &["--density", "7850", "--grade", "S355"]);

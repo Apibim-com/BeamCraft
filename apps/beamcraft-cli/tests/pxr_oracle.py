@@ -159,11 +159,14 @@ def main():
         check(prim.GetAttribute("steel:plate:thicknessMm").Get() == plate["thickness"], "thickness differs")
         contour = [tuple(p) for p in prim.GetAttribute("steel:plate:contourPointsMm").Get()]
         w, l = plate["width"], plate["length"]
-        check(contour == [(0.0, 0.0, 0.0), (w, 0.0, 0.0), (w, l, 0.0), (0.0, l, 0.0)], "contour differs")
+        expected_contour = plate.get("contour", [(0.0, 0.0, 0.0), (w, 0.0, 0.0), (w, l, 0.0), (0.0, l, 0.0)])
+        check(contour == [tuple(p) for p in expected_contour], "contour differs")
 
         mesh = UsdGeom.Mesh(stage.GetPrimAtPath(path + "/Geometry"))
         check(bool(mesh), "Geometry is not a UsdGeom.Mesh")
         points = mesh.GetPointsAttr().Get()
+        if "vertices" in plate:
+            check([tuple(p) for p in points] == [tuple(p) for p in plate["vertices"]], "framed mesh vertex order differs")
         counts = mesh.GetFaceVertexCountsAttr().Get()
         indices = mesh.GetFaceVertexIndicesAttr().Get()
         holes = plate.get("hole_counts")
@@ -230,9 +233,10 @@ def main():
         check(tuple(transform.ExtractTranslation()) == (tx, ty, tz), "composed translation differs")
         world = cache.ComputeWorldBound(prim).ComputeAlignedRange()
         lo, hi = world.GetMin(), world.GetMax()
+        bounds = plate.get("local_bounds", [[0, 0, 0], [w, l, plate["thickness"]]])
         check(
-            all(abs(a - b) <= 1e-3 for a, b in zip(lo, (tx, ty, tz)))
-            and all(abs(a - b) <= 1e-3 for a, b in zip(hi, (tx + w, ty + l, tz + plate["thickness"]))),
+            all(abs(a - (b + t)) <= 1e-3 for a, b, t in zip(lo, bounds[0], (tx, ty, tz)))
+            and all(abs(a - (b + t)) <= 1e-3 for a, b, t in zip(hi, bounds[1], (tx, ty, tz))),
             "pxr world bound differs: %r %r" % (tuple(lo), tuple(hi)),
         )
         report["plates"].append({

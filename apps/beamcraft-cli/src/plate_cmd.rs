@@ -538,19 +538,26 @@ fn section_shape(family: &str, options: &BTreeMap<&str, &str>) -> Run<SectionSha
     )?))
 }
 
-/// The plate contour of `--contour "X,Y;X,Y;..."`: its points in the plane `z = 0`, in the order
+/// The plate contour of `--contour "X,Y[,Z];..."`: two or three components, in the order
 /// given. Winding, simplicity and the size floor are the kernel's to decide.
 fn contour_points(text: &str) -> Run<Vec<[f64; 3]>> {
+    if text.split(';').count() > 1024 {
+        return Err(PlateError {
+            code: ErrorCode::LimitExceeded,
+            message: "more than 1024 contour points",
+        });
+    }
     text.split(';')
         .map(|pair| {
             let parts: Vec<f64> = pair
                 .split(',')
                 .map(|v| v.trim().parse::<f64>())
                 .collect::<Result<_, _>>()
-                .map_err(|_| invalid("a contour point is not two numbers"))?;
+                .map_err(|_| invalid("a contour point is not two or three numbers"))?;
             match parts.as_slice() {
                 [x, y] => Ok([*x, *y, 0.0]),
-                _ => Err(invalid("a contour point is not two numbers")),
+                [x, y, z] => Ok([*x, *y, *z]),
+                _ => Err(invalid("a contour point is not two or three numbers")),
             }
         })
         .collect()
@@ -1835,7 +1842,7 @@ fn plate_json(record: &PlateRecord) -> Run<Json> {
         ),
         (
             "outline",
-            Json::text(if record.body.is_origin_rectangle() {
+            Json::text(if record.body.is_rectangular_box() {
                 "rectangle"
             } else {
                 "contour"

@@ -54,11 +54,13 @@ inputs cannot reach it through `ViewSnapshot::build`.
 ## What is not implemented (and is not faked)
 
 - **P01 is a first slice only.** `CreatePlate` is implemented for the origin rectangle contour
-  `(0,0,0),(w,0,0),(w,l,0),(0,l,0)` (F04-POS-01). Its clockwise mirror is `INVALID_ARGUMENT`; every
-  other contour that passes the structural stages (translated or rotated rectangles, polygons)
-  is `UNSUPPORTED_GEOMETRY` and authors nothing, where F04 would accept it with an `unsupported`
-  geometry status or, for non-planar and self-intersecting contours, reject it as
-  `INVALID_ARGUMENT` (F04-NEG-29, -30, -38). A placement rotation other than the identity is
+  `(0,0,0),(w,0,0),(w,l,0),(0,l,0)` (F04-POS-01), simple CCW polygons in `z=0`, and exact
+  rectangular contours in other planes. Ordered 3D contour admission rejects outside-band
+  nonplanarity, clockwise winding and self-intersection as `INVALID_ARGUMENT` before support.
+  Valid near-planar input and other polygons outside `z=0` still author nothing and return
+  `UNSUPPORTED_GEOMETRY`; the authored-only unsupported state remains open. Holes on framed
+  rectangles are unsupported. See the [K1 contour/frame slice](../../docs/design/k1-plate-contour-frame.md).
+  A placement rotation other than the identity is
   `UNSUPPORTED_GEOMETRY`. There are no dependency keys (F06 section 7), no stored quantity or
   signature, no other command. Profile and material definitions are published by the CLI adapter
   (P02); the engine only resolves a pinned material to its density and no command consumes a

@@ -153,6 +153,65 @@ fn pxr_reads_the_committed_revision_and_agrees_with_the_closed_form() {
     let _ = fs::remove_dir_all(&root);
 }
 
+#[test]
+fn pxr_reads_the_ordered_3d_plate_frame_and_its_element_local_vertices() {
+    let Some((python, python_args)) = find_python() else {
+        println!("SKIP: independent pxr reader NOT RUN (no interpreter)");
+        return;
+    };
+    let root =
+        Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("k1-frame-pxr-{}", std::process::id()));
+    let store = root.join("store");
+    let layers = root.join("layers");
+    fs::create_dir_all(&store).unwrap();
+    fs::create_dir_all(&layers).unwrap();
+    let created = run_binary(&[
+        "create-plate",
+        "--store",
+        store.to_str().unwrap(),
+        "--contour",
+        "10,20,30;10,1020,30;-490,1020,30;-490,20,30",
+        "--thickness",
+        "10",
+        "--translation",
+        "2000,-150.5,25",
+        "--name",
+        "Framed plate",
+    ]);
+    let tilted = run_binary(&[
+        "create-plate",
+        "--store",
+        store.to_str().unwrap(),
+        "--contour",
+        "10,20,30;13,20,34;13,15,34;10,15,30",
+        "--thickness",
+        "5",
+        "--name",
+        "Tilted plate",
+    ]);
+    let inspected = run_binary(&["plate-inspect", "--store", store.to_str().unwrap()]);
+    copy_layers(&store, &layers, &inspected);
+    let expected = format!(
+        r#"[{{"id":"{}","name":"Framed plate","width":1000,"length":500,"thickness":10,
+        "translation":[2000,-150.5,25],"cli_volume_mm3":{},
+        "contour":[[10,20,30],[10,1020,30],[-490,1020,30],[-490,20,30]],
+        "vertices":[[10,20,30],[10,1020,30],[-490,20,30],[-490,1020,30],[10,20,40],[10,1020,40],[-490,20,40],[-490,1020,40]],
+        "local_bounds":[[-490,20,30],[10,1020,40]]}},
+        {{"id":"{}","name":"Tilted plate","width":5,"length":5,"thickness":5,
+        "translation":[0,0,0],"cli_volume_mm3":{},
+        "contour":[[10,20,30],[13,20,34],[13,15,34],[10,15,30]],
+        "vertices":[[10,20,30],[13,20,34],[10,15,30],[13,15,34],[14,20,27],[17,20,31],[14,15,27],[17,15,31]],
+        "local_bounds":[[10,15,27],[17,20,34]]}}]"#,
+        text(created.get("plate").unwrap(), "element_id"),
+        num(&created, &["plate", "quantities", "volume", "mm3"]),
+        text(tilted.get("plate").unwrap(), "element_id"),
+        num(&tilted, &["plate", "quantities", "volume", "mm3"])
+    );
+    let report = run_script(&python, &python_args, &layers, &expected);
+    assert_eq!(report.get("plates").unwrap().array().unwrap().len(), 2);
+    let _ = fs::remove_dir_all(&root);
+}
+
 /// Copies the layers of the head revision under their manifest names, where a plain USD reader
 /// finds them next to the root layer.
 fn copy_layers(store: &Path, layers: &Path, inspected: &Json) {
