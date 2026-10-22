@@ -16,8 +16,8 @@ feature or a change to a roadmap gate. K2 is separate.
 - The F04 and F06 JSON files remain unchanged. No expected value comes from a production geometry
   helper. Numeric references use F06's quantity relative tolerance and coordinate absolute plus
   relative tolerance; identities, codes, tables and digests are compared exactly.
-- `BEAMCRAFT_REQUIRE_PXR=1` makes the independent-reader test fail if pxr is absent. Ordinary
-  developer runs retain their explicit optional skip. A skip is never acceptance evidence.
+- The independent reader is the std-only `beamcraft-usd-oracle` process. It runs in every
+  `cargo test` and skips nowhere, so there is no optional-skip path to guard.
 
 ## K1 requirement to executable evidence
 
@@ -28,7 +28,7 @@ slice; the new contract inventory does not replace them.
 |---|---|---|
 | P01: two plate IDs, complete saved revisions, fresh-process reopen | `apps/beamcraft-cli/tests/plate.rs::two_plates_in_two_commits_are_independent_complete_revisions_readable_without_beamcraft` | Real CLI, separate commits, authored attributes and derived mesh, closed shell, winding, analytic volume, units and placement |
 | U16: current category paths and identities | `apps/beamcraft-cli/tests/prim_naming.rs` | Full UUID in `/World/Steel/Parts/PRT_<uuidhex>`; links, save/reopen and view export |
-| U02/U09: ordinary OpenUSD interoperability | `apps/beamcraft-cli/tests/pxr_oracle.rs::pxr_reads_the_committed_revision_and_agrees_with_the_closed_form` and `pxr_oracle.py` | Independent pxr opens the materialized revision layers; two plates, attributes, units, local/world geometry, model kinds, display name, extent, normals, volume and compliance checks |
+| U02/U09: ordinary OpenUSD interoperability | `apps/beamcraft-cli/tests/independent_reader.rs::the_reader_reads_the_committed_revision_and_agrees_with_the_closed_form` and `beamcraft-usd-oracle` | The independent reader opens the materialized revision layers; two plates, attributes, units, local/world geometry, model kinds, display name, volume and structural checks |
 | U06: atomic publication | `plate.rs::a_killed_process_leaves_the_old_or_the_new_complete_revision_at_every_commit_point`, `concurrent_creates_publish_only_complete_revisions_with_distinct_ids` | Killed child at commit checkpoints; old or new complete revision, no partial head; concurrent writers |
 | U07: recovery | `apps/beamcraft-cli/tests/recovery.rs::an_interrupted_commit_is_resolved_by_the_binary_at_every_crash_point`, `a_torn_ledger_tail_is_reported_and_recovery_rebuilds_the_record_from_the_root`, `a_ledger_that_contradicts_the_root_is_an_integrity_error_not_an_acceptance` | Journal outcomes, interrupted commits, torn tails and contradictory records |
 | P01 replay and rejection | `plate.rs::the_same_operation_is_replayed_and_a_changed_one_is_refused`, `rejected_commands_leave_no_revision_and_report_the_f04_code`, `a_library_error_is_typed_and_a_failed_commit_leaves_the_old_revision` | Stable operation result; typed errors; preserved previous head |
@@ -105,14 +105,12 @@ features are absent: the older G07 report and current runtime tests provide othe
 
 ## Reproduction and environment
 
-Recorded on 2026-10-21, Windows 10 build 19045, Rust/Cargo 1.96.0, Python 3.11.9, reference
-OpenUSD `Usd.GetVersion() == (0, 25, 11)`. All test models are contributor-original synthetic data
+Recorded on 2026-10-21, Windows 10 build 19045, Rust/Cargo 1.96.0. All test models are contributor-original synthetic data
 covered by the test-data entry in `ATTRIBUTION.md`. No network, runtime dependency or asset is added.
 
 ```powershell
 cargo test --offline --locked -p beamcraft-cli --test f04_cases --test f06_cases -- --nocapture
-$env:BEAMCRAFT_REQUIRE_PXR = '1'
-cargo test --offline --locked -p beamcraft-cli --test pxr_oracle -- --nocapture
+cargo test --offline --locked -p beamcraft-cli --test independent_reader -- --nocapture
 cargo test --offline --locked --workspace --no-fail-fast
 cargo fmt --all -- --check
 cargo clippy --offline --locked --workspace --all-targets -- -D warnings
@@ -121,9 +119,8 @@ cargo doc --offline --locked --workspace --no-deps
 cargo run --offline --locked -p beamcraft-boundaries -- check
 ```
 
-The missing-oracle control was also exercised: with `BEAMCRAFT_REQUIRE_PXR=1` and
-`BEAMCRAFT_PXR_PYTHON` pointing to a nonexistent interpreter, the selected independent-reader test
-fails with `K1 independent reader NOT RUN`, rather than passing through an optional skip.
+The missing-expectation control is `a_missing_expectation_file_fails_the_reader`: the reader
+fails rather than passing without an expectation.
 
 ## Acceptance limits
 

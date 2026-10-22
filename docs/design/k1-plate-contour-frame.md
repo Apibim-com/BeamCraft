@@ -33,18 +33,16 @@ vertical rectangles, independent signed volumes, exact winding ties, small-coord
 scaled near-planarity, invalid topology and caps. CLI regressions save and reopen the frame,
 preserve authored coordinates and check that a rejected nonplanar create leaves the head intact.
 The F04/F06 drivers exercise the unchanged frozen cases and retain their partial-field labels.
-The independent pxr regression reads materialized USD, compares authored coordinates and exact
-mesh vertices, checks translated bounds and volume, and runs the existing compliance checker.
+The independent reader regressions (`beamcraft-usd-oracle`, std-only, no code shared with the
+layer engine) read materialized USD, compare authored coordinates and exact mesh vertices, check
+translated bounds and volume, and check that an unsupported plate carries no derived opinion.
 
-Local Windows verification passed: the full offline/locked workspace test suite with
-`BEAMCRAFT_REQUIRE_PXR=1`, the final focused kernel/CLI regressions (including all five pxr
-oracle tests), engine tests, formatting, workspace Clippy with warnings denied, Rustdoc with
-warnings denied, module boundaries, F07 fixture verification and the independent Python
-expectations plus their eight regression tests. OpenUSD 0.25.11 reported empty compliance
-errors, failed checks and warnings for the new horizontal and oblique plate pair. The unchanged
-F04 driver now reports 36 matching admission projections, one deviation (POS-28) and five
-skips. F06 still reports partial projections, with only POS-11 in its explicit deviation list;
-the face-table format discrepancy within POS-01 remains. WASM and cargo-deny are unavailable
+Local Windows verification passed: the full offline/locked workspace test suite, the focused
+kernel/CLI regressions (including the independent reader tests), engine tests, formatting,
+workspace Clippy with warnings denied, Rustdoc with warnings denied, module boundaries and F07
+fixture verification. The unchanged F04 driver now reports 36 matching admission projections, one
+deviation (POS-28) and five skips. F06 still reports partial projections, with only POS-11 in its
+explicit deviation list; the face-table format discrepancy within POS-01 remains. WASM and cargo-deny are unavailable
 locally and still require CI evidence.
 
 Remaining work is explicit:
