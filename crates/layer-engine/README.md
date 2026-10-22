@@ -99,6 +99,10 @@ from external `usdchecker` (**not run**, no offline executable found), the F10 m
 catalogue and the F06 engineering validator. It does not certify contour topology,
 planarity, support, mesh solidness, exact quantities, F06 result freshness or signatures.
 Those remain engine prerequisites. See [the U02 validation report](../../docs/design/u02-validation.md).
+`Reader::open_validated` runs the same checker on the candidate it then installs, so a reader
+that needs both (the CLI's inspection and its commit verifier) parses and composes the stage
+once instead of twice; its refusals, their order, codes and messages are those of
+`validate_layers` followed by `Reader::open` (issue 26).
 
 ## Read-only foreign references (R01)
 
