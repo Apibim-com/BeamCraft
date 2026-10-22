@@ -1,16 +1,27 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! A08 headless command `numbering-preview`: groups equivalent parts, proposes number series and
-//! shows overlaps. Read-only: it approves nothing and writes nothing to the store.
+//! A08 headless command `numbering-preview` (groups equivalent parts, proposes number series and
+//! shows overlaps; read-only) and the A09 commands `numbering-approve` (stores the approved marks
+//! as authored data in the next revision) and `numbering-status` (reads the approval back and
+//! says whether the model still matches it).
 
 use beamcraft_cli::numbering::{NumberingView, numbering_preview};
+use beamcraft_cli::numbering_approval::{
+    ApprovalContext, Approved, StatusView, approve_numbering, numbering_status,
+};
 use beamcraft_cli::plate::PlateError;
 use beamcraft_engine::numbering::{GroupKind, Series, Settings, unnumbered};
-use beamcraft_host::{revision::RevisionStore, storage::BlobStore};
+use beamcraft_engine::numbering_approval::{ApproveNumbering, Report, compare_group};
+use beamcraft_host::{
+    ids::IdSource,
+    revision::{NoFault, RevisionStore, Uuid7},
+    storage::BlobStore,
+};
+use beamcraft_json::Json;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
-use beamcraft_protocol::json::Json;
+use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 
@@ -29,9 +40,11 @@ fn invalid(message: &'static str) -> PlateError {
     }
 }
 
-/// Whether `command` is `numbering-preview`.
+/// Whether `command` is one of the numbering commands.
 pub fn handles(command: &OsString) -> bool {
     command == "numbering-preview"
+        || command == "numbering-approve"
+        || command == "numbering-status"
 }
 
 /// Runs the command and returns the JSON result and the process exit code.
@@ -39,17 +52,21 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
     crate::plate_cmd::report(run(args))
 }
 
-const OPTIONS: [&str; 10] = [
-    "--store",
+const SETTINGS_OPTIONS: [&str; 6] = [
     "--plate-series",
     "--beam-series",
     "--column-series",
     "--assembly-series",
     "--tolerance",
     "--compare-name",
-    "--previous",
-    "--offset",
-    "--limit",
+];
+const PAGING_OPTIONS: [&str; 2] = ["--offset", "--limit"];
+const CONTEXT_OPTIONS: [&str; 5] = [
+    "--op-id",
+    "--revision-id",
+    "--actor-id",
+    "--project-id",
+    "--workspace-id",
 ];
 
 fn series(text: Option<&&str>, default: Series) -> Run<Series> {
@@ -67,33 +84,9 @@ fn series(text: Option<&&str>, default: Series) -> Run<Series> {
     })
 }
 
-fn run(args: &[OsString]) -> Run<Json> {
-    let args: Vec<&str> = args
-        .iter()
-        .map(|a| {
-            a.to_str()
-                .filter(|s| s.len() <= 4096)
-                .ok_or_else(|| invalid("argument is not bounded UTF-8"))
-        })
-        .collect::<Run<_>>()?;
-    let (_, tail) = args
-        .split_first()
-        .ok_or_else(|| invalid("missing command"))?;
-    if !tail.len().is_multiple_of(2) || tail.len() > 40 {
-        return Err(invalid("options are KEY VALUE pairs"));
-    }
-    let mut options = BTreeMap::new();
-    for pair in tail.as_chunks::<2>().0 {
-        let [key, value] = pair;
-        if !OPTIONS.contains(key) || options.insert(*key, *value).is_some() {
-            return Err(invalid("unknown or repeated option"));
-        }
-    }
-    let store_root = options
-        .get("--store")
-        .ok_or_else(|| invalid("--store is required"))?;
+fn settings_of(options: &BTreeMap<&str, &str>) -> Run<Settings> {
     let defaults = Settings::default();
-    let settings = Settings {
+    Ok(Settings {
         plate: series(options.get("--plate-series"), defaults.plate)?,
         beam: series(options.get("--beam-series"), defaults.beam)?,
         column: series(options.get("--column-series"), defaults.column)?,
@@ -111,14 +104,21 @@ fn run(args: &[OsString]) -> Run<Json> {
             Some(&"true") => true,
             Some(_) => return Err(invalid("--compare-name is true or false")),
         },
-    };
-    let previous = options
-        .get("--previous")
-        .map(|t| {
-            t.parse::<ContentDigest>()
-                .map_err(|_| invalid("--previous is a full SHA-256"))
-        })
-        .transpose()?;
+    })
+}
+
+fn token_option(
+    options: &BTreeMap<&str, &str>,
+    key: &str,
+    message: &'static str,
+) -> Run<Option<ContentDigest>> {
+    options
+        .get(key)
+        .map(|t| t.parse::<ContentDigest>().map_err(|_| invalid(message)))
+        .transpose()
+}
+
+fn paging(options: &BTreeMap<&str, &str>) -> Run<(usize, usize)> {
     let offset = options
         .get("--offset")
         .map(|t| {
@@ -138,13 +138,260 @@ fn run(args: &[OsString]) -> Run<Json> {
     if limit == 0 || limit > MAX_LIMIT {
         return Err(invalid("--limit is 1 to 256"));
     }
-    let blobs = BlobStore::new(store_root).map_err(|e| PlateError {
+    Ok((offset, limit))
+}
+
+fn run(args: &[OsString]) -> Run<Json> {
+    let args: Vec<&str> = args
+        .iter()
+        .map(|a| {
+            a.to_str()
+                .filter(|s| s.len() <= 4096)
+                .ok_or_else(|| invalid("argument is not bounded UTF-8"))
+        })
+        .collect::<Run<_>>()?;
+    let (command, tail) = args
+        .split_first()
+        .ok_or_else(|| invalid("missing command"))?;
+    let own: Vec<&str> = match *command {
+        "numbering-preview" => [
+            &SETTINGS_OPTIONS[..],
+            &PAGING_OPTIONS,
+            &["--store", "--previous"],
+        ]
+        .concat(),
+        "numbering-approve" => [
+            &SETTINGS_OPTIONS[..],
+            &CONTEXT_OPTIONS,
+            &["--store", "--preview-token"],
+        ]
+        .concat(),
+        "numbering-status" => [&PAGING_OPTIONS[..], &["--store"]].concat(),
+        _ => return Err(invalid("unknown command")),
+    };
+    if !tail.len().is_multiple_of(2) || tail.len() > 40 {
+        return Err(invalid("options are KEY VALUE pairs"));
+    }
+    let mut options = BTreeMap::new();
+    for pair in tail.as_chunks::<2>().0 {
+        let [key, value] = pair;
+        if !own.contains(key) || options.insert(*key, *value).is_some() {
+            return Err(invalid("unknown or repeated option"));
+        }
+    }
+    let store_root = options
+        .get("--store")
+        .ok_or_else(|| invalid("--store is required"))?;
+    match *command {
+        "numbering-approve" => {
+            let settings = settings_of(&options)?;
+            let preview_token = token_option(
+                &options,
+                "--preview-token",
+                "--preview-token is a full SHA-256",
+            )?
+            .ok_or_else(|| invalid("--preview-token is required"))?;
+            let store = open_store(store_root)?;
+            let _claim = crate::plate_cmd::check_project_option(&store, &options)?;
+            approve(
+                &store,
+                &context_of(&options)?,
+                &ApproveNumbering {
+                    settings,
+                    preview_token,
+                },
+            )
+        }
+        "numbering-status" => {
+            let (offset, limit) = paging(&options)?;
+            let store = open_store(store_root)?;
+            Ok(status_json(&numbering_status(&store)?, offset, limit))
+        }
+        _ => {
+            let settings = settings_of(&options)?;
+            let previous = token_option(&options, "--previous", "--previous is a full SHA-256")?;
+            let (offset, limit) = paging(&options)?;
+            let store = open_store(store_root)?;
+            let view = numbering_preview(&store, &settings, previous)?;
+            Ok(view_json(&view, offset, limit))
+        }
+    }
+}
+
+fn open_store(root: &str) -> Run<RevisionStore> {
+    let blobs = BlobStore::new(root).map_err(|e| PlateError {
         code: e.code(),
         message: "store root is not usable",
     })?;
-    let store = RevisionStore::new(blobs);
-    let view = numbering_preview(&store, &settings, previous)?;
-    Ok(view_json(&view, offset, limit))
+    Ok(RevisionStore::new(blobs))
+}
+
+fn context_of(options: &BTreeMap<&str, &str>) -> Run<ApprovalContext> {
+    let mut source = IdSource::system();
+    let mut fresh = || {
+        source.next_id().map_err(|_| PlateError {
+            code: ErrorCode::BackendUnavailable,
+            message: "no identity could be generated",
+        })
+    };
+    let given = |key: &str| options.get(key).copied();
+    Ok(ApprovalContext {
+        op_id: match given("--op-id") {
+            Some(text) => OpId::parse(text).map_err(crate::plate_cmd::id_error)?,
+            None => OpId::from_uuid(fresh()?),
+        },
+        revision_id: match given("--revision-id") {
+            Some(text) => RevisionId::parse(text).map_err(crate::plate_cmd::id_error)?,
+            None => RevisionId::from_uuid(fresh()?),
+        },
+        actor: match given("--actor-id") {
+            Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
+            None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+        },
+        project: match given("--project-id") {
+            Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::id_error)?,
+            None => ProjectId::from_uuid(fresh()?),
+        },
+        workspace: match given("--workspace-id") {
+            Some(text) => WorkspaceId::parse(text).map_err(crate::plate_cmd::id_error)?,
+            None => WorkspaceId::from_uuid(fresh()?),
+        },
+    })
+}
+
+fn approve(
+    store: &RevisionStore,
+    context: &ApprovalContext,
+    command: &ApproveNumbering,
+) -> Run<Json> {
+    let approved = approve_numbering(store, context, command, &mut NoFault)?;
+    let status = numbering_status(store)?;
+    Ok(approved_json(context, &approved, &status))
+}
+
+fn approved_json(context: &ApprovalContext, approved: &Approved, status: &StatusView) -> Json {
+    let outcome = if approved.replayed {
+        "numbering_approved_replayed"
+    } else if approved.unchanged {
+        "numbering_approved_unchanged"
+    } else {
+        "numbering_approved"
+    };
+    let count = |n: Option<usize>| n.map_or(Json::Null, |n| Json::uint(n as u64));
+    Json::object([
+        ("outcome", Json::text(outcome)),
+        ("op_id", Json::text(context.op_id.to_string())),
+        ("revision_id", Json::text(status.revision_id.clone())),
+        (
+            "revision",
+            crate::plate_cmd::revision_json(&approved.revision),
+        ),
+        (
+            "changed_layers",
+            Json::Array(approved.changed_layers.iter().map(Json::text).collect()),
+        ),
+        ("groups", count(approved.groups)),
+        ("marks", count(approved.marks)),
+        (
+            "footprint",
+            approved.footprint.as_ref().map_or(Json::Null, |f| {
+                Json::object([
+                    ("reads", Json::uint(f.reads().len() as u64)),
+                    ("writes", Json::uint(f.writes().len() as u64)),
+                ])
+            }),
+        ),
+        ("approval", approval_json(&status.report)),
+    ])
+}
+
+fn series_text(s: &Series) -> String {
+    format!("{}:{}", s.prefix, s.start)
+}
+
+fn approval_json(report: &Report) -> Json {
+    Json::object([
+        ("state", Json::text(report.currency.as_str())),
+        ("reason", report.reason.map_or(Json::Null, Json::text)),
+        ("marked", Json::uint(report.marked as u64)),
+        ("unmarked", Json::uint(report.unmarked as u64)),
+        ("differing", Json::uint(report.differing as u64)),
+        (
+            "differing_ids",
+            Json::Array(
+                report
+                    .differing_ids
+                    .iter()
+                    .map(|id| Json::text(id.to_string()))
+                    .collect(),
+            ),
+        ),
+        (
+            "approved_token",
+            report
+                .basis
+                .as_ref()
+                .map_or(Json::Null, |b| Json::text(b.token.to_string())),
+        ),
+        (
+            "approved_settings",
+            report.basis.as_ref().map_or(Json::Null, |b| {
+                let s = &b.settings;
+                Json::object([
+                    ("plate_series", Json::text(series_text(&s.plate))),
+                    ("beam_series", Json::text(series_text(&s.beam))),
+                    ("column_series", Json::text(series_text(&s.column))),
+                    ("assembly_series", Json::text(series_text(&s.assembly))),
+                    (
+                        "tolerance_mm",
+                        Json::number(s.tolerance_mm).unwrap_or(Json::Null),
+                    ),
+                    ("compare_name", Json::Bool(s.compare_name)),
+                ])
+            }),
+        ),
+    ])
+}
+
+fn status_json(status: &StatusView, offset: usize, limit: usize) -> Json {
+    let page: Vec<Json> = status
+        .marks
+        .iter()
+        .skip(offset)
+        .take(limit)
+        .map(|m| {
+            Json::object([
+                ("id", Json::text(m.id.to_string())),
+                (
+                    "kind",
+                    m.kind.map_or(Json::Null, |k| Json::text(kind_token(k))),
+                ),
+                ("series", Json::text(m.mark.series.clone())),
+                ("number", Json::uint(m.mark.number)),
+                (
+                    "mark",
+                    m.kind.map_or(Json::Null, |k| Json::text(m.mark.text(k))),
+                ),
+            ])
+        })
+        .collect();
+    Json::object([
+        ("outcome", Json::text("numbering_status")),
+        ("revision_id", Json::text(status.revision_id.clone())),
+        ("writes_model", Json::Bool(false)),
+        ("approval", approval_json(&status.report)),
+        ("count", Json::uint(status.marks.len() as u64)),
+        ("offset", Json::uint(offset as u64)),
+        (
+            "next_offset",
+            if offset.saturating_add(limit) < status.marks.len() {
+                Json::uint((offset + limit) as u64)
+            } else {
+                Json::Null
+            },
+        ),
+        ("marks", Json::Array(page)),
+    ])
 }
 
 fn kind_token(kind: GroupKind) -> &'static str {
@@ -187,6 +434,10 @@ fn view_json(view: &NumberingView, offset: usize, limit: usize) -> Json {
                     Json::Bool(g.members.len() > MAX_MEMBERS),
                 ),
                 ("description", Json::text(g.description.clone())),
+                (
+                    "stored",
+                    Json::text(compare_group(g, &view.stored).as_str()),
+                ),
             ])
         })
         .collect();
@@ -223,6 +474,7 @@ fn view_json(view: &NumberingView, offset: usize, limit: usize) -> Json {
         ("preview_token", Json::text(view.preview.token.to_string())),
         ("stale", view.stale.map_or(Json::Null, Json::Bool)),
         ("writes_model", Json::Bool(false)),
+        ("approval", approval_json(&view.approval)),
         (
             "settings",
             Json::object([

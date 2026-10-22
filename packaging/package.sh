@@ -43,8 +43,9 @@ if [ "$kind" = macos ]; then
     mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/assets/fonts/inter" \
         "$app/Contents/Resources/licenses"
     sed "s/@VERSION@/${tag#v}/" packaging/Info.plist > "$app/Contents/Info.plist"
-    cp "$release/beamcraft" "$release/beamcraft-ui" "$release/beamcraft-usd-worker" \
-        "$app/Contents/MacOS/"
+    cp assets/icons/BeamCraft.icns "$app/Contents/Resources/"
+    cp assets/icons/beamcraft-1024.png "$app/Contents/Resources/beamcraft-icon.png"
+    cp "$release/beamcraft" "$release/beamcraft-ui" "$app/Contents/MacOS/"
     cp assets/fonts/inter/Inter-Regular.ttf assets/fonts/inter/Inter-Bold.ttf \
         "$app/Contents/Resources/assets/fonts/inter/"
     cp licenses/OFL-1.1-Inter.txt "$app/Contents/Resources/licenses/"
@@ -54,8 +55,7 @@ if [ "$kind" = macos ]; then
     codesign --force --deep --sign - "$app" 1>&2
 else
     mkdir -p "$name/assets/fonts/inter" "$name/licenses"
-    cp "$release/beamcraft$ext" "$release/beamcraft-ui$ext" "$release/beamcraft-usd-worker$ext" \
-        "$name/"
+    cp "$release/beamcraft$ext" "$release/beamcraft-ui$ext" "$name/"
     cp assets/fonts/inter/Inter-Regular.ttf assets/fonts/inter/Inter-Bold.ttf \
         "$name/assets/fonts/inter/"
     cp licenses/OFL-1.1-Inter.txt "$name/licenses/"

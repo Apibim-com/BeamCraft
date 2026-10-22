@@ -48,9 +48,3 @@ listed in a fresh process, a mismatched area refused with nothing published),
   and `surface_per_meter_m2` for `nominalMassKg` and `surfaceAreaM2`.
 - No I-section family and no `tw`, `tf`, `r` (A07). No catalogue lookup.
 - The pxr oracle is unchanged; the new attributes are plain USD types.
-
-## Roadmap entry (proposed, not applied)
-
-- 2026-10-17: P02.2 added optional section properties (designation, standard, area, mass per metre,
-  surface per metre) to profile definitions and grade/standard to materials, checked against the
-  rectangle formula and pinned by the definition digest. No consumer until P04.

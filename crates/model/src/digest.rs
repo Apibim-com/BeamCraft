@@ -17,7 +17,7 @@ impl ContentDigest {
         Self(bytes)
     }
 
-    /// The complete raw digest, for binary protocols such as F05 attachments.
+    /// The complete raw digest, for binary formats.
     pub const fn as_bytes(&self) -> &[u8; 32] {
         &self.0
     }

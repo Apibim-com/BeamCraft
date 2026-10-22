@@ -72,8 +72,7 @@ binding and token authentication" is implemented for the publish coordinator. C0
 ("`--actor-id` stands for the trusted context until C02 adds tokens") is closed for publications
 through the coordinator.
 
-Provenance: the design follows the repository's architecture, F04, F05 framing conventions and
-C01; no external product material was used. No third-party dependency is added (`std::net` only).
+Provenance: the design follows the repository's architecture, F04 and C01; no external product material was used. No third-party dependency is added (`std::net` only).
 
 ## Evidence
 
@@ -97,7 +96,3 @@ C01; no external product material was used. No third-party dependency is added (
 - The handler runs C01's receipt synchronously; a very slow store blocks the queue up to the
   120-second answer deadline.
 - Windows access control on the token file is not checked (only the Unix mode is).
-
-## Proposed Roadmap entry
-
-`2026-10-18 C02: local coordinator (coordinator-serve, coordinator-publish, coordinator-head; loopback-only, token files authenticate the actor, one bounded publish queue, expected head equal to the changeset base, fast-forward publication with BASE_REVISION_MISMATCH and replay); experimental slice.`

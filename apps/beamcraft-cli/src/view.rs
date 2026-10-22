@@ -13,8 +13,8 @@ use beamcraft_engine::{
     SnapshotHistory, SnapshotToken, ViewCode, ViewError, ViewPin, ViewProjection, ViewSettings,
     ViewSnapshot,
 };
+use beamcraft_json::Json;
 use beamcraft_model::digest::{ContentDigest, Sha256};
-use beamcraft_protocol::json::Json;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 
@@ -37,7 +37,6 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
                 ("outcome", Json::text("rejected")),
                 ("code", Json::text(e.f04_code().as_str())),
                 ("message", Json::text("view query rejected")),
-                ("transport_code", Json::Null),
                 ("observed_context", Json::Null),
                 (
                     "diagnostics",

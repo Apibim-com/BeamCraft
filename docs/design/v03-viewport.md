@@ -24,7 +24,7 @@ beamcraft-ui --synthetic COUNT --metrics FRAMES [--width W] [--height H]
 
 ## Decisions
 
-- **Viewport stack.** The V01 spike's choice: wgpu 30.0.1 with eframe/egui 0.36.2, default features
+- **Viewport stack.** The V01 spike's stack: wgpu 30.0.1 with eframe/egui 0.37.0, default features
   off (no `default_fonts`), Inter at run time. PdfCraft vendor patches and craft-libs are not used;
   `craft-quit` is not needed yet. `accesskit` is **off**: on Linux it pulls zbus 5 crates that
   RustSec now marks unmaintained (zbus_names, zvariant, zvariant_derive), which fails `cargo deny`
@@ -102,7 +102,3 @@ These are software-rasterizer numbers on one machine, not hardware GPU results; 
 - Windows and macOS builds and runs, and the Rust 1.96 MSRV build of this stack, were not run here.
 - The window was run only under Xvfb with a software adapter; no interactive acceptance on a
   physical display.
-
-## Proposed Roadmap entry
-
-`2026-10-18 V03: native window and viewport (apps/beamcraft-ui: orbit camera, instanced wgpu offscreen viewport of the accepted snapshot received from the new view-export CLI command as an engine bundle, headless baseline metrics); experimental slice, run under Xvfb on llvmpipe.`

@@ -60,7 +60,3 @@ operation, a stale intent refused; bad arguments and a damaged log.
 - Restored relationships: elements author no relationships to each other yet, so only definition
   links are restored (they are part of the restored layers).
 - Layer processing is in-process (LEW-03), as everywhere.
-
-## Proposed Roadmap entry
-
-`2026-10-18 P07: workspace-undo/redo/history (an undo commits the earlier state's layers as a new verified draft revision; stacks derived from the log, restart and crash safe); experimental slice, PR stacked on #68.`

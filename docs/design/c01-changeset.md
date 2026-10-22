@@ -3,7 +3,7 @@
 Date: 2026-10-18. Status: **experimental vertical slice; C01 acceptance is limited as listed below.**
 Branch `feat/c01-changeset`, based on `origin/master` `3f9f0f5`.
 
-Plan row: C01 / M, depends on P06, P08 and F05. Result: base, op_id, actor, dependencies, USD delta
+Plan row: C01 / M, depends on P06 and P08. Result: base, op_id, actor, dependencies, USD delta
 and assets; bounded validation. Acceptance: a repeated op_id with the same payload is safe; with a
 different payload it is rejected; the author string grants no rights.
 
@@ -83,9 +83,5 @@ single-byte flips, caps before allocation, ordering, duplicates and the admissio
 - The footprint is derived from the USD difference, not recorded per command; it is conservative
   but coarser than the engine's command footprints for some edits.
 - Changesets travel inside the workspace store (the receiver reads the workspace's blobs); there is
-  no transport or bundle format yet (F05 frames would carry them).
+  no transport or bundle format yet.
 - Claims are never garbage-collected; the claims file is capped at 16 MiB.
-
-## Proposed Roadmap entry
-
-`2026-10-18 C01: changesets (model::changeset canonical bytes and admission, host changeset claims, CLI changeset-create/inspect/apply; same payload replays, another payload under the id is OP_ID_REUSE, the claimed actor must be the caller); experimental slice.`

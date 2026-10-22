@@ -1,27 +1,26 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 // Contributor-original harness for the frozen original acceptance descriptions of F04 0.1.0
-// (`docs/contracts/model-command-cases-v0.1.json`); no third-party material.
+// (`tests/fixtures/contracts/f04-model-command-cases-v0.1.json`); no third-party material.
 
 //! Drives every F04 `CreatePlate` case that can be decided without a workspace through the real
 //! engine admission (`admit_create_plate`) and checks the expected code or outcome. The case file
 //! is decoded with the bounded protocol JSON decoder; the arguments are mapped to the typed
 //! command here, so a non-number is `INVALID_ARGUMENT` like the contract says. Cases that need
 //! the envelope, a workspace or an authenticated actor are listed as skipped with the reason, and
-//! the cases where the A02 slice deliberately differs from F04 are listed as deviations: the test
-//! fails if either list drifts silently.
+//! the cases where P01 deliberately differs from F04 are listed as deviations: the test fails if
+//! either list drifts silently.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use beamcraft_engine::transaction::{Admission, PriorOp, admit_create_plate};
+use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::{CreatePlate, Placement};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId};
-use beamcraft_protocol::json::{self, Json};
-use beamcraft_protocol::limits::MAXIMA;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Cases that need the F04 envelope, a workspace or a trusted caller: not implemented in P01.
+/// Cases not decided by this typed admission adapter; workspaces have separate runtime tests.
 const SKIPPED: &[(&str, &str)] = &[
     (
         "F04-NEG-07",
@@ -29,11 +28,11 @@ const SKIPPED: &[(&str, &str)] = &[
     ),
     (
         "F04-NEG-08",
-        "base_revision precondition (needs P06 workspaces)",
+        "base_revision precondition (typed admission has no workspace/envelope context)",
     ),
     (
         "F04-NEG-09",
-        "workspace generation precondition (needs P06 workspaces)",
+        "workspace generation precondition (typed admission has no workspace/envelope context)",
     ),
     (
         "F04-NEG-17",
@@ -45,16 +44,72 @@ const SKIPPED: &[(&str, &str)] = &[
     ),
 ];
 
-/// Accepted by F04, not evaluated by the A02 slice with UNSUPPORTED_GEOMETRY (the code the
-/// first slice used, so no valid input gains a new refusal class): a contour that touches any
-/// nonzero `z` stays unevaluated because the plate body frame is the local XY plane and the
-/// placement carries translations; F04's exact planarity tolerance is the G06 policy.
-const UNSUPPORTED_IN_A02: &[&str] = &["F04-POS-18", "F04-POS-28"];
+/// Accepted by F04, refused with UNSUPPORTED_GEOMETRY: the contour is not in the plane `z = 0`
+/// (it needs the body-frame adapter, which A02.1 does not implement). Contours in the plane
+/// `z = 0` (F04-POS-19, F04-POS-20, ...) are evaluated since A02.1.
+const UNSUPPORTED_BY_P01: &[&str] = &["F04-POS-18", "F04-POS-28"];
 
-/// Rejected by F04 with INVALID_ARGUMENT (non-planar contour) but reported by this slice as
-/// UNSUPPORTED_GEOMETRY, like the first slice did: the exact planarity refusal needs the G06
-/// tolerance policy and is not an argument check here.
-const WRONG_CODE_IN_A02: &[&str] = &["F04-NEG-29", "F04-NEG-38"];
+/// Rejected by F04 with INVALID_ARGUMENT (non-planar contour) but reported as
+/// UNSUPPORTED_GEOMETRY: exact planarity of a contour outside the plane `z = 0` is not
+/// implemented. A self-intersecting contour in that plane (F04-NEG-30) is INVALID_ARGUMENT.
+const WRONG_CODE_IN_P01: &[&str] = &["F04-NEG-29", "F04-NEG-38"];
+
+#[test]
+fn the_k1_inventory_accounts_for_the_other_commands_and_raw_envelopes() {
+    let bytes = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/contracts/f04-model-command-cases-v0.1.json"
+    ))
+    .unwrap();
+    let file = beamcraft_json::decode(&bytes, &Limits::DEFAULT).unwrap();
+    let cases = file.get("cases").unwrap().array().unwrap();
+    assert_eq!(cases.len(), 69);
+    let omitted = [
+        ("UpdateElement", "POS-02 POS-06 NEG-11 NEG-14 NEG-15 POS-24"),
+        ("CopyElement", "POS-03"),
+        ("DeleteElement", "POS-05 NEG-12 NEG-13"),
+        (
+            "CreateStraightMember",
+            "POS-07 NEG-16 POS-10 POS-13 NEG-20 NEG-21 POS-15 POS-16 POS-21 POS-22 POS-23 NEG-33 POS-29 POS-30 NEG-36 NEG-37 NEG-39",
+        ),
+    ];
+    let mut seen = BTreeSet::new();
+    for (command, ids) in omitted {
+        let expected: BTreeSet<_> = ids
+            .split_whitespace()
+            .map(|id| format!("F04-{id}"))
+            .collect();
+        let actual: BTreeSet<_> = cases
+            .iter()
+            .filter(|c| c.get("command").unwrap().string().unwrap() == command)
+            .map(|c| c.get("case_id").unwrap().string().unwrap().to_owned())
+            .collect();
+        assert_eq!(actual, expected, "{command}: update the evidence inventory");
+        for id in actual {
+            assert!(seen.insert(id.clone()));
+            println!("NOT RUN by K1 admission adapter: {id} ({command})");
+        }
+    }
+    for case in cases
+        .iter()
+        .filter(|c| c.get("command").unwrap().string().unwrap() == "CreatePlate")
+    {
+        assert!(seen.insert(case.get("case_id").unwrap().string().unwrap().to_owned()));
+    }
+    assert_eq!(
+        seen.len(),
+        cases.len(),
+        "new/duplicate command or case needs a disposition"
+    );
+    let raw = file.get("raw_json_cases").unwrap().array().unwrap();
+    let ids: BTreeSet<_> = raw
+        .iter()
+        .map(|c| c.get("case_id").unwrap().string().unwrap().to_owned())
+        .collect();
+    assert_eq!(raw.len(), 7);
+    assert_eq!(ids, (1..=7).map(|n| format!("F04-RAW-{n:02}")).collect());
+    println!("NOT RUN by K1 admission adapter (raw F04 envelope decoder): {ids:?}");
+}
 
 fn code_of(name: &str) -> ErrorCode {
     ErrorCode::parse(name).unwrap()
@@ -173,10 +228,10 @@ fn run_case(case_id: &str, arguments: &Json, accepted: &BTreeMap<String, CreateP
 fn every_decidable_create_plate_case_matches_f04_or_is_a_declared_deviation() {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../docs/contracts/model-command-cases-v0.1.json"
+        "/../../tests/fixtures/contracts/f04-model-command-cases-v0.1.json"
     );
     let bytes = std::fs::read(path).unwrap();
-    let file = json::decode(&bytes, &MAXIMA).unwrap();
+    let file = beamcraft_json::decode(&bytes, &Limits::DEFAULT).unwrap();
     assert_eq!(
         file.get("contract_version").unwrap().string().unwrap(),
         "0.1.0"
@@ -186,7 +241,11 @@ fn every_decidable_create_plate_case_matches_f04_or_is_a_declared_deviation() {
         .iter()
         .filter(|c| c.get("command").unwrap().string().unwrap() == "CreatePlate")
         .collect();
-    assert!(plate_cases.len() >= 40, "{}", plate_cases.len());
+    assert_eq!(
+        plate_cases.len(),
+        42,
+        "update the K1 inventory for changed cases"
+    );
 
     let mut accepted = BTreeMap::new();
     let pos01 = plate_cases
@@ -221,7 +280,7 @@ fn every_decidable_create_plate_case_matches_f04_or_is_a_declared_deviation() {
                 other => panic!("{id}: unknown outcome {other}"),
             },
         };
-        if UNSUPPORTED_IN_A02.contains(&id) || WRONG_CODE_IN_A02.contains(&id) {
+        if UNSUPPORTED_BY_P01.contains(&id) || WRONG_CODE_IN_P01.contains(&id) {
             assert_eq!(
                 verdict,
                 Verdict::Rejected(ErrorCode::UnsupportedGeometry),
@@ -243,7 +302,7 @@ fn every_decidable_create_plate_case_matches_f04_or_is_a_declared_deviation() {
     assert_eq!(skipped.len(), SKIPPED.len());
     assert_eq!(
         deviations.len(),
-        UNSUPPORTED_IN_A02.len() + WRONG_CODE_IN_A02.len()
+        UNSUPPORTED_BY_P01.len() + WRONG_CODE_IN_P01.len()
     );
     // Cases that must be among the passing ones: the accepted first-scope plate, replay and reuse,
     // the minimum, the largest plate, large translation, quaternion tolerance, and the codes.
@@ -256,16 +315,6 @@ fn every_decidable_create_plate_case_matches_f04_or_is_a_declared_deviation() {
         "F04-POS-12",
         "F04-POS-14",
         "F04-POS-17",
-        // The A02 contour plate closed the former P01 deviations: the pentagon and the translated
-        // rectangles (including the POS-19 square, which is listed counter-clockwise after all)
-        // are evaluated, and the self-intersecting contour is refused with the F04 code. The
-        // non-planar NEG-29/38 stay declared wrong-code deviations (UNSUPPORTED instead of
-        // INVALID) with the off-plane POS-18/28.
-        "F04-POS-19",
-        "F04-POS-20",
-        "F04-POS-25",
-        "F04-POS-26",
-        "F04-NEG-30",
         "F04-POS-27",
         "F04-NEG-01",
         "F04-NEG-02",

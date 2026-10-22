@@ -37,12 +37,12 @@ use beamcraft_model::digest::{ContentDigest, Sha256};
 use core::cmp::Ordering;
 use core::ops::Range;
 
-const MAX_VERTICES: usize = 4096;
-const MAX_TRIANGLES: usize = 8192;
-const MAX_FACES: usize = 1024;
-const MAX_EDGES: usize = 12_288;
-const MAX_FEATURES: usize = 17_408;
-const MAX_BLOB_BYTES: usize = 213_024;
+const MAX_VERTICES: usize = 262_144;
+const MAX_TRIANGLES: usize = 524_288;
+const MAX_FACES: usize = 65_535;
+const MAX_EDGES: usize = 786_432;
+const MAX_FEATURES: usize = 1_114_111;
+const MAX_BLOB_BYTES: usize = 13_631_520;
 /// Relative bound of the numeric volume certificate (a build certificate, not CR-TOL-001).
 const VOLUME_CERTIFICATE: f64 = 1e-9;
 

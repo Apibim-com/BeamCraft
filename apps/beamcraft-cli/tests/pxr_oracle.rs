@@ -12,13 +12,11 @@
 //! variable, `py -3.11`, then `%LOCALAPPDATA%\Programs\Python\Python311\python.exe`. If none can
 //! `import pxr` it prints an explicit SKIP message and passes without running anything: CI has no
 //! pxr. A skip is never evidence. Nothing is downloaded or installed.
+//! Set `BEAMCRAFT_REQUIRE_PXR=1` for acceptance: a missing oracle then fails the tests.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use beamcraft_protocol::{
-    json::{self, Json},
-    message,
-};
+use beamcraft_json::{Json, Limits};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -39,16 +37,23 @@ fn probe(program: &str, args: &[&str]) -> Option<(String, Vec<String>)> {
 }
 
 fn find_python() -> Option<(String, Vec<String>)> {
-    if let Ok(path) = std::env::var("BEAMCRAFT_PXR_PYTHON") {
-        return probe(&path, &[]);
-    }
-    probe("py", &["-3.11"]).or_else(|| {
-        let local = std::env::var("LOCALAPPDATA").ok()?;
-        let path: PathBuf = [&local, "Programs", "Python", "Python311", "python.exe"]
-            .iter()
-            .collect();
-        probe(path.to_str()?, &[])
-    })
+    let found = if let Ok(path) = std::env::var("BEAMCRAFT_PXR_PYTHON") {
+        probe(&path, &[])
+    } else {
+        probe("py", &["-3.11"]).or_else(|| {
+            let local = std::env::var("LOCALAPPDATA").ok()?;
+            let path: PathBuf = [&local, "Programs", "Python", "Python311", "python.exe"]
+                .iter()
+                .collect();
+            probe(path.to_str()?, &[])
+        })
+    };
+    assert!(
+        std::env::var("BEAMCRAFT_REQUIRE_PXR").as_deref() != Ok("1") || found.is_some(),
+        "K1 independent reader NOT RUN: BEAMCRAFT_REQUIRE_PXR=1 requires a Python with pxr; \
+         set BEAMCRAFT_PXR_PYTHON to that interpreter"
+    );
+    found
 }
 
 fn run_binary(args: &[&str]) -> Json {
@@ -57,7 +62,7 @@ fn run_binary(args: &[&str]) -> Json {
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(0), "{args:?}");
-    json::decode(&output.stdout, &message::read_limits()).unwrap()
+    beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap()
 }
 
 fn text(json: &Json, key: &str) -> String {
@@ -192,7 +197,7 @@ fn run_script(python: &str, python_args: &[String], layers: &Path, expect: &str)
         "pxr rejected or disagreed: {}\n{report}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let report = json::decode(report.trim().as_bytes(), &message::read_limits()).unwrap();
+    let report = beamcraft_json::decode(report.trim().as_bytes(), &Limits::DEFAULT).unwrap();
     let compliance = report.get("compliance").unwrap();
     for key in ["errors", "failed_checks", "warnings"] {
         assert!(

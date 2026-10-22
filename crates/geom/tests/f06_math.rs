@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! Math projections of F06 cases, not mesh/quantity/engine acceptance tests.
-//! Inputs and reference values: geometry-contract-cases-v0.1.json, frozen 0.1.0.
+//! Inputs and reference values: f06-geometry-contract-cases-v0.1.json, frozen 0.1.0.
 
 use beamcraft_geom::tolerance::{ROLL_CAP_RAD, Tolerance};
 use beamcraft_geom::{

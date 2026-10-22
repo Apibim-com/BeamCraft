@@ -37,7 +37,7 @@ def main():
     check(abs(UsdGeom.GetStageMetersPerUnit(stage) - 0.001) < 1e-12, "stage is not millimetres")
     check(UsdGeom.GetStageUpAxis(stage) == "Z", "stage is not Z up")
 
-    wrapper_path = "/World/Steel/E_" + expect["id"].replace("-", "")
+    wrapper_path = "/World/References/REF_" + expect["id"].replace("-", "")
     holder_path = wrapper_path + "/Correction/Source"
     wrapper = stage.GetPrimAtPath(wrapper_path)
     check(wrapper.IsValid(), "missing wrapper " + wrapper_path)

@@ -29,9 +29,9 @@ beamcraft definitions   --store ROOT
 1. **The UI is a client of the CLI process, as V03.** Only the CLI links the layer engine, and F08
    forbids an app depending on an app. The commit is therefore `beamcraft create-*` in a separate
    process; the revision that results is the engine's, not a copy made in the window. The only
-   new dependency edge is `beamcraft-ui` -> `beamcraft-protocol` (already a workspace crate, layer
-   2 < 5), to decode the CLI's JSON reply with the project's bounded decoder instead of ad-hoc
-   string matching. The module table in `docs/contracts/module-boundaries-v0.1.md` is updated
+   new dependency edge is `beamcraft-ui` -> `beamcraft-json` (`beamcraft-protocol` at the time;
+   already a workspace crate, layer 2 < 5), to decode the CLI's JSON reply with the project's bounded decoder instead of ad-hoc
+   string matching. The module table in `docs/contracts/f08-module-boundaries-v0.1.md` is updated
    with it. No third-party dependency was added.
 2. **The UI computes no engineering geometry.** It checks only that a number is a finite decimal
    and that required choices (profile) are made, then forwards the trimmed text. Positive sizes,
@@ -114,7 +114,3 @@ beamcraft definitions   --store ROOT
     definitions each fail on their own with `NOT_FOUND`; with a revision both succeed.
 - The window (`beamcraft-ui --store ROOT`) was started on Windows (adapter not recorded) and stayed
   up; it was then stopped.
-
-## Proposed Roadmap entry
-
-`2026-10-18 V05.1: UI create tools (apps/beamcraft-ui: Create panel for a plate and a straight member with preview of the exact command, cancel and commit that runs the CLI's create-plate / create-member in a separate process and reloads the accepted revision; pure parameter mapping and reply parsing, end-to-end test equal to the CLI by hand); experimental, no geometry preview or picking placement.`

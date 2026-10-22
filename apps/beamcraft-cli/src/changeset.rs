@@ -243,7 +243,7 @@ fn definition_targets(state: &ElementState<'_>) -> Vec<ContentDigest> {
         .iter()
         .filter(|(name, _)| matches!(**name, "bim:profile" | "bim:material"))
         .flat_map(|(_, targets)| targets.iter())
-        .filter_map(|t| t.strip_prefix("/World/Definitions/D_")?.parse().ok())
+        .filter_map(|t| crate::definition::definition_digest(t))
         .collect()
 }
 
@@ -343,7 +343,7 @@ fn footprint(base: &[Prim], head: &[Prim]) -> Result<Vec<Dependency>, PlateError
     let definitions = |prims: &[Prim]| -> BTreeSet<ContentDigest> {
         prims
             .iter()
-            .filter_map(|p| p.path.strip_prefix("/World/Definitions/D_")?.parse().ok())
+            .filter_map(|p| crate::definition::definition_digest(&p.path))
             .collect()
     };
     let known = definitions(base);

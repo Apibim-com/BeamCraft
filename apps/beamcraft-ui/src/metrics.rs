@@ -8,6 +8,7 @@
 use crate::camera::Camera;
 use crate::render::{Gpu, Renderer, Uploaded, wait};
 use crate::scene::Scene;
+use crate::stats::Stats;
 use crate::{Error, json_string};
 use std::time::Instant;
 
@@ -60,14 +61,22 @@ fn percentiles(mut samples: Vec<f64>) -> [f64; 2] {
     [at(0.5), at(0.95)]
 }
 
-/// Renders `scene` offscreen `frames` times after ten warm-up frames, orbiting slowly.
-pub fn measure(scene: &Scene, frames: u32, size: [u32; 2]) -> Result<Baseline, Error> {
+/// Renders `scene` offscreen `frames` times after ten warm-up frames, orbiting slowly, with
+/// `samples` (1 or 4; `None` is the adapter's default).
+pub fn measure(
+    scene: &Scene,
+    frames: u32,
+    size: [u32; 2],
+    samples: Option<u32>,
+    stats: &Stats,
+) -> Result<Baseline, Error> {
     if frames == 0 || frames > MAX_FRAMES {
         return Err(Error::Input("frames 1..=10000"));
     }
     let gpu = pollster::block_on(Gpu::headless())?;
-    let renderer = Renderer::new(&gpu.adapter, &gpu.device, size[0], size[1])?;
-    let uploaded = Uploaded::new(&gpu.device, &gpu.queue, scene)?;
+    let renderer =
+        Renderer::with_samples(&gpu.adapter, &gpu.device, size[0], size[1], samples, stats)?;
+    let uploaded = Uploaded::new(&gpu.device, &gpu.queue, scene, stats)?;
     let (target, extent) = scene.framing();
     let aspect = size[0] as f32 / size[1] as f32;
     let mut camera = Camera::new(target, extent, aspect)?;
@@ -77,7 +86,7 @@ pub fn measure(scene: &Scene, frames: u32, size: [u32; 2]) -> Result<Baseline, E
         camera.navigate([0.01, 0.0], [0.0; 2], 0.0)?;
         let view = camera.view(aspect)?;
         let start = Instant::now();
-        let index = renderer.draw(&gpu.device, &gpu.queue, &uploaded, view);
+        let index = renderer.draw(&gpu.device, &gpu.queue, &uploaded, view, stats);
         let submitted = start.elapsed().as_secs_f64() * 1000.0;
         wait(&gpu.device, index)?;
         let completed = start.elapsed().as_secs_f64() * 1000.0;

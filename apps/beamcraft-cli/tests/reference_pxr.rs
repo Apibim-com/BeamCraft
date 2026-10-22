@@ -18,14 +18,11 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use beamcraft_engine::reference::ReferenceRecord;
+use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::Placement;
 use beamcraft_model::digest::Sha256;
 use beamcraft_model::id::ElementId;
 use beamcraft_model::reference::{SourceFormat, SourcePin, UnitsInterpretation, UpAxis};
-use beamcraft_protocol::{
-    json::{self, Json},
-    message,
-};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -85,7 +82,7 @@ fn run_binary(args: &[&str]) -> Json {
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(0), "{args:?}");
-    json::decode(&output.stdout, &message::read_limits()).unwrap()
+    beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap()
 }
 
 fn text(json: &Json, key: &str) -> String {
@@ -256,7 +253,7 @@ fn pxr_composes_the_reference_and_places_the_foreign_points_as_the_engine_says()
         "pxr rejected or disagreed: {}\n{report}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let report = json::decode(report.trim().as_bytes(), &message::read_limits()).unwrap();
+    let report = beamcraft_json::decode(report.trim().as_bytes(), &Limits::DEFAULT).unwrap();
     let compliance = report.get("compliance").unwrap();
     println!("COMPLIANCE: {compliance:?}");
     for key in ["errors", "failed_checks", "warnings"] {

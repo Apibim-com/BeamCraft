@@ -11,7 +11,7 @@ Public API:
 - `contains(&ContentDigest)` verifies presence; corruption is an error.
 - `verify(&ContentDigest)` verifies and discards the returned capped buffer.
 - `StorageError::code()` maps safe, typed failures to F04 `ErrorCode`.
-- `MAX_BLOB_BYTES` is 33,554,432 (F05 0.1.0 sections 3/4 bundle budget).
+- `MAX_BLOB_BYTES` is 33,554,432 (32 MiB; the layer engine sizes one layer by it).
 
 The root argument is host configuration, not a resource identifier. No resource API accepts
 paths or URIs. Files use `blobs/<two lowercase hex digits>/<64 lowercase hex digits>`.
@@ -30,7 +30,7 @@ races. Windows blob opens additionally use `FILE_FLAG_OPEN_REPARSE_POINT`. A wri
 change stored bytes can still change them after a verified read; readers receive their verified
 snapshot. Neither this API nor SHA-256 authenticates a hostile writer.
 
-No directory crash durability, garbage collection or worker is implemented in `storage`;
+No directory crash durability or garbage collection is implemented in `storage`;
 revision publication is the separate `revision` module below and recovery is the `ledger` module (U07, below); the CLI
 byte commands are U04.
 
@@ -86,36 +86,11 @@ protection from a hostile writer (the per-record SHA-256 is not authentication).
 implemented: ledger rotation (a full ledger refuses commits with `LIMIT_EXCEEDED`), garbage
 collection, personal workspaces, collaboration.
 
-## U04 experimental process client
+## Control
 
-`dispatch::Dispatcher` is shared by CLI and native callers; constructing one starts nothing.
-`AuthorizedRead::authorize` requires a protected U05 store, an independently selected full
-identity and an explicit owned-layer grant. It verifies manifest/asset bytes and publishes a
-small host grant. `BlobStore::read_capped` tightens a single read before reservation.
-Manifest/grant reads are capped at 1 MiB; individual layer reads at 64 KiB, with U01's
-8-layer/256 KiB aggregate profile. These are byte-storage operations, not U06 publication.
-
-`worker::Session` verifies the capped executable against trusted package configuration,
-clears its environment, opens private stdio pipes and validates the four-message handshake.
-Only the Windows OS `SystemRoot` is retained; no shell, Python or SDK process is invoked.
-One serialized request, bounded pipe channels, independent assembly/request deadlines,
-in-flight ping/pong, cancellation and capped diagnostic drain protect the host boundary.
-Raw diagnostics are discarded. Stop confirms child exit and pipe-task completion before a
-replacement; unconfirmed reaping blocks replacement. Hashing checks the host deadline by chunk.
-
-Only Open/Read/Close and an explicitly uncertain host QueryOutcome are registered. Errors
-carry the host-known workspace identity. Read pages are checked for closed fields, counts,
-identity/path consistency, value shapes/numbers, depth, source digest/ownership, duplicate
-paths and complete delivery counts. A read failure can reconstruct the exact authorized
-input at its nonzero generation, with at most two delayed restarts. Continuations from a
-lost incarnation are stale. No mutation intent is sent, erased, retried or accepted.
-An incarnation-specific supervision handle can force child loss while a request is pending.
-
-This does not close F05 or LEW-03: OS memory/work containment, guaranteed random-byte tokens,
-idle keepalive, complete negotiated profiles, mutation/event schemas, canonical replay and
-durable outcomes remain open. The standard-library token source is explicitly experimental.
-The protected filesystem/package namespaces remain caller prerequisites. See the
-[review and prepared draft PR body](../../docs/design/u04-cli-host.md).
+`beamcraft_host::control` holds what a CLI host operation shares: `HostError` (an F04 code, a
+fixed safe message and the stable CLI exit code), `Cancellation` and `Control` (one deadline
+across the operation, 30 s by default, 1..120000 ms when given). The host starts no process.
 
 ## P01 identity source
 

@@ -16,9 +16,11 @@ API. IFC export (E02) is a separate task; plain-text and HTML reports stay open.
 * Quantities (P04): volume is always `current` after a re-evaluation; mass is `current` only
   when the element pins a material whose definition declares a density, and is `unknown`
   otherwise. Density is never guessed, and a designation never selects a number (A07.2).
-* Marks (A08/A09): a plate, beam or column may carry an assigned or approved mark (`bim:mark`,
-  unique in the model); the verified read reports them in `Inspection.marks`. Not every element
-  is numbered, and every element has its full UUIDv7 and an optional user label (`bim:name`).
+* Marks (A08/A09): a plate, beam or column may carry an approved mark, stored by
+  `numbering-approve` as `steel:numbering:series`, `steel:numbering:number` and
+  `steel:numbering:basis`; equivalent parts share a mark, and `numbering-status` lists them.
+  Not every element is numbered, and every element has its full UUIDv7 and an optional user
+  label (`bim:name`).
 * A member pins a profile definition (rectangle, an A07.1 family or a custom outline) that may
   declare a designation and section numbers; a plate has no profile definition, only its contour
   and thickness. A definition may declare `mass_per_meter_kg`, but the A07.2 note leaves its use
@@ -145,6 +147,6 @@ beamcraft bom-export --store ROOT --out ELEMENTS_CSV [--summary SUMMARY_CSV]
 quoting), `cargo test -p beamcraft-cli --test bom` (real binary: a store with a material, an
 I-section with designation, plates and members exports both files; the rows match
 `plate-inspect`; the mass of an element without a material is an empty cell, counted in
-`mass_unknown`, and excluded from totals; a beam numbered by `number-assign` reports its mark,
+`mass_unknown`, and excluded from totals; a beam numbered by `numbering-approve` reports its mark,
 an unnumbered column falls back to `mark` equal to `element_id`; refusals: no revision,
 existing output file, unknown option, a colliding or identical summary path).

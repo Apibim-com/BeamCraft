@@ -74,11 +74,3 @@ beamcraft create-member ... --cut-point X,Y,Z --cut-normal X,Y,Z
   exact volume and mass, fresh-process reopen and re-verification, the saved layer text read by
   plain string matching, every rejection code, replay and `OP_ID_REUSE`, and a copy carrying
   the cut.
-
-## Roadmap entry (proposed, not applied)
-
-- 2026-10-19: A03 first slice let `create-plate` and `create-member` author one plane cut
-  (`--cut-point`, `--cut-normal`) trimmed by the G09 kernel after any holes, stored as two
-  element attributes under an amended U02 schema (a recorded deviation from the F04
-  operation-record rule). Exact cut volume and mass, verified at publish and reopen. No cut
-  command, edit, second cut or feature ids. A03 is not complete.
