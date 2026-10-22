@@ -120,13 +120,21 @@ pub fn delete_element(
         expected,
         ..
     } = base;
-    let (plates, members) = {
+    let (plate_ids, members) = {
         let mut reader = Reader::default();
         let opened = reader.open(base_request.clone(), &control)?;
         let decoded = decode(&reader, &opened, &control)?;
-        evaluate_decoded(&decoded)?
+        let (_, members) = evaluate_decoded(&decoded)?;
+        (
+            decoded
+                .plates
+                .iter()
+                .map(|(p, _)| p.id)
+                .collect::<std::collections::BTreeSet<_>>(),
+            members,
+        )
     };
-    let kind = if plates.iter().any(|r| r.authored.id == command.target_id) {
+    let kind = if plate_ids.contains(&command.target_id) {
         Some(DeletedKind::Plate)
     } else if members.iter().any(|r| r.authored.id == command.target_id) {
         Some(DeletedKind::Member)

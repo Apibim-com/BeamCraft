@@ -852,6 +852,7 @@ pub fn prepare_export_with_limits(
     check_destinations(store, out, None)?;
     let revision = open_revision(store, request.revision)?;
     let inspection = inspect_revision(&revision)?;
+    inspection.require_evaluated_geometry()?;
     let mut built = build(&inspection, request, &revision)?;
     if request.strict
         && let Some(fatal) = first_fatal(&built.findings)

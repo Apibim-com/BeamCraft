@@ -90,6 +90,168 @@ fn num(json: &Json, path: &[&str]) -> f64 {
 }
 
 #[test]
+fn a_valid_near_planar_plate_is_saved_without_partial_geometry_and_replays() {
+    let f = Fixture::new();
+    let args = [
+        "--contour",
+        "999000000,0,0;999393216,0,0.75;999393216,524288,0;999000000,524288,0.75",
+        "--thickness",
+        "10",
+        "--translation",
+        "0,1000000000,0",
+        "--new-id",
+        "019a7bf0-0000-7000-8000-000000000005",
+        "--op-id",
+        "019a7bf0-0000-7000-8000-000000000004",
+    ];
+    let created = f.ok("create-plate", &args);
+    let plate = at(&created, &["plate"]);
+    assert_eq!(text(plate, "validity"), "valid");
+    assert_eq!(text(plate, "geometry_status"), "unsupported");
+    assert_eq!(text(plate, "geometry_code"), "UNSUPPORTED_GEOMETRY");
+    for key in ["mesh_digest", "shape_key", "world_bounds_mm"] {
+        assert_eq!(plate.get(key).unwrap(), &Json::Null);
+    }
+    for (quantity, unit) in [("volume", "mm3"), ("mass", "kg")] {
+        assert_eq!(at(plate, &["quantities", quantity, unit]), &Json::Null);
+        assert_eq!(
+            text(at(plate, &["quantities", quantity]), "status"),
+            "unsupported"
+        );
+    }
+    let inspected = f.ok("plate-inspect", &[]);
+    assert_eq!(num(&inspected, &["plate_count"]), 1.);
+    assert_eq!(text(at(&inspected, &["snapshot"]), "pin_generation"), "1");
+    let reopened = &at(&inspected, &["plates"]).array().unwrap()[0];
+    for key in [
+        "contour_points_mm",
+        "placement",
+        "geometry_status",
+        "quantities",
+        "mesh_digest",
+    ] {
+        assert_eq!(reopened.get(key).unwrap(), plate.get(key).unwrap());
+    }
+    assert!(
+        at(&inspected, &["snapshot", "meshes"])
+            .array()
+            .unwrap()
+            .is_empty()
+    );
+    let entries = at(&inspected, &["snapshot", "elements"]).array().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].get("mesh_digest").unwrap(), &Json::Null);
+    let before = f.ok("revision-open", &[]);
+    let replay = f.ok("create-plate", &args);
+    assert_eq!(text(&replay, "outcome"), "plate_replayed");
+    assert_eq!(f.ok("revision-open", &[]), before);
+    assert_eq!(
+        f.rejected("view-export", &["--out", &f.path("unsupported.bundle")]),
+        "DEPENDENCY_UNAVAILABLE"
+    );
+    assert!(!Path::new(&f.path("unsupported.bundle")).exists());
+    assert_eq!(
+        f.rejected("numbering-preview", &[]),
+        "DEPENDENCY_UNAVAILABLE"
+    );
+    assert_eq!(
+        f.rejected("bom-export", &["--out", &f.path("unsupported.csv")]),
+        "DEPENDENCY_UNAVAILABLE"
+    );
+    assert!(!Path::new(&f.path("unsupported.csv")).exists());
+    assert_eq!(
+        f.rejected("export-ifc", &["--out", &f.path("unsupported.ifc")]),
+        "DEPENDENCY_UNAVAILABLE"
+    );
+    assert!(!Path::new(&f.path("unsupported.ifc")).exists());
+    f.ok(
+        "create-plate",
+        &["--width", "1000", "--length", "500", "--thickness", "10"],
+    );
+    let mixed = f.ok("plate-inspect", &[]);
+    assert_eq!(num(&mixed, &["plate_count"]), 2.);
+    assert_eq!(
+        at(&mixed, &["snapshot", "meshes"]).array().unwrap().len(),
+        1
+    );
+    f.ok(
+        "delete-element",
+        &["--id", "019a7bf0-0000-7000-8000-000000000005"],
+    );
+    assert_eq!(f.plates().len(), 1);
+}
+
+#[test]
+fn a_rectangle_in_its_3d_body_frame_is_saved_and_reopened() {
+    let f = Fixture::new();
+    let created = f.ok(
+        "create-plate",
+        &[
+            "--contour",
+            "10,20,30;10,1020,30;-490,1020,30;-490,20,30",
+            "--thickness",
+            "10",
+        ],
+    );
+    let plate = at(&created, &["plate"]);
+    assert_eq!(num(plate, &["dimensions_mm", "width"]), 1000.);
+    assert_eq!(num(plate, &["dimensions_mm", "length"]), 500.);
+    assert_eq!(num(plate, &["quantities", "volume", "mm3"]), 5_000_000.);
+    let reopened = f.plates();
+    assert_eq!(reopened.len(), 1);
+    assert_eq!(
+        at(&reopened[0], &["contour_points_mm"]),
+        at(plate, &["contour_points_mm"])
+    );
+    assert_eq!(
+        text(&reopened[0], "mesh_digest"),
+        text(plate, "mesh_digest")
+    );
+    let before = f.ok("revision-open", &[]);
+    assert_eq!(
+        f.rejected(
+            "create-plate",
+            &[
+                "--contour",
+                "0,0,0;1000,0,0;1000,500,20;0,500,0",
+                "--thickness",
+                "10"
+            ]
+        ),
+        "INVALID_ARGUMENT"
+    );
+    assert_eq!(f.ok("revision-open", &[]), before);
+    assert_eq!(
+        f.rejected(
+            "create-plate",
+            &[
+                "--contour",
+                "999000000,0,0;999393216,0,0.875;999393216,524288,0;999000000,524288,0.875",
+                "--thickness",
+                "10"
+            ]
+        ),
+        "INVALID_ARGUMENT"
+    );
+    assert_eq!(f.ok("revision-open", &[]), before);
+    assert_eq!(
+        f.rejected(
+            "create-plate",
+            &[
+                "--contour",
+                "10,20,30;10,1020,30;-490,1020,30;-490,20,30",
+                "--thickness",
+                "10",
+                "--hole-rect",
+                "0,0,1,1"
+            ]
+        ),
+        "UNSUPPORTED_GEOMETRY"
+    );
+    assert_eq!(f.ok("revision-open", &[]), before);
+}
+
+#[test]
 fn an_l_shaped_plate_is_saved_reopened_and_measured_by_closed_forms() {
     let f = Fixture::new();
     f.ok("define-material", &["--density", "7850", "--grade", "S355"]);
