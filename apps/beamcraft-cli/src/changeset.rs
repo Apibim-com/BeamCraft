@@ -361,7 +361,6 @@ fn footprint(base: &[Prim], head: &[Prim]) -> Result<Vec<Dependency>, PlateError
     }
     if set.len() > MAX_FOOTPRINT_ENTRIES {
         return Err(PlateError {
-            rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "the conservative changeset footprint exceeds 4096 entries",
         });
@@ -380,18 +379,14 @@ pub fn create_changeset(
     dir: &Path,
     request: &CreateChangeset,
 ) -> Result<StoredChangeset, PlateError> {
-    let state = crate::workspace::WorkspaceState::open(dir)?;
-    let meta = state.meta().ok_or_else(crate::workspace::unusable)?;
+    let meta = read_meta(dir)?;
     let draft = workspace.open()?;
     let head_sequence = draft.info().sequence();
-    if meta.synced_sequence == 0 || meta.rebase_sequence > head_sequence {
-        return Err(integrity(
-            "workspace metadata disagrees with its draft head",
-        ));
+    if meta.synced_sequence == 0 {
+        return Err(integrity("workspace metadata names no synced revision"));
     }
     if head_sequence <= meta.synced_sequence {
         return Err(PlateError {
-            rule_id: None,
             code: ErrorCode::InvalidArgument,
             message: "the workspace has nothing to send",
         });
@@ -399,22 +394,11 @@ pub fn create_changeset(
     let unsent = head_sequence - meta.synced_sequence;
     if usize::try_from(unsent).map_or(true, |n| n > MAX_OPERATIONS) {
         return Err(PlateError {
-            rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "too many unsent revisions for one changeset",
         });
     }
-    let base = crate::workspace::published_base(published, meta)?;
-    let content = draft.manifest().content();
-    let base_content = base.manifest().content();
-    if content.project() != base_content.project()
-        || content.schema() != base_content.schema()
-        || content.workspace() != &meta.workspace_id
-    {
-        return Err(integrity(
-            "the draft context differs from its accepted base",
-        ));
-    }
+    let base = workspace.open_at(meta.synced_sequence)?;
     let operations =
         crate::command_evidence::interval(workspace, meta.synced_sequence, head_sequence)?;
     let evidence =
@@ -430,6 +414,7 @@ pub fn create_changeset(
         .iter()
         .map(|e| (e.name(), e.digest()))
         .collect();
+    let content = draft.manifest().content();
     let mut layers = Vec::new();
     let mut assets = BTreeSet::new();
     for entry in content.entries() {
@@ -449,9 +434,16 @@ pub fn create_changeset(
         layers.push(delta);
     }
     layers.sort();
+    let project = published
+        .head()?
+        .ok_or_else(|| integrity("the published store has no revision"))?
+        .manifest()
+        .content()
+        .project()
+        .clone();
     let changeset = Changeset {
         changeset_id: request.changeset_id,
-        project: ProjectId::from_uuid(host_id(base_content.project())?),
+        project: ProjectId::from_uuid(host_id(&project)?),
         workspace: WorkspaceId::from_uuid(host_id(&meta.workspace_id)?),
         actor: match request.actor {
             Some(actor) => actor,
@@ -468,7 +460,6 @@ pub fn create_changeset(
     };
     let bytes = changeset.encode()?;
     let (digest, _) = workspace.blobs().publish(&bytes).map_err(|e| PlateError {
-        rule_id: None,
         code: e.code(),
         message: "changeset blob could not be stored",
     })?;
@@ -484,7 +475,6 @@ pub fn read_changeset(
         .blobs()
         .read_capped(digest, MAX_CHANGESET_BYTES)
         .map_err(|e| PlateError {
-            rule_id: None,
             code: e.code(),
             message: "changeset blob is not available",
         })?;
@@ -520,12 +510,11 @@ fn advance_workspace(
         if info.manifest_digest() == last.result {
             return write_meta(
                 dir,
-                Some(&meta),
                 &WorkspaceMeta {
                     base_revision: published.revision().clone(),
                     base_manifest: published.manifest_digest(),
                     synced_sequence: sequence,
-                    ..meta.clone()
+                    ..meta
                 },
             );
         }
@@ -551,13 +540,12 @@ pub fn apply_changeset(
     let id = as_host(&changeset.changeset_id.to_string())?;
     let receipt = changeset.admit(trusted_actor, published.changeset_claim(&id)?)?;
     // The workspace metadata is checked before anything is published, so a later workspace update
-    // can fail for I/O or a concurrent metadata transition. A published result stays successful.
+    // can only fail for I/O reasons.
     let meta = read_meta(dir)?;
-    if workspace.head()?.is_none_or(|head| {
-        meta.synced_sequence == 0
-            || meta.synced_sequence > head.sequence()
-            || meta.rebase_sequence > head.sequence()
-    }) {
+    if workspace
+        .head()?
+        .is_none_or(|head| meta.synced_sequence == 0 || meta.synced_sequence > head.sequence())
+    {
         return Err(integrity("workspace metadata disagrees with its revisions"));
     }
     // An operation id committed for something else is never this changeset's publication.
@@ -594,7 +582,6 @@ pub fn apply_changeset(
             return Ok(replayed(workspace, dir, &changeset, &info, digest));
         }
         return Err(PlateError {
-            rule_id: None,
             code: ErrorCode::BaseRevisionMismatch,
             message: "the published head is not the changeset's base",
         });
@@ -602,8 +589,7 @@ pub fn apply_changeset(
     let source =
         crate::command_evidence::aggregate(workspace, meta.synced_sequence, &changeset.operations)?;
     let source_content = source.head.manifest().content();
-    if source.head.sequence() < meta.rebase_sequence
-        || source_content.project() != content.project()
+    if source_content.project() != content.project()
         || source_content.workspace() != &meta.workspace_id
         || changeset.workspace.to_string() != meta.workspace_id.as_str()
         || changeset.base_revision.to_string() != meta.base_revision.as_str()
@@ -664,7 +650,6 @@ pub fn apply_changeset(
             published.blobs().read(&layer.digest)
         }
         .map_err(|e| PlateError {
-            rule_id: None,
             code: e.code(),
             message: "a changeset layer is not available",
         })?;
@@ -681,7 +666,6 @@ pub fn apply_changeset(
             .blobs()
             .read(&asset.digest)
             .map_err(|e| PlateError {
-                rule_id: None,
                 code: e.code(),
                 message: "a changeset asset is not available",
             })?;
@@ -689,7 +673,6 @@ pub fn apply_changeset(
             return Err(integrity("a changeset asset has another size"));
         }
         published.blobs().publish(&bytes).map_err(|e| PlateError {
-            rule_id: None,
             code: e.code(),
             message: "a changeset asset could not be stored",
         })?;
@@ -698,7 +681,6 @@ pub fn apply_changeset(
         .workspace_generation()
         .checked_add(1)
         .ok_or(PlateError {
-            rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "generation exhausted",
         })?;
@@ -717,7 +699,7 @@ pub fn apply_changeset(
         .as_ref()
         .map(|footprint| crate::command_evidence::store(published, &draft.op, digest, footprint))
         .transpose()?;
-    let committed = crate::publication::commit_verified_with_evidence(
+    let committed = crate::plate::commit_verified_with_evidence(
         published,
         &draft,
         &ExpectedBase::Revision(head.info().revision().clone()),

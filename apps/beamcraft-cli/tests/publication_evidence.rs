@@ -60,7 +60,7 @@ impl Fixture {
             ]);
         }
         f.ok(&[
-            "create-workspace",
+            "workspace-create",
             "--store",
             &f.path("published"),
             "--workspace-dir",
@@ -102,7 +102,7 @@ impl Fixture {
     }
     fn create(&self) -> (ContentDigest, Changeset) {
         let result = self.ok(&[
-            "create-changeset",
+            "changeset-create",
             "--store",
             &self.path("published"),
             "--workspace-dir",
@@ -124,7 +124,7 @@ impl Fixture {
     }
     fn apply(&self, digest: ContentDigest) -> (i32, Json) {
         self.run(&[
-            "apply-changeset",
+            "changeset-apply",
             "--store",
             &self.path("published"),
             "--workspace-dir",
@@ -200,7 +200,7 @@ fn a_workspace_publication_retains_exact_reads_and_its_immutable_request() {
     f.rename("Second");
     let source = f.store("draft").head().unwrap().unwrap().manifest_digest();
     f.ok(&[
-        "publish-workspace",
+        "workspace-publish",
         "--store",
         &f.path("published"),
         "--workspace-dir",
@@ -223,7 +223,7 @@ fn a_workspace_publication_retains_exact_reads_and_its_immutable_request() {
     );
     let head = f.head();
     f.ok(&[
-        "publish-workspace",
+        "workspace-publish",
         "--store",
         &f.path("published"),
         "--workspace-dir",
@@ -353,7 +353,7 @@ fn an_absent_legacy_record_does_not_hide_a_later_malformed_record() {
     );
     let before = f.head();
     let (code, json) = f.run(&[
-        "publish-workspace",
+        "workspace-publish",
         "--store",
         &f.path("published"),
         "--workspace-dir",
@@ -366,9 +366,9 @@ fn an_absent_legacy_record_does_not_hide_a_later_malformed_record() {
 #[test]
 fn numbering_dependencies_survive_publication_without_reinterpreting_the_command() {
     let f = Fixture::new();
-    let preview = f.ok(&["preview-numbering", "--store", &f.path("draft")]);
+    let preview = f.ok(&["numbering-preview", "--store", &f.path("draft")]);
     f.ok(&[
-        "approve-numbering",
+        "numbering-approve",
         "--store",
         &f.path("draft"),
         "--preview-token",
@@ -432,7 +432,7 @@ fn raw_aggregate_entry_work_is_bounded_even_when_entries_repeat() {
         }
         let before = f.head();
         let (code, json) = f.run(&[
-            "publish-workspace",
+            "workspace-publish",
             "--store",
             &f.path("published"),
             "--workspace-dir",
