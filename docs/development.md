@@ -181,6 +181,24 @@ that issue remains open, later checks do not create duplicates. Close it after t
 later incident then opens a new alert. The workflow uses the repository's `GITHUB_TOKEN` with
 Actions read, Contents read (for checkout) and Issues write permissions.
 
+### Cold-build timings
+
+Measure compiler-cold builds of both applications with the helper (Linux, macOS, or Bash on
+Windows):
+
+```sh
+bash tools/build-timings.sh --target aarch64-apple-darwin --output target/timings-after
+```
+
+Omit `--target` for the host target; the output directory must not exist. The helper builds with an
+empty target directory inside its output, disables compiler wrappers, and keeps `build.log`,
+`metadata.txt` (revision, platform, CPU, toolchain, command, elapsed seconds) and the standalone
+`cargo-timing.html`. It never clears the ordinary target directory. The registry cache is
+inherited, so disclose whether downloads were prefetched when sharing a result. CI runs the same
+helper on Linux and macOS and uploads `build-timings-<triple>` artifacts; a hosted-runner
+measurement is useful evidence, not the reference-machine acceptance of
+[Apibim-com/BeamCraft#153](https://github.com/Apibim-com/BeamCraft/issues/153).
+
 ## Releases
 
 Owner policy (2026-10-27, [decision](plan/decisions.md#2026-10-27)): Windows x64 and ARM64
