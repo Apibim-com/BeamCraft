@@ -262,11 +262,6 @@ impl PlateBody {
         self.result.is_some()
     }
 
-    /// Historical alias for [`Self::is_rectangular_box`]; also true for a framed rectangle.
-    pub const fn is_origin_rectangle(&self) -> bool {
-        self.is_rectangular_box()
-    }
-
     fn volumes(&self) -> Volumes {
         // The gross body is the exact outline extrusion (the box or the polygon prism), so the
         // gross volume is its analytic area times the thickness and equals the mesh before the

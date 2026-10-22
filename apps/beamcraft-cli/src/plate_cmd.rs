@@ -551,15 +551,14 @@ fn contour_points(text: &str) -> Run<Vec<[f64; 3]>> {
     }
     text.split(';')
         .map(|pair| {
-            let parts: Vec<f64> = pair
-                .split(',')
-                .map(|v| v.trim().parse::<f64>())
-                .collect::<Result<_, _>>()
-                .map_err(|_| invalid("a contour point is not two or three numbers"))?;
-            match parts.as_slice() {
-                [x, y] => Ok([*x, *y, 0.0]),
-                [x, y, z] => Ok([*x, *y, *z]),
-                _ => Err(invalid("a contour point is not two or three numbers")),
+            let bad = || invalid("a contour point is not two or three numbers");
+            let mut parts = pair.split(',').map(|v| v.trim().parse::<f64>());
+            let mut next = || parts.next().transpose().map_err(|_| bad());
+            let (x, y, z) = (next()?, next()?, next()?);
+            match (x, y, z, next()?) {
+                (Some(x), Some(y), None, None) => Ok([x, y, 0.0]),
+                (Some(x), Some(y), Some(z), None) => Ok([x, y, z]),
+                _ => Err(bad()),
             }
         })
         .collect()
