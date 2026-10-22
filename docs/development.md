@@ -111,12 +111,12 @@ cargo deny check
 - **Offline.** Add `--offline --locked` to Cargo commands to work without downloads; never update
   `Cargo.lock` as a side effect.
 
-For K1 acceptance, set `BEAMCRAFT_REQUIRE_PXR=1` and run
-`cargo test -p beamcraft-cli --test pxr_oracle -- --nocapture`. Optionally set
-`BEAMCRAFT_PXR_PYTHON` to the installed Python interpreter with `pxr`. This mode fails if the
-independent reader is unavailable; the default developer mode prints an explicit skip instead.
-No interpreter or SDK is installed by the tests. The exact contract case inventory, asserted
-fields and remaining deviations are in [K1 acceptance evidence](design/k1-contract-acceptance.md).
+The independent-reader gate runs in every `cargo test`: run
+`cargo test -p beamcraft-cli --test independent_reader --test reference_reader -- --nocapture`.
+The `beamcraft-usd-oracle` process re-reads the committed layer text with its own parser,
+composition and vector algebra and cross-checks the closed forms; a failure fails the tests, and
+no SDK or interpreter is needed. The exact contract case inventory, asserted fields and remaining
+deviations are in [K1 acceptance evidence](design/k1-contract-acceptance.md).
 
 ## CI wall time and Windows runner queues
 
@@ -182,7 +182,8 @@ packaging needs no image tools. Release smoke checks decode the packaged ICNS wi
 The same PNG ships inside the bundle as `Contents/Resources/beamcraft-icon.png`: while
 `beamcraft-ui` runs, the Dock shows the process icon, so the UI loads that file and applies
 it (`eframe::icon_data::from_png_bytes`), falling back to the coded I-section outside a
-bundle. Run `python3 packaging/test_package.py` to check the icon and archive wiring without
-a Rust build. On macOS, also confirm the official BeamCraft icon appears in Finder, the Dock
-and the app switcher. The icon and `docs/brand/beamcraft-logo.svg` are the official BeamCraft
-logo (see `ATTRIBUTION.md`); the brand terms in `docs/brand/LICENSE-brand.txt` apply to them.
+bundle. `cargo test -p beamcraft-cli --test macos_icon` checks the committed ICNS structure
+without a Rust build of the UI or macOS. On macOS, also confirm the official BeamCraft icon
+appears in Finder, the Dock and the app switcher. The icon and `docs/brand/beamcraft-logo.svg`
+are the official BeamCraft logo (see `ATTRIBUTION.md`); the brand terms in
+`docs/brand/LICENSE-brand.txt` apply to them.
