@@ -37,7 +37,6 @@ fn initial() -> WorkspaceMeta {
         base_revision: id(3),
         base_manifest: Sha256::digest(b"synthetic accepted pin").unwrap(),
         synced_sequence: 1,
-        rebase_sequence: 0,
     }
 }
 fn next(old: &WorkspaceMeta, n: usize) -> WorkspaceMeta {
@@ -142,43 +141,6 @@ fn metadata_cas_retains_v1_bytes_and_refuses_stale_identity_or_prefix() {
 }
 
 #[test]
-fn rebased_metadata_uses_strict_v2_without_publishing_unsent_work_or_rolling_back_its_boundary() {
-    let f = Fixture::new();
-    let old = f.initialize();
-    let mut rebased = next(&old, 1);
-    rebased.rebase_sequence = 3;
-    {
-        let mut state = WorkspaceState::open(&f.0).unwrap();
-        state.compare_and_swap(Some(&old), &rebased).unwrap();
-        assert_eq!(state.meta().unwrap().synced_sequence, 1);
-        let mut rollback = rebased.clone();
-        rollback.rebase_sequence = 2;
-        assert_eq!(
-            state
-                .compare_and_swap(Some(&rebased), &rollback)
-                .unwrap_err()
-                .code,
-            ErrorCode::InvalidArgument
-        );
-    }
-    assert_eq!(read_meta(&f.0).unwrap(), rebased);
-    let bytes = String::from_utf8(f.bytes()).unwrap();
-    assert!(bytes.starts_with("beamcraft-workspace 2\n"));
-    assert!(bytes.ends_with("rebase_sequence=3\n"));
-    for malformed in [
-        bytes.replace("rebase_sequence=3", "rebase_sequence=0"),
-        bytes.replace("rebase_sequence=3", "rebase_sequence=03"),
-        bytes.replace("rebase_sequence=3", "rebase_sequence=100001"),
-        bytes.replace('\n', "\r\n"),
-        bytes.replacen("workspace 2", "workspace 999", 1),
-    ] {
-        fs::write(f.0.join("workspace.json"), malformed.as_bytes()).unwrap();
-        assert!(read_meta(&f.0).is_err());
-        assert_eq!(f.bytes(), malformed.as_bytes());
-    }
-}
-
-#[test]
 fn eight_racing_writers_install_exactly_one_complete_metadata_snapshot() {
     let f = Fixture::new();
     let old = f.initialize();
@@ -239,7 +201,7 @@ fn metadata_serialization_still_allows_draft_edits_and_protects_cli_publication(
         &plate,
     ]);
     f.ok(&[
-        "create-workspace",
+        "workspace-create",
         "--store",
         pub_path,
         "--workspace-dir",
@@ -267,7 +229,7 @@ fn metadata_serialization_still_allows_draft_edits_and_protects_cli_publication(
     ]);
     let edited = revision_store(&draft).head().unwrap().unwrap();
     assert_ne!(edited, old_draft);
-    for command in ["inspect-workspace", "publish-workspace", "create-changeset"] {
+    for command in ["workspace-status", "workspace-publish", "changeset-create"] {
         let (code, json) = f.cli(&[command, "--store", pub_path, "--workspace-dir", draft_path]);
         assert_eq!(code, 3, "{command}: {json:?}");
         assert_eq!(
@@ -282,7 +244,7 @@ fn metadata_serialization_still_allows_draft_edits_and_protects_cli_publication(
     }
     drop(state);
     let status = f.ok(&[
-        "inspect-workspace",
+        "workspace-status",
         "--store",
         pub_path,
         "--workspace-dir",
@@ -298,24 +260,8 @@ fn metadata_serialization_still_allows_draft_edits_and_protects_cli_publication(
             .unwrap(),
         "1"
     );
-    // A pending rebase must be resolved before any interpretation of base/unsent state.
-    fs::write(draft.join("rebase.pending"), b"torn rebase intent").unwrap();
-    for command in ["inspect-workspace", "publish-workspace", "create-changeset"] {
-        let (code, json) = f.cli(&[command, "--store", pub_path, "--workspace-dir", draft_path]);
-        assert_eq!(code, 2, "{command}: {json:?}");
-        assert_eq!(
-            json.get("code").unwrap().string().unwrap(),
-            "INTEGRITY_ERROR"
-        );
-        assert_eq!(
-            revision_store(&published).head().unwrap().unwrap(),
-            accepted
-        );
-        assert_eq!(revision_store(&draft).head().unwrap().unwrap(), edited);
-    }
-    fs::remove_file(draft.join("rebase.pending")).unwrap();
     f.ok(&[
-        "publish-workspace",
+        "workspace-publish",
         "--store",
         pub_path,
         "--workspace-dir",
