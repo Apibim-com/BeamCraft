@@ -20,7 +20,7 @@ document.
 | Speed and bounded work | ACCEPTED WITH CONDITIONS | Section 7. Every measured workload, including inputs at the F06 caps and adversarial ones, ended with a result or a typed refusal in under about 0.6 s per kernel call on the measuring machine; no hang was seen. Condition: certification dominates the cost and its default budgets end it at a few thousand triangles at most (a 2,496-triangle slab certifies, a 4,352-triangle one does not; a plate stops after 5 holes of 64 edges, 1,312 triangles; finding F2); no performance promise is made |
 | List of supported operations with exact input classes | ACCEPTED | Section 3 |
 | Everything unknown is explicitly unsupported | ACCEPTED WITH CONDITIONS | Section 4. Open, non-manifold, misoriented, inward, degenerate, self-intersecting, overlapping and undecidable meshes never receive an exact status or an engineering quantity (tests in section 5). Condition: queries, keys, placement and analytic area have no code path at all; they are unsupported by absence, and G08 must keep returning typed unsupported results for them |
-| No third-party backend is chosen | ACCEPTED | Dependency tree above; no geometry crate in `Cargo.lock`; no copied third-party string found in the kernel sources, tests or example. Exposure of the human or agent implementers cannot be established from the repository (see the exposure note of the G04 design) and is not assessed here |
+| No third-party backend is chosen | ACCEPTED | Dependency tree above; no geometry crate in `Cargo.lock`; no copied third-party string found in the kernel sources, tests or example. |
 | Contract coverage of holes, cuts and curved cavities | NOT ACCEPTED | These operations are outside the frozen F06 0.1.0 contract (finding F3). They are accepted as a tested pilot only, not as a contracted feature, until an amendment exists |
 | Identical bytes on every target | NOT ACCEPTED as a claim | Evidence exists for one target (Windows x86_64) only; the wasm32 and `cargo deny` checks were not available (finding F5) |
 
@@ -136,7 +136,7 @@ Test file names are in `crates/kernel/tests/` unless a crate path is given.
 | V40 | S3 | Pick band, closed boundaries and nearest face points | none | - | NOT COVERED: UNSUPPORTED |
 | V41 | S3 | Strict ray-plane parallel threshold and denominator sensitivity | none | - | NOT COVERED: UNSUPPORTED |
 | V42 | S3 | Pick work cap, deterministic scan and cancellation/deadline polling | none | - | NOT COVERED: UNSUPPORTED |
-| V43 | S3 | Descriptor bytes and every negotiated delivery budget | host / F05 | - | NOT COVERED (host) |
+| V43 | S3 | Descriptor bytes and every negotiated delivery budget | host | - | NOT COVERED (host) |
 | V44 | S1 | Near-threshold frame branch has no unspecified exclusion band | `geom::MemberFrame` | `geom/tests/f06_math.rs` POS-46; `g07_acceptance.rs` | PASS |
 
 ### 5.2 Frozen F06 cases (112, every case appears exactly once)
@@ -169,7 +169,7 @@ the kernel has no code for them; G07 does not judge the engine.
 | NEG-08, NEG-09, NEG-10 | Curved profile, scaled or sheared transform, imported mesh frame | no kernel input form exists for them (member profile is a rectangle by type; no matrix input) | `geom/tests/f06_math.rs` NEG-09; absence by API shape | UNSUPPORTED by construction (the kernel does offer polygonal approximations of curved cavities, flagged `Approximated`, finding F3). Update 2026-10-19: NEG-08 is superseded by F06 amendment A-1 (decision D-6); no `Approximated` status exists in 0.1.x |
 | POS-11, POS-12 | Rotated and translated plate and member, world mesh and bounds | none: the kernel builds element-local meshes only (`TriMesh::transformed` exists but has no F06 vector) | `g06_measure.rs` exact_rigid_motions..., inexact_rotation_changes_quantities_only_within_rounding (no F06 vector) | NOT COVERED (the engine returns `UNSUPPORTED_GEOMETRY` for a rotated placement) |
 | POS-19, POS-20, POS-21, POS-22, POS-23, POS-24, POS-25, POS-26, POS-34, POS-35, POS-36, POS-38, NEG-21, NEG-25 | Shape/world/presentation keys, invalidation, incremental updates, stale quantity, token | none in the kernel (`kernel::keys` is planned; engine P04 signatures are not the F06 section 7 keys) | - | NOT COVERED: UNSUPPORTED in the kernel scope |
-| POS-28, NEG-34 | Whole-blob snapshot chunking, negotiated buffer limits | host / F05 delivery | - | NOT COVERED (host) |
+| POS-28, NEG-34 | Whole-blob snapshot chunking, negotiated buffer limits | host delivery | - | NOT COVERED (host) |
 | POS-29, POS-30, POS-31, POS-32, POS-33, POS-40, POS-43, POS-44, POS-45, POS-47, POS-59, NEG-22, NEG-23, NEG-24, NEG-26, NEG-27, NEG-28, NEG-29, NEG-32, NEG-33, NEG-36 | Pick (ray, point, finite horizon), LookupFeature, element list order, query validation | none (`Selection` in the engine says Pick and LookupFeature are not implemented) | - | NOT COVERED: UNSUPPORTED (no implementation anywhere) |
 | POS-39 | Engine API and CLI return the same logical result | engine and CLI for plates, members and plate holes (P01, P03, A04), not the full kernel scope | CLI tests of those tasks (not assessed by G07) | NOT COVERED by G07: G08 owns it |
 
@@ -307,7 +307,7 @@ vertices, hostile planes and cutters, maximum-size inputs) found nothing besides
 * The tests I added are independent of production geometry code but share the repository's test
   helper readers (`common`, `common_mesh`, `common_ops`), which earlier tasks wrote.
 * "No third-party code" is based on the dependency tree and a string search of the kernel sources,
-  tests and example; no code-similarity analysis was done and implementer exposure is not assessed.
+  tests and example; no code-similarity analysis was done.
 * Speed numbers are from one machine under shared load. They show order of magnitude and bounded
   work, not a guarantee or a regression threshold.
 * Nothing here validates the engine, the host or the CLI beyond the single observation in section 7.

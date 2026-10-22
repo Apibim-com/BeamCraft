@@ -15,10 +15,7 @@ use beamcraft_host::{
     revision::{ExpectedBase, LayerEntry, NoFault, RevisionDraft, RevisionStore, Uuid7},
     storage::BlobStore,
 };
-use beamcraft_protocol::{
-    json::{self, Json},
-    message,
-};
+use beamcraft_json::{Json, Limits};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -54,7 +51,7 @@ impl Fixture {
             .args(&args)
             .output()
             .unwrap();
-        let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
+        let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
         (output.status.code().unwrap(), body)
     }
     fn ok(&self, command: &str, extra: &[&str]) -> Json {
@@ -361,8 +358,8 @@ fn a_cycle_stored_outside_beamcraft_is_refused_when_read() {
     f.assembly(OUTER, "Outer");
     f.attach(FRAME, OUTER);
     // OUTER -> FRAME closes a two-cycle that no command would author.
-    let outer = format!("E_{}", OUTER.replace('-', ""));
-    let frame_path = format!("/World/Steel/E_{}", FRAME.replace('-', ""));
+    let outer = format!("ASM_{}", OUTER.replace('-', ""));
+    let frame_path = format!("/World/Steel/Assemblies/ASM_{}", FRAME.replace('-', ""));
     f.tamper(|name, text| {
         if name != "authored.usda" {
             return text;

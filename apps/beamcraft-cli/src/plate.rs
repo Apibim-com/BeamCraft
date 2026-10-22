@@ -22,24 +22,21 @@
 //!   the first revision (or supplied for the first one), the generation is the head's plus one.
 //!   `CreatePlate` and `CommitWorkspace` are fused: a successful call is a published revision.
 //!   Workspaces, drafts and undo (P06, P07) do not exist.
-//! * The layer engine runs **in this process**. The owner decision of 2026-10-16 places it in a
-//!   separate process (LEW-03 containment); there is no authoring message in the frozen U04
-//!   profile, so this path has no process isolation and must not be treated as a hostile-parser
-//!   boundary.
+//! * The layer engine runs **in this process**, as every USD read and write does (U17). A
+//!   hostile or corrupt layer is an ordinary refusal under the layer engine's size and depth
+//!   budgets, and the project's own layers are verified by SHA-256 before they are parsed.
 //! * Replay (`op_id`): an operation the host ledger proves committed is compared with the
 //!   element of that id in the head revision. This is sound only while no command edits or
-//!   deletes elements (true in P01); the stored canonical request of F05 replaces it.
+//!   deletes elements (true in P01); a stored canonical request (F04 section 3) replaces it.
 //! * Quantities are returned, not stored: the pinned U02 schema has no quantity attributes.
 
 use crate::definition::{
     DefinitionRecord, decode_definitions, definition_digest, material_lookup, profile_lookup,
 };
 use crate::level::levels_of;
-use crate::marks::marks_of;
 use beamcraft_engine::command::AuthoredPlate;
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
 use beamcraft_engine::level::Levels;
-use beamcraft_engine::marks::Numbering;
 use beamcraft_engine::member::AuthoredMember;
 use beamcraft_engine::quantity::{
     Assessment, Freshness, QuantityRecord, StoredRecord, assess, is_superseded_algorithm,
@@ -384,8 +381,6 @@ pub(crate) struct Decoded {
     pub(crate) levels: Levels,
     /// The common facts of every element except levels, by id.
     pub(crate) elements: BTreeMap<ElementId, ElementMeta>,
-    /// The marks of the model and their approval states (A08).
-    pub(crate) marks: Numbering,
 }
 
 pub(crate) fn number(value: &Value) -> Option<f64> {
@@ -692,7 +687,11 @@ pub(crate) fn decode(
             continue;
         };
         let id = ElementId::parse(text_id).map_err(|_| integrity("element id is not a UUIDv7"))?;
-        if prim.path != id.prim_path() {
+        let category = property(prim, "bim:elementKind")
+            .and_then(text)
+            .and_then(beamcraft_model::prim::ElementCategory::from_kind)
+            .ok_or_else(|| integrity("unknown element category"))?;
+        if prim.path != id.prim_path(category) {
             return Err(integrity("element path does not match its id"));
         }
         let mesh = || {
@@ -724,7 +723,6 @@ pub(crate) fn decode(
     }
     let definitions = decode_definitions(&prims)?;
     let levels = levels_of(&prims)?;
-    let marks = marks_of(&prims)?;
     Ok(Decoded {
         plates,
         members,
@@ -732,7 +730,6 @@ pub(crate) fn decode(
         definitions,
         levels,
         elements,
-        marks,
     })
 }
 
@@ -1326,7 +1323,6 @@ fn layer_group(group: LayerGroup) -> Group {
         LayerGroup::Material => Group::MaterialRef,
         LayerGroup::Derived => Group::Derived,
         LayerGroup::Relationship => Group::Relationship,
-        LayerGroup::Mark => Group::Mark,
     }
 }
 
@@ -1725,8 +1721,6 @@ pub struct Inspection {
     pub levels: Levels,
     /// The common facts of every element except levels, by id (E02).
     pub elements: BTreeMap<ElementId, ElementMeta>,
-    /// The marks of the model and their approval states (A08).
-    pub marks: Numbering,
 }
 
 /// Opens the head revision with verification, reads its model and derived layers in a fresh
@@ -1806,7 +1800,6 @@ pub fn inspect_revision(revision: &Revision) -> Result<Inspection, PlateError> {
         project_record: record,
         levels: decoded.levels,
         elements: decoded.elements,
-        marks: decoded.marks,
     })
 }
 

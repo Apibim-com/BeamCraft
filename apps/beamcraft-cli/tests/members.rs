@@ -10,10 +10,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use beamcraft_protocol::{
-    json::{self, Json},
-    message,
-};
+use beamcraft_json::{Json, Limits};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -48,7 +45,7 @@ impl Fixture {
             .args(&args)
             .output()
             .unwrap();
-        let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
+        let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
         (output.status.code().unwrap(), body)
     }
     fn ok(&self, command: &str, extra: &[&str]) -> Json {
@@ -176,7 +173,7 @@ fn a_beam_pins_its_profile_and_material_and_reopens_in_a_fresh_process() {
     // An ordinary reader of the saved text sees a standard Xform with explicit inputs and links.
     let authored = f.authored_text(&created);
     let prim = format!(
-        "def Xform \"E_{}\"",
+        "def Xform \"PRT_{}\"",
         text(member, "element_id").replace('-', "")
     );
     assert!(authored.contains(&prim), "{authored}");
@@ -187,10 +184,10 @@ fn a_beam_pins_its_profile_and_material_and_reopens_in_a_fresh_process() {
         assert!(authored.contains(line), "{line}\n{authored}");
     }
     assert!(authored.contains(&format!(
-        "custom rel bim:profile = </World/Definitions/D_{profile}>"
+        "custom rel bim:profile = </World/Definitions/Profiles/PRF_{profile}>"
     )));
     assert!(authored.contains(&format!(
-        "custom rel bim:material = </World/Definitions/D_{steel}>"
+        "custom rel bim:material = </World/Definitions/Materials/MAT_{steel}>"
     )));
 }
 
@@ -416,4 +413,33 @@ fn a_member_whose_mesh_would_collapse_in_float32_is_refused() {
         profile.as_str(),
     ];
     f.ok("create-member", &ok);
+}
+
+#[test]
+fn a_member_above_one_cubic_metre_is_within_the_stage_budget() {
+    // 200 mm x 300 mm over 20 m is 1.2 m3 = 1.2e9 mm3 of stored volume: the bounded read used
+    // to refuse any double above 1e9, so this very member could not be created at all (the
+    // same reproduction the issue reported).
+    let f = Fixture::new();
+    let profile = f.profile("200", "300");
+    let args = [
+        "--kind",
+        "beam",
+        "--start",
+        "0,0,0",
+        "--end",
+        "20000,0,0",
+        "--profile-digest",
+        profile.as_str(),
+    ];
+    let reply = f.ok("create-member", &args);
+    assert_eq!(text(&reply, "outcome"), "member_created");
+    assert_eq!(
+        num(at(&reply, &["member", "quantities", "volume"]), &["mm3"]),
+        1_200_000_000.0
+    );
+    // A fresh process reopens the revision and keeps the quantity current.
+    let inspected = f.ok("plate-inspect", &[]);
+    let members = inspected.get("members").unwrap().array().unwrap();
+    assert_eq!(members.len(), 1);
 }

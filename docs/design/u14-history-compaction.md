@@ -159,7 +159,3 @@ no network access, no Tekla/Trimble material, no third-party code.
   their bytes are those that were read before; the optional `pxr` oracle tests were not run.
 - Linux, macOS, wasm32 and `cargo deny` were not run here (CI covers them). `File::try_lock` is
   Rust 1.89 and later; the workspace requires 1.96.
-
-## Proposed Roadmap entry
-
-`2026-10-19 U14: history-stats and history-compact (keep-head / keep N, dry run with the lost undo points, confirmation and verified backup required, refused for unfinished intents, active coordinators and live workspace bases; head log floor marker, ledger rotation with tombstone tail, unreferenced-blob collection, crash-safe at every step); experimental slice.`

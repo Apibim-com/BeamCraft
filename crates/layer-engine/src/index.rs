@@ -15,8 +15,7 @@ use crate::*;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-const ELEMENT_PREFIX: &str = "/World/Steel/E_";
-const DEFINITION_PREFIX: &str = "/World/Definitions/D_";
+use beamcraft_model::prim::{DefinitionCategory, ElementCategory};
 const MAX_LABEL_BYTES: usize = 256;
 const MAX_PATH_BYTES: usize = 1024;
 /// Total relationship targets one index may hold (the 1 MiB snapshot ceiling at 32 bytes each).
@@ -56,10 +55,13 @@ impl ElementId {
         }
         Ok(Self(value))
     }
-    /// Parses `/World/Steel/E_<32 lowercase hexadecimal digits>`; any other form is `INVALID_ID`.
+    /// Parses a canonical category path with 32 lowercase UUIDv7 digits; any other form is `INVALID_ID`.
     pub fn from_path(path: &str) -> Result<Self, Diagnostic> {
         let bad = || invalid_id("element path lacks a full 32-digit UUIDv7");
-        let hex = path.strip_prefix(ELEMENT_PREFIX).ok_or_else(bad)?;
+        let hex = ElementCategory::ALL
+            .into_iter()
+            .find_map(|category| path.strip_prefix(category.prefix()))
+            .ok_or_else(bad)?;
         if hex.len() != 32 || !is_lower_hex(hex) {
             return Err(bad());
         }
@@ -78,8 +80,8 @@ impl ElementId {
         self.0
     }
     /// The canonical prim path of this element.
-    pub fn path(&self) -> String {
-        format!("{ELEMENT_PREFIX}{:032x}", self.0)
+    pub fn path(&self, category: ElementCategory) -> String {
+        format!("{}{:032x}", category.prefix(), self.0)
     }
 }
 impl fmt::Display for ElementId {
@@ -162,7 +164,7 @@ pub struct ElementEntry {
 /// An immutable definition prim, keyed by its full content digest.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DefinitionEntry {
-    /// Full digest from the `D_<64 hex>` path.
+    /// Full digest from the `MAT_<64 hex>` or `PRF_<64 hex>` path.
     pub digest: ContentDigest,
     /// Composed prim path.
     pub path: String,
@@ -304,7 +306,11 @@ impl ElementIndex {
     }
     /// Looks up by canonical element path; short or malformed paths are `INVALID_ID`.
     pub fn lookup_path(&self, path: &str) -> Result<&ElementEntry, Diagnostic> {
-        self.element(&ElementId::from_path(path)?)
+        let entry = self.element(&ElementId::from_path(path)?)?;
+        if entry.path != path {
+            return Err(fail(ErrorCode::NotFound, "element path does not resolve"));
+        }
+        Ok(entry)
     }
     /// Looks up an immutable definition by full digest.
     pub fn definition(&self, digest: &ContentDigest) -> Result<&DefinitionEntry, Diagnostic> {
@@ -439,7 +445,10 @@ impl ElementIndex {
         Ok(CopyPlan {
             source: *source,
             id: *fresh,
-            path: fresh.path(),
+            path: fresh.path(
+                category_of_path(&entry.path)
+                    .ok_or_else(|| invalid_id("invalid element category"))?,
+            ),
             links,
         })
     }
@@ -583,13 +592,14 @@ impl IndexBuilder {
     /// and retains only the fields the index uses. Ignored property values are neither copied
     /// nor traversed, so no nesting depth or value size can reach the allocator or the stack.
     fn project(&mut self, prim: &Prim) -> Result<Prim, Diagnostic> {
-        const USED: [&str; 6] = [
+        const USED: [&str; 7] = [
             "bim:id",
             "bim:name",
             "bim:elementKind",
             "bim:geometryMode",
             "bim:lifecycle",
             "bim:contentDigest",
+            "bim:definitionKind",
         ];
         let b = self.budgets;
         let long = |s: &str| s.len() > MAX_PATH_BYTES;
@@ -757,7 +767,13 @@ impl IndexBuilder {
             }
         }
         for (prim, id) in self.prims.iter().zip(&ids) {
-            if id.is_some_and(|id| prim.path != id.path()) {
+            if id.is_some_and(|id| {
+                ElementId::from_path(&prim.path).ok() != Some(id)
+                    || property(prim, "bim:elementKind")
+                        .and_then(text)
+                        .and_then(ElementCategory::from_kind)
+                        .is_some_and(|category| Some(category) != category_of_path(&prim.path))
+            }) {
                 return Err(invalid_id("element identity and canonical path differ"));
             }
         }
@@ -772,27 +788,56 @@ impl IndexBuilder {
         let mut definitions = BTreeMap::new();
         for (prim, id) in self.prims.iter().zip(&ids) {
             control.check()?;
+            let definition = DefinitionCategory::parse_path(&prim.path);
+            let definition_leaf = [DefinitionCategory::Material, DefinitionCategory::Profile]
+                .into_iter()
+                .any(|category| {
+                    prim.path
+                        .strip_prefix(category.prefix())
+                        .is_some_and(|rest| !rest.contains('/'))
+                });
+            if definition.is_none()
+                && (definition_leaf
+                    || prim.path.starts_with("/World/Definitions/D_")
+                    || (owned_prim(prim)
+                        && property(prim, "bim:contentDigest").is_some()
+                        && property(prim, "bim:definitionKind").is_some()))
+            {
+                return Err(invalid_id(
+                    "definition path lacks its category and full SHA-256",
+                ));
+            }
             if let Some(id) = id {
                 elements.insert(*id, element_entry(prim, *id, &foreign)?);
-            } else if let Some(rest) = prim.path.strip_prefix(DEFINITION_PREFIX)
-                && !rest.contains('/')
-            {
-                let digest = rest
-                    .parse::<ContentDigest>()
-                    .map_err(|_| invalid_id("definition path lacks a full SHA-256 digest"))?;
+            } else if let Some((category, digest)) = definition {
+                let digest_text = digest.to_string();
+                let rest = digest_text.as_str();
+                if property(prim, "bim:definitionKind")
+                    .and_then(text)
+                    .is_some_and(|kind| {
+                        (kind == "material") != (category == DefinitionCategory::Material)
+                    })
+                {
+                    return Err(invalid_id("definition category and kind differ"));
+                }
                 if let Some(p) = property(prim, "bim:contentDigest")
                     && text(p) != Some(rest)
                 {
                     return Err(corrupt());
                 }
-                definitions.insert(
-                    digest,
-                    DefinitionEntry {
+                if definitions
+                    .insert(
                         digest,
-                        path: prim.path.clone(),
-                        sources: prim.sources.clone(),
-                    },
-                );
+                        DefinitionEntry {
+                            digest,
+                            path: prim.path.clone(),
+                            sources: prim.sources.clone(),
+                        },
+                    )
+                    .is_some()
+                {
+                    return Err(corrupt());
+                }
             }
         }
         let lookup = Lookup {
@@ -880,10 +925,13 @@ fn identity(prim: &Prim) -> Result<Option<ElementId>, Diagnostic> {
     let bim = property(prim, "bim:id");
     match (&prim.element_id, bim) {
         (None, None) => {
-            let is_element_leaf = prim
-                .path
-                .rsplit_once('/')
-                .is_some_and(|(parent, leaf)| parent == "/World/Steel" && leaf.starts_with("E_"));
+            let is_element_leaf = prim.path.rsplit_once('/').is_some_and(|(parent, leaf)| {
+                ElementCategory::ALL.into_iter().any(|category| {
+                    let prefix = category.prefix();
+                    let (folder, code) = prefix.rsplit_once('/').unwrap_or(("", ""));
+                    parent == folder && leaf.starts_with(code)
+                })
+            });
             if is_element_leaf {
                 Err(invalid_id("element path lacks an authored identity"))
             } else {
@@ -992,10 +1040,16 @@ fn shield(prim: &Prim) -> Option<String> {
         .then(|| format!("{}/Correction/Source", prim.path))
 }
 
+fn category_of_path(path: &str) -> Option<ElementCategory> {
+    ElementCategory::ALL
+        .into_iter()
+        .find(|category| path.starts_with(category.prefix()))
+}
 fn owner_of(path: &str) -> Option<ElementId> {
-    let rest = path.strip_prefix(ELEMENT_PREFIX)?;
-    let leaf_len = rest.find('/').unwrap_or(rest.len());
-    ElementId::from_path(path.get(..ELEMENT_PREFIX.len().checked_add(leaf_len)?)?).ok()
+    let category = category_of_path(path)?;
+    let rest = path.strip_prefix(category.prefix())?;
+    let leaf = rest.split('/').next()?;
+    ElementId::from_path(&format!("{}{leaf}", category.prefix())).ok()
 }
 
 struct Lookup<'a> {
@@ -1020,27 +1074,42 @@ impl Lookup<'_> {
                 "relationship target does not resolve",
             )
         };
-        if let Some(rest) = target.strip_prefix(ELEMENT_PREFIX)
-            && !rest.contains('/')
+        if let Some(category) = category_of_path(target)
+            && !target
+                .strip_prefix(category.prefix())
+                .is_some_and(|rest| rest.contains('/'))
         {
             let id = ElementId::from_path(target)?;
-            return if self.elements.contains_key(&id) {
+            return if self
+                .elements
+                .get(&id)
+                .is_some_and(|entry| entry.path == target)
+            {
                 Ok(LinkTarget::Element(id))
             } else {
                 Err(dangling())
             };
         }
-        if let Some(rest) = target.strip_prefix(DEFINITION_PREFIX)
-            && !rest.contains('/')
-        {
-            let digest = rest
-                .parse::<ContentDigest>()
-                .map_err(|_| invalid_id("definition target lacks a full SHA-256 digest"))?;
-            return if self.definitions.contains_key(&digest) {
+        if let Some((_, digest)) = DefinitionCategory::parse_path(target) {
+            return if self
+                .definitions
+                .get(&digest)
+                .is_some_and(|entry| entry.path == target)
+            {
                 Ok(LinkTarget::Definition(digest))
             } else {
                 Err(dangling())
             };
+        }
+        if [DefinitionCategory::Material, DefinitionCategory::Profile]
+            .into_iter()
+            .any(|category| {
+                target
+                    .strip_prefix(category.prefix())
+                    .is_some_and(|rest| !rest.contains('/'))
+            })
+        {
+            return Err(invalid_id("definition target lacks a full SHA-256 digest"));
         }
         if self.paths.contains(target) {
             Ok(LinkTarget::Prim(target.to_owned()))

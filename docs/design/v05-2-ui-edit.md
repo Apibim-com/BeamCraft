@@ -95,7 +95,3 @@ beamcraft workspace-redo  --workspace-dir DIR
   nothing; in a workspace, undo restores the earlier state, redo the edit, a surplus undo is the
   engine's refusal, and the published store's head and state never change; the window binary
   refuses `--store` with `--workspace`.
-
-## Proposed Roadmap entry
-
-`2026-10-19 V05.2: UI edit tools (apps/beamcraft-ui: click selection through the engine's pick, selection box from the engine's bounds, move / copy / delete as previewed CLI commands update-element, copy-element, delete-element, undo and redo through workspace-undo / workspace-redo with --workspace DIR; pure mapping and reply parsing, end-to-end tests equal to the CLI by hand); experimental, no property editing (V06), no drag or snap placement.`

@@ -12,7 +12,7 @@ use beamcraft_cli::library::{
     EnvironmentInfo, LibraryEntry, LibraryInfo, Lookup, NewLibrary, RejectedEntry, Shadowed,
     Source, add_entry, open_lookup,
 };
-use beamcraft_protocol::json::Json;
+use beamcraft_json::Json;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 

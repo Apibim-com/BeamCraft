@@ -17,7 +17,7 @@ use std::{
 };
 
 const ID: &str = "0199e7a0-0000-7000-8000-000000000001";
-const PATH: &str = "/E_0199e7a0000070008000000000000001";
+const PATH: &str = "/World/Steel/Parts/PRT_0199e7a0000070008000000000000001";
 const HEADER: &str = "#usda 1.0\n(metersPerUnit = 0.001\nupAxis = \"Z\")\n";
 fn control() -> Control {
     Control {
@@ -33,7 +33,7 @@ fn layer(body: &str) -> String {
 }
 fn model() -> String {
     layer(&format!(
-        "def Xform \"E_0199e7a0000070008000000000000001\" {{ custom string bim:id = \"{ID}\"\n custom double demo:value = 77.25\n custom string future:label = \"Original\"\n }}"
+        "def Xform \"World\" {{ def Scope \"Steel\" {{ def Scope \"Parts\" {{ def Xform \"PRT_0199e7a0000070008000000000000001\" {{ custom string bim:id = \"{ID}\"\n custom double demo:value = 77.25\n custom string future:label = \"Original\"\n }} }} }} }}"
     ))
 }
 fn asset(name: &str, bytes: impl Into<Vec<u8>>) -> Asset {
@@ -92,9 +92,9 @@ fn real_usda_open_page_reopen_close_pins_full_identity_metadata_and_values() {
     assert_eq!(opened.meters_per_unit, 0.001);
     assert_eq!(opened.up_axis, "Z");
     let p = r.read(&opened.context, None, &control()).unwrap();
-    assert_eq!(p.items.len(), 1);
+    assert_eq!(p.items.len(), 4);
     assert!(p.next.is_none());
-    let prim = &p.items[0];
+    let prim = &p.items.last().unwrap();
     assert_eq!(prim.path, PATH);
     assert_eq!(prim.element_id.as_deref(), Some(ID));
     assert_eq!(prim.type_name.as_deref(), Some("Xform"));
@@ -139,9 +139,11 @@ fn real_usdc_reads_original_binary_fixture_and_corruption_is_atomic() {
         .open(request(vec![asset("root.usdc", bytes.clone())]), &control())
         .unwrap();
     let before = r.read(&opened.context, None, &control()).unwrap().items;
-    assert_eq!(before[0].element_id.as_deref(), Some(ID));
+    assert_eq!(before.last().unwrap().element_id.as_deref(), Some(ID));
     assert_eq!(
-        before[0]
+        before
+            .last()
+            .unwrap()
             .properties
             .iter()
             .find(|p| p.name == "demo:value")
@@ -235,7 +237,7 @@ fn rejects_asset_aliases_escapes_and_network_without_opening_them() {
 #[test]
 fn reference_provenance_overrides_and_foreign_write_refusal() {
     let root = layer(
-        "def Xform \"E_0199e7a0000070008000000000000001\" (prepend references = @foreign.usda@</Source>) { custom double demo:value = 88 }",
+        "def Xform \"World\" { def Scope \"Steel\" { def Scope \"Parts\" { def Xform \"PRT_0199e7a0000070008000000000000001\" (prepend references = @foreign.usda@</Source>) { custom double demo:value = 88 } } } }",
     );
     let foreign = layer(&format!(
         "def Xform \"Source\" {{ custom string bim:id = \"{ID}\"\ncustom double demo:value = 77.25 }}"
@@ -253,7 +255,9 @@ fn reference_provenance_overrides_and_foreign_write_refusal() {
         .unwrap();
     let p = r.read(&opened.context, None, &control()).unwrap();
     assert_eq!(
-        p.items[0]
+        p.items
+            .last()
+            .unwrap()
             .properties
             .iter()
             .find(|p| p.name == "demo:value")
@@ -261,10 +265,17 @@ fn reference_provenance_overrides_and_foreign_write_refusal() {
             .value,
         Some(Value::Number(88.0))
     );
-    assert!(p.items[0].sources.iter().any(|s| s.layer == "foreign.usda"
-        && s.path == "/Source"
-        && !s.owned
-        && s.digest == digest(&original)));
+    assert!(
+        p.items
+            .last()
+            .unwrap()
+            .sources
+            .iter()
+            .any(|s| s.layer == "foreign.usda"
+                && s.path == "/Source"
+                && !s.owned
+                && s.digest == digest(&original))
+    );
     assert_eq!(
         r.refuse_write(&opened.context, PATH).unwrap_err().code,
         ErrorCode::ForeignReadOnly
@@ -290,7 +301,12 @@ fn contained_sublayers_strong_opinions_and_dependency_failures() {
         )
         .unwrap();
     assert_eq!(
-        r.read(&opened.context, None, &control()).unwrap().items[0].path,
+        r.read(&opened.context, None, &control())
+            .unwrap()
+            .items
+            .last()
+            .unwrap()
+            .path,
         PATH
     );
     assert_eq!(
@@ -325,7 +341,12 @@ fn nonfinite_and_finite_cap_failures_preserve_old_view() {
             ErrorCode::NonFiniteNumber
         );
         assert_eq!(
-            r.read(&opened.context, None, &control()).unwrap().items[0].path,
+            r.read(&opened.context, None, &control())
+                .unwrap()
+                .items
+                .last()
+                .unwrap()
+                .path,
             PATH
         );
     }
@@ -431,7 +452,12 @@ fn cancellation_and_backend_error_never_replace_old_view() {
         .is_err()
     );
     assert_eq!(
-        r.read(&opened.context, None, &control()).unwrap().items[0].path,
+        r.read(&opened.context, None, &control())
+            .unwrap()
+            .items
+            .last()
+            .unwrap()
+            .path,
         PATH
     );
 }

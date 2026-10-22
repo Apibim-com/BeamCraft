@@ -48,8 +48,8 @@ pub(super) fn input_bounds(input: &Prepare, b: Budgets) -> Result<(), Diagnostic
                 }
             }
             Change::Label { name, .. } if name.len() > 256 => return Err(limit()),
+            Change::Mark { mark: m, .. } => mark(m)?,
             Change::AttachReference(r) if r.name.len() > 256 => return Err(limit()),
-            Change::Mark { value: Some(v), .. } if v.len() > 64 => return Err(limit()),
             Change::Contour { points_mm, .. } => {
                 count(points_mm.len().checked_mul(3).ok_or_else(limit)?, 8)?
             }
@@ -477,7 +477,14 @@ fn resource<'a>(
     digest: ContentDigest,
     kinds: &[&str],
 ) -> Result<&'a Prim, Diagnostic> {
-    let path = definition_path(digest);
+    let path = definition_path(
+        digest,
+        if kinds == ["material"] {
+            DefinitionCategory::Material
+        } else {
+            DefinitionCategory::Profile
+        },
+    );
     let p = prims
         .iter()
         .find(|p| p.path == path && p.active)
@@ -514,10 +521,19 @@ fn link<'a>(
     match targets {
         [] if !required => Ok(None),
         [target] => {
-            let Some(hex) = target.strip_prefix("/World/Definitions/D_") else {
+            let Some((category, digest)) = DefinitionCategory::parse_path(target) else {
                 return Err(invalid());
             };
-            let digest = hex.parse::<ContentDigest>().map_err(|_| invalid())?;
+            if target != &definition_path(digest, category)
+                || category
+                    != if name == "bim:material" {
+                        DefinitionCategory::Material
+                    } else {
+                        DefinitionCategory::Profile
+                    }
+            {
+                return Err(invalid());
+            }
             Ok(Some(resource(prims, digest, kinds)?))
         }
         _ => Err(fail(
@@ -569,7 +585,15 @@ pub(super) fn snapshot(
     metadata: &BTreeMap<String, Value>,
 ) -> Result<Validation, Diagnostic> {
     reference::stray_holders(prims)?;
-    for (path, kind) in [("/World", "assembly"), ("/World/Steel", "group")] {
+    for (path, kind) in [
+        ("/World", "assembly"),
+        ("/World/Steel", "group"),
+        ("/World/Steel/Parts", "group"),
+        ("/World/Steel/Assemblies", "group"),
+        ("/World/Steel/Connections", "group"),
+        ("/World/Levels", "group"),
+        ("/World/References", "group"),
+    ] {
         if let Some(p) = prims
             .iter()
             .find(|p| p.path == path && p.sources.iter().all(|s| s.owned))
@@ -622,7 +646,13 @@ pub(super) fn snapshot(
         ) {
             continue;
         }
-        if p.path != element_path(id)? {
+        if p.path
+            != element_path(
+                id,
+                ElementCategory::from_kind(text(p, "bim:elementKind", "token")?)
+                    .ok_or_else(invalid)?,
+            )?
+        {
             return Err(fail(
                 ErrorCode::InvalidId,
                 "invalid canonical owned element path",
@@ -859,7 +889,6 @@ pub(super) fn snapshot(
             "A06-V01:weld-properties-and-connects-two-distinct-parts",
             "A05-V01:bolt-properties-and-connects-two-distinct-parts",
             "D2-V01:level-elevation-and-level-kinds-cardinality-and-dangling",
-            "A08-V01:mark-value-status-pairing-kinds-and-uniqueness",
         ],
         prims: prims.len(),
     })
@@ -887,6 +916,58 @@ fn supported_kind(p: &Prim) -> Option<&str> {
             "plate" | "beam" | "column" | "assembly" | "connection" | "level"
         )
     })
+}
+
+/// The values of an A09 mark: a series of at most 16 letters, digits, `_` and `-`, a number in
+/// `0..=i32::MAX` and a non-empty printable-ASCII approval record of at most 512 bytes.
+fn mark_values(series: &str, number: i64, basis: &str) -> Result<(), Diagnostic> {
+    if series.chars().count() > MARK_MAX_SERIES
+        || !series
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        || !(0..=i64::from(i32::MAX)).contains(&number)
+        || basis.is_empty()
+        || basis.len() > MARK_MAX_BASIS
+        || !basis.bytes().all(|b| (0x20..=0x7e).contains(&b))
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+/// Checks a mark about to be authored.
+pub(super) fn mark(m: &Mark) -> Result<(), Diagnostic> {
+    mark_values(&m.series, i64::from(m.number), &m.basis)
+}
+
+/// A09 marks on loaded or authored elements: only a plate, beam, column or assembly carries one,
+/// and it carries all three properties with their exact types, or none. A partial or malformed
+/// record is refused, never read as "unnumbered".
+fn marks(prims: &[Prim]) -> Result<(), Diagnostic> {
+    for p in prims {
+        let Some(kind) = supported_kind(p) else {
+            continue;
+        };
+        let series = optional(p, MARK_SERIES, "string")?;
+        let number = optional(p, MARK_NUMBER, "int")?;
+        let basis = optional(p, MARK_BASIS, "string")?;
+        match (series, number, basis) {
+            (None, None, None) => {}
+            (Some(Value::Text(series)), Some(number), Some(Value::Text(basis))) => {
+                if !matches!(kind, "plate" | "beam" | "column" | "assembly") {
+                    return Err(unsupported());
+                }
+                let number = match number {
+                    Value::Int(n) => *n,
+                    Value::Uint(n) => i64::try_from(*n).map_err(|_| invalid())?,
+                    _ => return Err(invalid()),
+                };
+                mark_values(series, number, basis)?;
+            }
+            _ => return Err(invalid()),
+        }
+    }
+    Ok(())
 }
 
 /// The elevation of a loaded or authored level: finite and within the coordinate cap.
@@ -964,49 +1045,6 @@ fn level_links(prims: &[Prim]) -> Result<(), Diagnostic> {
                     "level target unavailable",
                 ));
             }
-        }
-    }
-    Ok(())
-}
-
-/// The value of a mark (A08): 1 to 64 UTF-8 bytes without control characters.
-fn mark_value(s: &str) -> Result<(), Diagnostic> {
-    if s.is_empty() || s.len() > 64 || s.chars().any(char::is_control) {
-        return Err(invalid());
-    }
-    Ok(())
-}
-
-/// A08 marks (`A08-V01`): `bim:mark` and its `bim:markStatus` are authored together on one
-/// supported fabricable element (a level is not fabricated), the value is bounded readable text
-/// and no two elements of a model carry the same value. Foreign, newer and unknown content stays
-/// inert, as everywhere: only owned 0.1.0 parametric elements are checked.
-fn marks(prims: &[Prim]) -> Result<(), Diagnostic> {
-    let mut seen: BTreeSet<String> = BTreeSet::new();
-    for p in prims
-        .iter()
-        .filter_map(|p| supported_kind(p).map(|k| (p, k)))
-    {
-        let value = optional_text(p.0, "bim:mark")?;
-        let status = optional(p.0, "bim:markStatus", "token")?;
-        match (&value, status) {
-            (None, None) => continue,
-            (None, Some(_)) | (Some(_), None) => return Err(invalid()),
-            (Some(v), Some(s)) => {
-                mark_value(v)?;
-                if !matches!(s, Value::Text(t) if MarkStatus::parse(t).is_some()) {
-                    return Err(invalid());
-                }
-            }
-        }
-        if p.1 == "level" {
-            return Err(fail(ErrorCode::InvalidArgument, "a level carries no mark"));
-        }
-        if !seen.insert(value.as_deref().ok_or_else(invalid)?.to_owned()) {
-            return Err(fail(
-                ErrorCode::InvalidArgument,
-                "the mark is already in use",
-            ));
         }
     }
     Ok(())
@@ -1303,7 +1341,7 @@ pub(super) fn changes(
     let mut writes = BTreeSet::new();
     for change in &input.changes {
         let (id, _) = change.key();
-        let path = element_path(id)?;
+        let path = change_path(id, input, prims)?;
         let existing = prims.iter().find(|p| p.path == path);
         // A wrapper is owned although its `Source` descendant is foreign: only the wrapper's own
         // levels are checked here, and the loaded shape (`reference::element`) refuses every
@@ -1383,22 +1421,8 @@ pub(super) fn changes(
                         matches!(kind, "plate" | "beam" | "column" | "assembly")
                     }
                     Change::Level { .. } => matches!(kind, "plate" | "beam" | "column"),
-                    // A mark lives on the fabricable elements a bill can list; a level is not
-                    // fabricated and a foreign wrapper is never marked (A08).
-                    Change::Mark { value, status, .. } => {
-                        if value.is_none() && status.is_none() {
-                            return Err(fail(
-                                ErrorCode::MalformedCommand,
-                                "a mark change authors nothing",
-                            ));
-                        }
-                        if let Some(v) = value {
-                            mark_value(v)?;
-                        }
-                        matches!(
-                            kind,
-                            "plate" | "beam" | "column" | "assembly" | "connection"
-                        )
+                    Change::Mark { .. } => {
+                        matches!(kind, "plate" | "beam" | "column" | "assembly")
                     }
                     _ => matches!(kind, "plate" | "beam" | "column"),
                 };
@@ -1429,6 +1453,9 @@ pub(super) fn changes(
                     Group::Placement,
                 ],
             ),
+            // A mark is stored with the label's group: it conflicts with a rename or another
+            // mark of the element and with nothing derived.
+            Change::Mark { .. } => (&[Group::Lifecycle, Group::Label], &[Group::Label]),
             Change::Label { .. } => (&[Group::Lifecycle, Group::Label], &[Group::Label]),
             Change::Material { .. } => (
                 &[Group::Lifecycle, Group::Derived],
@@ -1443,9 +1470,6 @@ pub(super) fn changes(
                 &[Group::Lifecycle, Group::Relationship],
                 &[Group::Relationship],
             ),
-            // A mark decision reads the element's existence and its current mark; it writes only
-            // the mark group (A08), mirroring the engine's `Footprint::for_mark`.
-            Change::Mark { .. } => (&[Group::Lifecycle, Group::Mark], &[Group::Mark]),
             Change::Delete { .. } => (
                 &[Group::Lifecycle, Group::Relationship],
                 &[
@@ -1515,6 +1539,7 @@ pub(super) fn changes(
                 | Change::Delete { .. }
                 | Change::PartOf { .. }
                 | Change::Level { .. }
+                | Change::Mark { .. }
         ) && let Some(p) = existing
         {
             for target in p
@@ -1523,10 +1548,7 @@ pub(super) fn changes(
                 .filter(|r| matches!(r.name.as_str(), "bim:profile" | "bim:material"))
                 .flat_map(|r| &r.targets)
             {
-                let hex = target
-                    .strip_prefix("/World/Definitions/D_")
-                    .ok_or_else(invalid)?;
-                let digest = hex.parse::<ContentDigest>().map_err(|_| invalid())?;
+                let (_, digest) = DefinitionCategory::parse_path(target).ok_or_else(invalid)?;
                 reads.insert(Footprint {
                     identity: digest.to_string(),
                     group: Group::Relationship,
@@ -1551,10 +1573,9 @@ pub(super) fn changes(
         // A definition that is not in the stage yet is created; an existing one is immutable and
         // must already be exactly this content, active and owned (kind, fields, types, label and
         // the recomputed digest), or the batch is refused instead of treating it as a no-op.
-        if prims
-            .iter()
-            .any(|p| p.path == definition_path(resource.digest))
-        {
+        if prims.iter().any(|p| {
+            p.path == definition_path(resource.digest, definition_category(&resource.definition))
+        }) {
             let kind = match &resource.definition {
                 Definition::RectangleProfile { .. } => "rectangle",
                 Definition::SectionProfile { shape, .. } => shape.token(),

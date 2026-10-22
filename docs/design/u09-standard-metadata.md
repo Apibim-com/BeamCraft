@@ -45,8 +45,3 @@ Usd.ModelAPI documentation only; no third-party sample was used.
 
 - Visual material and `displayColor` (U08), lighting (U13), instancing (U11), payloads (U10).
 - Old stores are not migrated.
-
-## Roadmap entry (proposed, not applied)
-
-- 2026-10-17: U09 authored model kinds, `displayName`, Mesh `extent` and flat per-face normals
-  and validated them in U02; pxr reads them with `Usd.ModelAPI`. No material or payload yet.

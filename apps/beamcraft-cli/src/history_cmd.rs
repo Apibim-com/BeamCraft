@@ -32,8 +32,8 @@ use beamcraft_host::compaction::{
 use beamcraft_host::lease::StoreLease;
 use beamcraft_host::revision::RevisionStore;
 use beamcraft_host::storage::BlobStore;
+use beamcraft_json::Json;
 use beamcraft_model::error::ErrorCode;
-use beamcraft_protocol::json::Json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};

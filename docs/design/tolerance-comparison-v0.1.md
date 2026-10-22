@@ -11,10 +11,9 @@ Status: documentation only, 2026-10-15. F04 remains a freeze candidate at contra
 F06 remains a draft. Nothing is implemented or admitted by this report. Constants are **confirmed by
 the owner as first-slice values; draft, to be validated by fixtures**.
 
-This report consumes [F04](../contracts/model-and-commands-v0.1.md),
-[F06](../contracts/geometry-contract-v0.1.md), the read-only [first-scope
-package](../clean-room/handoff/first-scope-v0.1.md) and [kernel design](kernel-design-v0.1.md). The
-package and design retain their earlier policies. Only the two contracts and their cases apply the
+This report consumes [F04](../contracts/f04-model-and-commands-v0.1.md),
+[F06](../contracts/f06-geometry-contract-v0.1.md), the first-scope requirements 0.1.0 (PR #10) and [kernel design](kernel-design-v0.1.md). The
+requirements and design retain their earlier policies. Only the two contracts and their cases apply the
 owner amendment here.
 
 ## Interpretation and classification
@@ -129,7 +128,7 @@ calls the generic structural limits loose for boxes but supported as validator l
 | Shape key encoding | kind byte 1/2, u16 contour count, f64 coordinates/thickness or axis/roll/profile; four u16 versions | Ordered authored contour is part of shape, not placement |
 | Digests / mass signature | SHA-256, 32 raw bytes / 64 lowercase hex digits; density presence byte 0/1 | Exact identities; never compare with tolerance |
 | World/mass tags and space | BCGEO-SHAPE, BCGEO-WORLD, BCGEO-MASS plus zero byte; mesh space 0 local / 1 world | Exact domain separation |
-| Host transport limits referenced by F06 | negotiated F05 limits, smaller applicable bound wins | No F05 number is changed or restated as a geometry tolerance |
+| Host transport limits referenced by F06 | the host's delivery limits, smaller applicable bound wins | No host limit is changed or restated as a geometry tolerance |
 | Design dyadic fallback proposal | <1107/1108/3330 bits; proposed 4096-bit buffer; degree <=3 | Analysis/proposal only, not a required homemade integer library |
 | Design resource proposals | 24576 directed edges; <=15 merge passes; <=10000000 limb-pair steps | Separate design proposal, not implemented or admitted here |
 
@@ -312,8 +311,7 @@ baseline mesh digest do not change.
   trig; no backend, crate, Git revision or vendor patch is selected in this record.
 - The ifc-lite numbers are supplied facts, not read by this worker. The floor is read as 1e-6 m
   (0.001 mm); the owner should confirm it against the millimetre-file reading (1e-6 mm).
-  Source-exposure admission, contract freeze, fixture validation and design reconciliation
-  remain separate gates.
+  Contract freeze, fixture validation and design reconciliation remain separate gates.
 
 ## Proposed edits to read-only files (not applied)
 
@@ -327,7 +325,7 @@ crate exists. Copyleft and weak-copyleft third-party packages, including MPL-2.0
 explicit owner exception for each package. Audited dependency use does not authorize copying
 implementation text or restricted commercial-product material.
 
-**module-boundaries-v0.1.md section 3, after the empty-list statement:**
+**f08-module-boundaries-v0.1.md section 3, after the empty-list statement:**
 
 > The owner decision of 2026-10-15 prefers suitable audited permissive Rust math and geometry
 crates. It does not populate this allowlist. Add each approved domain dependency here and update
@@ -335,14 +333,6 @@ its manifest and dependency audit together. Keep the PdfCraft frontend stack in 
 beamcraft-ui app; craft-libs requires a pinned revision, licence verification and a deny.toml
 unknown-git-source exception before integration. The domain/host/app edges and engine independence
 remain unchanged.
-
-**F05 section 12 clarification:**
-
-> F04/F06 owner amendments of 2026-10-15 replace plate width/length with contour_points_mm and add
-member roll_rad. Model commands keep their existing transport envelope; numeric overflow,
-duplicate-key and logical control bounds remain enforced. Geometry blobs remain opaque u8
-attachments. Algorithm and tolerance versions are 3 after the local-size amendment; mesh layout
-remains 1.
 
 **F10 sections 2.2 and 6.5 (replacing the corresponding old fields/rules):**
 
@@ -385,10 +375,8 @@ length floor. Preserve exact rational results; rewrite FS-NEG-QUAT's fourth quat
 w=0.999999 so it remains rejected. Raise the package version and review admission before relying
 on those changes; no current 0.1.0 entry is silently amended.
 
-The earlier ROADMAP progress-log entry and ATTRIBUTION row were applied directly in round 2.
-This local-size amendment does not edit those files; its ROADMAP proposal follows below. UI asset
-and patch
-rows wait for their own original-source audits; the architecture paragraph adds no dependency.
+UI asset and patch rows wait for their own original-source audits; the architecture paragraph adds
+no dependency.
 
 ## Earlier-round checks and delivery (historical)
 
@@ -416,9 +404,9 @@ contour or roll kernel. Tables and code blocks are exempt from prose wrapping.
 
 Owner decision: "Scale the tolerance by coordinate magnitude." This accepts round-2 open item 2
 for the large-coordinate part of A5 only. The exact operative definition is in
-[F04 section 3](../contracts/model-and-commands-v0.1.md#3-units-types-and-initial-limits) and
+[F04 section 3](../contracts/f04-model-and-commands-v0.1.md#3-units-types-and-limits) and
 [F06 section
-4](../contracts/geometry-contract-v0.1.md#4-tolerance-and-degeneracy-policy-g-06-draft):
+4](../contracts/f06-geometry-contract-v0.1.md#4-tolerance-and-degeneracy-policy):
 
 > `eps_geom = max(0.001 mm, 2^-22 * L)`.
 
@@ -479,21 +467,6 @@ lists exact digests and actual check results; scratch verification is in ignored
   (W10) remain open. Keep original counterexample arithmetic and conformance/admission gates.
   Update the read-only validation matrix in its own reviewed task, not by this amendment.
 
-### Proposed ROADMAP progress-log entry (exact text, not applied)
-
-```text
-- 2026-10-15: applied the owner local-size tolerance decision to F04/F06, stacked on PR #26:
-  eps_geom = max(0.001 mm, 2^-22 * L), with plate L=D and member L=max(axis length, section
-  half-diagonal), evaluated in the element-local frame under ordered binary64 arithmetic and
-  existing caps. Geometric length minima, coincidence, degeneracy, planarity and distance bands
-  use the scaled floor; CR-TOL-001, absolute pick bands, exact checks and relative 1e-6 bounds
-  remain unchanged. Algorithm/tolerance versions are 3/3 and seven dependency-key digests are
-  regenerated. F04 has 69 logical cases (30 positive, 39 negative), seven raw; F06 has 112 cases
-  (59 positive, 53 negative). Only A5's large-coordinate part is closed; rounded-mesh
-  cross-checks and subnormal mass remain open. F04 stays a freeze candidate 0.1.0, F06 a draft;
-  no runtime feature, admission, freeze or K0 gate is passed.
-```
-
 ### Amendments log
 
 - 2026-10-15: recorded the owner's local-size decision; resolved round-2 open item 2 only for
@@ -508,7 +481,7 @@ not execution of the logical acceptance descriptions or evidence of a working ge
 
 | Command | Exact result |
 |---------|--------------|
-| `python -c "import json; [json.load(open(p, encoding='utf-8')) for p in ('docs/contracts/model-command-cases-v0.1.json','docs/contracts/geometry-contract-cases-v0.1.json')]; print('json ok')"` | Exit 0; `json ok` |
+| `python -c "import json; [json.load(open(p, encoding='utf-8')) for p in ('tests/fixtures/contracts/f04-model-command-cases-v0.1.json','tests/fixtures/contracts/f06-geometry-contract-cases-v0.1.json')]; print('json ok')"` | Exit 0; `json ok` |
 | `git diff --check` | Exit 129; `warning: Not a git repository. Use --no-index to compare two paths outside a working tree`; no usable diff check. Earlier `git status` refused dubious ownership; no workaround attempted |
 | `cargo fmt --all -- --check` | Exit 0; no output |
 | `cargo clippy --workspace --all-targets -- -D warnings` | Exit 0; no warnings |
@@ -519,7 +492,7 @@ not execution of the logical acceptance descriptions or evidence of a working ge
 
 The independent before/after text comparison confirms no whole-file rewrite. Git branch, HEAD and
 the PR #26 stack cannot be verified under the ownership block. Status is **uncommitted**; no Git
-write command was run. The design and ROADMAP proposals above remain unapplied.
+write command was run. The design proposals above remain unapplied.
 
 ## Technical reservations
 
@@ -530,22 +503,3 @@ scaling resolves only the owner-selected large-coordinate policy part. The desig
 rounded-mesh and subnormal counterexamples remain unresolved. Exact expected values, topology and
 identity checks remain intact. The winding hemisphere and missing roll cap are reviewable
 assumptions; neither should be mistaken for a verbatim owner decision.
-
-## Exposure note
-
-Round 1 read this worktree's AGENTS.md, CLAUDE.md, ROADMAP.md, architecture, F04 and F06 with their
-case files, the first-scope package and case file, the kernel design, the domain vocabulary and
-module boundaries. Round 2 read this report, ROADMAP.md, ATTRIBUTION.md and the contract passages
-that mention the comparison. The ifc-lite numbers in this report were supplied by the orchestrator;
-the worker did not read, fetch or open the ifc-lite repository in round 2. Round 1 saw only search
-excerpts and listings of that repository, and no source file; no code, structure, comment, fixture
-or asset was copied. PdfCraft and craft-libs facts come from the orchestrator's supplied Cargo.toml
-facts. No commercial-product material, oracle process or client project was accessed.
-
-The local-size amendment read only authorized repository documents/cases and scratch files in
-this worktree, including the read-only first-scope package/cases and kernel design. It accessed
-no network, other checkout, commercial-product material or external oracle. Cargo checks may
-read installed toolchain/dependency files. No external code or asset is adopted.
-
-Earlier training or prior exposure that cannot be established remains unknown. This documentation
-task does not declare any implementer eligible or amend the source-exposure admission policy.

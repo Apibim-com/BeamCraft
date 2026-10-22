@@ -106,7 +106,3 @@ used.
   implements it as specified above and records that decision as open.
 - The schema descriptor changed: other open PRs that also edit it will conflict and need the
   earlier-descriptor list extended.
-
-## Proposed Roadmap entry
-
-`2026-10-18 A06: minimal weld (create-weld, welds; a connection element with explicit fillet size, workshop/site and side and one ordered bim:connects record to two parts; Shape::Weld and rule A06-V01 in the layer engine; delete/copy refusals); experimental slice.`

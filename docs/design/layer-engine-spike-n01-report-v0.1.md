@@ -354,7 +354,7 @@ number, write a number, export the edit layer) is a minimal slice of this surfac
 
 ## Python/C++ avoidance verdict (final answer for the owner)
 
-Question: can the Python/C++ OpenUSD worker be avoided for each first-slice need? The answer
+Question: can the Python/C++ OpenUSD SDK be avoided for each first-slice need? The answer
 below is limited to the synthetic fixtures run here, on Windows with one crate version, with
 no official-SDK comparison. "Shown" means the behaviour was observed; it does not mean the
 output is conformant.
@@ -369,11 +369,11 @@ output is conformant.
 | Delta / merge | **Partly shown** | Capture, replay and `(UUID, attribute)` collision detection shown; footprints, idempotency, gap/stale handling must be written by BeamCraft and were not run |
 
 Overall: nothing observed requires Python or C++ for these needs, but the evidence does not
-yet establish that the worker can be dropped. Open blockers: the MSRV change (the licence
+yet establish that the SDK can be dropped. Open blockers: the MSRV change (the licence
 exception is resolved by owner decision, with conditions), the lack of an oracle for
 interchange and composition correctness, and unproved parser limits. The crate is **not**
 shown to be suitable as the replacement backend, is **not adopted**, no option is selected,
-and no conclusion about the accepted SDK worker baseline follows.
+and no conclusion about the accepted SDK baseline follows.
 
 ## Risks, effort and next steps
 
@@ -421,18 +421,3 @@ head `8957c40`). All Cargo commands used `--offline`.
 | Rust 1.95 build, Linux, macOS | **Not run** |
 | `cargo deny` on the spike | **Not run** (spike is outside the repository CI) |
 | Official OpenUSD tooling | **Not run** (not available) |
-
-## Exposure note
-
-Exposure was limited to repository instructions, design and contract documents, the local
-toolchain and Cargo cache, the `openusd 0.8.0` package manifest and README licence statement and
-bundled notice file (for the licence finding), and the dependency metadata. No Tekla/Trimble or
-other commercial detailing assets, personal data, client projects or other checkouts were
-accessed. No upstream source or tests were copied. No network access was used; no service,
-worker or plugin was started other than the spike's own child processes. All new material is
-contributor-original and MPL-2.0.
-
-## ROADMAP and ATTRIBUTION text
-
-Applied in this change: one `ROADMAP.md` progress-log entry at the top of the log and one
-`ATTRIBUTION.md` row, with LF endings. PR URL: none (the orchestrator publishes).

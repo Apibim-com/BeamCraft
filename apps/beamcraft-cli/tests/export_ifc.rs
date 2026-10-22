@@ -23,10 +23,7 @@ use beamcraft_host::{
     storage::BlobStore,
 };
 use beamcraft_ifc::verify::{self, StepFile, Value};
-use beamcraft_protocol::{
-    json::{self, Json},
-    message,
-};
+use beamcraft_json::{Json, Limits};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -321,7 +318,7 @@ impl Drop for Fixture {
 
 fn decode_large(bytes: &[u8]) -> Json {
     // The scenes are small, so the report fits the control-message bounds of the other commands.
-    json::decode(bytes, &message::read_limits()).unwrap_or_else(|_| {
+    beamcraft_json::decode(bytes, &Limits::DEFAULT).unwrap_or_else(|_| {
         panic!(
             "undecodable output: {}",
             String::from_utf8_lossy(&bytes[..bytes.len().min(300)])

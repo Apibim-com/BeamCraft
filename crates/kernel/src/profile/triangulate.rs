@@ -21,8 +21,10 @@ use super::predicates::{SegRel, boxes_apart, segment_relation};
 use super::{Point2, Profile};
 use core::cmp::Ordering;
 
-/// Largest number of exact orientation evaluations of one triangulation.
-pub(crate) const WORK_BUDGET: u64 = 150_000_000;
+/// Largest number of exact orientation evaluations of one triangulation; ear clipping scans
+/// the remaining contour per candidate, so a full-cap profile costs about n*n/2 evaluations
+/// and the budget keeps that bounded (a typed failure, never a hang) with margin.
+pub(crate) const WORK_BUDGET: u64 = 40_000_000_000;
 
 enum TriError {
     Uncertain,

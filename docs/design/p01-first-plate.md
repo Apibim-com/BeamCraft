@@ -47,7 +47,7 @@ beamcraft plate-inspect --store ROOT
 4. **Replay.** The host's U07 ledger proves an op committed; the engine then compares the request
    with the element of that id in the head revision (reconstructed fingerprint). That is sound only
    while nothing edits or deletes elements (true in P01). P04/P08 must replace it with the stored
-   canonical request (F05 section 6, `model::canonical`, planned).
+   canonical request (F04 section 3, `model::canonical`, planned).
 5. **Verifier at publish.** The host's `ContentVerifier` is implemented in the CLI with the real
    engine: U02 structural validation, U03 `verify_index`, then every plate in the layers is
    re-evaluated by the kernel and its committed mesh must equal the kernel mesh (bit-exact float32
@@ -65,7 +65,7 @@ beamcraft plate-inspect --store ROOT
 | F04 section 5: published revisions include quantities | Volume is returned by the command and recomputed by `plate-inspect`; **not stored in USD**: the pinned U02 schema has no quantity attributes and the F06 keys are absent. | U02 schema amendment plus P04 signatures. |
 | Mesh `extent` | The U02 Mesh has `points`, topology, `orientation`, `subdivisionScheme`, `bim:shapeKey` and no `extent`. Readers compute it. | U02 schema amendment. |
 | Mesh precision | USD `point3f` is float32; the kernel blob is float64. The committed mesh equals the float32 cast; volumes agree within 1e-6 for the first-scope sizes. | Decide the F06/U02 precision policy (or double-precision points) before large coordinates matter. |
-| F04 section 6 envelope, `OpId` canonical bytes, `CommitWorkspace` | Not implemented (see decision 3). | P06, F05 `canonical`. |
+| F04 section 6 envelope, `OpId` canonical bytes, `CommitWorkspace` | Not implemented (see decision 3). | P06, `model::canonical`. |
 | F04 section 8 validation order | Implemented: arguments, replay, ID uniqueness, footprint, engineering validation; trusted context, workspace, base and generation preconditions are only partly covered by the host commit (base). | P06. |
 
 ## Evidence
@@ -97,10 +97,9 @@ beamcraft plate-inspect --store ROOT
   the checker does not flag it. No float32 incompatibility appeared (volumes agree to 1e-6). The
   test skips with an explicit message when no interpreter with pxr exists (CI); a skip is not
   evidence. Limits: one Windows machine and one OpenUSD version, 25.11, which is **not** the
-  F03-audited 26.8 release (`docs/audits/openusd-26.8.md` still requires an audited tool
-  distribution before the U02 independent-reader gate counts as closed). usd-core is a local test
+  F03-audited 26.8 release. usd-core is a local test
   oracle only (not vendored, not a dependency, nothing committed from it); its TOST-1.0 terms apply
-  to the installed wheel and `ATTRIBUTION.md` lists it as an external oracle, not redistributed.
+  to the installed wheel, which is not redistributed.
 * **Failure injection with real process death**: a child re-executes the test binary and
   `abort()`s inside the commit hook at each of the seven U06/U07 commit points, with and without a
   base revision. After each, a fresh `plate-inspect` sees one complete revision (old before the

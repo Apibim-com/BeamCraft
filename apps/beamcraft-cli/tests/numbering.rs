@@ -13,10 +13,7 @@
     clippy::panic
 )]
 
-use beamcraft_protocol::{
-    json::{self, Json},
-    message,
-};
+use beamcraft_json::{Json, Limits};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -59,7 +56,7 @@ impl Fixture {
             .args(&args)
             .output()
             .unwrap();
-        let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
+        let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
         (output.status.code().unwrap(), body)
     }
     fn ok(&self, command: &str, extra: &[&str]) -> Json {
@@ -495,7 +492,7 @@ fn bad_input_is_refused_without_a_preview() {
         .map(|o| {
             (
                 o.status.code().unwrap(),
-                json::decode(&o.stdout, &message::read_limits()).unwrap(),
+                beamcraft_json::decode(&o.stdout, &Limits::DEFAULT).unwrap(),
             )
         })
         .unwrap();

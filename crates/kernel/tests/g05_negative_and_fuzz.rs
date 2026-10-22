@@ -184,13 +184,14 @@ fn counts_and_caps_are_checked_before_any_traversal() {
     );
     assert_eq!(f.diagnostics()[0].field, ProfileField::OuterContour);
     assert_eq!(f.status(), "limit_exceeded");
-    // More than 256 cavities, and more than 2048 points in total.
+    // More than 256 cavities, and more than 131,072 points in total.
     let tiny = |k: f64| Cavity::polygon(vec![p(k, 1.0), p(k, 2.0), p(k + 1.0, 2.0)]);
     let cavities: Vec<Cavity> = (0..257).map(|k| tiny(f64::from(k) * 3.0)).collect();
     let f = reject(&base_outer(), &cavities, 1.0);
     assert_eq!(f.diagnostics()[0].field, ProfileField::CavityCount);
     let big = Cavity::polygon(ring(1024, 10.0));
-    let f = reject(&ring(1024, 1.0e5), &[big.clone(), big, tiny(0.0)], 1.0);
+    let cavities: Vec<Cavity> = (0..129).map(|_| big.clone()).collect();
+    let f = reject(&ring(1024, 1.0e5), &cavities, 1.0);
     assert_eq!(f.diagnostics()[0].field, ProfileField::TotalPoints);
     assert_eq!(f.diagnostics()[0].code, ProfileCode::AboveLimit);
 }

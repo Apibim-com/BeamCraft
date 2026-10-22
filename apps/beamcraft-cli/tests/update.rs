@@ -16,10 +16,7 @@ use beamcraft_host::{
     revision::{ExpectedBase, LayerEntry, NoFault, RevisionDraft, RevisionStore, Uuid7},
     storage::BlobStore,
 };
-use beamcraft_protocol::{
-    json::{self, Json},
-    message,
-};
+use beamcraft_json::{Json, Limits};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -57,7 +54,7 @@ impl Fixture {
             .args(&args)
             .output()
             .unwrap();
-        let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
+        let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
         (output.status.code().unwrap(), body)
     }
     fn ok(&self, command: &str, extra: &[&str]) -> Json {
@@ -462,11 +459,15 @@ fn a_stored_record_that_no_longer_matches_is_stale_never_current() {
     assert_eq!(record.stored.as_ref().unwrap().mass_kg, Some(99.0));
 
     // The material reference edited outside BeamCraft: the stored mass signature is now stale.
-    let steel_path = format!("D_{steel}");
-    let light_path = format!("D_{light}");
+    let steel_path = format!("MAT_{steel}");
+    let light_path = format!("MAT_{light}");
     f.tamper(|name, text| {
         if name == "authored.usda" {
             let (before, after) = text.split_once("custom rel bim:material").unwrap();
+            assert!(
+                after.contains(&steel_path),
+                "material target must be present before tampering"
+            );
             format!(
                 "{before}custom rel bim:material{}",
                 after.replacen(&steel_path, &light_path, 1)

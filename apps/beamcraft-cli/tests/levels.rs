@@ -18,10 +18,7 @@ use beamcraft_host::{
     revision::{ExpectedBase, LayerEntry, NoFault, RevisionDraft, RevisionStore, Uuid7},
     storage::BlobStore,
 };
-use beamcraft_protocol::{
-    json::{self, Json},
-    message,
-};
+use beamcraft_json::{Json, Limits};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -72,7 +69,7 @@ impl Fixture {
             .args(&args)
             .output()
             .unwrap();
-        let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
+        let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
         (output.status.code().unwrap(), body)
     }
     fn run(&self, command: &str, extra: &[&str]) -> (i32, Json) {
@@ -692,7 +689,16 @@ fn replay_reuse_delete_and_copy_follow_the_level_records() {
 
 #[test]
 fn level_records_stored_outside_beamcraft_are_refused_when_read() {
-    let path = |id: &str| format!("/World/Steel/E_{}", id.replace('-', ""));
+    let path = |id: &str| {
+        let category = if id == STOREY || id == ROOF {
+            beamcraft_model::prim::ElementCategory::Level
+        } else {
+            beamcraft_model::prim::ElementCategory::Part
+        };
+        beamcraft_model::id::ElementId::parse(id)
+            .unwrap()
+            .prim_path(category)
+    };
     // A target that is not a level, two targets, a target that does not exist, an elevation
     // beyond the cap and a level record on an owned foreign-source wrapper. Every reader that
     // interprets levels refuses them with the same code: the level list, the inspection and any
@@ -734,7 +740,7 @@ fn level_records_stored_outside_beamcraft_are_refused_when_read() {
             if case == "wrapper" {
                 // The record is added to the wrapper; the plate's own record stays valid.
                 let at = text
-                    .find(&format!("\"E_{}\"", WRAPPER.replace('-', "")))
+                    .find(&format!("\"REF_{}\"", WRAPPER.replace('-', "")))
                     .unwrap();
                 let open = at + text[at..].find('{').unwrap() + 1;
                 return format!(
@@ -764,7 +770,7 @@ fn a_foreign_or_newer_schema_level_stays_inert_instead_of_blocking_readers() {
     let plate = f.plate();
     f.level(STOREY, "Level 1", "3000");
     f.level(ROOF, "Roof", "6000");
-    let header = format!("\"E_{}\"", STOREY.replace('-', ""));
+    let header = format!("\"LVL_{}\"", STOREY.replace('-', ""));
     // A level written by a newer schema: it does not carry the current elevation field.
     f.tamper(|name, text| {
         if name != "authored.usda" {

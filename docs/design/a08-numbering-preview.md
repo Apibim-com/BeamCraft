@@ -97,7 +97,3 @@ rename do not.
   rings whose smallest vertices differ by less than the tolerance in different leading digits
   could be started at different vertices and not match.
 * The "main part" of an assembly and its mark when sub-assemblies differ are not modelled.
-
-## Proposed Roadmap entry
-
-`2026-10-19 A08: numbering preview (beamcraft_engine::numbering, beamcraft_cli::numbering, CLI numbering-preview): groups equivalent plates, beams and columns by kind, profile, material, dimensions within a tolerance and holes, proposes series per kind and assembly marks, shows overlapping series and a staleness token; read-only, nothing is approved or stored (A09); experimental slice.`

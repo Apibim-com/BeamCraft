@@ -23,6 +23,7 @@ use beamcraft_host::{
     revision::{NoFault, RevisionStore, Uuid7},
     storage::BlobStore,
 };
+use beamcraft_json::Json;
 use beamcraft_model::command::Placement;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
@@ -30,7 +31,6 @@ use beamcraft_model::reference::{
     CorrectReferenceUnits, ForeignTarget, MoveReference, UnitsInterpretation, UpAxis, WriteForeign,
     check_source_path,
 };
-use beamcraft_protocol::json::Json;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 
@@ -373,7 +373,14 @@ fn wrapper_json(wrapper: &Wrapper) -> Run<Json> {
     let optional = |value: Option<f64>| value.map_or(Ok(Json::Null), num);
     Ok(Json::object([
         ("id", Json::text(record.id.to_string())),
-        ("path", Json::text(record.id.prim_path())),
+        (
+            "path",
+            Json::text(
+                record
+                    .id
+                    .prim_path(beamcraft_model::prim::ElementCategory::Reference),
+            ),
+        ),
         ("name", Json::text(record.name.clone())),
         (
             "placement",

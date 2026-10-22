@@ -1,49 +1,25 @@
-# BeamCraft CLI and Rust USD worker
+# BeamCraft CLI
 
-U04 adds two native binaries in this existing package: `beamcraft` and
-`beamcraft-usd-worker`. The CLI calls `beamcraft_host::dispatch::Dispatcher`;
-only the worker constructs a `beamcraft_layer_engine::Reader`. Neither starts
-a socket or a service. The SDK fallback and the worker mutation protocol are unavailable;
-`revision-commit` and `revision-open` (below) publish already stored blobs and do not parse USD.
-`create-plate` (P01, below) and the P02 definition commands are the ones that author USD and publish it, in this process.
-This is an experimental read path, not complete LEW-03/F05 admission.
+The `beamcraft` binary is the headless entry point to every feature. USD is read and written in
+this process by the pure-Rust layer engine (`beamcraft-layer-engine`); no other process is
+started, and no command opens a socket or a service except the opt-in loopback coordinator
+commands. A
+corrupt or hostile layer is an ordinary refusal with a stable F04 code under the layer engine's
+size and depth budgets; the project's own layers are verified by SHA-256 before they are parsed.
+`revision-commit` and `revision-open` (below) publish already stored blobs and do not parse USD;
+`create-plate` (P01, below) and the other modelling commands author USD and publish it.
 
 Build offline with `cargo build --offline -p beamcraft-cli --bins`.
-`beamcraft --help` describes the bounded arguments. Example argument shape:
+`beamcraft --help` describes the bounded arguments. Results are one JSON object on standard
+output, with strings for generations and other lossless integers.
 
-```text
-beamcraft read --backend rust --store ABSOLUTE_PROTECTED_ROOT
-  --worker ABSOLUTE_PACKAGED_WORKER --worker-digest FULL_SHA256
-  --project-id FULL_UUIDV7 --workspace-id FULL_UUIDV7
-  --revision FULL_SHA256 --generation 42
-  --file EXPLICIT_LOCAL_LAYER --digest EXPECTED_LAYER_SHA256
-```
-
-Put these arguments on one line. The package manifest supplies the independently
-verified worker digest. This example includes no fabricated identity/digest or model.
-The file route names the virtual root `root.usda` and supports only a self-contained layer.
-The CLI verifies the supplied source digest. For multiple assets, use `--manifest SHA256`;
-the U05 blob contains `dispatch::read_manifest`'s closed format. Its identity must match
-the independently selected tuple. `--owned NAME,...` explicitly grants owned virtual layers;
-without it every contributing layer is foreign. USD metadata cannot grant ownership.
-
-`open` returns stage metadata/capabilities/context. `read` opens and returns the first
-bounded snapshot page (up to 64 prims). The native API supports continuation over a retained
-context. A new CLI invocation opens a fresh incarnation; its stage token/cursor cannot
-resume a previous CLI process. Results are JSON, with strings for generation and lossless
-signed/unsigned attribute integers. Static values use closed `kind`/`value` records.
-
-`--timeout-ms` accepts 1..120000 (default 30000); `--cancel-after-ms` accepts 0..120000
-and provides explicit headless cancellation. Exit codes: 0 success, 2 input/validation or
-unavailable command, 3 backend unavailable, 4 outcome unknown, 124 deadline, 130 cancelled.
-An explicitly selected unavailable backend returns 3; there is no automatic SDK fallback.
+Exit codes: 0 success, 2 input or validation refusal or an unavailable command, 3 backend
+unavailable, 4 outcome unknown, 124 deadline, 130 cancelled. `--timeout-ms` accepts 1..120000
+(default 30000) and `--cancel-after-ms` accepts 0..120000 on the blob and revision commands
+below.
 
 `blob-put --store ROOT --file FILE` and `blob-verify --store ROOT --digest SHA256`
-use U05 byte storage. They do not publish a project revision. `query-outcome` requires the
-selected identity and `--op-id UUIDV7`, works without a worker, and still returns
-OUTCOME_UNKNOWN: it is the frozen U04 stage-profile command and is not wired to the U07
-ledger (the profile has no recorded-result message). The durable host-ledger answer is
-`revision-outcome` below. Neither reports an assumed rejection on replay.
+use U05 byte storage. They do not publish a project revision.
 
 ## U06 revision commands
 
@@ -66,10 +42,10 @@ switch (the root is then unchanged and the cancellation/deadline error is report
 never checked after the switch, because a timeout would hide a committed revision. A retry of
 a commit must repeat the same `--base`: another base under the same op id is `OP_ID_REUSE`.
 
-These commands check blob integrity, not USD content: the layer engine runs in its own process
-and the frozen U04 profile has no verify/index message, so duplicate-ID, dangling-link and
+These commands check blob integrity, not USD content: duplicate-ID, dangling-link and
 U03-index checks run only through the host API's injected `ContentVerifier` (exercised in the
-tests with the real layer engine). A CLI commit records `index: null`. See the
+tests with the real layer engine). A CLI commit records `index: null`, and every command that
+later reads the revision parses it under the layer engine's budgets. See the
 [U06 record](../../docs/design/u06-revision-commit.md).
 
 ## U07 recovery commands
@@ -93,17 +69,9 @@ root contradicts is `INTEGRITY_ERROR`. Not implemented: a CLI fault-injection sw
 tests simulate the crash through the host commit hook and then run the real binary), ledger
 rotation, garbage collection. See the [U07 record](../../docs/design/u07-journal-recovery.md).
 
-The worker accepts only `--store ROOT`; unknown plugin/runtime options fail before reading
-model data. It has no plugin/script loader. Two explicit unquoted USDA directive names,
-`beamcraft:plugin` and `beamcraft:script`, are reserved and rejected before parser entry;
-comments and inert strings mentioning these names remain inert. No execution semantics
-are assigned to unknown binary metadata. Environment clearing removes Python, SDK, plugin
-and library discovery overrides. See [U04 review](../../docs/design/u04-cli-host.md) for
-the precise profile, production gates and tests.
-
 ## V02 view snapshot commands
 
-`view-snapshot` and `view-changes` need no store, worker or backend. They call
+`view-snapshot` and `view-changes` need no store. They call
 `beamcraft-engine` and print one JSON object (same shape for errors as above, plus a
 `diagnostics` entry with the view code such as `GEO_STALE_TOKEN`; exit 2 on rejection).
 The scene is **synthetic** (see `plate-inspect` for committed plates), built with the real kernel
@@ -167,11 +135,19 @@ layers with a fresh reader, re-evaluates every plate and checks its committed me
 kernel's, and prints the plates, the pinned snapshot token, the element table and the meshes a
 viewer must load (`synthetic: false`).
 
-Limits: rectangular origin plate only (other contours are `UNSUPPORTED_GEOMETRY`);
-the layer engine runs in-process (no process isolation, LEW-03 open); no workspace, undo or
-envelope/JSON command; quantities are printed, not stored in USD (the pinned schema has none).
+Plate geometry currently supports simple counter-clockwise contours in `z=0`; contours outside
+that plane and rotated placements remain `UNSUPPORTED_GEOMETRY`. The layer engine runs in
+process by the U17 decision. Workspace and undo commands have their own sections below; a full
+F04 envelope/JSON command adapter remains absent. Quantities are printed, not stored in USD
+(the pinned schema has none).
 A library target (`beamcraft_cli::plate`) exposes the same path with a commit hook for fault
-injection in tests. `tests/pxr_oracle.rs` (opt-in; skips without a Python that can `import pxr`, honours `BEAMCRAFT_PXR_PYTHON`) reads the saved layers with the OpenUSD reference implementation and runs `UsdUtils.ComplianceChecker`; see the design note for the version and result. See the [design note](../../docs/design/p01-first-plate.md).
+injection in tests. `tests/pxr_oracle.rs` reads the saved layers with the OpenUSD reference
+implementation and runs `UsdUtils.ComplianceChecker`. It honours `BEAMCRAFT_PXR_PYTHON` and
+normally skips explicitly without a Python that can `import pxr`; set `BEAMCRAFT_REQUIRE_PXR=1`
+for acceptance to fail when the oracle is missing. `tests/f04_cases.rs` and `tests/f06_cases.rs`
+read the frozen contract fixtures and report their projections, deviations and omissions. See
+the [P01 design note](../../docs/design/p01-first-plate.md) and the current
+[K1 evidence and case inventory](../../docs/design/k1-contract-acceptance.md).
 
 ## P02 profile and material definitions
 
@@ -195,7 +171,8 @@ density. The numbers are plain USD attributes (`steel:profile:areaMm2`, `steel:p
 `bim:materialGrade`, `bim:materialStandard`).
 
 `define-material` and `define-profile` publish one immutable definition as the next revision: a
-`/World/Definitions/D_<sha256>` prim in the model layer, with units `mm` and schema version
+`/World/Definitions/Materials/MAT_<sha256>` or
+`/World/Definitions/Profiles/PRF_<sha256>` prim in the model layer, with units `mm` and schema version
 `0.1.0`. The digest is the full SHA-256 of the canonical isolated definition layer that the layer
 engine writes, so it pins the values, the units and the version together; the output is
 `definition_created` with that digest, or `definition_exists` (no new revision, nothing written)
@@ -349,3 +326,7 @@ nothing is written. `reference-inspect` opens the verified head (every blob re-h
 the wrappers, their pinned source, the foreign prims and the external layers. Every other command
 (`create-plate`, `update-element`, `workspace-publish`, `workspace-undo`, ...) carries the external
 layer into its revision unchanged. See the [design note](../../docs/design/r01-readonly-reference.md).
+
+U16 uses the [category-based prim paths](../../docs/architecture.md#prim-hierarchy-and-naming-rule)
+in saved layers and `prim_path` output. Stores with earlier paths or schema pins are refused;
+there is no migration during this pre-alpha compatibility break.

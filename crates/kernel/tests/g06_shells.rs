@@ -690,7 +690,7 @@ fn caps_are_exact_at_the_limit_and_rejected_one_above() {
     assert_eq!(bytes.len(), MAX_BLOB_BYTES);
     let parsed = TriMesh::from_blob(&bytes).unwrap();
     assert_eq!(parsed.to_blob(), bytes);
-    assert_eq!(parsed.face_count(), 1024);
+    assert_eq!(parsed.face_count(), MAX_FACE_TABLE as u32);
     // Hostile worst case: a maximum soup of random triangles terminates and is refused.
     let mut rng = Rng(77);
     let soup: Vec<[u32; 3]> = (0..MAX_TRIANGLES)
@@ -725,15 +725,15 @@ fn blob_header_cases_follow_the_f06_codes() {
     };
     // F06-NEG-11..14: counts are compared with their caps before any size.
     assert_eq!(
-        code(&header(4097, 12, 6, 0)),
+        code(&header(262_145, 12, 6, 0)),
         (MeshCode::BufferLimit, Fault::Vertices)
     );
     assert_eq!(
-        code(&header(8, 8193, 6, 0)),
+        code(&header(8, 524_289, 6, 0)),
         (MeshCode::BufferLimit, Fault::Triangles)
     );
     assert_eq!(
-        code(&header(8, 12, 1025, 0)),
+        code(&header(8, 12, 65_536, 0)),
         (MeshCode::TopologyLimit, Fault::FaceTable)
     );
     assert_eq!(

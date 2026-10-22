@@ -27,7 +27,7 @@ fn the_portable_list_is_derived_from_the_table() {
         "-p beamcraft-geom -p beamcraft-model -p beamcraft-kernel"
     );
     for name in [
-        "beamcraft-protocol",
+        "beamcraft-json",
         "beamcraft-engine",
         "beamcraft-host",
         "beamcraft-cli",
