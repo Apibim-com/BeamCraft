@@ -503,6 +503,16 @@ fn k1_plate_projections_match_the_fixture_or_an_explicit_deviation() {
             println!("DEVIATION F06-{id}: actual UNSUPPORTED_GEOMETRY differs from fixture");
             deviations.insert(id);
         } else if let Ok(code) = expected.get("f04_code") {
+            if id == "POS-56" {
+                use beamcraft_engine::plate_draft::{PlateDraft, create_plate_draft};
+                let PlateDraft::Unsupported(plate) =
+                    create_plate_draft(&command, &|_| false, &no_materials).unwrap()
+                else {
+                    panic!("valid near-planar input must remain authored-only");
+                };
+                assert_eq!(plate.authored.to_command(), command);
+                assert_eq!(plate.reason, "contour_not_exactly_planar");
+            }
             assert_eq!(
                 result.unwrap_err().code,
                 ErrorCode::parse(code.string().unwrap()).unwrap(),

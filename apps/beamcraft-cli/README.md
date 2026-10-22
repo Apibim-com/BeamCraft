@@ -139,8 +139,13 @@ viewer must load (`synthetic: false`).
 Plate geometry supports simple counter-clockwise contours in `z=0` and exactly rectangular
 contours in other planes. A framed rectangle extrudes along its ordered normal; holes on this
 new path are unsupported. Nonplanarity beyond the scaled band, clockwise winding and touching
-are `INVALID_ARGUMENT`. Valid near-planar contours, other polygons outside `z=0` and rotated
-placements remain `UNSUPPORTED_GEOMETRY` at command application. The layer engine runs in
+are `INVALID_ARGUMENT`. Valid near-planar contours and other unsupported-plane polygons without
+operations are saved as authored-only plates: `plate-inspect` reports `validity: valid`,
+`geometry_status: unsupported`, null mesh/key/bounds and null volume/mass with unsupported status.
+They remain in the plate list and inspection snapshot without a render instance. Replays create
+no revision and deletion works. Editing/copying these plates and geometry-dependent numbering,
+BOM, IFC and binary view export return `DEPENDENCY_UNAVAILABLE`; none silently drops the element.
+Rotated element placements remain `UNSUPPORTED_GEOMETRY` at command application. The layer engine runs in
 process by the U17 decision. Workspace and undo commands have their own sections below; a full
 F04 envelope/JSON command adapter remains absent. Quantities are printed, not stored in USD
 (the pinned schema has none).

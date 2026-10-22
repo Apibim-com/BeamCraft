@@ -49,9 +49,9 @@ locally and still require CI evidence.
 
 Remaining work is explicit:
 
-- Valid near-planar input is admitted by the kernel but still rejected by command application.
-  Persisting an authored draft with unsupported geometry and no partial mesh/key is a separate
-  slice (F04-POS-28 / F06-POS-56).
+- The subsequent [authored-only draft slice](k1-unsupported-plate-drafts.md) handles
+  F04-POS-28 / F06-POS-56 without a partial mesh or current key. The original verification
+  counts above describe the first contour/frame commit, before that follow-up.
 - Holes on framed rectangles, nonrectangular polygons outside `z=0`, rotated element placements
   (P10), exact face-table identifier agreement and missing protocol adapters remain open.
 - Existing non-origin rectangles in `z=0` retain their G05 representation; their full body-frame

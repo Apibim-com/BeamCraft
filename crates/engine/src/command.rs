@@ -26,8 +26,8 @@
 //!
 //! Ordered 3D validity is checked before support: outside-band nonplanarity, clockwise winding,
 //! intersections and touches are `INVALID_ARGUMENT`. Other contours outside `z = 0`, including
-//! valid near-planar input, remain `UNSUPPORTED_GEOMETRY` at command application: the persisted
-//! authored-only unsupported state is still absent. Rotated element placements remain P10 work.
+//! valid near-planar input, remain `UNSUPPORTED_GEOMETRY` in this evaluated-body API. Use
+//! [`crate::plate_draft`] to retain supported authored-only states. Rotated placements remain P10 work.
 //!
 //! Through holes (A04) apply to the existing `z = 0` bodies. A box reports width and length in
 //! its body frame; a G05 contour reports its element-local XY bounding-box extents.

@@ -17,14 +17,16 @@ use beamcraft_cli::library::open_lookup;
 use beamcraft_cli::member::{CreateMemberRequest, create_member};
 use beamcraft_cli::plate::{
     AcceptedBinding, CreateRequest, Created, Inspection, PlateError, ProjectClaim, QuantityReport,
-    RevisionSummary, accepted_binding, claim_project, create_plate, ensure_project, inspect,
+    RevisionSummary, accepted_binding, claim_project, ensure_project, inspect,
 };
+use beamcraft_cli::plate_draft::{CreatedDraft, create_plate_draft};
 use beamcraft_cli::workspace::{
     CreateWorkspace, WorkspaceStatus, create_workspace, publish_workspace,
     status as workspace_status,
 };
 use beamcraft_engine::command::{Quantities, origin_rectangle_contour};
 use beamcraft_engine::footprint::{Entry, Footprint, Target};
+use beamcraft_engine::plate_draft::UnsupportedPlate;
 use beamcraft_engine::quantity::{Freshness, is_superseded_algorithm};
 use beamcraft_engine::query::committed::MemberRecord;
 use beamcraft_engine::query::committed::PlateRecord;
@@ -780,7 +782,7 @@ fn create(
         holes_mm: holes(options)?,
         cut: cut(options)?,
     };
-    let created = create_plate(
+    let created = create_plate_draft(
         store,
         &CreateRequest {
             op_id,
@@ -792,7 +794,23 @@ fn create(
         },
         &mut NoFault,
     )?;
-    created_json(&created, op_id)
+    match created {
+        CreatedDraft::Evaluated(created) => created_json(&created, op_id),
+        CreatedDraft::Unsupported(created) => Ok(Json::object([
+            (
+                "outcome",
+                Json::text(if created.replayed {
+                    "plate_replayed"
+                } else {
+                    "plate_created"
+                }),
+            ),
+            ("op_id", Json::text(op_id.to_string())),
+            ("plate", unsupported_plate_json(&created.plate)?),
+            ("revision", revision_json(&created.revision)),
+            ("footprint", footprint_json(created.footprint.as_ref())),
+        ])),
+    }
 }
 
 /// The through holes of `create-plate`: `--hole-rect "X,Y,W,H;..."` (axis-aligned rectangles from
@@ -1799,6 +1817,77 @@ pub(crate) fn definitions_json(
     })
 }
 
+fn unsupported_plate_json(record: &UnsupportedPlate) -> Run<Json> {
+    let authored = &record.authored;
+    let quantity = |unit| {
+        Json::object([
+            (unit, Json::Null),
+            ("status", Json::text("unsupported")),
+            ("reason", Json::text(record.reason)),
+            ("input_signature", Json::Null),
+            ("algorithm", Json::Null),
+        ])
+    };
+    Ok(Json::object([
+        ("element_id", Json::text(authored.id.to_string())),
+        (
+            "prim_path",
+            Json::text(
+                authored
+                    .id
+                    .prim_path(beamcraft_model::prim::ElementCategory::Part),
+            ),
+        ),
+        ("kind", Json::text("plate")),
+        ("name", Json::text(&authored.name)),
+        ("validity", Json::text("valid")),
+        ("geometry_status", Json::text("unsupported")),
+        ("geometry_code", Json::text("UNSUPPORTED_GEOMETRY")),
+        ("geometry_reason", Json::text(record.reason)),
+        (
+            "material_digest",
+            authored
+                .material
+                .map_or(Json::Null, |d| Json::text(d.to_string())),
+        ),
+        (
+            "contour_points_mm",
+            Json::Array(
+                authored
+                    .contour_points_mm
+                    .iter()
+                    .map(|p| triple(*p))
+                    .collect::<Run<Vec<_>>>()?,
+            ),
+        ),
+        ("thickness_mm", num(authored.thickness_mm)?),
+        (
+            "placement",
+            Json::object([
+                ("translation_mm", triple(authored.placement.translation_mm)?),
+                (
+                    "orientation_xyzw",
+                    Json::Array(
+                        authored
+                            .placement
+                            .orientation_xyzw
+                            .into_iter()
+                            .map(num)
+                            .collect::<Run<Vec<_>>>()?,
+                    ),
+                ),
+            ]),
+        ),
+        (
+            "quantities",
+            Json::object([("volume", quantity("mm3")), ("mass", quantity("kg"))]),
+        ),
+        ("mesh_digest", Json::Null),
+        ("shape_key", Json::Null),
+        ("world_bounds_mm", Json::Null),
+    ]))
+}
+
 fn plate_json(record: &PlateRecord) -> Run<Json> {
     let mesh = &record.body.solid;
     Ok(Json::object([
@@ -2107,7 +2196,7 @@ pub(crate) fn inspection_json(inspection: &Inspection, only: Option<ElementId>) 
         .iter()
         .filter(|e| wanted(e.id))
         .collect();
-    let plates = inspection
+    let mut plates = inspection
         .plates
         .iter()
         .filter(|p| wanted(p.authored.id))
@@ -2120,6 +2209,23 @@ pub(crate) fn inspection_json(inspection: &Inspection, only: Option<ElementId>) 
             ))
         })
         .collect::<Run<Vec<_>>>()?;
+    for p in &inspection.unsupported_plates {
+        if wanted(p.authored.id) {
+            plates.push(with_names(
+                with_stored(unsupported_plate_json(p)?, p.authored.id, inspection)?,
+                None,
+                p.authored.material,
+                inspection,
+            ));
+        }
+    }
+    plates.sort_by_key(|p| {
+        p.get("element_id")
+            .ok()
+            .and_then(|id| id.string().ok())
+            .unwrap_or("")
+            .to_owned()
+    });
     let members = inspection
         .members
         .iter()
@@ -2151,7 +2257,7 @@ pub(crate) fn inspection_json(inspection: &Inspection, only: Option<ElementId>) 
             ])
         })
         .collect();
-    let entries = shown
+    let mut entries = shown
         .iter()
         .map(|e| {
             Ok(Json::object([
@@ -2164,10 +2270,39 @@ pub(crate) fn inspection_json(inspection: &Inspection, only: Option<ElementId>) 
             ]))
         })
         .collect::<Run<Vec<_>>>()?;
+    for p in &inspection.unsupported_plates {
+        if wanted(p.authored.id) {
+            entries.push(Json::object([
+                ("id", Json::text(p.authored.id.to_string())),
+                ("instance", Json::Null),
+                ("mesh_digest", Json::Null),
+                ("shape_key", Json::Null),
+                ("geometry_status", Json::text("unsupported")),
+                ("placement_mm", triple(p.authored.placement.translation_mm)?),
+                ("world_min_mm", Json::Null),
+                ("world_max_mm", Json::Null),
+            ]));
+        }
+    }
+    entries.sort_by_key(|p| {
+        p.get("id")
+            .ok()
+            .and_then(|id| id.string().ok())
+            .unwrap_or("")
+            .to_owned()
+    });
     let mut reply = Json::object([
         ("outcome", Json::text("plate_inspection")),
         ("revision", revision_json(&inspection.revision)),
-        ("plate_count", Json::uint(inspection.plates.len() as u64)),
+        (
+            "plate_count",
+            Json::uint(
+                inspection
+                    .plates
+                    .len()
+                    .saturating_add(inspection.unsupported_plates.len()) as u64,
+            ),
+        ),
         ("member_count", Json::uint(inspection.members.len() as u64)),
         (
             "other_element_count",

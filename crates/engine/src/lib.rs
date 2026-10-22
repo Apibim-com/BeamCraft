@@ -23,6 +23,7 @@ pub mod limits;
 pub mod member;
 pub mod numbering;
 pub mod numbering_approval;
+pub mod plate_draft;
 pub mod presentation;
 pub mod quantity;
 pub mod query;

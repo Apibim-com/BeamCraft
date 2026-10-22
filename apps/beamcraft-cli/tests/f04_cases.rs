@@ -13,7 +13,10 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use beamcraft_engine::transaction::{Admission, PriorOp, admit_create_plate};
+use beamcraft_engine::plate_draft::{
+    DraftAdmission as Admission, admit_create_plate_draft as admit_create_plate,
+};
+use beamcraft_engine::transaction::PriorOp;
 use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::{CreatePlate, Placement};
 use beamcraft_model::error::ErrorCode;
@@ -44,9 +47,8 @@ const SKIPPED: &[(&str, &str)] = &[
     ),
 ];
 
-/// Accepted by F04 but still refused by command application: a valid near-planar contour
-/// needs the persisted authored-only unsupported state. Exact framed rectangles now evaluate.
-const UNSUPPORTED_BY_P01: &[&str] = &["F04-POS-28"];
+/// Authored-only admission now accepts POS-28; no declared contour-admission deviations remain.
+const UNSUPPORTED_BY_P01: &[&str] = &[];
 
 /// Nonplanarity is now checked before support; there are no remaining wrong-code deviations.
 const WRONG_CODE_IN_P01: &[&str] = &[];

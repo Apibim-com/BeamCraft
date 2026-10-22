@@ -23,6 +23,7 @@ type Run<T> = Result<T, PlateError>;
 
 /// One report row per plate and member of the verified head.
 pub fn rows(inspection: &Inspection, marks: &[StoredMark]) -> Run<Vec<BomRow>> {
+    inspection.require_evaluated_geometry()?;
     let mut result = Vec::with_capacity(
         inspection
             .plates

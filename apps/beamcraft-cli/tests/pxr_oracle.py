@@ -162,6 +162,14 @@ def main():
         expected_contour = plate.get("contour", [(0.0, 0.0, 0.0), (w, 0.0, 0.0), (w, l, 0.0), (0.0, l, 0.0)])
         check(contour == [tuple(p) for p in expected_contour], "contour differs")
 
+        if plate.get("unsupported"):
+            check(not stage.GetPrimAtPath(path + "/Geometry").IsValid(), "unsupported plate has geometry")
+            check(not any(p.GetTypeName() == "Mesh" for p in Usd.PrimRange(prim)), "unsupported plate has a mesh descendant")
+            for attr in prim.GetAttributes():
+                check(not attr.GetName().startswith(("bim:shape", "bim:volume", "bim:mass", "bim:quantity")), "unsupported plate has derived values")
+            report["plates"].append({"id": plate["id"], "geometry_status": "unsupported"})
+            continue
+
         mesh = UsdGeom.Mesh(stage.GetPrimAtPath(path + "/Geometry"))
         check(bool(mesh), "Geometry is not a UsdGeom.Mesh")
         points = mesh.GetPointsAttr().Get()

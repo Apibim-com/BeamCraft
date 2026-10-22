@@ -102,6 +102,7 @@ pub(crate) fn state(store: &RevisionStore) -> Result<State, PlateError> {
     for _ in 0..3 {
         let before = store.head()?.map(|h| h.revision().as_str().to_owned());
         let inspection = inspect(store)?;
+        inspection.require_evaluated_geometry()?;
         let views = assemblies(store)?;
         let (marks_revision, stored) = head_marks(store)?;
         let after = store.head()?.map(|h| h.revision().as_str().to_owned());

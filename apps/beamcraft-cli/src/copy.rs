@@ -123,6 +123,19 @@ pub fn copy_element(
         let opened = reader.open(base_request.clone(), &control)?;
         let decoded = decode(&reader, &opened, &control)?;
         let (plates, members) = evaluate_decoded(&decoded)?;
+        if decoded
+            .plates
+            .iter()
+            .any(|(p, _)| p.id == command.source_id)
+            && !plates.iter().any(|p| p.authored.id == command.source_id)
+        {
+            return Err(CommandError::new(
+                ErrorCode::DependencyUnavailable,
+                "source_id",
+                "copying an unsupported plate is not implemented",
+            )
+            .into());
+        }
         (plates, members, decoded.definitions, decoded.levels)
     };
     // The copy checks that the pinned definitions still resolve, as every create does.

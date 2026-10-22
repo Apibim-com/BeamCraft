@@ -10,6 +10,12 @@ digest, instance and triangle tables, ids and bounds, and computes no engineerin
 
 ## What is implemented
 
+K1 authored-only plate admission is exposed by `plate_draft::{create_plate_draft,
+admit_create_plate_draft, evaluate_committed_drafts}`. Its typed unsupported state retains valid
+inputs without a body or quantity values. The existing `command::create_plate` API remains an
+evaluated-body API and refuses unsupported geometry without changing state. See the
+[authored-only plate design note](../../docs/design/k1-unsupported-plate-drafts.md).
+
 | Area | API | Notes |
 |------|-----|-------|
 | Pinned snapshot | `ViewSnapshot::build(ViewPin, Vec<SceneElement>, &Limits)` | `ViewPin` is a revision digest and a workspace generation. Elements are ordered by `ElementId`; a duplicate id is rejected. |
@@ -57,8 +63,8 @@ inputs cannot reach it through `ViewSnapshot::build`.
   `(0,0,0),(w,0,0),(w,l,0),(0,l,0)` (F04-POS-01), simple CCW polygons in `z=0`, and exact
   rectangular contours in other planes. Ordered 3D contour admission rejects outside-band
   nonplanarity, clockwise winding and self-intersection as `INVALID_ARGUMENT` before support.
-  Valid near-planar input and other polygons outside `z=0` still author nothing and return
-  `UNSUPPORTED_GEOMETRY`; the authored-only unsupported state remains open. Holes on framed
+  The evaluated-body API refuses valid near-planar input and other polygons outside `z=0` with
+  `UNSUPPORTED_GEOMETRY`; `plate_draft` separately preserves those authored-only inputs. Holes on framed
   rectangles are unsupported. See the [K1 contour/frame slice](../../docs/design/k1-plate-contour-frame.md).
   A placement rotation other than the identity is
   `UNSUPPORTED_GEOMETRY`. There are no dependency keys (F06 section 7), no stored quantity or

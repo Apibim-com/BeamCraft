@@ -212,6 +212,47 @@ fn pxr_reads_the_ordered_3d_plate_frame_and_its_element_local_vertices() {
     let _ = fs::remove_dir_all(&root);
 }
 
+#[test]
+fn pxr_reads_valid_unsupported_authored_input_without_any_partial_result() {
+    let Some((python, python_args)) = find_python() else {
+        println!("SKIP: independent pxr reader NOT RUN (no interpreter)");
+        return;
+    };
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("k1-unsupported-pxr-{}", std::process::id()));
+    let store = root.join("store");
+    let layers = root.join("layers");
+    fs::create_dir_all(&store).unwrap();
+    fs::create_dir_all(&layers).unwrap();
+    let created = run_binary(&[
+        "create-plate",
+        "--store",
+        store.to_str().unwrap(),
+        "--contour",
+        "999000000,0,0;999393216,0,0.75;999393216,524288,0;999000000,524288,0.75",
+        "--thickness",
+        "10",
+        "--name",
+        "Unsupported original",
+    ]);
+    let inspected = run_binary(&["plate-inspect", "--store", store.to_str().unwrap()]);
+    copy_layers(&store, &layers, &inspected);
+    let expected = format!(
+        r#"[{{"id":"{}","name":"Unsupported original","width":0,"length":0,"thickness":10,"unsupported":true,
+        "contour":[[999000000,0,0],[999393216,0,0.75],[999393216,524288,0],[999000000,524288,0.75]]}}]"#,
+        text(created.get("plate").unwrap(), "element_id")
+    );
+    let report = run_script(&python, &python_args, &layers, &expected);
+    assert_eq!(
+        text(
+            &report.get("plates").unwrap().array().unwrap()[0],
+            "geometry_status"
+        ),
+        "unsupported"
+    );
+    let _ = fs::remove_dir_all(&root);
+}
+
 /// Copies the layers of the head revision under their manifest names, where a plain USD reader
 /// finds them next to the root layer.
 fn copy_layers(store: &Path, layers: &Path, inspected: &Json) {
