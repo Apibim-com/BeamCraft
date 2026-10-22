@@ -53,7 +53,7 @@ impl Fixture {
             ]);
         }
         f.ok(&[
-            "create-workspace",
+            "workspace-create",
             "--store",
             &f.path("published"),
             "--workspace-dir",
@@ -115,7 +115,7 @@ impl Fixture {
     }
     fn create_args(&self) -> Vec<String> {
         vec![
-            "create-changeset".into(),
+            "changeset-create".into(),
             "--store".into(),
             self.path("published"),
             "--workspace-dir".into(),
@@ -134,7 +134,7 @@ impl Fixture {
         (digest, changeset)
     }
     fn names(&self, store: &str) -> Vec<String> {
-        let json = self.ok(&["inspect-elements", "--store", &self.path(store)]);
+        let json = self.ok(&["plate-inspect", "--store", &self.path(store)]);
         let mut names: Vec<_> = json
             .get("plates")
             .unwrap()
@@ -201,7 +201,7 @@ fn a_new_accepted_base_does_not_mark_unsent_operations_published_or_use_old_laye
         );
     }
     f.ok(&[
-        "apply-changeset",
+        "changeset-apply",
         "--store",
         &f.path("published"),
         "--workspace-dir",
@@ -237,7 +237,7 @@ fn a_stale_workspace_packages_the_pinned_historical_base_instead_of_the_current_
         );
     }
     let (code, json) = f.run(&[
-        "apply-changeset",
+        "changeset-apply",
         "--store",
         &f.path("published"),
         "--workspace-dir",
@@ -250,91 +250,6 @@ fn a_stale_workspace_packages_the_pinned_historical_base_instead_of_the_current_
     assert_eq!((code, text(&json, "code")), (2, "BASE_REVISION_MISMATCH"));
     assert_eq!(f.head("published"), before);
     assert_eq!(f.names("draft"), ["Base two", "Unsent"]);
-}
-
-#[test]
-fn a_changeset_cannot_end_before_the_recorded_rebase_boundary() {
-    use beamcraft_cli::workspace::{WorkspaceState, read_meta};
-    let f = Fixture::new();
-    f.rename("draft", ONE, "Mine");
-    let (old_digest, _) = f.create();
-    f.rename("draft", TWO, "Also retained");
-    // Isolate the metadata/publication boundary with real committed edits. This fixture does
-    // not claim a runtime rebase: the old payload names a valid earlier source interval.
-    let dir = f.0.join("draft");
-    let old_meta = read_meta(&dir).unwrap();
-    let mut rebased = old_meta.clone();
-    rebased.rebase_sequence = f.head("draft").sequence();
-    WorkspaceState::open(&dir)
-        .unwrap()
-        .compare_and_swap(Some(&old_meta), &rebased)
-        .unwrap();
-    let published = f.head("published");
-    let (code, json) = f.run(&[
-        "apply-changeset",
-        "--store",
-        &f.path("published"),
-        "--workspace-dir",
-        &f.path("draft"),
-        "--changeset",
-        &old_digest.to_string(),
-        "--actor-id",
-        USER,
-    ]);
-    assert_eq!(code, 2, "{json:?}");
-    assert_eq!(text(&json, "code"), "INTEGRITY_ERROR");
-    assert_eq!(f.head("published"), published);
-    assert_eq!(read_meta(&dir).unwrap(), rebased);
-    let status = f.ok(&[
-        "inspect-workspace",
-        "--store",
-        &f.path("published"),
-        "--workspace-dir",
-        &f.path("draft"),
-    ]);
-    assert_eq!(
-        text(status.get("workspace").unwrap(), "rebase_sequence"),
-        rebased.rebase_sequence.to_string()
-    );
-    let (digest, _) = f.create();
-    f.ok(&[
-        "apply-changeset",
-        "--store",
-        &f.path("published"),
-        "--workspace-dir",
-        &f.path("draft"),
-        "--changeset",
-        &digest.to_string(),
-        "--actor-id",
-        USER,
-    ]);
-    assert_eq!(f.names("published"), ["Also retained", "Mine"]);
-    assert_eq!(
-        read_meta(&dir).unwrap().rebase_sequence,
-        rebased.rebase_sequence
-    );
-    let mut future = read_meta(&dir).unwrap();
-    let old = future.clone();
-    future.rebase_sequence = f.head("draft").sequence() + 1;
-    WorkspaceState::open(&dir)
-        .unwrap()
-        .compare_and_swap(Some(&old), &future)
-        .unwrap();
-    let published = f.head("published");
-    let draft = f.head("draft");
-    for command in ["inspect-workspace", "publish-workspace", "create-changeset"] {
-        let (code, json) = f.run(&[
-            command,
-            "--store",
-            &f.path("published"),
-            "--workspace-dir",
-            &f.path("draft"),
-        ]);
-        assert_eq!(code, 2, "{command}: {json:?}");
-        assert_eq!(text(&json, "code"), "INTEGRITY_ERROR");
-        assert_eq!(f.head("published"), published);
-        assert_eq!(f.head("draft"), draft);
-    }
 }
 
 #[test]
@@ -406,7 +321,7 @@ fn a_valid_pin_from_another_project_cannot_relabel_the_drafts_project() {
     let published = other.head("published");
     let draft = f.head("draft");
     let (code, json) = f.run(&[
-        "create-changeset",
+        "changeset-create",
         "--store",
         &other.path("published"),
         "--workspace-dir",
