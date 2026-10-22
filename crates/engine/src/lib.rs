@@ -26,6 +26,7 @@ pub mod numbering;
 pub mod presentation;
 pub mod quantity;
 pub mod query;
+pub mod rebase;
 pub mod reference;
 pub mod scene;
 pub mod solid;
