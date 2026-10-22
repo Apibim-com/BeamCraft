@@ -118,6 +118,35 @@ independent reader is unavailable; the default developer mode prints an explicit
 No interpreter or SDK is installed by the tests. The exact contract case inventory, asserted
 fields and remaining deviations are in [K1 acceptance evidence](design/k1-contract-acceptance.md).
 
+## CI wall time and Windows runner queues
+
+CI wall time is about 15 minutes today (14–17 minutes across the runs of 2026-10-22). The critical
+path is the `test (windows)` job at roughly 13–14 minutes; every other job finishes in under
+3 minutes. Each job carries an explicit `timeout-minutes` sized at about three times the longest
+observed runtime of that job, so a hung job fails within the hour instead of at GitHub's 6-hour
+run-level default, while a cold-cache rebuild is not killed and re-queued onto scarce runners.
+
+Windows jobs queue for runners that the account shares across all of its repositories and
+workflows, and hosted Windows runners are the scarcest standard tier: each Windows minute is
+billed at twice the Linux rate, and plan concurrency counts Windows and macOS jobs against a
+smaller allowance. During a burst — several pull requests, merges and retries at once — a Windows
+job can sit in the queue for hours with no failure signal, because the run reads "queued", not
+"failing". On 2026-10-21, run
+[39648960935](https://github.com/Apibim-com/BeamCraft/actions/runs/39648960935) waited about
+5 hours 40 minutes for a Windows runner while the rest of its jobs had long finished.
+
+Two workflow-level guardrails bound our own contribution to such bursts; neither widens the
+account quota:
+
+- The `concurrency` group `ci-<ref>` with `cancel-in-progress` keeps at most one active CI run per
+  branch or pull request; a new push cancels that ref's superseded run instead of queueing it.
+- Per-job `timeout-minutes` fail fast when a job hangs after it starts. They do not bound queue
+  time: a job waiting for a runner is still limited only by the run-level 6-hour default.
+
+When CI looks stuck, first check whether the Windows job is queued rather than running, then look
+for a burst across the account's Actions runs, cancel superseded runs and re-run the starved job
+once the burst subsides.
+
 ## Releases
 
 Push a tag such as `v0.1.0`, or run `.github/workflows/release.yml` by hand. It builds unsigned
