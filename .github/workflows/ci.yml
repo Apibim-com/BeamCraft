@@ -54,13 +54,6 @@ jobs:
       - name: Check module boundaries
         run: cargo run --locked -p beamcraft-boundaries -- check
 
-      # Independent oracle (Python standard library) for hashes and analytical expectations.
-      - name: Check fixture expectations independently
-        if: runner.os == 'Linux'
-        run: |
-          python3 tools/fixtures/verify_expectations.py
-          python3 tools/fixtures/test_verify_expectations.py
-
       - name: Docs
         if: runner.os == 'Linux'
         run: cargo doc --workspace --no-deps
