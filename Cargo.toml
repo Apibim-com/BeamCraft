@@ -46,6 +46,12 @@ codegen-units = 16
 lto = "off"
 strip = "symbols"
 
+# Dev-release: the USD reference stack (`openusd`, the largest dependency) stays unoptimized
+# so a cold build of both apps fits the Apibim-com/BeamCraft#153 budget; workspace code keeps
+# level 3. Performance measurements and packages use `dist`, which is unaffected by this.
+[profile.release.package.openusd]
+opt-level = 0
+
 # Release packages (`.github/workflows/release.yml`, `packaging/package.sh`): ThinLTO across
 # crates and one codegen unit per crate, for the smallest and fastest binaries.
 [profile.dist]
