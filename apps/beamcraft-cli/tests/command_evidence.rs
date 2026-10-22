@@ -122,6 +122,7 @@ fn canonical_round_trip_preserves_both_target_types_and_every_atomic_group() {
         Group::Placement,
         Group::MaterialRef,
         Group::Relationship,
+        Group::Mark,
         Group::Lifecycle,
         Group::Derived,
     ]
@@ -341,7 +342,7 @@ fn every_modeling_publication_path_records_its_own_operation() {
         &["--name", "Assembly", "--new-id", &element(5).to_string()],
     );
     f.recorded(
-        "attach-to-assembly",
+        "assembly-attach",
         &[
             "--id",
             &element(1).to_string(),
@@ -349,7 +350,7 @@ fn every_modeling_publication_path_records_its_own_operation() {
             &element(5).to_string(),
         ],
     );
-    f.recorded("detach-from-assembly", &["--id", &element(1).to_string()]);
+    f.recorded("assembly-detach", &["--id", &element(1).to_string()]);
     f.recorded(
         "create-weld",
         &[
@@ -388,15 +389,15 @@ fn every_modeling_publication_path_records_its_own_operation() {
             "16",
         ],
     );
-    let preview = f.ok("preview-numbering", &[]);
+    let preview = f.ok("numbering-preview", &[]);
     f.recorded(
-        "approve-numbering",
+        "numbering-approve",
         &["--preview-token", text(&preview, "preview_token")],
     );
     let source = f.0.join("foreign.usda");
     fs::write(&source, "#usda 1.0\n(\n defaultPrim = \"Site\"\n metersPerUnit = 1.0\n upAxis = \"Y\"\n)\ndef Xform \"Site\" {}\n").unwrap();
     f.recorded(
-        "attach-reference",
+        "reference-attach",
         &[
             "--source",
             source.to_str().unwrap(),
@@ -405,11 +406,11 @@ fn every_modeling_publication_path_records_its_own_operation() {
         ],
     );
     f.recorded(
-        "move-reference",
+        "reference-move",
         &["--id", &element(6).to_string(), "--translation", "100,0,0"],
     );
     f.recorded(
-        "correct-reference-units",
+        "reference-correct-units",
         &[
             "--id",
             &element(6).to_string(),
