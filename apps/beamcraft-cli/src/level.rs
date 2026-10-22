@@ -5,7 +5,7 @@
 //! head. The assignment of a plate, beam or column to a level is the level field of
 //! `UpdateElement` (see [`crate::edit`]); deleting a level is `delete-element`.
 //!
-//! A level is an element of kind `level` with its own UUIDv7 under `/World/Steel`, a label and an
+//! A level is an element of kind `level` with its own UUIDv7 under `/World/Levels`, a label and an
 //! `bim:elevationMm`, and no placement, material or derived body. Assignment is the one
 //! `bim:level` relationship that a plate, beam or column authors towards its level: the record
 //! lives with its source, so assigning writes only that element. A level has no geometric effect:

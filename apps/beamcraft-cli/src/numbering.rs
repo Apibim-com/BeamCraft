@@ -5,11 +5,14 @@
 //!
 //! Reads plates, members and assemblies of the verified head, hands the facts to
 //! `beamcraft_engine::numbering` and returns the proposal. It writes nothing: no revision, no
-//! layer, no attribute. Approving the numbers is A09.
+//! layer, no attribute. Approving the numbers is A09 ([`crate::numbering_approval`]); the preview
+//! also reports the approval stored in the model.
 
 use crate::assembly::assemblies;
+use crate::numbering_approval::head_marks;
 use crate::plate::{PlateError, inspect};
 use beamcraft_engine::numbering::{AssemblyFact, PartFact, PartKind, Preview, Settings, preview};
+use beamcraft_engine::numbering_approval::{Mark, Report, StoredMark, assess};
 use beamcraft_engine::query::committed::PlateRecord;
 use beamcraft_host::revision::RevisionStore;
 use beamcraft_model::command::MemberKind;
@@ -33,6 +36,10 @@ pub struct NumberingView {
     pub assemblies: usize,
     /// Whether a token given by the caller no longer matches (`None` when none was given).
     pub stale: Option<bool>,
+    /// The approved numbering stored in the model, judged against the model (A09).
+    pub approval: Report,
+    /// The marks stored on parts and assemblies, by element.
+    pub stored: BTreeMap<ElementId, Mark>,
 }
 
 fn error(code: ErrorCode, message: &'static str) -> PlateError {
@@ -77,15 +84,31 @@ fn holes_of(record: &PlateRecord) -> Vec<Vec<[f64; 2]>> {
         .collect()
 }
 
-fn facts(store: &RevisionStore) -> Result<(String, Vec<PartFact>, Vec<AssemblyFact>), PlateError> {
-    // Plates and assemblies are read by two readers of the head. If the head moves between the
-    // two reads they describe different revisions, so the pair is read again (a few times).
+/// The part and assembly facts of one revision and the marks stored on it.
+pub(crate) struct State {
+    /// The revision everything below was read from.
+    pub(crate) revision_id: String,
+    /// Plates, beams and columns.
+    pub(crate) parts: Vec<PartFact>,
+    /// Assemblies.
+    pub(crate) assemblies: Vec<AssemblyFact>,
+    /// The approved marks stored on parts and assemblies (A09).
+    pub(crate) stored: Vec<StoredMark>,
+}
+
+pub(crate) fn state(store: &RevisionStore) -> Result<State, PlateError> {
+    // Plates, assemblies and marks are read by three readers of the head. If the head moves
+    // between the reads they describe different revisions, so they are read again (a few times).
     for _ in 0..3 {
         let before = store.head()?.map(|h| h.revision().as_str().to_owned());
         let inspection = inspect(store)?;
         let views = assemblies(store)?;
+        let (marks_revision, stored) = head_marks(store)?;
         let after = store.head()?.map(|h| h.revision().as_str().to_owned());
-        if before != after || before.as_deref() != Some(inspection.revision.revision_id.as_str()) {
+        if before != after
+            || before.as_deref() != Some(inspection.revision.revision_id.as_str())
+            || marks_revision != inspection.revision.revision_id
+        {
             continue;
         }
         let mut holder: BTreeMap<ElementId, ElementId> = BTreeMap::new();
@@ -139,7 +162,12 @@ fn facts(store: &RevisionStore) -> Result<(String, Vec<PartFact>, Vec<AssemblyFa
                 parent: v.parent,
             })
             .collect();
-        return Ok((inspection.revision.revision_id, parts, assembly_facts));
+        return Ok(State {
+            revision_id: inspection.revision.revision_id,
+            parts,
+            assemblies: assembly_facts,
+            stored,
+        });
     }
     Err(error(
         ErrorCode::DependencyUnavailable,
@@ -148,15 +176,24 @@ fn facts(store: &RevisionStore) -> Result<(String, Vec<PartFact>, Vec<AssemblyFa
 }
 
 /// Previews the numbering of the verified head. `previous` is the token of an earlier preview;
-/// the result says whether the numbering it describes is out of date.
+/// the result says whether the numbering it describes is out of date. The view also reports the
+/// approval (A09) stored in the model and how every group compares with the marks stored on its
+/// members; none of it changes the proposal, which is a function of the revision's facts.
 pub fn numbering_preview(
     store: &RevisionStore,
     settings: &Settings,
     previous: Option<ContentDigest>,
 ) -> Result<NumberingView, PlateError> {
-    let (revision_id, parts, assemblies) = facts(store)?;
+    let State {
+        revision_id,
+        parts,
+        assemblies,
+        stored,
+    } = state(store)?;
     let proposal = preview(&parts, &assemblies, settings)
         .map_err(|e| error(ErrorCode::InvalidArgument, e.0))?;
+    let approval = assess(&parts, &assemblies, &stored).map_err(|e| error(e.code(), e.message))?;
+    let stored: BTreeMap<ElementId, Mark> = stored.into_iter().map(|m| (m.id, m.mark)).collect();
     Ok(NumberingView {
         revision_id,
         settings: settings.clone(),
@@ -164,5 +201,7 @@ pub fn numbering_preview(
         parts: parts.len(),
         assemblies: assemblies.len(),
         preview: proposal,
+        approval,
+        stored,
     })
 }

@@ -9,10 +9,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use beamcraft_protocol::{
-    json::{self, Json},
-    message,
-};
+use beamcraft_json::{Json, Limits};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -56,7 +53,7 @@ impl Fixture {
             .args(&args)
             .output()
             .unwrap();
-        let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
+        let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
         (output.status.code().unwrap(), body)
     }
     fn ok(&self, command: &str, extra: &[&str]) -> Json {
@@ -111,9 +108,9 @@ fn an_l_shaped_plate_is_saved_reopened_and_measured_by_closed_forms() {
     );
     assert_eq!(text(&created, "outcome"), "plate_created");
     let plate = at(&created, &["plate"]);
-    assert_eq!(text(plate, "shape"), "contour");
-    assert_eq!(num(plate, &["bounding_box_mm", "width"]), 1000.0);
-    assert_eq!(num(plate, &["bounding_box_mm", "length"]), 600.0);
+    assert_eq!(text(plate, "outline"), "contour");
+    assert_eq!(num(plate, &["dimensions_mm", "width"]), 1000.0);
+    assert_eq!(num(plate, &["dimensions_mm", "length"]), 600.0);
     let volume = L_AREA_MM2 * 10.0;
     assert_eq!(num(plate, &["quantities", "volume", "mm3"]), volume);
     // 4,200,000 mm3 = 0.0042 m3 of steel at 7850 kg/m3 = 32.97 kg.
@@ -123,7 +120,7 @@ fn an_l_shaped_plate_is_saved_reopened_and_measured_by_closed_forms() {
     let plates = f.plates();
     assert_eq!(plates.len(), 1);
     let reopened = &plates[0];
-    assert_eq!(text(reopened, "shape"), "contour");
+    assert_eq!(text(reopened, "outline"), "contour");
     assert_eq!(
         at(reopened, &["contour_points_mm"]).array().unwrap().len(),
         6
@@ -168,8 +165,8 @@ fn the_same_contour_gives_the_same_mesh_and_a_rectangle_keeps_its_box() {
         ],
     );
     let (x, y) = (&by_size.plates()[0], &by_contour.plates()[0]);
-    assert_eq!(text(x, "shape"), "rectangle");
-    assert_eq!(text(y, "shape"), "rectangle");
+    assert_eq!(text(x, "outline"), "rectangle");
+    assert_eq!(text(y, "outline"), "rectangle");
     assert_eq!(text(x, "mesh_digest"), text(y, "mesh_digest"));
     // A rectangle that does not start at the origin is a contour, evaluated as authored.
     let moved = Fixture::new();
@@ -183,7 +180,7 @@ fn the_same_contour_gives_the_same_mesh_and_a_rectangle_keeps_its_box() {
         ],
     );
     let plate = &moved.plates()[0];
-    assert_eq!(text(plate, "shape"), "contour");
+    assert_eq!(text(plate, "outline"), "contour");
     assert_eq!(num(plate, &["quantities", "volume", "mm3"]), 5_000_000.0);
     assert_ne!(text(plate, "mesh_digest"), text(x, "mesh_digest"));
 }
@@ -227,7 +224,7 @@ fn a_contour_plate_takes_holes_edits_copies_and_deletes_like_any_plate() {
     // The thickness is edited without touching the outline.
     f.ok("update-element", &["--id", &id, "--thickness", "20"]);
     let edited = f.plates();
-    assert_eq!(text(&edited[0], "shape"), "contour");
+    assert_eq!(text(&edited[0], "outline"), "contour");
     assert!((num(&edited[0], &["quantities", "volume", "mm3"]) - 8_200_000.0).abs() <= 1e-3);
     // A move changes only the placement.
     f.ok(

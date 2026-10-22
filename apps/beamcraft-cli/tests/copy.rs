@@ -13,10 +13,7 @@ use beamcraft_host::{
     revision::{ExpectedBase, LayerEntry, NoFault, RevisionDraft, RevisionStore, Uuid7},
     storage::BlobStore,
 };
-use beamcraft_protocol::{
-    json::{self, Json},
-    message,
-};
+use beamcraft_json::{Json, Limits};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -48,7 +45,7 @@ impl Fixture {
             .args(&args)
             .output()
             .unwrap();
-        let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
+        let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
         (output.status.code().unwrap(), body)
     }
     fn ok(&self, command: &str, extra: &[&str]) -> Json {
@@ -340,13 +337,13 @@ fn a_copy_refuses_element_links_it_cannot_carry_over() {
     let hex = |id: &str| id.replace('-', "");
     f.tamper(|name, mut text| {
         if name == "authored.usda" {
-            let marker = format!("\"E_{}\"", hex(&holder));
+            let marker = format!("\"PRT_{}\"", hex(&holder));
             let start = text.find(&marker).unwrap();
             let brace = start + text[start..].find('{').unwrap() + 1;
             text.insert_str(
                 brace,
                 &format!(
-                    "\ncustom rel bim:test:supports = </World/Steel/E_{}>\n",
+                    "\ncustom rel bim:test:supports = </World/Steel/Parts/PRT_{}>\n",
                     hex(&target)
                 ),
             );

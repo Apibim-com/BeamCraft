@@ -6,14 +6,14 @@
 
 /// Elements in one snapshot. This is the F06 section 9 scan bound.
 pub const MAX_ELEMENTS: usize = 65_536;
-/// One mesh blob (F06 section 6 hard caps at 4,096 vertices and 8,192 triangles).
-pub const MAX_MESH_BLOB_BYTES: usize = 213_024;
+/// One mesh blob (F06 section 6 hard caps at 262,144 vertices and 524,288 triangles).
+pub const MAX_MESH_BLOB_BYTES: usize = 13_631_520;
 /// Vertices per mesh blob (F06 section 6).
-pub const MAX_BLOB_VERTICES: u32 = 4_096;
+pub const MAX_BLOB_VERTICES: u32 = 262_144;
 /// Triangles per mesh blob (F06 section 6).
-pub const MAX_BLOB_TRIANGLES: u32 = 8_192;
+pub const MAX_BLOB_TRIANGLES: u32 = 524_288;
 /// Face-table entries per mesh blob (F06 section 6).
-pub const MAX_BLOB_FACES: u32 = 1_024;
+pub const MAX_BLOB_FACES: u32 = 65_535;
 /// Distinct mesh bytes retained by one snapshot (64 MiB).
 pub const MAX_TOTAL_MESH_BYTES: usize = 64 * 1024 * 1024;
 /// Triangles drawn by one projection; keeps every triangle index inside `u32`.

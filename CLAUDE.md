@@ -1,21 +1,24 @@
 # BeamCraft — instructions for agents
 
-BeamCraft is a clean-room, open-source, Rust-native structural steel detailing application,
+BeamCraft is an open-source, Rust-native structural steel detailing application written from scratch,
 developed by Apibim. It targets the workflows of tools like Tekla Structures without using any of
 their code or assets. Targets desktop-only use on Windows, Linux and macOS.
 
 ## Start every session here
 
 1. Read `AGENTS.md` (it wins over this file) and `ROADMAP.md` (current stage and next tasks).
+   Task IDs (F04, U06, A03, ...), their dependencies and acceptance are in `docs/plan/tasks.md`;
+   owner decisions are in `docs/plan/decisions.md`.
 2. Read `docs/architecture.md` and the README of the crate you are touching.
 3. Work in small steps: orient → plan → implement + test → verify → record → commit.
-4. Do not edit the progress log in `ROADMAP.md` in a feature PR. Put the proposed dated
-   one-line entry (existing log format) under "Roadmap entry" in the PR description. Entries
-   are appended in a separate docs-only change after merges.
+4. There is no progress log to append to: the history is git and the PR descriptions, and what a
+   package does is recorded in its note under `docs/design/`. Do not edit `ROADMAP.md` in a
+   feature PR; it changes only in a docs-only PR when a gate status or the scope changes.
+   A PR description goes into the PR itself, never into a file in the repository.
 
 ## Non-negotiables
 
-- **Clean-room and assets: `AGENTS.md` §1 and §2.** Nothing from Tekla/Trimble, ever.
+- **Assets and provenance: `AGENTS.md` §1 and §2.** Nothing from Tekla/Trimble, ever.
 - **Never crash on input:** `AGENTS.md` §4. Clippy denies `unwrap`/`expect`/`panic`/indexing in
   non-test code.
 - **Headless first:** every feature has an engine API and a CLI command (`AGENTS.md` §3).
@@ -32,7 +35,8 @@ cargo run -p beamcraft-cli -- --version
 
 CI (`.github/workflows/ci.yml`) runs the same on Windows and Linux, plus a wasm32 check of the
 three pure crates (`beamcraft-geom`, `beamcraft-model`, `beamcraft-kernel`) and `cargo deny`.
-A change is not done until these pass.
+A change is not done until these pass. The full list, with tools and PowerShell notes, is in
+`docs/development.md`.
 
 ## Conventions
 

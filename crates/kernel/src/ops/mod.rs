@@ -60,7 +60,7 @@ use crate::topology::Limits;
 /// and never a partial result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OpLimits {
-    /// Triangles of the result (also bounded by the F06 cap of 8192).
+    /// Triangles of the result (also bounded by the F06 cap of 524,288).
     pub max_triangles: usize,
     /// Loops of one cap or section, the outer loop included.
     pub max_loops: usize,
@@ -73,11 +73,11 @@ pub struct OpLimits {
 }
 
 impl OpLimits {
-    /// Production bounds: 8192 triangles, 64 loops, 2048 cap points, 2^18 exact fallbacks and
-    /// the default G06 limits.
+    /// Production bounds: 524,288 triangles, 257 loops (256 G05 cavities plus the outer
+    /// loop), 2048 cap points, 2^18 exact fallbacks and the default G06 limits.
     pub const DEFAULT: Self = Self {
-        max_triangles: 8192,
-        max_loops: 64,
+        max_triangles: 524_288,
+        max_loops: 257,
         max_cap_points: 2048,
         max_exact_predicates: 1 << 18,
         analysis: Limits::DEFAULT,

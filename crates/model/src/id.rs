@@ -192,10 +192,9 @@ typed_id!(
 );
 
 impl ElementId {
-    /// The USD prim path of an owned steel element: `/World/Steel/E_<32 hex digits>` (F04
-    /// section 2). The path is derived from the identity and never the reverse.
-    pub fn prim_path(&self) -> String {
-        format!("/World/Steel/E_{}", self.0.hex32())
+    /// The canonical USD path, using the immutable category and the complete UUIDv7.
+    pub fn prim_path(&self, category: crate::prim::ElementCategory) -> String {
+        format!("{}{}", category.prefix(), self.0.hex32())
     }
 }
 
@@ -285,8 +284,8 @@ mod tests {
         assert_eq!(id.to_string(), GOOD);
         assert_eq!(id.as_bytes().len(), 16);
         assert_eq!(
-            id.prim_path(),
-            "/World/Steel/E_01990000000070008000000000000001"
+            id.prim_path(crate::prim::ElementCategory::Part),
+            "/World/Steel/Parts/PRT_01990000000070008000000000000001"
         );
         let later = ElementId::parse("01990000-0000-7000-8000-00000000000a").unwrap();
         assert!(id < later);
@@ -297,8 +296,8 @@ mod tests {
     fn the_prim_path_has_all_32_digits() {
         let id = ElementId::parse("0199e7a0-1234-7abc-bdef-0123456789ab").unwrap();
         assert_eq!(
-            id.prim_path(),
-            "/World/Steel/E_0199e7a012347abcbdef0123456789ab"
+            id.prim_path(crate::prim::ElementCategory::Part),
+            "/World/Steel/Parts/PRT_0199e7a012347abcbdef0123456789ab"
         );
         assert_eq!(id.uuid().hex32().len(), 32);
     }

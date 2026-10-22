@@ -53,7 +53,3 @@ restart and a repeated create resumes; error codes (`NOT_FOUND`, `INVALID_ID`,
 - One linear draft history, published as one revision (the intermediate draft revisions are not
   republished one by one).
 - Layer processing is in-process (open decision LEW-03).
-
-## Proposed Roadmap entry
-
-`2026-10-18 P06: personal workspaces (workspace-create/status/publish; separate draft store, fast-forward publish through the strict verifier, restart-safe); experimental slice, PR stacked on #67.`

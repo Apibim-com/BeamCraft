@@ -66,16 +66,17 @@ inputs cannot reach it through `ViewSnapshot::build`.
   profile yet (P03). The snapshot builder still takes sealed kernel `PlateResult`s;
   `ElementId` is `beamcraft_model::id::ElementId`. `synthetic` scenes remain stand-ins and every
   command output marks them (`stand_ins`).
-- **Holes are authored with the plate (A04), not operations**: there is no cut or hole edit
-  command (A03, F04 amendment), so a distinct simplified mesh can only be a stand-in
-  supplied by the caller. Measuring the load-time gain on the 10 000-part scene is a V01 task.
+- **Holes are authored with the plate (A04), and no other operations exist yet** (A03), so a
+  distinct simplified mesh can only be a stand-in supplied by the caller: there is no hole
+  edit command, and no cut edit. Measuring the load-time gain on the 10 000-part scene is a
+  V01 task.
 - **Welds and bolts are not registered kinds** (F10 vocabulary 0.1). The kind filter works on
   the 13 registered kinds and will cover welds and bolts when a vocabulary version adds them.
 - **No geometric picking.** F06 `Pick` and `LookupFeature` need kernel feature geometry (G04).
   Selection by display hint (instance or triangle index from a GPU pick) is supported as a hint
   only; anything selecting for engineering use must come from the engine's `Pick`.
 - **No keys, statuses or local-space bounds** (P01), no presentation-key preimage (V01/V03),
-  no cancellation or deadline polling, no transport schema for deltas (U02/F05), no transform
+  no cancellation or deadline polling, no transport schema for deltas (U02), no transform
   other than translation (the first-scope placement).
 - **No mesh export from the CLI.** The CLI reports digests, sizes and counts; delivering blob
   bytes is an I/O-edge decision for the UI/host tasks.

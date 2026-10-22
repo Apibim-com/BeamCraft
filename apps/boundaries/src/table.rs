@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! The module table and the third-party allowlist, read from
-//! `docs/contracts/module-boundaries-v0.1.md`.
+//! `docs/contracts/f08-module-boundaries-v0.1.md`.
 //!
 //! Each is a Markdown table between two HTML-comment markers. The document is the only source;
 //! this module never writes it.
@@ -10,7 +10,7 @@
 use std::fmt;
 
 /// Repository path of the boundary document.
-pub const DOCUMENT_PATH: &str = "docs/contracts/module-boundaries-v0.1.md";
+pub const DOCUMENT_PATH: &str = "docs/contracts/f08-module-boundaries-v0.1.md";
 /// Largest document accepted, bytes.
 pub const MAX_DOCUMENT_BYTES: usize = 1 << 20;
 /// Most rows accepted in one table.

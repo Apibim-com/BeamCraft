@@ -15,11 +15,8 @@ use beamcraft_host::{
     revision::{ExpectedBase, LayerEntry, NoFault, RevisionDraft, RevisionStore, Uuid7},
     storage::BlobStore,
 };
-use beamcraft_model::error::ErrorCode;
-use beamcraft_protocol::{
-    json::{self, Json},
-    message,
-};
+use beamcraft_json::{Json, Limits};
+use beamcraft_model::{error::ErrorCode, id::ElementId, prim::ElementCategory};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -61,7 +58,7 @@ impl Fixture {
             .args(&args)
             .output()
             .unwrap();
-        let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
+        let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
         (output.status.code().unwrap(), body)
     }
 
@@ -138,7 +135,6 @@ fn assert_same(a: &Inspection, b: &Inspection) {
     assert_eq!(a.project_record, b.project_record);
     assert_eq!(a.levels, b.levels);
     assert_eq!(a.elements, b.elements);
-    assert_eq!(a.marks, b.marks);
 }
 
 /// Cache hits and misses of this thread so far.
@@ -275,7 +271,10 @@ fn a_warm_cache_still_refuses_a_tampered_derived_mesh() {
     // The copy's stored box is stretched from 10 to 12 mm while its authored inputs stay those
     // of the source. Points and extent change together and an axis-aligned box keeps its face
     // normals, so the layer passes every structural rule: only the kernel comparison can tell.
-    let marker = format!("\"E_{}\"", PLATE_COPY.replace('-', ""));
+    let path = ElementId::parse(PLATE_COPY)
+        .unwrap()
+        .prim_path(ElementCategory::Part);
+    let marker = format!("\"{}\"", path.rsplit('/').next().unwrap());
     f.tamper(|name, mut text| {
         if name == "derived.usda" {
             let block = text.find(&marker).unwrap();

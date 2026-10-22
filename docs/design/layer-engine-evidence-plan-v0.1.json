@@ -4,7 +4,8 @@
   "status": "proposed_not_executed",
   "authority": [
     "Original N01 recommendation; later owner decisions and the WS amendment below supersede its portability criteria. No runtime acceptance is established.",
-    "WS amendment, owner decision 2026-10-16: desktop-only (Windows, Linux, macOS); only beamcraft-geom, beamcraft-model and beamcraft-kernel require WASM compatibility as a layering discipline. U01-U04 and N03 are desktop-native; N03 retains Linux builds and available SDK-oracle verification without a WASM build."
+    "WS amendment, owner decision 2026-10-16: desktop-only (Windows, Linux, macOS); only beamcraft-geom, beamcraft-model and beamcraft-kernel require WASM compatibility as a layering discipline. U01-U04 and N03 are desktop-native; N03 retains Linux builds and available SDK-oracle verification without a WASM build.",
+    "U17, owner decision 2026-10-20: the separate USD worker process and the private worker protocol (F05) were removed; USD is read and written in the calling process by the layer engine. Mentions of the worker and of F05 in the claims below are the history of this plan, not the current design."
   ],
   "timebox": {
     "working_days": 10,

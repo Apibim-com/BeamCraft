@@ -15,11 +15,8 @@ use beamcraft_host::{
     revision::{ExpectedBase, LayerEntry, NoFault, RevisionDraft, RevisionStore, Uuid7},
     storage::BlobStore,
 };
+use beamcraft_json::{Json, Limits};
 use beamcraft_model::digest::Sha256;
-use beamcraft_protocol::{
-    json::{self, Json},
-    message,
-};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -83,7 +80,7 @@ impl Fixture {
             .args(&args)
             .output()
             .unwrap();
-        let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
+        let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
         (output.status.code().unwrap(), body)
     }
     fn run(&self, command: &str, extra: &[&str]) -> (i32, Json) {
@@ -795,7 +792,7 @@ fn sources_outside_the_static_profile_are_refused_with_an_explicit_diagnostic() 
         ),
         (
             "element-like name without identity",
-            b"#usda 1.0\n(defaultPrim = \"A\")\ndef Scope \"A\"\n{\n    def Scope \"E_beam\" {}\n}\n".to_vec(),
+            b"#usda 1.0\n(defaultPrim = \"A\")\ndef Scope \"A\"\n{\n    def Scope \"PRT_beam\" {}\n}\n".to_vec(),
             "INVALID_ID",
         ),
         ("too large", big.into_bytes(), "LIMIT_EXCEEDED"),
@@ -927,7 +924,7 @@ fn a_workspace_forks_publishes_and_undoes_with_the_foreign_layer_intact() {
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(0));
-    let undone = json::decode(&output.stdout, &message::read_limits()).unwrap();
+    let undone = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
     assert!(
         layers(&undone)
             .iter()

@@ -61,18 +61,43 @@ jobs:
           python3 tools/fixtures/verify_expectations.py
           python3 tools/fixtures/test_verify_expectations.py
 
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
-        with:
-          python-version: '3.12'
-
-      - name: Test offline audit tools
-        run: python -B -m unittest discover -s tools/audit -p "test_*.py" -v
-
       - name: Docs
         if: runner.os == 'Linux'
         run: cargo doc --workspace --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
+
+  build-timings:
+    name: cold release (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { os: macos-latest, target: aarch64-apple-darwin }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+      # Download outside the measured interval, but never restore compiled objects.
+      # Hosted macOS is useful evidence, not the reference Apple M5 acceptance.
+      - run: cargo fetch --locked --target ${{ matrix.target }}
+      - name: Measure compiler-cold release build
+        run: bash tools/build-timings.sh --target ${{ matrix.target }} --output target/build-timings
+        env:
+          CARGO_NET_OFFLINE: "true"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: build-timings-${{ matrix.target }}
+          path: |
+            target/build-timings/metadata.txt
+            target/build-timings/build.log
+            target/build-timings/target/cargo-timings/*.html
+          if-no-files-found: error
 
   wasm:
     name: wasm32 check
@@ -87,7 +112,7 @@ jobs:
         with:
           key: wasm32
       # WS / owner decision 2026-10-16: only geom, model and kernel require WASM compatibility.
-      # The three domain rows in docs/contracts/module-boundaries-v0.1.md define the list.
+      # The three domain rows in docs/contracts/f08-module-boundaries-v0.1.md define the list.
       - name: Check geom, model and kernel for wasm32
         run: |
           list="$(cargo run --locked --quiet -p beamcraft-boundaries -- portable)"

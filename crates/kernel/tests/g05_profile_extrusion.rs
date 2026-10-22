@@ -685,31 +685,31 @@ fn admitted_profile_triangulation_is_an_independent_exact_tiling() {
 }
 
 #[test]
-fn exactly_at_the_face_cap_is_accepted_and_one_more_is_a_topology_limit() {
-    let ngon = |n: usize, radius: f64| -> Vec<Point2> {
+fn one_above_the_face_cap_is_a_topology_limit() {
+    // Clockwise rings of `n` points on a circle of `radius` around (cx, cy).
+    let ring = |n: usize, radius: f64, cx: f64, cy: f64| -> Vec<Point2> {
         (0..n)
             .map(|k| {
                 let a = 2.0 * PI * k as f64 / n as f64;
-                p(radius * a.cos(), radius * a.sin())
+                p(cx + radius * a.cos(), cy - radius * a.sin())
             })
             .collect()
     };
-    let spec = CurveSpec {
-        max_sagitta_mm: 0.05,
-        min_segments: 1020,
-        max_segments: 1020,
-    };
-    let hole = Cavity::circle(p(0.0, 0.0), 1.0e4, spec).unwrap();
-    assert_eq!(hole.points().len(), 1020);
-    // 2 caps + 1021 outer walls + 1 cavity wall = 1024 faces (the F06 cap).
-    let outer = ngon(1021, 1.0e5);
-    let ex = extrude(&outer, std::slice::from_ref(&hole), 10.0).unwrap();
-    assert_eq!(ex.mesh().face_table().len(), 1024);
-    assert_valid_extrusion(&ex, &outer, std::slice::from_ref(&hole), 10.0);
-    // One more outer point exceeds the cap; admission itself still accepts the contour.
-    let outer = ngon(1022, 1.0e5);
-    assert!(Profile::admit(&outer, std::slice::from_ref(&hole)).is_ok());
-    let failure = extrude(&outer, std::slice::from_ref(&hole), 10.0).unwrap_err();
+    // 63 polygonal cavities of 1024 points and one of 1018 on an 8x8 grid: 2 caps + 4 outer
+    // walls + 65,530 cavity walls is exactly one face above the F06 cap of 65,535, with every
+    // other total inside its cap. Admission accepts the contours; the face cap refuses before
+    // any triangulation. Acceptance at the cap is covered blob-level by the F06-POS-27 cases
+    // in the shell and engine validators: a full 65,535-face build here would take minutes.
+    let cavities: Vec<Cavity> = (0..64)
+        .map(|k| {
+            let (col, row) = (f64::from(k % 8), f64::from(k / 8));
+            let n = if k == 63 { 1018 } else { 1024 };
+            Cavity::polygon(ring(n, 10.0, 15.0 + 25.0 * col, 15.0 + 25.0 * row))
+        })
+        .collect();
+    let outer = rect(0.0, 0.0, 220.0, 220.0);
+    assert!(Profile::admit(&outer, &cavities).is_ok());
+    let failure = extrude(&outer, &cavities, 10.0).unwrap_err();
     assert_eq!(failure.diagnostics()[0].code.as_str(), "GEO_TOPOLOGY_LIMIT");
     assert_eq!(failure.status(), "limit_exceeded");
 }
@@ -731,12 +731,37 @@ fn triangle_cap_is_enforced_before_any_triangulation() {
             .collect();
         (outer, cavities)
     };
-    // T = 4N + 4h - 4 = 36h + 12 with N = 4 + 8h: 227 holes give 8184, 228 give 8220.
+    // T = 4N + 4h - 4 = 36h + 12 with N = 4 + 8h: 227 holes give 8184, far below the F06 cap.
     let (outer, cavities) = holes(227);
     let ex = extrude(&outer, &cavities, 3.0).unwrap();
     assert_eq!(ex.mesh().triangles().len(), 8184);
     assert_valid_extrusion(&ex, &outer, &cavities, 3.0);
-    let (outer, cavities) = holes(228);
+    // At the cap: 128 curve holes of 1020 edges and one of 508 put N exactly at the total-point
+    // cap (131,072) and 4N + 4h - 4 at 524,800, one bucket above the F06 triangle cap of
+    // 524,288. Admission accepts; the triangle cap refuses before any triangulation.
+    let cap_spec = CurveSpec {
+        max_sagitta_mm: 1.0e9,
+        min_segments: 1020,
+        max_segments: 1020,
+    };
+    let cavities: Vec<Cavity> = (0..129)
+        .map(|k| {
+            let (col, row) = (f64::from(k % 16), f64::from(k / 16));
+            let segments = if k == 128 { 508 } else { 1020 };
+            Cavity::circle(
+                p(15.0 + 25.0 * col, 15.0 + 25.0 * row),
+                10.0,
+                CurveSpec {
+                    min_segments: segments,
+                    max_segments: segments,
+                    ..cap_spec
+                },
+            )
+            .unwrap()
+        })
+        .collect();
+    let outer = rect(0.0, 0.0, 420.0, 240.0);
+    assert!(Profile::admit(&outer, &cavities).is_ok());
     let failure = extrude(&outer, &cavities, 3.0).unwrap_err();
     assert_eq!(failure.diagnostics()[0].code.as_str(), "GEO_BUFFER_LIMIT");
 }

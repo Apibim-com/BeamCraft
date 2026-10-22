@@ -145,7 +145,7 @@ material `update-element`). There is no dedicated "recompute quantities" command
 - The declared mass per metre and the declared surface are still not read; mass uses the area.
 - A rectangle's `kernel_mm2`-style D3 warning is not added (the rectangle keeps its refusing P02.2
   0.1 % check).
-- The IFC contract ([ifc-export-v0.1](../contracts/ifc-export-v0.1.md)) maps one volume to both
+- The IFC contract ([e01-ifc-export-v0.1](../contracts/e01-ifc-export-v0.1.md)) maps one volume to both
   `NetVolume` and, only for elements without operations, `GrossVolume`; it is not changed here.
   With explicit gross and net figures a plate with holes could also publish `GrossVolume` (open).
 
@@ -178,10 +178,3 @@ the finished part weighs). Both are available now; the BOM chooses by use.
   (catalogue and computed entries), a plate with holes, a store from before this slice (stale,
   usable, refreshed by an edit) and a wrong record under the current label (still
   `INTEGRITY_ERROR`).
-
-## Roadmap entry (proposed, not applied)
-
-- 2026-10-18: P-Mass: member volume and mass are `area x axis length x density` with the area from
-  the declared catalogue value or the exact closed-form section area; quantities report gross and
-  net (net = gross - measured removed volume; old keys are net); signatures cover the area
-  source; earlier member records read as stale. Experimental slice.

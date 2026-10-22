@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! The BeamCraft IFC4 writer (E02, on the E01 contract `docs/contracts/ifc-export-v0.1.md`).
+//! The BeamCraft IFC4 writer (E02, on the E01 contract `docs/contracts/e01-ifc-export-v0.1.md`).
 //!
 //! A pure, std-only crate: the caller resolves every value into an [`ExportModel`] and the writer
 //! emits one clear-text STEP file through a bounded sink. It reads no store, calls no kernel,

@@ -39,7 +39,7 @@ pub const MAX_OPERATIONS: usize = 4096;
 pub const MAX_LAYERS: usize = 16;
 /// Most immutable blobs a changeset requires.
 pub const MAX_ASSETS: usize = 256;
-/// Largest layer or blob a changeset may name (the F05 bundle budget).
+/// Largest layer or blob a changeset may name (the host's 32 MiB blob cap).
 pub const MAX_ASSET_BYTES: u64 = 32 * 1024 * 1024;
 /// Longest layer name.
 pub const MAX_LAYER_NAME_BYTES: usize = 64;

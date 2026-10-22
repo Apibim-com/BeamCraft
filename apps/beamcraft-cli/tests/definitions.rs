@@ -12,11 +12,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+use beamcraft_json::{Json, Limits};
 use beamcraft_layer_engine::authored::{Definition, Resource, SectionProperties};
-use beamcraft_protocol::{
-    json::{self, Json},
-    message,
-};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -49,7 +46,7 @@ impl Fixture {
             .args(&args)
             .output()
             .unwrap();
-        let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
+        let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
         (output.status.code().unwrap(), body)
     }
     fn ok(&self, command: &str, extra: &[&str]) -> Json {
@@ -182,7 +179,7 @@ fn a_material_with_density_gives_the_plate_a_current_mass_across_processes() {
 
     // An ordinary reader of the saved text sees the definition, its units and the pinned link.
     let authored = f.layer_text("authored.usda", &created);
-    let prim = format!("def Scope \"D_{digest}\"");
+    let prim = format!("def Scope \"MAT_{digest}\"");
     assert!(authored.contains(&prim), "{authored}");
     for line in [
         "custom token bim:units = \"mm\"",
@@ -193,7 +190,7 @@ fn a_material_with_density_gives_the_plate_a_current_mass_across_processes() {
         assert!(authored.contains(line), "{line}\n{authored}");
     }
     assert!(authored.contains(&format!(
-        "custom rel bim:material = </World/Definitions/D_{digest}>"
+        "custom rel bim:material = </World/Definitions/Materials/MAT_{digest}>"
     )));
     // Physical material only: nothing in the layers is a shader, a colour or a surface binding.
     let derived = f.layer_text("derived.usda", &created);
@@ -230,7 +227,7 @@ fn unknown_density_stays_unknown_and_never_selects_a_default() {
     // Reopen: the layer carries no density attribute for the bare definition.
     let authored = f.layer_text("authored.usda", &steel);
     let bare_block = authored
-        .split("def Scope \"D_")
+        .split("def Scope \"MAT_")
         .find(|block| block.starts_with(&digest))
         .unwrap();
     let bare_block = bare_block.split('}').next().unwrap();

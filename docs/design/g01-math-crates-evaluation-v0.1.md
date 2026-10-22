@@ -355,7 +355,7 @@ robust.workspace = true
 other exception is proposed. Integration must update root Cargo.lock normally and repeat
 cargo-deny/target checks; this spike deliberately did not apply those changes.
 
-In docs/contracts/module-boundaries-v0.1.md section 3, replace the paragraph after its heading
+In docs/contracts/f08-module-boundaries-v0.1.md section 3, replace the paragraph after its heading
 and empty table with this exact text:
 
 ```markdown
@@ -479,16 +479,3 @@ Proposed ATTRIBUTION.md row:
 These original outputs are MPL-2.0. Upstream crates retain their own licences; this row does not
 relabel dependencies. The attribution proposal remains unapplied because this task explicitly
 forbids editing ATTRIBUTION.md.
-
-## Exposure note
-
-Read assigned-worktree AGENTS.md, CLAUDE.md, ROADMAP.md, architecture, F04/F06/F08 contracts,
-F06 cases, G04 numeric design, assigned geom/model source, manifests/policy, .gitignore and
-attribution column format. Read cached candidate/dependency metadata, original licences and
-selected math/predicate source expressly authorized for crate selection. Adapter expressions
-come from F06, not copied upstream implementation. Cargo/tests read toolchain/cache/workspace
-inputs as required; Python performed local text IO/hashing. No other checkout, Desktop path,
-private plan/observation, client project, commercial-product source/asset, browser page or
-external oracle was opened. No network, communication channel, subagent or delegation was used.
-Git ownership was not bypassed. Unestablished prior training/exposure remains unknown (EU);
-this report does not establish clean-room admission for later kernel implementation.

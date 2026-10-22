@@ -15,10 +15,7 @@ use beamcraft_host::{
     revision::{ExpectedBase, LayerEntry, NoFault, RevisionDraft, RevisionStore, Uuid7},
     storage::BlobStore,
 };
-use beamcraft_protocol::{
-    json::{self, Json},
-    message,
-};
+use beamcraft_json::{Json, Limits};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -54,7 +51,7 @@ impl Fixture {
             .args(&args)
             .output()
             .unwrap();
-        let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
+        let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
         (output.status.code().unwrap(), body)
     }
     fn ok(&self, command: &str, extra: &[&str]) -> Json {
@@ -332,7 +329,7 @@ fn a_damaged_connects_record_is_refused_not_reported() {
     let plate = f.plate();
     let beam = f.beam();
     f.weld(WELD, &plate, &beam);
-    let path = |id: &str| format!("</World/Steel/E_{}>", id.replace('-', ""));
+    let path = |id: &str| format!("</World/Steel/Parts/PRT_{}>", id.replace('-', ""));
     let full = format!("rel bim:connects = [{}, {}]", path(&plate), path(&beam));
     let single = format!("rel bim:connects = {}", path(&plate));
     f.tamper(|name, text| {
@@ -384,13 +381,13 @@ fn a_newer_schema_connection_stays_inert_beside_supported_welds() {
     let plate = f.plate();
     let beam = f.beam();
     f.weld(WELD, &plate, &beam);
-    let newer = "        def Xform \"E_019a7bf0000070008000000000600099\" (\n            kind = \"component\"\n        )\n        {\n            custom string bim:id = \"019a7bf0-0000-7000-8000-000000600099\"\n            custom token bim:elementKind = \"connection\"\n            custom string bim:schemaVersion = \"0.2.0\"\n            custom token bim:geometryMode = \"parametric\"\n        }\n";
+    let newer = "        def Xform \"CON_019a7bf0000070008000000000600099\" (\n            kind = \"component\"\n        )\n        {\n            custom string bim:id = \"019a7bf0-0000-7000-8000-000000600099\"\n            custom token bim:elementKind = \"connection\"\n            custom string bim:schemaVersion = \"0.2.0\"\n            custom token bim:geometryMode = \"parametric\"\n        }\n";
     f.tamper(|name, text| {
         if name != "authored.usda" {
             return text;
         }
-        let open = "def Scope \"Steel\" (\n        kind = \"group\"\n    )\n    {\n";
-        let at = text.find(open).unwrap() + open.len();
+        let folder = text.find("\"Connections\"").unwrap();
+        let at = folder + text[folder..].find('{').unwrap() + 1;
         format!("{}{newer}{}", &text[..at], &text[at..])
     });
     // Only the supported weld is reported, and new welds can still be created.

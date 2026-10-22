@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 // Contributor-original generated synthetic fixtures, MPL-2.0; covered by ATTRIBUTION.md's
-// crates/layer-engine/** row. Expectations follow F04 sections 2-4/8 and F06 sections 2/4.
+// test-data row. Expectations follow F04 sections 2-4/8 and F06 sections 2/4.
 
 //! U02 real-backend authoring regressions with original in-memory fixtures.
 
@@ -193,7 +193,16 @@ fn populated() -> (Author, Opened) {
     (a, installed)
 }
 fn path(id: &str) -> String {
-    format!("/World/Steel/E_{}", id.replace('-', ""))
+    use beamcraft_model::prim::ElementCategory;
+    let category = match id {
+        FRAME | OUTER => ElementCategory::Assembly,
+        WELD | BOLT => ElementCategory::Connection,
+        STOREY | ROOF => ElementCategory::Level,
+        _ => ElementCategory::Part,
+    };
+    beamcraft_model::id::ElementId::parse(id)
+        .unwrap()
+        .prim_path(category)
 }
 fn snapshot(author: &Author, context: &Context) -> Vec<Prim> {
     let mut result = Vec::new();
@@ -347,7 +356,7 @@ fn absence_block_removal_reveal_weaker_defaults_without_flattening() {
     *weak = asset(
         "weak.usda",
         layer(&format!(
-            "over \"World\" {{ over \"Steel\" {{ over \"E_{}\" {{ custom double steel:member:rollRad=0.75 }} }} }}",
+            "over \"World\" {{ over \"Steel\" {{ over \"Parts\" {{ over \"PRT_{}\" {{ custom double steel:member:rollRad=0.75 }} }} }} }}",
             MEMBER.replace('-', "")
         )),
     );
@@ -432,7 +441,7 @@ fn foreign_reference_overrides_and_foreign_ancestor_writes_fail_atomically() {
     let foreign = layer("def Xform \"Source\" { custom double future:value=23 }");
     input.assets.push(asset("foreign.usda", foreign));
     let body = layer(&format!(
-        "over \"World\" {{ over \"Steel\" {{ def Xform \"E_{}\" (references=@foreign.usda@</Source>) {{ custom string bim:id=\"{PLATE}\" }} }} }}",
+        "over \"World\" {{ over \"Steel\" {{ over \"Parts\" {{ def Xform \"PRT_{}\" (references=@foreign.usda@</Source>) {{ custom string bim:id=\"{PLATE}\" }} }} }} }}",
         PLATE.replace('-', "")
     ));
     *input
@@ -1047,8 +1056,8 @@ fn changed_input_bounds_are_inclusive_and_rejections_keep_the_entire_patch_atomi
         )
         .unwrap();
     let mut bad = mesh();
-    // One point above the array ceiling: 10,923 * 3 scalars > 32,768.
-    bad.points_mm = vec![[0.0; 3]; 10_923];
+    // One point above the array ceiling: (MODEL.array_items / 3 + 1) * 3 scalars.
+    bad.points_mm = vec![[0.0; 3]; Budgets::MODEL.array_items / 3 + 1];
     assert_eq!(
         a.prepare(batch(&o.context, vec![Change::Mesh(bad)]), &control())
             .unwrap_err()
@@ -1135,7 +1144,15 @@ fn a_definition_only_batch_publishes_immutable_definitions_and_an_empty_batch_is
     for d in &definitions {
         let definition = prims
             .iter()
-            .find(|p| p.path == format!("/World/Definitions/D_{}", d.digest))
+            .find(|p| {
+                p.path
+                    == (if matches!(d.definition, Definition::Material { .. }) {
+                        beamcraft_model::prim::DefinitionCategory::Material
+                    } else {
+                        beamcraft_model::prim::DefinitionCategory::Profile
+                    })
+                    .path(d.digest)
+            })
             .unwrap();
         let property = |name: &str| {
             definition
@@ -1465,10 +1482,10 @@ fn a_definition_display_name_is_part_of_the_resource_and_is_checked_before_reuse
     let hex = named.digest.to_string();
     let stage = |metadata: &str| {
         let body = format!(
-            "def Xform \"World\" {{ def Scope \"Definitions\" {{ def Scope \"D_{hex}\" {metadata}{{ \
+            "def Xform \"World\" {{ def Scope \"Definitions\" {{ def Scope \"Materials\" {{ def Scope \"MAT_{hex}\" {metadata}{{ \
              custom string bim:schemaVersion = \"0.1.0\"\n custom token bim:units = \"mm\"\n \
              custom token bim:definitionKind = \"material\"\n custom double bim:densityKgM3 = 1000.0\n \
-             custom string bim:contentDigest = \"{hex}\" }} }} }}"
+             custom string bim:contentDigest = \"{hex}\" }} }} }} }}"
         );
         request(
             vec![
@@ -1506,10 +1523,10 @@ fn an_existing_definition_must_match_the_resource_before_it_is_reused() {
     let hex = resource.digest.to_string();
     let stage = |density: &str, active: &str| {
         let body = format!(
-            "def Xform \"World\" {{ def Scope \"Definitions\" {{ def Scope \"D_{hex}\" {active}{{ \
+            "def Xform \"World\" {{ def Scope \"Definitions\" {{ def Scope \"Materials\" {{ def Scope \"MAT_{hex}\" {active}{{ \
              custom string bim:schemaVersion = \"0.1.0\"\n custom token bim:units = \"mm\"\n \
              custom token bim:definitionKind = \"material\"\n {density}\n \
-             custom string bim:contentDigest = \"{hex}\" }} }} }}"
+             custom string bim:contentDigest = \"{hex}\" }} }} }} }}"
         );
         request(
             vec![
@@ -1840,6 +1857,10 @@ fn standard_usd_metadata_kind_display_name_extent_and_flat_normals() {
     let all = snapshot(&a, &o.context);
     assert_eq!(prim(&all, "/World").kind.as_deref(), Some("assembly"));
     assert_eq!(prim(&all, "/World/Steel").kind.as_deref(), Some("group"));
+    assert_eq!(
+        prim(&all, "/World/Steel/Parts").kind.as_deref(),
+        Some("group")
+    );
     let plate = prim(&all, &path(PLATE));
     assert_eq!(plate.kind.as_deref(), Some("component"));
     assert_eq!(plate.display_name.as_deref(), Some("Plate Ω"));
@@ -1948,7 +1969,7 @@ fn value_at<'a>(prim: &'a Prim, name: &str) -> Option<&'a Value> {
 }
 
 #[test]
-fn a_store_pinned_to_the_previous_mapping_stays_editable_and_is_repinned() {
+fn a_store_pinned_to_the_previous_mapping_is_refused() {
     let previous = "70fc49a1d81314a6599284532bd2d45c18f77b4318266238cc6923b25c05f28e";
     let pinned = |body: &str| {
         format!(
@@ -1963,40 +1984,8 @@ fn a_store_pinned_to_the_previous_mapping_stays_editable_and_is_repinned() {
         *old = asset(name, pinned(&body));
     }
     input.manifest = input.manifest_digest().unwrap();
-    let (mut a, o) = open(input);
-    let p = prepare_initial(&mut a, &o.context);
-    let installed = a
-        .install(
-            &o.context,
-            &p.token,
-            &p.op_id,
-            Decision::Accepted,
-            &control(),
-        )
-        .unwrap();
-    let exported = a.export(&installed.context, &control()).unwrap();
-    let current = schema_identity().unwrap().digest.to_string();
-    for name in ["authored.usda", "derived.usda"] {
-        let layer = exported.iter().find(|l| l.name == name).unwrap();
-        let text = String::from_utf8(layer.bytes.clone()).unwrap();
-        assert!(
-            text.contains(&current) && !text.contains(previous),
-            "{name}"
-        );
-    }
-    let mut other = initial();
-    let old = other
-        .assets
-        .iter_mut()
-        .find(|a| a.name == "authored.usda")
-        .unwrap();
-    *old = asset(
-        "authored.usda",
-        pinned("").replace(previous, &"0".repeat(64)),
-    );
-    other.manifest = other.manifest_digest().unwrap();
     assert_eq!(
-        Author::open(other, targets(), schema_identity().unwrap(), &control())
+        Author::open(input, targets(), schema_identity().unwrap(), &control())
             .err()
             .map(|e| e.code),
         Some(ErrorCode::UnsupportedVersion)
@@ -2226,7 +2215,7 @@ fn an_assembly_never_gets_a_body_reads_cover_the_chain_and_detach_masks_weaker_r
     // A weaker owned layer supplies the membership; a detach must still end it.
     let mut weak = export_request(&a, &o.context);
     let text = format!(
-        "over \"World\" {{ over \"Steel\" {{ over \"E_{}\" {{ custom rel bim:partOf = <{}> }} }} }}",
+        "over \"World\" {{ over \"Steel\" {{ over \"Parts\" {{ over \"PRT_{}\" {{ custom rel bim:partOf = <{}> }} }} }} }}",
         PLATE.replace('-', ""),
         path(FRAME)
     );
@@ -2873,8 +2862,8 @@ fn section_profiles_round_trip_and_tampering_is_refused() {
     );
 }
 
-const STOREY: &str = "0199e7a0-0000-7000-8000-000000000301";
-const ROOF: &str = "0199e7a0-0000-7000-8000-000000000302";
+const STOREY: &str = "0199e7a0-0000-7000-8000-000000000401";
+const ROOF: &str = "0199e7a0-0000-7000-8000-000000000402";
 fn level(id: &str, name: &str, elevation_mm: f64) -> Change {
     Change::Create(Element {
         id: id.into(),
@@ -3186,111 +3175,189 @@ fn the_project_record_is_validated_read_and_kept_through_edits() {
     }
 }
 
+fn mark(series: &str, number: u32) -> Mark {
+    Mark {
+        series: series.into(),
+        number,
+        basis: "BCNUM1 plate=PL:1 token=abc".into(),
+    }
+}
+fn marked(id: &str, series: &str, number: u32) -> Change {
+    Change::Mark {
+        id: id.into(),
+        mark: mark(series, number),
+    }
+}
+
 #[test]
-fn a_mark_is_authored_with_its_status_and_damaged_and_overlong_ones_are_refused() {
-    // Assign the plate a mark (value and status together), then approve it (the status only,
-    // value untouched).
+fn a_mark_is_three_properties_of_the_element_replaced_whole_and_writes_only_the_label_group() {
     let (mut a, o) = populated();
-    let p = a
-        .prepare(
-            batch(
-                &o.context,
-                vec![Change::Mark {
-                    id: PLATE.into(),
-                    value: Some("P/1".into()),
-                    status: Some(MarkStatus::Assigned),
-                }],
-            ),
-            &control(),
-        )
-        .unwrap();
-    assert!(
-        p.writes
+    let (_, o) = installed(&mut a, &o, vec![assembly(FRAME, "Frame")]);
+    let (p, o) = installed(
+        &mut a,
+        &o,
+        vec![
+            marked(PLATE, "PL", 7),
+            marked(MEMBER, "B", 0),
+            marked(FRAME, "A-", 2_147_483_647),
+        ],
+    );
+    let prims = snapshot(&a, &o.context);
+    assert_eq!(
+        value(&prims, PLATE, MARK_SERIES),
+        Some(&Value::Text("PL".into()))
+    );
+    assert_eq!(value(&prims, PLATE, MARK_NUMBER), Some(&Value::Int(7)));
+    assert_eq!(
+        value(&prims, PLATE, MARK_BASIS),
+        Some(&Value::Text("BCNUM1 plate=PL:1 token=abc".into()))
+    );
+    assert_eq!(value(&prims, MEMBER, MARK_NUMBER), Some(&Value::Int(0)));
+    assert_eq!(
+        value(&prims, FRAME, MARK_NUMBER),
+        Some(&Value::Int(i64::from(i32::MAX)))
+    );
+    // A mark touches the label group alone: no shape, placement, relationship or derived group,
+    // so a mark never invalidates a body or a quantity.
+    for id in [PLATE, MEMBER, FRAME] {
+        let writes: BTreeSet<_> = p
+            .writes
             .iter()
-            .all(|f| f.identity == PLATE && f.group == Group::Mark),
-        "{:?}",
-        p.writes
+            .filter(|f| f.identity == id)
+            .map(|f| f.group)
+            .collect();
+        assert_eq!(writes, BTreeSet::from([Group::Label]), "{id}");
+    }
+    assert!(
+        p.opinions
+            .iter()
+            .any(|i| i.element_id == PLATE && i.attribute == MARK_NUMBER && i.type_name == "int")
     );
-    let o = a
-        .install(
-            &o.context,
-            &p.token,
-            &p.op_id,
-            Decision::Accepted,
-            &control(),
-        )
-        .unwrap();
+    // The derived mesh and the shape inputs are untouched.
+    assert!(value(&prims, PLATE, "steel:plate:thicknessMm").is_some());
+    assert!(
+        prims
+            .iter()
+            .any(|p| p.path == format!("{}/Geometry", path(PLATE)))
+    );
+    // A second mark replaces the first as a whole; the stage stays valid.
+    let (_, o) = installed(&mut a, &o, vec![marked(PLATE, "P", 8)]);
     let prims = snapshot(&a, &o.context);
     assert_eq!(
-        value(&prims, PLATE, "bim:mark"),
-        Some(&Value::Text("P/1".into()))
+        value(&prims, PLATE, MARK_SERIES),
+        Some(&Value::Text("P".into()))
     );
-    assert_eq!(
-        value(&prims, PLATE, "bim:markStatus"),
-        Some(&Value::Text("assigned".into()))
-    );
+    assert_eq!(value(&prims, PLATE, MARK_NUMBER), Some(&Value::Int(8)));
+    validate_layers(
+        export_request(&a, &o.context),
+        schema_identity().unwrap(),
+        &control(),
+    )
+    .unwrap();
+}
 
-    // Approving writes only the status; the value is kept.
-    let p = a
-        .prepare(
-            batch(
-                &o.context,
-                vec![Change::Mark {
-                    id: PLATE.into(),
-                    value: None,
-                    status: Some(MarkStatus::Approved),
-                }],
-            ),
-            &control(),
-        )
-        .unwrap();
-    let o = a
-        .install(
-            &o.context,
-            &p.token,
-            &p.op_id,
-            Decision::Accepted,
-            &control(),
-        )
-        .unwrap();
-    let prims = snapshot(&a, &o.context);
-    assert_eq!(
-        value(&prims, PLATE, "bim:mark"),
-        Some(&Value::Text("P/1".into()))
+#[test]
+fn wrong_marks_targets_and_loaded_mark_records_are_refused_with_nothing_written() {
+    let (mut a, o) = populated();
+    let (_, o) = installed(
+        &mut a,
+        &o,
+        vec![level(STOREY, "Level 1", 3000.0), assembly(FRAME, "Frame")],
     );
-    assert_eq!(
-        value(&prims, PLATE, "bim:markStatus"),
-        Some(&Value::Text("approved".into()))
-    );
-
-    // A change that authors nothing, and one over the value bound, are refused; the duplicate
-    // value is refused by the candidate's uniqueness rule.
-    for bad in [
-        Change::Mark {
-            id: PLATE.into(),
-            value: None,
-            status: None,
-        },
-        Change::Mark {
-            id: PLATE.into(),
-            value: Some("x".repeat(65)),
-            status: Some(MarkStatus::Assigned),
-        },
-        Change::Mark {
-            id: MEMBER.into(),
-            value: Some("P/1".into()),
-            status: Some(MarkStatus::Assigned),
-        },
+    let bad = |m: Mark| Change::Mark {
+        id: PLATE.into(),
+        mark: m,
+    };
+    let too_long = "X".repeat(17);
+    for (change, code) in [
+        (marked(PLATE, &too_long, 1), ErrorCode::InvalidArgument),
+        (marked(PLATE, "a b", 1), ErrorCode::InvalidArgument),
+        (marked(PLATE, "Ω", 1), ErrorCode::InvalidArgument),
+        (
+            marked(PLATE, "PL", 2_147_483_648),
+            ErrorCode::InvalidArgument,
+        ),
+        (
+            bad(Mark {
+                basis: String::new(),
+                ..mark("PL", 1)
+            }),
+            ErrorCode::InvalidArgument,
+        ),
+        (
+            bad(Mark {
+                basis: "x".repeat(513),
+                ..mark("PL", 1)
+            }),
+            ErrorCode::InvalidArgument,
+        ),
+        (
+            bad(Mark {
+                basis: "tab\there".into(),
+                ..mark("PL", 1)
+            }),
+            ErrorCode::InvalidArgument,
+        ),
+        // A level is no part; an absent element is NOT_FOUND.
+        (marked(STOREY, "PL", 1), ErrorCode::UnsupportedProperty),
+        (
+            marked("0199e7a0-0000-7000-8000-0000000009ff", "PL", 1),
+            ErrorCode::NotFound,
+        ),
+        (marked("not-an-id", "PL", 1), ErrorCode::InvalidId),
     ] {
-        assert!(
-            a.prepare(batch(&o.context, vec![bad]), &control()).is_err(),
-            "expected a refusal"
+        let got = refused_code(&mut a, &o, vec![change.clone()]);
+        assert_eq!(got, Some(code), "{change:?}");
+    }
+    // Two marks of one element in a batch are a duplicate key.
+    assert!(
+        refused_code(
+            &mut a,
+            &o,
+            vec![marked(PLATE, "PL", 1), marked(PLATE, "PL", 2)]
+        )
+        .is_some()
+    );
+    // Loaded records: a partial record, a wrong type, an out-of-range number, a mark on a level.
+    let (_, o) = installed(&mut a, &o, vec![marked(PLATE, "PL", 7)]);
+    let number = "int steel:numbering:number = 7";
+    let series = "string steel:numbering:series = \"PL\"";
+    for (from, to) in [
+        (number, "double steel:numbering:number = 7"),
+        (number, "int steel:numbering:number = -1"),
+        (series, "string steel:numbering:series = \"a b\""),
+        (series, "token steel:numbering:series = \"PL\""),
+    ] {
+        let input = tampered(&a, &o.context, "authored.usda", from, to);
+        let verdict = validate_layers(input, schema_identity().unwrap(), &control());
+        assert_eq!(
+            verdict.err().map(|e| e.code),
+            Some(ErrorCode::InvalidArgument),
+            "{to}"
         );
     }
-    // Nothing above changed the live marks.
-    let prims = snapshot(&a, &o.context);
+}
+
+#[test]
+fn a_store_pinned_to_the_pre_a09_mapping_is_refused() {
+    let previous = "fdaf890401a7bf4d8d17eb84ad1901b461ff21f1e7cec1e93f9e71203b83865b";
+    let mut input = initial();
+    for name in ["authored.usda", "derived.usda"] {
+        let old = input.assets.iter_mut().find(|a| a.name == name).unwrap();
+        let text = String::from_utf8(old.bytes.clone()).unwrap();
+        let body = text.split_once(")\n").unwrap().1.to_owned();
+        *old = asset(
+            name,
+            format!(
+                "#usda 1.0\n(metersPerUnit=0.001\nupAxis=\"Z\"\ncustomLayerData={{string bimSchemaDigest=\"{previous}\"}})\n{body}\n"
+            ),
+        );
+    }
+    input.manifest = input.manifest_digest().unwrap();
     assert_eq!(
-        value(&prims, PLATE, "bim:markStatus"),
-        Some(&Value::Text("approved".into()))
+        Author::open(input, targets(), schema_identity().unwrap(), &control())
+            .err()
+            .map(|e| e.code),
+        Some(ErrorCode::UnsupportedVersion)
     );
 }

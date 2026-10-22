@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 // Contributor-original generated synthetic fixtures, MPL-2.0; covered by ATTRIBUTION.md's
-// crates/layer-engine/** row. Expectations follow F04 sections 1 and 8, F10 `reference` and the
+// test-data row. Expectations follow F04 sections 1 and 8, F10 `reference` and the
 // R01 design note; the fixture "foreign source" is invented text, not third-party content.
 
 //! R01 real-backend regressions: reference wrappers and the foreign read-only rule.
@@ -186,7 +186,7 @@ fn snapshot(author: &Author, context: &Context) -> Vec<Prim> {
     result
 }
 fn path(id: &str) -> String {
-    format!("/World/Steel/E_{}", id.replace('-', ""))
+    format!("/World/References/REF_{}", id.replace('-', ""))
 }
 fn source_path(id: &str) -> String {
     format!("{}/Correction/Source", path(id))
@@ -1132,7 +1132,7 @@ fn a_binary_layer_outside_the_restricted_profile_fails_closed_with_a_diagnostic(
 }
 
 #[test]
-fn layers_pinned_to_the_p02_2_mapping_stay_editable_and_get_the_current_pin() {
+fn layers_pinned_to_the_p02_2_mapping_are_refused() {
     // The digest of the P02.2 descriptor (master before R01): R01 only adds the wrapper.
     let old = "960c23cae54987cab86028cde90e360eb44ed64f8b6847f3c4f98b02d630ef56";
     let pinned = |name: &str, pin: &str| asset(name, pinned_text(pin));
@@ -1142,15 +1142,19 @@ fn layers_pinned_to_the_p02_2_mapping_stay_editable_and_get_the_current_pin() {
         input.assets.push(pinned(name, old));
     }
     input.manifest = input.manifest_digest().unwrap();
-    assert!(validate_layers(input.clone(), schema_identity().unwrap(), &control()).is_ok());
-    let (mut a, o) = open(input);
-    let p = a
-        .prepare(batch(&o.context, vec![attach(WRAPPER)]), &control())
-        .unwrap();
-    let authored = p.layers.iter().find(|l| l.name == "authored.usda").unwrap();
-    let text = std::str::from_utf8(&authored.bytes).unwrap();
-    assert!(text.contains(&schema_identity().unwrap().digest.to_string()));
-    assert!(!text.contains(old));
+    assert_eq!(
+        validate_layers(input.clone(), schema_identity().unwrap(), &control())
+            .unwrap_err()
+            .code,
+        ErrorCode::UnsupportedVersion
+    );
+    assert_eq!(
+        Author::open(input, targets(), schema_identity().unwrap(), &control())
+            .err()
+            .unwrap()
+            .code,
+        ErrorCode::UnsupportedVersion
+    );
     // An unknown pin is still refused.
     let mut input = initial();
     input.assets.retain(|a| a.name != "authored.usda");
@@ -1226,12 +1230,13 @@ fn half_faked_wrappers_are_refused_and_never_owned() {
         index.element(&id).unwrap().ownership,
         beamcraft_layer_engine::index::Ownership::Foreign
     );
-    // Reference mode with another kind: not a wrapper, so its holder is stray.
+    // A part kind at a reference path is rejected by the reader's U16 category check,
+    // before the wrapper ownership validator runs.
     for (name, value) in [("bim:elementKind", "plate"), ("bim:elementKind", "beam")] {
         let bad = tamper(&assets, "authored.usda", |d| set(d, name, value));
         assert_eq!(
             validate(bad).unwrap_err().code,
-            ErrorCode::ForeignReadOnly,
+            ErrorCode::InvalidId,
             "{value}"
         );
     }

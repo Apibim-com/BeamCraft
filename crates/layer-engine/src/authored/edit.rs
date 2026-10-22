@@ -18,6 +18,29 @@ pub(super) fn data(asset: &Asset) -> Result<sdf::Data, Diagnostic> {
     openusd::usda::parse(std::str::from_utf8(&asset.bytes).map_err(|_| corrupt())?)
         .map_err(|_| corrupt())
 }
+/// Inspect each owned USDA marker after the reader has verified the manifest and bytes.
+pub(super) fn schema_pins(request: &OpenRequest) -> Result<(), Diagnostic> {
+    for asset in request
+        .assets
+        .iter()
+        .filter(|asset| request.owned_layers.contains(&asset.name) && asset.name.ends_with(".usda"))
+    {
+        let layer = data(asset)?;
+        if let Some(value) = layer
+            .try_field(&sdf::Path::abs_root(), "customLayerData")
+            .map_err(|_| corrupt())?
+            && let sdf::Value::Dictionary(fields) = value.as_ref()
+            && let Some(pin) = fields.get("bimSchemaDigest")
+            && !matches!(pin, sdf::Value::String(value) if pin_accepted(value)?)
+        {
+            return Err(fail(
+                ErrorCode::UnsupportedVersion,
+                "layer schema digest mismatch",
+            ));
+        }
+    }
+    Ok(())
+}
 pub(super) fn targets(request: &OpenRequest, targets: &EditTargets) -> Result<(), Diagnostic> {
     if targets.authored == targets.derived
         || targets.authored == request.root
@@ -32,26 +55,11 @@ pub(super) fn targets(request: &OpenRequest, targets: &EditTargets) -> Result<()
         if !name.ends_with(".usda") {
             return Err(unsupported());
         }
-        let layer = data(
-            request
-                .assets
-                .iter()
-                .find(|a| a.name == *name)
-                .ok_or_else(corrupt)?,
-        )?;
-        if let Some(value) = layer
-            .try_field(&sdf::Path::abs_root(), "customLayerData")
-            .map_err(|_| corrupt())?
-            && let sdf::Value::Dictionary(fields) = value.as_ref()
-            && let Some(pin) = fields.get("bimSchemaDigest")
-            && !matches!(pin, sdf::Value::String(s) if pin_accepted(s)?)
-        {
-            return Err(fail(
-                ErrorCode::UnsupportedVersion,
-                "layer schema digest mismatch",
-            ));
+        if !request.assets.iter().any(|asset| asset.name == *name) {
+            return Err(corrupt());
         }
     }
+    schema_pins(request)?;
     let root = data(
         request
             .assets
@@ -216,7 +224,14 @@ fn relationship(
     opinion: MaterialOpinion,
 ) -> Result<(), Diagnostic> {
     let targets = match opinion {
-        MaterialOpinion::Target(d) => Some(vec![path(&definition_path(d))?]),
+        MaterialOpinion::Target(d) => Some(vec![path(&definition_path(
+            d,
+            if name == "bim:material" {
+                DefinitionCategory::Material
+            } else {
+                DefinitionCategory::Profile
+            },
+        ))?]),
         MaterialOpinion::Empty => Some(Vec::new()),
         MaterialOpinion::Remove => None,
     };
@@ -511,10 +526,21 @@ pub(super) fn serialize(data: &sdf::Data, max: usize) -> Result<Vec<u8>, Diagnos
     TextWriter::write(data, &mut output).map_err(|_| limit())?;
     Ok(output.bytes)
 }
-fn create(data: &mut sdf::Data, e: &Element, actor: &str) -> Result<(), Diagnostic> {
-    let p = element_path(&e.id)?;
+fn create(
+    data: &mut sdf::Data,
+    e: &Element,
+    actor: &str,
+    input: &Prepare,
+    prims: &[Prim],
+) -> Result<(), Diagnostic> {
+    let p = element_path(&e.id, shape_category(&e.shape))?;
     container(data, "/World", "Xform", Some("assembly"))?;
     container(data, "/World/Steel", "Scope", Some("group"))?;
+    let folder = p
+        .rsplit_once('/')
+        .map(|(parent, _)| parent)
+        .ok_or_else(corrupt)?;
+    container(data, folder, "Scope", Some("group"))?;
     prim(data, &p, Some("Xform"), true)?;
     let model_kind = match e.shape {
         Shape::Assembly => "assembly",
@@ -630,7 +656,7 @@ fn create(data: &mut sdf::Data, e: &Element, actor: &str) -> Result<(), Diagnost
             let targets = w
                 .connects
                 .iter()
-                .map(|id| path(&element_path(id)?))
+                .map(|id| path(&target_path(id, ElementCategory::Part, input, prims)?))
                 .collect::<Result<Vec<_>, _>>()?;
             relationship_targets(data, &p, "bim:connects", Some(targets))?;
         }
@@ -676,7 +702,7 @@ fn create(data: &mut sdf::Data, e: &Element, actor: &str) -> Result<(), Diagnost
             let targets = b
                 .connects
                 .iter()
-                .map(|id| path(&element_path(id)?))
+                .map(|id| path(&target_path(id, ElementCategory::Part, input, prims)?))
                 .collect::<Result<Vec<_>, _>>()?;
             relationship_targets(data, &p, "bim:connects", Some(targets))?;
         }
@@ -713,8 +739,8 @@ fn create(data: &mut sdf::Data, e: &Element, actor: &str) -> Result<(), Diagnost
     }
     pose(data, &p, &e.placement)
 }
-fn mesh(data: &mut sdf::Data, m: &Mesh) -> Result<(), Diagnostic> {
-    let p = format!("{}/Geometry", element_path(&m.id)?);
+fn mesh(data: &mut sdf::Data, m: &Mesh, parent: &str) -> Result<(), Diagnostic> {
+    let p = format!("{parent}/Geometry");
     prim(data, &p, Some("Mesh"), true)?;
     field(data, &p, "kind", sdf::Value::token("subcomponent"))?;
     let extent = derive::extent(&m.points_mm).ok_or_else(invalid)?;
@@ -806,8 +832,8 @@ const QUANTITY_FIELDS: [(&str, &str); 7] = [
 ];
 /// Drops the quantity attributes of an existing mesh prim and nothing else, so a replacement
 /// never keeps a stale record while unknown content under the mesh is preserved.
-fn clear_quantities(data: &mut sdf::Data, id: &str) -> Result<(), Diagnostic> {
-    let p = format!("{}/Geometry", element_path(id)?);
+fn clear_quantities(data: &mut sdf::Data, parent: &str) -> Result<(), Diagnostic> {
+    let p = format!("{parent}/Geometry");
     if !data.has_spec(&path(&p)?) {
         return Ok(());
     }
@@ -816,8 +842,7 @@ fn clear_quantities(data: &mut sdf::Data, id: &str) -> Result<(), Diagnostic> {
     }
     Ok(())
 }
-fn erase_mesh(data: &mut sdf::Data, id: &str) -> Result<(), Diagnostic> {
-    let parent = element_path(id)?;
+fn erase_mesh(data: &mut sdf::Data, parent: &str) -> Result<(), Diagnostic> {
     let p = format!("{parent}/Geometry");
     let paths = data.spec_paths();
     for path in paths {
@@ -826,15 +851,14 @@ fn erase_mesh(data: &mut sdf::Data, id: &str) -> Result<(), Diagnostic> {
             data.erase_spec(&path);
         }
     }
-    if data.has_spec(&path(&parent)?) {
-        child(data, &parent, "primChildren", "Geometry", true)?;
+    if data.has_spec(&path(parent)?) {
+        child(data, parent, "primChildren", "Geometry", true)?;
     }
     Ok(())
 }
 
-fn erase_element(data: &mut sdf::Data, id: &str) -> Result<(), Diagnostic> {
-    let parent = element_path(id)?;
-    let name = parent.rsplit_once('/').map_or(parent.as_str(), |(_, n)| n);
+fn erase_element(data: &mut sdf::Data, parent: &str) -> Result<(), Diagnostic> {
+    let name = parent.rsplit_once('/').map_or(parent, |(_, n)| n);
     for path in data.spec_paths() {
         let s = path.to_string();
         if s == parent
@@ -844,8 +868,9 @@ fn erase_element(data: &mut sdf::Data, id: &str) -> Result<(), Diagnostic> {
             data.erase_spec(&path);
         }
     }
-    if data.has_spec(&path("/World/Steel")?) {
-        child(data, "/World/Steel", "primChildren", name, true)?;
+    let folder = parent.rsplit_once('/').map_or("/", |(folder, _)| folder);
+    if data.has_spec(&path(folder)?) {
+        child(data, folder, "primChildren", name, true)?;
     }
     Ok(())
 }
@@ -894,13 +919,18 @@ pub(super) fn apply(
                 "duplicate resource identity",
             ));
         }
-        let p = definition_path(r.digest);
+        let p = definition_path(r.digest, definition_category(&r.definition));
         validate::owned(prims, &p, true)?;
         if prims.iter().any(|v| v.path == p) {
             continue;
         } // Existing immutable bytes are never rewritten.
         container(&mut authored, "/World", "Xform", Some("assembly"))?;
         container(&mut authored, "/World/Definitions", "Scope", None)?;
+        let folder = p
+            .rsplit_once('/')
+            .map(|(parent, _)| parent)
+            .ok_or_else(corrupt)?;
+        container(&mut authored, folder, "Scope", None)?;
         definition(&mut authored, &p, &r.definition)?;
         attr(
             &mut authored,
@@ -914,7 +944,7 @@ pub(super) fn apply(
     for c in &input.changes {
         if let Change::Create(e) = c {
             control.check()?;
-            create(&mut authored, e, &input.actor)?;
+            create(&mut authored, e, &input.actor, input, prims)?;
         }
     }
     for c in &input.changes {
@@ -927,7 +957,7 @@ pub(super) fn apply(
     for c in &input.changes {
         control.check()?;
         let (id, _) = c.key();
-        let p = element_path(id)?;
+        let p = change_path(id, input, prims)?;
         match c {
             Change::Label { name, .. } => {
                 attr(
@@ -995,7 +1025,12 @@ pub(super) fn apply(
                 // A detach authors an explicit empty target list, which also masks a weaker
                 // layer's record; removing the spec could reveal it again.
                 let targets = match assembly.as_deref() {
-                    Some(a) => vec![path(&element_path(a)?)?],
+                    Some(a) => vec![path(&target_path(
+                        a,
+                        ElementCategory::Assembly,
+                        input,
+                        prims,
+                    )?)?],
                     None => Vec::new(),
                 };
                 relationship_targets(&mut authored, &p, "bim:partOf", Some(targets))?;
@@ -1003,29 +1038,28 @@ pub(super) fn apply(
             Change::Level { level, .. } => {
                 // An unassignment authors an explicit empty target list, as a detach does.
                 let targets = match level.as_deref() {
-                    Some(l) => vec![path(&element_path(l)?)?],
+                    Some(l) => vec![path(&target_path(
+                        l,
+                        ElementCategory::Level,
+                        input,
+                        prims,
+                    )?)?],
                     None => Vec::new(),
                 };
                 relationship_targets(&mut authored, &p, "bim:level", Some(targets))?;
             }
-            Change::Mark { value, status, .. } => {
-                if let Some(v) = value {
-                    attr(
-                        &mut authored,
-                        &p,
-                        "bim:mark",
+            Change::Mark { mark, .. } => {
+                let number = i32::try_from(mark.number).map_err(|_| invalid())?;
+                for (name, ty, value) in [
+                    (
+                        MARK_SERIES,
                         "string",
-                        sdf::Value::String(v.clone()),
-                    )?;
-                }
-                if let Some(s) = status {
-                    attr(
-                        &mut authored,
-                        &p,
-                        "bim:markStatus",
-                        "token",
-                        sdf::Value::token(s.as_token()),
-                    )?;
+                        sdf::Value::String(mark.series.clone()),
+                    ),
+                    (MARK_NUMBER, "int", sdf::Value::Int(number)),
+                    (MARK_BASIS, "string", sdf::Value::String(mark.basis.clone())),
+                ] {
+                    attr(&mut authored, &p, name, ty, value)?;
                 }
             }
             Change::ReferenceUnits { interpretation, .. } => {
@@ -1053,8 +1087,8 @@ pub(super) fn apply(
                         "delete requires the element to live in the authored and derived layers only",
                     ));
                 }
-                erase_element(&mut authored, id)?;
-                erase_element(&mut derived, id)?;
+                erase_element(&mut authored, &p)?;
+                erase_element(&mut derived, &p)?;
             }
             _ => (),
         }
@@ -1079,13 +1113,14 @@ pub(super) fn apply(
                     "derived invalidation requires exclusive result layer",
                 ));
             }
-            erase_mesh(&mut derived, id)?;
+            erase_mesh(&mut derived, &p)?;
         }
     }
     for c in &input.changes {
         if let Change::Mesh(m) = c {
             control.check()?;
-            let mesh_path = format!("{}/Geometry", element_path(&m.id)?);
+            let parent = change_path(&m.id, input, prims)?;
+            let mesh_path = format!("{parent}/Geometry");
             if prims
                 .iter()
                 .filter(|v| v.path == mesh_path || v.path.starts_with(&format!("{mesh_path}/")))
@@ -1099,11 +1134,11 @@ pub(super) fn apply(
             }
             // A mesh change replaces the supported fields and the quantity record as a whole:
             // stale quantity attributes never survive it, unknown content stays.
-            clear_quantities(&mut derived, &m.id)?;
-            mesh(&mut derived, m)?;
+            clear_quantities(&mut derived, &parent)?;
+            mesh(&mut derived, m, &parent)?;
         }
     }
-    let opinions = capture(input, &authored, &derived, original.budgets)?;
+    let opinions = capture(input, prims, &authored, &derived, original.budgets)?;
     for (name, data) in [
         (&original.root, root),
         (&targets.authored, authored),
@@ -1122,6 +1157,7 @@ pub(super) fn apply(
 
 fn capture(
     input: &Prepare,
+    prims: &[Prim],
     authored: &sdf::Data,
     derived: &sdf::Data,
     b: Budgets,
@@ -1258,6 +1294,9 @@ fn capture(
                     ("bim:partOf", "rel"),
                     ("bim:level", "rel"),
                     ("bim:elevationMm", "double"),
+                    (MARK_SERIES, "string"),
+                    (MARK_NUMBER, "int"),
+                    (MARK_BASIS, "string"),
                 ] {
                     add(name, ty, 0);
                 }
@@ -1285,13 +1324,10 @@ fn capture(
             Change::Material { .. } => add("bim:material", "rel", 0),
             Change::PartOf { .. } => add("bim:partOf", "rel", 0),
             Change::Level { .. } => add("bim:level", "rel", 0),
-            Change::Mark { value, status, .. } => {
-                if value.is_some() {
-                    add("bim:mark", "string", 0);
-                }
-                if status.is_some() {
-                    add("bim:markStatus", "token", 0);
-                }
+            Change::Mark { .. } => {
+                add(MARK_SERIES, "string", 0);
+                add(MARK_NUMBER, "int", 0);
+                add(MARK_BASIS, "string", 0);
             }
             Change::Placement { .. } => {
                 for &(name, ty) in POSE {
@@ -1326,7 +1362,7 @@ fn capture(
     }
     let mut result = Vec::new();
     for ((id, name, place), ty) in fields {
-        let p = element_path(&id)?;
+        let p = change_path(&id, input, prims)?;
         let p = match place {
             1 => format!("{p}/Geometry"),
             2 => format!("{p}/{}", reference::CORRECTION),
@@ -1356,7 +1392,7 @@ fn capture(
             match data.try_field(&spec, "default").map_err(|_| corrupt())? {
                 None => Opinion::Absent,
                 Some(v) if matches!(v.as_ref(), sdf::Value::ValueBlock) => Opinion::Block,
-                Some(v) => Opinion::Value(backend::typed(v.as_ref(), b)?),
+                Some(v) => Opinion::Value(backend::typed_attribute(v.as_ref(), b, name)?),
             }
         };
         result.push(AuthoredItem {

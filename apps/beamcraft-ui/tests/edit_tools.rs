@@ -5,7 +5,8 @@
 //! V05.2 end to end: selecting by a click, moving, copying, deleting, undo and redo, driven
 //! through the edit tools' mapping and reply parsing against the real `beamcraft` binary, give
 //! exactly what the CLI gives by hand (same placement, same mesh digest, same world bounds); a
-//! click finds what the engine's `pick` finds; a cancelled preview publishes nothing; a refusal
+//! click finds what the CLI's `pick` finds, without starting it; a lookup that is no longer
+//! wanted stops its process; a cancelled preview publishes nothing; a refusal
 //! reaches the panel with the engine's code and message. Without the CLI binary next to this
 //! package's binary the tests are skipped and say so (`cargo test --workspace` builds it).
 
@@ -17,17 +18,17 @@
 )]
 
 use beamcraft_engine::Representation;
-use beamcraft_protocol::{
-    json::{self, Json},
-    message,
-};
+use beamcraft_json::{Json, Limits};
 use beamcraft_ui::camera::Camera;
-use beamcraft_ui::edit::{EditKind, Editor, Target, ndc_of, ray_through};
+use beamcraft_ui::edit::{
+    EditKind, Editor, Target, ndc_of, parse_pick, pick_args, pick_in, ray_through,
+};
 use beamcraft_ui::scene::Scene;
+use beamcraft_ui::stats::Stats;
 use beamcraft_ui::{command, source};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
@@ -85,8 +86,17 @@ impl Drop for Stores {
 
 fn by_hand(cli: &Path, args: &[&str]) -> (i32, Json) {
     let output = Command::new(cli).args(args).output().unwrap();
-    let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
+    let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
     (output.status.code().unwrap(), body)
+}
+
+/// What the CLI's own `pick` answers for `ray` on the store's head.
+fn cli_pick(cli: &Path, store: &Path, ray: &beamcraft_ui::edit::Ray) -> Option<String> {
+    let output = Command::new(cli)
+        .args(pick_args(store, ray))
+        .output()
+        .unwrap();
+    parse_pick(output.status.code(), &output.stdout).unwrap()
 }
 
 fn ok(cli: &Path, args: &[&str]) -> Json {
@@ -196,7 +206,7 @@ fn target(store: &Path) -> Target<'_> {
 
 /// Selects `id` the way the window does after a click: the details from the engine's inspection.
 fn select(cli: &Path, store: &Path, editor: &mut Editor, id: &str) {
-    editor.select(command::element_info(cli, store, id).unwrap());
+    editor.select(command::element_info(cli, store, id, &Stats::default()).unwrap());
 }
 
 /// Runs a staged edit exactly as the window's Commit does.
@@ -208,7 +218,7 @@ fn commit(
 ) -> Result<beamcraft_ui::edit::Edited, beamcraft_ui::tools::ToolError> {
     editor.preview(kind, target).unwrap();
     let edit = editor.begin_commit(target).unwrap();
-    let result = command::commit_edit(cli, &edit);
+    let result = command::commit_edit(cli, &edit, &Stats::default());
     editor.finish();
     result
 }
@@ -218,7 +228,7 @@ fn a_click_selects_what_the_engine_picks() {
     let Some(cli) = cli() else { return };
     let stores = Stores::new();
     two_plates(&cli, &stores.ui());
-    let snapshot = source::load(&cli, &stores.ui()).unwrap();
+    let snapshot = source::load(&cli, &stores.ui(), &Stats::default()).unwrap();
     let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
     let (framing_target, extent) = scene.framing();
     let aspect = 1.6;
@@ -232,11 +242,23 @@ fn a_click_selects_what_the_engine_picks() {
         let pixel = [(nx * 0.5 + 0.5) * size[0], (0.5 - ny * 0.5) * size[1]];
         let ndc = ndc_of(pixel, [0.0, 0.0], size).unwrap();
         let ray = ray_through(&view, ndc, scene.origin_mm).unwrap();
-        let selected = command::select_at(&cli, &stores.ui(), &ray)
-            .unwrap()
-            .unwrap();
+        // The window picks in its own process on the snapshot it shows; the CLI's `pick` on
+        // the store's head answers the same.
+        assert_eq!(cli_pick(&cli, &stores.ui(), &ray).as_deref(), Some(id));
+        let selected = command::select(
+            &cli,
+            &stores.ui(),
+            &snapshot,
+            &ray,
+            &AtomicBool::new(false),
+            &Stats::default(),
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(selected.id, id);
         let info = selected.info.unwrap();
+        // The details of the same one-element reply agree with the light report.
+        assert_eq!(selected.details.unwrap().info(), info);
         assert_eq!(info.kind, "plate");
         assert_eq!(info.name, if id == A { "A" } else { "B" });
         assert_eq!(
@@ -248,13 +270,20 @@ fn a_click_selects_what_the_engine_picks() {
             }
         );
     }
-    // A pixel on empty space (the top-left corner) selects nothing.
+    // A pixel on empty space (the top-left corner) selects nothing, in the CLI as here.
     let ray = ray_through(&view, [-0.99, 0.99], scene.origin_mm).unwrap();
-    assert!(
-        command::select_at(&cli, &stores.ui(), &ray)
-            .unwrap()
-            .is_none()
-    );
+    assert_eq!(cli_pick(&cli, &stores.ui(), &ray), None);
+    assert_eq!(pick_in(&snapshot, &ray).unwrap(), None);
+    let picked = command::select(
+        &cli,
+        &stores.ui(),
+        &snapshot,
+        &ray,
+        &AtomicBool::new(false),
+        &Stats::default(),
+    )
+    .unwrap();
+    assert!(picked.is_none());
     // A click that is not inside the view is not a click.
     assert!(ndc_of([1700.0, 10.0], [0.0, 0.0], size).is_none());
 }
@@ -352,7 +381,9 @@ fn a_copy_and_a_delete_from_the_tool_equal_the_same_by_hand() {
     assert_eq!(state(&cli, &ui).len(), 2);
     // The deleted element is gone from the accepted revision.
     assert_eq!(
-        command::element_info(&cli, &ui, &copy_id).unwrap_err().code,
+        command::element_info(&cli, &ui, &copy_id, &Stats::default())
+            .unwrap_err()
+            .code,
         "NOT_FOUND"
     );
 }
@@ -468,18 +499,18 @@ fn undo_and_redo_run_in_a_workspace_and_never_touch_the_published_store() {
     assert_ne!(moved, published_state);
     // Undo restores the earlier state, redo the edit again.
     let undo = editor.begin_direct(EditKind::Undo, work).unwrap().unwrap();
-    let undone = command::commit_edit(&cli, &undo).unwrap();
+    let undone = command::commit_edit(&cli, &undo, &Stats::default()).unwrap();
     editor.finish();
     assert_eq!(undone.kind, EditKind::Undo);
     assert_eq!(state(&cli, &workspace), published_state);
     let redo = editor.begin_direct(EditKind::Redo, work).unwrap().unwrap();
-    command::commit_edit(&cli, &redo).unwrap();
+    command::commit_edit(&cli, &redo, &Stats::default()).unwrap();
     editor.finish();
     assert_eq!(state(&cli, &workspace), moved);
     // Nothing to undo any more after undoing everything: the engine's refusal is shown.
     for _ in 0..3 {
         let undo = editor.begin_direct(EditKind::Undo, work).unwrap().unwrap();
-        let result = command::commit_edit(&cli, &undo);
+        let result = command::commit_edit(&cli, &undo, &Stats::default());
         editor.finish();
         if let Err(e) = result {
             assert_eq!(e.code, "INVALID_ARGUMENT");
@@ -492,35 +523,50 @@ fn undo_and_redo_run_in_a_workspace_and_never_touch_the_published_store() {
 }
 
 #[test]
-fn the_window_binary_accepts_a_workspace_alone_and_as_publication_mode() {
+fn the_window_binary_refuses_a_store_and_a_workspace_together() {
     let ui = env!("CARGO_BIN_EXE_beamcraft-ui");
-    // No options at all is still a usage error.
-    let output = Command::new(ui).output().unwrap();
+    // Both a store and a workspace is a usage error (the workspace is the store).
+    let output = Command::new(ui)
+        .args(["--store", "S", "--workspace", "W"])
+        .output()
+        .unwrap();
     assert_eq!(output.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&output.stdout).contains("usage: beamcraft-ui"));
+}
 
-    // Naming the published store together with the workspace is the V06 publication mode: the
-    // pair passes option parsing and reaches the store logic. Proven without a GPU: with a CLI
-    // that cannot start, the run stops at the first query with the runner's error, not with the
-    // usage text.
-    let missing = "nonexistent-cli-for-tests";
-    for args in [
-        vec!["--workspace", "W", "--metrics", "1", "--cli", missing],
-        vec![
-            "--store",
-            "PUB",
-            "--workspace",
-            "W",
-            "--metrics",
-            "1",
-            "--cli",
-            missing,
-        ],
-    ] {
-        let output = Command::new(ui).args(&args).output().unwrap();
-        assert_eq!(output.status.code(), Some(2), "{args:?}");
-        let body = String::from_utf8_lossy(&output.stdout);
-        assert!(body.contains("rejected"), "{args:?}: {body}");
-        assert!(!body.contains("usage:"), "{args:?}: {body}");
-    }
+/// The no-argument launch is what a double-clicked app bundle does: the default session
+/// bootstraps a published store, forks a per-user workspace, and a rerun changes nothing.
+#[test]
+fn a_launch_without_arguments_bootstraps_a_default_workspace_and_forks_it_once() {
+    let Some(cli) = cli() else {
+        return;
+    };
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("v05-2-tests")
+        .join(format!(
+            "default-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+    let _ = std::fs::remove_dir_all(&root);
+
+    let (workspace, published) =
+        source::default_workspace_at(&root, &cli, &Stats::default()).unwrap();
+    assert!(workspace.is_dir());
+    assert!(published.is_dir());
+    let status = [
+        "workspace-status",
+        "--store",
+        s(&published),
+        "--workspace-dir",
+        s(&workspace),
+    ];
+    let before = format!("{:?}", ok(&cli, &status));
+
+    // A second launch reuses the session: same paths, no second fork, no new revision.
+    let again = source::default_workspace_at(&root, &cli, &Stats::default()).unwrap();
+    assert_eq!(again, (workspace.clone(), published.clone()));
+    assert_eq!(format!("{:?}", ok(&cli, &status)), before);
+
+    let _ = std::fs::remove_dir_all(&root);
 }

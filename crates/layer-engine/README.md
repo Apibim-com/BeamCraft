@@ -25,10 +25,9 @@ over one retained stage; they never reopen or recompose it.
 Cancellation is cooperative before/after upstream synchronous calls and during wrapper
 loops. Upstream allocation, panic-abort, stack overflow, and hard deadlines cannot be
 contained in-process. The declared/decompressed preflight and output caps are not an
-aggregate heap/work proof. A separate Rust process was selected by the owner on 2026-10-16.
-U04 owns its executable, F05 transport and host client; this crate contains library logic
-only. This slice must not be integrated as an untrusted production parser until
-LEW-03 containment is reviewed and proved. See [the U01 placement/containment review](../../docs/design/u01-placement-containment.md).
+aggregate heap/work proof. The engine runs in the calling process (owner decision of
+2026-10-20, U17): a refusal is an ordinary `Diagnostic`, the project's own layers are verified
+by SHA-256 before they are parsed, and foreign files are read under these budgets. See [the U01 placement/containment review](../../docs/design/u01-placement-containment.md).
 
 Tests use contributor-original synthetic USDA and binary output of those fixtures.
 Same-crate binary generation is not independent-reader evidence; U04 and N03 remain open.
@@ -99,7 +98,7 @@ Newer element schemas/kinds/modes remain inert and cannot be edited. This checke
 from external `usdchecker` (**not run**, no offline executable found), the F10 module-rule
 catalogue and the F06 engineering validator. It does not certify contour topology,
 planarity, support, mesh solidness, exact quantities, F06 result freshness or signatures.
-Those remain engine prerequisites. See [the U02 validation report](U02-VALIDATION.md).
+Those remain engine prerequisites. See [the U02 validation report](../../docs/design/u02-validation.md).
 `Reader::open_validated` runs the same checker on the candidate it then installs, so a reader
 that needs both (the CLI's inspection and its commit verifier) parses and composes the stage
 once instead of twice; its refusals, their order, codes and messages are those of
@@ -126,8 +125,8 @@ field and budget rules as every stage asset, without composing or resolving it; 
 identifier in it is `PERMISSION_DENIED`, an arc outside the static profile
 `UNSUPPORTED_PROPERTY`, another local asset `DEPENDENCY_UNAVAILABLE`. `authored::read_references`
 reads the wrappers back (after the same validation). A foreign prim that carries an element
-identity (`bim:id`, or a name starting `E_`) makes the stage fail with `INVALID_ID`. The schema
-descriptor lists the wrapper; layers pinned to the P02.2 mapping are still accepted. See the
+identity (`bim:id`, or a reserved element prefix) makes the stage fail with `INVALID_ID`. The schema
+descriptor lists the wrapper; pre-U16 schema pins are refused. See the
 [R01 design note](../../docs/design/r01-readonly-reference.md).
 
 ## UUID and relationship index (U03)
@@ -138,7 +137,7 @@ of one context: `Reader::element_index` / `Author::element_index` page the froze
 cap-plus-one pages and any item whose identity, path or provenance fails re-validation. The key
 is the full 128-bit UUIDv7 (`ElementId`); same-millisecond IDs are never shortened or merged and
 prefix, upper-case, unhyphenated, wrong-version/variant text is `INVALID_ID`. Element prims must
-be exactly `/World/Steel/E_<32 hex>` with agreeing snapshot identity and `bim:id`; duplicates are
+follow the category folders and three-letter prefixes of the [prim naming rule](../../docs/architecture.md#prim-hierarchy-and-naming-rule), with the full 32-digit UUIDv7 with agreeing snapshot identity and `bim:id`; duplicates are
 `DUPLICATE_ID`. Labels are never identity: rename keeps ID, path and the label-free
 `structure_digest`. Entries carry lifecycle (`bim:lifecycle`, absent means active), the USD
 `active` flag, composition provenance and an ownership verdict that includes foreign ancestors
@@ -155,9 +154,13 @@ relationship query and cannot prove absence. `Author::authorize_write`, `check_d
 `certify_dependent_reads` first call `verify_index`, which requires the index's own context to
 be live (`STALE_WORKSPACE` after any install/reopen), complete, and equal to a fresh rebuild
 (`INTEGRITY_ERROR` for a forged or tampered page set). The grant names the owned authored layer
-but is not host authorization or F04/F06 validation. Not implemented: a CLI/host command (the U04
-read profile advertises `relationships=false`, omits relationships from its closed page body and
-has no index method; carrying them changes the frozen profile and F05 schema), a persisted
+but is not host authorization or F04/F06 validation. Not implemented: a CLI/host command that
+reports the index, a persisted
 index, copy/delete commands (P05/P08), typed element-to-element relationship records and their
 vocabulary rules (F10/vocabulary section 5), and USDC relationship evidence (the restricted binary
-profile refuses relationship specs and U02 element layers). See [the U03 report](U03-INDEX.md).
+profile refuses relationship specs and U02 element layers). See [the U03 report](../../docs/design/u03-index.md).
+
+U16 makes an intentional pre-alpha compatibility break: no old-layout store or schema pin is
+accepted or migrated. Definitions live under `Definitions/Materials/MAT_<sha256>` or
+`Definitions/Profiles/PRF_<sha256>`; levels and reference wrappers live outside `/World/Steel`.
+See the [U16 design note](../../docs/design/u16-prim-naming.md).

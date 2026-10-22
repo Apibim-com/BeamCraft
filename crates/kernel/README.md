@@ -93,7 +93,7 @@ rounded/translated contours remains with G03/G04 and the F06 E-1 erratum.
 ## Integration and provenance
 
 The kernel call is the headless API. The CLI command and engine/CLI end-to-end
-gate are owned by P01, not G02. No worker protocol, USD, UI, hole, cut, contour
+gate are owned by P01, not G02. No USD, UI, hole, cut, contour
 evaluation, member or quaternion is implemented. Member sin/cos reproducibility
 remains OPEN and is not needed here. Native tests alone do not demonstrate
 cross-target byte conformance. K0 and the complete geometry feature remain open.
@@ -581,8 +581,8 @@ static rounding-error filter derived in the code, the shoelace area, the diverge
 signed volume, the Euler-Poincare relation `V - E + F = 2 - 2g`, inclusion-exclusion for the
 volume of a box cut by a half-space (tests only), and the G05/G06 mathematics of this crate. No
 third-party code, crate, test or data and no commercial-product material was consulted; there is
-no copied asset. The clean-room input list of this task is the repository's own kernel code and
-documents named in the task, and the public mathematics above.
+no copied asset. Its inputs were the repository's own kernel code and documents named in the
+task, and the public mathematics above.
 
 ## P03: straight member (`member` module)
 
@@ -611,7 +611,7 @@ a trace of every validation-plan row and every F06 case to code and tests, the m
 the preconditions for G08. G07 added `tests/g07_acceptance.rs` (member meshes against the F06 vertex
 lists, special-value sweeps over every public builder and operation, never-exact mesh probes, a
 near-tolerance cut, pinned blob digests), `examples/g07_bench.rs` (timing and determinism harness,
-`cargo run --release -p beamcraft-kernel --example g07_bench`) and `Code::AxisTooShort`
+`cargo run --profile dist -p beamcraft-kernel --example g07_bench`) and `Code::AxisTooShort`
 (`GEO_AXIS_TOO_SHORT`), which the member builder now reports for an axis below the floor together
 with the contract's stages for a failed frame certificate and a non-finite derived scale.
 

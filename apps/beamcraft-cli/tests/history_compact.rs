@@ -14,10 +14,7 @@ use beamcraft_host::{
     revision::{CommitPoint, ExpectedBase, Injected, RevisionDraft, RevisionStore, Uuid7},
     storage::BlobStore,
 };
-use beamcraft_protocol::{
-    json::{self, Json},
-    message,
-};
+use beamcraft_json::{Json, Limits};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
@@ -62,7 +59,7 @@ impl Fixture {
             .args(args)
             .output()
             .unwrap();
-        let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
+        let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
         (output.status.code().unwrap(), body)
     }
     fn ok(&self, args: &[&str]) -> Json {
@@ -706,7 +703,7 @@ fn a_running_coordinator_holds_the_store() {
     let mut stdout = BufReader::new(server.stdout.take().unwrap());
     let mut line = String::new();
     stdout.read_line(&mut line).unwrap();
-    let listening = json::decode(line.trim_end().as_bytes(), &message::read_limits()).unwrap();
+    let listening = beamcraft_json::decode(line.trim_end().as_bytes(), &Limits::DEFAULT).unwrap();
     let address = text(&listening, "address");
 
     let report = fx.dry_run(&["--keep-head"], &["--no-workspaces"]);

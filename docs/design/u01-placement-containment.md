@@ -1,5 +1,11 @@
 # U01 placement, containment evidence and proposed draft PR body
 
+> **Superseded in part by U17 (owner decision of 2026-10-20).** The separate USD worker
+> process and the private worker protocol (F05) were removed: USD is read and written in the
+> calling process by the layer engine, under its size and depth budgets. Mentions of the worker,
+> of a separate process and of F05 below are the history of this analysis, not the current
+> design; see [`architecture.md`](../architecture.md) and [`decisions.md`](../plan/decisions.md).
+
 Date: 2026-10-16. Status: **PARTIAL experimental read slice; U01 acceptance remains open**.
 Base and current HEAD: `adbc407e09476a803de07c31f3a5adcaabad1304`.
 Branch: `feat/u01-open-read`; proposed PR target: `master`; keep draft.
@@ -176,9 +182,8 @@ Its VCS metadata records `9c007a00fd2ca243a7b6812dd0bf34eca01ee878`, path `crate
 The task authorizes an exact cached version; no git download or inferred fork pin was used.
 Cargo.lock records 51 third-party packages, matching the cached N01 closure. All 51 archives
 matched their lockfile SHA-256s; every extracted archive member matched the corresponding
-cached source file. ATTRIBUTION records exact versions, original repository URLs, authors,
-declared licences and archive hashes. Hash verification proves provenance/immutability,
-not licence completeness or parser safety. A full redistribution/notice review remains open.
+cached source file. `cargo deny` checks their declared licences. Hash verification proves
+provenance/immutability, not licence completeness or parser safety. A full redistribution/notice review remains open.
 
 openusd's MIT-covered code remains MIT; src/usd/core_schemas.rs remains under the scoped
 LicenseRef-TOST-1.0 exception. Existing licenses/TOST-1.0-openusd.txt and NOTICE are preserved;
@@ -211,17 +216,6 @@ The binary fixtures are generated from our original text with the pinned crate. 
 reads establish self-consistency only; independently produced USDC/oracle evidence is absent.
 U04 API-to-CLI E2E and N03 Linux/WASM/admitted SDK evidence were not run and remain required.
 No production safety, full LEW acceptance, F05 real transport or K1 completion is claimed.
-
-## Roadmap entry
-
-Proposed dated entry only; ROADMAP.md was not edited:
-
-- 2026-10-16: U01 added an experimental native openusd 0.8.0 read wrapper on base
-  adbc407e09476a803de07c31f3a5adcaabad1304, with verified byte manifests, conservative
-  USDA/USDC preflight, static reference provenance, pinned bounded pages and cancellation
-  install gating. Windows workspace checks and 18 wrapper tests passed. Placement and
-  separate-process containment remain proposed for owner review; aggregate parser bounds,
-  hard cancellation, cargo-deny, U04 E2E and N03 evidence remain open. U01/K1 are not complete.
 
 ## Delivery state
 

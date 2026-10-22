@@ -66,7 +66,7 @@ def check_standard_metadata(stage, prim, name, mesh, points, counts, indices, ch
 
 def check_member(stage, member, check, report):
     """A beam or column: authored inputs, pinned profile, closed-form volume, bounds, mass."""
-    path = "/World/Steel/E_" + member["id"].replace("-", "")
+    path = "/World/Steel/Parts/PRT_" + member["id"].replace("-", "")
     prim = stage.GetPrimAtPath(path)
     check(prim.IsValid(), "missing prim " + path)
     if not prim.IsValid():
@@ -83,7 +83,7 @@ def check_member(stage, member, check, report):
         check(roll.IsValid() and roll.Get() == member["roll"], "roll differs")
     profile = prim.GetRelationship("bim:profile")
     targets = [t.pathString for t in profile.GetTargets()] if profile else []
-    profile_path = "/World/Definitions/D_" + member["profile"]
+    profile_path = "/World/Definitions/Profiles/PRF_" + member["profile"]
     check(targets == [profile_path], "profile target differs: %r" % targets)
     definition = stage.GetPrimAtPath(profile_path)
     check(definition.IsValid(), "missing profile definition prim")
@@ -145,7 +145,7 @@ def main():
         if plate.get("kind") in ("beam", "column"):
             check_member(stage, plate, check, report)
             continue
-        path = "/World/Steel/E_" + plate["id"].replace("-", "")
+        path = "/World/Steel/Parts/PRT_" + plate["id"].replace("-", "")
         prim = stage.GetPrimAtPath(path)
         check(prim.IsValid(), "missing prim " + path)
         if not prim.IsValid():
@@ -205,7 +205,7 @@ def main():
         if material is None:
             check(targets == [], "plate without a material has targets %r" % targets)
         else:
-            definition_path = "/World/Definitions/D_" + material["digest"]
+            definition_path = "/World/Definitions/Materials/MAT_" + material["digest"]
             check(targets == [definition_path], "material target differs: %r" % targets)
             definition = stage.GetPrimAtPath(definition_path)
             check(definition.IsValid(), "missing definition prim " + definition_path)

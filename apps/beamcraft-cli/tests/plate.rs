@@ -22,13 +22,10 @@ use beamcraft_host::{
     revision::{CommitPoint, Injected, NoFault, RevisionStore, Uuid7},
     storage::BlobStore,
 };
+use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::{CreatePlate, Placement};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
-use beamcraft_protocol::{
-    json::{self, Json},
-    message,
-};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -85,7 +82,7 @@ fn run_binary(args: &[&str]) -> (i32, Json) {
         .args(args)
         .output()
         .unwrap();
-    let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
+    let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
     (output.status.code().unwrap(), body)
 }
 
@@ -312,7 +309,7 @@ fn two_plates_in_two_commits_are_independent_complete_revisions_readable_without
     }
     assert_eq!(
         text(at(&first, &["plate"]), "prim_path"),
-        format!("/World/Steel/E_{}", id1.replace('-', ""))
+        format!("/World/Steel/Parts/PRT_{}", id1.replace('-', ""))
     );
 
     // Two atomic revisions in one project: sequence, generation and base chain.
@@ -446,7 +443,7 @@ fn two_plates_in_two_commits_are_independent_complete_revisions_readable_without
             [2000.0, -150.5, 25.0],
         ),
     ] {
-        let path = format!("/World/Steel/E_{}", id.replace('-', ""));
+        let path = format!("/World/Steel/Parts/PRT_{}", id.replace('-', ""));
         let prim = &stage.prims[&path];
         assert_eq!(prim["bim:id"], format!("\"{id}\""));
         assert_eq!(prim["bim:name"], format!("\"{name}\""));
@@ -674,7 +671,7 @@ fn concurrent_creates_publish_only_complete_revisions_with_distinct_ids() {
     let mut losers = 0;
     for child in children {
         let output = child.wait_with_output().unwrap();
-        let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
+        let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
         match output.status.code().unwrap() {
             0 => {
                 assert!(created.insert(text(at(&body, &["plate"]), "element_id")));
@@ -961,4 +958,39 @@ fn a_library_error_is_typed_and_a_failed_commit_leaves_the_old_revision() {
     let done = create_plate(&store, &second, &mut NoFault).unwrap();
     assert!(!done.replayed);
     assert_eq!(inspect(&store).unwrap().plates.len(), 2);
+}
+
+#[test]
+fn a_plate_above_one_cubic_metre_is_within_the_stage_budget() {
+    // 1e9 mm3 is exactly one cubic metre: the bounded read used to refuse any stored double
+    // above it, including the plate's own volume in mm3, so this very plate was impossible.
+    let fx = Fixture::new();
+    let (code, reply) = fx.create(&[
+        "--width",
+        "5000",
+        "--length",
+        "5000",
+        "--thickness",
+        "41",
+        "--name",
+        "Slab",
+    ]);
+    assert_eq!(code, 0, "{reply:?}");
+    assert_eq!(text(&reply, "outcome"), "plate_created");
+    assert!(close(
+        num(at(&reply, &["plate", "quantities", "volume"]), &["mm3"]),
+        5_000.0 * 5_000.0 * 41.0
+    ));
+    // A fresh process still opens the revision and re-reads the quantities.
+    let (code, inspected) = fx.inspect();
+    assert_eq!(code, 0, "{inspected:?}");
+    let plates = inspected.get("plates").unwrap().array().unwrap();
+    assert_eq!(plates.len(), 1);
+    assert!(close(
+        num(
+            at(plates.first().unwrap(), &["quantities", "volume"]),
+            &["mm3"]
+        ),
+        5_000.0 * 5_000.0 * 41.0
+    ));
 }

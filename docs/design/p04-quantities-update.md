@@ -58,7 +58,3 @@ as plain USD attributes.
 - Replay by `op_id` is computed from the head state, not from a saved canonical request.
 - No command envelope, workspace or undo yet (P06, P07).
 - Thickness edits for members, profile edits and placement edits are out of scope (P08 for placement).
-
-## Proposed Roadmap entry
-
-`2026-10-18 P04: update-element (name, material, thickness) with stored volume/mass records and current/stale/missing tracking; experimental slice, PR stacked on #65.`

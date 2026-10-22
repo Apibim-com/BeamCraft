@@ -31,10 +31,14 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          key: release-${{ matrix.target }}
+          key: dist-${{ matrix.target }}
 
       - name: Build
-        run: cargo build --release --locked --target ${{ matrix.target }} -p beamcraft-cli -p beamcraft-ui
+        run: cargo build --profile dist --locked --target ${{ matrix.target }} -p beamcraft-cli -p beamcraft-ui
+
+      - name: Check macOS icon packaging
+        if: runner.os == 'Linux'
+        run: python3 packaging/test_package.py
 
       - name: Package
         shell: bash
@@ -57,19 +61,19 @@ jobs:
           cd "$dir"/beamcraft-*
           if [ "${{ matrix.kind }}" = macos ]; then
             codesign --verify BeamCraft.app
+            test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' BeamCraft.app/Contents/Info.plist)" = BeamCraft.icns
+            iconutil --convert iconset --output "$dir/BeamCraft.iconset" BeamCraft.app/Contents/Resources/BeamCraft.icns
+            test -f "$dir/BeamCraft.iconset/icon_512x512@2x.png"
             ./BeamCraft.app/Contents/MacOS/beamcraft --version
             test -f BeamCraft.app/Contents/MacOS/beamcraft-ui
-            test -f BeamCraft.app/Contents/MacOS/beamcraft-usd-worker
             test -f BeamCraft.app/Contents/Resources/assets/fonts/inter/Inter-Regular.ttf
           else
             if [ "${{ matrix.kind }}" = win ]; then
               ./beamcraft.exe --version
               test -f beamcraft-ui.exe
-              test -f beamcraft-usd-worker.exe
             else
               ./beamcraft --version
               test -f beamcraft-ui
-              test -f beamcraft-usd-worker
             fi
             test -f assets/fonts/inter/Inter-Regular.ttf
           fi

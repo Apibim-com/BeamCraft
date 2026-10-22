@@ -91,7 +91,3 @@ used.
 - Kernel naming finding: `beamcraft_kernel::feature_id` exposes only `plate:` tokens and the member
   builder reuses them; F06 names member features `member:`. The engine is correct, but the kernel
   constants should gain member tokens (separate kernel change).
-
-## Proposed Roadmap entry
-
-`2026-10-18 V04: picking and snaps (pick, feature-lookup, snap; fid1 FeatureIds for box bodies from the snapshot's blobs, F06 ray/point pick with ordering and limits, vertex and member-axis snaps; holed plates skipped, references never hit, indices refused as addresses); experimental slice.`

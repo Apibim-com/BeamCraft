@@ -302,7 +302,14 @@ mod tests {
     use std::io::Write;
 
     fn scratch(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
+        // macOS: /var in the default temp path is a link to /private/var, and the validator
+        // refuses links above the output, so hand it the resolved root (tests only).
+        let base = if cfg!(target_os = "macos") {
+            fs::canonicalize(std::env::temp_dir()).expect("the temp directory resolves")
+        } else {
+            std::env::temp_dir()
+        };
+        let dir = base.join(format!(
             "beamcraft-output-{tag}-{}-{}",
             std::process::id(),
             COUNTER.fetch_add(1, Ordering::Relaxed)

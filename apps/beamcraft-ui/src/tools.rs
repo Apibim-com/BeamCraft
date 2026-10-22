@@ -11,10 +11,11 @@
 //! profiles and materials stays in the engine, and its refusal (a stable code and a message) is
 //! shown as it is.
 
-use beamcraft_protocol::json::{self, Json};
-use beamcraft_protocol::message;
+use beamcraft_json::{Json, Limits};
 use std::fmt;
 use std::path::Path;
+
+use crate::props::RevisionStamp;
 
 /// The longest accepted text field: the engine counts label bytes, so the same limit is
 /// checked in bytes before anything runs (the fields' character limit stays a soft affordance).
@@ -150,7 +151,7 @@ impl Prepared {
     }
 }
 
-pub(crate) fn number(field: &'static str, text: &str) -> Result<String, FormError> {
+fn number(field: &'static str, text: &str) -> Result<String, FormError> {
     let text = text.trim();
     if text.is_empty() || text.len() > 32 {
         return Err(FormError {
@@ -308,7 +309,7 @@ pub struct Created {
 }
 
 pub(crate) fn decode(stdout: &[u8]) -> Result<Json, ToolError> {
-    json::decode(stdout, &message::read_limits())
+    beamcraft_json::decode(stdout, &Limits::DEFAULT)
         .map_err(|_| ToolError::local("UNREADABLE_REPLY", "the CLI reply is not valid JSON"))
 }
 
@@ -317,16 +318,6 @@ pub(crate) fn text(json: &Json, key: &str) -> Option<String> {
         .ok()
         .and_then(|v| v.string().ok())
         .map(str::to_owned)
-}
-
-/// Decodes a reply and refuses it when the CLI reported a rejection: what every query and
-/// change parser reads next. Even a zero exit status cannot turn a rejection into a success.
-pub(crate) fn reply_json(exit_code: Option<i32>, stdout: &[u8]) -> Result<Json, ToolError> {
-    let reply = decode(stdout)?;
-    match rejection(&reply, exit_code) {
-        Some(error) => Err(error),
-        None => Ok(reply),
-    }
 }
 
 /// The refusal in a reply, if the reply is one.
@@ -421,6 +412,8 @@ pub struct Definitions {
     pub profiles: Vec<Choice>,
     /// Materials, for `--material-digest`.
     pub materials: Vec<Choice>,
+    /// The revision the listing was read from: the store's head at that moment.
+    pub head: Option<RevisionStamp>,
 }
 
 /// The arguments of the command that lists the definitions of `store`.
@@ -455,7 +448,13 @@ pub fn parse_definitions(exit_code: Option<i32>, stdout: &[u8]) -> Result<Defini
         return Err(error);
     }
     let unreadable = || ToolError::local("UNREADABLE_REPLY", "the CLI reply lacks a field");
-    let mut out = Definitions::default();
+    let mut out = Definitions {
+        head: reply
+            .get("revision")
+            .ok()
+            .and_then(RevisionStamp::from_json),
+        ..Definitions::default()
+    };
     for definition in reply
         .get("definitions")
         .and_then(Json::array)
@@ -465,8 +464,13 @@ pub fn parse_definitions(exit_code: Option<i32>, stdout: &[u8]) -> Result<Defini
     {
         let digest = text(definition, "digest").ok_or_else(unreadable)?;
         let kind = text(definition, "kind").ok_or_else(unreadable)?;
+        // The readable name the engine stores with the definition (A07.2) leads the label;
+        // definitions published before it fall back to the grade or designation they have.
+        let display = text(definition, "display_name").filter(|n| !n.is_empty());
         if kind == "material" {
-            let grade = text(definition, "grade").unwrap_or_else(|| "material".into());
+            let grade = display
+                .or_else(|| text(definition, "grade"))
+                .unwrap_or_else(|| "material".into());
             let density = dimension(definition, "density_kg_m3")
                 .map(|d| format!(" {d} kg/m3"))
                 .unwrap_or_default();
@@ -475,7 +479,9 @@ pub fn parse_definitions(exit_code: Option<i32>, stdout: &[u8]) -> Result<Defini
                 digest,
             });
         } else {
-            let name = text(definition, "designation").unwrap_or_else(|| kind.clone());
+            let name = display
+                .or_else(|| text(definition, "designation"))
+                .unwrap_or_else(|| kind.clone());
             let size = match (
                 dimension(definition, "width_mm"),
                 dimension(definition, "height_mm"),
@@ -729,6 +735,7 @@ mod tests {
         let listed = Definitions {
             profiles: vec![choice("p")],
             materials: vec![choice("m")],
+            ..Definitions::default()
         };
         let mut tools = Tools::default();
         tools.member.profile = Some("p".into());
@@ -762,7 +769,7 @@ mod tests {
         let shown = prepared.argument_list();
         assert_eq!(shown.lines().count(), prepared.args.len());
         let array = format!("[{}]", shown.replace('\n', ","));
-        let decoded = json::decode(array.as_bytes(), &message::read_limits()).unwrap();
+        let decoded = beamcraft_json::decode(array.as_bytes(), &Limits::DEFAULT).unwrap();
         let back: Vec<&str> = decoded
             .array()
             .unwrap()
@@ -800,7 +807,7 @@ mod tests {
 
     #[test]
     fn a_refusal_keeps_the_code_and_message() {
-        let reply = r#"{"code":"INVALID_ARGUMENT","diagnostics":[],"message":"dimension is not positive","observed_context":null,"outcome":"rejected","transport_code":null}"#;
+        let reply = r#"{"code":"INVALID_ARGUMENT","diagnostics":[],"message":"dimension is not positive","observed_context":null,"outcome":"rejected"}"#;
         let error = parse_created(ToolKind::Plate, Some(2), reply.as_bytes()).unwrap_err();
         assert_eq!(error.code, "INVALID_ARGUMENT");
         assert_eq!(error.message, "dimension is not positive");
@@ -843,14 +850,30 @@ mod tests {
 
     #[test]
     fn definitions_split_into_profiles_and_materials() {
+        // A07.2 definitions carry a stored display name; it leads the label.
         let reply = format!(
-            r#"{{"definition_count":2,"definitions":[{{"density_kg_m3":7850,"digest":"{m}","grade":"S355","kind":"material","used_by":[]}},{{"digest":"{DIGEST}","height_mm":300,"kind":"rectangle","width_mm":200,"used_by":[]}}],"outcome":"definitions"}}"#,
+            r#"{{"definition_count":2,"definitions":[{{"density_kg_m3":7850,"digest":"{m}","display_name":"Structural steel","grade":"S355","kind":"material","used_by":[]}},{{"digest":"{DIGEST}","display_name":"Roof beams","height_mm":300,"kind":"rectangle","width_mm":200,"used_by":[]}}],"outcome":"definitions"}}"#,
             m = "36281e26dd4affda6b39d884fe8a8bb04deb71684215741c188dac0806710ba9"
         );
         let definitions = parse_definitions(Some(0), reply.as_bytes()).unwrap();
         assert_eq!(definitions.materials.len(), 1);
         assert_eq!(definitions.profiles.len(), 1);
         assert_eq!(definitions.profiles[0].digest, DIGEST);
+        assert_eq!(
+            definitions.profiles[0].label,
+            "Roof beams 200 x 300 mm (5d660ddd)"
+        );
+        assert_eq!(
+            definitions.materials[0].label,
+            "Structural steel 7850 kg/m3 (36281e26)"
+        );
+        // Definitions published before A07.2 have no display name: the designation or grade
+        // and the kind still label them.
+        let unnamed = format!(
+            r#"{{"definition_count":2,"definitions":[{{"density_kg_m3":7850,"digest":"{m}","display_name":null,"grade":"S355","kind":"material","used_by":[]}},{{"digest":"{DIGEST}","display_name":null,"height_mm":300,"kind":"rectangle","width_mm":200,"used_by":[]}}],"outcome":"definitions"}}"#,
+            m = "36281e26dd4affda6b39d884fe8a8bb04deb71684215741c188dac0806710ba9"
+        );
+        let definitions = parse_definitions(Some(0), unnamed.as_bytes()).unwrap();
         assert_eq!(
             definitions.profiles[0].label,
             "rectangle 200 x 300 mm (5d660ddd)"
@@ -863,6 +886,14 @@ mod tests {
         .unwrap_err();
         assert_eq!(error.code, "NOT_FOUND");
         assert_eq!(definitions_args(store()), ["definitions", "--store", "S"]);
+        // No revision object in the reply: the head is unknown, not invented.
+        assert_eq!(definitions.head, None);
+        let with_head = r#"{"definitions":[],"outcome":"definitions","revision":{"revision_id":"r9","sequence":"9","manifest_digest":"abc"}}"#;
+        let head = parse_definitions(Some(0), with_head.as_bytes())
+            .unwrap()
+            .head
+            .unwrap();
+        assert_eq!((head.sequence, head.manifest_digest.as_str()), (9, "abc"));
     }
 
     #[test]

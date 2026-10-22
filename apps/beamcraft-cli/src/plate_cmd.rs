@@ -23,7 +23,7 @@ use beamcraft_cli::workspace::{
     CreateWorkspace, WorkspaceStatus, create_workspace, publish_workspace,
     status as workspace_status,
 };
-use beamcraft_engine::command::{Quantities, VOLUME_ALGORITHM, origin_rectangle_contour};
+use beamcraft_engine::command::{Quantities, origin_rectangle_contour};
 use beamcraft_engine::footprint::{Entry, Footprint, Target};
 use beamcraft_engine::quantity::{Freshness, is_superseded_algorithm};
 use beamcraft_engine::query::committed::MemberRecord;
@@ -33,6 +33,7 @@ use beamcraft_host::{
     revision::{NoFault, RevisionStore, Uuid7},
     storage::BlobStore,
 };
+use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::{
     CopyElement, CreatePlate, CreateStraightMember, DeleteElement, ElementPatch, MAX_HOLES,
     MemberKind, Placement, PlaneCut, UpdateElement,
@@ -42,8 +43,6 @@ use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use beamcraft_model::section::{CustomSection, ParametricSection, SectionFamily, SectionShape};
-use beamcraft_protocol::json::Json;
-use beamcraft_protocol::message;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 
@@ -86,7 +85,6 @@ pub(crate) fn report_with(result: Run<Json>, diagnostics: Vec<Json>) -> (Json, u
                 ),
                 ("code", Json::text(e.code.as_str())),
                 ("message", Json::text(e.message)),
-                ("transport_code", Json::Null),
                 ("observed_context", Json::Null),
                 ("diagnostics", Json::Array(diagnostics)),
             ]),
@@ -264,7 +262,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "workspace-history" => &["--workspace-dir"],
         "define-material" => DEFINE_MATERIAL_OPTIONS,
         "define-profile" => DEFINE_PROFILE_OPTIONS,
-        "plate-inspect" => &["--store"],
+        "plate-inspect" => &["--store", "--element"],
         "definitions" => &["--store", "--name", "--offset", "--limit"],
         _ => return Err(invalid("unknown command")),
     };
@@ -284,6 +282,11 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
     ) {
         return history_command(command, &options);
     }
+    // Parsed before the store is opened, so a malformed id reads nothing.
+    let element = match options.get("--element") {
+        Some(text) => Some(ElementId::parse(text).map_err(id_error)?),
+        None => None,
+    };
     let store_root = options
         .get("--store")
         .ok_or_else(|| invalid("--store is required"))?;
@@ -304,7 +307,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         }
         "define-material" | "define-profile" => define_command(&store, command, &options),
         "definitions" => definitions_json(&inspect(&store)?, &options),
-        _ => Ok(inspection_json(&inspect(&store)?)?),
+        _ => Ok(inspection_json(&inspect(&store)?, element)?),
     }
 }
 
@@ -467,26 +470,6 @@ fn candidate_json(digest: &ContentDigest, record: &DefinitionRecord) -> Json {
     ])
 }
 
-/// One closed polygon from `"X,Y;X,Y;..."`, in millimetres. One trailing separator is ignored
-/// (the closure of a contour is implicit); an empty outline is named as such. Winding,
-/// simplicity and the caps are the kernel's and the model's decisions, not the parser's.
-pub(crate) fn parse_polygon(text: &str) -> Run<Vec<[f64; 2]>> {
-    let text = text.strip_suffix(';').unwrap_or(text);
-    if text.is_empty() {
-        return Err(invalid("the outline is empty"));
-    }
-    text.split(';')
-        .map(|pair| {
-            let parts: Vec<f64> = pair
-                .split(',')
-                .map(|v| v.trim().parse::<f64>())
-                .collect::<Result<_, _>>()
-                .map_err(|_| invalid("an outline point is not two numbers"))?;
-            <[f64; 2]>::try_from(parts).map_err(|_| invalid("an outline point is not two numbers"))
-        })
-        .collect()
-}
-
 /// The section shape of `define-profile --family`: a family token with one `--<parameter>` per
 /// family parameter (millimetres), or `custom` with `--outer "X,Y;X,Y;..."` (counter-clockwise)
 /// and optional `--cavity "X,Y;...|X,Y;..."` (each clockwise). The rectangle's `--width` and
@@ -502,16 +485,26 @@ fn section_shape(family: &str, options: &BTreeMap<&str, &str>) -> Run<SectionSha
         if parameters.iter().any(|p| options.contains_key(p)) {
             return Err(invalid("a custom outline takes --outer and --cavity only"));
         }
-        let outer = parse_polygon(
+        let polygon = |text: &str| -> Run<Vec<[f64; 2]>> {
+            text.split(';')
+                .map(|pair| {
+                    let parts: Vec<f64> = pair
+                        .split(',')
+                        .map(|v| v.trim().parse::<f64>())
+                        .collect::<Result<_, _>>()
+                        .map_err(|_| invalid("an outline point is not two numbers"))?;
+                    <[f64; 2]>::try_from(parts)
+                        .map_err(|_| invalid("an outline point is not two numbers"))
+                })
+                .collect()
+        };
+        let outer = polygon(
             options
                 .get("--outer")
                 .ok_or_else(|| invalid("a custom outline needs --outer"))?,
         )?;
         let cavities = match options.get("--cavity") {
-            Some(text) => text
-                .split('|')
-                .map(parse_polygon)
-                .collect::<Run<Vec<_>>>()?,
+            Some(text) => text.split('|').map(polygon).collect::<Run<Vec<_>>>()?,
             None => Vec::new(),
         };
         return Ok(SectionShape::Custom(CustomSection { outer, cavities }));
@@ -543,6 +536,24 @@ fn section_shape(family: &str, options: &BTreeMap<&str, &str>) -> Run<SectionSha
     Ok(SectionShape::Parametric(ParametricSection::new(
         family, values,
     )?))
+}
+
+/// The plate contour of `--contour "X,Y;X,Y;..."`: its points in the plane `z = 0`, in the order
+/// given. Winding, simplicity and the size floor are the kernel's to decide.
+fn contour_points(text: &str) -> Run<Vec<[f64; 3]>> {
+    text.split(';')
+        .map(|pair| {
+            let parts: Vec<f64> = pair
+                .split(',')
+                .map(|v| v.trim().parse::<f64>())
+                .collect::<Result<_, _>>()
+                .map_err(|_| invalid("a contour point is not two numbers"))?;
+            match parts.as_slice() {
+                [x, y] => Ok([*x, *y, 0.0]),
+                _ => Err(invalid("a contour point is not two numbers")),
+            }
+        })
+        .collect()
 }
 
 /// The profile definition that explicit `define-profile`-style options describe: a rectangle from
@@ -728,32 +739,19 @@ fn create(
     } else {
         None
     };
-    // The outline is either the `--width`/`--length` origin rectangle or an arbitrary closed
-    // `--contour` (A02, experimental, counter-clockwise, element-local millimetres). The
-    // parser reads XY pairs; the plate body frame is the z = 0 plane, so the pair becomes a
-    // point with z = 0 and an off-plane input cannot be expressed here at all.
-    let contour: Vec<[f64; 3]> = match (given("--contour"), given("--width"), given("--length")) {
-        (Some(text), None, None) => parse_polygon(text)?
-            .into_iter()
-            .map(|[x, y]| [x, y, 0.0])
-            .collect(),
-        (None, Some(_), Some(_)) => {
-            let width = float(options, "--width")?;
-            let length = float(options, "--length")?;
-            origin_rectangle_contour(width, length).map_err(PlateError::from)?
-        }
-        (Some(_), _, _) => {
-            return Err(invalid(
-                "--contour and --width/--length are two ways of one outline; use one",
-            ));
-        }
-        (None, _, _) => {
-            return Err(invalid(
-                "create-plate needs --width and --length, or --contour",
-            ));
-        }
-    };
     let thickness = float(options, "--thickness")?;
+    let contour = match given("--contour") {
+        Some(text) => {
+            if options.contains_key("--width") || options.contains_key("--length") {
+                return Err(invalid(
+                    "--contour replaces --width and --length; give one or the other",
+                ));
+            }
+            contour_points(text)?
+        }
+        None => origin_rectangle_contour(float(options, "--width")?, float(options, "--length")?)
+            .map_err(PlateError::from)?,
+    };
     let name = given("--name").unwrap_or("Plate").to_owned();
     let command = CreatePlate {
         new_id,
@@ -1443,7 +1441,10 @@ fn member_json(record: &MemberRecord) -> Run<Json> {
     let a = &record.authored;
     Ok(Json::object([
         ("element_id", Json::text(a.id.to_string())),
-        ("prim_path", Json::text(a.id.prim_path())),
+        (
+            "prim_path",
+            Json::text(a.id.prim_path(beamcraft_model::prim::ElementCategory::Part)),
+        ),
         ("kind", Json::text(a.kind.as_str())),
         ("name", Json::text(a.name.clone())),
         ("profile_digest", Json::text(a.profile.to_string())),
@@ -1566,7 +1567,10 @@ fn quantities_json(q: &Quantities) -> Run<Json> {
 pub(crate) fn definition_json(digest: &ContentDigest, record: &DefinitionRecord) -> Run<Json> {
     let mut fields = vec![
         ("digest", Json::text(digest.to_string())),
-        ("prim_path", Json::text(definition_path(digest))),
+        (
+            "prim_path",
+            Json::text(definition_path(digest, record.kind())),
+        ),
         ("kind", Json::text(record.kind())),
         ("units", Json::text("mm")),
         ("schema_version", Json::text("0.1.0")),
@@ -1722,7 +1726,7 @@ pub(crate) fn fit_page(
     let mut count = available.min(limit);
     loop {
         let json = build(count)?;
-        if json.encode(&message::read_limits()).is_ok() {
+        if json.encode(&Limits::DEFAULT).is_ok() {
             return Ok(json);
         }
         if count <= 1 {
@@ -1748,7 +1752,11 @@ fn plate_users(plates: &[PlateRecord]) -> BTreeMap<ContentDigest, Vec<ElementId>
     users
 }
 
-fn definitions_json(inspection: &Inspection, options: &BTreeMap<&str, &str>) -> Run<Json> {
+/// The `definitions` reply for `inspection` (also framed by `view-export --with-definitions`).
+pub(crate) fn definitions_json(
+    inspection: &Inspection,
+    options: &BTreeMap<&str, &str>,
+) -> Run<Json> {
     let (offset, limit) = page_of(options)?;
     let name = options.get("--name");
     let matching: Vec<_> = inspection
@@ -1800,21 +1808,18 @@ fn definitions_json(inspection: &Inspection, options: &BTreeMap<&str, &str>) -> 
 
 fn plate_json(record: &PlateRecord) -> Run<Json> {
     let mesh = &record.body.solid;
-    // A rectangle's dimensions are its sides; a contour plate has no sides, only a bounding box,
-    // so the record names what it reports and never lets `width * length * thickness` pass for
-    // the size of an arbitrary outline.
-    let rectangle = record.body.volume_algorithm == VOLUME_ALGORITHM;
-    let shape = if rectangle { "rectangle" } else { "contour" };
-    let dimensions = if rectangle {
-        "dimensions_mm"
-    } else {
-        "bounding_box_mm"
-    };
     Ok(Json::object([
         ("element_id", Json::text(record.authored.id.to_string())),
-        ("prim_path", Json::text(record.authored.id.prim_path())),
+        (
+            "prim_path",
+            Json::text(
+                record
+                    .authored
+                    .id
+                    .prim_path(beamcraft_model::prim::ElementCategory::Part),
+            ),
+        ),
         ("kind", Json::text("plate")),
-        ("shape", Json::text(shape)),
         ("name", Json::text(record.authored.name.clone())),
         (
             "material_digest",
@@ -1824,7 +1829,7 @@ fn plate_json(record: &PlateRecord) -> Run<Json> {
                 .map_or(Json::Null, |d| Json::text(d.to_string())),
         ),
         (
-            dimensions,
+            "dimensions_mm",
             Json::object([
                 ("width", num(record.body.width_mm)?),
                 ("length", num(record.body.length_mm)?),
@@ -1841,6 +1846,14 @@ fn plate_json(record: &PlateRecord) -> Run<Json> {
                     .map(|p| triple(*p))
                     .collect::<Run<Vec<_>>>()?,
             ),
+        ),
+        (
+            "outline",
+            Json::text(if record.body.is_origin_rectangle() {
+                "rectangle"
+            } else {
+                "contour"
+            }),
         ),
         (
             "placement",
@@ -2089,11 +2102,22 @@ fn with_names(
     Json::Object(object)
 }
 
-fn inspection_json(inspection: &Inspection) -> Run<Json> {
+/// The `plate-inspect` reply for `inspection` (also framed by `view-export --with-element`).
+/// `only` keeps one element in the lists (plates, members, the snapshot's elements and their
+/// meshes), none when the revision does not hold it, and names it as `element_filter`; the
+/// counts still describe the whole revision. Without it the reply lists everything.
+pub(crate) fn inspection_json(inspection: &Inspection, only: Option<ElementId>) -> Run<Json> {
     let snapshot = &inspection.snapshot;
+    let wanted = |id: ElementId| only.is_none_or(|o| o == id);
+    let shown: Vec<_> = snapshot
+        .elements()
+        .iter()
+        .filter(|e| wanted(e.id))
+        .collect();
     let plates = inspection
         .plates
         .iter()
+        .filter(|p| wanted(p.authored.id))
         .map(|p| {
             Ok(with_names(
                 with_stored(plate_json(p)?, p.authored.id, inspection)?,
@@ -2106,6 +2130,7 @@ fn inspection_json(inspection: &Inspection) -> Run<Json> {
     let members = inspection
         .members
         .iter()
+        .filter(|m| wanted(m.authored.id))
         .map(|m| {
             Ok(with_names(
                 with_stored(member_json(m)?, m.authored.id, inspection)?,
@@ -2118,6 +2143,12 @@ fn inspection_json(inspection: &Inspection) -> Run<Json> {
     let meshes = snapshot
         .meshes()
         .iter()
+        .filter(|m| {
+            only.is_none()
+                || shown.iter().any(|e| {
+                    e.full.mesh_digest == m.digest() || e.simplified.mesh_digest == m.digest()
+                })
+        })
         .map(|m| {
             Json::object([
                 ("digest", Json::text(m.digest().to_string())),
@@ -2127,8 +2158,7 @@ fn inspection_json(inspection: &Inspection) -> Run<Json> {
             ])
         })
         .collect();
-    let entries = snapshot
-        .elements()
+    let entries = shown
         .iter()
         .map(|e| {
             Ok(Json::object([
@@ -2141,7 +2171,7 @@ fn inspection_json(inspection: &Inspection) -> Run<Json> {
             ]))
         })
         .collect::<Run<Vec<_>>>()?;
-    Ok(Json::object([
+    let mut reply = Json::object([
         ("outcome", Json::text("plate_inspection")),
         ("revision", revision_json(&inspection.revision)),
         ("plate_count", Json::uint(inspection.plates.len() as u64)),
@@ -2180,7 +2210,11 @@ fn inspection_json(inspection: &Inspection) -> Run<Json> {
                 ("meshes", Json::Array(meshes)),
             ]),
         ),
-    ]))
+    ]);
+    if let (Some(id), Json::Object(fields)) = (only, &mut reply) {
+        fields.insert("element_filter".into(), Json::text(id.to_string()));
+    }
+    Ok(reply)
 }
 
 #[cfg(test)]
@@ -2208,8 +2242,8 @@ mod tests {
         let (json, exit) = report_with(Err(invalid("ambiguous")), diagnostics);
         assert_eq!(exit, 2);
         // The shared encoder accepts it and keeps the error code.
-        let bytes = json.encode(&message::read_limits()).unwrap();
-        let back = beamcraft_protocol::json::decode(&bytes, &message::read_limits()).unwrap();
+        let bytes = json.encode(&Limits::DEFAULT).unwrap();
+        let back = beamcraft_json::decode(&bytes, &Limits::DEFAULT).unwrap();
         assert_eq!(back.get("code").unwrap().string(), Ok("INVALID_ARGUMENT"));
         // A small set lists everything and adds no summary.
         assert_eq!(ambiguity_diagnostics(&found[..3]).len(), 3);
@@ -2227,7 +2261,7 @@ mod tests {
         let json = fit_page(256, 256, page).unwrap();
         let shown = json.get("items").unwrap().array().unwrap().len();
         assert!(shown > 0 && shown < 256, "{shown}");
-        assert!(json.encode(&message::read_limits()).is_ok());
+        assert!(json.encode(&Limits::DEFAULT).is_ok());
         let one = fit_page(1, 256, page).unwrap();
         assert_eq!(one.get("items").unwrap().array().unwrap().len(), 1);
         let none = fit_page(0, 256, page).unwrap();

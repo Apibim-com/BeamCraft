@@ -120,7 +120,3 @@ product material was used.
   admitting the kind with its attributes in the next vocabulary version is the owner's decision.
 - The schema descriptor changed: other open PRs that also edit it will conflict and need the
   earlier-descriptor derivation extended.
-
-## Proposed Roadmap entry
-
-`2026-10-19 A05: minimal bolt groups (create-bolt, bolts; a connection element with explicit diameter, count, pitch and world origin plus unit direction and one ordered bim:connects record to two parts, every bolt position within both parts' bounds; Shape::Bolt and rule A05-V01 in the layer engine; delete/copy refusals); experimental slice.`

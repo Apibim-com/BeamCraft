@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
-// Contributor-original generated synthetic fixtures, MPL-2.0. Expectations follow F04 section 8,
-// F05 section 7 and the U07 plan row; no third-party layer or asset is used.
+// Contributor-original generated synthetic fixtures, MPL-2.0. Expectations follow F04 section 8
+// and the U07 plan row; no third-party layer or asset is used.
 
 //! U07 end to end: an interrupted commit is produced through the real host commit path and its
 //! hook (the commit "dies" at a chosen point, so nothing after it runs), then the real `beamcraft`
@@ -24,11 +24,8 @@ use beamcraft_host::{
     },
     storage::BlobStore,
 };
+use beamcraft_json::{Json, Limits};
 use beamcraft_model::digest::{ContentDigest, Sha256};
-use beamcraft_protocol::{
-    json::{self, Json},
-    message,
-};
 
 const PROJECT: &str = "0199e7a0-0000-7000-8000-000000000001";
 const WORKSPACE: &str = "0199e7a0-0000-7000-8000-000000000002";
@@ -71,7 +68,7 @@ impl Fixture {
             .args(args)
             .output()
             .unwrap();
-        let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
+        let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
         (output.status.code().unwrap(), body)
     }
     fn store_arg(&self) -> String {

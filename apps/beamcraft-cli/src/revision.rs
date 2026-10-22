@@ -6,16 +6,16 @@
 //! which runs in its own process and is not wired to these commands (see the README).
 
 use beamcraft_host::{
+    control::{Control, HostError},
     ledger::{Outcome, OutcomeSource, RecoveryPolicy},
     revision::{
         CommitOutcome, CommitPoint, ExpectedBase, Injected, LayerEntry, LayerRole, RevisionDraft,
         RevisionError, RevisionInfo, RevisionStore, Uuid7,
     },
     storage::BlobStore,
-    worker::{Control, HostError},
 };
+use beamcraft_json::Json;
 use beamcraft_model::{ErrorCode, digest::ContentDigest};
-use beamcraft_protocol::json::Json;
 use std::collections::BTreeMap;
 
 /// The shell argument cap (4096 bytes) already bounds the list; this is a clearer limit.

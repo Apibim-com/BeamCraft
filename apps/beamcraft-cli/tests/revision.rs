@@ -17,6 +17,7 @@ use beamcraft_host::{
     },
     storage::BlobStore,
 };
+use beamcraft_json::{Json, Limits};
 use beamcraft_layer_engine::{
     authored::{
         Author, Change, Decision, Definition, EditTargets, Element, MemberKind, Mesh, Placement,
@@ -28,10 +29,6 @@ use beamcraft_layer_engine::{
 use beamcraft_model::{
     ErrorCode,
     digest::{ContentDigest, Sha256},
-};
-use beamcraft_protocol::{
-    json::{self, Json},
-    message,
 };
 use std::{
     fs,
@@ -497,7 +494,7 @@ fn seq(n: u32) -> String {
 }
 fn el(id: &str, extra: &str) -> String {
     format!(
-        "def Xform \"E_{}\" {{\n custom string bim:id = \"{id}\"\n custom string bim:name = \"label\"\n{extra}\n}}\n",
+        "def Xform \"PRT_{}\" {{\n custom string bim:id = \"{id}\"\n custom string bim:name = \"label\"\n{extra}\n}}\n",
         hex(id)
     )
 }
@@ -507,7 +504,7 @@ fn hand_built(elements: &str, other: &str) -> Vec<Asset> {
         asset(
             "root.usda",
             layer(&format!(
-                "def Xform \"World\" {{\n def Scope \"Steel\" {{\n{elements}\n}}\n def Scope \"Definitions\" {{\n}}\n{other}\n}}"
+                "def Xform \"World\" {{\n def Scope \"Steel\" {{\n def Scope \"Parts\" {{\n{elements}\n}}\n}}\n def Scope \"Definitions\" {{\n}}\n{other}\n}}"
             )),
         ),
         asset("derived.usda", layer("")),
@@ -526,7 +523,7 @@ fn real_binary_commits_u02_layers_and_a_fresh_process_and_reader_verify_them() {
             .args(args)
             .output()
             .unwrap();
-        let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
+        let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
         (output.status.code().unwrap(), body)
     };
     let text = |j: &Json, key: &str| j.get(key).unwrap().string().unwrap().to_owned();
@@ -759,9 +756,14 @@ fn duplicate_short_and_dangling_identities_abort_the_commit_with_the_root_unchan
     let fx = Fixture::new();
     let store = fx.revisions();
     let id = seq(0x30);
-    let other = format!("def Scope \"Other\" {{ {} }}", el(&id, ""));
+    // The duplicate is at another valid category path, so the index checks UUID uniqueness
+    // rather than the reader rejecting a misplaced prim first.
+    let other = format!(
+        "def Scope \"Levels\" {{ {} }}",
+        el(&id, "").replace("PRT_", "LVL_")
+    );
     let dangling = format!(
-        "custom rel bim:profile = </World/Steel/E_{}>",
+        "custom rel bim:profile = </World/Steel/Parts/PRT_{}>",
         hex(&seq(0x99))
     );
     let cases: [(&str, Vec<Asset>, ErrorCode); 3] = [
@@ -773,7 +775,7 @@ fn duplicate_short_and_dangling_identities_abort_the_commit_with_the_root_unchan
         (
             "short",
             hand_built(
-                "def Xform \"E_0199e7a0\" { custom string bim:id = \"0199e7a0\" }",
+                "def Xform \"PRT_0199e7a0\" { custom string bim:id = \"0199e7a0\" }",
                 "",
             ),
             ErrorCode::InvalidId,

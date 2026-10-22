@@ -7,10 +7,6 @@ Delete any section that does not apply.
 
 <!-- What behaviour is different afterwards, and why. If it fixes an issue, say `Fixes #123`. -->
 
-## Roadmap entry
-
-<!-- Proposed dated progress-log line in the existing format; do not edit `ROADMAP.md` in this PR. -->
-
 ## How you verified it
 
 - [ ] `cargo fmt --all -- --check`
@@ -27,14 +23,12 @@ Every model file, IFC/DSTV import and keystroke is untrusted input (`AGENTS.md` 
 - [ ] No indexing or slicing with input-derived positions; allocations sized by input are capped
 - [ ] No `unsafe`
 
-## Provenance (clean-room)
+## Provenance
 
-Read `AGENTS.md` §1 and §2 before adding any asset or behaviour.
+Read `AGENTS.md` §1 and §2 before adding any asset.
 
-- [ ] No asset (icon, image, font, profile table, sample model) taken from Tekla Structures or any Trimble product
-- [ ] No Tekla/Trimble binaries decompiled, disassembled or copied; no Tekla Open API source or sample code copied
+- [ ] Nothing taken from Tekla Structures or any Trimble product (assets, code, documentation, tables)
 - [ ] No GPL/AGPL code copied in
-- [ ] Behaviour comes from public standards (IFC, DSTV, EN 1993, ...) or black-box observation of synthetic fixtures
 - [ ] Every new asset has an entry in `ATTRIBUTION.md`
 
 ## Anything a reviewer should look at first

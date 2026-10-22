@@ -8,8 +8,8 @@
 //! outcome ledger (U07); the engine is told only what the host proved, as [`PriorOp`], and
 //! decides between a new application, a replay (same content: return the recorded result,
 //! change nothing) and `OP_ID_REUSE` (different content under an accepted `op_id`). Content is
-//! compared through [`beamcraft_model::command::CreatePlate::content_fingerprint`], a typed-argument digest; the F05
-//! canonical-byte comparison is planned and replaces it without changing this API.
+//! compared through [`beamcraft_model::command::CreatePlate::content_fingerprint`], a typed-argument digest; a
+//! canonical-byte comparison (F04 section 3) is planned and replaces it without changing this API.
 
 use crate::command::{CreatePlateOutcome, MaterialLookup, create_plate};
 use beamcraft_model::command::{CommandError, CreatePlate};

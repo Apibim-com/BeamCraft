@@ -205,12 +205,15 @@ fn main() -> ExitCode {
     });
     println!("DIGEST member {}", member.mesh().mesh_digest());
 
-    // 2. Profile extrusion with cavities.
+    // 2. Profile extrusion with cavities. The extrusion time covers admission, triangulation,
+    // build and the self-checks: an `Extrusion` exists only after every check passed, so it is
+    // the cost of certifying the body, not only of building it.
     let outer = rect(1000.0, 500.0);
     for (name, count, segments, iterations) in [
         ("extrude 1 round cavity (64 edges)", 1_u32, 64_u32, 500_u32),
         ("extrude 16 round cavities (32 edges)", 16, 32, 100),
         ("extrude 128 round cavities (8 edges)", 128, 8, 10),
+        ("extrude 64 round cavities (1020 edges)", 64, 1020, 3),
     ] {
         let mut cavities = Vec::new();
         for k in 0..count {
@@ -228,7 +231,42 @@ fn main() -> ExitCode {
         println!("DIGEST {name} {}", digest_of(result.mesh().blob()));
     }
 
-    // 3. Plane cut.
+    // 3. G06 certification of a body at the raised F06 caps: the same sealed 64-hole plate the
+    // caps exist for, analyzed the way the operations certify a candidate. The default budgets
+    // stop the scan with a typed `Uncertain`; that is the kernel certification capacity, a
+    // separate implementation limit (`GEO_KERNEL_CAPACITY`), reported and never hidden.
+    {
+        let mut cavities = Vec::new();
+        for k in 0..64_u32 {
+            let (col, row) = (k % 16, k / 16);
+            let Some(c) = circle(
+                40.0 + 60.0 * f64::from(col),
+                40.0 + 60.0 * f64::from(row),
+                10.0,
+                1020,
+            ) else {
+                return fail("cap-body cavity builds");
+            };
+            cavities.push(c);
+        }
+        let Ok(result) = extrude(&outer, &cavities, 10.0) else {
+            return fail("cap-body extrusion builds");
+        };
+        let blob = result.mesh().blob().to_vec();
+        println!("SIZE cap-body blob bytes={}", blob.len());
+        let Ok(mesh) = TriMesh::from_blob(&blob) else {
+            return fail("cap-body blob parses");
+        };
+        let analysis = time("analyze cap body (64 round holes, 1020 edges)", 2, || {
+            analyze(&mesh)
+        });
+        let Ok(a) = analysis else {
+            return fail("cap-body analysis returns a verdict");
+        };
+        println!("OUTCOME cap body status {}", describe(a.status()));
+    }
+
+    // 4. Plane cut.
     let Ok(body) = Body::from_plate(&plate) else {
         return fail("body from plate");
     };
@@ -243,7 +281,7 @@ fn main() -> ExitCode {
     );
     println!("DIGEST plane-cut {}", cut.mesh_digest());
 
-    // 4. Through hole(s).
+    // 5. Through hole(s).
     let Some(round) = circle(500.0, 250.0, 20.0, 64) else {
         return fail("hole cavity");
     };
@@ -256,7 +294,7 @@ fn main() -> ExitCode {
     });
     println!("DIGEST through-hole {}", hole.mesh_digest());
 
-    // 5. Sequences of holes on the result body: every call re-certifies the whole body, so the
+    // 6. Sequences of holes on the result body: every call re-certifies the whole body, so the
     // cost grows with the body, and the default budgets end the sequence with a typed failure.
     for segments in [16_u32, 32, 64] {
         let mut current: Body = match through_hole(&body, &cutter) {
@@ -334,7 +372,7 @@ fn main() -> ExitCode {
         );
     }
 
-    // 6. Analysis and measurement of welded slabs of growing size (all closed and outward).
+    // 7. Analysis and measurement of welded slabs of growing size (all closed and outward).
     // The size at which certification stops being decided within its default budgets is a
     // property of the budgets, not of the mesh: it is reported, never hidden.
     let mut largest_certified: Option<(u32, TriMesh)> = None;
@@ -377,8 +415,9 @@ fn main() -> ExitCode {
     });
     println!("DIGEST slab-blob {}", digest_of(&blob));
 
-    // Structural gate alone at the F06 caps: 4096 vertices, 8192 triangles, 213,024 bytes.
-    let (fv, ft) = slab(44, 44, 10.0, 0.0);
+    // Structural gate alone at the F06 caps: 262,144 vertices, 524,288 triangles,
+    // 13,631,520 bytes (the slab here sits just inside them).
+    let (fv, ft) = slab(360, 360, 10.0, 0.0);
     let Ok(cap_mesh) = TriMesh::from_buffers(&fv, &ft) else {
         return fail("cap-size buffers");
     };
@@ -399,7 +438,7 @@ fn main() -> ExitCode {
         println!("OUTCOME far slab 16x16 status {}", describe(a.status()));
     }
 
-    // 7. Adversarial work: overlapping boxes up to the pair budget.
+    // 8. Adversarial work: overlapping boxes up to the pair budget.
     for (n, iterations) in [(200_u32, 3_u32), (1000, 3), (4000, 3)] {
         let (bv, bt) = bipyramid(n, 1000.0);
         let Ok(bm) = TriMesh::from_buffers(&bv, &bt) else {

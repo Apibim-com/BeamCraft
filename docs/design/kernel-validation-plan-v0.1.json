@@ -4,7 +4,7 @@
   "status": "draft; nothing implemented",
   "base_sha": "29d962e790ffd21ecd9a45143f052d4b4d53d3f7",
   "scope": "Rectangular plate and straight rectangular-section member; rigid placement; no implemented kernel or tests.",
-  "f06_cases_path": "../contracts/geometry-contract-cases-v0.1.json",
+  "f06_cases_path": "../../tests/fixtures/contracts/f06-geometry-contract-cases-v0.1.json",
   "design_path": "kernel-design-v0.1.md",
   "counts": {
     "rows": 44,
@@ -675,7 +675,7 @@
       "stage": "S3",
       "property": "Descriptor bytes and every negotiated delivery budget",
       "method": "Count complete encoded UTF-8 descriptor bytes below/equal/above 32768 independently of blob caps; use minimum applicable limits in each budget unit. Compare 392-byte blob to buffer limits 391/392 and test page ending, whole-body rejection, no splitting and atomic delivery.",
-      "inputs_class": "Six-face descriptors, generic structural-cap blobs, smaller control/token/string/buffer/attachment/bundle/batch/delivery limits and request deadline; counts cannot widen F04/F05 caps.",
+      "inputs_class": "Six-face descriptors, generic structural-cap blobs, smaller control/token/string/buffer/attachment/bundle/batch/delivery limits and request deadline; counts cannot widen F04 or host delivery caps.",
       "expected_oracle_kind": "analytic",
       "f06_case_refs": [
         "F06-NEG-34",
