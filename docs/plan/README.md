@@ -8,6 +8,7 @@ the owner's local planning document (Russian, kept outside the repository until 
 | [README.md](README.md) | Goal and boundaries, principles, gates and their order, what "done" means |
 | [tasks.md](tasks.md) | Every task by ID (F04, U06, A03, ...): dependencies, result, acceptance, status |
 | [decisions.md](decisions.md) | Owner decisions with dates, and the decisions still open |
+| [k1-acceptance.md](k1-acceptance.md) | K1 evidence verdict, contract deviations and remaining acceptance work |
 
 [`ROADMAP.md`](../../ROADMAP.md) is the short public summary (stage, gate table, MVP, next work).
 What a merged task actually does is in its note under [`docs/design/`](../design/); the
