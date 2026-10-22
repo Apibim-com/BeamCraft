@@ -93,8 +93,21 @@ fn run(mode: &str, root: &Path, expect_path: &str, marks_only: bool) -> Result<J
             findings.messages.extend(stage.take_problems());
             return findings.messages.is_empty().then_some(report);
         }
-        let bytes = std::fs::read(expect_path).ok()?;
-        let expect = beamcraft_json::decode(&bytes, &Limits::DEFAULT).ok()?;
+        // An unreadable or undecodable expectation is a failure, never a silent pass.
+        let bytes = match std::fs::read(expect_path) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                findings.fail(format!("{expect_path}: {e}"));
+                return None;
+            }
+        };
+        let expect = match beamcraft_json::decode(&bytes, &Limits::DEFAULT) {
+            Ok(expect) => expect,
+            Err(e) => {
+                findings.fail(format!("{expect_path}: {e}"));
+                return None;
+            }
+        };
         let report = if mode == "reference" {
             check_reference(&stage, &expect, &mut findings)
         } else {
@@ -258,15 +271,15 @@ fn pick(v: V3, axis: &str) -> f64 {
     }
 }
 
-/// Divergence-theorem volume of a closed polygon mesh (fan triangulation per face).
-fn signed_volume(points: &[V3], counts: &[usize], indices: &[usize]) -> f64 {
+/// Divergence-theorem volume of a closed polygon mesh (fan triangulation per face); `None`
+/// when a face count is absurd or the indices do not cover the faces.
+fn signed_volume(points: &[V3], counts: &[usize], indices: &[usize]) -> Option<f64> {
     let mut total = 0.0;
     let mut cursor = 0usize;
     for count in counts {
-        let Some(face) = indices.get(cursor..cursor + count) else {
-            return total;
-        };
-        cursor += count;
+        let end = cursor.checked_add(*count)?;
+        let face = indices.get(cursor..end)?;
+        cursor = end;
         let Some(first) = face.first().and_then(|i| points.get(*i)).copied() else {
             continue;
         };
@@ -280,7 +293,7 @@ fn signed_volume(points: &[V3], counts: &[usize], indices: &[usize]) -> f64 {
             total += first.dot(b.cross(c)) / 6.0;
         }
     }
-    total
+    Some(total)
 }
 
 /// Newell corner normal of a face, from its first three points.
@@ -1292,6 +1305,16 @@ fn expect_v3(expect: &Json, key: &str, findings: &mut Findings) -> Option<V3> {
     ))
 }
 
+/// A mandatory 3-vector: an absent or malformed key is itself a finding, so a malformed
+/// expectation cannot silently skip the check that reads it.
+fn require_v3(expect: &Json, key: &str, findings: &mut Findings) -> Option<V3> {
+    if expect.get(key).is_err() {
+        findings.fail(format!("the expectation lacks {key:?}"));
+        return None;
+    }
+    expect_v3(expect, key, findings)
+}
+
 fn dashless(id: &str) -> String {
     id.chars().filter(|c| *c != '-').collect()
 }
@@ -1454,7 +1477,15 @@ fn check_element(stage: &Stage, entry: &Json, findings: &mut Findings) -> Option
     }
     check_standard_metadata(&mesh, &points, &counts, &indices, findings);
 
-    let volume = signed_volume(&points, &counts, &indices);
+    let Some(volume) = signed_volume(&points, &counts, &indices) else {
+        findings.fail(format!(
+            "{geometry_path}: a face count is absurd or the indices do not cover the faces"
+        ));
+        return Some(Json::object([
+            ("id", Json::text(id)),
+            ("volume_mm3", Json::Null),
+        ]));
+    };
     findings.check(
         volume > 0.0,
         format!("{geometry_path}: volume {volume:?} is not outward oriented"),
@@ -1574,8 +1605,8 @@ fn check_member_inputs(stage: &Stage, prim: &Prim, entry: &Json, findings: &mut 
     let path = &prim.path;
     let axis = prim.v3s("bim:axisPointsMm");
     let (Some(start), Some(end)) = (
-        expect_v3(entry, "axis_start", findings),
-        expect_v3(entry, "axis_end", findings),
+        require_v3(entry, "axis_start", findings),
+        require_v3(entry, "axis_end", findings),
     ) else {
         return;
     };
@@ -1812,11 +1843,15 @@ fn check_standard_metadata(
     );
     let mut cursor = 0usize;
     for (index, count) in counts.iter().enumerate() {
+        let Some(end) = cursor.checked_add(*count) else {
+            findings.fail(format!("{where_}: face {index} has an absurd count"));
+            break;
+        };
         let face: Vec<usize> = indices
-            .get(cursor..cursor + count)
+            .get(cursor..end)
             .map(|window| window.to_vec())
             .unwrap_or_default();
-        cursor += count;
+        cursor = end;
         if face.len() != *count {
             findings.fail(format!("{where_}: face {index} reads past the index array"));
             break;
@@ -1983,8 +2018,8 @@ fn check_reference(stage: &Stage, expect: &Json, findings: &mut Findings) -> Jso
         findings.check(worst <= 1e-6, format!("world points differ by {worst}"));
     }
     if let (Some(lo), Some(hi)) = (
-        expect_v3(expect, "world_min", findings),
-        expect_v3(expect, "world_max", findings),
+        require_v3(expect, "world_min", findings),
+        require_v3(expect, "world_max", findings),
     ) {
         let (min, max) = bounds_of(&world);
         for axis in ["x", "y", "z"] {
@@ -2125,7 +2160,7 @@ mod tests {
             0, 4, 6, 0, 6, 2, 1, 3, 7, 1, 7, 5, 0, 1, 5, 0, 5, 4, 2, 6, 7, 2, 7, 3, 0, 2, 3, 0, 3,
             1, 4, 5, 7, 4, 7, 6,
         ];
-        let volume = signed_volume(&cube, &counts, &indices);
+        let volume = signed_volume(&cube, &counts, &indices).unwrap();
         assert!((volume - 1.0).abs() < 1e-12, "{volume:?}");
         let half = std::f64::consts::FRAC_1_SQRT_2;
         let quarter = Quat {

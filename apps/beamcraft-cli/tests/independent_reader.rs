@@ -139,6 +139,34 @@ fn plates(report: &Json) -> usize {
 }
 
 #[test]
+fn a_missing_expectation_file_fails_the_reader() {
+    let scratch = Scratch::new("no-expect");
+    let store_arg = scratch.store_arg();
+    run_binary(&plate_args(
+        store_arg,
+        "1000",
+        "500",
+        "10",
+        &["--name", "Oracle A"],
+    ));
+    let inspected = run_binary(&["plate-inspect", "--store", store_arg]);
+    copy_layers(Path::new(store_arg), &scratch.layers(), &inspected);
+    let absent = scratch.layers().join("absent-expectation.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_beamcraft-usd-oracle"))
+        .arg("revision")
+        .arg(scratch.layers().join("root.usda"))
+        .arg(&absent)
+        .output()
+        .unwrap();
+    assert_ne!(
+        output.status.code(),
+        Some(0),
+        "a missing expectation file must fail the reader, stdout: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
+#[test]
 fn the_reader_reads_the_committed_revision_and_agrees_with_the_closed_form() {
     let scratch = Scratch::new("p01-reader");
     let store_arg = scratch.store_arg();
