@@ -13,9 +13,6 @@ use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ActorId, DocumentVersionId, OpId};
 
-pub mod store;
-pub use store::{DocumentRevision, DocumentStore, DocumentWrite};
-
 /// Tight bound for the complete document root, including all persisted operation metadata.
 pub const MAX_DOCUMENT_ROOT_BYTES: usize = 16_384;
 /// Exact descriptor for the separate immutable document/revision contract.
@@ -89,7 +86,6 @@ pub fn encode(metadata: Metadata) -> Result<Asset, PlateError> {
             .is_some_and(|version| Some(version) != metadata.latest_published)
     {
         return Err(PlateError {
-            rule_id: None,
             code: ErrorCode::InvalidArgument,
             message: "published drawing version metadata is inconsistent",
         });
@@ -112,7 +108,6 @@ pub fn encode(metadata: Metadata) -> Result<Asset, PlateError> {
     bytes.extend_from_slice(insertion.as_bytes());
     if bytes.len() > MAX_DOCUMENT_ROOT_BYTES {
         return Err(PlateError {
-            rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "document root byte cap exceeded",
         });
