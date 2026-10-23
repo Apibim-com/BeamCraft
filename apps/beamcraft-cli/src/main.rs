@@ -54,11 +54,19 @@ fn main() -> std::process::ExitCode {
 
 
 
-
+>>>>>>> e931800 (feat: enumerate pinned semantic features for drawing references (D01.1))">>>>>>> 4bab820 (feat: enumerate pinned semantic features for drawing references (D01.1))
+>>>>>>> ac16fca (feat: project associative member dimensions headlessly (D02.1))
+>>>>>>> f5c6bd8 (feat: project associative member dimensions headlessly (D02.1))">>>>>>> 4bab820 (feat: enumerate pinned semantic features for drawing references (D01.1))">>>>>>> 4bab820 (feat: enumerate pinned semantic features for drawing references (D01.1))
+>>>>>>> e724dbb (feat: support rigid member placement in view queries)
+>>>>>>> ac16fca (feat: project associative member dimensions headlessly (D02.1))
+>>>>>>> 8f720c1 (feat: round-trip closed drawing intent as ordinary USD (D01.3))
+>>>>>>> f3b6aee (feat: round-trip closed drawing intent as ordinary USD (D01.3))
+>>>>>>> dcb5eda (feat: support rigid member placement in view queries)
         );
         println!(
             "Drawing documents (D03): drawing-create --store MODEL_ROOT --document-dir NEW_DIR (with drawing/view/dimension/member/anchor IDs, op/revision/actor IDs); drawing-refresh --store MODEL_ROOT --document-dir DIR --expected-head UUID (same IDs); drawing-publish --document-dir DIR --expected-head UUID --op-id UUID --revision-id UUID --actor-id UUID --version-id UUID; drawing-inspect --document-dir DIR [--model-store ROOT]; drawing-versions --document-dir DIR."
         );
+>>>>>>> ab026b5 (feat: support rigid member placement in view queries)
         return std::process::ExitCode::SUCCESS;
     }
     if args.first().is_some_and(|c| c == "view-export") {
