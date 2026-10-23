@@ -6,6 +6,12 @@ Open questions are at the end.
 
 ## 2026-10-22
 
+- **Point 5 deferred for a decision after the MVP.** Revisit the KM-to-KMD `builtFrom`
+  workflow and broader inter-section source dependencies after the MVP; do not implement or
+  finalize that design now. R06 is deferred, and the earlier KM-to-KMD description is a candidate
+  direction to reassess, not committed MVP scope. Approved opening assignments (stage 4), common
+  viewing (stage 6), exact reference pins and IFC conversion provenance remain in the current
+  contract package. Deferring point 5 does not remove their required version/evidence tracking.
 - **Section projects and reproducible coordination: foundation approved.** Distinguish an
   engineering module (`steel`) from a responsible project section (`KM`, `KMD`) and its optional
   zones. Sections can share one project store or publish independent projects under one common

@@ -83,7 +83,8 @@ Changes, deletions, conversion differences, wrapper alignment changes and unreso
 mark dependent assignments or engineering references for review. They do not rewrite owned
 pipes, steel elements, opening proposals or prior decisions. The source snapshot in a pending
 assignment remains the one actually used, even if the currently displayed reference advances.
-The full `builtFrom` workflow remains separate; this clause specifies external source evidence.
+The full `builtFrom` workflow is deferred for a decision after the MVP; this clause still
+requires external source evidence for the approved reference and assignment workflows.
 
 ## 4. Reports to participants outside Craft
 

@@ -103,5 +103,5 @@ render test is not evidence of display support.
 Before implementation, specify the exact common read API, supported representation types,
 property/unit mapping, capability descriptors, revision tokens, numeric budgets and any
 necessary new F04/F06 versions. Frozen 0.1 contracts and runtime behaviour stay unchanged.
-This approval does not advance module implementation, remote access or the broader point 5
-source-provenance workflow into the MVP.
+This approval does not advance module implementation or remote access into the MVP. The broader
+point 5 source-provenance workflow is deferred for a scope/design decision after the MVP.

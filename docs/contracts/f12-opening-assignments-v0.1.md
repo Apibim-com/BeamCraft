@@ -188,5 +188,6 @@ Also require interrupted-import/publication recovery, unknown package versions, 
 truncated input, bounded repeated evidence and retention of live proposal/decision bases.
 Existing C03–C06 remain deferred; no automatic rebase, second engineering module or network
 coordinator is needed merely to specify this file-based workflow. The broader point 5
-(`builtFrom` and other inter-section dependencies) remains separate work. Approved point 6
+(`builtFrom` and other inter-section dependencies) is deferred for a decision after the MVP;
+the approved assignment workflow and its version/evidence rules remain in scope here. Approved point 6
 is specified in the [common Craft reading companion](f12-craft-read-capabilities-v0.1.md).

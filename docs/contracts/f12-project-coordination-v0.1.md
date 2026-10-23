@@ -210,7 +210,7 @@ approval and release workflows still need their own specification.
 
 **PC-KEEP-001.** Every retained coordination revision is a retention root for its pinned
 dependency closure. A workspace base and retained historical provenance link, including a
-future `builtFrom` record, likewise pin the revisions/resources needed to interpret them.
+future `builtFrom` record if adopted after the MVP, likewise pin the revisions/resources needed to interpret them.
 Compaction must not remove these resources merely because they are no longer the latest head.
 
 The coordination store must retain verified local copies of the closure or an explicit,
@@ -257,7 +257,8 @@ as evidence for this new contract.
 - U21: independent section/zone projects, pinned connection resolution, atomic updates and
   retained dependency closure; coordinate with U14 before adding live cross-store pins.
 - U18: explicit compatibility-line upgrade; never infer legacy authority.
-- R06: future source-provenance references use the scoped identity and pin rules here.
+- R06 / point 5: deferred for a scope/design decision after the MVP; any later adopted
+  source-provenance workflow must respect the scoped identity and pin rules here.
 - C03–C06: remain deferred; operation replay and conflict semantics are unchanged in scope.
 
 The first implementation proof can use two small synthetic projects and the existing steel

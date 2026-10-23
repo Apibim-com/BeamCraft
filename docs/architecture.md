@@ -262,7 +262,9 @@ occurrence by the connection path. F12 defines the draft rules and required acce
 `bim:projectCode` (`2401-DEMO`), `bim:projectName` (`Demo warehouse`), `bim:organization` (`ACME`) and
 `bim:zones` (`["K1", "K2"]`, empty for a project without zones).
 
-**From KM to KMD.** Steel design (`KM`) and steel detailing (`KMD`) are a chain, not two
+**From KM to KMD — deferred; decide after the MVP.** The following is the earlier candidate
+direction for R06, to be reassessed after the MVP rather than finalized or implemented now.
+Steel design (`KM`) and steel detailing (`KMD`) are a chain, not two
 independent disciplines. `KM` is its own layer, made in BeamCraft or arriving read-only from
 another program. Detailing starts from it: a "create KMD from KM" command carries the KM elements
 into the `KMD` layer as the starting point, and each carried element gets a `bim:builtFrom`
