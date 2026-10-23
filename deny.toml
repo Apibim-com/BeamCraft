@@ -9,7 +9,6 @@
 # TOST-1.0 (owner decision 2026-10-15, AGENTS.md section 1.2). cargo-deny reads only the manifest
 # and cannot see that per-file licence. U01 records the exact package/version exception and
 # preserves the existing TOST licence and notice; full redistribution notice review remains open.
-# The N01 spike remains outside the workspace graph.
 
 [graph]
 all-features = true

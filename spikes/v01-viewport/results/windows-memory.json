@@ -1,1 +1,0 @@
-{"adapter":{"name":"NVIDIA GeForce RTX 3060","device_type":"DiscreteGpu","backend":"Vulkan","driver":"NVIDIA","driver_info":"560.94","software":false},"schema":1,"metric":"Windows Process.PeakWorkingSet64 sampled every 250 ms","whole_run_peak_working_set_bytes":341598208,"scope":"benchmark process, all six cases; not per-strategy or GPU memory"}
