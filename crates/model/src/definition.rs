@@ -161,9 +161,10 @@ pub struct RectangleProfileSpec {
 }
 
 impl RectangleProfileSpec {
-    /// Admits both dimensions: finite (`NON_FINITE_NUMBER`), at most 1,000,000 mm
-    /// (`LIMIT_EXCEEDED`) and at least the absolute geometric floor of 0.001 mm
-    /// (`INVALID_ARGUMENT`). Declared section numbers are admitted the same way and, for a
+    /// Admits both dimensions: finite (`NON_FINITE_NUMBER`), at least the absolute geometric
+    /// floor of 0.001 mm (`INVALID_ARGUMENT`), then at most 1,000,000 mm (`LIMIT_EXCEEDED`).
+    /// This makes negative finite values invalid regardless of magnitude. Declared section
+    /// numbers are admitted the same way and, for a
     /// rectangle, must agree with the family's own formula within 0.1 percent: the area with
     /// `width * height` and the surface per metre with the perimeter (`INVALID_ARGUMENT`).
     pub fn validate(&self) -> Result<(), CommandError> {
@@ -175,18 +176,18 @@ impl RectangleProfileSpec {
                 "value is not finite",
             ));
         }
-        if dimensions.iter().any(|v| v.abs() > DIMENSION_CAP_MM) {
-            return Err(CommandError::new(
-                ErrorCode::LimitExceeded,
-                "profile",
-                "section dimension exceeds the dimension cap",
-            ));
-        }
         if dimensions.iter().any(|v| *v < ABSOLUTE_FLOOR_MM) {
             return Err(CommandError::new(
                 ErrorCode::InvalidArgument,
                 "profile",
                 "section dimension is below the geometric floor",
+            ));
+        }
+        if dimensions.iter().any(|v| *v > DIMENSION_CAP_MM) {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "profile",
+                "section dimension exceeds the dimension cap",
             ));
         }
         self.section.validate()?;
@@ -434,6 +435,12 @@ mod tests {
         assert_eq!(rectangle(0.0009, 300.0), Err(ErrorCode::InvalidArgument));
         assert_eq!(rectangle(200.0, 0.0), Err(ErrorCode::InvalidArgument));
         assert_eq!(rectangle(-200.0, 300.0), Err(ErrorCode::InvalidArgument));
+        assert_eq!(
+            rectangle(-3_000_000.0, 300.0),
+            Err(ErrorCode::InvalidArgument)
+        );
+        assert_eq!(rectangle(-1e308, 300.0), Err(ErrorCode::InvalidArgument));
+        assert_eq!(rectangle(1e308, 300.0), Err(ErrorCode::LimitExceeded));
         assert_eq!(rectangle(200.0, 1_000_001.0), Err(ErrorCode::LimitExceeded));
         assert_eq!(rectangle(f64::NAN, 300.0), Err(ErrorCode::NonFiniteNumber));
         assert_eq!(
