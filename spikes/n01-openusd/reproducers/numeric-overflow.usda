@@ -1,3 +1,0 @@
-#usda 1.0
-def "A" { double x = 1e999999999
-}

@@ -103,5 +103,6 @@ no external code or assets were copied. Normative expressions, caps, certificate
 encoding and test inputs come from F06 0.1.0 sections 2, 4, 7 and 10 and its case
 file. Binary64 arithmetic and sqrt follow F06's public IEEE 754-2019 reference;
 cross products and basis maps are elementary right-handed vector algebra. Owner
-scope comes from `docs/design/g01-math-crates-evaluation-v0.1.md` and the task.
+scope comes from the owner decision of 2026-10-15 (no external math crates, plates unrotated,
+members roll about their local Z axis; see `docs/plan/decisions.md`) and the task.
 No dependency, catalogue, external fixture or licence text is added.

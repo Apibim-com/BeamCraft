@@ -82,12 +82,10 @@ Marked "proposal for owner review" in the text; nothing here changes an existing
   `apps/beamcraft-cli/tests/f04_cases.rs`, which declares deviations, so changing the expectation
   belongs with a code change. Needed edit: mark the geometry expectation as evaluated for a z = 0
   polygon, and add cases for the A-2 commands and the degenerate state (A04 acceptance, P-Degenerate).
-* `docs/design/kernel-validation-plan-v0.1.json`: row `G04-V07` lists `F06-NEG-08` and `G04-V36`
-  lists it as its only reference. Needed edit: mark `F06-NEG-08` superseded in both and replace the
-  V36 reference by the A-2 operation cases once A03 writes them. The plan is stale in general (G07
-  finding F6); left unchanged.
 * New F06 acceptance cases for A-2 (round-hole N, volume enclosure width, `extrusion`/`cut` ids,
   `GEO_OP_*`, `GEO_KERNEL_CAPACITY`) are written by A03, A04 acceptance and G10.
+* The kernel validation plan (`kernel-validation-plan-v0.1.json`, stale since G07 finding F6) has
+  been removed; the traceability is in the G07 acceptance record.
 
 ## 5. Task cards
 

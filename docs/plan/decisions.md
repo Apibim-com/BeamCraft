@@ -4,6 +4,52 @@ Decisions that shape the plan, newest first. Each names its date and, where one 
 document that records it in detail. A later decision overrides an earlier one where they differ.
 Open questions are at the end.
 
+## 2026-10-23
+
+- **Plate position, corners and contour editing.** Owner decisions, written up as a draft in
+  [the plate amendment](../contracts/f04-plate-amendment-draft-v0.1.md) for review:
+  - A plate has a thickness side `top`, `middle` or `bottom` from its contour plane: `top` lays the
+    thickness off in `+Z`, `bottom` in `-Z`, `middle` half each way. The default `top` keeps every
+    existing plate unchanged.
+  - A contour vertex may carry a chamfer or a rounding. A chamfer takes two distances, one along
+    the previous edge and one along the next, or one distance for a symmetric cut. A rounding takes
+    only a radius. A rounded corner is a stored radius, not a stored polygon; its mesh is faceted
+    to a stated chord deviation.
+  - A plate contour is edited in its plane: drag a vertex, drag an edge, insert a vertex in the
+    middle of an edge, delete a vertex. A plate never drops below three vertices; delete is
+    refused on a triangle.
+  - Numbering follows the geometry: plates that differ only in the thickness side are one group
+    (O-2 decided). Contour vertices stay addressed by position, with no stable ids for now (O-1
+    decided).
+  - Process: a reference screenshot of another product stays a private observation outside the
+    repository (`AGENTS.md` §1.1); only the behaviour, described in our own words, is recorded.
+- **Bolt geometry, fastener library and generated holes.** Owner decisions, written up as a
+  draft in [the bolt amendment](../contracts/f04-bolt-fastener-amendment-draft-v0.1.md) for review:
+  - A bolt group places a real fastener (head, shank, nut, washers as geometry). Its sizes come
+    from a definition in a fastener library: the user picks the standard and size, and the washer
+    under the head and under the nut are switches. The definition is pinned into the project, so
+    changing the library changes no existing group.
+  - A group is defined by two points (the line it follows), a reference plane with a rotation,
+    an offset on the plane and a depth (these position values give the shank axis; there is no
+    separate axis input), offsets, and spacings or a count and a pitch; one edit command changes
+    any of them. One group is one row; a rectangular arrangement is several groups.
+  - A setting says whether the group generates holes in the connected parts (bolts) or none
+    (screws and other fasteners that need no hole). Hole types beyond the round through hole
+    (oversize, slots, different holes per part, blind holes) come after the MVP.
+  - Holes in beams (web, flange, hollow-section walls) get their own contract, written up in
+    [the member hole amendment](../contracts/f06-member-hole-amendment-draft-v0.1.md) (tasks G14.1,
+    G14.2, A04.2): bolted beam connections need them.
+  - Environments are not built for now; the first fastener library holds one European DIN set.
+    Values enter only with a recorded source and licence (`AGENTS.md` §1.2); the repository also
+    ships a synthetic example library.
+  - Open: which DIN or ISO numbers make the first set and who enters the values (O-B2a).
+- **A workshop weld builds an assembly.** Owner decision, written up as a draft in
+  [the weld assembly amendment](../contracts/f04-weld-assembly-amendment-draft-v0.1.md): a weld
+  made in the workshop joins its two parts into one assembly automatically. The first part named is
+  the main part and the second is attached to it. A site weld changes no assembly. A part in
+  another assembly is a conflict for now, not a silent move (open O-W1: nest the whole
+  sub-assembly instead).
+
 ## 2026-10-22
 
 - **Point 5 deferred for a decision after the MVP.** Revisit the KM-to-KMD `builtFrom`
@@ -21,10 +67,6 @@ Open questions are at the end.
   specifications are [F12](../contracts/f12-project-coordination-v0.1.md) and its
   [F10 0.2 amendment](../contracts/f10-domain-vocabulary-v0.2.md). Their detailed clauses are for
   review; approved direction is not a claim of implementation or frozen contract acceptance.
-- **One branch and one PR for this foundation.** F12 and the associated vocabulary amendment,
-  architecture alignment and plan references form one coherent documentation task. Do not split
-  this agreed package into multiple PRs. Implementation tasks remain separate from this contract
-  work; no implementation status or MVP priority changes through this approval.
 - **One opening assignment.** The initiating engineer creates one shared assignment for an
   opening; the responsible host-section engineer decides whether it is acceptable. The physical
   opening is separately authored in the host model and linked to the assignment. Acceptance is
@@ -137,10 +179,7 @@ Open questions are at the end.
 - **IFC export after the MVP.** IFC needs independent validation and has many details of its own;
   the MVP takes the model out as a bill of materials, and the model itself is ordinary USD. The E01
   contract stays a draft and the experimental `export-ifc` stays in the code; their acceptance moves
-  after the MVP. This changes the MVP scope of 2026-10-18.
-- **KM to KMD.** Steel detailing is built from steel design: KMD starts as a copy of KM elements
-  linked by `bim:builtFrom` to the KM element and revision; KM is read-only for the detailer, and a
-  KM change marks affected KMD elements for checking without rewriting them (task R06).
+  after the MVP.
 - **Project organization.** Layers are split by discipline and optional zone, named
   `<code>[_<zone>]_<discipline>.usda` with the discipline codes `Coord`, `Grids`, `KM`, `KMD`, `KR`, `AR`,
   `AI`, `GP`, `EOM`, `VK`, `OV`, `SS`, `TH`, each present only when the project has that discipline;
@@ -152,7 +191,7 @@ Open questions are at the end.
   layer engine. The worker existed to isolate the C++ SDK, whose crashes cannot be caught; with
   `openusd` a bad file is an ordinary error, own project files are verified by SHA-256 before
   parsing, and foreign files are read under size and depth budgets. The worker binary, its host
-  supervision and the F05 protocol are removed (task U17, [issue #146](https://github.com/Apibim-com/BeamCraft/issues/146)). This replaces OD-1.
+  supervision and the F05 protocol are removed (task U17, [issue #146](https://github.com/Apibim-com/BeamCraft/issues/146)). This replaces the separate-process decision of 2026-10-16.
 - **Prim naming rule** (F04 amendment A-3; [architecture](../architecture.md#prim-hierarchy-and-naming-rule)):
   paths hold only category and identity (`/World/Steel/Parts/PRT_<uuid>`, `/World/Levels/LVL_<uuid>`,
   `/World/Definitions/Profiles/PRF_<sha256>`, ...); disciplines are second-level folders; names,
@@ -166,9 +205,6 @@ Open questions are at the end.
   reverse-engineered, so the F09 process (implementer admission, exposure records, isolated kernel
   agents) is retired and its documents removed. The asset and provenance rules of `AGENTS.md` §1–2 stay:
   nothing from Tekla or Trimble, no decompiling, no copied documentation, tables or GPL code.
-- **The plan lives in the repository.** The implementation plan, task list and decisions move
-  from the owner's local document into `docs/plan/` (English, no observation notes of commercial
-  products). This reverses the 2026-10-14 decision to keep detailed plans outside the repository.
 - **No progress log.** History is git, the pull requests and the design notes; `ROADMAP.md` keeps
   only the stage, gates, MVP and next work and changes in docs-only PRs. A single log file would
   conflict in every PR. Release notes are generated from merged PRs at tag time.
@@ -198,11 +234,6 @@ Open questions are at the end.
 
 ## 2026-10-18
 
-- **MVP scope.** A free single-user desktop MVP: model a simple steel frame in the native UI and
-  take it out as IFC and a BOM. Order: real sections (A07, A02) → editing in the UI (V05, V06.1)
-  → cuts, holes and bolts (A03–A05) → numbering, IFC and BOM (A08, A09, E02, E03) → alpha scenario
-  and installers (Q01, Q02). Deferred until after the MVP: C03–C06, D01–D03, R02–R03. Which parts
-  stay open source is decided after the MVP; until then everything is MPL-2.0.
 - **A09 without C05** for the MVP: numbering approval is sequential and single-user.
 - **Mass.** Mass = section area × length × density of the project material. The area comes from
   the catalogue when a profile is inserted from a library, otherwise the kernel computes it with
@@ -249,30 +280,15 @@ Open questions are at the end.
   wrapper; the official SDK only as an explicit fallback and test oracle.
 - **Desktop only** on Windows, Linux and macOS; only `geom`, `model` and `kernel` keep the WASM
   requirement.
-- **F04 and F06 frozen** at 0.1.0.
-- **OD-1 to OD-4** ([`usd-process-integration-v0.1.md`](../design/usd-process-integration-v0.1.md)):
-  the layer engine runs in a separate process (OD-1, replaced on 2026-10-20); holes and cuts are our own implementation
-  without third-party kernels (OD-2, scope widened by A-2 D-1); member roll uses `f64::sin`/`cos`
-  (OD-3); spike evidence policy: the repository holds the report, the decision and a minimal
-  harness, bulky raw output stays local (OD-4).
+- **Holes and cuts are our own implementation** without third-party kernels (scope widened by
+  A-2 D-1). Member roll uses `f64::sin`/`cos`.
 
 ## 2026-10-15
 
 - **Own kernel.** IFC-lite, Manifold, truck and OCCT are not production backends and are not
-  copied or ported; the kernel is ours.
+  copied or ported; the kernel is ours. No external math crates either: the scalar types and the
+  ordered arithmetic of F06 are BeamCraft's own.
 - **MSRV 1.96** (required by `openusd`).
-- **OpenUSD-derived TOST-1.0 material** in the `openusd` crate stays under its upstream licence;
-  BeamCraft's own code stays MPL-2.0 (`AGENTS.md` §1.2).
-- **Development order**: USD core and the steel domain schema locally → BeamCraft for one
-  engineer → versioning by delta layers without real time → IFC export before assemblies → a live
-  server only for real multi-team need → a second discipline module only after the schema is
-  proven on steel.
-
-## 2026-10-14
-
-- **MPL-2.0** for the project's own code.
-- **TOST-1.0** allowed only for official OpenUSD and its SDK resources.
-- **One focused PR per task**, branches `<type>/<description>` from the verified `origin/master`.
 
 ## Open questions
 
@@ -289,3 +305,6 @@ Open questions are at the end.
 | 9 | What a rejected design option keeps besides its journal entry | O01 |
 | 10 | Enabling options with overlapping footprints at once, marked as conflicting | O01 |
 | 11 | Retention defaults of the history policy (window size, automatic milestones) | U14 follow-up, U15 |
+| 12 | Which DIN or ISO numbers make the first fastener set and who enters the values (bolt amendment O-B2a) | A14.1 |
+| 13 | Whole sub-assembly nested instead of a conflict when a workshop weld meets a part already in an assembly (weld amendment O-W1) | A06.2, A16 |
+| 14 | Whether bolts and welds are numbered, and where defaults for omitted command arguments live (project, user or both) | A09 follow-up |
