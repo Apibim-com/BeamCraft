@@ -6,7 +6,7 @@
   "f04_contract_version": "0.1.0",
   "first_scope_package": "0.1.0",
   "comparison": "Owner amendment 2026-10-15 to CR-TOL-001: quantities use relative 1e-6; lengths and coordinates use 0.001 mm + 1e-6*abs(expected); dimensionless frame values use absolute 1e-6 at zero and relative 1e-6 otherwise. Exact rational references are unchanged. IDs, codes, statuses, counts, strings and digests compare exactly. This is test comparison only, separate from geometry decisions/certificates. The read-only first-scope package 0.1.0 retains its older rule pending review. Decimal strings are exact references unless marked approximate; JSON numbers are nearest binary64 inputs.",
-  "assumptions": "P-1 replaced by contour input, P-2 confirmed unchanged and P-3 refined by the owner on 2026-10-15. The legacy assumes field identifies these decisions. Contour caps/winding/planarity and the missing angle cap are assumptions in F04 section 3. Constants are owner-confirmed first-slice draft values, to be validated by fixtures; the ifc-lite numeric comparison is recorded in docs/design/tolerance-comparison-v0.1.md.",
+  "assumptions": "P-1 replaced by contour input, P-2 confirmed unchanged and P-3 refined by the owner on 2026-10-15. The legacy assumes field identifies these decisions. Contour caps/winding/planarity and the missing angle cap are assumptions in F04 section 3. Constants are owner-confirmed first-slice draft values, to be validated by fixtures.",
   "quaternion_convention": "F04 section 3: orientation_xyzw = (x, y, z, w), Hamilton, active rotation, world = R(q) * local + translation. The 90 degree turn about +Z is written with the nearest f64 0.7071067811865476 for both z and w.",
   "case_counts": {
     "logical_cases": 112,

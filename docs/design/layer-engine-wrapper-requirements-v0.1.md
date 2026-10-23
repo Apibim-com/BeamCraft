@@ -1,8 +1,8 @@
 # F11: layer-engine wrapper requirements, version 0.1.0
 
 Date: 2026-10-16. Status: **planned acceptance requirements; no wrapper implemented here**.
-The owner selected variant C in the [F11 decision](layer-engine-decision-v0.1.md#8-owner-decision-evidence-and-maintenance-policy).
-These duties close gaps observed by [N01 report 0.2.0](layer-engine-spike-n01-report-v0.1.md).
+The owner selected variant C (pure-Rust `openusd` behind the BeamCraft wrapper, `docs/plan/decisions.md`).
+These duties close gaps found by the N01 spike (its report is removed).
 They do not amend F04/F06 or admit dependencies. The engine runs in the calling process (owner
 decision of 2026-10-20, U17). U01-U04 implement the duties; N03 supplies platform and available-oracle evidence.
 

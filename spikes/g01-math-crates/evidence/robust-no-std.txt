@@ -1,2 +1,0 @@
-    Checking beamcraft-g01-math-crates-spike v0.0.1 (D:\Projects\01_BeamCraft-G01\spikes\g01-math-crates)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s

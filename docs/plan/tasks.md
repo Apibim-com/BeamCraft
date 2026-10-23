@@ -25,7 +25,7 @@ Status as of 2026-10-20, `master` at `d456670`. New tasks are added here in a do
 | F08 / M | [Module boundaries](../contracts/f08-module-boundaries-v0.1.md) | F04, F05, F06, F07 | Crate layout and allowed dependencies; CI targets | Pure crates pass the WASM check; native host isolated; checker in CI | living document; checker in CI |
 | F09 / M | Clean-room separation for the kernel | F01, F02 | Admission rules, requirement provenance, a package without source-derived material | Independent review of the specification passed | done, then retired by decision 2026-10-20 |
 | F10 / M | [Domain vocabulary and discipline modules](../contracts/f10-domain-vocabulary-v0.1.md) | F04, F08 | Common element types and attributes, namespaces, ownership, Opening/hosted-in relations, rule catalogue, discipline-module contract | Steel is the only implemented module; every rule has a positive and a negative case | frozen 0.1.0 |
-| F11 / M | [USD layer-engine decision](../design/layer-engine-decision-v0.1.md) | F03, F05, F08 | Comparison of SDK worker, own subset, `openusd` crate and hybrid | Recommendation marked as a proposal to the owner | done: variant C chosen |
+| F11 / M | USD layer-engine decision | F03, F05, F08 | Comparison of SDK worker, own subset, `openusd` crate and hybrid | Recommendation marked as a proposal to the owner | done: variant C chosen ([decisions](decisions.md)); the comparison document is removed |
 | F12 / M | [Section projects and pinned coordination](../contracts/f12-project-coordination-v0.1.md), [F10 0.2 amendment](../contracts/f10-domain-vocabulary-v0.2.md), [stage 4 opening assignments](../contracts/f12-opening-assignments-v0.1.md), [stage 6 Craft reading](../contracts/f12-craft-read-capabilities-v0.1.md), [external IFC references/reports](../contracts/f12-external-reference-workflow-v0.1.md) | F04, F08, F10 | One documentation package: module/section/zone separation, standalone projects, coordination pins, file-based assignment batches, exact-version decisions, common viewing, module-gated editing, single-section work with foreign IFC references and reports | Rules and positive/negative cases reviewed; frozen contracts preserved; late acceptance of an older proposal cannot approve or overwrite its successor; implementation gates explicit | open; foundation, stages 4/6 and external-reference workflow approved 2026-10-22, contract drafts |
 
 ## N: spikes and evaluations
@@ -34,11 +34,11 @@ Time-boxed research with a report; never a production gate.
 
 | ID | Task | Depends on | Result | Status |
 |----|------|------------|--------|--------|
-| N01 / M | Layer-engine spike on `openusd` | F11 | Prototype on synthetic fixtures, measurements, differential check | done ([report](../design/layer-engine-spike-n01-report-v0.1.md)) |
-| N02 / M | IFC-lite evaluation | — | Evaluation as an IFC path | done ([report](../design/n02-ifc-lite-evaluation-v0.1.md)); not adopted |
+| N01 / M | Layer-engine spike on `openusd` | F11 | Prototype on synthetic fixtures, measurements, differential check | done; spike and report removed |
+| N02 / M | IFC-lite evaluation | — | Evaluation as an IFC path | done; not adopted; spike and report removed |
 | N03 / M | Linux wrapper build and SDK-oracle verification | N01 | Build and differential checks against the official SDK where available | open |
-| N04 / M | `truck` kernel evaluation | — | Evaluation as a kernel | done ([report](../design/n04-truck-evaluation-v0.1.md)); not adopted |
-| N05 / M | SolidCraft kernel evaluation | — | Evaluation for contour extrusion and plane cuts | done, report not in the repo; rejected by decision OD-2 |
+| N04 / M | `truck` kernel evaluation | — | Evaluation as a kernel | done; not adopted; spike and report removed |
+| N05 / M | SolidCraft kernel evaluation | — | Evaluation for contour extrusion and plane cuts | done, report not in the repo; rejected by decision 2026-10-16 (own holes and cuts) |
 | N07 / S | Variant sets for viewing packages only | N01, O02, U12 | variantSets generated only in an export package for USD viewers; authored model keeps none | open |
 | N08 / S | Local compatibility run on a third-party USD sample | U01, R01 | Black-box run of the reader and R01 outside the repository; report without the sample's bytes | open, needs a licence check |
 
@@ -75,7 +75,7 @@ Time-boxed research with a report; never a production gate.
 | G01 / M | Kernel math | F08, F06 | Checked vectors, planes, transforms, finite f64 policy | Zero axes, NaN/Inf and bad transforms diagnosed; Rust and WASM tests | merged |
 | G02 / M | Rectangular plate | G01 | Standard mesh, analytical volume, local FeatureIds | Synthetic sizes and negative inputs checked; topology and winding | merged |
 | G03 / M | Original kernel fixtures | G02, F07 | About 50 own descriptions with an independent harness | Supported and unsupported marked; references with provenance | merged |
-| G04 / M | [Kernel design](../design/kernel-design-v0.1.md) | F06, F09 | Public mathematical sources, representation, predicates, tolerances, failure contract | Algorithms justified independently of other kernels | draft |
+| G04 / M | Kernel design | F06, F09 | Public mathematical sources, representation, predicates, tolerances, failure contract | Algorithms justified independently of other kernels | done; the kernel is built and accepted with conditions ([G07](../design/g07-kernel-first-scope-acceptance.md)); the draft design note is removed |
 | G05 / M | Profiles, extrusion and triangulation | G03, G04 | Profiles with cavities and straight sweeps | Own fixtures check topology and volume; bad contours refused | merged |
 | G06 / M | Topology and measurements | G03, G04 | Shell, orientation and volume checks, bounded spatial index | Open or unsupported meshes never get an exact status | merged |
 | G07 / S | [Acceptance of the first kernel scope](../design/g07-kernel-first-scope-acceptance.md) | G05, G06, G09 | Evidence of correctness and speed, list of supported operations | Readiness shown by fixtures; unknown explicitly unsupported | accepted with conditions |
