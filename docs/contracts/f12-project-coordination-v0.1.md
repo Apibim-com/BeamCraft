@@ -122,8 +122,8 @@ repeated siblings are permitted as distinct connections. Historical evidence pin
 opening-assignment responses referencing a proposal based on an earlier host revision, are
 not composition connections. Their bounded dependency graph must be acyclic by exact
 (ProjectId, RevisionId) identities with verified manifest digests; it may revisit a project
-at an older revision. Neither graph is traversed by mutable heads. Missing or damaged required resources
-prevent publication of a complete coordination revision. Lazy geometry loading can defer
+at an older revision. Neither graph is traversed by mutable heads. Missing or damaged
+required resources prevent publication of a complete coordination revision. Lazy geometry loading can defer
 decoding, but cannot substitute for verifying that its required bytes are available.
 
 **PC-REV-002.** A revision advertises only the capabilities its reader/module combination can
@@ -167,8 +167,8 @@ the expected coordination head. Publication is atomic and idempotent under F04. 
 the previous complete coordination revision and the user's draft. Concurrent changes to the
 head are refused under current fast-forward rules; this contract supplies no automatic merge.
 
-**PC-COORD-003.** A scope selection controls participation/display, not permission or permission
-to discard dependencies. All dependencies required to interpret and validate the selection must
+**PC-COORD-003.** A scope selection controls participation and display. It grants no permission
+and does not allow dependencies to be discarded. All dependencies required to interpret and validate the selection must
 remain pinned and available. Queries identify omitted scopes. A partial selection cannot prove
 that there are no incoming relationships or that the whole project has no clashes.
 

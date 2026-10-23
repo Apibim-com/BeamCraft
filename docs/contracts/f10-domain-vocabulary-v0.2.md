@@ -78,8 +78,8 @@ proposal/source pins and verified decision provenance still apply.
 
 ## 3. One shared opening assignment
 
-The engineering-facing name for the reserved `penetration` request is **opening assignment**
-(Russian: "задание на отверстие"). There is one assignment identity and one revisioned
+The engineering-facing name for the reserved `penetration` request is **opening assignment**.
+There is one assignment identity and one revisioned
 history of its proposal and decisions, not a separate request per participant.
 
 The proposer supplies the requested shape, dimensions, placement and subject/host references.
