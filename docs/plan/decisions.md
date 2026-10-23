@@ -23,6 +23,26 @@ Open questions are at the end.
     decided).
   - Process: a reference screenshot of another product stays a private observation outside the
     repository (`AGENTS.md` §1.1); only the behaviour, described in our own words, is recorded.
+- **Bolt geometry, fastener library and generated holes.** Owner decisions, written up as a
+  draft in [the bolt amendment](../contracts/f04-bolt-fastener-amendment-draft-v0.1.md) for review:
+  - A bolt group places a real fastener (head, shank, nut, washers as geometry). Its sizes come
+    from a definition in a fastener library: the user picks the standard and size, and the washer
+    under the head and under the nut are switches. The definition is pinned into the project, so
+    changing the library changes no existing group.
+  - A group is defined by two points (the line it follows), a reference plane with a rotation,
+    an offset on the plane and a depth (these position values give the shank axis; there is no
+    separate axis input), offsets, and spacings or a count and a pitch; one edit command changes
+    any of them. One group is one row; a rectangular arrangement is several groups.
+  - A setting says whether the group generates holes in the connected parts (bolts) or none
+    (screws and other fasteners that need no hole). Hole types beyond the round through hole
+    (oversize, slots, different holes per part, blind holes) come after the MVP.
+  - Holes in beams (web, flange, hollow-section walls) get their own contract, written up in
+    [the member hole amendment](../contracts/f06-member-hole-amendment-draft-v0.1.md) (tasks G14.1,
+    G14.2, A04.2): bolted beam connections need them.
+  - Environments are not built for now; the first fastener library holds one European DIN set.
+    Values enter only with a recorded source and licence (`AGENTS.md` §1.2); the repository also
+    ships a synthetic example library.
+  - Open: which DIN or ISO numbers make the first set and who enters the values (O-B2a).
 
 ## 2026-10-22
 
