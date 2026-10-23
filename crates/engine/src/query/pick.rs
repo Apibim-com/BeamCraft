@@ -32,7 +32,7 @@ use crate::error::{ViewCode, ViewError};
 use crate::query::feature::{
     BodyKind, BoxFeatures, FeatureId, FeatureKind, V3, add, cross, dot, finite, norm, scale, sub,
 };
-use crate::query::snapshot::{ElementEntry, SnapshotToken, ViewSnapshot};
+use crate::query::snapshot::{ElementEntry, SnapshotToken, ViewSnapshot, rotate_vector};
 use core::cmp::Ordering;
 
 /// The pick band of F06 section 9: one micrometre.
@@ -565,12 +565,9 @@ fn mesh_hit(
         ) else {
             return Err(uncertain());
         };
-        // World positions: the blob is element-local, the placement a translation.
-        let (a, b, c) = (
-            add(a, entry.placement_mm),
-            add(b, entry.placement_mm),
-            add(c, entry.placement_mm),
-        );
+        // World positions: the blob is element-local, then rigid placement is applied.
+        let world = |p| add(rotate_vector(p, entry.orientation_xyzw), entry.placement_mm);
+        let (a, b, c) = (world(a), world(b), world(c));
         let (e1, e2) = (sub(b, a), sub(c, a));
         let n = cross(e1, e2);
         let length = norm(n);
