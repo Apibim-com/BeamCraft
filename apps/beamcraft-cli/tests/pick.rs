@@ -22,6 +22,7 @@ const PLATE: &str = "019a7bf0-0000-7000-8000-000000700001";
 const MEMBER: &str = "019a7bf0-0000-7000-8000-000000700002";
 const COPY: &str = "019a7bf0-0000-7000-8000-000000700003";
 const HOLED: &str = "019a7bf0-0000-7000-8000-000000700004";
+const REFERENCE: &str = "019a7bf0-0000-7000-8000-000000700005";
 const SITE: &str = "#usda 1.0\n(\n    defaultPrim = \"Site\"\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n)\ndef Xform \"Site\"\n{\n    def Mesh \"Body\"\n    {\n        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0)]\n        int[] faceVertexCounts = [3]\n        int[] faceVertexIndices = [0, 1, 2]\n    }\n}\n";
 
 struct Fixture {
@@ -393,11 +394,13 @@ fn foreign_references_are_never_hit_and_holed_plates_are_skipped() {
             source.to_str().unwrap(),
             "--translation",
             "8000,0,0",
+            "--new-id",
+            REFERENCE,
         ],
     );
     let head = f.head();
-    // Through the foreign content and the holed plate: no hit, and only the holed plate is
-    // reported as skipped (the wrapper has no engine body at all).
+    // Both surfaces are in the view scene but neither has engineering FeatureIds: no hit,
+    // and both the holed plate and the read-only reference are explicitly reported as skipped.
     for x in ["8000.5", "5200"] {
         let picked = f.ok(
             "pick",
@@ -417,7 +420,7 @@ fn foreign_references_are_never_hit_and_holed_plates_are_skipped() {
             .iter()
             .map(|s| s.string().unwrap().to_owned())
             .collect();
-        assert_eq!(skipped, [HOLED]);
+        assert_eq!(skipped, [HOLED, REFERENCE]);
     }
     assert_eq!(
         f.refused(
