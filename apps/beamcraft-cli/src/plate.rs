@@ -51,8 +51,8 @@ use beamcraft_engine::{Limits, ViewPin, ViewSnapshot};
 use beamcraft_host::ledger::Outcome;
 use beamcraft_host::revision::{
     CommitHook, CommitOutcome, Committed, ContentRejection, ContentVerifier, ExpectedBase,
-    IndexEvidence, LayerEntry, LayerRole, Revision, RevisionDraft, RevisionError, RevisionInfo,
-    RevisionStore, Uuid7, VerifyRequest,
+    IndexEvidence, LayerEntry, LayerRole, Manifest, Revision, RevisionDraft, RevisionError,
+    RevisionInfo, RevisionStore, Uuid7, VerifyRequest,
 };
 use beamcraft_layer_engine::authored::{
     Author, Change, EditTargets, Element, Group as LayerGroup, PROJECT_RECORD_KEY,
@@ -381,8 +381,6 @@ pub(crate) struct Decoded {
     pub(crate) levels: Levels,
     /// The common facts of every element except levels, by id.
     pub(crate) elements: BTreeMap<ElementId, ElementMeta>,
-    /// Display conversion must not reject otherwise valid R01 attachment or inspection.
-    reference_scene: Result<Vec<beamcraft_engine::SceneElement>, PlateError>,
 }
 
 pub(crate) fn number(value: &Value) -> Option<f64> {
@@ -718,7 +716,7 @@ pub(crate) fn decode(
             Some("column") => {
                 members.push((decode_member(prim, id, MemberKind::Column)?, mesh()));
             }
-            // The read-only reference representation is decoded separately below.
+            // R01 wrappers are decoded by `beamcraft_cli::reference`.
             Some("reference") => {}
             _ => other += 1,
         }
@@ -732,7 +730,6 @@ pub(crate) fn decode(
         definitions,
         levels,
         elements,
-        reference_scene: crate::reference_view::scene_elements(&prims),
     })
 }
 
@@ -1139,12 +1136,15 @@ pub struct RevisionDetails {
 }
 
 pub(crate) fn summarize(info: &RevisionInfo) -> RevisionSummary {
-    let manifest = info.manifest();
+    summarize_manifest(info.manifest(), info.manifest_digest())
+}
+
+fn summarize_manifest(manifest: &Manifest, digest: ContentDigest) -> RevisionSummary {
     let content = manifest.content();
     RevisionSummary {
-        revision_id: info.revision().as_str().to_owned(),
-        sequence: info.sequence(),
-        manifest_digest: info.manifest_digest(),
+        revision_id: content.revision().as_str().to_owned(),
+        sequence: manifest.sequence(),
+        manifest_digest: digest,
         details: Some(RevisionDetails {
             project: content.project().as_str().to_owned(),
             workspace: content.workspace().as_str().to_owned(),
@@ -1762,9 +1762,6 @@ pub struct Inspection {
     pub definitions: BTreeMap<ContentDigest, DefinitionRecord>,
     /// The pinned view snapshot built from committed data.
     pub snapshot: ViewSnapshot,
-    /// A reference outside the translation-only display profile. Non-view inspection still
-    /// works, but a viewport must refuse the incomplete bundle rather than silently omit it.
-    pub reference_view_error: Option<PlateError>,
     /// D1: the ProjectId recorded in the root layer of the revision, or `None` for a store whose
     /// first revision predates the record (never invented for it).
     pub project_record: Option<String>,
@@ -1795,6 +1792,34 @@ pub fn inspect_revision(revision: &Revision) -> Result<Inspection, PlateError> {
             })
         })
         .collect::<Result<Vec<_>, PlateError>>()?;
+    inspect_manifest_assets(
+        revision.manifest(),
+        revision.info().manifest_digest(),
+        assets,
+    )
+}
+
+// A drawing archive has the exact source manifest and assets, but no fabricated live Revision
+// or head-log record. Share the entire strict reader/kernel path with ordinary model inspection.
+pub(crate) fn inspect_manifest_assets(
+    manifest: &Manifest,
+    digest: ContentDigest,
+    assets: Vec<Asset>,
+) -> Result<Inspection, PlateError> {
+    let content = manifest.content();
+    if Sha256::digest(&manifest.encode()).map_err(|_| integrity("source manifest digest failed"))?
+        != digest
+        || assets.len() != content.entries().len()
+        || assets.iter().zip(content.entries()).any(|(asset, entry)| {
+            asset.name != entry.name()
+                || asset.digest != entry.digest()
+                || asset.bytes.len() as u64 != entry.size()
+        })
+    {
+        return Err(integrity(
+            "source assets disagree with their exact manifest",
+        ));
+    }
     let external = content
         .entries()
         .iter()
@@ -1805,7 +1830,7 @@ pub fn inspect_revision(revision: &Revision) -> Result<Inspection, PlateError> {
         content.root_layer(),
         content.project().as_str(),
         content.workspace().as_str(),
-        revision.info().manifest_digest(),
+        digest,
         content.workspace_generation(),
         assets,
         &external,
@@ -1829,29 +1854,21 @@ pub fn inspect_revision(revision: &Revision) -> Result<Inspection, PlateError> {
     let decoded = decode(&reader, &opened, &control)?;
     let (plates, members) = evaluate_decoded(&decoded)?;
     let quantities = verify_derived(&plates, &members, &decoded, false)?;
-    let pin = ViewPin::new(
-        revision.info().manifest_digest(),
-        content.workspace_generation(),
-    );
-    let mut scene = scene_elements_with_members(&plates, &members)?;
-    let reference_view_error = match decoded.reference_scene {
-        Ok(references) => {
-            scene.extend(references);
-            None
-        }
-        Err(error) => Some(error),
-    };
-    let snapshot = ViewSnapshot::build(pin, scene, &Limits::default())
-        .map_err(|e| PlateError::new(e.f04_code(), "view snapshot could not be built"))?;
+    let pin = ViewPin::new(digest, content.workspace_generation());
+    let snapshot = ViewSnapshot::build(
+        pin,
+        scene_elements_with_members(&plates, &members)?,
+        &Limits::default(),
+    )
+    .map_err(|e| PlateError::new(e.f04_code(), "view snapshot could not be built"))?;
     Ok(Inspection {
-        revision: summarize(revision.info()),
+        revision: summarize_manifest(manifest, digest),
         plates,
         members,
         quantities,
         other_elements: decoded.other_elements,
         definitions: decoded.definitions,
         snapshot,
-        reference_view_error,
         project_record: record,
         levels: decoded.levels,
         elements: decoded.elements,
