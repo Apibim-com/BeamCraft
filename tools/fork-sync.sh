@@ -58,6 +58,13 @@ need_master_worktree() {
     fi
     git remote get-url origin >/dev/null 2>&1 || die "no origin remote" $EXIT_ENV
     git remote get-url upstream >/dev/null 2>&1 || die "no upstream remote" $EXIT_ENV
+    # A master tracking a foreign remote turns every habitual 'git pull' into a
+    # fast-forward to the wrong history; refuse and hand over the repair.
+    local tracking
+    tracking="$(git config branch.master.remote || true)"
+    if [ -n "$tracking" ] && [ "$tracking" != "origin" ]; then
+        die "master tracks '$tracking', not origin. Fix: git branch --set-upstream-to=origin/master master" $EXIT_ENV
+    fi
 }
 
 resolve_cargo() {
