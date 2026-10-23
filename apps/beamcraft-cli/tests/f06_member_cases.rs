@@ -254,6 +254,7 @@ fn the_thirty_f06_member_and_mixed_cases_have_explicit_evidence() {
         "0.1.0"
     );
     let mut seen = BTreeSet::new();
+    let mut member_and_mixed = 0usize;
     for case in file.get("cases").unwrap().array().unwrap() {
         let id = case
             .get("case_id")
@@ -262,11 +263,28 @@ fn the_thirty_f06_member_and_mixed_cases_have_explicit_evidence() {
             .unwrap()
             .strip_prefix("F06-")
             .unwrap();
+        let input = case.get("input").unwrap();
+        let member_case = match input.get("body") {
+            Ok(body) => body.get("kind").unwrap().string().unwrap() == "member",
+            Err(_) => input.get("bodies").ok().is_some_and(|bodies| {
+                bodies
+                    .array()
+                    .unwrap()
+                    .iter()
+                    .any(|b| b.get("kind").unwrap().string().unwrap() == "member")
+            }),
+        };
+        if member_case {
+            member_and_mixed += 1;
+        }
         if !CASES.split_whitespace().any(|wanted| wanted == id) {
             continue;
         }
+        assert!(
+            member_case,
+            "listed case F06-{id} is no longer a member/mixed fixture case"
+        );
         assert!(seen.insert(id.to_owned()));
-        let input = case.get("input").unwrap();
         let expected = case.get("expected").unwrap();
         if id == "POS-14" {
             let bodies = input.get("bodies").unwrap().array().unwrap();
@@ -376,5 +394,9 @@ fn the_thirty_f06_member_and_mixed_cases_have_explicit_evidence() {
         );
     }
     assert_eq!(seen, CASES.split_whitespace().map(str::to_owned).collect());
+    assert_eq!(
+        member_and_mixed, 33,
+        "member/mixed fixture composition changed; update the K2 inventory and this driver"
+    );
     assert_eq!(seen.len(), 30);
 }

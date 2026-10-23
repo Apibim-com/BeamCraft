@@ -60,8 +60,9 @@ independent of the layer engine, but is not the ordinary OpenUSD SDK itself.
 ## K2 fixture inventory
 
 `f06_member_cases.rs` now drives all 30 member/mixed cases previously assigned to K2 by the K1
-inventory. Every fixture ID is asserted exactly once, so additions or removals require an explicit
-inventory change. Every result is printed as `PARTIAL` or `DEVIATION`, not a full contract pass.
+inventory. Every member or mixed fixture case is asserted exactly once, and the driver refuses a
+member or mixed fixture case that its case list does not name, so additions or removals require an
+explicit inventory change. Every result is printed as `PARTIAL` or `DEVIATION`, not a full contract pass.
 
 | F06 cases (prefix omitted) | Assertions and limits |
 |---|---|
