@@ -6,7 +6,7 @@
 
 use crate::command::{AuthoredPlate, CreatePlateOutcome, MaterialLookup, create_plate};
 use crate::footprint::Footprint;
-use crate::query::committed::PlateRecord;
+use crate::query::committed::{BodyCache, PlateRecord};
 use crate::transaction::PriorOp;
 use beamcraft_model::command::{
     CommandError, CreatePlate, HOLE_POINT_CAP, MAX_HOLES, label_is_valid,
@@ -142,6 +142,18 @@ pub fn evaluate_committed_drafts(
     plates: &[AuthoredPlate],
     materials: MaterialLookup<'_>,
 ) -> Result<(Vec<PlateRecord>, Vec<UnsupportedPlate>), CommandError> {
+    evaluate_committed_drafts_cached(plates, materials, &mut BodyCache::disabled())
+}
+
+/// [`evaluate_committed_drafts`] with a caller-owned [`BodyCache`]: a body already evaluated for
+/// bit-identical shape inputs is shared instead of evaluated again, and every refusal is the
+/// same as without a cache. The per-plate checks, their order and the unsupported-classification
+/// rules are those of the uncached call.
+pub fn evaluate_committed_drafts_cached(
+    plates: &[AuthoredPlate],
+    materials: MaterialLookup<'_>,
+    cache: &mut BodyCache,
+) -> Result<(Vec<PlateRecord>, Vec<UnsupportedPlate>), CommandError> {
     if plates.len() > crate::limits::MAX_ELEMENTS {
         return Err(CommandError::new(
             ErrorCode::LimitExceeded,
@@ -171,17 +183,98 @@ pub fn evaluate_committed_drafts(
                 "committed plate exceeds count caps",
             ));
         }
-        match create_plate_draft(&authored.to_command(), &|id| seen.contains(id), materials)? {
-            PlateDraft::Evaluated(outcome) => evaluated.push(PlateRecord {
-                authored: outcome.authored,
-                body: outcome.body,
-                quantities: outcome.quantities,
-            }),
-            PlateDraft::Unsupported(record) => unsupported.push(*record),
+        if seen.contains(&authored.id) {
+            return Err(CommandError::new(
+                ErrorCode::DuplicateId,
+                "id",
+                "element id appears twice",
+            ));
+        }
+        authored.placement.validate()?;
+        let material = authored.material.as_ref().map(materials).transpose()?;
+        match cache.plate(authored) {
+            Ok(body) => {
+                // `create_plate` refuses a rotated placement after evaluating; the cache serves
+                // the same body, so the same refusal applies before it may be used.
+                if !authored.placement.is_identity_rotation() {
+                    return Err(CommandError::new(
+                        ErrorCode::UnsupportedGeometry,
+                        "placement.orientation_xyzw",
+                        "rotated placement is not evaluated in this slice",
+                    ));
+                }
+                let quantities = body.quantities_for(material)?;
+                evaluated.push(PlateRecord {
+                    authored: authored.clone(),
+                    body,
+                    quantities,
+                });
+            }
+            Err(error) => {
+                match create_plate_draft(&authored.to_command(), &|_| false, materials)? {
+                    PlateDraft::Unsupported(record) => unsupported.push(*record),
+                    // The cache only mirrors `evaluate_plate`, so an evaluation it refuses is a
+                    // kernel refusal; the draft admission classifying it differently would mean
+                    // the two evaluations disagreed, which is never expected.
+                    PlateDraft::Evaluated(_) => return Err(error),
+                }
+            }
         }
         seen.insert(authored.id);
     }
     evaluated.sort_by_key(|p| p.authored.id);
     unsupported.sort_by_key(|p| p.authored.id);
     Ok((evaluated, unsupported))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::command::no_materials;
+    use beamcraft_model::command::Placement;
+
+    fn plate(n: u8, orientation_xyzw: [f64; 4]) -> AuthoredPlate {
+        AuthoredPlate {
+            id: ElementId::parse(&format!("019a7bf0-0000-7000-8000-0000000000{n:02x}")).unwrap(),
+            name: format!("Plate {n}"),
+            contour_points_mm: vec![
+                [0.0, 0.0, 0.0],
+                [1000.0, 0.0, 0.0],
+                [1000.0, 500.0, 0.0],
+                [0.0, 500.0, 0.0],
+            ],
+            thickness_mm: 10.0,
+            placement: Placement {
+                translation_mm: [0.0, 0.0, 0.0],
+                orientation_xyzw,
+            },
+            material: None,
+            holes_mm: Vec::new(),
+            cut: None,
+        }
+    }
+
+    #[test]
+    fn a_rotated_committed_plate_is_refused_like_the_uncached_evaluation() {
+        let s = core::f64::consts::FRAC_1_SQRT_2;
+        let mut cache = BodyCache::new();
+        let rotated = [plate(1, [0.0, 0.0, s, s]), plate(2, [0.0, 0.0, 0.0, 1.0])];
+        let error =
+            evaluate_committed_drafts_cached(&rotated, &no_materials, &mut cache).unwrap_err();
+        assert_eq!(error.code, ErrorCode::UnsupportedGeometry);
+        assert_eq!(error.field, "placement.orientation_xyzw");
+        assert_eq!(
+            error.message,
+            "rotated placement is not evaluated in this slice"
+        );
+        // The identity neighbour still evaluates, cached or not.
+        let (evaluated, unsupported) = evaluate_committed_drafts_cached(
+            &[plate(2, [0.0, 0.0, 0.0, 1.0])],
+            &no_materials,
+            &mut cache,
+        )
+        .unwrap();
+        assert!(unsupported.is_empty());
+        assert_eq!(evaluated.len(), 1);
+    }
 }

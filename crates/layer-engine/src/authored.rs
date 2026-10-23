@@ -870,11 +870,21 @@ pub fn validate_layers(
     schema: SchemaIdentity,
     control: &Control,
 ) -> Result<Validation, Diagnostic> {
+    validated(&request, schema, control).map(|(_, validation)| validation)
+}
+
+/// The rules of [`validate_layers`], in one place, with the candidate that passed them:
+/// [`Reader::open_validated`] installs that candidate, so a rule added here applies to both.
+fn validated(
+    request: &OpenRequest,
+    schema: SchemaIdentity,
+    control: &Control,
+) -> Result<(backend::Candidate, Validation), Diagnostic> {
     validate::schema(schema)?;
     let candidate = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let candidate = backend::open(request.clone(), control)?;
-        edit::schema_pins(&request)?;
-        reference::layers(&request, &candidate.prims)?;
+        edit::schema_pins(request)?;
+        reference::layers(request, &candidate.prims)?;
         Ok::<_, Diagnostic>(candidate)
     }))
     .map_err(|_| {
@@ -883,7 +893,25 @@ pub fn validate_layers(
             "backend unwound during validation",
         )
     })??;
-    validate::snapshot(&candidate.prims, &candidate.metadata)
+    let validation = validate::snapshot(&candidate.prims, &candidate.metadata)?;
+    Ok((candidate, validation))
+}
+
+impl Reader {
+    /// [`validate_layers`] and then [`Reader::open`] of the same request, in one pass: the
+    /// structural rules run on the very candidate that is then installed, so the stage is parsed
+    /// and composed once instead of twice. The checks, their order, codes and messages are those
+    /// of the two calls in sequence, and nothing is installed unless every rule passed.
+    pub fn open_validated(
+        &mut self,
+        request: OpenRequest,
+        schema: SchemaIdentity,
+        control: &Control,
+    ) -> Result<(Opened, Validation), Diagnostic> {
+        let (candidate, validation) = validated(&request, schema, control)?;
+        let opened = self.install(candidate, control)?;
+        Ok((opened, validation))
+    }
 }
 
 pub(super) fn element_path(id: &str, category: ElementCategory) -> Result<String, Diagnostic> {
