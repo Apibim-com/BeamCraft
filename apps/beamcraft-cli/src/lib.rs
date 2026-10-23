@@ -14,6 +14,7 @@ pub mod coordinator;
 pub mod copy;
 pub mod definition;
 pub mod delete;
+pub mod drawing;
 pub mod edit;
 pub mod export;
 pub mod history;

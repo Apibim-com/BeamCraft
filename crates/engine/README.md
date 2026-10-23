@@ -27,6 +27,8 @@ evaluated-body API and refuses unsupported geometry without changing state. See 
 | View settings | `ViewSettings { hidden_kinds: KindFilter, representation }`; `ViewSnapshot::project` | A read-time projection: it changes no token, no authored or derived data. It exposes the instance/triangle tables, the meshes a view must load (`required_meshes`) and what is hidden. |
 | Incremental delta | `diff`, `SnapshotHistory::{push, changes_since}`; `ChangeSet` | Added/changed/removed in id order; `new_meshes` lists only blobs the consumer lacks, so a placement-only edit resends none. An unknown, expired or evicted token is `GEO_STALE_TOKEN` (`STALE_WORKSPACE`) with no partial list. History holds at most 8 snapshots. |
 | `ListElements` | `ViewSnapshot::list_elements(after, page_size)` | Id-ordered, cursor is the last id, page size 1 to 1,024. |
+| Semantic features (D01.1) | `query::feature::{list_features, lookup_feature}` | Enumerate 26 qualified face/edge/vertex roles of one canonical box body at the supplied snapshot. Stable semantic addresses include the owner; no indices or bounding-box substitutes for unsupported topology. CLI: `feature-list --store ROOT --id UUIDV7`. |
+| Drawing intent (D01.2) | `drawing::{Drawing::admit, DrawingSpec, SourceModelPin, LiveSource, Freshness}` | Bounded immutable intent: distinct typed drawing/view/dimension IDs, an exact source pin, one explicit orthographic view and two qualified member vertices. Explicit refresh retains references/IDs; freshness requires a supplied verified live context. This prerequisite adds no drawing storage, projection or publication; the headless adapter follows with D02. |
 | Selection | `Selection::{from_ids, from_instances, from_triangles, instances, rebased}` | Holds ids only; display hints are resolved through the projection and discarded. `rebased` enforces the destination snapshot's selection cap (`VIEW_SELECTION_LIMIT`). Selection is viewport state and never enters a key. |
 | Errors | `ViewCode`, `ViewError` | 11 closed codes, `GEO_*` where F06 section 3 names one and `VIEW_*` otherwise, each mapped onto an existing F04 `ErrorCode`. |
 | Headless | `beamcraft view-snapshot`, `beamcraft view-changes` | See the CLI README. |
@@ -47,6 +49,12 @@ bounded Cube and triangle/convex-quad Mesh cages become ordinary reference-kind 
 without acquiring certified bodies, quantities or engineering pick features. Source translations
 and explicit R01 units correction are supported; wrapper rotation and other foreign transforms
 are not. See the [R01 viewport profile](../../docs/design/r01-readonly-reference.md#translation-only-viewport-path-issue-137).
+`drawing::projection::resolve` (D02.1) consumes admitted intent and the exact captured snapshot.
+It returns twelve semantic wireframe edges and a projected, scale-independent model-mm dimension,
+or typed unresolved states for lost/unsupported/collapsed geometry. It checks the pin before
+geometry, caps all paper output, and performs fixed work over 26 roles and two anchors. The CLI's
+`drawing-preview` strictly inspects one opened model revision before calling it; no UI geometry
+or buffer address enters a measurement. Drawing USD persistence/publication remains D01.3/D03.
 
 All caps are checked before the work they bound, with checked arithmetic and no
 input-derived indexing. A caller may lower a limit with `Limits::new`, never raise it.
