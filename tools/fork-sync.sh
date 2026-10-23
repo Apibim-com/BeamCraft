@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: MPL-2.0
 # Sync the fork with upstream: merge upstream/master into the local fork master,
 # gate the result on the local fmt/clippy/test triple, then push origin/master.
-# The fork inherits upstream 1:1 (AGENTS.md §1 spirit): a merge conflict is an
-# error to investigate, never something to auto-resolve. See docs/development.md.
+# The fork inherits upstream 1:1: a merge conflict is an error to investigate,
+# never something to auto-resolve. See CONTRIBUTING.md, "Keep the fork aligned".
 set -euo pipefail
 
 usage() {
