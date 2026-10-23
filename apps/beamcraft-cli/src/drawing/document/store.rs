@@ -7,8 +7,6 @@ use super::{Metadata, State};
 use crate::drawing::{archive::SourceArchive, codec, derived};
 use crate::plate::{PlateError, control, host_uuid, integrity};
 use beamcraft_engine::drawing::Drawing;
-use beamcraft_engine::drawing::projection::{self, BodyProjection, DimensionProjection};
-use beamcraft_host::lease::StoreLease;
 use beamcraft_host::ledger::{Outcome, OutcomeSource};
 use beamcraft_host::revision::{
     CommitOutcome, ExpectedBase, LayerEntry, LayerRole, Revision, RevisionDraft, RevisionInfo,
@@ -79,7 +77,6 @@ pub struct DocumentWrite<'a> {
 
 fn bad(message: &'static str) -> PlateError {
     PlateError {
-        rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
     }
@@ -218,9 +215,6 @@ fn metadata_from_root(root: &Asset, revision: &Revision) -> Result<Metadata, Pla
 impl DocumentStore {
     /// Creates a new dedicated document directory. Existing paths are never adopted implicitly.
     pub fn create(root: &Path) -> Result<Self, PlateError> {
-        if !root.is_absolute() {
-            return Err(bad("document directory must be an absolute path"));
-        }
         fs::create_dir(root).map_err(|_| bad("document directory could not be created"))?;
         Self::open(root)
     }
@@ -253,43 +247,6 @@ impl DocumentStore {
             }
         }
         Ok(revisions)
-    }
-
-    fn require_unused_version(
-        &self,
-        version: DocumentVersionId,
-        through: u64,
-    ) -> Result<(), PlateError> {
-        // The host caps the sequence at MAX_REVISIONS. Keep only one verified revision in
-        // memory and retain the caller's maintenance lease until the candidate CAS completes.
-        // Skipping a compacted prefix would turn missing evidence into permission to reuse IDs.
-        let control = control();
-        for sequence in 1..=through {
-            if std::time::Instant::now() >= control.deadline {
-                return Err(PlateError {
-                    rule_id: None,
-                    code: ErrorCode::Cancelled,
-                    message: "document version history verification deadline expired",
-                });
-            }
-            let revision = self.revisions.open_at(sequence).map_err(|error| match error {
-                beamcraft_host::revision::RevisionError::Compacted => PlateError {
-                    rule_id: None,
-                    code: ErrorCode::DependencyUnavailable,
-                    message: "complete document history is required to verify version uniqueness",
-                },
-                other => other.into(),
-            })?;
-            let previous = self.verify_revision(revision)?;
-            if previous.version == Some(version) {
-                return Err(PlateError {
-                    rule_id: None,
-                    code: ErrorCode::DuplicateId,
-                    message: "document version id was already published",
-                });
-            }
-        }
-        Ok(())
     }
 
     fn verify_revision(&self, revision: Revision) -> Result<DocumentRevision, PlateError> {
@@ -399,12 +356,6 @@ impl DocumentStore {
         expected: &ExpectedBase,
         write: DocumentWrite<'_>,
     ) -> Result<(CommitOutcome, DocumentRevision), PlateError> {
-        let _maintenance =
-            StoreLease::shared(self.revisions.blobs()).map_err(|error| PlateError {
-                rule_id: None,
-                code: error.code(),
-                message: "document maintenance guard is unavailable",
-            })?;
         let DocumentWrite {
             revision,
             operation,
@@ -432,7 +383,6 @@ impl DocumentStore {
         if let Some(previous) = replay {
             if previous.request != request {
                 return Err(PlateError {
-                    rule_id: None,
                     code: ErrorCode::OpIdReuse,
                     message: "document operation id was already used for another request",
                 });
@@ -443,7 +393,6 @@ impl DocumentStore {
             ExpectedBase::Initial => None,
             ExpectedBase::Revision(id) => {
                 let sequence = self.revisions.sequence_of(id)?.ok_or(PlateError {
-                    rule_id: None,
                     code: ErrorCode::BaseRevisionMismatch,
                     message: "expected document base is unavailable",
                 })?;
@@ -465,11 +414,10 @@ impl DocumentStore {
             (State::Draft, None, None, None) => {}
             (State::Draft, None, latest, Some(head)) if latest == head.latest_published => {}
             (State::Published, Some(version), Some(latest), Some(head))
-                if version == latest && head.state == State::Draft => {}
+                if version == latest
+                    && head.state == State::Draft
+                    && head.latest_published != Some(version) => {}
             _ => return Err(bad("document lifecycle transition is invalid")),
-        }
-        if let (Some(version), Some(head)) = (version, previous.as_ref()) {
-            self.require_unused_version(version, head.info.sequence())?;
         }
         let metadata = Metadata {
             state,
@@ -481,22 +429,7 @@ impl DocumentStore {
         };
         let root = super::encode(metadata)?;
         let intent = codec::encode(drawing)?;
-        let snapshot = source.inspect()?.snapshot;
-        // Publication requires a fully resolved draft: an explicit unresolved state never enters
-        // an immutable version, and this refuses before any resource is stored or head moves.
-        if state == State::Published {
-            let checked = projection::resolve(drawing, &snapshot)?;
-            if matches!(checked.body, BodyProjection::Unresolved(_))
-                || matches!(checked.dimension, DimensionProjection::Unresolved(_))
-            {
-                return Err(PlateError {
-                    rule_id: None,
-                    code: ErrorCode::InvalidArgument,
-                    message: "unresolved drawing geometry cannot be published",
-                });
-            }
-        }
-        let projected = derived::encode(drawing, &snapshot)?;
+        let projected = derived::encode(drawing, &source.inspect()?.snapshot)?;
         let mut assets = vec![root, intent, projected];
         assets.extend_from_slice(source.resources());
         let mut layer_entries = Vec::with_capacity(assets.len());
@@ -505,7 +438,6 @@ impl DocumentStore {
                 .blobs()
                 .publish(&asset.bytes)
                 .map_err(|error| PlateError {
-                    rule_id: None,
                     code: error.code(),
                     message: "document layer could not be stored",
                 })?;
@@ -553,7 +485,6 @@ impl DocumentStore {
             }
             Outcome::Aborted { .. } | Outcome::NotFound => Ok(None),
             Outcome::Unknown => Err(PlateError {
-                rule_id: None,
                 code: ErrorCode::OutcomeUnknown,
                 message: "document operation outcome is unknown",
             }),
