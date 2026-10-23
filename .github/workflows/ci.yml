@@ -57,15 +57,14 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
 
-  test:
-    name: test (${{ matrix.os }}, shard ${{ matrix.shard }}/8)
+  test-archive:
+    name: build test archive (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         # Windows first: Tekla users are on Windows. macOS is covered by release builds.
         os: [windows-latest, ubuntu-latest]
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -80,13 +79,44 @@ jobs:
         with:
           tool: cargo-nextest@0.9.149
 
-      - name: Test
-        run: cargo nextest run --workspace --locked --no-fail-fast --partition hash:${{ matrix.shard }}/8
+      - name: Build and archive tests
+        run: cargo nextest archive --workspace --locked --archive-file nextest-archive.tar.zst
 
-      # nextest does not execute rustdoc tests; keep those in the full cross-platform gate.
+      # nextest archives do not contain rustdoc tests; keep them in the full cross-platform gate.
       - name: Test documentation
-        if: matrix.shard == 1
         run: cargo test --workspace --doc --locked
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nextest-archive-${{ matrix.os }}
+          path: nextest-archive.tar.zst
+          if-no-files-found: error
+
+  test:
+    name: test (${{ matrix.os }}, shard ${{ matrix.shard }}/8)
+    needs: test-archive
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    timeout-minutes: 45
+    steps:
+      # The archive needs the matching revision's source tree for fixtures and runtime assets.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: cargo-nextest@0.9.149
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: nextest-archive-${{ matrix.os }}
+          path: nextest-archive
+
+      - name: Run archived test partition
+        run: cargo nextest run --archive-file nextest-archive/nextest-archive.tar.zst --no-fail-fast --partition hash:${{ matrix.shard }}/8
 
   build-timings:
     name: cold release (${{ matrix.target }})
