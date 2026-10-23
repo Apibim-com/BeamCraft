@@ -7,7 +7,7 @@
 use crate::plate::{Inspection, PlateError, inspect_manifest_assets, integrity};
 use beamcraft_engine::drawing::SourceModelPin;
 use beamcraft_host::lease::StoreLease;
-use beamcraft_host::revision::{MAX_MANIFEST_BYTES, Manifest, RevisionStore};
+use beamcraft_host::revision::{MAX_MANIFEST_BYTES, MAX_NAME_BYTES, Manifest, RevisionStore};
 use beamcraft_host::storage::BlobStore;
 use beamcraft_layer_engine::authored::schema_identity;
 use beamcraft_layer_engine::{Asset, Budgets};
@@ -53,7 +53,7 @@ fn check_sizes(manifest: &Manifest) -> Result<(), PlateError> {
             return Err(limit());
         }
         // The retained resource must also fit the host's existing virtual-name cap.
-        if SOURCE_PREFIX.len() + entry.name().len() > 256 {
+        if SOURCE_PREFIX.len() + entry.name().len() > MAX_NAME_BYTES {
             return Err(limit());
         }
     }
@@ -116,7 +116,7 @@ impl SourceArchive {
         }
         let mut total = 0usize;
         for resource in &resources {
-            if resource.name.len() > 256 {
+            if resource.name.len() > MAX_NAME_BYTES {
                 return Err(limit());
             }
             let cap = if resource.name == MANIFEST_RESOURCE {
