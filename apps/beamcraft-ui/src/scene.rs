@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! Display data of a view snapshot: one vertex buffer per distinct mesh and one translation per
-//! element that uses it (instancing by mesh digest). Nothing here is engineering geometry.
+//! Display data of a view snapshot: one vertex buffer per distinct mesh and one rigid transform
+//! per element that uses it (instancing by mesh digest). Nothing here is engineering geometry.
 
 use crate::Error;
 use beamcraft_engine::{Representation, ViewSnapshot};
@@ -11,8 +11,8 @@ use std::collections::BTreeSet;
 
 /// Bytes of one expanded vertex: position and normal, 3 x f32 each.
 pub const VERTEX_BYTES: usize = 24;
-/// Bytes of one instance: a translation, 3 x f32.
-pub const INSTANCE_BYTES: usize = 12;
+/// Bytes of one instance: a translation and quaternion, 7 x f32.
+pub const INSTANCE_BYTES: usize = 28;
 /// Largest total of expanded vertex bytes a scene may upload.
 pub const MAX_VERTEX_BYTES: usize = 256 * 1024 * 1024;
 
@@ -28,7 +28,7 @@ pub struct DrawMesh {
     /// Element-local point (millimetres) the vertices are relative to: the centre of the mesh's
     /// own bounds, so large element-local coordinates keep their precision in f32.
     pub anchor_mm: [f64; 3],
-    /// Element translations plus the anchor, relative to [`Scene::origin_mm`], little-endian f32.
+    /// Element transform plus the rotated anchor, relative to [`Scene::origin_mm`], little-endian f32.
     pub instances: Vec<u8>,
     /// Instance count.
     pub instance_count: u32,
@@ -289,10 +289,34 @@ impl Scene {
             let mesh = meshes.get_mut(at).ok_or(Error::Input("slot"))?;
             let [px, py, pz] = element.placement_mm;
             let [ax, ay, az] = mesh.anchor_mm;
-            for value in sub([px + ax, py + ay, pz + az], origin_mm) {
+            let [qx, qy, qz, qw] = element.orientation_xyzw;
+            let norm = (((qx * qx + qy * qy) + qz * qz) + qw * qw).sqrt();
+            if !(norm.is_finite() && norm > 0.0) {
+                return Err(Error::Input("orientation"));
+            }
+            let [x, y, z, w] = [qx / norm, qy / norm, qz / norm, qw / norm];
+            let anchor = [
+                (1.0 - 2.0 * (y * y + z * z)) * ax
+                    + 2.0 * (x * y - z * w) * ay
+                    + 2.0 * (x * z + y * w) * az,
+                2.0 * (x * y + z * w) * ax
+                    + (1.0 - 2.0 * (x * x + z * z)) * ay
+                    + 2.0 * (y * z - x * w) * az,
+                2.0 * (x * z - y * w) * ax
+                    + 2.0 * (y * z + x * w) * ay
+                    + (1.0 - 2.0 * (x * x + y * y)) * az,
+            ];
+            for value in sub([px + anchor[0], py + anchor[1], pz + anchor[2]], origin_mm) {
                 let value = value as f32;
                 if !value.is_finite() {
                     return Err(Error::Input("placement"));
+                }
+                mesh.instances.extend_from_slice(&value.to_le_bytes());
+            }
+            for value in [x, y, z, w] {
+                let value = value as f32;
+                if !value.is_finite() {
+                    return Err(Error::Input("orientation"));
                 }
                 mesh.instances.extend_from_slice(&value.to_le_bytes());
             }
@@ -395,6 +419,28 @@ mod tests {
         }
         let (_, extent) = scene.framing();
         assert!(extent > 1.0);
+    }
+
+    #[test]
+    fn a_rotated_element_uploads_the_full_instance_quaternion() {
+        let half = core::f64::consts::FRAC_1_SQRT_2;
+        let elements = plate_scene(1, false)
+            .unwrap()
+            .into_iter()
+            .map(|element| element.with_orientation([0.0, 0.0, half, half]))
+            .collect();
+        let pin = ViewPin::new(Sha256::digest(b"rotated revision").unwrap(), 1);
+        let snapshot = ViewSnapshot::build(pin, elements, &Limits::default()).unwrap();
+        let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+        let instance = scene.meshes[0].instances.as_slice();
+        assert_eq!(instance.len(), INSTANCE_BYTES);
+        let orientation: Vec<f32> = instance[12..]
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|part| f32::from_le_bytes(*part))
+            .collect();
+        assert_eq!(orientation, [0.0, 0.0, half as f32, half as f32]);
     }
 
     #[test]

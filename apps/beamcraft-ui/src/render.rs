@@ -357,7 +357,7 @@ fn pipeline(
         source: wgpu::ShaderSource::Wgsl(include_str!("viewport.wgsl").into()),
     });
     let attributes = wgpu::vertex_attr_array![0=>Float32x3,1=>Float32x3];
-    let instance_attributes = wgpu::vertex_attr_array![2=>Float32x3];
+    let instance_attributes = wgpu::vertex_attr_array![2=>Float32x3,3=>Float32x4];
     let vertex_layout = || {
         Some(wgpu::VertexBufferLayout {
             array_stride: 24,

@@ -4,8 +4,16 @@
 struct Camera { right: vec4f, up: vec4f, back: vec4f, eye: vec4f, params: vec4f }
 @group(0) @binding(0) var<uniform> camera: Camera;
 struct Out { @builtin(position) position: vec4f, @location(0) normal: vec3f }
-@vertex fn instanced(@location(0) p: vec3f, @location(1) n: vec3f, @location(2) t: vec3f) -> Out {
-    let v = p + t - camera.eye.xyz;
+fn rotate(v: vec3f, q: vec4f) -> vec3f {
+    return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
+}
+@vertex fn instanced(
+    @location(0) p: vec3f,
+    @location(1) n: vec3f,
+    @location(2) t: vec3f,
+    @location(3) q: vec4f,
+) -> Out {
+    let v = rotate(p, q) + t - camera.eye.xyz;
     let d = -dot(v, camera.back.xyz);
     let near = camera.params.z;
     let far = camera.params.w;
@@ -16,7 +24,7 @@ struct Out { @builtin(position) position: vec4f, @location(0) normal: vec3f }
         far / (far - near) * d - far * near / (far - near),
         d,
     );
-    o.normal = n;
+    o.normal = rotate(n, q);
     return o;
 }
 @fragment fn shade(o: Out) -> @location(0) vec4f {

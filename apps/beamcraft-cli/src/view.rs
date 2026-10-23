@@ -169,6 +169,12 @@ fn triple(values: [f64; 3]) -> View<Json> {
     ))
 }
 
+fn quaternion(values: [f64; 4]) -> View<Json> {
+    Ok(Json::Array(
+        values.into_iter().map(num).collect::<View<Vec<_>>>()?,
+    ))
+}
+
 fn bounds_json(bounds: Option<Aabb>) -> View<Json> {
     bounds.map_or(Ok(Json::Null), |b| {
         Ok(Json::object([
@@ -235,6 +241,7 @@ fn snapshot_json(
                 ("exact", Json::Bool(p.exact)),
                 ("mesh_digest", Json::text(p.mesh_digest.to_string())),
                 ("placement_mm", triple(p.placement_mm)?),
+                ("orientation_xyzw", quaternion(p.orientation_xyzw)?),
                 ("world_bounds", bounds_json(Some(p.world_bounds))?),
             ]))
         })
@@ -311,6 +318,7 @@ fn entry_json(entry: &ElementEntry) -> View<Json> {
     Ok(Json::object([
         ("kind", Json::text(entry.kind.as_token())),
         ("placement_mm", triple(entry.placement_mm)?),
+        ("orientation_xyzw", quaternion(entry.orientation_xyzw)?),
         ("full_mesh", Json::text(entry.full.mesh_digest.to_string())),
         (
             "simplified_mesh",

@@ -111,6 +111,8 @@ pub struct ElementEntry {
     pub kind: ElementKind,
     /// Translation placement in millimetres.
     pub placement_mm: [f64; 3],
+    /// Rigid orientation in quaternion `(x, y, z, w)` form.
+    pub orientation_xyzw: [f64; 4],
     /// The full representation (operations applied): the only one engineering uses.
     pub full: RepresentationRef,
     /// The simplified representation; the same mesh as `full` when there are no operations.
@@ -191,6 +193,7 @@ struct Pending {
     id: ElementId,
     kind: ElementKind,
     placement: [f64; 3],
+    orientation_xyzw: [f64; 4],
     full: (ContentDigest, Aabb),
     simplified: (ContentDigest, Aabb),
 }
@@ -207,21 +210,57 @@ fn local_bounds(mesh: &SceneMesh) -> Result<Aabb, ViewError> {
     bounds.ok_or_else(numeric)
 }
 
-/// World bounds of mesh-local bounds under a translation-only placement. The local corners are
-/// the local extremes and addition is monotone, so translating them is exact, and a non-finite
-/// sum is the same numeric failure the per-vertex scan reported.
-fn translated_bounds(local: Aabb, placement: Translation3) -> Result<Aabb, ViewError> {
+/// World bounds of local bounds under a rigid placement. Transform all eight corners because a
+/// rotated local AABB's min/max corner pair is not sufficient to recover its world AABB.
+fn placed_bounds(
+    local: Aabb,
+    placement: Translation3,
+    orientation_xyzw: [f64; 4],
+) -> Result<Aabb, ViewError> {
     let numeric = || ViewError::new(ViewCode::NumericUncertain);
-    let min = placement
-        .apply_point(Point3::new(local.min[0], local.min[1], local.min[2]))
-        .map_err(|_| numeric())?;
-    let max = placement
-        .apply_point(Point3::new(local.max[0], local.max[1], local.max[2]))
-        .map_err(|_| numeric())?;
-    Ok(Aabb {
-        min: [min.x, min.y, min.z],
-        max: [max.x, max.y, max.z],
-    })
+    let [qx, qy, qz, qw] = orientation_xyzw;
+    let norm = ((((qx * qx) + (qy * qy)) + (qz * qz)) + (qw * qw)).sqrt();
+    if !norm.is_finite() || norm == 0.0 {
+        return Err(numeric());
+    }
+    let mut bounds: Option<Aabb> = None;
+    let [min_x, min_y, min_z] = local.min;
+    let [max_x, max_y, max_z] = local.max;
+    for mask in 0..8 {
+        let point = [
+            if (mask & 1) == 0 { min_x } else { max_x },
+            if (mask & 2) == 0 { min_y } else { max_y },
+            if (mask & 4) == 0 { min_z } else { max_z },
+        ];
+        let rotated = rotate_vector(point, orientation_xyzw);
+        let world = placement
+            .apply_point(Point3::new(rotated[0], rotated[1], rotated[2]))
+            .map_err(|_| numeric())?;
+        let point = Aabb {
+            min: [world.x, world.y, world.z],
+            max: [world.x, world.y, world.z],
+        };
+        bounds = Some(bounds.map_or(point, |b| b.union(point)));
+    }
+    bounds.ok_or_else(numeric)
+}
+
+pub(crate) fn rotate_vector(v: [f64; 3], q: [f64; 4]) -> [f64; 3] {
+    let [x, y, z, w] = q;
+    let [vx, vy, vz] = v;
+    let norm = (((x * x + y * y) + z * z) + w * w).sqrt();
+    let (x, y, z, w) = (x / norm, y / norm, z / norm, w / norm);
+    [
+        (1.0 - 2.0 * (y * y + z * z)) * vx
+            + 2.0 * (x * y - z * w) * vy
+            + 2.0 * (x * z + y * w) * vz,
+        2.0 * (x * y + z * w) * vx
+            + (1.0 - 2.0 * (x * x + z * z)) * vy
+            + 2.0 * (y * z - x * w) * vz,
+        2.0 * (x * z - y * w) * vx
+            + 2.0 * (y * z + x * w) * vy
+            + (1.0 - 2.0 * (x * x + y * y)) * vz,
+    ]
 }
 
 fn slot_of(meshes: &[MeshEntry], digest: &ContentDigest) -> Result<u32, ViewError> {
@@ -284,7 +323,8 @@ impl ViewSnapshot {
                     found
                 }
             };
-            let full_bounds = translated_bounds(full_local, element.placement)?;
+            let full_bounds =
+                placed_bounds(full_local, element.placement, element.orientation_xyzw)?;
             let simplified = match &element.simplified {
                 Some(plate) => {
                     let digest = registry.add(plate)?;
@@ -296,7 +336,10 @@ impl ViewSnapshot {
                             found
                         }
                     };
-                    (digest, translated_bounds(plate_local, element.placement)?)
+                    (
+                        digest,
+                        placed_bounds(plate_local, element.placement, element.orientation_xyzw)?,
+                    )
                 }
                 None => (full_digest, full_bounds),
             };
@@ -304,6 +347,7 @@ impl ViewSnapshot {
                 id: element.id,
                 kind: element.kind,
                 placement: element.placement.offset().components(),
+                orientation_xyzw: element.orientation_xyzw,
                 full: (full_digest, full_bounds),
                 simplified,
             });
@@ -332,6 +376,7 @@ impl ViewSnapshot {
                     .map_err(|_| ViewError::new(ViewCode::ElementLimit))?,
                 kind: p.kind,
                 placement_mm: p.placement,
+                orientation_xyzw: p.orientation_xyzw,
                 full,
                 simplified,
             });
@@ -472,6 +517,9 @@ fn content_digest(pin: ViewPin, entries: &[ElementEntry]) -> Result<ContentDiges
         for c in e.placement_mm {
             put(&canonical_f64_bytes(c).map_err(|_| numeric())?)?;
         }
+        for c in e.orientation_xyzw {
+            put(&canonical_f64_bytes(c).map_err(|_| numeric())?)?;
+        }
         put(e.full.mesh_digest.as_bytes())?;
         put(e.simplified.mesh_digest.as_bytes())?;
     }
@@ -528,6 +576,28 @@ mod tests {
         assert_eq!(second.max[0] - first.max[0], 200.0);
         assert_eq!(first.min[1], second.min[1]);
         assert_eq!(first.max[2], second.max[2]);
+    }
+
+    #[test]
+    fn rigid_orientation_rotates_local_bounds_before_translation() {
+        let half = core::f64::consts::FRAC_1_SQRT_2;
+        let element = SceneElement::new(
+            ElementId::parse("01990000-0000-7000-8000-000000000010").unwrap(),
+            ElementKind::Plate,
+            Translation3::new(-50.0, 70.0, 1000.0).unwrap(),
+            plate_mesh(),
+        )
+        .with_orientation([0.0, 0.0, half, half]);
+        let snapshot = ViewSnapshot::build(pin(), vec![element], &Limits::default()).unwrap();
+        let bounds = snapshot.engineering_bounds().unwrap();
+        for (actual, expected) in bounds
+            .min
+            .into_iter()
+            .chain(bounds.max)
+            .zip([-130.0, 70.0, 1000.0, -50.0, 170.0, 1010.0])
+        {
+            assert!((actual - expected).abs() <= 1e-12, "{actual} != {expected}");
+        }
     }
 
     #[test]
