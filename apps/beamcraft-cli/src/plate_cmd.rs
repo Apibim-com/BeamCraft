@@ -1777,7 +1777,10 @@ fn plate_users(plates: &[PlateRecord]) -> BTreeMap<ContentDigest, Vec<ElementId>
 }
 
 /// The `definitions` reply for `inspection` (also framed by `view-export --with-definitions`).
-pub(crate) fn definitions_json(inspection: &Inspection, options: &BTreeMap<&str, &str>) -> Run<Json> {
+pub(crate) fn definitions_json(
+    inspection: &Inspection,
+    options: &BTreeMap<&str, &str>,
+) -> Run<Json> {
     let (offset, limit) = page_of(options)?;
     let name = options.get("--name");
     let matching: Vec<_> = inspection

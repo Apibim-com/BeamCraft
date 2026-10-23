@@ -1,9 +1,11 @@
 # Issue 26: the cost of one inspection
 
-Date: 2026-10-21. Status: **implemented; performance only, no reply changes.** Branch
-`bug/26-inspection-cache`, based on `origin/master` `538cbed`. Remainder of
-[issue 26](https://github.com/axisrow/BeamCraft/issues/26), finding 2: the work inside the one
-inspection that every read command runs.
+Date: 2026-10-21. Status: **implemented; performance only, no reply changes.** Developed in the
+fork on `bug/26-inspection-cache`, built and measured on the fork's `master` `538cbed`; the
+figures were not taken again after later merges. Ported to `upstream/master` `53d0624` on
+2026-10-23. Remainder of
+[issue 26](https://github.com/axisrow/BeamCraft/issues/26) of the fork, finding 2: the work
+inside the one inspection that every read command runs.
 
 ## Problem
 
@@ -104,8 +106,9 @@ with every switch off matched `master` within 0.96 to 1.02 of its median, which 
 switches. Every output was byte-identical across all variants and runs.
 
 Machine: Linux 6.18 container, 4 vCPU Intel Xeon at 2.80 GHz, 16 GiB, rustc 1.97.0, the
-workspace release profile (thin LTO, one codegen unit). F1 and F2: one warm-up and 10 runs per
-variant; F3 and F4: one warm-up and 8 runs.
+workspace release profile of `538cbed`: thin LTO, one codegen unit. Those are today's `dist`
+settings; today's `--release` leaves dependencies unoptimized. F1 and F2: one warm-up and 10
+runs per variant; F3 and F4: one warm-up and 8 runs.
 
 **Decision rule, fixed before the runs.** A change is kept when, in the four pairs of
 combinations that differ only in it, it is at least 3 % faster with non-overlapping min-max
@@ -168,8 +171,9 @@ where every pair passed the rule):
 
 ## Results: `master` against this change
 
-The `master` binary (`538cbed`) against the release binary of this branch (`05fe658`, the body
-cache and one parse), on the same machine and fixtures, alternating every run: one warm-up and
+The `master` binary (`538cbed`) against the release binary of this branch (`4604a36`, the body
+cache and one parse; built from the same product code before a formatting-only test fix was
+folded into that commit), on the same machine and fixtures, alternating every run: one warm-up and
 15 runs per binary on F1 and F2, 10 on F3 and F4. `copy-element` runs on a fresh copy of the
 fixture each time and is the write path (head evaluation plus commit verifier). This run was
 noisier than the experiment, which the min-max ranges show; the medians agree with it.
@@ -223,26 +227,31 @@ revision. Reuse across calls would need state on disk:
 * checked on read (blob digest recomputed, mesh decoded, stored inputs compared), with private
   directory checks, atomic writes and bounded eviction, and an opt-in switch for the window.
 
-That is new local state and a new trust surface; the owner chose the in-process cache. A
-long-lived reader process (the F05 worker route) would get cross-call reuse without on-disk
-state.
+That is new local state and a new trust surface; the owner chose the in-process cache. Only a
+long-lived reader process could reuse bodies across calls without on-disk state, and there is
+none: U17 removed the USD worker, and the window reads through CLI processes.
 
 ## Not changed
 
 * Each layer blob is still read and hashed twice per inspection (R above: no measurable effect).
-* Six adapters read their stage with the same two-pass pattern as before: `level`, `bolt`,
-  `weld`, `marks`, `reference` and `assembly`. They serve their own commands and are left as
-  they are; `Reader::open_validated` is ready for them.
+* Six adapters read their stage with the same two-pass pattern as before: `assembly`, `bolt`,
+  `level`, `numbering_approval`, `reference` and `weld`. They serve their own commands
+  and are left as they are; `Reader::open_validated` is ready for them. It shares one
+  implementation of the rules with `validate_layers`, so a rule added there applies to both.
 * A body is still cloned into every element's record; sharing by reference would change public
   record types.
-* The native window still runs `view-export`, `definitions` and `plate-inspect` as separate
-  processes per refresh on `master`; every one of them now pays less.
+* On `538cbed` the native window ran `view-export`, `definitions` and `plate-inspect` as separate
+  processes per refresh. Current `master` (the issue 26 follow-up,
+  [Apibim-com/BeamCraft#159](https://github.com/Apibim-com/BeamCraft/pull/159)) runs one
+  `view-export --with-definitions` per refresh and one `plate-inspect --element` per selection.
+  Each of them is one inspection and pays less in the same way.
 * **Found while measuring, not changed here:** on every fixture of about 300 elements,
   `plate-inspect` answers `{"outcome":"rejected","code":"LIMIT_EXCEEDED"}` (exit 2), on `master`
   as after this change. The whole inspection runs, but its JSON exceeds the read-profile
-  encoder limits that `print_json` enforces, so the command cannot report a model of that size;
-  the window's property lookup, which runs `plate-inspect`, fails the same way. Its timings above
-  are still the inspection's. A paged or per-element reply is a separate change.
+  encoder limits that `print_json` enforces, so the command cannot report a model of that size.
+  On `538cbed` the window's property lookup ran this command and failed the same way; current
+  `master` asks for one element (`plate-inspect --element`), which fits. Its timings above are
+  still the inspection's. Paging the whole-model reply is a separate change.
 
 ## Reproduction
 
@@ -264,8 +273,8 @@ contours (`0,0;1000,0;1000,300;400,300;400,600;0,600`) with one 100 x 100 hole, 
 except the last two is one element and its copies.
 
 ```sh
-cargo build --release -p beamcraft-cli
-b=./target/release/beamcraft
+cargo build --profile dist -p beamcraft-cli   # the settings measured here (--release on 538cbed)
+b=./target/dist/beamcraft
 s=$(mktemp -d)   # F1; the other fixtures follow the table the same way
 $b create-plate --store "$s" --width 1000 --length 600 --thickness 10 \
   --new-id 019a7bf0-0001-7000-8000-000000000001 > /dev/null
