@@ -4,6 +4,26 @@ Decisions that shape the plan, newest first. Each names its date and, where one 
 document that records it in detail. A later decision overrides an earlier one where they differ.
 Open questions are at the end.
 
+## 2026-10-23
+
+- **Plate position, corners and contour editing.** Owner decisions, written up as a draft in
+  [the plate amendment](../contracts/f04-plate-amendment-draft-v0.1.md) for review:
+  - A plate has a thickness side `top`, `middle` or `bottom` from its contour plane: `top` lays the
+    thickness off in `+Z`, `bottom` in `-Z`, `middle` half each way. The default `top` keeps every
+    existing plate unchanged.
+  - A contour vertex may carry a chamfer or a rounding. A chamfer takes two distances, one along
+    the previous edge and one along the next, or one distance for a symmetric cut. A rounding takes
+    only a radius. A rounded corner is a stored radius, not a stored polygon; its mesh is faceted
+    to a stated chord deviation.
+  - A plate contour is edited in its plane: drag a vertex, drag an edge, insert a vertex in the
+    middle of an edge, delete a vertex. A plate never drops below three vertices; delete is
+    refused on a triangle.
+  - Numbering follows the geometry: plates that differ only in the thickness side are one group
+    (O-2 decided). Contour vertices stay addressed by position, with no stable ids for now (O-1
+    decided).
+  - Process: a reference screenshot of another product stays a private observation outside the
+    repository (`AGENTS.md` §1.1); only the behaviour, described in our own words, is recorded.
+
 ## 2026-10-22
 
 - **Point 5 deferred for a decision after the MVP.** Revisit the KM-to-KMD `builtFrom`
