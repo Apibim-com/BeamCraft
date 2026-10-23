@@ -43,6 +43,18 @@ Open questions are at the end.
   unavailable. The [F12 stage 6 companion](../contracts/f12-craft-read-capabilities-v0.1.md)
   belongs in the same branch and PR. This is a contract direction, not a claim that MEPCraft
   or additional engineering modules have been implemented.
+- **Single-section companies and external IFC references.** A company can author only KM or
+  OV in Craft while receiving the other disciplines as IFC. One IFC delivery becomes one logical
+  read-only USD reference with retained original bytes, conversion provenance, source identifiers,
+  units/frame mapping and an explicit loss report. It never becomes editable native elements
+  merely through conversion. Another Craft project or a shared coordination project is not a
+  prerequisite. Opening assignments can be issued as human-readable reports to external engineers,
+  with external replies explicitly recorded against exact proposal/source versions; no Craft
+  application, account or machine-readable response is required from the recipient. The
+  [F12 external-reference companion](../contracts/f12-external-reference-workflow-v0.1.md)
+  specifies this extension in the same PR. This selects the reference-conversion boundary for
+  E04; its supported IFC subset, converter and implementation remain to be specified. I01–I03
+  editable-item work remains deferred and unchanged.
 - **Existing foundations retained.** USD remains the model; source element identity, immutable
   revisions, typed commands and operation-based merge remain authoritative. The frozen F04/F06/
   F10 0.1 documents and their existing schemas stay unchanged. C03–C06 remain after the MVP;
@@ -255,7 +267,7 @@ Open questions are at the end.
 |---|----------|--------|
 | 1 | Independent IFC validation tool (E01 Q-8) | E02 acceptance |
 | 2 | macOS policy without project hardware | Q02 acceptance |
-| 3 | IFC import scope (E04) | E04 |
+| 3 | IFC reference converter, supported subset, budgets and provenance (read-only workflow selected on 2026-10-22) | E04 |
 | 4 | Live channel and permission model (C07, C08) | C07, C08 |
 | 5 | Where saved views and review notes live: workspace only or a shared review layer | W01, W02 |
 | 6 | Variant sets in our own layers (N07) | N07 |

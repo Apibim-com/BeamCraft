@@ -70,6 +70,11 @@ read-only viewing requirement into common Craft reading and specialized editing 
 All Craft applications inspect admitted content through the shared read contract; only a
 compatible owning module can supply engineering edits, subject to the scope checks above.
 BeamCraft and MEPCraft are application examples, not module tokens or permission grants.
+The [external-reference companion](f12-external-reference-workflow-v0.1.md) also permits
+single-section work with received IFC converted into foreign read-only USD references.
+Conversion and installing a matching module never turn those sources into owned native data.
+Opening-assignment reports may target external organizations without Craft identities; exact
+proposal/source pins and verified decision provenance still apply.
 
 ## 3. One shared opening assignment
 

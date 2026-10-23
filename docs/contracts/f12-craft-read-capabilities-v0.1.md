@@ -11,6 +11,13 @@ content read-only; MEPCraft can show steel content read-only and supplies its ME
 capabilities. These examples describe the approved product direction, not existing MEPCraft
 software or implemented MEP kinds.
 
+The source need not have been authored in Craft. A received IFC can supply admitted converted
+USD reference content under the [external-reference contract](f12-external-reference-workflow-v0.1.md).
+For such content, the projection below uses source lineage, original IFC element identifier,
+source digest and conversion/placement pins instead of a fictional source Craft project or
+native ElementId. Even an enabled owning module cannot edit that foreign reference. A company
+can author only KM or OV while all other models remain external references.
+
 An application is a shell that exposes common reading and its available modules. A module is
 the F10 boundary of namespaces, kinds, commands and engineering rules. The application name
 does not grant authority. This decision does not require separate model formats, cloned cores,

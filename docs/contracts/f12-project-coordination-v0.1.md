@@ -10,6 +10,8 @@ stage 4 adds [opening assignments and file exchange](f12-opening-assignments-v0.
 same package, with exact-version review and separate implementation evidence. Approved
 [stage 6](f12-craft-read-capabilities-v0.1.md) defines common reading across Craft applications
 and specialized module editing in this same package.
+The [external-reference companion](f12-external-reference-workflow-v0.1.md) adds single-section
+companies receiving IFC models and exchanging reports with participants outside Craft.
 
 ## 1. Invariants and scope
 
@@ -23,6 +25,11 @@ Two organizations are supported by the design:
 1. **Shared project:** several sections have separate authored scopes in one project store.
 2. **Independent projects:** each section or zone has its own project store and publication
    history; a coordination project connects their selected revisions read-only.
+
+A company can also run just its own section project with received IFC converted into read-only
+USD references. Other participants need no Craft projects or accounts, and a shared coordination
+project is optional. The external-reference companion defines source evidence and reporting;
+native project pins in this document apply only when the source is actually a Craft project.
 
 The same identity, compatibility and responsibility rules apply to both. Physical file layout
 does not authorize writes. Independent projects are not workspaces of the coordination

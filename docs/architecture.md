@@ -283,6 +283,24 @@ workflow and multi-client merge are not delivered by these documents.
 
 ## Common Craft viewing and specialized editing
 
+### A company working on one section
+
+A KM-only company can model steel against architectural IFC, and an OV-only company can model
+services against structural IFC. The proposed [external-reference workflow](contracts/f12-external-reference-workflow-v0.1.md)
+converts each received IFC into one logical read-only USD reference, retaining original source
+bytes, IFC identifiers, conversion settings, coordinate mapping and losses. It does not create
+native editable parts. New deliveries are explicitly reviewed and pinned without overwriting
+the source versions on which existing work depends. A shared Craft coordination project is
+optional, and external companies need no Craft application or account.
+
+Opening requests can leave Craft as human-readable reports with exact assignment versions,
+source IFC identification, dimensions and locating context. External answers are recorded with
+their evidence and applicability; sending a report alone is not approval, and an old 150 mm
+acceptance never approves a 200 mm successor. External implementation stays in the recipient's
+authoring tool. This is a specified workflow; IFC conversion/report codecs are not implemented.
+
+### Shared reading and module capabilities
+
 The approved [stage 6 contract](contracts/f12-craft-read-capabilities-v0.1.md) gives Craft
 applications a common read path for admitted content from all project sections. For example,
 BeamCraft can inspect supplied MEP representations and properties read-only; MEPCraft supplies

@@ -15,6 +15,14 @@ Companion to [F12](f12-project-coordination-v0.1.md) and the
 5. The structural engineer authors accepted openings in the structural model through authorized
    commands and returns decisions and, where available, implementation records in a response file.
 
+This is the Craft-to-Craft path. The equally supported design for an external participant is
+specified in the [IFC reference/report companion](f12-external-reference-workflow-v0.1.md):
+the source can be a received IFC converted to a read-only USD reference, the request a readable
+report, and the response external evidence recorded by an authorized user. No Craft project
+or structured response file is required from that participant. Native host project/section/
+revision fields below are replaced in that path by the external recipient, source lineage,
+exact IFC snapshot and conversion/placement pins; no native identity is fabricated.
+
 An intersection is a reason to propose an opening, not permission to create it. Delivery,
 engineering acceptance, implementation in the host model and selection of a new structural
 revision in coordination are separate events. Receipt of a file performs none of the latter
@@ -121,6 +129,8 @@ logical presentation outcomes, not newly prescribed USD attribute tokens.
 ## 5. Acceptance and implementation are separate
 
 **OA-IMPL-001.** Accepting or importing an assignment/decision does not cut the host model.
+The host command and atomicity rules below apply to a native Craft host. An external host
+implements in its own tool; externally reported or observed completion follows XR-IMPL-001.
 An authorized host command creates the physical opening only after checking the exact accepted
 proposal and the current structural basis. It records the assignment, proposal, effective
 decision, resulting opening identity and resulting host revision. The publication is atomic
