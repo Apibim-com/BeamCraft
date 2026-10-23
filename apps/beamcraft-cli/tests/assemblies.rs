@@ -423,8 +423,11 @@ fn a_different_request_under_an_accepted_op_id_is_reuse_not_a_replay() {
     };
     assert_eq!(attach(&one, op(3)).0, 0);
     assert_eq!(attach(&two, op(4)).0, 0);
-    let (code, body) = attach(&two, op(3));
-    assert_eq!((code, text(&body, "code").as_str()), (2, "OP_ID_REUSE"));
+    let reused = f.rejected(
+        "assembly-attach",
+        &["--id", &two, "--assembly-id", FRAME, "--op-id", &op(3)],
+    );
+    assert_eq!(reused, "OP_ID_REUSE");
     let (code, body) = attach(&one, op(3));
     assert_eq!(code, 0);
     assert_eq!(text(&body, "outcome"), "part_attached_replayed");
@@ -432,8 +435,8 @@ fn a_different_request_under_an_accepted_op_id_is_reuse_not_a_replay() {
     let detach = |part: &str, o: String| f.run("assembly-detach", &["--id", part, "--op-id", &o]);
     assert_eq!(detach(&one, op(5)).0, 0);
     assert_eq!(detach(&two, op(6)).0, 0);
-    let (code, body) = detach(&two, op(5));
-    assert_eq!((code, text(&body, "code").as_str()), (2, "OP_ID_REUSE"));
+    let reused = f.rejected("assembly-detach", &["--id", &two, "--op-id", &op(5)]);
+    assert_eq!(reused, "OP_ID_REUSE");
     let (code, body) = detach(&one, op(5));
     assert_eq!(code, 0);
     assert_eq!(text(&body, "outcome"), "part_detached_replayed");

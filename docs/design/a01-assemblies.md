@@ -88,7 +88,9 @@ membership decisions and `for_part_of`.
 - No rename, move or placement for an assembly; no main part; no numbering, marks or BOM
   (A08/E03).
 - No multi-element (assembly) copy; the vocabulary leaves it undefined.
-- Replay is decided from the head state, as in P04, P05 and P08.
+- Replay is decided from the revision of the accepted operation, as for bolts, levels and welds:
+  the requested state must hold there and not in the revision before, otherwise `OP_ID_REUSE`. A
+  revision at or below the compaction floor cannot be checked and answers `NOT_FOUND`.
 - `bim:discipline` and `bim:lifecycle` are still not authored (no first-slice element writes them).
 - Domain vocabulary 0.1.0 lists `assembly` as reserved (`DV-KIND-004`); implementing it needs the
   owner to admit the kind in the next vocabulary version. This PR implements the reserved rules as

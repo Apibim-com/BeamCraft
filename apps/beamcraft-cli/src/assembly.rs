@@ -12,8 +12,11 @@
 //! model; the layer engine re-checks the same rules on the candidate and the strict verifier on
 //! the committed bytes.
 //!
-//! Honesty limits: replay of an `op_id` is decided from the head state, as in `edit` and `delete`
-//! (an attach is a replay when the head already has the part in that assembly). Copying a part
+//! Honesty limits: replay of an `op_id` is decided from the revision of that operation, as for
+//! bolts, levels and welds: the request is the accepted one only if the state it asks for holds in
+//! that revision and did not hold in the one before. The head is not consulted, so a later
+//! operation does not break a replay. A revision at or below the compaction floor of a compacted
+//! history cannot be checked this way and answers `NOT_FOUND`, not a replay. Copying a part
 //! that has a `part-of` record is refused by `copy-element` (`DV-REL-011`); a multi-element copy
 //! is not implemented. Deleting an assembly that still has parts is `DEPENDENCY_CONFLICT`; there
 //! is no cascade. An assembly cannot be renamed or moved yet.
@@ -238,7 +241,8 @@ fn introduced_by(
 }
 
 /// The shared path of every A01 command: open the head, decide replay from the ledger and the
-/// head state, plan against the head model, author, check the footprint, commit.
+/// revision of the accepted operation (see [`introduced_by`]), plan against the head model,
+/// author, check the footprint, commit.
 fn apply(
     store: &RevisionStore,
     context: &AssemblyContext,
