@@ -19,13 +19,14 @@ permissions:
 
 jobs:
   test:
-    name: test (${{ matrix.os }})
+    name: test (${{ matrix.os }}, shard ${{ matrix.shard }}/4)
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         # Windows first: Tekla users are on Windows. macOS is covered by release builds.
         os: [windows-latest, ubuntu-latest]
+        shard: [1, 2, 3, 4]
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -42,29 +43,33 @@ jobs:
           tool: cargo-nextest@0.9.149
 
       - name: Format
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.shard == 1
         run: cargo fmt --all -- --check
 
       - name: Clippy
+        if: matrix.shard == 1
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Test
-        run: cargo nextest run --workspace --locked --no-fail-fast
+        run: cargo nextest run --workspace --locked --no-fail-fast --partition hash:${{ matrix.shard }}/4
 
       # nextest does not execute rustdoc tests; keep those in the full cross-platform gate.
       - name: Test documentation
+        if: matrix.shard == 1
         run: cargo test --workspace --doc --locked
 
       # F07: committed fixtures must equal the generator output and their manifest digests.
       - name: Verify original fixtures
+        if: matrix.shard == 1
         run: cargo run -p beamcraft-fixtures -- verify --dir tests/fixtures/f07
 
       # F08: workspace manifests must obey the module table (also run by cargo test).
       - name: Check module boundaries
+        if: matrix.shard == 1
         run: cargo run --locked -p beamcraft-boundaries -- check
 
       - name: Docs
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.shard == 1
         run: cargo doc --workspace --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
