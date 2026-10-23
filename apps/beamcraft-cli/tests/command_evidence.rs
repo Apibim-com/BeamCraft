@@ -122,7 +122,6 @@ fn canonical_round_trip_preserves_both_target_types_and_every_atomic_group() {
         Group::Placement,
         Group::MaterialRef,
         Group::Relationship,
-        Group::Mark,
         Group::Lifecycle,
         Group::Derived,
     ]

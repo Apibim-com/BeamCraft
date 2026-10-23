@@ -52,7 +52,6 @@ fn group(text: &str) -> Result<Group, CommandError> {
         "placement" => Group::Placement,
         "material_ref" => Group::MaterialRef,
         "relationship" => Group::Relationship,
-        "mark" => Group::Mark,
         "lifecycle" => Group::Lifecycle,
         "derived" => Group::Derived,
         _ => return Err(invalid()),
@@ -230,6 +229,7 @@ pub(crate) fn store(
 pub(crate) struct SourceInterval {
     pub(crate) head: RevisionInfo,
     pub(crate) footprint: Option<Footprint>,
+    pub(crate) commands: Vec<beamcraft_engine::rebase::Operation>,
 }
 
 /// Verify the complete contiguous source interval. Absence is conservative, not an empty proof;
@@ -250,6 +250,7 @@ pub(crate) fn aggregate(
     let mut combined = Footprint::default();
     let mut complete = true;
     let mut raw_entries = 0usize;
+    let mut commands = Vec::with_capacity(operations.len());
     let mut last_rebase: Option<(u64, crate::workspace::rebase_receipt::RevisionPin)> = None;
     for (position, operation) in operations.iter().enumerate() {
         let bytes = store
@@ -339,6 +340,10 @@ pub(crate) fn aggregate(
                         "aggregate operation footprint exceeds 4096 entries",
                     ));
                 }
+                commands.push(beamcraft_engine::rebase::Operation {
+                    id: captured.op_id,
+                    footprint: captured.footprint.clone(),
+                });
                 combined = combined.union(captured.footprint)?;
             }
         }
@@ -348,6 +353,7 @@ pub(crate) fn aggregate(
     Ok(SourceInterval {
         head: head.ok_or_else(|| integrity("source interval has no head"))?,
         footprint: complete.then_some(combined),
+        commands,
     })
 }
 
@@ -399,7 +405,6 @@ pub(crate) fn dependencies(footprint: &Footprint) -> Vec<Dependency> {
                 Group::Placement => DependencyGroup::Placement,
                 Group::MaterialRef => DependencyGroup::MaterialRef,
                 Group::Relationship => DependencyGroup::Relationship,
-                Group::Mark => DependencyGroup::Mark,
                 Group::Lifecycle => DependencyGroup::Lifecycle,
                 Group::Derived => DependencyGroup::Derived,
             };
