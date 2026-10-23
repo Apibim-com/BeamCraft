@@ -194,6 +194,15 @@ pub fn evaluate_committed_drafts_cached(
         let material = authored.material.as_ref().map(materials).transpose()?;
         match cache.plate(authored) {
             Ok(body) => {
+                // `create_plate` refuses a rotated placement after evaluating; the cache serves
+                // the same body, so the same refusal applies before it may be used.
+                if !authored.placement.is_identity_rotation() {
+                    return Err(CommandError::new(
+                        ErrorCode::UnsupportedGeometry,
+                        "placement.orientation_xyzw",
+                        "rotated placement is not evaluated in this slice",
+                    ));
+                }
                 let quantities = body.quantities_for(material)?;
                 evaluated.push(PlateRecord {
                     authored: authored.clone(),
@@ -216,4 +225,56 @@ pub fn evaluate_committed_drafts_cached(
     evaluated.sort_by_key(|p| p.authored.id);
     unsupported.sort_by_key(|p| p.authored.id);
     Ok((evaluated, unsupported))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::command::no_materials;
+    use beamcraft_model::command::Placement;
+
+    fn plate(n: u8, orientation_xyzw: [f64; 4]) -> AuthoredPlate {
+        AuthoredPlate {
+            id: ElementId::parse(&format!("019a7bf0-0000-7000-8000-0000000000{n:02x}")).unwrap(),
+            name: format!("Plate {n}"),
+            contour_points_mm: vec![
+                [0.0, 0.0, 0.0],
+                [1000.0, 0.0, 0.0],
+                [1000.0, 500.0, 0.0],
+                [0.0, 500.0, 0.0],
+            ],
+            thickness_mm: 10.0,
+            placement: Placement {
+                translation_mm: [0.0, 0.0, 0.0],
+                orientation_xyzw,
+            },
+            material: None,
+            holes_mm: Vec::new(),
+            cut: None,
+        }
+    }
+
+    #[test]
+    fn a_rotated_committed_plate_is_refused_like_the_uncached_evaluation() {
+        let s = core::f64::consts::FRAC_1_SQRT_2;
+        let mut cache = BodyCache::new();
+        let rotated = [plate(1, [0.0, 0.0, s, s]), plate(2, [0.0, 0.0, 0.0, 1.0])];
+        let error =
+            evaluate_committed_drafts_cached(&rotated, &no_materials, &mut cache).unwrap_err();
+        assert_eq!(error.code, ErrorCode::UnsupportedGeometry);
+        assert_eq!(error.field, "placement.orientation_xyzw");
+        assert_eq!(
+            error.message,
+            "rotated placement is not evaluated in this slice"
+        );
+        // The identity neighbour still evaluates, cached or not.
+        let (evaluated, unsupported) = evaluate_committed_drafts_cached(
+            &[plate(2, [0.0, 0.0, 0.0, 1.0])],
+            &no_materials,
+            &mut cache,
+        )
+        .unwrap();
+        assert!(unsupported.is_empty());
+        assert_eq!(evaluated.len(), 1);
+    }
 }
