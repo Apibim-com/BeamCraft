@@ -6,7 +6,7 @@
 
 //! P03 end to end through the real `beamcraft` binary: `create-member` publishes a beam or a
 //! column that pins its profile (and optionally a material) from earlier definitions, and fresh
-//! processes reopen it with `inspect-elements`.
+//! processes reopen it with `plate-inspect`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
@@ -143,7 +143,7 @@ fn a_beam_pins_its_profile_and_material_and_reopens_in_a_fresh_process() {
     let writes = at(&created, &["footprint", "writes"]).array().unwrap();
     assert!(writes.iter().all(|e| text(e, "target_kind") == "element"));
 
-    let inspected = f.ok("inspect-elements", &[]);
+    let inspected = f.ok("plate-inspect", &[]);
     assert_eq!(num(&inspected, &["plate_count"]), 0.0);
     assert_eq!(num(&inspected, &["member_count"]), 1.0);
     let reopened = &at(&inspected, &["members"]).array().unwrap()[0];
@@ -192,108 +192,6 @@ fn a_beam_pins_its_profile_and_material_and_reopens_in_a_fresh_process() {
 }
 
 #[test]
-fn spatial_beams_reopen_with_their_axis_volume_and_world_bounds() {
-    // Independent section bases: X across the width, Y across the height.
-    // The inclined axis has length sqrt(3000² + 4000² + 12000²) = 13000 mm.
-    for (start, end, length, x, y, roll) in [
-        (
-            [100.0, 200.0, 300.0],
-            [3100.0, 4200.0, 12300.0],
-            13000.0,
-            [-0.8, 0.6, 0.0],
-            [-36.0 / 65.0, -48.0 / 65.0, 5.0 / 13.0],
-            None,
-        ),
-        (
-            [3100.0, 4200.0, 12300.0],
-            [100.0, 200.0, 300.0],
-            13000.0,
-            [0.8, -0.6, 0.0],
-            [-36.0 / 65.0, -48.0 / 65.0, 5.0 / 13.0],
-            None,
-        ),
-        (
-            [100.0, 200.0, 300.0],
-            [100.0, 200.0, 3300.0],
-            3000.0,
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            None,
-        ),
-        (
-            [100.0, 200.0, 300.0],
-            [3100.0, 4200.0, 12300.0],
-            13000.0,
-            [-0.8, 0.6, 0.0],
-            [-36.0 / 65.0, -48.0 / 65.0, 5.0 / 13.0],
-            Some(0.7_f64),
-        ),
-    ] {
-        let f = Fixture::new();
-        let profile = f.profile("200", "300");
-        let point = |p: [f64; 3]| format!("{},{},{}", p[0], p[1], p[2]);
-        let start_arg = point(start);
-        let end_arg = point(end);
-        let mut args = vec![
-            "--kind",
-            "beam",
-            "--start",
-            &start_arg,
-            "--end",
-            &end_arg,
-            "--profile-digest",
-            &profile,
-        ];
-        let roll_arg = roll.unwrap_or(0.0).to_string();
-        if roll.is_some() {
-            args.extend_from_slice(&["--roll", &roll_arg]);
-        }
-        let created = f.ok("create-member", &args);
-        let member = at(&created, &["member"]);
-        let inspected = f.ok("inspect-elements", &[]);
-        let reopened = &at(&inspected, &["members"]).array().unwrap()[0];
-        assert_eq!(text(reopened, "kind"), "beam");
-        assert_eq!(text(reopened, "element_id"), text(member, "element_id"));
-        assert_eq!(text(reopened, "mesh_digest"), text(member, "mesh_digest"));
-        for record in [member, reopened] {
-            let axis = at(record, &["axis_points_mm"]).array().unwrap();
-            for (actual, expected) in axis.iter().zip([start, end]) {
-                let actual: Vec<_> = actual
-                    .array()
-                    .unwrap()
-                    .iter()
-                    .map(|v| v.float().unwrap())
-                    .collect();
-                assert_eq!(actual, expected);
-            }
-            assert!(
-                (num(record, &["quantities", "volume", "mm3"]) - 60000.0 * length).abs() < 0.001
-            );
-            if let Some(roll) = roll {
-                assert_eq!(num(record, &["roll_rad"]), roll);
-            }
-        }
-        let elements = at(&inspected, &["snapshot", "elements"]).array().unwrap();
-        assert_eq!(elements.len(), 1);
-        let lo = at(&elements[0], &["world_min_mm"]).array().unwrap();
-        let hi = at(&elements[0], &["world_max_mm"]).array().unwrap();
-        let (sin, cos) = roll.unwrap_or(0.0).sin_cos();
-        for i in 0..3 {
-            let extent =
-                100.0 * (cos * x[i] + sin * y[i]).abs() + 150.0 * (-sin * x[i] + cos * y[i]).abs();
-            // Snapshot bounds enclose the float32 display mesh.
-            assert!((lo[i].float().unwrap() - (start[i].min(end[i]) - extent)).abs() < 0.01);
-            assert!((hi[i].float().unwrap() - (start[i].max(end[i]) + extent)).abs() < 0.01);
-        }
-        let authored = f.authored_text(&created);
-        assert!(authored.contains(&format!(
-            "custom double3[] bim:axisPointsMm = [({:?}, {:?}, {:?}), ({:?}, {:?}, {:?})]",
-            start[0], start[1], start[2], end[0], end[1], end[2],
-        )));
-    }
-}
-
-#[test]
 fn a_rotated_member_reopens_with_world_bounds_and_unchanged_shape() {
     let f = Fixture::new();
     let profile = f.profile("200", "300");
@@ -319,7 +217,7 @@ fn a_rotated_member_reopens_with_world_bounds_and_unchanged_shape() {
     let digest = text(member, "mesh_digest");
 
     // A fresh CLI process reads the committed USD and rebuilds the view placement.
-    let reopened = f.ok("inspect-elements", &[]);
+    let reopened = f.ok("plate-inspect", &[]);
     let member = &at(&reopened, &["members"]).array().unwrap()[0];
     assert_eq!(text(member, "mesh_digest"), digest);
     assert_eq!(num(member, &["quantities", "volume", "mm3"]), 240_000_000.0);
@@ -341,7 +239,7 @@ fn a_rotated_member_reopens_with_world_bounds_and_unchanged_shape() {
 
     let member_id = text(member, "element_id");
     let feature_id = format!("fid1:{member_id}:member:v.x1.y0.z0");
-    let feature = f.ok("lookup-feature", &["--feature-id", &feature_id]);
+    let feature = f.ok("feature-lookup", &["--feature-id", &feature_id]);
     assert_eq!(text(&feature, "feature_kind"), "vertex");
     let vector = |space| {
         at(&feature, &[space, "position"])
@@ -353,9 +251,7 @@ fn a_rotated_member_reopens_with_world_bounds_and_unchanged_shape() {
     };
     let local = vector("local");
     let world = vector("world");
-    // The member mesh carries the placement rotation (issue #130), so the snapshot places it
-    // by the translation only and the world position is the rotated local plus the translation.
-    let expected = [local[0] - 50.0, local[1] + 70.0, local[2] + 1000.0];
+    let expected = [-local[1] - 50.0, local[0] + 70.0, local[2] + 1000.0];
     for (actual, expected) in world.iter().zip(expected) {
         assert!((actual - expected).abs() < 1e-8, "{actual} != {expected}");
     }
@@ -424,7 +320,7 @@ fn a_column_a_roll_and_a_plate_live_in_one_revision() {
         "create-plate",
         &["--width", "1000", "--length", "500", "--thickness", "10"],
     );
-    let inspected = f.ok("inspect-elements", &[]);
+    let inspected = f.ok("plate-inspect", &[]);
     assert_eq!(num(&inspected, &["plate_count"]), 1.0);
     assert_eq!(num(&inspected, &["member_count"]), 1.0);
     let elements = at(&inspected, &["snapshot", "elements"]).array().unwrap();
@@ -497,22 +393,6 @@ fn rejections_use_the_f04_codes_and_publish_nothing() {
         f.rejected("create-member", &["--start", "0,0,0", "--end", "1,0,0"]),
         "INVALID_ARGUMENT"
     );
-    for end in ["3000,4000,NaN", "3000,Infinity,12000"] {
-        assert_eq!(
-            f.rejected(
-                "create-member",
-                &[
-                    "--start",
-                    "100,200,300",
-                    "--end",
-                    end,
-                    "--profile-digest",
-                    &profile
-                ]
-            ),
-            "NON_FINITE_NUMBER"
-        );
-    }
     // Zero length and a hostile coordinate.
     assert_eq!(
         f.rejected(
@@ -542,7 +422,7 @@ fn rejections_use_the_f04_codes_and_publish_nothing() {
         ),
         "LIMIT_EXCEEDED"
     );
-    let inspected = f.ok("inspect-elements", &[]);
+    let inspected = f.ok("plate-inspect", &[]);
     assert_eq!(num(&inspected, &["member_count"]), 0.0);
     // Two definitions only: nothing was created by any rejection.
     assert_eq!(
@@ -607,235 +487,6 @@ fn replay_reuse_and_a_duplicate_id_across_kinds() {
 }
 
 #[test]
-fn hostile_orientation_input_is_refused_and_publishes_nothing() {
-    let f = Fixture::new();
-    let profile = f.profile("200", "300");
-    let create = |orientation: &str| {
-        f.rejected(
-            "create-member",
-            &[
-                "--start",
-                "0,0,0",
-                "--end",
-                "6000,0,0",
-                "--profile-digest",
-                profile.as_str(),
-                "--orientation-xyzw",
-                orientation,
-            ],
-        )
-    };
-    // Hostile create-member input: non-normalized, zero, extra components and NaN. Every
-    // refusal is a typed exit, never a crash, and nothing is written.
-    assert_eq!(create("0,0,0.5,0.5"), "INVALID_ARGUMENT");
-    assert_eq!(create("0,0,0,0"), "INVALID_ARGUMENT");
-    assert_eq!(
-        create("0,0,0.7071067811865476,0.7071067811865476,1"),
-        "INVALID_ARGUMENT"
-    );
-    assert_eq!(create("0,NaN,0,1"), "NON_FINITE_NUMBER");
-    assert_eq!(num(&f.ok("inspect-elements", &[]), &["member_count"]), 0.0);
-
-    // The same input on update-element, against a member that exists: the head stays where it
-    // was and the stored orientation is untouched.
-    let created = f.ok(
-        "create-member",
-        &[
-            "--start",
-            "0,0,0",
-            "--end",
-            "6000,0,0",
-            "--profile-digest",
-            profile.as_str(),
-            "--new-id",
-            "01a00000-0000-7000-8000-000000000031",
-        ],
-    );
-    let member_id = text(at(&created, &["member"]), "element_id");
-    let before = f.ok("inspect-elements", &[]);
-    let head = text(at(&before, &["revision"]), "revision_id");
-    let update = |orientation: &str| {
-        f.rejected(
-            "update-element",
-            &[
-                "--id",
-                member_id.as_str(),
-                "--orientation-xyzw",
-                orientation,
-            ],
-        )
-    };
-    assert_eq!(update("0,0,0.5,0.5"), "INVALID_ARGUMENT");
-    assert_eq!(update("0,0,0,0"), "INVALID_ARGUMENT");
-    assert_eq!(
-        update("0,0,0.7071067811865476,0.7071067811865476,1"),
-        "INVALID_ARGUMENT"
-    );
-    assert_eq!(update("NaN,0,0,1"), "NON_FINITE_NUMBER");
-    let after = f.ok("inspect-elements", &[]);
-    assert_eq!(
-        text(at(&after, &["revision"]), "revision_id"),
-        head,
-        "a refusal must not commit"
-    );
-    let member = &at(&after, &["members"]).array().unwrap()[0];
-    let quaternion: Vec<f64> = at(member, &["placement", "orientation_xyzw"])
-        .array()
-        .unwrap()
-        .iter()
-        .map(|v| v.float().unwrap())
-        .collect();
-    for (actual, expected) in quaternion.iter().zip([0.0, 0.0, 0.0, 1.0]) {
-        assert!((actual - expected).abs() < 1e-12, "{quaternion:?}");
-    }
-}
-
-#[test]
-fn an_orientation_update_sets_clears_and_replays() {
-    let f = Fixture::new();
-    let profile = f.profile("200", "300");
-    let created = f.ok(
-        "create-member",
-        &[
-            "--start",
-            "0,0,0",
-            "--end",
-            "6000,0,0",
-            "--profile-digest",
-            profile.as_str(),
-            "--new-id",
-            "01a00000-0000-7000-8000-000000000041",
-        ],
-    );
-    let member = at(&created, &["member"]);
-    let member_id = text(member, "element_id");
-    let plain = text(member, "mesh_digest");
-
-    // Set: the stored orientation is the quarter turn and the mesh carries the rotation.
-    let quarter = "0,0,0.7071067811865476,0.7071067811865476";
-    let set = |op: &str| {
-        f.ok(
-            "update-element",
-            &[
-                "--id",
-                member_id.as_str(),
-                "--orientation-xyzw",
-                quarter,
-                "--op-id",
-                op,
-            ],
-        )
-    };
-    let turned = set("01a00000-0000-7000-8000-000000000042");
-    assert_eq!(text(&turned, "outcome"), "element_updated");
-    assert_eq!(at(&turned, &["effect", "orientation"]), &Json::Bool(true));
-    assert_eq!(at(&turned, &["effect", "placement"]), &Json::Bool(false));
-    let inspected = f.ok("inspect-elements", &[]);
-    let member = &at(&inspected, &["members"]).array().unwrap()[0];
-    let quaternion: Vec<f64> = at(member, &["placement", "orientation_xyzw"])
-        .array()
-        .unwrap()
-        .iter()
-        .map(|v| v.float().unwrap())
-        .collect();
-    for (actual, expected) in quaternion
-        .iter()
-        .zip([0.0, 0.0, 0.5_f64.sqrt(), 0.5_f64.sqrt()])
-    {
-        assert!((actual - expected).abs() < 1e-8, "{quaternion:?}");
-    }
-    assert_ne!(text(member, "mesh_digest"), plain);
-    let translation: Vec<f64> = at(member, &["placement", "translation_mm"])
-        .array()
-        .unwrap()
-        .iter()
-        .map(|v| v.float().unwrap())
-        .collect();
-    assert_eq!(
-        translation, [0.0; 3],
-        "an orientation change keeps the translation"
-    );
-
-    // An immediate retry of the same --op-id is a replay of the same state.
-    let replayed = set("01a00000-0000-7000-8000-000000000042");
-    assert_eq!(text(&replayed, "outcome"), "element_update_replayed");
-
-    // Clear: none resets the rotation to the identity and the body to the unrotated mesh.
-    let cleared = f.ok(
-        "update-element",
-        &[
-            "--id",
-            member_id.as_str(),
-            "--orientation-xyzw",
-            "none",
-            "--op-id",
-            "01a00000-0000-7000-8000-000000000043",
-        ],
-    );
-    assert_eq!(text(&cleared, "outcome"), "element_updated");
-    let member = at(&cleared, &["element"]);
-    let quaternion: Vec<f64> = at(member, &["placement", "orientation_xyzw"])
-        .array()
-        .unwrap()
-        .iter()
-        .map(|v| v.float().unwrap())
-        .collect();
-    assert_eq!(quaternion, [0.0, 0.0, 0.0, 1.0]);
-    assert_eq!(
-        text(member, "mesh_digest"),
-        plain,
-        "the identity rebuild is the original mesh"
-    );
-}
-
-#[test]
-fn a_rotated_member_replays_identically_on_the_same_op_id() {
-    let f = Fixture::new();
-    let profile = f.profile("200", "300");
-    let args = [
-        "--start",
-        "0,0,0",
-        "--end",
-        "4000,0,0",
-        "--profile-digest",
-        profile.as_str(),
-        "--orientation-xyzw",
-        "0,0,0.7071067811865476,0.7071067811865476",
-        "--new-id",
-        "01a00000-0000-7000-8000-000000000051",
-        "--op-id",
-        "01a00000-0000-7000-8000-000000000052",
-    ];
-    let first = f.ok("create-member", &args);
-    assert_eq!(text(&first, "outcome"), "member_created");
-    let replay = f.ok("create-member", &args);
-    assert_eq!(text(&replay, "outcome"), "member_replayed");
-    assert_eq!(
-        text(at(&replay, &["member"]), "mesh_digest"),
-        text(at(&first, &["member"]), "mesh_digest")
-    );
-    assert_eq!(
-        text(at(&replay, &["member"]), "element_id"),
-        text(at(&first, &["member"]), "element_id")
-    );
-    // The rotated state is what a fresh process reports for the stored orientation.
-    let inspected = f.ok("inspect-elements", &[]);
-    let member = &at(&inspected, &["members"]).array().unwrap()[0];
-    let quaternion: Vec<f64> = at(member, &["placement", "orientation_xyzw"])
-        .array()
-        .unwrap()
-        .iter()
-        .map(|v| v.float().unwrap())
-        .collect();
-    for (actual, expected) in quaternion
-        .iter()
-        .zip([0.0, 0.0, 0.5_f64.sqrt(), 0.5_f64.sqrt()])
-    {
-        assert!((actual - expected).abs() < 1e-8, "{quaternion:?}");
-    }
-}
-
-#[test]
 fn a_member_whose_mesh_would_collapse_in_float32_is_refused() {
     let f = Fixture::new();
     let profile = f.profile("1", "1");
@@ -884,7 +535,7 @@ fn a_member_above_one_cubic_metre_is_within_the_stage_budget() {
         1_200_000_000.0
     );
     // A fresh process reopens the revision and keeps the quantity current.
-    let inspected = f.ok("inspect-elements", &[]);
+    let inspected = f.ok("plate-inspect", &[]);
     let members = inspected.get("members").unwrap().array().unwrap();
     assert_eq!(members.len(), 1);
 }

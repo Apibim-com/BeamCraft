@@ -232,7 +232,9 @@ fn an_attached_reference_is_uploaded_and_renders_visible_pixels() {
     assert_eq!(scene.min, [-1000.0; 3]);
     assert_eq!(scene.max, [1000.0; 3]);
     assert_eq!(scene.meshes[0].vertex_count, 36);
-    assert_eq!(scene.meshes[0].instances, [0u8; 12]);
+    let mut identity_instance = vec![0u8; 24];
+    identity_instance.extend_from_slice(&1.0f32.to_le_bytes());
+    assert_eq!(scene.meshes[0].instances, identity_instance);
     assert_eq!(
         Scene::from_snapshot(&snapshot, Representation::Simplified).unwrap(),
         scene,
