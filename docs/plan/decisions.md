@@ -22,9 +22,18 @@ Open questions are at the end.
 - **One opening assignment.** The initiating engineer creates one shared assignment for an
   opening; the responsible host-section engineer decides whether it is acceptable. The physical
   opening is separately authored in the host model and linked to the assignment. Acceptance is
-  distinct from implementation, and applies to the reviewed request/host versions. Full lifecycle
-  and cross-project decision mechanics require subsequent specification; the reserved F10
-  mechanism is not an implemented workflow.
+  distinct from implementation, and applies to the reviewed request/host versions. The reserved
+  F10 mechanism is not an implemented workflow.
+- **Stage 4 approved: reference-first design and assignment files.** Services engineers take a
+  pinned structural project as a read-only reference and model pipes/ducts without cutting holes.
+  They collect required openings and send a file containing individual assignments; structural
+  engineers decide per item and author accepted openings in their own model. Decisions and
+  implementation evidence return in a response file. Retransmission creates no duplicates.
+  Acceptance of a 150 mm proposal never approves its 200 mm successor and never overwrites it;
+  retain the old decision with the exact proposal/host versions it reviewed. A changed structural
+  basis likewise requires revalidation. The [F12 stage 4 companion](../contracts/f12-opening-assignments-v0.1.md)
+  specifies this workflow in the same branch and PR. Detailed encoding and executable acceptance
+  remain open; this approval adds neither a general project-review system nor runtime features.
 - **Existing foundations retained.** USD remains the model; source element identity, immutable
   revisions, typed commands and operation-based merge remain authoritative. The frozen F04/F06/
   F10 0.1 documents and their existing schemas stay unchanged. C03–C06 remain after the MVP;

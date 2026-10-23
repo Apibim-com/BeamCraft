@@ -281,6 +281,24 @@ proposed responsibility and coordination boundary; their schema, commands and re
 must be implemented before claiming support. A second engineering module, review/approval
 workflow and multi-client merge are not delivered by these documents.
 
+## Opening assignments between sections
+
+The approved stage 4 workflow is [specified as an F12 companion](contracts/f12-opening-assignments-v0.1.md).
+The services engineer connects a pinned structural reference, models pipes/ducts without
+changing the structures, collects required openings and sends an assignment file. One file
+can carry many assignments, each with its own persistent identity and proposal version.
+The structural engineer reviews items individually, authors accepted openings in the host
+model and returns exact-version decisions and implementation evidence. File receipt,
+acceptance, physical implementation and coordination update remain separate events.
+
+If a request changes from 150 mm to 200 mm while a reviewer considers the old version, the
+old acceptance remains attached to 150 mm. It neither approves 200 mm nor overwrites the new
+request. A changed host revision requires revalidation. Duplicate deliveries are idempotent;
+competing decisions remain explicit conflicts. Each party writes its own history, and imports
+validated immutable evidence from the other, without a cross-project atomic transaction.
+These are draft contract rules: no file codec, opening-assignment UI or domain module is
+implemented by this documentation change.
+
 # Part 3. Prim structure
 
 ## Prim hierarchy and naming rule

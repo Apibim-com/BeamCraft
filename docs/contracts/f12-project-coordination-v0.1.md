@@ -5,7 +5,9 @@ Status: **draft contract; foundation approved by the owner on 2026-10-22; not im
 The approved foundation has three parts: separate modules from responsible sections; allow
 sections to produce independent projects under one standard; coordinate exact published
 revisions. This contract and the [F10 0.2 amendment](f10-domain-vocabulary-v0.2.md) form one
-documentation work package, developed in one branch and one PR.
+documentation work package, developed in one branch and one PR. The subsequently approved
+stage 4 adds [opening assignments and file exchange](f12-opening-assignments-v0.1.md) to the
+same package, with exact-version review and separate implementation evidence.
 
 ## 1. Invariants and scope
 
@@ -25,9 +27,10 @@ does not authorize writes. Independent projects are not workspaces of the coordi
 project; each can have its own engineers' workspaces. Splitting or combining existing stores
 is an explicit future migration operation, never a consequence of opening a project.
 
-Rebase, semantic merge, review/approval workflows, remote sync, a second engineering module
-and generic display APIs are outside this foundation. Their existing tasks are not moved into
-the MVP. The assignment clarification in F10 records intent, not a completed approval protocol.
+Rebase, semantic merge, general project review/approval workflows, remote sync, a second
+engineering module and generic display APIs are outside this foundation. Their existing tasks
+are not moved into the MVP. The stage 4 companion specifies the approved opening-assignment
+workflow; its concrete file encoding and command protocol remain implementation gates.
 
 ## 2. Identity and project descriptor
 
@@ -91,8 +94,12 @@ The storage implementation must validate these distinctions without weakening F0
 
 **PC-REV-001.** A published revision pins its descriptor, authored and derived resources,
 external resources and dependency revisions by their verified manifests and exact bytes.
-The effective dependency graph is bounded and acyclic by ProjectId on any traversal path;
-repeated siblings are permitted as distinct connections. Missing or damaged required resources
+Composition connections are bounded and acyclic by ProjectId on a composition traversal path;
+repeated siblings are permitted as distinct connections. Historical evidence pins, such as
+opening-assignment responses referencing a proposal based on an earlier host revision, are
+not composition connections. Their bounded dependency graph must be acyclic by exact
+(ProjectId, RevisionId) identities with verified manifest digests; it may revisit a project
+at an older revision. Neither graph is traversed by mutable heads. Missing or damaged required resources
 prevent publication of a complete coordination revision. Lazy geometry loading can defer
 decoding, but cannot substitute for verifying that its required bytes are available.
 
@@ -172,8 +179,9 @@ C12 remains reproducible with its original dependency closure.
 ```
 
 Publishing in a section and selecting its version in coordination are different operations.
-Neither operation implies formal engineering approval or release for construction. Those
-workflows need a separate version-pinned review contract.
+Neither operation implies formal engineering approval or release for construction. The
+stage 4 companion defines version-pinned review of opening assignments only; general project
+approval and release workflows still need their own specification.
 
 ## 7. History and storage reachability
 

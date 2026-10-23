@@ -84,13 +84,20 @@ the host may record a decision on the assignment but cannot alter the proposer's
 fields or other source content. It must run as a shared command, with both participants and
 the exact target state validated, never as a raw foreign-layer edit.
 
-The existing 0.1 transition table and `stateSeq` concurrency checks remain the reserved
-baseline. This amendment does not add a new transition, an `opening` implementation for KR,
-or a cross-project transaction protocol. Version-pinned approval, implementation tracking and
-cross-project decision publication need a subsequent lifecycle contract before implementation.
-In particular, an acceptance must not be presented as current for a changed request or host
-without revalidation; "accepted" and "implemented in the model" are distinct facts. This
-records the owner's workflow clarification without claiming the complete lifecycle is designed.
+The owner-approved stage 4 workflow is specified in the
+[F12 opening-assignment companion](f12-opening-assignments-v0.1.md): engineers design services
+against a pinned structural reference, then send batches of assignments as files. Decisions
+bind exact proposal and reviewed host revisions; acceptance of a 150 mm request never applies
+to its 200 mm successor. Accepted and implemented remain distinct facts.
+
+For file exchange on the proposed 0.2 line, the companion replaces the assumption of a global
+`stateSeq` transaction with immutable, version-pinned proposals and host decisions, each
+published in its owner's local history. The shared decision command records a decision in the
+host's project and never writes the proposer's store. Received records are immutable evidence;
+only validated, authorized records can affect the projected assignment status. The companion
+specifies stale-response handling and partial batch outcomes. The old 0.1 table and fixtures
+remain unchanged; concrete 0.2 commands, encoding and provenance admission are implementation
+gates. No KR opening implementation or distributed transaction is added by these documents.
 
 ## 4. Compatibility and implementation boundary
 
@@ -121,8 +128,9 @@ is advisory; the publisher derives provenance and permissions again from trusted
 
 Additional reserved lifecycle cases: the host section can decide an assignment while its
 request fields remain unchanged; the proposer cannot accept merely because both sections use
-the same module; two decisions with one expected state sequence cannot both succeed; acceptance
-alone does not create a physical opening. Existing `DV-PEN-*` refusals still apply.
+the same module; competing decisions cannot both become the effective acceptance; acceptance
+alone does not create a physical opening. The companion maps the exchanged-assignment
+concurrency rules to F04 refusals and explains their relationship to `DV-PEN-003`.
 
 ## 6. Provenance
 
