@@ -37,6 +37,10 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: cargo-nextest@0.9.149
+
       - name: Format
         if: runner.os == 'Linux'
         run: cargo fmt --all -- --check
@@ -45,7 +49,11 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Test
-        run: cargo test --workspace
+        run: cargo nextest run --workspace --locked --no-fail-fast
+
+      # nextest does not execute rustdoc tests; keep those in the full cross-platform gate.
+      - name: Test documentation
+        run: cargo test --workspace --doc --locked
 
       # F07: committed fixtures must equal the generator output and their manifest digests.
       - name: Verify original fixtures
