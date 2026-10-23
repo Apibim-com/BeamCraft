@@ -4,6 +4,33 @@ Decisions that shape the plan, newest first. Each names its date and, where one 
 document that records it in detail. A later decision overrides an earlier one where they differ.
 Open questions are at the end.
 
+## 2026-10-22
+
+- **Section projects and reproducible coordination: foundation approved.** Distinguish an
+  engineering module (`steel`) from a responsible project section (`KM`, `KMD`) and its optional
+  zones. Sections can share one project store or publish independent projects under one common
+  standard. A coordination revision pins the exact source revisions; a new section publication
+  does not update coordination automatically. This extends the project-organization decision of
+  2026-10-20 from independent zone projects to independent section projects as well. The draft
+  specifications are [F12](../contracts/f12-project-coordination-v0.1.md) and its
+  [F10 0.2 amendment](../contracts/f10-domain-vocabulary-v0.2.md). Their detailed clauses are for
+  review; approved direction is not a claim of implementation or frozen contract acceptance.
+- **One branch and one PR for this foundation.** F12 and the associated vocabulary amendment,
+  architecture alignment and plan references form one coherent documentation task. Do not split
+  this agreed package into multiple PRs. Implementation tasks remain separate from this contract
+  work; no implementation status or MVP priority changes through this approval.
+- **One opening assignment.** The initiating engineer creates one shared assignment for an
+  opening; the responsible host-section engineer decides whether it is acceptable. The physical
+  opening is separately authored in the host model and linked to the assignment. Acceptance is
+  distinct from implementation, and applies to the reviewed request/host versions. Full lifecycle
+  and cross-project decision mechanics require subsequent specification; the reserved F10
+  mechanism is not an implemented workflow.
+- **Existing foundations retained.** USD remains the model; source element identity, immutable
+  revisions, typed commands and operation-based merge remain authoritative. The frozen F04/F06/
+  F10 0.1 documents and their existing schemas stay unchanged. C03–C06 remain after the MVP;
+  approval/review tooling, remote hosting and additional engineering modules are not added to
+  the current implementation scope.
+
 ## 2026-10-21
 
 - **MVP scope widened.** The first version is a full manual steel-modelling tool with views,

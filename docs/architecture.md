@@ -190,8 +190,8 @@ Planned:
 
 ```text
 <code>_Coord.usda                  coordination root (see "Project organization" below)
-├─ <code>[_<zone>]_<discipline>.usda  one authored layer per discipline and zone; a workspace
-│                                  writes only its active discipline (U19)
+├─ <code>[_<zone>]_<section>.usda  one authored layer per section and zone; a workspace
+│                                writes only its authorized active-section scope (U19)
 ├─ options/<option>.usda           design options as delta layers over the base (O01–O04)
 ├─ derived/<element or group>.usda derived data in parts, so one edit does not rewrite all (U15),
 │                                  heavy geometry as payloads loaded on demand (U10)
@@ -203,14 +203,25 @@ Planned:
 
 ## Project organization and layer names
 
-A project is organized the way its team works: by discipline, and optionally by zone (a building,
-block or section such as `K1`, `K2`). Each discipline of each zone is its own authored layer, owned
-by one team; the coordination layer composes them. Zones are optional: a small project has none,
-and a large one may instead be split into one project per zone with a coordination project on top.
+The approved foundation distinguishes a **section** (team deliverable such as `KM` or `KMD`)
+from an **engineering module** (`steel`, which can serve both). The proposed rules are in
+[F12](contracts/f12-project-coordination-v0.1.md) and the
+[F10 0.2 amendment](contracts/f10-domain-vocabulary-v0.2.md); both are draft specifications,
+not implemented capabilities. The frozen F10 0.1 workspace rules remain the old contract line.
 
-**Names.** `<code>[_<zone>]_<discipline>.usda`, with the project code, the optional zone and the
-discipline code. No program version is part of a name; the format version is stored inside. A
-project has layers only for the disciplines it contains: a concrete building without steel has no
+A project is organized by section and optionally by zone (a building or block such as `K1`,
+`K2`). Each section/zone has its own authored scope; the coordination root composes them.
+Zones are optional. Teams may keep sections in one store or create independent projects per
+section or zone, connected read-only by a coordination project. An independent section project
+has its own publication history and engineers' workspaces. It is not a workspace of the
+coordination project. An active section and explicit authorized zone set govern ordinary edits;
+module availability, file names and section codes do not grant rights. Shared metadata and grids
+require separately authorized shared commands.
+
+**Names.** `<code>[_<zone>]_<section>.usda`, with the project code, the optional zone and the
+section code. This clarifies the older `<discipline>` placeholder without changing file names.
+No program version is part of a name; the format version is stored inside. A
+project has layers only for the sections it contains: a concrete building without steel has no
 `KM` or `KMD` layer.
 
 | Code | Content |
@@ -238,6 +249,15 @@ Example, project `2401-DEMO` with two zones:
 The same split as one project per zone: `2401-DEMO-K1_Coord.usda` and `2401-DEMO-K2_Coord.usda` are
 complete projects, and a coordination project `2401-DEMO_Coord.usda` composes both read-only.
 
+The independent-section organization works the same way. Each connection pins the source
+ProjectId, exact RevisionId and manifest digest, with an explicit source scope and rigid
+placement. A coordination revision might pin AR A17, KM S09 and OV M23. Publishing AR A18
+leaves that revision unchanged; an explicit, verified connection update publishes a new
+coordination revision. Missing sources never fall back to `latest`. Retained coordination
+revisions keep their dependency resources reachable. Source-local element paths stay intact;
+the coordination view identifies an element by its source project and element ID, and its
+occurrence by the connection path. F12 defines the draft rules and required acceptance cases.
+
 **Project metadata** in the coordination layer (`customLayerData`): `bim:projectId`,
 `bim:projectCode` (`2401-DEMO`), `bim:projectName` (`Demo warehouse`), `bim:organization` (`ACME`) and
 `bim:zones` (`["K1", "K2"]`, empty for a project without zones).
@@ -256,7 +276,10 @@ Inside the store, layers are still blobs named by their SHA-256; these names are
 manifest gives them and the names a checkout of a revision writes to disk.
 
 **Status:** the code still writes `root.usda`, `authored.usda` and `derived.usda` without zones,
-codes or metadata other than the ProjectId (tasks U19, U20, U21).
+codes or metadata other than the ProjectId (tasks U19, U20, U21). F12 and F10 0.2 specify the
+proposed responsibility and coordination boundary; their schema, commands and retention checks
+must be implemented before claiming support. A second engineering module, review/approval
+workflow and multi-client merge are not delivered by these documents.
 
 # Part 3. Prim structure
 
