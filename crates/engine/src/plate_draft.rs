@@ -6,7 +6,7 @@
 
 use crate::command::{AuthoredPlate, CreatePlateOutcome, MaterialLookup, create_plate};
 use crate::footprint::Footprint;
-use crate::query::committed::PlateRecord;
+use crate::query::committed::{BodyCache, PlateRecord};
 use crate::transaction::PriorOp;
 use beamcraft_model::command::{
     CommandError, CreatePlate, HOLE_POINT_CAP, MAX_HOLES, label_is_valid,
@@ -142,6 +142,18 @@ pub fn evaluate_committed_drafts(
     plates: &[AuthoredPlate],
     materials: MaterialLookup<'_>,
 ) -> Result<(Vec<PlateRecord>, Vec<UnsupportedPlate>), CommandError> {
+    evaluate_committed_drafts_cached(plates, materials, &mut BodyCache::disabled())
+}
+
+/// [`evaluate_committed_drafts`] with a caller-owned [`BodyCache`]: a body already evaluated for
+/// bit-identical shape inputs is shared instead of evaluated again, and every refusal is the
+/// same as without a cache. The per-plate checks, their order and the unsupported-classification
+/// rules are those of the uncached call.
+pub fn evaluate_committed_drafts_cached(
+    plates: &[AuthoredPlate],
+    materials: MaterialLookup<'_>,
+    cache: &mut BodyCache,
+) -> Result<(Vec<PlateRecord>, Vec<UnsupportedPlate>), CommandError> {
     if plates.len() > crate::limits::MAX_ELEMENTS {
         return Err(CommandError::new(
             ErrorCode::LimitExceeded,
@@ -171,13 +183,33 @@ pub fn evaluate_committed_drafts(
                 "committed plate exceeds count caps",
             ));
         }
-        match create_plate_draft(&authored.to_command(), &|id| seen.contains(id), materials)? {
-            PlateDraft::Evaluated(outcome) => evaluated.push(PlateRecord {
-                authored: outcome.authored,
-                body: outcome.body,
-                quantities: outcome.quantities,
-            }),
-            PlateDraft::Unsupported(record) => unsupported.push(*record),
+        if seen.contains(&authored.id) {
+            return Err(CommandError::new(
+                ErrorCode::DuplicateId,
+                "id",
+                "element id appears twice",
+            ));
+        }
+        authored.placement.validate()?;
+        let material = authored.material.as_ref().map(materials).transpose()?;
+        match cache.plate(authored) {
+            Ok(body) => {
+                let quantities = body.quantities_for(material)?;
+                evaluated.push(PlateRecord {
+                    authored: authored.clone(),
+                    body,
+                    quantities,
+                });
+            }
+            Err(error) => {
+                match create_plate_draft(&authored.to_command(), &|_| false, materials)? {
+                    PlateDraft::Unsupported(record) => unsupported.push(*record),
+                    // The cache only mirrors `evaluate_plate`, so an evaluation it refuses is a
+                    // kernel refusal; the draft admission classifying it differently would mean
+                    // the two evaluations disagreed, which is never expected.
+                    PlateDraft::Evaluated(_) => return Err(error),
+                }
+            }
         }
         seen.insert(authored.id);
     }

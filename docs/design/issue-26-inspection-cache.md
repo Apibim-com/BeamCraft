@@ -2,7 +2,7 @@
 
 Date: 2026-10-21. Status: **implemented; performance only, no reply changes.** Developed in the
 fork on `bug/26-inspection-cache`, built and measured on the fork's `master` `538cbed`; the
-figures were not taken again after later merges. Ported to `upstream/master` `53d0624` on
+figures were not taken again after later merges. Ported to `upstream/master` (at `236ce9b`) on
 2026-10-23. Remainder of
 [issue 26](https://github.com/axisrow/BeamCraft/issues/26) of the fork, finding 2: the work
 inside the one inspection that every read command runs.

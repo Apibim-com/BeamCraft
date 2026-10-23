@@ -38,13 +38,13 @@ use beamcraft_engine::command::AuthoredPlate;
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
 use beamcraft_engine::level::Levels;
 use beamcraft_engine::member::AuthoredMember;
-use beamcraft_engine::plate_draft::{UnsupportedPlate, evaluate_committed_drafts};
+use beamcraft_engine::plate_draft::{UnsupportedPlate, evaluate_committed_drafts_cached};
 use beamcraft_engine::quantity::{
     Assessment, Freshness, QuantityRecord, StoredRecord, assess, is_superseded_algorithm,
 };
 use beamcraft_engine::query::committed::{
-    BodyCache, MemberRecord, PlateRecord, evaluate_committed_cached,
-    evaluate_committed_members_cached, ids, scene_elements_with_members,
+    BodyCache, MemberRecord, PlateRecord, evaluate_committed_members_cached, ids,
+    scene_elements_with_members,
 };
 use beamcraft_engine::solid::SolidMesh;
 use beamcraft_engine::transaction::{Admission, PriorOp, admit_create_plate};
@@ -913,7 +913,7 @@ fn evaluate_with(
     let authored: Vec<AuthoredPlate> = decoded.plates.iter().map(|(a, _)| a.clone()).collect();
     let members: Vec<AuthoredMember> = decoded.members.iter().map(|(a, _)| a.clone()).collect();
     let materials = material_lookup(&decoded.definitions);
-    let plates = evaluate_committed_cached(&authored, &materials, cache)?;
+    let (plates, _) = evaluate_committed_drafts_cached(&authored, &materials, cache)?;
     let members = evaluate_committed_members_cached(
         &members,
         &profile_lookup(&decoded.definitions),
@@ -921,6 +921,35 @@ fn evaluate_with(
         cache,
     )?;
     Ok((plates, members))
+}
+
+/// The committed plates the kernel cannot evaluate, listed as authored-only records, over this
+/// thread's [`BODIES`] cache: the second pass of an inspection reuses the bodies the first pass
+/// evaluated instead of paying for them twice. The refusals are those of
+/// `beamcraft_engine::plate_draft::evaluate_committed_drafts`.
+pub(crate) fn evaluate_committed_drafts_with_cache(
+    decoded: &Decoded,
+) -> Result<Vec<UnsupportedPlate>, PlateError> {
+    let authored: Vec<AuthoredPlate> = decoded.plates.iter().map(|(a, _)| a.clone()).collect();
+    let materials = material_lookup(&decoded.definitions);
+    let shared = BODIES.try_with(|cache| {
+        cache
+            .try_borrow_mut()
+            .ok()
+            .map(|mut cache| evaluate_committed_drafts_cached(&authored, &materials, &mut cache))
+    });
+    match shared {
+        Ok(Some(result)) => result
+            .map(|(_, unsupported)| unsupported)
+            .map_err(PlateError::from),
+        // The thread is ending or the cache is in use further up the stack: evaluate with a
+        // cache of this call alone rather than fail.
+        Ok(None) | Err(_) => {
+            evaluate_committed_drafts_cached(&authored, &materials, &mut BodyCache::new())
+                .map(|(_, unsupported)| unsupported)
+                .map_err(PlateError::from)
+        }
+    }
 }
 
 /// The quantity record the engine expects for a plate: its quantities under the signature of its
@@ -1875,9 +1904,7 @@ pub fn inspect_revision(revision: &Revision) -> Result<Inspection, PlateError> {
     reader.verify_index(&index, &control)?;
     let decoded = decode(&reader, &opened, &control)?;
     let (plates, members) = evaluate_decoded(&decoded)?;
-    let authored: Vec<_> = decoded.plates.iter().map(|(p, _)| p.clone()).collect();
-    let (_, unsupported_plates) =
-        evaluate_committed_drafts(&authored, &material_lookup(&decoded.definitions))?;
+    let unsupported_plates = evaluate_committed_drafts_with_cache(&decoded)?;
     let quantities = verify_derived(&plates, &members, &decoded, false)?;
     let pin = ViewPin::new(
         revision.info().manifest_digest(),
