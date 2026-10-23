@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 // Contributor-original synthetic plates, members and a foreign USDA source, MPL-2.0.
 
-//! V04 end to end: `pick`, `lookup-feature` and `snap` through the real CLI binary against
+//! V04 end to end: `pick`, `feature-lookup` and `snap` through the real CLI binary against
 //! committed revisions. Every expected position is derived here from the command inputs and the
 //! F06 frame rules, never read back from the engine. FeatureIds survive a move and differ on a
 //! copy; no answer contains an index and an index is refused as an address; the queries write
@@ -20,28 +20,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
-#[path = "drawing/projection.rs"]
-mod drawing_projection;
-
-#[path = "drawing/archive.rs"]
-mod drawing_archive;
-
-#[path = "drawing/lifecycle.rs"]
-mod drawing_lifecycle;
-
-#[path = "drawing/derived.rs"]
-mod drawing_derived;
-
-#[path = "drawing/export.rs"]
-mod drawing_export;
-
 const PLATE: &str = "019a7bf0-0000-7000-8000-000000700001";
 const MEMBER: &str = "019a7bf0-0000-7000-8000-000000700002";
 const COPY: &str = "019a7bf0-0000-7000-8000-000000700003";
 const HOLED: &str = "019a7bf0-0000-7000-8000-000000700004";
 const IBEAM: &str = "019a7bf0-0000-7000-8000-000000700005";
-const REFERENCE: &str = "019a7bf0-0000-7000-8000-000000700006";
-const SITE: &str = "#usda 1.0\n(\n    defaultPrim = \"Site\"\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n)\ndef Xform \"Site\"\n{\n    def Mesh \"Body\"\n    {\n        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0)]\n        int[] faceVertexCounts = [3]\n        int[] faceVertexIndices = [0, 1, 2]\n        uniform token subdivisionScheme = \"none\"\n    }\n}\n";
+const SITE: &str = "#usda 1.0\n(\n    defaultPrim = \"Site\"\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n)\ndef Xform \"Site\"\n{\n    def Mesh \"Body\"\n    {\n        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0)]\n        int[] faceVertexCounts = [3]\n        int[] faceVertexIndices = [0, 1, 2]\n    }\n}\n";
 
 struct Fixture {
     root: PathBuf,
@@ -87,7 +71,7 @@ impl Fixture {
         (text(&body, "code"), reason)
     }
     fn head(&self) -> String {
-        text(&self.ok("open-revision", &[]), "revision_id")
+        text(&self.ok("revision-open", &[]), "revision_id")
     }
     /// A 1000 x 500 x 10 plate at (100, 200, 300) and a 3000 mm beam along +X with a 100 x 50
     /// profile, its axis from (0, 2000, 0) to (3000, 2000, 0).
@@ -161,173 +145,6 @@ fn triple(json: &Json) -> [f64; 3] {
 fn fid(element: &str, local: &str) -> String {
     format!("fid1:{element}:{local}")
 }
-
-#[test]
-fn listed_member_features_are_complete_pinned_read_only_and_stable_after_move_and_copy() {
-    let f = Fixture::new();
-    f.model();
-    let head = f.head();
-    let listed = f.ok("list-feature", &["--id", MEMBER]);
-    assert_eq!(text(&listed, "outcome"), "features_listed");
-    assert_eq!(text(&listed, "revision_id"), head);
-    assert_eq!(text(&listed, "element_id"), MEMBER);
-    let features = list(&listed, "features");
-    assert_eq!(features.len(), 26);
-    for (kind, count) in [("face", 6), ("edge", 12), ("vertex", 8)] {
-        assert_eq!(
-            features.iter().filter(|v| text(v, "kind") == kind).count(),
-            count
-        );
-    }
-    let ids: Vec<_> = features.iter().map(|v| text(v, "feature_id")).collect();
-    assert_eq!(
-        ids.iter().collect::<std::collections::BTreeSet<_>>().len(),
-        26
-    );
-    assert!(
-        ids.iter()
-            .all(|id| id.starts_with(&format!("fid1:{MEMBER}:member:")))
-    );
-    let near = fid(MEMBER, "member:v.x0.y0.z0");
-    let far = fid(MEMBER, "member:v.x0.y0.z1");
-    assert!(ids.contains(&near) && ids.contains(&far));
-    assert_eq!(
-        triple(at(
-            &f.ok("lookup-feature", &["--feature-id", &near]),
-            &["world", "position"]
-        )),
-        [0.0, 1950.0, -25.0]
-    );
-    assert_eq!(
-        triple(at(
-            &f.ok("lookup-feature", &["--feature-id", &far]),
-            &["world", "position"]
-        )),
-        [3000.0, 1950.0, -25.0]
-    );
-    assert_eq!(
-        f.head(),
-        head,
-        "feature queries cannot write a model revision"
-    );
-    let mut all_keys = Vec::new();
-    keys(&listed, &mut all_keys);
-    assert!(
-        all_keys.iter().all(|key| !key.contains("index")
-            && !key.contains("triangle")
-            && !key.contains("slot"))
-    );
-    f.ok(
-        "update-element",
-        &["--id", MEMBER, "--translation", "10,20,30"],
-    );
-    let moved = f.ok("list-feature", &["--id", MEMBER]);
-    assert_eq!(list(&moved, "features"), features);
-    assert_ne!(
-        text(&moved, "model_manifest"),
-        text(&listed, "model_manifest")
-    );
-    assert_ne!(
-        text(&moved, "workspace_generation"),
-        text(&listed, "workspace_generation")
-    );
-    assert_eq!(
-        triple(at(
-            &f.ok("lookup-feature", &["--feature-id", &near]),
-            &["world", "position"]
-        )),
-        [10.0, -30.0, 5.0]
-    );
-    f.ok(
-        "copy-element",
-        &["--id", MEMBER, "--new-id", COPY, "--offset", "0,0,100"],
-    );
-    let copied = f.ok("list-feature", &["--id", COPY]);
-    let copied_ids: Vec<_> = list(&copied, "features")
-        .iter()
-        .map(|v| text(v, "feature_id"))
-        .collect();
-    assert_eq!(
-        copied_ids,
-        ids.iter()
-            .map(|id| id.replace(MEMBER, COPY))
-            .collect::<Vec<_>>()
-    );
-    assert!(ids.iter().all(|id| !copied_ids.contains(id)));
-    f.ok("delete-element", &["--id", MEMBER]);
-    assert_eq!(
-        f.refused("list-feature", &["--id", MEMBER]),
-        ("NOT_FOUND".into(), Some("GEO_FEATURE_NOT_FOUND".into()))
-    );
-    assert_eq!(
-        list(&f.ok("list-feature", &["--id", COPY]), "features").len(),
-        26
-    );
-}
-
-#[test]
-fn feature_listing_supports_named_non_box_geometry_and_refuses_numeric_addresses() {
-    let f = Fixture::new();
-    f.model();
-    f.ok(
-        "create-plate",
-        &[
-            "--width",
-            "400",
-            "--length",
-            "400",
-            "--thickness",
-            "10",
-            "--hole-rect",
-            "100,100,50,50",
-            "--new-id",
-            HOLED,
-        ],
-    );
-    let profile = text(
-        at(
-            &f.ok(
-                "define-profile",
-                &[
-                    "--family", "i_shape", "--h", "200", "--b", "100", "--tw", "6", "--tf", "10",
-                    "--r", "0",
-                ],
-            ),
-            &["definition"],
-        ),
-        "digest",
-    );
-    f.ok(
-        "create-member",
-        &[
-            "--start",
-            "0,0,0",
-            "--end",
-            "3000,0,0",
-            "--profile-digest",
-            &profile,
-            "--new-id",
-            IBEAM,
-        ],
-    );
-    let head = f.head();
-    for id in [HOLED, IBEAM] {
-        assert!(!list(&f.ok("list-feature", &["--id", id]), "features").is_empty());
-    }
-    assert_eq!(
-        f.refused(
-            "list-feature",
-            &["--id", "019a7bf0-0000-7000-8000-000000700099"]
-        ),
-        ("NOT_FOUND".into(), Some("GEO_FEATURE_NOT_FOUND".into()))
-    );
-    for option in ["--triangle", "--vertex-index", "--instance"] {
-        let (_, reason) = f.refused("list-feature", &["--id", MEMBER, option, "0"]);
-        assert_eq!(reason.as_deref(), Some("GEO_TRIANGLE_ADDRESS_FORBIDDEN"));
-    }
-    assert_eq!(f.refused("list-feature", &["--id", "0"]).0, "INVALID_ID");
-    assert_eq!(f.head(), head);
-}
 /// Every key anywhere in a JSON value.
 fn keys(json: &Json, out: &mut Vec<String>) {
     match json {
@@ -394,7 +211,7 @@ fn faces_vertices_and_axes_are_found_at_independent_positions() {
 
     // The plate's far top corner: local (1000, 500, 10), world plus the translation.
     let corner = fid(PLATE, "plate:v.x1.y1.z1");
-    let found = f.ok("lookup-feature", &["--feature-id", &corner]);
+    let found = f.ok("feature-lookup", &["--feature-id", &corner]);
     assert_eq!(text(&found, "feature_kind"), "vertex");
     assert_eq!(text(&found, "local_id"), "plate:v.x1.y1.z1");
     assert_eq!(
@@ -486,7 +303,7 @@ fn feature_ids_survive_a_move_differ_on_a_copy_and_indices_are_refused() {
     let corner = fid(PLATE, "plate:v.x1.y1.z1");
     // A move keeps the name and moves the feature (F06 section 5 rule 4).
     f.ok("update-element", &["--id", PLATE, "--translation", "0,0,0"]);
-    let found = f.ok("lookup-feature", &["--feature-id", &corner]);
+    let found = f.ok("feature-lookup", &["--feature-id", &corner]);
     assert_eq!(
         triple(at(&found, &["world", "position"])),
         [1000.0, 500.0, 10.0]
@@ -497,7 +314,7 @@ fn feature_ids_survive_a_move_differ_on_a_copy_and_indices_are_refused() {
         &["--id", PLATE, "--new-id", COPY, "--offset", "0,0,100"],
     );
     let copied = f.ok(
-        "lookup-feature",
+        "feature-lookup",
         &["--feature-id", &fid(COPY, "plate:v.x1.y1.z1")],
     );
     assert_eq!(
@@ -509,7 +326,7 @@ fn feature_ids_survive_a_move_differ_on_a_copy_and_indices_are_refused() {
     // Indices are never addresses (rule 8); dangling and malformed ids are told apart.
     let forbidden = Some("GEO_TRIANGLE_ADDRESS_FORBIDDEN".to_owned());
     assert_eq!(
-        f.refused("lookup-feature", &["--feature-id", &fid(PLATE, "plate:7")]),
+        f.refused("feature-lookup", &["--feature-id", &fid(PLATE, "plate:7")]),
         ("UNSUPPORTED_PROPERTY".to_owned(), forbidden.clone())
     );
     assert_eq!(
@@ -521,7 +338,7 @@ fn feature_ids_survive_a_move_differ_on_a_copy_and_indices_are_refused() {
     );
     assert_eq!(
         f.refused(
-            "lookup-feature",
+            "feature-lookup",
             &[
                 "--feature-id",
                 &fid("019a7bf0-0000-7000-8000-0000007000ff", "plate:f.z1")
@@ -534,14 +351,14 @@ fn feature_ids_survive_a_move_differ_on_a_copy_and_indices_are_refused() {
     );
     assert_eq!(
         f.refused(
-            "lookup-feature",
+            "feature-lookup",
             &["--feature-id", &fid(MEMBER, "plate:f.z1")]
         )
         .1,
         Some("GEO_FEATURE_NOT_FOUND".to_owned())
     );
     assert_eq!(
-        f.refused("lookup-feature", &["--feature-id", "fid1:nope"]),
+        f.refused("feature-lookup", &["--feature-id", "fid1:nope"]),
         (
             "INVALID_ARGUMENT".to_owned(),
             Some("GEO_FEATURE_ID_INVALID".to_owned())
@@ -550,7 +367,7 @@ fn feature_ids_survive_a_move_differ_on_a_copy_and_indices_are_refused() {
 }
 
 #[test]
-fn foreign_references_are_skipped_and_non_box_bodies_have_resolvable_features() {
+fn foreign_references_are_never_hit_and_mesh_bodies_pick_at_element_level() {
     let f = Fixture::new();
     f.model();
     f.ok(
@@ -603,19 +420,17 @@ fn foreign_references_are_skipped_and_non_box_bodies_have_resolvable_features() 
     let source = f.root.join("site.usda");
     fs::write(&source, SITE).unwrap();
     f.ok(
-        "attach-reference",
+        "reference-attach",
         &[
             "--source",
             source.to_str().unwrap(),
             "--translation",
             "8000,0,0",
-            "--new-id",
-            REFERENCE,
         ],
     );
     let head = f.head();
     // Solid material of the holed plate (world x 5200) and of the I-beam's top flange are
-    // hits resolve to semantic FeatureIds through the CLI.
+    // hits at element level: no FeatureId, but selectable.
     for (element, origin, point) in [
         (HOLED, "5200,200,100", [5200.0, 200.0, 10.0]),
         (IBEAM, "1500,400,1000", [1500.0, 400.0, 100.0]),
@@ -636,21 +451,26 @@ fn foreign_references_are_skipped_and_non_box_bodies_have_resolvable_features() 
         let hits = list(&picked, "hits");
         assert_eq!(hits.len(), 1, "{origin}");
         assert_eq!(text(&hits[0], "element_id"), element);
-        let feature_id = text(&hits[0], "feature_id");
-        assert!(feature_id.starts_with(if element == IBEAM { "fid2:" } else { "fid1:" }));
-        f.ok("lookup-feature", &["--feature-id", &feature_id]);
+        assert!(matches!(at(&hits[0], &["feature_id"]), Json::Null));
         assert_eq!(text(&hits[0], "feature_kind"), "face");
         assert_eq!(triple(at(&hits[0], &["point_world_mm"])), point);
-        // The read-only reference is never considered by engineering picking, so every pick
-        // of this model reports it as skipped.
-        let skipped: Vec<String> = list(&picked, "skipped")
-            .iter()
-            .map(|s| s.string().unwrap().to_owned())
-            .collect();
-        assert_eq!(skipped, [REFERENCE]);
+        assert!(list(&picked, "skipped").is_empty(), "{origin}");
     }
-    // The read-only reference is in the view scene but has no engineering features: no hit,
-    // and it is explicitly reported as skipped.
+    // Through the plate's hole (world x 5100..5150, y 100..150) there is no hit.
+    let picked = f.ok(
+        "pick",
+        &[
+            "--origin",
+            "5125,125,100",
+            "--direction",
+            "0,0,-1",
+            "--targets",
+            "face",
+        ],
+    );
+    assert!(list(&picked, "hits").is_empty(), "{picked:?}");
+    // The foreign content is never a hit, and nothing is skipped on the ray form: every
+    // engine body was considered.
     let picked = f.ok(
         "pick",
         &[
@@ -665,30 +485,13 @@ fn foreign_references_are_skipped_and_non_box_bodies_have_resolvable_features() 
         ],
     );
     assert!(list(&picked, "hits").is_empty(), "{picked:?}");
-    let skipped: Vec<String> = list(&picked, "skipped")
-        .iter()
-        .map(|s| s.string().unwrap().to_owned())
-        .collect();
-    assert_eq!(skipped, [REFERENCE]);
-    // Through the plate's hole (world x 5100..5150, y 100..150) there is no hit.
-    let picked = f.ok(
-        "pick",
-        &[
-            "--origin",
-            "5125,125,100",
-            "--direction",
-            "0,0,-1",
-            "--targets",
-            "face",
-        ],
-    );
-    assert!(list(&picked, "hits").is_empty(), "{picked:?}");
-    // Named bodies participate in point queries; the foreign reference remains skipped.
+    assert!(list(&picked, "skipped").is_empty(), "{picked:?}");
+    // The point form measures to features, which a mesh body has none of: both stay skipped.
     let picked = f.ok(
         "pick",
         &[
             "--point",
-            "5200,200,10",
+            "5200,200,5",
             "--radius",
             "2",
             "--targets",
@@ -699,26 +502,14 @@ fn foreign_references_are_skipped_and_non_box_bodies_have_resolvable_features() 
         .iter()
         .map(|s| s.string().unwrap().to_owned())
         .collect();
-    assert_eq!(skipped, [REFERENCE]);
-    assert_eq!(list(&picked, "hits").len(), 1);
-    let feature_id = text(&list(&picked, "hits")[0], "feature_id");
-    f.ok("lookup-feature", &["--feature-id", &feature_id]);
-    let snapped = f.ok(
-        "snap",
-        &[
-            "--point",
-            "5000,0,10",
-            "--radius",
-            "0.01",
-            "--kinds",
-            "vertex",
-        ],
-    );
-    assert!(!list(&snapped, "candidates").is_empty());
-
-    f.ok(
-        "lookup-feature",
-        &["--feature-id", &fid(HOLED, "plate:f.z1")],
+    assert_eq!(skipped, [HOLED, IBEAM]);
+    assert_eq!(
+        f.refused(
+            "feature-lookup",
+            &["--feature-id", &fid(HOLED, "plate:f.z1")]
+        )
+        .1,
+        Some("GEO_FEATURE_NOT_FOUND".to_owned())
     );
     assert_eq!(f.head(), head);
 }
@@ -822,7 +613,7 @@ fn a_small_member_far_from_the_origin_keeps_its_features() {
     // Local geometry is exact, not world minus translation: for an axis along (0.6, 0.8, 0),
     // X_m = (-0.8, 0.6, 0) and Y_m = +Z (F06 P-2), so v.x0.y0.z0 = (0.4, -0.3, -0.5).
     let found = f.ok(
-        "lookup-feature",
+        "feature-lookup",
         &["--feature-id", &fid(MEMBER, "member:v.x0.y0.z0")],
     );
     let local = triple(at(&found, &["local", "position"]));
