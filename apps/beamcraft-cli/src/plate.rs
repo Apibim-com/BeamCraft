@@ -22,24 +22,21 @@
 //!   the first revision (or supplied for the first one), the generation is the head's plus one.
 //!   `CreatePlate` and `CommitWorkspace` are fused: a successful call is a published revision.
 //!   Workspaces, drafts and undo (P06, P07) do not exist.
-//! * The layer engine runs **in this process**. The owner decision of 2026-10-16 places it in a
-//!   separate process (LEW-03 containment); there is no authoring message in the frozen U04
-//!   profile, so this path has no process isolation and must not be treated as a hostile-parser
-//!   boundary.
+//! * The layer engine runs **in this process**, as every USD read and write does (U17). A
+//!   hostile or corrupt layer is an ordinary refusal under the layer engine's size and depth
+//!   budgets, and the project's own layers are verified by SHA-256 before they are parsed.
 //! * Replay (`op_id`): an operation the host ledger proves committed is compared with the
 //!   element of that id in the head revision. This is sound only while no command edits or
-//!   deletes elements (true in P01); the stored canonical request of F05 replaces it.
+//!   deletes elements (true in P01); a stored canonical request (F04 section 3) replaces it.
 //! * Quantities are returned, not stored: the pinned U02 schema has no quantity attributes.
 
 use crate::definition::{
     DefinitionRecord, decode_definitions, definition_digest, material_lookup, profile_lookup,
 };
 use crate::level::levels_of;
-use crate::marks::marks_of;
 use beamcraft_engine::command::AuthoredPlate;
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
 use beamcraft_engine::level::Levels;
-use beamcraft_engine::marks::Numbering;
 use beamcraft_engine::member::AuthoredMember;
 use beamcraft_engine::quantity::{
     Assessment, Freshness, QuantityRecord, StoredRecord, assess, is_superseded_algorithm,
@@ -103,7 +100,7 @@ pub struct PlateError {
 }
 
 impl PlateError {
-    pub(crate) const fn new(code: ErrorCode, message: &'static str) -> Self {
+    const fn new(code: ErrorCode, message: &'static str) -> Self {
         Self { code, message }
     }
 }
@@ -384,8 +381,8 @@ pub(crate) struct Decoded {
     pub(crate) levels: Levels,
     /// The common facts of every element except levels, by id.
     pub(crate) elements: BTreeMap<ElementId, ElementMeta>,
-    /// The marks of the model and their approval states (A08).
-    pub(crate) marks: Numbering,
+    /// Display conversion must not reject otherwise valid R01 attachment or inspection.
+    reference_scene: Result<Vec<beamcraft_engine::SceneElement>, PlateError>,
 }
 
 pub(crate) fn number(value: &Value) -> Option<f64> {
@@ -692,7 +689,11 @@ pub(crate) fn decode(
             continue;
         };
         let id = ElementId::parse(text_id).map_err(|_| integrity("element id is not a UUIDv7"))?;
-        if prim.path != id.prim_path() {
+        let category = property(prim, "bim:elementKind")
+            .and_then(text)
+            .and_then(beamcraft_model::prim::ElementCategory::from_kind)
+            .ok_or_else(|| integrity("unknown element category"))?;
+        if prim.path != id.prim_path(category) {
             return Err(integrity("element path does not match its id"));
         }
         let mesh = || {
@@ -717,14 +718,13 @@ pub(crate) fn decode(
             Some("column") => {
                 members.push((decode_member(prim, id, MemberKind::Column)?, mesh()));
             }
-            // R01 wrappers are decoded by `beamcraft_cli::reference`.
+            // The read-only reference representation is decoded separately below.
             Some("reference") => {}
             _ => other += 1,
         }
     }
     let definitions = decode_definitions(&prims)?;
     let levels = levels_of(&prims)?;
-    let marks = marks_of(&prims)?;
     Ok(Decoded {
         plates,
         members,
@@ -732,7 +732,7 @@ pub(crate) fn decode(
         definitions,
         levels,
         elements,
-        marks,
+        reference_scene: crate::reference_view::scene_elements(&prims),
     })
 }
 
@@ -945,7 +945,7 @@ pub struct QuantityReport {
 /// authored inputs, and a stored quantity record must be the engine's or, outside `strict` mode,
 /// is reported as stale. Publishing is strict: a layer whose stored quantities disagree with the
 /// kernel cannot become a revision.
-pub(crate) fn verify_derived(
+fn verify_derived(
     records: &[PlateRecord],
     member_records: &[MemberRecord],
     decoded: &Decoded,
@@ -1371,7 +1371,6 @@ fn layer_group(group: LayerGroup) -> Group {
         LayerGroup::Material => Group::MaterialRef,
         LayerGroup::Derived => Group::Derived,
         LayerGroup::Relationship => Group::Relationship,
-        LayerGroup::Mark => Group::Mark,
     }
 }
 
@@ -1650,8 +1649,6 @@ pub fn create_plate(
     let committed = publish_revision(
         store,
         &PublishRequest {
-            footprint: &transaction.outcome.footprint,
-            fingerprint: transaction.outcome.fingerprint,
             prepared: &prepared,
             schema,
             project: &project,
@@ -1673,8 +1670,6 @@ pub fn create_plate(
 
 /// What `publish_revision` needs to turn a prepared candidate into a committed revision.
 pub(crate) struct PublishRequest<'a> {
-    pub(crate) footprint: &'a Footprint,
-    pub(crate) fingerprint: ContentDigest,
     pub(crate) prepared: &'a Prepared,
     pub(crate) schema: SchemaIdentity,
     pub(crate) project: &'a str,
@@ -1735,15 +1730,7 @@ pub(crate) fn publish_revision(
         root_layer: ROOT_LAYER.into(),
         entries,
     };
-    let pin =
-        crate::command_evidence::store(store, &request.op, request.fingerprint, request.footprint)?;
-    Ok(store.commit_with_evidence(
-        &draft,
-        request.expected,
-        Some(pin),
-        Some(&PlateVerifier),
-        hook,
-    )?)
+    Ok(store.commit_with(&draft, request.expected, Some(&PlateVerifier), hook)?)
 }
 
 /// Commits a complete layer set through U06/U07 with the content verifier of this module (U03
@@ -1755,17 +1742,7 @@ pub(crate) fn commit_verified(
     expected: &ExpectedBase,
     hook: &mut dyn CommitHook,
 ) -> Result<Committed, PlateError> {
-    commit_verified_with_evidence(store, draft, expected, None, hook)
-}
-
-pub(crate) fn commit_verified_with_evidence(
-    store: &RevisionStore,
-    draft: &RevisionDraft,
-    expected: &ExpectedBase,
-    evidence: Option<beamcraft_host::revision::EvidencePin>,
-    hook: &mut dyn CommitHook,
-) -> Result<Committed, PlateError> {
-    Ok(store.commit_with_evidence(draft, expected, evidence, Some(&PlateVerifier), hook)?)
+    Ok(store.commit_with(draft, expected, Some(&PlateVerifier), hook)?)
 }
 
 /// A plate as listed from a committed revision.
@@ -1785,6 +1762,9 @@ pub struct Inspection {
     pub definitions: BTreeMap<ContentDigest, DefinitionRecord>,
     /// The pinned view snapshot built from committed data.
     pub snapshot: ViewSnapshot,
+    /// A reference outside the translation-only display profile. Non-view inspection still
+    /// works, but a viewport must refuse the incomplete bundle rather than silently omit it.
+    pub reference_view_error: Option<PlateError>,
     /// D1: the ProjectId recorded in the root layer of the revision, or `None` for a store whose
     /// first revision predates the record (never invented for it).
     pub project_record: Option<String>,
@@ -1853,12 +1833,16 @@ pub fn inspect_revision(revision: &Revision) -> Result<Inspection, PlateError> {
         revision.info().manifest_digest(),
         content.workspace_generation(),
     );
-    let snapshot = ViewSnapshot::build(
-        pin,
-        scene_elements_with_members(&plates, &members)?,
-        &Limits::default(),
-    )
-    .map_err(|e| PlateError::new(e.f04_code(), "view snapshot could not be built"))?;
+    let mut scene = scene_elements_with_members(&plates, &members)?;
+    let reference_view_error = match decoded.reference_scene {
+        Ok(references) => {
+            scene.extend(references);
+            None
+        }
+        Err(error) => Some(error),
+    };
+    let snapshot = ViewSnapshot::build(pin, scene, &Limits::default())
+        .map_err(|e| PlateError::new(e.f04_code(), "view snapshot could not be built"))?;
     Ok(Inspection {
         revision: summarize(revision.info()),
         plates,
@@ -1867,6 +1851,7 @@ pub fn inspect_revision(revision: &Revision) -> Result<Inspection, PlateError> {
         other_elements: decoded.other_elements,
         definitions: decoded.definitions,
         snapshot,
+        reference_view_error,
         project_record: record,
         levels: decoded.levels,
         elements: decoded.elements,

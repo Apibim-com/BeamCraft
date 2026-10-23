@@ -5,7 +5,6 @@
 //! The builder trusts neither the caller's `kind` nor any mesh: it re-validates every blob.
 
 mod reference;
-pub(crate) use reference::foreign_surface;
 pub use reference::{ReferenceGeometry, reference_element};
 
 use crate::element::{ElementId, ElementKind};
@@ -13,9 +12,6 @@ use beamcraft_geom::{Point3, Translation3};
 use beamcraft_kernel::PlateResult;
 use beamcraft_model::digest::ContentDigest;
 use std::sync::Arc;
-
-/// Transport bound for a single kernel-authored local face role.
-pub(crate) const MAX_FACE_ROLE_BYTES: usize = 1024;
 
 /// The mesh of one representation: the exact BCMESH01 blob, its digest and the vertex positions
 /// (element-local millimetres) the bounds are computed from. Any sealed kernel body can be
@@ -26,8 +22,6 @@ pub struct SceneMesh {
     pub(crate) blob: Arc<[u8]>,
     pub(crate) digest: ContentDigest,
     pub(crate) vertices: Arc<[Point3]>,
-    /// Stable local face roles kept beside the index-based BCMESH01 face table.
-    pub(crate) face_table: Arc<[String]>,
 }
 
 impl SceneMesh {
@@ -44,15 +38,7 @@ impl SceneMesh {
             blob,
             digest,
             vertices: vertices.into(),
-            face_table: Arc::from([]),
         }
-    }
-
-    /// Keeps kernel-authored semantic face roles beside the mesh buffer.
-    #[must_use]
-    pub(crate) fn with_face_table(mut self, face_table: Vec<String>) -> Self {
-        self.face_table = face_table.into();
-        self
     }
 }
 
@@ -63,12 +49,6 @@ impl From<&PlateResult> for SceneMesh {
             blob: Arc::from(mesh.blob().as_slice()),
             digest: mesh.mesh_digest(),
             vertices: Arc::from(mesh.vertices().as_slice()),
-            face_table: Arc::from(
-                mesh.face_table()
-                    .iter()
-                    .map(|id| (*id).to_owned())
-                    .collect::<Vec<_>>(),
-            ),
         }
     }
 }
@@ -90,7 +70,6 @@ pub struct SceneElement {
     pub(crate) id: ElementId,
     pub(crate) kind: ElementKind,
     pub(crate) placement: Translation3,
-    pub(crate) orientation_xyzw: [f64; 4],
     pub(crate) full: SceneMesh,
     pub(crate) simplified: Option<SceneMesh>,
 }
@@ -108,17 +87,9 @@ impl SceneElement {
             id,
             kind,
             placement,
-            orientation_xyzw: [0.0, 0.0, 0.0, 1.0],
             full: full.into(),
             simplified: None,
         }
-    }
-
-    /// Sets an admitted rigid orientation in quaternion `(x, y, z, w)` form.
-    #[must_use]
-    pub fn with_orientation(mut self, orientation_xyzw: [f64; 4]) -> Self {
-        self.orientation_xyzw = orientation_xyzw;
-        self
     }
 
     /// Adds a distinct simplified representation.
