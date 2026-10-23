@@ -34,6 +34,15 @@ Open questions are at the end.
   basis likewise requires revalidation. The [F12 stage 4 companion](../contracts/f12-opening-assignments-v0.1.md)
   specifies this workflow in the same branch and PR. Detailed encoding and executable acceptance
   remain open; this approval adds neither a general project-review system nor runtime features.
+- **Stage 6 approved: common Craft viewing, specialized editing.** Every Craft application
+  can inspect admitted project content from other sections. Editing requires the compatible
+  owning engineering module, for example MEP capabilities in MEPCraft, plus authority over
+  the active section/zone. Application names and viewing capability grant no editing rights.
+  An unavailable module leaves its content preserved and read-only. Supplied display geometry
+  does not establish engineering validity; unsupported representations remain explicitly
+  unavailable. The [F12 stage 6 companion](../contracts/f12-craft-read-capabilities-v0.1.md)
+  belongs in the same branch and PR. This is a contract direction, not a claim that MEPCraft
+  or additional engineering modules have been implemented.
 - **Existing foundations retained.** USD remains the model; source element identity, immutable
   revisions, typed commands and operation-based merge remain authoritative. The frozen F04/F06/
   F10 0.1 documents and their existing schemas stay unchanged. C03–C06 remain after the MVP;

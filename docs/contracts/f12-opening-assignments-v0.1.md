@@ -177,5 +177,6 @@ These are contract requirements, not executed tests. Refusals use existing F04 c
 Also require interrupted-import/publication recovery, unknown package versions, hostile paths,
 truncated input, bounded repeated evidence and retention of live proposal/decision bases.
 Existing C03–C06 remain deferred; no automatic rebase, second engineering module or network
-coordinator is needed merely to specify this file-based workflow. The broader points 5
-(`builtFrom` and other inter-section dependencies) and 6 (generic viewing) remain separate work.
+coordinator is needed merely to specify this file-based workflow. The broader point 5
+(`builtFrom` and other inter-section dependencies) remains separate work. Approved point 6
+is specified in the [common Craft reading companion](f12-craft-read-capabilities-v0.1.md).

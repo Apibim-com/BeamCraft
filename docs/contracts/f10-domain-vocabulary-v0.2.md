@@ -65,6 +65,12 @@ unchanged on the 0.1 line. `DV-OWN-001` and namespace checks remain additional c
 permission within a section never permits writing another module's private attributes.
 Module enable/disable and unknown-content preservation otherwise retain section 7.4's rules.
 
+The approved [F12 stage 6 companion](f12-craft-read-capabilities-v0.1.md) expands section 7.4's
+read-only viewing requirement into common Craft reading and specialized editing capabilities.
+All Craft applications inspect admitted content through the shared read contract; only a
+compatible owning module can supply engineering edits, subject to the scope checks above.
+BeamCraft and MEPCraft are application examples, not module tokens or permission grants.
+
 ## 3. One shared opening assignment
 
 The engineering-facing name for the reserved `penetration` request is **opening assignment**

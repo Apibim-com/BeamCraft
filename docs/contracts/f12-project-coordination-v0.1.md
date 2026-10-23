@@ -7,7 +7,9 @@ sections to produce independent projects under one standard; coordinate exact pu
 revisions. This contract and the [F10 0.2 amendment](f10-domain-vocabulary-v0.2.md) form one
 documentation work package, developed in one branch and one PR. The subsequently approved
 stage 4 adds [opening assignments and file exchange](f12-opening-assignments-v0.1.md) to the
-same package, with exact-version review and separate implementation evidence.
+same package, with exact-version review and separate implementation evidence. Approved
+[stage 6](f12-craft-read-capabilities-v0.1.md) defines common reading across Craft applications
+and specialized module editing in this same package.
 
 ## 1. Invariants and scope
 
@@ -27,10 +29,11 @@ does not authorize writes. Independent projects are not workspaces of the coordi
 project; each can have its own engineers' workspaces. Splitting or combining existing stores
 is an explicit future migration operation, never a consequence of opening a project.
 
-Rebase, semantic merge, general project review/approval workflows, remote sync, a second
-engineering module and generic display APIs are outside this foundation. Their existing tasks
-are not moved into the MVP. The stage 4 companion specifies the approved opening-assignment
-workflow; its concrete file encoding and command protocol remain implementation gates.
+Rebase, semantic merge, general project review/approval workflows, remote sync and a second
+engineering module remain outside this foundation. Their existing tasks are not moved into
+the MVP. The stage 4 companion specifies opening-assignment exchange; stage 6 specifies
+common read/display and specialized editing capabilities. Concrete file encoding, read APIs
+and command protocols remain implementation gates.
 
 ## 2. Identity and project descriptor
 

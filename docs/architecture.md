@@ -281,6 +281,21 @@ proposed responsibility and coordination boundary; their schema, commands and re
 must be implemented before claiming support. A second engineering module, review/approval
 workflow and multi-client merge are not delivered by these documents.
 
+## Common Craft viewing and specialized editing
+
+The approved [stage 6 contract](contracts/f12-craft-read-capabilities-v0.1.md) gives Craft
+applications a common read path for admitted content from all project sections. For example,
+BeamCraft can inspect supplied MEP representations and properties read-only; MEPCraft supplies
+MEP editing and can inspect steel read-only. An application exposes its enabled modules;
+editing still requires a compatible owning module, a supported typed command and authority
+over the active section/zone. Application branding grants no rights.
+
+The common reader lists identity, provenance, relationships, declared properties and supported
+representations without invoking an absent engineering module. Missing geometry remains an
+explicit state; display-only meshes and unknown quantities never imply certified engineering
+results. Generic property panels cannot bypass typed commands. This is a proposed common API
+boundary, not an implemented cross-product viewer or a decision to duplicate the core.
+
 ## Opening assignments between sections
 
 The approved stage 4 workflow is [specified as an F12 companion](contracts/f12-opening-assignments-v0.1.md).
