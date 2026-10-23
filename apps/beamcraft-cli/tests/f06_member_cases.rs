@@ -15,7 +15,6 @@ use beamcraft_engine::member::{CreateMemberOutcome, ProfileInfo, create_straight
 use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::{CreatePlate, CreateStraightMember, MemberKind, Placement};
 use beamcraft_model::digest::Sha256;
-use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -335,22 +334,6 @@ fn the_thirty_f06_member_and_mixed_cases_have_explicit_evidence() {
         } else {
             let density = input.get("density_kg_m3").ok().and_then(|v| v.float().ok());
             let result = member(input, input.get("body").unwrap(), density);
-            if id == "POS-12" {
-                assert_eq!(result.unwrap_err().code, ErrorCode::UnsupportedGeometry);
-                println!("DEVIATION F06-{id}: world rotation is UNSUPPORTED_GEOMETRY");
-                continue;
-            }
-            if matches!(id, "NEG-52" | "NEG-53") {
-                assert_eq!(
-                    expected.get("f04_code").unwrap().string().unwrap(),
-                    "INVALID_ARGUMENT"
-                );
-                assert_eq!(result.unwrap_err().code, ErrorCode::LimitExceeded);
-                println!(
-                    "DEVIATION F06-{id}: expected INVALID_ARGUMENT, observed LIMIT_EXCEEDED for negative width"
-                );
-                continue;
-            }
             if id.starts_with("NEG-") {
                 assert_eq!(
                     result.unwrap_err().code.as_str(),
