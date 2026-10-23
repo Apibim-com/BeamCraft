@@ -7,8 +7,8 @@
 //! * [`create_changeset`] packages the unsent draft revisions of a workspace: the base revision
 //!   (the workspace's fork or last publication), every unsent operation with the manifest digest
 //!   of its draft revision, the complete layer set of the draft head with each layer's base
-//!   digest, the changed layers as required blobs, and a conservative footprint derived from the
-//!   difference between the base and the head model. The canonical bytes are stored as a blob
+//!   digest, the changed layers as required blobs, and the aggregate captured command footprint
+//!   (a conservative state-difference footprint for legacy intervals). Canonical bytes are a blob
 //!   in the workspace store, so the changeset is addressed by its digest.
 //! * [`apply_changeset`] decodes and validates a changeset, checks the claimed actor against the
 //!   trusted caller (`PERMISSION_DENIED`), binds the changeset id to the payload digest in the
@@ -17,14 +17,11 @@
 //!   published head (`BASE_REVISION_MISMATCH`), copies and verifies the blobs, and commits the
 //!   layers through U06/U07 with the strict verifier, with the changeset id as the operation.
 //!
-//! Honesty limits: the trusted caller context is the CLI's `--actor-id` (there is no
-//! authentication until C02); there is no rebase (C03) or semantic conflict detection (C04): a
-//! moved head is refused. The footprint is derived from the USD difference, conservatively, not
-//! from the per-command engine footprints of the draft operations, which are not journaled.
+//! Honesty limits: the CLI's `--actor-id` is its trusted context; C02's opt-in coordinator derives
+//! that context from its token. A moved head is refused; this does not implement C03 rebase or
+//! C04 conflict resolution. A legacy or unverified source interval never earns precise evidence.
 
-use crate::plate::{
-    PlateError, RevisionSummary, commit_verified, integrity, open_request, summarize,
-};
+use crate::plate::{PlateError, RevisionSummary, integrity, open_request, summarize};
 use crate::workspace::{WorkspaceMeta, read_meta, write_meta};
 use beamcraft_host::revision::{
     CommitHook, CommitOutcome, ExpectedBase, LayerEntry, LayerRole as HostRole, Revision,
@@ -34,7 +31,7 @@ use beamcraft_layer_engine::authored::schema_identity;
 use beamcraft_layer_engine::{Asset as LayerAsset, Cancellation, Control, Prim, Reader};
 use beamcraft_model::changeset::{
     Access, Asset, Changeset, Dependency, DependencyGroup, DependencyTarget, LayerDelta, LayerRole,
-    MAX_CHANGESET_BYTES, MAX_OPERATIONS, Operation, Receipt,
+    MAX_CHANGESET_BYTES, MAX_OPERATIONS, Receipt,
 };
 use beamcraft_model::command::CommandError;
 use beamcraft_model::digest::ContentDigest;
@@ -382,11 +379,14 @@ pub fn create_changeset(
     dir: &Path,
     request: &CreateChangeset,
 ) -> Result<StoredChangeset, PlateError> {
-    let meta = read_meta(dir)?;
+    let state = crate::workspace::WorkspaceState::open(dir)?;
+    let meta = state.meta().ok_or_else(crate::workspace::unusable)?;
     let draft = workspace.open()?;
     let head_sequence = draft.info().sequence();
-    if meta.synced_sequence == 0 {
-        return Err(integrity("workspace metadata names no synced revision"));
+    if meta.synced_sequence == 0 || meta.rebase_sequence > head_sequence {
+        return Err(integrity(
+            "workspace metadata disagrees with its draft head",
+        ));
     }
     if head_sequence <= meta.synced_sequence {
         return Err(PlateError {
@@ -401,15 +401,25 @@ pub fn create_changeset(
             message: "too many unsent revisions for one changeset",
         });
     }
-    let base = workspace.open_at(meta.synced_sequence)?;
-    let mut operations = Vec::new();
-    for sequence in meta.synced_sequence.saturating_add(1)..=head_sequence {
-        let info = workspace.info_at(sequence)?;
-        operations.push(Operation {
-            op_id: OpId::from_uuid(host_id(info.manifest().content().op())?),
-            result: info.manifest_digest(),
-        });
+    let base = crate::workspace::published_base(published, meta)?;
+    let content = draft.manifest().content();
+    let base_content = base.manifest().content();
+    if content.project() != base_content.project()
+        || content.schema() != base_content.schema()
+        || content.workspace() != &meta.workspace_id
+    {
+        return Err(integrity(
+            "the draft context differs from its accepted base",
+        ));
     }
+    let operations =
+        crate::command_evidence::interval(workspace, meta.synced_sequence, head_sequence)?;
+    let evidence =
+        crate::command_evidence::aggregate(workspace, meta.synced_sequence, &operations)?;
+    let dependencies = match evidence.footprint.as_ref() {
+        Some(footprint) => crate::command_evidence::dependencies(footprint),
+        None => footprint(&prims_of(&base)?, &prims_of(&draft)?)?,
+    };
     let base_layers: BTreeMap<&str, ContentDigest> = base
         .manifest()
         .content()
@@ -417,7 +427,6 @@ pub fn create_changeset(
         .iter()
         .map(|e| (e.name(), e.digest()))
         .collect();
-    let content = draft.manifest().content();
     let mut layers = Vec::new();
     let mut assets = BTreeSet::new();
     for entry in content.entries() {
@@ -437,16 +446,9 @@ pub fn create_changeset(
         layers.push(delta);
     }
     layers.sort();
-    let project = published
-        .head()?
-        .ok_or_else(|| integrity("the published store has no revision"))?
-        .manifest()
-        .content()
-        .project()
-        .clone();
     let changeset = Changeset {
         changeset_id: request.changeset_id,
-        project: ProjectId::from_uuid(host_id(&project)?),
+        project: ProjectId::from_uuid(host_id(base_content.project())?),
         workspace: WorkspaceId::from_uuid(host_id(&meta.workspace_id)?),
         actor: match request.actor {
             Some(actor) => actor,
@@ -456,7 +458,7 @@ pub fn create_changeset(
         base_manifest: meta.base_manifest,
         revision: request.revision_id,
         operations,
-        dependencies: footprint(&prims_of(&base)?, &prims_of(&draft)?)?,
+        dependencies,
         layers,
         root_layer: content.root_layer().to_owned(),
         assets: assets.into_iter().collect(),
@@ -513,11 +515,12 @@ fn advance_workspace(
         if info.manifest_digest() == last.result {
             return write_meta(
                 dir,
+                Some(&meta),
                 &WorkspaceMeta {
                     base_revision: published.revision().clone(),
                     base_manifest: published.manifest_digest(),
                     synced_sequence: sequence,
-                    ..meta
+                    ..meta.clone()
                 },
             );
         }
@@ -543,12 +546,13 @@ pub fn apply_changeset(
     let id = as_host(&changeset.changeset_id.to_string())?;
     let receipt = changeset.admit(trusted_actor, published.changeset_claim(&id)?)?;
     // The workspace metadata is checked before anything is published, so a later workspace update
-    // can only fail for I/O reasons.
+    // can fail for I/O or a concurrent metadata transition. A published result stays successful.
     let meta = read_meta(dir)?;
-    if workspace
-        .head()?
-        .is_none_or(|head| meta.synced_sequence == 0 || meta.synced_sequence > head.sequence())
-    {
+    if workspace.head()?.is_none_or(|head| {
+        meta.synced_sequence == 0
+            || meta.synced_sequence > head.sequence()
+            || meta.rebase_sequence > head.sequence()
+    }) {
         return Err(integrity("workspace metadata disagrees with its revisions"));
     }
     // An operation id committed for something else is never this changeset's publication.
@@ -588,6 +592,55 @@ pub fn apply_changeset(
             code: ErrorCode::BaseRevisionMismatch,
             message: "the published head is not the changeset's base",
         });
+    }
+    let source =
+        crate::command_evidence::aggregate(workspace, meta.synced_sequence, &changeset.operations)?;
+    let source_content = source.head.manifest().content();
+    if source.head.sequence() < meta.rebase_sequence
+        || source_content.project() != content.project()
+        || source_content.workspace() != &meta.workspace_id
+        || changeset.workspace.to_string() != meta.workspace_id.as_str()
+        || changeset.base_revision.to_string() != meta.base_revision.as_str()
+        || changeset.base_manifest != meta.base_manifest
+        || source_content.schema() != content.schema()
+        || source_content.root_layer() != changeset.root_layer
+        || source_content.entries().len() != changeset.layers.len()
+        || source_content
+            .entries()
+            .iter()
+            .zip(&changeset.layers)
+            .any(|(a, b)| {
+                a.name() != b.name
+                    || a.role() != host_role(b.role)
+                    || a.digest() != b.digest
+                    || a.size() != b.size
+            })
+    {
+        return Err(integrity(
+            "changeset output differs from its verified source interval",
+        ));
+    }
+    let expected_dependencies = match source.footprint.as_ref() {
+        Some(footprint) => crate::command_evidence::dependencies(footprint),
+        None => {
+            let source_revision = workspace.open_at(source.head.sequence())?;
+            let mut expected = footprint(&prims_of(&head)?, &prims_of(&source_revision)?)?;
+            // Old C01 v1 payloads had no mark group. They retain conservative validation and
+            // never acquire a precise destination proof merely by passing the legacy path.
+            if !changeset
+                .dependencies
+                .iter()
+                .any(|d| d.group == DependencyGroup::Mark)
+            {
+                expected.retain(|d| d.group != DependencyGroup::Mark);
+            }
+            expected
+        }
+    };
+    if changeset.dependencies != expected_dependencies {
+        return Err(integrity(
+            "changeset dependencies differ from verified source operations",
+        ));
     }
     let head_layers: BTreeMap<&str, ContentDigest> = content
         .entries()
@@ -649,10 +702,16 @@ pub fn apply_changeset(
         root_layer: changeset.root_layer.clone(),
         entries,
     };
-    let committed = commit_verified(
+    let evidence = source
+        .footprint
+        .as_ref()
+        .map(|footprint| crate::command_evidence::store(published, &draft.op, digest, footprint))
+        .transpose()?;
+    let committed = crate::plate::commit_verified_with_evidence(
         published,
         &draft,
         &ExpectedBase::Revision(head.info().revision().clone()),
+        evidence,
         hook,
     )?;
     let workspace_synced = sync_workspace(workspace, dir, &changeset, &committed.info);

@@ -13,6 +13,24 @@ Build offline with `cargo build --offline -p beamcraft-cli --bins`.
 `beamcraft --help` describes the bounded arguments. Results are one JSON object on standard
 output, with strings for generations and other lossless integers.
 
+Modelling commits also pin the admitted command's exact read/write footprint and typed request
+fingerprint as operation evidence in the revision manifest. This includes unchanged copy sources,
+linked parts and immutable definitions, which a state diff cannot recover. The public
+`command_evidence::read` API verifies canonical bytes and operation binding; legacy absence stays
+explicit. The host protects the evidence through replay, recovery and compaction. Workspace
+publication and changeset application aggregate a complete, verified source interval, preserving
+reads of unchanged objects. A receiver recomputes dependencies and checks the ordered source
+operations and exact final layer set before publishing. The aggregate is bound to the destination
+operation and immutable source-manifest or changeset digest. Operations and aggregate read/write
+entries are capped at 4096, counting repeated entries before union.
+
+Low-level `revision-commit`, workspace forks and history restoration do not fabricate command
+evidence. An interval with any absent or unverified record uses conservative changeset dependencies
+and publishes without precise evidence; malformed evidence still fails closed. C01 wire v1 stays
+byte-compatible; the additional `mark` group uses canonical v2 without changing existing tags.
+This preserves the command's actual groups (A09 approval currently declares label writes). Missing
+evidence never proves independence. Publication still requires the current base; rebase is separate.
+
 Exit codes: 0 success, 2 input or validation refusal or an unavailable command, 3 backend
 unavailable, 4 outcome unknown, 124 deadline, 130 cancelled. `--timeout-ms` accepts 1..120000
 (default 30000) and `--cancel-after-ms` accepts 0..120000 on the blob and revision commands
@@ -288,6 +306,42 @@ revisions and whether the base is still the published head. `workspace-publish` 
 only: a moved published head is `BASE_REVISION_MISMATCH`, a fresh fork is `INVALID_ARGUMENT`, and
 repeating a finished or interrupted publish is a replay. There is no authentication and no merge.
 See the [design note](../../docs/design/p06-workspace.md).
+
+`workspace::WorkspaceState` serializes metadata transitions with an OS lease and a complete
+expected-snapshot comparison. Reads and base updates return `BACKEND_UNAVAILABLE` while another
+holder is transitioning; a stale metadata writer gets `BASE_REVISION_MISMATCH`. Ordinary local
+model edits still use the draft revision CAS. The metadata guard also blocks compaction while
+held. Workspace/user identity and the published local prefix cannot be rolled back, and legacy
+v1 metadata bytes stay unchanged. This primitive does not implement rebase or its recovery.
+
+A nonzero `rebase_sequence` uses canonical metadata v2 and identifies the earliest source endpoint
+publication may send. Older payloads and a boundary beyond the draft head are refused. Status
+exposes that sequence; snapshot undo stops there, while later edits remain undo/redo units. The
+bounded `workspace::rebase_receipt` codec binds original metadata, source/accepted pins, ordered
+operations and dependency evidence. It does not itself produce or recover a runtime rebase.
+
+`WorkspaceState::stage_rebase` syncs `rebase.pending` before the candidate CAS; the caller must
+first verify/pin the accepted basis, prove independence and materialize the candidate. Every state
+open resolves that intent before exposing metadata. Recovery verifies the original source union,
+the exact candidate slot/base, strict-verifier index and receipt pin; it advances metadata once
+without classifying retained commands or later edits as published. A missing/other CAS winner
+abandons the intent without changing metadata. Corrupt or unavailable evidence fails closed.
+As with other store writes, the complete file is synced; directory-entry durability is not promised.
+Status, packaging, direct publication and undo retain the state guard across their snapshots.
+Receipt aggregation checks ordered prefixes and prior bases, retaining the original command IDs
+without counting administrative copies of their dependencies again. This is recovery plumbing;
+an explicit rebase command and its complete acceptance remain separate.
+
+`rebase-workspace --store PUBLISHED --workspace-dir DRAFT --op-id UUID --expected-head UUID
+--expected-draft UUID [--actor-id UUID]` explicitly retains independent unsent work over a newer
+accepted basis. It pins publication while planning/committing the personal draft, verifies all
+intervening command evidence, materializes in isolation and runs the kernel/quantity verifier.
+It never publishes automatically. Missing proof refuses; semantic conflicts return complete
+target/group and operation diagnostics. Unknown/reference-wrapper deltas retain their dedicated
+writers and refuse this materializer. The local actor defaults to the recorded workspace owner;
+this is trusted CLI context, not authentication. The authenticated coordinator rebase endpoint
+is separate. Retrying the same ID/pins returns its original revision, preserving later edits;
+another payload under that ID is refused, including after a failed attempt.
 
 ## P07 undo and redo
 
