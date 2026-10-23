@@ -19,7 +19,7 @@ beamcraft snap --store ROOT --point X,Y,Z [--radius MM] [--kinds vertex,axis_end
 | Area | What exists |
 |---|---|
 | `beamcraft_engine::query::feature` | `FeatureId` (`fid1:` + ElementId + `:` + `plate:`/`member:` + face, edge or vertex role; at most 64 bytes; parse and display), `FeatureKind`, `BodyKind`, `lookup_feature` (kind, owner, local id, local and world geometry: face normal and corners with vertex ids, edge ends with vertex ids, vertex position), `has_features`. |
-| `beamcraft_engine::query::pick` | `pick` with `RayPick` and `PointPick` as F06 section 9 specifies (closed rectangles enlarged by `eps_pick`, parallel test, back faces, closed finite segment with clamped `t`, point-form distances, inclusive band, quantized ordering, `max_hits` and `truncated`, the limit and input codes), and `snap` (`vertex`, `axis_end`, `axis`). |
+| `beamcraft_engine::query::pick` | `pick` with `RayPick` and `PointPick` as F06 section 9 specifies (closed rectangles enlarged by `eps_pick`, parallel test, back faces, closed finite segment with clamped `t`, point-form distances, inclusive band, quantized ordering, `max_hits` and `truncated`, the limit and input codes), and `snap` (`vertex`, `axis_end`, `axis`). A ray pick additionally hits bodies without FeatureIds at element level, by their mesh (amendment of 2026-10-23 below). |
 | `beamcraft_engine::error::ViewCode` | `GEO_NON_FINITE`, `GEO_PICK_INPUT_INVALID`, `GEO_PICK_LIMIT`, `GEO_FEATURE_ID_INVALID`, `GEO_FEATURE_NOT_FOUND`, `GEO_TRIANGLE_ADDRESS_FORBIDDEN`, mapped to F04 codes as F06 section 3 lists. |
 | CLI | `pick`, `feature-lookup` and `snap` over the verified head's view snapshot (the one `plate-inspect` builds); errors carry the F04 `code` and the F06 `reason` token. |
 
@@ -30,9 +30,20 @@ beamcraft snap --store ROOT --point X,Y,Z [--radius MM] [--kinds vertex,axis_end
   box roles only when the blob has exactly the canonical layout of F06 section 6: 8 vertices, the
   12 canonical triangles with their face indices, 6 faces, and every face a rectangle (relative
   tolerance `1e-9` on orthogonality and closure). Geometry is the blob's element-local positions
-  plus the snapshot's translation. Any other body has no FeatureIds (F06 section 5 rule 9): a plate
-  with through holes is listed in `skipped` and never approximated; a lookup of one of its ids is
-  `GEO_FEATURE_NOT_FOUND`.
+  plus the snapshot's translation. Any other body has no FeatureIds (F06 section 5 rule 9), and a
+  lookup of one of the box ids on it is `GEO_FEATURE_NOT_FOUND`.
+- **Amendment 2026-10-23 (issue #63): a ray pick also hits bodies without FeatureIds, by their
+  mesh.** The nearest front-facing triangle of the body's own blob answers an element-level hit
+  with `feature_id` `None`, so an I-section member or a plate with a through hole is selectable
+  without inventing box roles for it; a ray through the hole hits nothing, and back faces follow
+  `include_backfaces`. The hit is the exact triangle surface, not an approximation. This extends
+  the F06 0.1.0 hit record, which does not know a null `feature_id`; recorded here as this
+  fix's decision (issue #63): a body the Create panel builds and renders must be
+  selectable, and no stable role exists for it yet. The point form and
+  `snap` still consider box features only. A body a query cannot consider at all (the point form,
+  no face target) is listed in `skipped`. The mesh scan is bounded by a ray–AABB
+  test against the element's world bounds, and the per-element work by the blob caps the snapshot
+  already validated on admission.
 - **Body kind from the element kind.** Plates are `plate:`, beams and columns `member:`, as F06
   section 5 requires. The kernel's member mesh reuses the plate face-table constants, whose tokens
   carry a `plate:` prefix; the engine does not copy those tokens, it builds the local id from the
@@ -71,21 +82,25 @@ used.
 
 ## Evidence
 
-- `apps/beamcraft-cli/tests/pick.rs` (4 end-to-end tests through the binary): positions derived from
+- `apps/beamcraft-cli/tests/pick.rs` (5 end-to-end tests through the binary): positions derived from
   the command inputs and the F06 frame rules (plate top face, a horizontal beam's `f.y1`, the
   plate's far corner, vertex and edge and face counts around it, axis start and mid point); ids
-  survive a move and differ on a copy; index addresses, dangling and malformed ids; a holed plate
-  is skipped and an attached foreign reference is never hit; every limit and input error; the head
-  is unchanged by queries.
+  survive a move and differ on a copy; index addresses, dangling and malformed ids; an I-section
+  member and a holed plate are hit at element level by their mesh, a ray through the plate's hole
+  hits nothing, and an attached foreign reference is never hit (the holed plate is in `skipped`
+  only on the point form); every limit and input error; the head is unchanged by queries.
 - Engine unit tests: FeatureId grammar and refusals, the 26 features with outward rectangular faces,
   world equals local plus translation, front and back face hits, the inclusive band with `t`
-  clamped at the segment end, ordering and truncation, input validation, snap.
+  clamped at the segment end, ordering and truncation, input validation, snap; a body without box
+  features (a kernel prism) is picked by its mesh at element level, with the mesh hit's front and
+  back faces, the miss beyond the slanted edge while still scanned, and the `skipped` cases.
 
 ## Not done
 
 - No cancellation token or request deadline polling inside a pick (the engine's query API has none
   yet); the scan is bounded by the element and feature caps instead.
-- No features for non-box bodies (holed plates, future contours): A02 defines their topology.
+- No features (FeatureIds) for non-box bodies (holed plates, future contours): A02 defines their
+  topology; they are picked at element level by the amendment above, not named.
 - No local-space pick, no pick against a simplified representation, no paging of pick results.
 - The V03 viewport does not call these queries yet (V05 adds tools).
 - Kernel naming finding: `beamcraft_kernel::feature_id` exposes only `plate:` tokens and the member
