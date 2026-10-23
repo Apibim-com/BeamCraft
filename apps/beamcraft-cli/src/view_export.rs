@@ -143,6 +143,9 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
     })?;
     let inspection = inspect(&RevisionStore::new(blobs))?;
     inspection.require_evaluated_geometry()?;
+    if let Some(error) = inspection.reference_view_error {
+        return Err(error);
+    }
     let snapshot = &inspection.snapshot;
     let bundle = snapshot.to_bundle().map_err(|e| PlateError {
         code: e.f04_code(),
