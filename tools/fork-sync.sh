@@ -69,29 +69,38 @@ resolve_cargo() {
     command -v cargo >/dev/null 2>&1 || die "cargo not found in PATH or ~/.cargo/bin" $EXIT_ENV
 }
 
-pending_upstream() {
-    git rev-list --count master..upstream/master
-}
-
 # Best-effort conflict prediction; prints the conflicting paths, one per line.
 # merge-tree prints the merged tree OID on line 1, conflicted paths after it.
 predict_conflicts() {
     local out
-    out="$(git merge-tree --write-tree master upstream/master 2>/dev/null || true)"
+    out="$(git merge-tree --write-tree "$1" upstream/master 2>/dev/null || true)"
     printf '%s\n' "$out" | tail -n +2
 }
 
-# The local master may lag behind origin/master after PR merges on GitHub.
-# Fast-forward it first; a diverged master needs a human, not a script.
+# The branch a sync would merge from: after the fast-forward a stale local
+# master becomes origin/master. Read-only, so status and --dry-run use it too.
+sync_base() {
+    if [ "$(git rev-list --count origin/master..master)" -eq 0 ] &&
+        [ "$(git rev-list --count master..origin/master)" -gt 0 ]; then
+        git rev-parse origin/master
+    else
+        git rev-parse master
+    fi
+}
+
+# A stale local master is fast-forwarded to origin/master. A strictly ahead
+# master is the unpushed merge commit of a previous rejected push: keep it.
+# Anything else is real divergence and needs a human.
 align_master() {
     local local_head origin_head
     local_head="$(git rev-parse master)"
     origin_head="$(git rev-parse origin/master)"
     if [ "$local_head" != "$origin_head" ]; then
-        if [ "$(git rev-list --count master..origin/master)" -gt 0 ] &&
-            [ "$(git rev-list --count origin/master..master)" -eq 0 ]; then
+        if [ "$(git rev-list --count origin/master..master)" -eq 0 ]; then
             echo "fork-sync: fast-forwarding local master to origin/master"
             git merge --ff-only origin/master
+        elif [ "$(git rev-list --count master..origin/master)" -eq 0 ]; then
+            echo "fork-sync: local master is ahead of origin/master (unpushed merge commit); proceeding"
         else
             die "local master has diverged from origin/master; reconcile by hand first" $EXIT_ENV
         fi
@@ -125,23 +134,21 @@ run_triple() {
 cleanup_branches() {
     local branch
     while read -r branch; do
+        [ -n "$branch" ] || continue
         git branch -d "$branch" >/dev/null && echo "fork-sync: deleted merged branch $branch"
-    done <<EOF
-$(git branch --merged master --format '%(refname:short)' | grep -E '^(sync/|chore/sync-upstream-)' || true)
-EOF
+    done < <(git branch --merged master --format '%(refname:short)' | grep -E '^(sync/|chore/sync-upstream-)' || true)
 }
 
 merge_message() {
     local topics="" subject
     while read -r subject; do
+        [ -n "$subject" ] || continue
         if [ -n "$topics" ]; then
             topics="$topics, $subject"
         else
             topics="$subject"
         fi
-    done <<EOF
-$(git log --no-decorate --max-count=4 master..upstream/master --format=%s | cut -c1-48)
-EOF
+    done < <(git log --no-decorate --max-count=4 master..upstream/master --format=%s | cut -c1-48)
     echo "Merge upstream master into the fork: $topics"
 }
 
@@ -153,20 +160,22 @@ do_sync() {
     git fetch upstream master
     git fetch origin master
 
-    align_master
-
+    # Read-only planning runs before any mutation, so --dry-run stays true to
+    # "touches no branch": the base is where a real sync would merge from.
+    local base
+    base="$(sync_base)"
     local pending
-    pending="$(pending_upstream)"
+    pending="$(git rev-list --count "$base..upstream/master")"
     if [ "$pending" -eq 0 ]; then
         echo "fork-sync: upstream has no new commits, nothing to sync"
         exit $EXIT_OK
     fi
     echo "fork-sync: $pending upstream commit(s) to merge:"
-    git log --oneline --no-decorate master..upstream/master
+    git log --oneline --no-decorate "$base..upstream/master"
 
     if [ "$dry_run" = true ]; then
         local conflicts
-        conflicts="$(predict_conflicts)"
+        conflicts="$(predict_conflicts "$base")"
         if [ -n "$conflicts" ]; then
             echo "fork-sync: dry-run predicts conflicts in:"
             echo "  ${conflicts//$'\n'/$'\n'  }"
@@ -176,6 +185,8 @@ do_sync() {
         echo "fork-sync: dry-run stops here; nothing was merged"
         exit $EXIT_OK
     fi
+
+    align_master
 
     if [ "$assume_yes" = false ]; then
         printf 'Proceed with merge, local triple and push to origin/master? [y/N] '
@@ -213,8 +224,9 @@ do_sync() {
 }
 
 do_status() {
-    local behind ahead conflicts
-    behind="$(git rev-list --count master..upstream/master)"
+    local base behind ahead conflicts
+    base="$(sync_base)"
+    behind="$(git rev-list --count "$base..upstream/master")"
     ahead="$(git rev-list --count upstream/master..master)"
     echo "upstream commits not in master: $behind"
     echo "fork commits not in upstream (pending promotion): $ahead"
@@ -232,10 +244,10 @@ do_status() {
     fi
     if [ "$behind" -gt 0 ]; then
         local pending_log
-        pending_log="$(git log --oneline --no-decorate master..upstream/master)"
+        pending_log="$(git log --oneline --no-decorate "$base..upstream/master")"
         echo "pending upstream commits:"
         echo "  ${pending_log//$'\n'/$'\n'  }"
-        conflicts="$(predict_conflicts)"
+        conflicts="$(predict_conflicts "$base")"
         if [ -n "$conflicts" ]; then
             echo "conflict prediction:"
             echo "  ${conflicts//$'\n'/$'\n'  }"
