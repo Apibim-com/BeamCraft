@@ -29,9 +29,8 @@
 //! (bounded to [`MAX_REVISIONS`] revisions and [`LOG_CAP`] bytes); undo does not touch the
 //! published store (a later publish sends the draft head as it is).
 
-use crate::plate::{PlateError, RevisionSummary, host_uuid, integrity, summarize};
-use crate::publication::commit_verified;
-use crate::workspace::WorkspaceState;
+use crate::plate::{PlateError, RevisionSummary, commit_verified, host_uuid, integrity, summarize};
+use crate::workspace::read_meta;
 use beamcraft_host::revision::{
     CommitHook, ExpectedBase, LayerEntry, RevisionDraft, RevisionInfo, RevisionStore, Uuid7,
 };
@@ -49,7 +48,6 @@ pub const MAX_REVISIONS: u64 = 4096;
 
 fn unusable() -> PlateError {
     PlateError {
-        rule_id: None,
         code: ErrorCode::BackendUnavailable,
         message: "the undo log is not usable",
     }
@@ -96,7 +94,6 @@ fn read_log(dir: &Path) -> Result<Vec<Intent>, PlateError> {
     };
     if length > LOG_CAP {
         return Err(PlateError {
-            rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "the undo log is full",
         });
@@ -143,7 +140,6 @@ fn append_intent(dir: &Path, intent: &Intent) -> Result<(), PlateError> {
     let line_length = u64::try_from(line.len()).map_err(|_| unusable())?;
     if used.saturating_add(line_length) > LOG_CAP {
         return Err(PlateError {
-            rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "the undo log is full",
         });
@@ -185,8 +181,7 @@ impl Timeline {
 
 /// Derives the undo and redo stacks of the draft in `dir`.
 pub fn timeline(workspace: &RevisionStore, dir: &Path) -> Result<Timeline, PlateError> {
-    let state = WorkspaceState::open(dir)?;
-    let meta = state.meta().ok_or_else(crate::workspace::unusable)?;
+    let meta = read_meta(dir)?;
     let head = head_of(workspace)?;
     if meta.rebase_sequence > head.sequence() {
         return Err(integrity(
@@ -195,7 +190,6 @@ pub fn timeline(workspace: &RevisionStore, dir: &Path) -> Result<Timeline, Plate
     }
     if head.sequence() > MAX_REVISIONS {
         return Err(PlateError {
-            rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "the draft history is too long to derive",
         });
@@ -282,7 +276,6 @@ pub fn step(
         Some(intent) => {
             if intent.direction != direction {
                 return Err(PlateError {
-                    rule_id: None,
                     code: ErrorCode::OpIdReuse,
                     message: "the operation id was used for the other direction",
                 });
@@ -301,7 +294,6 @@ pub fn step(
             }
             if &intent.base != line.head.revision() {
                 return Err(PlateError {
-                    rule_id: None,
                     code: ErrorCode::OpIdReuse,
                     message: "the operation was recorded against an older draft head",
                 });
@@ -316,7 +308,6 @@ pub fn step(
     }
     .copied()
     .ok_or(PlateError {
-        rule_id: None,
         code: ErrorCode::InvalidArgument,
         message: match direction {
             Direction::Undo => "there is nothing to undo",
@@ -346,7 +337,6 @@ pub fn step(
         .workspace_generation()
         .checked_add(1)
         .ok_or(PlateError {
-            rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "generation exhausted",
         })?;
