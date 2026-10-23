@@ -8,8 +8,8 @@
 //! columns), a FeatureId, and carries world positions computed by the engine; no hit contains a
 //! triangle, vertex or buffer index. A ray pick also hits bodies without FeatureIds (an I-section
 //! member, a plate with a through hole) by their mesh: the nearest front-facing triangle names
-//! its element only, with `feature_id` `None`. A body a query cannot consider at all (no engine
-//! mesh, the point form, no face target) is listed in [`PickResult::skipped`] rather than
+//! its element only, with `feature_id` `None`. A body a query cannot consider at all (the point
+//! form, no face target) is listed in [`PickResult::skipped`] rather than approximated.
 //! approximated.
 //!
 //! Pick follows F06 exactly: closed face rectangles enlarged by `eps_pick` with the parallel
@@ -157,8 +157,8 @@ pub struct PickResult {
     pub hits: Vec<Hit>,
     /// True when more hits qualified than were returned.
     pub truncated: bool,
-    /// Elements a query could not consider: no engine mesh, the point form, or no face target
-    /// against a body without FeatureIds, in id order.
+    /// Elements a query could not consider: the point form, or no face target against a body
+    /// without FeatureIds, in id order.
     pub skipped: Vec<ElementId>,
 }
 

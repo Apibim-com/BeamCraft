@@ -40,8 +40,8 @@ beamcraft snap --store ROOT --point X,Y,Z [--radius MM] [--kinds vertex,axis_end
   the F06 0.1.0 hit record, which does not know a null `feature_id`; recorded here as this
   fix's decision (issue #63): a body the Create panel builds and renders must be
   selectable, and no stable role exists for it yet. The point form and
-  `snap` still consider box features only. A body a query cannot consider at all (no engine mesh,
-  the point form, no face target) is listed in `skipped`. The mesh scan is bounded by a ray–AABB
+  `snap` still consider box features only. A body a query cannot consider at all (the point form,
+  no face target) is listed in `skipped`. The mesh scan is bounded by a ray–AABB
   test against the element's world bounds, and the per-element work by the blob caps the snapshot
   already validated on admission.
 - **Body kind from the element kind.** Plates are `plate:`, beams and columns `member:`, as F06
