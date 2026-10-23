@@ -283,7 +283,14 @@ workflow and multi-client merge are not delivered by these documents.
 
 ## Common Craft viewing and specialized editing
 
-### A company working on one section
+### One workflow for all company arrangements
+
+The company may author every section, author one section and receive all others as IFC, or
+author several sections while referencing the rest. This is one workflow: each model is either
+owned authored content or a pinned read-only reference, and the engineer edits only an
+authorized section through its specialized module. Internal/external delivery changes how
+assignments and responses travel, not what their versions or approvals mean. Storage in one
+project or several connected projects is a separate choice (F12 PC-WORK-001).
 
 A KM-only company can model steel against architectural IFC, and an OV-only company can model
 services against structural IFC. The proposed [external-reference workflow](contracts/f12-external-reference-workflow-v0.1.md)

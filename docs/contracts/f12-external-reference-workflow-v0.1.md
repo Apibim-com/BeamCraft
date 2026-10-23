@@ -5,7 +5,13 @@ Companion to [F12](f12-project-coordination-v0.1.md), its
 [opening assignments](f12-opening-assignments-v0.1.md) and
 [common Craft reading](f12-craft-read-capabilities-v0.1.md), in the same branch and PR.
 
-## 1. A company can work on only its own section
+## 1. External references participate in the common workflow
+
+F12 PC-WORK-001 covers companies authoring every section, just one section, or several sections
+with the rest supplied externally. This companion specifies the IFC/report part of that same
+workflow, not a separate single-section product mode. Each model independently has an authored
+or external-reference role; both may coexist in one project view. The common scope, revision
+and assignment rules apply across all three arrangements.
 
 The workflow must work when only one participant uses Craft. A KM company can create its own
 project with an architectural IFC reference; an OV company can model services against a

@@ -43,6 +43,13 @@ Open questions are at the end.
   unavailable. The [F12 stage 6 companion](../contracts/f12-craft-read-capabilities-v0.1.md)
   belongs in the same branch and PR. This is a contract direction, not a claim that MEPCraft
   or additional engineering modules have been implemented.
+- **One workflow across company arrangements.** The same section-based workflow must work
+  when a company authors all sections, authors only one and receives all other models as IFC,
+  or authors several and receives the rest as references. Native authoring versus foreign
+  referencing is a per-model distinction, not a project-wide operating mode. Module/scope
+  permissions and exact-version assignment decisions are the same in all arrangements;
+  internal exchange and external reports are delivery choices. F12 PC-WORK-001 requires all
+  three scenarios in acceptance, independently of single-store or multi-project organization.
 - **Single-section companies and external IFC references.** A company can author only KM or
   OV in Craft while receiving the other disciplines as IFC. One IFC delivery becomes one logical
   read-only USD reference with retained original bytes, conversion provenance, source identifiers,

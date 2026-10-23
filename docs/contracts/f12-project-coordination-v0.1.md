@@ -20,7 +20,20 @@ complete revisions and atomic publication remain the storage foundation. This co
 not introduce a second saved model, a cloud service, a database, a Git backend or a remote
 permission system. "Repository for engineers" describes the workflow, not textual USD merges.
 
-Two organizations are supported by the design:
+**PC-WORK-001.** One section-based workflow supports all three company arrangements:
+
+- The company authors every project section through the respective specialized modules.
+- The company authors only one section and receives all other models as IFC references.
+- The company authors several sections and receives the remaining models as references.
+
+For each model, record whether it is owned authored content or a pinned read-only reference;
+there is no project-wide switch that makes every model native or every model external. Module
+capabilities and authorized section scopes still control editing. Proposal identities,
+exact-version decisions and explicit reference updates have the same meaning in every
+arrangement; internal exchange or an external report changes the delivery channel, not the
+meaning of approval. Company membership alone grants no right to edit another section.
+
+Storage organization is a separate choice:
 
 1. **Shared project:** several sections have separate authored scopes in one project store.
 2. **Independent projects:** each section or zone has its own project store and publication
@@ -216,6 +229,7 @@ codes and attach the contract rule ID; no new top-level error vocabulary is intr
 
 | Case / rule | Required positive outcome | Required negative outcome |
 |-------------|---------------------------|---------------------------|
+| PC-WORK-001 | Exercise the same design/reference/assignment flow with all sections authored internally, one authored section plus IFC references, and a mixed project | No arrangement requires all counterpart models to become native; common company ownership grants no cross-section edits; report delivery never becomes approval |
 | PC-ID-001 | Rename K1 without changing ZoneId or element paths | Duplicate IDs/codes or unresolved registry entries refused (`DUPLICATE_ID` / `INVALID_ARGUMENT`) |
 | PC-ID-002/003 | Two source projects with the same local ElementId remain distinct; two occurrences of one source remain distinct | Bare ambiguous lookup or colliding composed roots refused (`INVALID_ARGUMENT`) |
 | PC-OWN-001/002 | KMD edit preserves KM, AR and shared grids | Foreign override refused (`FOREIGN_READ_ONLY`); unauthorized shared operation refused (`PERMISSION_DENIED`) |
