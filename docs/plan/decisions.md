@@ -43,6 +43,12 @@ Open questions are at the end.
     Values enter only with a recorded source and licence (`AGENTS.md` §1.2); the repository also
     ships a synthetic example library.
   - Open: which DIN or ISO numbers make the first set and who enters the values (O-B2a).
+- **A workshop weld builds an assembly.** Owner decision, written up as a draft in
+  [the weld assembly amendment](../contracts/f04-weld-assembly-amendment-draft-v0.1.md): a weld
+  made in the workshop joins its two parts into one assembly automatically. The first part named is
+  the main part and the second is attached to it. A site weld changes no assembly. A part in
+  another assembly is a conflict for now, not a silent move (open O-W1: nest the whole
+  sub-assembly instead).
 
 ## 2026-10-22
 
