@@ -93,7 +93,7 @@ fn capture_refuses_active_maintenance_and_untrusted_archive_pins_resources_and_b
         }
         assert!(SourceArchive::verify(wrong, archive.resources().to_vec()).is_err());
     }
-    for case in 0..5 {
+    for case in 0..6 {
         let mut resources = archive.resources().to_vec();
         match case {
             0 => {
@@ -106,9 +106,12 @@ fn capture_refuses_active_maintenance_and_untrusted_archive_pins_resources_and_b
             3 => {
                 resources[1].name = "model/missing.usda".into();
             }
-            _ => {
+            4 => {
                 resources[1].bytes.push(b' ');
                 resources[1].digest = Sha256::digest(&resources[1].bytes).unwrap();
+            }
+            _ => {
+                resources[1].name = "m".repeat(beamcraft_host::revision::MAX_NAME_BYTES + 1);
             }
         }
         assert!(SourceArchive::verify(pin, resources).is_err());
