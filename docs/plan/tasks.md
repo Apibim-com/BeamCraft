@@ -152,6 +152,7 @@ Time-boxed research with a report; never a production gate.
 | V15 / M | Cut plane | V12 | Clip planes and a work-area box per view | Non-destructive; no change to the model or measurements | open |
 | V16 / M | Render modes | V03, U12 | Five modes on Ctrl+1 to Ctrl+5 (own set, user-remappable): wireframe, transparent, grey, shaded, selected only | One engine query; frame time baseline; shortcuts configurable | open |
 | V17 / M | Colour by filter and class | V14, V16, P15 | Saved representation sets (ordered filter rules with colour and transparency) and a temporary colouring overlay | The overlay is never stored in the model; a saved set lives in the views layer | open |
+| V18 / M | Plate contour grips | A12.3, V05 | Highlighted contour with vertex and edge-middle grips; drag, insert, delete a vertex, corner treatment editor; the plate stays in its plane | The UI calls the A12.3 commands; a drag is one undo unit; the saved result equals the CLI's | open |
 
 ## A: fabrication operations
 
@@ -169,6 +170,9 @@ Time-boxed research with a report; never a production gate.
 | A10 / M | Bent plate | G13, A12 | A plate folded along lines or rolled to a cylinder or cone section, with thickness and bend radii | Analytical area and volume; the unfolded outline is reported | open |
 | A11 / M | Lofted plate | G13, A12 | A plate between two contours that need not be coplanar | Closed certified mesh; refusal for twisted or self-intersecting input | open |
 | A12 / M | Complex plate contours | A02, G12 | Contours with arcs, chamfered and rounded corners, plates in any plane, point editing | Replaces the z = 0 limit of A02; arc deviation reported | open |
+| A12.1 / S | Plate thickness side | A02, [plate amendment](../contracts/f04-plate-amendment-draft-v0.1.md) | Slice of A12: `top`, `middle`, `bottom` laid off from the contour plane; the default `top` keeps old plates; numbering normalises the side away | `z` ranges, equal volume, an older plate reads as `top`, plates differing only in the side share a number; engine, CLI and end-to-end test | open |
+| A12.2 / M | Plate corner treatment | A12.1, plate amendment | Slice of A12: chamfer (one or two distances) and rounding (radius) on a contour vertex, authored as parameters, arcs faceted to the stated deviation, `arc_deviation_mm` reported; needs no sweep, so no G12 | Amendment cases 2 to 5 and the negative cases; undo, copy and reopen exact | open |
+| A12.3 / M | Plate contour editing commands | A12.2, P-Degenerate, plate amendment | Slice of A12: move vertex, move edge, insert vertex, delete vertex (never below three), set corner, as engine commands and CLI | Amendment cases 6 and 7 and the negative cases; one undo unit each | open |
 | A13 / M | Fits, cuts, chamfers, split and combine | A03, A12 | Line, polygon and part cuts, fit an end to another part, chamfers, split a part in two, combine two parts, as A-2 operation records | Volume, mass and stable features; undo of every operation | open |
 | A14 / M | Complete bolt groups | A05, A04, A12 | Rectangular, circular and free-point patterns; round, slotted and oversized holes generated in every connected part; length, washers and nuts | Holes match in all parts; deleting a part conflicts as in A05 | open |
 | A15 / M | Weld geometry | A06, G05 | Weld types and sizes along an edge or polyline, an optional solid shape, symbol data | Workshop/site and side kept; solid volume against analytical values | open |
