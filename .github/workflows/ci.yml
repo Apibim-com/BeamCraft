@@ -115,11 +115,8 @@ jobs:
           name: nextest-archive-${{ matrix.os }}
           path: nextest-archive
 
-      - name: Prepare target directory for archive extraction
-        run: mkdir target
-
       - name: Run archived test partition
-        run: cargo nextest run --archive-file nextest-archive/nextest-archive.tar.zst --extract-to target --no-fail-fast --partition hash:${{ matrix.shard }}/8
+        run: cargo nextest run --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --no-fail-fast --partition hash:${{ matrix.shard }}/8
 
   build-timings:
     name: cold release (${{ matrix.target }})
