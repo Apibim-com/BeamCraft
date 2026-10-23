@@ -232,14 +232,15 @@ fn a_warm_cache_returns_what_a_cold_evaluation_returns() {
     let before = counts();
     let first = inspect(&store).unwrap();
     let after_first = counts();
-    // Eight elements, five distinct shapes: three copies share a body within the first call.
+    // Eight elements, five distinct shapes: three copies share a body within the first call,
+    // and the unsupported-listing pass rides the same cache, so every evaluated body hits again.
     assert_eq!(after_first.1 - before.1, 5);
-    assert_eq!(after_first.0 - before.0, 3);
+    assert_eq!(after_first.0 - before.0, 8);
     let second = inspect(&store).unwrap();
     let after_second = counts();
     // The second call evaluates nothing.
     assert_eq!(after_second.1, after_first.1);
-    assert_eq!(after_second.0 - after_first.0, 8);
+    assert_eq!(after_second.0 - after_first.0, 13);
     assert_same(&cold, &first);
     assert_same(&first, &second);
     assert_eq!(first.plates.len() + first.members.len(), 8);

@@ -10,8 +10,8 @@
 //! member, a plate with a through hole) by their mesh: the nearest front-facing triangle names
 //! its element only, with `feature_id` `None`. A read-only reference is never picked (R01): it is
 //! reported as skipped even though it carries a display mesh. A body a query cannot consider at
-//! all (no engine mesh, the point form, no face target) is listed in [`PickResult::skipped`]
-//! rather than approximated.
+//! all (the point form, no face target) is listed in [`PickResult::skipped`] rather than
+//! approximated.
 //!
 //! Pick follows F06 exactly: closed face rectangles enlarged by `eps_pick` with the parallel
 //! test `|u . n| < 1e-6`; edge and vertex distances to the closed finite segment
@@ -158,8 +158,8 @@ pub struct PickResult {
     pub hits: Vec<Hit>,
     /// True when more hits qualified than were returned.
     pub truncated: bool,
-    /// Elements a query could not consider: no engine mesh, the point form, no face target
-    /// against a body without FeatureIds, or a read-only reference, in id order.
+    /// Elements a query could not consider: the point form, no face target against a body
+    /// without FeatureIds, or a read-only reference, in id order.
     pub skipped: Vec<ElementId>,
 }
 

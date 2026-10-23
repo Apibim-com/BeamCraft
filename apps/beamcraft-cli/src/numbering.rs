@@ -61,7 +61,7 @@ fn contour_origin(record: &PlateRecord) -> [f64; 2] {
 /// The outline of a plate whose contour is not the origin rectangle, relative to
 /// [`contour_origin`]; empty for the origin rectangle (its width and length already say it all).
 fn outline_of(record: &PlateRecord) -> Vec<[f64; 2]> {
-    if record.body.is_origin_rectangle() {
+    if record.body.is_rectangular_box() {
         return Vec::new();
     }
     let [low_x, low_y] = contour_origin(record);
@@ -102,6 +102,7 @@ pub(crate) fn state(store: &RevisionStore) -> Result<State, PlateError> {
     for _ in 0..3 {
         let before = store.head()?.map(|h| h.revision().as_str().to_owned());
         let inspection = inspect(store)?;
+        inspection.require_evaluated_geometry()?;
         let views = assemblies(store)?;
         let (marks_revision, stored) = head_marks(store)?;
         let after = store.head()?.map(|h| h.revision().as_str().to_owned());

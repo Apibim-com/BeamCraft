@@ -148,6 +148,70 @@ fn nested(depth: usize) -> Vec<u8> {
 }
 
 #[test]
+fn unsupported_authored_plates_refuse_even_malformed_partial_derived_opinions() {
+    let source = Fixture::new();
+    let id = "019a7bf0-0000-7000-8000-000000000005";
+    let (code, _, _) = source.run(&[
+        "create-plate",
+        "--store",
+        &source.store(),
+        "--new-id",
+        id,
+        "--contour",
+        "999000000,0,0;999393216,0,0.75;999393216,524288,0;999000000,524288,0.75",
+        "--thickness",
+        "10",
+    ]);
+    assert_eq!(code, 0);
+    let (_, inspected, _) = source.run(&["plate-inspect", "--store", &source.store()]);
+    let layer = inspected
+        .get("revision")
+        .unwrap()
+        .get("manifest")
+        .unwrap()
+        .get("layers")
+        .unwrap()
+        .array()
+        .unwrap()
+        .iter()
+        .find(|l| l.get("name").unwrap().string().unwrap() == "authored.usda")
+        .unwrap();
+    let digest = layer.get("digest").unwrap().string().unwrap();
+    let bytes = fs::read(
+        Path::new(&source.store())
+            .join("blobs")
+            .join(&digest[..2])
+            .join(digest),
+    )
+    .unwrap();
+    let baseline = Fixture::new();
+    baseline.commit(&bytes);
+    assert_eq!(
+        baseline
+            .run(&["plate-inspect", "--store", &baseline.store()])
+            .0,
+        0
+    );
+    for opinion in [
+        "def Xform \"Geometry\" {}",
+        "custom double bim:volumeMm3 = 1",
+        "def Mesh \"OtherGeometry\" {}",
+    ] {
+        let target = Fixture::new();
+        let mut layer = String::from_utf8(bytes.clone()).unwrap();
+        layer.push_str(&format!("\nover \"World\" {{ over \"Steel\" {{ over \"Parts\" {{ over \"PRT_{}\" {{ {opinion}\n }} }} }} }}\n",id.replace('-', "")));
+        target.commit(layer.as_bytes());
+        let (code, body, _) = target.run(&["plate-inspect", "--store", &target.store()]);
+        assert_eq!(code, 2, "{opinion}: {body:?}");
+        let code = body.get("code").unwrap().string().unwrap();
+        assert!(
+            matches!(code, "INTEGRITY_ERROR" | "INVALID_ID"),
+            "{opinion}: {code}"
+        );
+    }
+}
+
+#[test]
 fn hostile_own_store_layers_give_stable_codes_in_process() {
     let mut binary = b"PXR-USDC\x00\x08\x00\x00\x00\x00\x00\x00".to_vec();
     binary.extend((0u8..=255).cycle().take(4096));

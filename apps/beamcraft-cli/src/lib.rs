@@ -23,6 +23,7 @@ pub mod member;
 pub mod numbering;
 pub mod numbering_approval;
 pub mod plate;
+pub mod plate_draft;
 pub mod reference;
 mod reference_view;
 pub mod source_file;

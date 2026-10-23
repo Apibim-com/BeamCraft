@@ -142,6 +142,7 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
         message: "store root is not usable",
     })?;
     let inspection = inspect(&RevisionStore::new(blobs))?;
+    inspection.require_evaluated_geometry()?;
     if let Some(error) = inspection.reference_view_error {
         return Err(error);
     }

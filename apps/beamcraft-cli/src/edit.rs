@@ -132,6 +132,19 @@ pub fn update_element(
         let opened = reader.open(base_request.clone(), &control)?;
         let decoded = decode(&reader, &opened, &control)?;
         let (plates, members) = evaluate_decoded(&decoded)?;
+        if decoded
+            .plates
+            .iter()
+            .any(|(p, _)| p.id == command.target_id)
+            && !plates.iter().any(|p| p.authored.id == command.target_id)
+        {
+            return Err(CommandError::new(
+                ErrorCode::DependencyUnavailable,
+                "target_id",
+                "editing an unsupported plate is not implemented",
+            )
+            .into());
+        }
         (plates, members, decoded.definitions, decoded.levels)
     };
     let materials = material_lookup(&definitions);

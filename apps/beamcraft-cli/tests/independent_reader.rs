@@ -447,3 +447,86 @@ fn the_reader_reads_a_beam_and_a_column_against_the_closed_form() {
     let report = run_oracle(&scratch.layers(), &expect);
     assert_eq!(plates(&report), 2);
 }
+
+#[test]
+fn the_reader_reads_the_ordered_3d_plate_frame_and_its_element_local_vertices() {
+    let scratch = Scratch::new("k1-frame-reader");
+    let store_arg = scratch.store_arg();
+    let created = run_binary(&[
+        "create-plate",
+        "--store",
+        store_arg,
+        "--contour",
+        "10,20,30;10,1020,30;-490,1020,30;-490,20,30",
+        "--thickness",
+        "10",
+        "--translation",
+        "2000,-150.5,25",
+        "--name",
+        "Framed plate",
+    ]);
+    let tilted = run_binary(&[
+        "create-plate",
+        "--store",
+        store_arg,
+        "--contour",
+        "10,20,30;13,20,34;13,15,34;10,15,30",
+        "--thickness",
+        "5",
+        "--name",
+        "Tilted plate",
+    ]);
+    let inspected = run_binary(&["plate-inspect", "--store", store_arg]);
+    copy_layers(Path::new(store_arg), &scratch.layers(), &inspected);
+    // Bounds are world bounds: the element-local bounds shifted by the translation.
+    let expect = format!(
+        r#"[{{"id":"{}","name":"Framed plate","width":1000,"length":500,"thickness":10,
+        "translation":[2000,-150.5,25],"cli_volume_mm3":{},
+        "contour":[[10,20,30],[10,1020,30],[-490,1020,30],[-490,20,30]],
+        "vertices":[[10,20,30],[10,1020,30],[-490,20,30],[-490,1020,30],[10,20,40],[10,1020,40],[-490,20,40],[-490,1020,40]],
+        "bounds_min":[1510,-130.5,55],"bounds_max":[2010,869.5,65]}},
+        {{"id":"{}","name":"Tilted plate","width":5,"length":5,"thickness":5,
+        "translation":[0,0,0],"cli_volume_mm3":{},
+        "contour":[[10,20,30],[13,20,34],[13,15,34],[10,15,30]],
+        "vertices":[[10,20,30],[13,20,34],[10,15,30],[13,15,34],[14,20,27],[17,20,31],[14,15,27],[17,15,31]],
+        "bounds_min":[10,15,27],"bounds_max":[17,20,34]}}]"#,
+        text(created.get("plate").unwrap(), "element_id"),
+        num(&created, &["plate", "quantities", "volume", "mm3"]),
+        text(tilted.get("plate").unwrap(), "element_id"),
+        num(&tilted, &["plate", "quantities", "volume", "mm3"])
+    );
+    let report = run_oracle(&scratch.layers(), &expect);
+    assert_eq!(plates(&report), 2);
+}
+
+#[test]
+fn the_reader_sees_valid_unsupported_authored_input_without_any_partial_result() {
+    let scratch = Scratch::new("k1-unsupported-reader");
+    let store_arg = scratch.store_arg();
+    let created = run_binary(&[
+        "create-plate",
+        "--store",
+        store_arg,
+        "--contour",
+        "999000000,0,0;999393216,0,0.75;999393216,524288,0;999000000,524288,0.75",
+        "--thickness",
+        "10",
+        "--name",
+        "Unsupported original",
+    ]);
+    let inspected = run_binary(&["plate-inspect", "--store", store_arg]);
+    copy_layers(Path::new(store_arg), &scratch.layers(), &inspected);
+    let expect = format!(
+        r#"[{{"id":"{}","name":"Unsupported original","width":0,"length":0,"thickness":10,"unsupported":true,
+        "contour":[[999000000,0,0],[999393216,0,0.75],[999393216,524288,0],[999000000,524288,0.75]]}}]"#,
+        text(created.get("plate").unwrap(), "element_id")
+    );
+    let report = run_oracle(&scratch.layers(), &expect);
+    assert_eq!(
+        text(
+            &report.get("plates").unwrap().array().unwrap()[0],
+            "geometry_status"
+        ),
+        "unsupported"
+    );
+}

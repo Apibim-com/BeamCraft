@@ -1,11 +1,11 @@
 # Issue 26: the cost of one inspection
 
-Date: 2026-10-21. Status: **implemented; performance only, no reply changes.** Branch
-`bug/26-inspection-cache`, built and measured on `origin/master` `538cbed`. On 2026-10-22
-`master` `6aa5ed4` (the upstream sync) was merged in; the figures below were not taken again
-after that merge. Remainder of
-[issue 26](https://github.com/axisrow/BeamCraft/issues/26), finding 2: the work inside the one
-inspection that every read command runs.
+Date: 2026-10-21. Status: **implemented; performance only, no reply changes.** Developed in the
+fork on `bug/26-inspection-cache`, built and measured on the fork's `master` `538cbed`; the
+figures were not taken again after later merges. Ported to `upstream/master` (at `236ce9b`) on
+2026-10-23. Remainder of
+[issue 26](https://github.com/axisrow/BeamCraft/issues/26) of the fork, finding 2: the work
+inside the one inspection that every read command runs.
 
 ## Problem
 
@@ -234,8 +234,8 @@ none: U17 removed the USD worker, and the window reads through CLI processes.
 ## Not changed
 
 * Each layer blob is still read and hashed twice per inspection (R above: no measurable effect).
-* Seven adapters read their stage with the same two-pass pattern as before: `assembly`, `bolt`,
-  `level`, `marks`, `numbering_approval`, `reference` and `weld`. They serve their own commands
+* Six adapters read their stage with the same two-pass pattern as before: `assembly`, `bolt`,
+  `level`, `numbering_approval`, `reference` and `weld`. They serve their own commands
   and are left as they are; `Reader::open_validated` is ready for them. It shares one
   implementation of the rules with `validate_layers`, so a rule added there applies to both.
 * A body is still cloned into every element's record; sharing by reference would change public

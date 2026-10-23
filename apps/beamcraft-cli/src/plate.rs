@@ -38,12 +38,13 @@ use beamcraft_engine::command::AuthoredPlate;
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
 use beamcraft_engine::level::Levels;
 use beamcraft_engine::member::AuthoredMember;
+use beamcraft_engine::plate_draft::{UnsupportedPlate, evaluate_committed_drafts_cached};
 use beamcraft_engine::quantity::{
     Assessment, Freshness, QuantityRecord, StoredRecord, assess, is_superseded_algorithm,
 };
 use beamcraft_engine::query::committed::{
-    BodyCache, MemberRecord, PlateRecord, evaluate_committed_cached,
-    evaluate_committed_members_cached, ids, scene_elements_with_members,
+    BodyCache, MemberRecord, PlateRecord, evaluate_committed_members_cached, ids,
+    scene_elements_with_members,
 };
 use beamcraft_engine::solid::SolidMesh;
 use beamcraft_engine::transaction::{Admission, PriorOp, admit_create_plate};
@@ -381,6 +382,8 @@ pub(crate) struct Decoded {
     pub(crate) levels: Levels,
     /// The common facts of every element except levels, by id.
     pub(crate) elements: BTreeMap<ElementId, ElementMeta>,
+    /// Any geometry subtree or derived-value opinion, including malformed/non-mesh prims.
+    pub(crate) derived_elements: BTreeSet<ElementId>,
     /// Display conversion must not reject otherwise valid R01 attachment or inspection.
     reference_scene: Result<Vec<beamcraft_engine::SceneElement>, PlateError>,
 }
@@ -725,6 +728,30 @@ pub(crate) fn decode(
     }
     let definitions = decode_definitions(&prims)?;
     let levels = levels_of(&prims)?;
+    let derived_elements = plates
+        .iter()
+        .filter_map(|(plate, _)| {
+            let path = plate
+                .id
+                .prim_path(beamcraft_model::prim::ElementCategory::Part);
+            let geometry = format!("{path}/Geometry");
+            let prefix = format!("{path}/");
+            let has_geometry = by_path
+                .range(path.as_str()..)
+                .take_while(|(p, _)| **p == path || p.starts_with(&prefix))
+                .any(|(_, p)| {
+                    p.path == geometry
+                        || p.path.starts_with(&format!("{geometry}/"))
+                        || p.type_name.as_deref() == Some("Mesh")
+                        || p.properties.iter().any(|v| {
+                            ["bim:shape", "bim:volume", "bim:mass", "bim:quantity"]
+                                .iter()
+                                .any(|prefix| v.name.starts_with(prefix))
+                        })
+                });
+            has_geometry.then_some(plate.id)
+        })
+        .collect();
     Ok(Decoded {
         plates,
         members,
@@ -732,6 +759,7 @@ pub(crate) fn decode(
         definitions,
         levels,
         elements,
+        derived_elements,
         reference_scene: crate::reference_view::scene_elements(&prims),
     })
 }
@@ -888,7 +916,7 @@ fn evaluate_with(
     let authored: Vec<AuthoredPlate> = decoded.plates.iter().map(|(a, _)| a.clone()).collect();
     let members: Vec<AuthoredMember> = decoded.members.iter().map(|(a, _)| a.clone()).collect();
     let materials = material_lookup(&decoded.definitions);
-    let plates = evaluate_committed_cached(&authored, &materials, cache)?;
+    let (plates, _) = evaluate_committed_drafts_cached(&authored, &materials, cache)?;
     let members = evaluate_committed_members_cached(
         &members,
         &profile_lookup(&decoded.definitions),
@@ -896,6 +924,35 @@ fn evaluate_with(
         cache,
     )?;
     Ok((plates, members))
+}
+
+/// The committed plates the kernel cannot evaluate, listed as authored-only records, over this
+/// thread's [`BODIES`] cache: the second pass of an inspection reuses the bodies the first pass
+/// evaluated instead of paying for them twice. The refusals are those of
+/// `beamcraft_engine::plate_draft::evaluate_committed_drafts`.
+pub(crate) fn evaluate_committed_drafts_with_cache(
+    decoded: &Decoded,
+) -> Result<Vec<UnsupportedPlate>, PlateError> {
+    let authored: Vec<AuthoredPlate> = decoded.plates.iter().map(|(a, _)| a.clone()).collect();
+    let materials = material_lookup(&decoded.definitions);
+    let shared = BODIES.try_with(|cache| {
+        cache
+            .try_borrow_mut()
+            .ok()
+            .map(|mut cache| evaluate_committed_drafts_cached(&authored, &materials, &mut cache))
+    });
+    match shared {
+        Ok(Some(result)) => result
+            .map(|(_, unsupported)| unsupported)
+            .map_err(PlateError::from),
+        // The thread is ending or the cache is in use further up the stack: evaluate with a
+        // cache of this call alone rather than fail.
+        Ok(None) | Err(_) => {
+            evaluate_committed_drafts_cached(&authored, &materials, &mut BodyCache::new())
+                .map(|(_, unsupported)| unsupported)
+                .map_err(PlateError::from)
+        }
+    }
 }
 
 /// The quantity record the engine expects for a plate: its quantities under the signature of its
@@ -951,6 +1008,14 @@ fn verify_derived(
     decoded: &Decoded,
     strict: bool,
 ) -> Result<BTreeMap<ElementId, QuantityReport>, PlateError> {
+    let supported: BTreeSet<_> = records.iter().map(|p| p.authored.id).collect();
+    for (authored, mesh) in &decoded.plates {
+        if !supported.contains(&authored.id)
+            && (mesh.is_some() || decoded.derived_elements.contains(&authored.id))
+        {
+            return Err(integrity("unsupported plate has partial derived results"));
+        }
+    }
     let found: BTreeMap<ElementId, &Option<DerivedMesh>> = decoded
         .plates
         .iter()
@@ -1750,8 +1815,10 @@ pub(crate) fn commit_verified(
 pub struct Inspection {
     /// The verified revision.
     pub revision: RevisionSummary,
-    /// Committed plates in element-id order, re-evaluated by the engine.
+    /// Evaluated committed plates in element-id order; authored-only plates are listed separately.
     pub plates: Vec<PlateRecord>,
+    /// Valid authored plates with explicit unsupported geometry and no derived results.
+    pub unsupported_plates: Vec<UnsupportedPlate>,
     /// Committed beams and columns in element-id order, re-evaluated by the engine.
     pub members: Vec<MemberRecord>,
     /// Stored quantity records against the engine's, by element id.
@@ -1772,6 +1839,21 @@ pub struct Inspection {
     pub levels: Levels,
     /// The common facts of every element except levels, by id (E02).
     pub elements: BTreeMap<ElementId, ElementMeta>,
+}
+
+impl Inspection {
+    /// Refuses consumers that require a complete geometry set instead of silently dropping
+    /// authored unsupported elements from an export, total, numbering or binary view bundle.
+    pub fn require_evaluated_geometry(&self) -> Result<(), PlateError> {
+        if self.unsupported_plates.is_empty() {
+            Ok(())
+        } else {
+            Err(PlateError::new(
+                ErrorCode::DependencyUnavailable,
+                "the revision contains plates with unsupported geometry; inspect their authored inputs",
+            ))
+        }
+    }
 }
 
 /// Opens the head revision with verification, reads its model and derived layers in a fresh
@@ -1828,6 +1910,7 @@ pub fn inspect_revision(revision: &Revision) -> Result<Inspection, PlateError> {
     reader.verify_index(&index, &control)?;
     let decoded = decode(&reader, &opened, &control)?;
     let (plates, members) = evaluate_decoded(&decoded)?;
+    let unsupported_plates = evaluate_committed_drafts_with_cache(&decoded)?;
     let quantities = verify_derived(&plates, &members, &decoded, false)?;
     let pin = ViewPin::new(
         revision.info().manifest_digest(),
@@ -1846,6 +1929,7 @@ pub fn inspect_revision(revision: &Revision) -> Result<Inspection, PlateError> {
     Ok(Inspection {
         revision: summarize(revision.info()),
         plates,
+        unsupported_plates,
         members,
         quantities,
         other_elements: decoded.other_elements,

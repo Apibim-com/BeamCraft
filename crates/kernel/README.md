@@ -9,6 +9,12 @@ external asset, catalogue, network capability or unsafe code is introduced.
 
 ## API
 
+The K1 `plate_contour` module separately admits ordered 3D plate contours and evaluates exact
+rectangles in their own certified body frame. It validates caps before allocation, uses bounded
+exact area/topology predicates, and distinguishes in-band near-planar input from an exact solid.
+See [the contour/frame design note](../../docs/design/k1-plate-contour-frame.md) for engine/CLI
+integration, regression evidence and remaining acceptance limits.
+
 `rectangular_plate(RectangularPlate { width_mm, length_mm, thickness_mm })`
 returns a sealed `PlateResult` or typed `diagnostic::Failure`. The dimensions
 describe an origin plate spanning `[0,width]`, `[0,length]`, `[0,thickness]`.

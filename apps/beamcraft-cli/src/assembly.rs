@@ -12,16 +12,19 @@
 //! model; the layer engine re-checks the same rules on the candidate and the strict verifier on
 //! the committed bytes.
 //!
-//! Honesty limits: replay of an `op_id` is decided from the head state, as in `edit` and `delete`
-//! (an attach is a replay when the head already has the part in that assembly). Copying a part
+//! Honesty limits: replay of an `op_id` is decided from the revision of that operation, as for
+//! bolts, levels and welds: the request is the accepted one only if the state it asks for holds in
+//! that revision and did not hold in the one before. The head is not consulted, so a later
+//! operation does not break a replay. A revision at or below the compaction floor of a compacted
+//! history cannot be checked this way and answers `NOT_FOUND`, not a replay. Copying a part
 //! that has a `part-of` record is refused by `copy-element` (`DV-REL-011`); a multi-element copy
 //! is not implemented. Deleting an assembly that still has parts is `DEPENDENCY_CONFLICT`; there
 //! is no cascade. An assembly cannot be renamed or moved yet.
 
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, PublishRequest, RevisionSummary,
-    check_footprint, control, digest_of, host_uuid, integrity, load_base, open_base, prior_op_with,
-    property, publish_revision, replay_summary, summarize, text,
+    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, PublishRequest, RevisionSummary, base_of,
+    check_footprint, control, host_uuid, integrity, load_base, open_base, prior_op_with, property,
+    publish_revision, replay_summary, summarize, text,
 };
 use beamcraft_engine::assembly::{Membership, PartKind};
 use beamcraft_engine::footprint::Footprint;
@@ -217,8 +220,29 @@ fn reuse() -> PlateError {
     .into()
 }
 
+/// Whether `holds` is true in the revision at `sequence` and was not in the one before it.
+fn introduced_by(
+    store: &RevisionStore,
+    sequence: u64,
+    holds: &dyn Fn(&Model) -> bool,
+    control: &Control,
+) -> Result<bool, PlateError> {
+    let model_at = |sequence: u64| -> Result<Model, PlateError> {
+        let revision = store.open_at(sequence)?;
+        model_of(&open_base(&base_of(&revision)?)?, control)
+    };
+    if !holds(&model_at(sequence)?) {
+        return Ok(false);
+    }
+    Ok(match sequence.checked_sub(1).filter(|s| *s > 0) {
+        Some(before) => !holds(&model_at(before)?),
+        None => true,
+    })
+}
+
 /// The shared path of every A01 command: open the head, decide replay from the ledger and the
-/// head state, plan against the head model, author, check the footprint, commit.
+/// revision of the accepted operation (see [`introduced_by`]), plan against the head model,
+/// author, check the footprint, commit.
 fn apply(
     store: &RevisionStore,
     context: &AssemblyContext,
@@ -253,26 +277,25 @@ fn apply(
         ..
     } = base;
     let op_host = host_uuid(&context.op_id.to_string())?;
-    let held = in_head(&model);
-    let (prior, recorded) = prior_op_with(store, &op_host, || {
-        if held {
-            Ok(fingerprint)
-        } else {
-            digest_of(b"no accepted request matches the head state")
+    // The ledger records that the operation committed, not what it asked for. The request is the
+    // accepted one only if the revision of that operation is where its effect first appears: the
+    // state it asks for holds there and did not hold in the revision before. The head cannot
+    // decide this, since it may hold the same state through another operation.
+    let (prior, recorded) = prior_op_with(store, &op_host, || Ok(fingerprint))?;
+    if let PriorOp::Accepted { .. } = prior {
+        let Some((_, sequence, _)) = &recorded else {
+            return Err(integrity("replay without a recorded revision"));
+        };
+        if !introduced_by(store, *sequence, in_head, &control)? {
+            return Err(reuse());
         }
-    })?;
-    match prior {
-        PriorOp::Accepted { fingerprint: seen } if seen == fingerprint => {
-            return Ok(AssemblyChange {
-                replayed: true,
-                revision: replay_summary(&head, recorded)?,
-                footprint: None,
-                changed_layers: Vec::new(),
-                assemblies: views(&model),
-            });
-        }
-        PriorOp::Accepted { .. } => return Err(reuse()),
-        PriorOp::Unseen => {}
+        return Ok(AssemblyChange {
+            replayed: true,
+            revision: replay_summary(&head, recorded)?,
+            footprint: None,
+            changed_layers: Vec::new(),
+            assemblies: views(&model),
+        });
     }
     let Plan { changes, footprint } = plan(&model)?;
     let schema = schema_identity()?;

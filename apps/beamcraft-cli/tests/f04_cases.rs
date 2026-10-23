@@ -13,7 +13,10 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use beamcraft_engine::transaction::{Admission, PriorOp, admit_create_plate};
+use beamcraft_engine::plate_draft::{
+    DraftAdmission as Admission, admit_create_plate_draft as admit_create_plate,
+};
+use beamcraft_engine::transaction::PriorOp;
 use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::{CreatePlate, Placement};
 use beamcraft_model::error::ErrorCode;
@@ -44,15 +47,11 @@ const SKIPPED: &[(&str, &str)] = &[
     ),
 ];
 
-/// Accepted by F04, refused with UNSUPPORTED_GEOMETRY: the contour is not in the plane `z = 0`
-/// (it needs the body-frame adapter, which A02.1 does not implement). Contours in the plane
-/// `z = 0` (F04-POS-19, F04-POS-20, ...) are evaluated since A02.1.
-const UNSUPPORTED_BY_P01: &[&str] = &["F04-POS-18", "F04-POS-28"];
+/// Authored-only admission now accepts POS-28; no declared contour-admission deviations remain.
+const UNSUPPORTED_BY_P01: &[&str] = &[];
 
-/// Rejected by F04 with INVALID_ARGUMENT (non-planar contour) but reported as
-/// UNSUPPORTED_GEOMETRY: exact planarity of a contour outside the plane `z = 0` is not
-/// implemented. A self-intersecting contour in that plane (F04-NEG-30) is INVALID_ARGUMENT.
-const WRONG_CODE_IN_P01: &[&str] = &["F04-NEG-29", "F04-NEG-38"];
+/// Nonplanarity is now checked before support; there are no remaining wrong-code deviations.
+const WRONG_CODE_IN_P01: &[&str] = &[];
 
 #[test]
 fn the_k1_inventory_accounts_for_the_other_commands_and_raw_envelopes() {

@@ -1009,6 +1009,19 @@ impl Stage {
             .collect()
     }
 
+    /// Whether any owned layer authors a prim strictly below `path`, and the type of the first.
+    fn descendant_types(&self, path: &str) -> Vec<Option<String>> {
+        let prefix = format!("{path}/");
+        self.layers
+            .borrow()
+            .iter()
+            .filter(|(_, _, foreign)| !foreign)
+            .flat_map(|(_, layer, _)| layer.specs.iter())
+            .filter(|s| s.path.starts_with(&prefix))
+            .map(|s| s.type_name.clone())
+            .collect()
+    }
+
     /// A composed prim: local opinions, then the foreign subtree baked by [`Self::resolve_arcs`].
     fn prim(&self, path: &str) -> Option<Prim> {
         let mut prim = Prim {
@@ -1420,6 +1433,14 @@ fn check_element(stage: &Stage, entry: &Json, findings: &mut Findings) -> Option
         check_plate_inputs(stage, &prim, entry, findings);
     }
 
+    if matches!(entry.get("unsupported"), Ok(Json::Bool(true))) {
+        check_unsupported(stage, &prim, findings);
+        return Some(Json::object([
+            ("id", Json::text(id)),
+            ("geometry_status", Json::text("unsupported")),
+        ]));
+    }
+
     // The derived mesh and its quantities.
     let geometry_path = format!("{path}/Geometry");
     let mesh = stage.prim(&geometry_path)?;
@@ -1473,6 +1494,13 @@ fn check_element(stage: &Stage, entry: &Json, findings: &mut Findings) -> Option
                 "{geometry_path}: a plate with holes has {} faces",
                 counts.len()
             ),
+        );
+    }
+    if let Ok(vertices) = entry.get("vertices").and_then(|v| v.array()) {
+        let want: Vec<V3> = vertices.iter().filter_map(json_v3).collect();
+        findings.check(
+            want.len() == vertices.len() && points == want,
+            format!("{geometry_path}: mesh vertices are {points:?}"),
         );
     }
     check_standard_metadata(&mesh, &points, &counts, &indices, findings);
@@ -1676,7 +1704,14 @@ fn check_plate_inputs(stage: &Stage, prim: &Prim, entry: &Json, findings: &mut F
         );
     }
     let contour = prim.v3s("steel:plate:contourPointsMm");
-    if let (Some(w), Some(l)) = (
+    if let Ok(given) = entry.get("contour").and_then(|c| c.array()) {
+        // An authored 3D contour is compared point by point, in the order given.
+        let want: Vec<V3> = given.iter().filter_map(json_v3).collect();
+        findings.check(
+            want.len() == given.len() && contour == want,
+            format!("{path}: contour is {contour:?}"),
+        );
+    } else if let (Some(w), Some(l)) = (
         expect_float(entry, "width", findings),
         expect_float(entry, "length", findings),
     ) {
@@ -1709,6 +1744,37 @@ fn check_plate_inputs(stage: &Stage, prim: &Prim, entry: &Json, findings: &mut F
     findings.check(
         hole_points.iter().all(|p| p.z == 0.0),
         format!("{path}: a hole point is not in the XY plane"),
+    );
+}
+
+/// A valid plate whose geometry is unsupported keeps its authored inputs only: no `Geometry`
+/// prim, no mesh below the element and no derived shape, volume, mass or quantity opinion.
+fn check_unsupported(stage: &Stage, prim: &Prim, findings: &mut Findings) {
+    let path = &prim.path;
+    let below = stage.descendant_types(path);
+    findings.check(
+        below.is_empty(),
+        format!(
+            "{path}: an unsupported plate has {} descendant prims",
+            below.len()
+        ),
+    );
+    findings.check(
+        !below.iter().any(|t| t.as_deref() == Some("Mesh")),
+        format!("{path}: an unsupported plate has a mesh descendant"),
+    );
+    for name in prim.attributes.keys() {
+        let derived = ["bim:shape", "bim:volume", "bim:mass", "bim:quantity"]
+            .iter()
+            .any(|prefix| name.starts_with(prefix));
+        findings.check(
+            !derived,
+            format!("{path}: an unsupported plate has the derived value {name:?}"),
+        );
+    }
+    findings.check(
+        !prim.has("points") && !prim.has("faceVertexIndices"),
+        format!("{path}: an unsupported plate carries mesh data"),
     );
 }
 

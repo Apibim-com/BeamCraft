@@ -4,6 +4,76 @@ Decisions that shape the plan, newest first. Each names its date and, where one 
 document that records it in detail. A later decision overrides an earlier one where they differ.
 Open questions are at the end.
 
+## 2026-10-22
+
+- **Point 5 deferred for a decision after the MVP.** Revisit the KM-to-KMD `builtFrom`
+  workflow and broader inter-section source dependencies after the MVP; do not implement or
+  finalize that design now. R06 is deferred, and the earlier KM-to-KMD description is a candidate
+  direction to reassess, not committed MVP scope. Approved opening assignments (stage 4), common
+  viewing (stage 6), exact reference pins and IFC conversion provenance remain in the current
+  contract package. Deferring point 5 does not remove their required version/evidence tracking.
+- **Section projects and reproducible coordination: foundation approved.** Distinguish an
+  engineering module (`steel`) from a responsible project section (`KM`, `KMD`) and its optional
+  zones. Sections can share one project store or publish independent projects under one common
+  standard. A coordination revision pins the exact source revisions; a new section publication
+  does not update coordination automatically. This extends the project-organization decision of
+  2026-10-20 from independent zone projects to independent section projects as well. The draft
+  specifications are [F12](../contracts/f12-project-coordination-v0.1.md) and its
+  [F10 0.2 amendment](../contracts/f10-domain-vocabulary-v0.2.md). Their detailed clauses are for
+  review; approved direction is not a claim of implementation or frozen contract acceptance.
+- **One branch and one PR for this foundation.** F12 and the associated vocabulary amendment,
+  architecture alignment and plan references form one coherent documentation task. Do not split
+  this agreed package into multiple PRs. Implementation tasks remain separate from this contract
+  work; no implementation status or MVP priority changes through this approval.
+- **One opening assignment.** The initiating engineer creates one shared assignment for an
+  opening; the responsible host-section engineer decides whether it is acceptable. The physical
+  opening is separately authored in the host model and linked to the assignment. Acceptance is
+  distinct from implementation, and applies to the reviewed request/host versions. The reserved
+  F10 mechanism is not an implemented workflow.
+- **Stage 4 approved: reference-first design and assignment files.** Services engineers take a
+  pinned structural project as a read-only reference and model pipes/ducts without cutting holes.
+  They collect required openings and send a file containing individual assignments; structural
+  engineers decide per item and author accepted openings in their own model. Decisions and
+  implementation evidence return in a response file. Retransmission creates no duplicates.
+  Acceptance of a 150 mm proposal never approves its 200 mm successor and never overwrites it;
+  retain the old decision with the exact proposal/host versions it reviewed. A changed structural
+  basis likewise requires revalidation. The [F12 stage 4 companion](../contracts/f12-opening-assignments-v0.1.md)
+  specifies this workflow in the same branch and PR. Detailed encoding and executable acceptance
+  remain open; this approval adds neither a general project-review system nor runtime features.
+- **Stage 6 approved: common Craft viewing, specialized editing.** Every Craft application
+  can inspect admitted project content from other sections. Editing requires the compatible
+  owning engineering module, for example MEP capabilities in MEPCraft, plus authority over
+  the active section/zone. Application names and viewing capability grant no editing rights.
+  An unavailable module leaves its content preserved and read-only. Supplied display geometry
+  does not establish engineering validity; unsupported representations remain explicitly
+  unavailable. The [F12 stage 6 companion](../contracts/f12-craft-read-capabilities-v0.1.md)
+  belongs in the same branch and PR. This is a contract direction, not a claim that MEPCraft
+  or additional engineering modules have been implemented.
+- **One workflow across company arrangements.** The same section-based workflow must work
+  when a company authors all sections, authors only one and receives all other models as IFC,
+  or authors several and receives the rest as references. Native authoring versus foreign
+  referencing is a per-model distinction, not a project-wide operating mode. Module/scope
+  permissions and exact-version assignment decisions are the same in all arrangements;
+  internal exchange and external reports are delivery choices. F12 PC-WORK-001 requires all
+  three scenarios in acceptance, independently of single-store or multi-project organization.
+- **Single-section companies and external IFC references.** A company can author only KM or
+  OV in Craft while receiving the other disciplines as IFC. One IFC delivery becomes one logical
+  read-only USD reference with retained original bytes, conversion provenance, source identifiers,
+  units/frame mapping and an explicit loss report. It never becomes editable native elements
+  merely through conversion. Another Craft project or a shared coordination project is not a
+  prerequisite. Opening assignments can be issued as human-readable reports to external engineers,
+  with external replies explicitly recorded against exact proposal/source versions; no Craft
+  application, account or machine-readable response is required from the recipient. The
+  [F12 external-reference companion](../contracts/f12-external-reference-workflow-v0.1.md)
+  specifies this extension in the same PR. This selects the reference-conversion boundary for
+  E04; its supported IFC subset, converter and implementation remain to be specified. I01–I03
+  editable-item work remains deferred and unchanged.
+- **Existing foundations retained.** USD remains the model; source element identity, immutable
+  revisions, typed commands and operation-based merge remain authoritative. The frozen F04/F06/
+  F10 0.1 documents and their existing schemas stay unchanged. C03–C06 remain after the MVP;
+  approval/review tooling, remote hosting and additional engineering modules are not added to
+  the current implementation scope.
+
 ## 2026-10-21
 
 - **MVP scope widened.** The first version is a full manual steel-modelling tool with views,
@@ -210,7 +280,7 @@ Open questions are at the end.
 |---|----------|--------|
 | 1 | Independent IFC validation tool (E01 Q-8) | E02 acceptance |
 | 2 | macOS policy without project hardware | Q02 acceptance |
-| 3 | IFC import scope (E04) | E04 |
+| 3 | IFC reference converter, supported subset, budgets and provenance (read-only workflow selected on 2026-10-22) | E04 |
 | 4 | Live channel and permission model (C07, C08) | C07, C08 |
 | 5 | Where saved views and review notes live: workspace only or a shared review layer | W01, W02 |
 | 6 | Variant sets in our own layers (N07) | N07 |
