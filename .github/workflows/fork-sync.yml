@@ -1,0 +1,53 @@
+name: Fork sync
+
+# Hourly upstream sync per the fork contract: the script is the single
+# implementation (local run and cron share it), the cron adds only --yes.
+# A green run is silent by design; a red run is the alarm (owner decision).
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+# A cron run must not overlap itself. A race with a local sync is safe: the
+# script's push is non-force, so the loser exits 4 and the next hour redoes it.
+concurrency:
+  group: fork-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    name: sync upstream master
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      # ref: master keeps the script's current-branch guard green (a default
+      # checkout detaches HEAD); the full history is needed for the merge base.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      # The script guards on both remotes; checkout configures only origin.
+      - name: Add the upstream remote
+        run: git remote add upstream https://github.com/Apibim-com/BeamCraft.git
+
+      - name: Identify the committer
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Sync
+        run: bash tools/fork-sync.sh sync --yes
