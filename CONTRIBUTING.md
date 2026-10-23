@@ -20,8 +20,9 @@ Thanks for helping. Humans and AI agents follow the same rules.
 5. Open a PR with the template filled in. CI must be green.
 6. Keep the fork aligned with upstream: `bash tools/fork-sync.sh status` inspects the
    divergence, `bash tools/fork-sync.sh sync` merges `upstream/master`, gates it on the local
-   triple and pushes `master`. The script doubles as the reference example for the small,
-   single-purpose shell tools that live in [`tools/`](tools/).
+   triple and pushes `master`. The fork inherits upstream 1:1, so `sync` never auto-resolves:
+   a merge conflict stops the run for manual investigation. The script doubles as the reference
+   example for the small, single-purpose shell tools that live in [`tools/`](tools/).
 
 Mirrors (forks) of this repository keep their own `master` aligned with this one. This
 repository ships only [`tools/sync.schema.example`](tools/sync.schema.example) — the schema
