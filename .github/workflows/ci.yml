@@ -58,14 +58,14 @@ jobs:
           RUSTDOCFLAGS: -D warnings
 
   test:
-    name: test (${{ matrix.os }}, shard ${{ matrix.shard }}/6)
+    name: test (${{ matrix.os }}, shard ${{ matrix.shard }}/8)
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         # Windows first: Tekla users are on Windows. macOS is covered by release builds.
         os: [windows-latest, ubuntu-latest]
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -81,7 +81,7 @@ jobs:
           tool: cargo-nextest@0.9.149
 
       - name: Test
-        run: cargo nextest run --workspace --locked --no-fail-fast --partition hash:${{ matrix.shard }}/6
+        run: cargo nextest run --workspace --locked --no-fail-fast --partition hash:${{ matrix.shard }}/8
 
       # nextest does not execute rustdoc tests; keep those in the full cross-platform gate.
       - name: Test documentation
