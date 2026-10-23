@@ -10,7 +10,6 @@
 //! member, a plate with a through hole) by their mesh: the nearest front-facing triangle names
 //! its element only, with `feature_id` `None`. A body a query cannot consider at all (the point
 //! form, no face target) is listed in [`PickResult::skipped`] rather than approximated.
-//! approximated.
 //!
 //! Pick follows F06 exactly: closed face rectangles enlarged by `eps_pick` with the parallel
 //! test `|u . n| < 1e-6`; edge and vertex distances to the closed finite segment
