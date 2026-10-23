@@ -34,7 +34,7 @@ def main():
     brand = ET.parse(ROOT / 'docs/brand/beamcraft-logo.svg').getroot()
     # Only place the official I-beam group. Never rewrite its paths, colours or strokes.
     mark_svg = ET.Element(NS + 'svg', width='1024', height='1024', viewBox='0 0 1024 1024')
-    placement = ET.SubElement(mark_svg, NS + 'g', transform='translate(15 15) scale(0.78)')
+    placement = ET.SubElement(mark_svg, NS + 'g', transform='translate(45 45) scale(0.73)')
     placement.append(deepcopy(brand.findall(NS + 'g')[-1]))
     mark = render(mark_svg)
     canvas = shadow(tile, 10, 12, 0.30)
