@@ -10,7 +10,7 @@ use beamcraft_host::lease::{PublicationLease, StoreLease};
 use beamcraft_host::ledger::Outcome;
 use beamcraft_host::revision::{RevisionStore, Uuid7};
 use beamcraft_host::storage::BlobStore;
-use beamcraft_json::{Json, Limits};
+use beamcraft_json::Limits;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
