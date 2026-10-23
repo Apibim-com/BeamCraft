@@ -15,7 +15,6 @@ use beamcraft_engine::member::{CreateMemberOutcome, ProfileInfo, create_straight
 use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::{CreatePlate, CreateStraightMember, MemberKind, Placement};
 use beamcraft_model::digest::Sha256;
-use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
 use std::collections::{BTreeMap, BTreeSet};
 
