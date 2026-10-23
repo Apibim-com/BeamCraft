@@ -55,6 +55,13 @@ beamcraft create-member ... --cut-point X,Y,Z --cut-normal X,Y,Z
    `cut:f.p0` is the kernel's provisional local id, as in G09); placement rotation is still
    `UNSUPPORTED_GEOMETRY`, so the cut coordinates are element-local in the unrotated frame.
 
+Update 2026-10-23 (F06/F04 amendment A-2, see [the A-2 notes](g08-f06-a2-notes.md)): decision 1's
+deviation is replaced by the `plane_cut` operation record and the `CutByPlane` command of F04
+(sections 4 and 7). The contract names the kept side explicitly (`keep`: `positive` or
+`negative`); decision 2's fixed "keep the side the normal points away from" describes this slice
+only. The two `steel:cut:*` attributes are deprecated, and moving to the records belongs to the
+A03 acceptance task. Until then the code in this note is not the contract.
+
 ## Not done (not claimed)
 
 * No `UpdateElement`/remove-cut command, no operation records, no cut features in the
