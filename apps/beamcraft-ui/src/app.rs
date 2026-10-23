@@ -556,14 +556,16 @@ impl App {
             refresh_timings: Vec::new(),
         };
         app.reload();
-        app.refresh_status();
         Ok(app)
     }
 
     /// Starts a refresh on a worker thread (the CLI queries and the scene build); the result is
     /// applied by `poll_reload`. A refresh asked for while one runs is queued, so it still reads
-    /// the store after whatever just changed it.
+    /// the store after whatever just changed it. The publication status describes the same
+    /// stores, so every reload reads it again: a create must not leave the panel at the old
+    /// draft, and neither may the reload key (issue 64).
     fn reload(&mut self) {
+        self.refresh_status();
         if self.reload_job.is_some() {
             self.reload_queued = true;
             return;
@@ -916,14 +918,12 @@ impl App {
                     // The element may have moved, or the undo may have removed it: ask again.
                     _ => self.refresh_selection(),
                 }
-                self.refresh_status();
             }
             Err(e) => {
                 if e.code == "OUTCOME_UNKNOWN" {
                     self.invalidate_select();
                     self.reload();
                     self.refresh_selection();
-                    self.refresh_status();
                 }
                 self.edit_note = Some(Err(e.to_string()));
             }
@@ -1025,14 +1025,12 @@ impl App {
                     done.sequence
                 )));
                 self.refresh_selection();
-                self.refresh_status();
             }
             Err(e) => {
                 if e.code == "OUTCOME_UNKNOWN" {
                     self.invalidate_select();
                     self.reload();
                     self.refresh_selection();
-                    self.refresh_status();
                 }
                 self.props_note = Some(Err(e.to_string()));
             }
@@ -2018,23 +2016,27 @@ impl eframe::App for App {
 mod tests {
     use super::{App, Source, load_icon, needs_refit, target_size, volume_note};
     use crate::Error;
+    use crate::command;
     use crate::perf::RefreshTiming;
     use crate::render::Gpu;
     use crate::scene::Scene;
     use crate::source::{Refreshed, Reloaded};
-    use crate::tools::ToolError;
+    use crate::stats::Stats;
+    use crate::tools::{ToolError, ToolKind};
     use beamcraft_engine::synthetic::plate_scene;
     use beamcraft_engine::{Limits, Representation, ViewPin, ViewSnapshot};
     use beamcraft_model::digest::Sha256;
     use eframe::egui_wgpu;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
     use std::sync::Arc;
-    use std::sync::atomic::Ordering;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{Duration, Instant};
 
-    /// The window state on the headless adapter, with no window and no CLI behind it: the
-    /// refresh it starts fails and is never read, and a test hands it results itself. `None`,
-    /// saying so, without a native adapter. The counters are this test's own, so parallel tests
-    /// never count into each other (issue 167).
-    fn headless() -> Option<App> {
+    /// The window state on the headless adapter, with no window: a test hands it results itself
+    /// or points it at real stores and the real CLI. `None`, saying so, without a native adapter.
+    /// The counters are this test's own, so parallel tests never count into each other (issue 167).
+    fn headless_at(source: Source) -> Option<App> {
         let gpu = match pollster::block_on(Gpu::headless()) {
             Ok(gpu) => gpu,
             Err(Error::NoAdapter) => {
@@ -2057,16 +2059,20 @@ mod tests {
             target_format: format,
             renderer: std::sync::Arc::new(egui::mutex::RwLock::new(renderer)),
         });
+        let stats = Arc::new(Stats::default());
+        Some(App::new(&cc, source, stats).unwrap())
+    }
+
+    /// The window state with no CLI behind it: the refresh it starts fails and is never read.
+    fn headless() -> Option<App> {
         let missing = std::env::temp_dir().join("beamcraft-window-test-no-cli");
-        let source = Source {
+        headless_at(Source {
             store: missing.clone(),
             cli: missing,
             workspace: None,
             published: None,
             samples: None,
-        };
-        let stats = Arc::new(crate::stats::Stats::default());
-        Some(App::new(&cc, source, stats).unwrap())
+        })
     }
 
     /// A refresh that read `scene`.
@@ -2191,6 +2197,191 @@ mod tests {
         let icon = load_icon();
         assert_eq!((icon.width, icon.height), (32, 32));
         assert_eq!(icon.rgba.len(), 32 * 32 * 4);
+    }
+
+    /// Stores of one run: a published store and the workspace forked from it, gone afterwards.
+    struct Stores {
+        root: PathBuf,
+    }
+
+    impl Stores {
+        fn new() -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let root = std::env::temp_dir().join(format!(
+                "beamcraft-issue-64-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(root.join("published")).unwrap();
+            Self { root }
+        }
+
+        fn published(&self) -> PathBuf {
+            self.root.join("published")
+        }
+
+        fn workspace(&self) -> PathBuf {
+            self.root.join("workspace")
+        }
+    }
+
+    impl Drop for Stores {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    /// The `beamcraft` CLI in this target directory (`cargo test --workspace` builds it); without
+    /// it the store tests are skipped and say so.
+    fn cli() -> Option<PathBuf> {
+        let exe = std::env::current_exe().ok()?;
+        let cli = exe
+            .parent()?
+            .parent()?
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        if cli.is_file() {
+            Some(cli)
+        } else {
+            eprintln!(
+                "SKIP publish-status test: build beamcraft-cli first (cargo test --workspace does)"
+            );
+            None
+        }
+    }
+
+    /// Runs the real CLI; a refusal fails the test with the reply shown.
+    fn ok(cli: &Path, args: &[&str]) {
+        let done = Command::new(cli).args(args).output().unwrap();
+        assert_eq!(
+            done.status.code(),
+            Some(0),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&done.stdout)
+        );
+    }
+
+    /// Pumps the window's polls until `done` holds, as the frame loop would; past the deadline
+    /// the test fails instead of hanging.
+    fn pump(app: &mut App, what: &str, done: impl FnMut(&App) -> bool) {
+        let mut done = done;
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while !done(app) {
+            app.poll_commit();
+            app.poll_status();
+            app.poll_reload();
+            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    /// The Publish panel follows the stores, not the last restart: after a created revision it
+    /// shows the new draft head without a restart, and a reload reports a change made outside the
+    /// window too (issue 64). Run against the real CLI and real stores.
+    #[test]
+    fn the_publish_status_follows_a_created_revision_and_a_reload() {
+        let Some(cli) = cli() else { return };
+        let stores = Stores::new();
+        let (published, workspace) = (stores.published(), stores.workspace());
+        let store = published.to_string_lossy().into_owned();
+        ok(
+            &cli,
+            &["define-material", "--store", &store, "--density", "7850"],
+        );
+        ok(
+            &cli,
+            &[
+                "define-profile",
+                "--store",
+                &store,
+                "--width",
+                "200",
+                "--height",
+                "300",
+            ],
+        );
+        ok(
+            &cli,
+            &[
+                "workspace-create",
+                "--store",
+                &store,
+                "--workspace-dir",
+                &workspace.to_string_lossy(),
+            ],
+        );
+        let definitions = command::definitions(&cli, &workspace, &Stats::default()).unwrap();
+        let (profile, material) = (
+            definitions.profiles.first().unwrap().digest.clone(),
+            definitions.materials.first().unwrap().digest.clone(),
+        );
+        let Some(mut app) = headless_at(Source {
+            store: workspace.clone(),
+            cli: cli.clone(),
+            workspace: Some(workspace.clone()),
+            published: Some(published),
+            samples: None,
+        }) else {
+            return;
+        };
+
+        // The fork at its base: one draft revision, nothing unsent.
+        pump(&mut app, "the first status read", |app| {
+            app.publisher
+                .status
+                .as_ref()
+                .is_some_and(|s| (s.unsent_revisions, s.draft_sequence) == (0, 1))
+        });
+
+        // A member committed through the Create panel's own path: form, preview, commit.
+        app.tools.active = ToolKind::Member;
+        app.tools.member.start = ["0".into(), "400".into(), "0".into()];
+        app.tools.member.end = ["1000".into(), "400".into(), "0".into()];
+        app.tools.member.profile = Some(profile.clone());
+        app.tools.member.material = Some(material);
+        app.tools.member.name = "IBeam".into();
+        app.tools.preview(&app.source.store).unwrap();
+        app.start_commit();
+        pump(&mut app, "the create to finish", |app| !app.tools.busy());
+        let note = app.tool_note.clone().unwrap().unwrap();
+        assert!(
+            note.contains("Created member") && note.contains("(sequence 2)"),
+            "{note}"
+        );
+
+        // The panel tells the truth about the new draft: one unsent revision, sequence 2.
+        pump(&mut app, "the status to follow the create", |app| {
+            app.publisher.status.as_ref().is_some_and(|s| {
+                (s.unsent_revisions, s.draft_sequence, s.base_is_current) == (1, 2, true)
+            })
+        });
+
+        // A change made outside the window (here, the CLI by hand) is reported after a reload,
+        // the R key's path, not only after a restart.
+        let ws = workspace.to_string_lossy().into_owned();
+        ok(
+            &cli,
+            &[
+                "create-member",
+                "--store",
+                &ws,
+                "--start",
+                "0,500,0",
+                "--end",
+                "2000,500,0",
+                "--profile-digest",
+                &profile,
+                "--name",
+                "Direct",
+            ],
+        );
+        app.reload();
+        pump(&mut app, "the status to follow the reload", |app| {
+            app.publisher
+                .status
+                .as_ref()
+                .is_some_and(|s| (s.unsent_revisions, s.draft_sequence) == (2, 3))
+        });
     }
 }
 
