@@ -42,7 +42,7 @@ Icon=com.apibim.BeamCraft
 Terminal=false
 Categories=Graphics;Engineering;
 StartupNotify=true
-StartupWMClass=beamcraft-ui
+StartupWMClass=com.apibim.BeamCraft
 DESKTOP
 chmod 644 "$applications_dir/com.apibim.BeamCraft.desktop"
 if command -v update-desktop-database >/dev/null 2>&1; then
