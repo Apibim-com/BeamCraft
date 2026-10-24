@@ -67,6 +67,7 @@ else
     cp licenses/OFL-1.1-Inter.txt "$name/licenses/"
     cp -R environments "$name/"
     if [ "$kind" = linux ]; then
+        cp assets/icons/beamcraft-linux-256.png "$name/assets/icons/"
         cp packaging/install-linux.sh "$name/install-linux.sh"
         chmod +x "$name/install-linux.sh"
     fi

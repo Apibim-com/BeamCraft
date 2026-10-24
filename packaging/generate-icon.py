@@ -49,6 +49,8 @@ def main():
                 sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64),
                        (128, 128), (256, 256)])
     canvas.save(ROOT / 'assets/icons/beamcraft-linux-1024.png')
+    canvas.resize((256, 256), Image.Resampling.LANCZOS).save(
+        ROOT / 'assets/icons/beamcraft-linux-256.png')
     chunks = []
     # PNG-backed ICNS representations, including explicit Retina slots.
     for kind, size in ((b'icp4', 16), (b'icp5', 32), (b'icp6', 64),

@@ -10,7 +10,7 @@ if [[ "$data_dir" != /* || "$data_dir" == *$'\n'* ]]; then
     exit 1
 fi
 install_dir="$data_dir/beamcraft"
-for resource in beamcraft beamcraft-ui assets/icons/beamcraft-icon.png; do
+for resource in beamcraft beamcraft-ui assets/icons/beamcraft-linux-256.png; do
     test -f "$package_dir/$resource" || { echo "Missing release resource: $resource" >&2; exit 1; }
 done
 case "$install_dir/" in
@@ -26,10 +26,10 @@ if [[ "$package_dir" != "$install_dir" ]]; then
     cp -R "$package_dir/." "$install_dir/"
 fi
 chmod +x "$install_dir/beamcraft" "$install_dir/beamcraft-ui"
-icon_dir="$data_dir/icons/hicolor/1024x1024/apps"
+icon_dir="$data_dir/icons/hicolor/256x256/apps"
 applications_dir="$data_dir/applications"
 mkdir -p "$icon_dir" "$applications_dir"
-cp "$install_dir/assets/icons/beamcraft-icon.png" "$icon_dir/com.apibim.BeamCraft.png"
+cp "$install_dir/assets/icons/beamcraft-linux-256.png" "$icon_dir/com.apibim.BeamCraft.png"
 # Desktop Exec uses its own quoting rules; it is not a shell command.
 exec_path="$(printf '%s' "$install_dir/beamcraft-ui" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/`/\\`/g' -e 's/\$/\\$/g' -e 's/%/%%/g')"
 cat > "$applications_dir/com.apibim.BeamCraft.desktop" <<DESKTOP
