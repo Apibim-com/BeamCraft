@@ -17,8 +17,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+        include:
+          # GNOME 46 supports the X11/Xvfb desktop used by this acceptance capture.
+          # Newer ubuntu-latest images can ship GNOME without --x11.
+          - os: ubuntu-latest
+            runner: ubuntu-24.04
+          - os: windows-latest
+            runner: windows-latest
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -57,15 +63,27 @@ jobs:
             export BEAMCRAFT_THEME=light
             gnome-shell --x11 --mode=ubuntu > screenshots/gnome-shell.log 2>&1 &
             shell_pid=$!
-            sleep 20
+            if ! gdbus wait --session --timeout 60 org.gnome.Shell; then
+              cat screenshots/gnome-shell.log
+              exit 1
+            fi
             kill -0 "$shell_pid"
             gsettings set org.gnome.shell favorite-apps "[\"com.apibim.BeamCraft.desktop\"]"
             gtk-launch com.apibim.BeamCraft > screenshots/application.log 2>&1
-            sleep 15
+            window_id=""
+            for attempt in {1..60}; do
+              if window_id="$(xdotool search --onlyvisible --class com.apibim.BeamCraft | head -n 1)"; then
+                break
+              fi
+              sleep 1
+            done
+            if [[ -z "$window_id" ]]; then
+              cat screenshots/application.log
+              exit 1
+            fi
             pgrep -x beamcraft-ui
             xdotool key Escape
             sleep 2
-            window_id="$(xdotool search --class com.apibim.BeamCraft | head -n 1)"
             xprop -id "$window_id" WM_CLASS > screenshots/window-class.txt
             grep -q com.apibim.BeamCraft screenshots/window-class.txt
             import -window root screenshots/linux.png
