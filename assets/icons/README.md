@@ -42,7 +42,8 @@ registers `com.apibim.BeamCraft.desktop` in the user applications directory and
 installs the application icon in the user's `hicolor` icon theme. No sudo is needed.
 Open Ubuntu's Show Applications, search for BeamCraft and launch it. Right-click
 its Dock icon and choose Pin to Dash to keep the launcher there. The Linux window's
-application ID matches the desktop entry so the running window groups with that launcher.
+Wayland application ID matches the desktop entry; on X11, StartupWMClass matches
+`beamcraft-ui`, so the running window groups with that launcher.
 Run the installer again from a newer extracted release to update it.
 
 The Linux screenshot workflow launches the installed desktop entry in Ubuntu's
