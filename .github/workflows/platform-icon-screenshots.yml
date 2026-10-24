@@ -28,7 +28,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       - name: Install Linux desktop tools
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y xvfb imagemagick ubuntu-session gnome-shell gnome-shell-extension-ubuntu-dock dbus-x11 xdotool libgtk-3-bin desktop-file-utils libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libvulkan1 mesa-vulkan-drivers libgl1-mesa-dri
+        run: sudo apt-get update && sudo apt-get install -y xvfb imagemagick ubuntu-session gnome-shell gnome-shell-extension-ubuntu-dock dbus-x11 xdotool x11-utils libgtk-3-bin desktop-file-utils libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libvulkan1 mesa-vulkan-drivers libgl1-mesa-dri
       - name: Build application
         run: cargo build --locked -p beamcraft-cli -p beamcraft-ui
       - name: Capture Linux window
@@ -63,6 +63,10 @@ jobs:
             gtk-launch com.apibim.BeamCraft > screenshots/application.log 2>&1
             sleep 15
             pgrep -x beamcraft-ui
+            xdotool key Escape
+            sleep 2
+            xprop -name BeamCraft WM_CLASS > screenshots/window-class.txt
+            grep -q com.apibim.BeamCraft screenshots/window-class.txt
             import -window root screenshots/linux.png
             xdotool key super+a
             sleep 5
