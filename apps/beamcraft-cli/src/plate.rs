@@ -101,7 +101,7 @@ pub struct PlateError {
 }
 
 impl PlateError {
-    const fn new(code: ErrorCode, message: &'static str) -> Self {
+    pub(crate) const fn new(code: ErrorCode, message: &'static str) -> Self {
         Self { code, message }
     }
 }
@@ -1002,7 +1002,7 @@ pub struct QuantityReport {
 /// authored inputs, and a stored quantity record must be the engine's or, outside `strict` mode,
 /// is reported as stale. Publishing is strict: a layer whose stored quantities disagree with the
 /// kernel cannot become a revision.
-fn verify_derived(
+pub(crate) fn verify_derived(
     records: &[PlateRecord],
     member_records: &[MemberRecord],
     decoded: &Decoded,
@@ -1714,6 +1714,8 @@ pub fn create_plate(
     let committed = publish_revision(
         store,
         &PublishRequest {
+            footprint: &transaction.outcome.footprint,
+            fingerprint: transaction.outcome.fingerprint,
             prepared: &prepared,
             schema,
             project: &project,
@@ -1735,6 +1737,8 @@ pub fn create_plate(
 
 /// What `publish_revision` needs to turn a prepared candidate into a committed revision.
 pub(crate) struct PublishRequest<'a> {
+    pub(crate) footprint: &'a Footprint,
+    pub(crate) fingerprint: ContentDigest,
     pub(crate) prepared: &'a Prepared,
     pub(crate) schema: SchemaIdentity,
     pub(crate) project: &'a str,
@@ -1795,7 +1799,15 @@ pub(crate) fn publish_revision(
         root_layer: ROOT_LAYER.into(),
         entries,
     };
-    Ok(store.commit_with(&draft, request.expected, Some(&PlateVerifier), hook)?)
+    let pin =
+        crate::command_evidence::store(store, &request.op, request.fingerprint, request.footprint)?;
+    Ok(store.commit_with_evidence(
+        &draft,
+        request.expected,
+        Some(pin),
+        Some(&PlateVerifier),
+        hook,
+    )?)
 }
 
 /// Commits a complete layer set through U06/U07 with the content verifier of this module (U03
@@ -1807,7 +1819,17 @@ pub(crate) fn commit_verified(
     expected: &ExpectedBase,
     hook: &mut dyn CommitHook,
 ) -> Result<Committed, PlateError> {
-    Ok(store.commit_with(draft, expected, Some(&PlateVerifier), hook)?)
+    commit_verified_with_evidence(store, draft, expected, None, hook)
+}
+
+pub(crate) fn commit_verified_with_evidence(
+    store: &RevisionStore,
+    draft: &RevisionDraft,
+    expected: &ExpectedBase,
+    evidence: Option<beamcraft_host::revision::EvidencePin>,
+    hook: &mut dyn CommitHook,
+) -> Result<Committed, PlateError> {
+    Ok(store.commit_with_evidence(draft, expected, evidence, Some(&PlateVerifier), hook)?)
 }
 
 /// A plate as listed from a committed revision.
