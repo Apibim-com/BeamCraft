@@ -525,21 +525,22 @@ pub fn paint_preview(painter: &Painter, rect: Rect) {
     painter.rect_stroke(rect, radius, Stroke::new(2.0, INK), StrokeKind::Inside);
 }
 
-/// Where the official logo PNG may be: the working directory (an extracted package), the source
-/// tree, next to the program, and in the macOS bundle's resources.
-fn logo_candidates() -> Vec<PathBuf> {
-    let name = "assets/icons/beamcraft-1024.png";
+/// Where a PNG asset under `assets/icons/` may be: the working directory (an extracted
+/// package), the source tree, next to the program, and in the macOS bundle's resources
+/// (`bundled`, relative to `Contents/Resources`).
+fn asset_candidates(file: &str, bundled: &str) -> Vec<PathBuf> {
+    let name = Path::new("assets/icons").join(file);
     let mut candidates = vec![
-        Path::new(name).to_path_buf(),
+        name.clone(),
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
-            .join(name),
+            .join(&name),
     ];
     if let Ok(exe) = std::env::current_exe()
         && let Some(dir) = exe.parent()
     {
-        candidates.push(dir.join(name));
-        candidates.push(dir.join("../Resources/beamcraft-icon.png"));
+        candidates.push(dir.join(&name));
+        candidates.push(dir.join("../Resources").join(bundled));
     }
     candidates
 }
@@ -547,8 +548,27 @@ fn logo_candidates() -> Vec<PathBuf> {
 /// The official logo as `side` x `side` RGBA pixels, averaged down from the PNG; `None` when the
 /// file is missing or does not decode.
 pub fn logo_rgba(side: usize) -> Option<Vec<u8>> {
+    let file = "beamcraft-1024.png";
+    png_rgba(
+        &asset_candidates(file, &format!("assets/icons/{file}")),
+        side,
+    )
+}
+
+/// The application icon (the official logo on a rounded tile, built by
+/// `packaging/generate-icon.py`) as `side` x `side` RGBA pixels; `None` when the file is missing
+/// or does not decode.
+pub fn app_icon_rgba(side: usize) -> Option<Vec<u8>> {
+    png_rgba(
+        &asset_candidates("beamcraft-icon.png", "beamcraft-icon.png"),
+        side,
+    )
+}
+
+/// The first readable PNG of `candidates` as `side` x `side` RGBA pixels, averaged down.
+fn png_rgba(candidates: &[PathBuf], side: usize) -> Option<Vec<u8>> {
     use std::io::Read;
-    let path = logo_candidates().into_iter().find(|p| p.is_file())?;
+    let path = candidates.iter().find(|p| p.is_file())?;
     let mut bytes = Vec::new();
     std::fs::File::open(path)
         .ok()?
@@ -665,6 +685,19 @@ mod tests {
         let centre = (128 * 256 + 128) * 4;
         assert_eq!(rgba[centre + 3], 255);
         assert!(logo_rgba(0).is_none());
+    }
+
+    #[test]
+    fn the_application_icon_is_a_rounded_tile() {
+        // The source tree holds the icon, so a development build always finds it.
+        let rgba = app_icon_rgba(256).unwrap();
+        assert_eq!(rgba.len(), 256 * 256 * 4);
+        // Opaque in the middle, transparent in the margin and at the rounded corner.
+        let alpha = |x: usize, y: usize| rgba[(y * 256 + x) * 4 + 3];
+        assert_eq!(alpha(128, 128), 255);
+        assert_eq!(alpha(2, 2), 0);
+        assert_eq!(alpha(28, 28), 0);
+        assert!(app_icon_rgba(0).is_none());
     }
 
     #[test]

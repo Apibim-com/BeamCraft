@@ -219,6 +219,10 @@ fn window(size: egui::Vec2, create: eframe::AppCreator<'_>) -> Result<(), Error>
         .with_inner_size(size)
         .with_title("BeamCraft")
         .with_icon(load_icon());
+    // The Wayland app ID and X11 window class match the desktop entry `install-linux.sh`
+    // registers, so the running window groups with its launcher and shows its icon.
+    #[cfg(target_os = "linux")]
+    let viewport = viewport.with_app_id("com.apibim.BeamCraft");
     let options = eframe::NativeOptions {
         viewport,
         renderer: eframe::Renderer::Wgpu,
