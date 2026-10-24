@@ -7,6 +7,8 @@
 //! (primary drag orbits, Shift + primary drag pans, pinch zooms). In both the wheel zooms toward
 //! the cursor, F fits and R reloads.
 
+mod workbench;
+
 use crate::camera::{Camera, View};
 use crate::command::Selected;
 use crate::edit::{EditKind, Edited, Editor, Epoch, Target, ndc_of, ray_through};
@@ -17,7 +19,7 @@ use crate::render::{Renderer, Uploaded};
 use crate::scene::SceneSummary;
 use crate::source::{Known, Refreshed, Reloaded};
 use crate::stats::Stats;
-use crate::tools::{Choice, Created, MAX_TEXT, MemberKind, ToolError, ToolKind, Tools};
+use crate::tools::{Choice, Created, MAX_TEXT, ToolError, ToolKind, Tools};
 use crate::{Error, check_font, command, json_string, source};
 use beamcraft_engine::ViewSnapshot;
 use std::path::{Path, PathBuf};
@@ -47,6 +49,10 @@ pub struct Source {
     /// The author identity (UUIDv7) recorded as the actor of the window's edits; `None` lets the
     /// CLI make one per command.
     pub actor: Option<String>,
+    /// The environment chosen at start, shown in the header.
+    pub environment: Option<String>,
+    /// The author's name, shown in the header.
+    pub author: Option<String>,
 }
 
 /// The scene on screen: the pinned snapshot, its buffers on the device and what the window
@@ -115,6 +121,15 @@ pub struct App {
     selects_finished: u64,
     /// Worker timings of the refreshes consumed while a perf run is active.
     refresh_timings: Vec<RefreshTiming>,
+    /// The tool chosen on the ribbon; the inspector shows what it needs.
+    bench: workbench::Bench,
+    /// Whether the Details window is open.
+    details: bool,
+    /// A zoom (true: in) or fit asked for by the view buttons, applied in the next frame.
+    pending_zoom: Option<bool>,
+    pending_fit: bool,
+    logo: Option<egui::TextureHandle>,
+    logo_tried: bool,
 }
 
 /// Records a scene swap in the perf counters: the CPU display bytes and the snapshot mesh bytes
@@ -607,6 +622,12 @@ impl App {
             last_commit_ok: true,
             selects_finished: 0,
             refresh_timings: Vec::new(),
+            bench: workbench::Bench::default(),
+            details: false,
+            pending_zoom: None,
+            pending_fit: false,
+            logo: None,
+            logo_tried: false,
         };
         app.tools.actor.clone_from(&app.source.actor);
         app.editor.actor.clone_from(&app.source.actor);
@@ -770,20 +791,6 @@ impl App {
             );
         self.stats.resize_ns.add_duration(started.elapsed());
         Ok(())
-    }
-
-    fn panel(&mut self, ui: &mut egui::Ui) {
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            self.info(ui);
-            ui.separator();
-            self.tools_panel(ui);
-            ui.separator();
-            self.edit_panel(ui);
-            ui.separator();
-            self.props_panel(ui);
-            ui.separator();
-            self.publish_panel(ui);
-        });
     }
 
     fn target(&self) -> Target<'_> {
@@ -1190,7 +1197,6 @@ impl App {
     }
 
     fn props_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Properties");
         let Some(id) = self.props.selected().map(str::to_owned) else {
             ui.label("Select a plate or straight member to see its properties.");
             return;
@@ -1217,13 +1223,14 @@ impl App {
                 details.kind,
                 details.revision.label()
             ));
-            egui::Grid::new("props-readonly").show(ui, |ui| {
-                for (label, value) in details.read_only_rows() {
-                    ui.label(label);
+            // One wrapped row per value: the inspector has a fixed width and values can be long.
+            let muted = crate::theme::Palette::current(ui).muted;
+            for (label, value) in details.read_only_rows() {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(egui::RichText::new(label).color(muted));
                     ui.label(value);
-                    ui.end_row();
-                }
-            });
+                });
+            }
             // Borrowed beside the form (disjoint fields), never copied: the panel is laid out in
             // every frame the window draws.
             let materials = &self.tools.definitions.materials;
@@ -1322,7 +1329,6 @@ impl App {
     }
 
     fn publish_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Publish");
         match self.publisher.target() {
             Err(why) => {
                 ui.label(why);
@@ -1400,7 +1406,6 @@ impl App {
     }
 
     fn edit_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Edit");
         ui.label("Click an element in the view to select it. Esc clears the selection.");
         match self.editor.selected() {
             Some(info) => {
@@ -1414,29 +1419,20 @@ impl App {
             }
         }
         let selected = self.editor.selected().is_some();
-        let mut action = self.editor.action();
-        ui.add_enabled_ui(selected, |ui| {
-            ui.horizontal(|ui| {
-                ui.selectable_value(&mut action, EditKind::Move, "Move");
-                ui.selectable_value(&mut action, EditKind::Copy, "Copy");
-                ui.selectable_value(&mut action, EditKind::Delete, "Delete");
-            });
-            match action {
-                EditKind::Move => {
-                    ui.label("New position in mm (absolute):");
-                    point_fields(ui, &mut self.editor.move_to);
-                }
-                EditKind::Copy => {
-                    ui.label("Offset of the copy in mm:");
-                    point_fields(ui, &mut self.editor.copy_offset);
-                }
-                _ => {
-                    ui.label("Deletes the element (refused while another element links to it).");
-                }
+        let action = self.editor.action();
+        ui.add_enabled_ui(selected, |ui| match action {
+            EditKind::Move => {
+                ui.label("New position in mm (absolute):");
+                point_fields(ui, &mut self.editor.move_to);
+            }
+            EditKind::Copy => {
+                ui.label("Offset of the copy in mm:");
+                point_fields(ui, &mut self.editor.copy_offset);
+            }
+            _ => {
+                ui.label("Deletes the element (refused while another element links to it).");
             }
         });
-        // Another action needs its own preview.
-        self.editor.set_action(action);
         let busy = self.editor.busy();
         let target = self.target();
         let can_commit = self.editor.can_commit(target);
@@ -1483,27 +1479,6 @@ impl App {
             if !self.editor.can_commit(self.target()) {
                 ui.colored_label(RED, "The parameters changed: preview again.");
             }
-        }
-        let has_workspace = self.source.workspace.is_some();
-        let (mut undo, mut redo) = (false, false);
-        ui.horizontal(|ui| {
-            undo = ui
-                .add_enabled(has_workspace && !busy, egui::Button::new("Undo"))
-                .clicked();
-            redo = ui
-                .add_enabled(has_workspace && !busy, egui::Button::new("Redo"))
-                .clicked();
-        });
-        if undo {
-            self.start_edit(Some(EditKind::Undo));
-        }
-        if redo {
-            self.start_edit(Some(EditKind::Redo));
-        }
-        if !has_workspace {
-            ui.label(
-                "Undo and redo need a personal workspace: open the window with --workspace DIR.",
-            );
         }
         if busy {
             ui.label("Running…");
@@ -1709,11 +1684,6 @@ impl App {
     }
 
     fn tools_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Create");
-        ui.horizontal(|ui| {
-            ui.selectable_value(&mut self.tools.active, ToolKind::Plate, "Plate");
-            ui.selectable_value(&mut self.tools.active, ToolKind::Member, "Member");
-        });
         ui.label("Dimensions in mm.");
         // Borrowed beside the form (disjoint fields), never copied: the panel is laid out in every
         // frame the window draws.
@@ -1736,10 +1706,6 @@ impl App {
             }
             ToolKind::Member => {
                 let form = &mut self.tools.member;
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut form.kind, MemberKind::Beam, "Beam");
-                    ui.selectable_value(&mut form.kind, MemberKind::Column, "Column");
-                });
                 for (label, point) in [("Start", &mut form.start), ("End", &mut form.end)] {
                     ui.horizontal(|ui| {
                         ui.label(label);
@@ -1849,7 +1815,6 @@ impl App {
     }
 
     fn info(&mut self, ui: &mut egui::Ui) {
-        ui.heading("BeamCraft");
         ui.label(format!("{:.0} FPS", self.fps));
         ui.label(&self.adapter);
         ui.label(format!("{}x MSAA", self.renderer.samples));
@@ -1947,11 +1912,16 @@ impl eframe::App for App {
                 self.invalidate_select();
                 self.editor.deselect();
                 self.props.clear();
+                self.set_bench(workbench::Bench::Select);
             }
         }
         if reload {
             self.reload();
         }
+        let fit = fit || std::mem::take(&mut self.pending_fit);
+        let pending_zoom = self.pending_zoom.take();
+        let zoom_in = zoom_in || pending_zoom == Some(true);
+        let zoom_out = zoom_out || pending_zoom == Some(false);
         if fit && let Some(l) = &self.loaded {
             let (target, extent) = l.summary.framing();
             if let Err(e) = self.camera.fit(target, extent, self.aspect()) {
@@ -1959,12 +1929,15 @@ impl eframe::App for App {
             }
         }
         if self.text {
-            // A fixed width: the 3D view must not shift sideways when a tab or a chosen
-            // definition name is wider, and the coordinate rows must fit at the default size.
-            egui::Panel::left("info")
-                .exact_size(320.0)
-                .show(ui, |ui| self.panel(ui));
-            self.publish_dialog(&ui.ctx().clone());
+            // Header, ribbon and status bar first, then the inspector at a fixed width: the 3D
+            // view must not shift sideways when a chosen definition name is wider.
+            self.header(ui);
+            self.ribbon(ui);
+            self.status_bar(ui);
+            self.inspector(ui);
+            let ctx = ui.ctx().clone();
+            self.details_window(&ctx);
+            self.publish_dialog(&ctx);
         }
         egui::CentralPanel::default().show(ui, |ui| {
             let size = ui.available_size();
@@ -2032,6 +2005,14 @@ impl eframe::App for App {
                 .and_then(|()| self.camera.view(aspect))
             {
                 Ok(view) => {
+                    // A pale blueprint behind the model in the light theme, a deep one in the dark.
+                    let rgb = if ui.ctx().theme() == egui::Theme::Dark {
+                        [0x0B, 0x2A, 0x33]
+                    } else {
+                        [0xE3, 0xF5, 0xFA]
+                    };
+                    let [r, g, b] = rgb.map(|c: u8| f64::from(c) / 255.0);
+                    self.renderer.background = wgpu::Color { r, g, b, a: 1.0 };
                     if let Some(l) = &self.loaded {
                         self.renderer.draw(
                             &self.state.device,
@@ -2064,6 +2045,9 @@ impl eframe::App for App {
             }
             if let Some(ray) = picked {
                 self.start_select(ray);
+            }
+            if self.text {
+                self.view_controls(ui, response.rect);
             }
         });
         ui.ctx().request_repaint();
@@ -2121,6 +2105,8 @@ mod tests {
             published: None,
             samples: None,
             actor: None,
+            environment: None,
+            author: None,
         };
         let stats = Arc::new(crate::stats::Stats::default());
         Some(App::new(&cc, source, stats).unwrap())

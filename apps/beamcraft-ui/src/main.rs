@@ -176,6 +176,8 @@ fn run() -> Result<Option<(String, u8)>, Error> {
         published,
         samples,
         actor: map.get("--actor-id").cloned(),
+        environment: None,
+        author: None,
     };
     let perf_run = plan.is_some();
     window(
