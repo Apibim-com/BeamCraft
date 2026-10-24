@@ -8,10 +8,11 @@ on:
         options: ['1', '4', '8']
         default: '8'
         description: '1 runs nextest in place; 4/8 use an archive'
-      cold:
-        type: boolean
-        default: false
-        description: 'Use a fresh Cargo cache namespace'
+      cache-mode:
+        type: choice
+        options: ['warmup', 'cold', 'warm']
+        default: 'warmup'
+        description: 'Per variant: cold once, warmup once (excluded), then three warm runs with exact cache hits'
 
 env:
   CARGO_TERM_COLOR: always
@@ -40,9 +41,30 @@ jobs:
         with:
           toolchain: stable
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - id: rust-cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          key: benchmark-${{ inputs.shards }}-${{ inputs.cold && github.run_id || 'warm' }}
+          # A cold run cannot restore or populate the warm namespace.
+          prefix-key: benchmark-${{ inputs['cache-mode'] == 'cold' && format('cold-{0}-{1}', github.run_id, github.run_attempt) || 'warm' }}
+          key: variant-${{ inputs.shards }}
+
+      - name: Validate benchmark cache state
+        shell: bash
+        env:
+          CACHE_MODE: ${{ inputs['cache-mode'] }}
+          CACHE_HIT: ${{ steps.rust-cache.outputs.cache-hit }}
+        run: |
+          printf 'Cache mode: %s; exact cache hit: %s\n' "$CACHE_MODE" "${CACHE_HIT:-false}" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$CACHE_MODE" = warmup ]; then
+            echo 'Warmup only: exclude this run from measured samples.' >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$CACHE_MODE" = warm ] && [ "$CACHE_HIT" != true ]; then
+            echo 'INVALID warm sample: run warmup successfully on this ref and variant, then retry.' >> "$GITHUB_STEP_SUMMARY"
+            echo '::error::Warm benchmark requires an exact cache hit; sample excluded.'
+            exit 1
+          elif [ "$CACHE_MODE" = cold ] && [ "$CACHE_HIT" = true ]; then
+            echo '::error::Cold benchmark unexpectedly restored an exact cache hit; sample excluded.'
+            exit 1
+          fi
 
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
@@ -103,9 +125,30 @@ jobs:
         with:
           toolchain: stable
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - id: rust-cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          key: benchmark-${{ inputs.shards }}-${{ inputs.cold && github.run_id || 'warm' }}
+          # A cold run cannot restore or populate the warm namespace.
+          prefix-key: benchmark-${{ inputs['cache-mode'] == 'cold' && format('cold-{0}-{1}', github.run_id, github.run_attempt) || 'warm' }}
+          key: variant-${{ inputs.shards }}
+
+      - name: Validate benchmark cache state
+        shell: bash
+        env:
+          CACHE_MODE: ${{ inputs['cache-mode'] }}
+          CACHE_HIT: ${{ steps.rust-cache.outputs.cache-hit }}
+        run: |
+          printf 'Cache mode: %s; exact cache hit: %s\n' "$CACHE_MODE" "${CACHE_HIT:-false}" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$CACHE_MODE" = warmup ]; then
+            echo 'Warmup only: exclude this run from measured samples.' >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$CACHE_MODE" = warm ] && [ "$CACHE_HIT" != true ]; then
+            echo 'INVALID warm sample: run warmup successfully on this ref and variant, then retry.' >> "$GITHUB_STEP_SUMMARY"
+            echo '::error::Warm benchmark requires an exact cache hit; sample excluded.'
+            exit 1
+          elif [ "$CACHE_MODE" = cold ] && [ "$CACHE_HIT" = true ]; then
+            echo '::error::Cold benchmark unexpectedly restored an exact cache hit; sample excluded.'
+            exit 1
+          fi
 
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
