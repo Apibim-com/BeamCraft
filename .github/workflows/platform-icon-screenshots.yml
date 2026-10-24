@@ -68,6 +68,8 @@ jobs:
             xprop -name BeamCraft WM_CLASS > screenshots/window-class.txt
             grep -q com.apibim.BeamCraft screenshots/window-class.txt
             import -window root screenshots/linux.png
+            gsettings set org.gnome.shell favorite-apps "[]"
+            sleep 2
             xdotool key super+a
             sleep 5
             import -window root screenshots/linux-applications.png
