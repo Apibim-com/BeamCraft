@@ -482,13 +482,14 @@ pub fn icon() -> egui::IconData {
     }
 }
 
-/// The window/application icon: the official logo (`assets/icons/beamcraft-1024.png` next to the
-/// program or in the source tree, `Contents/Resources/beamcraft-icon.png` in the macOS bundle,
-/// where eframe also applies it to the Dock), averaged down to 256 x 256. When it cannot be
-/// read, the coded [`icon`] is used, so no asset bytes are compiled into the binary.
+/// The window/application icon: the official logo on a rounded tile, the same picture as the
+/// macOS ICNS, the Windows ICO and the Linux launcher icon (`assets/icons/beamcraft-icon.png`
+/// next to the program or in the source tree; in the macOS bundle the grid-margin variant
+/// `Contents/Resources/beamcraft-icon.png`, which eframe also applies to the Dock), averaged down to 256 x 256. When it
+/// cannot be read, the coded [`icon`] is used, so no asset bytes are compiled into the binary.
 pub fn load_icon() -> egui::IconData {
     const SIDE: u32 = 256;
-    match crate::theme::logo_rgba(SIDE as usize) {
+    match crate::theme::app_icon_rgba(SIDE as usize) {
         Some(rgba) => egui::IconData {
             rgba,
             width: SIDE,
@@ -2240,10 +2241,10 @@ mod tests {
         assert_eq!(volume_note(1.025e9), ", volume 1.025 m3");
     }
 
-    /// A development build finds the official logo in the source tree; the coded fallback is a
-    /// complete icon too, never an empty one.
+    /// A development build finds the application icon in the source tree; the coded fallback is
+    /// a complete icon too, never an empty one.
     #[test]
-    fn the_icon_loader_uses_the_logo_and_has_a_complete_fallback() {
+    fn the_icon_loader_uses_the_app_icon_and_has_a_complete_fallback() {
         let icon = load_icon();
         assert_eq!((icon.width, icon.height), (256, 256));
         assert_eq!(icon.rgba.len(), 256 * 256 * 4);
