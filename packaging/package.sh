@@ -66,6 +66,10 @@ else
         "$name/assets/fonts/inter/"
     cp licenses/OFL-1.1-Inter.txt "$name/licenses/"
     cp -R environments "$name/"
+    if [ "$kind" = linux ]; then
+        cp packaging/install-linux.sh "$name/install-linux.sh"
+        chmod +x "$name/install-linux.sh"
+    fi
 fi
 
 if [ "$kind" = win ]; then

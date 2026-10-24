@@ -33,3 +33,17 @@ icon. Native macOS acceptance still requires checking the running Dock, Finder
 and Spotlight icons at normal and magnified sizes, including transparent corners
 and small sizes. Attribution and retained trademark terms are in
 `ATTRIBUTION.md`.
+
+## Ubuntu application menu and Dock
+
+After extracting the Linux release, run `bash install-linux.sh` from its folder.
+It installs BeamCraft under `${XDG_DATA_HOME:-$HOME/.local/share}/beamcraft`,
+registers `com.apibim.BeamCraft.desktop` in the user applications directory and
+installs the application icon in the user's `hicolor` icon theme. No sudo is needed.
+Open Ubuntu's Show Applications, search for BeamCraft and launch it. Right-click
+its Dock icon and choose Pin to Dash to keep the launcher there. The Linux window's
+application ID matches the desktop entry so the running window groups with that launcher.
+Run the installer again from a newer extracted release to update it.
+
+The Linux screenshot workflow launches the installed desktop entry in Ubuntu's
+GNOME Shell session and captures both the Dock and Show Applications.
