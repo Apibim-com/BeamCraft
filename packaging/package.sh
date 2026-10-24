@@ -56,6 +56,7 @@ if [ "$kind" = macos ]; then
     codesign --force --deep --sign - "$app" 1>&2
 else
     mkdir -p "$name/assets/fonts/inter" "$name/assets/icons" "$name/licenses"
+    cp assets/icons/beamcraft-1024.png "$name/assets/icons/"
     cp assets/icons/beamcraft-linux-1024.png "$name/assets/icons/beamcraft-icon.png"
     if [ "$kind" = win ]; then
         cp assets/icons/beamcraft-windows.ico "$name/BeamCraft.ico"
