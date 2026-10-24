@@ -88,6 +88,8 @@ pub struct ProjectedElement {
     pub world_bounds: Aabb,
     /// Translation placement in millimetres.
     pub placement_mm: [f64; 3],
+    /// Rigid orientation in quaternion `(x, y, z, w)` form.
+    pub orientation_xyzw: [f64; 4],
 }
 
 /// A snapshot seen through view settings. Instance and triangle indices are local to it.
@@ -136,6 +138,7 @@ impl ViewSnapshot {
                 triangle_count,
                 world_bounds: rep.world_bounds,
                 placement_mm: entry.placement_mm,
+                orientation_xyzw: entry.orientation_xyzw,
             });
         }
         Ok(ViewProjection {

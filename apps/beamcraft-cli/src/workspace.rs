@@ -22,20 +22,25 @@
 
 use crate::plate::{PlateError, RevisionSummary, commit_verified, host_uuid, integrity, summarize};
 use beamcraft_host::revision::{
-    CommitHook, CommitOutcome, ExpectedBase, LayerEntry, RevisionDraft, RevisionError,
+    CommitHook, CommitOutcome, ExpectedBase, LayerEntry, Revision, RevisionDraft, RevisionError,
     RevisionStore, Uuid7,
 };
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
-use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
+
+mod state;
+pub use state::WorkspaceState;
+mod pending;
+pub mod rebase;
+pub mod rebase_receipt;
 
 const META_FILE: &str = "workspace.json";
 const META_MAGIC: &str = "beamcraft-workspace 1";
+const META_MAGIC_REBASED: &str = "beamcraft-workspace 2";
 const META_CAP: u64 = 4096;
 
-fn unusable() -> PlateError {
+pub(crate) fn unusable() -> PlateError {
     PlateError {
         code: ErrorCode::BackendUnavailable,
         message: "workspace metadata is not usable",
@@ -55,23 +60,36 @@ pub struct WorkspaceMeta {
     pub base_manifest: ContentDigest,
     /// Draft head sequence that is already published (or was forked from the published head).
     pub synced_sequence: u64,
+    /// Latest local rebase candidate. Publication cannot end before it. Zero keeps v1 bytes;
+    /// this is separate from the already-published prefix and never marks unsent edits published.
+    pub rebase_sequence: u64,
 }
 
 impl WorkspaceMeta {
     fn encode(&self) -> String {
-        format!(
-            "{META_MAGIC}\nworkspace_id={}\nuser_id={}\nbase_revision={}\nbase_manifest={}\nsynced_sequence={}\n",
+        let magic = if self.rebase_sequence == 0 {
+            META_MAGIC
+        } else {
+            META_MAGIC_REBASED
+        };
+        let mut out = format!(
+            "{magic}\nworkspace_id={}\nuser_id={}\nbase_revision={}\nbase_manifest={}\nsynced_sequence={}\n",
             self.workspace_id.as_str(),
             self.user_id.as_str(),
             self.base_revision.as_str(),
             self.base_manifest,
             self.synced_sequence
-        )
+        );
+        if self.rebase_sequence != 0 {
+            out.push_str(&format!("rebase_sequence={}\n", self.rebase_sequence));
+        }
+        out
     }
 
     fn decode(text: &str) -> Result<Self, PlateError> {
         let mut lines = text.lines();
-        if lines.next() != Some(META_MAGIC) {
+        let magic = lines.next();
+        if magic != Some(META_MAGIC) && magic != Some(META_MAGIC_REBASED) {
             return Err(unusable());
         }
         let mut field = |key: &str| -> Result<&str, PlateError> {
@@ -86,16 +104,32 @@ impl WorkspaceMeta {
         let base_revision = host_uuid(field("base_revision")?)?;
         let base_manifest = field("base_manifest")?.parse().map_err(|_| unusable())?;
         let synced_sequence = field("synced_sequence")?.parse().map_err(|_| unusable())?;
+        let rebase_sequence = if magic == Some(META_MAGIC_REBASED) {
+            let sequence = field("rebase_sequence")?
+                .parse::<u64>()
+                .map_err(|_| unusable())?;
+            if sequence == 0 || sequence > beamcraft_host::revision::MAX_REVISIONS {
+                return Err(unusable());
+            }
+            sequence
+        } else {
+            0
+        };
         if lines.next().is_some() {
             return Err(unusable());
         }
-        Ok(Self {
+        let meta = Self {
             workspace_id,
             user_id,
             base_revision,
             base_manifest,
             synced_sequence,
-        })
+            rebase_sequence,
+        };
+        if rebase_sequence != 0 && meta.encode() != text {
+            return Err(unusable());
+        }
+        Ok(meta)
     }
 }
 
@@ -103,35 +137,21 @@ fn meta_path(dir: &Path) -> PathBuf {
     dir.join(META_FILE)
 }
 
-/// Reads and validates the metadata of a workspace directory.
+/// Recovers any pending rebase, then reads and validates workspace metadata.
 pub fn read_meta(dir: &Path) -> Result<WorkspaceMeta, PlateError> {
-    let path = meta_path(dir);
-    // A link is never followed: the metadata is a regular file inside the workspace.
-    let metadata = fs::symlink_metadata(&path).map_err(|_| unusable())?;
-    if !metadata.is_file() || metadata.len() > META_CAP {
-        return Err(unusable());
-    }
-    let text = fs::read_to_string(&path).map_err(|_| unusable())?;
-    WorkspaceMeta::decode(&text)
+    WorkspaceState::open(dir)?
+        .meta()
+        .cloned()
+        .ok_or_else(unusable)
 }
 
-/// Replaces the metadata atomically: a temporary file, synced, then renamed over the old one.
-pub(crate) fn write_meta(dir: &Path, meta: &WorkspaceMeta) -> Result<(), PlateError> {
-    let temporary = dir.join(format!("{META_FILE}.tmp"));
-    // Exclusive creation: a leftover or planted entry (even a link) is removed as an entry, never
-    // written through.
-    if fs::symlink_metadata(&temporary).is_ok() {
-        fs::remove_file(&temporary).map_err(|_| unusable())?;
-    }
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temporary)
-        .map_err(|_| unusable())?;
-    file.write_all(meta.encode().as_bytes())
-        .and_then(|()| file.sync_all())
-        .map_err(|_| unusable())?;
-    fs::rename(&temporary, meta_path(dir)).map_err(|_| unusable())
+pub(crate) fn write_meta(
+    dir: &Path,
+    expected: Option<&WorkspaceMeta>,
+    next: &WorkspaceMeta,
+) -> Result<(), PlateError> {
+    WorkspaceState::open(dir)?.compare_and_swap(expected, next)?;
+    Ok(())
 }
 
 /// Identities of one `create` call.
@@ -166,6 +186,32 @@ fn head_of(
     store: &RevisionStore,
 ) -> Result<Option<beamcraft_host::revision::RevisionInfo>, PlateError> {
     store.head().map_err(PlateError::from)
+}
+
+/// Resolves the exact accepted pin independently of the local published-operation prefix.
+/// The current-head path avoids a history search; `sequence_of` bounds a historical lookup by
+/// the host's MAX_REVISIONS cap. An unavailable or compacted pin never falls back to local USD.
+pub(crate) fn published_base(
+    published: &RevisionStore,
+    meta: &WorkspaceMeta,
+) -> Result<Revision, PlateError> {
+    let head = published
+        .head()?
+        .ok_or_else(|| integrity("the published store has no revision"))?;
+    let info = if head.revision() == &meta.base_revision {
+        head
+    } else {
+        let sequence = published
+            .sequence_of(&meta.base_revision)?
+            .ok_or_else(|| integrity("the accepted workspace base is unavailable"))?;
+        published.info_at(sequence)?
+    };
+    if info.manifest_digest() != meta.base_manifest {
+        return Err(integrity(
+            "the accepted workspace base pin disagrees with history",
+        ));
+    }
+    Ok(published.open_at(info.sequence())?)
 }
 
 /// Forks the published head into a new workspace directory.
@@ -214,8 +260,9 @@ pub fn create_workspace(
             base_revision: revision.info().revision().clone(),
             base_manifest: revision.info().manifest_digest(),
             synced_sequence: 1,
+            rebase_sequence: 0,
         };
-        write_meta(dir, &meta)?;
+        write_meta(dir, None, &meta)?;
         meta
     };
     if head_of(workspace)?.is_none() {
@@ -249,8 +296,14 @@ pub fn status(
     workspace: &RevisionStore,
     dir: &Path,
 ) -> Result<WorkspaceStatus, PlateError> {
-    let meta = read_meta(dir)?;
+    let state = WorkspaceState::open(dir)?;
+    let meta = state.meta().cloned().ok_or_else(unusable)?;
     let draft = head_of(workspace)?.ok_or_else(|| integrity("the workspace has no revision"))?;
+    if meta.rebase_sequence > draft.sequence() {
+        return Err(integrity(
+            "workspace rebase boundary is beyond its draft head",
+        ));
+    }
     let head =
         head_of(published)?.ok_or_else(|| integrity("the published store has no revision"))?;
     Ok(WorkspaceStatus {
@@ -286,9 +339,15 @@ pub fn publish_workspace(
     dir: &Path,
     hook: &mut dyn CommitHook,
 ) -> Result<Published, PlateError> {
-    let meta = read_meta(dir)?;
+    let mut state = WorkspaceState::open(dir)?;
+    let meta = state.meta().cloned().ok_or_else(unusable)?;
     let draft = workspace.open()?;
     let draft_sequence = draft.info().sequence();
+    if meta.rebase_sequence > draft_sequence {
+        return Err(integrity(
+            "workspace rebase boundary is beyond its draft head",
+        ));
+    }
     let op = draft.info().revision().clone();
     let head = published.open().map_err(|e| match e {
         RevisionError::NoRevision => integrity("the published store has no revision"),
@@ -300,9 +359,10 @@ pub fn publish_workspace(
             base_revision: head.info().revision().clone(),
             base_manifest: head.info().manifest_digest(),
             synced_sequence: draft_sequence,
-            ..meta
+            ..meta.clone()
         };
-        write_meta(dir, &next)?;
+        state.compare_and_swap(Some(&meta), &next)?;
+        drop(state);
         return Ok(Published {
             replayed: true,
             revision: summarize(head.info()),
@@ -349,21 +409,43 @@ pub fn publish_workspace(
         root_layer: content.root_layer().to_owned(),
         entries,
     };
-    let committed = commit_verified(
+    let operations =
+        crate::command_evidence::interval(workspace, meta.synced_sequence, draft_sequence)?;
+    let source = crate::command_evidence::aggregate(workspace, meta.synced_sequence, &operations)?;
+    if source.head.manifest_digest() != draft.info().manifest_digest() {
+        return Err(integrity(
+            "publication source differs from the verified draft head",
+        ));
+    }
+    let evidence = source
+        .footprint
+        .as_ref()
+        .map(|footprint| {
+            crate::command_evidence::store(
+                published,
+                &next.op,
+                draft.info().manifest_digest(),
+                footprint,
+            )
+        })
+        .transpose()?;
+    let committed = crate::plate::commit_verified_with_evidence(
         published,
         &next,
         &ExpectedBase::Revision(meta.base_revision.clone()),
+        evidence,
         hook,
     )?;
-    write_meta(
-        dir,
+    state.compare_and_swap(
+        Some(&meta),
         &WorkspaceMeta {
             base_revision: committed.info.revision().clone(),
             base_manifest: committed.info.manifest_digest(),
             synced_sequence: draft_sequence,
-            ..meta
+            ..meta.clone()
         },
     )?;
+    drop(state);
     Ok(Published {
         replayed: committed.outcome == CommitOutcome::Replayed,
         revision: summarize(&committed.info),

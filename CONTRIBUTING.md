@@ -18,6 +18,19 @@ Thanks for helping. Humans and AI agents follow the same rules.
    The full list of CI checks is in [`docs/development.md`](docs/development.md).
 4. Add a test for new behaviour. For a bug fix, confirm the test fails without the fix.
 5. Open a PR with the template filled in. CI must be green.
+6. Keep the fork aligned with upstream: `bash tools/fork-sync.sh status` inspects the
+   divergence, `bash tools/fork-sync.sh sync` merges `upstream/master`, gates it on the local
+   triple and pushes `master`. The fork inherits upstream 1:1, so `sync` never auto-resolves:
+   a merge conflict stops the run for manual investigation. The script doubles as the reference
+   example for the small, single-purpose shell tools that live in [`tools/`](tools/).
+7. Mirror a merged fork PR to upstream: `bash tools/upstream-mirror.sh mirror <pr-number>`
+   replays the PR's reviewed commits (the merge commit's second parent) on a fresh
+   `upstream/master` and opens a mirror PR in `Apibim-com/BeamCraft` whose head is the replay
+   branch. Commits already upstream drop out as empty cherry-picks; a PR touching only
+   fork-only paths (the sync tooling, the fork icon pipeline) is skipped; any other conflict
+   stops the run for manual resolution — the mirror never auto-merges. The same workflow runs
+   automatically when a PR merges into fork `master` and on `workflow_dispatch` with a PR
+   number. Direct pushes to fork `master` bypass the PR trigger: mirror those by hand.
 
 An AI agent that works through a hosted GitHub integration needs write access for that
 integration. For example, OpenAI Codex cloud fails to create a branch or a pull request with

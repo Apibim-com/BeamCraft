@@ -13,6 +13,24 @@ Build offline with `cargo build --offline -p beamcraft-cli --bins`.
 `beamcraft --help` describes the bounded arguments. Results are one JSON object on standard
 output, with strings for generations and other lossless integers.
 
+Modelling commits also pin the admitted command's exact read/write footprint and typed request
+fingerprint as operation evidence in the revision manifest. This includes unchanged copy sources,
+linked parts and immutable definitions, which a state diff cannot recover. The public
+`command_evidence::read` API verifies canonical bytes and operation binding; legacy absence stays
+explicit. The host protects the evidence through replay, recovery and compaction. Workspace
+publication and changeset application aggregate a complete, verified source interval, preserving
+reads of unchanged objects. A receiver recomputes dependencies and checks the ordered source
+operations and exact final layer set before publishing. The aggregate is bound to the destination
+operation and immutable source-manifest or changeset digest. Operations and aggregate read/write
+entries are capped at 4096, counting repeated entries before union.
+
+Low-level `revision-commit`, workspace forks and history restoration do not fabricate command
+evidence. An interval with any absent or unverified record uses conservative changeset dependencies
+and publishes without precise evidence; malformed evidence still fails closed. C01 wire v1 stays
+byte-compatible; the additional `mark` group uses canonical v2 without changing existing tags.
+This preserves the command's actual groups (A09 approval currently declares label writes). Missing
+evidence never proves independence. Publication still requires the current base; rebase is separate.
+
 Exit codes: 0 success, 2 input or validation refusal or an unavailable command, 3 backend
 unavailable, 4 outcome unknown, 124 deadline, 130 cancelled. `--timeout-ms` accepts 1..120000
 (default 30000) and `--cancel-after-ms` accepts 0..120000 on the blob and revision commands
@@ -202,6 +220,72 @@ is idempotent by content digest; in-process layer engine as above. See the
 
 ## P03 straight member
 
+### Associative projection preview (D02.1)
+
+```text
+beamcraft drawing-preview --store ROOT --id MEMBER_UUIDV7
+  --drawing-id UUIDV7 --view-id UUIDV7 --dimension-id UUIDV7
+  --anchor-a QUALIFIED_VERTEX_ID --anchor-b QUALIFIED_VERTEX_ID
+  [--plane front|top|right] [--scale 100] [--origin X,Y] [--offset MM]
+  [--decimals 0..3] [--name TEXT]
+  [--intent-out NEW_FILE.usda]
+```
+
+The engine projects twelve named edges of a real canonical rectangular member and measures the
+projected interval between the selected member's two semantic vertices. Front uses model X/Z,
+top X/Y and right Y/Z. Paper geometry is in millimetres; scale is a denominator (default 1:100),
+and the dimension label reports projected model millimetres before scaling. This is a wireframe
+with coincident/hidden edges retained, not hidden-line removal or a true 3D measurement.
+
+The JSON includes the exact source project/revision/manifest/schema/generation, document object
+IDs, retained anchor IDs, paper geometry and resolution states. A deleted owner, unsupported
+body or anchors that project to less than 0.001 mm are explicitly unresolved with no numeric
+dimension value. All output coordinates/offsets are capped at 10000 paper mm; scale is 1..10000.
+The command is read-only and does not yet save/publish a drawing or export a document version.
+
+`--intent-out` optionally creates a new ordinary USDA intent file after complete admission,
+source inspection and projection. It never overwrites a destination and reports `intent_digest`.
+The separate `beamcraft-drawing-usd/1` schema records intent and exact source pins, without copying
+the model into it. This standalone intent is not a published version or a self-contained source
+archive. The library `drawing::codec::{encode, decode}` uses admitted engine intent and bounded
+USD reading/re-admission (16 KiB, three prims, canonical closed fields); source verification is
+still a separate prerequisite. Historical publication/archive and derived geometry follow in D03.
+
+The D03.1 prerequisite `drawing::archive::SourceArchive` captures a source revision under the
+source store's shared maintenance guard. It retains exact `source-manifest` provenance and all
+USD bytes under `model/`, outside drawing composition. Verification binds every source-pin field,
+layer name/role/size/digest and the existing strict USD/schema/index/kernel inspection. Reopening
+restores original virtual names and needs no live model or foreign filesystem source. Existing
+model layer/count/total-byte budgets apply before capture. Document-store retention and the D03
+CLI publication flow follow separately; an in-memory archive is not yet a published document.
+
+The D02.2 storage prerequisite `drawing::derived::{root, encode, verify}` composes authored
+intent with ordinary linear `BasisCurves` in paper XY. Standard point3f display curves accompany
+exact double3 coordinates and a double model-mm dimension value. A source/algorithm signature
+binds derived data; verification recomputes the engine projection and compares exact bytes.
+Unresolved geometry stores a reason without a successful value. The root composes only drawing
+USD, never source/provenance resources. This API is used by the upcoming document-store commands;
+`drawing-preview` continues to expose the same engine geometry headlessly.
+
+### Semantic feature addresses (D01.1)
+
+```text
+beamcraft feature-list --store ROOT --id ELEMENT_UUIDV7
+beamcraft feature-lookup --store ROOT --feature-id QUALIFIED_FEATURE_ID
+```
+
+`feature-list` opens and strictly verifies the committed model, then enumerates the selected
+canonical box body's 6 face, 12 edge and 8 vertex addresses. Each full `fid1` address includes
+the owning ElementId and semantic role; array positions are not addresses. The result includes
+the model revision UUID, manifest digest, generation and snapshot token. Both queries are
+read-only. A move preserves addresses and changes the pin/coordinates; a copy has new addresses.
+Missing owners and unsupported non-box bodies (including I-sections and holed plates) refuse
+with `GEO_FEATURE_NOT_FOUND`. Triangle, numeric vertex and instance addresses refuse with
+`GEO_TRIANGLE_ADDRESS_FORBIDDEN`. This query supplies associative references; it does not yet
+create or publish a drawing.
+
+### Create a member
+
 ```text
 beamcraft create-member --store ROOT --start X,Y,Z --end X,Y,Z --profile-digest SHA256
   [--kind beam|column] [--roll RAD] [--material-digest SHA256] [--name TEXT]
@@ -288,6 +372,42 @@ revisions and whether the base is still the published head. `workspace-publish` 
 only: a moved published head is `BASE_REVISION_MISMATCH`, a fresh fork is `INVALID_ARGUMENT`, and
 repeating a finished or interrupted publish is a replay. There is no authentication and no merge.
 See the [design note](../../docs/design/p06-workspace.md).
+
+`workspace::WorkspaceState` serializes metadata transitions with an OS lease and a complete
+expected-snapshot comparison. Reads and base updates return `BACKEND_UNAVAILABLE` while another
+holder is transitioning; a stale metadata writer gets `BASE_REVISION_MISMATCH`. Ordinary local
+model edits still use the draft revision CAS. The metadata guard also blocks compaction while
+held. Workspace/user identity and the published local prefix cannot be rolled back, and legacy
+v1 metadata bytes stay unchanged. This primitive does not implement rebase or its recovery.
+
+A nonzero `rebase_sequence` uses canonical metadata v2 and identifies the earliest source endpoint
+publication may send. Older payloads and a boundary beyond the draft head are refused. Status
+exposes that sequence; snapshot undo stops there, while later edits remain undo/redo units. The
+bounded `workspace::rebase_receipt` codec binds original metadata, source/accepted pins, ordered
+operations and dependency evidence. It does not itself produce or recover a runtime rebase.
+
+`WorkspaceState::stage_rebase` syncs `rebase.pending` before the candidate CAS; the caller must
+first verify/pin the accepted basis, prove independence and materialize the candidate. Every state
+open resolves that intent before exposing metadata. Recovery verifies the original source union,
+the exact candidate slot/base, strict-verifier index and receipt pin; it advances metadata once
+without classifying retained commands or later edits as published. A missing/other CAS winner
+abandons the intent without changing metadata. Corrupt or unavailable evidence fails closed.
+As with other store writes, the complete file is synced; directory-entry durability is not promised.
+Status, packaging, direct publication and undo retain the state guard across their snapshots.
+Receipt aggregation checks ordered prefixes and prior bases, retaining the original command IDs
+without counting administrative copies of their dependencies again. This is recovery plumbing;
+an explicit rebase command and its complete acceptance remain separate.
+
+`rebase-workspace --store PUBLISHED --workspace-dir DRAFT --op-id UUID --expected-head UUID
+--expected-draft UUID [--actor-id UUID]` explicitly retains independent unsent work over a newer
+accepted basis. It pins publication while planning/committing the personal draft, verifies all
+intervening command evidence, materializes in isolation and runs the kernel/quantity verifier.
+It never publishes automatically. Missing proof refuses; semantic conflicts return complete
+target/group and operation diagnostics. Unknown/reference-wrapper deltas retain their dedicated
+writers and refuse this materializer. The local actor defaults to the recorded workspace owner;
+this is trusted CLI context, not authentication. The authenticated coordinator rebase endpoint
+is separate. Retrying the same ID/pins returns its original revision, preserving later edits;
+another payload under that ID is refused, including after a failed attempt.
 
 ## P07 undo and redo
 

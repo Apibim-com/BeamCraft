@@ -180,6 +180,7 @@ const CREATE_MEMBER_OPTIONS: &[&str] = &[
     "--roll",
     "--name",
     "--translation",
+    "--orientation-xyzw",
     "--material-digest",
     "--material",
     "--cut-point",
@@ -332,6 +333,19 @@ pub(crate) fn translation(text: &str) -> Run<[f64; 3]> {
     parts
         .try_into()
         .map_err(|_| invalid("translation is not three numbers"))
+}
+
+pub(crate) fn quaternion(text: &str) -> Run<[f64; 4]> {
+    let parts: Vec<f64> = text
+        .split(',')
+        .map(|p| {
+            p.parse::<f64>()
+                .map_err(|_| invalid("orientation is not four numbers"))
+        })
+        .collect::<Run<_>>()?;
+    parts
+        .try_into()
+        .map_err(|_| invalid("orientation is not four numbers"))
 }
 
 pub(crate) fn id_error(error: beamcraft_model::id::IdError) -> PlateError {
@@ -1158,6 +1172,10 @@ fn workspace_json(status: &WorkspaceStatus) -> Json {
         ),
         ("base_is_current", Json::Bool(status.base_is_current)),
         (
+            "rebase_sequence",
+            Json::text(status.meta.rebase_sequence.to_string()),
+        ),
+        (
             "unsent_revisions",
             Json::text(status.unsent_revisions.to_string()),
         ),
@@ -1421,7 +1439,8 @@ fn create_member_command(
         profile_digest,
         placement: Placement {
             translation_mm: given("--translation").map_or(Ok([0.0; 3]), translation)?,
-            ..Placement::IDENTITY
+            orientation_xyzw: given("--orientation-xyzw")
+                .map_or(Ok([0.0, 0.0, 0.0, 1.0]), quaternion)?,
         },
         roll_rad: given("--roll")
             .map(|text| {
@@ -2278,6 +2297,15 @@ pub(crate) fn inspection_json(inspection: &Inspection, only: Option<ElementId>) 
                 ("instance", Json::uint(u64::from(e.index))),
                 ("mesh_digest", Json::text(e.full.mesh_digest.to_string())),
                 ("placement_mm", triple(e.placement_mm)?),
+                (
+                    "orientation_xyzw",
+                    Json::Array(
+                        e.orientation_xyzw
+                            .into_iter()
+                            .map(num)
+                            .collect::<Run<Vec<_>>>()?,
+                    ),
+                ),
                 ("world_min_mm", triple(e.full.world_bounds.min)?),
                 ("world_max_mm", triple(e.full.world_bounds.max)?),
             ]))

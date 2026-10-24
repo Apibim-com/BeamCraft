@@ -46,5 +46,10 @@ skrifa = "=0.44.0"
 [target.'cfg(any(windows, target_os = "macos"))'.dependencies]
 rfd = { version = "=0.17.2", default-features = false }
 
+[dev-dependencies]
+# The properties-panel test renders its grid and saves the screenshot as PNG evidence; image is
+# already in the dependency graph through eframe, so this adds no new crate to the lock.
+image = { version = "=0.25.10", default-features = false, features = ["png"] }
+
 [lints]
 workspace = true
