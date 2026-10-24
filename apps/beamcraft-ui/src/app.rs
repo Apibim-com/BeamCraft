@@ -486,18 +486,22 @@ pub fn icon() -> egui::IconData {
 /// macOS continues to use the bundle resource for its Dock icon. The coded [`icon`] remains the
 /// fallback when no artwork can be read.
 pub fn load_icon() -> egui::IconData {
-    #[cfg(not(target_os = "macos"))]
     {
-        let mut candidates = vec![Path::new("assets/icons/beamcraft-icon.png").to_path_buf()];
+        let mut candidates = Vec::new();
         if let Ok(exe) = std::env::current_exe()
             && let Some(dir) = exe.parent()
         {
+            if cfg!(target_os = "macos") {
+                candidates.push(dir.join("../Resources/beamcraft-icon.png"));
+            }
             candidates.push(dir.join("assets/icons/beamcraft-icon.png"));
         }
-        candidates.push(
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../assets/icons/beamcraft-linux-1024.png"),
-        );
+        let artwork = if cfg!(target_os = "macos") {
+            "../../assets/icons/beamcraft-macos-1024.png"
+        } else {
+            "../../assets/icons/beamcraft-linux-1024.png"
+        };
+        candidates.push(Path::new(env!("CARGO_MANIFEST_DIR")).join(artwork));
         if let Some(png) = candidates.iter().find_map(|path| std::fs::read(path).ok())
             && let Ok(source) = image::load_from_memory(&png)
         {
