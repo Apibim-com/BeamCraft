@@ -3,8 +3,9 @@
 The original `beamcraft-1024.png` and everything under `docs/brand/` remain unchanged.
 The macOS composition places the official SVG's I-beam group, without changing its
 paths or colours, on a contributor-original continuous-corner enamel tile. The
-824-unit tile has 100-unit canvas insets, a subtle rim, directional lighting and
-soft shadows. No grid competes with the mark at small Dock sizes.
+824-unit tile has 100-unit canvas insets, a muted teal finish, restrained rim,
+directional lighting and soft shadows. The mark keeps clear space from the tile
+edge so its silhouette remains distinct at small Dock sizes.
 
 Rebuild from any directory with Python 3.12, CairoSVG 2.8.2 (system Cairo required)
 and Pillow 12.3.0:
