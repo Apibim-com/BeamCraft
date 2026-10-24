@@ -17,23 +17,10 @@ the raster with the tools included with macOS:
 The Windows ICO and Linux PNG use the same composition. The ICO contains 16, 24,
 32, 48, 64, 128 and 256 pixel representations. Windows/Linux runtime window icons
 load the packaged PNG from `assets/icons/beamcraft-icon.png`; the Windows archive
-also includes `BeamCraft.ico`.
-
-Re-render the Windows and Linux rasters from any directory with Python 3.12,
-CairoSVG 2.8.2 (system Cairo required) and Pillow 12.3.0:
-
-```sh
-python3 -m pip install CairoSVG==2.8.2 Pillow==12.3.0
-python3 packaging/generate-icon.py
-```
-
-The SVG tile and compositor are the editable sources. The generator reads
-`docs/brand/beamcraft-logo.svg` without writing it. It supersamples at 2048px and
-writes the macOS and Linux PNGs, the Windows ICO, and PNG-backed ICNS
-representations for standard/Retina sizes, including 16, 32, 64, 128, 256, 512
-and 1024px; the committed ICNS is rebuilt from the raster with the shell script
-above. Pinned renderer versions in the same environment produce identical
-bytes; Cairo/zlib versions can affect encoding across operating systems.
+also includes `BeamCraft.ico`. The committed Windows/Linux rasters are one-off
+renders of the same composition from `macos-tile.svg` with pinned CairoSVG 2.8.2
+and Pillow 12.3.0; the rendering script is not part of the project and their
+provenance is recorded in `ATTRIBUTION.md`.
 
 `packaging/package.sh` installs the ICNS for Finder/Spotlight and the same
 composition as `Contents/Resources/beamcraft-icon.png` for eframe's runtime Dock
