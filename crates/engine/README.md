@@ -56,7 +56,6 @@ or typed unresolved states for lost/unsupported/collapsed geometry. It checks th
 geometry, caps all paper output, and performs fixed work over 26 roles and two anchors. The CLI's
 `drawing-preview` strictly inspects one opened model revision before calling it; no UI geometry
 or buffer address enters a measurement. Drawing USD persistence/publication remains D01.3/D03.
->>>>>>> ac16fca (feat: project associative member dimensions headlessly (D02.1))
 
 All caps are checked before the work they bound, with checked arithmetic and no
 input-derived indexing. A caller may lower a limit with `Limits::new`, never raise it.

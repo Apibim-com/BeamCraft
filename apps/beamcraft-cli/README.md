@@ -256,16 +256,41 @@ source store's shared maintenance guard. It retains exact `source-manifest` prov
 USD bytes under `model/`, outside drawing composition. Verification binds every source-pin field,
 layer name/role/size/digest and the existing strict USD/schema/index/kernel inspection. Reopening
 restores original virtual names and needs no live model or foreign filesystem source. Existing
-model layer/count/total-byte budgets apply before capture. Document-store retention and the D03
-CLI publication flow follow separately; an in-memory archive is not yet a published document.
+model layer/count/total-byte budgets apply before capture. The document commands below retain
+these resources; an in-memory archive alone is not a published document.
 
 The D02.2 storage prerequisite `drawing::derived::{root, encode, verify}` composes authored
 intent with ordinary linear `BasisCurves` in paper XY. Standard point3f display curves accompany
 exact double3 coordinates and a double model-mm dimension value. A source/algorithm signature
 binds derived data; verification recomputes the engine projection and compares exact bytes.
 Unresolved geometry stores a reason without a successful value. The root composes only drawing
-USD, never source/provenance resources. This API is used by the upcoming document-store commands;
+USD, never source/provenance resources. This API is used by the document-store commands;
 `drawing-preview` continues to expose the same engine geometry headlessly.
+
+### Drawing document lifecycle (D03.3)
+
+`drawing-create --store MODEL --document-dir DOCUMENT` takes the same drawing/member/view/
+dimension IDs, anchors and settings as `drawing-preview`, plus required `--op-id`,
+`--revision-id` and `--actor-id`. It creates a dedicated document store and archives the exact
+verified model. `drawing-refresh` takes those options and `--expected-head REVISION_UUID`,
+creating a new draft against that document head. Neither command publishes automatically.
+
+`drawing-publish --document-dir DOCUMENT --expected-head REVISION_UUID --op-id UUID
+--revision-id UUID --actor-id UUID --version-id UUID` publishes the current draft as an immutable
+version. A new publication must use a version ID that has never been published in this document;
+reusing either the latest or an older ID is `DUPLICATE_ID` without a new revision. The exact
+original operation still replays after later publications and leaves the current head intact.
+
+Publication verifies the complete document history one revision at a time, bounded by the host
+revision cap and a verification deadline. A shared maintenance lease protects that check through
+the candidate CAS; ordinary writers remain subject to the head CAS. Missing or corrupt history
+refuses publication. In particular, a compacted document history is `DEPENDENCY_UNAVAILABLE`:
+restore the complete history before publishing again. Retained head inspection still works.
+
+`drawing-inspect --document-dir DOCUMENT [--model-store MODEL]` reports the current document
+and freshness (`current`, `stale`, `unavailable` or `unknown`). `drawing-versions --document-dir
+DOCUMENT` lists retained published revisions. Archived models remain outside drawing composition.
+This slice does not implement drawing UI, PDF/print, or the full D03 acceptance gate.
 
 ### Semantic feature addresses (D01.1)
 
