@@ -12,7 +12,7 @@
 //!
 //! Everything here runs the same CLI commands a user types (`settings-show`, `settings-set`,
 //! `environment-list`, `recent-list`, `recent-add`, `project-list`, `project-create`), each in a
-//! separate process on a worker thread; replies are read with [`crate::tools::rejection`] so a
+//! separate process on a worker thread; replies are read with `crate::tools::rejection` so a
 //! refusal is shown with the CLI's code and message. Nothing here reads a store directly.
 
 use crate::command;

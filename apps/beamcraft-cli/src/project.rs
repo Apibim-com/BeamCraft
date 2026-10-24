@@ -376,12 +376,15 @@ pub fn list_environments(folders: &[(PathBuf, &'static str)]) -> Vec<Environment
             .collect();
         files.sort();
         for file in files {
+            // The canonical path only detects the same file reached twice. It is never reported:
+            // on Windows it is a `\\?\` device path, which every file command refuses.
             let canonical = fs::canonicalize(&file).unwrap_or_else(|_| file.clone());
             if seen_files.contains(&canonical) {
                 continue;
             }
-            seen_files.push(canonical.clone());
-            let state = match read_environment(&canonical) {
+            seen_files.push(canonical);
+            let file = plain(&file);
+            let state = match read_environment(&file) {
                 Ok((id, title)) => {
                     let shadowed = found.iter().any(|e| {
                         matches!(&e.state, EnvironmentState::Ready { id: other, .. } if *other == id)
@@ -395,13 +398,31 @@ pub fn list_environments(folders: &[(PathBuf, &'static str)]) -> Vec<Environment
                 Err(error) => EnvironmentState::Refused(error),
             };
             found.push(EnvironmentEntry {
-                path: canonical,
+                path: file,
                 origin,
                 state,
             });
         }
     }
     found
+}
+
+/// `path` made absolute with its `.` and `..` segments folded away, on the text alone: the form
+/// a person and every file command accept (no `\\?\` prefix, no link resolution).
+fn plain(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut out = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 fn read_environment(file: &Path) -> Result<(String, Option<String>), PlateError> {
@@ -427,6 +448,18 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
     use super::*;
+
+    #[test]
+    fn reported_paths_are_plain() {
+        let p = plain(Path::new("/a/b/../c/./d.usda"));
+        // On Windows the root gains the current drive; the rest is the same everywhere.
+        assert!(p.is_absolute() && p.ends_with("a/c/d.usda"), "{p:?}");
+        assert!(p.components().all(|c| !matches!(
+            c,
+            std::path::Component::ParentDir | std::path::Component::CurDir
+        )));
+        assert!(!p.to_string_lossy().starts_with("\\\\"));
+    }
 
     #[test]
     fn project_names_are_portable_folder_names() {
