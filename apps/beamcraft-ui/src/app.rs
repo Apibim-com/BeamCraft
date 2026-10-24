@@ -2240,13 +2240,16 @@ mod tests {
         assert_eq!(volume_note(1.025e9), ", volume 1.025 m3");
     }
 
-    /// The test binary has no `../Resources` next to it, so the loader falls back to the
-    /// coded icon instead of panicking or returning an empty icon.
+    /// A development build finds the official logo in the source tree; the coded fallback is a
+    /// complete icon too, never an empty one.
     #[test]
-    fn the_icon_loader_falls_back_to_the_coded_icon() {
+    fn the_icon_loader_uses_the_logo_and_has_a_complete_fallback() {
         let icon = load_icon();
-        assert_eq!((icon.width, icon.height), (32, 32));
-        assert_eq!(icon.rgba.len(), 32 * 32 * 4);
+        assert_eq!((icon.width, icon.height), (256, 256));
+        assert_eq!(icon.rgba.len(), 256 * 256 * 4);
+        let fallback = super::icon();
+        assert_eq!((fallback.width, fallback.height), (32, 32));
+        assert_eq!(fallback.rgba.len(), 32 * 32 * 4);
     }
 }
 
