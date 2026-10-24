@@ -262,13 +262,13 @@ mod tests {
 
     #[test]
     fn a_frame_splits_into_its_replies_and_bundle() {
-        let bytes = frame(b"{}", b"{\"a\":1}", b"BCVIEW01rest");
+        let bytes = frame(b"{}", b"{\"a\":1}", b"BCVIEW02rest");
         assert_eq!(
             split_frame(&bytes).unwrap(),
             Frame {
                 definitions: b"{}",
                 element: b"{\"a\":1}",
-                bundle: b"BCVIEW01rest",
+                bundle: b"BCVIEW02rest",
             }
         );
         let empty = frame(b"", b"", b"");

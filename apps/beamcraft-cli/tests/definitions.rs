@@ -361,6 +361,28 @@ fn a_definition_is_immutable_and_publishing_it_again_writes_nothing() {
 }
 
 #[test]
+fn negative_rectangle_dimensions_are_invalid_before_the_positive_dimension_cap() {
+    let f = Fixture::new();
+    for width in ["-3000000", "-1e308"] {
+        assert_eq!(
+            f.rejected("define-profile", &["--width", width, "--height", "300"]),
+            "INVALID_ARGUMENT",
+            "width {width}"
+        );
+    }
+    assert_eq!(
+        f.rejected("define-profile", &["--width", "1e308", "--height", "300"]),
+        "LIMIT_EXCEEDED"
+    );
+    let created = f.ok("define-profile", &["--width", "200", "--height", "300"]);
+    assert_eq!(
+        sequence(&created),
+        1,
+        "rejected inputs must not publish revisions"
+    );
+}
+
+#[test]
 fn declared_section_properties_and_material_labels_are_stored_listed_and_pinned() {
     let f = Fixture::new();
     let profile = f.ok(

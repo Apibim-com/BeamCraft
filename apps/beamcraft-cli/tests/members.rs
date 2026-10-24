@@ -192,6 +192,102 @@ fn a_beam_pins_its_profile_and_material_and_reopens_in_a_fresh_process() {
 }
 
 #[test]
+fn a_rotated_member_reopens_with_world_bounds_and_unchanged_shape() {
+    let f = Fixture::new();
+    let profile = f.profile("200", "300");
+    let created = f.ok(
+        "create-member",
+        &[
+            "--kind",
+            "beam",
+            "--start",
+            "0,0,0",
+            "--end",
+            "4000,0,0",
+            "--profile-digest",
+            &profile,
+            "--orientation-xyzw",
+            "0,0,0.7071067811865476,0.7071067811865476",
+            "--translation",
+            "-50,70,1000",
+        ],
+    );
+    let member = at(&created, &["member"]);
+    assert_eq!(num(member, &["quantities", "volume", "mm3"]), 240_000_000.0);
+    let digest = text(member, "mesh_digest");
+
+    // A fresh CLI process reads the committed USD and rebuilds the view placement.
+    let reopened = f.ok("plate-inspect", &[]);
+    let member = &at(&reopened, &["members"]).array().unwrap()[0];
+    assert_eq!(text(member, "mesh_digest"), digest);
+    assert_eq!(num(member, &["quantities", "volume", "mm3"]), 240_000_000.0);
+    let element = &at(&reopened, &["snapshot", "elements"]).array().unwrap()[0];
+    let vector = |key| {
+        at(element, &[key])
+            .array()
+            .unwrap()
+            .iter()
+            .map(|v| v.float().unwrap())
+            .collect::<Vec<_>>()
+    };
+    for (actual, expected) in vector("world_min_mm").iter().zip([-150.0, 70.0, 850.0]) {
+        assert!((actual - expected).abs() < 1e-8, "{actual} != {expected}");
+    }
+    for (actual, expected) in vector("world_max_mm").iter().zip([50.0, 4070.0, 1150.0]) {
+        assert!((actual - expected).abs() < 1e-8, "{actual} != {expected}");
+    }
+
+    let member_id = text(member, "element_id");
+    let feature_id = format!("fid1:{member_id}:member:v.x1.y0.z0");
+    let feature = f.ok("feature-lookup", &["--feature-id", &feature_id]);
+    assert_eq!(text(&feature, "feature_kind"), "vertex");
+    let vector = |space| {
+        at(&feature, &[space, "position"])
+            .array()
+            .unwrap()
+            .iter()
+            .map(|v| v.float().unwrap())
+            .collect::<Vec<_>>()
+    };
+    let local = vector("local");
+    let world = vector("world");
+    let expected = [-local[1] - 50.0, local[0] + 70.0, local[2] + 1000.0];
+    for (actual, expected) in world.iter().zip(expected) {
+        assert!((actual - expected).abs() < 1e-8, "{actual} != {expected}");
+    }
+    let picked = f.ok(
+        "pick",
+        &[
+            "--origin",
+            "100,2000,1000",
+            "--direction",
+            "-1,0,0",
+            "--targets",
+            "face",
+        ],
+    );
+    let hit = &at(&picked, &["hits"]).array().unwrap()[0];
+    assert!(text(hit, "feature_id").starts_with(&format!("fid1:{member_id}:member:")));
+    let point = at(hit, &["point_world_mm"])
+        .array()
+        .unwrap()
+        .iter()
+        .map(|v| v.float().unwrap())
+        .collect::<Vec<_>>();
+    for (actual, expected) in point.iter().zip([50.0, 2000.0, 1000.0]) {
+        assert!((actual - expected).abs() < 1e-8, "{actual} != {expected}");
+    }
+
+    // Independently inspect the saved USDA text for the authored transform quaternion.
+    let authored = f.authored_text(&created);
+    assert!(
+        authored
+            .contains("quatd xformOp:orient = (0.7071067811865476, 0.0, 0.0, 0.7071067811865476)"),
+        "{authored}"
+    );
+}
+
+#[test]
 fn a_column_a_roll_and_a_plate_live_in_one_revision() {
     let f = Fixture::new();
     let profile = f.profile("200", "300");
