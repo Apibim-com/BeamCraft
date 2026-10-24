@@ -324,6 +324,8 @@ pub struct Editor {
     pub move_to: [String; 3],
     /// `--offset` of a copy.
     pub copy_offset: [String; 3],
+    /// The author recorded as `--actor-id` of a move, copy or delete, when the window has one.
+    pub actor: Option<String>,
     staged: Option<Edit>,
     busy: bool,
 }
@@ -335,6 +337,7 @@ impl Default for Editor {
             action: EditKind::Move,
             move_to: Default::default(),
             copy_offset: Default::default(),
+            actor: None,
             staged: None,
             busy: false,
         }
@@ -412,7 +415,7 @@ impl Editor {
                     message: "click an element first".into(),
                 })
         };
-        let args = match kind {
+        let mut args = match kind {
             EditKind::Move => vec![
                 "update-element".to_owned(),
                 "--store".into(),
@@ -450,6 +453,9 @@ impl Editor {
                 ]
             }
         };
+        if matches!(kind, EditKind::Move | EditKind::Copy | EditKind::Delete) {
+            crate::tools::push_actor(&mut args, self.actor.as_deref());
+        }
         Ok(Edit { kind, args })
     }
 
