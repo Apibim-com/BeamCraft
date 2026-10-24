@@ -645,6 +645,13 @@ fn the_window_binary_accepts_a_workspace_and_refuses_both_options() {
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&output.stdout).contains("usage: beamcraft-ui"));
-    let output = Command::new(ui).output().unwrap();
-    assert_eq!(output.status.code(), Some(2));
+    // Without a model the window opens on the start page, so only refused combinations run
+    // here: the start page's settings directory and an explicit author belong to different modes.
+    for args in [
+        ["--store", "S", "--config-dir", "C"],
+        ["--actor-id", "A", "--config-dir", "C"],
+    ] {
+        let output = Command::new(ui).args(args).output().unwrap();
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+    }
 }

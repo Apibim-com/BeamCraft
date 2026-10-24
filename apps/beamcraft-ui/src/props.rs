@@ -449,6 +449,8 @@ pub struct Properties {
     head: Option<RevisionStamp>,
     /// The editable fields, as typed.
     pub form: Form,
+    /// The author recorded as `--actor-id` of a property edit, when the window has one.
+    pub actor: Option<String>,
     baseline: Form,
     staged: Option<PropertyEdit>,
     busy: bool,
@@ -610,6 +612,7 @@ impl Properties {
         if changed.is_empty() {
             return Err(refuse("Properties", "nothing was changed"));
         }
+        crate::tools::push_actor(&mut args, self.actor.as_deref());
         Ok(PropertyEdit { args, changed })
     }
 

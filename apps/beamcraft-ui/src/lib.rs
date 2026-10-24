@@ -32,7 +32,9 @@ pub mod props;
 pub mod publish;
 pub mod render;
 pub mod scene;
+pub mod shell;
 pub mod source;
+pub mod start;
 pub mod stats;
 pub mod tools;
 

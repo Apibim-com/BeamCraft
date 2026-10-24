@@ -44,6 +44,9 @@ pub struct Source {
     /// The viewport's MSAA sample count, 1 or 4; `None` is the adapter's default
     /// ([`crate::render::samples_for`]).
     pub samples: Option<u32>,
+    /// The author identity (UUIDv7) recorded as the actor of the window's edits; `None` lets the
+    /// CLI make one per command.
+    pub actor: Option<String>,
 }
 
 /// The scene on screen: the pinned snapshot, its buffers on the device and what the window
@@ -378,7 +381,7 @@ fn volume_note(volume_mm3: f64) -> String {
 }
 
 /// Inter from the admitted asset directory, validated before egui can panic on it.
-fn inter(ctx: &egui::Context) -> bool {
+pub(crate) fn inter(ctx: &egui::Context) -> bool {
     // CWD (an extracted package root), the source tree, then next to the executable: the
     // win/linux package puts assets beside it, the macOS .app bundle under its Resources
     // directory (Q02 packaging).
@@ -479,11 +482,26 @@ impl App {
         perf: Option<(Vec<PerfPhase>, PerfReport)>,
         stats: Arc<Stats>,
     ) -> Result<Self, Error> {
-        let state = cc
-            .wgpu_render_state
-            .clone()
-            .ok_or(Error::Input("eframe requires wgpu"))?;
-        let text = inter(&cc.egui_ctx);
+        Self::open(
+            &cc.egui_ctx,
+            cc.wgpu_render_state.as_ref(),
+            source,
+            perf,
+            stats,
+        )
+    }
+
+    /// [`App::with_perf_run`] from a running window's context and render state, so a window that
+    /// started on the start page can open a model later.
+    pub fn open(
+        ctx: &egui::Context,
+        state: Option<&eframe::egui_wgpu::RenderState>,
+        source: Source,
+        perf: Option<(Vec<PerfPhase>, PerfReport)>,
+        stats: Arc<Stats>,
+    ) -> Result<Self, Error> {
+        let state = state.cloned().ok_or(Error::Input("eframe requires wgpu"))?;
+        let text = inter(ctx);
         let renderer = Renderer::with_samples(
             &state.adapter,
             &state.device,
@@ -555,6 +573,9 @@ impl App {
             selects_finished: 0,
             refresh_timings: Vec::new(),
         };
+        app.tools.actor.clone_from(&app.source.actor);
+        app.editor.actor.clone_from(&app.source.actor);
+        app.props.actor.clone_from(&app.source.actor);
         app.reload();
         app.refresh_status();
         Ok(app)
@@ -2064,6 +2085,7 @@ mod tests {
             workspace: None,
             published: None,
             samples: None,
+            actor: None,
         };
         let stats = Arc::new(crate::stats::Stats::default());
         Some(App::new(&cc, source, stats).unwrap())
