@@ -12,7 +12,8 @@ local/world transforms and the saved shape; BC-PART-002 coverage is partial.
 
 ```text
 beamcraft create-member --store ROOT --start X,Y,Z --end X,Y,Z --profile-digest SHA256
-  [--kind beam|column] [--roll RAD] [--material-digest SHA256] [--translation X,Y,Z] [--name TEXT]
+  [--kind beam|column] [--roll RAD] [--material-digest SHA256] [--translation X,Y,Z]
+  [--orientation-xyzw X,Y,Z,W] [--name TEXT]
   model::CreateStraightMember (F04 caps) --> engine resolves the pinned profile (required) and
   material (optional), kernel::straight_member builds the body --> U02 Shape::Member + Mesh
   --> host U06/U07 commit; the verifier re-evaluates every plate and member with the kernel
@@ -29,10 +30,10 @@ beamcraft plate-inspect --store ROOT   (plates and members, one pinned view snap
 
 ## Decisions
 
-1. **Axis points define the layout.** A placement rotation other than the identity is
-   `UNSUPPORTED_GEOMETRY` (the view contract carries translations only, as for plates), so a
-   horizontal beam is the axis `(0,0,0) -> (L,0,0)`; the frame rules of F06 section 4 then fix
-   which section edge is vertical (width along `Y`, height along `Z`).
+1. **Axis points define the local layout.** A horizontal beam is the local axis
+   `(0,0,0) -> (L,0,0)`; the frame rules of F06 section 4 then fix which section edge is vertical
+   (width along `Y`, height along `Z`). The rigid element placement is applied after local shape
+   construction and does not change the mesh or quantities.
 2. **Profile is required and pinned.** A missing digest is `NOT_FOUND`, a material digest where a
    profile is required is `INVALID_ARGUMENT`; the profile values are re-read from the committed
    definition and re-admitted on every evaluation.
@@ -45,14 +46,16 @@ beamcraft plate-inspect --store ROOT   (plates and members, one pinned view snap
 
 * No logical `UpdateElement`, move or delete of a member (P04, P08); no signatures or stored
   quantities (P04); `shapeKey` is the mesh digest as in P01.
-* Rotated placement, other profile kinds, curved members, cuts, holes, bolts and welds.
+* Other profile kinds, curved members, cuts, holes, bolts and welds. Rotated member placement is
+  implemented for engine admission, committed reopen, world bounds, feature geometry, picking,
+  and viewport rendering; rotated plates and IFC transform acceptance remain P10 work.
 * Sin/cos reproducibility across targets for a nonzero roll is still an open owner decision.
 * The layer engine runs in the CLI process (LEW-03 open); no workspace or undo (P06, P07).
 
 ## Evidence
 
 * `cargo test -p beamcraft-kernel --test member` (6 tests), model, engine and `beamcraft-cli` unit
-  tests, and `cargo test -p beamcraft-cli --test members` (real binary, 4 tests): a 6000 mm beam of
+  tests, and `cargo test -p beamcraft-cli --test members` (real binary): a 6000 mm beam of
   200 x 300 mm is 0.36 m3 and 2826 kg at 7850 kg/m3; fresh-process reopen, world bounds from the
   pinned snapshot, a rolled column, plates and members together, `NOT_FOUND`, `INVALID_ARGUMENT`,
   `NON_FINITE_NUMBER`, `LIMIT_EXCEEDED`, replay, `OP_ID_REUSE`, `DUPLICATE_ID` across kinds.

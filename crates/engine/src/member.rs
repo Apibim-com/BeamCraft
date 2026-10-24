@@ -468,13 +468,6 @@ pub fn create_straight_member(
     )?;
     let authored = AuthoredMember::from_command(command);
     let body = evaluate_member(&authored, profile)?;
-    if !command.placement.is_identity_rotation() {
-        return Err(CommandError::new(
-            ErrorCode::UnsupportedGeometry,
-            "placement.orientation_xyzw",
-            "rotated placement is not evaluated in this slice",
-        ));
-    }
     let quantities = member_quantities(&body, material)?;
     Ok(CreateMemberOutcome {
         fingerprint: command.content_fingerprint()?,
@@ -953,18 +946,28 @@ mod tests {
     }
 
     #[test]
-    fn rotation_ids_and_hostile_profiles_are_rejected_without_a_panic() {
+    fn a_rigid_member_rotation_preserves_local_shape_and_quantities() {
         let profile = digest(b"rectangle 200x300");
         let lookup = |d: &ContentDigest| rectangle(d, profile);
         let mut c = command(profile);
         let s = core::f64::consts::FRAC_1_SQRT_2;
         c.placement.orientation_xyzw = [0.0, 0.0, s, s];
-        assert_eq!(
-            create_straight_member(&c, &none, &lookup, &no_materials)
-                .unwrap_err()
-                .code,
-            ErrorCode::UnsupportedGeometry
-        );
+        c.placement.translation_mm = [-50.0, 70.0, 1000.0];
+        let rotated = create_straight_member(&c, &none, &lookup, &no_materials).unwrap();
+        let identity = create_straight_member(
+            &CreateStraightMember {
+                placement: beamcraft_model::command::Placement::IDENTITY,
+                ..c.clone()
+            },
+            &none,
+            &lookup,
+            &no_materials,
+        )
+        .unwrap();
+        assert_eq!(rotated.body.solid, identity.body.solid);
+        assert_eq!(rotated.quantities, identity.quantities);
+
+        // The remaining assertions in this regression concern the existing refusal order.
         let c = command(profile);
         let taken = |id: &ElementId| *id == c.new_id;
         assert_eq!(

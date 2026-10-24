@@ -19,7 +19,7 @@
 use crate::element::{ElementId, ElementKind};
 use crate::error::{ViewCode, ViewError};
 use crate::query::mesh::MeshEntry;
-use crate::query::snapshot::{ElementEntry, ViewSnapshot};
+use crate::query::snapshot::{ElementEntry, ViewSnapshot, rotate_vector};
 
 /// The rule version of every FeatureId produced here.
 pub const FEATURE_RULE: &str = "fid1";
@@ -399,15 +399,15 @@ impl BoxFeatures {
     /// The world-space features of a snapshot element, or `None` when its body has no FeatureIds
     /// (no box layout, or a kind without a body kind).
     pub(crate) fn world(snapshot: &ViewSnapshot, entry: &ElementEntry) -> Option<Self> {
-        Self::placed(snapshot, entry, entry.placement_mm)
+        Self::placed(snapshot, entry, true)
     }
 
     /// The element-local features (no translation).
     pub(crate) fn local(snapshot: &ViewSnapshot, entry: &ElementEntry) -> Option<Self> {
-        Self::placed(snapshot, entry, [0.0; 3])
+        Self::placed(snapshot, entry, false)
     }
 
-    fn placed(snapshot: &ViewSnapshot, entry: &ElementEntry, by: V3) -> Option<Self> {
+    fn placed(snapshot: &ViewSnapshot, entry: &ElementEntry, world: bool) -> Option<Self> {
         let body = BodyKind::of(entry.kind)?;
         let mesh = snapshot.mesh_at(entry.full.mesh_slot)?;
         let local = box_vertices(mesh)?;
@@ -418,13 +418,23 @@ impl BoxFeatures {
         for quad in FACE_QUADS {
             faces.push(face_of(&local, quad)?);
         }
-        let shift = |v: V3| add(v, by);
+        let shift = |v: V3| {
+            let v = if world {
+                rotate_vector(v, entry.orientation_xyzw)
+            } else {
+                v
+            };
+            if world { add(v, entry.placement_mm) } else { v }
+        };
         let vertices = local.map(shift);
         if !vertices.iter().all(|v| finite(*v)) {
             return None;
         }
         for face in &mut faces {
             face.corners = face.corners.map(shift);
+            if world {
+                face.normal = rotate_vector(face.normal, entry.orientation_xyzw);
+            }
         }
         Some(Self {
             element: entry.id,

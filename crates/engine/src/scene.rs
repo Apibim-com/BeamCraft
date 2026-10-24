@@ -70,6 +70,7 @@ pub struct SceneElement {
     pub(crate) id: ElementId,
     pub(crate) kind: ElementKind,
     pub(crate) placement: Translation3,
+    pub(crate) orientation_xyzw: [f64; 4],
     pub(crate) full: SceneMesh,
     pub(crate) simplified: Option<SceneMesh>,
 }
@@ -87,9 +88,17 @@ impl SceneElement {
             id,
             kind,
             placement,
+            orientation_xyzw: [0.0, 0.0, 0.0, 1.0],
             full: full.into(),
             simplified: None,
         }
+    }
+
+    /// Sets an admitted rigid orientation in quaternion `(x, y, z, w)` form.
+    #[must_use]
+    pub fn with_orientation(mut self, orientation_xyzw: [f64; 4]) -> Self {
+        self.orientation_xyzw = orientation_xyzw;
+        self
     }
 
     /// Adds a distinct simplified representation.

@@ -121,7 +121,8 @@ pub fn diff(old: &ViewSnapshot, new: &ViewSnapshot) -> ChangeSet {
                 if let (Some(x), Some(y)) = (a.next(), b.next()) {
                     let fields = ChangedFields {
                         kind: x.kind != y.kind,
-                        placement: x.placement_mm != y.placement_mm,
+                        placement: x.placement_mm != y.placement_mm
+                            || x.orientation_xyzw != y.orientation_xyzw,
                         shape: x.full.mesh_digest != y.full.mesh_digest
                             || x.simplified.mesh_digest != y.simplified.mesh_digest,
                     };

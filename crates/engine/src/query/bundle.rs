@@ -11,10 +11,10 @@
 //! limits), and the rebuilt token must equal the bundled one. A bundle therefore cannot carry a
 //! geometry, a placement or an identity the engine would not produce from the same inputs.
 //!
-//! Layout (little endian): `BCVIEW01`, revision digest (32), generation (u64), token digest
+//! Layout (little endian): `BCVIEW02`, revision digest (32), generation (u64), token digest
 //! (32), element count (u32), mesh count (u32); per mesh its byte length (u32) and bytes; per
-//! element its id (16), kind (u8, registry order), translation (3 x f64), full slot (u32) and
-//! simplified slot (u32). Nothing may follow.
+//! element its id (16), kind (u8, registry order), translation (3 x f64), orientation (4 x f64),
+//! full slot (u32) and simplified slot (u32). Nothing may follow.
 
 use crate::element::{ElementId, ElementKind};
 use crate::error::{ViewCode, ViewError};
@@ -28,7 +28,7 @@ use beamcraft_model::id::Uuid7;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-const MAGIC: &[u8; 8] = b"BCVIEW01";
+const MAGIC: &[u8; 8] = b"BCVIEW02";
 
 fn invalid() -> ViewError {
     ViewError::new(ViewCode::ArgumentInvalid)
@@ -43,7 +43,7 @@ fn push_u32(out: &mut Vec<u8>, n: usize) -> Result<(), ViewError> {
 /// The largest bundle a snapshot under `limits` can produce: header, every mesh at the total
 /// mesh-byte cap with its length, and every element record.
 pub fn max_bundle_bytes(limits: &Limits) -> usize {
-    const ELEMENT: usize = 16 + 1 + 24 + 4 + 4;
+    const ELEMENT: usize = 16 + 1 + 24 + 32 + 4 + 4;
     let meshes = limits
         .max_total_mesh_bytes()
         .saturating_add(limits.max_elements().saturating_mul(2).saturating_mul(4));
@@ -141,6 +141,9 @@ impl ViewSnapshot {
             for v in e.placement_mm {
                 out.extend_from_slice(&v.to_le_bytes());
             }
+            for v in e.orientation_xyzw {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
             out.extend_from_slice(&e.full.mesh_slot.to_le_bytes());
             out.extend_from_slice(&e.simplified.mesh_slot.to_le_bytes());
         }
@@ -201,9 +204,11 @@ impl ViewSnapshot {
             let (x, y, z) = (r.f64()?, r.f64()?, r.f64()?);
             let placement = Translation3::new(x, y, z)
                 .map_err(|_| ViewError::new(ViewCode::NumericUncertain))?;
+            let orientation_xyzw = [r.f64()?, r.f64()?, r.f64()?, r.f64()?];
             let full = meshes.get(r.usize()?).ok_or_else(invalid)?.clone();
             let simplified = meshes.get(r.usize()?).ok_or_else(invalid)?.clone();
-            let element = SceneElement::new(id, kind, placement, full.clone());
+            let element = SceneElement::new(id, kind, placement, full.clone())
+                .with_orientation(orientation_xyzw);
             elements.push(if simplified == full {
                 element
             } else {
@@ -253,6 +258,23 @@ mod tests {
             assert_eq!(back, s);
             assert!(bytes.len() <= max_bundle_bytes(&Limits::default()));
         }
+    }
+
+    #[test]
+    fn a_bundle_preserves_rigid_orientation_and_world_bounds() {
+        let half = core::f64::consts::FRAC_1_SQRT_2;
+        let mut elements = plate_scene(1, false).unwrap();
+        let element = elements.remove(0).with_orientation([0.0, 0.0, half, half]);
+        let pin = ViewPin::new(Sha256::digest(b"rotated revision").unwrap(), 7);
+        let snapshot = ViewSnapshot::build(pin, vec![element], &Limits::default()).unwrap();
+        let bytes = snapshot.to_bundle().unwrap();
+        assert_eq!(bytes.get(..8), Some(b"BCVIEW02".as_slice()));
+        let reopened = ViewSnapshot::from_bundle(&bytes, &Limits::default()).unwrap();
+        assert_eq!(reopened, snapshot);
+        assert_eq!(
+            reopened.elements()[0].orientation_xyzw,
+            [0.0, 0.0, half, half]
+        );
     }
 
     #[test]
