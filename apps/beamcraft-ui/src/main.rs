@@ -223,6 +223,11 @@ fn window(size: egui::Vec2, create: eframe::AppCreator<'_>) -> Result<(), Error>
     let viewport = viewport.with_app_id("com.apibim.BeamCraft");
     let options = eframe::NativeOptions {
         viewport,
+        #[cfg(target_os = "linux")]
+        window_builder: Some(Box::new(|attributes| {
+            use winit::platform::x11::WindowAttributesExtX11 as _;
+            attributes.with_name("com.apibim.BeamCraft", "com.apibim.BeamCraft")
+        })),
         renderer: eframe::Renderer::Wgpu,
         wgpu_options: eframe::WgpuConfiguration {
             wgpu_setup: setup.into(),
