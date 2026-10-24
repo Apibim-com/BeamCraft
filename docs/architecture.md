@@ -227,7 +227,7 @@ project has layers only for the sections it contains: a concrete building withou
 | Code | Content |
 |------|---------|
 | `Coord` | Coordination: the root layer with the project metadata and the list of all layers |
-| `Grids` | Axes and levels |
+| `Grids` | Axes and levels (axes: [grid contract draft](contracts/t01-project-grids-draft-v0.1.md)) |
 | `KM`, `KMD` | Steel structures, design or detailing; written by BeamCraft |
 | `KR` | Reinforced concrete |
 | `AR`, `AI`, `GP` | Architecture, interiors, site plan |

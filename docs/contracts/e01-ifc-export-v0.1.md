@@ -696,7 +696,7 @@ is listed in the report when it applies to an element and is stated here once.
 | L-09 | Relationships between elements (F10 section 5) are not exported; none exist in the first slice. |
 | L-10 | Display appearance and colours are not exported. |
 | L-11 | A text longer than 255 characters in an `IfcLabel` attribute (element, storey, project or material name, object type) is truncated to 255 code points; the full text is in `Label`, `FullName` or `Description` (`IFCX-PSET-004`). |
-| L-12 | The site and the building are synthetic. The model records no grids, no site data and no building data. |
+| L-12 | The site and the building are synthetic. The export records no grids (the [grid contract draft](t01-project-grids-draft-v0.1.md) keeps them in the model, skipped by the exporter), no site data and no building data. |
 | L-13 | The quaternion is not recoverable: only the rotation is, and only up to the rounding of the direction vectors (`q` and `-q` are indistinguishable). |
 | L-14 | The escapes of 11.4 and the header form are taken from the public description of the STEP physical file and are not yet checked against an independent reader. |
 | L-15 | No model view definition is claimed (section 2.1); a consumer that requires one may reject the file. |
