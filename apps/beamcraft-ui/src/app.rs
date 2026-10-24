@@ -406,6 +406,7 @@ pub(crate) fn inter(ctx: &egui::Context) -> bool {
         check_font(&bytes).map_err(std::io::Error::other)?;
         Ok(bytes)
     });
+    let bold = crate::theme::bold_family();
     match bytes {
         Some(Ok(bytes)) => {
             let mut fonts = egui::FontDefinitions::empty();
@@ -415,15 +416,47 @@ pub(crate) fn inter(ctx: &egui::Context) -> bool {
             for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
                 fonts.families.insert(family, vec!["Inter".into()]);
             }
+            // Inter Bold beside the regular face, checked the same way; headings fall back to
+            // the regular face without it.
+            let mut bold_fonts = vec!["Inter".to_owned()];
+            if let Some(bytes) = candidates
+                .iter()
+                .find(|p| p.is_file())
+                .and_then(|regular| bounded_font(&regular.with_file_name("Inter-Bold.ttf")))
+            {
+                fonts.font_data.insert(
+                    "Inter-Bold".into(),
+                    egui::FontData::from_owned(bytes).into(),
+                );
+                bold_fonts.insert(0, "Inter-Bold".into());
+            }
+            fonts.families.insert(bold, bold_fonts);
             ctx.set_fonts(fonts);
             true
         }
         _ => {
             eprintln!("Inter is unavailable; the window runs without text.");
-            ctx.set_fonts(egui::FontDefinitions::empty());
+            let mut fonts = egui::FontDefinitions::empty();
+            fonts.families.insert(bold, Vec::new());
+            ctx.set_fonts(fonts);
             false
         }
     }
+}
+
+/// The bytes of a font file of at most 4 MiB that egui can load, or `None`.
+fn bounded_font(path: &Path) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(4 * 1024 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.is_empty() || bytes.len() > 4 * 1024 * 1024 || check_font(&bytes).is_err() {
+        return None;
+    }
+    Some(bytes)
 }
 
 /// A contributor-original 32 x 32 window icon (an I-section silhouette), drawn in code. It
@@ -502,6 +535,7 @@ impl App {
     ) -> Result<Self, Error> {
         let state = state.cloned().ok_or(Error::Input("eframe requires wgpu"))?;
         let text = inter(ctx);
+        crate::theme::install(ctx);
         let renderer = Renderer::with_samples(
             &state.adapter,
             &state.device,

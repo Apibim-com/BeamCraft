@@ -31,6 +31,7 @@ impl Shell {
         stats: Arc<Stats>,
     ) -> Self {
         crate::app::inter(&cc.egui_ctx);
+        crate::theme::install(&cc.egui_ctx);
         Self {
             start: StartPage::new(cli.clone(), config_dir, Arc::clone(&stats)),
             app: None,

@@ -178,10 +178,13 @@ fn run() -> Result<Option<(String, u8)>, Error> {
         actor: map.get("--actor-id").cloned(),
     };
     let perf_run = plan.is_some();
-    window(Box::new(move |cc| {
-        let perf = plan.map(|phases| (phases, report));
-        Ok(Box::new(App::with_perf_run(cc, source, perf, stats)?))
-    }))?;
+    window(
+        egui::vec2(1400.0, 900.0),
+        Box::new(move |cc| {
+            let perf = plan.map(|phases| (phases, report));
+            Ok(Box::new(App::with_perf_run(cc, source, perf, stats)?))
+        }),
+    )?;
     if !perf_run {
         return Ok(None);
     }
@@ -200,19 +203,20 @@ fn start_page(
     samples: Option<u32>,
     stats: Arc<Stats>,
 ) -> Result<Option<(String, u8)>, Error> {
-    window(Box::new(move |cc| {
-        Ok(Box::new(Shell::new(cc, cli, config_dir, samples, stats)))
-    }))?;
+    window(
+        beamcraft_ui::start::LAUNCHER_SIZE,
+        Box::new(move |cc| Ok(Box::new(Shell::new(cc, cli, config_dir, samples, stats)))),
+    )?;
     Ok(None)
 }
 
 /// Runs one native window until it closes.
-fn window(create: eframe::AppCreator<'_>) -> Result<(), Error> {
+fn window(size: egui::Vec2, create: eframe::AppCreator<'_>) -> Result<(), Error> {
     let mut setup = eframe::egui_wgpu::WgpuSetupCreateNew::without_display_handle();
     setup.instance_descriptor.backends =
         wgpu::Backends::DX12 | wgpu::Backends::VULKAN | wgpu::Backends::METAL;
     let viewport = egui::ViewportBuilder::default()
-        .with_inner_size([1400.0, 900.0])
+        .with_inner_size(size)
         .with_title("BeamCraft")
         .with_icon(load_icon());
     let options = eframe::NativeOptions {

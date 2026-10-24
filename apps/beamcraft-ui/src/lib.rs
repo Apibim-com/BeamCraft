@@ -36,6 +36,7 @@ pub mod shell;
 pub mod source;
 pub mod start;
 pub mod stats;
+pub mod theme;
 pub mod tools;
 
 /// A bounded viewport failure; adapter absence is reported, never replaced by a fake result.
