@@ -54,10 +54,14 @@ if [ "$kind" = macos ]; then
     # Progress goes to stderr: stdout carries the archive path only.
     codesign --force --deep --sign - "$app" 1>&2
 else
-    mkdir -p "$name/assets/fonts/inter" "$name/licenses"
+    mkdir -p "$name/assets/fonts/inter" "$name/assets/icons" "$name/licenses"
     cp "$release/beamcraft$ext" "$release/beamcraft-ui$ext" "$name/"
     cp assets/fonts/inter/Inter-Regular.ttf assets/fonts/inter/Inter-Bold.ttf \
         "$name/assets/fonts/inter/"
+    cp assets/icons/beamcraft-linux-1024.png "$name/assets/icons/beamcraft-icon.png"
+    if [ "$kind" = win ]; then
+        cp assets/icons/beamcraft-windows.ico "$name/BeamCraft.ico"
+    fi
     cp licenses/OFL-1.1-Inter.txt "$name/licenses/"
 fi
 

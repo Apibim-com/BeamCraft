@@ -446,16 +446,22 @@ pub fn icon() -> egui::IconData {
     }
 }
 
-/// The window/application icon. In the macOS bundle the dedicated macOS artwork ships as
+/// The window/application icon. Windows and Linux packages ship the platform artwork beside
+/// the executables; macOS keeps it in the app bundle's Resources directory.
+/// In the macOS bundle the dedicated macOS artwork ships as
 /// `Contents/Resources/beamcraft-icon.png`, and eframe applies it to the Dock at run time
 /// (`setApplicationIconImage`): while the app runs, the Dock shows the process icon and
 /// ignores the bundle's ICNS. Outside a bundle, or when the resource is missing, the coded
 /// [`icon`] is used, so no asset bytes are compiled into the binary.
 pub fn load_icon() -> egui::IconData {
-    let png = std::env::current_exe().ok().and_then(|exe| {
-        let dir = exe.parent()?;
-        std::fs::read(dir.join("../Resources/beamcraft-icon.png")).ok()
-    });
+    let mut candidates = vec![Path::new("assets/icons/beamcraft-icon.png").to_path_buf()];
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        candidates.push(dir.join("assets/icons/beamcraft-icon.png"));
+        candidates.push(dir.join("../Resources/beamcraft-icon.png"));
+    }
+    let png = candidates.iter().find_map(|path| std::fs::read(path).ok());
     match png.as_deref().map(eframe::icon_data::from_png_bytes) {
         Some(Ok(icon)) => icon,
         _ => icon(),

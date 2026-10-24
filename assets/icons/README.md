@@ -1,4 +1,4 @@
-# macOS application icon
+# Application icons
 
 The original `beamcraft-1024.png` and everything under `docs/brand/` remain unchanged.
 The macOS composition places the official SVG's I-beam group, without changing its
@@ -15,9 +15,14 @@ python3 -m pip install CairoSVG==2.8.2 Pillow==12.3.0
 python3 -m unittest discover -s packaging -p 'test_*.py'
 ```
 
-The SVG tile and the compositor are the editable sources. The generator reads
+The Windows ICO and Linux PNG use that same composition. The ICO contains 16, 24,
+32, 48, 64, 128 and 256 pixel representations. The Windows archive includes
+`BeamCraft.ico`; Windows/Linux runtime window icons load the PNG from
+`assets/icons/beamcraft-icon.png` in the package. The SVG tile and compositor are
+the editable sources. The generator reads
 `docs/brand/beamcraft-logo.svg` without writing it. It supersamples at 2048px and
-writes `beamcraft-macos-1024.png` plus PNG-backed ICNS representations for all
+writes `beamcraft-macos-1024.png`, `beamcraft-linux-1024.png`,
+`beamcraft-windows.ico`, plus PNG-backed ICNS representations for all
 standard/Retina sizes, including 16, 32, 64, 128, 256, 512 and 1024px. Pinned
 renderer versions in the same environment produce identical bytes; Cairo/zlib
 versions can affect encoding across operating systems.
