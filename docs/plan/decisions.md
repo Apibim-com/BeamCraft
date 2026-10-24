@@ -10,18 +10,24 @@ Open questions are at the end.
   grids (axes) are the first work item, ahead of the milestones M1 to M5 of 2026-10-21, which
   become M0 (grids) followed by M1 to M5. The contract is written first, as a draft for review:
   [project grids](../contracts/t01-project-grids-draft-v0.1.md), with task T01 split into the
-  slices T01.1 to T01.6. The draft proposes, for the owner to confirm or change:
-  - Three kinds: rectangular, radial and a single line. A grid is one element that owns its axes as
-    records; an axis has a stable AxisId and is not an element of its own (O-G1).
-  - Axis labels are numeric, alphabetic or custom, unique in the grid and stored on the axis;
-    spacing is a list of distances or a count and a pitch, expanded to positions, which are the
-    authoritative values (O-G2).
-  - A grid is stored as an element beside the levels and moves to the `Grids` layer with U19; it
-    has no stored relation to levels or to parts. Placing an element on an intersection copies
-    coordinates; nothing follows a moved axis (O-G5).
+  slices T01.1 to T01.9. The owner's answers of the same day:
+  - A grid is two families, U and V, of named lines (GridLines), as in the IFC schema (`IfcGrid`,
+    `IfcGridAxis`). Each line has a name such as `A`, `1` or `Г-1`; the character `/` is allowed in
+    a name. In the MVP a line is straight; arcs and curves, and with them radial grids, come after
+    the MVP.
+  - A regular family is typed as an expression, `0 5*6000` (first position, then distances, `N*D` for
+    `N` equal distances); the expression is kept so a step is edited fast. Lines can also be drawn
+    one by one. Names are a list of words separated by spaces; no letters are skipped.
+  - Lines are records inside one grid element, with stable ids. A point on an intersection is one
+    parameter in a command. Grid names need not be unique.
+  - The height of a placed element is a level plus an offset. A section project uses a grid of the
+    pinned coordination project, read-only, so a grid is not created again for every section.
+  - Limits: 64 grids per project, 200 lines per family.
+  - Grids are visible to other USD viewers as thin tubes (details open). A **magnetic** mode, in
+    which placed elements follow a grid, is wanted (details open).
+  - Open questions are listed in section 12 of the contract (O-G5, O-G7, O-G11 to O-G16).
   - Grids and levels share one shared scope; an ordinary section edit changes neither. No export
     (IFC, BOM, numbering) carries grids in the MVP.
-  - Visibility of grids and labels is view state and never changes the model.
 
 - **Plate position, corners and contour editing.** Owner decisions, written up as a draft in
   [the plate amendment](../contracts/f04-plate-amendment-draft-v0.1.md) for review:
@@ -315,7 +321,7 @@ Open questions are at the end.
 | 2 | macOS policy without project hardware | Q02 acceptance |
 | 3 | IFC reference converter, supported subset, budgets and provenance (read-only workflow selected on 2026-10-22) | E04 |
 | 4 | Live channel and permission model (C07, C08) | C07, C08 |
-| 5 | Grid contract draft: owner review of O-G1 to O-G10 ([contract](../contracts/t01-project-grids-draft-v0.1.md) section 11) | T01.1 |
+| 5 | Grid contract draft: owner answers to O-G5, O-G7 and O-G11 to O-G16 ([contract](../contracts/t01-project-grids-draft-v0.1.md) section 12) | T01.3, T01.4, T01.7, T01.8 |
 | 5 | Where saved views and review notes live: workspace only or a shared review layer | W01, W02 |
 | 6 | Variant sets in our own layers (N07) | N07 |
 | 7 | Local use of the third-party USD sample under its licence | N08 |

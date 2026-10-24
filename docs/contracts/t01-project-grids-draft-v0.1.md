@@ -1,292 +1,319 @@
 # T01 contract draft: project grids (axes)
 
-Status: **draft for owner review (2026-10-23).** [F04](f04-model-and-commands-v0.1.md) 0.1.0 and the
-domain vocabulary stay unchanged until the owner accepts this text; on acceptance the new element
-kind, commands and limits are recorded as an F04 amendment (name to be confirmed) and the sections
-they extend get a dated pointer. It is the contract for the slices T01.1 to T01.6 in
-[`tasks.md`](../plan/tasks.md) and answers [issue #192](https://github.com/Apibim-com/BeamCraft/issues/192).
-The owner decided that development starts with grids ([decisions](../plan/decisions.md)); the
-behaviour below is a proposal for that work, with the points that need the owner listed in
-section 11. Nothing here is implemented.
+Status: **draft for owner review (2026-10-23, revised after the owner's answers of the same day).**
+[F04](f04-model-and-commands-v0.1.md) 0.1.0 and the domain vocabulary stay unchanged until the owner
+accepts this text; on acceptance the new element kind, commands and limits are recorded as an F04
+amendment (name to be confirmed) and the sections they extend get a dated pointer. It is the
+contract for the slices T01.1 to T01.9 in [`tasks.md`](../plan/tasks.md) and answers
+[issue #192](https://github.com/Apibim-com/BeamCraft/issues/192). Development starts with grids
+([decisions](../plan/decisions.md)). Points the owner has not yet answered are open questions in
+section 12; the text says so where it depends on one. Nothing here is implemented.
 
 Today the repository only says that the `Grids` layer holds "axes and levels"
 ([architecture](../architecture.md)), that levels are elements ([D2](../design/d1-d2-project-level.md))
 and that shared grids change only by an explicit authorized command (F10 0.2 `DV-SCOPE-004`,
 F12 `PC-OWN-002`). This document says what a grid is, how it is stored, built, edited and used.
 
-## 1. Summary
+## 1. Owner decisions that shape this draft
 
-| Question (issue #192) | Answer of this draft | Section |
-|-----------------------|----------------------|---------|
-| Kinds of grid; one object or many | Three kinds: `rectangular`, `radial`, `line`. A grid is **one element** that owns its axes as ordered records; an axis has a stable AxisId but is not an element | 2, 5 |
-| Labels | Numeric, alphabetic or custom, unique per grid, numbering direction chosen at creation, stored explicitly; what a view shows is view state | 3 |
-| Spacing and later edits | A list of distances, or a count and a pitch that expand to positions; positions are authoritative; axis commands edit them | 4, 8 |
-| Storage and identity | Element of kind `grid` at `/World/Grids/GRD_<uuid>` in the authored model; moves to the `Grids` layer with U19; GridId and AxisId are UUIDv7 and never change | 5 |
-| Relation to levels | None stored. Grids are vertical, levels are horizontal; a grid point has no height | 6 |
-| Use: snap, placement, views | Snap kinds `grid_line` and `grid_intersection`; placement helper that bakes coordinates; plane of an axis for "view by grid line"; visibility is view state | 7 |
-| Rights | Grids and levels share one shared scope; an ordinary section edit changes neither | 9 |
-| API, limits, codes | Engine API first, then CLI; limits and reuse of the F04 codes with `GRID_*` reason tokens | 8, 10 |
-| Interchange | No grid in IFC, BOM or numbering in the MVP | 12 |
+| # | Decision (owner, 2026-10-23) | Where |
+|---|------------------------------|-------|
+| D1 | A grid is a **set of curves in two families, U and V**, taken from the IFC schema (`IfcGrid`: `UAxes`, `VAxes`; each `IfcGridAxis` has a tag and a curve). Each line is a **GridLine** with a name such as `A` or `1` | 2 |
+| D2 | In the MVP a GridLine is a **straight line**. Arcs and other curves come after the MVP | 2 |
+| D3 | A point on an intersection is written as **one parameter** | 8.2 |
+| D4 | Axes are **records inside one grid element**, not elements of their own | 5.1 |
+| D5 | A family keeps its **source expression** (`0 5*6000`) as well as the lines, so a step can be edited fast | 4 |
+| D6 | Per-line extents of regular grids and partial arcs come **after the MVP** | 2 |
+| D7 | A section project may **use a grid of a pinned coordination project**, read-only, so a grid is not created again for each section | 9 |
+| D8 | There is a **magnetic mode**: elements placed on a grid may follow it. Details are open | 7.5, O-G5 |
+| D9 | The height of a placed element is taken **from a level plus an offset**, as is usual in BIM tools; there is no stored link between a grid and a level | 6, 7.2 |
+| D10 | Grids are **visible in 3D to other USD viewers**, as thin tubes of small diameter. Details are open | 12, O-G7 |
+| D11 | Limits of 64 grids and 200 lines per family are accepted | 10 |
+| D12 | Labels are **not skipped** (no letters left out); default label schemes need no skip set | 3 |
+| D13 | Grid **names need not be unique** | 5.2, 10 |
+| D14 | Labels are a **list of words separated by spaces**: `А Б В Г Г-1 Г-2 Д`; the character `/` is allowed in a label | 3 |
 
 ## 2. What a grid is
 
-A **grid** is a named, plan-only construction object: a set of **axes** in the horizontal plane,
-each of which stands for a vertical plane at every height. It has no thickness, no mass, no
-material, no geometry in the engineering sense, and no effect on any quantity. Units are
-millimetres and radians, right-handed, Z up, as everywhere (F04).
+A **grid** is a named, plan-only construction object: two families of **GridLines** (`u` and `v`) in
+the horizontal plane, each line standing for a vertical plane at every height. It has no thickness,
+mass, material or engineering geometry and no effect on any quantity. Units are millimetres and
+radians, right-handed, Z up (F04).
 
-A grid has a **frame**: an origin `(x, y)` and a rotation about +Z. Local coordinates `(u, v)`
-are measured in that frame; the grid lives at `z = 0` and has no elevation of its own.
+The model follows the public IFC4 schema (`IfcGrid` with its two axis lists and `IfcGridAxis` with
+a tag and a curve), so that a later IFC export is a direct mapping. The optional third list of that
+schema (`WAxes`) is not used: a plan grid has no vertical axes. U and V are two ordered families;
+they need not be perpendicular, and a drawn line may take any direction.
 
-| Kind | Families | Axes |
-|------|----------|------|
-| `rectangular` | `x`: straight lines at `u = position`, parallel to local Y. `y`: straight lines at `v = position`, parallel to local X | 0 to 200 in each family, at least one axis in total |
-| `radial` | `ring`: circles about the origin, `position` = radius. `ray`: half-lines from the origin, `position` = angle in radians, counter-clockwise from local X | 0 to 200 in each family, at least one axis in total |
-| `line` | `line`: exactly one straight axis, the segment from the origin along local X for `length_mm` | exactly 1 |
+| Part | Rule |
+|------|------|
+| **Frame** | An origin `(x, y)` and a rotation about +Z. Local coordinates `(u, v)` are measured in that frame; the grid lies at `z = 0` and has no elevation |
+| **GridLine** | An AxisId, a **label** (the name the user sees, section 3) and a geometry. In the MVP the geometry is a straight segment between two points in grid-local coordinates. Its `shape` token is `line`; any other shape is `UNSUPPORTED_GEOMETRY` (arcs, polylines, splines: after the MVP, D2) |
+| **Family `u`, `v`** | An ordered list of at most 200 GridLines. A family is **regular** or **drawn** |
+| **Regular family** | Its lines are parallel and are generated from one expression (section 4). Lines of a family `u` run parallel to local Y at `u = position`; lines of a family `v` run parallel to local X at `v = position`. The family also has a **span**: the interval along its lines over which they are drawn |
+| **Drawn family** | Its lines are drawn one by one, each a segment by two points, in any position and at any angle (section 2.1) |
+| **Intersection** | A point where a line of `u` crosses a line of `v` over their stored segments. Lines of one family are not intersected with each other. Two lines cross in at most one point; parallel, collinear or non-crossing lines have none. Intersections are computed, never stored |
 
-* An **intersection** is a point where an axis of one family of the same grid crosses an axis of the
-  other: for a rectangular grid `(u, v) = (x_i, y_j)`; for a radial grid `(u, v) = r_i (cos θ_j,
-  sin θ_j)`. Axes of the same family never intersect (rings are concentric, parallel lines never
-  meet, rays meet only at the origin, which is not an intersection). A `line` grid has none.
-  Intersections are computed, never stored.
-* **Extent.** Each axis is drawn and snapped only over a finite extent, which grows with the
-  grid's `extension_mm` (default 2000, 0 to 1,000,000). A rectangular `x` axis runs over
-  `v` from `min(y positions) - extension` to `max(y positions) + extension` (the other family
-  empty: `-extension` to `+extension`); a `y` axis likewise over `u`. A ray runs from the origin to
-  `max(ring radii) + extension` (no rings: to `extension`). A ring is a full circle. A `line`
-  axis is exactly its segment. Per-axis extents and partial ring arcs are open (O-G3).
-* The kind is fixed at creation. Changing it is `UNSUPPORTED_PROPERTY`.
-* Not supported in this version (`UNSUPPORTED_GEOMETRY` unless noted): grids inclined from the
-  vertical or rotated about any axis but Z, arcs and splines other than the full ring, skewed
-  rectangular grids (a family not at a right angle to the other), a grid with its own elevation,
-  and three-dimensional grids. A rectangular family at an arbitrary angle is made as a second
-  rectangular grid with its own frame; a single skewed axis is a `line` grid.
+A grid needs at least one line in total. A family may be empty. A grid may mix a regular `u` family
+with a drawn `v` family. A rectangular grid is therefore two regular families; a free layout is two
+drawn ones.
 
-## 3. Axis labels
+**Span of a regular family.** Stored explicitly as two numbers, the start and the end along the
+line direction, in local millimetres. Its default at creation is the range of the other family's
+positions extended by 2000 mm on each side (the other family empty or drawn: `-2000` to `+2000`
+about the origin). Changing the other family afterwards does not change the span; a later edit
+sets it. A regular line is therefore a segment `(position, span.start)` to `(position, span.end)`
+for `u`, and `(span.start, position)` to `(span.end, position)` for `v`. Individual lengths per line
+are drawn lines (below) or after the MVP (D6).
 
-Every axis has one **label**, the name the user sees and types.
+### 2.1 Drawing lines
+
+Drawing is a UI feature on engine commands (T01.2, T01.6): the user picks a family, clicks two
+points with the usual snaps (including those of other grids), and gives or accepts a label. The UI
+turns the clicks into the numbers of `GridLineDraw`; the engine never sees a mouse event. A drawn
+line can be reshaped (new end points), relabelled and removed. Drawing into a regular family is
+refused (`UNSUPPORTED_PROPERTY`): turn the family into a drawn one by editing it (O-G11), or draw
+into the other family. The kind of a family can be chosen when the grid is created.
+
+The following are not supported in this version (`UNSUPPORTED_GEOMETRY` unless noted): arcs,
+circles, rings, splines and any curved line, radial grids (they need rings, so they come with
+curves, T01.9), grids inclined from the vertical or rotated about any axis but Z, a grid with its
+own elevation, and a third family.
+
+## 3. Labels
+
+Every GridLine has one **label**, the name the user sees and types.
 
 | Rule | Value |
 |------|-------|
-| `GR-LBL-001` Characters | 1 to 16 Unicode characters and at most 64 UTF-8 bytes; Unicode letters and digits, `-`, `_`, `.`, `+`. No spaces and none of `/ : , #`, so a label can appear in the point syntax of section 7. Letters of any script are allowed |
-| `GR-LBL-002` Uniqueness | Unique **in the grid**, across both families, so one label names one axis and the label of an intersection needs no family tag. Compared exactly (code point by code point, no case folding, no normalisation). A clash is `INVALID_ARGUMENT`, reason `GRID_LABEL_DUPLICATE`. A different grid may reuse a label |
-| `GR-LBL-003` Stored | Labels are stored on the axes. Moving an axis, or adding or removing another, never renumbers or relabels. A gap in the sequence is allowed |
-| `GR-LBL-004` Not an identity | A label can change; the identity is the AxisId (section 5). Nothing in the model may depend on the text of a label |
+| `GR-LBL-001` Characters | 1 to 16 Unicode characters and at most 64 UTF-8 bytes: Unicode letters and digits, `-`, `_`, `.`, `+` and **`/`** (so `1/2` and `А/1` are labels). Letters of any script are allowed (`А Б В Г Д`). No spaces and none of `: , #`, which the input syntax uses as separators |
+| `GR-LBL-002` Uniqueness | Unique **in the grid**, across both families, so one label names one line. Compared exactly (code point by code point, no case folding, no normalisation). A clash is `INVALID_ARGUMENT`, reason `GRID_LABEL_DUPLICATE`. A different grid may reuse a label |
+| `GR-LBL-003` Stored | Labels are stored on the lines. Moving a line, or adding or removing another, never renumbers or relabels. A gap in the sequence is allowed (`Г`, `Г-1`, `Г-2`, `Д`) |
+| `GR-LBL-004` Not an identity | A label can change; the identity is the AxisId (section 5.3). Nothing in the model depends on the text of a label |
 
-**Label schemes.** A scheme expands to an explicit list of labels when a grid is created or a
-family is relabelled. The expansion is a pure function of the model crate, used by the CLI and the
-UI; a command carries the expanded list, so replay does not depend on the scheme code.
+**How labels are given.** The user types a **list of words separated by spaces** (a comma is also
+accepted), one word per line, in line order: `1 2 3 4`, `A B C`, `А Б В Г Г-1 Г-2 Д`, `1/2 2/3`. The
+number of words must equal the number of lines (`INVALID_ARGUMENT`, `GRID_LABEL_COUNT`). Two
+helpers write the list for the user: `numeric` (`start` default 1, `step` default 1) and `alpha`
+(the Latin letters A to Z, then AA, AB, ...; `start` default `A`), each with `order` `ascending`
+(the first label goes to the lowest position, default) or `descending` (the first goes to the
+highest). Nothing is skipped (D12). Helpers expand to the explicit list before the command is built,
+so a command always carries the list. A scheme for the Cyrillic alphabet is open (O-G12).
+Defaults when the user says nothing: `u` numeric, `v` alpha.
 
-| Scheme | Rule |
-|--------|------|
-| `numeric` | Decimal integers, `start` (default 1, at least 0) and `step` (default 1, at least 1): `start`, `start + step`, ... No padding |
-| `alpha` | Letters in the order A to Z, AA, AB, ..., AZ, BA, ... (bijective base 26: after `Z` comes `AA`). `start` is a label of this sequence (default `A`). An optional `skip` set of letters (default none) is left out of every label, so with `skip = {I, O}` the sequence is A to H, J to N, P to Z, then AA, AB, ... |
-| `custom` | An explicit list with exactly one label for each axis |
+**Labels per view.** Which labels a view shows, at which end of a line and how large, and whether a
+grid is shown at all, is **view state** (W01, V12 and D04), not model data. Until the views layer
+exists the UI keeps it in the session. Hiding a grid or a label never changes the model, a revision,
+a signature or an export (`GR-USE-005`).
 
-**Direction.** `order` is `ascending` (default: the first label goes to the axis with the lowest
-position) or `descending` (the first label goes to the axis with the highest position). For
-`ray` the position is the angle. Defaults when a command does not say: `x` numeric, `y` alpha,
-`ring` alpha, `ray` numeric; the user can change every one (O-G9).
+## 4. Coordinate expressions and editing
 
-**Labels per view.** Which labels a view shows, at which end of the axis and in which size, and
-whether a grid is shown at all, is **view state** (task W01, V12 and the drawing views of D04), not
-model data. Until the views layer exists the UI keeps it in the session. A hidden grid or a hidden
-label never changes the model, any revision, any signature or any export (`GR-USE-005`).
+A **regular family** is created from one **expression**, the text the user types:
 
-## 4. How spacing is given
+* words separated by spaces or commas;
+* the **first number is the position of the first line**, in millimetres (any value, at most
+  1,000,000 in absolute value);
+* every following word is the **distance to the next line**, a number greater than zero, or
+  `N*D`, meaning `N` equal distances `D` (`N` is a whole number from 1 to 200).
 
-A family is created from a starting position and either of two inputs, as for bolt groups
-([A14 draft](f04-bolt-fastener-amendment-draft-v0.1.md) section 4):
+| Expression | Lines (positions) |
+|------------|-------------------|
+| `0 5*6000` | 6 lines: `0, 6000, 12000, 18000, 24000, 30000` (5 bays of 6 m) |
+| `0 3*6000 7500` | 5 lines: `0, 6000, 12000, 18000, 25500` |
+| `1000 2*4500 6000` | 4 lines: `1000, 5500, 10000, 16000` |
+| `0` | one line at 0 |
 
-| Input | Rule |
-|-------|------|
-| `start` | Position of the first axis. Default 0 for `x`, `y`; the radius of the first ring (greater than zero); the angle of the first ray, 0 to less than 2π (degrees at the CLI) |
-| `spacings` | The distances between neighbouring axes, a list. The number of axes is `len(spacings) + 1`. The CLI writes repetition as `N*D`: `3*6000,7500` is `6000, 6000, 6000, 7500` |
-| `count` + `pitch` | `count` axes at an equal distance: the same as `count - 1` spacings equal to `pitch`. `count` 1 takes no `pitch` |
+Positions follow by summation: `p[0]` is the first number, then each distance is added. The
+expression is stored (normalised: single spaces, repetitions kept as written) together with the
+generated lines, and shown back to the user as typed. **The expression is the authoritative form of
+a regular family** (D5): the stored lines must equal what the expression and the span generate, and
+a stored family where they differ is refused by the structural validator (`T01-V01`). Editing the
+step is editing the text: `0 5*6000` to `0 5*6500` moves every line of the family.
 
-Positions follow by summation: `p[0] = start`, `p[i] = p[i-1] + spacings[i-1]`. For rays the
-spacings are angles.
+**Editing a regular family** is a command that gives the new expression and the **full label list**
+for the new line count (section 3). Lines are matched by **label**: a label that remains keeps its
+AxisId and takes its new position; a new label creates a line with a new AxisId; a label that
+disappears removes its line. Moving one line alone or inserting a bay is writing the equivalent
+expression; the UI does this when a line is dragged. Removing a line that a stored reference names
+is `DEPENDENCY_CONFLICT`. How a manual drag, an expression and a drawn line coexist in one family
+is open (O-G11).
 
-**Positions are authoritative.** `spacings` and `count` + `pitch` are generators used when a grid or
-an axis is created; they are expanded at once and **not stored**, so editing one axis never has to
-guess what an equal pitch meant. (The bolt amendment keeps spacings authoritative because a group is
-a pattern; a grid is a set of named lines, so the position is the value users edit. O-G2.)
-
-**Editing afterwards** is by axis commands (section 8): add an axis at a position, move one axis
-alone, move an axis together with every later axis of the family (stretching or shrinking a bay),
-remove an axis, relabel. A request to change `count` or `pitch` of an existing family does not
-exist.
+A drawn family has no expression.
 
 ## 5. Storage and identity
 
-### 5.1 One element, axes as records
+### 5.1 One element, lines as records
 
-A grid is **one element** of kind `grid`. Its axes are **records inside it**, not elements. The
-reasons, against one element per axis:
+A grid is **one element** of kind `grid`. Its lines are **records inside it**, not elements (D4).
+The reasons, against one element per line:
 
-* Label uniqueness, ordering and the minimum distance are properties of the whole set. One element
-  keeps them inside one footprint and one validator rule. Separate axis elements would let two
-  concurrent edits each pass their own footprint and together break uniqueness.
-* A family of up to 200 axes stays one prim, not 200 elements with their own identity, lifecycle,
-  relationship and copy rules.
+* Label uniqueness, the expression and the limits are properties of the whole set. One element
+  keeps them inside one footprint and one validator rule.
+* A family of up to 200 lines stays one prim, not 200 elements with their own identity,
+  lifecycle, relationship and copy rules.
 * Deleting, copying and permission checks act on one object.
 
-The price is that an axis cannot be the target of a USD relationship. A reference to an axis is a
-pair `(GridId, AxisId)`: a relationship to the grid plus the AxisId attribute (section 5.4). Axes as
-child elements is the alternative, listed as O-G1.
+The price is that a line cannot be the target of a USD relationship. A reference to a line is the
+pair `(GridId, AxisId)`: a relationship to the grid plus the AxisId (section 5.4).
 
 ### 5.2 Where it is stored
 
 | Item | Rule |
 |------|------|
-| Path | `/World/Grids/GRD_<uuid>`, the category folder `Grids` (USD `kind = group`) beside `/World/Levels`; prefix `GRD`; the full 32 hex digits of the UUIDv7, as every element (F04 `A-3`, [architecture](../architecture.md#prim-hierarchy-and-naming-rule)). A grid is shared by every discipline and sits outside `/Steel` |
-| Layer | Today the authored model, as levels are. When U19 lands, grid **and** level elements move to the `Grids` layer (`<code>[_<zone>]_Grids.usda`) by task T01.5; their paths and identities do not change, and no migration of earlier stores is promised while the project is pre-alpha |
-| Kind | `bim:elementKind = grid`. USD `kind = component`. No `Geometry` child, no material, no mass |
+| Path | `/World/Grids/GRD_<uuid>`, the category folder `Grids` (USD `kind = group`) beside `/World/Levels`; prefix `GRD`; the full 32 hex digits of the UUIDv7 (F04 `A-3`, [architecture](../architecture.md#prim-hierarchy-and-naming-rule)). A grid is shared by every discipline and sits outside `/Steel` |
+| Layer | Today the authored model, as levels are. When U19 lands, grid **and** level elements move to the `Grids` layer (`<code>[_<zone>]_Grids.usda`) by task T01.5; paths and identities do not change, and no migration of earlier stores is promised while the project is pre-alpha |
+| Kind | `bim:elementKind = grid`. USD `kind = component`. No `Geometry` child in the authored layer, no material, no mass (viewer geometry is derived data, section 12) |
 | Placement | `xformOp:translate` = `(x, y, 0)` and `xformOp:orient` = a rotation about +Z only. `z != 0`, or an orientation with an X or Y component, is `UNSUPPORTED_GEOMETRY`, reason `GRID_PLACEMENT_UNSUPPORTED` |
-| Common | `bim:id`, `bim:name` (label rule of F04, 1 to 256 bytes), `bim:schemaVersion`, `bim:createdBy` |
+| Common | `bim:id`, `bim:name` (F04 label rule, 1 to 256 bytes; **not required to be unique**, D13), `bim:schemaVersion`, `bim:createdBy` |
 
-Attributes (explicit, readable without a schema, as all others):
+Attributes, for each family `<f>` = `u` or `v` (explicit, readable without a schema):
 
 | Attribute | Meaning |
 |-----------|---------|
-| `bim:grid:kind` | token `rectangular`, `radial` or `line` |
-| `bim:grid:extensionMm` | extension of section 2 |
-| `bim:grid:lengthMm` | `line` only: the length of the axis |
-| `bim:grid:<family>:ids` | string array, the AxisIds, in order |
-| `bim:grid:<family>:labels` | string array, the labels, same order |
-| `bim:grid:<family>:positionsMm` | double array: `x`, `y`, `ring`, `line` (always `[0]`) |
-| `bim:grid:ray:positionsRad` | double array: the ray angles |
+| `bim:grid:<f>:mode` | token `regular` or `drawn` |
+| `bim:grid:<f>:expression` | string, `regular` only: the coordinate expression of section 4 |
+| `bim:grid:<f>:spanMm` | double array of 2, `regular` only: the span |
+| `bim:grid:<f>:ids` | string array: the AxisIds, in order |
+| `bim:grid:<f>:labels` | string array: the labels, same order |
+| `bim:grid:<f>:shapes` | token array: `line` (the only value in the MVP), same order |
+| `bim:grid:<f>:pointsMm` | double array, four numbers per line `(x1, y1, x2, y2)` in grid-local coordinates, same order |
 
-`<family>` is `x`, `y`, `ring`, `ray` or `line`. The three arrays of a family have the same
-length, positions are strictly increasing, and a kind carries only its own families. A stored grid
-that breaks these rules is refused by the structural validator with `INVALID_ARGUMENT` (rule
-`T01-V01`), array lengths above the limits are refused before allocation with `LIMIT_EXCEEDED`.
+The arrays of a family have lengths that agree (`pointsMm` has four times as many entries as
+`ids`). A stored grid that breaks this, a duplicate AxisId or label, a segment shorter than 1 mm, a
+regular family that does not match its expression, or any array above the limits, is refused by the
+structural validator: `INVALID_ARGUMENT`, rule `T01-V01`, and `LIMIT_EXCEEDED` for sizes, checked
+before allocation. The reader never indexes with a stored value.
 
 ### 5.3 Identity
 
-* **GridId** is a UUIDv7 and never changes: not on rename, move, rotation, relabelling or edit of
-  any axis. The prim path is derived from it.
-* **AxisId** is a UUIDv7 unique **in the project**, never reused (also not after the axis is
-  removed), so `(GridId, AxisId)` and the AxisId alone each name one axis for ever. Moving an axis,
-  changing its label or its position keeps the AxisId. Removing an axis ends it; adding an axis with
-  the same label creates a new AxisId.
-* A command carries the ids of everything it creates (`new_id`, `axis_ids`), so replay under the
-  same `op_id` is exact (F04 section 6). The CLI generates them when they are omitted. A duplicate
-  GridId or AxisId, inside the command or against the project, is `DUPLICATE_ID`.
+* **GridId** is a UUIDv7 and never changes: not on rename, move, rotation, relabelling or edit of any
+  line.
+* **AxisId** is a UUIDv7 unique **in the project**, never reused (also not after the line is
+  removed), so `(GridId, AxisId)` and the AxisId alone each name one line for ever. Moving a line,
+  changing its label or its position keeps the AxisId. Removing a line ends it; a new line with the
+  same label gets a new AxisId.
+* A command carries the ids of everything it creates (`new_id`, `axis_ids`), so replay under the same
+  `op_id` is exact (F04 section 6). The CLI generates them when they are omitted. A duplicate GridId
+  or AxisId, inside the command or against the project, is `DUPLICATE_ID`.
 
 ### 5.4 Edits, forks, copies and references
 
 | Event | Behaviour |
 |-------|-----------|
-| Edit | Any grid command keeps GridId and every unaffected AxisId (section 8) |
-| Workspace fork, publication, rebase | A fork is the same project history, so all ids are the same. A later merge matches grids and axes by id, never by label or position |
-| `CopyElement` of a grid | A new independent grid: a fresh GridId and **fresh AxisIds**, all supplied by the command. Nothing is shared, so a reference to the copy's axis can never mean the source's |
-| Reference to an axis | `(GridId, AxisId)`. Saved views (W01) and, later, drawing dimensions (D03) store the pair, plus a relationship to the grid so a dangling grid is found. An axis that disappears leaves the reference **unresolved** and visible, never silently dropped |
-| Delete or remove | Refused with `DEPENDENCY_CONFLICT` (reason `GRID_IN_USE`) while a stored reference names the grid or the axis; the diagnostic names the referrers. A project with no such referrer deletes freely |
-
-No element of the model refers to a grid or an axis: parts keep coordinates only (section 7).
+| Edit | Any grid command keeps the GridId and every unaffected AxisId |
+| Workspace fork, publication, rebase | A fork is the same project history, so all ids are the same. A later merge matches grids and lines by id, never by label or position |
+| `CopyElement` of a grid | A new independent grid: a fresh GridId and **fresh AxisIds**, all supplied by the command. Nothing is shared |
+| Reference to a line | `(GridId, AxisId)`. Saved views (W01) and, later, drawing dimensions (D03) store the pair plus a relationship to the grid. A line that disappears leaves the reference **unresolved** and visible, never silently dropped |
+| Delete or remove | Refused with `DEPENDENCY_CONFLICT` (reason `GRID_IN_USE`) while a stored reference names the grid or the line; the diagnostic names the referrers |
 
 ## 6. Grids, levels and zones
 
 * **Levels stay as D2 made them:** elements of kind `level` with `bim:elevationMm`, shared by every
-  discipline. A level has no relation to a grid. A grid has no height, a level has no plan position;
-  a point on a level and an intersection give a three-dimensional point only when a caller pairs
-  them (section 7.2). The elevation of a level against grid axes is therefore the elevation value
-  itself, in the same project coordinates the grid origin uses.
-* **No "one common grid" is required.** A project may hold any number of grids (at most 64), which
-  may overlap. A "common" grid is simply one in the unzoned `Grids` layer. Once U19 lands, a zone's
-  grids and levels live in that zone's `Grids` layer, with the zone's own frame, so two zones may
-  hold two rotated rectangular grids side by side. Which zone a grid belongs to is the layer it is
-  stored in, never an attribute of the grid.
-* **Levels and grids are shared data of one kind** (section 9): both are written only by the shared
-  scope, and sections only read them.
-* A "view by grid line" and a "view at a level" combine freely in V12: the first fixes a vertical
-  plane, the second a horizontal one.
+  discipline. A grid has no height and a level has no plan position, and **no link between them is
+  stored** (D9). The height of a placed element is taken from a level plus an offset when the
+  element is placed (section 7.2).
+* **Any number of grids**, at most 64 per project (D11), which may overlap. A "common" grid is one in
+  the unzoned `Grids` layer. Once U19 lands, a zone's grids and levels live in that zone's `Grids`
+  layer with the zone's own frame; the zone of a grid is the layer it is stored in.
+* **Sections use a shared grid, they do not copy it** (D7): a section project reads a grid of the
+  pinned coordination project (F12), so one grid serves KM, KMD, AR and the others. Using it for
+  snapping and placement is read-only (section 9).
 
 ## 7. How grids are used
 
 ### 7.1 Snapping
 
-`snap` (V04) gains two kinds beside `vertex`, `axis_end` and `axis`:
+`snap` (V04) gains three kinds beside `vertex`, `axis_end` and `axis`:
 
 | Kind | Candidate |
 |------|-----------|
 | `grid_intersection` | An intersection of section 2 |
-| `grid_line` | The nearest point of an axis over its extent (straight: perpendicular foot clamped to the extent; ring: the nearest point of the circle) |
+| `grid_line` | The nearest point of a GridLine over its segment (perpendicular foot clamped to the ends) |
+| `grid_end` | An end point of a GridLine |
 
-* **Plan distance.** The distance is measured in the XY plane. A hit keeps the query point's `z`:
-  a grid has no height, and the caller's work plane or level supplies it.
+* **Plan distance.** The distance is measured in the XY plane. A hit keeps the query point's `z`
+  (a grid has no height; the caller's work plane or level supplies it).
 * **Ordering and bands** are the V04 rules: quantized distance, kind, then ids. The new kinds rank
-  after the existing ones, `grid_intersection` before `grid_line`, then GridId, AxisId (the pair of
-  AxisIds for an intersection, in family order `x`, `y` and `ring`, `ray`). A hit carries `(GridId,
-  AxisId[, AxisId])` and the label(s), never a FeatureId. A UI may prefer intersections by its own
-  rule; the engine returns the whole ordered list.
-* **Work bounds.** At most 64 grids and 400 axes per grid are read. Intersections are not
-  enumerated: for each family the candidates within the radius are found in the sorted positions,
-  so a `200 x 200` rectangular grid costs the work of the nearby axes, not 40,000 points.
-* **Visibility is the caller's.** `snap` takes an optional grid filter (`--grids ID,ID`, default all).
-  A grid a view hides is simply not passed.
+  after the existing ones, `grid_intersection`, `grid_end`, `grid_line`; then GridId, AxisId (the
+  pair of AxisIds `u` then `v` for an intersection). A hit carries `(GridId, AxisId[, AxisId])` and
+  the labels, never a FeatureId. A UI may prefer intersections by its own rule.
+* **Work bounds.** At most 64 grids and 400 lines per grid are read. Only lines whose distance to
+  the query point is within the radius are candidates, and intersections are computed among those
+  candidates only, so a `200 x 200` grid costs the work of the nearby lines, not 40,000 pairs. The
+  band test is that of V04 (`distance <= radius + 0.001`).
+* **Visibility is the caller's.** `snap` takes an optional grid filter (`--grids ID,ID`, default
+  all); a grid a view hides is not passed.
 * The query is read-only and never changes the head.
 
 ### 7.2 Placing an element on an intersection
 
-A grid is a **placement helper, not a link** (`GR-USE-003`). The engine API
-`grid_point(grid, label_a, label_b)` returns the world point `(x, y)` of the intersection of two
-labels, one from each family, in either order (`B/3` and `3/B` are the same point); two labels of
-one family, a label of another grid or an unknown label are refused (section 10). Commands that
-take points accept the syntax `GRID:LABEL/LABEL` (`GRID` is a GridId, or a grid name when exactly
-one live grid has it) and an explicit `--z`. The CLI resolves them **before** it builds the
-command, so the stored command and the stored element hold plain coordinates:
+The engine API `grid_point(grid, label, label)` returns the world point `(x, y)` where the two
+named lines cross: one label from each family, in either order. Two labels of one family, an
+unknown label, a non-crossing pair or a grid that does not exist are refused (section 10).
 
-* moving a grid or an axis afterwards moves no element and changes no signature, and replaying an
-  old `op_id` gives the same result;
-* the part has no relationship to the grid, so an ordinary section edit never reads or writes it;
-* an element that follows grid changes (associative placement) is out of scope (O-G5).
+A command that takes points accepts **one parameter** for it (D3): `GRID:LABEL,LABEL`, where `GRID`
+is a GridId or a grid name carried by exactly one live grid (`GRID_NAME_AMBIGUOUS` otherwise), for
+example `--start-at-grid 2401:Б,3`. The comma separator is proposed (O-G13). Height is given as
+`--z MM`, or as **`--level LEVEL [--offset MM]`**, which takes `z = elevation of the level + offset`
+(offset default 0; D9). Without either the command is refused (`INVALID_ARGUMENT`). T01.4 adds the
+syntax to `create-member` (`--start-at-grid`, `--end-at-grid`) and to the placement origin of
+`create-plate`.
 
-T01.4 adds the syntax to `create-member` (`--start-at-grid`, `--end-at-grid`) and to the
-placement origin of `create-plate`. Taking `z` from a level is O-G6.
+In the normal (non-magnetic) mode the CLI resolves the parameter **before** it builds the command,
+so the stored command and the stored element hold plain coordinates: moving a grid or a line
+afterwards moves no element, changes no signature, and replaying an old `op_id` gives the same
+result; the part has no relationship to the grid.
 
 ### 7.3 View by grid line
 
-`grid_axis_plane(grid, axis)` returns the vertical plane of a straight axis as a world point and a
-unit normal (horizontal, perpendicular to the axis direction) for a `rectangular` axis, a `ray`
-or the `line` axis. A `ring` has no plane: `UNSUPPORTED_GEOMETRY`, reason `GRID_AXIS_NOT_PLANAR`.
-A saved view (V12) stores `(GridId, AxisId)`, the side and the depth, and **re-resolves** the plane
-each time it opens, so moving the axis moves the view; a missing axis leaves the view unresolved
-(`GR-USE-004`). Plane views by level are unchanged.
+`grid_line_plane(grid, line)` returns the vertical plane of a GridLine as a world point and a unit
+normal (horizontal, perpendicular to the line direction). A saved view (V12) stores `(GridId,
+AxisId)`, the side and the depth and **re-resolves** the plane each time it opens, so moving the
+line moves the view; a missing line leaves the view unresolved (`GR-USE-004`). Plan views by level are
+unchanged.
 
 ### 7.4 Visibility and selection
 
-Showing or hiding grids, labels and ends is view state (section 3). Selecting a grid is a V11
-selection switch (`grids`, already in V11) that changes picking only. Hiding a grid never changes
-the model, the revision, the snapshot token or any export (`GR-USE-005`).
+Showing or hiding grids, labels and ends is view state (section 3). Selecting a grid is the V11
+switch `grids`, which changes picking only. Hiding a grid never changes the model, the revision, the
+snapshot token or any export (`GR-USE-005`).
+
+### 7.5 Magnetic mode (open)
+
+The owner wants a **magnetic** mode in which elements placed on a grid follow it (D8). Where the
+switch lives, what follows, what happens when a line is deleted, and how a section element is kept
+authoritative when a shared grid changes are not decided; they are the questions of O-G5. This
+document specifies the non-magnetic placement of section 7.2 only; the magnetic mode is slice T01.8
+and is not scheduled until O-G5 is answered. The non-magnetic mode never becomes magnetic by itself.
 
 ## 8. Commands (engine API first, then CLI)
 
 Each command is one atomic edit and one undo unit, takes `op_id`, validates before it writes and, on
 any refusal, changes nothing. CLI option names are indicative; T01.1 fixes them.
 
+### 8.1 Edits
+
 | Command (CLI) | Arguments | Behaviour |
 |---------------|-----------|-----------|
-| `CreateGrid` (`create-grid`) | `new_id`, `name`, `kind`, `origin`, `rotation`, `extension`; per family `start` and the spacings or `count` + `pitch`, the scheme (`numeric`, `alpha`, `custom`, `order`), and `axis_ids`; for `line`: `start`, `end` points instead of origin and rotation, and one `label` | Validates, expands generators and schemes, authors the grid. The CLI takes degrees for angles |
-| `UpdateGrid` (`update-grid`) | `target_id`; any of `name`, `origin`, `rotation`, `extension`, `length` (`line`) | Moves or renames the grid as a whole; axes and ids are unchanged |
-| `GridAxisAdd` (`grid-axis-add`) | `target_id`, `family`, `new_axis_id`, `position`, `label` | Inserts one axis in order; the minimum distance and label rules hold |
-| `GridAxisMove` (`grid-axis-move`) | `target_id`, `axis_id`, `position`, `mode` = `single` (default) or `shift` | `single`: moves only this axis, which must stay strictly between its neighbours. `shift`: moves this axis and every later axis of the family by the same delta (a bay becomes longer or shorter) |
-| `GridAxisRemove` (`grid-axis-remove`) | `target_id`, `axis_id` | Removes the axis; other labels and ids are untouched. The last axis of a `line` grid, or of a grid whose removal leaves no axis, is refused: delete the grid |
-| `GridRelabel` (`grid-relabel`) | `target_id`, then `axis_id` + `label`, or `family` + the expanded `labels` list | Changes labels only; ids and positions are untouched |
-| `DeleteElement` (`delete-element`) | `target_id` | Deletes the grid with its axes; refused while a stored reference exists (section 5.4) |
-| `CopyElement` (`copy-element`) | `source_id`, `new_id`, `name`, `new_axis_ids` | An independent copy (section 5.4) |
+| `CreateGrid` (`create-grid`) | `new_id`, `name`, `origin`, `rotation` (degrees at the CLI); per family `u`, `v`: either an `expression`, its `labels` list or helper, a `span` and `axis_ids`, or `drawn` (empty) | Validates, expands the expression and the labels, authors the grid |
+| `UpdateGrid` (`update-grid`) | `target_id`; any of `name`, `origin`, `rotation`; per regular family a new `expression` with the full `labels` list and `axis_ids` for new labels, and `span` | Rewrites a regular family by section 4; moves or renames the grid; ids of kept lines unchanged |
+| `GridLineDraw` (`grid-line-draw`) | `target_id`, `family`, `new_axis_id`, `label`, `from`, `to` (world points) | Adds one straight line to a **drawn** family |
+| `GridLineReshape` (`grid-line-reshape`) | `target_id`, `axis_id`, `from`, `to` | New end points of a line of a drawn family; id and label kept |
+| `GridLineRemove` (`grid-line-remove`) | `target_id`, `axis_id` | Removes a line of a drawn family. The only line of a grid is refused (delete the grid) |
+| `GridRelabel` (`grid-relabel`) | `target_id`, `axis_id` + `label`, or `family` + the full `labels` list | Changes labels only; ids and geometry untouched |
+| `DeleteElement` | `target_id` | Deletes the grid with its lines; refused while a stored reference exists |
+| `CopyElement` | `source_id`, `new_id`, `name`, `new_axis_ids` | An independent copy (section 5.4) |
 
-**Queries** (read-only, no revision): `grids` (every grid with kind, frame and each axis: id, label,
-position, and the world coordinates of the axis ends), `grid-point` (section 7.2), `grid-plane`
-(section 7.3) and `snap` with the new kinds (section 7.1). `plate-inspect` lists grids beside
+**Queries** (read-only, no revision): `grids` (every grid with its frame and each line: id, label,
+and the world coordinates of its end points, and each family's expression), `grid-point` (section
+7.2), `grid-plane` (section 7.3) and `snap` with the new kinds. `plate-inspect` lists grids beside
 levels.
 
-**Footprints.** Create: read the absence of the GridId and of every AxisId, write the new
-lifecycle and the complete authored fields. Any other grid command: read the lifecycle and the
-complete `shape_inputs` group of the grid, write that group (and `label` for a rename or
-`placement` for a move). A grid command reads and writes no other element. Axis ids are checked
-against an index of all AxisIds in the project, which a stored-graph validator also rebuilds.
+**Footprints.** Create: read the absence of the GridId and of every AxisId, write the new lifecycle
+and the complete authored fields. Any other grid command: read the lifecycle and the complete
+`shape_inputs` group of the grid, write that group (and `label` for a rename, `placement` for a
+move). A grid command reads and writes no other element. AxisIds are checked against an index of all
+AxisIds of the project, which a stored-graph validator also rebuilds.
 
 ## 9. Rights
 
@@ -295,86 +322,82 @@ Grids and levels are **shared data** with their own shared scope (F12 `PC-OWN-00
 
 | Operation | Section user (ordinary edit) | Shared `Grids` scope |
 |-----------|------------------------------|----------------------|
-| Read grids and levels, `snap`, `grid-point`, `grid-plane`, `--at-grid` placement | allowed | allowed |
-| Create, update, copy or delete a grid; add, move, remove or relabel an axis | `PERMISSION_DENIED` | allowed |
+| Read grids and levels, `snap`, `grid-point`, `grid-plane`, `--start-at-grid` placement | allowed | allowed |
+| Create, update, copy or delete a grid; draw, reshape, remove or relabel a line | `PERMISSION_DENIED` | allowed |
 | Create or change a level (D2) | `PERMISSION_DENIED` | allowed |
-| Ordinary `UpdateElement`, create or copy of a part | may not touch a grid or a level and cannot: a part holds only coordinates and a `bim:level` link | n/a |
+| Ordinary `UpdateElement`, create or copy of a part | cannot touch a grid or a level: a part holds coordinates and a `bim:level` link | n/a |
 
-* An ordinary section edit therefore **never changes a grid or a level**. A KMD edit preserves the
+* An ordinary section edit therefore **never changes a grid or a level**; a KMD edit preserves the
   grids exactly (`PC-OWN-001`).
-* A grid reached through a read-only reference or a pinned source project is `FOREIGN_READ_ONLY` for
-  every write; whether a section project may *use* a pinned grid for snaps and placement is open
-  (O-G4).
+* A grid of a pinned coordination project or a read-only reference is usable for reading and for
+  placement by the section (D7) and `FOREIGN_READ_ONLY` for every write. Its identity there is
+  `(project, GridId)`; the exact addressing is part of F12 coordination (T01.5).
 * **Transition.** Before U19 a workspace has one scope and grid commands run without an
   authorization check, as `create-level` does today. T01.5 puts grids and levels under the shared
-  scope together with U19; the command set and the engine API do not change, only the refusal.
+  scope together with U19; the commands do not change, only the refusal.
 * Authority comes from the trusted execution context, never from a file name, a layer name or a
   client-provided scope (`DV-SCOPE-001`, `DV-SCOPE-002`).
 
 ## 10. Limits, codes and what is unsupported
 
-Limits are original operating limits, not promises of anything else. They are checked before
-allocation and never widened.
+Limits are original operating limits, checked before allocation and never widened.
 
 | Item | Limit | Above or outside |
 |------|-------|------------------|
 | Grids in a project | 64 | `LIMIT_EXCEEDED`, `GRID_COUNT_LIMIT` |
-| Axes in one family | 200 (`line`: 1) | `LIMIT_EXCEEDED`, `GRID_COUNT_LIMIT` |
-| Entries of a `spacings` list, a repetition `N`, a `count` | 200 | `LIMIT_EXCEEDED`, `GRID_COUNT_LIMIT` |
-| One spacing, `abs(position)`, `length_mm` | at most 1,000,000 mm | `LIMIT_EXCEEDED` |
-| Origin | the coordinate cap of F04, 1,000,000,000 mm | `LIMIT_EXCEEDED` |
-| Minimum distance between neighbouring axes | 1 mm (rings and positions); 1e-6 rad (rays). Positions strictly increase | `INVALID_ARGUMENT`, `GRID_POSITION_ORDER` |
-| Spacing, pitch, extension | spacing and pitch greater than zero; extension 0 to 1,000,000 | `INVALID_ARGUMENT`, `GRID_SPACING_INVALID` |
-| Ring radius, ray angle, rotation | radius at least 1 mm; angle in `[0, 2π)`; `abs(rotation)` at most `2π` | `INVALID_ARGUMENT` |
-| Label, name | section 3; F04 label rule | `INVALID_ARGUMENT`, `GRID_LABEL_INVALID` |
+| Lines in one family | 200 | `LIMIT_EXCEEDED`, `GRID_COUNT_LIMIT` |
+| Expression | at most 4096 UTF-8 bytes; `N` of `N*D` from 1 to 200; at most 200 lines after expansion | `INVALID_ARGUMENT` (`GRID_EXPRESSION_INVALID`) or `LIMIT_EXCEEDED` |
+| One distance, `abs(position)`, span ends | at most 1,000,000 mm | `LIMIT_EXCEEDED` |
+| Origin and world end points | the coordinate cap of F04, 1,000,000,000 mm | `LIMIT_EXCEEDED` |
+| Distance between neighbouring lines of a regular family | at least 1 mm; every distance greater than zero | `INVALID_ARGUMENT`, `GRID_SPACING_INVALID` |
+| Length of a line (drawn, or the span of a regular family) | at least 1 mm | `INVALID_ARGUMENT`, `GRID_LINE_DEGENERATE` |
+| `abs(rotation)` | at most `2π` | `INVALID_ARGUMENT` |
+| Label | section 3 | `INVALID_ARGUMENT`, `GRID_LABEL_INVALID` or `GRID_LABEL_COUNT` |
+| Grid name | F04 label rule (1 to 256 bytes) | `INVALID_ARGUMENT` |
 | Non-finite number | any numeric input | `NON_FINITE_NUMBER` |
 
-**Codes.** No new top-level code: F04's codes are used with a diagnostic `reason` token.
+**Codes.** No new top-level code: F04's codes with a diagnostic `reason` token.
 
 | Case | Code | Reason |
 |------|------|--------|
-| Two axes with one label in a grid | `INVALID_ARGUMENT` | `GRID_LABEL_DUPLICATE` |
-| Unknown grid, unknown axis or label | `NOT_FOUND` | `GRID_AXIS_UNKNOWN` |
-| Two labels of one family, or a `line` grid, for an intersection | `INVALID_ARGUMENT` | `GRID_INTERSECTION_UNDEFINED` |
-| A grid name that more than one live grid carries, used as a grid reference | `INVALID_ARGUMENT` | `GRID_NAME_AMBIGUOUS` |
-| A family the kind does not have; a change of kind; an axis added to a `line` grid | `UNSUPPORTED_PROPERTY` | `GRID_KIND_FIXED` |
-| Placement or shape outside section 2 | `UNSUPPORTED_GEOMETRY` | `GRID_PLACEMENT_UNSUPPORTED`, `GRID_AXIS_NOT_PLANAR` |
+| Two lines with one label in a grid | `INVALID_ARGUMENT` | `GRID_LABEL_DUPLICATE` |
+| Unknown grid, line or label | `NOT_FOUND` | `GRID_AXIS_UNKNOWN` |
+| Two labels of one family, or two lines that do not cross, for an intersection | `INVALID_ARGUMENT` | `GRID_INTERSECTION_UNDEFINED` |
+| A grid name that more than one live grid carries | `INVALID_ARGUMENT` | `GRID_NAME_AMBIGUOUS` |
+| Drawing into a regular family; an expression for a drawn family | `UNSUPPORTED_PROPERTY` | `GRID_FAMILY_MODE` |
+| A shape other than `line`; a placement outside section 5.2 | `UNSUPPORTED_GEOMETRY` | `GRID_SHAPE_UNSUPPORTED`, `GRID_PLACEMENT_UNSUPPORTED` |
 | Delete or remove while a reference exists | `DEPENDENCY_CONFLICT` | `GRID_IN_USE` |
 | Used GridId or AxisId | `DUPLICATE_ID` | `GRID_ID_USED` |
-| No authority; foreign grid | `PERMISSION_DENIED`; `FOREIGN_READ_ONLY` | |
+| No authority; foreign grid write | `PERMISSION_DENIED`; `FOREIGN_READ_ONLY` | |
 | Same `op_id`, other content | `OP_ID_REUSE` | |
 
-A malformed stored grid is `INVALID_ARGUMENT`, rule `T01-V01`; the reader never indexes with a
-stored position and caps every array before reading it.
+## 11. Interchange
 
-## 11. Open questions for the owner
-
-| # | Question | Draft position | Blocks |
-|---|----------|----------------|--------|
-| O-G1 | Axes as records of one grid element, or as child elements | Records (section 5.1) | T01.1 |
-| O-G2 | Positions authoritative, generators not stored, or keep the generator for later "change the pitch" edits | Positions authoritative | T01.1 |
-| O-G3 | Per-axis extents, partial ring arcs, skewed and arc axes, an axis style | After the MVP; one grid-wide extension now | T01.2 |
-| O-G4 | May a section project use a grid from a pinned coordination source for snaps and placement | Yes, read-only, by `(project, GridId)` | T01.5 |
-| O-G5 | Associative placement: parts that follow a moved axis | No link in the MVP (section 7.2) | after MVP |
-| O-G6 | Take `z` of a placed element from a level | Not in T01.4; `--z` only | T01.4 |
-| O-G7 | Write the axes as USD `guide` curves for other USD viewers (U12 axis representation) | No geometry now | U12 |
-| O-G8 | Limits of section 10 (64 grids, 200 axes per family) and the label character set | As drafted | T01.1 |
-| O-G9 | Default schemes and an optional `skip` set of letters | `x` numeric, `y` alpha, no skipped letters | T01.1 |
-| O-G10 | Must grid names be unique | No; a duplicate name is refused only as a grid reference (`GRID_NAME_AMBIGUOUS`) | T01.1 |
-
-## 12. Interchange
-
-In the MVP **no export carries grids**.
-
-* **IFC** (E01, deferred): an element of kind `grid` is not exported and is not counted as an
-  element, as a `level` is a storey and not an exported element. The subset of E01 section 2.3
-  already lists grids as not exported; limitation L-12 now reads "the export records no grids".
+* **IFC** (E01, deferred): not in the MVP. A grid element is not exported and is not counted as an
+  element, as a `level` is a storey and not an exported element. The model follows `IfcGrid`, so
+  the later export is a direct mapping of the families, tags and straight curves. E01 limitation
+  L-12 reads "the export records no grids".
 * **BOM, numbering, schedules, quantities:** a grid has no part number, mass or volume and is
-  skipped by every one; adding a grid never makes numbering stale and never changes a signature.
+  skipped by every one; adding a grid never makes numbering stale or changes a signature.
 * **DXF, DSTV, STEP, FBX, DWG:** not part of the MVP. A drawing view (D04) may draw the grid lines
   its view shows as view content; that is drawing data, not an exchange of grids.
-* **USD:** the grid is an ordinary `Xform` with attributes in the project's layers, readable by any
-  USD tool, and carries no geometry (O-G7).
+* **Other USD viewers:** the grid is an ordinary `Xform` with attributes, readable by any USD tool,
+  and carries thin tube geometry for 3D viewing (section 12, T01.7).
+
+## 12. Open questions for the owner
+
+Answered ones are in section 1. The others are still open; the text that depends on one says so.
+
+| # | Question | Blocks |
+|---|----------|--------|
+| O-G5 | **Magnetic mode.** (a) Where is the switch: per grid, per element, per placement, or a session setting? (b) What follows the grid: the ends of a member, the vertices of a plate, the points of a bolt group, a hole, all of them? (c) A shared grid is moved by the shared scope, but the followers belong to a section; a shared command must not rewrite section elements (`PC-OWN-001`). Should the followers be moved by the section's own edit when it next updates (marked "grid changed, check", as KM changes mark KMD), moved in the same transaction by an explicit authorized command, or should moving a grid be refused while followers exist? (d) What happens to followers when their line is deleted? (e) Does moving a follower by hand detach it? (f) Can an element follow a line of a pinned grid of another project? | T01.8 |
+| O-G7 | **Viewer geometry (D10).** What diameter for the thin tube (for example 50 mm)? At what height is it drawn: at `z = 0`, at the lowest level, once per level, or a vertical strip? Is it `render` or `guide` purpose, and is it drawn in the derived layer so it never enters the authored model? Do other viewers need the labels (USD has no text primitive)? | T01.7 |
+| O-G11 | **Expression and manual edits.** The draft makes the expression authoritative for a regular family and lines matched by label when it is edited (section 4). Is that right? How should a drag of one regular line behave: rewrite the expression (draft), or turn the family into a drawn one? Can a drawn family be turned into a regular one? | T01.3 |
+| O-G12 | Cyrillic: add a helper that writes the Russian alphabet (А Б В Г Д...), with or without the letters usually left out (Ё З Й О Х Ц Ч Щ Ъ Ы Ь), or is typing the list enough? Default `u` numeric and `v` alpha | T01.1 |
+| O-G13 | The one-parameter syntax of an intersection: `GRID:LABEL,LABEL` is proposed; `/` is allowed in labels so it cannot be the separator | T01.4 |
+| O-G14 | Radial grids need rings, so they leave the MVP with curves (T01.9). Is that the intention? | T01.9 |
+| O-G15 | Default span of a regular family (the other family's range plus 2000 mm) and the default `u`/`v` orientation of a regular family (`u` lines parallel to Y); right? | T01.1 |
+| O-G16 | The level-and-offset rule of section 7.2 (`z = elevation + offset`): confirm, or say how a level should act on a grid | T01.4 |
 
 ## 13. Acceptance cases (to be bound to fixtures)
 
@@ -384,51 +407,63 @@ Positive:
 
 | # | Case | Expected |
 |---|------|----------|
-| GR-P01 | Rectangular grid, origin `(0, 0)`, rotation 0; `x`: start 0, spacings `3*6000`, numeric; `y`: start 0, spacings `7500,4500`, alpha | `x` positions `[0, 6000, 12000, 18000]` labelled `1` to `4`; `y` positions `[0, 7500, 12000]` labelled `A` to `C`; 12 intersections; `B/3` and `3/B` are `(12000, 7500)` |
-| GR-P02 | The same `x` family from `count 4`, `pitch 6000`; `count 1` without a pitch | Identical positions; a single axis at `start` |
-| GR-P03 | The grid of GR-P01 with origin `(1000, 2000)` and rotation 90° | `B/3` is `(-6500, 14000)` (`(-7500 + 1000, 12000 + 2000)`) |
-| GR-P04 | Schemes: `alpha` from `A`, 28 axes; `alpha` with `skip = {I, O}`, 26 axes; `numeric` descending, 5 axes at 0 to 4000 pitch 1000; `custom` list | A to Z, `AA`, `AB`; A to H, J to N, P to Z, `AA`, `AB`; labels `5,4,3,2,1` at positions `0,1000,2000,3000,4000`; the list as given |
-| GR-P05 | Radial grid: `ring` start 5000, spacings `5000` (radii 5000 and 10000); `ray` start 0°, spacings `2*45°` (0°, 45°, 90°) | Intersection of ring 10000 and ray 45° is `(7071.067811865476, 7071.067811865476)`; 6 intersections |
-| GR-P06 | `line` grid from `(0, 0)` to `(3000, 4000)` | origin `(0, 0)`, rotation `0.9272952180016122` rad, length 5000, one axis |
-| GR-P07 | Each applied alone to the grid of GR-P01: `single` move of axis `2` to 6500; `shift` move of axis `2` to 6500; add axis `2A` at 9000; remove axis `4` | `[0, 6500, 12000, 18000]`; `[0, 6500, 12500, 18500]`; `[0, 6000, 9000, 12000, 18000]`; labels `1, 2, 3` remain. Every AxisId unchanged except the new one; GridId unchanged; each command is one undo unit |
-| GR-P08 | `snap` at `(12003, 7502, 3000)`, radius 10, kinds `grid_intersection,grid_line` on GR-P01 | Hits in order: line `B` at `(12003, 7500, 3000)` (distance 2), line `3` at `(12000, 7502, 3000)` (3), intersection `B/3` at `(12000, 7500, 3000)` (3.6056). The same query with `--grids` omitting the grid returns none, and the head is unchanged |
-| GR-P09 | `create-member` from `--start-at-grid G:B/3` to `--end-at-grid G:B/4`, `--z 3000` on GR-P01; then move axis `3` | Member axis `(12000, 7500, 3000)` to `(18000, 7500, 3000)`; after the move the member, its shape key and its mass signature are unchanged; its stored command holds coordinates |
-| GR-P10 | `CopyElement` of a grid | A new GridId and new AxisIds, same labels and positions; both grids snap independently; deleting one leaves the other |
-| GR-P11 | Create a grid on a project with a plate, a member and a level; then export the BOM and run numbering | Element list, quantities and part numbers equal those of the same project without the grid; numbering is not stale; the grid is not in the IFC element list |
-| GR-P12 | A KMD edit (rename a part, move a plate) under the shared-scope rules of T01.5 | Every grid and level is byte-equal before and after; with no `Grids` authority a grid command is `PERMISSION_DENIED` |
-| GR-P13 | A rectangular axis and a ray: `grid-plane` | Plane through the axis, horizontal unit normal; a ring is `UNSUPPORTED_GEOMETRY`. Restart and reopen give the same result |
+| GR-P01 | Grid with origin `(0, 0)`, rotation 0; `u`: expression `0 3*6000`, labels `1 2 3 4`; `v`: expression `0 7500 4500`, labels `A B C`; default span | `u` positions `[0, 6000, 12000, 18000]`; `v` positions `[0, 7500, 12000]`; line `3` runs `(12000, -2000)` to `(12000, 14000)`; line `B` runs `(-2000, 7500)` to `(20000, 7500)`; 12 intersections; `B,3` and `3,B` are `(12000, 7500)` |
+| GR-P02 | Expressions `0 5*6000`; `0,3*6000,7500`; `1000 2*4500 6000`; `0` | `[0, 6000, ..., 30000]` (6 lines); `[0, 6000, 12000, 18000, 25500]`; `[1000, 5500, 10000, 16000]`; one line at 0. The family `0 3*6000 7500` is shown back as typed |
+| GR-P03 | The grid of GR-P01 with origin `(1000, 2000)` and rotation 90° | `B,3` is `(-6500, 14000)` (`(-7500 + 1000, 12000 + 2000)`) |
+| GR-P04 | Labels: the list `А Б В Г Г-1 Г-2 Д` on a family `0 6*6000`; the list `1/2 2/3`; `alpha` for 28 lines; `numeric` descending on `0 4*1000` | the seven labels as given, in order; labels `1/2`, `2/3`; `A` to `Z`, `AA`, `AB`; labels `5, 4, 3, 2, 1` at positions `0, 1000, 2000, 3000, 4000` |
+| GR-P05 | Drawn families: draw `D1` from `(0, 0)` to `(3000, 4000)` into `u` and `D2` from `(3000, 0)` to `(0, 4000)` into `v` | One intersection `D1,D2` at `(1500, 2000)`. Reshape `D2` to `(3000, 0)`-`(3000, 4000)`: `D1,D2` at `(3000, 4000)` (end point included) |
+| GR-P06 | Edit GR-P01 `u` to `0 3*6500` with labels `1 2 3 4`; to `0 4*6000` with `1 2 3 4 5`; to `0 2*6000` with `1 2 3` | positions `[0, 6500, 13000, 19500]` with every AxisId kept; lines `1`-`4` keep their AxisId and `5` is new; line `4` removed, the rest kept. GridId unchanged; each command one undo unit |
+| GR-P07 | `snap` at `(12003, 7502, 3000)`, radius 10, kinds `grid_intersection,grid_end,grid_line` on GR-P01 | Hits in order: line `B` at `(12003, 7500, 3000)` (2), line `3` at `(12000, 7502, 3000)` (3), intersection `B,3` at `(12000, 7500, 3000)` (3.6056); no `grid_end`. With `--grids` omitting the grid: no hit; the head is unchanged |
+| GR-P08 | A level at `3000`; `create-member` from `--start-at-grid G:B,3` to `--end-at-grid G:B,4`, `--level L --offset 500`, on GR-P01; then edit `u` of the grid | Axis `(12000, 7500, 3500)` to `(18000, 7500, 3500)`; after the edit the member, its shape key and its mass signature are unchanged; its stored command holds coordinates |
+| GR-P09 | `CopyElement` of a grid | A new GridId and new AxisIds, same labels and geometry; both snap independently; deleting one leaves the other |
+| GR-P10 | Create a grid in a project with a plate, a member and a level; export the BOM and run numbering | Element list, quantities and part numbers equal those without the grid; numbering is not stale; the grid is not in the IFC element list |
+| GR-P11 | A KMD edit (rename a part, move a plate) under the rules of T01.5 | Every grid and level is byte-equal before and after; with no `Grids` authority a grid command is `PERMISSION_DENIED` |
+| GR-P12 | A section project places a member at an intersection of a grid of the pinned coordination project | Coordinates as GR-P08; the grid is unchanged; a write to that grid is `FOREIGN_READ_ONLY` |
+| GR-P13 | `grid-plane` of line `3` of GR-P01 | A vertical plane through `(12000, y)` with normal `(±1, 0, 0)`; the same after reopening |
 
 Negative:
 
 | # | Case | Expected |
 |---|------|----------|
-| GR-N01 | `x` label `1` and `y` label `1` in one grid; relabel to an existing label | `INVALID_ARGUMENT`, `GRID_LABEL_DUPLICATE` |
-| GR-N02 | A label with a space, `/`, `:` or `,`; an empty label; 17 characters | `INVALID_ARGUMENT`, `GRID_LABEL_INVALID` |
-| GR-N03 | Spacing 0 or negative; neighbours 0.5 mm apart; `single` move past a neighbour; a ray at 360° | `INVALID_ARGUMENT` (`GRID_SPACING_INVALID` or `GRID_POSITION_ORDER`) |
-| GR-N04 | 201 axes in a family; the 65th grid; spacing 1,000,001 mm; origin 1,000,000,001 mm | `LIMIT_EXCEEDED` |
-| GR-N05 | NaN or infinite spacing | `NON_FINITE_NUMBER` |
-| GR-N06 | `grid-point` with two labels of one family, an unknown label, or on a `line` grid | `INVALID_ARGUMENT` (`GRID_INTERSECTION_UNDEFINED`) or `NOT_FOUND` (`GRID_AXIS_UNKNOWN`) |
-| GR-N07 | Add an axis to a `line` grid; change the kind; give `ring` axes to a rectangular grid | `UNSUPPORTED_PROPERTY` |
-| GR-N08 | Placement rotated about X, or `z != 0` | `UNSUPPORTED_GEOMETRY`, `GRID_PLACEMENT_UNSUPPORTED` |
-| GR-N09 | Duplicate GridId; an AxisId repeated in the command or used by another grid | `DUPLICATE_ID` |
-| GR-N10 | The same `op_id` with other content | `OP_ID_REUSE` |
-| GR-N11 | Remove an axis, or delete a grid, named by a saved view (after W01) | `DEPENDENCY_CONFLICT`, `GRID_IN_USE`; the view stays |
-| GR-N12 | A stored grid whose arrays differ in length, whose positions are not increasing, whose AxisId repeats, or whose array exceeds the limit | `INVALID_ARGUMENT` or `LIMIT_EXCEEDED`; no panic, no allocation sized by the file |
-| GR-N13 | A write to a grid of a foreign reference | `FOREIGN_READ_ONLY` |
+| GR-N01 | Label `1` in `u` and again in `v`; relabel to an existing label | `INVALID_ARGUMENT`, `GRID_LABEL_DUPLICATE` |
+| GR-N02 | A label with a space, `:`, `,` or `#`; an empty label; 17 characters | `INVALID_ARGUMENT`, `GRID_LABEL_INVALID` |
+| GR-N03 | Three lines and a label list of two words | `INVALID_ARGUMENT`, `GRID_LABEL_COUNT` |
+| GR-N04 | Expressions `0 0*6000`, `0 -6000`, `0 6000 x`, empty text | `INVALID_ARGUMENT`, `GRID_EXPRESSION_INVALID` |
+| GR-N05 | Two neighbouring lines 0.5 mm apart; a distance of 0 | `INVALID_ARGUMENT`, `GRID_SPACING_INVALID` |
+| GR-N06 | 201 lines in a family; the 65th grid; a distance of 1,000,001 mm; origin 1,000,000,001 mm | `LIMIT_EXCEEDED` |
+| GR-N07 | NaN or infinite number | `NON_FINITE_NUMBER` |
+| GR-N08 | `grid-point` with two labels of one family; an unknown label; two lines that do not cross (parallel lines, or crossing outside both segments) | `INVALID_ARGUMENT` (`GRID_INTERSECTION_UNDEFINED`) or `NOT_FOUND` (`GRID_AXIS_UNKNOWN`) |
+| GR-N09 | Draw a line into a regular family; give an expression to a drawn family | `UNSUPPORTED_PROPERTY`, `GRID_FAMILY_MODE` |
+| GR-N10 | A drawn line of length 0.5 mm or with equal end points | `INVALID_ARGUMENT`, `GRID_LINE_DEGENERATE` |
+| GR-N11 | A shape `arc`; a placement rotated about X, or `z != 0` | `UNSUPPORTED_GEOMETRY` |
+| GR-N12 | Duplicate GridId; an AxisId repeated in the command or used by another grid | `DUPLICATE_ID` |
+| GR-N13 | The same `op_id` with other content | `OP_ID_REUSE` |
+| GR-N14 | Remove a line, or delete a grid, named by a saved view (after W01) | `DEPENDENCY_CONFLICT`, `GRID_IN_USE`; the view stays |
+| GR-N15 | A stored grid whose arrays differ in length, whose AxisId repeats, whose regular lines differ from their expression, or whose array exceeds the limit | `INVALID_ARGUMENT` or `LIMIT_EXCEEDED`; no panic, no allocation sized by the file |
+| GR-N16 | A write to a grid of a foreign reference or a pinned project | `FOREIGN_READ_ONLY` |
+| GR-N17 | `--start-at-grid` with neither `--z` nor `--level` | `INVALID_ARGUMENT` |
+| GR-N18 | A grid name carried by two grids used as a grid reference | `INVALID_ARGUMENT`, `GRID_NAME_AMBIGUOUS` |
+
+Cases for the viewer geometry (T01.7) and for the magnetic mode (T01.8) are written when O-G7 and
+O-G5 are answered.
 
 ## 14. Slices and dependencies
 
-Recorded in [`tasks.md`](../plan/tasks.md): T01.1 rectangular grids and single lines (model,
-layer engine, engine, CLI); T01.2 radial grids; T01.3 axis commands; T01.4 queries, snaps and
-placement; T01.5 shared-scope rights and the move to the `Grids` layer with U19; T01.6 the UI.
-Every slice has its own end-to-end test (`AGENTS.md` section 3).
+Recorded in [`tasks.md`](../plan/tasks.md): T01.1 grid model with regular families, labels and
+expressions (model, layer engine, engine, CLI); T01.2 drawn lines; T01.3 editing a regular family;
+T01.4 queries, snaps and placement; T01.5 shared-scope rights, pinned grids and the move to the
+`Grids` layer with U19; T01.6 the UI; T01.7 viewer geometry; T01.8 magnetic mode (after O-G5);
+T01.9 curved lines and radial grids (after the MVP). Every slice has its own end-to-end test
+(`AGENTS.md` section 3).
 
 ## 15. Provenance
 
-The request and the decision to begin with grids are the owner's (issue #192). The model, the
-rules, the limits and the label sequence are our own and use only what this repository already
-defines: the element and prim rules of F04, the level of D2, the snap of V04, the bolt-group
-generators and the F10 0.2 and F12 scope rules. The alphabetic sequence is the ordinary
-bijective base-26 numbering. The behaviour is described in our own words; nothing was taken from
-Tekla Structures or another commercial product, and no screenshot or asset is part of this
-document (`AGENTS.md` sections 1 and 2).
+The request, the structure (two families of named lines, as in the IFC schema), the expression form,
+the label list, the magnetic mode, the level-and-offset height and the viewer geometry are the
+owner's decisions of 2026-10-23. The model, the rules, the limits and the acceptance numbers are
+our own and use only what this repository defines (the element and prim rules of F04, the level of
+D2, the snap of V04, the F10 0.2 and F12 scope rules) and the public buildingSMART IFC4
+specification for `IfcGrid` and `IfcGridAxis` (attribute names and meaning only; no text is
+copied). The behaviour is described in our own words; nothing was taken from Tekla Structures or
+another commercial product, and no screenshot or asset is part of this document (`AGENTS.md`
+sections 1 and 2).
