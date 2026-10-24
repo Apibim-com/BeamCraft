@@ -329,6 +329,8 @@ fn apply(
     let committed = publish_revision(
         store,
         &PublishRequest {
+            footprint: &footprint,
+            fingerprint,
             prepared: &prepared,
             schema,
             project: &project,

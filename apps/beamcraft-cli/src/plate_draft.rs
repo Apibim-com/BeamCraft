@@ -155,6 +155,8 @@ pub fn create_plate_draft(
     let committed = publish_revision(
         store,
         &PublishRequest {
+            footprint: &transaction.footprint,
+            fingerprint: transaction.fingerprint,
             prepared: &prepared,
             schema,
             project: &base.project,
