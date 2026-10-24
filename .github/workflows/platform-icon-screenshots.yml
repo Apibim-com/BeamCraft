@@ -1,0 +1,73 @@
+name: Platform icon screenshots
+
+on:
+  push:
+    branches: ['feat/platform-icons']
+  pull_request:
+    paths:
+      - '.github/workflows/platform-icon-screenshots.yml'
+      - 'apps/beamcraft-ui/**'
+      - 'assets/icons/**'
+
+permissions:
+  contents: read
+
+jobs:
+  screenshot:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      - name: Install Linux desktop tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb openbox imagemagick libxkbcommon-dev libwayland-dev
+      - name: Build application
+        run: cargo build --locked -p beamcraft-cli -p beamcraft-ui
+      - name: Capture Linux window
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p screenshots
+          xvfb-run -a -s '-screen 0 1280x900x24' bash -c '
+            openbox > /tmp/openbox.log 2>&1 &
+            BEAMCRAFT_THEME=light target/debug/beamcraft-ui > screenshots/application.log 2>&1 &
+            app_pid=$!
+            sleep 12
+            kill -0 "$app_pid"
+            import -window root screenshots/linux.png
+            kill "$app_pid"
+          '
+      - name: Capture Windows window
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force screenshots | Out-Null
+          $env:BEAMCRAFT_THEME = 'light'
+          $app = Start-Process target/debug/beamcraft-ui.exe -PassThru
+          Start-Sleep -Seconds 12
+          if ($app.HasExited) { throw 'BeamCraft exited before capture' }
+          Add-Type -AssemblyName System.Windows.Forms
+          Add-Type -AssemblyName System.Drawing
+          $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
+          $bitmap = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
+          $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+          $graphics.CopyFromScreen($bounds.Left, $bounds.Top, 0, 0, $bounds.Size)
+          $bitmap.Save("$PWD/screenshots/windows.png", [System.Drawing.Imaging.ImageFormat]::Png)
+          $graphics.Dispose()
+          $bitmap.Dispose()
+          Stop-Process -Id $app.Id
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: platform-screenshot-${{ runner.os }}
+          path: screenshots/
+          if-no-files-found: error
