@@ -220,6 +220,97 @@ is idempotent by content digest; in-process layer engine as above. See the
 
 ## P03 straight member
 
+### Associative projection preview (D02.1)
+
+```text
+beamcraft drawing-preview --store ROOT --id MEMBER_UUIDV7
+  --drawing-id UUIDV7 --view-id UUIDV7 --dimension-id UUIDV7
+  --anchor-a QUALIFIED_VERTEX_ID --anchor-b QUALIFIED_VERTEX_ID
+  [--plane front|top|right] [--scale 100] [--origin X,Y] [--offset MM]
+  [--decimals 0..3] [--name TEXT]
+  [--intent-out NEW_FILE.usda]
+```
+
+The engine projects twelve named edges of a real canonical rectangular member and measures the
+projected interval between the selected member's two semantic vertices. Front uses model X/Z,
+top X/Y and right Y/Z. Paper geometry is in millimetres; scale is a denominator (default 1:100),
+and the dimension label reports projected model millimetres before scaling. This is a wireframe
+with coincident/hidden edges retained, not hidden-line removal or a true 3D measurement.
+
+The JSON includes the exact source project/revision/manifest/schema/generation, document object
+IDs, retained anchor IDs, paper geometry and resolution states. A deleted owner, unsupported
+body or anchors that project to less than 0.001 mm are explicitly unresolved with no numeric
+dimension value. All output coordinates/offsets are capped at 10000 paper mm; scale is 1..10000.
+The command is read-only and does not yet save/publish a drawing or export a document version.
+
+`--intent-out` optionally creates a new ordinary USDA intent file after complete admission,
+source inspection and projection. It never overwrites a destination and reports `intent_digest`.
+The separate `beamcraft-drawing-usd/1` schema records intent and exact source pins, without copying
+the model into it. This standalone intent is not a published version or a self-contained source
+archive. The library `drawing::codec::{encode, decode}` uses admitted engine intent and bounded
+USD reading/re-admission (16 KiB, three prims, canonical closed fields); source verification is
+still a separate prerequisite. Historical publication/archive and derived geometry follow in D03.
+
+The D03.1 prerequisite `drawing::archive::SourceArchive` captures a source revision under the
+source store's shared maintenance guard. It retains exact `source-manifest` provenance and all
+USD bytes under `model/`, outside drawing composition. Verification binds every source-pin field,
+layer name/role/size/digest and the existing strict USD/schema/index/kernel inspection. Reopening
+restores original virtual names and needs no live model or foreign filesystem source. Existing
+model layer/count/total-byte budgets apply before capture. The document commands below retain
+these resources; an in-memory archive alone is not a published document.
+
+The D02.2 storage prerequisite `drawing::derived::{root, encode, verify}` composes authored
+intent with ordinary linear `BasisCurves` in paper XY. Standard point3f display curves accompany
+exact double3 coordinates and a double model-mm dimension value. A source/algorithm signature
+binds derived data; verification recomputes the engine projection and compares exact bytes.
+Unresolved geometry stores a reason without a successful value. The root composes only drawing
+USD, never source/provenance resources. This API is used by the document-store commands;
+`drawing-preview` continues to expose the same engine geometry headlessly.
+
+### Drawing document lifecycle (D03.3)
+
+`drawing-create --store MODEL --document-dir DOCUMENT` takes the same drawing/member/view/
+dimension IDs, anchors and settings as `drawing-preview`, plus required `--op-id`,
+`--revision-id` and `--actor-id`. It creates a dedicated document store and archives the exact
+verified model. `drawing-refresh` takes those options and `--expected-head REVISION_UUID`,
+creating a new draft against that document head. Neither command publishes automatically.
+
+`drawing-publish --document-dir DOCUMENT --expected-head REVISION_UUID --op-id UUID
+--revision-id UUID --actor-id UUID --version-id UUID` publishes the current draft as an immutable
+version. A new publication must use a version ID that has never been published in this document;
+reusing either the latest or an older ID is `DUPLICATE_ID` without a new revision. The exact
+original operation still replays after later publications and leaves the current head intact.
+
+Publication verifies the complete document history one revision at a time, bounded by the host
+revision cap and a verification deadline. A shared maintenance lease protects that check through
+the candidate CAS; ordinary writers remain subject to the head CAS. Missing or corrupt history
+refuses publication. In particular, a compacted document history is `DEPENDENCY_UNAVAILABLE`:
+restore the complete history before publishing again. Retained head inspection still works.
+
+`drawing-inspect --document-dir DOCUMENT [--model-store MODEL]` reports the current document
+and freshness (`current`, `stale`, `unavailable` or `unknown`). `drawing-versions --document-dir
+DOCUMENT` lists retained published revisions. Archived models remain outside drawing composition.
+This slice does not implement drawing UI, PDF/print, or the full D03 acceptance gate.
+
+### Semantic feature addresses (D01.1)
+
+```text
+beamcraft feature-list --store ROOT --id ELEMENT_UUIDV7
+beamcraft feature-lookup --store ROOT --feature-id QUALIFIED_FEATURE_ID
+```
+
+`feature-list` opens and strictly verifies the committed model, then enumerates the selected
+canonical box body's 6 face, 12 edge and 8 vertex addresses. Each full `fid1` address includes
+the owning ElementId and semantic role; array positions are not addresses. The result includes
+the model revision UUID, manifest digest, generation and snapshot token. Both queries are
+read-only. A move preserves addresses and changes the pin/coordinates; a copy has new addresses.
+Missing owners and unsupported non-box bodies (including I-sections and holed plates) refuse
+with `GEO_FEATURE_NOT_FOUND`. Triangle, numeric vertex and instance addresses refuse with
+`GEO_TRIANGLE_ADDRESS_FORBIDDEN`. This query supplies associative references; it does not yet
+create or publish a drawing.
+
+### Create a member
+
 ```text
 beamcraft create-member --store ROOT --start X,Y,Z --end X,Y,Z --profile-digest SHA256
   [--kind beam|column] [--roll RAD] [--material-digest SHA256] [--name TEXT]
