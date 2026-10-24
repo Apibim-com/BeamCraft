@@ -544,9 +544,9 @@ fn logo_candidates() -> Vec<PathBuf> {
     candidates
 }
 
-/// The official logo as a texture of `side` x `side` pixels, averaged down from the PNG; `None`
-/// when the file is missing or does not decode (the window then shows the name only).
-pub fn load_logo(ctx: &egui::Context, side: usize) -> Option<egui::TextureHandle> {
+/// The official logo as `side` x `side` RGBA pixels, averaged down from the PNG; `None` when the
+/// file is missing or does not decode.
+pub fn logo_rgba(side: usize) -> Option<Vec<u8>> {
     use std::io::Read;
     let path = logo_candidates().into_iter().find(|p| p.is_file())?;
     let mut bytes = Vec::new();
@@ -585,6 +585,13 @@ pub fn load_logo(ctx: &egui::Context, side: usize) -> Option<egui::TextureHandle
             }
         }
     }
+    Some(out)
+}
+
+/// The official logo as a texture of `side` x `side` pixels ([`logo_rgba`]); `None` when it could
+/// not be read (the window then shows the name only).
+pub fn load_logo(ctx: &egui::Context, side: usize) -> Option<egui::TextureHandle> {
+    let out = logo_rgba(side)?;
     let image = egui::ColorImage::from_rgba_unmultiplied([side, side], &out);
     Some(ctx.load_texture("beamcraft-logo", image, egui::TextureOptions::LINEAR))
 }
@@ -647,6 +654,17 @@ mod tests {
             assert!(contrast(p.error, p.page) >= 4.5, "{theme:?} error");
         }
         assert!(contrast(INK, BRAND) >= 4.5, "text on the brand colour");
+    }
+
+    #[test]
+    fn the_official_logo_is_read_and_averaged_down() {
+        // The source tree holds the logo, so a development build always finds it.
+        let rgba = logo_rgba(256).unwrap();
+        assert_eq!(rgba.len(), 256 * 256 * 4);
+        // The logo fills its square: the centre is opaque.
+        let centre = (128 * 256 + 128) * 4;
+        assert_eq!(rgba[centre + 3], 255);
+        assert!(logo_rgba(0).is_none());
     }
 
     #[test]

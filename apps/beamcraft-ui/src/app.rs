@@ -482,19 +482,19 @@ pub fn icon() -> egui::IconData {
     }
 }
 
-/// The window/application icon. In the macOS bundle the official logo ships as
-/// `Contents/Resources/beamcraft-icon.png`, and eframe applies it to the Dock at run time
-/// (`setApplicationIconImage`): while the app runs, the Dock shows the process icon and
-/// ignores the bundle's ICNS. Outside a bundle, or when the resource is missing, the coded
-/// [`icon`] is used, so no asset bytes are compiled into the binary.
+/// The window/application icon: the official logo (`assets/icons/beamcraft-1024.png` next to the
+/// program or in the source tree, `Contents/Resources/beamcraft-icon.png` in the macOS bundle,
+/// where eframe also applies it to the Dock), averaged down to 256 x 256. When it cannot be
+/// read, the coded [`icon`] is used, so no asset bytes are compiled into the binary.
 pub fn load_icon() -> egui::IconData {
-    let png = std::env::current_exe().ok().and_then(|exe| {
-        let dir = exe.parent()?;
-        std::fs::read(dir.join("../Resources/beamcraft-icon.png")).ok()
-    });
-    match png.as_deref().map(eframe::icon_data::from_png_bytes) {
-        Some(Ok(icon)) => icon,
-        _ => icon(),
+    const SIDE: u32 = 256;
+    match crate::theme::logo_rgba(SIDE as usize) {
+        Some(rgba) => egui::IconData {
+            rgba,
+            width: SIDE,
+            height: SIDE,
+        },
+        None => icon(),
     }
 }
 
