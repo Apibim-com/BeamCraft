@@ -119,7 +119,10 @@ jobs:
           path: nextest-archive
 
       - name: Run archived test partition
-        run: cargo nextest run --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --no-fail-fast --partition hash:${{ matrix.shard }}/8
+        # CARGO_TARGET_TMPDIR is compiled into each test binary as the build
+        # job's <workspace>/target/tmp; the archive carries binaries only, so
+        # recreate that directory before the extracted tests run.
+        run: mkdir -p target/tmp && cargo nextest run --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --no-fail-fast --partition hash:${{ matrix.shard }}/8
 
   build-timings:
     name: cold release (${{ matrix.target }})
