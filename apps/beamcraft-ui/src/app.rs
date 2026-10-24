@@ -44,6 +44,9 @@ pub struct Source {
     /// The viewport's MSAA sample count, 1 or 4; `None` is the adapter's default
     /// ([`crate::render::samples_for`]).
     pub samples: Option<u32>,
+    /// The author identity (UUIDv7) recorded as the actor of the window's edits; `None` lets the
+    /// CLI make one per command.
+    pub actor: Option<String>,
 }
 
 /// The scene on screen: the pinned snapshot, its buffers on the device and what the window
@@ -378,7 +381,7 @@ fn volume_note(volume_mm3: f64) -> String {
 }
 
 /// Inter from the admitted asset directory, validated before egui can panic on it.
-fn inter(ctx: &egui::Context) -> bool {
+pub(crate) fn inter(ctx: &egui::Context) -> bool {
     // CWD (an extracted package root), the source tree, then next to the executable: the
     // win/linux package puts assets beside it, the macOS .app bundle under its Resources
     // directory (Q02 packaging).
@@ -403,6 +406,7 @@ fn inter(ctx: &egui::Context) -> bool {
         check_font(&bytes).map_err(std::io::Error::other)?;
         Ok(bytes)
     });
+    let bold = crate::theme::bold_family();
     match bytes {
         Some(Ok(bytes)) => {
             let mut fonts = egui::FontDefinitions::empty();
@@ -412,15 +416,47 @@ fn inter(ctx: &egui::Context) -> bool {
             for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
                 fonts.families.insert(family, vec!["Inter".into()]);
             }
+            // Inter Bold beside the regular face, checked the same way; headings fall back to
+            // the regular face without it.
+            let mut bold_fonts = vec!["Inter".to_owned()];
+            if let Some(bytes) = candidates
+                .iter()
+                .find(|p| p.is_file())
+                .and_then(|regular| bounded_font(&regular.with_file_name("Inter-Bold.ttf")))
+            {
+                fonts.font_data.insert(
+                    "Inter-Bold".into(),
+                    egui::FontData::from_owned(bytes).into(),
+                );
+                bold_fonts.insert(0, "Inter-Bold".into());
+            }
+            fonts.families.insert(bold, bold_fonts);
             ctx.set_fonts(fonts);
             true
         }
         _ => {
             eprintln!("Inter is unavailable; the window runs without text.");
-            ctx.set_fonts(egui::FontDefinitions::empty());
+            let mut fonts = egui::FontDefinitions::empty();
+            fonts.families.insert(bold, Vec::new());
+            ctx.set_fonts(fonts);
             false
         }
     }
+}
+
+/// The bytes of a font file of at most 4 MiB that egui can load, or `None`.
+fn bounded_font(path: &Path) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(4 * 1024 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.is_empty() || bytes.len() > 4 * 1024 * 1024 || check_font(&bytes).is_err() {
+        return None;
+    }
+    Some(bytes)
 }
 
 /// A contributor-original 32 x 32 window icon (an I-section silhouette), drawn in code. It
@@ -446,19 +482,19 @@ pub fn icon() -> egui::IconData {
     }
 }
 
-/// The window/application icon. In the macOS bundle the dedicated macOS artwork ships as
-/// `Contents/Resources/beamcraft-icon.png`, and eframe applies it to the Dock at run time
-/// (`setApplicationIconImage`): while the app runs, the Dock shows the process icon and
-/// ignores the bundle's ICNS. Outside a bundle, or when the resource is missing, the coded
-/// [`icon`] is used, so no asset bytes are compiled into the binary.
+/// The window/application icon: the official logo (`assets/icons/beamcraft-1024.png` next to the
+/// program or in the source tree, `Contents/Resources/beamcraft-icon.png` in the macOS bundle,
+/// where eframe also applies it to the Dock), averaged down to 256 x 256. When it cannot be
+/// read, the coded [`icon`] is used, so no asset bytes are compiled into the binary.
 pub fn load_icon() -> egui::IconData {
-    let png = std::env::current_exe().ok().and_then(|exe| {
-        let dir = exe.parent()?;
-        std::fs::read(dir.join("../Resources/beamcraft-icon.png")).ok()
-    });
-    match png.as_deref().map(eframe::icon_data::from_png_bytes) {
-        Some(Ok(icon)) => icon,
-        _ => icon(),
+    const SIDE: u32 = 256;
+    match crate::theme::logo_rgba(SIDE as usize) {
+        Some(rgba) => egui::IconData {
+            rgba,
+            width: SIDE,
+            height: SIDE,
+        },
+        None => icon(),
     }
 }
 
@@ -479,11 +515,27 @@ impl App {
         perf: Option<(Vec<PerfPhase>, PerfReport)>,
         stats: Arc<Stats>,
     ) -> Result<Self, Error> {
-        let state = cc
-            .wgpu_render_state
-            .clone()
-            .ok_or(Error::Input("eframe requires wgpu"))?;
-        let text = inter(&cc.egui_ctx);
+        Self::open(
+            &cc.egui_ctx,
+            cc.wgpu_render_state.as_ref(),
+            source,
+            perf,
+            stats,
+        )
+    }
+
+    /// [`App::with_perf_run`] from a running window's context and render state, so a window that
+    /// started on the start page can open a model later.
+    pub fn open(
+        ctx: &egui::Context,
+        state: Option<&eframe::egui_wgpu::RenderState>,
+        source: Source,
+        perf: Option<(Vec<PerfPhase>, PerfReport)>,
+        stats: Arc<Stats>,
+    ) -> Result<Self, Error> {
+        let state = state.cloned().ok_or(Error::Input("eframe requires wgpu"))?;
+        let text = inter(ctx);
+        crate::theme::install(ctx);
         let renderer = Renderer::with_samples(
             &state.adapter,
             &state.device,
@@ -555,6 +607,9 @@ impl App {
             selects_finished: 0,
             refresh_timings: Vec::new(),
         };
+        app.tools.actor.clone_from(&app.source.actor);
+        app.editor.actor.clone_from(&app.source.actor);
+        app.props.actor.clone_from(&app.source.actor);
         app.reload();
         Ok(app)
     }
@@ -2083,6 +2138,7 @@ mod tests {
             workspace: None,
             published: None,
             samples: None,
+            actor: None,
         })
     }
 
@@ -2201,13 +2257,16 @@ mod tests {
         assert_eq!(volume_note(1.025e9), ", volume 1.025 m3");
     }
 
-    /// The test binary has no `../Resources` next to it, so the loader falls back to the
-    /// coded icon instead of panicking or returning an empty icon.
+    /// A development build finds the official logo in the source tree; the coded fallback is a
+    /// complete icon too, never an empty one.
     #[test]
-    fn the_icon_loader_falls_back_to_the_coded_icon() {
+    fn the_icon_loader_uses_the_logo_and_has_a_complete_fallback() {
         let icon = load_icon();
-        assert_eq!((icon.width, icon.height), (32, 32));
-        assert_eq!(icon.rgba.len(), 32 * 32 * 4);
+        assert_eq!((icon.width, icon.height), (256, 256));
+        assert_eq!(icon.rgba.len(), 256 * 256 * 4);
+        let fallback = super::icon();
+        assert_eq!((fallback.width, fallback.height), (32, 32));
+        assert_eq!(fallback.rgba.len(), 32 * 32 * 4);
     }
 
     /// Stores of one run: a published store and the workspace forked from it, gone afterwards.
@@ -2332,6 +2391,7 @@ mod tests {
             workspace: Some(workspace.clone()),
             published: Some(published),
             samples: None,
+            actor: None,
         }) else {
             return;
         };

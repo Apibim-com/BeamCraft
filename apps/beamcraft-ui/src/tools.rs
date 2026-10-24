@@ -200,6 +200,13 @@ fn push_name(args: &mut Vec<String>, name: &str) -> Result<(), FormError> {
     Ok(())
 }
 
+/// Appends `--actor-id` when the window records an author.
+pub(crate) fn push_actor(args: &mut Vec<String>, actor: Option<&str>) {
+    if let Some(actor) = actor {
+        args.extend(["--actor-id".into(), actor.to_owned()]);
+    }
+}
+
 fn push_material(args: &mut Vec<String>, material: Option<&String>) {
     if let Some(digest) = material {
         args.extend(["--material-digest".into(), digest.clone()]);
@@ -510,6 +517,8 @@ pub struct Tools {
     pub member: MemberForm,
     /// The store's definitions, as of the last refresh.
     pub definitions: Definitions,
+    /// The author recorded as `--actor-id` of every create command, when the window has one.
+    pub actor: Option<String>,
     staged: Option<Prepared>,
     busy: bool,
 }
@@ -521,6 +530,7 @@ impl Default for Tools {
             plate: PlateForm::default(),
             member: MemberForm::default(),
             definitions: Definitions::default(),
+            actor: None,
             staged: None,
             busy: false,
         }
@@ -556,10 +566,12 @@ impl Tools {
     }
     /// The command of the selected form.
     pub fn prepare(&self, store: &Path) -> Result<Prepared, FormError> {
-        match self.active {
+        let mut prepared = match self.active {
             ToolKind::Plate => self.plate.prepare(store),
             ToolKind::Member => self.member.prepare(store),
-        }
+        }?;
+        push_actor(&mut prepared.args, self.actor.as_deref());
+        Ok(prepared)
     }
 
     /// Stages the selected form's command for review; nothing is run or written.

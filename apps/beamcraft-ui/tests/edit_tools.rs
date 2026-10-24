@@ -645,6 +645,15 @@ fn the_window_binary_refuses_a_store_and_a_workspace_together() {
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&output.stdout).contains("usage: beamcraft-ui"));
+    // Without a model the window opens on the start page, so only refused combinations run
+    // here: the start page's settings directory and an explicit author belong to different modes.
+    for args in [
+        ["--store", "S", "--config-dir", "C"],
+        ["--actor-id", "A", "--config-dir", "C"],
+    ] {
+        let output = Command::new(ui).args(args).output().unwrap();
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+    }
 }
 
 /// The no-argument launch is what a double-clicked app bundle does: the default session
