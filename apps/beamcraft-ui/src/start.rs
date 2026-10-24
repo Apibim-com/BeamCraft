@@ -523,7 +523,38 @@ impl StartPage {
         });
     }
 
+    /// Shows the system's folder dialog, starting at the folder typed so far; the chosen folder,
+    /// or `None` when it was cancelled or could not be shown (the reason is the page's note).
+    fn browse(&mut self, title: &str) -> Option<String> {
+        let start = match self.tab {
+            Tab::All => self.folder.trim(),
+            _ => self.new_parent.trim(),
+        };
+        match crate::dialog::pick_folder(title, Some(Path::new(start))) {
+            Ok(Some(dir)) => match dir.to_str() {
+                Some(text) => Some(text.to_owned()),
+                None => {
+                    self.note = Some(Err("the chosen folder's path is not UTF-8 text".into()));
+                    None
+                }
+            },
+            Ok(None) => None,
+            Err(e) => {
+                self.note = Some(Err(e.to_string()));
+                None
+            }
+        }
+    }
+
     fn create_project(&mut self) {
+        // A typed location is checked here, so the refusal names the path that was typed.
+        let parent = self.new_parent.trim();
+        if !Path::new(parent).is_dir() {
+            self.note = Some(Err(format!(
+                "The folder \"{parent}\" does not exist. Choose an existing folder with Browse…"
+            )));
+            return;
+        }
         let args = project_create_args(
             self.config_dir.as_deref(),
             self.new_parent.trim(),
@@ -962,6 +993,12 @@ impl StartPage {
                                 .align(egui::Align2::LEFT_CENTER)
                                 .char_limit(MAX_FIELD),
                         );
+                        if theme::button(ui, Kind::Secondary, "Browse…", !busy).clicked()
+                            && let Some(dir) = self.browse("Folder with models")
+                        {
+                            self.folder = dir;
+                            self.list_folder();
+                        }
                         if theme::button(ui, Kind::Secondary, "Refresh", !busy).clicked() {
                             self.list_folder();
                         }
@@ -1151,7 +1188,22 @@ impl StartPage {
                 );
                 ui.add_space(8.0);
                 ui.label(theme::bold("Location", 14.0));
-                field(ui, &mut self.new_parent, MAX_FIELD);
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.new_parent)
+                            .hint_text("Choose a folder with Browse…")
+                            .desired_width(ui.available_width() - 130.0)
+                            .min_size(egui::vec2(0.0, 42.0))
+                            .align(egui::Align2::LEFT_CENTER)
+                            .margin(egui::Margin::symmetric(12, 8))
+                            .char_limit(MAX_FIELD),
+                    );
+                    if theme::button(ui, Kind::Secondary, "Browse…", !busy).clicked()
+                        && let Some(dir) = self.browse("Where to create the model")
+                    {
+                        self.new_parent = dir;
+                    }
+                });
                 ui.add_space(8.0);
                 ui.label(theme::bold("Template", 14.0));
                 ui.horizontal(|ui| {

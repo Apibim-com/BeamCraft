@@ -25,6 +25,7 @@
 pub mod app;
 pub mod camera;
 pub mod command;
+pub mod dialog;
 pub mod edit;
 pub mod metrics;
 pub mod perf;
