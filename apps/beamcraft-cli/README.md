@@ -13,6 +13,12 @@ Build offline with `cargo build --offline -p beamcraft-cli --bins`.
 `beamcraft --help` describes the bounded arguments. Results are one JSON object on standard
 output, with strings for generations and other lossless integers.
 
+CLI help is owned by command family under `src/help/` (for example `member.rs`, `drawing.rs`
+and `workspace.rs`). Edit that family's text and command inventory there. `src/help/mod.rs`
+only composes the inventory and sections in their established order; register a new family
+there without adding help text to `main.rs`. Parsing and execution stay in the existing
+command adapters. No arguments, `--help` and `-h` print the same help.
+
 Modelling commits also pin the admitted command's exact read/write footprint and typed request
 fingerprint as operation evidence in the revision manifest. This includes unchanged copy sources,
 linked parts and immutable definitions, which a state diff cannot recover. The public
