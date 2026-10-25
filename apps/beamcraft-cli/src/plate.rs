@@ -1204,12 +1204,15 @@ pub struct RevisionDetails {
 }
 
 pub(crate) fn summarize(info: &RevisionInfo) -> RevisionSummary {
-    let manifest = info.manifest();
+    summarize_manifest(info.manifest(), info.manifest_digest())
+}
+
+fn summarize_manifest(manifest: &Manifest, digest: ContentDigest) -> RevisionSummary {
     let content = manifest.content();
     RevisionSummary {
-        revision_id: info.revision().as_str().to_owned(),
-        sequence: info.sequence(),
-        manifest_digest: info.manifest_digest(),
+        revision_id: content.revision().as_str().to_owned(),
+        sequence: manifest.sequence(),
+        manifest_digest: digest,
         details: Some(RevisionDetails {
             project: content.project().as_str().to_owned(),
             workspace: content.workspace().as_str().to_owned(),
@@ -1899,95 +1902,11 @@ pub fn inspect_revision(revision: &Revision) -> Result<Inspection, PlateError> {
             })
         })
         .collect::<Result<Vec<_>, PlateError>>()?;
-    let external = content
-        .entries()
-        .iter()
-        .filter(|e| e.role() == LayerRole::External)
-        .map(|e| e.name().to_owned())
-        .collect();
-    let request = open_request(
-        content.root_layer(),
-        content.project().as_str(),
-        content.workspace().as_str(),
+    inspect_manifest_assets(
+        revision.manifest(),
         revision.info().manifest_digest(),
-        content.workspace_generation(),
         assets,
-        &external,
-    )?;
-    let control = control();
-    // The structural rules (D2-V01 among them) run on the parsed stage before anything is
-    // decoded, so a damaged level or project record is refused rather than reported.
-    let mut reader = Reader::default();
-    let (opened, _) = reader.open_validated(request, schema_identity()?, &control)?;
-    let record = project_record(&opened.metadata)?;
-    if record
-        .as_deref()
-        .is_some_and(|recorded| recorded != content.project().as_str())
-    {
-        return Err(integrity(
-            "the project record differs from the revision's project",
-        ));
-    }
-    let index = reader.element_index(&opened.context, &control)?;
-    reader.verify_index(&index, &control)?;
-    let decoded = decode(&reader, &opened, &control)?;
-    let (plates, members) = evaluate_decoded(&decoded)?;
-    let unsupported_plates = evaluate_committed_drafts_with_cache(&decoded)?;
-    let quantities = verify_derived(&plates, &members, &decoded, false)?;
-    let pin = ViewPin::new(
-        revision.info().manifest_digest(),
-        content.workspace_generation(),
-    );
-    let mut scene = scene_elements_with_members(&plates, &members)?;
-    let reference_view_error = match decoded.reference_scene {
-        Ok(references) => {
-            scene.extend(references);
-            None
-        }
-        Err(error) => Some(error),
-    };
-    let snapshot = ViewSnapshot::build(pin, scene, &Limits::default())
-        .map_err(|e| PlateError::new(e.f04_code(), "view snapshot could not be built"))?;
-    Ok(Inspection {
-        revision: summarize(revision.info()),
-        plates,
-        unsupported_plates,
-        members,
-        quantities,
-        other_elements: decoded.other_elements,
-        definitions: decoded.definitions,
-        snapshot,
-        reference_view_error,
-        project_record: record,
-        levels: decoded.levels,
-        elements: decoded.elements,
-    })
-}
-
-fn summarize_manifest(manifest: &Manifest, digest: ContentDigest) -> RevisionSummary {
-    let content = manifest.content();
-    RevisionSummary {
-        revision_id: content.revision().as_str().to_owned(),
-        sequence: manifest.sequence(),
-        manifest_digest: digest,
-        details: Some(RevisionDetails {
-            project: content.project().as_str().to_owned(),
-            workspace: content.workspace().as_str().to_owned(),
-            op: content.op().as_str().to_owned(),
-            generation: content.workspace_generation(),
-            layers: content
-                .entries()
-                .iter()
-                .map(|e| LayerSummary {
-                    role: e.role().as_str(),
-                    name: e.name().to_owned(),
-                    digest: e.digest(),
-                    size: e.size(),
-                })
-                .collect(),
-            index: manifest.index().map(|i| (i.structure, i.prims)),
-        }),
-    }
+    )
 }
 
 // A drawing archive has the exact source manifest and assets, but no fabricated live Revision
