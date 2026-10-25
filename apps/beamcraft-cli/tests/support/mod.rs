@@ -3,6 +3,8 @@
 
 //! Mechanical real-binary fixtures; domain expectations stay in each integration suite.
 
+#![allow(clippy::panic)]
+
 use beamcraft_json::{Json, Limits};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{

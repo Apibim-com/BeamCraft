@@ -44,9 +44,6 @@ impl Fixture {
         }
     }
 
-    fn store(&self) -> String {
-        self.shared.root.join("store").to_str().unwrap().to_owned()
-    }
     /// Writes the invented foreign source and returns its path text.
     fn source(&self) -> String {
         let path = self.shared.root.join("site.usda");
