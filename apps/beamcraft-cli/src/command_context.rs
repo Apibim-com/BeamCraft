@@ -102,7 +102,7 @@ mod tests {
             });
             assert_eq!(
                 result.err().unwrap().code,
-                beamcraft_model::error::ErrorCode::InvalidArgument
+                beamcraft_model::error::ErrorCode::InvalidId
             );
         }
     }
