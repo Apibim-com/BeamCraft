@@ -3,7 +3,6 @@
 
 //! Headless CLI using the same native dispatcher as application callers.
 
-mod command_context;
 mod revision;
 
 use beamcraft_host::{
@@ -18,6 +17,7 @@ mod assembly_cmd;
 mod bolt_cmd;
 mod bom_cmd;
 mod changeset_cmd;
+mod command_context;
 mod coordinator_cmd;
 mod drawing_cmd;
 mod export_cmd;
