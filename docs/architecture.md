@@ -91,11 +91,11 @@ Every editing command (`create-plate`, `create-member`, `update-element`, `copy-
 
 A crash at any step leaves either the old or the new complete revision; `recover-revision` closes
 an interrupted commit. Read commands (`inspect-elements`, `definitions`, `preview-numbering`,
-`export-ifc`, `export-bom`, `pick`, `view-export`, ...) do steps 1–2 only.
+`export-ifc`, `export-bom`, `pick`, `export-view`, ...) do steps 1–2 only.
 
 ## The window
 
-`beamcraft-ui` does not open USD. It starts `beamcraft view-export` as a separate process, receives
+`beamcraft-ui` does not open USD. It starts `beamcraft export-view` as a separate process, receives
 a bundle (element-local meshes, placements, bounds, ids), re-validates it, and draws each distinct
 mesh once with one instance per element. Since the issue 26 follow-up one refresh is one process
 and one verified inspection: `--with-definitions true` frames the store's definitions of that

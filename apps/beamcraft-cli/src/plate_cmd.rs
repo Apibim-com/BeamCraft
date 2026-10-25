@@ -1768,7 +1768,7 @@ fn plate_users(plates: &[PlateRecord]) -> BTreeMap<ContentDigest, Vec<ElementId>
     users
 }
 
-/// The `definitions` reply for `inspection` (also framed by `view-export --with-definitions`).
+/// The `definitions` reply for `inspection` (also framed by `export-view --with-definitions`).
 pub(crate) fn definitions_json(
     inspection: &Inspection,
     options: &BTreeMap<&str, &str>,
@@ -2189,7 +2189,7 @@ fn with_names(
     Json::Object(object)
 }
 
-/// The `inspect-elements` reply for `inspection` (also framed by `view-export --with-element`).
+/// The `inspect-elements` reply for `inspection` (also framed by `export-view --with-element`).
 /// `only` keeps one element in the lists (plates, members, the snapshot's elements and their
 /// meshes), none when the revision does not hold it, and names it as `element_filter`; the
 /// counts still describe the whole revision. Without it the reply lists everything.

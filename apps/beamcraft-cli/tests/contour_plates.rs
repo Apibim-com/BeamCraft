@@ -146,7 +146,7 @@ fn a_valid_near_planar_plate_is_saved_without_partial_geometry_and_replays() {
     assert_eq!(text(&replay, "outcome"), "plate_replayed");
     assert_eq!(f.ok("open-revision", &[]), before);
     assert_eq!(
-        f.rejected("view-export", &["--out", &f.path("unsupported.bundle")]),
+        f.rejected("export-view", &["--out", &f.path("unsupported.bundle")]),
         "DEPENDENCY_UNAVAILABLE"
     );
     assert!(!Path::new(&f.path("unsupported.bundle")).exists());

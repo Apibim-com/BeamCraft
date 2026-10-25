@@ -327,7 +327,7 @@ fn all_categories_reopen_at_rule_paths_and_keep_identity_through_edits_and_view_
     assert!(targets(&after, &plate_path, "bim:partOf").is_empty());
     assert!(targets(&after, &plate_path, "bim:level").is_empty());
     let bundle = f.0.join("scene.bundle");
-    f.run("view-export", &["--out", bundle.to_str().unwrap()]);
+    f.run("export-view", &["--out", bundle.to_str().unwrap()]);
     let view =
         ViewSnapshot::from_bundle(&fs::read(bundle).unwrap(), &ViewLimits::default()).unwrap();
     for id in [PLATE, BEAM, COLUMN] {

@@ -168,7 +168,7 @@ fn a_created_project_opens_lists_and_is_remembered() {
     );
     let models = f.path("models");
     let created = f.ok(&[
-        "project-create",
+        "create-project",
         "--parent",
         &models,
         "--name",
@@ -206,7 +206,7 @@ fn a_created_project_opens_lists_and_is_remembered() {
     // A second project of the same name, a reserved name and a missing parent are refused, and
     // a refused creation leaves no folder behind.
     let args = |name: &'static str, parent: &str| {
-        f.code(&["project-create", "--parent", parent, "--name", name])
+        f.code(&["create-project", "--parent", parent, "--name", name])
     };
     assert_eq!(args("Каркас A-F 1-14", &models), "DUPLICATE_ID");
     assert_eq!(args("CON", &models), "INVALID_ARGUMENT");

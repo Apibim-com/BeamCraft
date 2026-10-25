@@ -48,12 +48,12 @@ representation. `beamcraft inspect-view-changes` scripts edits and prints the re
 
 ## 2. Export a store's view bundle
 
-`view-export` writes the verified head's pinned view snapshot as one engine bundle - the input
+`export-view` writes the verified head's pinned view snapshot as one engine bundle - the input
 of the native viewport. With `--out FILE` the file is created new and a JSON summary is printed;
 with `--out -` the raw bundle goes to standard output instead:
 
 ```sh
-beamcraft view-export --store STORE --out FILE.bundle
+beamcraft export-view --store STORE --out FILE.bundle
 ```
 
 Captured run (the file appeared next to it):
@@ -94,14 +94,14 @@ acceptance.
 - snapshot: `outcome` is `view_snapshot` with the element count you asked for;
 - export: `outcome` is `view_exported`, and the file exists with the reported `bytes`.
 
-A view-export bundle plus `inspect-elements` output is the complete acceptance evidence for the
+A export-view bundle plus `inspect-elements` output is the complete acceptance evidence for the
 "show the model headlessly" workflow. No mesh bytes are in the snapshot JSON; a consumer reads
 blobs by digest through the engine API.
 
 ## Apply it to the request
 
 Produce the BeamCraft view as described in the request - `snapshot-view` for a synthetic
-scene without a store, `view-export` for the verified head of a store, §3 to open the native
+scene without a store, `export-view` for the verified head of a store, §3 to open the native
 viewport on it.
 
 1. Build the `beamcraft` binary if it is not built (the command is above).

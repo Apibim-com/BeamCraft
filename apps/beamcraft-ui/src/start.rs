@@ -11,7 +11,7 @@
 //! project from a template. Shared (cloud) projects are not available yet; the tab says so.
 //!
 //! Everything here runs the same CLI commands a user types (`show-settings`, `set-settings`,
-//! `list-environment`, `list-recent`, `add-recent`, `list-project`, `project-create`), each in a
+//! `list-environment`, `list-recent`, `add-recent`, `list-project`, `create-project`), each in a
 //! separate process on a worker thread; replies are read with `crate::tools::rejection` so a
 //! refusal is shown with the CLI's code and message. Nothing here reads a store directly.
 
@@ -86,7 +86,7 @@ impl EnvironmentView {
     }
 }
 
-/// One project folder as `list-project`, `list-recent` or `project-create` report it.
+/// One project folder as `list-project`, `list-recent` or `create-project` report it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectView {
     /// The folder name.
@@ -243,7 +243,7 @@ pub fn parse_recent(exit_code: Option<i32>, stdout: &[u8]) -> Result<Vec<Project
         .collect()
 }
 
-/// Reads the reply of `project-create` or `add-recent`: the project.
+/// Reads the reply of `create-project` or `add-recent`: the project.
 pub fn parse_project(
     exit_code: Option<i32>,
     stdout: &[u8],
@@ -283,7 +283,7 @@ pub fn settings_set_args(
     with_config(args, config_dir)
 }
 
-/// The `project-create` arguments of the Create tab.
+/// The `create-project` arguments of the Create tab.
 pub fn project_create_args(
     config_dir: Option<&Path>,
     parent: &str,
@@ -291,7 +291,7 @@ pub fn project_create_args(
     actor_id: Option<&str>,
 ) -> Vec<String> {
     let mut args = vec![
-        "project-create".to_owned(),
+        "create-project".to_owned(),
         "--parent".into(),
         parent.to_owned(),
         "--name".into(),
@@ -1465,7 +1465,7 @@ mod tests {
         assert_eq!(
             args,
             [
-                "project-create",
+                "create-project",
                 "--parent",
                 "/m",
                 "--name",

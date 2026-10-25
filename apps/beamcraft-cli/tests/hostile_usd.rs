@@ -244,7 +244,7 @@ fn hostile_own_store_layers_give_stable_codes_in_process() {
             vec!["inspect-reference", "--store", &store],
             vec!["preview-numbering", "--store", &store],
             vec![
-                "view-export",
+                "export-view",
                 "--store",
                 &store,
                 "--out",

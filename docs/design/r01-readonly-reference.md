@@ -99,7 +99,7 @@ rewrites.
 
 ## Translation-only viewport path (issue #137)
 
-`view-export` now includes supported foreign surfaces in the ordinary engine view bundle. The
+`export-view` now includes supported foreign surfaces in the ordinary engine view bundle. The
 adapter reads the already verified composed prims (no second file open or resolver); the engine's
 `scene::reference_element` combines a wrapper's visible surfaces into one `reference` element and
 a bounded BCMESH01 display mesh. The existing UI instancing/upload path draws it in both full and

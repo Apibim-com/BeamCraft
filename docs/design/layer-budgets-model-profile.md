@@ -51,7 +51,7 @@ members** (A07.1 probe), and a circular hollow section above about 110 mm exceed
 | 40 | | 0.96 s |
 | 60 | 509,650 bytes (8.5 KB per member) | 1.48 s |
 
-On the 60-member store: `open-revision` 10 ms, `inspect-elements` 0.60 s, `view-export` 0.63 s.
+On the 60-member store: `open-revision` 10 ms, `inspect-elements` 0.60 s, `export-view` 0.63 s.
 One `kernel::section::section_member` build of that section (64 vertices, 124 triangles, G06
 certification included) takes 8.8 ms.
 

@@ -6,7 +6,7 @@
 //! object with the same error shape and exit codes as the plate commands.
 //!
 //! The settings live in the user's configuration directory unless `--config-dir` names another.
-//! `project-create` takes its author from the settings profile unless `--actor-id` names one, and
+//! `create-project` takes its author from the settings profile unless `--actor-id` names one, and
 //! records the new project as recently opened; a project is created even when that record cannot
 //! be written (`recent_recorded` is then false).
 
@@ -50,7 +50,7 @@ pub fn handles(command: &OsString) -> bool {
         "show-settings",
         "set-settings",
         "list-environment",
-        "project-create",
+        "create-project",
         "list-project",
         "list-recent",
         "add-recent",
@@ -86,7 +86,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             "--skip-launcher",
             "--models-dir",
         ],
-        "project-create" => &[
+        "create-project" => &[
             "--config-dir",
             "--parent",
             "--name",
@@ -178,7 +178,7 @@ fn run(args: &[OsString]) -> Run<Json> {
                 ),
             ]))
         }
-        "project-create" => {
+        "create-project" => {
             let parent = given("--parent").ok_or_else(|| invalid("--parent is required"))?;
             let name = given("--name").ok_or_else(|| invalid("--name is required"))?;
             // The settings are read only when they are needed: for the author, and to remember

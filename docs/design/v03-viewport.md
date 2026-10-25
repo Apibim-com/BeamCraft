@@ -10,7 +10,7 @@ baseline GPU metrics.
 ## What is implemented
 
 ```text
-beamcraft view-export --store ROOT --out FILE|-
+beamcraft export-view --store ROOT --out FILE|-
 beamcraft-ui --store ROOT [--cli PATH]
 beamcraft-ui --store ROOT --metrics FRAMES [--width W] [--height H]
 beamcraft-ui --synthetic COUNT --metrics FRAMES [--width W] [--height H]
@@ -19,7 +19,7 @@ beamcraft-ui --synthetic COUNT --metrics FRAMES [--width W] [--height H]
 | Area | What exists |
 |---|---|
 | `beamcraft_engine::query::bundle` | `ViewSnapshot::to_bundle` and `from_bundle`: the pinned snapshot as one bounded byte bundle (pin, token, elements, mesh blobs). Import re-inspects every blob, recomputes every digest, rebuilds with `ViewSnapshot::build` and requires the rebuilt token to equal the bundled one. |
-| `beamcraft-cli` | `view-export`: the verified head's snapshot (the same one `inspect-elements` reports) as a bundle on standard output or in a new file. |
+| `beamcraft-cli` | `export-view`: the verified head's snapshot (the same one `inspect-elements` reports) as a bundle on standard output or in a new file. |
 | `apps/beamcraft-ui` (new, F08 row now `now`) | `source` (runs the CLI, bounded read, engine rebuild), `scene` (one vertex buffer per distinct mesh, one instance per element, f64 re-centring), `camera` (orbit/pan/zoom/fit, Z up, mm), `render` (wgpu offscreen target, depth, 4x MSAA when supported, one draw call per distinct mesh), `metrics` (headless baseline), `app` (eframe window, info panel, controls, original window icon). |
 
 ## Decisions
@@ -31,7 +31,7 @@ beamcraft-ui --synthetic COUNT --metrics FRAMES [--width W] [--height H]
   advisories. Re-enabling accessibility (and ignoring or upgrading those advisories) is an owner
   decision; no ignore entry was added.
 - **Process boundary instead of a crate edge.** F08 forbids an app depending on an app, and only the
-  CLI links the layer engine. The UI therefore runs `beamcraft view-export` and receives the
+  CLI links the layer engine. The UI therefore runs `beamcraft export-view` and receives the
   engine's snapshot as bytes; the engine re-validates them. The renderer computes no engineering
   geometry: it decodes BCMESH01 positions and indices and derives display-only flat normals (F06
   section 6 has no normal section).

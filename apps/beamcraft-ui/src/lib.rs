@@ -15,7 +15,7 @@
 //! ([`source::default_workspace_at`]), so a double-clicked app bundle launches.
 //!
 //! The viewport shows the accepted (published) revision of a store. Its input is the engine's
-//! pinned view snapshot, produced by the headless CLI (`beamcraft view-export --out -`) in a
+//! pinned view snapshot, produced by the headless CLI (`beamcraft export-view --out -`) in a
 //! separate process and rebuilt here with [`beamcraft_engine::ViewSnapshot::from_bundle`], which
 //! re-validates every blob, digest and the token. The renderer computes no engineering geometry:
 //! it decodes the engine's element-local meshes, derives display-only flat normals, and draws

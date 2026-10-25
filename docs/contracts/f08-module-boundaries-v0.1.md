@@ -119,7 +119,7 @@ by the named task with real code. Allowed dependencies are those of the owning r
 | Numbering preview: grouping rules, series, overlaps, staleness token | A08 | `beamcraft_engine::numbering` (rules), `beamcraft_cli::numbering` (adapter), `preview-numbering` | **now**, A08 (experimental; read-only, no stored numbers) |
 | IFC4 export: GlobalId, STEP lexical rules, entity templates, bounded sink, structural reader for tests | E01 s.3, 11, 15 | `beamcraft_ifc::{guid, step, model, verify}` and `write_ifc` | **now**, E02 (experimental; std only, no I/O of its own; `verify` is a test harness, not an importer) |
 | Export adapter: committed revision to `ExportModel`, report, atomic output | E01 s.4, 8, 13, 15.4 | `apps/beamcraft-cli` (`beamcraft_cli::export`), `beamcraft_host::output` | **now**, E02 (the contract proposed `beamcraft_engine::export`; the adapter sits with the other P/A-slice adapters and the engine gains no edge to `beamcraft-ifc`) |
-| Native UI and viewport | F06 s.9, V-tasks | `apps/beamcraft-ui` | **now, partial**, V03: window, orbit camera, instanced offscreen viewport of the accepted snapshot (received as `beamcraft_engine::query::bundle` from `beamcraft view-export`), headless baseline metrics. Selection, snapping and tools are V04/V05 |
+| Native UI and viewport | F06 s.9, V-tasks | `apps/beamcraft-ui` | **now, partial**, V03: window, orbit camera, instanced offscreen viewport of the accepted snapshot (received as `beamcraft_engine::query::bundle` from `beamcraft export-view`), headless baseline metrics. Selection, snapping and tools are V04/V05 |
 
 ## 5. Crates created now, and why
 

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 // Contributor-original synthetic plates, MPL-2.0.
 
-//! V03 `view-export`: the verified head's view snapshot as one engine bundle. The bundle rebuilds
+//! V03 `export-view`: the verified head's view snapshot as one engine bundle. The bundle rebuilds
 //! the identical snapshot (same token as `inspect-elements`), shares one mesh between copies, never
 //! overwrites a file, draws no body for an assembly and is refused for a store without a revision.
 //! With `--with-definitions true` and `--with-element ID` the same inspection also yields the
@@ -74,7 +74,7 @@ fn the_bundle_is_the_engine_snapshot_of_the_head() {
         ]);
         assert_eq!(copied.0, 0);
     }
-    let (code, bundle) = run(&["view-export", "--store", store, "--out", "-"]);
+    let (code, bundle) = run(&["export-view", "--store", store, "--out", "-"]);
     assert_eq!(code, 0);
     let snapshot = ViewSnapshot::from_bundle(&bundle, &Limits::default()).unwrap();
     assert_eq!(snapshot.len(), 3);
@@ -88,14 +88,14 @@ fn the_bundle_is_the_engine_snapshot_of_the_head() {
 
     let file = root.join("view.bin");
     let file = file.to_str().unwrap();
-    let (code, summary) = run(&["view-export", "--store", store, "--out", file]);
+    let (code, summary) = run(&["export-view", "--store", store, "--out", file]);
     assert_eq!(code, 0);
     let summary = json_of(&summary);
     assert_eq!(text(&summary, "outcome"), "view_exported");
     assert_eq!(text(&summary, "token"), token);
     assert_eq!(fs::read(file).unwrap(), bundle);
     // An existing file is never overwritten.
-    let (code, refused) = run(&["view-export", "--store", store, "--out", file]);
+    let (code, refused) = run(&["export-view", "--store", store, "--out", file]);
     assert_eq!(code, 2);
     assert_eq!(text(&json_of(&refused), "code"), "INVALID_ARGUMENT");
     let _ = fs::remove_dir_all(&root);
@@ -106,12 +106,12 @@ fn a_store_without_a_revision_and_bad_options_are_refused() {
     let root = root("empty");
     let store = root.join("store");
     let store = store.to_str().unwrap();
-    let (code, body) = run(&["view-export", "--store", store, "--out", "-"]);
+    let (code, body) = run(&["export-view", "--store", store, "--out", "-"]);
     assert_eq!(code, 2);
     assert_eq!(text(&json_of(&body), "code"), "NOT_FOUND");
     // A framed request on an empty store is the same plain rejection, not a frame.
     let (code, body) = run(&[
-        "view-export",
+        "export-view",
         "--store",
         store,
         "--out",
@@ -128,7 +128,7 @@ fn a_store_without_a_revision_and_bad_options_are_refused() {
     for (args, expected) in [
         (
             vec![
-                "view-export",
+                "export-view",
                 "--store",
                 store,
                 "--out",
@@ -140,7 +140,7 @@ fn a_store_without_a_revision_and_bad_options_are_refused() {
         ),
         (
             vec![
-                "view-export",
+                "export-view",
                 "--store",
                 store,
                 "--out",
@@ -152,7 +152,7 @@ fn a_store_without_a_revision_and_bad_options_are_refused() {
         ),
         (
             vec![
-                "view-export",
+                "export-view",
                 "--store",
                 store,
                 "--out",
@@ -164,7 +164,7 @@ fn a_store_without_a_revision_and_bad_options_are_refused() {
         ),
         (
             vec![
-                "view-export",
+                "export-view",
                 "--store",
                 store,
                 "--out",
@@ -184,9 +184,9 @@ fn a_store_without_a_revision_and_bad_options_are_refused() {
         "a refused export creates no file"
     );
     for args in [
-        vec!["view-export", "--store", store],
+        vec!["export-view", "--store", store],
         vec![
-            "view-export",
+            "export-view",
             "--store",
             store,
             "--out",
@@ -194,7 +194,7 @@ fn a_store_without_a_revision_and_bad_options_are_refused() {
             "--extra",
             "x",
         ],
-        vec!["view-export", "--out", "-"],
+        vec!["export-view", "--out", "-"],
     ] {
         let (code, body) = run(&args);
         assert_eq!(code, 2, "{args:?}");
@@ -251,14 +251,14 @@ fn the_definitions_and_one_element_ride_in_the_same_reply_as_the_bundle() {
         ]);
         assert_eq!(code, 0);
     }
-    let (code, plain) = run(&["view-export", "--store", store, "--out", "-"]);
+    let (code, plain) = run(&["export-view", "--store", store, "--out", "-"]);
     assert_eq!(code, 0);
     let (code, listing) = run(&["definitions", "--store", store]);
     assert_eq!(code, 0);
     let (code, inspected) = run(&["inspect-elements", "--store", store, "--element", PLATE]);
     assert_eq!(code, 0);
     let (code, framed) = run(&[
-        "view-export",
+        "export-view",
         "--store",
         store,
         "--out",
@@ -285,7 +285,7 @@ fn the_definitions_and_one_element_ride_in_the_same_reply_as_the_bundle() {
     assert_eq!(text(first, "digest"), material);
     // Each option alone frames only its reply; a length of zero is a reply not asked for.
     let (code, only) = run(&[
-        "view-export",
+        "export-view",
         "--store",
         store,
         "--out",
@@ -299,7 +299,7 @@ fn the_definitions_and_one_element_ride_in_the_same_reply_as_the_bundle() {
         (listing.as_slice(), &b""[..], plain.as_slice())
     );
     let (code, only) = run(&[
-        "view-export",
+        "export-view",
         "--store",
         store,
         "--out",
@@ -314,7 +314,7 @@ fn the_definitions_and_one_element_ride_in_the_same_reply_as_the_bundle() {
     );
     // `false` is the plain bundle.
     let (code, unframed) = run(&[
-        "view-export",
+        "export-view",
         "--store",
         store,
         "--out",
@@ -473,7 +473,7 @@ fn an_assembly_has_no_body_and_its_parts_are_drawn() {
     ] {
         assert_eq!(run(args).0, 0, "{args:?}");
     }
-    let (code, bundle) = run(&["view-export", "--store", store, "--out", "-"]);
+    let (code, bundle) = run(&["export-view", "--store", store, "--out", "-"]);
     assert_eq!(code, 0);
     let snapshot = ViewSnapshot::from_bundle(&bundle, &Limits::default()).unwrap();
     assert_eq!(snapshot.len(), 1);

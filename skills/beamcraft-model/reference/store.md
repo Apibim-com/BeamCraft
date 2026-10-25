@@ -27,11 +27,11 @@ cargo build --offline -p beamcraft-cli --bins
 
 ## 1. Create a store
 
-`project-create` makes the folder `DIR/NAME` and commits an empty first revision into it. That
+`create-project` makes the folder `DIR/NAME` and commits an empty first revision into it. That
 folder is the `--store ROOT` of every other command.
 
 ```sh
-beamcraft project-create --parent DIR --name demo-store
+beamcraft create-project --parent DIR --name demo-store
 ```
 
 Captured output (trimmed):

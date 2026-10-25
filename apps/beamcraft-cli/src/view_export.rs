@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! V03 headless command `view-export`: the pinned view snapshot of the verified head revision as
+//! V03 headless command `export-view`: the pinned view snapshot of the verified head revision as
 //! one engine bundle (`beamcraft_engine::query::bundle`), the input of the native viewport.
 //!
 //! `--out -` writes the raw bundle to standard output and nothing else (the viewport reads it
@@ -74,7 +74,7 @@ fn invalid(message: &'static str) -> PlateError {
     }
 }
 
-/// Runs `view-export`.
+/// Runs `export-view`.
 pub fn execute(args: &[OsString]) -> Output {
     match run(args) {
         Ok(output) => output,

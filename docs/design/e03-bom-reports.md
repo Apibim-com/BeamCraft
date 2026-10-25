@@ -128,7 +128,7 @@ beamcraft export-bom --store ROOT --out ELEMENTS_CSV [--summary SUMMARY_CSV]
 
 * Reads and verifies the head exactly like `inspect-elements`; a store without a revision is
   refused. The JSON result names the revision, the row and group counts and the files.
-* Files are created new (`create_new`), never overwritten, synced, as `view-export` does;
+* Files are created new (`create_new`), never overwritten, synced, as `export-view` does;
   `BackendUnavailable` when writing fails. Both files are reserved before any bytes are
   written, so a refusal on either path — an existing or uncreatable summary included, and the
   same path given twice — leaves nothing on disk; the files reserved so far are removed again.

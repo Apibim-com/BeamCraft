@@ -110,7 +110,7 @@ fn an_attached_reference_enters_the_pinned_view_scene() {
 
 fn view(f: &Fixture) -> ViewSnapshot {
     let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
-        .args(["view-export", "--store", &f.store(), "--out", "-"])
+        .args(["export-view", "--store", &f.store(), "--out", "-"])
         .output()
         .unwrap();
     assert!(output.status.success(), "{output:?}");
@@ -244,7 +244,7 @@ fn unsupported_views_are_explicit_refusals_without_breaking_r01_or_creating_a_fi
         f.ok("inspect-elements", &[]);
         let out = f.root.join("refused.bundle");
         assert_eq!(
-            f.rejected("view-export", &["--out", out.to_str().unwrap()]),
+            f.rejected("export-view", &["--out", out.to_str().unwrap()]),
             expected
         );
         assert!(!out.exists());
@@ -264,7 +264,7 @@ fn unsupported_views_are_explicit_refusals_without_breaking_r01_or_creating_a_fi
         ],
     );
     assert_eq!(
-        f.rejected("view-export", &["--out", "-"]),
+        f.rejected("export-view", &["--out", "-"]),
         "UNSUPPORTED_GEOMETRY"
     );
     f.ok("inspect-reference", &[]);
