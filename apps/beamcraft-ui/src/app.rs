@@ -31,7 +31,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 /// Where a `--perf-run` report goes: the JSON object and whether every phase succeeded.
 pub type PerfReport = Sender<(String, bool)>;
@@ -93,6 +93,10 @@ pub struct App {
     /// The store watcher: one message per head change another process committed, so the view
     /// refreshes without the `R` key. `None` when the watcher thread could not start.
     store_watch: Option<Receiver<()>>,
+    /// The watcher's shutdown handle: dropping it (with the window) ends the thread even
+    /// when the store never changes again. Never read: its drop is the shutdown.
+    #[expect(dead_code)]
+    store_watch_shutdown: Option<Sender<()>>,
     /// The result of the last Preview, Cancel or Commit.
     tool_note: Option<Result<String, String>>,
     /// The two-click 3D placement of the member tool (issue #134).
@@ -403,27 +407,45 @@ fn needs_refit(
 /// How often the window checks the store for revisions another process has committed.
 const WATCH_INTERVAL: Duration = Duration::from_millis(500);
 
-/// The stamp of a store's committed revisions: the directory gains one file per committed
-/// write, so a changed stamp means the head moved. A missing directory is "no signal yet",
-/// not an error: the view-export reports the state of an empty store itself.
-fn revisions_stamp(store: &Path) -> Option<SystemTime> {
-    std::fs::metadata(store.join("revisions"))
-        .and_then(|meta| meta.modified())
-        .ok()
+/// The token of a store's committed revisions: one record file per committed write, so the
+/// entry count and the newest file name together identify the head without trusting
+/// filesystem timestamp resolution. A missing directory is "no signal yet", not an error:
+/// the view-export reports the state of an empty store itself.
+fn revisions_token(store: &Path) -> Option<(usize, String)> {
+    let mut newest = String::new();
+    let mut count = 0usize;
+    for entry in std::fs::read_dir(store.join("revisions")).ok()? {
+        let entry = entry.ok()?;
+        count += 1;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name > newest {
+            newest = name;
+        }
+    }
+    Some((count, newest))
 }
 
 /// Watches a store and reports every change of its revisions as one message, so the window
-/// refreshes by itself when another process (the CLI, an agent) commits to the store it shows.
-/// `None` when the thread could not start: the `R` key keeps working either way.
-fn spawn_watch(store: PathBuf) -> Option<Receiver<()>> {
+/// refreshes by itself when another process (the CLI, an agent) commits to the store it
+/// shows. Returns the signal receiver, the shutdown handle and the thread handle: the
+/// watcher exits when the shutdown handle is dropped (the window's lifetime), whether or
+/// not the store ever changes. `None` when the thread could not start: the `R` key keeps
+/// working either way.
+fn spawn_watch(store: PathBuf) -> Option<(Receiver<()>, Sender<()>, std::thread::JoinHandle<()>)> {
     let (tx, rx) = std::sync::mpsc::channel();
+    let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel();
     let spawned = std::thread::Builder::new()
         .name("beamcraft-watch".into())
         .spawn(move || {
-            let mut seen = revisions_stamp(&store);
+            let mut seen = revisions_token(&store);
             loop {
-                std::thread::sleep(WATCH_INTERVAL);
-                let now = revisions_stamp(&store);
+                match shutdown_rx.recv_timeout(WATCH_INTERVAL) {
+                    // The window dropped the handle (or asked to stop): exit without
+                    // touching the filesystem again.
+                    Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                }
+                let now = revisions_token(&store);
                 if now != seen {
                     seen = now;
                     if tx.send(()).is_err() {
@@ -431,8 +453,9 @@ fn spawn_watch(store: PathBuf) -> Option<Receiver<()>> {
                     }
                 }
             }
-        });
-    spawned.ok().map(|_| rx)
+        })
+        .ok()?;
+    Some((rx, shutdown_tx, spawned))
 }
 
 /// One resolved world point, for notes and hints.
@@ -641,7 +664,13 @@ impl App {
             );
             (PerfRun::new(phases, header), report)
         });
-        let store_watch = spawn_watch(source.store.clone());
+        let (store_watch, store_watch_shutdown) = match spawn_watch(source.store.clone()) {
+            Some((rx, shutdown, handle)) => {
+                drop(handle);
+                (Some(rx), Some(shutdown))
+            }
+            None => (None, None),
+        };
         let mut app = Self {
             state,
             source,
@@ -663,6 +692,7 @@ impl App {
             reload_job: None,
             reload_queued: false,
             store_watch,
+            store_watch_shutdown,
             tool_note: None,
             refresh_error: None,
             framed: None,
@@ -2336,10 +2366,13 @@ impl eframe::App for App {
 
 #[cfg(test)]
 mod tests {
-    use super::{App, Source, load_icon, needs_refit, revisions_stamp, target_size, volume_note};
+    use super::{
+        App, Source, WATCH_INTERVAL, load_icon, needs_refit, revisions_token, spawn_watch,
+        target_size, volume_note,
+    };
 
     #[test]
-    fn a_committed_revision_moves_the_watch_stamp() {
+    fn a_committed_revision_moves_the_watch_token() {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -2348,13 +2381,60 @@ mod tests {
             std::env::temp_dir().join(format!("bc-watch-test-{}-{nanos}", std::process::id()));
         let revisions = dir.join("revisions");
         // No revisions directory yet: no signal, and never an error to react to.
-        assert_eq!(revisions_stamp(&dir), None);
+        assert_eq!(revisions_token(&dir), None);
         std::fs::create_dir_all(&revisions).unwrap();
-        let first = revisions_stamp(&dir).expect("the directory exists");
-        // A commit is one new file in the directory: the stamp moves, the store root does not.
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        // An empty directory is the zero head: no entries, no newest name.
+        assert_eq!(revisions_token(&dir), Some((0, String::new())));
+        // A commit is one new record file: the token moves without trusting timestamps.
         std::fs::write(revisions.join("00000000000000000001"), b"x").unwrap();
-        assert_ne!(first, revisions_stamp(&dir).expect("the directory exists"));
+        assert_eq!(
+            revisions_token(&dir),
+            Some((1, "00000000000000000001".into()))
+        );
+        std::fs::write(revisions.join("00000000000000000002"), b"x").unwrap();
+        assert_eq!(
+            revisions_token(&dir),
+            Some((2, "00000000000000000002".into()))
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_watch_thread_exits_when_the_owner_drops_the_shutdown() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("bc-watch-exit-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(dir.join("revisions")).unwrap();
+        let (_rx, shutdown, handle) = spawn_watch(dir.clone()).unwrap();
+        // No filesystem change happens after this point; dropping the shutdown handle must
+        // still end the thread.
+        drop(shutdown);
+        handle.join().expect("the watcher exits on shutdown");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_foreign_commit_wakes_the_watch_thread() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("bc-watch-wake-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(dir.join("revisions")).unwrap();
+        let (rx, shutdown, handle) = spawn_watch(dir.clone()).unwrap();
+        // The watcher takes its first token at startup, so a commit inside that window is
+        // the baseline (missed until the next one, by design). Sleep past one poll, then
+        // commit: the signal must arrive.
+        std::thread::sleep(WATCH_INTERVAL + std::time::Duration::from_millis(150));
+        std::fs::write(dir.join("revisions").join("00000000000000000001"), b"x").unwrap();
+        rx.recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the watcher signals the committed head");
+        drop(shutdown);
+        let _ = handle.join();
         std::fs::remove_dir_all(&dir).unwrap();
     }
     use crate::Error;
