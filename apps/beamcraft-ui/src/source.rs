@@ -67,7 +67,7 @@ pub fn default_workspace_at(
     let published = root.join("published");
     let workspace = root.join("workspace");
     // A fork generates fresh identifiers, so an existing workspace is what says "already
-    // forked": a second `workspace-create` would only be refused as a duplicate.
+    // forked": a second `create-workspace` would only be refused as a duplicate.
     if !workspace.exists() {
         // The store commands open an existing root (they never create one): the published
         // store is a plain directory the CLI fills in.
@@ -82,7 +82,7 @@ pub fn default_workspace_at(
         ];
         bootstrapped(cli, &material, stats, &[])?;
         let fork = [
-            "workspace-create".to_owned(),
+            "create-workspace".to_owned(),
             "--store".into(),
             store,
             "--workspace-dir".into(),
@@ -171,7 +171,7 @@ pub const FRAME_MAGIC: &[u8; 8] = b"BCVXFRM1";
 pub struct Frame<'a> {
     /// The `definitions` reply; empty when it was not asked for.
     pub definitions: &'a [u8],
-    /// The `plate-inspect --element ID` reply; empty when it was not asked for.
+    /// The `inspect-elements --element ID` reply; empty when it was not asked for.
     pub element: &'a [u8],
     /// The engine bundle.
     pub bundle: &'a [u8],

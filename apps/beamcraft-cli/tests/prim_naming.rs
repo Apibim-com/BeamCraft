@@ -193,7 +193,7 @@ fn all_categories_reopen_at_rule_paths_and_keep_identity_through_edits_and_view_
         &["--name", "Frame", "--new-id", ASSEMBLY],
     );
     f.run(
-        "assembly-attach",
+        "attach-to-assembly",
         &["--id", PLATE, "--assembly-id", ASSEMBLY],
     );
     f.run(
@@ -246,7 +246,7 @@ fn all_categories_reopen_at_rule_paths_and_keep_identity_through_edits_and_view_
     let source = f.0.join("foreign.usda");
     fs::write(&source, "#usda 1.0\n(defaultPrim=\"Original\")\ndef Xform \"Original\" { def Scope \"Child\" {} }\n").unwrap();
     f.run(
-        "reference-attach",
+        "attach-reference",
         &[
             "--source",
             source.to_str().unwrap(),
@@ -315,7 +315,7 @@ fn all_categories_reopen_at_rule_paths_and_keep_identity_through_edits_and_view_
         "update-element",
         &["--id", PLATE, "--name", "Renamed", "--level", "none"],
     );
-    f.run("assembly-detach", &["--id", PLATE]);
+    f.run("detach-from-assembly", &["--id", PLATE]);
     let after = f.prims();
     assert_eq!(
         prim(&after, &plate_path).display_name.as_deref(),

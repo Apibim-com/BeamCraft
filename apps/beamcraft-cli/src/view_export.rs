@@ -12,7 +12,7 @@
 //! refresh and everything it shows belongs to the exported revision (issue 26, finding 2).
 //! Standard output is then a frame: [`FRAME_MAGIC`]; the length of the definitions reply as a
 //! little-endian `u32` and that reply byte for byte as `beamcraft definitions --store ROOT`
-//! prints it; the length and the reply of `beamcraft plate-inspect --store ROOT --element ID`
+//! prints it; the length and the reply of `beamcraft inspect-elements --store ROOT --element ID`
 //! the same way; then the bundle. A length of zero is a reply that was not asked for.
 
 use crate::plate_cmd::{definitions_json, id_error, inspection_json};

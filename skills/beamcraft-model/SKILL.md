@@ -1,6 +1,6 @@
 ---
 name: model
-description: Drive BeamCraft steel detailing through the beamcraft-cli - create, update and inspect members and plates (define-profile, define-material, create-member, create-plate, update-element, plate-inspect), create and verify a store (project-create, revision-open), pick and resolve coordinates (pick, feature-list, feature-lookup, snap), and snapshot or export views (view-snapshot, view-export). Use when the user asks to model, edit, move or list elements in a BeamCraft store, to check or create a store, to snap or resolve a coordinate or feature address, or for a view snapshot or export. The slash command /beamcraft:open launches the native viewport app separately.
+description: Drive BeamCraft steel detailing through the beamcraft-cli - create, update and inspect members and plates (define-profile, define-material, create-member, create-plate, update-element, inspect-elements), create and verify a store (project-create, open-revision), pick and resolve coordinates (pick, list-feature, lookup-feature, snap), and snapshot or export views (snapshot-view, view-export). Use when the user asks to model, edit, move or list elements in a BeamCraft store, to check or create a store, to snap or resolve a coordinate or feature address, or for a view snapshot or export. The slash command /beamcraft:open launches the native viewport app separately.
 argument-hint: [what to do, and where]
 ---
 
@@ -36,13 +36,13 @@ cargo build --offline -p beamcraft-cli --bins
 
 ## References - follow the one the task needs
 
-- `reference/store.md` - `project-create`, `revision-open`, `plate-inspect`: create a store,
+- `reference/store.md` - `project-create`, `open-revision`, `inspect-elements`: create a store,
   verify its integrity, list what it holds.
 - `reference/model.md` - `define-profile`, `define-material`, `create-member`, `create-plate`,
   `update-element`: publish definitions and model or edit elements.
-- `reference/pick.md` - `pick`, `feature-list`, `feature-lookup`, `snap`: resolve coordinates,
+- `reference/pick.md` - `pick`, `list-feature`, `lookup-feature`, `snap`: resolve coordinates,
   feature addresses and snaps.
-- `reference/view.md` - `view-snapshot`, `view-export`: snapshot a scene, export a view bundle,
+- `reference/view.md` - `snapshot-view`, `view-export`: snapshot a scene, export a view bundle,
   open the native viewport.
 
 ## Apply it to the request

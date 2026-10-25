@@ -21,13 +21,13 @@ cargo build --offline -p beamcraft-cli --bins
 
 ## 1. Snapshot a synthetic scene (no store)
 
-`view-snapshot` needs no store. It builds a synthetic plate scene with the real kernel
+`snapshot-view` needs no store. It builds a synthetic plate scene with the real kernel
 (`--plates 1..500`; every fifth element is labelled `support`) and prints one JSON object with
 the pin, the snapshot token, the projected elements with instance slots and world bounds, and
 the meshes a view must load:
 
 ```sh
-beamcraft view-snapshot --plates 6
+beamcraft snapshot-view --plates 6
 ```
 
 Captured output (trimmed):
@@ -43,7 +43,7 @@ Captured output (trimmed):
 
 `--hide plate,support`, `--representation full|simplified`, `--stand-in-simplified true|false`
 and `--select ID,ID` change the picture; the snapshot token does not change with hiding or
-representation. `beamcraft view-changes` scripts edits and prints the resulting delta (see
+representation. `beamcraft inspect-view-changes` scripts edits and prints the resulting delta (see
 `apps/beamcraft-cli/README.md`, V02).
 
 ## 2. Export a store's view bundle
@@ -94,13 +94,13 @@ acceptance.
 - snapshot: `outcome` is `view_snapshot` with the element count you asked for;
 - export: `outcome` is `view_exported`, and the file exists with the reported `bytes`.
 
-A view-export bundle plus `plate-inspect` output is the complete acceptance evidence for the
+A view-export bundle plus `inspect-elements` output is the complete acceptance evidence for the
 "show the model headlessly" workflow. No mesh bytes are in the snapshot JSON; a consumer reads
 blobs by digest through the engine API.
 
 ## Apply it to the request
 
-Produce the BeamCraft view as described in the request - `view-snapshot` for a synthetic
+Produce the BeamCraft view as described in the request - `snapshot-view` for a synthetic
 scene without a store, `view-export` for the verified head of a store, §3 to open the native
 viewport on it.
 

@@ -3,10 +3,10 @@
 // Contributor-original synthetic plates, MPL-2.0.
 
 //! V03 `view-export`: the verified head's view snapshot as one engine bundle. The bundle rebuilds
-//! the identical snapshot (same token as `plate-inspect`), shares one mesh between copies, never
+//! the identical snapshot (same token as `inspect-elements`), shares one mesh between copies, never
 //! overwrites a file, draws no body for an assembly and is refused for a store without a revision.
 //! With `--with-definitions true` and `--with-element ID` the same inspection also yields the
-//! `definitions` and `plate-inspect --element ID` replies, framed before the unchanged bundle
+//! `definitions` and `inspect-elements --element ID` replies, framed before the unchanged bundle
 //! (issue 26: one process per viewport refresh).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
@@ -80,7 +80,7 @@ fn the_bundle_is_the_engine_snapshot_of_the_head() {
     assert_eq!(snapshot.len(), 3);
     // Copies share one mesh blob: the instancing input of the viewport.
     assert_eq!(snapshot.meshes().len(), 1);
-    let (code, inspected) = run(&["plate-inspect", "--store", store]);
+    let (code, inspected) = run(&["inspect-elements", "--store", store]);
     assert_eq!(code, 0);
     let inspected = json_of(&inspected);
     let token = text(inspected.get("snapshot").unwrap(), "token");
@@ -255,7 +255,7 @@ fn the_definitions_and_one_element_ride_in_the_same_reply_as_the_bundle() {
     assert_eq!(code, 0);
     let (code, listing) = run(&["definitions", "--store", store]);
     assert_eq!(code, 0);
-    let (code, inspected) = run(&["plate-inspect", "--store", store, "--element", PLATE]);
+    let (code, inspected) = run(&["inspect-elements", "--store", store, "--element", PLATE]);
     assert_eq!(code, 0);
     let (code, framed) = run(&[
         "view-export",
@@ -377,14 +377,14 @@ fn plate_inspect_lists_only_the_element_it_is_asked_for() {
         beam,
     ]);
     assert_eq!(code, 0);
-    let (code, full) = run(&["plate-inspect", "--store", store]);
+    let (code, full) = run(&["inspect-elements", "--store", store]);
     assert_eq!(code, 0);
     let full = json_of(&full);
     let listed = |reply: &Json, key: &str| -> Vec<Json> {
         reply.get(key).unwrap().array().unwrap().to_vec()
     };
     for id in [PLATE, beam] {
-        let (code, one) = run(&["plate-inspect", "--store", store, "--element", id]);
+        let (code, one) = run(&["inspect-elements", "--store", store, "--element", id]);
         assert_eq!(code, 0);
         let one = json_of(&one);
         assert_eq!(text(&one, "element_filter"), id);
@@ -416,7 +416,7 @@ fn plate_inspect_lists_only_the_element_it_is_asked_for() {
     }
     // An id the head does not hold lists nothing; a malformed one reads nothing.
     let (code, none) = run(&[
-        "plate-inspect",
+        "inspect-elements",
         "--store",
         store,
         "--element",
@@ -425,7 +425,7 @@ fn plate_inspect_lists_only_the_element_it_is_asked_for() {
     assert_eq!(code, 0);
     let none = json_of(&none);
     assert!(listed(&none, "plates").is_empty() && listed(&none, "members").is_empty());
-    let (code, bad) = run(&["plate-inspect", "--store", store, "--element", "x"]);
+    let (code, bad) = run(&["inspect-elements", "--store", store, "--element", "x"]);
     assert_eq!(code, 2);
     assert_eq!(text(&json_of(&bad), "code"), "INVALID_ID");
     let _ = fs::remove_dir_all(&root);
@@ -462,7 +462,7 @@ fn an_assembly_has_no_body_and_its_parts_are_drawn() {
             assembly,
         ],
         &[
-            "assembly-attach",
+            "attach-to-assembly",
             "--store",
             store,
             "--id",

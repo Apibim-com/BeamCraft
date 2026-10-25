@@ -9,7 +9,7 @@
 //!
 //! V06.1 adds a properties panel for the selected plate or straight member (what the engine
 //! reports, labelled current, stale or unknown; edits are the CLI's `update-element`) and a
-//! Publish action (`workspace-publish`); see [`props`] and [`publish`].
+//! Publish action (`publish-workspace`); see [`props`] and [`publish`].
 //!
 //! A launch without arguments opens a per-user default workspace created on demand
 //! ([`source::default_workspace_at`]), so a double-clicked app bundle launches.
