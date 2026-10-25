@@ -4,20 +4,22 @@
 //! P04 adapter: `UpdateElement` for a plate or a member, committed as the next revision.
 //!
 //! The patch is typed (label, material reference, a plate's thickness, the placement translation,
-//! the D2 level assignment)
+//! the placement rotation, the D2 level assignment)
 //! and the adapter writes only what the patch changes: a rename touches the authored layer alone,
 //! a material change rewrites the quantity record next to an unchanged mesh, a thickness change
-//! rebuilds the mesh and the records, and a move (P08) rewrites the placement alone: the
-//! element-local body, its mesh and its stored quantities are not copied or rebuilt. The engine
-//! decides which groups changed and the layer engine's own write set is checked against the
-//! footprint it declares.
+//! rebuilds the mesh and the records, a move (P08) rewrites the placement alone: the
+//! element-local body, its mesh and its stored quantities are not copied or rebuilt. An
+//! orientation change rewrites the placement and, for a member, rebuilds the rotated body (the
+//! placement rotation is part of the member mesh). The engine decides which groups changed and
+//! the layer engine's own write set is checked against the footprint it declares.
 //!
 //! Honesty limits: replay of an `op_id` is decided from the head model (the update is a replay
 //! when the head already holds the patched state), not from a stored canonical request; a later
-//! edit of the same element therefore turns a retry into `OP_ID_REUSE`. The stored canonical
-//! request of F05 replaces this. One implicit workspace, in-process layer engine, as in `plate`.
+//! edit of the same element therefore turns a retry into `OP_ID_REUSE`. A stored canonical
+//! request (F04 section 3) replaces this. One implicit workspace, in-process layer engine, as in
+//! `plate`.
 
-use crate::definition::material_lookup;
+use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
     AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, PublishRequest, RevisionSummary,
     check_footprint, control, decode, digest_of, evaluate_decoded, host_uuid, integrity, load_base,
@@ -26,7 +28,7 @@ use crate::plate::{
 };
 use beamcraft_engine::command::evaluate_plate;
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::member::member_quantities;
+use beamcraft_engine::member::{evaluate_member, member_quantities};
 use beamcraft_engine::query::committed::{MemberRecord, PlateRecord};
 use beamcraft_engine::transaction::PriorOp;
 use beamcraft_engine::update::{UpdateEffect, effect, patch_member, patch_plate};
@@ -36,7 +38,7 @@ use beamcraft_layer_engine::authored::{
     Author, Change, EditTargets, MaterialOpinion, Placement as LayerPlacement, Prepare,
     schema_identity,
 };
-use beamcraft_model::command::{CommandError, MarkStatus, UpdateElement};
+use beamcraft_model::command::{CommandError, UpdateElement};
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
@@ -126,18 +128,25 @@ pub fn update_element(
         expected,
         ..
     } = base;
-    let (plates, members, definitions, levels, marks) = {
+    let (plates, members, definitions, levels) = {
         let mut reader = Reader::default();
         let opened = reader.open(base_request.clone(), &control)?;
         let decoded = decode(&reader, &opened, &control)?;
         let (plates, members) = evaluate_decoded(&decoded)?;
-        (
-            plates,
-            members,
-            decoded.definitions,
-            decoded.levels,
-            decoded.marks,
-        )
+        if decoded
+            .plates
+            .iter()
+            .any(|(p, _)| p.id == command.target_id)
+            && !plates.iter().any(|p| p.authored.id == command.target_id)
+        {
+            return Err(CommandError::new(
+                ErrorCode::DependencyUnavailable,
+                "target_id",
+                "editing an unsupported plate is not implemented",
+            )
+            .into());
+        }
+        (plates, members, decoded.definitions, decoded.levels)
     };
     let materials = material_lookup(&definitions);
     let patch_effect = effect(&command.patch);
@@ -189,12 +198,20 @@ pub fn update_element(
         Target::Member(head) => {
             let authored = patch_member(&head.authored, &command.patch)?;
             let material = authored.material.as_ref().map(&materials).transpose()?;
-            let quantities = member_quantities(&head.body, material)?;
+            // The placement rotation is part of the member mesh: an orientation change rebuilds
+            // the body, every other patch keeps the head's mesh.
+            let body = if patch_effect.orientation {
+                let profile = profile_lookup(&definitions)(&authored.profile)?;
+                evaluate_member(&authored, profile)?
+            } else {
+                head.body.clone()
+            };
+            let quantities = member_quantities(&body, material)?;
             (
                 UpdatedElement::Member(Box::new(head.clone())),
                 UpdatedElement::Member(Box::new(MemberRecord {
                     authored,
-                    body: head.body.clone(),
+                    body,
                     quantities,
                 })),
             )
@@ -253,26 +270,13 @@ pub fn update_element(
         patch_effect.name,
         patch_effect.material,
         patch_effect.shape,
-        patch_effect.placement,
+        patch_effect.placement || patch_effect.orientation,
         new_material,
     )?;
     // The level decision needs the model (kind of the target, existence and kind of the level);
     // it runs after replay and no-op detection, so a retry never fails on its own result.
     if let Some(level) = command.patch.level {
         footprint = footprint.union(levels.assign(command.target_id, level)?.footprint)?;
-    }
-    // A09: a shape-input edit withdraws the approval of an approved mark in the same batch. The
-    // value is kept; a person approves the edited geometry again. The engine decision (which
-    // edits withdraw) stays in `beamcraft_engine::marks`; the call site adds the real value
-    // change (a patch that restates the current thickness changes no shape input) and the batch
-    // authoring.
-    let thickness_changes = match (&command.patch.thickness_mm, &head_element) {
-        (Some(mm), UpdatedElement::Plate(record)) => *mm != record.authored.thickness_mm,
-        _ => false,
-    };
-    let withdraws = thickness_changes && marks.shape_edit_withdraws(&command.target_id);
-    if withdraws {
-        footprint = footprint.union(Footprint::for_mark(command.target_id)?)?;
     }
     let schema = schema_identity()?;
     let (mut author, opened) = Author::open(
@@ -304,7 +308,7 @@ pub fn update_element(
             mm,
         });
     }
-    if patch_effect.placement {
+    if patch_effect.placement || patch_effect.orientation {
         let placement = match &next {
             UpdatedElement::Plate(r) => r.authored.placement,
             UpdatedElement::Member(r) => r.authored.placement,
@@ -320,18 +324,14 @@ pub fn update_element(
     }
     if let Some(level) = command.patch.level {
         changes.push(Change::Level {
-            id: id_text.clone(),
+            id: id_text,
             level: level.map(|l| l.to_string()),
         });
     }
-    if withdraws {
-        changes.push(Change::Mark {
-            id: id_text.clone(),
-            value: None,
-            status: Some(MarkStatus::Assigned),
-        });
-    }
-    if patch_effect.material || patch_effect.shape {
+    if patch_effect.material
+        || patch_effect.shape
+        || (patch_effect.orientation && matches!(next, UpdatedElement::Member(_)))
+    {
         changes.push(match &next {
             UpdatedElement::Plate(r) => {
                 mesh_change(&r.authored.id, &r.body.solid, &plate_record(r))?
