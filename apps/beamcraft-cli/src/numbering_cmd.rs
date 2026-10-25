@@ -49,7 +49,7 @@ pub fn handles(command: &OsString) -> bool {
 
 /// Runs the command and returns the JSON result and the process exit code.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
-    crate::plate_cmd::report(run(args))
+    crate::report::report(run(args))
 }
 
 const SETTINGS_OPTIONS: [&str; 6] = [
