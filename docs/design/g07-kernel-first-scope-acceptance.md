@@ -209,6 +209,10 @@ spread is shown where it matters. These numbers are what this machine did, not a
 Machine class: Intel Core i5-10400F (6 cores, 12 threads, 2.9 GHz base), 64 GB RAM, Windows 10
 Enterprise 10.0.19045, x86_64, rustc 1.96.0, release profile (thin LTO, one codegen unit).
 
+Note (2026-10-21): those release settings are now the `dist` profile, and `--release` builds with
+16 codegen units and no LTO. Reproduce these conditions with
+`cargo run --profile dist -p beamcraft-kernel --example g07_bench`.
+
 | Workload | Time | Outcome |
 |---|---|---|
 | Plate 1000 x 500 x 10, build and seal | 6.4 microseconds | sealed |
