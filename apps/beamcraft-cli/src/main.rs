@@ -3,6 +3,7 @@
 
 //! Headless CLI using the same native dispatcher as application callers.
 
+mod report;
 mod revision;
 
 use beamcraft_host::{
