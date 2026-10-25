@@ -20,7 +20,9 @@ use beamcraft_model::digest::Sha256;
 use beamcraft_ui::camera::Camera;
 use beamcraft_ui::render::{Gpu, Renderer, Uploaded, wait};
 use beamcraft_ui::scene::Scene;
-use beamcraft_ui::{Error, source};
+use beamcraft_ui::stats::Stats;
+use beamcraft_ui::tools::{ToolKind, Tools};
+use beamcraft_ui::{Error, command, source};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -46,10 +48,11 @@ fn gpu() -> Option<Gpu> {
 fn render(gpu: &Gpu, scene: &Scene) -> ([u8; 4], [u8; 4], usize) {
     let (target, extent) = scene.framing();
     let view = Camera::new(target, extent, 1.0).unwrap().view(1.0).unwrap();
-    let renderer = Renderer::new(&gpu.adapter, &gpu.device, 128, 128).unwrap();
-    let uploaded = Uploaded::new(&gpu.device, &gpu.queue, scene).unwrap();
+    let stats = Stats::default();
+    let renderer = Renderer::new(&gpu.adapter, &gpu.device, 128, 128, &stats).unwrap();
+    let uploaded = Uploaded::new(&gpu.device, &gpu.queue, scene, &stats).unwrap();
     let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
-    let index = renderer.draw(&gpu.device, &gpu.queue, &uploaded, view);
+    let index = renderer.draw(&gpu.device, &gpu.queue, &uploaded, view, &stats);
     wait(&gpu.device, index).unwrap();
     let (pixels, row) = renderer.readback(&gpu.device, &gpu.queue).unwrap();
     assert!(pollster::block_on(scope.pop()).is_none());
@@ -68,8 +71,10 @@ fn is_background([r, g, b, a]: [u8; 4]) -> bool {
     (4..=6).contains(&r) && (7..=9).contains(&g) && (12..=14).contains(&b) && a == 255
 }
 
+/// A pixel of the model: the logo's cream and grey-teal, lit, never darker than its unlit side
+/// (grey-teal at the 0.55 ambient term is about 66, 100, 108).
 fn is_lit([r, g, b, a]: [u8; 4]) -> bool {
-    r > 20 && g > 60 && b > 100 && r < g && g < b && a == 255
+    r > 50 && g > 80 && b > 80 && a == 255
 }
 
 #[test]
@@ -82,6 +87,67 @@ fn an_engine_snapshot_renders_lit_geometry_on_a_background() {
     let (corner, centre, _) = render(&gpu, &scene);
     assert!(is_background(corner), "background {corner:?}");
     assert!(is_lit(centre), "lit plate {centre:?}");
+}
+
+/// Draws `uploaded` framed on `scene` and returns the lit pixel count.
+fn lit_pixels(gpu: &Gpu, scene: &Scene, uploaded: &Uploaded) -> usize {
+    let (target, extent) = scene.framing();
+    let view = Camera::new(target, extent, 1.0).unwrap().view(1.0).unwrap();
+    let renderer = Renderer::new(&gpu.adapter, &gpu.device, 128, 128, &Stats::default()).unwrap();
+    let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let index = renderer.draw(&gpu.device, &gpu.queue, uploaded, view, &Stats::default());
+    wait(&gpu.device, index).unwrap();
+    let (pixels, row) = renderer.readback(&gpu.device, &gpu.queue).unwrap();
+    assert!(pollster::block_on(scope.pop()).is_none());
+    (0..128usize)
+        .flat_map(|y| (0..128usize).map(move |x| (x, y)))
+        .filter(|(x, y)| {
+            let at = y * row as usize + x * 4;
+            is_lit(pixels[at..at + 4].try_into().unwrap())
+        })
+        .count()
+}
+
+#[test]
+fn a_refresh_reuses_the_meshes_on_the_device_and_still_draws_them() {
+    let pin = ViewPin::new(Sha256::digest(b"revision").unwrap(), 1);
+    let first =
+        ViewSnapshot::build(pin, plate_scene(12, false).unwrap(), &Limits::default()).unwrap();
+    let before = Scene::from_snapshot(&first, Representation::Full).unwrap();
+    // The next revision adds four plates; its first twelve meshes are already on the device.
+    let pin = ViewPin::new(Sha256::digest(b"revision").unwrap(), 2);
+    let second =
+        ViewSnapshot::build(pin, plate_scene(16, false).unwrap(), &Limits::default()).unwrap();
+    let Some(gpu) = gpu() else { return };
+    let old = Uploaded::upload(&gpu.device, &gpu.queue, &before, None).unwrap();
+    let resident = old.resident();
+    let after = Scene::from_snapshot_reusing(&second, Representation::Full, &resident).unwrap();
+    let kept = after.meshes.iter().filter(|m| m.resident).count();
+    assert_eq!(kept, before.meshes.len());
+    assert!(
+        after
+            .meshes
+            .iter()
+            .filter(|m| m.resident)
+            .all(|m| m.vertices.is_empty())
+    );
+    let new = Uploaded::upload(&gpu.device, &gpu.queue, &after, Some(&old)).unwrap();
+    assert_eq!(new.shared_vertex_buffers(&old), kept);
+    // Only the new meshes' vertices and every instance buffer were sent again.
+    let full = Scene::from_snapshot(&second, Representation::Full).unwrap();
+    let sent: usize = full
+        .meshes
+        .iter()
+        .map(|m| if resident.contains(&m.digest) { 0 } else { m.vertices.len() } + m.instances.len())
+        .sum();
+    assert_eq!(new.bytes, sent as u64);
+    // The reused buffers draw the same image as a fresh upload of the whole scene.
+    let fresh = Uploaded::new(&gpu.device, &gpu.queue, &full, &Stats::default()).unwrap();
+    let lit = lit_pixels(&gpu, &full, &new);
+    assert!(lit > 0);
+    assert_eq!(lit, lit_pixels(&gpu, &full, &fresh));
+    // A resident mesh the device does not hold is refused, never drawn from nothing.
+    assert!(Uploaded::upload(&gpu.device, &gpu.queue, &after, None).is_err());
 }
 
 fn cli() -> Option<PathBuf> {
@@ -160,7 +226,8 @@ fn the_accepted_revision_of_a_store_is_the_viewport_scene() {
             "0,2000,0",
         ],
     );
-    let snapshot = source::load(&cli, &root).unwrap();
+    let stats = Stats::default();
+    let snapshot = source::load(&cli, &root, &stats).unwrap();
     // The viewport sees the engine's snapshot of the head: the same token plate-inspect reports.
     let inspect = run(&cli, &["plate-inspect", "--store", store]);
     assert!(inspect.contains(snapshot.token().as_str()));
@@ -180,7 +247,7 @@ fn the_accepted_revision_of_a_store_is_the_viewport_scene() {
     // A store without a revision is the typed empty state, not a failure.
     let empty = root.join("empty");
     std::fs::create_dir_all(&empty).unwrap();
-    match source::load(&cli, &empty) {
+    match source::load(&cli, &empty, &stats) {
         Err(Error::NoRevision) => (),
         other => panic!("expected the empty-store state, got {other:?}"),
     }
@@ -273,4 +340,126 @@ fn an_attached_reference_is_uploaded_and_renders_visible_pixels() {
         "the reference must cover visible pixels, got {lit}"
     );
     assert_eq!(render(&gpu, &moved), (corner, centre, lit));
+}
+
+/// Full readback of the framed scene, for pixel-by-pixel comparisons.
+fn render_pixels(gpu: &Gpu, scene: &Scene) -> Vec<u8> {
+    let (target, extent) = scene.framing();
+    let view = Camera::new(target, extent, 1.0).unwrap().view(1.0).unwrap();
+    let stats = Stats::default();
+    let renderer = Renderer::new(&gpu.adapter, &gpu.device, 128, 128, &stats).unwrap();
+    let uploaded = Uploaded::new(&gpu.device, &gpu.queue, scene, &stats).unwrap();
+    let index = renderer.draw(&gpu.device, &gpu.queue, &uploaded, view, &stats);
+    wait(&gpu.device, index).unwrap();
+    renderer.readback(&gpu.device, &gpu.queue).unwrap().0
+}
+
+/// A 45-degree sloped beam, created through the UI's own tool state machine, renders a
+/// silhouette that the roll moves (issue #134): the committed member carries `--roll` in its
+/// exact CLI argument list, the snapshot bounds match the unrolled analytic section placement,
+/// and the rolled render differs pixel by pixel from the unrolled one.
+#[test]
+fn an_oriented_beam_created_through_the_ui_renders_a_rotated_silhouette() {
+    let Some(cli) = cli() else { return };
+    let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("v03-tests-oriented");
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    let stats = Stats::default();
+    // Both stores go through the same path the Commit button runs: form -> preview -> commit.
+    let member_of = |store: &Path, roll: &str| {
+        let mut tools = Tools::default();
+        let definitions = command::definitions(&cli, store, &stats).unwrap();
+        tools.apply_definitions(Ok(definitions));
+        let digest = tools.definitions.profiles[0].digest.clone();
+        assert!(tools.definitions.profiles[0].rect_mm.is_some());
+        tools.active = ToolKind::Member;
+        tools.member.profile = Some(digest);
+        tools
+            .member
+            .set_endpoints([0.0, 0.0, 0.0], [4000.0, 0.0, 4000.0]);
+        tools.member.roll = roll.into();
+        let staged = tools.preview(store).unwrap().clone();
+        (tools, staged)
+    };
+    let store_of = |name: &str| {
+        let store = base.join(name);
+        std::fs::create_dir_all(&store).unwrap();
+        // The first revision comes from the pinned rectangle profile the forms list.
+        run(
+            &cli,
+            &[
+                "define-profile",
+                "--store",
+                store.to_str().unwrap(),
+                "--width",
+                "200",
+                "--height",
+                "300",
+            ],
+        );
+        store
+    };
+
+    let rolled_store = store_of("rolled");
+    let (mut tools, staged) = member_of(&rolled_store, "0.6");
+    assert!(
+        staged
+            .args
+            .windows(2)
+            .any(|w| w[0] == "--roll" && w[1] == "0.6"),
+        "{staged:?}"
+    );
+    let created =
+        command::commit(&cli, &tools.begin_commit(&rolled_store).unwrap(), &stats).unwrap();
+    assert!(!created.replayed);
+
+    let plain_store = store_of("plain");
+    let (mut tools, _) = member_of(&plain_store, "");
+    command::commit(&cli, &tools.begin_commit(&plain_store).unwrap(), &stats).unwrap();
+
+    // The unrolled section frame, by hand: width 200 along X_m = +Y, height 300 along
+    // Y_m = (-1,0,1)/sqrt(2), so the box reaches 100 in Y and 150/sqrt(2) outside the axis.
+    let plain = Scene::from_snapshot(
+        &source::load(&cli, &plain_store, &stats).unwrap(),
+        Representation::Full,
+    )
+    .unwrap();
+    let half = 150.0 / 2.0_f64.sqrt();
+    for (got, want) in plain
+        .min
+        .iter()
+        .zip([-2000.0 - half, -100.0, -2000.0 - half])
+    {
+        assert!((f64::from(*got) - want).abs() < 1.0, "min {got} != {want}");
+    }
+    for (got, want) in plain.max.iter().zip([2000.0 + half, 100.0, 2000.0 + half]) {
+        assert!((f64::from(*got) - want).abs() < 1.0, "max {got} != {want}");
+    }
+
+    let Some(gpu) = gpu() else {
+        let _ = std::fs::remove_dir_all(&base);
+        return;
+    };
+    let rolled = Scene::from_snapshot(
+        &source::load(&cli, &rolled_store, &stats).unwrap(),
+        Representation::Full,
+    )
+    .unwrap();
+    let plain_pixels = render_pixels(&gpu, &plain);
+    let rolled_pixels = render_pixels(&gpu, &rolled);
+    let lit = |pixels: &[u8]| {
+        pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|p| is_lit(**p))
+            .count()
+    };
+    assert!(lit(&plain_pixels) > 200, "plain beam must be visible");
+    assert!(lit(&rolled_pixels) > 200, "rolled beam must be visible");
+    assert_ne!(
+        plain_pixels, rolled_pixels,
+        "the roll must move the silhouette"
+    );
+    let _ = std::fs::remove_dir_all(&base);
 }

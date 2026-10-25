@@ -11,10 +11,11 @@
 //! profiles and materials stays in the engine, and its refusal (a stable code and a message) is
 //! shown as it is.
 
-use beamcraft_protocol::json::{self, Json};
-use beamcraft_protocol::message;
+use beamcraft_json::{Json, Limits};
 use std::fmt;
 use std::path::Path;
+
+use crate::props::RevisionStamp;
 
 /// The longest accepted text field: the engine counts label bytes, so the same limit is
 /// checked in bytes before anything runs (the fields' character limit stays a soft affordance).
@@ -110,6 +111,10 @@ pub struct MemberForm {
     pub material: Option<String>,
     /// `--name`, optional.
     pub name: String,
+    /// `--roll RAD`, optional (radians; empty means the flag is absent).
+    pub roll: String,
+    /// `--orientation-xyzw X,Y,Z,W`, optional (empty means the flag is absent).
+    pub orientation: String,
 }
 
 impl Default for MemberForm {
@@ -121,6 +126,8 @@ impl Default for MemberForm {
             profile: None,
             material: None,
             name: String::new(),
+            roll: String::new(),
+            orientation: String::new(),
         }
     }
 }
@@ -150,7 +157,7 @@ impl Prepared {
     }
 }
 
-pub(crate) fn number(field: &'static str, text: &str) -> Result<String, FormError> {
+fn number(field: &'static str, text: &str) -> Result<String, FormError> {
     let text = text.trim();
     if text.is_empty() || text.len() > 32 {
         return Err(FormError {
@@ -183,6 +190,22 @@ fn point(field: &'static str, parts: &[String; 3]) -> Result<String, FormError> 
     ))
 }
 
+/// `X,Y,Z,W`, each a finite decimal: the quaternion form of `--orientation-xyzw`.
+fn quaternion(field: &'static str, text: &str) -> Result<String, FormError> {
+    let text = text.trim();
+    let parts: Vec<&str> = text.split(',').map(str::trim).collect();
+    if parts.len() != 4 {
+        return Err(FormError {
+            field,
+            message: "enter four numbers X,Y,Z,W".into(),
+        });
+    }
+    for part in &parts {
+        number(field, part)?;
+    }
+    Ok(text.to_owned())
+}
+
 fn push_name(args: &mut Vec<String>, name: &str) -> Result<(), FormError> {
     let name = name.trim();
     // The engine admits labels by byte length; counting characters let a Cyrillic name pass
@@ -197,6 +220,13 @@ fn push_name(args: &mut Vec<String>, name: &str) -> Result<(), FormError> {
         args.extend(["--name".into(), name.to_owned()]);
     }
     Ok(())
+}
+
+/// Appends `--actor-id` when the window records an author.
+pub(crate) fn push_actor(args: &mut Vec<String>, actor: Option<&str>) {
+    if let Some(actor) = actor {
+        args.extend(["--actor-id".into(), actor.to_owned()]);
+    }
 }
 
 fn push_material(args: &mut Vec<String>, material: Option<&String>) {
@@ -252,10 +282,34 @@ impl MemberForm {
         ];
         push_name(&mut args, &self.name)?;
         push_material(&mut args, self.material.as_ref());
+        // An empty field keeps the flag absent, so the planar form builds exactly the command it
+        // always did; the engine owns every rule about rolls and quaternions.
+        let roll = self.roll.trim();
+        if !roll.is_empty() {
+            args.extend(["--roll".into(), number("Roll", roll)?]);
+        }
+        let orientation = self.orientation.trim();
+        if !orientation.is_empty() {
+            args.extend([
+                "--orientation-xyzw".into(),
+                quaternion("Orientation", orientation)?,
+            ]);
+        }
         Ok(Prepared {
             kind: ToolKind::Member,
             args,
         })
+    }
+
+    /// Fills both endpoints from resolved world points (the two clicks of the viewport
+    /// placement): the shortest decimal text that parses back exactly.
+    pub fn set_endpoints(&mut self, start: [f64; 3], end: [f64; 3]) {
+        let text = |p: [f64; 3]| {
+            let [x, y, z] = p.map(|v| format!("{v}"));
+            [x, y, z]
+        };
+        self.start = text(start);
+        self.end = text(end);
     }
 }
 
@@ -308,7 +362,7 @@ pub struct Created {
 }
 
 pub(crate) fn decode(stdout: &[u8]) -> Result<Json, ToolError> {
-    json::decode(stdout, &message::read_limits())
+    beamcraft_json::decode(stdout, &Limits::DEFAULT)
         .map_err(|_| ToolError::local("UNREADABLE_REPLY", "the CLI reply is not valid JSON"))
 }
 
@@ -317,16 +371,6 @@ pub(crate) fn text(json: &Json, key: &str) -> Option<String> {
         .ok()
         .and_then(|v| v.string().ok())
         .map(str::to_owned)
-}
-
-/// Decodes a reply and refuses it when the CLI reported a rejection: what every query and
-/// change parser reads next. Even a zero exit status cannot turn a rejection into a success.
-pub(crate) fn reply_json(exit_code: Option<i32>, stdout: &[u8]) -> Result<Json, ToolError> {
-    let reply = decode(stdout)?;
-    match rejection(&reply, exit_code) {
-        Some(error) => Err(error),
-        None => Ok(reply),
-    }
 }
 
 /// The refusal in a reply, if the reply is one.
@@ -406,21 +450,60 @@ pub fn parse_created(
 }
 
 /// One definition of the store that a form can choose.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Choice {
     /// The definition's content digest (what the CLI takes).
     pub digest: String,
     /// A short label for the list.
     pub label: String,
+    /// Width and height of a rectangle section, when the definition is one: the display-only
+    /// ghost preview is drawn for these and only these (the engine builds the real shape).
+    pub rect_mm: Option<[f64; 2]>,
+}
+
+/// The two-click 3D placement of the member tool (issue #134): the first resolved point arms
+/// the start, the second fills the form's endpoints. The points are resolved outside (the
+/// engine's pick on the viewed snapshot, else the ground plane); this only remembers them.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BeamPlace {
+    start: Option<[f64; 3]>,
+}
+
+impl BeamPlace {
+    /// The armed start point, if any.
+    pub fn start(&self) -> Option<[f64; 3]> {
+        self.start
+    }
+
+    /// Records a click. The first arms the start; the second returns the `(start, end)` pair.
+    pub fn click(&mut self, point: [f64; 3]) -> Option<([f64; 3], [f64; 3])> {
+        match self.start {
+            None => {
+                self.start = Some(point);
+                None
+            }
+            Some(start) => {
+                self.start = None;
+                Some((start, point))
+            }
+        }
+    }
+
+    /// Drops the armed start (Esc, a mode change, a commit).
+    pub fn reset(&mut self) {
+        self.start = None;
+    }
 }
 
 /// The profile and material definitions of the accepted revision.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Definitions {
     /// Profiles, for `--profile-digest`.
     pub profiles: Vec<Choice>,
     /// Materials, for `--material-digest`.
     pub materials: Vec<Choice>,
+    /// The revision the listing was read from: the store's head at that moment.
+    pub head: Option<RevisionStamp>,
 }
 
 /// The arguments of the command that lists the definitions of `store`.
@@ -455,7 +538,13 @@ pub fn parse_definitions(exit_code: Option<i32>, stdout: &[u8]) -> Result<Defini
         return Err(error);
     }
     let unreadable = || ToolError::local("UNREADABLE_REPLY", "the CLI reply lacks a field");
-    let mut out = Definitions::default();
+    let mut out = Definitions {
+        head: reply
+            .get("revision")
+            .ok()
+            .and_then(RevisionStamp::from_json),
+        ..Definitions::default()
+    };
     for definition in reply
         .get("definitions")
         .and_then(Json::array)
@@ -465,27 +554,42 @@ pub fn parse_definitions(exit_code: Option<i32>, stdout: &[u8]) -> Result<Defini
     {
         let digest = text(definition, "digest").ok_or_else(unreadable)?;
         let kind = text(definition, "kind").ok_or_else(unreadable)?;
+        // The readable name the engine stores with the definition (A07.2) leads the label;
+        // definitions published before it fall back to the grade or designation they have.
+        let display = text(definition, "display_name").filter(|n| !n.is_empty());
         if kind == "material" {
-            let grade = text(definition, "grade").unwrap_or_else(|| "material".into());
+            let grade = display
+                .or_else(|| text(definition, "grade"))
+                .unwrap_or_else(|| "material".into());
             let density = dimension(definition, "density_kg_m3")
                 .map(|d| format!(" {d} kg/m3"))
                 .unwrap_or_default();
             out.materials.push(Choice {
                 label: format!("{grade}{density} ({})", short(&digest)),
                 digest,
+                rect_mm: None,
             });
         } else {
-            let name = text(definition, "designation").unwrap_or_else(|| kind.clone());
-            let size = match (
+            let name = display
+                .or_else(|| text(definition, "designation"))
+                .unwrap_or_else(|| kind.clone());
+            let (width, height) = (
                 dimension(definition, "width_mm"),
                 dimension(definition, "height_mm"),
-            ) {
+            );
+            let size = match (&width, &height) {
                 (Some(w), Some(h)) => format!(" {w} x {h} mm"),
                 _ => String::new(),
             };
+            let rect_mm = width
+                .as_deref()
+                .and_then(|w| w.parse::<f64>().ok())
+                .zip(height.as_deref().and_then(|h| h.parse::<f64>().ok()))
+                .map(|(w, h)| [w, h]);
             out.profiles.push(Choice {
                 label: format!("{name}{size} ({})", short(&digest)),
                 digest,
+                rect_mm,
             });
         }
     }
@@ -504,6 +608,8 @@ pub struct Tools {
     pub member: MemberForm,
     /// The store's definitions, as of the last refresh.
     pub definitions: Definitions,
+    /// The author recorded as `--actor-id` of every create command, when the window has one.
+    pub actor: Option<String>,
     staged: Option<Prepared>,
     busy: bool,
 }
@@ -515,6 +621,7 @@ impl Default for Tools {
             plate: PlateForm::default(),
             member: MemberForm::default(),
             definitions: Definitions::default(),
+            actor: None,
             staged: None,
             busy: false,
         }
@@ -550,10 +657,12 @@ impl Tools {
     }
     /// The command of the selected form.
     pub fn prepare(&self, store: &Path) -> Result<Prepared, FormError> {
-        match self.active {
+        let mut prepared = match self.active {
             ToolKind::Plate => self.plate.prepare(store),
             ToolKind::Member => self.member.prepare(store),
-        }
+        }?;
+        push_actor(&mut prepared.args, self.actor.as_deref());
+        Ok(prepared)
     }
 
     /// Stages the selected form's command for review; nothing is run or written.
@@ -687,6 +796,76 @@ mod tests {
     }
 
     #[test]
+    fn roll_and_orientation_extend_the_member_command_only_when_filled() {
+        let mut form = MemberForm {
+            profile: Some(DIGEST.into()),
+            ..MemberForm::default()
+        };
+        // The planar default keeps today's exact argument list: no roll, no orientation.
+        let args = form.prepare(store()).unwrap().args;
+        assert!(!args.contains(&"--roll".to_owned()));
+        assert!(!args.contains(&"--orientation-xyzw".to_owned()));
+        form.roll = " 0.7853981633974483 ".into();
+        form.orientation = "0,0,0.7071067811865476,0.7071067811865476".into();
+        let args = form.prepare(store()).unwrap().args;
+        assert_eq!(
+            args.get(args.len() - 4..),
+            Some(
+                &[
+                    "--roll".to_owned(),
+                    "0.7853981633974483".into(),
+                    "--orientation-xyzw".to_owned(),
+                    "0,0,0.7071067811865476,0.7071067811865476".into()
+                ][..]
+            )
+        );
+        let error_of = |roll: &str, orientation: &str| {
+            MemberForm {
+                profile: Some(DIGEST.into()),
+                roll: roll.into(),
+                orientation: orientation.into(),
+                ..MemberForm::default()
+            }
+            .prepare(store())
+            .unwrap_err()
+        };
+        assert_eq!(error_of("x", "").field, "Roll");
+        assert_eq!(error_of("", "0,0,1").field, "Orientation");
+        assert_eq!(error_of("", "0,0,1,2,3").field, "Orientation");
+    }
+
+    #[test]
+    fn the_viewport_clicks_fill_the_endpoints_and_the_place_state_remembers_the_start() {
+        let mut place = BeamPlace::default();
+        assert_eq!(place.start(), None);
+        assert_eq!(place.click([0.0, 0.0, 0.0]), None);
+        assert_eq!(place.start(), Some([0.0, 0.0, 0.0]));
+        assert_eq!(
+            place.click([4000.0, 0.0, 4000.0]),
+            Some(([0.0, 0.0, 0.0], [4000.0, 0.0, 4000.0]))
+        );
+        assert_eq!(place.start(), None);
+        place.reset();
+        assert_eq!(place.start(), None);
+
+        let mut form = MemberForm::default();
+        form.set_endpoints([0.0, -0.25, 1e6], [4000.0, 0.0, 4000.0]);
+        assert_eq!(
+            form.start,
+            ["0".to_owned(), "-0.25".to_owned(), "1000000".to_owned()]
+        );
+        assert_eq!(
+            form.end,
+            ["4000".to_owned(), "0".to_owned(), "4000".to_owned()]
+        );
+        form.profile = Some(DIGEST.into());
+        let args = form.prepare(store()).unwrap().args;
+        let at = |flag: &str| args.iter().position(|a| a == flag).unwrap() + 1;
+        assert_eq!(args[at("--start")], "0,-0.25,1000000");
+        assert_eq!(args[at("--end")], "4000,0,4000");
+    }
+
+    #[test]
     fn bad_numbers_are_refused_before_anything_runs() {
         for bad in ["", "  ", "abc", "1,5", "NaN", "inf", "-inf", "1e999"] {
             let mut form = plate();
@@ -725,10 +904,12 @@ mod tests {
         let choice = |digest: &str| Choice {
             digest: digest.into(),
             label: digest.into(),
+            rect_mm: None,
         };
         let listed = Definitions {
             profiles: vec![choice("p")],
             materials: vec![choice("m")],
+            ..Definitions::default()
         };
         let mut tools = Tools::default();
         tools.member.profile = Some("p".into());
@@ -762,7 +943,7 @@ mod tests {
         let shown = prepared.argument_list();
         assert_eq!(shown.lines().count(), prepared.args.len());
         let array = format!("[{}]", shown.replace('\n', ","));
-        let decoded = json::decode(array.as_bytes(), &message::read_limits()).unwrap();
+        let decoded = beamcraft_json::decode(array.as_bytes(), &Limits::DEFAULT).unwrap();
         let back: Vec<&str> = decoded
             .array()
             .unwrap()
@@ -800,7 +981,7 @@ mod tests {
 
     #[test]
     fn a_refusal_keeps_the_code_and_message() {
-        let reply = r#"{"code":"INVALID_ARGUMENT","diagnostics":[],"message":"dimension is not positive","observed_context":null,"outcome":"rejected","transport_code":null}"#;
+        let reply = r#"{"code":"INVALID_ARGUMENT","diagnostics":[],"message":"dimension is not positive","observed_context":null,"outcome":"rejected"}"#;
         let error = parse_created(ToolKind::Plate, Some(2), reply.as_bytes()).unwrap_err();
         assert_eq!(error.code, "INVALID_ARGUMENT");
         assert_eq!(error.message, "dimension is not positive");
@@ -843,14 +1024,33 @@ mod tests {
 
     #[test]
     fn definitions_split_into_profiles_and_materials() {
+        // A07.2 definitions carry a stored display name; it leads the label.
         let reply = format!(
-            r#"{{"definition_count":2,"definitions":[{{"density_kg_m3":7850,"digest":"{m}","grade":"S355","kind":"material","used_by":[]}},{{"digest":"{DIGEST}","height_mm":300,"kind":"rectangle","width_mm":200,"used_by":[]}}],"outcome":"definitions"}}"#,
+            r#"{{"definition_count":2,"definitions":[{{"density_kg_m3":7850,"digest":"{m}","display_name":"Structural steel","grade":"S355","kind":"material","used_by":[]}},{{"digest":"{DIGEST}","display_name":"Roof beams","height_mm":300,"kind":"rectangle","width_mm":200,"used_by":[]}}],"outcome":"definitions"}}"#,
             m = "36281e26dd4affda6b39d884fe8a8bb04deb71684215741c188dac0806710ba9"
         );
         let definitions = parse_definitions(Some(0), reply.as_bytes()).unwrap();
         assert_eq!(definitions.materials.len(), 1);
         assert_eq!(definitions.profiles.len(), 1);
         assert_eq!(definitions.profiles[0].digest, DIGEST);
+        // The rectangle dimensions also feed the display-only ghost preview.
+        assert_eq!(definitions.profiles[0].rect_mm, Some([200.0, 300.0]));
+        assert_eq!(definitions.materials[0].rect_mm, None);
+        assert_eq!(
+            definitions.profiles[0].label,
+            "Roof beams 200 x 300 mm (5d660ddd)"
+        );
+        assert_eq!(
+            definitions.materials[0].label,
+            "Structural steel 7850 kg/m3 (36281e26)"
+        );
+        // Definitions published before A07.2 have no display name: the designation or grade
+        // and the kind still label them.
+        let unnamed = format!(
+            r#"{{"definition_count":2,"definitions":[{{"density_kg_m3":7850,"digest":"{m}","display_name":null,"grade":"S355","kind":"material","used_by":[]}},{{"digest":"{DIGEST}","display_name":null,"height_mm":300,"kind":"rectangle","width_mm":200,"used_by":[]}}],"outcome":"definitions"}}"#,
+            m = "36281e26dd4affda6b39d884fe8a8bb04deb71684215741c188dac0806710ba9"
+        );
+        let definitions = parse_definitions(Some(0), unnamed.as_bytes()).unwrap();
         assert_eq!(
             definitions.profiles[0].label,
             "rectangle 200 x 300 mm (5d660ddd)"
@@ -863,6 +1063,14 @@ mod tests {
         .unwrap_err();
         assert_eq!(error.code, "NOT_FOUND");
         assert_eq!(definitions_args(store()), ["definitions", "--store", "S"]);
+        // No revision object in the reply: the head is unknown, not invented.
+        assert_eq!(definitions.head, None);
+        let with_head = r#"{"definitions":[],"outcome":"definitions","revision":{"revision_id":"r9","sequence":"9","manifest_digest":"abc"}}"#;
+        let head = parse_definitions(Some(0), with_head.as_bytes())
+            .unwrap()
+            .head
+            .unwrap();
+        assert_eq!((head.sequence, head.manifest_digest.as_str()), (9, "abc"));
     }
 
     #[test]

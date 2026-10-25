@@ -7,19 +7,26 @@
 //! (primary drag orbits, Shift + primary drag pans, pinch zooms). In both the wheel zooms toward
 //! the cursor, F fits and R reloads.
 
+mod workbench;
+
 use crate::camera::{Camera, View};
 use crate::command::Selected;
-use crate::edit::{EditKind, Edited, Editor, Epoch, Target, ndc_of, ray_through};
+use crate::edit::{
+    EditKind, Edited, Editor, Epoch, Target, ground_point, ndc_of, pick_point_in, ray_through,
+};
 use crate::perf::{Observed, PerfRun, Phase as PerfPhase, RefreshTiming, Request};
 use crate::props::{Properties, State};
 use crate::publish::{Phase, Published, Publisher, Status};
 use crate::render::{Renderer, Uploaded};
-use crate::scene::SceneSummary;
+use crate::scene::{GhostMesh, SceneSummary};
 use crate::source::{Known, Refreshed, Reloaded};
 use crate::stats::Stats;
-use crate::tools::{Choice, Created, MAX_TEXT, MemberKind, ToolError, ToolKind, Tools};
+use crate::tools::{BeamPlace, Choice, Created, MAX_TEXT, ToolError, ToolKind, Tools};
 use crate::{Error, check_font, command, json_string, source};
 use beamcraft_engine::ViewSnapshot;
+use beamcraft_engine::element::ElementId;
+use beamcraft_engine::member::{AuthoredMember, ProfileInfo};
+use beamcraft_model::command::{MemberKind as ModelMemberKind, Placement};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -47,6 +54,10 @@ pub struct Source {
     /// The author identity (UUIDv7) recorded as the actor of the window's edits; `None` lets the
     /// CLI make one per command.
     pub actor: Option<String>,
+    /// The environment chosen at start, shown in the header.
+    pub environment: Option<String>,
+    /// The author's name, shown in the header.
+    pub author: Option<String>,
 }
 
 /// The scene on screen: the pinned snapshot, its buffers on the device and what the window
@@ -81,6 +92,13 @@ pub struct App {
     reload_queued: bool,
     /// The result of the last Preview, Cancel or Commit.
     tool_note: Option<Result<String, String>>,
+    /// The two-click 3D placement of the member tool (issue #134).
+    beam: BeamPlace,
+    /// Whether viewport clicks place the beam instead of selecting.
+    beam_mode: bool,
+    /// The millimetre-quantized hover end the current ghost was built for: the buffers rebuild
+    /// only when the preview actually moves.
+    ghost_end: Option<[i64; 3]>,
     /// Why the last definitions refresh failed; kept apart from `tool_note` so neither hides the other.
     refresh_error: Option<String>,
     /// The scene framing the camera was last fitted to (centre, extent, aspect): a reload that
@@ -115,6 +133,15 @@ pub struct App {
     selects_finished: u64,
     /// Worker timings of the refreshes consumed while a perf run is active.
     refresh_timings: Vec<RefreshTiming>,
+    /// The tool chosen on the ribbon; the inspector shows what it needs.
+    bench: workbench::Bench,
+    /// Whether the Details window is open.
+    details: bool,
+    /// A zoom (true: in) or fit asked for by the view buttons, applied in the next frame.
+    pending_zoom: Option<bool>,
+    pending_fit: bool,
+    logo: Option<egui::TextureHandle>,
+    logo_tried: bool,
 }
 
 /// Records a scene swap in the perf counters: the CPU display bytes and the snapshot mesh bytes
@@ -372,6 +399,15 @@ fn needs_refit(
 
 /// The volume part of a commit note: cubic millimetres below a thousandth of a cubic metre,
 /// cubic metres from there, so a small plate does not read as `0.000 m3`.
+/// One resolved world point, for notes and hints.
+struct PointText([f64; 3]);
+impl std::fmt::Display for PointText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let [x, y, z] = self.0;
+        write!(f, "({x:.1}, {y:.1}, {z:.1}) mm")
+    }
+}
+
 fn volume_note(volume_mm3: f64) -> String {
     if volume_mm3 < 1e6 {
         format!(", volume {volume_mm3:.0} mm3")
@@ -482,42 +518,14 @@ pub fn icon() -> egui::IconData {
     }
 }
 
-/// The window/application icon. Windows and Linux packages carry a PNG alongside the program;
-/// macOS continues to use the bundle resource for its Dock icon. The coded [`icon`] remains the
-/// fallback when no artwork can be read.
+/// The window/application icon: the official logo on a rounded tile, the same picture as the
+/// macOS ICNS, the Windows ICO and the Linux launcher icon (`assets/icons/beamcraft-icon.png`
+/// next to the program or in the source tree; in the macOS bundle the grid-margin variant
+/// `Contents/Resources/beamcraft-icon.png`, which eframe also applies to the Dock), averaged down to 256 x 256. When it
+/// cannot be read, the coded [`icon`] is used, so no asset bytes are compiled into the binary.
 pub fn load_icon() -> egui::IconData {
-    {
-        let mut candidates = Vec::new();
-        if let Ok(exe) = std::env::current_exe()
-            && let Some(dir) = exe.parent()
-        {
-            if cfg!(target_os = "macos") {
-                candidates.push(dir.join("../Resources/beamcraft-icon.png"));
-            }
-            candidates.push(dir.join("assets/icons/beamcraft-icon.png"));
-        }
-        let artwork = if cfg!(target_os = "macos") {
-            "../../assets/icons/beamcraft-macos-1024.png"
-        } else {
-            "../../assets/icons/beamcraft-linux-1024.png"
-        };
-        candidates.push(Path::new(env!("CARGO_MANIFEST_DIR")).join(artwork));
-        if let Some(png) = candidates.iter().find_map(|path| std::fs::read(path).ok())
-            && let Ok(source) = image::load_from_memory(&png)
-        {
-            let rgba = source
-                .resize_exact(256, 256, image::imageops::FilterType::Lanczos3)
-                .into_rgba8();
-            return egui::IconData {
-                rgba: rgba.into_raw(),
-                width: 256,
-                height: 256,
-            };
-        }
-    }
-
     const SIDE: u32 = 256;
-    match crate::theme::logo_rgba(SIDE as usize) {
+    match crate::theme::app_icon_rgba(SIDE as usize) {
         Some(rgba) => egui::IconData {
             rgba,
             width: SIDE,
@@ -609,6 +617,9 @@ impl App {
             last: Instant::now(),
             fps: 0.0,
             tools: Tools::default(),
+            beam: BeamPlace::default(),
+            beam_mode: false,
+            ghost_end: None,
             job: None,
             reload_job: None,
             reload_queued: false,
@@ -635,6 +646,12 @@ impl App {
             last_commit_ok: true,
             selects_finished: 0,
             refresh_timings: Vec::new(),
+            bench: workbench::Bench::default(),
+            details: false,
+            pending_zoom: None,
+            pending_fit: false,
+            logo: None,
+            logo_tried: false,
         };
         app.tools.actor.clone_from(&app.source.actor);
         app.editor.actor.clone_from(&app.source.actor);
@@ -798,20 +815,6 @@ impl App {
             );
         self.stats.resize_ns.add_duration(started.elapsed());
         Ok(())
-    }
-
-    fn panel(&mut self, ui: &mut egui::Ui) {
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            self.info(ui);
-            ui.separator();
-            self.tools_panel(ui);
-            ui.separator();
-            self.edit_panel(ui);
-            ui.separator();
-            self.props_panel(ui);
-            ui.separator();
-            self.publish_panel(ui);
-        });
     }
 
     fn target(&self) -> Target<'_> {
@@ -1218,7 +1221,6 @@ impl App {
     }
 
     fn props_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Properties");
         let Some(id) = self.props.selected().map(str::to_owned) else {
             ui.label("Select a plate or straight member to see its properties.");
             return;
@@ -1245,13 +1247,14 @@ impl App {
                 details.kind,
                 details.revision.label()
             ));
-            egui::Grid::new("props-readonly").show(ui, |ui| {
-                for (label, value) in details.read_only_rows() {
-                    ui.label(label);
+            // One wrapped row per value: the inspector has a fixed width and values can be long.
+            let muted = crate::theme::Palette::current(ui).muted;
+            for (label, value) in details.read_only_rows() {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(egui::RichText::new(label).color(muted));
                     ui.label(value);
-                    ui.end_row();
-                }
-            });
+                });
+            }
             // Borrowed beside the form (disjoint fields), never copied: the panel is laid out in
             // every frame the window draws.
             let materials = &self.tools.definitions.materials;
@@ -1350,7 +1353,6 @@ impl App {
     }
 
     fn publish_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Publish");
         match self.publisher.target() {
             Err(why) => {
                 ui.label(why);
@@ -1428,7 +1430,6 @@ impl App {
     }
 
     fn edit_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Edit");
         ui.label("Click an element in the view to select it. Esc clears the selection.");
         match self.editor.selected() {
             Some(info) => {
@@ -1442,29 +1443,20 @@ impl App {
             }
         }
         let selected = self.editor.selected().is_some();
-        let mut action = self.editor.action();
-        ui.add_enabled_ui(selected, |ui| {
-            ui.horizontal(|ui| {
-                ui.selectable_value(&mut action, EditKind::Move, "Move");
-                ui.selectable_value(&mut action, EditKind::Copy, "Copy");
-                ui.selectable_value(&mut action, EditKind::Delete, "Delete");
-            });
-            match action {
-                EditKind::Move => {
-                    ui.label("New position in mm (absolute):");
-                    point_fields(ui, &mut self.editor.move_to);
-                }
-                EditKind::Copy => {
-                    ui.label("Offset of the copy in mm:");
-                    point_fields(ui, &mut self.editor.copy_offset);
-                }
-                _ => {
-                    ui.label("Deletes the element (refused while another element links to it).");
-                }
+        let action = self.editor.action();
+        ui.add_enabled_ui(selected, |ui| match action {
+            EditKind::Move => {
+                ui.label("New position in mm (absolute):");
+                point_fields(ui, &mut self.editor.move_to);
+            }
+            EditKind::Copy => {
+                ui.label("Offset of the copy in mm:");
+                point_fields(ui, &mut self.editor.copy_offset);
+            }
+            _ => {
+                ui.label("Deletes the element (refused while another element links to it).");
             }
         });
-        // Another action needs its own preview.
-        self.editor.set_action(action);
         let busy = self.editor.busy();
         let target = self.target();
         let can_commit = self.editor.can_commit(target);
@@ -1512,27 +1504,6 @@ impl App {
                 ui.colored_label(RED, "The parameters changed: preview again.");
             }
         }
-        let has_workspace = self.source.workspace.is_some();
-        let (mut undo, mut redo) = (false, false);
-        ui.horizontal(|ui| {
-            undo = ui
-                .add_enabled(has_workspace && !busy, egui::Button::new("Undo"))
-                .clicked();
-            redo = ui
-                .add_enabled(has_workspace && !busy, egui::Button::new("Redo"))
-                .clicked();
-        });
-        if undo {
-            self.start_edit(Some(EditKind::Undo));
-        }
-        if redo {
-            self.start_edit(Some(EditKind::Redo));
-        }
-        if !has_workspace {
-            ui.label(
-                "Undo and redo need a personal workspace: open the window with --workspace DIR.",
-            );
-        }
         if busy {
             ui.label("Running…");
         }
@@ -1560,6 +1531,12 @@ impl App {
         let Some(prepared) = self.tools.begin_commit(&self.source.store) else {
             return;
         };
+        // A commit ends the placement: the armed start and the ghost belong to no command.
+        self.beam_mode = false;
+        self.beam.reset();
+        self.ghost_end = None;
+        self.renderer
+            .set_ghost(&self.state.device, &self.state.queue, None);
         let cli = self.source.cli.clone();
         let (tx, rx) = std::sync::mpsc::channel();
         self.job = Some(rx);
@@ -1736,16 +1713,172 @@ impl App {
         self.perf = Some((run, report));
     }
 
+    /// Turns viewport placement of the member on or off (issue #134).
+    fn toggle_place(&mut self) {
+        self.beam_mode = !self.beam_mode;
+        self.beam.reset();
+        self.ghost_end = None;
+        self.renderer
+            .set_ghost(&self.state.device, &self.state.queue, None);
+        if self.beam_mode {
+            self.tool_note = Some(Ok(
+                "Placing: the next two clicks in the view fill Start and End; nothing is written until Commit."
+                    .into(),
+            ));
+        }
+    }
+
+    /// One click of the placement: the engine's front-face point on the viewed snapshot, else
+    /// the ground plane. The first click arms the start, the second fills the form's endpoints.
+    /// The query is bounded by the snapshot caps and runs only while placing.
+    fn place_beam(&mut self, ray: crate::edit::Ray) {
+        let snapshot = self.loaded.as_ref().map(|l| Arc::clone(&l.snapshot));
+        let resolved = match snapshot.map(|s| pick_point_in(&s, &ray)) {
+            Some(Ok(resolved)) => resolved
+                .map(|(point, _)| point)
+                .or_else(|| ground_point(&ray)),
+            Some(Err(e)) => {
+                self.tool_note = Some(Err(e.to_string()));
+                return;
+            }
+            None => ground_point(&ray),
+        };
+        let Some(point) = resolved else {
+            self.tool_note = Some(Err(
+                "the click has no world point: aim at the model or the ground plane".into(),
+            ));
+            return;
+        };
+        match self.beam.click(point) {
+            None => {
+                self.ghost_end = None;
+                self.tool_note = Some(Ok(format!(
+                    "Start {} armed; the ghost follows the pointer.",
+                    PointText(point)
+                )));
+            }
+            Some((start, end)) => {
+                self.tools.member.set_endpoints(start, end);
+                self.beam_mode = false;
+                self.ghost_end = None;
+                self.renderer
+                    .set_ghost(&self.state.device, &self.state.queue, None);
+                self.tool_note = Some(Ok(
+                    "Endpoints placed: Preview stages the create-member command; the engine builds the shape at Commit.".into(),
+                ));
+            }
+        }
+    }
+
+    /// Rebuilds the ghost preview for the pointer's hover point: the engine's own body mesh for
+    /// start -> hover, where the pointer ray meets the plane through the start parallel to the
+    /// view. Display only: an axis the engine refuses simply draws no ghost, and Commit still
+    /// asks the engine.
+    fn update_ghost(&mut self, view: &View, ndc: [f32; 2]) {
+        let Some(start) = self.beam.start() else {
+            return;
+        };
+        let origin_mm = self
+            .loaded
+            .as_ref()
+            .map_or([0.0; 3], |l| l.summary.origin_mm);
+        let Some(ray) = ray_through(view, ndc, origin_mm) else {
+            return;
+        };
+        // The view plane through the start: every pixel off the horizon maps to a point.
+        let n = [
+            f64::from(view.back[0]),
+            f64::from(view.back[1]),
+            f64::from(view.back[2]),
+        ];
+        let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        let denom = dot(ray.direction, n);
+        if denom.abs() < 1e-9 {
+            return;
+        }
+        let t = dot(
+            [
+                start[0] - ray.origin[0],
+                start[1] - ray.origin[1],
+                start[2] - ray.origin[2],
+            ],
+            n,
+        ) / denom;
+        if !(t.is_finite() && t > 0.0) {
+            return;
+        }
+        let end = [
+            ray.origin[0] + t * ray.direction[0],
+            ray.origin[1] + t * ray.direction[1],
+            ray.origin[2] + t * ray.direction[2],
+        ];
+        let key = end.map(|v| v.round() as i64);
+        if self.ghost_end == Some(key) {
+            return;
+        }
+        self.ghost_end = Some(key);
+        let ghost = self.build_ghost(start, end, origin_mm);
+        self.renderer
+            .set_ghost(&self.state.device, &self.state.queue, ghost.as_ref());
+    }
+
+    /// The engine's body mesh for the staged axis, when a rectangle profile is chosen and the
+    /// engine accepts the inputs; `None` draws no ghost.
+    fn build_ghost(
+        &self,
+        start: [f64; 3],
+        end: [f64; 3],
+        origin_mm: [f64; 3],
+    ) -> Option<GhostMesh> {
+        let rect = self.profile_rect()?;
+        let authored = AuthoredMember {
+            id: ElementId::parse("01990000-0000-7000-8000-00000000e347").ok()?,
+            kind: match self.tools.member.kind {
+                crate::tools::MemberKind::Beam => ModelMemberKind::Beam,
+                crate::tools::MemberKind::Column => ModelMemberKind::Column,
+            },
+            name: "ghost".into(),
+            axis_points_mm: [start, end],
+            profile: self.tools.member.profile.as_deref()?.parse().ok()?,
+            roll_rad: self.tools.member.roll.trim().parse::<f64>().ok(),
+            placement: Placement::IDENTITY,
+            material: None,
+            cut: None,
+        };
+        let body = beamcraft_engine::member::evaluate_member(
+            &authored,
+            ProfileInfo::Rectangle {
+                width_mm: rect[0],
+                height_mm: rect[1],
+                declared_area_mm2: None,
+            },
+        )
+        .ok()?;
+        Some(GhostMesh::of(
+            body.solid.vertices(),
+            body.solid.triangles(),
+            origin_mm,
+        ))
+    }
+
+    /// Width and height of the selected rectangle profile, for the ghost.
+    fn profile_rect(&self) -> Option<[f64; 2]> {
+        let digest = self.tools.member.profile.as_ref()?;
+        self.tools
+            .definitions
+            .profiles
+            .iter()
+            .find(|c| &c.digest == digest)
+            .and_then(|c| c.rect_mm)
+    }
+
     fn tools_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Create");
-        ui.horizontal(|ui| {
-            ui.selectable_value(&mut self.tools.active, ToolKind::Plate, "Plate");
-            ui.selectable_value(&mut self.tools.active, ToolKind::Member, "Member");
-        });
         ui.label("Dimensions in mm.");
         // Borrowed beside the form (disjoint fields), never copied: the panel is laid out in every
         // frame the window draws.
         let definitions = &self.tools.definitions;
+        let placing = self.beam_mode;
+        let mut place_clicked = false;
         match self.tools.active {
             ToolKind::Plate => {
                 let form = &mut self.tools.plate;
@@ -1764,10 +1897,6 @@ impl App {
             }
             ToolKind::Member => {
                 let form = &mut self.tools.member;
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut form.kind, MemberKind::Beam, "Beam");
-                    ui.selectable_value(&mut form.kind, MemberKind::Column, "Column");
-                });
                 for (label, point) in [("Start", &mut form.start), ("End", &mut form.end)] {
                     ui.horizontal(|ui| {
                         ui.label(label);
@@ -1798,10 +1927,30 @@ impl App {
                     &definitions.materials,
                     false,
                 );
+                // Optional orientation (issue #134): an empty field keeps the flag absent, so
+                // the planar command stays exactly what it always was; the rules are the
+                // engine's, the form only forwards text.
+                field(ui, "Roll (rad)", &mut form.roll, 80.0);
+                field(ui, "Orientation X,Y,Z,W", &mut form.orientation, 140.0);
+                place_clicked = ui.selectable_label(placing, "Place in view").clicked();
+                if placing {
+                    match self.beam.start() {
+                        Some(start) => ui.label(format!(
+                            "Placing: click the end point in the view (start {}).",
+                            PointText(start)
+                        )),
+                        None => ui.label(
+                            "Placing: click the start point in the view. A click lands on a face; in empty space it lands on the ground plane z = 0.",
+                        ),
+                    };
+                }
                 if definitions.profiles.is_empty() {
                     ui.label("The store has no profile definition yet (beamcraft define-profile).");
                 }
             }
+        }
+        if place_clicked {
+            self.toggle_place();
         }
         let busy = self.tools.busy();
         let store = &self.source.store;
@@ -1877,7 +2026,6 @@ impl App {
     }
 
     fn info(&mut self, ui: &mut egui::Ui) {
-        ui.heading("BeamCraft");
         ui.label(format!("{:.0} FPS", self.fps));
         ui.label(&self.adapter);
         ui.label(format!("{}x MSAA", self.renderer.samples));
@@ -1975,11 +2123,16 @@ impl eframe::App for App {
                 self.invalidate_select();
                 self.editor.deselect();
                 self.props.clear();
+                self.set_bench(workbench::Bench::Select);
             }
         }
         if reload {
             self.reload();
         }
+        let fit = fit || std::mem::take(&mut self.pending_fit);
+        let pending_zoom = self.pending_zoom.take();
+        let zoom_in = zoom_in || pending_zoom == Some(true);
+        let zoom_out = zoom_out || pending_zoom == Some(false);
         if fit && let Some(l) = &self.loaded {
             let (target, extent) = l.summary.framing();
             if let Err(e) = self.camera.fit(target, extent, self.aspect()) {
@@ -1987,12 +2140,15 @@ impl eframe::App for App {
             }
         }
         if self.text {
-            // A fixed width: the 3D view must not shift sideways when a tab or a chosen
-            // definition name is wider, and the coordinate rows must fit at the default size.
-            egui::Panel::left("info")
-                .exact_size(320.0)
-                .show(ui, |ui| self.panel(ui));
-            self.publish_dialog(&ui.ctx().clone());
+            // Header, ribbon and status bar first, then the inspector at a fixed width: the 3D
+            // view must not shift sideways when a chosen definition name is wider.
+            self.header(ui);
+            self.ribbon(ui);
+            self.status_bar(ui);
+            self.inspector(ui);
+            let ctx = ui.ctx().clone();
+            self.details_window(&ctx);
+            self.publish_dialog(&ctx);
         }
         egui::CentralPanel::default().show(ui, |ui| {
             let size = ui.available_size();
@@ -2060,6 +2216,14 @@ impl eframe::App for App {
                 .and_then(|()| self.camera.view(aspect))
             {
                 Ok(view) => {
+                    // A pale blueprint behind the model in the light theme, a deep one in the dark.
+                    let rgb = if ui.ctx().theme() == egui::Theme::Dark {
+                        [0x0B, 0x2A, 0x33]
+                    } else {
+                        [0xE3, 0xF5, 0xFA]
+                    };
+                    let [r, g, b] = rgb.map(|c: u8| f64::from(c) / 255.0);
+                    self.renderer.background = wgpu::Color { r, g, b, a: 1.0 };
                     if let Some(l) = &self.loaded {
                         self.renderer.draw(
                             &self.state.device,
@@ -2087,11 +2251,30 @@ impl eframe::App for App {
                             picked = Some(ray);
                         }
                     }
+                    // The ghost preview follows the pointer on the plane through the armed
+                    // start, parallel to the view; the committed endpoint comes from the click.
+                    if self.beam_mode
+                        && let Some(pos) = response.hover_pos()
+                        && let Some(ndc) = ndc_of(
+                            [pos.x, pos.y],
+                            [response.rect.min.x, response.rect.min.y],
+                            [response.rect.width(), response.rect.height()],
+                        )
+                    {
+                        self.update_ghost(&view, ndc);
+                    }
                 }
                 Err(e) => self.error = Some(e.to_string()),
             }
             if let Some(ray) = picked {
-                self.start_select(ray);
+                if self.beam_mode {
+                    self.place_beam(ray);
+                } else {
+                    self.start_select(ray);
+                }
+            }
+            if self.text {
+                self.view_controls(ui, response.rect);
             }
         });
         ui.ctx().request_repaint();
@@ -2149,6 +2332,8 @@ mod tests {
             published: None,
             samples: None,
             actor: None,
+            environment: None,
+            author: None,
         };
         let stats = Arc::new(crate::stats::Stats::default());
         Some(App::new(&cc, source, stats).unwrap())
@@ -2269,10 +2454,10 @@ mod tests {
         assert_eq!(volume_note(1.025e9), ", volume 1.025 m3");
     }
 
-    /// A development build finds the official logo in the source tree; the coded fallback is a
-    /// complete icon too, never an empty one.
+    /// A development build finds the application icon in the source tree; the coded fallback is
+    /// a complete icon too, never an empty one.
     #[test]
-    fn the_icon_loader_uses_the_logo_and_has_a_complete_fallback() {
+    fn the_icon_loader_uses_the_app_icon_and_has_a_complete_fallback() {
         let icon = load_icon();
         assert_eq!((icon.width, icon.height), (256, 256));
         assert_eq!(icon.rgba.len(), 256 * 256 * 4);
