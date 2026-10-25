@@ -37,8 +37,6 @@ eframe = { version = "=0.37.0", default-features = false, features = ["wgpu_no_d
 winit = { version = "=0.30.13", default-features = false, features = ["wayland-dlopen"] }
 wgpu = { version = "=30.0.1", default-features = false, features = ["std", "wgsl", "dx12", "vulkan", "metal"] }
 pollster = "=1.0.1"
-# Decode and resize the runtime application icon; PNG only.
-image = { version = "=0.25.10", default-features = false, features = ["png"] }
 # The parser epaint 0.37.0 uses at font init; validates Inter before egui can panic on it.
 # Keep it on epaint's exact version, or the check can accept a file epaint then rejects.
 skrifa = "=0.44.0"
