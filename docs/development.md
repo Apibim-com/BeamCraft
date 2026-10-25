@@ -174,6 +174,12 @@ When CI looks stuck, first check whether the Windows job is queued rather than r
 for a burst across the account's Actions runs, cancel superseded runs and re-run the starved job
 once the burst subsides.
 
+The scheduled `CI runner queue alert` workflow checks queued jobs every 15 minutes. If any job
+has waited for at least 15 minutes, it opens one issue labelled `ci-queue` with the affected refs,
+jobs and run links. While that issue remains open, later checks do not create duplicates. Close it
+after the queue drains; a later incident then opens a new alert. The workflow uses the repository's
+`GITHUB_TOKEN` with Actions read and Issues write permissions only.
+
 ## Releases
 
 Push a tag such as `v0.1.0`, or run `.github/workflows/release.yml` by hand. It builds unsigned
