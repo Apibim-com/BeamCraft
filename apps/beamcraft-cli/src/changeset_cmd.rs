@@ -28,6 +28,7 @@ type Run<T> = Result<T, PlateError>;
 
 fn invalid(message: &'static str) -> PlateError {
     PlateError {
+        rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
     }
@@ -40,6 +41,7 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
 
 fn store_at(path: &Path, message: &'static str) -> Run<RevisionStore> {
     let blobs = BlobStore::new(path).map_err(|e| PlateError {
+        rule_id: None,
         code: e.code(),
         message,
     })?;
@@ -113,6 +115,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         let mut source = IdSource::system();
         let mut fresh = || {
             source.next_id().map_err(|_| PlateError {
+                rule_id: None,
                 code: ErrorCode::BackendUnavailable,
                 message: "no identity could be generated",
             })
