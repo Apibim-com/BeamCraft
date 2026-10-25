@@ -3,7 +3,7 @@
 
 //! Help owned by the plate command family.
 
-pub(super) const COMMANDS: &[&str] = &["create-plate", "plate-inspect"];
+pub(super) const COMMANDS: &[&str] = &["create-plate", "inspect-elements"];
 
 pub(super) const HELP: &str = concat!(
     "Plate (P01, committed USD revision): create-plate --store ROOT (--width MM --length MM | ",
@@ -16,9 +16,9 @@ pub(super) const HELP: &str = concat!(
     "evaluated, extruded along their ordered normal; holes on framed rectangles are ",
     "unsupported; clockwise, self-crossing or touching outlines are INVALID_ARGUMENT, nothing ",
     "is reordered or repaired; the origin rectangle written as a contour is the same box; ",
-    "plate-inspect lists contour_points_mm and outline rectangle|contour, and width and ",
+    "inspect-elements lists contour_points_mm and outline rectangle|contour, and width and ",
     "length are the bounding-box extents of a contour; a retry of the same --op-id needs the ",
-    "same --new-id and arguments and is replayed); plate-inspect --store ROOT [--element ",
+    "same --new-id and arguments and is replayed); inspect-elements --store ROOT [--element ",
     "UUID] (verified head revision, plates, meshes, snapshot; --element lists only that ",
     "element, none when the head does not hold it, names it as element_filter and keeps the ",
     "counts of the whole revision)",

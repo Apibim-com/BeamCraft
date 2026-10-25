@@ -4,7 +4,7 @@
 //! Help owned by the drawing command family.
 
 pub(super) const PREVIEW: &str = concat!(
-    "Drawing: drawing-preview --store ROOT --id MEMBER_UUID --drawing-id UUID --view-id UUID ",
+    "Drawing: preview-drawing --store ROOT --id MEMBER_UUID --drawing-id UUID --view-id UUID ",
     "--dimension-id UUID --anchor-a FEATURE_ID --anchor-b FEATURE_ID [--plane ",
     "front|top|right] [--scale 100] [--origin X,Y] [--offset MM] [--decimals 0..3] [--name ",
     "TEXT] [--intent-out NEW_FILE.usda] (model is read-only; projected model-mm dimension; ",
@@ -12,10 +12,10 @@ pub(super) const PREVIEW: &str = concat!(
 );
 
 pub(super) const DOCUMENTS: &str = concat!(
-    "Drawing documents (D03): drawing-create --store MODEL_ROOT --document-dir NEW_DIR (with ",
-    "drawing/view/dimension/member/anchor IDs, op/revision/actor IDs); drawing-refresh ",
-    "--store MODEL_ROOT --document-dir DIR --expected-head UUID (same IDs); drawing-publish ",
+    "Drawing documents (D03): create-drawing --store MODEL_ROOT --document-dir NEW_DIR (with ",
+    "drawing/view/dimension/member/anchor IDs, op/revision/actor IDs); refresh-drawing ",
+    "--store MODEL_ROOT --document-dir DIR --expected-head UUID (same IDs); publish-drawing ",
     "--document-dir DIR --expected-head UUID --op-id UUID --revision-id UUID --actor-id UUID ",
-    "--version-id UUID; drawing-inspect --document-dir DIR [--model-store ROOT]; ",
-    "drawing-versions --document-dir DIR.",
+    "--version-id UUID; inspect-drawing --document-dir DIR [--model-store ROOT]; ",
+    "inspect-drawing-versions --document-dir DIR.",
 );

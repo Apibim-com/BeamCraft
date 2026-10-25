@@ -3,10 +3,10 @@
 
 //! Help owned by the bom command family.
 
-pub(super) const COMMANDS: &[&str] = &["bom-export"];
+pub(super) const COMMANDS: &[&str] = &["export-bom"];
 
 pub(super) const HELP: &str = concat!(
-    "BOM (E03): bom-export --store ROOT --out ELEMENTS_CSV [--summary SUMMARY_CSV] (the ",
+    "BOM (E03): export-bom --store ROOT --out ELEMENTS_CSV [--summary SUMMARY_CSV] (the ",
     "verified head's bill of materials as two CSV files: one row per plate, beam and column ",
     "and one summary group per kind, profile and material; the mark is the element's approved ",
     "numbering mark (A09), or the element id for an element without one; a mass without a ",

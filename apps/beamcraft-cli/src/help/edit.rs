@@ -14,6 +14,6 @@ pub(super) const HELP: &str = concat!(
     "thickness change the mesh, a move (--translation, absolute, rotation kept) only the ",
     "placement without rebuilding the body; --orientation-xyzw replaces the stored placement ",
     "quaternion (absolute; none resets to the identity) and is validated like on ",
-    "create-member, rebuilding a member's rotated body; plate-inspect reports stored ",
+    "create-member, rebuilding a member's rotated body; inspect-elements reports stored ",
     "quantities as current, stale or missing)",
 );

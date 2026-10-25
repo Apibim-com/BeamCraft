@@ -14,7 +14,7 @@ pub(super) const HELP: &str = concat!(
     "update-element --level UUID (one level per plate, beam or column; DANGLING_RELATIONSHIP ",
     "for an unknown level) or --level none; delete-element refuses a level that elements use ",
     "(DEPENDENCY_CONFLICT); copy-element keeps the source's level. Project (D1): the first ",
-    "revision records its --project-id (or a generated one) in the root layer; plate-inspect ",
-    "reports it as project_id_record; a later command naming another --project-id is ",
-    "INVALID_ARGUMENT",
+    "revision records its --project-id (or a generated one) in the root layer; ",
+    "inspect-elements reports it as project_id_record; a later command naming another ",
+    "--project-id is INVALID_ARGUMENT",
 );

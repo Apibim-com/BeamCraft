@@ -51,7 +51,7 @@ fn main() -> std::process::ExitCode {
         help::print();
         return std::process::ExitCode::SUCCESS;
     }
-    if args.first().is_some_and(|c| c == "view-export") {
+    if args.first().is_some_and(|c| c == "export-view") {
         match view_export::execute(&args) {
             view_export::Output::Raw(bytes) => {
                 use std::io::Write;
@@ -89,7 +89,7 @@ fn main() -> std::process::ExitCode {
     };
     let (json, exit) = if args
         .first()
-        .is_some_and(|c| c == "view-snapshot" || c == "view-changes")
+        .is_some_and(|c| c == "snapshot-view" || c == "inspect-view-changes")
     {
         view::execute(&args)
     } else if args.first().is_some_and(history_cmd::handles) {
@@ -98,15 +98,15 @@ fn main() -> std::process::ExitCode {
         reference_cmd::execute(&args)
     } else if args.first().is_some_and(|c| {
         c == "create-assembly"
-            || c == "assembly-attach"
-            || c == "assembly-detach"
+            || c == "attach-to-assembly"
+            || c == "detach-from-assembly"
             || c == "assemblies"
     }) {
         assembly_cmd::execute(&args)
     } else if args.first().is_some_and(|c| c == "rebase-workspace") {
         rebase_cmd::execute(&args)
     } else if args.first().is_some_and(|c| {
-        c == "changeset-create" || c == "changeset-inspect" || c == "changeset-apply"
+        c == "create-changeset" || c == "inspect-changeset" || c == "apply-changeset"
     }) {
         changeset_cmd::execute(&args)
     } else if args.first().is_some_and(coordinator_cmd::handles) {
@@ -131,7 +131,7 @@ fn main() -> std::process::ExitCode {
         numbering_cmd::execute(&args)
     } else if args.first().is_some_and(|c| {
         c == "create-plate"
-            || c == "plate-inspect"
+            || c == "inspect-elements"
             || c == "define-material"
             || c == "define-profile"
             || c == "definitions"
@@ -139,12 +139,12 @@ fn main() -> std::process::ExitCode {
             || c == "update-element"
             || c == "delete-element"
             || c == "copy-element"
-            || c == "workspace-create"
-            || c == "workspace-status"
-            || c == "workspace-publish"
-            || c == "workspace-undo"
-            || c == "workspace-redo"
-            || c == "workspace-history"
+            || c == "create-workspace"
+            || c == "inspect-workspace"
+            || c == "publish-workspace"
+            || c == "undo-workspace"
+            || c == "redo-workspace"
+            || c == "inspect-workspace-history"
     }) {
         plate_cmd::execute(&args)
     } else {
@@ -255,7 +255,7 @@ fn run(args: Vec<std::ffi::OsString>) -> Result<Json, (HostError, Json)> {
         control.remaining()?;
         let store = BlobStore::new(get("--store")?).map_err(|e| HostError::logical(e.code()))?;
         let parse_digest = |s: &str| s.parse::<ContentDigest>().map_err(|_| invalid());
-        if command == "blob-put" {
+        if command == "put-blob" {
             let bytes = read_file(get("--file")?, 32 * 1024 * 1024)?;
             let (digest, _) = store
                 .publish(&bytes)
@@ -266,7 +266,7 @@ fn run(args: Vec<std::ffi::OsString>) -> Result<Json, (HostError, Json)> {
                 ("digest", Json::text(digest.to_string())),
             ]));
         }
-        if command == "blob-verify" {
+        if command == "verify-blob" {
             let digest = parse_digest(get("--digest")?)?;
             store
                 .verify(&digest)
@@ -277,23 +277,23 @@ fn run(args: Vec<std::ffi::OsString>) -> Result<Json, (HostError, Json)> {
                 ("digest", Json::text(digest.to_string())),
             ]));
         }
-        if command == "revision-commit" {
+        if command == "commit-revision" {
             // The deadline and cancellation are checked before and during the commit (not
             // after the root switch: a timeout would hide a committed revision). A retry with
             // the same op id returns the revision.
             return revision::commit(&store, &options, &control);
         }
-        if command == "revision-open" {
+        if command == "open-revision" {
             let result = revision::open(&store)?;
             control.remaining()?;
             return Ok(result);
         }
         // Recovery and outcome queries only restate what the root proves; a deadline after the
         // work would hide a result that is already durable, so none is checked afterwards.
-        if command == "revision-recover" {
+        if command == "recover-revision" {
             return revision::recover(&store, &options);
         }
-        if command == "revision-outcome" {
+        if command == "inspect-revision-outcome" {
             return revision::outcome(&store, &options);
         }
         Err(HostError::logical(ErrorCode::UnsupportedCommand))

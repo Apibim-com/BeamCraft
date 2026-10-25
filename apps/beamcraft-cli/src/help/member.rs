@@ -17,5 +17,5 @@ pub(super) const HELP: &str = concat!(
     "validated: a non-normalized, zero or non-finite quaternion is INVALID_ARGUMENT; the ",
     "section frame is rolled by --roll about the axis first and then mapped by the ",
     "quaternion, so both compose; rigid placement leaves the local mesh and quantities ",
-    "unchanged; plate-inspect lists plates and members)",
+    "unchanged; inspect-elements lists plates and members)",
 );

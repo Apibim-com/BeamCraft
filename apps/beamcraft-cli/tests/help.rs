@@ -34,6 +34,6 @@ fn help_aliases_share_a_unique_documented_command_inventory() {
     }
     assert!(seen.contains("create-plate"));
     assert!(seen.contains("create-member"));
-    assert!(seen.contains("workspace-publish"));
+    assert!(seen.contains("publish-workspace"));
     assert!(details.ends_with('\n'));
 }
