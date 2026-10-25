@@ -3,6 +3,8 @@
 
 //! Help aliases and the command inventory are a real-binary CLI contract.
 
+#![allow(clippy::expect_used)]
+
 use std::collections::BTreeSet;
 use std::process::Command;
 
