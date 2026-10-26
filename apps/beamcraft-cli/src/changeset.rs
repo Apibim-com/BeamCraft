@@ -361,6 +361,7 @@ fn footprint(base: &[Prim], head: &[Prim]) -> Result<Vec<Dependency>, PlateError
     }
     if set.len() > MAX_FOOTPRINT_ENTRIES {
         return Err(PlateError {
+            rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "the conservative changeset footprint exceeds 4096 entries",
         });
@@ -390,6 +391,7 @@ pub fn create_changeset(
     }
     if head_sequence <= meta.synced_sequence {
         return Err(PlateError {
+            rule_id: None,
             code: ErrorCode::InvalidArgument,
             message: "the workspace has nothing to send",
         });
@@ -397,6 +399,7 @@ pub fn create_changeset(
     let unsent = head_sequence - meta.synced_sequence;
     if usize::try_from(unsent).map_or(true, |n| n > MAX_OPERATIONS) {
         return Err(PlateError {
+            rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "too many unsent revisions for one changeset",
         });
@@ -465,6 +468,7 @@ pub fn create_changeset(
     };
     let bytes = changeset.encode()?;
     let (digest, _) = workspace.blobs().publish(&bytes).map_err(|e| PlateError {
+        rule_id: None,
         code: e.code(),
         message: "changeset blob could not be stored",
     })?;
@@ -480,6 +484,7 @@ pub fn read_changeset(
         .blobs()
         .read_capped(digest, MAX_CHANGESET_BYTES)
         .map_err(|e| PlateError {
+            rule_id: None,
             code: e.code(),
             message: "changeset blob is not available",
         })?;
@@ -589,6 +594,7 @@ pub fn apply_changeset(
             return Ok(replayed(workspace, dir, &changeset, &info, digest));
         }
         return Err(PlateError {
+            rule_id: None,
             code: ErrorCode::BaseRevisionMismatch,
             message: "the published head is not the changeset's base",
         });
@@ -658,6 +664,7 @@ pub fn apply_changeset(
             published.blobs().read(&layer.digest)
         }
         .map_err(|e| PlateError {
+            rule_id: None,
             code: e.code(),
             message: "a changeset layer is not available",
         })?;
@@ -674,6 +681,7 @@ pub fn apply_changeset(
             .blobs()
             .read(&asset.digest)
             .map_err(|e| PlateError {
+                rule_id: None,
                 code: e.code(),
                 message: "a changeset asset is not available",
             })?;
@@ -681,6 +689,7 @@ pub fn apply_changeset(
             return Err(integrity("a changeset asset has another size"));
         }
         published.blobs().publish(&bytes).map_err(|e| PlateError {
+            rule_id: None,
             code: e.code(),
             message: "a changeset asset could not be stored",
         })?;
@@ -689,6 +698,7 @@ pub fn apply_changeset(
         .workspace_generation()
         .checked_add(1)
         .ok_or(PlateError {
+            rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "generation exhausted",
         })?;

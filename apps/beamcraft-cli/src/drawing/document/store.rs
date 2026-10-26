@@ -78,6 +78,7 @@ pub struct DocumentWrite<'a> {
 
 fn bad(message: &'static str) -> PlateError {
     PlateError {
+        rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
     }
@@ -265,12 +266,14 @@ impl DocumentStore {
         for sequence in 1..=through {
             if std::time::Instant::now() >= control.deadline {
                 return Err(PlateError {
+                    rule_id: None,
                     code: ErrorCode::Cancelled,
                     message: "document version history verification deadline expired",
                 });
             }
             let revision = self.revisions.open_at(sequence).map_err(|error| match error {
                 beamcraft_host::revision::RevisionError::Compacted => PlateError {
+                    rule_id: None,
                     code: ErrorCode::DependencyUnavailable,
                     message: "complete document history is required to verify version uniqueness",
                 },
@@ -279,6 +282,7 @@ impl DocumentStore {
             let previous = self.verify_revision(revision)?;
             if previous.version == Some(version) {
                 return Err(PlateError {
+                    rule_id: None,
                     code: ErrorCode::DuplicateId,
                     message: "document version id was already published",
                 });
@@ -396,6 +400,7 @@ impl DocumentStore {
     ) -> Result<(CommitOutcome, DocumentRevision), PlateError> {
         let _maintenance =
             StoreLease::shared(self.revisions.blobs()).map_err(|error| PlateError {
+                rule_id: None,
                 code: error.code(),
                 message: "document maintenance guard is unavailable",
             })?;
@@ -426,6 +431,7 @@ impl DocumentStore {
         if let Some(previous) = replay {
             if previous.request != request {
                 return Err(PlateError {
+                    rule_id: None,
                     code: ErrorCode::OpIdReuse,
                     message: "document operation id was already used for another request",
                 });
@@ -436,6 +442,7 @@ impl DocumentStore {
             ExpectedBase::Initial => None,
             ExpectedBase::Revision(id) => {
                 let sequence = self.revisions.sequence_of(id)?.ok_or(PlateError {
+                    rule_id: None,
                     code: ErrorCode::BaseRevisionMismatch,
                     message: "expected document base is unavailable",
                 })?;
@@ -482,6 +489,7 @@ impl DocumentStore {
                 .blobs()
                 .publish(&asset.bytes)
                 .map_err(|error| PlateError {
+                    rule_id: None,
                     code: error.code(),
                     message: "document layer could not be stored",
                 })?;
@@ -529,6 +537,7 @@ impl DocumentStore {
             }
             Outcome::Aborted { .. } | Outcome::NotFound => Ok(None),
             Outcome::Unknown => Err(PlateError {
+                rule_id: None,
                 code: ErrorCode::OutcomeUnknown,
                 message: "document operation outcome is unknown",
             }),

@@ -123,6 +123,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         .get("--store")
         .ok_or_else(|| invalid("--store is required"))?;
     let blobs = BlobStore::new(store_root).map_err(|e| PlateError {
+        rule_id: None,
         code: e.code(),
         message: "store root is not usable",
     })?;
@@ -141,6 +142,7 @@ fn ids(options: &BTreeMap<&str, &str>) -> Run<Ids> {
     let mut source = IdSource::system();
     let mut fresh = || {
         source.next_id().map_err(|_| PlateError {
+            rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
         })
@@ -211,6 +213,7 @@ fn attach_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
         None => {
             let mut source = IdSource::system();
             ElementId::from_uuid(source.next_id().map_err(|_| PlateError {
+                rule_id: None,
                 code: ErrorCode::BackendUnavailable,
                 message: "no identity could be generated",
             })?)
