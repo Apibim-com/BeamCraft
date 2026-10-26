@@ -803,7 +803,7 @@ fn copying_connected_assembly_parts_keeps_only_the_level_replays_and_supports_un
     for source in [&plate, &beam] {
         f.assign(source, STOREY);
         f.ok(
-            "assembly-attach",
+            "attach-to-assembly",
             &["--id", source, "--assembly-id", ASSEMBLY],
         );
     }
@@ -834,9 +834,9 @@ fn copying_connected_assembly_parts_keeps_only_the_level_replays_and_supports_un
         .to_str()
         .unwrap()
         .to_owned();
-    f.ok("workspace-create", &["--workspace-dir", &draft]);
+    f.ok("create-workspace", &["--workspace-dir", &draft]);
     let run = |command: &str, args: &[&str]| {
-        let (code, json) = if matches!(command, "workspace-undo" | "workspace-redo") {
+        let (code, json) = if matches!(command, "undo-workspace" | "redo-workspace") {
             let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
                 .arg(command)
                 .args(args)
@@ -868,7 +868,7 @@ fn copying_connected_assembly_parts_keeps_only_the_level_replays_and_supports_un
     ] {
         let args = ["--id", source, "--new-id", copy_id, "--op-id", op];
         run("copy-element", &args);
-        let inspected = run("plate-inspect", &[]);
+        let inspected = run("inspect-elements", &[]);
         assert_eq!(level_of(&inspected, key, copy_id).as_deref(), Some(STOREY));
         assert_eq!(
             element(&inspected, key, source),
@@ -884,16 +884,16 @@ fn copying_connected_assembly_parts_keeps_only_the_level_replays_and_supports_un
             text(&run("copy-element", &args), "outcome"),
             "element_copy_replayed"
         );
-        run("workspace-undo", &["--workspace-dir", &draft]);
-        let undone = run("plate-inspect", &[]);
+        run("undo-workspace", &["--workspace-dir", &draft]);
+        let undone = run("inspect-elements", &[]);
         assert!(
             !list(&undone, key)
                 .iter()
                 .any(|e| text(e, "element_id") == copy_id)
         );
         assert_eq!(run("assemblies", &[]), before_assembly);
-        run("workspace-redo", &["--workspace-dir", &draft]);
-        let redone = run("plate-inspect", &[]);
+        run("redo-workspace", &["--workspace-dir", &draft]);
+        let redone = run("inspect-elements", &[]);
         assert_eq!(list(&redone, key), list(&inspected, key));
     }
 }
