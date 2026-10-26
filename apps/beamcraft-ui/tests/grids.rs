@@ -97,12 +97,14 @@ fn inserted_grid_matches_the_cli_and_is_displayed_from_one_pinned_read() {
     let f = Fixture::new();
     let store = f.root.join("ui");
     let other = f.root.join("script");
-    let form = GridForm {
+    let mut form = GridForm {
         name: "Frame grid".into(),
         origin: ["1250".into(), "-750".into()],
         rotation: "20".into(),
         ..GridForm::default()
     };
+    form.u.labels = "1 2 3 4 5 6 7 8 9".into();
+    form.v.labels = "A B C D E F".into();
     // Filling and validating the form is read-only; cancelling before insertion writes nothing.
     let before = f.head(&store);
     let args = form.prepare(&store, Some(ACTOR)).unwrap();
@@ -122,6 +124,10 @@ fn inserted_grid_matches_the_cli_and_is_displayed_from_one_pinned_read() {
         "0 2*4000",
         "--v-expression",
         "0 2*5000",
+        "--u-labels",
+        "1 2 3 4 5 6 7 8 9",
+        "--v-labels",
+        "A B C D E F",
         "--actor-id",
         ACTOR,
     ]);
@@ -143,6 +149,14 @@ fn inserted_grid_matches_the_cli_and_is_displayed_from_one_pinned_read() {
             .array()
             .unwrap();
         assert_eq!(left.len(), 3);
+        let expected = if family == "u" {
+            ["1", "2", "3"]
+        } else {
+            ["A", "B", "C"]
+        };
+        for (line, label) in left.iter().zip(expected) {
+            assert_eq!(line.get("label").unwrap().string().unwrap(), label);
+        }
         for (a, b) in left.iter().zip(right) {
             for key in ["label", "start_mm", "end_mm"] {
                 assert_eq!(a.get(key), b.get(key));
@@ -188,17 +202,17 @@ fn invalid_input_and_engine_refusals_publish_no_grid() {
         assert!(form.prepare(&store, None).is_err());
     }
     form = GridForm::default();
-    form.u.labels = "1 2 3 4 5 6 7 8 9".into();
+    form.u.labels = "1 2".into();
     let mismatch = form.prepare(&store, None).unwrap_err();
     assert_eq!(mismatch.field, "U labels");
     assert!(mismatch.message.contains("3 axes"));
-    assert!(mismatch.message.contains("9 labels"));
+    assert!(mismatch.message.contains("2 labels"));
     form.u.labels = "1, 2, 3".into();
-    form.v.labels = "A B C D E F".into();
+    form.v.labels = "A B".into();
     let mismatch = form.prepare(&store, None).unwrap_err();
     assert_eq!(mismatch.field, "V labels");
     assert!(mismatch.message.contains("3 axes"));
-    assert!(mismatch.message.contains("6 labels"));
+    assert!(mismatch.message.contains("2 labels"));
     form.v.labels = "A B C".into();
     assert!(form.prepare(&store, None).is_ok());
     form.v.labels = "A A C".into();

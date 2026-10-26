@@ -43,7 +43,10 @@ fn family(ui: &mut Ui, title: &str, form: &mut FamilyForm, hint: &str) {
                 .small(),
             );
             field(ui, "Labels", &mut form.labels, hint);
-            ui.label(egui::RichText::new("Leave blank for automatic labels.").small());
+            ui.label(
+                egui::RichText::new("Leave blank for automatic labels. Extra labels are unused.")
+                    .small(),
+            );
             egui::CollapsingHeader::new("Line limits").show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {

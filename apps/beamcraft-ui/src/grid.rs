@@ -136,7 +136,7 @@ impl GridForm {
                                 .filter(|word| !word.is_empty())
                                 .count();
                             format!(
-                                "Coordinates define {} axes, but you entered {count} labels. Enter one label per axis, or leave Labels blank for automatic labels.",
+                                "Coordinates define {} axes, but only {count} labels were entered. Add the missing labels, or leave Labels blank for automatic labels.",
                                 positions.len()
                             )
                         }

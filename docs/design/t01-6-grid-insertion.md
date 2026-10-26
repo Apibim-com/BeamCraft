@@ -20,6 +20,12 @@ use the engine defaults. The form uses the shared model parsers; all engineering
 remains with the engine. Creating is one atomic revision. Cancel runs no command. A refusal
 leaves the model unchanged and is shown as a readable message.
 
+Explicit label input may contain more words than coordinates produce lines. The shared model
+parser uses only the first label per existing line; unused trailing words are ignored by both the
+UI and CLI before building a canonical command. Too few explicit labels are refused; blank input
+in the form still selects automatic labels. This does not add axes or retain unused words in the
+model. The accepted labels retain their validation and grid-wide uniqueness requirements.
+
 The creation and cancel buttons stay below the scrollable fields. Grid visibility is session
 view state; its switch never authors a revision. Levels remain separate from plan grids.
 

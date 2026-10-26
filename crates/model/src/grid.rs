@@ -373,13 +373,16 @@ pub enum GridLabelError {
     Invalid,
     /// The generated list or a label exceeds a contract cap.
     Limit,
-    /// The label count disagrees with the number of lines.
+    /// There are fewer labels than lines.
     Count,
     /// A label occurs more than once in the grid.
     Duplicate,
 }
 
-/// Validate a whitespace or comma separated explicit label list.
+/// Read one whitespace or comma separated label per line, ignoring unused trailing labels.
+///
+/// The accepted prefix is validated and contains exactly `expected` labels. Too few labels are
+/// refused; unused trailing words do not become model data and are not validated as axis labels.
 pub fn parse_grid_labels(text: &str, expected: usize) -> Result<Vec<String>, GridLabelError> {
     if text.len() > 16_384 || expected > MAX_GRID_LINES_PER_FAMILY * 2 {
         return Err(GridLabelError::Limit);
@@ -387,6 +390,7 @@ pub fn parse_grid_labels(text: &str, expected: usize) -> Result<Vec<String>, Gri
     let labels: Vec<String> = text
         .split(|c: char| c.is_ascii_whitespace() || c == ',')
         .filter(|word| !word.is_empty())
+        .take(expected)
         .map(str::to_owned)
         .collect();
     if labels.len() != expected {
@@ -610,6 +614,19 @@ mod tests {
         );
         assert!(parse_grid_labels("A a", 2).is_ok());
         assert!(parse_grid_labels("A A", 2).is_err());
+        assert_eq!(
+            parse_grid_labels("A, B C C ? unused", 3).unwrap(),
+            ["A", "B", "C"]
+        );
+        assert_eq!(parse_grid_labels("A B", 3), Err(GridLabelError::Count));
+        assert_eq!(
+            parse_grid_labels("A A C D", 3),
+            Err(GridLabelError::Duplicate)
+        );
+        assert_eq!(
+            parse_grid_labels(&"A ".repeat(8193), 1),
+            Err(GridLabelError::Limit)
+        );
         assert_eq!(
             generate_grid_labels("alpha", 4, None, None, GridLabelOrder::Ascending).unwrap(),
             ["A", "B", "C", "D"]
