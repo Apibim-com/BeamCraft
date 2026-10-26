@@ -175,6 +175,10 @@ pub fn update(
         target,
         group: Group::ShapeInputs,
     }];
+    writes.push(Entry {
+        target,
+        group: Group::Derived,
+    });
     if request.name.is_some() {
         writes.push(Entry {
             target,
