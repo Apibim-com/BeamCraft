@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! The layout of the model window (design v1): a brand header with the project and Publish, a
-//! ribbon of tools, the 3D view with its view and zoom controls, an inspector on the right that
+//! tabbed tool ribbon, an unobstructed 3D view, an inspector on the right that
 //! shows what the chosen tool needs, and a status bar. The panels it shows run the same commands
 //! as before; tools that do not exist yet are shown disabled, with a tooltip saying so.
 
@@ -92,6 +92,42 @@ impl RibbonTab {
 /// Why a ribbon tool is disabled, shown as its tooltip.
 const LATER: &str = "Not available yet";
 
+/// A text tab joined to the ribbon by an underline, without a button frame.
+fn command_tab(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
+    let palette = Palette::current(ui);
+    let (rect, response) = ui.allocate_exact_size(vec2(96.0, 38.0), Sense::click());
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Tab, true, selected, label));
+    if selected || response.hovered() || response.has_focus() {
+        ui.painter().rect_filled(
+            rect,
+            0,
+            if selected {
+                palette.surface
+            } else {
+                palette.select
+            },
+        );
+    }
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        label,
+        egui::FontId::new(13.0, theme::bold_family()),
+        if selected {
+            palette.text
+        } else {
+            palette.muted
+        },
+    );
+    if selected {
+        ui.painter().line_segment(
+            [rect.left_bottom(), rect.right_bottom()],
+            Stroke::new(3.0, BRAND),
+        );
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
 /// One ribbon button: an icon over a label. Active tools are brand cyan with an ink border.
 fn tool_button(
     ui: &mut Ui,
@@ -106,7 +142,16 @@ fn tool_button(
     } else {
         Sense::hover()
     };
-    let (rect, response) = ui.allocate_exact_size(vec2(62.0, 56.0), sense);
+    let compact = label.is_empty();
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(if compact { 44.0 } else { 62.0 }, 56.0), sense);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::Role::Button,
+            enabled,
+            if compact { "Select" } else { label },
+        )
+    });
     let painter = ui.painter();
     let radius = egui::CornerRadius::same(9);
     if active {
@@ -118,19 +163,24 @@ fn tool_button(
     }
     let alpha = if enabled { 1.0 } else { 0.35 };
     let line = if active { INK } else { palette.line };
-    let icon_rect = Rect::from_center_size(rect.center() - vec2(0.0, 8.0), vec2(28.0, 28.0));
+    let icon_rect = Rect::from_center_size(
+        rect.center() - vec2(0.0, if compact { 0.0 } else { 8.0 }),
+        vec2(28.0, 28.0),
+    );
     // A disabled icon is painted faint on a separate layer of the same painter.
     let mut faint = painter.clone();
     faint.multiply_opacity(alpha);
     theme::paint_icon(&faint, icon_rect, icon, line);
     let text = if active { INK } else { palette.text };
-    faint.text(
-        rect.center_bottom() - vec2(0.0, 8.0),
-        egui::Align2::CENTER_CENTER,
-        label,
-        egui::FontId::proportional(11.0),
-        text,
-    );
+    if !compact {
+        faint.text(
+            rect.center_bottom() - vec2(0.0, 8.0),
+            egui::Align2::CENTER_CENTER,
+            label,
+            egui::FontId::proportional(11.0),
+            text,
+        );
+    }
     if enabled {
         response.on_hover_cursor(egui::CursorIcon::PointingHand)
     } else {
@@ -185,17 +235,6 @@ impl App {
             .show(ui, |ui| {
                 let bottom = ui.max_rect().bottom();
                 ui.horizontal_centered(|ui| {
-                    if ui
-                        .add(
-                            egui::Button::new(theme::bold("⋮", 24.0).color(INK))
-                                .min_size(vec2(44.0, 44.0))
-                                .fill(theme::CREAM),
-                        )
-                        .on_hover_text("Workspace menu")
-                        .clicked()
-                    {
-                        self.menu_open = !self.menu_open;
-                    }
                     if self.logo.is_none() && !self.logo_tried {
                         self.logo_tried = true;
                         self.logo = theme::load_logo(ui.ctx(), 96);
@@ -273,11 +312,11 @@ impl App {
     pub(crate) fn ribbon(&mut self, ui: &mut Ui) {
         let palette = Palette::current(ui);
         egui::Panel::top("model-command-tabs")
-            .exact_size(48.0)
+            .exact_size(40.0)
             .frame(
                 egui::Frame::new()
                     .fill(palette.head)
-                    .inner_margin(egui::Margin::symmetric(10, 4)),
+                    .inner_margin(egui::Margin::symmetric(10, 0)),
             )
             .show(ui, |ui| {
                 egui::ScrollArea::horizontal()
@@ -285,14 +324,7 @@ impl App {
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             for tab in RibbonTab::ALL {
-                                if ui
-                                    .add(
-                                        egui::Button::new(theme::bold(tab.title(), 13.0))
-                                            .selected(self.ribbon_tab == tab)
-                                            .min_size(vec2(96.0, 36.0)),
-                                    )
-                                    .clicked()
-                                {
+                                if command_tab(ui, tab.title(), self.ribbon_tab == tab).clicked() {
                                     self.ribbon_tab = tab;
                                 }
                             }
@@ -313,143 +345,178 @@ impl App {
                 let has_workspace = self.source.workspace.is_some();
                 let mut pick = None;
                 let (mut undo, mut redo) = (false, false);
-                egui::ScrollArea::horizontal()
-                    .id_salt("ribbon-tools-scroll")
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            let group = |ui: &mut Ui, name: &str, add: &mut dyn FnMut(&mut Ui)| {
-                                ui.vertical(|ui| {
-                                    ui.spacing_mut().item_spacing = vec2(4.0, 2.0);
-                                    ui.horizontal(|ui| add(ui));
-                                    caption(ui, name);
-                                });
-                                ui.separator();
-                            };
-                            let bench = self.bench;
-                            group(ui, "SELECT", &mut |ui| {
-                                if tool_button(
-                                    ui,
-                                    Icon::Select,
-                                    "Select",
-                                    bench == Bench::Select,
-                                    true,
-                                )
-                                .clicked()
+                ui.horizontal(|ui| {
+                    if ui
+                        .add(
+                            egui::Button::new(theme::bold("☰", 22.0).color(INK))
+                                .min_size(vec2(44.0, 56.0))
+                                .corner_radius(0)
+                                .fill(BRAND),
+                        )
+                        .on_hover_text("Workspace menu")
+                        .clicked()
+                    {
+                        self.menu_open = !self.menu_open;
+                    }
+                    egui::ScrollArea::horizontal()
+                        .id_salt("ribbon-tools-scroll")
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                let group =
+                                    |ui: &mut Ui, name: &str, add: &mut dyn FnMut(&mut Ui)| {
+                                        ui.vertical(|ui| {
+                                            ui.spacing_mut().item_spacing = vec2(4.0, 2.0);
+                                            ui.horizontal(|ui| add(ui));
+                                            caption(ui, name);
+                                        });
+                                        ui.separator();
+                                    };
+                                let bench = self.bench;
+                                if tool_button(ui, Icon::Select, "", bench == Bench::Select, true)
+                                    .on_hover_text("Select (Esc)")
+                                    .clicked()
                                 {
                                     pick = Some(Bench::Select);
                                 }
-                            });
-                            match self.ribbon_tab {
-                                RibbonTab::Model => {
-                                    group(ui, "STEEL PARTS", &mut |ui| {
-                                        for (b, icon, label) in [
-                                            (Bench::Plate, Icon::Plate, "Plate"),
-                                            (Bench::Beam, Icon::Beam, "Beam"),
-                                            (Bench::Column, Icon::Column, "Column"),
-                                        ] {
-                                            if tool_button(ui, icon, label, bench == b, true)
-                                                .clicked()
+                                ui.separator();
+                                match self.ribbon_tab {
+                                    RibbonTab::Model => {
+                                        group(ui, "STEEL PARTS", &mut |ui| {
+                                            for (b, icon, label) in [
+                                                (Bench::Plate, Icon::Plate, "Plate"),
+                                                (Bench::Beam, Icon::Beam, "Beam"),
+                                                (Bench::Column, Icon::Column, "Column"),
+                                            ] {
+                                                if tool_button(ui, icon, label, bench == b, true)
+                                                    .clicked()
+                                                {
+                                                    pick = Some(b);
+                                                }
+                                            }
+                                        });
+                                        group(ui, "SHAPES", &mut |ui| {
+                                            for label in
+                                                ["Polybeam", "Curved", "Contour", "Bent plate"]
                                             {
-                                                pick = Some(b);
+                                                tool_button(ui, Icon::Block, label, false, false);
                                             }
-                                        }
-                                    });
-                                    group(ui, "SHAPES", &mut |ui| {
-                                        for label in ["Polybeam", "Curved", "Contour", "Bent plate"]
-                                        {
-                                            tool_button(ui, Icon::Block, label, false, false);
-                                        }
-                                    });
-                                    group(ui, "CONNECT", &mut |ui| {
-                                        tool_button(ui, Icon::Bolt, "Bolts", false, false);
-                                        tool_button(ui, Icon::Weld, "Weld", false, false);
-                                        tool_button(ui, Icon::Block, "Assembly", false, false);
-                                    });
-                                    group(ui, "LAYOUT", &mut |ui| {
-                                        tool_button(ui, Icon::Wire, "Grid", false, false);
-                                        tool_button(ui, Icon::Plus, "Guide", false, false);
-                                    });
-                                }
-                                RibbonTab::Modify => {
-                                    group(ui, "EDIT", &mut |ui| {
-                                        for (b, icon, label) in [
-                                            (Bench::Move, Icon::Move, "Move"),
-                                            (Bench::Copy, Icon::Copy, "Copy"),
-                                            (Bench::Delete, Icon::Delete, "Delete"),
-                                        ] {
-                                            let response =
-                                                tool_button(ui, icon, label, bench == b, selected);
-                                            if response.clicked() {
-                                                pick = Some(b);
+                                        });
+                                        group(ui, "CONNECT", &mut |ui| {
+                                            tool_button(ui, Icon::Bolt, "Bolts", false, false);
+                                            tool_button(ui, Icon::Weld, "Weld", false, false);
+                                            tool_button(ui, Icon::Block, "Assembly", false, false);
+                                        });
+                                        group(ui, "LAYOUT", &mut |ui| {
+                                            tool_button(ui, Icon::Wire, "Grid", false, false);
+                                            tool_button(ui, Icon::Plus, "Guide", false, false);
+                                        });
+                                    }
+                                    RibbonTab::Modify => {
+                                        group(ui, "EDIT", &mut |ui| {
+                                            for (b, icon, label) in [
+                                                (Bench::Move, Icon::Move, "Move"),
+                                                (Bench::Copy, Icon::Copy, "Copy"),
+                                                (Bench::Delete, Icon::Delete, "Delete"),
+                                            ] {
+                                                let response = tool_button(
+                                                    ui,
+                                                    icon,
+                                                    label,
+                                                    bench == b,
+                                                    selected,
+                                                );
+                                                if response.clicked() {
+                                                    pick = Some(b);
+                                                }
                                             }
-                                        }
-                                        let can = has_workspace && edits_free;
-                                        undo = tool_button(ui, Icon::Undo, "Undo", false, can)
-                                            .clicked();
-                                        redo = tool_button(ui, Icon::Redo, "Redo", false, can)
-                                            .clicked();
-                                    });
-                                    group(ui, "TRANSFORM", &mut |ui| {
-                                        for label in ["Rotate", "Mirror", "Array"] {
-                                            tool_button(ui, Icon::Move, label, false, false);
-                                        }
-                                    });
-                                    group(ui, "SHAPE EDITS", &mut |ui| {
-                                        for label in ["Trim", "Cut", "Split", "Combine", "Chamfer"]
-                                        {
-                                            tool_button(ui, Icon::Plate, label, false, false);
-                                        }
-                                    });
+                                            let can = has_workspace && edits_free;
+                                            undo = tool_button(ui, Icon::Undo, "Undo", false, can)
+                                                .clicked();
+                                            redo = tool_button(ui, Icon::Redo, "Redo", false, can)
+                                                .clicked();
+                                        });
+                                        group(ui, "TRANSFORM", &mut |ui| {
+                                            for label in ["Rotate", "Mirror", "Array"] {
+                                                tool_button(ui, Icon::Move, label, false, false);
+                                            }
+                                        });
+                                        group(ui, "SHAPE EDITS", &mut |ui| {
+                                            for label in
+                                                ["Trim", "Cut", "Split", "Combine", "Chamfer"]
+                                            {
+                                                tool_button(ui, Icon::Plate, label, false, false);
+                                            }
+                                        });
+                                    }
+                                    RibbonTab::View => {
+                                        group(ui, "DISPLAY", &mut |ui| {
+                                            tool_button(ui, Icon::Block, "Shaded", true, true);
+                                            tool_button(ui, Icon::Wire, "Wire", false, false);
+                                        });
+                                        group(ui, "VIEWS", &mut |ui| {
+                                            for label in
+                                                ["Plan", "Elevation", "Section", "Saved views"]
+                                            {
+                                                tool_button(ui, Icon::Wire, label, false, false);
+                                            }
+                                        });
+                                        group(ui, "VISIBILITY", &mut |ui| {
+                                            tool_button(ui, Icon::Block, "Filters", false, false);
+                                            tool_button(ui, Icon::Block, "Colours", false, false);
+                                        });
+                                    }
+                                    RibbonTab::Drawings => {
+                                        group(ui, "DOCUMENTS", &mut |ui| {
+                                            tool_button(ui, Icon::Plus, "New sheet", false, false);
+                                            tool_button(ui, Icon::Folder, "Drawings", false, false);
+                                        });
+                                        group(ui, "ANNOTATION", &mut |ui| {
+                                            for label in ["Dimension", "Mark", "Text"] {
+                                                tool_button(ui, Icon::Plus, label, false, false);
+                                            }
+                                        });
+                                        group(ui, "OUTPUT", &mut |ui| {
+                                            tool_button(ui, Icon::Plate, "Print", false, false);
+                                            tool_button(
+                                                ui,
+                                                Icon::Plate,
+                                                "Export PDF",
+                                                false,
+                                                false,
+                                            );
+                                        });
+                                    }
+                                    RibbonTab::Project => {
+                                        group(ui, "PROJECT DATA", &mut |ui| {
+                                            tool_button(
+                                                ui,
+                                                Icon::Block,
+                                                "Information",
+                                                false,
+                                                false,
+                                            );
+                                            tool_button(ui, Icon::Recent, "History", false, false);
+                                        });
+                                        group(ui, "LIBRARIES", &mut |ui| {
+                                            tool_button(ui, Icon::Beam, "Profiles", false, false);
+                                            tool_button(ui, Icon::Block, "Materials", false, false);
+                                            tool_button(ui, Icon::Bolt, "Fasteners", false, false);
+                                        });
+                                        group(ui, "PREFERENCES", &mut |ui| {
+                                            tool_button(ui, Icon::Select, "Settings", false, false);
+                                            tool_button(
+                                                ui,
+                                                Icon::Select,
+                                                "Shortcuts",
+                                                false,
+                                                false,
+                                            );
+                                        });
+                                    }
                                 }
-                                RibbonTab::View => {
-                                    group(ui, "DISPLAY", &mut |ui| {
-                                        tool_button(ui, Icon::Block, "Shaded", true, true);
-                                        tool_button(ui, Icon::Wire, "Wire", false, false);
-                                    });
-                                    group(ui, "VIEWS", &mut |ui| {
-                                        for label in ["Plan", "Elevation", "Section", "Saved views"]
-                                        {
-                                            tool_button(ui, Icon::Wire, label, false, false);
-                                        }
-                                    });
-                                    group(ui, "VISIBILITY", &mut |ui| {
-                                        tool_button(ui, Icon::Block, "Filters", false, false);
-                                        tool_button(ui, Icon::Block, "Colours", false, false);
-                                    });
-                                }
-                                RibbonTab::Drawings => {
-                                    group(ui, "DOCUMENTS", &mut |ui| {
-                                        tool_button(ui, Icon::Plus, "New sheet", false, false);
-                                        tool_button(ui, Icon::Folder, "Drawings", false, false);
-                                    });
-                                    group(ui, "ANNOTATION", &mut |ui| {
-                                        for label in ["Dimension", "Mark", "Text"] {
-                                            tool_button(ui, Icon::Plus, label, false, false);
-                                        }
-                                    });
-                                    group(ui, "OUTPUT", &mut |ui| {
-                                        tool_button(ui, Icon::Plate, "Print", false, false);
-                                        tool_button(ui, Icon::Plate, "Export PDF", false, false);
-                                    });
-                                }
-                                RibbonTab::Project => {
-                                    group(ui, "PROJECT DATA", &mut |ui| {
-                                        tool_button(ui, Icon::Block, "Information", false, false);
-                                        tool_button(ui, Icon::Recent, "History", false, false);
-                                    });
-                                    group(ui, "LIBRARIES", &mut |ui| {
-                                        tool_button(ui, Icon::Beam, "Profiles", false, false);
-                                        tool_button(ui, Icon::Block, "Materials", false, false);
-                                        tool_button(ui, Icon::Bolt, "Fasteners", false, false);
-                                    });
-                                    group(ui, "PREFERENCES", &mut |ui| {
-                                        tool_button(ui, Icon::Select, "Settings", false, false);
-                                        tool_button(ui, Icon::Select, "Shortcuts", false, false);
-                                    });
-                                }
-                            }
+                            });
                         });
-                    });
+                });
                 if let Some(bench) = pick {
                     self.set_bench(bench);
                 }
@@ -567,52 +634,6 @@ impl App {
             .default_width(360.0)
             .show(ctx, |ui| self.info(ui));
         self.details = open;
-    }
-
-    /// The view and zoom controls drawn over the 3D view at `rect`.
-    pub(crate) fn view_controls(&mut self, ui: &mut Ui, rect: Rect) {
-        let palette = Palette::current(ui);
-        let at = Rect::from_min_size(rect.min + vec2(14.0, 14.0), vec2(320.0, 50.0));
-        let mut bar = ui.new_child(egui::UiBuilder::new().max_rect(at));
-        theme::card(palette, 3)
-            .inner_margin(egui::Margin::same(4))
-            .show(&mut bar, |ui| {
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::Button::new(theme::bold("3D", 12.0).color(INK))
-                            .fill(BRAND)
-                            .stroke(Stroke::new(2.0, INK)),
-                    );
-                    for view in ["Plan", "Grid A"] {
-                        ui.add_enabled(false, egui::Button::new(RichText::new(view).small()))
-                            .on_disabled_hover_text(LATER);
-                    }
-                });
-            });
-        let at = Rect::from_min_size(rect.right_bottom() - vec2(78.0, 160.0), vec2(64.0, 146.0));
-        let mut zoom = ui.new_child(egui::UiBuilder::new().max_rect(at));
-        theme::card(palette, 3)
-            .inner_margin(egui::Margin::same(4))
-            .show(&mut zoom, |ui| {
-                ui.vertical_centered(|ui| {
-                    let small = |ui: &mut Ui, text: &str, tip: &str| {
-                        ui.add(
-                            egui::Button::new(theme::bold(text, 16.0)).min_size(vec2(36.0, 34.0)),
-                        )
-                        .on_hover_text(tip)
-                        .clicked()
-                    };
-                    if small(ui, "+", "Zoom in (+)") {
-                        self.pending_zoom = Some(true);
-                    }
-                    if small(ui, "−", "Zoom out (-)") {
-                        self.pending_zoom = Some(false);
-                    }
-                    if small(ui, "Fit", "Fit the model (F)") {
-                        self.pending_fit = true;
-                    }
-                });
-            });
     }
 }
 
