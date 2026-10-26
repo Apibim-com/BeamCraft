@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! P01 headless commands: `create-plate` and `plate-inspect`. They call the engine API through
+//! P01 headless commands: `create-plate` and `inspect-elements`. They call the engine API through
 //! the adapter of `beamcraft_cli::plate` and print one JSON object (same error shape as the other
 //! commands; exit 0 success, 2 rejection, 3 backend unavailable, 4 outcome unknown).
 
+use crate::report::report_with;
 use beamcraft_cli::copy::{CopiedElement, CopyRequest, copy_element};
 use beamcraft_cli::definition::{
     DefineRequest, Defined, DefinitionRecord, NameResolution, define, definition_path,
@@ -17,14 +18,16 @@ use beamcraft_cli::library::open_lookup;
 use beamcraft_cli::member::{CreateMemberRequest, create_member};
 use beamcraft_cli::plate::{
     AcceptedBinding, CreateRequest, Created, Inspection, PlateError, ProjectClaim, QuantityReport,
-    RevisionSummary, accepted_binding, claim_project, create_plate, ensure_project, inspect,
+    RevisionSummary, accepted_binding, claim_project, ensure_project, inspect,
 };
+use beamcraft_cli::plate_draft::{CreatedDraft, create_plate_draft};
 use beamcraft_cli::workspace::{
     CreateWorkspace, WorkspaceStatus, create_workspace, publish_workspace,
     status as workspace_status,
 };
-use beamcraft_engine::command::{Quantities, VOLUME_ALGORITHM, origin_rectangle_contour};
+use beamcraft_engine::command::{Quantities, origin_rectangle_contour};
 use beamcraft_engine::footprint::{Entry, Footprint, Target};
+use beamcraft_engine::plate_draft::UnsupportedPlate;
 use beamcraft_engine::quantity::{Freshness, is_superseded_algorithm};
 use beamcraft_engine::query::committed::MemberRecord;
 use beamcraft_engine::query::committed::PlateRecord;
@@ -33,6 +36,7 @@ use beamcraft_host::{
     revision::{NoFault, RevisionStore, Uuid7},
     storage::BlobStore,
 };
+use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::{
     CopyElement, CreatePlate, CreateStraightMember, DeleteElement, ElementPatch, MAX_HOLES,
     MemberKind, Placement, PlaneCut, UpdateElement,
@@ -42,8 +46,6 @@ use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use beamcraft_model::section::{CustomSection, ParametricSection, SectionFamily, SectionShape};
-use beamcraft_protocol::json::Json;
-use beamcraft_protocol::message;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 
@@ -61,42 +63,6 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
     let mut candidates = Vec::new();
     let result = run(args, &mut candidates);
     report_with(result, candidates)
-}
-
-/// The shared result shape of the store commands: the JSON object and the exit code (0 success,
-/// 2 rejection, 3 backend unavailable, 4 outcome unknown).
-pub(crate) fn report(result: Run<Json>) -> (Json, u8) {
-    report_with(result, Vec::new())
-}
-
-/// [`report`] with the `diagnostics` array of a rejection filled in (the candidates of an
-/// ambiguous name).
-pub(crate) fn report_with(result: Run<Json>, diagnostics: Vec<Json>) -> (Json, u8) {
-    match result {
-        Ok(json) => (json, 0),
-        Err(e) => (
-            Json::object([
-                (
-                    "outcome",
-                    Json::text(if e.code == ErrorCode::OutcomeUnknown {
-                        "outcome_unknown"
-                    } else {
-                        "rejected"
-                    }),
-                ),
-                ("code", Json::text(e.code.as_str())),
-                ("message", Json::text(e.message)),
-                ("transport_code", Json::Null),
-                ("observed_context", Json::Null),
-                ("diagnostics", Json::Array(diagnostics)),
-            ]),
-            match e.code {
-                ErrorCode::OutcomeUnknown => 4,
-                ErrorCode::BackendUnavailable => 3,
-                _ => 2,
-            },
-        ),
-    }
 }
 
 const CREATE_OPTIONS: &[&str] = &[
@@ -261,12 +227,12 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "update-element" => UPDATE_OPTIONS,
         "delete-element" => DELETE_OPTIONS,
         "copy-element" => COPY_OPTIONS,
-        "workspace-create" | "workspace-status" | "workspace-publish" => WORKSPACE_OPTIONS,
-        "workspace-undo" | "workspace-redo" => HISTORY_OPTIONS,
-        "workspace-history" => &["--workspace-dir"],
+        "create-workspace" | "inspect-workspace" | "publish-workspace" => WORKSPACE_OPTIONS,
+        "undo-workspace" | "redo-workspace" => HISTORY_OPTIONS,
+        "inspect-workspace-history" => &["--workspace-dir"],
         "define-material" => DEFINE_MATERIAL_OPTIONS,
         "define-profile" => DEFINE_PROFILE_OPTIONS,
-        "plate-inspect" => &["--store"],
+        "inspect-elements" => &["--store", "--element"],
         "definitions" => &["--store", "--name", "--offset", "--limit"],
         _ => return Err(invalid("unknown command")),
     };
@@ -282,10 +248,15 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
     }
     if matches!(
         *command,
-        "workspace-undo" | "workspace-redo" | "workspace-history"
+        "undo-workspace" | "redo-workspace" | "inspect-workspace-history"
     ) {
         return history_command(command, &options);
     }
+    // Parsed before the store is opened, so a malformed id reads nothing.
+    let element = match options.get("--element") {
+        Some(text) => Some(ElementId::parse(text).map_err(id_error)?),
+        None => None,
+    };
     let store_root = options
         .get("--store")
         .ok_or_else(|| invalid("--store is required"))?;
@@ -301,12 +272,12 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "update-element" => update_command(&store, &options),
         "delete-element" => delete_command(&store, &options),
         "copy-element" => copy_command(&store, &options),
-        "workspace-create" | "workspace-status" | "workspace-publish" => {
-            workspace_command(&store, command, &options)
+        "create-workspace" | "inspect-workspace" | "publish-workspace" => {
+            workspace_command(&store, command, &options, candidates)
         }
         "define-material" | "define-profile" => define_command(&store, command, &options),
         "definitions" => definitions_json(&inspect(&store)?, &options),
-        _ => Ok(inspection_json(&inspect(&store)?)?),
+        _ => Ok(inspection_json(&inspect(&store)?, element)?),
     }
 }
 
@@ -482,26 +453,6 @@ fn candidate_json(digest: &ContentDigest, record: &DefinitionRecord) -> Json {
     ])
 }
 
-/// One closed polygon from `"X,Y;X,Y;..."`, in millimetres. One trailing separator is ignored
-/// (the closure of a contour is implicit); an empty outline is named as such. Winding,
-/// simplicity and the caps are the kernel's and the model's decisions, not the parser's.
-pub(crate) fn parse_polygon(text: &str) -> Run<Vec<[f64; 2]>> {
-    let text = text.strip_suffix(';').unwrap_or(text);
-    if text.is_empty() {
-        return Err(invalid("the outline is empty"));
-    }
-    text.split(';')
-        .map(|pair| {
-            let parts: Vec<f64> = pair
-                .split(',')
-                .map(|v| v.trim().parse::<f64>())
-                .collect::<Result<_, _>>()
-                .map_err(|_| invalid("an outline point is not two numbers"))?;
-            <[f64; 2]>::try_from(parts).map_err(|_| invalid("an outline point is not two numbers"))
-        })
-        .collect()
-}
-
 /// The section shape of `define-profile --family`: a family token with one `--<parameter>` per
 /// family parameter (millimetres), or `custom` with `--outer "X,Y;X,Y;..."` (counter-clockwise)
 /// and optional `--cavity "X,Y;...|X,Y;..."` (each clockwise). The rectangle's `--width` and
@@ -517,16 +468,26 @@ fn section_shape(family: &str, options: &BTreeMap<&str, &str>) -> Run<SectionSha
         if parameters.iter().any(|p| options.contains_key(p)) {
             return Err(invalid("a custom outline takes --outer and --cavity only"));
         }
-        let outer = parse_polygon(
+        let polygon = |text: &str| -> Run<Vec<[f64; 2]>> {
+            text.split(';')
+                .map(|pair| {
+                    let parts: Vec<f64> = pair
+                        .split(',')
+                        .map(|v| v.trim().parse::<f64>())
+                        .collect::<Result<_, _>>()
+                        .map_err(|_| invalid("an outline point is not two numbers"))?;
+                    <[f64; 2]>::try_from(parts)
+                        .map_err(|_| invalid("an outline point is not two numbers"))
+                })
+                .collect()
+        };
+        let outer = polygon(
             options
                 .get("--outer")
                 .ok_or_else(|| invalid("a custom outline needs --outer"))?,
         )?;
         let cavities = match options.get("--cavity") {
-            Some(text) => text
-                .split('|')
-                .map(parse_polygon)
-                .collect::<Run<Vec<_>>>()?,
+            Some(text) => text.split('|').map(polygon).collect::<Run<Vec<_>>>()?,
             None => Vec::new(),
         };
         return Ok(SectionShape::Custom(CustomSection { outer, cavities }));
@@ -560,10 +521,34 @@ fn section_shape(family: &str, options: &BTreeMap<&str, &str>) -> Run<SectionSha
     )?))
 }
 
+/// The plate contour of `--contour "X,Y[,Z];..."`: two or three components, in the order
+/// given. Winding, simplicity and the size floor are the kernel's to decide.
+fn contour_points(text: &str) -> Run<Vec<[f64; 3]>> {
+    if text.split(';').count() > 1024 {
+        return Err(PlateError {
+            code: ErrorCode::LimitExceeded,
+            message: "more than 1024 contour points",
+        });
+    }
+    text.split(';')
+        .map(|pair| {
+            let bad = || invalid("a contour point is not two or three numbers");
+            let mut parts = pair.split(',').map(|v| v.trim().parse::<f64>());
+            let mut next = || parts.next().transpose().map_err(|_| bad());
+            let (x, y, z) = (next()?, next()?, next()?);
+            match (x, y, z, next()?) {
+                (Some(x), Some(y), None, None) => Ok([x, y, 0.0]),
+                (Some(x), Some(y), Some(z), None) => Ok([x, y, z]),
+                _ => Err(bad()),
+            }
+        })
+        .collect()
+}
+
 /// The profile definition that explicit `define-profile`-style options describe: a rectangle from
 /// `--width` and `--height`, a family from `--family` and its parameters, or a custom outline,
 /// with the optional `--designation`, `--standard` and declared section numbers. Shared by
-/// `define-profile` and `library-add`; the display name is left to the caller.
+/// `define-profile` and `add-library`; the display name is left to the caller.
 pub(crate) fn profile_record(options: &BTreeMap<&str, &str>) -> Run<DefinitionRecord> {
     let given = |key: &str| options.get(key).copied();
     let optional_float = |key: &str| {
@@ -743,32 +728,19 @@ fn create(
     } else {
         None
     };
-    // The outline is either the `--width`/`--length` origin rectangle or an arbitrary closed
-    // `--contour` (A02, experimental, counter-clockwise, element-local millimetres). The
-    // parser reads XY pairs; the plate body frame is the z = 0 plane, so the pair becomes a
-    // point with z = 0 and an off-plane input cannot be expressed here at all.
-    let contour: Vec<[f64; 3]> = match (given("--contour"), given("--width"), given("--length")) {
-        (Some(text), None, None) => parse_polygon(text)?
-            .into_iter()
-            .map(|[x, y]| [x, y, 0.0])
-            .collect(),
-        (None, Some(_), Some(_)) => {
-            let width = float(options, "--width")?;
-            let length = float(options, "--length")?;
-            origin_rectangle_contour(width, length).map_err(PlateError::from)?
-        }
-        (Some(_), _, _) => {
-            return Err(invalid(
-                "--contour and --width/--length are two ways of one outline; use one",
-            ));
-        }
-        (None, _, _) => {
-            return Err(invalid(
-                "create-plate needs --width and --length, or --contour",
-            ));
-        }
-    };
     let thickness = float(options, "--thickness")?;
+    let contour = match given("--contour") {
+        Some(text) => {
+            if options.contains_key("--width") || options.contains_key("--length") {
+                return Err(invalid(
+                    "--contour replaces --width and --length; give one or the other",
+                ));
+            }
+            contour_points(text)?
+        }
+        None => origin_rectangle_contour(float(options, "--width")?, float(options, "--length")?)
+            .map_err(PlateError::from)?,
+    };
     let name = given("--name").unwrap_or("Plate").to_owned();
     let command = CreatePlate {
         new_id,
@@ -790,7 +762,7 @@ fn create(
         holes_mm: holes(options)?,
         cut: cut(options)?,
     };
-    let created = create_plate(
+    let created = create_plate_draft(
         store,
         &CreateRequest {
             op_id,
@@ -802,7 +774,23 @@ fn create(
         },
         &mut NoFault,
     )?;
-    created_json(&created, op_id)
+    match created {
+        CreatedDraft::Evaluated(created) => created_json(&created, op_id),
+        CreatedDraft::Unsupported(created) => Ok(Json::object([
+            (
+                "outcome",
+                Json::text(if created.replayed {
+                    "plate_replayed"
+                } else {
+                    "plate_created"
+                }),
+            ),
+            ("op_id", Json::text(op_id.to_string())),
+            ("plate", unsupported_plate_json(&created.plate)?),
+            ("revision", revision_json(&created.revision)),
+            ("footprint", footprint_json(created.footprint.as_ref())),
+        ])),
+    }
 }
 
 /// The through holes of `create-plate`: `--hole-rect "X,Y,W,H;..."` (axis-aligned rectangles from
@@ -1166,6 +1154,16 @@ fn workspace_json(status: &WorkspaceStatus) -> Json {
         ),
         ("draft_head", revision_json(&status.draft_head)),
         ("published_head", revision_json(&status.published_head)),
+        (
+            "pending_conflicts",
+            Json::Array(
+                status
+                    .pending_conflicts
+                    .iter()
+                    .map(beamcraft_cli::workspace::conflicts::conflict_json)
+                    .collect(),
+            ),
+        ),
     ])
 }
 
@@ -1188,7 +1186,7 @@ fn history_command(command: &str, options: &BTreeMap<&str, &str>) -> Run<Json> {
                 .collect(),
         )
     };
-    if command == "workspace-history" {
+    if command == "inspect-workspace-history" {
         let line = timeline(&workspace, dir)?;
         return Ok(Json::object([
             ("outcome", Json::text("workspace_history")),
@@ -1212,7 +1210,7 @@ fn history_command(command: &str, options: &BTreeMap<&str, &str>) -> Run<Json> {
                 .and_then(|id| Uuid7::parse(&id.to_string()).map_err(PlateError::from)),
         }
     };
-    let (direction, done, replayed) = if command == "workspace-undo" {
+    let (direction, done, replayed) = if command == "undo-workspace" {
         (
             Direction::Undo,
             "workspace_undone",
@@ -1256,6 +1254,7 @@ fn workspace_command(
     store: &RevisionStore,
     command: &str,
     options: &BTreeMap<&str, &str>,
+    candidates: &mut Vec<Json>,
 ) -> Run<Json> {
     let mut source = IdSource::system();
     let mut fresh = || -> Run<String> {
@@ -1271,12 +1270,12 @@ fn workspace_command(
     let dir = std::path::Path::new(
         given("--workspace-dir").ok_or_else(|| invalid("--workspace-dir is required"))?,
     );
-    if command == "workspace-publish" && given("--revision-id").is_some() {
+    if command == "publish-workspace" && given("--revision-id").is_some() {
         return Err(invalid(
-            "workspace-publish takes its revision id from the draft head",
+            "publish-workspace takes its revision id from the draft head",
         ));
     }
-    if command == "workspace-create" && !dir.exists() {
+    if command == "create-workspace" && !dir.exists() {
         std::fs::create_dir(dir).map_err(|_| PlateError {
             code: ErrorCode::BackendUnavailable,
             message: "workspace directory could not be created",
@@ -1300,7 +1299,7 @@ fn workspace_command(
         }
     };
     match command {
-        "workspace-create" => {
+        "create-workspace" => {
             let created = create_workspace(
                 store,
                 &workspace,
@@ -1318,7 +1317,7 @@ fn workspace_command(
                 ("workspace", workspace_json(&created)),
             ]))
         }
-        "workspace-status" => Ok(Json::object([
+        "inspect-workspace" => Ok(Json::object([
             ("outcome", Json::text("workspace_status")),
             (
                 "workspace",
@@ -1326,7 +1325,19 @@ fn workspace_command(
             ),
         ])),
         _ => {
-            let published = publish_workspace(store, &workspace, dir, &mut NoFault)?;
+            let published = match publish_workspace(store, &workspace, dir, &mut NoFault) {
+                Ok(published) => published,
+                Err(error) if error.code == ErrorCode::DependencyConflict => {
+                    // C04: the refusal names every pending conflict in its diagnostics.
+                    candidates.extend(
+                        beamcraft_cli::workspace::pending_conflicts(&workspace, dir)?
+                            .iter()
+                            .map(beamcraft_cli::workspace::conflicts::conflict_json),
+                    );
+                    return Err(error);
+                }
+                Err(error) => return Err(error),
+            };
             Ok(Json::object([
                 (
                     "outcome",
@@ -1469,7 +1480,10 @@ fn member_json(record: &MemberRecord) -> Run<Json> {
     let a = &record.authored;
     Ok(Json::object([
         ("element_id", Json::text(a.id.to_string())),
-        ("prim_path", Json::text(a.id.prim_path())),
+        (
+            "prim_path",
+            Json::text(a.id.prim_path(beamcraft_model::prim::ElementCategory::Part)),
+        ),
         ("kind", Json::text(a.kind.as_str())),
         ("name", Json::text(a.name.clone())),
         ("profile_digest", Json::text(a.profile.to_string())),
@@ -1592,7 +1606,10 @@ fn quantities_json(q: &Quantities) -> Run<Json> {
 pub(crate) fn definition_json(digest: &ContentDigest, record: &DefinitionRecord) -> Run<Json> {
     let mut fields = vec![
         ("digest", Json::text(digest.to_string())),
-        ("prim_path", Json::text(definition_path(digest))),
+        (
+            "prim_path",
+            Json::text(definition_path(digest, record.kind())),
+        ),
         ("kind", Json::text(record.kind())),
         ("units", Json::text("mm")),
         ("schema_version", Json::text("0.1.0")),
@@ -1748,7 +1765,7 @@ pub(crate) fn fit_page(
     let mut count = available.min(limit);
     loop {
         let json = build(count)?;
-        if json.encode(&message::read_limits()).is_ok() {
+        if json.encode(&Limits::DEFAULT).is_ok() {
             return Ok(json);
         }
         if count <= 1 {
@@ -1774,7 +1791,11 @@ fn plate_users(plates: &[PlateRecord]) -> BTreeMap<ContentDigest, Vec<ElementId>
     users
 }
 
-fn definitions_json(inspection: &Inspection, options: &BTreeMap<&str, &str>) -> Run<Json> {
+/// The `definitions` reply for `inspection` (also framed by `export-view --with-definitions`).
+pub(crate) fn definitions_json(
+    inspection: &Inspection,
+    options: &BTreeMap<&str, &str>,
+) -> Run<Json> {
     let (offset, limit) = page_of(options)?;
     let name = options.get("--name");
     let matching: Vec<_> = inspection
@@ -1824,23 +1845,91 @@ fn definitions_json(inspection: &Inspection, options: &BTreeMap<&str, &str>) -> 
     })
 }
 
-fn plate_json(record: &PlateRecord) -> Run<Json> {
-    let mesh = &record.body.solid;
-    // A rectangle's dimensions are its sides; a contour plate has no sides, only a bounding box,
-    // so the record names what it reports and never lets `width * length * thickness` pass for
-    // the size of an arbitrary outline.
-    let rectangle = record.body.volume_algorithm == VOLUME_ALGORITHM;
-    let shape = if rectangle { "rectangle" } else { "contour" };
-    let dimensions = if rectangle {
-        "dimensions_mm"
-    } else {
-        "bounding_box_mm"
+fn unsupported_plate_json(record: &UnsupportedPlate) -> Run<Json> {
+    let authored = &record.authored;
+    let quantity = |unit| {
+        Json::object([
+            (unit, Json::Null),
+            ("status", Json::text("unsupported")),
+            ("reason", Json::text(record.reason)),
+            ("input_signature", Json::Null),
+            ("algorithm", Json::Null),
+        ])
     };
     Ok(Json::object([
-        ("element_id", Json::text(record.authored.id.to_string())),
-        ("prim_path", Json::text(record.authored.id.prim_path())),
+        ("element_id", Json::text(authored.id.to_string())),
+        (
+            "prim_path",
+            Json::text(
+                authored
+                    .id
+                    .prim_path(beamcraft_model::prim::ElementCategory::Part),
+            ),
+        ),
         ("kind", Json::text("plate")),
-        ("shape", Json::text(shape)),
+        ("name", Json::text(&authored.name)),
+        ("validity", Json::text("valid")),
+        ("geometry_status", Json::text("unsupported")),
+        ("geometry_code", Json::text("UNSUPPORTED_GEOMETRY")),
+        ("geometry_reason", Json::text(record.reason)),
+        (
+            "material_digest",
+            authored
+                .material
+                .map_or(Json::Null, |d| Json::text(d.to_string())),
+        ),
+        (
+            "contour_points_mm",
+            Json::Array(
+                authored
+                    .contour_points_mm
+                    .iter()
+                    .map(|p| triple(*p))
+                    .collect::<Run<Vec<_>>>()?,
+            ),
+        ),
+        ("thickness_mm", num(authored.thickness_mm)?),
+        (
+            "placement",
+            Json::object([
+                ("translation_mm", triple(authored.placement.translation_mm)?),
+                (
+                    "orientation_xyzw",
+                    Json::Array(
+                        authored
+                            .placement
+                            .orientation_xyzw
+                            .into_iter()
+                            .map(num)
+                            .collect::<Run<Vec<_>>>()?,
+                    ),
+                ),
+            ]),
+        ),
+        (
+            "quantities",
+            Json::object([("volume", quantity("mm3")), ("mass", quantity("kg"))]),
+        ),
+        ("mesh_digest", Json::Null),
+        ("shape_key", Json::Null),
+        ("world_bounds_mm", Json::Null),
+    ]))
+}
+
+fn plate_json(record: &PlateRecord) -> Run<Json> {
+    let mesh = &record.body.solid;
+    Ok(Json::object([
+        ("element_id", Json::text(record.authored.id.to_string())),
+        (
+            "prim_path",
+            Json::text(
+                record
+                    .authored
+                    .id
+                    .prim_path(beamcraft_model::prim::ElementCategory::Part),
+            ),
+        ),
+        ("kind", Json::text("plate")),
         ("name", Json::text(record.authored.name.clone())),
         (
             "material_digest",
@@ -1850,7 +1939,7 @@ fn plate_json(record: &PlateRecord) -> Run<Json> {
                 .map_or(Json::Null, |d| Json::text(d.to_string())),
         ),
         (
-            dimensions,
+            "dimensions_mm",
             Json::object([
                 ("width", num(record.body.width_mm)?),
                 ("length", num(record.body.length_mm)?),
@@ -1867,6 +1956,14 @@ fn plate_json(record: &PlateRecord) -> Run<Json> {
                     .map(|p| triple(*p))
                     .collect::<Run<Vec<_>>>()?,
             ),
+        ),
+        (
+            "outline",
+            Json::text(if record.body.is_rectangular_box() {
+                "rectangle"
+            } else {
+                "contour"
+            }),
         ),
         (
             "placement",
@@ -2115,11 +2212,22 @@ fn with_names(
     Json::Object(object)
 }
 
-fn inspection_json(inspection: &Inspection) -> Run<Json> {
+/// The `inspect-elements` reply for `inspection` (also framed by `export-view --with-element`).
+/// `only` keeps one element in the lists (plates, members, the snapshot's elements and their
+/// meshes), none when the revision does not hold it, and names it as `element_filter`; the
+/// counts still describe the whole revision. Without it the reply lists everything.
+pub(crate) fn inspection_json(inspection: &Inspection, only: Option<ElementId>) -> Run<Json> {
     let snapshot = &inspection.snapshot;
-    let plates = inspection
+    let wanted = |id: ElementId| only.is_none_or(|o| o == id);
+    let shown: Vec<_> = snapshot
+        .elements()
+        .iter()
+        .filter(|e| wanted(e.id))
+        .collect();
+    let mut plates = inspection
         .plates
         .iter()
+        .filter(|p| wanted(p.authored.id))
         .map(|p| {
             Ok(with_names(
                 with_stored(plate_json(p)?, p.authored.id, inspection)?,
@@ -2129,9 +2237,27 @@ fn inspection_json(inspection: &Inspection) -> Run<Json> {
             ))
         })
         .collect::<Run<Vec<_>>>()?;
+    for p in &inspection.unsupported_plates {
+        if wanted(p.authored.id) {
+            plates.push(with_names(
+                with_stored(unsupported_plate_json(p)?, p.authored.id, inspection)?,
+                None,
+                p.authored.material,
+                inspection,
+            ));
+        }
+    }
+    plates.sort_by_key(|p| {
+        p.get("element_id")
+            .ok()
+            .and_then(|id| id.string().ok())
+            .unwrap_or("")
+            .to_owned()
+    });
     let members = inspection
         .members
         .iter()
+        .filter(|m| wanted(m.authored.id))
         .map(|m| {
             Ok(with_names(
                 with_stored(member_json(m)?, m.authored.id, inspection)?,
@@ -2144,6 +2270,12 @@ fn inspection_json(inspection: &Inspection) -> Run<Json> {
     let meshes = snapshot
         .meshes()
         .iter()
+        .filter(|m| {
+            only.is_none()
+                || shown.iter().any(|e| {
+                    e.full.mesh_digest == m.digest() || e.simplified.mesh_digest == m.digest()
+                })
+        })
         .map(|m| {
             Json::object([
                 ("digest", Json::text(m.digest().to_string())),
@@ -2153,8 +2285,7 @@ fn inspection_json(inspection: &Inspection) -> Run<Json> {
             ])
         })
         .collect();
-    let entries = snapshot
-        .elements()
+    let mut entries = shown
         .iter()
         .map(|e| {
             Ok(Json::object([
@@ -2176,10 +2307,39 @@ fn inspection_json(inspection: &Inspection) -> Run<Json> {
             ]))
         })
         .collect::<Run<Vec<_>>>()?;
-    Ok(Json::object([
+    for p in &inspection.unsupported_plates {
+        if wanted(p.authored.id) {
+            entries.push(Json::object([
+                ("id", Json::text(p.authored.id.to_string())),
+                ("instance", Json::Null),
+                ("mesh_digest", Json::Null),
+                ("shape_key", Json::Null),
+                ("geometry_status", Json::text("unsupported")),
+                ("placement_mm", triple(p.authored.placement.translation_mm)?),
+                ("world_min_mm", Json::Null),
+                ("world_max_mm", Json::Null),
+            ]));
+        }
+    }
+    entries.sort_by_key(|p| {
+        p.get("id")
+            .ok()
+            .and_then(|id| id.string().ok())
+            .unwrap_or("")
+            .to_owned()
+    });
+    let mut reply = Json::object([
         ("outcome", Json::text("plate_inspection")),
         ("revision", revision_json(&inspection.revision)),
-        ("plate_count", Json::uint(inspection.plates.len() as u64)),
+        (
+            "plate_count",
+            Json::uint(
+                inspection
+                    .plates
+                    .len()
+                    .saturating_add(inspection.unsupported_plates.len()) as u64,
+            ),
+        ),
         ("member_count", Json::uint(inspection.members.len() as u64)),
         (
             "other_element_count",
@@ -2215,7 +2375,11 @@ fn inspection_json(inspection: &Inspection) -> Run<Json> {
                 ("meshes", Json::Array(meshes)),
             ]),
         ),
-    ]))
+    ]);
+    if let (Some(id), Json::Object(fields)) = (only, &mut reply) {
+        fields.insert("element_filter".into(), Json::text(id.to_string()));
+    }
+    Ok(reply)
 }
 
 #[cfg(test)]
@@ -2243,8 +2407,8 @@ mod tests {
         let (json, exit) = report_with(Err(invalid("ambiguous")), diagnostics);
         assert_eq!(exit, 2);
         // The shared encoder accepts it and keeps the error code.
-        let bytes = json.encode(&message::read_limits()).unwrap();
-        let back = beamcraft_protocol::json::decode(&bytes, &message::read_limits()).unwrap();
+        let bytes = json.encode(&Limits::DEFAULT).unwrap();
+        let back = beamcraft_json::decode(&bytes, &Limits::DEFAULT).unwrap();
         assert_eq!(back.get("code").unwrap().string(), Ok("INVALID_ARGUMENT"));
         // A small set lists everything and adds no summary.
         assert_eq!(ambiguity_diagnostics(&found[..3]).len(), 3);
@@ -2262,7 +2426,7 @@ mod tests {
         let json = fit_page(256, 256, page).unwrap();
         let shown = json.get("items").unwrap().array().unwrap().len();
         assert!(shown > 0 && shown < 256, "{shown}");
-        assert!(json.encode(&message::read_limits()).is_ok());
+        assert!(json.encode(&Limits::DEFAULT).is_ok());
         let one = fit_page(1, 256, page).unwrap();
         assert_eq!(one.get("items").unwrap().array().unwrap().len(), 1);
         let none = fit_page(0, 256, page).unwrap();
