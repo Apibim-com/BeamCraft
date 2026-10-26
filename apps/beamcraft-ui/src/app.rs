@@ -7,6 +7,7 @@
 //! (primary drag orbits, Shift + primary drag pans, pinch zooms). In both the wheel zooms toward
 //! the cursor, F fits and R reloads.
 
+mod menu;
 mod workbench;
 
 use crate::camera::{Camera, View};
@@ -142,11 +143,12 @@ pub struct App {
     refresh_timings: Vec<RefreshTiming>,
     /// The tool chosen on the ribbon; the inspector shows what it needs.
     bench: workbench::Bench,
+    /// The command category shown on the ribbon.
+    ribbon_tab: workbench::RibbonTab,
+    /// Whether the workspace panel is expanded along the left side of the window.
+    menu_open: bool,
     /// Whether the Details window is open.
     details: bool,
-    /// A zoom (true: in) or fit asked for by the view buttons, applied in the next frame.
-    pending_zoom: Option<bool>,
-    pending_fit: bool,
     logo: Option<egui::TextureHandle>,
     logo_tried: bool,
 }
@@ -215,7 +217,8 @@ fn navigation(
     let sign = if invert_zoom { -1.0 } else { 1.0 };
     let factor = distance * 0.0008;
     let pan = [-pointer_delta.x * factor, pointer_delta.y * factor];
-    let orbit = [pointer_delta.x * 0.008, -pointer_delta.y * 0.008];
+    // Drag the visible model with the pointer; the orbit camera moves the other way.
+    let orbit = [-pointer_delta.x * 0.008, pointer_delta.y * 0.008];
     let (orbit, pan) = match preset {
         // The left button is reserved for selection: a primary drag never moves the camera.
         Preset::Mouse => {
@@ -717,9 +720,9 @@ impl App {
             selects_finished: 0,
             refresh_timings: Vec::new(),
             bench: workbench::Bench::default(),
+            ribbon_tab: workbench::RibbonTab::default(),
+            menu_open: false,
             details: false,
-            pending_zoom: None,
-            pending_fit: false,
             logo: None,
             logo_tried: false,
         };
@@ -2193,7 +2196,9 @@ impl eframe::App for App {
         self.poll_select();
         self.poll_reload();
         self.perf_step(ui.ctx(), frame.info().cpu_usage);
-        if !wants_text && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        if self.menu_open && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.menu_open = false;
+        } else if !wants_text && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             // Esc closes the publish dialog first; it clears the selection only when none is open.
             if self.publisher.phase() == Phase::Confirming {
                 self.publisher.cancel();
@@ -2212,10 +2217,6 @@ impl eframe::App for App {
         if reload || store_changed {
             self.reload();
         }
-        let fit = fit || std::mem::take(&mut self.pending_fit);
-        let pending_zoom = self.pending_zoom.take();
-        let zoom_in = zoom_in || pending_zoom == Some(true);
-        let zoom_out = zoom_out || pending_zoom == Some(false);
         if fit && let Some(l) = &self.loaded {
             let (target, extent) = l.summary.framing();
             if let Err(e) = self.camera.fit(target, extent, self.aspect()) {
@@ -2228,6 +2229,7 @@ impl eframe::App for App {
             self.header(ui);
             self.ribbon(ui);
             self.status_bar(ui);
+            menu::show(ui, &mut self.menu_open);
             self.inspector(ui);
             let ctx = ui.ctx().clone();
             self.details_window(&ctx);
@@ -2355,9 +2357,6 @@ impl eframe::App for App {
                 } else {
                     self.start_select(ray);
                 }
-            }
-            if self.text {
-                self.view_controls(ui, response.rect);
             }
         });
         ui.ctx().request_repaint();
@@ -2520,6 +2519,158 @@ mod tests {
     }
 
     #[test]
+    fn menu_and_selection_stay_aligned_across_tabs_and_window_widths() {
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        for width in [760.0, 1100.0, 1600.0] {
+            for tab in [
+                super::workbench::RibbonTab::Model,
+                super::workbench::RibbonTab::Modify,
+                super::workbench::RibbonTab::View,
+                super::workbench::RibbonTab::Drawings,
+                super::workbench::RibbonTab::Project,
+            ] {
+                app.ribbon_tab = tab;
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 900.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        app.header(ui);
+                        app.ribbon(ui);
+                    },
+                );
+                output.textures_delta.clear();
+                let menu = ctx
+                    .read_response(egui::Id::unique(super::workbench::MENU_TOGGLE_ID))
+                    .unwrap()
+                    .rect;
+                let select = ctx
+                    .read_response(egui::Id::unique(super::workbench::SELECT_TOOL_ID))
+                    .unwrap()
+                    .rect;
+                assert_eq!(menu.left(), 0.0, "the menu rail meets the window edge");
+                assert_eq!(menu.width(), 32.0);
+                assert_eq!(select.size(), egui::vec2(44.0, 56.0));
+                assert!(menu.height() > select.height());
+                assert_eq!(menu.center().y, select.center().y);
+                assert!(menu.right() < select.left());
+            }
+        }
+    }
+
+    #[test]
+    fn ribbon_and_workspace_menu_accept_input_without_changing_the_model() {
+        let Some(mut app) = headless() else { return };
+        deliver(&mut app, refreshed(2));
+        let token = app.loaded.as_ref().unwrap().snapshot.token().clone();
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        // Hit-testing is deterministic without waiting for slide animation frames.
+        ctx.all_styles_mut(|style| style.animation_time = 0.0);
+        let mut draw = |events: Vec<egui::Event>| {
+            let mut viewport = egui::Rect::NOTHING;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1400.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.header(ui);
+                    app.ribbon(ui);
+                    app.status_bar(ui);
+                    super::menu::show(ui, &mut app.menu_open);
+                    app.inspector(ui);
+                    egui::CentralPanel::default().show(ui, |ui| viewport = ui.max_rect());
+                },
+            );
+            output.textures_delta.clear();
+            (output, viewport)
+        };
+        let position = |(output, _): &(egui::FullOutput, egui::Rect), label: &str| {
+            output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == label => {
+                        Some(text.pos + text.galley.size() / 2.0)
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{label} was not drawn"))
+        };
+        let click = |pos: egui::Pos2| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        let initial = draw(Vec::new());
+        let menu_button = ctx
+            .read_response(egui::Id::unique(super::workbench::MENU_TOGGLE_ID))
+            .unwrap()
+            .rect
+            .center();
+        assert!(menu_button.x < 64.0);
+        assert!(menu_button.y > 92.0, "the menu belongs on the tool row");
+        assert!(!initial.0.shapes.iter().any(|shape| matches!(
+            &shape.shape,
+            egui::Shape::Text(text) if matches!(text.galley.job.text.as_str(), "Select" | "SELECT")
+        )), "the selection tool has an icon and a tooltip, without duplicate labels");
+        let modified = draw(click(position(&initial, "Modify")));
+        position(&modified, "Move");
+        draw(click(menu_button));
+        let opened = draw(Vec::new());
+        assert!(opened.1.left() > initial.1.left() + 200.0);
+        assert_eq!(opened.1.top(), initial.1.top());
+        // An inert file command neither dismisses the drawer nor starts an edit.
+        let still_open = draw(click(position(&opened, "Open model")));
+        position(&still_open, "Workspace");
+        // The rest of the window stays usable: this is a docked panel, not a modal.
+        let view_tab = draw(click(position(&still_open, "View")));
+        position(&view_tab, "Shaded");
+        position(&view_tab, "Workspace");
+        assert!(ctx.memory(|memory| memory.top_modal_layer().is_none()));
+        let toggled_closed = draw(click(menu_button));
+        assert_eq!(toggled_closed.1.left(), initial.1.left());
+        draw(click(menu_button));
+        draw(vec![egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }]);
+        assert!(!app.menu_open);
+        assert_eq!(app.ribbon_tab, super::workbench::RibbonTab::View);
+        assert_eq!(app.bench, super::workbench::Bench::Select);
+        assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
+        assert!(app.edit_job.is_none() && app.job.is_none());
+    }
+
+    #[test]
     fn a_lookup_that_is_given_up_is_told_to_stop() {
         let Some(mut app) = headless() else { return };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -2668,6 +2819,49 @@ mod navigation_tests {
     }
 
     #[test]
+    fn orbit_drag_moves_the_near_surface_with_the_pointer() {
+        for preset in [Preset::Mouse, Preset::Trackpad] {
+            for delta in [
+                egui::vec2(-12.0, 0.0),
+                egui::vec2(12.0, 0.0),
+                egui::vec2(0.0, -12.0),
+                egui::vec2(0.0, 12.0),
+            ] {
+                let mut camera = Camera::new([0.0; 3], 1000.0, 1.5).unwrap();
+                let view = camera.view(1.5).unwrap();
+                // A point on the near face of a model centred on the orbit target.
+                let point = [
+                    view.back[0] * 250.0,
+                    view.back[1] * 250.0,
+                    view.back[2] * 250.0,
+                ];
+                let before = view.project(point);
+                let (orbit, pan, zoom) = navigate(
+                    preset,
+                    delta,
+                    (preset == Preset::Trackpad, false, preset == Preset::Mouse),
+                    preset == Preset::Mouse,
+                    false,
+                    camera.distance(),
+                    true,
+                    0.0,
+                    1.0,
+                    KEYS_NONE,
+                    false,
+                );
+                camera.navigate(orbit, pan, zoom).unwrap();
+                let after = camera.view(1.5).unwrap().project(point);
+                if delta.x != 0.0 {
+                    assert!((after[0] - before[0]) * delta.x > 0.0);
+                } else {
+                    // Projection uses Y up; pointer events use Y down.
+                    assert!((after[1] - before[1]) * delta.y < 0.0);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn mouse_left_drag_never_moves_the_camera() {
         let delta = egui::Vec2::new(10.0, -20.0);
         for shift in [false, true] {
@@ -2726,7 +2920,7 @@ mod navigation_tests {
             false,
         );
         assert!(
-            (orbit[0] - 0.08).abs() < 1e-6 && (orbit[1] - 0.16).abs() < 1e-6,
+            (orbit[0] + 0.08).abs() < 1e-6 && (orbit[1] + 0.16).abs() < 1e-6,
             "{orbit:?}"
         );
         assert_eq!(pan, [0.0; 2]);
@@ -2783,7 +2977,7 @@ mod navigation_tests {
             false,
         );
         assert!(
-            (orbit[0] - 0.08).abs() < 1e-6 && (orbit[1] - 0.16).abs() < 1e-6,
+            (orbit[0] + 0.08).abs() < 1e-6 && (orbit[1] + 0.16).abs() < 1e-6,
             "{orbit:?}"
         );
         assert_eq!(pan, [0.0; 2]);

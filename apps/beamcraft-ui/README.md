@@ -40,19 +40,32 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
 - Live refresh: the window watches the store's committed revisions and reloads by itself when
   another process (the CLI, an agent) commits to the store it shows; `R` stays for a manual
   reload. A reload whose framing changed fits the camera, so new content comes into view.
-- Layout (design v1, the BeamCraft look of `src/theme.rs`): a brand header with the project, its
+- Layout (the BeamCraft look of `src/theme.rs`): a brand header with the project, its
   save state, the environment and author, and Publish; a ribbon of tools (Select; Plate, Beam,
-  Column; Move, Copy, Delete, Undo, Redo; Shaded); the 3D view with view and zoom buttons; an
+  Column; Move, Copy, Delete, Undo, Redo; Shaded); an unobstructed 3D view; an
   inspector on the right that shows what the chosen tool needs (properties, a create form or an
   edit form); a status bar with the selection and a Details window (frame rate, adapter,
   revision, navigation). Tools that do not exist yet (Bolts, Weld, Wire, the Plan and Grid views,
   snapping) are shown disabled. Model parts are drawn in the logo's colours on a blueprint
   ground that follows the light or dark theme.
+- Command navigation: the three-horizontal-line button immediately left of Select slides the
+  workspace panel in from the left edge below the ribbon. Its grouped file, exchange, project,
+  support and session commands are disabled placeholders. Close it with the same toggle, its
+  close button or Esc. The docked panel shares the layout with the viewport; the rest of the window
+  stays interactive, without a popup frame or a backdrop.
+  The ribbon has Model, Modify, View, Drawings and Project tabs. Existing modelling and editing
+  commands retain their behaviour; new command placeholders are disabled with an availability
+  tooltip. Horizontal scrolling keeps the tabs and tools reachable in narrow windows.
+  Tabs use text and an active underline rather than button frames. The selection tool is an
+  icon with a tooltip, without repeated Select captions. The viewport has no floating
+  3D/Plan/Grid or Fit/zoom controls; the wheel and keyboard navigation remain available.
+  Orbit dragging moves the model's near surface in the pointer's direction on both presets.
+  See [the navigation note](../../docs/design/v10-command-navigation.md).
 - V05.1 Create panel (experimental, now the inspector of Plate, Beam and Column): a plate (width, length, thickness, optional name and material)
   or a straight beam/column (start, end, profile and material chosen from the store's definitions,
   optional name). Preview stages the exact `create-plate` / `create-member` argument list (one per line, not a shell
   command line; no geometry preview), Commit runs it in a separate process and reloads the accepted revision,
-  Cancel drops it and publishes nothing; a CLI refusal is shown with its code and message. The
+  Cancel drops it and publishes nothing; a CLI refusal is shown as a message without a technical code prefix. The
   parameter mapping and reply parsing are `tools.rs` (pure, unit-tested); the process is
   `command.rs`. See [the design note](../../docs/design/v05-1-ui-create-tools.md).
 - `--metrics` renders offscreen without a window and prints one JSON object (adapter, scene size,
