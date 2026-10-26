@@ -245,6 +245,14 @@ pub fn parse_recent(exit_code: Option<i32>, stdout: &[u8]) -> Result<Vec<Project
         .collect()
 }
 
+/// Reads a bounded read-only project-name suggestion.
+pub fn parse_project_name(exit_code: Option<i32>, stdout: &[u8]) -> Result<String, ToolError> {
+    let reply = reply(exit_code, stdout, "project_name")?;
+    text(&reply, "name")
+        .filter(|name| !name.is_empty() && name.len() <= 256)
+        .ok_or_else(unreadable)
+}
+
 /// Reads the reply of `create-project` or `add-recent`: the project.
 pub fn parse_project(
     exit_code: Option<i32>,
@@ -304,6 +312,9 @@ pub fn project_create_args(
         "--name".into(),
         name.to_owned(),
     ];
+    if name == DEFAULT_MODEL_NAME {
+        args.extend(["--unique-name".into(), "true".into()]);
+    }
     if let Some(actor) = actor_id {
         args.push("--actor-id".into());
         args.push(actor.to_owned());
@@ -351,6 +362,11 @@ enum Reply {
     Saved(Result<(SettingsView, Vec<ProjectView>), ToolError>),
     Listed(Result<Vec<ProjectView>, ToolError>),
     Opened(Result<ProjectView, ToolError>),
+    Suggested {
+        parent: String,
+        previous: String,
+        name: Result<String, ToolError>,
+    },
 }
 
 /// The start window and the start page.
@@ -372,6 +388,7 @@ pub struct StartPage {
     all: Vec<ProjectView>,
     folder: String,
     new_name: String,
+    suggested_name: String,
     new_parent: String,
     note: Option<Result<String, String>>,
     open: Option<PathBuf>,
@@ -403,6 +420,7 @@ impl StartPage {
             all: Vec::new(),
             folder: String::new(),
             new_name: DEFAULT_MODEL_NAME.to_owned(),
+            suggested_name: DEFAULT_MODEL_NAME.to_owned(),
             new_parent: String::new(),
             note: None,
             open: None,
@@ -558,6 +576,33 @@ impl StartPage {
         }
     }
 
+    fn suggest_project_name(&mut self) {
+        if self.job.is_some()
+            || self.new_name != self.suggested_name
+            || self.new_parent.trim().is_empty()
+        {
+            return;
+        }
+        let parent = self.new_parent.trim().to_owned();
+        let previous = self.new_name.clone();
+        self.spawn(move |cli, stats| {
+            let args = vec![
+                "suggest-project-name".into(),
+                "--parent".into(),
+                parent.clone(),
+                "--name".into(),
+                DEFAULT_MODEL_NAME.into(),
+            ];
+            let name = command::run(cli, &args, DEADLINE, stats)
+                .and_then(|out| parse_project_name(out.code, &out.stdout));
+            Reply::Suggested {
+                parent,
+                previous,
+                name,
+            }
+        });
+    }
+
     fn create_project(&mut self) {
         // A typed location is checked here, so the refusal names the path that was typed.
         let parent = self.new_parent.trim();
@@ -570,7 +615,11 @@ impl StartPage {
         let args = project_create_args(
             self.config_dir.as_deref(),
             self.new_parent.trim(),
-            self.new_name.trim(),
+            if self.new_name == self.suggested_name {
+                DEFAULT_MODEL_NAME
+            } else {
+                self.new_name.trim()
+            },
             self.actor_id().as_deref(),
         );
         self.spawn(move |cli, stats| {
@@ -609,6 +658,19 @@ impl StartPage {
         };
         self.job = None;
         match reply {
+            Reply::Suggested {
+                parent,
+                previous,
+                name,
+            } => {
+                if self.new_parent.trim() == parent
+                    && self.new_name == previous
+                    && let Ok(name) = name
+                {
+                    self.new_name = name.clone();
+                    self.suggested_name = name;
+                }
+            }
             Reply::Loaded(Ok((settings, environments, recent))) => {
                 self.loaded = true;
                 self.environments = environments;
@@ -956,6 +1018,7 @@ impl StartPage {
                         if theme::button(ui, Kind::Primary, "+  New model", !busy).clicked() {
                             self.tab = Tab::Create;
                             self.note = None;
+                            self.suggest_project_name();
                         }
                         if self.tab != Tab::Shared {
                             ui.add(
@@ -1212,7 +1275,7 @@ impl StartPage {
                 ui.add_space(8.0);
                 ui.label(theme::bold("Location", 14.0));
                 ui.horizontal(|ui| {
-                    ui.add(
+                    let location = ui.add(
                         egui::TextEdit::singleline(&mut self.new_parent)
                             .hint_text("Choose a folder with Browse…")
                             .desired_width(ui.available_width() - 130.0)
@@ -1221,10 +1284,14 @@ impl StartPage {
                             .margin(egui::Margin::symmetric(12, 8))
                             .char_limit(MAX_FIELD),
                     );
+                    if location.lost_focus() {
+                        self.suggest_project_name();
+                    }
                     if theme::button(ui, Kind::Secondary, "Browse…", !busy).clicked()
                         && let Some(dir) = self.browse("Where to create the model")
                     {
                         self.new_parent = dir;
+                        self.suggest_project_name();
                     }
                 });
                 ui.add_space(8.0);

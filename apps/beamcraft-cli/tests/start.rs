@@ -79,6 +79,80 @@ fn text(json: &Json, key: &str) -> String {
 }
 
 #[test]
+fn default_project_names_skip_existing_files_and_reserve_free_folders() {
+    let f = Fixture::new();
+    let parent = f.path("models");
+    let suggest = || {
+        f.raw(&[
+            "suggest-project-name",
+            "--parent",
+            &parent,
+            "--name",
+            "New Model",
+        ])
+    };
+    assert_eq!(text(&suggest().1, "name"), "New Model");
+    assert!(!f.root.join("models/New Model").exists());
+    let create = || {
+        f.ok(&[
+            "create-project",
+            "--parent",
+            &parent,
+            "--name",
+            "New Model",
+            "--unique-name",
+            "true",
+            "--actor-id",
+            ACTOR,
+        ])
+    };
+    assert_eq!(text(at(&create(), &["project"]), "name"), "New Model");
+    assert_eq!(text(&suggest().1, "name"), "New Model 1");
+    fs::write(
+        f.root.join("models/New Model 1"),
+        b"keep this existing file",
+    )
+    .unwrap();
+    assert_eq!(text(at(&create(), &["project"]), "name"), "New Model 2");
+    assert_eq!(text(at(&create(), &["project"]), "name"), "New Model 3");
+    let mut concurrent = std::thread::scope(|scope| {
+        let first = scope.spawn(create);
+        let second = scope.spawn(create);
+        [first.join().unwrap(), second.join().unwrap()]
+            .map(|created| text(at(&created, &["project"]), "name"))
+    });
+    concurrent.sort();
+    assert_eq!(concurrent, ["New Model 4", "New Model 5"]);
+    assert_eq!(
+        fs::read(f.root.join("models/New Model 1")).unwrap(),
+        b"keep this existing file"
+    );
+    assert_eq!(
+        f.code(&[
+            "create-project",
+            "--parent",
+            &parent,
+            "--name",
+            "New Model",
+            "--actor-id",
+            ACTOR
+        ]),
+        "DUPLICATE_ID"
+    );
+    assert_eq!(
+        f.raw(&[
+            "suggest-project-name",
+            "--parent",
+            &parent,
+            "--name",
+            "../bad"
+        ])
+        .0,
+        2
+    );
+}
+
+#[test]
 fn listing_recents_persists_removal_of_missing_models_and_keeps_unreadable_models() {
     use beamcraft_host::settings::Settings;
     let f = Fixture::new();

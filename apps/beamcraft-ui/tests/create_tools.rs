@@ -127,7 +127,7 @@ fn a_duplicate_model_name_explains_how_to_recover() {
     let args = beamcraft_ui::start::project_create_args(
         Some(&config),
         stores.root.to_str().unwrap(),
-        "New Model",
+        "Workshop",
         Some("0199e7a0-0000-7000-8000-0000000000a1"),
     );
     let run = || {
@@ -135,7 +135,7 @@ fn a_duplicate_model_name_explains_how_to_recover() {
         beamcraft_ui::start::parse_project(output.status.code(), &output.stdout, "project_created")
     };
     let created = run().unwrap();
-    assert_eq!(created.name, "New Model");
+    assert_eq!(created.name, "Workshop");
     let error = run().unwrap_err();
     assert_eq!(error.code, "DUPLICATE_ID");
     assert!(
@@ -144,7 +144,42 @@ fn a_duplicate_model_name_explains_how_to_recover() {
             .contains("Choose a different name or location")
     );
     assert!(!error.to_string().contains("DUPLICATE_ID"));
-    assert!(stores.root.join("New Model/revisions").is_dir());
+    assert!(stores.root.join("Workshop/revisions").is_dir());
+}
+
+#[test]
+fn automatic_new_model_names_use_the_same_unique_creation_as_the_cli() {
+    let Some(cli) = cli() else { return };
+    let stores = Stores::new();
+    let config = stores.root.join("config");
+    let args = beamcraft_ui::start::project_create_args(
+        Some(&config),
+        stores.root.to_str().unwrap(),
+        "New Model",
+        Some("0199e7a0-0000-7000-8000-0000000000a1"),
+    );
+    for expected in ["New Model", "New Model 1", "New Model 2"] {
+        let out = Command::new(&cli)
+            .args([
+                "suggest-project-name",
+                "--parent",
+                stores.root.to_str().unwrap(),
+                "--name",
+                "New Model",
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(
+            beamcraft_ui::start::parse_project_name(out.status.code(), &out.stdout).unwrap(),
+            expected
+        );
+        let out = Command::new(&cli).args(&args).output().unwrap();
+        let created =
+            beamcraft_ui::start::parse_project(out.status.code(), &out.stdout, "project_created")
+                .unwrap();
+        assert_eq!(created.name, expected);
+        assert!(Path::new(&created.path).join("revisions").is_dir());
+    }
 }
 
 #[test]
