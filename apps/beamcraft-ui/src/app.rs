@@ -2588,7 +2588,7 @@ mod tests {
         super::inter(&ctx);
         crate::theme::install(&ctx);
         let mut draw = |events| {
-            ctx.run_ui(
+            let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(
                         egui::Pos2::ZERO,
@@ -2603,7 +2603,10 @@ mod tests {
                     app.inspector(ui);
                     egui::CentralPanel::default().show(ui, |_| {});
                 },
-            )
+            );
+            // Only layout and input are inspected; this test does not upload textures.
+            output.textures_delta.clear();
+            output
         };
         let position = |output: &egui::FullOutput, label: &str| {
             output
@@ -2694,7 +2697,7 @@ mod tests {
         super::inter(&ctx);
         crate::theme::install(&ctx);
         let draw = |app: &mut App, events| {
-            ctx.run_ui(
+            let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(
                         egui::Pos2::ZERO,
@@ -2709,7 +2712,9 @@ mod tests {
                     app.inspector(ui);
                     egui::CentralPanel::default().show(ui, |_| {});
                 },
-            )
+            );
+            output.textures_delta.clear();
+            output
         };
         let position = |output: &egui::FullOutput, label: &str| {
             output
@@ -2780,7 +2785,7 @@ mod tests {
                 super::workbench::RibbonTab::Project,
             ] {
                 app.ribbon_tab = tab;
-                let _ = ctx.run_ui(
+                let mut output = ctx.run_ui(
                     egui::RawInput {
                         screen_rect: Some(egui::Rect::from_min_size(
                             egui::Pos2::ZERO,
@@ -2793,6 +2798,7 @@ mod tests {
                         app.ribbon(ui);
                     },
                 );
+                output.textures_delta.clear();
                 let menu = ctx
                     .read_response(egui::Id::unique(super::workbench::MENU_TOGGLE_ID))
                     .unwrap()
@@ -2823,7 +2829,7 @@ mod tests {
         ctx.all_styles_mut(|style| style.animation_time = 0.0);
         let mut draw = |events: Vec<egui::Event>| {
             let mut viewport = egui::Rect::NOTHING;
-            let output = ctx.run_ui(
+            let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(
                         egui::Pos2::ZERO,
@@ -2841,6 +2847,7 @@ mod tests {
                     egui::CentralPanel::default().show(ui, |ui| viewport = ui.max_rect());
                 },
             );
+            output.textures_delta.clear();
             (output, viewport)
         };
         let position = |(output, _): &(egui::FullOutput, egui::Rect), label: &str| {

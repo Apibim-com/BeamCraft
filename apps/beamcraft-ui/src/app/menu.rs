@@ -103,7 +103,7 @@ mod tests {
             )),
             ..Default::default()
         };
-        let _ = ctx.run_ui(input.clone(), |ui| {
+        let mut output = ctx.run_ui(input.clone(), |ui| {
             show(ui, &mut open);
             egui::CentralPanel::default().show(ui, |ui| {
                 for (_, entries) in GROUPS {
@@ -115,6 +115,8 @@ mod tests {
                 }
             });
         });
+        // This input test has no painter; deliberately discard texture uploads.
+        output.textures_delta.clear();
         assert!(open);
         let mut input = input;
         input.events.push(egui::Event::Key {
@@ -124,7 +126,8 @@ mod tests {
             repeat: false,
             modifiers: egui::Modifiers::NONE,
         });
-        let _ = ctx.run_ui(input, |ui| show(ui, &mut open));
+        let mut output = ctx.run_ui(input, |ui| show(ui, &mut open));
+        output.textures_delta.clear();
         assert!(!open);
     }
 }

@@ -740,9 +740,11 @@ mod tests {
     fn the_menu_icon_is_three_lines_and_contains_no_font_glyph() {
         let ctx = egui::Context::default();
         let mut rect = egui::Rect::NOTHING;
-        let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             rect = super::menu_toggle(ui, false).rect;
         });
+        // This layout test has no painter; deliberately discard texture uploads.
+        output.textures_delta.clear();
         let lines = output
             .shapes
             .iter()
