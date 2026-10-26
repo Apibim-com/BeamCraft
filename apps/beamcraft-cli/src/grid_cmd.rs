@@ -356,9 +356,22 @@ fn run(args: &[OsString]) -> Run<Json> {
         BlobStore::new(root).map_err(|e| error(e.code(), "store root is not usable"))?,
     );
     if *command == "list-grids" {
+        let revision = match store.open() {
+            Ok(r) => Some(r),
+            Err(beamcraft_host::revision::RevisionError::NoRevision) => None,
+            Err(e) => return Err(e.into()),
+        };
+        let (model, manifest) = match revision {
+            Some(r) => (
+                beamcraft_cli::grid::grids_at(&store, r.info().sequence())?,
+                Json::text(r.info().manifest_digest().to_string()),
+            ),
+            None => (Vec::new(), Json::Null),
+        };
         return Ok(Json::object([
             ("outcome", Json::text("grids")),
-            ("grids", views_json(&grids(&store)?)?),
+            ("model_manifest", manifest),
+            ("grids", views_json(&model)?),
         ]));
     }
     if matches!(*command, "resolve-grid-point" | "resolve-grid-plane") {
@@ -526,6 +539,15 @@ pub(crate) fn views_json(grids: &[Grid]) -> Run<Json> {
                         ("mode", Json::text(mode)),
                         ("expression", expression),
                         (
+                            "span_mm",
+                            match f {
+                                GridFamily::Regular(r) => Json::Array(
+                                    r.span_mm.iter().map(|v| num(*v)).collect::<Run<_>>()?,
+                                ),
+                                GridFamily::Drawn(_) => Json::Null,
+                            },
+                        ),
+                        (
                             "lines",
                             Json::Array(
                                 lines
@@ -536,6 +558,18 @@ pub(crate) fn views_json(grids: &[Grid]) -> Run<Json> {
                                             ("label", Json::text(label)),
                                             ("start_mm", world(a)?),
                                             ("end_mm", world(b)?),
+                                            (
+                                                "local_start_mm",
+                                                Json::Array(
+                                                    a.into_iter().map(num).collect::<Run<_>>()?,
+                                                ),
+                                            ),
+                                            (
+                                                "local_end_mm",
+                                                Json::Array(
+                                                    b.into_iter().map(num).collect::<Run<_>>()?,
+                                                ),
+                                            ),
                                         ]))
                                     })
                                     .collect::<Run<Vec<_>>>()?,
@@ -559,6 +593,10 @@ pub(crate) fn views_json(grids: &[Grid]) -> Run<Json> {
                     (
                         "rotation_rad",
                         num(2.0 * g.orientation_zw[0].atan2(g.orientation_zw[1]))?,
+                    ),
+                    (
+                        "orientation_zw",
+                        Json::Array(g.orientation_zw.into_iter().map(num).collect::<Run<_>>()?),
                     ),
                     ("u", family(&g.u, true)?),
                     ("v", family(&g.v, false)?),

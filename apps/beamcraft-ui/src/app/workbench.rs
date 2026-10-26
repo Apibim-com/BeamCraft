@@ -25,6 +25,8 @@ pub(crate) enum Bench {
     Beam,
     /// Create a column.
     Column,
+    /// Create and edit project grids.
+    Grid,
     /// Move the selected element.
     Move,
     /// Copy the selected element.
@@ -44,6 +46,7 @@ impl Bench {
             Self::Move => "Move",
             Self::Copy => "Copy",
             Self::Delete => "Delete",
+            Self::Grid => "Grids",
         }
     }
 
@@ -53,7 +56,7 @@ impl Bench {
             Self::Move => Some(EditKind::Move),
             Self::Copy => Some(EditKind::Copy),
             Self::Delete => Some(EditKind::Delete),
-            Self::Select | Self::Plate | Self::Beam | Self::Column => None,
+            Self::Select | Self::Plate | Self::Beam | Self::Column | Self::Grid => None,
         }
     }
 }
@@ -121,6 +124,10 @@ fn caption(ui: &mut Ui, text: &str) {
 impl App {
     /// Switches the inspector to `bench` and points the create or edit forms at it.
     pub(crate) fn set_bench(&mut self, bench: Bench) {
+        if bench != Bench::Grid {
+            self.grids.drawing = false;
+            self.grids.first = None;
+        }
         self.bench = bench;
         match bench {
             Bench::Plate => self.tools.active = ToolKind::Plate,
@@ -138,6 +145,11 @@ impl App {
                 }
             }
             Bench::Select => {}
+            Bench::Grid => {
+                if self.beam_mode {
+                    self.toggle_place();
+                }
+            }
         }
     }
 
@@ -272,6 +284,11 @@ impl App {
                             }
                         }
                     });
+                    group(ui, "GRIDS", &mut |ui| {
+                        if ui.selectable_label(bench == Bench::Grid, "Grids").clicked() {
+                            pick = Some(Bench::Grid);
+                        }
+                    });
                     group(ui, "CONNECT", &mut |ui| {
                         tool_button(ui, Icon::Bolt, "Bolts", false, false);
                         tool_button(ui, Icon::Weld, "Weld", false, false);
@@ -344,6 +361,7 @@ impl App {
                         ui.label(theme::bold(self.bench.title(), 18.0));
                         match self.bench {
                             Bench::Select => self.props_panel(ui),
+                            Bench::Grid => self.grid_panel(ui),
                             Bench::Plate | Bench::Beam | Bench::Column => self.tools_panel(ui),
                             Bench::Move | Bench::Copy | Bench::Delete => self.edit_panel(ui),
                         }
@@ -355,7 +373,7 @@ impl App {
             });
     }
 
-    /// The status bar: the selection, snap switches (not available yet) and Details.
+    /// The status bar: selection, the grid snap switch and Details.
     pub(crate) fn status_bar(&mut self, ui: &mut Ui) {
         let palette = Palette::current(ui);
         egui::Panel::bottom("model-status")
@@ -393,7 +411,8 @@ impl App {
                         {
                             self.details = !self.details;
                         }
-                        for snap in ["Nearest", "Grid", "Middle", "End"] {
+                        ui.checkbox(&mut self.grids.snap, "Grid snap");
+                        for snap in ["Nearest", "Middle", "End"] {
                             ui.add_enabled(false, egui::Button::new(RichText::new(snap).small()))
                                 .on_disabled_hover_text(LATER);
                         }

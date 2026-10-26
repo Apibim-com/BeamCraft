@@ -7,6 +7,7 @@
 //! (primary drag orbits, Shift + primary drag pans, pinch zooms). In both the wheel zooms toward
 //! the cursor, F fits and R reloads.
 
+mod grids;
 mod workbench;
 
 use crate::camera::{Camera, View};
@@ -87,6 +88,10 @@ pub struct App {
     last: Instant,
     fps: f32,
     tools: Tools,
+    grids: crate::grid_tools::GridTools,
+    grid_job: Option<Receiver<Result<(bool, beamcraft_json::Json), String>>>,
+    grid_refresh: bool,
+    grid_framing: Option<(String, [f64; 3])>,
     job: Option<Receiver<Result<Created, ToolError>>>,
     reload_job: Option<Receiver<Reloaded>>,
     reload_queued: bool,
@@ -685,6 +690,10 @@ impl App {
             last: Instant::now(),
             fps: 0.0,
             tools: Tools::default(),
+            grids: crate::grid_tools::GridTools::default(),
+            grid_job: None,
+            grid_refresh: true,
+            grid_framing: None,
             beam: BeamPlace::default(),
             beam_mode: false,
             ghost_end: None,
@@ -735,6 +744,7 @@ impl App {
     /// applied by `poll_reload`. A refresh asked for while one runs is queued, so it still reads
     /// the store after whatever just changed it.
     fn reload(&mut self) {
+        self.grid_refresh = true;
         if self.reload_job.is_some() {
             self.reload_queued = true;
             return;
@@ -1819,6 +1829,7 @@ impl App {
             ));
             return;
         };
+        let point = self.snap_grid_point(point);
         match self.beam.click(point) {
             None => {
                 self.ghost_end = None;
@@ -2185,6 +2196,7 @@ impl eframe::App for App {
                 !wants_text && i.key_pressed(egui::Key::Minus),
             )
         });
+        self.poll_grids();
         self.poll_commit();
         self.poll_edit();
         self.poll_props();
@@ -2192,8 +2204,10 @@ impl eframe::App for App {
         self.poll_status();
         self.poll_select();
         self.poll_reload();
+        self.fit_grid_scene();
         self.perf_step(ui.ctx(), frame.info().cpu_usage);
         if !wants_text && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.grids.cancel();
             // Esc closes the publish dialog first; it clears the selection only when none is open.
             if self.publisher.phase() == Phase::Confirming {
                 self.publisher.cancel();
@@ -2321,6 +2335,7 @@ impl eframe::App for App {
                             let painter = ui.painter_at(response.rect);
                             draw_selection(&painter, response.rect, &view, l, &selected.id);
                         }
+                        self.draw_grids(&ui.painter_at(response.rect), response.rect, &view);
                         // A click (not a drag) picks along the ray through the pixel.
                         if response.clicked_by(egui::PointerButton::Primary)
                             && let Some(pos) = response.interact_pointer_pos()
@@ -2350,7 +2365,9 @@ impl eframe::App for App {
                 Err(e) => self.error = Some(e.to_string()),
             }
             if let Some(ray) = picked {
-                if self.beam_mode {
+                if self.grids.drawing {
+                    self.place_grid_line(ray);
+                } else if self.beam_mode {
                     self.place_beam(ray);
                 } else {
                     self.start_select(ray);
@@ -2517,6 +2534,68 @@ mod tests {
         tx.send(reloaded).unwrap();
         app.reload_job = Some(rx);
         app.poll_reload();
+    }
+
+    #[test]
+    fn grid_panel_and_native_labels_paint_without_changing_the_snapshot() {
+        let Some(mut app) = headless() else {
+            return;
+        };
+        deliver(&mut app, refreshed(1));
+        let loaded = app.loaded.as_ref().unwrap();
+        let token = loaded.snapshot.token().clone();
+        app.grids.manifest = Some(loaded.snapshot.pin().revision().to_string());
+        let id = |n| {
+            beamcraft_engine::ElementId::parse(&format!("01990000-0000-7000-8000-{n:012x}"))
+                .unwrap()
+        };
+        let grid = beamcraft_model::grid::Grid {
+            id: id(100),
+            name: "Grid".into(),
+            translation_mm: [0., 0.],
+            orientation_zw: [0., 1.],
+            u: beamcraft_model::grid::GridFamily::Drawn(vec![
+                beamcraft_model::grid::DrawnGridLine {
+                    axis_id: id(101),
+                    label: "A".into(),
+                    start_mm: [0., 0.],
+                    end_mm: [100., 100.],
+                },
+            ]),
+            v: beamcraft_model::grid::GridFamily::Drawn(Vec::new()),
+        };
+        app.grids.form.select(&grid);
+        app.grids.form.action = crate::grid_tools::GridAction::Draw;
+        app.grids.grids = vec![grid];
+        app.set_bench(super::workbench::Bench::Grid);
+        let ctx = egui::Context::default();
+        if !super::inter(&ctx) {
+            eprintln!("SKIP grid panel paint: admitted font unavailable");
+            return;
+        }
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1000., 800.),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                app.grid_panel(ui);
+                let view = app.camera.view(1.).unwrap();
+                app.draw_grids(ui.painter(), ui.max_rect(), &view);
+            },
+        );
+        assert!(!output.shapes.is_empty());
+        output.textures_delta.clear();
+        app.grids.staged = Some(app.grids.form.prepare(&app.source.store).unwrap());
+        app.grids.drawing = true;
+        app.grids.click([1., 2., 0.]);
+        app.grids.cancel();
+        assert!(app.grids.staged.is_none());
+        assert!(app.grid_job.is_none());
+        assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
     }
 
     #[test]
