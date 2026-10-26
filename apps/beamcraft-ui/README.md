@@ -48,11 +48,18 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   revision, navigation). Tools that do not exist yet (Bolts, Weld, Wire, the Plan and Grid views,
   snapping) are shown disabled. Model parts are drawn in the logo's colours on a blueprint
   ground that follows the light or dark theme.
+- Command navigation: the header's vertical-ellipsis button opens the original BeamCraft workspace
+  drawer on the left. Its grouped file, exchange, project, support and session commands are disabled
+  placeholders. Close it with its close button, Esc or a click outside; it does not resize the view.
+  The ribbon has Model, Modify, View, Drawings and Project tabs. Existing modelling and editing
+  commands retain their behaviour; new command placeholders are disabled with an availability
+  tooltip. Horizontal scrolling keeps the tabs and tools reachable in narrow windows.
+  See [the navigation note](../../docs/design/v10-command-navigation.md).
 - V05.1 Create panel (experimental, now the inspector of Plate, Beam and Column): a plate (width, length, thickness, optional name and material)
   or a straight beam/column (start, end, profile and material chosen from the store's definitions,
   optional name). Preview stages the exact `create-plate` / `create-member` argument list (one per line, not a shell
   command line; no geometry preview), Commit runs it in a separate process and reloads the accepted revision,
-  Cancel drops it and publishes nothing; a CLI refusal is shown with its code and message. The
+  Cancel drops it and publishes nothing; a CLI refusal is shown as a message without a technical code prefix. The
   parameter mapping and reply parsing are `tools.rs` (pure, unit-tested); the process is
   `command.rs`. See [the design note](../../docs/design/v05-1-ui-create-tools.md).
 - `--metrics` renders offscreen without a window and prints one JSON object (adapter, scene size,

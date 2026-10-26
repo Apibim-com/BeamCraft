@@ -7,6 +7,7 @@
 //! (primary drag orbits, Shift + primary drag pans, pinch zooms). In both the wheel zooms toward
 //! the cursor, F fits and R reloads.
 
+mod menu;
 mod workbench;
 
 use crate::camera::{Camera, View};
@@ -142,6 +143,10 @@ pub struct App {
     refresh_timings: Vec<RefreshTiming>,
     /// The tool chosen on the ribbon; the inspector shows what it needs.
     bench: workbench::Bench,
+    /// The command category shown on the ribbon.
+    ribbon_tab: workbench::RibbonTab,
+    /// Whether the workspace menu covers the left side of the window.
+    menu_open: bool,
     /// Whether the Details window is open.
     details: bool,
     /// A zoom (true: in) or fit asked for by the view buttons, applied in the next frame.
@@ -717,6 +722,8 @@ impl App {
             selects_finished: 0,
             refresh_timings: Vec::new(),
             bench: workbench::Bench::default(),
+            ribbon_tab: workbench::RibbonTab::default(),
+            menu_open: false,
             details: false,
             pending_zoom: None,
             pending_fit: false,
@@ -2176,7 +2183,7 @@ impl eframe::App for App {
         if dt > 0.0 {
             self.fps = self.fps * 0.9 + 0.1 / dt;
         }
-        let wants_text = ui.ctx().egui_wants_keyboard_input();
+        let wants_text = ui.ctx().egui_wants_keyboard_input() || self.menu_open;
         let (fit, reload, zoom_in, zoom_out) = ui.input(|i| {
             (
                 !wants_text && i.key_pressed(egui::Key::F),
@@ -2193,7 +2200,9 @@ impl eframe::App for App {
         self.poll_select();
         self.poll_reload();
         self.perf_step(ui.ctx(), frame.info().cpu_usage);
-        if !wants_text && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        if self.menu_open && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.menu_open = false;
+        } else if !wants_text && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             // Esc closes the publish dialog first; it clears the selection only when none is open.
             if self.publisher.phase() == Phase::Confirming {
                 self.publisher.cancel();
@@ -2232,6 +2241,7 @@ impl eframe::App for App {
             let ctx = ui.ctx().clone();
             self.details_window(&ctx);
             self.publish_dialog(&ctx);
+            menu::show(&ctx, &mut self.menu_open);
         }
         egui::CentralPanel::default().show(ui, |ui| {
             let size = ui.available_size();
@@ -2517,6 +2527,86 @@ mod tests {
         tx.send(reloaded).unwrap();
         app.reload_job = Some(rx);
         app.poll_reload();
+    }
+
+    #[test]
+    fn ribbon_and_workspace_menu_accept_input_without_changing_the_model() {
+        let Some(mut app) = headless() else { return };
+        deliver(&mut app, refreshed(2));
+        let token = app.loaded.as_ref().unwrap().snapshot.token().clone();
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        let mut draw = |events: Vec<egui::Event>| {
+            ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1400.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.header(ui);
+                    app.ribbon(ui);
+                    app.status_bar(ui);
+                    app.inspector(ui);
+                    egui::CentralPanel::default().show(ui, |_| {});
+                    super::menu::show(ui.ctx(), &mut app.menu_open);
+                },
+            )
+        };
+        let position = |output: &egui::FullOutput, label: &str| {
+            output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == label => {
+                        Some(text.pos + text.galley.size() / 2.0)
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{label} was not drawn"))
+        };
+        let click = |pos: egui::Pos2| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        let initial = draw(Vec::new());
+        let modified = draw(click(position(&initial, "Modify")));
+        position(&modified, "Move");
+        draw(click(position(&modified, "⋮")));
+        // A new egui Area needs its sizing pass before its text is painted.
+        let opened = draw(Vec::new());
+        // An inert file command neither dismisses the drawer nor starts an edit.
+        let still_open = draw(click(position(&opened, "Open model")));
+        position(&still_open, "Workspace");
+        draw(vec![egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }]);
+        assert!(!app.menu_open);
+        assert_eq!(app.ribbon_tab, super::workbench::RibbonTab::Modify);
+        assert_eq!(app.bench, super::workbench::Bench::Select);
+        assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
+        assert!(app.edit_job.is_none() && app.job.is_none());
     }
 
     #[test]
