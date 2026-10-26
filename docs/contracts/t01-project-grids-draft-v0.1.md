@@ -271,7 +271,8 @@ unknown label, a non-crossing pair or a grid that does not exist are refused (se
 
 A command that takes points accepts **one parameter** for it (D3): `GRID:LABEL,LABEL`, where `GRID`
 is a GridId or a grid name carried by exactly one live grid (`GRID_NAME_AMBIGUOUS` otherwise), for
-example `--start-at-grid 2401:Б,3`. Comma is the fixed label separator. Height is given as
+example `--start-at-grid 2401:Б,3`. A name containing `:` must be addressed by GridId. Comma is
+the fixed label separator. Height is given as
 `--z MM`, or as **`--level LEVEL [--offset MM]`**, which takes `z = elevation of the level + offset`
 (offset default 0; D9). Without either the command is refused (`INVALID_ARGUMENT`). T01.4 adds the
 syntax to `create-member` (`--start-at-grid`, `--end-at-grid`) and to the placement origin of
@@ -438,7 +439,7 @@ Positive:
 | GR-P11 | A KMD edit (rename a part, move a plate) under the rules of T01.5 | Every grid and level is byte-equal before and after; with no `Grids` authority a grid command is `PERMISSION_DENIED` |
 | GR-P12 | A section project places a member at an intersection of a grid of the pinned coordination project | Coordinates as GR-P08; the grid is unchanged; a write to that grid is `FOREIGN_READ_ONLY` |
 | GR-P13 | `resolve-grid-plane` of line `3` of GR-P01 | A vertical plane through `(12000, y)` with normal `(±1, 0, 0)`; the same after reopening |
-| GR-P14 | Default spans when the opposite family is drawn | A regular `u` line spans local Y from the opposite drawn family's endpoint minimum minus 2000 mm to its maximum plus 2000 mm; a regular `v` line uses the same rule over local X |
+| GR-P14 | Grid A has regular `u` at 0 and drawn `v` endpoints `(1000, 8000)` and `(5000, 12000)`; Grid B has regular `v` at 0 and drawn `u` endpoints `(1000, 3000)` and `(5000, 4000)` | Grid A's `u` segment runs `(0, 6000)` to `(0, 14000)`; Grid B's `v` segment runs `(-1000, 0)` to `(7000, 0)` |
 | GR-P15 | Drag regular line `2` of positions `[0, 6000, 12000]` to `6500` | Expression becomes `0 6500 5500`; all three labels and AxisIds remain; one undo restores the previous expression and positions |
 | GR-P16 | Open a derived USD grid in another viewer | One 50 mm diameter tube per line at `z = 0`, `purpose = guide`; no USD text labels and no grid geometry in the authored layer |
 
