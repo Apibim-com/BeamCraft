@@ -2580,7 +2580,11 @@ mod tests {
             ]
         };
         let initial = draw(Vec::new());
-        let menu_button = position(&initial, "☰");
+        let menu_button = ctx
+            .read_response(egui::Id::unique(super::workbench::MENU_TOGGLE_ID))
+            .unwrap()
+            .rect
+            .center();
         assert!(menu_button.x < 64.0);
         assert!(menu_button.y > 92.0, "the menu belongs on the tool row");
         assert!(!initial.0.shapes.iter().any(|shape| matches!(
@@ -2589,7 +2593,7 @@ mod tests {
         )), "the selection tool has an icon and a tooltip, without duplicate labels");
         let modified = draw(click(position(&initial, "Modify")));
         position(&modified, "Move");
-        draw(click(position(&modified, "☰")));
+        draw(click(menu_button));
         let opened = draw(Vec::new());
         assert!(opened.1.left() > initial.1.left() + 200.0);
         assert_eq!(opened.1.top(), initial.1.top());
@@ -2601,9 +2605,9 @@ mod tests {
         position(&view_tab, "Shaded");
         position(&view_tab, "Workspace");
         assert!(ctx.memory(|memory| memory.top_modal_layer().is_none()));
-        let toggled_closed = draw(click(position(&view_tab, "☰")));
+        let toggled_closed = draw(click(menu_button));
         assert_eq!(toggled_closed.1.left(), initial.1.left());
-        draw(click(position(&toggled_closed, "☰")));
+        draw(click(menu_button));
         draw(vec![egui::Event::Key {
             key: egui::Key::Escape,
             physical_key: None,

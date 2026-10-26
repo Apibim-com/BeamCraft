@@ -92,6 +92,45 @@ impl RibbonTab {
 /// Why a ribbon tool is disabled, shown as its tooltip.
 const LATER: &str = "Not available yet";
 
+/// Stable identity for the painted workspace-menu toggle and its input tests.
+pub(super) const MENU_TOGGLE_ID: &str = "workspace-menu-toggle";
+
+/// Three geometric strokes, independent of the font's rendering of menu symbols.
+fn menu_toggle(ui: &mut Ui, open: bool) -> egui::Response {
+    let (_, rect) = ui.allocate_space(vec2(44.0, 56.0));
+    let response = ui.interact(rect, egui::Id::unique(MENU_TOGGLE_ID), Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::Role::Button, true, open, "Workspace menu")
+    });
+    ui.painter().rect_filled(
+        rect,
+        0,
+        if response.hovered() || open {
+            theme::BRAND_LIGHT
+        } else {
+            BRAND
+        },
+    );
+    let centre = rect.center();
+    for offset in [-6.0, 0.0, 6.0] {
+        ui.painter().line_segment(
+            [centre + vec2(-9.0, offset), centre + vec2(9.0, offset)],
+            Stroke::new(2.0, INK),
+        );
+    }
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            rect.shrink(2.0),
+            0,
+            Stroke::new(1.0, INK),
+            StrokeKind::Inside,
+        );
+    }
+    response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Workspace menu")
+}
+
 /// A text tab joined to the ribbon by an underline, without a button frame.
 fn command_tab(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
     let palette = Palette::current(ui);
@@ -346,16 +385,7 @@ impl App {
                 let mut pick = None;
                 let (mut undo, mut redo) = (false, false);
                 ui.horizontal(|ui| {
-                    if ui
-                        .add(
-                            egui::Button::new(theme::bold("☰", 22.0).color(INK))
-                                .min_size(vec2(44.0, 56.0))
-                                .corner_radius(0)
-                                .fill(BRAND),
-                        )
-                        .on_hover_text("Workspace menu")
-                        .clicked()
-                    {
+                    if menu_toggle(ui, self.menu_open).clicked() {
                         self.menu_open = !self.menu_open;
                     }
                     egui::ScrollArea::horizontal()
@@ -641,6 +671,33 @@ impl App {
 mod tests {
     use super::Bench;
     use crate::edit::EditKind;
+
+    #[test]
+    fn the_menu_icon_is_three_lines_and_contains_no_font_glyph() {
+        let ctx = egui::Context::default();
+        let mut rect = egui::Rect::NOTHING;
+        let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            rect = super::menu_toggle(ui, false).rect;
+        });
+        let lines = output
+            .shapes
+            .iter()
+            .filter(|shape| {
+                matches!(
+                    &shape.shape,
+                    egui::Shape::LineSegment { points: [a, b], .. }
+                        if a.y == b.y && a.x < b.x && rect.contains(*a) && rect.contains(*b)
+                )
+            })
+            .count();
+        assert_eq!(lines, 3);
+        assert!(
+            !output
+                .shapes
+                .iter()
+                .any(|shape| matches!(shape.shape, egui::Shape::Text(_)))
+        );
+    }
 
     #[test]
     fn edit_benches_map_to_edit_actions() {

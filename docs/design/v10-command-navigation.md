@@ -10,6 +10,8 @@ command entries are disabled, including file and session entries. They dispatch 
 The same toggle, the close button and Esc collapse the panel. It shares the window layout with
 the viewport, with no floating frame, shadow or backdrop. Other controls and the model stay
 interactive while it is open. Opening it changes the viewport's available width, never model data.
+The menu icon is painted from three horizontal strokes rather than a Unicode character, so the
+font cannot substitute a word or a different symbol. Its accessible name and tooltip remain text.
 
 Five ribbon tabs organize commands: Model, Modify, View, Drawings and Project. Tab navigation is
 active, using text tabs with an active underline and no button frames. Selection uses a single
