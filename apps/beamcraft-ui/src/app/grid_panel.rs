@@ -31,6 +31,11 @@ fn family(ui: &mut Ui, title: &str, form: &mut FamilyForm, hint: &str) {
                 &mut form.expression,
                 "Start coordinate, then spacings",
             );
+            if let Ok((_, positions)) =
+                beamcraft_model::grid::parse_grid_expression(form.expression.trim())
+            {
+                ui.label(egui::RichText::new(format!("{} axes", positions.len())).small());
+            }
             ui.label(
                 egui::RichText::new(
                     "First position, then positive spacings; N*D repeats a spacing.",

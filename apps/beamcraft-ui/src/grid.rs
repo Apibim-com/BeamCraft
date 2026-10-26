@@ -11,7 +11,7 @@ use crate::tools::{FormError, ToolError, decode, push_actor, rejection, text};
 use crate::{command, theme};
 use beamcraft_json::Json;
 use beamcraft_model::grid::{
-    MAX_GRID_LINES_PER_FAMILY, MAX_GRIDS, parse_grid_expression, parse_grid_labels,
+    GridLabelError, MAX_GRID_LINES_PER_FAMILY, MAX_GRIDS, parse_grid_expression, parse_grid_labels,
 };
 use beamcraft_model::id::ElementId;
 use std::path::Path;
@@ -109,9 +109,9 @@ impl GridForm {
             "--rotation".into(),
             decimal("Rotation", &self.rotation)?,
         ];
-        for (prefix, family, field) in [
-            ("u", &self.u, "U coordinates"),
-            ("v", &self.v, "V coordinates"),
+        for (prefix, family, field, labels_field) in [
+            ("u", &self.u, "U coordinates", "U labels"),
+            ("v", &self.v, "V coordinates", "V labels"),
         ] {
             let expression = family.expression.trim();
             if expression.is_empty() {
@@ -128,11 +128,23 @@ impl GridForm {
             let (normalized, positions) = parse_grid_expression(expression).map_err(|_| form_error(field, "Enter a start coordinate followed by positive spacings, for example 0 2*4000. At most 200 lines are allowed."))?;
             args.extend([format!("--{prefix}-expression"), normalized]);
             if !family.labels.trim().is_empty() {
-                let labels = parse_grid_labels(&family.labels, positions.len()).map_err(|_| {
-                    form_error(
-                        field,
-                        "Enter one valid, unique label per line, separated by spaces.",
-                    )
+                let labels = parse_grid_labels(&family.labels, positions.len()).map_err(|error| {
+                    let message = match error {
+                        GridLabelError::Count => {
+                            let count = family.labels
+                                .split(|c: char| c.is_ascii_whitespace() || c == ',')
+                                .filter(|word| !word.is_empty())
+                                .count();
+                            format!(
+                                "Coordinates define {} axes, but you entered {count} labels. Enter one label per axis, or leave Labels blank for automatic labels.",
+                                positions.len()
+                            )
+                        }
+                        GridLabelError::Duplicate => "Each axis needs a unique label.".into(),
+                        GridLabelError::Invalid | GridLabelError::Limit =>
+                            "Use labels of up to 16 letters or digits, with -, _, ., + or /. Separate labels with spaces or commas.".into(),
+                    };
+                    form_error(labels_field, &message)
                 })?;
                 args.extend([format!("--{prefix}-labels"), labels.join(" ")]);
             }

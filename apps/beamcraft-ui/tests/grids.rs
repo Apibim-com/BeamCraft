@@ -188,6 +188,25 @@ fn invalid_input_and_engine_refusals_publish_no_grid() {
         assert!(form.prepare(&store, None).is_err());
     }
     form = GridForm::default();
+    form.u.labels = "1 2 3 4 5 6 7 8 9".into();
+    let mismatch = form.prepare(&store, None).unwrap_err();
+    assert_eq!(mismatch.field, "U labels");
+    assert!(mismatch.message.contains("3 axes"));
+    assert!(mismatch.message.contains("9 labels"));
+    form.u.labels = "1, 2, 3".into();
+    form.v.labels = "A B C D E F".into();
+    let mismatch = form.prepare(&store, None).unwrap_err();
+    assert_eq!(mismatch.field, "V labels");
+    assert!(mismatch.message.contains("3 axes"));
+    assert!(mismatch.message.contains("6 labels"));
+    form.v.labels = "A B C".into();
+    assert!(form.prepare(&store, None).is_ok());
+    form.v.labels = "A A C".into();
+    let duplicate = form.prepare(&store, None).unwrap_err();
+    assert_eq!(duplicate.field, "V labels");
+    assert!(duplicate.message.contains("unique"));
+    assert_eq!(f.head(&store), before);
+    form = GridForm::default();
     form.u.labels = "A B C".into();
     form.v.labels = "A B C".into();
     let args = form.prepare(&store, Some(ACTOR)).unwrap();
