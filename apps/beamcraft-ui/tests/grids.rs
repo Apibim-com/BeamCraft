@@ -117,7 +117,7 @@ fn displayed_grid_can_be_picked_edited_and_restored_by_workspace_history() {
     let grid = guides.get(&created.id).unwrap();
     assert!(grid.editable);
     assert_eq!(grid.form.u.expression, "0 2*4000");
-    assert_eq!(grid.form.u.span, ["-2000", "12000"]);
+    assert_eq!(grid.form.u.span, ["2000", "12000"]);
     let Refreshed::New(scene) = read.scene.unwrap() else {
         panic!("expected snapshot")
     };
@@ -166,7 +166,7 @@ fn displayed_grid_can_be_picked_edited_and_restored_by_workspace_history() {
     edited.u.expression = "0 2*6500".into();
     edited.u.labels = "1 2".into();
     edited.v.labels = "A B C D E".into();
-    edited.u.span = ["-1000".into(), "14000".into()];
+    edited.u.span = ["1000".into(), "14000".into()];
     edited.origin = ["1000".into(), "-250".into()];
     edited.rotation = "30".into();
     let args = edited
@@ -183,6 +183,15 @@ fn displayed_grid_can_be_picked_edited_and_restored_by_workspace_history() {
     let old = &initial.get("grids").unwrap().array().unwrap()[0];
     let new = &after.get("grids").unwrap().array().unwrap()[0];
     assert_eq!(new.get("name").unwrap().string().unwrap(), "Edited grid");
+    assert_eq!(
+        at(new, &["u", "span_mm"])
+            .array()
+            .unwrap()
+            .iter()
+            .map(|n| n.float().unwrap())
+            .collect::<Vec<_>>(),
+        [-1000.0, 14000.0]
+    );
     for family in ["u", "v"] {
         for (a, b) in old
             .get(family)
@@ -211,7 +220,7 @@ fn displayed_grid_can_be_picked_edited_and_restored_by_workspace_history() {
     let saved = &reopened.get(&created.id).unwrap().form;
     assert_eq!(saved.u.expression, "0 2*6500");
     assert_eq!(saved.u.labels, "1 2 3");
-    assert_eq!(saved.u.span, ["-1000", "14000"]);
+    assert_eq!(saved.u.span, ["1000", "14000"]);
     assert_eq!(saved.origin, ["1000", "-250"]);
     assert!((saved.rotation.parse::<f64>().unwrap() - 30.0).abs() < 1e-10);
     f.ok(&[
@@ -226,6 +235,36 @@ fn displayed_grid_can_be_picked_edited_and_restored_by_workspace_history() {
     );
     f.ok(&[
         "redo-workspace",
+        "--workspace-dir",
+        workspace.to_str().unwrap(),
+    ]);
+    assert_eq!(
+        after.get("grids"),
+        f.ok(&["list-grids", "--store", workspace.to_str().unwrap()])
+            .get("grids")
+    );
+    // The UI's direct Delete command removes the selected grid in one undo unit.
+    let mut editor = beamcraft_ui::edit::Editor::default();
+    editor.select_id(created.id.clone());
+    let deletion = editor
+        .prepare(
+            beamcraft_ui::edit::EditKind::Delete,
+            beamcraft_ui::edit::Target {
+                store: &workspace,
+                workspace: Some(&workspace),
+            },
+        )
+        .unwrap();
+    beamcraft_ui::command::commit_edit(&f.cli, &deletion, &Stats::default()).unwrap();
+    assert!(
+        source::reload(&f.cli, &workspace, &Known::default(), &Stats::default())
+            .grids
+            .unwrap()
+            .grids
+            .is_empty()
+    );
+    f.ok(&[
+        "undo-workspace",
         "--workspace-dir",
         workspace.to_str().unwrap(),
     ]);
@@ -363,8 +402,8 @@ fn growing_both_coordinate_families_keeps_every_line_across_the_whole_grid() {
         .grids
         .unwrap();
     let grid = enlarged.get(&created.id).unwrap();
-    assert_eq!(grid.form.u.span, ["-2000", "47000"]);
-    assert_eq!(grid.form.v.span, ["-2000", "32000"]);
+    assert_eq!(grid.form.u.span, ["2000", "47000"]);
+    assert_eq!(grid.form.v.span, ["2000", "32000"]);
     assert_eq!(grid.form.u.labels, "1 2 3 4 5 6");
     assert_eq!(grid.form.v.labels, "A B C D E F G H I J");
     let (vertical, horizontal) = enlarged.lines.split_at(6);

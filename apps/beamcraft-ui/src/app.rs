@@ -1070,6 +1070,29 @@ impl App {
         }
     }
 
+    /// Delete the current grid or part using the same engine command as the CLI.
+    fn delete_selection(&mut self) {
+        if self.other_command_running() {
+            return;
+        }
+        if let Some(edit) = &self.grid_edit {
+            self.editor.select_id(edit.id.clone());
+        }
+        if self.editor.selected().is_some() {
+            self.start_edit(Some(EditKind::Delete));
+        }
+    }
+
+    fn selection_shortcuts(&mut self, ctx: &egui::Context) {
+        if !ctx.egui_wants_keyboard_input()
+            && !self.menu_open
+            && self.publisher.phase() != Phase::Confirming
+            && ctx.input(|input| input.key_pressed(egui::Key::Delete))
+        {
+            self.delete_selection();
+        }
+    }
+
     fn poll_edit(&mut self) {
         let Some(rx) = &self.edit_job else { return };
         let result = match rx.try_recv() {
@@ -1104,6 +1127,9 @@ impl App {
                     EditKind::Delete => {
                         self.editor.deselect();
                         self.props.clear();
+                        self.grid_edit = None;
+                        self.grid_form = crate::grid::GridForm::default();
+                        self.set_bench(workbench::Bench::Select);
                     }
                     // The element may have moved, or the undo may have removed it: ask again.
                     _ => self.refresh_selection(),
@@ -1111,6 +1137,10 @@ impl App {
                 self.refresh_status();
             }
             Err(e) => {
+                if self.grid_edit.is_some() {
+                    self.grid_note = Some(Err(e.to_string()));
+                    self.editor.deselect();
+                }
                 if e.code == "OUTCOME_UNKNOWN" {
                     self.invalidate_select();
                     self.reload();
@@ -2229,6 +2259,7 @@ impl eframe::App for App {
         self.poll_status();
         self.poll_select();
         self.poll_reload();
+        self.selection_shortcuts(ui.ctx());
         self.perf_step(ui.ctx(), frame.info().cpu_usage);
         if self.menu_open && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.menu_open = false;
@@ -2259,8 +2290,7 @@ impl eframe::App for App {
             }
         }
         if self.text {
-            // Header, ribbon and status bar first, then the inspector at a fixed width: the 3D
-            // view must not shift sideways when a chosen definition name is wider.
+            // The inspector wraps long values within the width chosen by the user.
             self.header(ui);
             self.ribbon(ui);
             self.status_bar(ui);
@@ -2598,6 +2628,7 @@ mod tests {
                     ..Default::default()
                 },
                 |ui| {
+                    app.selection_shortcuts(ui.ctx());
                     app.header(ui);
                     app.ribbon(ui);
                     app.inspector(ui);
@@ -2640,14 +2671,14 @@ mod tests {
         let first = draw(Vec::new());
         let form = draw(click(position(&first, "Grid")));
         position(&form, "Create grid");
-        let hidden = draw(click(position(&form, "Show grids")));
-        draw(click(position(&hidden, "Cancel")));
+        assert!(!form.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text == "Show grids")));
+        draw(click(position(&form, "Cancel")));
         let cancelled = draw(Vec::new());
         position(&cancelled, "Properties");
         assert_eq!(app.bench, super::workbench::Bench::Select);
         assert!(app.grid_job.is_none());
         assert!(!app.beam_mode && app.beam.start().is_none() && app.ghost_end.is_none());
-        assert!(!app.grids_visible);
+        assert!(app.grids_visible);
         assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
     }
 
@@ -2707,6 +2738,7 @@ mod tests {
                     ..Default::default()
                 },
                 |ui| {
+                    app.selection_shortcuts(ui.ctx());
                     app.header(ui);
                     app.ribbon(ui);
                     app.inspector(ui);
@@ -2749,8 +2781,12 @@ mod tests {
         app.grid_form.name = "Unapplied name".into();
         let edited = draw(&mut app, Vec::new());
         position(&edited, "Grid properties");
-        position(&edited, "Fit grid extents");
-        draw(&mut app, click(position(&edited, "Reload properties")));
+        for removed in ["Fit grid extents", "Reload properties", "Show grids"] {
+            assert!(!edited.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text == removed)));
+        }
+        draw(&mut app, click(position(&edited, "Cancel")));
+        assert!(app.grid_edit.is_none());
+        app.select_grid(id);
         assert_eq!(app.grid_form, form);
         app.grid_form.name = "My draft".into();
         app.grid_scene.grids[0].form.name = "External change".into();
@@ -2760,14 +2796,93 @@ mod tests {
         draw(&mut app, click(position(&stale, "Apply changes")));
         assert!(app.grid_job.is_none());
         assert_eq!(app.grid_form.name, "My draft");
-        let stale = draw(&mut app, Vec::new());
-        draw(&mut app, click(position(&stale, "Reload properties")));
+        app.select_grid(id);
         assert_eq!(app.grid_form.name, "External change");
+        // Delete edits text while a field has focus, and deletes the grid otherwise.
+        let current = draw(&mut app, Vec::new());
+        let name_input = position(&current, "Name") + egui::vec2(0.0, 25.0);
+        draw(&mut app, click(name_input));
+        let key = |pressed| egui::Event::Key {
+            key: egui::Key::Delete,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        draw(&mut app, vec![key(true)]);
+        assert!(app.edit_job.is_none());
+        ctx.memory_mut(|memory| {
+            if let Some(focused) = memory.focused() {
+                memory.surrender_focus(focused);
+            }
+        });
+        draw(&mut app, vec![key(false)]);
+        draw(&mut app, vec![key(true)]);
+        assert!(app.edit_job.is_some());
+        assert_eq!(app.editor.selected().unwrap().id, id);
         app.grid_scene.grids.clear();
         app.sync_grid_selection();
         assert!(app.grid_edit.is_none());
         assert!(app.grid_job.is_none());
         assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
+    }
+
+    #[test]
+    fn inspector_can_be_widened_and_narrowed_without_editing_the_model() {
+        let Some(mut app) = headless() else { return };
+        deliver(&mut app, refreshed(1));
+        let token = app.loaded.as_ref().unwrap().snapshot.token().clone();
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        let draw = |app: &mut App, events| {
+            let mut viewport = egui::Rect::NOTHING;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1400.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.inspector(ui);
+                    egui::CentralPanel::default()
+                        .frame(egui::Frame::NONE)
+                        .show(ui, |ui| viewport = ui.max_rect());
+                },
+            );
+            output.textures_delta.clear();
+            viewport
+        };
+        let pointer = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        draw(&mut app, Vec::new());
+        let initial = draw(&mut app, Vec::new());
+        let mut current = initial;
+        for delta in [-180.0, 120.0] {
+            let start = egui::pos2(current.right(), 400.0);
+            let end = start + egui::vec2(delta, 0.0);
+            draw(
+                &mut app,
+                vec![egui::Event::PointerMoved(start), pointer(start, true)],
+            );
+            draw(&mut app, vec![egui::Event::PointerMoved(end)]);
+            draw(&mut app, vec![pointer(end, false)]);
+            let next = draw(&mut app, Vec::new());
+            assert!(
+                (next.right() - current.right() - delta).abs() < 3.0,
+                "{current:?} -> {next:?}"
+            );
+            current = next;
+        }
+        assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
+        assert!(!app.other_command_running());
     }
 
     #[test]

@@ -49,7 +49,8 @@ pub struct FamilyForm {
     pub expression: String,
     /// Explicit labels, or empty for automatic labels.
     pub labels: String,
-    /// Explicit segment start/end, or both empty for the engine default.
+    /// Nonnegative start distance (negated in the command) and the end coordinate,
+    /// or both empty for the engine default.
     pub span: [String; 2],
 }
 
@@ -104,6 +105,30 @@ fn decimal(field: &'static str, value: &str) -> Result<String, FormError> {
         ));
     }
     Ok(value.to_owned())
+}
+
+fn start_coordinate(value: &str) -> Result<String, FormError> {
+    let value = decimal("Line start", value)?;
+    let distance = value
+        .parse::<f64>()
+        .map_err(|_| form_error("Line start", "Enter a number."))?;
+    if distance < 0.0 {
+        return Err(form_error(
+            "Line start",
+            "Enter a positive distance or zero.",
+        ));
+    }
+    Ok((-distance).to_string())
+}
+
+fn display_rotation(radians: f64) -> String {
+    let rounded = format!("{:.3}", radians.to_degrees());
+    let trimmed = rounded.trim_end_matches('0').trim_end_matches('.');
+    if trimmed == "-0" {
+        "0".into()
+    } else {
+        trimmed.into()
+    }
 }
 
 impl GridForm {
@@ -264,7 +289,7 @@ impl GridForm {
             if !start.trim().is_empty() || !end.trim().is_empty() {
                 args.extend([
                     format!("--{prefix}-span"),
-                    [decimal("Span start", start)?, decimal("Span end", end)?].join(","),
+                    [start_coordinate(start)?, decimal("Span end", end)?].join(","),
                 ]);
             }
         }
@@ -456,7 +481,7 @@ impl GridScene {
             let mut form = GridForm {
                 name,
                 origin: origin.map(|n| n.to_string()),
-                rotation: rotation.to_degrees().to_string(),
+                rotation: display_rotation(rotation),
                 ..GridForm::default()
             };
             let mut editable = true;
@@ -513,7 +538,7 @@ impl GridScene {
                         FamilyForm {
                             expression,
                             labels: labels.get(family_start..).ok_or_else(bad)?.join(" "),
-                            span: span.map(|n| n.to_string()),
+                            span: [span[0].abs().to_string(), span[1].to_string()],
                         }
                     }
                     Some("drawn") => {
@@ -694,5 +719,33 @@ impl GridScene {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod form_tests {
+    use super::*;
+
+    #[test]
+    fn start_distance_is_positive_in_the_form_and_negative_in_the_command() {
+        let mut form = GridForm::default();
+        form.u.span = ["2500".into(), "12000".into()];
+        let args = form.prepare(Path::new("model"), None).unwrap();
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--u-span", "-2500,12000"])
+        );
+        form.u.span[0] = "-2500".into();
+        assert!(form.prepare(Path::new("model"), None).is_err());
+        form.u.span[0] = "0".into();
+        assert!(form.prepare(Path::new("model"), None).is_ok());
+    }
+
+    #[test]
+    fn rotation_display_has_at_most_three_decimal_places() {
+        assert_eq!(display_rotation(45.00000000000001_f64.to_radians()), "45");
+        assert_eq!(display_rotation(12.3456789_f64.to_radians()), "12.346");
+        assert_eq!(display_rotation(-0.00001_f64.to_radians()), "0");
     }
 }

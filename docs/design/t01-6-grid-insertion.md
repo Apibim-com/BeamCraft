@@ -31,8 +31,10 @@ gain a numeric suffix. Already-used labels in the family are skipped. Blank inpu
 selects the default automatic labels. This does not add axes or retain unused words in the
 model. The accepted labels retain their validation and grid-wide uniqueness requirements.
 
-The creation and cancel buttons stay below the scrollable fields. Grid visibility is session
-view state; its switch never authors a revision. Levels remain separate from plan grids.
+The creation and cancel buttons stay below the scrollable fields. The inspector can be resized
+horizontally and wraps its contents at the chosen width. Grid visibility is session view state;
+it has no control in grid properties and is reserved for view properties. Levels remain separate
+from plan grids.
 
 ## Selection and properties
 
@@ -45,17 +47,23 @@ These values come from the same pinned inspection as the displayed lines, includ
 
 Apply changes invokes `update-grid` once. Only edited fields are sent, so unchanged frames keep
 their exact stored values. Retained labels preserve AxisIds according to T01.3; the combined edit
-is one workspace undo unit. Reload properties discards the draft and uses the currently displayed
-properties. A background reload refreshes untouched forms; a dirty form whose grid changed is
-disabled until reloaded. A removed grid clears its selection. Empty space or Esc clears selection;
+is one workspace undo unit. Cancel discards the draft and selection. A background reload refreshes
+untouched forms; a dirty form whose grid changed is disabled until the grid is selected again.
+A removed grid clears its selection. Empty space or Esc clears selection;
 hidden grids cannot be picked. Drawn families can be selected but are read-only in this panel.
+
+The form shows the start limit as a nonnegative distance; an edited start is negated for the
+existing signed CLI coordinate. Rotation is shown to at most three decimal places, with no
+negative zero. Unchanged fields retain their exact stored values, including a higher-precision
+rotation or legacy signed limits. Delete outside text fields and the ribbon's Delete action
+invoke `delete-element` for the selected grid; engine refusals remain visible and workspace undo
+restores the complete grid.
 
 Changing a coordinate expression additionally requests `--fit-spans true`. The engine fits regular
 line limits to the opposite family's complete new coordinate range, with 2000 mm extensions at
 both ends. This keeps enlarged grids connected rather than leaving new axes beyond the old line
-ends. Explicitly edited line limits remain an advanced override. The panel's Fit grid extents
-action repairs older short spans without changing coordinate expressions, labels or AxisIds;
-apply or reload pending drafts before using it. Ordinary CLI updates retain their old span
+ends. Explicitly edited line limits remain an advanced override. There is no separate Fit action
+in the panel. Ordinary CLI updates retain their old span
 behaviour unless the fit option is requested. Fit operations have a distinct fingerprint domain,
 while existing ordinary-update fingerprints remain unchanged for exact replay.
 
@@ -77,7 +85,7 @@ model properties.
 
 Actual-binary acceptance compares form insertion with the direct CLI, checks rotated endpoints,
 labels, one pinned refresh, framing, and refusals without publication. Native egui input tests
-cover opening the form, hiding guides, cancel, and preserving the snapshot. Both legacy and new
+cover opening the form, resizing the inspector, cancel, text-safe Delete, and preserving the snapshot. Both legacy and new
 frame readers remain bounded. A combined regression edits a rotated rectangular grid through
 the form, resolves and snaps its four outer intersections through the T01.4 CLI, preserves the
 query height, and checks that already placed parts stay unchanged and queries publish nothing.

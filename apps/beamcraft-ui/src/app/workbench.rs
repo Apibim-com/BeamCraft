@@ -409,7 +409,8 @@ impl App {
             )
             .show(ui, |ui| {
                 let bottom = ui.max_rect().bottom();
-                let selected = self.editor.selected().is_some();
+                let grid_selected = self.grid_edit.is_some();
+                let selected = self.editor.selected().is_some() && !grid_selected;
                 let edits_free = !self.editor.busy() && !self.other_command_running();
                 let has_workspace = self.source.workspace.is_some();
                 let mut pick = None;
@@ -493,7 +494,9 @@ impl App {
                                                     icon,
                                                     label,
                                                     bench == b,
-                                                    selected,
+                                                    (selected
+                                                        || b == Bench::Delete && grid_selected)
+                                                        && edits_free,
                                                 );
                                                 if response.clicked() {
                                                     pick = Some(b);
@@ -588,7 +591,11 @@ impl App {
                         });
                 });
                 if let Some(bench) = pick {
-                    self.set_bench(bench);
+                    if bench == Bench::Delete && grid_selected {
+                        self.delete_selection();
+                    } else {
+                        self.set_bench(bench);
+                    }
                 }
                 if undo {
                     self.start_edit(Some(EditKind::Undo));
@@ -610,8 +617,9 @@ impl App {
     pub(crate) fn inspector(&mut self, ui: &mut Ui) {
         let palette = Palette::current(ui);
         egui::Panel::right("model-inspector")
-            .exact_size(320.0)
-            .resizable(false)
+            .default_size(320.0)
+            .size_range(280.0..=(ui.available_width() * 0.75).max(320.0))
+            .resizable(true)
             .frame(
                 egui::Frame::new()
                     .fill(palette.surface)
@@ -644,7 +652,7 @@ impl App {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        // The inspector keeps its width: long values and ids wrap instead.
+                        // Long values wrap within the width chosen by the user.
                         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
                         ui.set_max_width(ui.available_width());
                         ui.label(theme::bold(self.bench.title(), 18.0));

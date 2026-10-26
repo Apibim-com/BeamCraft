@@ -55,15 +55,14 @@ fn family(ui: &mut Ui, title: &str, form: &mut FamilyForm, hint: &str) {
                     .small(),
             );
             egui::CollapsingHeader::new("Line limits").show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        ui.set_width(116.0);
-                        field(ui, "Line start (mm)", &mut form.span[0], "Automatic");
-                    });
-                    ui.vertical(|ui| {
-                        ui.set_width(116.0);
-                        field(ui, "Line end (mm)", &mut form.span[1], "Automatic");
-                    });
+                let [start, end] = &mut form.span;
+                ui.columns(2, |columns| {
+                    for (column, (label, value)) in columns.iter_mut().zip([
+                        ("Line start (mm)", start),
+                        ("Line end (mm)", end),
+                    ]) {
+                        field(column, label, value, "Automatic");
+                    }
                 });
             });
         });
@@ -145,7 +144,7 @@ impl App {
             .is_none_or(|edit| edit.original != self.grid_form);
         ui.label("Horizontal project axes. Levels are managed separately.");
         if self.grid_edit.as_ref().is_some_and(|edit| edit.stale) {
-            ui.colored_label(Palette::current(ui).error, "This grid changed while you were editing. Reload its properties before applying changes.");
+            ui.colored_label(Palette::current(ui).error, "This grid changed while you were editing. Select it again before applying changes.");
         }
         if self.grid_edit.as_ref().is_some_and(|edit| !edit.editable) {
             ui.label("This panel edits regular grids. Drawn-line properties are read-only here.");
@@ -155,7 +154,7 @@ impl App {
             180.0
         } else {
             120.0
-        } + if editing { 80.0 } else { 0.0 };
+        };
         egui::ScrollArea::vertical()
             .id_salt("grid-form")
             .max_height((ui.available_height() - footer).max(0.0))
@@ -174,7 +173,6 @@ impl App {
                         });
                 });
             });
-        ui.checkbox(&mut self.grids_visible, "Show grids");
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             if theme::button(
@@ -189,33 +187,15 @@ impl App {
             )
             .clicked()
             {
-                self.start_grid(false);
+                self.start_grid();
             }
-            if theme::button(
-                ui,
-                Kind::Secondary,
-                if editing {
-                    "Reload properties"
-                } else {
-                    "Cancel"
-                },
-                !busy,
-            )
-            .clicked()
-            {
-                if let Some(id) = self.grid_edit.as_ref().map(|edit| edit.id.clone()) {
-                    self.select_grid(&id);
-                } else {
-                    self.set_bench(Bench::Select);
-                }
+            if theme::button(ui, Kind::Secondary, "Cancel", !busy).clicked() {
+                self.grid_edit = None;
+                self.grid_form = crate::grid::GridForm::default();
+                self.grid_note = None;
+                self.set_bench(Bench::Select);
             }
         });
-        if editing
-            && theme::button(ui, Kind::Secondary, "Fit grid extents", !busy && editable && !changed)
-                .on_hover_text("Extend regular lines across the whole grid with 2000 mm margins. Apply or reload pending edits first.")
-                .clicked() {
-                self.start_grid(true);
-        }
         if self.grid_job.is_some() {
             ui.spinner();
             ui.label(if editing {
@@ -236,7 +216,7 @@ impl App {
         }
     }
 
-    fn start_grid(&mut self, fit_only: bool) {
+    fn start_grid(&mut self) {
         if self.other_command_running() {
             return;
         }
@@ -244,19 +224,12 @@ impl App {
             if !edit.editable || edit.stale {
                 return;
             }
-            if fit_only {
-                if self.grid_form != edit.original {
-                    return;
-                }
-                crate::grid::fit_args(&self.source.store, &edit.id, self.source.actor.as_deref())
-            } else {
-                self.grid_form.prepare_update(
-                    &edit.original,
-                    &edit.id,
-                    &self.source.store,
-                    self.source.actor.as_deref(),
-                )
-            }
+            self.grid_form.prepare_update(
+                &edit.original,
+                &edit.id,
+                &self.source.store,
+                self.source.actor.as_deref(),
+            )
         } else {
             self.grid_form
                 .prepare(&self.source.store, self.source.actor.as_deref())
