@@ -44,7 +44,7 @@ fn family(ui: &mut Ui, title: &str, form: &mut FamilyForm, hint: &str) {
             );
             field(ui, "Labels", &mut form.labels, hint);
             ui.label(
-                egui::RichText::new("Leave blank for automatic labels. Extra labels are unused.")
+                egui::RichText::new("Missing labels continue from the last one. Extra labels are unused. Leave blank for automatic labels.")
                     .small(),
             );
             egui::CollapsingHeader::new("Line limits").show(ui, |ui| {

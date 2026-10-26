@@ -94,101 +94,103 @@ fn at<'a>(json: &'a Json, keys: &[&str]) -> &'a Json {
 
 #[test]
 fn inserted_grid_matches_the_cli_and_is_displayed_from_one_pinned_read() {
-    let f = Fixture::new();
-    let store = f.root.join("ui");
-    let other = f.root.join("script");
-    let mut form = GridForm {
-        name: "Frame grid".into(),
-        origin: ["1250".into(), "-750".into()],
-        rotation: "20".into(),
-        ..GridForm::default()
-    };
-    form.u.labels = "1 2 3 4 5 6 7 8 9".into();
-    form.v.labels = "A B C D E F".into();
-    // Filling and validating the form is read-only; cancelling before insertion writes nothing.
-    let before = f.head(&store);
-    let args = form.prepare(&store, Some(ACTOR)).unwrap();
-    assert_eq!(f.head(&store), before);
-    let created = beamcraft_ui::grid::commit(&f.cli, &args, &Stats::default()).unwrap();
-    f.ok(&[
-        "create-grid",
-        "--store",
-        other.to_str().unwrap(),
-        "--name",
-        "Frame grid",
-        "--origin",
-        "1250,-750",
-        "--rotation",
-        "20",
-        "--u-expression",
-        "0 2*4000",
-        "--v-expression",
-        "0 2*5000",
-        "--u-labels",
-        "1 2 3 4 5 6 7 8 9",
-        "--v-labels",
-        "A B C D E F",
-        "--actor-id",
-        ACTOR,
-    ]);
-    let listed = f.ok(&["list-grids", "--store", store.to_str().unwrap()]);
-    let script = f.ok(&["list-grids", "--store", other.to_str().unwrap()]);
-    for family in ["u", "v"] {
-        let left = at(&listed, &["grids"]).array().unwrap()[0]
-            .get(family)
-            .unwrap()
-            .get("lines")
-            .unwrap()
-            .array()
-            .unwrap();
-        let right = at(&script, &["grids"]).array().unwrap()[0]
-            .get(family)
-            .unwrap()
-            .get("lines")
-            .unwrap()
-            .array()
-            .unwrap();
-        assert_eq!(left.len(), 3);
-        let expected = if family == "u" {
-            ["1", "2", "3"]
-        } else {
-            ["A", "B", "C"]
+    for (u_labels, v_labels) in [("1 2 3 4 5 6 7 8 9", "A B C D E F"), ("1 2", "A B")] {
+        let f = Fixture::new();
+        let store = f.root.join("ui");
+        let other = f.root.join("script");
+        let mut form = GridForm {
+            name: "Frame grid".into(),
+            origin: ["1250".into(), "-750".into()],
+            rotation: "20".into(),
+            ..GridForm::default()
         };
-        for (line, label) in left.iter().zip(expected) {
-            assert_eq!(line.get("label").unwrap().string().unwrap(), label);
-        }
-        for (a, b) in left.iter().zip(right) {
-            for key in ["label", "start_mm", "end_mm"] {
-                assert_eq!(a.get(key), b.get(key));
+        form.u.labels = u_labels.into();
+        form.v.labels = v_labels.into();
+        // Filling and validating the form is read-only; cancelling before insertion writes nothing.
+        let before = f.head(&store);
+        let args = form.prepare(&store, Some(ACTOR)).unwrap();
+        assert_eq!(f.head(&store), before);
+        let created = beamcraft_ui::grid::commit(&f.cli, &args, &Stats::default()).unwrap();
+        f.ok(&[
+            "create-grid",
+            "--store",
+            other.to_str().unwrap(),
+            "--name",
+            "Frame grid",
+            "--origin",
+            "1250,-750",
+            "--rotation",
+            "20",
+            "--u-expression",
+            "0 2*4000",
+            "--v-expression",
+            "0 2*5000",
+            "--u-labels",
+            u_labels,
+            "--v-labels",
+            v_labels,
+            "--actor-id",
+            ACTOR,
+        ]);
+        let listed = f.ok(&["list-grids", "--store", store.to_str().unwrap()]);
+        let script = f.ok(&["list-grids", "--store", other.to_str().unwrap()]);
+        for family in ["u", "v"] {
+            let left = at(&listed, &["grids"]).array().unwrap()[0]
+                .get(family)
+                .unwrap()
+                .get("lines")
+                .unwrap()
+                .array()
+                .unwrap();
+            let right = at(&script, &["grids"]).array().unwrap()[0]
+                .get(family)
+                .unwrap()
+                .get("lines")
+                .unwrap()
+                .array()
+                .unwrap();
+            assert_eq!(left.len(), 3);
+            let expected = if family == "u" {
+                ["1", "2", "3"]
+            } else {
+                ["A", "B", "C"]
+            };
+            for (line, label) in left.iter().zip(expected) {
+                assert_eq!(line.get("label").unwrap().string().unwrap(), label);
+            }
+            for (a, b) in left.iter().zip(right) {
+                for key in ["label", "start_mm", "end_mm"] {
+                    assert_eq!(a.get(key), b.get(key));
+                }
             }
         }
-    }
-    let stats = Stats::default();
-    let refreshed = source::reload(&f.cli, &store, &Known::default(), &stats);
-    assert_eq!(stats.cli_runs.get(), 1);
-    let guides = refreshed.grids.unwrap();
-    assert_eq!(guides.lines.len(), 6);
-    let Refreshed::New(scene) = refreshed.scene.unwrap() else {
-        panic!("expected a first scene");
-    };
-    assert_eq!(
-        scene.0.pin().revision().to_string(),
-        created.revision.manifest_digest
-    );
-    let summary = scene.1.summary();
-    let (target, extent) = guides.framing(&summary);
-    let view = Camera::new(target, extent, 1.5).unwrap().view(1.5).unwrap();
-    for line in &guides.lines {
-        for point in line.points {
-            let local = std::array::from_fn(|i| (point[i] - summary.origin_mm[i]) as f32);
-            let [x, y, z] = view.project(local);
-            assert!(x.abs() <= 1.0 && y.abs() <= 1.0 && (0.0..=1.0).contains(&z));
+        let stats = Stats::default();
+        let refreshed = source::reload(&f.cli, &store, &Known::default(), &stats);
+        assert_eq!(stats.cli_runs.get(), 1);
+        let guides = refreshed.grids.unwrap();
+        assert_eq!(guides.lines.len(), 6);
+        let Refreshed::New(scene) = refreshed.scene.unwrap() else {
+            panic!("expected a first scene");
+        };
+        assert_eq!(
+            scene.0.pin().revision().to_string(),
+            created.revision.manifest_digest
+        );
+        let summary = scene.1.summary();
+        let (target, extent) = guides.framing(&summary);
+        let view = Camera::new(target, extent, 1.5).unwrap().view(1.5).unwrap();
+        for line in &guides.lines {
+            for point in line.points {
+                let local = std::array::from_fn(|i| (point[i] - summary.origin_mm[i]) as f32);
+                let [x, y, z] = view.project(local);
+                assert!(x.abs() <= 1.0 && y.abs() <= 1.0 && (0.0..=1.0).contains(&z));
+            }
         }
+        assert_eq!(
+            f.head(&store).get("revision_id").unwrap().string().unwrap(),
+            created.revision.revision_id
+        );
     }
-    assert_eq!(
-        f.head(&store).get("revision_id").unwrap().string().unwrap(),
-        created.revision.revision_id
-    );
 }
 
 #[test]
@@ -203,16 +205,13 @@ fn invalid_input_and_engine_refusals_publish_no_grid() {
     }
     form = GridForm::default();
     form.u.labels = "1 2".into();
-    let mismatch = form.prepare(&store, None).unwrap_err();
-    assert_eq!(mismatch.field, "U labels");
-    assert!(mismatch.message.contains("3 axes"));
-    assert!(mismatch.message.contains("2 labels"));
-    form.u.labels = "1, 2, 3".into();
     form.v.labels = "A B".into();
-    let mismatch = form.prepare(&store, None).unwrap_err();
-    assert_eq!(mismatch.field, "V labels");
-    assert!(mismatch.message.contains("3 axes"));
-    assert!(mismatch.message.contains("2 labels"));
+    assert!(form.prepare(&store, None).is_ok());
+    form.u.labels = ", ,".into();
+    let missing = form.prepare(&store, None).unwrap_err();
+    assert_eq!(missing.field, "U labels");
+    assert!(missing.message.contains("starting label"));
+    form.u.labels = "1, 2, 3".into();
     form.v.labels = "A B C".into();
     assert!(form.prepare(&store, None).is_ok());
     form.v.labels = "A A C".into();

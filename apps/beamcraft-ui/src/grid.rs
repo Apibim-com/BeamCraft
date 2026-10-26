@@ -131,20 +131,13 @@ impl GridForm {
                 let labels = parse_grid_labels(&family.labels, positions.len()).map_err(|error| {
                     let message = match error {
                         GridLabelError::Count => {
-                            let count = family.labels
-                                .split(|c: char| c.is_ascii_whitespace() || c == ',')
-                                .filter(|word| !word.is_empty())
-                                .count();
-                            format!(
-                                "Coordinates define {} axes, but only {count} labels were entered. Add the missing labels, or leave Labels blank for automatic labels.",
-                                positions.len()
-                            )
+                            "Enter a starting label, or leave Labels blank for automatic labels."
                         }
-                        GridLabelError::Duplicate => "Each axis needs a unique label.".into(),
+                        GridLabelError::Duplicate => "Each axis needs a unique label.",
                         GridLabelError::Invalid | GridLabelError::Limit =>
-                            "Use labels of up to 16 letters or digits, with -, _, ., + or /. Separate labels with spaces or commas.".into(),
+                            "Use labels of up to 16 letters or digits, with -, _, ., + or /. Separate labels with spaces or commas.",
                     };
-                    form_error(labels_field, &message)
+                    form_error(labels_field, message)
                 })?;
                 args.extend([format!("--{prefix}-labels"), labels.join(" ")]);
             }

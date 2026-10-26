@@ -4,12 +4,13 @@ Experimental insertion slice, not completion of T01.6 or the parent T01 acceptan
 
 ## Dependencies and merge order
 
-This local implementation builds on the accepted UI work in `feat/ui-modeling` and the existing
-grid stack: contract #415 (`ba9a855`), T01.1 #416 (`9150947`), T01.2 #417 (`29f90d5`) and
-T01.3 #419 (`78df3d8`). They are preserved in the local integration base
-`chore/t01-ui-prerequisites`, based on verified `origin/master` `f5f3d3e`. Publish the insertion
-diff against that base only while its prerequisites are open; after they land, rebase and retarget
-to `master`. No prerequisite is merged into `master` by developing this slice.
+This implementation builds on verified `origin/master` `65728b0`, which contains the regular-grid
+model and drawn-line commands integrated through #417. The native form uses those commands and
+their stored grid records. It does not require the unmerged regular-family editing slice #419.
+
+The local development branch also carries the accepted command-navigation UI changes. For review,
+integrate those first or use their branch as the base so the insertion PR shows only its own
+changes. This note does not change the implementation-plan status or claim the parent gate.
 
 ## Behaviour
 
@@ -22,8 +23,10 @@ leaves the model unchanged and is shown as a readable message.
 
 Explicit label input may contain more words than coordinates produce lines. The shared model
 parser uses only the first label per existing line; unused trailing words are ignored by both the
-UI and CLI before building a canonical command. Too few explicit labels are refused; blank input
-in the form still selects automatic labels. This does not add axes or retain unused words in the
+UI and CLI before building a canonical command. Missing labels continue from the last supplied
+label: letters advance in the same alphabet and case; trailing numbers increment. Other names
+gain a numeric suffix. Already-used labels in the family are skipped. Blank input in the form
+selects the default automatic labels. This does not add axes or retain unused words in the
 model. The accepted labels retain their validation and grid-wide uniqueness requirements.
 
 The creation and cancel buttons stay below the scrollable fields. Grid visibility is session
