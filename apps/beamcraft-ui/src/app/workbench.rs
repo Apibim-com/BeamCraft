@@ -437,20 +437,6 @@ impl App {
                                     };
                                 match self.ribbon_tab {
                                     RibbonTab::Model => {
-                                        group(ui, "LAYOUT", &mut |ui| {
-                                            if tool_button(
-                                                ui,
-                                                Icon::Grid,
-                                                "Grid",
-                                                bench == Bench::Grid,
-                                                true,
-                                            )
-                                            .clicked()
-                                            {
-                                                pick = Some(Bench::Grid);
-                                            }
-                                            tool_button(ui, Icon::Plus, "Guide", false, false);
-                                        });
                                         group(ui, "STEEL PARTS", &mut |ui| {
                                             for (b, icon, label) in [
                                                 (Bench::Plate, Icon::Plate, "Plate"),
@@ -475,6 +461,20 @@ impl App {
                                             tool_button(ui, Icon::Bolt, "Bolts", false, false);
                                             tool_button(ui, Icon::Weld, "Weld", false, false);
                                             tool_button(ui, Icon::Block, "Assembly", false, false);
+                                        });
+                                        group(ui, "LAYOUT", &mut |ui| {
+                                            if tool_button(
+                                                ui,
+                                                Icon::Grid,
+                                                "Grid",
+                                                bench == Bench::Grid,
+                                                true,
+                                            )
+                                            .clicked()
+                                            {
+                                                pick = Some(Bench::Grid);
+                                            }
+                                            tool_button(ui, Icon::Plus, "Guide", false, false);
                                         });
                                     }
                                     RibbonTab::Modify => {
