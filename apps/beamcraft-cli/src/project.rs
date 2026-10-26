@@ -143,6 +143,13 @@ pub fn is_store(dir: &Path) -> bool {
     dir.join("revisions").is_dir()
 }
 
+/// Whether a remembered project has definitely disappeared. Read errors do not prove absence.
+pub fn project_is_missing(dir: &Path) -> bool {
+    [dir.to_path_buf(), dir.join("revisions")]
+        .iter()
+        .any(|path| fs::metadata(path).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound))
+}
+
 fn absolute(path: &Path) -> Result<PathBuf, PlateError> {
     std::path::absolute(path).map_err(|_| invalid("the path cannot be made absolute"))
 }

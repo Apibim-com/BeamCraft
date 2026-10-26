@@ -15,7 +15,7 @@ use beamcraft_cli::plate::PlateError;
 use beamcraft_cli::project::{
     ENVIRONMENTS_DIR, EnvironmentEntry, EnvironmentState, ProjectContext, ProjectInfo,
     ProjectState, builtin_environment_dirs, create_project, list_environments, list_projects,
-    project_info,
+    project_info, project_is_missing,
 };
 use beamcraft_host::ids::IdSource;
 use beamcraft_host::revision::NoFault;
@@ -242,7 +242,13 @@ fn run(args: &[OsString]) -> Run<Json> {
             ]))
         }
         "list-recent" => {
-            let settings = Settings::load(&config_dir()?).map_err(settings_error)?;
+            let dir = config_dir()?;
+            let mut settings = Settings::load(&dir).map_err(settings_error)?;
+            let previous_count = settings.recent.len();
+            settings.recent.retain(|r| !project_is_missing(&r.path));
+            if settings.recent.len() != previous_count {
+                settings.save(&dir).map_err(settings_error)?;
+            }
             let mut recent = Vec::with_capacity(settings.recent.len());
             for r in &settings.recent {
                 let project = project_info(&r.path)?;

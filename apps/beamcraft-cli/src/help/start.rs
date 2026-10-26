@@ -26,5 +26,6 @@ pub(super) const HELP: &str = concat!(
     "exists, and commits an empty first revision; the author is --actor-id, else the settings ",
     "profile; the project is remembered as recent); list-project --dir DIR (the store folders ",
     "directly inside DIR by name, read-only; created_ms is the ProjectId timestamp, ",
-    "modified_ms the head revision id timestamp); list-recent; add-recent --store DIR",
+    "modified_ms the head revision id timestamp); list-recent (removes confirmed missing ",
+    "project folders from the saved recent list; unreadable stores remain listed); add-recent --store DIR",
 );
