@@ -10,8 +10,8 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
 ```
 
 - The model comes from the engine, through the headless CLI in a separate process:
-  `beamcraft export-view --store ROOT --out - --with-definitions true` writes the pinned view
-  snapshot as one bundle, framed after the store's definitions from the same verified inspection,
+  `beamcraft export-view --store ROOT --out - --with-definitions true --with-grids true` writes the pinned view
+  snapshot as one bundle, framed after the store's definitions and grid display data from the same verified inspection,
   and `beamcraft_engine::ViewSnapshot::from_bundle` rebuilds and re-validates it here. One refresh
   is one process and one inspection; only when the export fails is the definitions listing asked on
   its own. The UI never opens USD and never depends on the CLI crate (F08:
@@ -43,9 +43,9 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
 - Layout (the BeamCraft look of `src/theme.rs`): a brand header with the project, its
   save state, the environment and author, and Publish; a ribbon of tools (Select; Plate, Beam,
   Column; Move, Copy, Delete, Undo, Redo; Shaded); an unobstructed 3D view; an
-  inspector on the right that shows what the chosen tool needs (properties, a create form or an
+  horizontally resizable inspector on the right that shows what the chosen tool needs (properties, a create form or an
   edit form); a status bar with the selection and a Details window (frame rate, adapter,
-  revision, navigation). Tools that do not exist yet (Bolts, Weld, Wire, the Plan and Grid views,
+  revision, navigation). Tools that do not exist yet (Bolts, Weld, Wire, the Plan view,
   snapping) are shown disabled. Model parts are drawn in the logo's colours on a blueprint
   ground that follows the light or dark theme.
 - Command navigation: the three-horizontal-line button immediately left of Select slides the
@@ -70,6 +70,20 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   `command.rs`. See [the design note](../../docs/design/v05-1-ui-create-tools.md).
 - `--metrics` renders offscreen without a window and prints one JSON object (adapter, scene size,
   upload, per-frame median and p95). `--synthetic` measures synthetic kernel plates for scale.
+- Grid insertion (experimental T01.6 slice): Model → Grid opens regular-family coordinates,
+  labels, line limits and frame inputs. Create grid runs the existing `create-grid`; Cancel runs
+  nothing. Guides and labels are read with the pinned meshes in one `export-view --with-grids true`
+  process and drawn in the viewport. Grid visibility belongs to view properties, with no switch in
+  the grid form. Levels are separate.
+  Click a grid line or endpoint label to select the whole grid and edit its properties in the
+  inspector. Apply changes invokes `update-grid` as one undo unit; Cancel discards unapplied input
+  and selection. A changed grid makes a dirty form stale until selected again. Drawn-family editing
+  is not offered in this panel.
+  Coordinate edits extend regular lines across the full grid with 2000 mm extensions; explicit
+  line-limit edits take precedence. Start distances are positive in the form and negated for the
+  CLI. Rotation displays at most three decimals without changing unedited stored precision.
+  Delete outside text fields, or Delete on the ribbon, deletes the selected grid through the CLI.
+  See [the insertion note](../../docs/design/t01-6-grid-insertion.md) for prerequisite PRs and limits.
 - `--perf-run PLAN` opens the window, runs a scripted measurement in it and prints one JSON report:
   `PLAN` is a comma-separated list of `load`, `idle:S`, `ui:K` (frames without a viewport change),
   `orbit:K`, `reload:K`, `select:K` (clicks onto box elements), `cancel:K` (a click, Esc while its

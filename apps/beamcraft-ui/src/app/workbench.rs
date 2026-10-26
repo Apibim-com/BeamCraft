@@ -25,6 +25,8 @@ pub(crate) enum Bench {
     Beam,
     /// Create a column.
     Column,
+    /// Insert a regular project grid.
+    Grid,
     /// Move the selected element.
     Move,
     /// Copy the selected element.
@@ -41,6 +43,7 @@ impl Bench {
             Self::Plate => "New plate",
             Self::Beam => "New beam",
             Self::Column => "New column",
+            Self::Grid => "New grid",
             Self::Move => "Move",
             Self::Copy => "Copy",
             Self::Delete => "Delete",
@@ -53,7 +56,7 @@ impl Bench {
             Self::Move => Some(EditKind::Move),
             Self::Copy => Some(EditKind::Copy),
             Self::Delete => Some(EditKind::Delete),
-            Self::Select | Self::Plate | Self::Beam | Self::Column => None,
+            Self::Select | Self::Plate | Self::Beam | Self::Column | Self::Grid => None,
         }
     }
 }
@@ -252,6 +255,10 @@ fn caption(ui: &mut Ui, text: &str) {
 impl App {
     /// Switches the inspector to `bench` and points the create or edit forms at it.
     pub(crate) fn set_bench(&mut self, bench: Bench) {
+        if bench != Bench::Select && self.grid_edit.take().is_some() {
+            self.grid_form = crate::grid::GridForm::default();
+            self.grid_note = None;
+        }
         self.bench = bench;
         match bench {
             Bench::Plate => self.tools.active = ToolKind::Plate,
@@ -269,6 +276,13 @@ impl App {
                 }
             }
             Bench::Select => {}
+            Bench::Grid => {
+                self.beam_mode = false;
+                self.beam.reset();
+                self.ghost_end = None;
+                self.renderer
+                    .set_ghost(&self.state.device, &self.state.queue, None);
+            }
         }
     }
 
@@ -395,7 +409,8 @@ impl App {
             )
             .show(ui, |ui| {
                 let bottom = ui.max_rect().bottom();
-                let selected = self.editor.selected().is_some();
+                let grid_selected = self.grid_edit.is_some();
+                let selected = self.editor.selected().is_some() && !grid_selected;
                 let edits_free = !self.editor.busy() && !self.other_command_running();
                 let has_workspace = self.source.workspace.is_some();
                 let mut pick = None;
@@ -453,7 +468,17 @@ impl App {
                                             tool_button(ui, Icon::Block, "Assembly", false, false);
                                         });
                                         group(ui, "LAYOUT", &mut |ui| {
-                                            tool_button(ui, Icon::Wire, "Grid", false, false);
+                                            if tool_button(
+                                                ui,
+                                                Icon::Grid,
+                                                "Grid",
+                                                bench == Bench::Grid,
+                                                true,
+                                            )
+                                            .clicked()
+                                            {
+                                                pick = Some(Bench::Grid);
+                                            }
                                             tool_button(ui, Icon::Plus, "Guide", false, false);
                                         });
                                     }
@@ -469,7 +494,9 @@ impl App {
                                                     icon,
                                                     label,
                                                     bench == b,
-                                                    selected,
+                                                    (selected
+                                                        || b == Bench::Delete && grid_selected)
+                                                        && edits_free,
                                                 );
                                                 if response.clicked() {
                                                     pick = Some(b);
@@ -564,7 +591,11 @@ impl App {
                         });
                 });
                 if let Some(bench) = pick {
-                    self.set_bench(bench);
+                    if bench == Bench::Delete && grid_selected {
+                        self.delete_selection();
+                    } else {
+                        self.set_bench(bench);
+                    }
                 }
                 if undo {
                     self.start_edit(Some(EditKind::Undo));
@@ -586,8 +617,9 @@ impl App {
     pub(crate) fn inspector(&mut self, ui: &mut Ui) {
         let palette = Palette::current(ui);
         egui::Panel::right("model-inspector")
-            .exact_size(320.0)
-            .resizable(false)
+            .default_size(320.0)
+            .size_range(280.0..=(ui.available_width() * 0.75).max(320.0))
+            .resizable(true)
             .frame(
                 egui::Frame::new()
                     .fill(palette.surface)
@@ -602,16 +634,32 @@ impl App {
                     ],
                     Stroke::new(2.0, palette.ink),
                 );
+                if self.bench == Bench::Grid
+                    || self.bench == Bench::Select && self.grid_edit.is_some()
+                {
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                    ui.label(theme::bold(
+                        if self.grid_edit.is_some() {
+                            "Grid properties"
+                        } else {
+                            self.bench.title()
+                        },
+                        18.0,
+                    ));
+                    self.grid_panel(ui);
+                    return;
+                }
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        // The inspector keeps its width: long values and ids wrap instead.
+                        // Long values wrap within the width chosen by the user.
                         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
                         ui.set_max_width(ui.available_width());
                         ui.label(theme::bold(self.bench.title(), 18.0));
                         match self.bench {
                             Bench::Select => self.props_panel(ui),
                             Bench::Plate | Bench::Beam | Bench::Column => self.tools_panel(ui),
+                            Bench::Grid => self.grid_panel(ui),
                             Bench::Move | Bench::Copy | Bench::Delete => self.edit_panel(ui),
                         }
                         ui.add_space(12.0);
@@ -642,9 +690,17 @@ impl App {
                     Stroke::new(2.0, palette.ink),
                 );
                 ui.horizontal_centered(|ui| {
-                    let selection = match self.editor.selected() {
-                        Some(info) => format!("1 selected · {} {}", info.kind, info.name),
-                        None => "Nothing selected".to_owned(),
+                    let selection = if let Some(grid) = self
+                        .grid_edit
+                        .as_ref()
+                        .and_then(|edit| self.grid_scene.get(&edit.id))
+                    {
+                        format!("1 selected · Grid {}", grid.form.name)
+                    } else {
+                        match self.editor.selected() {
+                            Some(info) => format!("1 selected · {} {}", info.kind, info.name),
+                            None => "Nothing selected".to_owned(),
+                        }
                     };
                     ui.label(theme::bold(selection, 12.0));
                     if self.select_job.is_some() {
@@ -695,6 +751,7 @@ mod tests {
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             rect = super::menu_toggle(ui, false).rect;
         });
+        // This layout test has no painter; deliberately discard texture uploads.
         output.textures_delta.clear();
         let lines = output
             .shapes
