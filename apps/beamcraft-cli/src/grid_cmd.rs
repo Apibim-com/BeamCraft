@@ -36,7 +36,17 @@ fn error(code: ErrorCode, message: &'static str) -> PlateError {
 }
 /// Whether this is a grid command.
 pub fn handles(c: &OsString) -> bool {
-    c == "create-grid" || c == "list-grids"
+    matches!(
+        c.to_str(),
+        Some(
+            "create-grid"
+                | "list-grids"
+                | "draw-grid-line"
+                | "reshape-grid-line"
+                | "remove-grid-line"
+                | "relabel-grid-line"
+        )
+    )
 }
 /// Run one grid command through the common JSON result protocol.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
@@ -53,6 +63,9 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
                     | "GRID_SPACING_INVALID"
                     | "GRID_EXPRESSION_INVALID"
                     | "GRID_LINE_DEGENERATE"
+                    | "GRID_FAMILY_MODE"
+                    | "GRID_AXIS_UNKNOWN"
+                    | "GRID_IN_USE"
             )
         })
         .map(|e| {
@@ -81,12 +94,60 @@ fn pair(text: &str) -> Run<[f64; 2]> {
 fn family(
     options: &BTreeMap<&str, &str>,
     u: bool,
+    frame: &Grid,
     fresh: &mut dyn FnMut() -> Run<Uuid7>,
 ) -> Run<GridFamily> {
     let prefix = if u { "--u" } else { "--v" };
     let key = |suffix: &str| format!("{prefix}-{suffix}");
     let get = |suffix: &str| options.get(key(suffix).as_str()).copied();
+    if get("expression").is_some()
+        && ["from", "to", "label", "axis-id"]
+            .iter()
+            .any(|s| get(s).is_some())
+    {
+        return Err(error(ErrorCode::UnsupportedProperty, "GRID_FAMILY_MODE"));
+    }
     let Some(expression) = get("expression") else {
+        if ["from", "to", "label", "axis-id"]
+            .iter()
+            .any(|s| get(s).is_some())
+            && [
+                "labels",
+                "axis-ids",
+                "span",
+                "scheme",
+                "label-start",
+                "label-step",
+                "label-order",
+            ]
+            .iter()
+            .any(|s| get(s).is_some())
+        {
+            return Err(error(ErrorCode::UnsupportedProperty, "GRID_FAMILY_MODE"));
+        }
+        if ["from", "to", "label", "axis-id"]
+            .iter()
+            .any(|s| get(s).is_some())
+        {
+            let from =
+                pair(get("from").ok_or_else(|| invalid("drawn family requires from and to"))?)?;
+            let to = pair(get("to").ok_or_else(|| invalid("drawn family requires from and to"))?)?;
+            let label = get("label")
+                .ok_or_else(|| invalid("drawn family requires a label"))?
+                .to_owned();
+            let axis_id = match get("axis-id") {
+                Some(s) => ElementId::parse(s).map_err(id_error)?,
+                None => ElementId::from_uuid(fresh()?),
+            };
+            return Ok(GridFamily::Drawn(vec![
+                beamcraft_model::grid::DrawnGridLine {
+                    axis_id,
+                    label,
+                    start_mm: beamcraft_engine::grid_edit::world_to_local(frame, from),
+                    end_mm: beamcraft_engine::grid_edit::world_to_local(frame, to),
+                },
+            ]));
+        }
         if [
             "labels",
             "axis-ids",
@@ -198,29 +259,60 @@ fn run(args: &[OsString]) -> Run<Json> {
     if !tail.len().is_multiple_of(2) || tail.len() > 80 {
         return Err(invalid("options are KEY VALUE pairs"));
     }
-    let own = [
-        "--store",
-        "--name",
-        "--new-id",
-        "--origin",
-        "--rotation",
-        "--u-expression",
-        "--v-expression",
-        "--u-labels",
-        "--v-labels",
-        "--u-axis-ids",
-        "--v-axis-ids",
-        "--u-span",
-        "--v-span",
-        "--u-scheme",
-        "--v-scheme",
-        "--u-label-start",
-        "--v-label-start",
-        "--u-label-step",
-        "--v-label-step",
-        "--u-label-order",
-        "--v-label-order",
-    ];
+    let own: &[&str] = match *command {
+        "create-grid" => &[
+            "--store",
+            "--name",
+            "--new-id",
+            "--origin",
+            "--rotation",
+            "--u-expression",
+            "--v-expression",
+            "--u-labels",
+            "--v-labels",
+            "--u-axis-ids",
+            "--v-axis-ids",
+            "--u-span",
+            "--v-span",
+            "--u-scheme",
+            "--v-scheme",
+            "--u-label-start",
+            "--v-label-start",
+            "--u-label-step",
+            "--v-label-step",
+            "--u-label-order",
+            "--v-label-order",
+            "--u-from",
+            "--u-to",
+            "--u-label",
+            "--u-axis-id",
+            "--v-from",
+            "--v-to",
+            "--v-label",
+            "--v-axis-id",
+        ],
+        "list-grids" => &["--store"],
+        "draw-grid-line" => &[
+            "--store",
+            "--id",
+            "--family",
+            "--new-axis-id",
+            "--label",
+            "--from",
+            "--to",
+        ],
+        "reshape-grid-line" => &["--store", "--id", "--axis-id", "--from", "--to"],
+        "remove-grid-line" => &["--store", "--id", "--axis-id"],
+        "relabel-grid-line" => &[
+            "--store",
+            "--id",
+            "--axis-id",
+            "--label",
+            "--family",
+            "--labels",
+        ],
+        _ => return Err(invalid("unknown grid command")),
+    };
     let mut options = BTreeMap::new();
     for pair in tail.as_chunks::<2>().0 {
         let [key, value] = pair;
@@ -263,18 +355,13 @@ fn run(args: &[OsString]) -> Run<Json> {
         project: common.project,
         workspace: common.workspace,
     };
+    if *command != "create-grid" {
+        return line_command(&store, &options, command, &context, &mut fresh);
+    }
     let id = match options.get("--new-id") {
         Some(s) => ElementId::parse(s).map_err(id_error)?,
         None => ElementId::from_uuid(fresh()?),
     };
-    let mut u = family(&options, true, &mut fresh)?;
-    let mut v = family(&options, false, &mut fresh)?;
-    if !options.contains_key("--u-span") {
-        set_default_span(&mut u, &v)
-    }
-    if !options.contains_key("--v-span") {
-        set_default_span(&mut v, &u)
-    }
     let rotation_rad = options
         .get("--rotation")
         .copied()
@@ -291,7 +378,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     if rotation_rad.abs() > std::f64::consts::TAU {
         return Err(invalid("grid rotation exceeds 360 degrees"));
     }
-    let grid = Grid {
+    let mut grid = Grid {
         id,
         name: options
             .get("--name")
@@ -299,9 +386,17 @@ fn run(args: &[OsString]) -> Run<Json> {
             .to_string(),
         translation_mm: pair(options.get("--origin").copied().unwrap_or("0,0"))?,
         orientation_zw: [(rotation_rad / 2.0).sin(), (rotation_rad / 2.0).cos()],
-        u,
-        v,
+        u: GridFamily::Drawn(Vec::new()),
+        v: GridFamily::Drawn(Vec::new()),
     };
+    grid.u = family(&options, true, &grid, &mut fresh)?;
+    grid.v = family(&options, false, &grid, &mut fresh)?;
+    if !options.contains_key("--u-span") {
+        set_default_span(&mut grid.u, &grid.v)
+    }
+    if !options.contains_key("--v-span") {
+        set_default_span(&mut grid.v, &grid.u)
+    }
     let change = create_grid(&store, &context, &CreateGrid { grid }, &mut NoFault)?;
     Ok(Json::object([
         (
@@ -497,6 +592,98 @@ pub(crate) fn copy_command(store: &RevisionStore, options: &BTreeMap<&str, &str>
         ("source_id", Json::text(source_id.to_string())),
         ("element_id", Json::text(new_id.to_string())),
         ("op_id", Json::text(context.op_id.to_string())),
+        ("revision", revision_json(&change.revision)),
+        ("footprint", footprint_json(change.footprint.as_ref())),
+        ("grids", views_json(&change.grids)?),
+    ]))
+}
+
+fn line_command(
+    store: &RevisionStore,
+    options: &BTreeMap<&str, &str>,
+    command: &str,
+    context: &GridContext,
+    fresh: &mut dyn FnMut() -> Run<Uuid7>,
+) -> Run<Json> {
+    use beamcraft_model::grid_edit::{GridFamilyId, GridLineEdit, GridLineEditRequest};
+    let required = |name| {
+        options
+            .get(name)
+            .copied()
+            .ok_or_else(|| invalid("missing grid-line option"))
+    };
+    let target_id = ElementId::parse(required("--id")?).map_err(id_error)?;
+    let axis = || ElementId::parse(required("--axis-id")?).map_err(id_error);
+    let family = || {
+        GridFamilyId::parse(required("--family")?).ok_or_else(|| invalid("family must be u or v"))
+    };
+    let edit = match command {
+        "draw-grid-line" => GridLineEdit::Draw {
+            family: family()?,
+            new_axis_id: match options.get("--new-axis-id") {
+                Some(s) => ElementId::parse(s).map_err(id_error)?,
+                None => ElementId::from_uuid(fresh()?),
+            },
+            label: required("--label")?.to_owned(),
+            from_mm: pair(required("--from")?)?,
+            to_mm: pair(required("--to")?)?,
+        },
+        "reshape-grid-line" => GridLineEdit::Reshape {
+            axis_id: axis()?,
+            from_mm: pair(required("--from")?)?,
+            to_mm: pair(required("--to")?)?,
+        },
+        "remove-grid-line" => GridLineEdit::Remove { axis_id: axis()? },
+        "relabel-grid-line" => {
+            if options.contains_key("--family") {
+                if options.contains_key("--axis-id") || options.contains_key("--label") {
+                    return Err(invalid("choose one axis or a family label list"));
+                }
+                let text = required("--labels")?;
+                let count = text
+                    .split(|c: char| c.is_ascii_whitespace() || c == ',')
+                    .filter(|s| !s.is_empty())
+                    .count();
+                GridLineEdit::RelabelFamily {
+                    family: family()?,
+                    labels: parse_grid_labels(text, count)
+                        .map_err(|_| invalid("GRID_LABEL_INVALID"))?,
+                }
+            } else {
+                if options.contains_key("--labels") {
+                    return Err(invalid("label list requires a family"));
+                }
+                GridLineEdit::Relabel {
+                    axis_id: axis()?,
+                    label: required("--label")?.to_owned(),
+                }
+            }
+        }
+        _ => return Err(invalid("unknown grid-line command")),
+    };
+    let change = beamcraft_cli::grid::edit_grid(
+        store,
+        context,
+        &GridLineEditRequest { target_id, edit },
+        &mut NoFault,
+    )?;
+    let outcome = match command {
+        "draw-grid-line" => "grid_line_drawn",
+        "reshape-grid-line" => "grid_line_reshaped",
+        "remove-grid-line" => "grid_line_removed",
+        _ => "grid_line_relabelled",
+    };
+    Ok(Json::object([
+        (
+            "outcome",
+            Json::text(if change.replayed {
+                format!("{outcome}_replayed")
+            } else {
+                outcome.to_owned()
+            }),
+        ),
+        ("op_id", Json::text(context.op_id.to_string())),
+        ("element_id", Json::text(target_id.to_string())),
         ("revision", revision_json(&change.revision)),
         ("footprint", footprint_json(change.footprint.as_ref())),
         ("grids", views_json(&change.grids)?),

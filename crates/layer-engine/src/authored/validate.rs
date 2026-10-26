@@ -1416,6 +1416,7 @@ pub(super) fn changes(
                     Change::Axis { .. } | Change::Roll { .. } | Change::Profile { .. } => {
                         matches!(kind, "beam" | "column")
                     }
+                    Change::Grid { .. } => kind == "grid",
                     Change::ReferenceUnits { .. } => wrapper,
                     // A rename and a move are the only edits a wrapper takes as an element; an
                     // assembly can be renamed, deleted and be a part, never moved (identity pose).
@@ -1486,6 +1487,10 @@ pub(super) fn changes(
             // mark of the element and with nothing derived.
             Change::Mark { .. } => (&[Group::Lifecycle, Group::Label], &[Group::Label]),
             Change::Label { .. } => (&[Group::Lifecycle, Group::Label], &[Group::Label]),
+            Change::Grid { .. } => (
+                &[Group::Lifecycle, Group::ShapeInputs, Group::Placement],
+                &[Group::ShapeInputs],
+            ),
             Change::Material { .. } => (
                 &[Group::Lifecycle, Group::Derived],
                 &[Group::Material, Group::Relationship, Group::Derived],
@@ -1780,6 +1785,26 @@ pub(super) fn changes(
                     });
                 }
             }
+            Change::Grid { id, grid: g } => {
+                grid::validate_record(g)?;
+                let existing = prims
+                    .iter()
+                    .find(|p| p.element_id.as_deref() == Some(id))
+                    .ok_or_else(invalid)?;
+                let before = grid::read(existing)?;
+                let mode = |f: &beamcraft_model::grid::GridFamily| {
+                    matches!(f, beamcraft_model::grid::GridFamily::Regular(_))
+                };
+                if g.id != before.id
+                    || g.name != before.name
+                    || g.translation_mm != before.translation_mm
+                    || g.orientation_zw != before.orientation_zw
+                    || mode(&g.u) != mode(&before.u)
+                    || mode(&g.v) != mode(&before.v)
+                {
+                    return Err(unsupported());
+                }
+            }
             Change::Label { name, .. } => label(name)?,
             Change::AttachReference(r) => reference::check_new(r)?,
             Change::ReferenceUnits { interpretation, .. } => {
@@ -1903,6 +1928,7 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                 Shape::Grid(g) => grid::validate_record(g),
             }
         }
+        Change::Grid { grid: g, .. } => grid::validate_record(g),
         Change::AttachReference(r) => finite(
             r.placement
                 .translation_mm

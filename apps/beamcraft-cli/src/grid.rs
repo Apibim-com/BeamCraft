@@ -301,3 +301,115 @@ pub fn copy_grid(
         hook,
     )
 }
+
+/// Apply one atomic line edit, with index-backed ownership and incoming-reference guards.
+pub fn edit_grid(
+    store: &RevisionStore,
+    context: &GridContext,
+    request: &beamcraft_model::grid_edit::GridLineEditRequest,
+    hook: &mut dyn CommitHook,
+) -> Result<GridChange, PlateError> {
+    let fingerprint = request.content_fingerprint()?;
+    if let Some(replayed) = replay(store, context, fingerprint)? {
+        return Ok(replayed);
+    }
+    let c = control();
+    let (_, base) = load_base(store, &context.project, &context.workspace)?;
+    let before: BTreeMap<String, _> = base
+        .assets
+        .iter()
+        .map(|a| (a.name.clone(), a.digest))
+        .collect();
+    let base_request = open_base(&base)?;
+    let prims = snapshot(base_request.clone(), &c)?;
+    let model = storage::read_grids(&prims)?;
+    let schema = schema_identity()?;
+    let (mut author, opened) = Author::open(
+        base_request,
+        EditTargets {
+            authored: AUTHORED_LAYER.into(),
+            derived: DERIVED_LAYER.into(),
+        },
+        schema,
+        &c,
+    )?;
+    let index = author.element_index(&opened.context, &c)?;
+    let id = beamcraft_layer_engine::index::ElementId::parse(&request.target_id.to_string())?;
+    author.authorize_write(&index, &id, &c)?;
+    let source = model
+        .iter()
+        .find(|g| g.id == request.target_id)
+        .ok_or(CommandError::new(
+            ErrorCode::UnsupportedProperty,
+            "target_id",
+            "target is not a supported grid",
+        ))?;
+    let mut used = prims
+        .iter()
+        .filter_map(|p| p.element_id.as_deref())
+        .map(ElementId::parse)
+        .collect::<Result<BTreeSet<_>, _>>()
+        .map_err(|_| integrity("invalid element identity"))?;
+    used.extend(model.iter().flat_map(|g| g.axis_ids()));
+    let mut referenced = BTreeSet::new();
+    if let beamcraft_model::grid_edit::GridLineEdit::Remove { axis_id } = request.edit
+        && !index.delete_blockers(&id)?.is_empty()
+    {
+        referenced.insert(axis_id);
+    }
+    let edited = beamcraft_engine::grid_edit::edit(request, source, &used, &referenced)?;
+    let prepared = author.prepare(
+        Prepare {
+            context: opened.context.clone(),
+            op_id: context.op_id.to_string(),
+            actor: context.actor.to_string(),
+            schema,
+            resources: Vec::new(),
+            changes: vec![Change::Grid {
+                id: request.target_id.to_string(),
+                grid: edited.grid,
+            }],
+        },
+        &c,
+    )?;
+    check_footprint(&prepared, &edited.footprint)?;
+    let changed_layers = prepared
+        .layers
+        .iter()
+        .filter(|l| before.get(&l.name) != Some(&l.digest))
+        .map(|l| l.name.clone())
+        .collect();
+    let Base {
+        project,
+        workspace,
+        generation: base_generation,
+        expected,
+        ..
+    } = base;
+    let committed = publish_revision(
+        store,
+        &PublishRequest {
+            footprint: &edited.footprint,
+            fingerprint,
+            prepared: &prepared,
+            schema,
+            project: &project,
+            workspace: &workspace,
+            revision_id: &context.revision_id,
+            op: host_uuid(&context.op_id.to_string())?,
+            base_generation,
+            expected: &expected,
+        },
+        hook,
+    )?;
+    if committed.outcome == CommitOutcome::Replayed {
+        return Err(integrity("unseen grid edit reported as replayed"));
+    }
+    Ok(GridChange {
+        replayed: false,
+        revision: summarize(&committed.info),
+        footprint: Some(edited.footprint),
+        changed_layers,
+        grids: grids(store)?,
+    })
+}

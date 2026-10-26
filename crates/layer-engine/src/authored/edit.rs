@@ -975,6 +975,7 @@ pub(super) fn apply(
         let (id, _) = c.key();
         let p = change_path(id, input, prims)?;
         match c {
+            Change::Grid { grid: g, .. } => grid::author(&mut authored, &p, g)?,
             Change::Label { name, .. } => {
                 attr(
                     &mut authored,
@@ -1274,6 +1275,11 @@ fn capture(
                             add(name, ty, 0);
                         }
                     }
+                }
+            }
+            Change::Grid { .. } => {
+                for &(name, ty) in grid::FIELDS {
+                    add(name, ty, 0);
                 }
             }
             Change::AttachReference(r) => {

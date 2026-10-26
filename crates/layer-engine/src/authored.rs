@@ -418,6 +418,13 @@ pub struct Mesh {
 pub enum Change {
     /// Author a new complete element.
     Create(Element),
+    /// Replace validated grid-family attributes without changing its frame or identity.
+    Grid {
+        /// Existing GridId.
+        id: String,
+        /// Complete replacement record from the grid engine.
+        grid: beamcraft_model::grid::Grid,
+    },
     /// Update only the user label.
     Label {
         /// Full target UUIDv7.
@@ -527,6 +534,7 @@ impl Change {
             Self::Create(e) => (&e.id, "lifecycle"),
             Self::Delete { id } => (id, "lifecycle"),
             Self::Label { id, .. } => (id, "bim:name"),
+            Self::Grid { id, .. } => (id, "bim:grid"),
             Self::Contour { id, .. } => (id, "steel:plate:contourPointsMm"),
             Self::Thickness { id, .. } => (id, "steel:plate:thicknessMm"),
             Self::Axis { id, .. } => (id, "bim:axisPointsMm"),

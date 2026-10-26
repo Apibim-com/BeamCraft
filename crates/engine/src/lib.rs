@@ -20,6 +20,7 @@ pub mod element;
 pub mod error;
 pub mod footprint;
 pub mod grid;
+pub mod grid_edit;
 pub mod level;
 pub mod limits;
 pub mod member;

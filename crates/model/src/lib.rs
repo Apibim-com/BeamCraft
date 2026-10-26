@@ -9,6 +9,7 @@ pub mod definition;
 pub mod digest;
 pub mod error;
 pub mod grid;
+pub mod grid_edit;
 pub mod id;
 pub mod limits;
 pub mod prim;
