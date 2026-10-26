@@ -309,7 +309,44 @@ pub fn edit_grid(
     request: &beamcraft_model::grid_edit::GridLineEditRequest,
     hook: &mut dyn CommitHook,
 ) -> Result<GridChange, PlateError> {
-    let fingerprint = request.content_fingerprint()?;
+    mutate_grid(
+        store,
+        context,
+        request.target_id,
+        request.content_fingerprint()?,
+        |source, used, refs| beamcraft_engine::grid_edit::edit(request, source, used, refs),
+        hook,
+    )
+}
+
+/// Atomically update regular families and the grid's label/frame, preserving kept axes by label.
+pub fn update_grid(
+    store: &RevisionStore,
+    context: &GridContext,
+    request: &beamcraft_model::grid_update::UpdateGrid,
+    hook: &mut dyn CommitHook,
+) -> Result<GridChange, PlateError> {
+    mutate_grid(
+        store,
+        context,
+        request.target_id,
+        request.content_fingerprint()?,
+        |source, used, refs| beamcraft_engine::grid_update::update(request, source, used, refs),
+        hook,
+    )
+}
+fn mutate_grid(
+    store: &RevisionStore,
+    context: &GridContext,
+    target_id: ElementId,
+    fingerprint: beamcraft_model::digest::ContentDigest,
+    decide: impl FnOnce(
+        &Grid,
+        &BTreeSet<ElementId>,
+        &BTreeSet<ElementId>,
+    ) -> Result<beamcraft_engine::grid_edit::EditedGrid, CommandError>,
+    hook: &mut dyn CommitHook,
+) -> Result<GridChange, PlateError> {
     if let Some(replayed) = replay(store, context, fingerprint)? {
         return Ok(replayed);
     }
@@ -334,11 +371,11 @@ pub fn edit_grid(
         &c,
     )?;
     let index = author.element_index(&opened.context, &c)?;
-    let id = beamcraft_layer_engine::index::ElementId::parse(&request.target_id.to_string())?;
+    let id = beamcraft_layer_engine::index::ElementId::parse(&target_id.to_string())?;
     author.authorize_write(&index, &id, &c)?;
     let source = model
         .iter()
-        .find(|g| g.id == request.target_id)
+        .find(|g| g.id == target_id)
         .ok_or(CommandError::new(
             ErrorCode::UnsupportedProperty,
             "target_id",
@@ -351,13 +388,34 @@ pub fn edit_grid(
         .collect::<Result<BTreeSet<_>, _>>()
         .map_err(|_| integrity("invalid element identity"))?;
     used.extend(model.iter().flat_map(|g| g.axis_ids()));
-    let mut referenced = BTreeSet::new();
-    if let beamcraft_model::grid_edit::GridLineEdit::Remove { axis_id } = request.edit
-        && !index.delete_blockers(&id)?.is_empty()
-    {
-        referenced.insert(axis_id);
+    let referenced = if index.delete_blockers(&id)?.is_empty() {
+        BTreeSet::new()
+    } else {
+        source.axis_ids().collect()
+    };
+    let edited = decide(source, &used, &referenced)?;
+    let mut attributes = edited.grid.clone();
+    attributes.name = source.name.clone();
+    attributes.translation_mm = source.translation_mm;
+    attributes.orientation_zw = source.orientation_zw;
+    let mut changes = vec![Change::Grid {
+        id: target_id.to_string(),
+        grid: attributes,
+    }];
+    if source.name != edited.grid.name {
+        changes.push(Change::Label {
+            id: target_id.to_string(),
+            name: edited.grid.name.clone(),
+        });
     }
-    let edited = beamcraft_engine::grid_edit::edit(request, source, &used, &referenced)?;
+    if source.translation_mm != edited.grid.translation_mm
+        || source.orientation_zw != edited.grid.orientation_zw
+    {
+        changes.push(Change::Placement {
+            id: target_id.to_string(),
+            placement: storage::placement(&edited.grid),
+        });
+    }
     let prepared = author.prepare(
         Prepare {
             context: opened.context.clone(),
@@ -365,10 +423,7 @@ pub fn edit_grid(
             actor: context.actor.to_string(),
             schema,
             resources: Vec::new(),
-            changes: vec![Change::Grid {
-                id: request.target_id.to_string(),
-                grid: edited.grid,
-            }],
+            changes,
         },
         &c,
     )?;
