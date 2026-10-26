@@ -314,7 +314,7 @@ any refusal, changes nothing. The CLI command and option names in this contract 
 
 | Command (CLI) | Arguments | Behaviour |
 |---------------|-----------|-----------|
-| `CreateGrid` (`create-grid`) | `new_id`, `name`, `origin`, `rotation` (degrees at the CLI); per family `u`, `v`: either an `expression`, its `labels` list or helper, a `span` and `axis_ids`, or `drawn` (empty) | Validates, expands the expression and the labels, authors the grid |
+| `CreateGrid` (`create-grid`) | `new_id`, `name`, `origin`, `rotation` (degrees at the CLI); per family `u`, `v`: either an `expression`, its `labels` list or helper, a `span` and `axis_ids`, or `drawn` with an optional explicit `endpoints` list (empty by default) | Validates, expands the expression and the labels, authors the grid; a drawn family given at creation feeds its endpoint projections into the other family's default span (section 2) |
 | `UpdateGrid` (`update-grid`) | `target_id`; any of `name`, `origin`, `rotation`; per regular family a new `expression` with the full `labels` list and `axis_ids` for new labels, and `span` | Rewrites a regular family by section 4; moves or renames the grid; ids of kept lines unchanged |
 | `GridLineDraw` (`draw-grid-line`) | `target_id`, `family`, `new_axis_id`, `label`, `from`, `to` (world points) | Adds one straight line to a **drawn** family |
 | `GridLineReshape` (`reshape-grid-line`) | `target_id`, `axis_id`, `from`, `to` | New end points of a line of a drawn family; id and label kept |
