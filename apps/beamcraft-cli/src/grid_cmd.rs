@@ -42,6 +42,8 @@ pub fn handles(c: &OsString) -> bool {
             "create-grid"
                 | "update-grid"
                 | "list-grids"
+                | "resolve-grid-point"
+                | "resolve-grid-plane"
                 | "draw-grid-line"
                 | "reshape-grid-line"
                 | "remove-grid-line"
@@ -68,6 +70,9 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
                     | "GRID_AXIS_UNKNOWN"
                     | "GRID_IN_USE"
                     | "GRID_AXIS_ID_COUNT"
+                    | "GRID_UNKNOWN"
+                    | "GRID_NAME_AMBIGUOUS"
+                    | "GRID_INTERSECTION_UNDEFINED"
             )
         })
         .map(|e| {
@@ -294,6 +299,8 @@ fn run(args: &[OsString]) -> Run<Json> {
             "--v-axis-id",
         ],
         "list-grids" => &["--store"],
+        "resolve-grid-point" => &["--store", "--grid", "--labels"],
+        "resolve-grid-plane" => &["--store", "--grid", "--label"],
         "update-grid" => &[
             "--store",
             "--id",
@@ -353,6 +360,39 @@ fn run(args: &[OsString]) -> Run<Json> {
         return Ok(Json::object([
             ("outcome", Json::text("grids")),
             ("grids", views_json(&grids(&store)?)?),
+        ]));
+    }
+    if matches!(*command, "resolve-grid-point" | "resolve-grid-plane") {
+        let model = grids(&store)?;
+        let required = |key| {
+            options
+                .get(key)
+                .copied()
+                .ok_or_else(|| invalid("missing grid query option"))
+        };
+        let grid = beamcraft_engine::grid_query::resolve_grid(&model, required("--grid")?)?;
+        if *command == "resolve-grid-point" {
+            let (a, b) = required("--labels")?
+                .split_once(',')
+                .filter(|(_, b)| !b.contains(','))
+                .ok_or_else(|| invalid("--labels needs two comma-separated labels"))?;
+            let [x, y] = beamcraft_engine::grid_query::grid_point(grid, a, b)?;
+            return Ok(Json::object([
+                ("outcome", Json::text("grid_point")),
+                ("grid_id", Json::text(grid.id.to_string())),
+                ("point_world_mm", Json::Array(vec![num(x)?, num(y)?])),
+            ]));
+        }
+        let p = beamcraft_engine::grid_query::grid_line_plane(grid, required("--label")?)?;
+        return Ok(Json::object([
+            ("outcome", Json::text("grid_plane")),
+            ("grid_id", Json::text(p.grid_id.to_string())),
+            ("axis_id", Json::text(p.axis_id.to_string())),
+            (
+                "point_world_mm",
+                crate::plate_cmd::triple(p.point_world_mm)?,
+            ),
+            ("normal_world", crate::plate_cmd::triple(p.normal_world)?),
         ]));
     }
     let _claim = check_project_option(&store, &options)?;
