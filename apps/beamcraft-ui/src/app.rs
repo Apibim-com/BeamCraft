@@ -153,6 +153,8 @@ pub struct App {
     grid_job: Option<Receiver<Result<crate::grid::CreatedGrid, ToolError>>>,
     grid_note: Option<Result<String, String>>,
     grids_visible: bool,
+    grid_edit: Option<grid_panel::GridEdit>,
+    grid_refresh_edit: bool,
     /// Whether the Details window is open.
     details: bool,
     logo: Option<egui::TextureHandle>,
@@ -733,6 +735,8 @@ impl App {
             grid_job: None,
             grid_note: None,
             grids_visible: true,
+            grid_edit: None,
+            grid_refresh_edit: false,
             details: false,
             logo: None,
             logo_tried: false,
@@ -878,6 +882,7 @@ impl App {
             }
             Err(e) => self.error = Some(e.to_string()),
         }
+        self.sync_grid_selection();
         if std::mem::take(&mut self.reload_queued) {
             self.reload();
         }
@@ -940,6 +945,7 @@ impl App {
     /// Starts a click selection on a worker: the engine's `pick` along the ray, then the details
     /// of the element it hit, from one lookup ([`command::select`]) on the snapshot on screen.
     fn start_select(&mut self, ray: crate::edit::Ray) {
+        self.grid_edit = None;
         if self.select_job.is_some() {
             return;
         }
@@ -1322,7 +1328,7 @@ impl App {
 
     fn props_panel(&mut self, ui: &mut egui::Ui) {
         let Some(id) = self.props.selected().map(str::to_owned) else {
-            ui.label("Select a plate or straight member to see its properties.");
+            ui.label("Select a part or grid to see its properties.");
             return;
         };
         ui.label(format!("Element {id}"));
@@ -2235,6 +2241,7 @@ impl eframe::App for App {
                 self.editor.deselect();
                 self.props.clear();
                 self.set_bench(workbench::Bench::Select);
+                self.grid_edit = None;
             }
         }
         // Another process committed to the store: refresh, exactly as the `R` key does.
@@ -2323,6 +2330,7 @@ impl eframe::App for App {
                 }
             };
             let mut picked = None;
+            let mut picked_grid = None;
             match self
                 .camera
                 .navigate(orbit, pan, zoom)
@@ -2348,8 +2356,13 @@ impl eframe::App for App {
                     }
                     if let Some(l) = &self.loaded {
                         if self.grids_visible {
-                            self.grid_scene
-                                .paint(ui, response.rect, &view, l.summary.origin_mm);
+                            self.grid_scene.paint(
+                                ui,
+                                response.rect,
+                                &view,
+                                l.summary.origin_mm,
+                                self.grid_edit.as_ref().map(|edit| edit.id.as_str()),
+                            );
                         }
                         if let Some(selected) = self.editor.selected() {
                             let painter = ui.painter_at(response.rect);
@@ -2365,7 +2378,15 @@ impl eframe::App for App {
                             )
                             && let Some(ray) = ray_through(&view, ndc, l.summary.origin_mm)
                         {
-                            picked = Some(ray);
+                            if !self.beam_mode && self.grids_visible {
+                                picked_grid = self
+                                    .grid_scene
+                                    .hit_test(response.rect, &view, l.summary.origin_mm, pos)
+                                    .map(|grid| grid.id.clone());
+                            }
+                            if picked_grid.is_none() {
+                                picked = Some(ray);
+                            }
                         }
                     }
                     // The ghost preview follows the pointer on the plane through the armed
@@ -2383,10 +2404,14 @@ impl eframe::App for App {
                 }
                 Err(e) => self.error = Some(e.to_string()),
             }
-            if let Some(ray) = picked {
+            if let Some(id) = picked_grid {
+                if !self.other_command_running() {
+                    self.select_grid(&id);
+                }
+            } else if let Some(ray) = picked {
                 if self.beam_mode {
                     self.place_beam(ray);
-                } else {
+                } else if !self.other_command_running() {
                     self.start_select(ray);
                 }
             }
@@ -2635,11 +2660,108 @@ mod tests {
                 label: "A".into(),
                 points: [[-1e7, 0.0, 0.0], [1e7, 0.0, 0.0]],
             }],
+            ..Default::default()
         });
         deliver(&mut app, next);
         assert!(app.error.is_some());
         assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
         assert_eq!(app.grid_scene, old_guides);
+    }
+
+    #[test]
+    fn selected_grid_properties_reset_and_reject_stale_edits_without_writing() {
+        let Some(mut app) = headless() else { return };
+        deliver(&mut app, refreshed(1));
+        let token = app.loaded.as_ref().unwrap().snapshot.token().clone();
+        let id = "01990000-0000-7000-8000-000000000001";
+        let form = crate::grid::GridForm::default();
+        app.grid_scene = crate::grid::GridScene {
+            lines: vec![crate::grid::GridLine {
+                label: "1".into(),
+                points: [[0.0, -2000.0, 0.0], [0.0, 12000.0, 0.0]],
+            }],
+            grids: vec![crate::grid::GridProperties {
+                id: id.into(),
+                form: form.clone(),
+                editable: true,
+                lines: 0..1,
+            }],
+        };
+        app.select_grid(id);
+        assert_eq!(app.bench, super::workbench::Bench::Select);
+        assert!(app.editor.selected().is_none());
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        let draw = |app: &mut App, events| {
+            ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1400.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.header(ui);
+                    app.ribbon(ui);
+                    app.inspector(ui);
+                    egui::CentralPanel::default().show(ui, |_| {});
+                },
+            )
+        };
+        let position = |output: &egui::FullOutput, label: &str| {
+            output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == label => {
+                        Some(text.pos + text.galley.size() / 2.0)
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{label} was not drawn"))
+        };
+        let click = |pos| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        draw(&mut app, Vec::new());
+        app.grid_form.name = "Unapplied name".into();
+        let edited = draw(&mut app, Vec::new());
+        position(&edited, "Grid properties");
+        draw(&mut app, click(position(&edited, "Reload properties")));
+        assert_eq!(app.grid_form, form);
+        app.grid_form.name = "My draft".into();
+        app.grid_scene.grids[0].form.name = "External change".into();
+        app.sync_grid_selection();
+        let stale = draw(&mut app, Vec::new());
+        assert!(stale.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text.contains("changed while you were editing"))));
+        draw(&mut app, click(position(&stale, "Apply changes")));
+        assert!(app.grid_job.is_none());
+        assert_eq!(app.grid_form.name, "My draft");
+        let stale = draw(&mut app, Vec::new());
+        draw(&mut app, click(position(&stale, "Reload properties")));
+        assert_eq!(app.grid_form.name, "External change");
+        app.grid_scene.grids.clear();
+        app.sync_grid_selection();
+        assert!(app.grid_edit.is_none());
+        assert!(app.grid_job.is_none());
+        assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
     }
 
     #[test]

@@ -93,6 +93,150 @@ fn at<'a>(json: &'a Json, keys: &[&str]) -> &'a Json {
 }
 
 #[test]
+fn displayed_grid_can_be_picked_edited_and_restored_by_workspace_history() {
+    let f = Fixture::new();
+    let published = f.root.join("ui");
+    let form = GridForm::default();
+    let created = beamcraft_ui::grid::commit(
+        &f.cli,
+        &form.prepare(&published, Some(ACTOR)).unwrap(),
+        &Stats::default(),
+    )
+    .unwrap();
+    let workspace = f.root.join("draft");
+    f.ok(&[
+        "create-workspace",
+        "--store",
+        published.to_str().unwrap(),
+        "--workspace-dir",
+        workspace.to_str().unwrap(),
+    ]);
+    let initial = f.ok(&["list-grids", "--store", workspace.to_str().unwrap()]);
+    let read = source::reload(&f.cli, &workspace, &Known::default(), &Stats::default());
+    let guides = read.grids.unwrap();
+    let grid = guides.get(&created.id).unwrap();
+    assert!(grid.editable);
+    assert_eq!(grid.form.u.expression, "0 2*4000");
+    assert_eq!(grid.form.u.span, ["-2000", "12000"]);
+    let Refreshed::New(scene) = read.scene.unwrap() else {
+        panic!("expected snapshot")
+    };
+    let summary = scene.1.summary();
+    let rect = egui::Rect::from_min_size(egui::pos2(30.0, 50.0), egui::vec2(1200.0, 800.0));
+    let (target, extent) = guides.framing(&summary);
+    let view = Camera::new(target, extent, 1.5).unwrap().view(1.5).unwrap();
+    let line = &guides.lines[0];
+    let middle = std::array::from_fn(|i| {
+        ((line.points[0][i] + line.points[1][i]) * 0.5 - summary.origin_mm[i]) as f32
+    });
+    let [x, y, _] = view.project(middle);
+    let pixel = egui::pos2(
+        rect.left() + (x + 1.0) * rect.width() / 2.0,
+        rect.top() + (1.0 - y) * rect.height() / 2.0,
+    );
+    assert_eq!(
+        guides
+            .hit_test(rect, &view, summary.origin_mm, pixel)
+            .unwrap()
+            .id,
+        created.id
+    );
+    assert!(
+        guides
+            .hit_test(
+                rect,
+                &view,
+                summary.origin_mm,
+                rect.min - egui::vec2(20.0, 20.0)
+            )
+            .is_none()
+    );
+    let before = f.head(&workspace);
+    let mut no_op = grid.form.clone();
+    no_op.name = format!(" {} ", no_op.name);
+    no_op.origin = ["0.0".into(), "0.00".into()];
+    no_op.rotation = "0.0".into();
+    assert!(
+        no_op
+            .prepare_update(&grid.form, &created.id, &workspace, Some(ACTOR))
+            .is_err()
+    );
+    let mut edited = grid.form.clone();
+    edited.name = "Edited grid".into();
+    edited.u.expression = "0 2*6500".into();
+    edited.u.labels = "1 2".into();
+    edited.v.labels = "A B C D E".into();
+    edited.u.span = ["-1000".into(), "14000".into()];
+    edited.origin = ["1000".into(), "-250".into()];
+    edited.rotation = "30".into();
+    let args = edited
+        .prepare_update(&grid.form, &created.id, &workspace, Some(ACTOR))
+        .unwrap();
+    assert_eq!(
+        before,
+        f.head(&workspace),
+        "editing and cancelling a form must not publish"
+    );
+    let updated = beamcraft_ui::grid::commit(&f.cli, &args, &Stats::default()).unwrap();
+    assert_eq!(updated.id, created.id);
+    let after = f.ok(&["list-grids", "--store", workspace.to_str().unwrap()]);
+    let old = &initial.get("grids").unwrap().array().unwrap()[0];
+    let new = &after.get("grids").unwrap().array().unwrap()[0];
+    assert_eq!(new.get("name").unwrap().string().unwrap(), "Edited grid");
+    for family in ["u", "v"] {
+        for (a, b) in old
+            .get(family)
+            .unwrap()
+            .get("lines")
+            .unwrap()
+            .array()
+            .unwrap()
+            .iter()
+            .zip(
+                new.get(family)
+                    .unwrap()
+                    .get("lines")
+                    .unwrap()
+                    .array()
+                    .unwrap(),
+            )
+        {
+            assert_eq!(a.get("axis_id"), b.get("axis_id"));
+            assert_eq!(a.get("label"), b.get("label"));
+        }
+    }
+    let reopened = source::reload(&f.cli, &workspace, &Known::default(), &Stats::default())
+        .grids
+        .unwrap();
+    let saved = &reopened.get(&created.id).unwrap().form;
+    assert_eq!(saved.u.expression, "0 2*6500");
+    assert_eq!(saved.u.labels, "1 2 3");
+    assert_eq!(saved.u.span, ["-1000", "14000"]);
+    assert_eq!(saved.origin, ["1000", "-250"]);
+    assert!((saved.rotation.parse::<f64>().unwrap() - 30.0).abs() < 1e-10);
+    f.ok(&[
+        "undo-workspace",
+        "--workspace-dir",
+        workspace.to_str().unwrap(),
+    ]);
+    assert_eq!(
+        initial.get("grids"),
+        f.ok(&["list-grids", "--store", workspace.to_str().unwrap()])
+            .get("grids")
+    );
+    f.ok(&[
+        "redo-workspace",
+        "--workspace-dir",
+        workspace.to_str().unwrap(),
+    ]);
+    assert_eq!(
+        after.get("grids"),
+        f.ok(&["list-grids", "--store", workspace.to_str().unwrap()])
+            .get("grids")
+    );
+}
+
+#[test]
 fn inserted_grid_matches_the_cli_and_is_displayed_from_one_pinned_read() {
     for (u_labels, v_labels) in [("1 2 3 4 5 6 7 8 9", "A B C D E F"), ("1 2", "A B")] {
         let f = Fixture::new();

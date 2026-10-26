@@ -74,6 +74,10 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   labels, line limits and frame inputs. Create grid runs the existing `create-grid`; Cancel runs
   nothing. Guides and labels are read with the pinned meshes in one `export-view --with-grids true`
   process and drawn in the viewport. Show grids changes only session view state. Levels are separate.
+  Click a grid line or endpoint label to select the whole grid and edit its properties in the
+  inspector. Apply changes invokes `update-grid` as one undo unit; Reload properties discards
+  unapplied input. A changed grid makes a dirty form stale until reloaded. Drawn-family editing
+  is not offered in this panel.
   See [the insertion note](../../docs/design/t01-6-grid-insertion.md) for prerequisite PRs and limits.
 - `--perf-run PLAN` opens the window, runs a scripted measurement in it and prints one JSON report:
   `PLAN` is a comma-separated list of `load`, `idle:S`, `ui:K` (frames without a viewport change),

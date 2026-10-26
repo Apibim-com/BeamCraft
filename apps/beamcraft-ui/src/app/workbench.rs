@@ -255,6 +255,10 @@ fn caption(ui: &mut Ui, text: &str) {
 impl App {
     /// Switches the inspector to `bench` and points the create or edit forms at it.
     pub(crate) fn set_bench(&mut self, bench: Bench) {
+        if bench != Bench::Select && self.grid_edit.take().is_some() {
+            self.grid_form = crate::grid::GridForm::default();
+            self.grid_note = None;
+        }
         self.bench = bench;
         match bench {
             Bench::Plate => self.tools.active = ToolKind::Plate,
@@ -622,9 +626,18 @@ impl App {
                     ],
                     Stroke::new(2.0, palette.ink),
                 );
-                if self.bench == Bench::Grid {
+                if self.bench == Bench::Grid
+                    || self.bench == Bench::Select && self.grid_edit.is_some()
+                {
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-                    ui.label(theme::bold(self.bench.title(), 18.0));
+                    ui.label(theme::bold(
+                        if self.grid_edit.is_some() {
+                            "Grid properties"
+                        } else {
+                            self.bench.title()
+                        },
+                        18.0,
+                    ));
                     self.grid_panel(ui);
                     return;
                 }
@@ -669,9 +682,17 @@ impl App {
                     Stroke::new(2.0, palette.ink),
                 );
                 ui.horizontal_centered(|ui| {
-                    let selection = match self.editor.selected() {
-                        Some(info) => format!("1 selected · {} {}", info.kind, info.name),
-                        None => "Nothing selected".to_owned(),
+                    let selection = if let Some(grid) = self
+                        .grid_edit
+                        .as_ref()
+                        .and_then(|edit| self.grid_scene.get(&edit.id))
+                    {
+                        format!("1 selected · Grid {}", grid.form.name)
+                    } else {
+                        match self.editor.selected() {
+                            Some(info) => format!("1 selected · {} {}", info.kind, info.name),
+                            None => "Nothing selected".to_owned(),
+                        }
                     };
                     ui.label(theme::bold(selection, 12.0));
                     if self.select_job.is_some() {

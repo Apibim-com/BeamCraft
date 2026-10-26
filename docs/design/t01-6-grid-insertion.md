@@ -6,7 +6,9 @@ Experimental insertion slice, not completion of T01.6 or the parent T01 acceptan
 
 This implementation builds on verified `origin/master` `65728b0`, which contains the regular-grid
 model and drawn-line commands integrated through #417. The native form uses those commands and
-their stored grid records. It does not require the unmerged regular-family editing slice #419.
+their stored grid records. Property editing additionally uses the T01.3 API and CLI from #419,
+locally integrated at its reviewed head `42372f7`. Integrate that prerequisite before publishing
+the property editor against `master`.
 
 The local development branch also carries the accepted command-navigation UI changes. For review,
 integrate those first or use their branch as the base so the insertion PR shows only its own
@@ -32,6 +34,22 @@ model. The accepted labels retain their validation and grid-wide uniqueness requ
 The creation and cancel buttons stay below the scrollable fields. Grid visibility is session
 view state; its switch never authors a revision. Levels remain separate from plan grids.
 
+## Selection and properties
+
+Click a visible guide line or an endpoint label to select its whole grid. Screen hit testing
+uses the projected engine endpoints and a small pixel tolerance, without inventing engineering
+geometry or grid intersections. The selected guides are highlighted. The Select inspector shows
+the grid's name, coordinate expressions, labels, stored line limits, XY origin and Z rotation.
+These values come from the same pinned inspection as the displayed lines, including the additive
+`span_mm` field on regular families in `list-grids` and the view envelope.
+
+Apply changes invokes `update-grid` once. Only edited fields are sent, so unchanged frames keep
+their exact stored values. Retained labels preserve AxisIds according to T01.3; the combined edit
+is one workspace undo unit. Reload properties discards the draft and uses the currently displayed
+properties. A background reload refreshes untouched forms; a dirty form whose grid changed is
+disabled until reloaded. A removed grid clears its selection. Empty space or Esc clears selection;
+hidden grids cannot be picked. Drawn families can be selected but are read-only in this panel.
+
 ## Pinned display transport
 
 `export-view --with-grids true --out -` adds the engine-computed world endpoints and labels from
@@ -53,7 +71,7 @@ labels, one pinned refresh, framing, and refusals without publication. Native eg
 cover opening the form, hiding guides, cancel, and preserving the snapshot. Both legacy and new
 frame readers remain bounded.
 
-This slice does not add grid selection/property editing, drawn-line gestures, grid snaps or
+This slice does not add drawn-line editing, drawn-line gestures, grid snaps or
 intersection placement (T01.4), magnetic behaviour, radial grids, or derived USD guide tubes
 (T01.7). New preview builds use the prerequisite grid schema; older stores are not silently
 migrated. No new dependency or asset is introduced. Code and synthetic tests are contributor

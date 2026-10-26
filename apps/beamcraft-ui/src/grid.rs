@@ -16,6 +16,32 @@ use beamcraft_model::grid::{
 use beamcraft_model::id::ElementId;
 use std::path::Path;
 
+fn pair(json: &Json, key: &str) -> Option<[f64; 2]> {
+    let [a, b] = json.get(key).ok()?.array().ok()? else {
+        return None;
+    };
+    let values = [a.float().ok()?, b.float().ok()?];
+    values.iter().all(|n| n.is_finite()).then_some(values)
+}
+
+fn project(point: [f64; 3], rect: egui::Rect, view: &View, origin: [f64; 3]) -> Option<egui::Pos2> {
+    let local = std::array::from_fn(|i| {
+        (point.get(i).copied().unwrap_or(0.0) - origin.get(i).copied().unwrap_or(0.0)) as f32
+    });
+    let [x, y, depth] = view.project(local);
+    (x.is_finite()
+        && y.is_finite()
+        && x.abs() < 1e5
+        && y.abs() < 1e5
+        && (0.0..=1.0).contains(&depth))
+    .then(|| {
+        egui::pos2(
+            rect.left() + (x + 1.0) * rect.width() / 2.0,
+            rect.top() + (1.0 - y) * rect.height() / 2.0,
+        )
+    })
+}
+
 /// Inputs of one regular grid family. Empty labels ask the CLI for its default label scheme.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FamilyForm {
@@ -81,6 +107,95 @@ fn decimal(field: &'static str, value: &str) -> Result<String, FormError> {
 }
 
 impl GridForm {
+    /// Prepares a regular-grid update, sending only fields changed in the properties panel.
+    /// Unchanged frames and labels retain their exact engine-authored values.
+    pub fn prepare_update(
+        &self,
+        original: &Self,
+        id: &str,
+        store: &Path,
+        actor: Option<&str>,
+    ) -> Result<Vec<String>, FormError> {
+        if ElementId::parse(id).is_err() {
+            return Err(form_error(
+                "Grid",
+                "The selected grid has an invalid identity.",
+            ));
+        }
+        let mut normalized = self.clone();
+        for (family, numeric) in [(&mut normalized.u, true), (&mut normalized.v, false)] {
+            if !family.expression.trim().is_empty() && family.labels.trim().is_empty() {
+                let (_, positions) = parse_grid_expression(family.expression.trim())
+                    .map_err(|_| form_error("Coordinates", "Enter valid grid coordinates."))?;
+                family.labels = beamcraft_model::grid::generate_grid_labels(
+                    if numeric { "numeric" } else { "alpha" },
+                    positions.len(),
+                    None,
+                    None,
+                    beamcraft_model::grid::GridLabelOrder::Ascending,
+                )
+                .map_err(|_| form_error("Labels", "Automatic labels could not be generated."))?
+                .join(" ");
+            }
+        }
+        let prepared = normalized.prepare(store, actor)?;
+        let mut args = vec!["update-grid".into(), "--id".into(), id.to_owned()];
+        let (_, tail) = prepared
+            .split_first()
+            .ok_or_else(|| form_error("Grid", "The grid request is empty."))?;
+        for [key, value] in tail.as_chunks::<2>().0 {
+            let changed = match key.as_str() {
+                "--name" => self.name.trim() != original.name.trim(),
+                "--origin" => {
+                    self.origin.clone().map(|n| n.trim().parse::<f64>().ok())
+                        != original
+                            .origin
+                            .clone()
+                            .map(|n| n.trim().parse::<f64>().ok())
+                }
+                "--rotation" => {
+                    self.rotation.trim().parse::<f64>().ok()
+                        != original.rotation.trim().parse::<f64>().ok()
+                }
+                "--u-expression" | "--u-labels" => {
+                    self.u.expression != original.u.expression || self.u.labels != original.u.labels
+                }
+                "--v-expression" | "--v-labels" => {
+                    self.v.expression != original.v.expression || self.v.labels != original.v.labels
+                }
+                "--u-span" => self.u.span != original.u.span,
+                "--v-span" => self.v.span != original.v.span,
+                _ => true,
+            };
+            if changed {
+                args.extend([key.clone(), value.clone()]);
+            }
+        }
+        for (family, old) in [(&self.u, &original.u), (&self.v, &original.v)] {
+            if family.expression.trim().is_empty() && !old.expression.is_empty() {
+                return Err(form_error(
+                    "Coordinates",
+                    "A regular family needs at least one coordinate.",
+                ));
+            }
+        }
+        if !args.iter().any(|key| {
+            matches!(
+                key.as_str(),
+                "--name"
+                    | "--origin"
+                    | "--rotation"
+                    | "--u-expression"
+                    | "--v-expression"
+                    | "--u-span"
+                    | "--v-span"
+            )
+        }) {
+            return Err(form_error("Grid", "No properties have changed."));
+        }
+        Ok(args)
+    }
+
     /// Builds the real `create-grid` arguments. No model is read or changed here.
     pub fn prepare(&self, store: &Path, actor: Option<&str>) -> Result<Vec<String>, FormError> {
         let name = self.name.trim();
@@ -157,16 +272,16 @@ impl GridForm {
     }
 }
 
-/// An accepted grid creation, returned by the real CLI.
+/// An accepted grid creation or property update, returned by the real CLI.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreatedGrid {
-    /// Identity of the new grid.
+    /// Identity of the created or updated grid.
     pub id: String,
     /// Revision containing it.
     pub revision: RevisionStamp,
 }
 
-/// Reads a creation reply while preserving engine refusals.
+/// Reads a grid command reply while preserving engine refusals.
 pub fn parse_created(exit: Option<i32>, bytes: &[u8]) -> Result<CreatedGrid, ToolError> {
     let json = decode(bytes)?;
     if let Some(mut error) = rejection(&json, exit) {
@@ -175,6 +290,16 @@ pub fn parse_created(exit: Option<i32>, bytes: &[u8]) -> Result<CreatedGrid, Too
                 "Axis labels must be unique across both grid families. Choose different U and V labels.",
             ),
             "GRID_LABEL_COUNT" => Some("Enter exactly one label for each grid line."),
+            "GRID_FAMILY_MODE" => {
+                Some("This edit cannot change a family between regular axes and drawn lines.")
+            }
+            "GRID_IN_USE" => {
+                Some("Some axes are referenced by other model objects and cannot be removed.")
+            }
+            "GRID_AXIS_ID_COUNT" => Some(
+                "The grid update could not allocate the required axis identities. Reload its properties and retry.",
+            ),
+            "GRID_LINE_DEGENERATE" => Some("The line end must be at least 1 mm beyond its start."),
             "GRID_LABEL_INVALID" => {
                 Some("Use axis labels of up to 16 letters or digits, with -, _, ., + or /.")
             }
@@ -203,7 +328,7 @@ pub fn parse_created(exit: Option<i32>, bytes: &[u8]) -> Result<CreatedGrid, Too
     };
     if !matches!(
         text(&json, "outcome").as_deref(),
-        Some("grid_created" | "grid_created_replayed")
+        Some("grid_created" | "grid_created_replayed" | "grid_updated" | "grid_update_replayed")
     ) {
         return Err(bad());
     }
@@ -238,6 +363,21 @@ pub struct GridLine {
 pub struct GridScene {
     /// World segments, bounded by the grid model limits.
     pub lines: Vec<GridLine>,
+    /// Grid identities and the source properties belonging to those guide segments.
+    pub grids: Vec<GridProperties>,
+}
+
+/// Properties read from the same engine inspection as the displayed guides.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GridProperties {
+    /// Stable model identity.
+    pub id: String,
+    /// Source fields, not reconstructed from projected endpoints.
+    pub form: GridForm,
+    /// Whether all nonempty families are regular and supported by this editor.
+    pub editable: bool,
+    /// Range of this grid's segments in [`GridScene::lines`].
+    pub lines: std::ops::Range<usize>,
 }
 
 impl GridScene {
@@ -264,10 +404,38 @@ impl GridScene {
             return Err(bad());
         }
         let mut lines = Vec::new();
+        let mut properties = Vec::new();
+        let mut identities = std::collections::BTreeSet::new();
         for grid in grids {
             let initial_count = lines.len();
+            let id = text(grid, "id")
+                .filter(|id| ElementId::parse(id).is_ok() && identities.insert(id.clone()))
+                .ok_or_else(bad)?;
+            let name = text(grid, "name")
+                .filter(|name| !name.is_empty() && name.len() <= 256)
+                .ok_or_else(bad)?;
+            let origin = pair(grid, "origin_mm").ok_or_else(bad)?;
+            let rotation = grid
+                .get("rotation_rad")
+                .and_then(Json::float)
+                .map_err(|_| bad())?;
+            if origin.iter().any(|n| n.abs() > 1e9)
+                || !rotation.is_finite()
+                || rotation.abs() > std::f64::consts::TAU + 1e-9
+            {
+                return Err(bad());
+            }
+            let mut form = GridForm {
+                name,
+                origin: origin.map(|n| n.to_string()),
+                rotation: rotation.to_degrees().to_string(),
+                ..GridForm::default()
+            };
+            let mut editable = true;
             let mut labels = Vec::new();
             for family in ["u", "v"] {
+                let family_start = labels.len();
+                let family_json = grid.get(family).map_err(|_| bad())?;
                 let axes = grid
                     .get(family)
                     .and_then(|f| f.get("lines"))
@@ -302,14 +470,100 @@ impl GridScene {
                         points: [point("start_mm")?, point("end_mm")?],
                     });
                 }
+                let family_form = match text(family_json, "mode").as_deref() {
+                    Some("regular") => {
+                        let expression = text(family_json, "expression").ok_or_else(bad)?;
+                        let (_, positions) =
+                            parse_grid_expression(&expression).map_err(|_| bad())?;
+                        let span = pair(family_json, "span_mm").ok_or_else(bad)?;
+                        if positions.len() != axes.len()
+                            || span.iter().any(|n| n.abs() > 1e6)
+                            || span[1] - span[0] < 1.0
+                        {
+                            return Err(bad());
+                        }
+                        FamilyForm {
+                            expression,
+                            labels: labels.get(family_start..).ok_or_else(bad)?.join(" "),
+                            span: span.map(|n| n.to_string()),
+                        }
+                    }
+                    Some("drawn") => {
+                        editable &= axes.is_empty();
+                        FamilyForm {
+                            expression: String::new(),
+                            labels: String::new(),
+                            span: [String::new(), String::new()],
+                        }
+                    }
+                    _ => return Err(bad()),
+                };
+                if family == "u" {
+                    form.u = family_form;
+                } else {
+                    form.v = family_form;
+                }
             }
             if lines.len() == initial_count
                 || beamcraft_model::grid::validate_grid_labels(&labels).is_err()
             {
                 return Err(bad());
             }
+            properties.push(GridProperties {
+                id,
+                form,
+                editable,
+                lines: initial_count..lines.len(),
+            });
         }
-        Ok(Self { lines })
+        Ok(Self {
+            lines,
+            grids: properties,
+        })
+    }
+
+    /// Finds an identity in the displayed revision.
+    pub fn get(&self, id: &str) -> Option<&GridProperties> {
+        self.grids.iter().find(|grid| grid.id == id)
+    }
+
+    /// Picks a visible guide in screen pixels. This is display hit testing of engine endpoints.
+    pub fn hit_test(
+        &self,
+        rect: egui::Rect,
+        view: &View,
+        origin: [f64; 3],
+        point: egui::Pos2,
+    ) -> Option<&GridProperties> {
+        if !rect.contains(point) {
+            return None;
+        }
+        let mut nearest = 8.0_f32;
+        let mut hit = None;
+        for grid in &self.grids {
+            for line in self.lines.get(grid.lines.clone()).unwrap_or_default() {
+                let [Some(a), Some(b)] = line.points.map(|p| project(p, rect, view, origin)) else {
+                    continue;
+                };
+                let delta = b - a;
+                let t = if delta.length_sq() > 1e-8 {
+                    ((point - a).dot(delta) / delta.length_sq()).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                let mut distance = point.distance(a + delta * t);
+                if rect.shrink(14.0).contains(a) && point.distance(a) <= 14.0
+                    || rect.shrink(14.0).contains(b) && point.distance(b) <= 14.0
+                {
+                    distance = 0.0;
+                }
+                if distance < nearest {
+                    nearest = distance;
+                    hit = Some(grid);
+                }
+            }
+        }
+        hit
     }
 
     /// Fits the camera to the union of engineering bounds and grid guides, in scene coordinates.
@@ -355,34 +609,34 @@ impl GridScene {
     }
 
     /// Paints construction guides and labels using engine endpoints, without authoring geometry.
-    pub fn paint(&self, ui: &egui::Ui, rect: egui::Rect, view: &View, origin: [f64; 3]) {
+    pub fn paint(
+        &self,
+        ui: &egui::Ui,
+        rect: egui::Rect,
+        view: &View,
+        origin: [f64; 3],
+        selected: Option<&str>,
+    ) {
         let painter = ui.painter_at(rect);
         let palette = theme::Palette::current(ui);
-        for line in &self.lines {
-            let project = |point: [f64; 3]| {
-                let local = std::array::from_fn(|i| {
-                    (point.get(i).copied().unwrap_or(0.0) - origin.get(i).copied().unwrap_or(0.0))
-                        as f32
-                });
-                let [x, y, depth] = view.project(local);
-                (x.is_finite()
-                    && y.is_finite()
-                    && x.abs() < 1e5
-                    && y.abs() < 1e5
-                    && (0.0..=1.0).contains(&depth))
-                .then(|| {
-                    egui::pos2(
-                        rect.left() + (x + 1.0) * rect.width() / 2.0,
-                        rect.top() + (1.0 - y) * rect.height() / 2.0,
-                    )
-                })
+        let selected_lines = selected
+            .and_then(|id| self.get(id))
+            .map(|g| g.lines.clone());
+        for (index, line) in self.lines.iter().enumerate() {
+            let active = selected_lines
+                .as_ref()
+                .is_some_and(|range| range.contains(&index));
+            let color = if active {
+                theme::BRAND
+            } else {
+                palette.link.gamma_multiply(0.6)
             };
-            let [Some(a), Some(b)] = line.points.map(project) else {
+            let [Some(a), Some(b)] = line.points.map(|p| project(p, rect, view, origin)) else {
                 continue;
             };
             painter.line_segment(
                 [a, b],
-                egui::Stroke::new(1.0, palette.link.gamma_multiply(0.6)),
+                egui::Stroke::new(if active { 2.5 } else { 1.0 }, color),
             );
             for end in [a, b] {
                 if rect.shrink(14.0).contains(end) {
@@ -393,7 +647,15 @@ impl GridScene {
                     );
                     let size = (galley.size() + egui::vec2(10.0, 6.0)).max(egui::vec2(24.0, 24.0));
                     let label_rect = egui::Rect::from_center_size(end, size);
-                    painter.rect_filled(label_rect, 12, palette.surface);
+                    painter.rect_filled(
+                        label_rect,
+                        12,
+                        if active {
+                            palette.select
+                        } else {
+                            palette.surface
+                        },
+                    );
                     painter.rect_stroke(
                         label_rect,
                         12,

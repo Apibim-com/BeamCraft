@@ -180,7 +180,7 @@ fn malformed_order_labels_modes_and_identities_refuse_without_publication() {
     );
     rejected(
         &f,
-        &["--id", GRID, "--u-expression", "0 6000", "--u-labels", "1"],
+        &["--id", GRID, "--u-expression", "0 6000", "--u-labels", ","],
         "INVALID_ARGUMENT",
     );
     rejected(

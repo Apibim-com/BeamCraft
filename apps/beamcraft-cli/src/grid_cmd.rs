@@ -486,6 +486,19 @@ pub(crate) fn views_json(grids: &[Grid]) -> Run<Json> {
                         ("mode", Json::text(mode)),
                         ("expression", expression),
                         (
+                            "span_mm",
+                            match f {
+                                GridFamily::Regular(f) => Json::Array(
+                                    f.span_mm
+                                        .iter()
+                                        .copied()
+                                        .map(num)
+                                        .collect::<Run<Vec<_>>>()?,
+                                ),
+                                GridFamily::Drawn(_) => Json::Null,
+                            },
+                        ),
+                        (
                             "lines",
                             Json::Array(
                                 lines
