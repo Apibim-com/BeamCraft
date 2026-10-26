@@ -801,7 +801,7 @@ pub(super) fn snapshot(
         // authored or loaded.
         if matches!(
             supported_kind(element),
-            Some("assembly" | "connection" | "level" | "grid")
+            Some("assembly" | "connection" | "level")
         ) {
             return Err(unsupported());
         }
@@ -1417,6 +1417,7 @@ pub(super) fn changes(
                         matches!(kind, "beam" | "column")
                     }
                     Change::Grid { .. } => kind == "grid",
+                    Change::Mesh(m) if kind == "grid" => m.quantities.is_none(),
                     Change::ReferenceUnits { .. } => wrapper,
                     // A rename and a move are the only edits a wrapper takes as an element; an
                     // assembly can be renamed, deleted and be a part, never moved (identity pose).
@@ -1838,6 +1839,9 @@ pub(super) fn changes(
                 });
             }
             Change::Mesh(m) => {
+                if grid::guide_target(input, prims, &m.id) && m.quantities.is_some() {
+                    return Err(unsupported());
+                }
                 mesh(m, b)?;
                 if let Some(q) = &m.quantities {
                     quantities(q)?;
