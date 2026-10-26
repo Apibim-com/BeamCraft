@@ -78,7 +78,7 @@ until then everything stays MPL-2.0.
 In this order (milestones M0 to M5; M1 to M5 are those of the decision of 2026-10-21, and the owner
 put grids first on 2026-10-23); the task cards are in [`docs/plan/tasks.md`](docs/plan/tasks.md).
 
-0. **M0, grids:** review the [T01/F04 grid contract amendment](docs/contracts/t01-project-grids-draft-v0.1.md)
+0. **M0, grids:** review the [T01/F04/F10 grid contract amendment](docs/contracts/t01-project-grids-draft-v0.1.md)
    with its MVP defaults, then T01.1 to T01.4 (model, layer, engine, CLI, drawn lines, snaps and
    placement), T01.5 (rights, pinned grids, with U19), T01.6 (UI) and T01.7 (50 mm derived USD
    guide tubes). Magnetic mode (T01.8) waits on its ownership/scope decision; curved and radial grids

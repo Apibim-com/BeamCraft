@@ -36,7 +36,8 @@ Open questions are at the end.
   - Limits: 64 grids per project, 200 lines per family.
   - Grids are visible to other USD viewers as thin tubes (details open). A **magnetic** mode, in
     which placed elements follow a grid, is wanted (details open).
-  - Open questions at the time were listed in section 12 of the contract (O-G5, O-G7, O-G11 to O-G16); the 2026-10-26 defaults below resolve the MVP questions except magnetic mode O-G5.
+  - Open questions at the time were listed in section 12 of the contract (O-G5, O-G7, O-G11 to
+    O-G16). The 2026-10-26 defaults below resolve the MVP questions except magnetic mode O-G5.
   - Grids and levels share one shared scope; an ordinary section edit changes neither. No export
     (IFC, BOM, numbering) carries grids in the MVP.
 
