@@ -17,6 +17,45 @@ def fail(message: str) -> "NoReturn":
     raise SystemExit(1)
 
 
+def find_stale_jobs(pages, repo_path: str, threshold: int, now: datetime) -> list[dict]:
+    """Find old queued jobs in both queued and already-running workflow runs."""
+    cutoff = now - timedelta(minutes=threshold)
+    stale: list[dict] = []
+    for run_status in ("queued", "in_progress"):
+        runs = pages(f"{repo_path}/actions/runs?status={run_status}")
+        for run in runs:
+            run_id = run.get("id")
+            if not isinstance(run_id, int):
+                fail("GitHub API returned a workflow run without an integer id")
+            jobs = pages(f"{repo_path}/actions/runs/{run_id}/jobs")
+            for job in jobs:
+                if job.get("status") != "queued":
+                    continue
+                if not isinstance(job.get("id"), int):
+                    fail("GitHub API returned a queued job without an integer id")
+                created = job.get("created_at")
+                if not isinstance(created, str):
+                    fail("GitHub API returned a queued job without created_at")
+                try:
+                    queued_at = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                except ValueError:
+                    fail("GitHub API returned an invalid queued-job created_at")
+                if queued_at.tzinfo is None:
+                    fail("GitHub API returned a queued-job created_at without a timezone")
+                if queued_at > cutoff:
+                    continue
+                stale.append(
+                    {
+                        "job": str(job.get("name", "unnamed job"))[:200],
+                        "run_id": run_id,
+                        "ref": str(run.get("head_branch", "unknown ref"))[:200],
+                        "queued_at": queued_at.isoformat(),
+                        "run_url": str(run.get("html_url", ""))[:500],
+                    }
+                )
+    return stale
+
+
 def main() -> None:
     token = os.environ.get("GITHUB_TOKEN", "")
     repository = os.environ.get("GITHUB_REPOSITORY", "")
@@ -56,7 +95,7 @@ def main() -> None:
 
     def pages(path: str) -> list[dict]:
         items: list[dict] = []
-        for page in range(1, 6):
+        for page in range(1, 101):
             separator = "&" if "?" in path else "?"
             result = api("GET", f"{path}{separator}{urlencode({'per_page': 100, 'page': page})}")
             if not isinstance(result, list):
@@ -64,40 +103,9 @@ def main() -> None:
             items.extend(item for item in result if isinstance(item, dict))
             if len(result) < 100:
                 return items
-        return items
+        fail("GitHub API pagination exceeded the 100-page safety limit")
 
-    now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(minutes=threshold)
-    queued_runs = pages(f"{repo_path}/actions/runs?status=queued")
-    stale: list[dict] = []
-    for run in queued_runs:
-        run_id = run.get("id")
-        if not isinstance(run_id, int):
-            continue
-        jobs = pages(f"{repo_path}/actions/runs/{run_id}/jobs")
-        for job in jobs:
-            if job.get("status") != "queued" or not isinstance(job.get("id"), int):
-                continue
-            created = job.get("created_at")
-            if not isinstance(created, str):
-                continue
-            try:
-                queued_at = datetime.fromisoformat(created.replace("Z", "+00:00"))
-            except ValueError:
-                continue
-            if queued_at.tzinfo is None:
-                continue
-            if cutoff - queued_at < timedelta(0):
-                continue
-            stale.append(
-                {
-                    "job": str(job.get("name", "unnamed job"))[:200],
-                    "run_id": run_id,
-                    "ref": str(run.get("head_branch", "unknown ref"))[:200],
-                    "queued_at": queued_at.isoformat(),
-                    "run_url": str(run.get("html_url", ""))[:500],
-                }
-            )
+    stale = find_stale_jobs(pages, repo_path, threshold, datetime.now(timezone.utc))
 
     if not stale:
         print("No queued job exceeded the threshold.")
