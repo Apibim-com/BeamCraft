@@ -413,6 +413,9 @@ fn build(
         message,
     };
     for (id, meta) in &inspection.elements {
+        if meta.kind == "grid" {
+            continue;
+        }
         let mut row = ElementReport {
             element_id: *id,
             ifc_global_id: None,
