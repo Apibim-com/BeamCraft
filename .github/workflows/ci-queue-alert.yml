@@ -7,8 +7,8 @@ on:
   pull_request:
     paths:
       - .github/workflows/ci-queue-alert.yml
-      - tools/ci_queue_alert.py
-      - tools/test_ci_queue_alert.py
+      - tools/ci-queue-alert.sh
+      - tools/test-ci-queue-alert.sh
 
 permissions:
   actions: read
@@ -28,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Test queue alert logic
-        run: python3 -m unittest tools.test_ci_queue_alert
+        run: bash tools/test-ci-queue-alert.sh
 
   detect:
     needs: test
@@ -47,4 +47,4 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check queued jobs and open one deduplicated alert
-        run: python3 tools/ci_queue_alert.py
+        run: bash tools/ci-queue-alert.sh
