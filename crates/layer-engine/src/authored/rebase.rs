@@ -114,6 +114,7 @@ fn geometry_property(name: &str) -> bool {
     matches!(
         name,
         "points"
+            | "purpose"
             | "faceVertexCounts"
             | "faceVertexIndices"
             | "subdivisionScheme"
