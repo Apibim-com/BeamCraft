@@ -196,6 +196,10 @@ jobs:
           toolchain: stable
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # Measure whether restoring compiled workspace crates shortens the Mac test critical path.
+          key: archive-workspace-crates-v1
+          cache-workspace-crates: true
 
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
