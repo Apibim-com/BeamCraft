@@ -2744,6 +2744,7 @@ mod tests {
         app.grid_form.name = "Unapplied name".into();
         let edited = draw(&mut app, Vec::new());
         position(&edited, "Grid properties");
+        position(&edited, "Fit grid extents");
         draw(&mut app, click(position(&edited, "Reload properties")));
         assert_eq!(app.grid_form, form);
         app.grid_form.name = "My draft".into();

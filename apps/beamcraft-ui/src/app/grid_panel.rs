@@ -155,7 +155,7 @@ impl App {
             180.0
         } else {
             120.0
-        };
+        } + if editing { 80.0 } else { 0.0 };
         egui::ScrollArea::vertical()
             .id_salt("grid-form")
             .max_height((ui.available_height() - footer).max(0.0))
@@ -189,7 +189,7 @@ impl App {
             )
             .clicked()
             {
-                self.start_grid();
+                self.start_grid(false);
             }
             if theme::button(
                 ui,
@@ -210,6 +210,12 @@ impl App {
                 }
             }
         });
+        if editing
+            && theme::button(ui, Kind::Secondary, "Fit grid extents", !busy && editable && !changed)
+                .on_hover_text("Extend regular lines across the whole grid with 2000 mm margins. Apply or reload pending edits first.")
+                .clicked() {
+                self.start_grid(true);
+        }
         if self.grid_job.is_some() {
             ui.spinner();
             ui.label(if editing {
@@ -230,7 +236,7 @@ impl App {
         }
     }
 
-    fn start_grid(&mut self) {
+    fn start_grid(&mut self, fit_only: bool) {
         if self.other_command_running() {
             return;
         }
@@ -238,12 +244,19 @@ impl App {
             if !edit.editable || edit.stale {
                 return;
             }
-            self.grid_form.prepare_update(
-                &edit.original,
-                &edit.id,
-                &self.source.store,
-                self.source.actor.as_deref(),
-            )
+            if fit_only {
+                if self.grid_form != edit.original {
+                    return;
+                }
+                crate::grid::fit_args(&self.source.store, &edit.id, self.source.actor.as_deref())
+            } else {
+                self.grid_form.prepare_update(
+                    &edit.original,
+                    &edit.id,
+                    &self.source.store,
+                    self.source.actor.as_deref(),
+                )
+            }
         } else {
             self.grid_form
                 .prepare(&self.source.store, self.source.actor.as_deref())

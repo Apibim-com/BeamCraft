@@ -179,6 +179,10 @@ impl GridForm {
                 ));
             }
         }
+        if self.u.expression != original.u.expression || self.v.expression != original.v.expression
+        {
+            args.extend(["--fit-spans".into(), "true".into()]);
+        }
         if !args.iter().any(|key| {
             matches!(
                 key.as_str(),
@@ -270,6 +274,30 @@ impl GridForm {
         push_actor(&mut args, actor);
         Ok(args)
     }
+}
+
+/// Prepare a standalone repair of regular grid extents without changing coordinates or labels.
+pub fn fit_args(store: &Path, id: &str, actor: Option<&str>) -> Result<Vec<String>, FormError> {
+    if ElementId::parse(id).is_err() {
+        return Err(form_error(
+            "Grid",
+            "The selected grid has an invalid identity.",
+        ));
+    }
+    let store = store
+        .to_str()
+        .ok_or_else(|| form_error("Model", "The model path must be UTF-8."))?;
+    let mut args = vec![
+        "update-grid".into(),
+        "--store".into(),
+        store.into(),
+        "--id".into(),
+        id.into(),
+        "--fit-spans".into(),
+        "true".into(),
+    ];
+    push_actor(&mut args, actor);
+    Ok(args)
 }
 
 /// An accepted grid creation or property update, returned by the real CLI.

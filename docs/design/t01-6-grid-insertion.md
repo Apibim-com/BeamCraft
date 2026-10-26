@@ -50,6 +50,15 @@ properties. A background reload refreshes untouched forms; a dirty form whose gr
 disabled until reloaded. A removed grid clears its selection. Empty space or Esc clears selection;
 hidden grids cannot be picked. Drawn families can be selected but are read-only in this panel.
 
+Changing a coordinate expression additionally requests `--fit-spans true`. The engine fits regular
+line limits to the opposite family's complete new coordinate range, with 2000 mm extensions at
+both ends. This keeps enlarged grids connected rather than leaving new axes beyond the old line
+ends. Explicitly edited line limits remain an advanced override. The panel's Fit grid extents
+action repairs older short spans without changing coordinate expressions, labels or AxisIds;
+apply or reload pending drafts before using it. Ordinary CLI updates retain their old span
+behaviour unless the fit option is requested. Fit operations have a distinct fingerprint domain,
+while existing ordinary-update fingerprints remain unchanged for exact replay.
+
 ## Pinned display transport
 
 `export-view --with-grids true --out -` adds the engine-computed world endpoints and labels from

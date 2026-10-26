@@ -78,6 +78,8 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   inspector. Apply changes invokes `update-grid` as one undo unit; Reload properties discards
   unapplied input. A changed grid makes a dirty form stale until reloaded. Drawn-family editing
   is not offered in this panel.
+  Coordinate edits extend regular lines across the full grid. Fit grid extents repairs existing
+  short line limits with 2000 mm extensions; explicit line-limit edits take precedence.
   See [the insertion note](../../docs/design/t01-6-grid-insertion.md) for prerequisite PRs and limits.
 - `--perf-run PLAN` opens the window, runs a scripted measurement in it and prints one JSON report:
   `PLAN` is a comma-separated list of `load`, `idle:S`, `ui:K` (frames without a viewport change),

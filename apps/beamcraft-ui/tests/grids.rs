@@ -338,6 +338,64 @@ fn inserted_grid_matches_the_cli_and_is_displayed_from_one_pinned_read() {
 }
 
 #[test]
+fn growing_both_coordinate_families_keeps_every_line_across_the_whole_grid() {
+    let f = Fixture::new();
+    let store = f.root.join("ui");
+    let created = beamcraft_ui::grid::commit(
+        &f.cli,
+        &GridForm::default().prepare(&store, Some(ACTOR)).unwrap(),
+        &Stats::default(),
+    )
+    .unwrap();
+    let initial = source::reload(&f.cli, &store, &Known::default(), &Stats::default())
+        .grids
+        .unwrap();
+    let original = &initial.get(&created.id).unwrap().form;
+    let mut larger = original.clone();
+    larger.u.expression = "0 5*6000".into();
+    larger.v.expression = "0 9*5000".into();
+    let args = larger
+        .prepare_update(original, &created.id, &store, Some(ACTOR))
+        .unwrap();
+    assert!(args.windows(2).any(|pair| pair == ["--fit-spans", "true"]));
+    beamcraft_ui::grid::commit(&f.cli, &args, &Stats::default()).unwrap();
+    let enlarged = source::reload(&f.cli, &store, &Known::default(), &Stats::default())
+        .grids
+        .unwrap();
+    let grid = enlarged.get(&created.id).unwrap();
+    assert_eq!(grid.form.u.span, ["-2000", "47000"]);
+    assert_eq!(grid.form.v.span, ["-2000", "32000"]);
+    assert_eq!(grid.form.u.labels, "1 2 3 4 5 6");
+    assert_eq!(grid.form.v.labels, "A B C D E F G H I J");
+    let (vertical, horizontal) = enlarged.lines.split_at(6);
+    assert_eq!(horizontal.len(), 10);
+    for u in vertical {
+        for v in horizontal {
+            assert!(u.points[0][0] >= v.points[0][0] && u.points[0][0] <= v.points[1][0]);
+            assert!(v.points[0][1] >= u.points[0][1] && v.points[0][1] <= u.points[1][1]);
+        }
+    }
+    // The panel's repair action fixes short stored spans without changing axes or labels.
+    f.ok(&[
+        "update-grid",
+        "--store",
+        store.to_str().unwrap(),
+        "--id",
+        &created.id,
+        "--u-span",
+        "0,1000",
+        "--v-span",
+        "0,1000",
+    ]);
+    let fit = beamcraft_ui::grid::fit_args(&store, &created.id, Some(ACTOR)).unwrap();
+    beamcraft_ui::grid::commit(&f.cli, &fit, &Stats::default()).unwrap();
+    let repaired = source::reload(&f.cli, &store, &Known::default(), &Stats::default())
+        .grids
+        .unwrap();
+    assert_eq!(enlarged, repaired);
+}
+
+#[test]
 fn invalid_input_and_engine_refusals_publish_no_grid() {
     let f = Fixture::new();
     let store = f.root.join("ui");
