@@ -29,6 +29,8 @@ use std::time::Duration;
 const DEADLINE: Duration = Duration::from_secs(60);
 /// Longest text in a field.
 const MAX_FIELD: usize = 1_024;
+/// Initial editable model name; translate with the UI when other languages are added.
+const DEFAULT_MODEL_NAME: &str = "New Model";
 
 /// The author as the settings hold it.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -249,7 +251,12 @@ pub fn parse_project(
     stdout: &[u8],
     outcome: &str,
 ) -> Result<ProjectView, ToolError> {
-    let reply = reply(exit_code, stdout, outcome)?;
+    let reply = reply(exit_code, stdout, outcome).map_err(|mut error| {
+        if outcome == "project_created" && error.code == "DUPLICATE_ID" {
+            error.message = "A model or folder with this name already exists in this location. Choose a different name or location.".to_owned();
+        }
+        error
+    })?;
     project_of(reply.get("project").map_err(|_| unreadable())?)
 }
 
@@ -395,7 +402,7 @@ impl StartPage {
             recent: Vec::new(),
             all: Vec::new(),
             folder: String::new(),
-            new_name: String::new(),
+            new_name: DEFAULT_MODEL_NAME.to_owned(),
             new_parent: String::new(),
             note: None,
             open: None,

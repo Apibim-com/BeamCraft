@@ -120,6 +120,34 @@ fn bounds(cli: &Path, store: &Path) -> (Json, Json) {
 }
 
 #[test]
+fn a_duplicate_model_name_explains_how_to_recover() {
+    let Some(cli) = cli() else { return };
+    let stores = Stores::new();
+    let config = stores.root.join("config");
+    let args = beamcraft_ui::start::project_create_args(
+        Some(&config),
+        stores.root.to_str().unwrap(),
+        "New Model",
+        Some("0199e7a0-0000-7000-8000-0000000000a1"),
+    );
+    let run = || {
+        let output = Command::new(&cli).args(&args).output().unwrap();
+        beamcraft_ui::start::parse_project(output.status.code(), &output.stdout, "project_created")
+    };
+    let created = run().unwrap();
+    assert_eq!(created.name, "New Model");
+    let error = run().unwrap_err();
+    assert_eq!(error.code, "DUPLICATE_ID");
+    assert!(
+        error
+            .to_string()
+            .contains("Choose a different name or location")
+    );
+    assert!(!error.to_string().contains("DUPLICATE_ID"));
+    assert!(stores.root.join("New Model/revisions").is_dir());
+}
+
+#[test]
 fn a_plate_from_the_tool_equals_the_plate_made_by_hand() {
     let Some(cli) = cli() else { return };
     let stores = Stores::new();
