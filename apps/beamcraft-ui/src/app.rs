@@ -2519,6 +2519,50 @@ mod tests {
     }
 
     #[test]
+    fn menu_and_selection_stay_aligned_across_tabs_and_window_widths() {
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        for width in [760.0, 1100.0, 1600.0] {
+            for tab in [
+                super::workbench::RibbonTab::Model,
+                super::workbench::RibbonTab::Modify,
+                super::workbench::RibbonTab::View,
+                super::workbench::RibbonTab::Drawings,
+                super::workbench::RibbonTab::Project,
+            ] {
+                app.ribbon_tab = tab;
+                let _ = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 900.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        app.header(ui);
+                        app.ribbon(ui);
+                    },
+                );
+                let menu = ctx
+                    .read_response(egui::Id::unique(super::workbench::MENU_TOGGLE_ID))
+                    .unwrap()
+                    .rect;
+                let select = ctx
+                    .read_response(egui::Id::unique(super::workbench::SELECT_TOOL_ID))
+                    .unwrap()
+                    .rect;
+                assert_eq!(menu.size(), select.size(), "{tab:?}, width {width}");
+                assert_eq!(menu.top(), select.top(), "{tab:?}, width {width}");
+                assert_eq!(menu.center().y, select.center().y);
+                assert!(menu.right() < select.left());
+            }
+        }
+    }
+
+    #[test]
     fn ribbon_and_workspace_menu_accept_input_without_changing_the_model() {
         let Some(mut app) = headless() else { return };
         deliver(&mut app, refreshed(2));

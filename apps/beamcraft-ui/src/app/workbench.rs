@@ -94,10 +94,13 @@ const LATER: &str = "Not available yet";
 
 /// Stable identity for the painted workspace-menu toggle and its input tests.
 pub(super) const MENU_TOGGLE_ID: &str = "workspace-menu-toggle";
+/// Stable identity for the adjacent selection tool.
+pub(super) const SELECT_TOOL_ID: &str = "selection-tool";
+const NAV_BUTTON_SIZE: egui::Vec2 = vec2(44.0, 56.0);
 
 /// Three geometric strokes, independent of the font's rendering of menu symbols.
 fn menu_toggle(ui: &mut Ui, open: bool) -> egui::Response {
-    let (_, rect) = ui.allocate_space(vec2(44.0, 56.0));
+    let (_, rect) = ui.allocate_space(NAV_BUTTON_SIZE);
     let response = ui.interact(rect, egui::Id::unique(MENU_TOGGLE_ID), Sense::click());
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::Role::Button, true, open, "Workspace menu")
@@ -182,8 +185,15 @@ fn tool_button(
         Sense::hover()
     };
     let compact = label.is_empty();
-    let (rect, response) =
-        ui.allocate_exact_size(vec2(if compact { 44.0 } else { 62.0 }, 56.0), sense);
+    let (rect, response) = if compact {
+        let (_, rect) = ui.allocate_space(NAV_BUTTON_SIZE);
+        (
+            rect,
+            ui.interact(rect, egui::Id::unique(SELECT_TOOL_ID), sense),
+        )
+    } else {
+        ui.allocate_exact_size(vec2(62.0, 56.0), sense)
+    };
     response.widget_info(|| {
         egui::WidgetInfo::labeled(
             egui::Role::Button,
@@ -193,7 +203,27 @@ fn tool_button(
     });
     let painter = ui.painter();
     let radius = egui::CornerRadius::same(9);
-    if active {
+    if compact {
+        painter.rect_filled(
+            rect,
+            0,
+            if active {
+                BRAND
+            } else if response.hovered() {
+                palette.head
+            } else {
+                palette.surface
+            },
+        );
+        if response.has_focus() {
+            painter.rect_stroke(
+                rect.shrink(2.0),
+                0,
+                Stroke::new(1.0, palette.line),
+                StrokeKind::Inside,
+            );
+        }
+    } else if active {
         painter.rect_filled(rect.translate(vec2(2.0, 2.0)), radius, palette.ink);
         painter.rect_filled(rect, radius, BRAND);
         painter.rect_stroke(rect, radius, Stroke::new(2.0, INK), StrokeKind::Inside);
@@ -384,14 +414,22 @@ impl App {
                 let has_workspace = self.source.workspace.is_some();
                 let mut pick = None;
                 let (mut undo, mut redo) = (false, false);
-                ui.horizontal(|ui| {
+                ui.horizontal_top(|ui| {
                     if menu_toggle(ui, self.menu_open).clicked() {
                         self.menu_open = !self.menu_open;
                     }
+                    let bench = self.bench;
+                    if tool_button(ui, Icon::Select, "", bench == Bench::Select, true)
+                        .on_hover_text("Select (Esc)")
+                        .clicked()
+                    {
+                        pick = Some(Bench::Select);
+                    }
+                    ui.separator();
                     egui::ScrollArea::horizontal()
                         .id_salt("ribbon-tools-scroll")
                         .show(ui, |ui| {
-                            ui.horizontal(|ui| {
+                            ui.horizontal_top(|ui| {
                                 let group =
                                     |ui: &mut Ui, name: &str, add: &mut dyn FnMut(&mut Ui)| {
                                         ui.vertical(|ui| {
@@ -401,14 +439,6 @@ impl App {
                                         });
                                         ui.separator();
                                     };
-                                let bench = self.bench;
-                                if tool_button(ui, Icon::Select, "", bench == Bench::Select, true)
-                                    .on_hover_text("Select (Esc)")
-                                    .clicked()
-                                {
-                                    pick = Some(Bench::Select);
-                                }
-                                ui.separator();
                                 match self.ribbon_tab {
                                     RibbonTab::Model => {
                                         group(ui, "STEEL PARTS", &mut |ui| {
