@@ -156,13 +156,13 @@ jobs:
           if-no-files-found: error
 
   test-windows:
-    name: test (windows-latest, shard ${{ matrix.shard }}/8)
+    name: test (windows-latest, shard ${{ matrix.shard }}/6)
     needs: test-archive-windows
     runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2, 3, 4, 5, 6]
     timeout-minutes: 45
     steps:
       # The archive needs the matching revision's source tree for fixtures and runtime assets.
@@ -179,7 +179,7 @@ jobs:
 
       - name: Run archived test partition
         shell: bash
-        run: mkdir -p target/tmp && cargo nextest run --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --extract-overwrite --no-fail-fast --partition hash:${{ matrix.shard }}/8
+        run: mkdir -p target/tmp && cargo nextest run --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --extract-overwrite --no-fail-fast --partition hash:${{ matrix.shard }}/6
 
   test-archive-macos:
     name: build test archive (macos-latest)
@@ -196,10 +196,6 @@ jobs:
           toolchain: stable
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          # Measure whether restoring compiled workspace crates shortens the Mac test critical path.
-          key: archive-workspace-crates-v1
-          cache-workspace-crates: true
 
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
@@ -220,13 +216,13 @@ jobs:
           if-no-files-found: error
 
   test-macos:
-    name: test (macos-latest, shard ${{ matrix.shard }}/8)
+    name: test (macos-latest, shard ${{ matrix.shard }}/6)
     needs: test-archive-macos
     runs-on: macos-latest
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2, 3, 4, 5, 6]
     timeout-minutes: 45
     steps:
       # The archive needs the matching revision's source tree for fixtures and runtime assets.
@@ -243,7 +239,7 @@ jobs:
 
       - name: Run archived test partition
         shell: bash
-        run: mkdir -p target/tmp && cargo nextest run --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --extract-overwrite --no-fail-fast --partition hash:${{ matrix.shard }}/8
+        run: mkdir -p target/tmp && cargo nextest run --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --extract-overwrite --no-fail-fast --partition hash:${{ matrix.shard }}/6
 
   build-timings:
     name: cold release (${{ matrix.target }})
