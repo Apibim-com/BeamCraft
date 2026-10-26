@@ -2554,8 +2554,10 @@ mod tests {
                     .read_response(egui::Id::unique(super::workbench::SELECT_TOOL_ID))
                     .unwrap()
                     .rect;
-                assert_eq!(menu.size(), select.size(), "{tab:?}, width {width}");
-                assert_eq!(menu.top(), select.top(), "{tab:?}, width {width}");
+                assert_eq!(menu.left(), 0.0, "the menu rail meets the window edge");
+                assert_eq!(menu.width(), 32.0);
+                assert_eq!(select.size(), egui::vec2(44.0, 56.0));
+                assert!(menu.height() > select.height());
                 assert_eq!(menu.center().y, select.center().y);
                 assert!(menu.right() < select.left());
             }

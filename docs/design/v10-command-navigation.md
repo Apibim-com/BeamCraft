@@ -12,8 +12,10 @@ the viewport, with no floating frame, shadow or backdrop. Other controls and the
 interactive while it is open. Opening it changes the viewport's available width, never model data.
 The menu icon is painted from three horizontal strokes rather than a Unicode character, so the
 font cannot substitute a word or a different symbol. Its accessible name and tooltip remain text.
-Menu and selection share a fixed leading row, identical button dimensions and flat faces. Both
-stay outside the tool scroller, top-aligned independently of group captions or scrollbar height.
+The menu occupies a narrow, full-height rail flush with the window's left edge. Selection sits
+next to it with the original rounded active face, outline and offset shadow. The icon centres
+share a horizontal axis, independent of group captions or scrollbar height. Both controls stay
+outside the tool scroller.
 
 Five ribbon tabs organize commands: Model, Modify, View, Drawings and Project. Tab navigation is
 active, using text tabs with an active underline and no button frames. Selection uses a single

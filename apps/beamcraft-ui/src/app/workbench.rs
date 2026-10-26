@@ -96,11 +96,12 @@ const LATER: &str = "Not available yet";
 pub(super) const MENU_TOGGLE_ID: &str = "workspace-menu-toggle";
 /// Stable identity for the adjacent selection tool.
 pub(super) const SELECT_TOOL_ID: &str = "selection-tool";
-const NAV_BUTTON_SIZE: egui::Vec2 = vec2(44.0, 56.0);
+const SELECT_BUTTON_SIZE: egui::Vec2 = vec2(44.0, 56.0);
+const MENU_RAIL_SIZE: egui::Vec2 = vec2(32.0, 86.0);
 
 /// Three geometric strokes, independent of the font's rendering of menu symbols.
 fn menu_toggle(ui: &mut Ui, open: bool) -> egui::Response {
-    let (_, rect) = ui.allocate_space(NAV_BUTTON_SIZE);
+    let (_, rect) = ui.allocate_space(MENU_RAIL_SIZE);
     let response = ui.interact(rect, egui::Id::unique(MENU_TOGGLE_ID), Sense::click());
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::Role::Button, true, open, "Workspace menu")
@@ -186,7 +187,7 @@ fn tool_button(
     };
     let compact = label.is_empty();
     let (rect, response) = if compact {
-        let (_, rect) = ui.allocate_space(NAV_BUTTON_SIZE);
+        let (_, rect) = ui.allocate_space(SELECT_BUTTON_SIZE);
         (
             rect,
             ui.interact(rect, egui::Id::unique(SELECT_TOOL_ID), sense),
@@ -203,27 +204,7 @@ fn tool_button(
     });
     let painter = ui.painter();
     let radius = egui::CornerRadius::same(9);
-    if compact {
-        painter.rect_filled(
-            rect,
-            0,
-            if active {
-                BRAND
-            } else if response.hovered() {
-                palette.head
-            } else {
-                palette.surface
-            },
-        );
-        if response.has_focus() {
-            painter.rect_stroke(
-                rect.shrink(2.0),
-                0,
-                Stroke::new(1.0, palette.line),
-                StrokeKind::Inside,
-            );
-        }
-    } else if active {
+    if active {
         painter.rect_filled(rect.translate(vec2(2.0, 2.0)), radius, palette.ink);
         painter.rect_filled(rect, radius, BRAND);
         painter.rect_stroke(rect, radius, Stroke::new(2.0, INK), StrokeKind::Inside);
@@ -405,16 +386,21 @@ impl App {
             .frame(
                 egui::Frame::new()
                     .fill(palette.surface)
-                    .inner_margin(egui::Margin::symmetric(10, 4)),
+                    .inner_margin(egui::Margin {
+                        left: 0,
+                        right: 10,
+                        top: 0,
+                        bottom: 0,
+                    }),
             )
             .show(ui, |ui| {
-                let bottom = ui.max_rect().bottom() + 4.0;
+                let bottom = ui.max_rect().bottom();
                 let selected = self.editor.selected().is_some();
                 let edits_free = !self.editor.busy() && !self.other_command_running();
                 let has_workspace = self.source.workspace.is_some();
                 let mut pick = None;
                 let (mut undo, mut redo) = (false, false);
-                ui.horizontal_top(|ui| {
+                ui.horizontal(|ui| {
                     if menu_toggle(ui, self.menu_open).clicked() {
                         self.menu_open = !self.menu_open;
                     }
@@ -588,7 +574,7 @@ impl App {
                 }
                 ui.painter().line_segment(
                     [
-                        egui::pos2(ui.max_rect().left() - 10.0, bottom),
+                        egui::pos2(ui.max_rect().left(), bottom),
                         egui::pos2(ui.max_rect().right() + 10.0, bottom),
                     ],
                     Stroke::new(2.0, palette.ink),
