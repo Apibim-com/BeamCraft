@@ -57,6 +57,14 @@ pub fn grids(store: &RevisionStore) -> Result<Vec<Grid>, PlateError> {
         &control(),
     )?)?)
 }
+/// Grids pinned to an already inspected immutable revision sequence.
+pub fn grids_at(store: &RevisionStore, sequence: u64) -> Result<Vec<Grid>, PlateError> {
+    let revision = store.open_at(sequence)?;
+    Ok(storage::read_grids(&snapshot(
+        open_base(&base_of(&revision)?)?,
+        &control(),
+    )?)?)
+}
 /// Whether a verified snapshot has this owned grid identity.
 pub(crate) fn is_grid(
     request: &OpenRequest,
@@ -467,4 +475,75 @@ fn mutate_grid(
         changed_layers,
         grids: grids(store)?,
     })
+}
+
+/// Resolve a non-magnetic placement point from a grid address and explicit height source.
+/// Accepted retries read the immutable revision of that operation before consulting today's grids.
+pub fn resolve_placement(
+    store: &RevisionStore,
+    op: &beamcraft_model::id::OpId,
+    address: &str,
+    z: Option<f64>,
+    level: Option<ElementId>,
+    offset: f64,
+) -> Result<[f64; 3], PlateError> {
+    use beamcraft_host::ledger::Outcome;
+    let bad = || {
+        CommandError::new(
+            ErrorCode::InvalidArgument,
+            "grid.placement",
+            "grid placement needs an address and exactly one height source",
+        )
+    };
+    if address.len() > 512 || z.is_some() == level.is_some() || (z.is_some() && offset != 0.0) {
+        return Err(bad().into());
+    }
+    if z.is_some_and(|v| !v.is_finite()) || !offset.is_finite() {
+        return Err(
+            CommandError::new(ErrorCode::NonFiniteNumber, "z", "height is not finite").into(),
+        );
+    }
+    let (selector, labels) = address.split_once(':').ok_or_else(bad)?;
+    let (first, second) = labels
+        .split_once(',')
+        .filter(|(_, b)| !b.contains(','))
+        .ok_or_else(bad)?;
+    let revision = match store.query_outcome(&host_uuid(&op.to_string())?)? {
+        Outcome::Committed { sequence, .. } => {
+            let revision = store.open_at(sequence)?;
+            crate::command_evidence::read(&revision)?
+                .ok_or_else(|| integrity("accepted placement has no command evidence"))?;
+            revision
+        }
+        Outcome::Unknown => {
+            return Err(CommandError::new(
+                ErrorCode::OutcomeUnknown,
+                "op_id",
+                "operation outcome is uncertain",
+            )
+            .into());
+        }
+        Outcome::NotFound | Outcome::Aborted { .. } => store.open()?,
+    };
+    let request = open_base(&base_of(&revision)?)?;
+    let grids = storage::read_grids(&snapshot(request.clone(), &control())?)?;
+    let grid = beamcraft_engine::grid_query::resolve_grid(&grids, selector)?;
+    let [x, y] = beamcraft_engine::grid_query::grid_point(grid, first, second)?;
+    let z = match (z, level) {
+        (Some(z), None) => z,
+        (None, Some(id)) => {
+            crate::level::model_of(&request, &control())?
+                .level(&id)
+                .ok_or_else(|| CommandError::new(ErrorCode::NotFound, "level", "level not found"))?
+                .elevation_mm
+                + offset
+        }
+        _ => return Err(bad().into()),
+    };
+    if !z.is_finite() {
+        return Err(
+            CommandError::new(ErrorCode::NonFiniteNumber, "z", "height is not finite").into(),
+        );
+    }
+    Ok([x, y, z])
 }
