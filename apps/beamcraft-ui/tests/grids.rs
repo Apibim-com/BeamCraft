@@ -396,6 +396,112 @@ fn growing_both_coordinate_families_keeps_every_line_across_the_whole_grid() {
 }
 
 #[test]
+fn edited_rotated_rectangle_uses_master_queries_and_preserves_placed_parts() {
+    let f = Fixture::new();
+    let store = f.root.join("ui");
+    let path = store.to_str().unwrap();
+    let form = GridForm {
+        origin: ["1250".into(), "-750".into()],
+        rotation: "30".into(),
+        ..GridForm::default()
+    };
+    let created = beamcraft_ui::grid::commit(
+        &f.cli,
+        &form.prepare(&store, Some(ACTOR)).unwrap(),
+        &Stats::default(),
+    )
+    .unwrap();
+    let address = format!("{}:2,B", created.id);
+    f.ok(&[
+        "create-plate",
+        "--store",
+        path,
+        "--width",
+        "100",
+        "--length",
+        "200",
+        "--thickness",
+        "10",
+        "--origin-at-grid",
+        &address,
+        "--z",
+        "3500",
+    ]);
+    let before = f.ok(&["inspect-elements", "--store", path]);
+    let initial = source::reload(&f.cli, &store, &Known::default(), &Stats::default())
+        .grids
+        .unwrap();
+    let original = &initial.get(&created.id).unwrap().form;
+    let mut edited = original.clone();
+    edited.u.expression = "-3000 5*6000".into();
+    edited.v.expression = "-5000 9*5000".into();
+    edited.u.labels = "1".into();
+    edited.v.labels = "A".into();
+    beamcraft_ui::grid::commit(
+        &f.cli,
+        &edited
+            .prepare_update(original, &created.id, &store, Some(ACTOR))
+            .unwrap(),
+        &Stats::default(),
+    )
+    .unwrap();
+    let after = f.ok(&["inspect-elements", "--store", path]);
+    assert_eq!(before.get("plates"), after.get("plates"));
+    let head = f.head(&store);
+    // Every crossing, including newly added outer axes, must resolve and snap in world XY.
+    let angle = 30.0_f64.to_radians();
+    for (u, x) in [("1", -3000.0), ("6", 27000.0)] {
+        for (v, y) in [("A", -5000.0), ("J", 40000.0)] {
+            let labels = format!("{u},{v}");
+            let resolved = f.ok(&[
+                "resolve-grid-point",
+                "--store",
+                path,
+                "--grid",
+                &created.id,
+                "--labels",
+                &labels,
+            ]);
+            let xy = resolved.get("point_world_mm").unwrap().array().unwrap();
+            let expected = [
+                1250.0 + x * angle.cos() - y * angle.sin(),
+                -750.0 + x * angle.sin() + y * angle.cos(),
+            ];
+            for (value, expected) in xy.iter().zip(expected) {
+                assert!((value.float().unwrap() - expected).abs() < 1e-7);
+            }
+            let point = format!("{},{},3500", xy[0].float().unwrap(), xy[1].float().unwrap());
+            let snapped = f.ok(&[
+                "snap",
+                "--store",
+                path,
+                "--point",
+                &point,
+                "--radius",
+                "0",
+                "--kinds",
+                "grid_intersection",
+                "--grids",
+                &created.id,
+            ]);
+            let hits = snapped.get("candidates").unwrap().array().unwrap();
+            assert_eq!(hits.len(), 1, "{snapped:?}");
+            assert_eq!(
+                at(&hits[0], &["grid", "grid_id"]).string().unwrap(),
+                created.id
+            );
+            assert_eq!(
+                at(&hits[0], &["point_world_mm"]).array().unwrap()[2]
+                    .float()
+                    .unwrap(),
+                3500.0
+            );
+        }
+    }
+    assert_eq!(head, f.head(&store), "grid queries must not publish edits");
+}
+
+#[test]
 fn invalid_input_and_engine_refusals_publish_no_grid() {
     let f = Fixture::new();
     let store = f.root.join("ui");

@@ -4,11 +4,11 @@ Experimental insertion slice, not completion of T01.6 or the parent T01 acceptan
 
 ## Dependencies and merge order
 
-This implementation builds on verified `origin/master` `65728b0`, which contains the regular-grid
-model and drawn-line commands integrated through #417. The native form uses those commands and
-their stored grid records. Property editing additionally uses the T01.3 API and CLI from #419,
-locally integrated at its reviewed head `42372f7`. Integrate that prerequisite before publishing
-the property editor against `master`.
+This implementation now includes verified `origin/master` `9cfa681`, the integration of #421.
+That commit includes both the T01.3 regular-family editing originally reviewed in #419 and the
+T01.4 queries, snaps and non-magnetic placement. #419 is closed without a separate merge and has
+no remaining diff. The native form uses these existing commands and stored grid records;
+it does not introduce a second implementation of regular-family editing.
 
 The local development branch also carries the accepted command-navigation UI changes. For review,
 integrate those first or use their branch as the base so the insertion PR shows only its own
@@ -78,10 +78,12 @@ model properties.
 Actual-binary acceptance compares form insertion with the direct CLI, checks rotated endpoints,
 labels, one pinned refresh, framing, and refusals without publication. Native egui input tests
 cover opening the form, hiding guides, cancel, and preserving the snapshot. Both legacy and new
-frame readers remain bounded.
+frame readers remain bounded. A combined regression edits a rotated rectangular grid through
+the form, resolves and snaps its four outer intersections through the T01.4 CLI, preserves the
+query height, and checks that already placed parts stay unchanged and queries publish nothing.
 
-This slice does not add drawn-line editing, drawn-line gestures, grid snaps or
-intersection placement (T01.4), magnetic behaviour, radial grids, or derived USD guide tubes
+This UI slice does not add drawn-line editing, drawn-line gestures, UI snap controls or
+interactive intersection placement, magnetic behaviour, radial grids, or derived USD guide tubes
 (T01.7). New preview builds use the prerequisite grid schema; older stores are not silently
 migrated. No new dependency or asset is introduced. Code and synthetic tests are contributor
 original under MPL-2.0; no commercial screenshot or UI asset is included or traced.
