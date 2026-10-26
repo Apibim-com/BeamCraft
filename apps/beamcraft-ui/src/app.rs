@@ -7,6 +7,7 @@
 //! (primary drag orbits, Shift + primary drag pans, pinch zooms). In both the wheel zooms toward
 //! the cursor, F fits and R reloads.
 
+mod grid_panel;
 mod menu;
 mod workbench;
 
@@ -147,6 +148,11 @@ pub struct App {
     ribbon_tab: workbench::RibbonTab,
     /// Whether the workspace panel is expanded along the left side of the window.
     menu_open: bool,
+    grid_form: crate::grid::GridForm,
+    grid_scene: crate::grid::GridScene,
+    grid_job: Option<Receiver<Result<crate::grid::CreatedGrid, ToolError>>>,
+    grid_note: Option<Result<String, String>>,
+    grids_visible: bool,
     /// Whether the Details window is open.
     details: bool,
     logo: Option<egui::TextureHandle>,
@@ -722,6 +728,11 @@ impl App {
             bench: workbench::Bench::default(),
             ribbon_tab: workbench::RibbonTab::default(),
             menu_open: false,
+            grid_form: crate::grid::GridForm::default(),
+            grid_scene: crate::grid::GridScene::default(),
+            grid_job: None,
+            grid_note: None,
+            grids_visible: true,
             details: false,
             logo: None,
             logo_tried: false,
@@ -786,6 +797,7 @@ impl App {
             self.refresh_timings.push(reloaded.timing);
         }
         self.refresh_error = self.tools.apply_definitions(reloaded.definitions);
+        let grids = reloaded.grids;
         let result = reloaded.scene.and_then(|refreshed| match refreshed {
             Refreshed::Unchanged => Ok(None),
             Refreshed::New(new) => {
@@ -811,7 +823,10 @@ impl App {
             // The snapshot on screen again: nothing to build, upload or draw, unless the
             // viewport changed since it was framed.
             Ok(None) => {
-                if let Some((target, extent)) = self.loaded.as_ref().map(|l| l.summary.framing()) {
+                self.apply_grids(grids);
+                if let Some((target, extent)) =
+                    self.loaded.as_ref().map(|l| self.grid_framing(&l.summary))
+                {
                     let aspect = self.aspect();
                     if needs_refit(self.framed, target, extent, aspect) {
                         match self.camera.fit(target, extent, aspect) {
@@ -827,7 +842,15 @@ impl App {
                 }
             }
             Ok(Some(loaded)) => {
-                let (target, extent) = loaded.summary.framing();
+                let next_grids = grids.unwrap_or_else(|error| {
+                    self.grid_note = Some(Err(error.to_string()));
+                    crate::grid::GridScene::default()
+                });
+                let (target, extent) = if self.grids_visible {
+                    next_grids.framing(&loaded.summary)
+                } else {
+                    loaded.summary.framing()
+                };
                 let aspect = self.aspect();
                 // A scene the camera cannot frame keeps the previous scene and shows why. An
                 // unchanged framing keeps the user's camera.
@@ -835,17 +858,20 @@ impl App {
                     match self.camera.fit(target, extent, aspect) {
                         Ok(()) => {
                             self.framed = Some((target, extent, aspect));
+                            self.grid_scene = next_grids;
                             self.show(loaded);
                         }
                         Err(e) => self.error = Some(e.to_string()),
                     }
                 } else {
+                    self.grid_scene = next_grids;
                     self.show(loaded);
                 }
             }
             // A store with no revision yet is a normal state, not an error: the definitions
             // listing treats the same NOT_FOUND the same way.
             Err(e) if source::is_no_revision(&e) => {
+                self.grid_scene = crate::grid::GridScene::default();
                 self.loaded = None;
                 self.framed = None;
                 self.error = None;
@@ -1130,6 +1156,7 @@ impl App {
             || self.publish_job.is_some()
             || self.edit_job.is_some()
             || self.job.is_some()
+            || self.grid_job.is_some()
     }
 
     /// Starts the committed property edit on a worker: the same `update-element` the CLI runs.
@@ -2189,6 +2216,7 @@ impl eframe::App for App {
             )
         });
         self.poll_commit();
+        self.poll_grid();
         self.poll_edit();
         self.poll_props();
         self.poll_publish();
@@ -2218,7 +2246,7 @@ impl eframe::App for App {
             self.reload();
         }
         if fit && let Some(l) = &self.loaded {
-            let (target, extent) = l.summary.framing();
+            let (target, extent) = self.grid_framing(&l.summary);
             if let Err(e) = self.camera.fit(target, extent, self.aspect()) {
                 self.error = Some(e.to_string());
             }
@@ -2319,6 +2347,10 @@ impl eframe::App for App {
                         );
                     }
                     if let Some(l) = &self.loaded {
+                        if self.grids_visible {
+                            self.grid_scene
+                                .paint(ui, response.rect, &view, l.summary.origin_mm);
+                        }
                         if let Some(selected) = self.editor.selected() {
                             let painter = ui.painter_at(response.rect);
                             draw_selection(&painter, response.rect, &view, l, &selected.id);
@@ -2496,6 +2528,7 @@ mod tests {
         Reloaded {
             scene,
             definitions: Err(ToolError::local("NOT_FOUND", "no store in this test")),
+            grids: Ok(crate::grid::GridScene::default()),
             timing: RefreshTiming::default(),
         }
     }
@@ -2516,6 +2549,97 @@ mod tests {
         tx.send(reloaded).unwrap();
         app.reload_job = Some(rx);
         app.poll_reload();
+    }
+
+    #[test]
+    fn grid_tool_opens_its_form_and_cancel_keeps_the_snapshot() {
+        let Some(mut app) = headless() else { return };
+        deliver(&mut app, refreshed(2));
+        let token = app.loaded.as_ref().unwrap().snapshot.token().clone();
+        app.beam_mode = true;
+        app.beam.click([100.0, 200.0, 0.0]);
+        app.ghost_end = Some([100, 200, 0]);
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        let mut draw = |events| {
+            ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1400.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.header(ui);
+                    app.ribbon(ui);
+                    app.inspector(ui);
+                    egui::CentralPanel::default().show(ui, |_| {});
+                },
+            )
+        };
+        let position = |output: &egui::FullOutput, label: &str| {
+            output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == label => {
+                        Some(text.pos + text.galley.size() / 2.0)
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{label} was not drawn"))
+        };
+        let click = |pos| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        let first = draw(Vec::new());
+        let form = draw(click(position(&first, "Grid")));
+        position(&form, "Create grid");
+        let hidden = draw(click(position(&form, "Show grids")));
+        draw(click(position(&hidden, "Cancel")));
+        let cancelled = draw(Vec::new());
+        position(&cancelled, "Properties");
+        assert_eq!(app.bench, super::workbench::Bench::Select);
+        assert!(app.grid_job.is_none());
+        assert!(!app.beam_mode && app.beam.start().is_none() && app.ghost_end.is_none());
+        assert!(!app.grids_visible);
+        assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
+    }
+
+    #[test]
+    fn a_rejected_grid_framing_keeps_the_old_scene_and_its_guides_together() {
+        let Some(mut app) = headless() else { return };
+        deliver(&mut app, refreshed(2));
+        let token = app.loaded.as_ref().unwrap().snapshot.token().clone();
+        let old_guides = app.grid_scene.clone();
+        let mut next = refreshed(3);
+        next.grids = Ok(crate::grid::GridScene {
+            lines: vec![crate::grid::GridLine {
+                label: "A".into(),
+                points: [[-1e7, 0.0, 0.0], [1e7, 0.0, 0.0]],
+            }],
+        });
+        deliver(&mut app, next);
+        assert!(app.error.is_some());
+        assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
+        assert_eq!(app.grid_scene, old_guides);
     }
 
     #[test]

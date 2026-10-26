@@ -25,6 +25,8 @@ pub(crate) enum Bench {
     Beam,
     /// Create a column.
     Column,
+    /// Insert a regular project grid.
+    Grid,
     /// Move the selected element.
     Move,
     /// Copy the selected element.
@@ -41,6 +43,7 @@ impl Bench {
             Self::Plate => "New plate",
             Self::Beam => "New beam",
             Self::Column => "New column",
+            Self::Grid => "New grid",
             Self::Move => "Move",
             Self::Copy => "Copy",
             Self::Delete => "Delete",
@@ -53,7 +56,7 @@ impl Bench {
             Self::Move => Some(EditKind::Move),
             Self::Copy => Some(EditKind::Copy),
             Self::Delete => Some(EditKind::Delete),
-            Self::Select | Self::Plate | Self::Beam | Self::Column => None,
+            Self::Select | Self::Plate | Self::Beam | Self::Column | Self::Grid => None,
         }
     }
 }
@@ -269,6 +272,13 @@ impl App {
                 }
             }
             Bench::Select => {}
+            Bench::Grid => {
+                self.beam_mode = false;
+                self.beam.reset();
+                self.ghost_end = None;
+                self.renderer
+                    .set_ghost(&self.state.device, &self.state.queue, None);
+            }
         }
     }
 
@@ -427,6 +437,20 @@ impl App {
                                     };
                                 match self.ribbon_tab {
                                     RibbonTab::Model => {
+                                        group(ui, "LAYOUT", &mut |ui| {
+                                            if tool_button(
+                                                ui,
+                                                Icon::Grid,
+                                                "Grid",
+                                                bench == Bench::Grid,
+                                                true,
+                                            )
+                                            .clicked()
+                                            {
+                                                pick = Some(Bench::Grid);
+                                            }
+                                            tool_button(ui, Icon::Plus, "Guide", false, false);
+                                        });
                                         group(ui, "STEEL PARTS", &mut |ui| {
                                             for (b, icon, label) in [
                                                 (Bench::Plate, Icon::Plate, "Plate"),
@@ -451,10 +475,6 @@ impl App {
                                             tool_button(ui, Icon::Bolt, "Bolts", false, false);
                                             tool_button(ui, Icon::Weld, "Weld", false, false);
                                             tool_button(ui, Icon::Block, "Assembly", false, false);
-                                        });
-                                        group(ui, "LAYOUT", &mut |ui| {
-                                            tool_button(ui, Icon::Wire, "Grid", false, false);
-                                            tool_button(ui, Icon::Plus, "Guide", false, false);
                                         });
                                     }
                                     RibbonTab::Modify => {
@@ -602,6 +622,12 @@ impl App {
                     ],
                     Stroke::new(2.0, palette.ink),
                 );
+                if self.bench == Bench::Grid {
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                    ui.label(theme::bold(self.bench.title(), 18.0));
+                    self.grid_panel(ui);
+                    return;
+                }
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
@@ -612,6 +638,7 @@ impl App {
                         match self.bench {
                             Bench::Select => self.props_panel(ui),
                             Bench::Plate | Bench::Beam | Bench::Column => self.tools_panel(ui),
+                            Bench::Grid => self.grid_panel(ui),
                             Bench::Move | Bench::Copy | Bench::Delete => self.edit_panel(ui),
                         }
                         ui.add_space(12.0);
