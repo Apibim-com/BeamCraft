@@ -975,10 +975,6 @@ fn network_urls_and_device_paths_are_refused_before_any_io() {
 #[test]
 fn sources_outside_the_static_profile_are_refused_with_an_explicit_diagnostic() {
     let f = Fixture::new();
-    let big = format!(
-        "#usda 1.0\n(defaultPrim = \"A\")\ndef Scope \"A\" {{}}\n# {}\n",
-        "x".repeat(70_000)
-    );
     let cases: Vec<(&str, Vec<u8>, &str)> = vec![
         (
             "payload",
@@ -1025,7 +1021,6 @@ fn sources_outside_the_static_profile_are_refused_with_an_explicit_diagnostic() 
             b"#usda 1.0\n(defaultPrim = \"A\")\ndef Scope \"A\"\n{\n    def Scope \"PRT_beam\" {}\n}\n".to_vec(),
             "INVALID_ID",
         ),
-        ("too large", big.into_bytes(), "LIMIT_EXCEEDED"),
         ("not a layer", b"hello".to_vec(), "INTEGRITY_ERROR"),
         ("empty", Vec::new(), "INTEGRITY_ERROR"),
         ("usdz", b"PK\x03\x04zip".to_vec(), "UNSUPPORTED_PROPERTY"),
@@ -1280,6 +1275,92 @@ fn a_revision_edited_outside_beamcraft_to_override_foreign_content_is_refused_on
             "{what}: create-plate {body:?}"
         );
     }
+}
+
+#[test]
+fn references_larger_than_the_first_slice_reopen_and_reach_the_view() {
+    use std::fmt::Write;
+
+    let f = Fixture::new();
+    let mut extra = String::new();
+    for n in 0..300 {
+        writeln!(extra, "    def Scope \"Node{n}\" {{}}").unwrap();
+    }
+    let scalars = std::iter::repeat_n("0", 2048)
+        .collect::<Vec<_>>()
+        .join(", ");
+    writeln!(extra, "    custom float[] weights = [{scalars}]").unwrap();
+    writeln!(
+        extra,
+        "    custom string sourceNotes = \"{}\"",
+        "n".repeat(48_854)
+    )
+    .unwrap();
+    let mut bytes = SITE.replacen(
+        "    def Xform \"Block\"",
+        &format!("{extra}    def Xform \"Block\""),
+        1,
+    );
+    writeln!(bytes, "# {}", "padding".repeat(12_000)).unwrap();
+    assert!(bytes.len() > 65_536);
+    let source = f.source("larger-reference.usda", &bytes);
+
+    f.attach(&source, &[]);
+    let inspected = f.inspect();
+    let reference = at(&inspected, &["references"])
+        .array()
+        .unwrap()
+        .first()
+        .unwrap();
+    assert_eq!(
+        at(reference, &["foreign_prim_count"]).unsigned().unwrap(),
+        303
+    );
+    assert_eq!(
+        text(at(reference, &["source"]), "digest"),
+        sha(bytes.as_bytes())
+    );
+    assert_eq!(fs::read(&source).unwrap(), bytes.as_bytes());
+    let snapshot = view(&f);
+    assert_eq!(snapshot.len(), 1);
+    assert_eq!(snapshot.meshes()[0].triangle_count(), 12);
+}
+
+#[test]
+fn a_source_above_the_blob_cap_is_refused_without_changing_the_revision() {
+    let f = Fixture::new();
+    let source = f.source("control.usda", SITE);
+    f.attach(&source, &[]);
+    let before = f.listing();
+    let oversized = f.root.join("sources").join("oversized.usda");
+    fs::File::create(&oversized)
+        .unwrap()
+        .set_len(beamcraft_model::reference::MAX_SOURCE_BYTES + 1)
+        .unwrap();
+    assert_eq!(
+        f.rejected(
+            "attach-reference",
+            &["--source", oversized.to_str().unwrap()]
+        ),
+        "LIMIT_EXCEEDED"
+    );
+    assert_eq!(f.listing(), before);
+    assert_eq!(at(&f.inspect(), &["references"]).array().unwrap().len(), 1);
+
+    let too_long = SITE.replacen(
+        "    def Xform \"Block\"",
+        &format!(
+            "    custom string sourceNotes = \"{}\"\n    def Xform \"Block\"",
+            "n".repeat(beamcraft_layer_engine::Budgets::MODEL.text_bytes + 1)
+        ),
+        1,
+    );
+    let source = f.source("oversized-text.usda", &too_long);
+    assert_eq!(
+        f.rejected("attach-reference", &["--source", &source]),
+        "LIMIT_EXCEEDED"
+    );
+    assert_eq!(f.listing(), before);
 }
 
 #[test]

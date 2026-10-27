@@ -499,7 +499,7 @@ pub(crate) fn load_asset(
         preflight::binary(&asset.bytes, b, &mut counters.decoded)?;
         let file = openusd::usdc::CrateFile::open(asset.bytes.clone()).map_err(|_| corrupt())?;
         file.validate().map_err(|_| corrupt())?;
-        if file.tokens.iter().any(|s| s.len() > 1024) {
+        if file.tokens.iter().any(|s| s.len() > b.text_bytes) {
             return Err(limit());
         }
         preflight::binary_values(&file, &asset.bytes, b, &mut counters.decoded)?;
@@ -778,13 +778,13 @@ fn typed_depth(
         V::Float(v) => number((*v).into(), max),
         V::Double(v) => number(*v, max),
         V::String(v) => {
-            if v.len() > 1024 {
+            if v.len() > b.text_bytes {
                 return Err(limit());
             }
             Ok(Value::Text(v.clone()))
         }
         V::Token(v) => {
-            if v.len() > 1024 {
+            if v.len() > b.text_bytes {
                 return Err(limit());
             }
             Ok(Value::Text(v.to_string()))
@@ -816,13 +816,13 @@ fn typed_depth(
             array(v.iter().map(|n| Value::Int((*n).into())).collect())
         }
         V::StringVec(v) => {
-            if v.len() > b.array_items || v.iter().any(|s| s.len() > 1024) {
+            if v.len() > b.array_items || v.iter().any(|s| s.len() > b.text_bytes) {
                 return Err(limit());
             }
             array(v.iter().map(|s| Value::Text(s.clone())).collect())
         }
         V::TokenVec(v) => {
-            if v.len() > b.array_items || v.iter().any(|s| s.len() > 1024) {
+            if v.len() > b.array_items || v.iter().any(|s| s.len() > b.text_bytes) {
                 return Err(limit());
             }
             array(v.iter().map(|s| Value::Text(s.to_string())).collect())

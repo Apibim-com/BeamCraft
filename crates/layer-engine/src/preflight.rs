@@ -106,7 +106,8 @@ pub(crate) fn text(bytes: &[u8], b: Budgets, control: &Control) -> Result<(), Di
                         i = i.checked_add(1).ok_or_else(limit)?;
                     }
                     i = i.checked_add(1).ok_or_else(limit)?;
-                    if i.saturating_sub(start) > 1024 {
+                    let max_bytes = if ch == b'"' { b.text_bytes } else { 1024 };
+                    if i.saturating_sub(start) > max_bytes {
                         return Err(limit());
                     }
                 }

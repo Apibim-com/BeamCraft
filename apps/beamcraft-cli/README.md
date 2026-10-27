@@ -481,8 +481,9 @@ beamcraft write-reference         --store ROOT --id UUID (--target source | --pr
 beamcraft inspect-reference       --store ROOT
 ```
 
-`attach-reference` reads a local USDA or restricted USDC layer (at most 65536 bytes, one
-self-contained layer with a `defaultPrim`) and publishes a revision in which its bytes are an
+`attach-reference` reads a local USDA or restricted USDC layer (at most 32 MiB, one
+self-contained layer with a `defaultPrim`, under the model-profile stage budgets) and publishes
+a revision in which its bytes are an
 `external` layer named by their SHA-256, composed below an owned wrapper element. The file is only
 read; its path is never stored (only its file name, as a label). A URL, a network share or a device
 path (any `scheme:` of two or more characters, or a path starting with two slashes or two

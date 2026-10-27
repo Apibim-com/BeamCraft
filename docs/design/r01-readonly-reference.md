@@ -1,5 +1,25 @@
 # R01 read-only USD reference
 
+## Update 2026-10-27: reference input budgets
+
+By the owner's instruction following the N08 external-scene check (#478), R01 now admits
+sources up to **32 MiB**, matching the host blob cap. Source inspection uses `Budgets::MODEL`
+instead of the original `FIRST_SLICE` profile: 262,144 prims, 1,572,864 scalars per array and the
+existing decoded/snapshot ceilings. Raw USD string/token values have an explicit tightenable
+64 KiB ceiling; paths, identifiers, engineering labels and the dedicated library/drawing
+profiles retain their tighter limits. The complete project still has its 64 MiB and eight-layer
+ceilings. The original small-input profile remains available to callers that select it explicitly.
+
+The CLI regression covers a source over 64 KiB with 303 prims, a 2,048-value array and a
+48,854-byte foreign string. It checks reopening, unchanged source bytes/digest and viewport
+export. An oversized sparse source is
+refused before publication and leaves the accepted revision unchanged; model admission checks
+the inclusive source-size boundary. Reader tests round-trip USDA/USDC strings at their exact
+text cap, reject cap-plus-one, and exercise a tighter caller-selected text budget.
+This does not establish hard containment of the upstream parser or support for multi-file
+scenes, payloads, variants or textures. The historical
+first-slice limits below describe the original delivery and are superseded by this update.
+
 Date: 2026-10-17. Status: **experimental vertical slice; the R01 acceptance criteria are demonstrated
 for the supported profile below, and K3 is not claimed** (it also needs R02, R03 and G08).
 Branch `feat/r01-readonly-reference`, based on `origin/master` at `43026e2`.

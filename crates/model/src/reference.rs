@@ -23,9 +23,9 @@ use crate::error::ErrorCode;
 use crate::id::ElementId;
 use beamcraft_geom::canonical_f64_bytes;
 
-/// Largest foreign layer, in bytes. It equals the U01 per-layer stage budget, which the layer
-/// engine enforces independently; a larger source is `LIMIT_EXCEEDED`.
-pub const MAX_SOURCE_BYTES: u64 = 65_536;
+/// Largest foreign layer, in bytes: 32 MiB, matching the host blob cap and the U01 model-profile
+/// per-layer budget. The layer engine enforces its stage budgets independently.
+pub const MAX_SOURCE_BYTES: u64 = 32 * 1024 * 1024;
 /// Smallest `metersPerUnit` a source or an interpretation may state (nanometres).
 pub const MIN_METERS_PER_UNIT: f64 = 1e-9;
 /// Largest `metersPerUnit` a source or an interpretation may state (1000 km).
@@ -208,7 +208,7 @@ impl SourcePin {
             return Err(error(
                 ErrorCode::LimitExceeded,
                 "source.bytes",
-                "source layer is empty or larger than 65536 bytes",
+                "source layer is empty or larger than 32 MiB",
             ));
         }
         if !is_prim_name(&self.default_prim) {
@@ -725,6 +725,9 @@ mod tests {
     #[test]
     fn source_pin_rules() {
         assert!(pin().validate().is_ok());
+        let mut p = pin();
+        p.bytes = MAX_SOURCE_BYTES;
+        assert!(p.validate().is_ok());
         let mut p = pin();
         p.bytes = 0;
         assert_eq!(p.validate().unwrap_err().code, ErrorCode::LimitExceeded);
