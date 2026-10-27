@@ -7,6 +7,8 @@
 //! (primary drag orbits, Shift + primary drag pans, pinch zooms). In both the wheel zooms toward
 //! the cursor, F fits and R reloads.
 
+mod grid_panel;
+mod menu;
 mod workbench;
 
 use crate::camera::{Camera, View};
@@ -31,7 +33,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 /// Where a `--perf-run` report goes: the JSON object and whether every phase succeeded.
 pub type PerfReport = Sender<(String, bool)>;
@@ -93,12 +95,18 @@ pub struct App {
     /// The store watcher: one message per head change another process committed, so the view
     /// refreshes without the `R` key. `None` when the watcher thread could not start.
     store_watch: Option<Receiver<()>>,
+    /// The watcher's shutdown handle: dropping it (with the window) ends the thread even
+    /// when the store never changes again. Never read: its drop is the shutdown.
+    #[expect(dead_code)]
+    store_watch_shutdown: Option<Sender<()>>,
     /// The result of the last Preview, Cancel or Commit.
     tool_note: Option<Result<String, String>>,
     /// The two-click 3D placement of the member tool (issue #134).
     beam: BeamPlace,
     /// Whether viewport clicks place the beam instead of selecting.
     beam_mode: bool,
+    plane_form: crate::work_plane::Form,
+    plane_pick: bool,
     /// The millimetre-quantized hover end the current ghost was built for: the buffers rebuild
     /// only when the preview actually moves.
     ghost_end: Option<[i64; 3]>,
@@ -138,11 +146,19 @@ pub struct App {
     refresh_timings: Vec<RefreshTiming>,
     /// The tool chosen on the ribbon; the inspector shows what it needs.
     bench: workbench::Bench,
+    /// The command category shown on the ribbon.
+    ribbon_tab: workbench::RibbonTab,
+    /// Whether the workspace panel is expanded along the left side of the window.
+    menu_open: bool,
+    grid_form: crate::grid::GridForm,
+    grid_scene: crate::grid::GridScene,
+    grid_job: Option<Receiver<Result<crate::grid::CreatedGrid, ToolError>>>,
+    grid_note: Option<Result<String, String>>,
+    grids_visible: bool,
+    grid_edit: Option<grid_panel::GridEdit>,
+    grid_refresh_edit: bool,
     /// Whether the Details window is open.
     details: bool,
-    /// A zoom (true: in) or fit asked for by the view buttons, applied in the next frame.
-    pending_zoom: Option<bool>,
-    pending_fit: bool,
     logo: Option<egui::TextureHandle>,
     logo_tried: bool,
 }
@@ -211,7 +227,8 @@ fn navigation(
     let sign = if invert_zoom { -1.0 } else { 1.0 };
     let factor = distance * 0.0008;
     let pan = [-pointer_delta.x * factor, pointer_delta.y * factor];
-    let orbit = [pointer_delta.x * 0.008, -pointer_delta.y * 0.008];
+    // Drag the visible model with the pointer; the orbit camera moves the other way.
+    let orbit = [-pointer_delta.x * 0.008, pointer_delta.y * 0.008];
     let (orbit, pan) = match preset {
         // The left button is reserved for selection: a primary drag never moves the camera.
         Preset::Mouse => {
@@ -403,27 +420,45 @@ fn needs_refit(
 /// How often the window checks the store for revisions another process has committed.
 const WATCH_INTERVAL: Duration = Duration::from_millis(500);
 
-/// The stamp of a store's committed revisions: the directory gains one file per committed
-/// write, so a changed stamp means the head moved. A missing directory is "no signal yet",
-/// not an error: the view-export reports the state of an empty store itself.
-fn revisions_stamp(store: &Path) -> Option<SystemTime> {
-    std::fs::metadata(store.join("revisions"))
-        .and_then(|meta| meta.modified())
-        .ok()
+/// The token of a store's committed revisions: one record file per committed write, so the
+/// entry count and the newest file name together identify the head without trusting
+/// filesystem timestamp resolution. A missing directory is "no signal yet", not an error:
+/// the view-export reports the state of an empty store itself.
+fn revisions_token(store: &Path) -> Option<(usize, String)> {
+    let mut newest = String::new();
+    let mut count = 0usize;
+    for entry in std::fs::read_dir(store.join("revisions")).ok()? {
+        let entry = entry.ok()?;
+        count += 1;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name > newest {
+            newest = name;
+        }
+    }
+    Some((count, newest))
 }
 
 /// Watches a store and reports every change of its revisions as one message, so the window
-/// refreshes by itself when another process (the CLI, an agent) commits to the store it shows.
-/// `None` when the thread could not start: the `R` key keeps working either way.
-fn spawn_watch(store: PathBuf) -> Option<Receiver<()>> {
+/// refreshes by itself when another process (the CLI, an agent) commits to the store it
+/// shows. Returns the signal receiver, the shutdown handle and the thread handle: the
+/// watcher exits when the shutdown handle is dropped (the window's lifetime), whether or
+/// not the store ever changes. `None` when the thread could not start: the `R` key keeps
+/// working either way.
+fn spawn_watch(store: PathBuf) -> Option<(Receiver<()>, Sender<()>, std::thread::JoinHandle<()>)> {
     let (tx, rx) = std::sync::mpsc::channel();
+    let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel();
     let spawned = std::thread::Builder::new()
         .name("beamcraft-watch".into())
         .spawn(move || {
-            let mut seen = revisions_stamp(&store);
+            let mut seen = revisions_token(&store);
             loop {
-                std::thread::sleep(WATCH_INTERVAL);
-                let now = revisions_stamp(&store);
+                match shutdown_rx.recv_timeout(WATCH_INTERVAL) {
+                    // The window dropped the handle (or asked to stop): exit without
+                    // touching the filesystem again.
+                    Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                }
+                let now = revisions_token(&store);
                 if now != seen {
                     seen = now;
                     if tx.send(()).is_err() {
@@ -431,8 +466,9 @@ fn spawn_watch(store: PathBuf) -> Option<Receiver<()>> {
                     }
                 }
             }
-        });
-    spawned.ok().map(|_| rx)
+        })
+        .ok()?;
+    Some((rx, shutdown_tx, spawned))
 }
 
 /// One resolved world point, for notes and hints.
@@ -641,7 +677,13 @@ impl App {
             );
             (PerfRun::new(phases, header), report)
         });
-        let store_watch = spawn_watch(source.store.clone());
+        let (store_watch, store_watch_shutdown) = match spawn_watch(source.store.clone()) {
+            Some((rx, shutdown, handle)) => {
+                drop(handle);
+                (Some(rx), Some(shutdown))
+            }
+            None => (None, None),
+        };
         let mut app = Self {
             state,
             source,
@@ -658,11 +700,14 @@ impl App {
             tools: Tools::default(),
             beam: BeamPlace::default(),
             beam_mode: false,
+            plane_form: crate::work_plane::Form::default(),
+            plane_pick: false,
             ghost_end: None,
             job: None,
             reload_job: None,
             reload_queued: false,
             store_watch,
+            store_watch_shutdown,
             tool_note: None,
             refresh_error: None,
             framed: None,
@@ -687,9 +732,16 @@ impl App {
             selects_finished: 0,
             refresh_timings: Vec::new(),
             bench: workbench::Bench::default(),
+            ribbon_tab: workbench::RibbonTab::default(),
+            menu_open: false,
+            grid_form: crate::grid::GridForm::default(),
+            grid_scene: crate::grid::GridScene::default(),
+            grid_job: None,
+            grid_note: None,
+            grids_visible: true,
+            grid_edit: None,
+            grid_refresh_edit: false,
             details: false,
-            pending_zoom: None,
-            pending_fit: false,
             logo: None,
             logo_tried: false,
         };
@@ -753,6 +805,7 @@ impl App {
             self.refresh_timings.push(reloaded.timing);
         }
         self.refresh_error = self.tools.apply_definitions(reloaded.definitions);
+        let grids = reloaded.grids;
         let result = reloaded.scene.and_then(|refreshed| match refreshed {
             Refreshed::Unchanged => Ok(None),
             Refreshed::New(new) => {
@@ -778,7 +831,10 @@ impl App {
             // The snapshot on screen again: nothing to build, upload or draw, unless the
             // viewport changed since it was framed.
             Ok(None) => {
-                if let Some((target, extent)) = self.loaded.as_ref().map(|l| l.summary.framing()) {
+                self.apply_grids(grids);
+                if let Some((target, extent)) =
+                    self.loaded.as_ref().map(|l| self.grid_framing(&l.summary))
+                {
                     let aspect = self.aspect();
                     if needs_refit(self.framed, target, extent, aspect) {
                         match self.camera.fit(target, extent, aspect) {
@@ -794,7 +850,15 @@ impl App {
                 }
             }
             Ok(Some(loaded)) => {
-                let (target, extent) = loaded.summary.framing();
+                let next_grids = grids.unwrap_or_else(|error| {
+                    self.grid_note = Some(Err(error.to_string()));
+                    crate::grid::GridScene::default()
+                });
+                let (target, extent) = if self.grids_visible {
+                    next_grids.framing(&loaded.summary)
+                } else {
+                    loaded.summary.framing()
+                };
                 let aspect = self.aspect();
                 // A scene the camera cannot frame keeps the previous scene and shows why. An
                 // unchanged framing keeps the user's camera.
@@ -802,23 +866,27 @@ impl App {
                     match self.camera.fit(target, extent, aspect) {
                         Ok(()) => {
                             self.framed = Some((target, extent, aspect));
+                            self.grid_scene = next_grids;
                             self.show(loaded);
                         }
                         Err(e) => self.error = Some(e.to_string()),
                     }
                 } else {
+                    self.grid_scene = next_grids;
                     self.show(loaded);
                 }
             }
             // A store with no revision yet is a normal state, not an error: the definitions
             // listing treats the same NOT_FOUND the same way.
             Err(e) if source::is_no_revision(&e) => {
+                self.grid_scene = crate::grid::GridScene::default();
                 self.loaded = None;
                 self.framed = None;
                 self.error = None;
             }
             Err(e) => self.error = Some(e.to_string()),
         }
+        self.sync_grid_selection();
         if std::mem::take(&mut self.reload_queued) {
             self.reload();
         }
@@ -881,6 +949,7 @@ impl App {
     /// Starts a click selection on a worker: the engine's `pick` along the ray, then the details
     /// of the element it hit, from one lookup ([`command::select`]) on the snapshot on screen.
     fn start_select(&mut self, ray: crate::edit::Ray) {
+        self.grid_edit = None;
         if self.select_job.is_some() {
             return;
         }
@@ -1005,6 +1074,29 @@ impl App {
         }
     }
 
+    /// Delete the current grid or part using the same engine command as the CLI.
+    fn delete_selection(&mut self) {
+        if self.other_command_running() {
+            return;
+        }
+        if let Some(edit) = &self.grid_edit {
+            self.editor.select_id(edit.id.clone());
+        }
+        if self.editor.selected().is_some() {
+            self.start_edit(Some(EditKind::Delete));
+        }
+    }
+
+    fn selection_shortcuts(&mut self, ctx: &egui::Context) {
+        if !ctx.egui_wants_keyboard_input()
+            && !self.menu_open
+            && self.publisher.phase() != Phase::Confirming
+            && ctx.input(|input| input.key_pressed(egui::Key::Delete))
+        {
+            self.delete_selection();
+        }
+    }
+
     fn poll_edit(&mut self) {
         let Some(rx) = &self.edit_job else { return };
         let result = match rx.try_recv() {
@@ -1039,6 +1131,9 @@ impl App {
                     EditKind::Delete => {
                         self.editor.deselect();
                         self.props.clear();
+                        self.grid_edit = None;
+                        self.grid_form = crate::grid::GridForm::default();
+                        self.set_bench(workbench::Bench::Select);
                     }
                     // The element may have moved, or the undo may have removed it: ask again.
                     _ => self.refresh_selection(),
@@ -1046,6 +1141,10 @@ impl App {
                 self.refresh_status();
             }
             Err(e) => {
+                if self.grid_edit.is_some() {
+                    self.grid_note = Some(Err(e.to_string()));
+                    self.editor.deselect();
+                }
                 if e.code == "OUTCOME_UNKNOWN" {
                     self.invalidate_select();
                     self.reload();
@@ -1097,6 +1196,7 @@ impl App {
             || self.publish_job.is_some()
             || self.edit_job.is_some()
             || self.job.is_some()
+            || self.grid_job.is_some()
     }
 
     /// Starts the committed property edit on a worker: the same `update-element` the CLI runs.
@@ -1208,7 +1308,7 @@ impl App {
         }
     }
 
-    /// Runs the confirmed `workspace-publish` on a worker.
+    /// Runs the confirmed `publish-workspace` on a worker.
     fn start_publish(&mut self) {
         if self.other_command_running() {
             self.publisher.cancel();
@@ -1262,7 +1362,7 @@ impl App {
 
     fn props_panel(&mut self, ui: &mut egui::Ui) {
         let Some(id) = self.props.selected().map(str::to_owned) else {
-            ui.label("Select a plate or straight member to see its properties.");
+            ui.label("Select a part or grid to see its properties.");
             return;
         };
         ui.label(format!("Element {id}"));
@@ -1754,8 +1854,23 @@ impl App {
         self.perf = Some((run, report));
     }
 
+    fn install_plane(&mut self, plane: Option<beamcraft_engine::work_plane::WorkPlane>) {
+        self.tools.cancel();
+        self.tools.plane = plane;
+        self.plane_pick = false;
+        self.beam_mode = false;
+        self.beam.reset();
+        self.ghost_end = None;
+        self.renderer
+            .set_ghost(&self.state.device, &self.state.queue, None);
+        self.tool_note = Some(Ok(
+            "Work plane updated for this session; the model is unchanged.".into(),
+        ));
+    }
+
     /// Turns viewport placement of the member on or off (issue #134).
     fn toggle_place(&mut self) {
+        self.plane_pick = false;
         self.beam_mode = !self.beam_mode;
         self.beam.reset();
         self.ghost_end = None;
@@ -1784,6 +1899,11 @@ impl App {
             }
             None => ground_point(&ray),
         };
+        let resolved = if let Some(plane) = self.tools.plane {
+            plane.ray_point(ray.origin, ray.direction)
+        } else {
+            resolved
+        };
         let Some(point) = resolved else {
             self.tool_note = Some(Err(
                 "the click has no world point: aim at the model or the ground plane".into(),
@@ -1791,7 +1911,10 @@ impl App {
             return;
         };
         let point = match self.beam.start() {
-            Some(start) => match self.tools.member.axis_lock.constrain(start, point) {
+            Some(start) => match self.tools.plane.map_or_else(
+                || self.tools.member.axis_lock.constrain(start, point),
+                |plane| plane.constrain_world(start, point, self.tools.member.axis_lock),
+            ) {
                 Ok(point) => point,
                 Err(e) => {
                     self.tool_note = Some(Err(e.to_string()));
@@ -1809,6 +1932,19 @@ impl App {
                 )));
             }
             Some((start, end)) => {
+                let points = self.tools.plane.map(|plane| {
+                    plane
+                        .to_local(start)
+                        .and_then(|start| plane.to_local(end).map(|end| (start, end)))
+                });
+                let (start, end) = match points {
+                    Some(Ok(pair)) => pair,
+                    Some(Err(e)) => {
+                        self.tool_note = Some(Err(e.to_string()));
+                        return;
+                    }
+                    None => (start, end),
+                };
                 self.tools.member.set_endpoints(start, end);
                 self.beam_mode = false;
                 self.ghost_end = None;
@@ -1863,7 +1999,19 @@ impl App {
             ray.origin[1] + t * ray.direction[1],
             ray.origin[2] + t * ray.direction[2],
         ];
-        let Ok(end) = self.tools.member.axis_lock.constrain(start, end) else {
+        let end = if let Some(plane) = self.tools.plane {
+            let Some(end) = plane.ray_point(ray.origin, ray.direction) else {
+                return;
+            };
+            end
+        } else {
+            end
+        };
+        let constrained = match self.tools.plane {
+            Some(plane) => plane.constrain_world(start, end, self.tools.member.axis_lock),
+            None => self.tools.member.axis_lock.constrain(start, end),
+        };
+        let Ok(end) = constrained else {
             return;
         };
         let key = end.map(|v| v.round() as i64);
@@ -1936,6 +2084,20 @@ impl App {
     }
 
     fn tools_panel(&mut self, ui: &mut egui::Ui) {
+        match self.plane_form.show(ui) {
+            Ok(Some(crate::work_plane::Action::Apply(plane))) => self.install_plane(Some(plane)),
+            Ok(Some(crate::work_plane::Action::Clear)) => self.install_plane(None),
+            Ok(Some(crate::work_plane::Action::PickFace)) => {
+                self.install_plane(self.tools.plane);
+                self.plane_pick = true;
+                self.tool_note = Some(Ok("Click a face to set the session work plane.".into()));
+            }
+            Err(e) => self.tool_note = Some(Err(e.to_string())),
+            _ => {}
+        }
+        if let Some(plane) = self.tools.plane {
+            ui.label(format!("Plane origin: {}", PointText(plane.origin())));
+        }
         ui.label("Dimensions in mm.");
         // Borrowed beside the form (disjoint fields), never copied: the panel is laid out in every
         // frame the window draws.
@@ -2183,14 +2345,19 @@ impl eframe::App for App {
             )
         });
         self.poll_commit();
+        self.poll_grid();
         self.poll_edit();
         self.poll_props();
         self.poll_publish();
         self.poll_status();
         self.poll_select();
         self.poll_reload();
+        self.selection_shortcuts(ui.ctx());
         self.perf_step(ui.ctx(), frame.info().cpu_usage);
-        if !wants_text && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        if self.menu_open && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.menu_open = false;
+        } else if !wants_text && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.plane_pick = false;
             // Esc closes the publish dialog first; it clears the selection only when none is open.
             if self.publisher.phase() == Phase::Confirming {
                 self.publisher.cancel();
@@ -2199,6 +2366,7 @@ impl eframe::App for App {
                 self.editor.deselect();
                 self.props.clear();
                 self.set_bench(workbench::Bench::Select);
+                self.grid_edit = None;
             }
         }
         // Another process committed to the store: refresh, exactly as the `R` key does.
@@ -2209,22 +2377,18 @@ impl eframe::App for App {
         if reload || store_changed {
             self.reload();
         }
-        let fit = fit || std::mem::take(&mut self.pending_fit);
-        let pending_zoom = self.pending_zoom.take();
-        let zoom_in = zoom_in || pending_zoom == Some(true);
-        let zoom_out = zoom_out || pending_zoom == Some(false);
         if fit && let Some(l) = &self.loaded {
-            let (target, extent) = l.summary.framing();
+            let (target, extent) = self.grid_framing(&l.summary);
             if let Err(e) = self.camera.fit(target, extent, self.aspect()) {
                 self.error = Some(e.to_string());
             }
         }
         if self.text {
-            // Header, ribbon and status bar first, then the inspector at a fixed width: the 3D
-            // view must not shift sideways when a chosen definition name is wider.
+            // The inspector wraps long values within the width chosen by the user.
             self.header(ui);
             self.ribbon(ui);
             self.status_bar(ui);
+            menu::show(ui, &mut self.menu_open);
             self.inspector(ui);
             let ctx = ui.ctx().clone();
             self.details_window(&ctx);
@@ -2290,6 +2454,7 @@ impl eframe::App for App {
                 }
             };
             let mut picked = None;
+            let mut picked_grid = None;
             match self
                 .camera
                 .navigate(orbit, pan, zoom)
@@ -2314,6 +2479,15 @@ impl eframe::App for App {
                         );
                     }
                     if let Some(l) = &self.loaded {
+                        if self.grids_visible {
+                            self.grid_scene.paint(
+                                ui,
+                                response.rect,
+                                &view,
+                                l.summary.origin_mm,
+                                self.grid_edit.as_ref().map(|edit| edit.id.as_str()),
+                            );
+                        }
                         if let Some(selected) = self.editor.selected() {
                             let painter = ui.painter_at(response.rect);
                             draw_selection(&painter, response.rect, &view, l, &selected.id);
@@ -2328,7 +2502,15 @@ impl eframe::App for App {
                             )
                             && let Some(ray) = ray_through(&view, ndc, l.summary.origin_mm)
                         {
-                            picked = Some(ray);
+                            if !self.beam_mode && self.grids_visible {
+                                picked_grid = self
+                                    .grid_scene
+                                    .hit_test(response.rect, &view, l.summary.origin_mm, pos)
+                                    .map(|grid| grid.id.clone());
+                            }
+                            if picked_grid.is_none() {
+                                picked = Some(ray);
+                            }
                         }
                     }
                     // The ghost preview follows the pointer on the plane through the armed
@@ -2346,15 +2528,34 @@ impl eframe::App for App {
                 }
                 Err(e) => self.error = Some(e.to_string()),
             }
-            if let Some(ray) = picked {
-                if self.beam_mode {
+            if let Some(id) = picked_grid {
+                if !self.other_command_running() {
+                    self.select_grid(&id);
+                }
+            } else if let Some(ray) = picked {
+                if self.plane_pick {
+                    if let Some(loaded) = &self.loaded {
+                        match beamcraft_engine::work_plane::pick_work_plane(
+                            &loaded.snapshot,
+                            ray.origin,
+                            ray.direction,
+                        ) {
+                            Ok(Some(plane)) => {
+                                self.plane_form.set(plane);
+                                self.install_plane(Some(plane));
+                            }
+                            Ok(None) => {
+                                self.tool_note =
+                                    Some(Err("No face was hit; pick a model face.".into()))
+                            }
+                            Err(e) => self.tool_note = Some(Err(e.to_string())),
+                        }
+                    }
+                } else if self.beam_mode {
                     self.place_beam(ray);
-                } else {
+                } else if !self.other_command_running() {
                     self.start_select(ray);
                 }
-            }
-            if self.text {
-                self.view_controls(ui, response.rect);
             }
         });
         ui.ctx().request_repaint();
@@ -2363,10 +2564,13 @@ impl eframe::App for App {
 
 #[cfg(test)]
 mod tests {
-    use super::{App, Source, load_icon, needs_refit, revisions_stamp, target_size, volume_note};
+    use super::{
+        App, Source, WATCH_INTERVAL, load_icon, needs_refit, revisions_token, spawn_watch,
+        target_size, volume_note,
+    };
 
     #[test]
-    fn a_committed_revision_moves_the_watch_stamp() {
+    fn a_committed_revision_moves_the_watch_token() {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -2375,13 +2579,60 @@ mod tests {
             std::env::temp_dir().join(format!("bc-watch-test-{}-{nanos}", std::process::id()));
         let revisions = dir.join("revisions");
         // No revisions directory yet: no signal, and never an error to react to.
-        assert_eq!(revisions_stamp(&dir), None);
+        assert_eq!(revisions_token(&dir), None);
         std::fs::create_dir_all(&revisions).unwrap();
-        let first = revisions_stamp(&dir).expect("the directory exists");
-        // A commit is one new file in the directory: the stamp moves, the store root does not.
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        // An empty directory is the zero head: no entries, no newest name.
+        assert_eq!(revisions_token(&dir), Some((0, String::new())));
+        // A commit is one new record file: the token moves without trusting timestamps.
         std::fs::write(revisions.join("00000000000000000001"), b"x").unwrap();
-        assert_ne!(first, revisions_stamp(&dir).expect("the directory exists"));
+        assert_eq!(
+            revisions_token(&dir),
+            Some((1, "00000000000000000001".into()))
+        );
+        std::fs::write(revisions.join("00000000000000000002"), b"x").unwrap();
+        assert_eq!(
+            revisions_token(&dir),
+            Some((2, "00000000000000000002".into()))
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_watch_thread_exits_when_the_owner_drops_the_shutdown() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("bc-watch-exit-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(dir.join("revisions")).unwrap();
+        let (_rx, shutdown, handle) = spawn_watch(dir.clone()).unwrap();
+        // No filesystem change happens after this point; dropping the shutdown handle must
+        // still end the thread.
+        drop(shutdown);
+        handle.join().expect("the watcher exits on shutdown");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_foreign_commit_wakes_the_watch_thread() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("bc-watch-wake-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(dir.join("revisions")).unwrap();
+        let (rx, shutdown, handle) = spawn_watch(dir.clone()).unwrap();
+        // The watcher takes its first token at startup, so a commit inside that window is
+        // the baseline (missed until the next one, by design). Sleep past one poll, then
+        // commit: the signal must arrive.
+        std::thread::sleep(WATCH_INTERVAL + std::time::Duration::from_millis(150));
+        std::fs::write(dir.join("revisions").join("00000000000000000001"), b"x").unwrap();
+        rx.recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the watcher signals the committed head");
+        drop(shutdown);
+        let _ = handle.join();
         std::fs::remove_dir_all(&dir).unwrap();
     }
     use crate::Error;
@@ -2444,6 +2695,7 @@ mod tests {
         Reloaded {
             scene,
             definitions: Err(ToolError::local("NOT_FOUND", "no store in this test")),
+            grids: Ok(crate::grid::GridScene::default()),
             timing: RefreshTiming::default(),
         }
     }
@@ -2464,6 +2716,437 @@ mod tests {
         tx.send(reloaded).unwrap();
         app.reload_job = Some(rx);
         app.poll_reload();
+    }
+
+    #[test]
+    fn grid_tool_opens_its_form_and_cancel_keeps_the_snapshot() {
+        let Some(mut app) = headless() else { return };
+        deliver(&mut app, refreshed(2));
+        let token = app.loaded.as_ref().unwrap().snapshot.token().clone();
+        app.beam_mode = true;
+        app.beam.click([100.0, 200.0, 0.0]);
+        app.ghost_end = Some([100, 200, 0]);
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        let mut draw = |events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1400.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.selection_shortcuts(ui.ctx());
+                    app.header(ui);
+                    app.ribbon(ui);
+                    app.inspector(ui);
+                    egui::CentralPanel::default().show(ui, |_| {});
+                },
+            );
+            // Only layout and input are inspected; this test does not upload textures.
+            output.textures_delta.clear();
+            output
+        };
+        let position = |output: &egui::FullOutput, label: &str| {
+            output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == label => {
+                        Some(text.pos + text.galley.size() / 2.0)
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{label} was not drawn"))
+        };
+        let click = |pos| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        let first = draw(Vec::new());
+        let form = draw(click(position(&first, "Grid")));
+        position(&form, "Create grid");
+        assert!(!form.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text == "Show grids")));
+        draw(click(position(&form, "Cancel")));
+        let cancelled = draw(Vec::new());
+        position(&cancelled, "Properties");
+        assert_eq!(app.bench, super::workbench::Bench::Select);
+        assert!(app.grid_job.is_none());
+        assert!(!app.beam_mode && app.beam.start().is_none() && app.ghost_end.is_none());
+        assert!(app.grids_visible);
+        assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
+    }
+
+    #[test]
+    fn a_rejected_grid_framing_keeps_the_old_scene_and_its_guides_together() {
+        let Some(mut app) = headless() else { return };
+        deliver(&mut app, refreshed(2));
+        let token = app.loaded.as_ref().unwrap().snapshot.token().clone();
+        let old_guides = app.grid_scene.clone();
+        let mut next = refreshed(3);
+        next.grids = Ok(crate::grid::GridScene {
+            lines: vec![crate::grid::GridLine {
+                label: "A".into(),
+                points: [[-1e7, 0.0, 0.0], [1e7, 0.0, 0.0]],
+            }],
+            ..Default::default()
+        });
+        deliver(&mut app, next);
+        assert!(app.error.is_some());
+        assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
+        assert_eq!(app.grid_scene, old_guides);
+    }
+
+    #[test]
+    fn selected_grid_properties_reset_and_reject_stale_edits_without_writing() {
+        let Some(mut app) = headless() else { return };
+        deliver(&mut app, refreshed(1));
+        let token = app.loaded.as_ref().unwrap().snapshot.token().clone();
+        let id = "01990000-0000-7000-8000-000000000001";
+        let form = crate::grid::GridForm::default();
+        app.grid_scene = crate::grid::GridScene {
+            lines: vec![crate::grid::GridLine {
+                label: "1".into(),
+                points: [[0.0, -2000.0, 0.0], [0.0, 12000.0, 0.0]],
+            }],
+            grids: vec![crate::grid::GridProperties {
+                id: id.into(),
+                form: form.clone(),
+                editable: true,
+                lines: 0..1,
+            }],
+        };
+        app.select_grid(id);
+        assert_eq!(app.bench, super::workbench::Bench::Select);
+        assert!(app.editor.selected().is_none());
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        let draw = |app: &mut App, events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1400.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.selection_shortcuts(ui.ctx());
+                    app.header(ui);
+                    app.ribbon(ui);
+                    app.inspector(ui);
+                    egui::CentralPanel::default().show(ui, |_| {});
+                },
+            );
+            output.textures_delta.clear();
+            output
+        };
+        let position = |output: &egui::FullOutput, label: &str| {
+            output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == label => {
+                        Some(text.pos + text.galley.size() / 2.0)
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{label} was not drawn"))
+        };
+        let click = |pos| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        draw(&mut app, Vec::new());
+        app.grid_form.name = "Unapplied name".into();
+        let edited = draw(&mut app, Vec::new());
+        position(&edited, "Grid properties");
+        for removed in ["Fit grid extents", "Reload properties", "Show grids"] {
+            assert!(!edited.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text == removed)));
+        }
+        draw(&mut app, click(position(&edited, "Cancel")));
+        assert!(app.grid_edit.is_none());
+        app.select_grid(id);
+        assert_eq!(app.grid_form, form);
+        app.grid_form.name = "My draft".into();
+        app.grid_scene.grids[0].form.name = "External change".into();
+        app.sync_grid_selection();
+        let stale = draw(&mut app, Vec::new());
+        assert!(stale.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text.contains("changed while you were editing"))));
+        draw(&mut app, click(position(&stale, "Apply changes")));
+        assert!(app.grid_job.is_none());
+        assert_eq!(app.grid_form.name, "My draft");
+        app.select_grid(id);
+        assert_eq!(app.grid_form.name, "External change");
+        // Delete edits text while a field has focus, and deletes the grid otherwise.
+        let current = draw(&mut app, Vec::new());
+        let name_input = position(&current, "Name") + egui::vec2(0.0, 25.0);
+        draw(&mut app, click(name_input));
+        let key = |pressed| egui::Event::Key {
+            key: egui::Key::Delete,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        draw(&mut app, vec![key(true)]);
+        assert!(app.edit_job.is_none());
+        ctx.memory_mut(|memory| {
+            if let Some(focused) = memory.focused() {
+                memory.surrender_focus(focused);
+            }
+        });
+        draw(&mut app, vec![key(false)]);
+        draw(&mut app, vec![key(true)]);
+        assert!(app.edit_job.is_some());
+        assert_eq!(app.editor.selected().unwrap().id, id);
+        app.grid_scene.grids.clear();
+        app.sync_grid_selection();
+        assert!(app.grid_edit.is_none());
+        assert!(app.grid_job.is_none());
+        assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
+    }
+
+    #[test]
+    fn inspector_can_be_widened_and_narrowed_without_editing_the_model() {
+        let Some(mut app) = headless() else { return };
+        deliver(&mut app, refreshed(1));
+        let token = app.loaded.as_ref().unwrap().snapshot.token().clone();
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        let draw = |app: &mut App, events| {
+            let mut viewport = egui::Rect::NOTHING;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1400.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.inspector(ui);
+                    egui::CentralPanel::default()
+                        .frame(egui::Frame::NONE)
+                        .show(ui, |ui| viewport = ui.max_rect());
+                },
+            );
+            output.textures_delta.clear();
+            viewport
+        };
+        let pointer = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        draw(&mut app, Vec::new());
+        let initial = draw(&mut app, Vec::new());
+        let mut current = initial;
+        for delta in [-180.0, 120.0] {
+            let start = egui::pos2(current.right(), 400.0);
+            let end = start + egui::vec2(delta, 0.0);
+            draw(
+                &mut app,
+                vec![egui::Event::PointerMoved(start), pointer(start, true)],
+            );
+            draw(&mut app, vec![egui::Event::PointerMoved(end)]);
+            draw(&mut app, vec![pointer(end, false)]);
+            let next = draw(&mut app, Vec::new());
+            assert!(
+                (next.right() - current.right() - delta).abs() < 3.0,
+                "{current:?} -> {next:?}"
+            );
+            current = next;
+        }
+        assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
+        assert!(!app.other_command_running());
+    }
+
+    #[test]
+    fn menu_and_selection_stay_aligned_across_tabs_and_window_widths() {
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        for width in [760.0, 1100.0, 1600.0] {
+            for tab in [
+                super::workbench::RibbonTab::Model,
+                super::workbench::RibbonTab::Modify,
+                super::workbench::RibbonTab::View,
+                super::workbench::RibbonTab::Drawings,
+                super::workbench::RibbonTab::Project,
+            ] {
+                app.ribbon_tab = tab;
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 900.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        app.header(ui);
+                        app.ribbon(ui);
+                    },
+                );
+                output.textures_delta.clear();
+                let menu = ctx
+                    .read_response(egui::Id::unique(super::workbench::MENU_TOGGLE_ID))
+                    .unwrap()
+                    .rect;
+                let select = ctx
+                    .read_response(egui::Id::unique(super::workbench::SELECT_TOOL_ID))
+                    .unwrap()
+                    .rect;
+                assert_eq!(menu.left(), 0.0, "the menu rail meets the window edge");
+                assert_eq!(menu.width(), 32.0);
+                assert_eq!(select.size(), egui::vec2(44.0, 56.0));
+                assert!(menu.height() > select.height());
+                assert_eq!(menu.center().y, select.center().y);
+                assert!(menu.right() < select.left());
+            }
+        }
+    }
+
+    #[test]
+    fn ribbon_and_workspace_menu_accept_input_without_changing_the_model() {
+        let Some(mut app) = headless() else { return };
+        deliver(&mut app, refreshed(2));
+        let token = app.loaded.as_ref().unwrap().snapshot.token().clone();
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        // Hit-testing is deterministic without waiting for slide animation frames.
+        ctx.all_styles_mut(|style| style.animation_time = 0.0);
+        let mut draw = |events: Vec<egui::Event>| {
+            let mut viewport = egui::Rect::NOTHING;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1400.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.header(ui);
+                    app.ribbon(ui);
+                    app.status_bar(ui);
+                    super::menu::show(ui, &mut app.menu_open);
+                    app.inspector(ui);
+                    egui::CentralPanel::default().show(ui, |ui| viewport = ui.max_rect());
+                },
+            );
+            output.textures_delta.clear();
+            (output, viewport)
+        };
+        let position = |(output, _): &(egui::FullOutput, egui::Rect), label: &str| {
+            output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == label => {
+                        Some(text.pos + text.galley.size() / 2.0)
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{label} was not drawn"))
+        };
+        let click = |pos: egui::Pos2| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        let initial = draw(Vec::new());
+        let menu_button = ctx
+            .read_response(egui::Id::unique(super::workbench::MENU_TOGGLE_ID))
+            .unwrap()
+            .rect
+            .center();
+        assert!(menu_button.x < 64.0);
+        assert!(menu_button.y > 92.0, "the menu belongs on the tool row");
+        assert!(!initial.0.shapes.iter().any(|shape| matches!(
+            &shape.shape,
+            egui::Shape::Text(text) if matches!(text.galley.job.text.as_str(), "Select" | "SELECT")
+        )), "the selection tool has an icon and a tooltip, without duplicate labels");
+        let modified = draw(click(position(&initial, "Modify")));
+        position(&modified, "Move");
+        draw(click(menu_button));
+        let opened = draw(Vec::new());
+        assert!(opened.1.left() > initial.1.left() + 200.0);
+        assert_eq!(opened.1.top(), initial.1.top());
+        // An inert file command neither dismisses the drawer nor starts an edit.
+        let still_open = draw(click(position(&opened, "Open model")));
+        position(&still_open, "Workspace");
+        // The rest of the window stays usable: this is a docked panel, not a modal.
+        let view_tab = draw(click(position(&still_open, "View")));
+        position(&view_tab, "Shaded");
+        position(&view_tab, "Workspace");
+        assert!(ctx.memory(|memory| memory.top_modal_layer().is_none()));
+        let toggled_closed = draw(click(menu_button));
+        assert_eq!(toggled_closed.1.left(), initial.1.left());
+        draw(click(menu_button));
+        draw(vec![egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }]);
+        assert!(!app.menu_open);
+        assert_eq!(app.ribbon_tab, super::workbench::RibbonTab::View);
+        assert_eq!(app.bench, super::workbench::Bench::Select);
+        assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
+        assert!(app.edit_job.is_none() && app.job.is_none());
     }
 
     #[test]
@@ -2615,6 +3298,49 @@ mod navigation_tests {
     }
 
     #[test]
+    fn orbit_drag_moves_the_near_surface_with_the_pointer() {
+        for preset in [Preset::Mouse, Preset::Trackpad] {
+            for delta in [
+                egui::vec2(-12.0, 0.0),
+                egui::vec2(12.0, 0.0),
+                egui::vec2(0.0, -12.0),
+                egui::vec2(0.0, 12.0),
+            ] {
+                let mut camera = Camera::new([0.0; 3], 1000.0, 1.5).unwrap();
+                let view = camera.view(1.5).unwrap();
+                // A point on the near face of a model centred on the orbit target.
+                let point = [
+                    view.back[0] * 250.0,
+                    view.back[1] * 250.0,
+                    view.back[2] * 250.0,
+                ];
+                let before = view.project(point);
+                let (orbit, pan, zoom) = navigate(
+                    preset,
+                    delta,
+                    (preset == Preset::Trackpad, false, preset == Preset::Mouse),
+                    preset == Preset::Mouse,
+                    false,
+                    camera.distance(),
+                    true,
+                    0.0,
+                    1.0,
+                    KEYS_NONE,
+                    false,
+                );
+                camera.navigate(orbit, pan, zoom).unwrap();
+                let after = camera.view(1.5).unwrap().project(point);
+                if delta.x != 0.0 {
+                    assert!((after[0] - before[0]) * delta.x > 0.0);
+                } else {
+                    // Projection uses Y up; pointer events use Y down.
+                    assert!((after[1] - before[1]) * delta.y < 0.0);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn mouse_left_drag_never_moves_the_camera() {
         let delta = egui::Vec2::new(10.0, -20.0);
         for shift in [false, true] {
@@ -2673,7 +3399,7 @@ mod navigation_tests {
             false,
         );
         assert!(
-            (orbit[0] - 0.08).abs() < 1e-6 && (orbit[1] - 0.16).abs() < 1e-6,
+            (orbit[0] + 0.08).abs() < 1e-6 && (orbit[1] + 0.16).abs() < 1e-6,
             "{orbit:?}"
         );
         assert_eq!(pan, [0.0; 2]);
@@ -2730,7 +3456,7 @@ mod navigation_tests {
             false,
         );
         assert!(
-            (orbit[0] - 0.08).abs() < 1e-6 && (orbit[1] - 0.16).abs() < 1e-6,
+            (orbit[0] + 0.08).abs() < 1e-6 && (orbit[1] + 0.16).abs() < 1e-6,
             "{orbit:?}"
         );
         assert_eq!(pan, [0.0; 2]);

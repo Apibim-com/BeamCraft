@@ -36,6 +36,7 @@ pub mod render;
 pub mod scene;
 pub mod source;
 pub mod tools;
+pub mod work_plane;
 
 /// A bounded viewport failure; adapter absence is reported, never replaced by a fake result.
 #[derive(Debug)]
