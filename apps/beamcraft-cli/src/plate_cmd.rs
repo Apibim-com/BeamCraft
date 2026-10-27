@@ -54,6 +54,7 @@ pub(crate) type Run<T> = Result<T, PlateError>;
 
 pub(crate) fn invalid(message: &'static str) -> PlateError {
     PlateError {
+        rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
     }
@@ -85,6 +86,10 @@ const CREATE_OPTIONS: &[&str] = &[
     "--actor-id",
     "--project-id",
     "--workspace-id",
+    "--z",
+    "--level",
+    "--offset",
+    "--origin-at-grid",
 ];
 
 const DEFINE_MATERIAL_OPTIONS: &[&str] = &[
@@ -140,6 +145,7 @@ const CREATE_MEMBER_OPTIONS: &[&str] = &[
     "--kind",
     "--start",
     "--end",
+    "--axis-lock",
     "--profile-digest",
     "--profile",
     "--roll",
@@ -154,6 +160,11 @@ const CREATE_MEMBER_OPTIONS: &[&str] = &[
     "--actor-id",
     "--project-id",
     "--workspace-id",
+    "--z",
+    "--level",
+    "--offset",
+    "--start-at-grid",
+    "--end-at-grid",
 ];
 
 const CUT_OPTIONS: &[&str] = &[
@@ -197,6 +208,7 @@ const DELETE_OPTIONS: &[&str] = &[
 ];
 
 const COPY_OPTIONS: &[&str] = &[
+    "--new-axis-ids",
     "--store",
     "--id",
     "--name",
@@ -273,6 +285,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         .get("--store")
         .ok_or_else(|| invalid("--store is required"))?;
     let blobs = BlobStore::new(store_root).map_err(|e| PlateError {
+        rule_id: None,
         code: e.code(),
         message: "store root is not usable",
     })?;
@@ -330,6 +343,7 @@ pub(crate) fn quaternion(text: &str) -> Run<[f64; 4]> {
 
 pub(crate) fn id_error(error: beamcraft_model::id::IdError) -> PlateError {
     PlateError {
+        rule_id: Some("DV-BASE-001"),
         code: error.code(),
         message: "identity is not a full canonical UUIDv7",
     }
@@ -426,6 +440,7 @@ fn selected(
             match resolve_name(&definitions, name, profiles) {
                 NameResolution::Found(digest) => Ok(Some(digest)),
                 NameResolution::NotFound => Err(PlateError {
+                    rule_id: None,
                     code: ErrorCode::NotFound,
                     message: if profiles {
                         "no profile definition in the head has this name"
@@ -539,6 +554,7 @@ fn section_shape(family: &str, options: &BTreeMap<&str, &str>) -> Run<SectionSha
 fn contour_points(text: &str) -> Run<Vec<[f64; 3]>> {
     if text.split(';').count() > 1024 {
         return Err(PlateError {
+            rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "more than 1024 contour points",
         });
@@ -607,6 +623,7 @@ fn define_command(
     let mut source = IdSource::system();
     let mut fresh = || {
         source.next_id().map_err(|_| PlateError {
+            rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
         })
@@ -707,6 +724,7 @@ fn create(
     let mut source = IdSource::system();
     let mut fresh = || {
         source.next_id().map_err(|_| PlateError {
+            rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
         })
@@ -761,7 +779,17 @@ fn create(
         contour_points_mm: contour,
         thickness_mm: thickness,
         placement: Placement {
-            translation_mm: given("--translation").map_or(Ok([0.0; 3]), translation)?,
+            translation_mm: if options.contains_key("--origin-at-grid") {
+                grid_placement(store, options, &op_id, "--origin-at-grid")?
+            } else {
+                if ["--z", "--level", "--offset"]
+                    .iter()
+                    .any(|k| options.contains_key(k))
+                {
+                    return Err(invalid("height options require grid placement"));
+                }
+                given("--translation").map_or(Ok([0.0; 3]), translation)?
+            },
             ..Placement::IDENTITY
         },
         material_digest: selected(
@@ -885,6 +913,7 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
     let mut source = IdSource::system();
     let mut fresh = || {
         source.next_id().map_err(|_| PlateError {
+            rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
         })
@@ -1072,6 +1101,7 @@ fn delete_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
     let mut source = IdSource::system();
     let mut fresh = || {
         source.next_id().map_err(|_| PlateError {
+            rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
         })
@@ -1132,6 +1162,7 @@ fn delete_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
                     DeletedKind::Weld => "weld",
                     DeletedKind::Bolt => "bolt",
                     DeletedKind::Level => "level",
+                    DeletedKind::Grid => "grid",
                 })
             }),
         ),
@@ -1145,9 +1176,24 @@ fn delete_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
 }
 
 fn copy_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Json> {
+    let source_id = ElementId::parse(
+        options
+            .get("--id")
+            .ok_or_else(|| invalid("--id is required"))?,
+    )
+    .map_err(id_error)?;
+    if beamcraft_cli::grid::grids(store)?
+        .iter()
+        .any(|g| g.id == source_id)
+        || options.contains_key("--new-axis-ids")
+    {
+        return crate::grid_cmd::copy_command(store, options);
+    }
+
     let mut source = IdSource::system();
     let mut fresh = || {
         source.next_id().map_err(|_| PlateError {
+            rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
         })
@@ -1263,6 +1309,7 @@ fn history_command(command: &str, options: &BTreeMap<&str, &str>) -> Run<Json> {
             .ok_or_else(|| invalid("--workspace-dir is required"))?,
     );
     let blobs = BlobStore::new(dir).map_err(|e| PlateError {
+        rule_id: None,
         code: e.code(),
         message: "workspace directory is not usable",
     })?;
@@ -1293,6 +1340,7 @@ fn history_command(command: &str, options: &BTreeMap<&str, &str>) -> Run<Json> {
             None => source
                 .next_id()
                 .map_err(|_| PlateError {
+                    rule_id: None,
                     code: ErrorCode::BackendUnavailable,
                     message: "no identity could be generated",
                 })
@@ -1351,6 +1399,7 @@ fn workspace_command(
             .next_id()
             .map(|id| id.to_string())
             .map_err(|_| PlateError {
+                rule_id: None,
                 code: ErrorCode::BackendUnavailable,
                 message: "no identity could be generated",
             })
@@ -1366,6 +1415,7 @@ fn workspace_command(
     }
     if command == "create-workspace" && !dir.exists() {
         std::fs::create_dir(dir).map_err(|_| PlateError {
+            rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "workspace directory could not be created",
         })?;
@@ -1377,6 +1427,7 @@ fn workspace_command(
         return Err(invalid("the workspace directory is the published store"));
     }
     let blobs = BlobStore::new(dir).map_err(|e| PlateError {
+        rule_id: None,
         code: e.code(),
         message: "workspace directory is not usable",
     })?;
@@ -1451,6 +1502,7 @@ fn create_member_command(
     let mut source = IdSource::system();
     let mut fresh = || {
         source.next_id().map_err(|_| PlateError {
+            rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
         })
@@ -1485,13 +1537,32 @@ fn create_member_command(
         Some("column") => MemberKind::Column,
         Some(_) => return Err(invalid("--kind is beam or column")),
     };
-    let point = |key: &'static str| -> Run<[f64; 3]> {
-        translation(
-            options
-                .get(key)
-                .ok_or_else(|| invalid("--start and --end are required"))?,
-        )
+    use beamcraft_engine::coordinate::AxisLock;
+    if !options.contains_key("--start-at-grid")
+        && !options.contains_key("--end-at-grid")
+        && ["--z", "--level", "--offset"]
+            .iter()
+            .any(|k| options.contains_key(k))
+    {
+        return Err(invalid("height options require grid placement"));
+    }
+    let coordinate = |key: &'static str, grid, origin, lock: AxisLock| -> Run<[f64; 3]> {
+        if options.contains_key(grid) {
+            if options.contains_key(key) {
+                return Err(invalid("point and grid address are mutually exclusive"));
+            }
+            return lock
+                .constrain(origin, grid_placement(store, options, &op_id, grid)?)
+                .map_err(PlateError::from);
+        }
+        let text = options
+            .get(key)
+            .ok_or_else(|| invalid("--start and --end are required"))?;
+        beamcraft_engine::coordinate::resolve(text, origin, lock).map_err(PlateError::from)
     };
+    let lock = AxisLock::parse(given("--axis-lock").unwrap_or("none")).map_err(PlateError::from)?;
+    let start = coordinate("--start", "--start-at-grid", [0.0; 3], AxisLock::None)?;
+    let end = coordinate("--end", "--end-at-grid", start, lock)?;
     let replay = if options.contains_key("--op-id")
         && (options.contains_key("--profile") || options.contains_key("--material"))
     {
@@ -1520,7 +1591,7 @@ fn create_member_command(
         new_id,
         kind,
         name: given("--name").unwrap_or(kind.as_str()).to_owned(),
-        axis_points_mm: [point("--start")?, point("--end")?],
+        axis_points_mm: [start, end],
         profile_digest,
         placement: Placement {
             translation_mm: given("--translation").map_or(Ok([0.0; 3]), translation)?,
@@ -1561,6 +1632,39 @@ fn create_member_command(
         ("revision", revision_json(&created.revision)),
         ("footprint", footprint_json(created.footprint.as_ref())),
     ]))
+}
+
+fn grid_placement(
+    store: &RevisionStore,
+    options: &BTreeMap<&str, &str>,
+    op: &OpId,
+    key: &str,
+) -> Run<[f64; 3]> {
+    let address = options
+        .get(key)
+        .ok_or_else(|| invalid("missing grid address"))?;
+    let z = options
+        .get("--z")
+        .map(|s| s.parse::<f64>().map_err(|_| invalid("invalid height")))
+        .transpose()?;
+    let level = options
+        .get("--level")
+        .map(|s| ElementId::parse(s).map_err(id_error))
+        .transpose()?;
+    let offset = options
+        .get("--offset")
+        .map(|s| s.parse::<f64>().map_err(|_| invalid("invalid offset")))
+        .transpose()?
+        .unwrap_or(0.0);
+    if options.contains_key("--translation")
+        || options.contains_key("--orientation-xyzw")
+        || (options.contains_key("--offset") && level.is_none())
+    {
+        return Err(invalid(
+            "grid placement conflicts with translation, orientation or an offset without level",
+        ));
+    }
+    beamcraft_cli::grid::resolve_placement(store, op, address, z, level, offset)
 }
 
 fn member_json(record: &MemberRecord) -> Run<Json> {
@@ -1637,6 +1741,7 @@ fn cuts_json(cuts: &[CutRecord]) -> Run<Json> {
 
 pub(crate) fn num(value: f64) -> Run<Json> {
     Json::number(value).map_err(|_| PlateError {
+        rule_id: None,
         code: ErrorCode::NonFiniteNumber,
         message: "a result is not finite",
     })
@@ -1864,6 +1969,7 @@ pub(crate) fn fit_page(
         }
         if count <= 1 {
             return Err(PlateError {
+                rule_id: None,
                 code: ErrorCode::LimitExceeded,
                 message: "one listing entry exceeds the output budget",
             });
@@ -2436,6 +2542,17 @@ pub(crate) fn inspection_json(inspection: &Inspection, only: Option<ElementId>) 
         ),
         ("member_count", Json::uint(inspection.members.len() as u64)),
         (
+            "grids",
+            crate::grid_cmd::views_json(
+                &inspection
+                    .grids
+                    .iter()
+                    .filter(|g| only.is_none_or(|id| id == g.id))
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            )?,
+        ),
+        (
             "other_element_count",
             Json::uint(inspection.other_elements as u64),
         ),
@@ -2474,6 +2591,22 @@ pub(crate) fn inspection_json(inspection: &Inspection, only: Option<ElementId>) 
         fields.insert("element_filter".into(), Json::text(id.to_string()));
     }
     Ok(reply)
+}
+
+/// Domain failures retain the exact F10 rule through CLI adapters.
+pub(crate) fn domain_diagnostics(error: &PlateError) -> Vec<Json> {
+    error
+        .rule_id
+        .into_iter()
+        .map(|rule| {
+            Json::object([
+                ("rule_id", Json::text(rule)),
+                ("severity", Json::text("error")),
+                ("code", Json::text(error.code.as_str())),
+                ("message", Json::text(error.message)),
+            ])
+        })
+        .collect()
 }
 
 #[cfg(test)]
