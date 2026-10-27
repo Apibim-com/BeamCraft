@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! Headless queries: `pick`, `feature-list`, `feature-lookup` and `snap` against the verified head's pinned
+//! Headless queries: `pick`, `list-feature`, `lookup-feature` and `snap` against the verified head's pinned
 //! view snapshot. They call the engine queries (`beamcraft_engine::query::{pick, feature}`) and
 //! add no computation: the CLI parses the options, the engine decides and measures.
 //!
@@ -17,7 +17,8 @@ use beamcraft_engine::query::feature::{
     FeatureGeometry, FeatureKind, FeatureLookup, list_features, lookup_feature,
 };
 use beamcraft_engine::query::pick::{
-    DEFAULT_MAX_HITS, Hit, MAX_T_MM, PickQuery, PointPick, RayPick, SnapKind, SnapQuery, pick, snap,
+    DEFAULT_MAX_HITS, Hit, MAX_T_MM, PickQuery, PointPick, RayPick, SelectionFilter, SnapKind,
+    SnapQuery, pick, snap_with_grids,
 };
 use beamcraft_host::{revision::RevisionStore, storage::BlobStore};
 use beamcraft_json::Json;
@@ -27,6 +28,7 @@ use std::ffi::OsString;
 
 /// A failure of a query: an F04 code, the F06 token when the engine produced it, and a message.
 struct Failure {
+    rule_id: Option<&'static str>,
     code: ErrorCode,
     reason: Option<&'static str>,
     message: &'static str,
@@ -35,6 +37,7 @@ struct Failure {
 impl From<PlateError> for Failure {
     fn from(e: PlateError) -> Self {
         Self {
+            rule_id: e.rule_id,
             code: e.code,
             reason: None,
             message: e.message,
@@ -45,6 +48,7 @@ impl From<PlateError> for Failure {
 impl From<ViewError> for Failure {
     fn from(e: ViewError) -> Self {
         Self {
+            rule_id: None,
             code: e.f04_code(),
             reason: Some(e.code().as_str()),
             message: "the query was refused",
@@ -56,6 +60,7 @@ type Run<T> = Result<T, Failure>;
 
 fn invalid(message: &'static str) -> Failure {
     Failure {
+        rule_id: None,
         code: ErrorCode::InvalidArgument,
         reason: None,
         message,
@@ -65,8 +70,8 @@ fn invalid(message: &'static str) -> Failure {
 /// Whether `command` is one of the V04 queries.
 pub fn handles(command: &OsString) -> bool {
     command == "pick"
-        || command == "feature-lookup"
-        || command == "feature-list"
+        || command == "lookup-feature"
+        || command == "list-feature"
         || command == "snap"
 }
 
@@ -81,7 +86,14 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
                 ("reason", e.reason.map_or(Json::Null, Json::text)),
                 ("message", Json::text(e.message)),
                 ("observed_context", Json::Null),
-                ("diagnostics", Json::Array(vec![])),
+                (
+                    "diagnostics",
+                    Json::Array(crate::plate_cmd::domain_diagnostics(&PlateError {
+                        rule_id: e.rule_id,
+                        code: e.code,
+                        message: e.message,
+                    })),
+                ),
             ]),
             match e.code {
                 ErrorCode::BackendUnavailable => 3,
@@ -114,10 +126,18 @@ fn run(args: &[OsString]) -> Run<Json> {
             "--targets",
             "--radius",
             "--max-hits",
+            "--exclude",
         ],
-        "feature-lookup" => &["--store", "--feature-id"],
-        "feature-list" => &["--store", "--id"],
-        "snap" => &["--store", "--point", "--radius", "--kinds", "--max-hits"],
+        "lookup-feature" => &["--store", "--feature-id"],
+        "list-feature" => &["--store", "--id"],
+        "snap" => &[
+            "--store",
+            "--point",
+            "--radius",
+            "--kinds",
+            "--max-hits",
+            "--grids",
+        ],
         _ => return Err(invalid("unknown command")),
     };
     if !tail.len().is_multiple_of(2) || tail.len() > 40 {
@@ -169,6 +189,15 @@ fn run(args: &[OsString]) -> Run<Json> {
                         .ok_or_else(|| invalid("--targets are face, edge or vertex"))
                 })
                 .collect::<Run<Vec<_>>>()?;
+            // The selection switches of the pick (V11): every listed class is off, so the
+            // query selects nothing of it. The switches change picking only.
+            let excluded = given("--exclude").unwrap_or("");
+            let selection =
+                SelectionFilter::parse_excluded(excluded).map_err(|_| {
+                    invalid(
+                        "--exclude is a comma-separated list of parts, assemblies, bolts, welds, holes, grids, construction_objects or items",
+                    )
+                })?;
             let radius_mm = number("--radius", 0.0)?;
             match (given("--origin"), given("--point")) {
                 (Some(_), None) => Request::Pick(PickQuery::Ray(RayPick {
@@ -183,6 +212,7 @@ fn run(args: &[OsString]) -> Run<Json> {
                         Some("true") => true,
                         Some(_) => return Err(invalid("--include-backfaces is true or false")),
                     },
+                    selection,
                 })),
                 (None, Some(_)) => {
                     if given("--direction").is_some()
@@ -196,21 +226,23 @@ fn run(args: &[OsString]) -> Run<Json> {
                         radius_mm,
                         targets,
                         max_hits,
+                        selection,
                     }))
                 }
                 _ => return Err(invalid("give either --origin and --direction, or --point")),
             }
         }
-        "feature-lookup" => Request::Lookup(
+        "lookup-feature" => Request::Lookup(
             given("--feature-id")
                 .ok_or_else(|| invalid("--feature-id is required"))?
                 .to_owned(),
         ),
-        "feature-list" => Request::List(
+        "list-feature" => Request::List(
             beamcraft_model::id::ElementId::parse(
                 given("--id").ok_or_else(|| invalid("--id is required"))?,
             )
             .map_err(|_| Failure {
+                rule_id: None,
                 code: ErrorCode::InvalidId,
                 reason: None,
                 message: "--id must be a full canonical UUIDv7",
@@ -231,10 +263,12 @@ fn run(args: &[OsString]) -> Run<Json> {
         }),
     };
     let blobs = BlobStore::new(store_root).map_err(|e| PlateError {
+        rule_id: None,
         code: e.code(),
         message: "store root is not usable",
     })?;
-    let inspection = inspect(&RevisionStore::new(blobs))?;
+    let store = RevisionStore::new(blobs);
+    let inspection = inspect(&store)?;
     let snapshot = &inspection.snapshot;
     let revision = Json::text(inspection.revision.revision_id.clone());
     let header = |outcome: &str| {
@@ -294,7 +328,28 @@ fn run(args: &[OsString]) -> Run<Json> {
             fields
         }
         Request::Snap(query) => {
-            let result = snap(snapshot, &query)?;
+            let visible = given("--grids")
+                .map(|text| {
+                    if text.is_empty() {
+                        return Ok(std::collections::BTreeSet::new());
+                    }
+                    if text.split(',').count() > 64 {
+                        return Err(invalid("too many grid ids"));
+                    }
+                    text.split(',')
+                        .map(|id| {
+                            beamcraft_model::id::ElementId::parse(id)
+                                .map_err(|e| Failure::from(crate::plate_cmd::id_error(e)))
+                        })
+                        .collect::<Run<std::collections::BTreeSet<_>>>()
+                })
+                .transpose()?;
+            let result = snap_with_grids(
+                snapshot,
+                &query,
+                &beamcraft_cli::grid::grids_at(&store, inspection.revision.sequence)?,
+                visible.as_ref(),
+            )?;
             let mut fields = header("snapped");
             let candidates = result
                 .candidates
@@ -303,6 +358,25 @@ fn run(args: &[OsString]) -> Run<Json> {
                     Ok(Json::object([
                         ("element_id", Json::text(c.element_id.to_string())),
                         ("kind", Json::text(c.kind.as_str())),
+                        (
+                            "grid",
+                            c.grid.as_ref().map_or(Json::Null, |g| {
+                                Json::object([
+                                    ("grid_id", Json::text(c.element_id.to_string())),
+                                    ("axis_id", Json::text(g.axis_id.to_string())),
+                                    (
+                                        "other_axis_id",
+                                        g.other_axis_id
+                                            .map_or(Json::Null, |id| Json::text(id.to_string())),
+                                    ),
+                                    ("label", Json::text(&g.label)),
+                                    (
+                                        "other_label",
+                                        g.other_label.as_ref().map_or(Json::Null, Json::text),
+                                    ),
+                                ])
+                            }),
+                        ),
                         (
                             "feature_id",
                             c.feature_id
@@ -380,6 +454,38 @@ fn geometry_json(g: &FeatureGeometry) -> Result<Json, PlateError> {
                     vertex_ids
                         .iter()
                         .map(|v| Json::text(v.to_string()))
+                        .collect(),
+                ),
+            ),
+        ]),
+        FeatureGeometry::Surface {
+            normal,
+            triangles,
+            vertex_ids,
+        } => Json::object([
+            ("normal", normal.map_or(Ok(Json::Null), triple)?),
+            (
+                "triangles",
+                Json::Array(
+                    triangles
+                        .iter()
+                        .map(|triangle| {
+                            Ok(Json::Array(
+                                triangle
+                                    .iter()
+                                    .map(|p| triple(*p))
+                                    .collect::<Result<_, PlateError>>()?,
+                            ))
+                        })
+                        .collect::<Result<_, PlateError>>()?,
+                ),
+            ),
+            (
+                "vertex_ids",
+                Json::Array(
+                    vertex_ids
+                        .iter()
+                        .map(|id| Json::text(id.to_string()))
                         .collect(),
                 ),
             ),

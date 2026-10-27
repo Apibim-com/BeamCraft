@@ -7,16 +7,15 @@
 //! runs the CLI's `create-plate` / `create-member` in a separate process and then reloads the
 //! accepted revision; see [`tools`] (pure parameter mapping and reply parsing) and [`command`].
 //!
-//! V05.2 adds the edit tools: click selection through the engine's `pick`, Move / Copy / Delete
-//! as staged CLI commands, and Undo / Redo on a workspace; see [`edit`].
+//! V06.1 adds a properties panel for the selected plate or straight member (what the engine
+//! reports, labelled current, stale or unknown; edits are the CLI's `update-element`) and a
+//! Publish action (`publish-workspace`); see [`props`] and [`publish`].
 //!
-//! V06 adds the properties panel (the selected element's full `plate-inspect` report, property
-//! edits through `update-element`) and the publication panel of a personal workspace
-//! (`workspace-status` / `-publish` with `--store PUBLISHED --workspace DIR`); see [`props`] for
-//! the pure mapping, following the same client pattern.
+//! A launch without arguments opens a per-user default workspace created on demand
+//! ([`source::default_workspace_at`]), so a double-clicked app bundle launches.
 //!
 //! The viewport shows the accepted (published) revision of a store. Its input is the engine's
-//! pinned view snapshot, produced by the headless CLI (`beamcraft view-export --out -`) in a
+//! pinned view snapshot, produced by the headless CLI (`beamcraft export-view --out -`) in a
 //! separate process and rebuilt here with [`beamcraft_engine::ViewSnapshot::from_bundle`], which
 //! re-validates every blob, digest and the token. The renderer computes no engineering geometry:
 //! it decodes the engine's element-local meshes, derives display-only flat normals, and draws
@@ -29,12 +28,21 @@
 pub mod app;
 pub mod camera;
 pub mod command;
+pub mod dialog;
 pub mod edit;
+pub mod grid;
 pub mod metrics;
+pub mod perf;
 pub mod props;
+pub mod publish;
 pub mod render;
 pub mod scene;
+pub mod selection;
+pub mod shell;
 pub mod source;
+pub mod start;
+pub mod stats;
+pub mod theme;
 pub mod tools;
 pub mod work_plane;
 
