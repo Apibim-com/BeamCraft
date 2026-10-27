@@ -2030,6 +2030,7 @@ pub(super) fn changes(
                         thickness_mm,
                         // A parsed side is one of three closed tokens; nothing to bound.
                         thickness_side: _,
+                        corners,
                         holes,
                         hole_records,
                         cuts,
@@ -2037,6 +2038,27 @@ pub(super) fn changes(
                         count_points(contour_mm, b)?;
                         cap(contour_mm.iter().flatten().copied(), 1e9)?;
                         cap([*thickness_mm], 1e6)?;
+                        // Corner treatments (A12.2): at most one per vertex, each naming a
+                        // vertex of this contour with bounded values; whether the corner
+                        // really turns and the treatments fit the edges are the engine's.
+                        if corners.len() > contour_mm.len() {
+                            return Err(limit());
+                        }
+                        let mut seen = Vec::new();
+                        for corner in corners {
+                            if corner.vertex >= contour_mm.len() || seen.contains(&corner.vertex) {
+                                return Err(invalid());
+                            }
+                            seen.push(corner.vertex);
+                            let values = match corner.treatment {
+                                CornerTreatment::Chamfer { d1_mm, d2_mm } => [d1_mm, d2_mm],
+                                CornerTreatment::Round { radius_mm } => [radius_mm, radius_mm],
+                            };
+                            if values.iter().any(|v| *v <= 0.0) {
+                                return Err(invalid());
+                            }
+                            cap(values, 1e9)?;
+                        }
                         if holes.len() + hole_records.len() > MAX_HOLES {
                             return Err(limit());
                         }
@@ -2347,6 +2369,7 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                     contour_mm,
                     thickness_mm,
                     thickness_side: _,
+                    corners,
                     holes,
                     hole_records,
                     cuts,
@@ -2365,7 +2388,11 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                         .chain(
                             cuts.iter()
                                 .flat_map(|c| c.point_mm.into_iter().chain(c.normal)),
-                        ),
+                        )
+                        .chain(corners.iter().flat_map(|c| match c.treatment {
+                            CornerTreatment::Chamfer { d1_mm, d2_mm } => [d1_mm, d2_mm],
+                            CornerTreatment::Round { radius_mm } => [radius_mm, radius_mm],
+                        })),
                 ),
                 Shape::Member {
                     axis_mm,
