@@ -321,7 +321,7 @@ pub fn copy_element(
                             .iter()
                             .map(|h| h.iter().map(|[x, y]| [*x, *y, 0.0]).collect())
                             .collect(),
-                        cut: a.cut,
+                        cuts: a.cuts.clone(),
                     },
                     placement: LayerPlacement {
                         translation_mm: a.placement.translation_mm,
@@ -347,7 +347,7 @@ pub fn copy_element(
                         axis_mm: a.axis_points_mm,
                         profile: a.profile,
                         roll_rad: a.roll_rad,
-                        cut: a.cut,
+                        cuts: a.cuts.clone(),
                     },
                     placement: LayerPlacement {
                         translation_mm: a.placement.translation_mm,

@@ -6,16 +6,18 @@
 //! P01 implements `CreatePlate` only. This module holds what is true of the arguments
 //! regardless of geometry: identity, label, finiteness, caps and the rigid placement. Contour
 //! and thickness *geometry* (floor, winding, supported shapes) is evaluated by the engine with
-//! the kernel. No JSON, envelope or canonical-byte form lives here yet: F04 section 6 and F05
-//! section 6 (`canonical`) remain planned, and [`CreatePlate::content_fingerprint`] is a
+//! the kernel. No JSON, envelope or canonical-byte form lives here yet: F04 sections 3 and 6
+//! (`canonical`) remain planned, and [`CreatePlate::content_fingerprint`] is a
 //! deterministic digest of the typed arguments, not RFC 8785 canonical bytes.
 
 use crate::digest::{ContentDigest, Sha256};
 use crate::error::ErrorCode;
-use crate::id::ElementId;
+pub use crate::grid::CreateGrid;
+pub use crate::grid_update::UpdateGrid;
+use crate::id::{ElementId, OpId};
 use crate::limits::{
     BOLT_DIAMETER_CAP_MM, CONTOUR_POINT_CAP, COORDINATE_CAP_MM, DIMENSION_CAP_MM,
-    MAX_BOLT_GROUP_SIZE, MAX_LABEL_BYTES, MAX_MARK_BYTES, MIN_CONTOUR_POINTS, MIN_LABEL_BYTES,
+    MAX_BOLT_GROUP_SIZE, MAX_LABEL_BYTES, MIN_CONTOUR_POINTS, MIN_LABEL_BYTES,
     ORIENTATION_NORM_TOLERANCE, ROLL_CAP_RAD, WELD_SIZE_CAP_MM,
 };
 use beamcraft_geom::canonical_f64_bytes;
@@ -28,6 +30,8 @@ pub const CONTRACT_VERSION: &str = "0.1.0";
 /// carries caller text, paths or credentials.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommandError {
+    /// F10 rule for domain admission failures, absent for other errors.
+    pub rule_id: Option<&'static str>,
     /// Stable F04 code.
     pub code: ErrorCode,
     /// Fixed schema token of the offending field, for example `contour_points_mm`.
@@ -43,7 +47,13 @@ impl CommandError {
             code,
             field,
             message,
+            rule_id: None,
         }
+    }
+    /// Retains the exact F10 rule through engine and CLI admission.
+    pub const fn with_rule(mut self, rule_id: &'static str) -> Self {
+        self.rule_id = Some(rule_id);
+        self
     }
 }
 
@@ -83,11 +93,10 @@ impl Placement {
             if values.iter().all(|v| v.is_finite()) {
                 Ok(())
             } else {
-                Err(CommandError::new(
-                    ErrorCode::NonFiniteNumber,
-                    field,
-                    "value is not finite",
-                ))
+                Err(
+                    CommandError::new(ErrorCode::NonFiniteNumber, field, "value is not finite")
+                        .with_rule("DV-ATTR-003"),
+                )
             }
         };
         finite(&self.translation_mm, "placement.translation_mm")?;
@@ -101,7 +110,8 @@ impl Placement {
                 ErrorCode::LimitExceeded,
                 "placement.translation_mm",
                 "translation component exceeds the coordinate cap",
-            ));
+            )
+            .with_rule("DV-LIM-001"));
         }
         Self::validate_orientation(self.orientation_xyzw)
     }
@@ -114,14 +124,16 @@ impl Placement {
                 ErrorCode::NonFiniteNumber,
                 "placement.orientation_xyzw",
                 "value is not finite",
-            ));
+            )
+            .with_rule("DV-ATTR-003"));
         }
         if xyzw.iter().any(|v| v.abs() > 1.0) {
             return Err(CommandError::new(
                 ErrorCode::InvalidArgument,
                 "placement.orientation_xyzw",
                 "quaternion component is outside [-1, 1]",
-            ));
+            )
+            .with_rule("DV-LIM-003"));
         }
         let [x, y, z, w] = xyzw;
         let squared = ((x * x + y * y) + z * z) + w * w;
@@ -130,7 +142,8 @@ impl Placement {
                 ErrorCode::InvalidArgument,
                 "placement.orientation_xyzw",
                 "quaternion squared norm is not within 1e-6 of one",
-            ));
+            )
+            .with_rule("DV-LIM-003"));
         }
         Ok(())
     }
@@ -143,23 +156,57 @@ impl Placement {
     }
 }
 
-/// One plane cut authored with an element (A03, experimental): a point of the plane and its
-/// normal, both in element-local millimetres as submitted. The plane itself is the exact set
-/// `normal . (p - point_mm) = 0` of the submitted binary64 numbers; a scaled normal describes
-/// the same plane. The kept half-space is the one the normal points *away from*
-/// (`normal . (p - point_mm) <= 0`), so the normal points into the trimmed-off material.
-///
-/// Whether the plane actually crosses the element (some vertex strictly on each side, no face
-/// in the plane) is the kernel's decision; a tangent or missing plane refuses the command.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct PlaneCut {
-    /// A point of the cutting plane, element-local millimetres.
-    pub point_mm: [f64; 3],
-    /// A non-zero normal of the plane; the kept side is where it does not point.
-    pub normal: [f64; 3],
+/// Which closed half-space of the cutting plane survives (F04 section 7 `CutByPlane`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeepSide {
+    /// The side the plane normal points to (`normal . (p - point) >= 0`).
+    Positive,
+    /// The opposite side (`normal . (p - point) <= 0`).
+    Negative,
 }
 
-impl PlaneCut {
+impl KeepSide {
+    /// The wire token.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Positive => "positive",
+            Self::Negative => "negative",
+        }
+    }
+
+    /// Parses the wire token; anything else is `None`.
+    pub fn parse(token: &str) -> Option<Self> {
+        match token {
+            "positive" => Some(Self::Positive),
+            "negative" => Some(Self::Negative),
+            _ => None,
+        }
+    }
+}
+
+/// One owned `plane_cut` operation record of an element (F04 section 4, amendment A-2): the
+/// plane parameters and the kept side, with the record identity the engine assigned it.
+///
+/// The plane is the exact set `normal . (p - point_mm) = 0` of the stored binary64 numbers; a
+/// scaled normal describes the same plane. Whether the plane actually crosses the element (some
+/// vertex strictly on each side, no face in the plane) is the kernel's decision at replay; a
+/// tangent or missing plane refuses the command that authors or replays it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CutRecord {
+    /// Full UUIDv7 of the record, unused in the project (`DUPLICATE_ID`).
+    pub operation_id: OpId,
+    /// The per-element ordinal the engine assigned in creation order; it names the cap face
+    /// `cut:f.p<ordinal>` and is never reused or renumbered.
+    pub ordinal: u16,
+    /// A point of the cutting plane, element-local millimetres.
+    pub point_mm: [f64; 3],
+    /// A non-zero normal of the plane.
+    pub normal: [f64; 3],
+    /// The kept half-space.
+    pub keep: KeepSide,
+}
+
+impl CutRecord {
     /// Admits what does not depend on geometry: finiteness, the coordinate cap for the point and
     /// every normal component, and a non-zero normal. A non-finite number is
     /// `NON_FINITE_NUMBER`; a coordinate above 1,000,000,000 mm is `LIMIT_EXCEEDED`; a zero
@@ -175,7 +222,8 @@ impl PlaneCut {
                 ErrorCode::NonFiniteNumber,
                 "cut",
                 "value is not finite",
-            ));
+            )
+            .with_rule("DV-ATTR-003"));
         }
         if self
             .point_mm
@@ -187,7 +235,8 @@ impl PlaneCut {
                 ErrorCode::LimitExceeded,
                 "cut",
                 "coordinate exceeds the coordinate cap",
-            ));
+            )
+            .with_rule("DV-LIM-001"));
         }
         if self.normal.iter().all(|v| *v == 0.0) {
             return Err(CommandError::new(
@@ -197,6 +246,62 @@ impl PlaneCut {
             ));
         }
         Ok(())
+    }
+}
+
+/// F04 section 7 `CutByPlane`: adds one `plane_cut` record to a valid plate, beam or column and
+/// updates its derived data in one transaction. `operation_id` must be unused in the project;
+/// the engine assigns the next ordinal of the target.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CutByPlane {
+    /// The element to cut.
+    pub target_id: ElementId,
+    /// Full UUIDv7 of the new record; unused in the project.
+    pub operation_id: OpId,
+    /// A point of the cutting plane, element-local millimetres.
+    pub point_mm: [f64; 3],
+    /// A non-zero normal of the plane.
+    pub normal: [f64; 3],
+    /// The kept half-space.
+    pub keep: KeepSide,
+}
+
+impl CutByPlane {
+    /// Admits what does not depend on geometry or model state: finiteness, the coordinate cap
+    /// and a non-zero normal, as [`CutRecord::validate`].
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        CutRecord {
+            operation_id: self.operation_id,
+            ordinal: 0,
+            point_mm: self.point_mm,
+            normal: self.normal,
+            keep: self.keep,
+        }
+        .validate()
+    }
+
+    /// SHA-256 of a versioned, length-prefixed binary encoding of the validated arguments, with
+    /// signed zero normalized; the same deterministic digest form as
+    /// [`CreatePlate::content_fingerprint`].
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        self.validate_arguments()?;
+        let bad =
+            || CommandError::new(ErrorCode::NonFiniteNumber, "cut", "value cannot be encoded");
+        let mut bytes = Vec::with_capacity(128);
+        bytes.extend_from_slice(b"BeamCraft/A03/CutByPlane/v1\0");
+        bytes.extend_from_slice(self.target_id.as_bytes());
+        bytes.extend_from_slice(self.operation_id.as_bytes());
+        bytes.push(match self.keep {
+            KeepSide::Positive => 0,
+            KeepSide::Negative => 1,
+        });
+        for v in self.point_mm.into_iter().chain(self.normal) {
+            bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| bad())?);
+        }
+        Sha256::digest(&bytes).map_err(|_| {
+            CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
+        })
     }
 }
 
@@ -220,8 +325,6 @@ pub struct CreatePlate {
     /// seen from +Z (the cutter convention of the kernel). Whether a hole is strictly inside the
     /// outline and clear of the others is the kernel's decision. Empty means a solid plate.
     pub holes_mm: Vec<Vec<[f64; 2]>>,
-    /// Optional single plane cut applied after every hole (A03, experimental).
-    pub cut: Option<PlaneCut>,
 }
 
 /// Whether `name` is a valid element label (F04 section 3, `DV-BASE-003`).
@@ -270,8 +373,6 @@ pub struct CreateStraightMember {
     pub roll_rad: Option<f64>,
     /// Optional pinned material definition.
     pub material_digest: Option<ContentDigest>,
-    /// Optional single plane cut applied to the member body (A03, experimental).
-    pub cut: Option<PlaneCut>,
 }
 
 impl CreateStraightMember {
@@ -284,7 +385,8 @@ impl CreateStraightMember {
                 ErrorCode::InvalidArgument,
                 "name",
                 "label must be 1 to 256 bytes without control characters",
-            ));
+            )
+            .with_rule("DV-BASE-003"));
         }
         let roll = self.roll_rad.unwrap_or(0.0);
         if !roll.is_finite() || self.axis_points_mm.iter().flatten().any(|v| !v.is_finite()) {
@@ -292,7 +394,8 @@ impl CreateStraightMember {
                 ErrorCode::NonFiniteNumber,
                 "axis_points_mm",
                 "value is not finite",
-            ));
+            )
+            .with_rule("DV-ATTR-003"));
         }
         if self
             .axis_points_mm
@@ -304,23 +407,22 @@ impl CreateStraightMember {
                 ErrorCode::LimitExceeded,
                 "axis_points_mm",
                 "coordinate exceeds the coordinate cap",
-            ));
+            )
+            .with_rule("DV-LIM-001"));
         }
         if roll.abs() > ROLL_CAP_RAD {
             return Err(CommandError::new(
                 ErrorCode::LimitExceeded,
                 "roll_rad",
                 "roll exceeds 2 pi",
-            ));
-        }
-        if let Some(cut) = &self.cut {
-            cut.validate()?;
+            )
+            .with_rule("DV-LIM-001"));
         }
         self.placement.validate()
     }
 
     /// SHA-256 of a versioned, length-prefixed binary encoding of the validated arguments, with
-    /// signed zero normalized; like [`CreatePlate::content_fingerprint`] it is not the F05
+    /// signed zero normalized; like [`CreatePlate::content_fingerprint`] it is not the F04
     /// canonical form.
     pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
         self.validate_arguments()?;
@@ -330,9 +432,10 @@ impl CreateStraightMember {
                 "axis_points_mm",
                 "value cannot be encoded",
             )
+            .with_rule("DV-ATTR-003")
         };
         let mut bytes = Vec::with_capacity(256);
-        bytes.extend_from_slice(b"BeamCraft/P03/CreateStraightMember/v2\0");
+        bytes.extend_from_slice(b"BeamCraft/P03/CreateStraightMember/v3\0");
         bytes.extend_from_slice(self.new_id.as_bytes());
         bytes.push(match self.kind {
             MemberKind::Beam => 0,
@@ -356,15 +459,6 @@ impl CreateStraightMember {
             }
             None => bytes.push(0),
         }
-        match &self.cut {
-            Some(cut) => {
-                bytes.push(1);
-                for v in cut.point_mm.into_iter().chain(cut.normal) {
-                    bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| bad())?);
-                }
-            }
-            None => bytes.push(0),
-        }
         let mut scalars = self
             .axis_points_mm
             .iter()
@@ -378,6 +472,7 @@ impl CreateStraightMember {
         })?;
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
         })
     }
 }
@@ -396,7 +491,8 @@ impl CreatePlate {
                 ErrorCode::InvalidArgument,
                 "name",
                 "label must be 1 to 256 bytes without control characters",
-            ));
+            )
+            .with_rule("DV-BASE-003"));
         }
         let count = self.contour_points_mm.len();
         if count > CONTOUR_POINT_CAP {
@@ -404,7 +500,8 @@ impl CreatePlate {
                 ErrorCode::LimitExceeded,
                 "contour_points_mm",
                 "contour has more than 1024 points",
-            ));
+            )
+            .with_rule("DV-LIM-001"));
         }
         if count < MIN_CONTOUR_POINTS {
             return Err(CommandError::new(
@@ -424,7 +521,8 @@ impl CreatePlate {
                 ErrorCode::NonFiniteNumber,
                 "contour_points_mm",
                 "value is not finite",
-            ));
+            )
+            .with_rule("DV-ATTR-003"));
         }
         if self
             .contour_points_mm
@@ -436,20 +534,19 @@ impl CreatePlate {
                 ErrorCode::LimitExceeded,
                 "contour_points_mm",
                 "coordinate exceeds the coordinate cap",
-            ));
+            )
+            .with_rule("DV-LIM-001"));
         }
         if self.thickness_mm > DIMENSION_CAP_MM {
             return Err(CommandError::new(
                 ErrorCode::LimitExceeded,
                 "thickness_mm",
                 "thickness exceeds the dimension cap",
-            ));
+            )
+            .with_rule("DV-LIM-001"));
         }
         self.placement.validate()?;
         self.validate_holes()?;
-        if let Some(cut) = &self.cut {
-            cut.validate()?;
-        }
         Ok(())
     }
 
@@ -459,14 +556,16 @@ impl CreatePlate {
                 ErrorCode::LimitExceeded,
                 "holes_mm",
                 "more than 64 holes",
-            ));
+            )
+            .with_rule("DV-LIM-001"));
         }
         if self.holes_mm.iter().any(|h| h.len() > HOLE_POINT_CAP) {
             return Err(CommandError::new(
                 ErrorCode::LimitExceeded,
                 "holes_mm",
                 "a hole has more than 1024 points",
-            ));
+            )
+            .with_rule("DV-LIM-001"));
         }
         if self.holes_mm.iter().any(|h| h.len() < MIN_CONTOUR_POINTS) {
             return Err(CommandError::new(
@@ -481,21 +580,23 @@ impl CreatePlate {
                 ErrorCode::NonFiniteNumber,
                 "holes_mm",
                 "value is not finite",
-            ));
+            )
+            .with_rule("DV-ATTR-003"));
         }
         if coordinates().any(|v| v.abs() > COORDINATE_CAP_MM) {
             return Err(CommandError::new(
                 ErrorCode::LimitExceeded,
                 "holes_mm",
                 "coordinate exceeds the coordinate cap",
-            ));
+            )
+            .with_rule("DV-LIM-001"));
         }
         Ok(())
     }
 
     /// SHA-256 of a versioned, length-prefixed binary encoding of the validated arguments, with
     /// signed zero normalized. Two commands with the same fingerprint have identical content;
-    /// it is *not* the F05 canonical form and must not be sent over a wire.
+    /// it is *not* the F04 canonical form and must not be sent over a wire.
     ///
     /// Fails (`LIMIT_EXCEEDED`, `NON_FINITE_NUMBER`) on arguments that do not validate, so a
     /// fingerprint exists only for admissible content.
@@ -507,9 +608,10 @@ impl CreatePlate {
                 "contour_points_mm",
                 "value cannot be encoded",
             )
+            .with_rule("DV-ATTR-003")
         };
         let mut bytes = Vec::with_capacity(64 + self.contour_points_mm.len() * 24);
-        bytes.extend_from_slice(b"BeamCraft/P04/CreatePlate/v4\0");
+        bytes.extend_from_slice(b"BeamCraft/P04/CreatePlate/v5\0");
         bytes.extend_from_slice(self.new_id.as_bytes());
         let name = self.name.as_bytes();
         bytes.extend_from_slice(&(name.len() as u64).to_le_bytes());
@@ -541,17 +643,9 @@ impl CreatePlate {
                 bytes.extend_from_slice(&canonical_f64_bytes(*v).map_err(|_| bad())?);
             }
         }
-        match &self.cut {
-            Some(cut) => {
-                bytes.push(1);
-                for v in cut.point_mm.into_iter().chain(cut.normal) {
-                    bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| bad())?);
-                }
-            }
-            None => bytes.push(0),
-        }
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
         })
     }
 }
@@ -575,8 +669,8 @@ pub struct ElementPatch {
     /// New placement translation in millimetres, absolute; the rotation is kept (a move).
     pub translation_mm: Option<[f64; 3]>,
     /// New placement rotation, absolute. Replaces the stored quaternion (the identity resets a
-    /// member or plate to the unrotated pose); the translation is kept. The quaternion follows
-    /// the `Placement` rules and is validated.
+    /// member to the unrotated pose; a plate refuses a non-identity rotation, as at creation);
+    /// the translation is kept. The quaternion follows the `Placement` rules and is validated.
     pub orientation_xyzw: Option<[f64; 4]>,
     /// D2: new level assignment of a plate, beam or column, or its explicit removal
     /// (`Some(None)`). Whether the level exists is the engine's decision.
@@ -618,14 +712,16 @@ impl UpdateElement {
                     ErrorCode::NonFiniteNumber,
                     "translation_mm",
                     "value is not finite",
-                ));
+                )
+                .with_rule("DV-ATTR-003"));
             }
             if translation.iter().any(|v| v.abs() > COORDINATE_CAP_MM) {
                 return Err(CommandError::new(
                     ErrorCode::LimitExceeded,
                     "translation_mm",
                     "translation component exceeds the coordinate cap",
-                ));
+                )
+                .with_rule("DV-LIM-001"));
             }
         }
         if let Some(xyzw) = patch.orientation_xyzw {
@@ -636,7 +732,8 @@ impl UpdateElement {
                 ErrorCode::InvalidArgument,
                 "name",
                 "label must be 1 to 256 bytes without control characters",
-            ));
+            )
+            .with_rule("DV-BASE-003"));
         }
         if let Some(t) = patch.thickness_mm {
             if !t.is_finite() {
@@ -644,14 +741,16 @@ impl UpdateElement {
                     ErrorCode::NonFiniteNumber,
                     "thickness_mm",
                     "value is not finite",
-                ));
+                )
+                .with_rule("DV-ATTR-003"));
             }
             if t > DIMENSION_CAP_MM {
                 return Err(CommandError::new(
                     ErrorCode::LimitExceeded,
                     "thickness_mm",
                     "thickness exceeds the dimension cap",
-                ));
+                )
+                .with_rule("DV-LIM-001"));
             }
         }
         Ok(())
@@ -688,6 +787,7 @@ impl UpdateElement {
                         "thickness_mm",
                         "value cannot be encoded",
                     )
+                    .with_rule("DV-ATTR-003")
                 })?);
             }
             None => bytes.push(0),
@@ -702,6 +802,7 @@ impl UpdateElement {
                         "translation_mm",
                         "value cannot be encoded",
                     )
+                    .with_rule("DV-ATTR-003")
                 })?);
             }
         }
@@ -724,11 +825,13 @@ impl UpdateElement {
                         "placement.orientation_xyzw",
                         "value cannot be encoded",
                     )
+                    .with_rule("DV-ATTR-003")
                 })?);
             }
         }
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
         })
     }
 }
@@ -750,6 +853,7 @@ impl DeleteElement {
         bytes.extend_from_slice(self.target_id.as_bytes());
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
         })
     }
 }
@@ -779,28 +883,32 @@ impl CopyElement {
                 ErrorCode::DuplicateId,
                 "new_id",
                 "the copy identity equals the source",
-            ));
+            )
+            .with_rule("DV-BASE-002"));
         }
         if self.name.as_deref().is_some_and(|n| !label_is_valid(n)) {
             return Err(CommandError::new(
                 ErrorCode::InvalidArgument,
                 "name",
                 "label must be 1 to 256 bytes without control characters",
-            ));
+            )
+            .with_rule("DV-BASE-003"));
         }
         if self.offset_mm.iter().any(|v| !v.is_finite()) {
             return Err(CommandError::new(
                 ErrorCode::NonFiniteNumber,
                 "offset_mm",
                 "value is not finite",
-            ));
+            )
+            .with_rule("DV-ATTR-003"));
         }
         if self.offset_mm.iter().any(|v| v.abs() > COORDINATE_CAP_MM) {
             return Err(CommandError::new(
                 ErrorCode::LimitExceeded,
                 "offset_mm",
                 "offset component exceeds the coordinate cap",
-            ));
+            )
+            .with_rule("DV-LIM-001"));
         }
         Ok(())
     }
@@ -827,10 +935,12 @@ impl CopyElement {
                     "offset_mm",
                     "value cannot be encoded",
                 )
+                .with_rule("DV-ATTR-003")
             })?);
         }
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
         })
     }
 }
@@ -855,7 +965,8 @@ impl CreateAssembly {
                 ErrorCode::InvalidArgument,
                 "name",
                 "label must be 1 to 256 bytes without control characters",
-            ));
+            )
+            .with_rule("DV-BASE-003"));
         }
         Ok(())
     }
@@ -870,6 +981,7 @@ impl CreateAssembly {
         bytes.extend_from_slice(self.name.as_bytes());
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
         })
     }
 }
@@ -908,6 +1020,7 @@ impl AttachToAssembly {
         bytes.extend_from_slice(self.assembly_id.as_bytes());
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
         })
     }
 }
@@ -929,6 +1042,7 @@ impl DetachFromAssembly {
         bytes.extend_from_slice(self.part_id.as_bytes());
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
         })
     }
 }
@@ -957,21 +1071,24 @@ impl CreateLevel {
                 ErrorCode::InvalidArgument,
                 "name",
                 "label must be 1 to 256 bytes without control characters",
-            ));
+            )
+            .with_rule("DV-BASE-003"));
         }
         if !self.elevation_mm.is_finite() {
             return Err(CommandError::new(
                 ErrorCode::NonFiniteNumber,
                 "elevation_mm",
                 "value is not finite",
-            ));
+            )
+            .with_rule("DV-ATTR-003"));
         }
         if self.elevation_mm.abs() > COORDINATE_CAP_MM {
             return Err(CommandError::new(
                 ErrorCode::LimitExceeded,
                 "elevation_mm",
                 "elevation exceeds the coordinate cap",
-            ));
+            )
+            .with_rule("DV-LIM-001"));
         }
         Ok(())
     }
@@ -990,9 +1107,11 @@ impl CreateLevel {
                 "elevation_mm",
                 "value cannot be encoded",
             )
+            .with_rule("DV-ATTR-003")
         })?);
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
         })
     }
 }
@@ -1119,21 +1238,24 @@ impl CreateWeld {
                 ErrorCode::InvalidArgument,
                 "name",
                 "label must be 1 to 256 bytes without control characters",
-            ));
+            )
+            .with_rule("DV-BASE-003"));
         }
         if self.main_id == self.secondary_id {
             return Err(CommandError::new(
                 ErrorCode::InvalidArgument,
                 "secondary_id",
                 "a weld connects two distinct parts",
-            ));
+            )
+            .with_rule("DV-REL-007"));
         }
         if self.new_id == self.main_id || self.new_id == self.secondary_id {
             return Err(CommandError::new(
                 ErrorCode::InvalidArgument,
                 "new_id",
                 "a weld cannot connect itself",
-            ));
+            )
+            .with_rule("DV-REL-006"));
         }
         let size = self.weld.size_mm;
         if !size.is_finite() {
@@ -1141,7 +1263,8 @@ impl CreateWeld {
                 ErrorCode::NonFiniteNumber,
                 "size_mm",
                 "weld size must be finite",
-            ));
+            )
+            .with_rule("DV-ATTR-003"));
         }
         if size <= 0.0 || size > WELD_SIZE_CAP_MM {
             return Err(CommandError::new(
@@ -1178,102 +1301,12 @@ impl CreateWeld {
                 "size_mm",
                 "weld size must be finite",
             )
+            .with_rule("DV-ATTR-003")
         })?;
         bytes.extend_from_slice(&size);
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
-        })
-    }
-}
-
-/// The approval state of a mark (A08): `assigned` is a value a person chose that no one has
-/// approved yet; `approved` freezes the value until the approval is revoked or withdrawn.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MarkStatus {
-    /// A chosen value, still changeable by its owner.
-    Assigned,
-    /// A value a person has approved; it cannot change while the approval stands.
-    Approved,
-}
-
-impl MarkStatus {
-    /// The stored token.
-    pub const fn as_token(self) -> &'static str {
-        match self {
-            Self::Assigned => "assigned",
-            Self::Approved => "approved",
-        }
-    }
-    /// Parses an exact token.
-    pub fn parse(token: &str) -> Option<Self> {
-        match token {
-            "assigned" => Some(Self::Assigned),
-            "approved" => Some(Self::Approved),
-            _ => None,
-        }
-    }
-}
-
-/// Whether `mark` is an admissible mark value (A08): 1 to [`MAX_MARK_BYTES`] UTF-8 bytes without
-/// control characters. The value is what outputs print, so anything readable passes.
-pub fn mark_is_valid(mark: &str) -> bool {
-    (MIN_LABEL_BYTES..=MAX_MARK_BYTES).contains(&mark.len()) && !mark.chars().any(char::is_control)
-}
-
-/// A08 `AssignMark`: authors the mark of one element, or revokes its approval. The value is a
-/// human decision; this command never generates one.
-///
-/// `mark = Some(value)` assigns `value` to an unmarked element or replaces the value of one whose
-/// mark is still `assigned`. `mark = None` revokes the approval of an `approved` mark (the value
-/// is kept; the status falls back to `assigned`). Whether the element exists, is markable, is
-/// unmarked or approved, and whether another element already carries the value are the engine's
-/// decisions.
-#[derive(Debug, Clone, PartialEq)]
-pub struct AssignMark {
-    /// The element to mark.
-    pub target_id: ElementId,
-    /// The mark to author, or `None` to revoke the approval.
-    pub mark: Option<String>,
-}
-
-impl AssignMark {
-    /// Admits the request: a present value is a valid mark (`INVALID_ARGUMENT`, `LIMIT_EXCEEDED`).
-    pub fn validate_arguments(&self) -> Result<(), CommandError> {
-        match &self.mark {
-            Some(mark) if mark.len() > MAX_MARK_BYTES => {
-                return Err(CommandError::new(
-                    ErrorCode::LimitExceeded,
-                    "mark",
-                    "mark exceeds 64 bytes",
-                ));
-            }
-            Some(mark) if !mark_is_valid(mark) => {
-                return Err(CommandError::new(
-                    ErrorCode::InvalidArgument,
-                    "mark",
-                    "mark must be 1 to 64 bytes without control characters",
-                ));
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-
-    /// SHA-256 of a versioned encoding of the request.
-    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
-        let mut bytes = Vec::with_capacity(80);
-        bytes.extend_from_slice(b"BeamCraft/A08/AssignMark/v1\0");
-        bytes.extend_from_slice(self.target_id.as_bytes());
-        match &self.mark {
-            None => bytes.push(0),
-            Some(mark) => {
-                bytes.push(1);
-                bytes.extend_from_slice(&(mark.len() as u64).to_le_bytes());
-                bytes.extend_from_slice(mark.as_bytes());
-            }
-        }
-        Sha256::digest(&bytes).map_err(|_| {
-            CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
         })
     }
 }
@@ -1330,21 +1363,24 @@ impl CreateBolt {
                 ErrorCode::InvalidArgument,
                 "name",
                 "label must be 1 to 256 bytes without control characters",
-            ));
+            )
+            .with_rule("DV-BASE-003"));
         }
         if self.main_id == self.secondary_id {
             return Err(CommandError::new(
                 ErrorCode::InvalidArgument,
                 "secondary_id",
                 "a bolt group connects two distinct parts",
-            ));
+            )
+            .with_rule("DV-REL-007"));
         }
         if self.new_id == self.main_id || self.new_id == self.secondary_id {
             return Err(CommandError::new(
                 ErrorCode::InvalidArgument,
                 "new_id",
                 "a bolt group cannot connect itself",
-            ));
+            )
+            .with_rule("DV-REL-006"));
         }
         let bolt = &self.bolt;
         let scalars = [bolt.diameter_mm, bolt.pitch_mm];
@@ -1353,14 +1389,16 @@ impl CreateBolt {
                 ErrorCode::NonFiniteNumber,
                 "bolt",
                 "bolt diameter, pitch or origin is not finite",
-            ));
+            )
+            .with_rule("DV-ATTR-003"));
         }
         if bolt.direction_mm.iter().any(|v| !v.is_finite()) {
             return Err(CommandError::new(
                 ErrorCode::NonFiniteNumber,
                 "direction_mm",
                 "direction is not finite",
-            ));
+            )
+            .with_rule("DV-ATTR-003"));
         }
         if bolt.diameter_mm <= 0.0 || bolt.diameter_mm > BOLT_DIAMETER_CAP_MM {
             return Err(CommandError::new(
@@ -1381,7 +1419,8 @@ impl CreateBolt {
                 ErrorCode::LimitExceeded,
                 "count",
                 "a bolt group has more than 512 bolts",
-            ));
+            )
+            .with_rule("DV-LIM-001"));
         }
         if bolt.pitch_mm <= 0.0 || bolt.pitch_mm > DIMENSION_CAP_MM {
             return Err(CommandError::new(
@@ -1395,7 +1434,8 @@ impl CreateBolt {
                 ErrorCode::LimitExceeded,
                 "origin_mm",
                 "origin component exceeds the coordinate cap",
-            ));
+            )
+            .with_rule("DV-LIM-001"));
         }
         let squared = bolt.direction_mm.iter().map(|v| v * v).sum::<f64>();
         if (squared - 1.0).abs() > ORIENTATION_NORM_TOLERANCE {
@@ -1417,6 +1457,7 @@ impl CreateBolt {
                 "bolt",
                 "a bolt property cannot be encoded",
             )
+            .with_rule("DV-ATTR-003")
         };
         let mut bytes = Vec::with_capacity(160 + self.name.len());
         bytes.extend_from_slice(b"BeamCraft/A05/CreateBolt/v1\0");
@@ -1440,6 +1481,7 @@ impl CreateBolt {
         }
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
         })
     }
 }
@@ -1460,6 +1502,7 @@ impl ApproveMark {
         bytes.extend_from_slice(self.target_id.as_bytes());
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
         })
     }
 }
@@ -1482,7 +1525,6 @@ mod tests {
             placement: Placement::IDENTITY,
             material_digest: None,
             holes_mm: Vec::new(),
-            cut: None,
         }
     }
 
@@ -1527,63 +1569,55 @@ mod tests {
         assert!(bad.validate_arguments().is_ok());
     }
 
-    #[test]
-    fn a_cut_has_caps_codes_and_part_of_the_fingerprint() {
-        let solid = plate().content_fingerprint().unwrap();
-        let mut p = plate();
-        p.cut = Some(PlaneCut {
-            point_mm: [500.0, 0.0, 0.0],
+    fn cut() -> CutByPlane {
+        CutByPlane {
+            target_id: ElementId::parse("019a7bf0-0000-7000-8000-000000000005").unwrap(),
+            operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000c7").unwrap(),
+            point_mm: [250.0, 0.0, 0.0],
             normal: [1.0, 0.0, 0.0],
-        });
-        assert!(p.validate_arguments().is_ok());
-        assert_ne!(p.content_fingerprint().unwrap(), solid);
-        let mut moved = p.clone();
-        moved.cut.as_mut().unwrap().point_mm[0] = 501.0;
-        assert_ne!(
-            moved.content_fingerprint().unwrap(),
-            p.content_fingerprint().unwrap()
-        );
-        let code_of = |cut: Option<PlaneCut>| {
-            let mut p = plate();
-            p.cut = cut;
-            code(&p)
-        };
+            keep: KeepSide::Negative,
+        }
+    }
+
+    #[test]
+    fn a_cut_command_has_caps_codes_and_a_content_fingerprint() {
+        let c = cut();
+        assert!(c.validate_arguments().is_ok());
+        let base = c.content_fingerprint().unwrap();
+        assert_eq!(base, c.content_fingerprint().unwrap());
+        let mut moved = c;
+        moved.point_mm[0] = 251.0;
+        assert_ne!(moved.content_fingerprint().unwrap(), base);
+        let mut flipped = c;
+        flipped.keep = KeepSide::Positive;
+        assert_ne!(flipped.content_fingerprint().unwrap(), base);
         // A zero normal is not a plane; finiteness and the coordinate cap come first.
+        let zero = CutByPlane {
+            normal: [0.0; 3],
+            ..cut()
+        };
         assert_eq!(
-            code_of(Some(PlaneCut {
-                point_mm: [0.0; 3],
-                normal: [0.0; 3],
-            })),
+            zero.validate_arguments().unwrap_err().code,
             ErrorCode::InvalidArgument
         );
+        let nan = CutByPlane {
+            point_mm: [f64::NAN, 0.0, 0.0],
+            ..cut()
+        };
         assert_eq!(
-            code_of(Some(PlaneCut {
-                point_mm: [f64::NAN, 0.0, 0.0],
-                normal: [1.0, 0.0, 0.0],
-            })),
+            nan.validate_arguments().unwrap_err().code,
             ErrorCode::NonFiniteNumber
         );
+        let wide = CutByPlane {
+            point_mm: [2e9, 0.0, 0.0],
+            ..cut()
+        };
         assert_eq!(
-            code_of(Some(PlaneCut {
-                point_mm: [2e9, 0.0, 0.0],
-                normal: [1.0, 0.0, 0.0],
-            })),
+            wide.validate_arguments().unwrap_err().code,
             ErrorCode::LimitExceeded
         );
-        // The member command takes the same cut with the same codes.
-        let mut m = member();
-        m.cut = Some(PlaneCut {
-            point_mm: [3000.0, 0.0, 0.0],
-            normal: [1.0, 0.0, 0.0],
-        });
-        assert!(m.validate_arguments().is_ok());
-        let uncut = member().content_fingerprint().unwrap();
-        assert_ne!(m.content_fingerprint().unwrap(), uncut);
-        m.cut.as_mut().unwrap().normal = [0.0; 3];
-        assert_eq!(
-            m.validate_arguments().unwrap_err().code,
-            ErrorCode::InvalidArgument
-        );
+        assert_eq!(KeepSide::parse("positive"), Some(KeepSide::Positive));
+        assert_eq!(KeepSide::parse("sideways"), None);
     }
 
     #[test]
@@ -1738,7 +1772,6 @@ mod tests {
             placement: Placement::IDENTITY,
             roll_rad: None,
             material_digest: None,
-            cut: None,
         }
     }
 
@@ -1882,6 +1915,32 @@ mod tests {
             update(Some(negated)).content_fingerprint().unwrap(),
             update(Some(quarter)).content_fingerprint().unwrap()
         );
+    }
+
+    #[test]
+    fn non_finite_orientation_reports_the_domain_rule_in_validation_and_encoding() {
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            for component in 0..4 {
+                let mut orientation = [0.0, 0.0, 0.0, 1.0];
+                orientation[component] = value;
+                let update = UpdateElement {
+                    target_id: id(5),
+                    patch: ElementPatch {
+                        orientation_xyzw: Some(orientation),
+                        ..ElementPatch::default()
+                    },
+                };
+                for error in [
+                    Placement::validate_orientation(orientation).unwrap_err(),
+                    update.validate_arguments().unwrap_err(),
+                    update.content_fingerprint().unwrap_err(),
+                ] {
+                    assert_eq!(error.code, ErrorCode::NonFiniteNumber);
+                    assert_eq!(error.field, "placement.orientation_xyzw");
+                    assert_eq!(error.rule_id, Some("DV-ATTR-003"));
+                }
+            }
+        }
     }
 
     #[test]
@@ -2169,13 +2228,6 @@ mod tests {
         assert!(set != other && set != clear && other != clear);
     }
 
-    fn assign(mark: Option<&str>) -> AssignMark {
-        AssignMark {
-            target_id: id(5),
-            mark: mark.map(str::to_owned),
-        }
-    }
-
     fn bolt() -> CreateBolt {
         CreateBolt {
             new_id: id(1),
@@ -2190,57 +2242,6 @@ mod tests {
                 direction_mm: [1.0, 0.0, 0.0],
             },
         }
-    }
-
-    #[test]
-    fn a_mark_value_is_bounded_readable_text() {
-        assert!(assign(Some("P/1")).validate_arguments().is_ok());
-        assert!(assign(Some("A-1002.b")).validate_arguments().is_ok());
-        // A revoke request carries no value and is admitted.
-        assert!(assign(None).validate_arguments().is_ok());
-        assert_eq!(
-            assign(Some("")).validate_arguments().unwrap_err().code,
-            ErrorCode::InvalidArgument
-        );
-        assert_eq!(
-            assign(Some("P\u{7f}1"))
-                .validate_arguments()
-                .unwrap_err()
-                .code,
-            ErrorCode::InvalidArgument
-        );
-        assert_eq!(
-            assign(Some(&"x".repeat(65)))
-                .validate_arguments()
-                .unwrap_err()
-                .code,
-            ErrorCode::LimitExceeded
-        );
-    }
-
-    #[test]
-    fn mark_commands_fingerprint_their_content() {
-        let base = assign(Some("P/1")).content_fingerprint().unwrap();
-        for changed in [
-            assign(Some("P/2")),
-            assign(None),
-            AssignMark {
-                target_id: id(6),
-                mark: Some("P/1".into()),
-            },
-        ] {
-            assert_ne!(changed.content_fingerprint().unwrap(), base);
-        }
-        assert_eq!(assign(Some("P/1")).content_fingerprint().unwrap(), base);
-        let approve = ApproveMark { target_id: id(5) };
-        assert_ne!(
-            approve.content_fingerprint().unwrap(),
-            ApproveMark { target_id: id(6) }
-                .content_fingerprint()
-                .unwrap()
-        );
-        assert_eq!(MarkStatus::parse("approved"), Some(MarkStatus::Approved));
-        assert_eq!(MarkStatus::parse("open"), None);
     }
 
     #[test]
