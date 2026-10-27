@@ -3,6 +3,7 @@
 
 use super::*;
 use beamcraft_model::id::OpId;
+use beamcraft_model::limits::MIN_WELD_SEGMENT_MM;
 use beamcraft_model::section::{
     CustomSection, MAX_CUSTOM_CAVITIES, MAX_CUSTOM_POINTS, ParametricSection, SectionFamily,
 };
@@ -49,8 +50,8 @@ pub(super) fn input_bounds(input: &Prepare, b: Budgets) -> Result<(), Diagnostic
                 }
             }
             Change::Label { name, .. } if name.len() > 256 => return Err(limit()),
+            Change::Mark { mark: m, .. } => mark(m)?,
             Change::AttachReference(r) if r.name.len() > 256 => return Err(limit()),
-            Change::Mark { value: Some(v), .. } if v.len() > 64 => return Err(limit()),
             Change::Contour { points_mm, .. } => {
                 count(points_mm.len().checked_mul(3).ok_or_else(limit)?, 8)?
             }
@@ -66,25 +67,24 @@ pub(super) fn input_bounds(input: &Prepare, b: Budgets) -> Result<(), Diagnostic
 }
 pub(super) fn finite(values: impl IntoIterator<Item = f64>) -> Result<(), Diagnostic> {
     if values.into_iter().any(|n| !n.is_finite()) {
-        return Err(fail(
-            ErrorCode::NonFiniteNumber,
-            "non-finite authored value",
-        ));
+        return Err(
+            fail(ErrorCode::NonFiniteNumber, "non-finite authored value").with_rule("DV-ATTR-003"),
+        );
     }
     Ok(())
 }
 pub(super) fn cap(values: impl IntoIterator<Item = f64>, max: f64) -> Result<(), Diagnostic> {
     if values.into_iter().any(|n| n.abs() > max) {
-        return Err(limit());
+        return Err(limit().with_rule("DV-LIM-001"));
     }
     Ok(())
 }
 pub(super) fn label(s: &str) -> Result<(), Diagnostic> {
     if s.len() > 256 {
-        return Err(limit());
+        return Err(limit().with_rule("DV-BASE-003"));
     }
     if s.is_empty() || s.chars().any(label_char_forbidden) {
-        return Err(invalid());
+        return Err(invalid().with_rule("DV-BASE-003"));
     }
     Ok(())
 }
@@ -294,17 +294,23 @@ pub(super) fn owned(prims: &[Prim], path: &str, descendants: bool) -> Result<(),
     Ok(())
 }
 pub(super) fn required<'a>(prim: &'a Prim, name: &str, ty: &str) -> Result<&'a Value, Diagnostic> {
-    prim.properties
+    let p = prim
+        .properties
         .iter()
-        .find(|p| p.name == name && p.type_name == ty)
-        .and_then(|p| p.value.as_ref())
+        .find(|p| p.name == name)
+        .ok_or_else(|| invalid().with_rule("DV-ATTR-001"))?;
+    if p.type_name != ty {
+        return Err(invalid().with_rule("DV-ATTR-002"));
+    }
+    p.value
+        .as_ref()
         .filter(|v| !matches!(v, Value::Block))
-        .ok_or_else(invalid)
+        .ok_or_else(|| invalid().with_rule("DV-ATTR-001"))
 }
 pub(super) fn text<'a>(prim: &'a Prim, name: &str, ty: &str) -> Result<&'a str, Diagnostic> {
     match required(prim, name, ty)? {
         Value::Text(s) => Ok(s),
-        _ => Err(invalid()),
+        _ => Err(invalid().with_rule("DV-ATTR-002")),
     }
 }
 pub(super) fn number(prim: &Prim, name: &str) -> Result<f64, Diagnostic> {
@@ -537,7 +543,14 @@ fn resource<'a>(
     digest: ContentDigest,
     kinds: &[&str],
 ) -> Result<&'a Prim, Diagnostic> {
-    let path = definition_path(digest);
+    let path = definition_path(
+        digest,
+        if kinds == ["material"] {
+            DefinitionCategory::Material
+        } else {
+            DefinitionCategory::Profile
+        },
+    );
     let p = prims
         .iter()
         .find(|p| p.path == path && p.active)
@@ -574,10 +587,19 @@ fn link<'a>(
     match targets {
         [] if !required => Ok(None),
         [target] => {
-            let Some(hex) = target.strip_prefix("/World/Definitions/D_") else {
+            let Some((category, digest)) = DefinitionCategory::parse_path(target) else {
                 return Err(invalid());
             };
-            let digest = hex.parse::<ContentDigest>().map_err(|_| invalid())?;
+            if target != &definition_path(digest, category)
+                || category
+                    != if name == "bim:material" {
+                        DefinitionCategory::Material
+                    } else {
+                        DefinitionCategory::Profile
+                    }
+            {
+                return Err(invalid());
+            }
             Ok(Some(resource(prims, digest, kinds)?))
         }
         _ => Err(fail(
@@ -629,7 +651,16 @@ pub(super) fn snapshot(
     metadata: &BTreeMap<String, Value>,
 ) -> Result<Validation, Diagnostic> {
     reference::stray_holders(prims)?;
-    for (path, kind) in [("/World", "assembly"), ("/World/Steel", "group")] {
+    for (path, kind) in [
+        ("/World", "assembly"),
+        ("/World/Steel", "group"),
+        ("/World/Steel/Parts", "group"),
+        ("/World/Steel/Assemblies", "group"),
+        ("/World/Steel/Connections", "group"),
+        ("/World/Levels", "group"),
+        ("/World/Grids", "group"),
+        ("/World/References", "group"),
+    ] {
         if let Some(p) = prims
             .iter()
             .find(|p| p.path == path && p.sources.iter().all(|s| s.owned))
@@ -659,6 +690,7 @@ pub(super) fn snapshot(
         if text(p, "bim:schemaVersion", "string")? != "0.1.0" {
             continue;
         }
+        crate::is_deactivated(p)?;
         if text(p, "bim:geometryMode", "token")? == "reference" {
             if text(p, "bim:elementKind", "token")? != "reference" {
                 return Err(unsupported());
@@ -668,7 +700,8 @@ pub(super) fn snapshot(
                 return Err(fail(
                     ErrorCode::InvalidArgument,
                     "only a plate, beam or column is assigned to a level",
-                ));
+                )
+                .with_rule("DV-REL-003"));
             }
             reference::element(p, prims)?;
             continue;
@@ -678,11 +711,17 @@ pub(super) fn snapshot(
         }
         if !matches!(
             text(p, "bim:elementKind", "token")?,
-            "plate" | "beam" | "column" | "assembly" | "connection" | "level"
+            "plate" | "beam" | "column" | "assembly" | "connection" | "level" | "grid"
         ) {
             continue;
         }
-        if p.path != element_path(id)? {
+        if p.path
+            != element_path(
+                id,
+                ElementCategory::from_kind(text(p, "bim:elementKind", "token")?)
+                    .ok_or_else(invalid)?,
+            )?
+        {
             return Err(fail(
                 ErrorCode::InvalidId,
                 "invalid canonical owned element path",
@@ -756,23 +795,24 @@ pub(super) fn snapshot(
             }
             // An assembly has no shape inputs and no material of its own; a connection is a weld
             // (A06) or a bolt group (A05) with its own properties and no material either.
+            "grid" => {
+                grid::read(p)?;
+                if relationship(p, "bim:material").is_some_and(|r| !r.targets.is_empty()) {
+                    return Err(invalid());
+                }
+            }
             "assembly" | "connection" | "level" => {
                 if relationship(p, "bim:material").is_some_and(|r| !r.targets.is_empty()) {
                     return Err(invalid());
                 }
                 if kind == "connection" {
-                    // Exactly one property set: a weld's or a bolt group's. Content with
-                    // neither, or with both, is not something this version reads — refused,
-                    // never guessed.
-                    match (
-                        p.properties.iter().any(|v| v.name == "steel:weld:type"),
-                        p.properties
-                            .iter()
-                            .any(|v| v.name == "steel:bolt:diameterMm"),
-                    ) {
-                        (true, false) => weld_properties(p)?,
-                        (false, true) => bolt_properties(p)?,
-                        _ => return Err(invalid()),
+                    let connection_type = text(p, "steel:connection:type", "token")?;
+                    let has =
+                        |prefix: &str| p.properties.iter().any(|v| v.name.starts_with(prefix));
+                    match connection_type {
+                        "weld" if !has("steel:bolt:") => weld_properties(p)?,
+                        "bolt_group" if !has("steel:weld:") => bolt_properties(p)?,
+                        _ => return Err(invalid().with_rule("DV-ATTR-002")),
                     }
                 }
                 if kind == "level" {
@@ -800,6 +840,7 @@ pub(super) fn snapshot(
             return Err(unsupported());
         }
     }
+    grid::read_grids(prims)?;
     part_of(prims)?;
     main_part(prims)?;
     connects(prims)?;
@@ -818,12 +859,17 @@ pub(super) fn snapshot(
         else {
             continue;
         };
-        // An assembly, a weld or a level has no body: a Geometry mesh under one is refused,
-        // authored or loaded.
-        if matches!(
-            supported_kind(element),
-            Some("assembly" | "connection" | "level")
-        ) {
+        // An assembly, a level, a grid or a weld without a path has no body: a Geometry mesh
+        // under one is refused, authored or loaded. Only the A15 weld with an authored path
+        // carries a derived solid.
+        let kind = supported_kind(element);
+        let bodyless = matches!(kind, Some("assembly" | "level" | "grid"))
+            || (kind == Some("connection")
+                && !element
+                    .properties
+                    .iter()
+                    .any(|v| v.name == "steel:weld:pathMm"));
+        if bodyless {
             return Err(unsupported());
         }
         let id = element.element_id.clone().ok_or_else(invalid)?;
@@ -918,7 +964,7 @@ pub(super) fn snapshot(
             "A06-V01:weld-properties-and-connects-two-distinct-parts",
             "A05-V01:bolt-properties-and-connects-two-distinct-parts",
             "D2-V01:level-elevation-and-level-kinds-cardinality-and-dangling",
-            "A08-V01:mark-value-status-pairing-kinds-and-uniqueness",
+            "T01-V01:grid-arrays-expression-frame-and-project-axis-identities",
         ],
         prims: prims.len(),
     })
@@ -943,9 +989,61 @@ fn supported_kind(p: &Prim) -> Option<&str> {
     token("bim:elementKind").filter(|k| {
         matches!(
             *k,
-            "plate" | "beam" | "column" | "assembly" | "connection" | "level"
+            "plate" | "beam" | "column" | "assembly" | "connection" | "level" | "grid"
         )
     })
+}
+
+/// The values of an A09 mark: a series of at most 16 letters, digits, `_` and `-`, a number in
+/// `0..=i32::MAX` and a non-empty printable-ASCII approval record of at most 512 bytes.
+fn mark_values(series: &str, number: i64, basis: &str) -> Result<(), Diagnostic> {
+    if series.chars().count() > MARK_MAX_SERIES
+        || !series
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        || !(0..=i64::from(i32::MAX)).contains(&number)
+        || basis.is_empty()
+        || basis.len() > MARK_MAX_BASIS
+        || !basis.bytes().all(|b| (0x20..=0x7e).contains(&b))
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+/// Checks a mark about to be authored.
+pub(super) fn mark(m: &Mark) -> Result<(), Diagnostic> {
+    mark_values(&m.series, i64::from(m.number), &m.basis)
+}
+
+/// A09 marks on loaded or authored elements: only a plate, beam, column or assembly carries one,
+/// and it carries all three properties with their exact types, or none. A partial or malformed
+/// record is refused, never read as "unnumbered".
+fn marks(prims: &[Prim]) -> Result<(), Diagnostic> {
+    for p in prims {
+        let Some(kind) = supported_kind(p) else {
+            continue;
+        };
+        let series = optional(p, MARK_SERIES, "string")?;
+        let number = optional(p, MARK_NUMBER, "int")?;
+        let basis = optional(p, MARK_BASIS, "string")?;
+        match (series, number, basis) {
+            (None, None, None) => {}
+            (Some(Value::Text(series)), Some(number), Some(Value::Text(basis))) => {
+                if !matches!(kind, "plate" | "beam" | "column" | "assembly") {
+                    return Err(unsupported());
+                }
+                let number = match number {
+                    Value::Int(n) => *n,
+                    Value::Uint(n) => i64::try_from(*n).map_err(|_| invalid())?,
+                    _ => return Err(invalid()),
+                };
+                mark_values(series, number, basis)?;
+            }
+            _ => return Err(invalid()),
+        }
+    }
+    Ok(())
 }
 
 /// The elevation of a loaded or authored level: finite and within the coordinate cap.
@@ -992,7 +1090,8 @@ fn level_links(prims: &[Prim]) -> Result<(), Diagnostic> {
             return Err(fail(
                 ErrorCode::InvalidArgument,
                 "only a plate, beam or column is assigned to a level",
-            ));
+            )
+            .with_rule("DV-REL-003"));
         }
         match elements.get(target) {
             Some((t, "level")) if t.active => {}
@@ -1018,54 +1117,35 @@ fn level_links(prims: &[Prim]) -> Result<(), Diagnostic> {
                 ));
             }
             None => {
-                return Err(fail(
-                    ErrorCode::DanglingRelationship,
-                    "level target unavailable",
-                ));
+                return Err(
+                    fail(ErrorCode::DanglingRelationship, "level target unavailable")
+                        .with_rule("DV-REL-001"),
+                );
             }
         }
     }
     Ok(())
 }
 
-/// The value of a mark (A08): 1 to 64 UTF-8 bytes without control characters.
-fn mark_value(s: &str) -> Result<(), Diagnostic> {
-    if s.is_empty() || s.len() > 64 || s.chars().any(char::is_control) {
+/// The A15 weld path rules shared by the loaded-content and candidate checks: 2 to 1024 points,
+/// finite and within the coordinate cap, consecutive points at least the minimum apart.
+fn weld_path_points(points: &[[f64; 3]]) -> Result<(), Diagnostic> {
+    if !(2..=1024).contains(&points.len()) {
         return Err(invalid());
     }
-    Ok(())
-}
-
-/// A08 marks (`A08-V01`): `bim:mark` and its `bim:markStatus` are authored together on one
-/// supported fabricable element (a level is not fabricated), the value is bounded readable text
-/// and no two elements of a model carry the same value. Foreign, newer and unknown content stays
-/// inert, as everywhere: only owned 0.1.0 parametric elements are checked.
-fn marks(prims: &[Prim]) -> Result<(), Diagnostic> {
-    let mut seen: BTreeSet<String> = BTreeSet::new();
-    for p in prims
-        .iter()
-        .filter_map(|p| supported_kind(p).map(|k| (p, k)))
-    {
-        let value = optional_text(p.0, "bim:mark")?;
-        let status = optional(p.0, "bim:markStatus", "token")?;
-        match (&value, status) {
-            (None, None) => continue,
-            (None, Some(_)) | (Some(_), None) => return Err(invalid()),
-            (Some(v), Some(s)) => {
-                mark_value(v)?;
-                if !matches!(s, Value::Text(t) if MarkStatus::parse(t).is_some()) {
-                    return Err(invalid());
-                }
-            }
-        }
-        if p.1 == "level" {
-            return Err(fail(ErrorCode::InvalidArgument, "a level carries no mark"));
-        }
-        if !seen.insert(value.as_deref().ok_or_else(invalid)?.to_owned()) {
-            return Err(fail(
-                ErrorCode::InvalidArgument,
-                "the mark is already in use",
-            ));
+    for point in points {
+        finite(*point)?;
+        cap(*point, 1e9)?;
+    }
+    for pair in points.windows(2) {
+        let [from, to] = pair else {
+            continue;
+        };
+        let [fx, fy, fz] = from;
+        let [tx, ty, tz] = to;
+        let (dx, dy, dz) = (tx - fx, ty - fy, tz - fz);
+        if (dx * dx + dy * dy + dz * dz) < MIN_WELD_SEGMENT_MM * MIN_WELD_SEGMENT_MM {
+            return Err(invalid());
         }
     }
     Ok(())
@@ -1073,14 +1153,39 @@ fn marks(prims: &[Prim]) -> Result<(), Diagnostic> {
 
 /// The weld properties of a loaded `connection` (A06): every one is authored, with a supported
 /// token, and the size is finite in `(0, 1000]`. A connection without them is not a weld this
-/// slice can read, so it is refused rather than guessed.
+/// slice can read, so it is refused rather than guessed. The optional geometry attributes (A15)
+/// are validated as a whole when the path is present and refused in part.
 fn weld_properties(p: &Prim) -> Result<(), Diagnostic> {
     weld_tokens(
         text(p, "steel:weld:type", "token")?,
         text(p, "steel:weld:location", "token")?,
         text(p, "steel:weld:side", "token")?,
     )?;
-    weld_size(number(p, "steel:weld:sizeMm")?)
+    weld_size(number(p, "steel:weld:sizeMm")?)?;
+    let path = p.properties.iter().any(|v| v.name == "steel:weld:pathMm");
+    let all_around = p
+        .properties
+        .iter()
+        .any(|v| v.name == "steel:weld:allAround");
+    let contour = p.properties.iter().any(|v| v.name == "steel:weld:contour");
+    if path {
+        weld_path_points(&points(p, "steel:weld:pathMm")?)?;
+        if all_around && !matches!(text(p, "steel:weld:allAround", "token")?, "true" | "false") {
+            return Err(invalid());
+        }
+        if contour
+            && !matches!(
+                text(p, "steel:weld:contour", "token")?,
+                "none" | "flush" | "concave" | "convex"
+            )
+        {
+            return Err(invalid());
+        }
+    } else if all_around || contour {
+        // Symbol data without the path it belongs to has no supported meaning.
+        return Err(invalid());
+    }
+    Ok(())
 }
 fn weld_tokens(weld_type: &str, location: &str, side: &str) -> Result<(), Diagnostic> {
     if weld_type != "fillet" {
@@ -1162,7 +1267,8 @@ fn connects(prims: &[Prim]) -> Result<(), Diagnostic> {
                 return Err(fail(
                     ErrorCode::DependencyConflict,
                     "a connection connects exactly two parts",
-                ));
+                )
+                .with_rule("DV-REL-004"));
             }
             continue;
         };
@@ -1170,19 +1276,22 @@ fn connects(prims: &[Prim]) -> Result<(), Diagnostic> {
             return Err(fail(
                 ErrorCode::InvalidArgument,
                 "only a connection carries a connects record",
-            ));
+            )
+            .with_rule("DV-REL-003"));
         }
         let [first, second] = r.targets.as_slice() else {
             return Err(fail(
                 ErrorCode::DependencyConflict,
                 "a connection connects exactly two parts",
-            ));
+            )
+            .with_rule("DV-REL-004"));
         };
         if first == second {
             return Err(fail(
                 ErrorCode::InvalidArgument,
                 "a connection connects two distinct parts",
-            ));
+            )
+            .with_rule("DV-REL-007"));
         }
         for target in [first, second] {
             if target == path {
@@ -1196,7 +1305,8 @@ fn connects(prims: &[Prim]) -> Result<(), Diagnostic> {
                     return Err(fail(
                         ErrorCode::DanglingRelationship,
                         "connects target is not active",
-                    ));
+                    )
+                    .with_rule("DV-REL-001"));
                 }
                 Some((_, "plate" | "beam" | "column")) => {}
                 Some((_, "assembly")) => return Err(unsupported()),
@@ -1213,13 +1323,15 @@ fn connects(prims: &[Prim]) -> Result<(), Diagnostic> {
                     return Err(fail(
                         ErrorCode::InvalidArgument,
                         "connects target is not a supported owned part",
-                    ));
+                    )
+                    .with_rule("DV-REL-003"));
                 }
                 None => {
                     return Err(fail(
                         ErrorCode::DanglingRelationship,
                         "connects target unavailable",
-                    ));
+                    )
+                    .with_rule("DV-REL-001"));
                 }
             }
         }
@@ -1248,14 +1360,16 @@ fn part_of(prims: &[Prim]) -> Result<(), Diagnostic> {
                 return Err(fail(
                     ErrorCode::DependencyConflict,
                     "an element is a part of at most one assembly",
-                ));
+                )
+                .with_rule("DV-REL-004"));
             }
         };
         if target == path {
             return Err(fail(
                 ErrorCode::InvalidArgument,
                 "an element cannot be a part of itself",
-            ));
+            )
+            .with_rule("DV-REL-006"));
         }
         match elements.get(target) {
             Some((t, "assembly")) if t.active => {}
@@ -1263,13 +1377,15 @@ fn part_of(prims: &[Prim]) -> Result<(), Diagnostic> {
                 return Err(fail(
                     ErrorCode::DanglingRelationship,
                     "part-of target is not active",
-                ));
+                )
+                .with_rule("DV-REL-001"));
             }
             Some(_) => {
                 return Err(fail(
                     ErrorCode::InvalidArgument,
                     "part-of target is not an assembly",
-                ));
+                )
+                .with_rule("DV-REL-003"));
             }
             None if prims
                 .iter()
@@ -1278,13 +1394,15 @@ fn part_of(prims: &[Prim]) -> Result<(), Diagnostic> {
                 return Err(fail(
                     ErrorCode::InvalidArgument,
                     "part-of target is not a supported owned assembly",
-                ));
+                )
+                .with_rule("DV-REL-003"));
             }
             None => {
                 return Err(fail(
                     ErrorCode::DanglingRelationship,
                     "part-of target unavailable",
-                ));
+                )
+                .with_rule("DV-REL-001"));
             }
         }
         parent.insert(path, target);
@@ -1301,7 +1419,8 @@ fn part_of(prims: &[Prim]) -> Result<(), Diagnostic> {
                     return Err(fail(
                         ErrorCode::DependencyConflict,
                         "part-of records form a cycle",
-                    ));
+                    )
+                    .with_rule("DV-REL-005"));
                 }
                 _ => {
                     state.insert(node, 1);
@@ -1439,7 +1558,7 @@ pub(super) fn changes(
     let mut writes = BTreeSet::new();
     for change in &input.changes {
         let (id, _) = change.key();
-        let path = element_path(id)?;
+        let path = change_path(id, input, prims)?;
         let existing = prims.iter().find(|p| p.path == path);
         // A wrapper is owned although its `Source` descendant is foreign: only the wrapper's own
         // levels are checked here, and the loaded shape (`reference::element`) refuses every
@@ -1491,11 +1610,12 @@ pub(super) fn changes(
                     Change::Axis { .. } | Change::Roll { .. } | Change::Profile { .. } => {
                         matches!(kind, "beam" | "column")
                     }
+                    Change::Grid { .. } => kind == "grid",
                     Change::ReferenceUnits { .. } => wrapper,
                     // A rename and a move are the only edits a wrapper takes as an element; an
                     // assembly can be renamed, deleted and be a part, never moved (identity pose).
                     Change::Placement { .. } => {
-                        matches!(kind, "plate" | "beam" | "column" | "reference")
+                        matches!(kind, "plate" | "beam" | "column" | "reference" | "grid")
                     }
                     Change::Label { .. } => {
                         matches!(
@@ -1507,12 +1627,19 @@ pub(super) fn changes(
                                 | "assembly"
                                 | "connection"
                                 | "level"
+                                | "grid"
                         )
                     }
                     Change::Delete { .. } => {
                         matches!(
                             kind,
-                            "plate" | "beam" | "column" | "assembly" | "connection" | "level"
+                            "plate"
+                                | "beam"
+                                | "column"
+                                | "assembly"
+                                | "connection"
+                                | "level"
+                                | "grid"
                         )
                     }
                     Change::PartOf { .. } => {
@@ -1521,22 +1648,8 @@ pub(super) fn changes(
                     // The main-part record lives on the assembly; only it is a source.
                     Change::MainPart { .. } => kind == "assembly",
                     Change::Level { .. } => matches!(kind, "plate" | "beam" | "column"),
-                    // A mark lives on the fabricable elements a bill can list; a level is not
-                    // fabricated and a foreign wrapper is never marked (A08).
-                    Change::Mark { value, status, .. } => {
-                        if value.is_none() && status.is_none() {
-                            return Err(fail(
-                                ErrorCode::MalformedCommand,
-                                "a mark change authors nothing",
-                            ));
-                        }
-                        if let Some(v) = value {
-                            mark_value(v)?;
-                        }
-                        matches!(
-                            kind,
-                            "plate" | "beam" | "column" | "assembly" | "connection"
-                        )
+                    Change::Mark { .. } => {
+                        matches!(kind, "plate" | "beam" | "column" | "assembly")
                     }
                     _ => matches!(kind, "plate" | "beam" | "column"),
                 };
@@ -1567,7 +1680,14 @@ pub(super) fn changes(
                     Group::Placement,
                 ],
             ),
+            // A mark is stored with the label's group: it conflicts with a rename or another
+            // mark of the element and with nothing derived.
+            Change::Mark { .. } => (&[Group::Lifecycle, Group::Label], &[Group::Label]),
             Change::Label { .. } => (&[Group::Lifecycle, Group::Label], &[Group::Label]),
+            Change::Grid { .. } => (
+                &[Group::Lifecycle, Group::ShapeInputs, Group::Placement],
+                &[Group::ShapeInputs],
+            ),
             Change::Material { .. } => (
                 &[Group::Lifecycle, Group::Derived],
                 &[Group::Material, Group::Relationship, Group::Derived],
@@ -1581,9 +1701,6 @@ pub(super) fn changes(
                 &[Group::Lifecycle, Group::Relationship],
                 &[Group::Relationship],
             ),
-            // A mark decision reads the element's existence and its current mark; it writes only
-            // the mark group (A08), mirroring the engine's `Footprint::for_mark`.
-            Change::Mark { .. } => (&[Group::Lifecycle, Group::Mark], &[Group::Mark]),
             Change::Delete { .. } => (
                 &[Group::Lifecycle, Group::Relationship],
                 &[
@@ -1667,6 +1784,7 @@ pub(super) fn changes(
                 | Change::PartOf { .. }
                 | Change::MainPart { .. }
                 | Change::Level { .. }
+                | Change::Mark { .. }
         ) && let Some(p) = existing
         {
             for target in p
@@ -1675,10 +1793,7 @@ pub(super) fn changes(
                 .filter(|r| matches!(r.name.as_str(), "bim:profile" | "bim:material"))
                 .flat_map(|r| &r.targets)
             {
-                let hex = target
-                    .strip_prefix("/World/Definitions/D_")
-                    .ok_or_else(invalid)?;
-                let digest = hex.parse::<ContentDigest>().map_err(|_| invalid())?;
+                let (_, digest) = DefinitionCategory::parse_path(target).ok_or_else(invalid)?;
                 reads.insert(Footprint {
                     identity: digest.to_string(),
                     group: Group::Relationship,
@@ -1703,10 +1818,9 @@ pub(super) fn changes(
         // A definition that is not in the stage yet is created; an existing one is immutable and
         // must already be exactly this content, active and owned (kind, fields, types, label and
         // the recomputed digest), or the batch is refused instead of treating it as a no-op.
-        if prims
-            .iter()
-            .any(|p| p.path == definition_path(resource.digest))
-        {
+        if prims.iter().any(|p| {
+            p.path == definition_path(resource.digest, definition_category(&resource.definition))
+        }) {
             let kind = match &resource.definition {
                 Definition::RectangleProfile { .. } => "rectangle",
                 Definition::SectionProfile { shape, .. } => shape.token(),
@@ -1786,6 +1900,15 @@ pub(super) fn changes(
                         }
                         weld_tokens(&w.weld_type, &w.location, &w.side)?;
                         weld_size(w.size_mm)?;
+                        if let Some(geometry) = &w.geometry {
+                            weld_path_points(&geometry.points_mm)?;
+                            if !matches!(
+                                geometry.contour.as_str(),
+                                "none" | "flush" | "concave" | "convex"
+                            ) {
+                                return Err(invalid());
+                            }
+                        }
                         let [main, secondary] = &w.connects;
                         if !uuid7(main) || !uuid7(secondary) {
                             return Err(fail(
@@ -1855,6 +1978,16 @@ pub(super) fn changes(
                             });
                         }
                     }
+                    Shape::Grid(g) => {
+                        grid::validate_record(g)?;
+                        if e.id != g.id.to_string()
+                            || e.name != g.name
+                            || e.material.is_some()
+                            || e.placement != grid::placement(g)
+                        {
+                            return Err(invalid());
+                        }
+                    }
                     Shape::Level { elevation_mm } => {
                         if e.material.is_some()
                             || e.placement.translation_mm != [0.0; 3]
@@ -1870,6 +2003,26 @@ pub(super) fn changes(
                         identity: d.to_string(),
                         group: Group::Relationship,
                     });
+                }
+            }
+            Change::Grid { id, grid: g } => {
+                grid::validate_record(g)?;
+                let existing = prims
+                    .iter()
+                    .find(|p| p.element_id.as_deref() == Some(id))
+                    .ok_or_else(invalid)?;
+                let before = grid::read(existing)?;
+                let mode = |f: &beamcraft_model::grid::GridFamily| {
+                    matches!(f, beamcraft_model::grid::GridFamily::Regular(_))
+                };
+                if g.id != before.id
+                    || g.name != before.name
+                    || g.translation_mm != before.translation_mm
+                    || g.orientation_zw != before.orientation_zw
+                    || mode(&g.u) != mode(&before.u)
+                    || mode(&g.v) != mode(&before.v)
+                {
+                    return Err(unsupported());
                 }
             }
             Change::Label { name, .. } => label(name)?,
@@ -2002,8 +2155,10 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                         .chain(b.direction_mm),
                 ),
                 Shape::Level { elevation_mm } => finite([*elevation_mm]),
+                Shape::Grid(g) => grid::validate_record(g),
             }
         }
+        Change::Grid { grid: g, .. } => grid::validate_record(g),
         Change::AttachReference(r) => finite(
             r.placement
                 .translation_mm
