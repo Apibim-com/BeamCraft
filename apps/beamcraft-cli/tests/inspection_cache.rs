@@ -15,54 +15,32 @@ use beamcraft_host::{
     revision::{ExpectedBase, LayerEntry, NoFault, RevisionDraft, RevisionStore, Uuid7},
     storage::BlobStore,
 };
-use beamcraft_model::error::ErrorCode;
-use beamcraft_protocol::{
-    json::{self, Json},
-    message,
-};
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
+mod support;
 
-static NEXT: AtomicU64 = AtomicU64::new(0);
+use beamcraft_json::Json;
+use beamcraft_model::{error::ErrorCode, id::ElementId, prim::ElementCategory};
 
 const PLATE: &str = "019a7bf0-0000-7000-8000-000000000010";
 const PLATE_COPY: &str = "019a7bf0-0000-7000-8000-000000000011";
 const L_SHAPE: &str = "0,0;1000,0;1000,300;400,300;400,600;0,600";
 
 struct Fixture {
-    root: PathBuf,
+    shared: support::StoreFixture,
 }
 
 impl Fixture {
     fn new() -> Self {
-        let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("issue26-cache");
-        fs::create_dir_all(&base).unwrap();
-        let root = base.join(format!(
-            "e2e-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir(&root).unwrap();
-        fs::create_dir(root.join("store")).unwrap();
-        Self { root }
+        Self {
+            shared: support::StoreFixture::new("issue26-cache"),
+        }
     }
 
     fn store(&self) -> RevisionStore {
-        RevisionStore::new(BlobStore::new(self.root.join("store")).unwrap())
+        RevisionStore::new(BlobStore::new(self.shared.root.join("store")).unwrap())
     }
 
     fn run(&self, command: &str, extra: &[&str]) -> (i32, Json) {
-        let store = self.root.join("store").to_str().unwrap().to_owned();
-        let mut args = vec![command, "--store", store.as_str()];
-        args.extend_from_slice(extra);
-        let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
-            .args(&args)
-            .output()
-            .unwrap();
-        let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
-        (output.status.code().unwrap(), body)
+        self.shared.run(command, extra)
     }
 
     fn ok(&self, command: &str, extra: &[&str]) -> Json {
@@ -120,13 +98,6 @@ impl Fixture {
     }
 }
 
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        assert!(self.root.is_absolute() && self.root.file_name().is_some());
-        let _ = fs::remove_dir_all(&self.root);
-    }
-}
-
 fn assert_same(a: &Inspection, b: &Inspection) {
     assert_eq!(a.revision, b.revision);
     assert_eq!(a.plates, b.plates);
@@ -138,7 +109,6 @@ fn assert_same(a: &Inspection, b: &Inspection) {
     assert_eq!(a.project_record, b.project_record);
     assert_eq!(a.levels, b.levels);
     assert_eq!(a.elements, b.elements);
-    assert_eq!(a.marks, b.marks);
 }
 
 /// Cache hits and misses of this thread so far.
@@ -252,14 +222,15 @@ fn a_warm_cache_returns_what_a_cold_evaluation_returns() {
     let before = counts();
     let first = inspect(&store).unwrap();
     let after_first = counts();
-    // Eight elements, five distinct shapes: three copies share a body within the first call.
+    // Eight elements, five distinct shapes: three copies share a body within the first call,
+    // and the unsupported-listing pass rides the same cache, so every evaluated body hits again.
     assert_eq!(after_first.1 - before.1, 5);
-    assert_eq!(after_first.0 - before.0, 3);
+    assert_eq!(after_first.0 - before.0, 8);
     let second = inspect(&store).unwrap();
     let after_second = counts();
     // The second call evaluates nothing.
     assert_eq!(after_second.1, after_first.1);
-    assert_eq!(after_second.0 - after_first.0, 8);
+    assert_eq!(after_second.0 - after_first.0, 13);
     assert_same(&cold, &first);
     assert_same(&first, &second);
     assert_eq!(first.plates.len() + first.members.len(), 8);
@@ -291,7 +262,10 @@ fn a_warm_cache_still_refuses_a_tampered_derived_mesh() {
     // The copy's stored box is stretched from 10 to 12 mm while its authored inputs stay those
     // of the source. Points and extent change together and an axis-aligned box keeps its face
     // normals, so the layer passes every structural rule: only the kernel comparison can tell.
-    let marker = format!("\"E_{}\"", PLATE_COPY.replace('-', ""));
+    let path = ElementId::parse(PLATE_COPY)
+        .unwrap()
+        .prim_path(ElementCategory::Part);
+    let marker = format!("\"{}\"", path.rsplit('/').next().unwrap());
     f.tamper(|name, mut text| {
         if name == "derived.usda" {
             let block = text.find(&marker).unwrap();
@@ -322,7 +296,7 @@ fn a_warm_cache_still_refuses_a_tampered_derived_mesh() {
             .unwrap()
     };
     assert_eq!(cold, refused);
-    let (code, body) = f.run("plate-inspect", &[]);
+    let (code, body) = f.run("inspect-elements", &[]);
     assert_eq!(code, 2);
     assert_eq!(
         body.get("code").unwrap().string().unwrap(),

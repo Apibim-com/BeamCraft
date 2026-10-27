@@ -64,10 +64,10 @@ fn actor() -> beamcraft_model::id::ActorId {
 fn captured_model_and_foreign_source_survive_live_edit_compaction_and_removal() {
     let f = Fixture::new();
     f.model();
-    let foreign = f.root.join("site.usda");
+    let foreign = f.shared.root.join("site.usda");
     fs::write(&foreign, SITE).unwrap();
-    f.ok("reference-attach", &["--source", foreign.to_str().unwrap()]);
-    let root = f.root.join("store");
+    f.ok("attach-reference", &["--source", foreign.to_str().unwrap()]);
+    let root = f.shared.root.join("store");
     let archive = SourceArchive::capture(&root).unwrap();
     let pin = archive.pin();
     assert_eq!(pin.revision.to_string(), f.head());
@@ -96,7 +96,7 @@ fn captured_model_and_foreign_source_survive_live_edit_compaction_and_removal() 
     );
     assert_ne!(pin.revision.to_string(), f.head());
     f.ok(
-        "history-compact",
+        "compact-history",
         &["--keep-head", "--yes", "--no-backup", "--no-workspaces"],
     );
     {
@@ -121,10 +121,10 @@ fn captured_model_and_foreign_source_survive_live_edit_compaction_and_removal() 
 fn document_revision_is_cas_verified_and_operation_replay_survives_a_later_edit() {
     let f = Fixture::new();
     f.model();
-    let model_root = f.root.join("store");
+    let model_root = f.shared.root.join("store");
     let first_source = SourceArchive::capture(&model_root).unwrap();
     let first_drawing = drawing(first_source.pin());
-    let documents = DocumentStore::create(&f.root.join("documents")).unwrap();
+    let documents = DocumentStore::create(&f.shared.root.join("documents")).unwrap();
     let first_op = beamcraft_model::id::OpId::parse(OP1).unwrap();
     let first_revision = beamcraft_model::id::Uuid7::parse(REV1).unwrap();
     let (outcome, first) = documents
@@ -220,9 +220,9 @@ fn document_revision_is_cas_verified_and_operation_replay_survives_a_later_edit(
 fn document_publication_creates_an_immutable_version_and_stale_cas_loses() {
     let f = Fixture::new();
     f.model();
-    let source = SourceArchive::capture(&f.root.join("store")).unwrap();
+    let source = SourceArchive::capture(&f.shared.root.join("store")).unwrap();
     let drawing = drawing(source.pin());
-    let documents = DocumentStore::create(&f.root.join("documents")).unwrap();
+    let documents = DocumentStore::create(&f.shared.root.join("documents")).unwrap();
     let (_, draft) = documents
         .commit(
             &ExpectedBase::Initial,
@@ -289,10 +289,123 @@ fn document_publication_creates_an_immutable_version_and_stale_cas_loses() {
 }
 
 #[test]
+fn publication_refuses_incomplete_history_and_active_maintenance_without_a_revision() {
+    use beamcraft_model::error::ErrorCode;
+    use beamcraft_model::id::{DocumentVersionId, OpId, Uuid7};
+
+    for damage in ["compacted", "missing", "busy"] {
+        let f = Fixture::new();
+        f.model();
+        let source = SourceArchive::capture(&f.shared.root.join("store")).unwrap();
+        let drawing = drawing(source.pin());
+        let root = f.shared.root.join("documents");
+        let documents = DocumentStore::create(&root).unwrap();
+        let first_version = DocumentVersionId::parse(VERSION).unwrap();
+        let write = |base: &ExpectedBase, n: u8, state, version, latest_published| {
+            documents.commit(
+                base,
+                DocumentWrite {
+                    revision: Uuid7::parse(&format!("01900000-0000-7000-8000-{n:012x}")).unwrap(),
+                    operation: OpId::parse(&format!("01900000-0000-7000-8000-{:012x}", n + 1))
+                        .unwrap(),
+                    actor: actor(),
+                    drawing: &drawing,
+                    source: &source,
+                    state,
+                    version,
+                    latest_published,
+                },
+            )
+        };
+        let (_, draft) = write(&ExpectedBase::Initial, 20, State::Draft, None, None).unwrap();
+        let (_, published) = write(
+            &expected_base(Some(&draft.info)).unwrap(),
+            22,
+            State::Published,
+            Some(first_version),
+            Some(first_version),
+        )
+        .unwrap();
+        let (_, current) = write(
+            &expected_base(Some(&published.info)).unwrap(),
+            24,
+            State::Draft,
+            None,
+            Some(first_version),
+        )
+        .unwrap();
+        let blobs = BlobStore::new(&root).unwrap();
+        let maintenance = if damage == "busy" {
+            Some(StoreLease::exclusive(&blobs).unwrap())
+        } else {
+            None
+        };
+        let expected_code = match damage {
+            "compacted" => {
+                let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
+                    .args([
+                        "compact-history",
+                        "--store",
+                        root.to_str().unwrap(),
+                        "--keep-head",
+                        "--yes",
+                        "--no-backup",
+                        "--no-workspaces",
+                    ])
+                    .output()
+                    .unwrap();
+                assert!(output.status.success(), "{:?}", output);
+                assert!(matches!(
+                    RevisionStore::new(blobs.clone()).open_at(published.info.sequence()),
+                    Err(beamcraft_host::revision::RevisionError::Compacted)
+                ));
+                ErrorCode::DependencyUnavailable
+            }
+            "missing" => {
+                let digest = published
+                    .info
+                    .manifest()
+                    .content()
+                    .entries()
+                    .iter()
+                    .find(|entry| entry.name() == "root.usda")
+                    .unwrap()
+                    .digest()
+                    .to_string();
+                fs::remove_file(root.join("blobs").join(&digest[..2]).join(&digest)).unwrap();
+                ErrorCode::IntegrityError
+            }
+            _ => ErrorCode::BackendUnavailable,
+        };
+        // Neither a previously used nor a fresh ID earns a uniqueness proof from missing
+        // history. A conflicting maintenance lease must also refuse before any commit.
+        for version in [first_version, DocumentVersionId::parse(COPY).unwrap()] {
+            let error = write(
+                &expected_base(Some(&current.info)).unwrap(),
+                26,
+                State::Published,
+                Some(version),
+                Some(version),
+            )
+            .unwrap_err();
+            assert_eq!(error.code, expected_code, "{damage}");
+            assert_eq!(documents.head().unwrap().info, current.info);
+            assert!(
+                documents
+                    .query(&OpId::parse("01900000-0000-7000-8000-00000000001b").unwrap())
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        drop(maintenance);
+    }
+}
+
+#[test]
 fn capture_refuses_active_maintenance_and_untrusted_archive_pins_resources_and_bytes() {
     let f = Fixture::new();
     f.model();
-    let root = f.root.join("store");
+    let root = f.shared.root.join("store");
     let head = f.head();
     {
         let blobs = BlobStore::new(&root).unwrap();
@@ -342,7 +455,7 @@ fn capture_refuses_active_maintenance_and_untrusted_archive_pins_resources_and_b
 fn a_self_consistent_rehashed_archive_with_stale_kernel_geometry_is_refused() {
     let f = Fixture::new();
     f.model();
-    let archive = SourceArchive::capture(&f.root.join("store")).unwrap();
+    let archive = SourceArchive::capture(&f.shared.root.join("store")).unwrap();
     let mut resources = archive.resources().to_vec();
     let source = resources
         .iter_mut()

@@ -19,10 +19,11 @@
 //! engine, as in `plate`.
 
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, PublishRequest, RevisionSummary,
-    check_footprint, control, decode, digest_of, evaluate_decoded, host_uuid, integrity, load_base,
-    open_base, prior_op_with, publish_revision, replay_summary, summarize,
+    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, check_footprint, control,
+    decode, digest_of, evaluate_decoded, host_uuid, integrity, load_base, open_base, prior_op_with,
+    replay_summary, summarize,
 };
+use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
@@ -65,6 +66,8 @@ pub enum DeletedKind {
     Bolt,
     /// A level (D2); refused while a plate, beam or column is assigned to it.
     Level,
+    /// Shared project grid (T01).
+    Grid,
 }
 
 /// Result of `delete_element`.
@@ -120,13 +123,21 @@ pub fn delete_element(
         expected,
         ..
     } = base;
-    let (plates, members) = {
+    let (plate_ids, members) = {
         let mut reader = Reader::default();
         let opened = reader.open(base_request.clone(), &control)?;
         let decoded = decode(&reader, &opened, &control)?;
-        evaluate_decoded(&decoded)?
+        let (_, members) = evaluate_decoded(&decoded)?;
+        (
+            decoded
+                .plates
+                .iter()
+                .map(|(p, _)| p.id)
+                .collect::<std::collections::BTreeSet<_>>(),
+            members,
+        )
     };
-    let kind = if plates.iter().any(|r| r.authored.id == command.target_id) {
+    let kind = if plate_ids.contains(&command.target_id) {
         Some(DeletedKind::Plate)
     } else if members.iter().any(|r| r.authored.id == command.target_id) {
         Some(DeletedKind::Member)
@@ -136,6 +147,8 @@ pub fn delete_element(
         Some(DeletedKind::Weld)
     } else if crate::bolt::is_bolt(&base_request, &command.target_id, &control)? {
         Some(DeletedKind::Bolt)
+    } else if crate::grid::is_grid(&base_request, &command.target_id, &control)? {
+        Some(DeletedKind::Grid)
     } else if crate::level::is_level(&base_request, &command.target_id, &control)? {
         Some(DeletedKind::Level)
     } else {
@@ -212,12 +225,7 @@ pub fn delete_element(
         &control,
     )?;
     check_footprint(&prepared, &footprint)?;
-    let changed_layers = prepared
-        .layers
-        .iter()
-        .filter(|l| before.get(&l.name) != Some(&l.digest))
-        .map(|l| l.name.clone())
-        .collect();
+    let changed_layers = changed_layers(&prepared, &before);
     let committed = publish_revision(
         store,
         &PublishRequest {

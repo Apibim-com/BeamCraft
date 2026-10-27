@@ -12,53 +12,35 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+mod support;
+
+use support::{at, text};
+
 use beamcraft_host::{
     ids::IdSource,
     revision::{ExpectedBase, LayerEntry, NoFault, RevisionDraft, RevisionStore, Uuid7},
     storage::BlobStore,
 };
-use beamcraft_protocol::{
-    json::{self, Json},
-    message,
-};
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-static NEXT: AtomicU64 = AtomicU64::new(0);
+use beamcraft_json::Json;
 
 const BOLT: &str = "019a7bf0-0000-7000-8000-000000700001";
 const SECOND: &str = "019a7bf0-0000-7000-8000-000000700002";
 const FRAME: &str = "019a7bf0-0000-7000-8000-000000700003";
 
 struct Fixture {
-    root: PathBuf,
+    shared: support::StoreFixture,
 }
 impl Fixture {
     fn new() -> Self {
-        let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("a05-tests");
-        fs::create_dir_all(&base).unwrap();
-        let root = base.join(format!(
-            "e2e-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir(&root).unwrap();
-        fs::create_dir(root.join("store")).unwrap();
-        Self { root }
+        Self {
+            shared: support::StoreFixture::new("a05-tests"),
+        }
     }
+
     fn run(&self, command: &str, extra: &[&str]) -> (i32, Json) {
-        let store = self.root.join("store").to_str().unwrap().to_owned();
-        let mut args = vec![command, "--store", store.as_str()];
-        args.extend_from_slice(extra);
-        let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
-            .args(&args)
-            .output()
-            .unwrap();
-        let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
-        (output.status.code().unwrap(), body)
+        self.shared.run(command, extra)
     }
+
     fn ok(&self, command: &str, extra: &[&str]) -> Json {
         let (code, body) = self.run(command, extra);
         assert_eq!(code, 0, "{command} {extra:?}: {body:?}");
@@ -73,7 +55,7 @@ impl Fixture {
         text(&body, "code")
     }
     fn head(&self) -> String {
-        text(&self.ok("revision-open", &[]), "revision_id")
+        text(&self.ok("open-revision", &[]), "revision_id")
     }
     /// The first-slice plate: world bounds `[0,1000] x [0,500] x [0,10]`.
     fn plate(&self) -> String {
@@ -134,9 +116,9 @@ impl Fixture {
         self.ok("create-bolt", &Self::bolt_args(id, main, secondary))
     }
     /// Commits a head-based revision with edited layer text and no content verification, the way
-    /// a layer edited outside BeamCraft would arrive through `revision-commit`.
+    /// a layer edited outside BeamCraft would arrive through `commit-revision`.
     fn tamper(&self, edit: impl Fn(&str, String) -> String) {
-        let store = RevisionStore::new(BlobStore::new(self.root.join("store")).unwrap());
+        let store = RevisionStore::new(BlobStore::new(self.shared.root.join("store")).unwrap());
         let head = store.open().unwrap();
         let content = head.manifest().content();
         let mut ids = IdSource::system();
@@ -172,19 +154,7 @@ impl Fixture {
         list(&self.ok("bolts", &[]), "bolts").to_vec()
     }
 }
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        assert!(self.root.is_absolute() && self.root.file_name().is_some());
-        let _ = fs::remove_dir_all(&self.root);
-    }
-}
 
-fn text(json: &Json, key: &str) -> String {
-    json.get(key).unwrap().string().unwrap().to_owned()
-}
-fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
-    path.iter().fold(json, |j, k| j.get(k).unwrap())
-}
 fn list<'a>(json: &'a Json, key: &str) -> &'a [Json] {
     at(json, &[key]).array().unwrap()
 }
@@ -206,7 +176,7 @@ fn a_bolt_group_authors_its_properties_and_connects_record_and_reads_its_parts()
     let f = Fixture::new();
     let plate = f.plate();
     let beam = f.beam();
-    let inspected = f.ok("plate-inspect", &[]);
+    let inspected = f.ok("inspect-elements", &[]);
     let mesh_before = text(&list(&inspected, "plates")[0], "mesh_digest");
 
     let created = f.bolt(BOLT, &plate, &beam);
@@ -235,7 +205,7 @@ fn a_bolt_group_authors_its_properties_and_connects_record_and_reads_its_parts()
     assert_eq!(strings(b, "direction_mm"), ["1", "0", "0"]);
 
     // The parts' bodies are untouched and the group adds nothing to the view.
-    let inspected = f.ok("plate-inspect", &[]);
+    let inspected = f.ok("inspect-elements", &[]);
     assert_eq!(
         text(&list(&inspected, "plates")[0], "mesh_digest"),
         mesh_before
@@ -363,7 +333,7 @@ fn a_damaged_connects_record_is_refused_not_reported() {
     let plate = f.plate();
     let beam = f.beam();
     f.bolt(BOLT, &plate, &beam);
-    let path = |id: &str| format!("</World/Steel/E_{}>", id.replace('-', ""));
+    let path = |id: &str| format!("</World/Steel/Parts/PRT_{}>", id.replace('-', ""));
     let full = format!("rel bim:connects = [{}, {}]", path(&plate), path(&beam));
     let single = format!("rel bim:connects = {}", path(&plate));
     f.tamper(|name, text| {

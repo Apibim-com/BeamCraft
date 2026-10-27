@@ -2,51 +2,32 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 // Contributor-original synthetic plates, beams and materials, MPL-2.0.
 
-//! E03 end to end: `bom-export` through the real CLI binary against a verified store. The
-//! exported per-element and summary CSVs match `plate-inspect`, the mark is the element id
+//! E03 end to end: `export-bom` through the real CLI binary against a verified store. The
+//! exported per-element and summary CSVs match `inspect-elements`, the mark is the element id
 //! (the fallback until numbering exists), a mass without a density is an empty cell excluded
 //! from the totals and counted in `mass_unknown`, and the files are created new, never
 //! overwritten.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use beamcraft_protocol::{
-    json::{self, Json},
-    message,
-};
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
+mod support;
 
-static NEXT: AtomicU64 = AtomicU64::new(0);
+use support::{at, text};
+
+use beamcraft_json::Json;
+use std::fs;
 
 struct Fixture {
-    root: PathBuf,
+    shared: support::StoreFixture,
 }
 impl Fixture {
     fn new() -> Self {
-        let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("e03-tests");
-        fs::create_dir_all(&base).unwrap();
-        let root = base.join(format!(
-            "e2e-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir(&root).unwrap();
-        fs::create_dir(root.join("store")).unwrap();
-        Self { root }
+        Self {
+            shared: support::StoreFixture::new("e03-tests"),
+        }
     }
     fn run(&self, command: &str, extra: &[&str]) -> (i32, Json) {
-        let store = self.root.join("store").to_str().unwrap().to_owned();
-        let mut args = vec![command, "--store", store.as_str()];
-        args.extend_from_slice(extra);
-        let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
-            .args(&args)
-            .output()
-            .unwrap();
-        let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
-        (output.status.code().unwrap(), body)
+        self.shared.run(command, extra)
     }
     fn ok(&self, command: &str, extra: &[&str]) -> Json {
         let (code, body) = self.run(command, extra);
@@ -67,14 +48,14 @@ impl Fixture {
         text(&body, "code")
     }
     fn head(&self) -> String {
-        text(&self.ok("revision-open", &[]), "revision_id")
+        text(&self.ok("open-revision", &[]), "revision_id")
     }
     fn read(&self, name: &str) -> String {
-        fs::read_to_string(self.root.join(name)).unwrap()
+        fs::read_to_string(self.shared.root.join(name)).unwrap()
     }
     /// Absolute path of an output file under the fixture root.
     fn out(&self, name: &str) -> String {
-        self.root.join(name).to_str().unwrap().to_owned()
+        self.shared.root.join(name).to_str().unwrap().to_owned()
     }
     /// The model of the design-note evidence: a graded material, a plate on it, a plate without
     /// any material, a rectangle-section beam on the graded material and an I-section column
@@ -192,22 +173,18 @@ impl Fixture {
             "element_id",
         );
         // A09: the beam is numbered, the column is not, so the report shows both mark sources.
-        self.ok("number-assign", &["--id", &beam, "--mark", "B1"]);
+        // The numbering-approval path: approve only the beam series (B), so the beam carries
+        // the stored mark B1 and every other element stays unnumbered.
+        let token = text(
+            &self.ok("preview-numbering", &["--beam-series", "B:1"]),
+            "preview_token",
+        );
+        self.ok(
+            "approve-numbering",
+            &["--preview-token", &token, "--beam-series", "B:1"],
+        );
         (plate, bare_plate, beam, column)
     }
-}
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        assert!(self.root.is_absolute() && self.root.file_name().is_some());
-        let _ = fs::remove_dir_all(&self.root);
-    }
-}
-
-fn text(json: &Json, key: &str) -> String {
-    json.get(key).unwrap().string().unwrap().to_owned()
-}
-fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
-    path.iter().fold(json, |j, k| j.get(k).unwrap())
 }
 fn list<'a>(json: &'a Json, key: &str) -> &'a [Json] {
     at(json, &[key]).array().unwrap()
@@ -222,9 +199,20 @@ fn cells(line: &str) -> Vec<&str> {
 fn the_exported_tables_match_the_verified_revision() {
     let f = Fixture::new();
     let (plate, bare_plate, beam, column) = f.build_model();
+    // A part created after the approval carries no mark: the report falls back to the id.
+    let late = text(
+        at(
+            &f.ok(
+                "create-plate",
+                &["--width", "600", "--length", "300", "--thickness", "10"],
+            ),
+            &["plate"],
+        ),
+        "element_id",
+    );
 
     // The quantities the CSV must repeat come from the verified read of the same head.
-    let inspected = f.ok("plate-inspect", &[]);
+    let inspected = f.ok("inspect-elements", &[]);
     let masses: Vec<(String, f64)> = list(&inspected, "plates")
         .iter()
         .chain(list(&inspected, "members").iter())
@@ -248,61 +236,72 @@ fn the_exported_tables_match_the_verified_revision() {
     let elements_path = f.out("elements.csv");
     let summary_path = f.out("summary.csv");
     let exported = f.ok(
-        "bom-export",
+        "export-bom",
         &["--out", &elements_path, "--summary", &summary_path],
     );
     assert_eq!(text(&exported, "outcome"), "bom_exported");
-    assert_eq!(at(&exported, &["elements"]).float(), Ok(4.0));
+    assert_eq!(at(&exported, &["elements"]).float(), Ok(5.0));
     assert_eq!(at(&exported, &["groups"]).float(), Ok(4.0));
     assert_eq!(text(&exported, "elements_file"), elements_path);
     assert_eq!(text(&exported, "summary_file"), summary_path);
 
     let elements = f.read("elements.csv");
     let lines: Vec<&str> = elements.lines().collect();
-    assert_eq!(lines.len(), 5, "{elements}");
+    assert_eq!(lines.len(), 6, "{elements}");
     assert_eq!(
         lines[0],
         "mark,element_id,kind,name,profile,material,length_mm,area_mm2,volume_mm3,volume_m3,mass_kg"
     );
     // Report order: plates, then beams, then columns; within a kind by profile, then mark.
+    // The approved marks are PL1 (the bare plate), PL2, B1 and C1; the late plate is
+    // unnumbered, so its mark falls back to the element id and sorts before the PL marks.
     let rows: Vec<Vec<&str>> = lines[1..].iter().map(|l| cells(l)).collect();
     assert_eq!(rows[0][2], "plate");
-    assert_eq!(rows[0][0], bare_plate, "mark falls back to the element id");
+    assert_eq!(rows[0][0], late, "an unnumbered mark falls back to the id");
     assert_eq!(rows[0][0], rows[0][1]);
     assert_eq!(
         rows[0][5], "",
         "a plate without a material has no material cell"
     );
     assert_eq!(rows[0][6], "", "a plate has no length cell");
-    assert_eq!(rows[0][7], "320000", "net face area = volume / thickness");
+    assert_eq!(rows[0][7], "180000", "net face area = volume / thickness");
     assert_eq!(
         rows[0][10], "",
         "an unknown mass is an empty cell, never zero"
     );
-    assert_eq!(rows[1][1], plate);
-    assert_eq!(rows[1][5], "S355");
-    assert_eq!(rows[1][7], "500000");
     assert_eq!(
-        rows[1][10],
+        rows[1][0], "PL1",
+        "the approved numbering labels the element"
+    );
+    assert_eq!(rows[1][1], bare_plate);
+    assert_eq!(rows[1][5], "");
+    assert_eq!(rows[1][7], "320000");
+    assert_eq!(rows[1][10], "");
+    assert_eq!(rows[2][0], "PL2");
+    assert_eq!(rows[2][1], plate);
+    assert_eq!(rows[2][5], "S355");
+    assert_eq!(rows[2][7], "500000");
+    assert_eq!(
+        rows[2][10],
         format!("{}", mass_of(&plate)),
         "the CSV mass is the verified mass"
     );
-    assert_eq!(rows[2][2], "beam");
-    assert_eq!(rows[2][0], "B1", "an assigned mark labels the element");
-    assert_eq!(rows[2][1], beam);
+    assert_eq!(rows[3][2], "beam");
+    assert_eq!(rows[3][0], "B1", "an approved mark labels the element");
+    assert_eq!(rows[3][1], beam);
     assert_eq!(
-        rows[2][4], "RECT100x50",
+        rows[3][4], "RECT100x50",
         "the designation labels the profile"
     );
-    assert_eq!(rows[2][6], "3000");
-    assert_eq!(rows[2][7], "5000", "net section area = volume / length");
-    assert_eq!(rows[2][10], format!("{}", mass_of(&beam)));
-    assert_eq!(rows[3][2], "column");
-    assert_eq!(rows[3][1], column);
-    assert_eq!(rows[3][0], column);
-    assert_eq!(rows[3][4], "SYNI300");
-    assert_eq!(rows[3][5], "");
-    assert_eq!(rows[3][10], "");
+    assert_eq!(rows[3][6], "3000");
+    assert_eq!(rows[3][7], "5000", "net section area = volume / length");
+    assert_eq!(rows[3][10], format!("{}", mass_of(&beam)));
+    assert_eq!(rows[4][2], "column");
+    assert_eq!(rows[4][1], column);
+    assert_eq!(rows[4][0], "C1");
+    assert_eq!(rows[4][4], "SYNI300");
+    assert_eq!(rows[4][5], "");
+    assert_eq!(rows[4][10], "");
 
     let summary = f.read("summary.csv");
     let lines: Vec<&str> = summary.lines().collect();
@@ -313,12 +312,15 @@ fn the_exported_tables_match_the_verified_revision() {
     );
     let groups: Vec<Vec<&str>> = lines[1..].iter().map(|l| cells(l)).collect();
     assert_eq!(groups[0][..3], ["plate", "PL10", ""]);
-    assert_eq!(groups[0][3], "1");
+    assert_eq!(
+        groups[0][3], "2",
+        "the bare and the late plate share the group"
+    );
     assert_eq!(groups[0][4], "", "plates have no total length");
     assert_eq!(groups[0][7], "");
     assert_eq!(
-        groups[0][8], "1",
-        "the bare plate is counted as unknown mass"
+        groups[0][8], "2",
+        "both plates without a material are counted as unknown mass"
     );
     assert_eq!(groups[1][..3], ["plate", "PL10", "S355"]);
     assert_eq!(groups[1][7], format!("{}", mass_of(&plate)));
@@ -336,7 +338,7 @@ fn refusals_write_nothing() {
     // A store without a revision has nothing to report.
     assert_eq!(
         f.rejected_empty(
-            "bom-export",
+            "export-bom",
             &[
                 "--out",
                 &f.out("elements.csv"),
@@ -346,23 +348,39 @@ fn refusals_write_nothing() {
         ),
         "NOT_FOUND"
     );
-    assert!(!f.root.join("elements.csv").exists());
+    assert!(!f.shared.root.join("elements.csv").exists());
 
     f.build_model();
     let elements_path = f.out("elements.csv");
-    let exported = f.ok("bom-export", &["--out", &elements_path]);
+    let exported = f.ok("export-bom", &["--out", &elements_path]);
     assert_eq!(text(&exported, "outcome"), "bom_exported");
     // Files are created new, never overwritten.
     assert_eq!(
-        f.rejected("bom-export", &["--out", &elements_path]),
+        f.rejected("export-bom", &["--out", &elements_path]),
         "INVALID_ARGUMENT"
     );
     let other = f.out("other.csv");
     assert_eq!(
-        f.rejected("bom-export", &["--out", &other, "--bogus", "x"]),
+        f.rejected("export-bom", &["--out", &other, "--bogus", "x"]),
         "INVALID_ARGUMENT"
     );
-    assert!(!f.root.join("other.csv").exists());
+    assert!(!f.shared.root.join("other.csv").exists());
     // At least one output file is required.
-    assert_eq!(f.rejected("bom-export", &[]), "INVALID_ARGUMENT");
+    assert_eq!(f.rejected("export-bom", &[]), "INVALID_ARGUMENT");
+    // A refusal on either path leaves nothing, not even the file of the other output: both
+    // files are reserved before any bytes are written.
+    let fresh = f.out("fresh.csv");
+    let taken = f.out("taken.csv");
+    fs::write(&taken, "occupied").unwrap();
+    assert_eq!(
+        f.rejected("export-bom", &["--out", &fresh, "--summary", &taken]),
+        "INVALID_ARGUMENT"
+    );
+    assert!(!f.shared.root.join("fresh.csv").exists());
+    let same = f.out("same.csv");
+    assert_eq!(
+        f.rejected("export-bom", &["--out", &same, "--summary", &same]),
+        "INVALID_ARGUMENT"
+    );
+    assert!(!f.shared.root.join("same.csv").exists());
 }
