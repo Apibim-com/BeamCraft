@@ -2065,6 +2065,7 @@ pub(super) fn changes(
                         axis_mm,
                         roll_rad,
                         profile,
+                        placement,
                         cuts,
                         ..
                     } => {
@@ -2074,6 +2075,17 @@ pub(super) fn changes(
                         cap(axis_mm.iter().flatten().copied(), 1e9)?;
                         if let Some(n) = roll_rad {
                             cap([*n], std::f64::consts::TAU)?;
+                        }
+                        if let Some(p) = placement {
+                            cap(
+                                [
+                                    p.plane_offset_mm,
+                                    p.depth_offset_mm,
+                                    p.start_offset_mm,
+                                    p.end_offset_mm,
+                                ],
+                                1e6,
+                            )?;
                         }
                         cut_values(cuts)?;
                         reads.insert(Footprint {
@@ -2358,6 +2370,7 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                 Shape::Member {
                     axis_mm,
                     roll_rad,
+                    placement,
                     cuts,
                     ..
                 } => finite(
@@ -2366,6 +2379,14 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                         .flatten()
                         .copied()
                         .chain(roll_rad.iter().copied())
+                        .chain(placement.iter().flat_map(|p| {
+                            [
+                                p.plane_offset_mm,
+                                p.depth_offset_mm,
+                                p.start_offset_mm,
+                                p.end_offset_mm,
+                            ]
+                        }))
                         .chain(
                             cuts.iter()
                                 .flat_map(|c| c.point_mm.into_iter().chain(c.normal)),
