@@ -192,7 +192,7 @@ impl Fixture {
         let candidate = self.candidate(receipt);
         let pin = state.stage_rebase(receipt).unwrap();
         assert_eq!(state.stage_rebase(receipt).unwrap(), pin);
-        plate::commit_verified_with_evidence(
+        crate::publication::commit_verified_with_evidence(
             &self.draft,
             &candidate,
             &ExpectedBase::Revision(receipt.draft.revision.clone()),
@@ -358,7 +358,7 @@ fn a_candidate_without_the_exact_receipt_cannot_advance_the_base() {
     let candidate = f.candidate(&receipt);
     let state = WorkspaceState::open(&f.dir()).unwrap();
     state.stage_rebase(&receipt).unwrap();
-    plate::commit_verified_with_evidence(
+    crate::publication::commit_verified_with_evidence(
         &f.draft,
         &candidate,
         &ExpectedBase::Revision(receipt.draft.revision.clone()),
@@ -411,7 +411,7 @@ fn rebase_crash_child() {
         }
         Ok(())
     };
-    plate::commit_verified_with_evidence(
+    crate::publication::commit_verified_with_evidence(
         &f.draft,
         &candidate,
         &ExpectedBase::Revision(receipt.draft.revision.clone()),

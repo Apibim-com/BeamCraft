@@ -88,6 +88,39 @@ impl Camera {
     pub fn distance(&self) -> f32 {
         self.distance
     }
+    /// The pan (millimetres) that keeps the point under the cursor fixed while zooming: `ndc` is
+    /// the cursor in normalized device coordinates (`edit::ndc_of`, y up, inside `[-1, 1]`) and
+    /// `zoom` the same logarithmic input `navigate` takes. On the target plane the view scales
+    /// from the distance `navigate` will actually reach (including its clamps), so moving the
+    /// target by `(1 - s)` of the cursor's offset from the target keeps the anchor still even at
+    /// the zoom bounds; zero zoom gives zero pan.
+    pub fn cursor_zoom_pan(
+        &self,
+        ndc: [f32; 2],
+        aspect: f32,
+        zoom: f32,
+    ) -> Result<[f32; 2], Error> {
+        if !ndc.into_iter().all(|x| x.is_finite())
+            || ndc[0].abs() > 1.0
+            || ndc[1].abs() > 1.0
+            || !zoom.is_finite()
+        {
+            return Err(Error::Input("camera cursor zoom"));
+        }
+        let view = self.view(aspect)?;
+        let [tan, aspect, _, _] = view.params;
+        let d = self.distance;
+        let reached = (d * (-zoom.clamp(-10.0, 10.0)).exp()).clamp(10.0, 2e7);
+        let s = reached / d;
+        let nx = ndc[0].clamp(-1.0, 1.0);
+        let ny = ndc[1].clamp(-1.0, 1.0);
+        // Clamp each component into what navigate accepts: near the distance bounds the raw
+        // compensation (up to d * tan * aspect) would get the whole frame rejected.
+        Ok([
+            ((1.0 - s) * d * nx * tan * aspect).clamp(-1e6, 1e6),
+            ((1.0 - s) * d * ny * tan).clamp(-1e6, 1e6),
+        ])
+    }
     /// Perspective basis with depth range `[0, 1]`, vertical FOV 45 degrees.
     pub fn view(&self, aspect: f32) -> Result<View, Error> {
         if !aspect.is_finite() || !(0.05..=20.0).contains(&aspect) {
@@ -140,7 +173,6 @@ impl View {
             far / (far - near) - far * near / ((far - near) * depth),
         ]
     }
-
     pub(crate) fn bytes(self) -> Vec<u8> {
         self.right
             .into_iter()
@@ -207,6 +239,69 @@ mod tests {
         }
         assert!(c.view(1.0).unwrap().bytes().len() == 80);
         assert!(c.distance().is_finite());
+    }
+    #[test]
+    fn zoom_toward_the_cursor_keeps_the_point_under_the_cursor_still() {
+        let aspect = 1.6;
+        // A fresh camera per case: the invariant must not depend on navigation history.
+        for ndc in [[0.5f32, 0.3], [-0.7, -0.4], [0.9, -0.8], [0.0, 0.0]] {
+            for zoom in [0.7f32, -0.9, 2.0] {
+                let mut c = Camera::new([0.0; 3], 1000.0, aspect).unwrap();
+                let v = c.view(aspect).unwrap();
+                let [tan, va, _, _] = v.params;
+                let d = c.distance();
+                // The anchor is where the cursor ray crosses the plane through the target.
+                let anchor = [
+                    v.eye[0] - v.back[0] * d
+                        + v.right[0] * ndc[0] * tan * va * d
+                        + v.up[0] * ndc[1] * tan * d,
+                    v.eye[1] - v.back[1] * d
+                        + v.right[1] * ndc[0] * tan * va * d
+                        + v.up[1] * ndc[1] * tan * d,
+                    v.eye[2] - v.back[2] * d
+                        + v.right[2] * ndc[0] * tan * va * d
+                        + v.up[2] * ndc[1] * tan * d,
+                ];
+                let want = v.project(anchor);
+                let pan = c.cursor_zoom_pan(ndc, aspect, zoom).unwrap();
+                c.navigate([0.0; 2], pan, zoom).unwrap();
+                let got = c.view(aspect).unwrap().project(anchor);
+                assert!(
+                    (want[0] - got[0]).abs() < 1e-3 && (want[1] - got[1]).abs() < 1e-3,
+                    "ndc {ndc:?} zoom {zoom}: {want:?} -> {got:?}"
+                );
+            }
+        }
+        // At the zoom bounds navigate clamps the distance; the compensation follows the clamped
+        // distance, so the anchor still stays still (a raw exponential here would miss).
+        let mut c = Camera::new([0.0; 3], 1000.0, aspect).unwrap();
+        let zoom = 6.0f32;
+        let v = c.view(aspect).unwrap();
+        let [tan, va, _, _] = v.params;
+        let d = c.distance();
+        let anchor = [
+            v.eye[0] - v.back[0] * d + v.right[0] * 0.5 * tan * va * d + v.up[0] * 0.3 * tan * d,
+            v.eye[1] - v.back[1] * d + v.right[1] * 0.5 * tan * va * d + v.up[1] * 0.3 * tan * d,
+            v.eye[2] - v.back[2] * d + v.right[2] * 0.5 * tan * va * d + v.up[2] * 0.3 * tan * d,
+        ];
+        let want = v.project(anchor);
+        let pan = c.cursor_zoom_pan([0.5, 0.3], aspect, zoom).unwrap();
+        c.navigate([0.0; 2], pan, zoom).unwrap();
+        assert_eq!(c.distance(), 10.0); // the raw exponential would have gone to 3.4
+        let got = c.view(aspect).unwrap().project(anchor);
+        assert!(
+            (want[0] - got[0]).abs() < 1e-3 && (want[1] - got[1]).abs() < 1e-3,
+            "clamped: {want:?} -> {got:?}"
+        );
+        // The compensation is clamped into what navigate accepts: at the distance bounds it
+        // would otherwise exceed the 1e6 input limit and get the whole frame rejected.
+        let mut big = Camera::new([0.0; 3], 1e7, aspect).unwrap();
+        let pan = big.cursor_zoom_pan([1.0, 1.0], aspect, 0.4).unwrap();
+        assert!(pan[0].abs() <= 1e6 && pan[1].abs() <= 1e6, "{pan:?}");
+        assert!(big.navigate([0.0; 2], pan, 0.4).is_ok());
+        assert!(c.cursor_zoom_pan([f32::NAN, 0.0], aspect, 1.0).is_err());
+        assert!(c.cursor_zoom_pan([2.0, 0.0], aspect, 1.0).is_err());
+        assert!(c.cursor_zoom_pan([0.0, 0.0], aspect, f32::NAN).is_err());
     }
     #[test]
     fn the_near_plane_follows_the_distance_and_stays_inside_the_depth_range() {

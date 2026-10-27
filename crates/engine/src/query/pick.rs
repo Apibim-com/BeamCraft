@@ -10,8 +10,8 @@
 //! member, a plate with a through hole) by their mesh: the nearest front-facing triangle names
 //! its element only, with `feature_id` `None`. A read-only reference is never picked (R01): it is
 //! reported as skipped even though it carries a display mesh. A body a query cannot consider at
-//! all (no engine mesh, the point form, no face target) is listed in [`PickResult::skipped`]
-//! rather than approximated.
+//! all (the point form, no face target) is listed in [`PickResult::skipped`] rather than
+//! approximated.
 //!
 //! Pick follows F06 exactly: closed face rectangles enlarged by `eps_pick` with the parallel
 //! test `|u . n| < 1e-6`; edge and vertex distances to the closed finite segment
@@ -34,6 +34,7 @@
 
 use crate::element::{ElementId, ElementKind};
 use crate::error::{ViewCode, ViewError};
+use crate::query::feature::NamedFeatures;
 use crate::query::feature::{
     BodyKind, BoxFeatures, FeatureId, FeatureKind, V3, add, cross, dot, finite, norm, scale, sub,
 };
@@ -329,8 +330,8 @@ pub struct PickResult {
     pub hits: Vec<Hit>,
     /// True when more hits qualified than were returned.
     pub truncated: bool,
-    /// Elements a query could not consider: no engine mesh, the point form, no face target
-    /// against a body without FeatureIds, or a read-only reference, in id order.
+    /// Elements a query could not consider: the point form, no face target against a body
+    /// without FeatureIds, or a read-only reference, in id order.
     pub skipped: Vec<ElementId>,
 }
 
@@ -656,6 +657,165 @@ fn hits_of(features: &BoxFeatures, query: &PickQuery, dir: V3) -> Result<Vec<Hit
     Ok(out)
 }
 
+fn nearest_triangle(p: V3, [a, b, c]: [V3; 3]) -> V3 {
+    let (u, v, r) = (sub(b, a), sub(c, a), sub(p, a));
+    let (uu, uv, vv) = (dot(u, u), dot(u, v), dot(v, v));
+    let det = uu * vv - uv * uv;
+    if det > 0.0 {
+        let s = (vv * dot(r, u) - uv * dot(r, v)) / det;
+        let t = (uu * dot(r, v) - uv * dot(r, u)) / det;
+        if s >= 0.0 && t >= 0.0 && s + t <= 1.0 {
+            return add(a, add(scale(u, s), scale(v, t)));
+        }
+    }
+    let mut best = a;
+    let mut distance = norm(sub(p, a));
+    for (start, end) in [(a, b), (b, c), (c, a)] {
+        let (q, _) = closest_on_segment(p, start, end);
+        let d = norm(sub(p, q));
+        if d < distance {
+            distance = d;
+            best = q;
+        }
+    }
+    best
+}
+
+fn named_hits(
+    features: &NamedFeatures,
+    query: &PickQuery,
+    dir: V3,
+    max: usize,
+) -> Result<(Vec<Hit>, bool), ViewError> {
+    let mut hits = Vec::new();
+    let mut truncated = false;
+    let (targets, radius) = match query {
+        PickQuery::Ray(q) => (&q.targets, q.radius_mm),
+        PickQuery::Point(q) => (&q.targets, q.radius_mm),
+    };
+    if wanted(targets, FeatureKind::Face) {
+        for face in &features.faces {
+            let mut best: Option<Hit> = None;
+            for triangle in &face.triangles {
+                let [a, b, c] = *triangle;
+                let n = cross(sub(b, a), sub(c, a));
+                let length = norm(n);
+                if !(length > 0.0 && length.is_finite()) {
+                    continue;
+                }
+                let n = scale(n, 1.0 / length);
+                let (point, t, distance, back) = match query {
+                    PickQuery::Ray(q) => {
+                        let un = dot(dir, n);
+                        if un.abs() < PARALLEL || (un > 0.0 && !q.include_backfaces) {
+                            continue;
+                        }
+                        let t = canonical(dot(sub(a, q.origin_mm), n) / un);
+                        if !(0.0..=q.t_max_mm).contains(&t) {
+                            continue;
+                        }
+                        let p = add(q.origin_mm, scale(dir, t));
+                        if norm(sub(p, nearest_triangle(p, *triangle))) > EPS_PICK_MM {
+                            continue;
+                        }
+                        (p, Some(t), 0.0, un > 0.0)
+                    }
+                    PickQuery::Point(q) => {
+                        let point = nearest_triangle(q.point_mm, *triangle);
+                        let distance = norm(sub(q.point_mm, point));
+                        if distance > radius + EPS_PICK_MM {
+                            continue;
+                        }
+                        (point, None, distance, dot(sub(q.point_mm, point), n) < 0.0)
+                    }
+                };
+                if !finite(point) || !distance.is_finite() {
+                    return Err(uncertain());
+                }
+                let hit = Hit {
+                    element_id: features.element,
+                    feature_id: Some(face.id.clone()),
+                    feature_kind: FeatureKind::Face,
+                    t_mm: t,
+                    distance_mm: distance,
+                    point_world_mm: point,
+                    normal_world: Some(n),
+                    back_facing: back,
+                    boundary: false,
+                };
+                if best.as_ref().is_none_or(|old| order(&hit, old).is_lt()) {
+                    best = Some(hit);
+                }
+            }
+            if let Some(mut hit) = best {
+                hit.boundary = face.boundary.iter().any(|[a, b]| {
+                    norm(sub(
+                        hit.point_world_mm,
+                        closest_on_segment(hit.point_world_mm, *a, *b).0,
+                    )) <= EPS_PICK_MM
+                });
+                hits.push(hit);
+            }
+            if hits.len() > KEEP {
+                truncated |= keep_best(&mut hits, max, order);
+            }
+        }
+    }
+    let candidates = features
+        .edges
+        .iter()
+        .filter(|_| wanted(targets, FeatureKind::Edge))
+        .map(|e| (&e.id, e.ends, FeatureKind::Edge))
+        .chain(
+            features
+                .vertices
+                .iter()
+                .filter(|_| wanted(targets, FeatureKind::Vertex))
+                .map(|(id, v)| (id, [*v, *v], FeatureKind::Vertex)),
+        );
+    for (id, [a, b], kind) in candidates {
+        let (point, t, distance) = match query {
+            PickQuery::Ray(q) if kind == FeatureKind::Edge => {
+                let (s, point, distance) =
+                    segment_segment(q.origin_mm, scale(dir, q.t_max_mm), a, b);
+                (point, Some(canonical(s * q.t_max_mm)), distance)
+            }
+            PickQuery::Ray(q) => {
+                let t = canonical(dot(sub(a, q.origin_mm), dir).clamp(0.0, q.t_max_mm));
+                (a, Some(t), norm(sub(a, add(q.origin_mm, scale(dir, t)))))
+            }
+            PickQuery::Point(q) => {
+                let point = if kind == FeatureKind::Vertex {
+                    a
+                } else {
+                    closest_on_segment(q.point_mm, a, b).0
+                };
+                (point, None, norm(sub(point, q.point_mm)))
+            }
+        };
+        if !finite(point) || !distance.is_finite() {
+            return Err(uncertain());
+        }
+        if distance <= radius + EPS_PICK_MM {
+            hits.push(Hit {
+                element_id: features.element,
+                feature_id: Some(id.clone()),
+                feature_kind: kind,
+                t_mm: t,
+                distance_mm: distance,
+                point_world_mm: point,
+                normal_world: None,
+                back_facing: false,
+                boundary: false,
+            });
+        }
+        if hits.len() > KEEP {
+            truncated |= keep_best(&mut hits, max, order);
+        }
+    }
+    Ok((hits, truncated))
+}
+
 fn word(bytes: &[u8], at: usize) -> Option<f64> {
     Some(f64::from_le_bytes(bytes.get(at..at + 8)?.try_into().ok()?))
 }
@@ -869,14 +1029,22 @@ pub fn pick(snapshot: &ViewSnapshot, query: &PickQuery) -> Result<PickResult, Vi
         }
         match BoxFeatures::world(snapshot, entry) {
             Some(features) => hits.extend(hits_of(&features, query, dir)?),
-            None => match query {
-                PickQuery::Ray(ray) if wanted(&ray.targets, FeatureKind::Face) => {
-                    if let Some(hit) = mesh_hit(snapshot, entry, ray, dir)? {
-                        hits.push(hit);
+            None => {
+                if let Some(features) = NamedFeatures::world(snapshot, entry) {
+                    let (extra, cut) = named_hits(&features, query, dir, max)?;
+                    hits.extend(extra);
+                    truncated |= cut;
+                } else {
+                    match query {
+                        PickQuery::Ray(ray) if wanted(&ray.targets, FeatureKind::Face) => {
+                            if let Some(hit) = mesh_hit(snapshot, entry, ray, dir)? {
+                                hits.push(hit);
+                            }
+                        }
+                        _ => skipped.push(entry.id),
                     }
                 }
-                _ => skipped.push(entry.id),
-            },
+            }
         }
         if hits.len() > KEEP {
             truncated |= keep_best(&mut hits, max, order);
@@ -900,6 +1068,12 @@ pub enum SnapKind {
     AxisEnd,
     /// The nearest point of a member's axis segment.
     Axis,
+    /// Intersection of a U and V grid segment.
+    GridIntersection,
+    /// Endpoint of a grid segment.
+    GridEnd,
+    /// Closest point of a grid segment.
+    GridLine,
 }
 
 impl SnapKind {
@@ -919,6 +1093,9 @@ impl SnapKind {
             Self::Vertex => "vertex",
             Self::AxisEnd => "axis_end",
             Self::Axis => "axis",
+            Self::GridIntersection => "grid_intersection",
+            Self::GridEnd => "grid_end",
+            Self::GridLine => "grid_line",
         }
     }
 
@@ -928,6 +1105,9 @@ impl SnapKind {
             "vertex" => Some(Self::Vertex),
             "axis_end" => Some(Self::AxisEnd),
             "axis" => Some(Self::Axis),
+            "grid_intersection" => Some(Self::GridIntersection),
+            "grid_end" => Some(Self::GridEnd),
+            "grid_line" => Some(Self::GridLine),
             _ => None,
         }
     }
@@ -937,6 +1117,9 @@ impl SnapKind {
             Self::Vertex => 0,
             Self::AxisEnd => 1,
             Self::Axis => 2,
+            Self::GridIntersection => 3,
+            Self::GridEnd => 4,
+            Self::GridLine => 5,
         }
     }
 }
@@ -954,9 +1137,24 @@ pub struct SnapQuery {
     pub max_hits: u32,
 }
 
+/// Persistent grid snap address, independent of mesh features.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GridSnapIdentity {
+    /// First axis (U for intersections).
+    pub axis_id: ElementId,
+    /// Second, V axis for intersections.
+    pub other_axis_id: Option<ElementId>,
+    /// First axis label.
+    pub label: String,
+    /// Second axis label.
+    pub other_label: Option<String>,
+}
+
 /// One snap candidate.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SnapCandidate {
+    /// Grid line identities and labels; absent for engineering-body candidates.
+    pub grid: Option<GridSnapIdentity>,
     /// The owning element.
     pub element_id: ElementId,
     /// What it snaps to.
@@ -990,6 +1188,12 @@ fn snap_order(a: &SnapCandidate, b: &SnapCandidate) -> Ordering {
         .total_cmp(&quantum(b.distance_mm))
         .then_with(|| a.kind.rank().cmp(&b.kind.rank()))
         .then_with(|| a.element_id.to_string().cmp(&b.element_id.to_string()))
+        .then_with(|| {
+            a.grid
+                .as_ref()
+                .map(|g| (g.axis_id, g.other_axis_id))
+                .cmp(&b.grid.as_ref().map(|g| (g.axis_id, g.other_axis_id)))
+        })
         .then_with(|| local(a).cmp(&local(b)))
         .then_with(|| {
             canonical(a.axis_parameter.unwrap_or(0.0))
@@ -1021,6 +1225,31 @@ pub fn snap(snapshot: &ViewSnapshot, query: &SnapQuery) -> Result<SnapResult, Vi
     let mut truncated = false;
     let mut skipped = Vec::new();
     for entry in snapshot.elements() {
+        if let Some(features) = NamedFeatures::world(snapshot, entry) {
+            if query.kinds.contains(&SnapKind::Vertex) {
+                for (id, point) in features.vertices {
+                    let distance = norm(sub(p, point));
+                    if !distance.is_finite() {
+                        return Err(uncertain());
+                    }
+                    if distance <= band {
+                        candidates.push(SnapCandidate {
+                            grid: None,
+                            element_id: entry.id,
+                            kind: SnapKind::Vertex,
+                            feature_id: Some(id),
+                            axis_parameter: None,
+                            point_world_mm: point,
+                            distance_mm: distance,
+                        });
+                        if candidates.len() > KEEP {
+                            truncated |= keep_best(&mut candidates, max, snap_order);
+                        }
+                    }
+                }
+            }
+            continue;
+        }
         let Some(features) = BoxFeatures::world(snapshot, entry) else {
             skipped.push(entry.id);
             continue;
@@ -1032,6 +1261,7 @@ pub fn snap(snapshot: &ViewSnapshot, query: &SnapQuery) -> Result<SnapResult, Vi
             }
             if distance <= band {
                 candidates.push(SnapCandidate {
+                    grid: None,
                     element_id: entry.id,
                     kind,
                     feature_id,
@@ -1074,6 +1304,86 @@ pub fn snap(snapshot: &ViewSnapshot, query: &SnapQuery) -> Result<SnapResult, Vi
         truncated,
         skipped,
     })
+}
+
+/// Snap against engineering bodies and a complete pinned grid set, with an optional visible-id filter.
+pub fn snap_with_grids(
+    snapshot: &ViewSnapshot,
+    query: &SnapQuery,
+    grids: &[beamcraft_model::grid::Grid],
+    visible: Option<&std::collections::BTreeSet<ElementId>>,
+) -> Result<SnapResult, ViewError> {
+    use crate::grid_query::{closest, intersection, local_to_world, segments};
+    crate::grid_query::validate(grids).map_err(|_| input())?;
+    if visible.is_some_and(|v| v.len() > 64) {
+        return Err(limit());
+    }
+    let mut result = snap(snapshot, query)?;
+    let max = usize::try_from(query.max_hits).map_err(|_| limit())?;
+    let band = query.radius_mm + EPS_PICK_MM;
+    let [px, py, pz] = query.point_mm;
+    for grid in grids {
+        if visible.is_some_and(|v| !v.contains(&grid.id)) {
+            continue;
+        }
+        let p = crate::grid_edit::world_to_local(grid, [px, py]);
+        let lines = segments(grid).map_err(|_| input())?;
+        let nearby = lines
+            .iter()
+            .filter(|l| {
+                let [x, y] = closest(l, p);
+                let [lx, ly] = p;
+                (x - lx).hypot(y - ly) <= band
+            })
+            .collect::<Vec<_>>();
+        let mut push = |kind,
+                        a: &crate::grid_query::GridSegment,
+                        b: Option<&crate::grid_query::GridSegment>,
+                        point| {
+            let [x, y] = local_to_world(grid, point);
+            let distance = (x - px).hypot(y - py);
+            if distance <= band {
+                result.candidates.push(SnapCandidate {
+                    element_id: grid.id,
+                    kind,
+                    feature_id: None,
+                    axis_parameter: None,
+                    point_world_mm: [x, y, pz],
+                    distance_mm: distance,
+                    grid: Some(GridSnapIdentity {
+                        axis_id: a.axis_id,
+                        other_axis_id: b.map(|l| l.axis_id),
+                        label: a.label.clone(),
+                        other_label: b.map(|l| l.label.clone()),
+                    }),
+                });
+                // Retain at most two result pages, never the full cross product.
+                if result.candidates.len() > max.saturating_mul(2) {
+                    result.truncated |= keep_best(&mut result.candidates, max, snap_order);
+                }
+            }
+        };
+        for line in &nearby {
+            if query.kinds.contains(&SnapKind::GridLine) {
+                push(SnapKind::GridLine, line, None, closest(line, p));
+            }
+            if query.kinds.contains(&SnapKind::GridEnd) {
+                push(SnapKind::GridEnd, line, None, line.start);
+                push(SnapKind::GridEnd, line, None, line.end);
+            }
+        }
+        if query.kinds.contains(&SnapKind::GridIntersection) {
+            for u in nearby.iter().filter(|l| l.family == 0) {
+                for v in nearby.iter().filter(|l| l.family == 1) {
+                    if let Some(point) = intersection(u, v) {
+                        push(SnapKind::GridIntersection, u, Some(v), point);
+                    }
+                }
+            }
+        }
+    }
+    result.truncated |= keep_best(&mut result.candidates, max, snap_order);
+    Ok(result)
 }
 
 #[cfg(test)]

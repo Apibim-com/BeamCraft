@@ -22,6 +22,7 @@ use std::{collections::BTreeMap, ffi::OsString, path::Path};
 
 fn invalid(message: &'static str) -> PlateError {
     PlateError {
+        rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
     }
@@ -30,27 +31,7 @@ fn invalid(message: &'static str) -> PlateError {
 pub fn execute(args: &[OsString]) -> (Json, u8) {
     match run(args) {
         Ok(result) => result,
-        Err(error) => (
-            Json::object([
-                (
-                    "outcome",
-                    Json::text(if error.code == ErrorCode::OutcomeUnknown {
-                        "outcome_unknown"
-                    } else {
-                        "rejected"
-                    }),
-                ),
-                ("code", Json::text(error.code.as_str())),
-                ("message", Json::text(error.message)),
-                ("observed_context", Json::Null),
-                ("diagnostics", Json::Array(Vec::new())),
-            ]),
-            match error.code {
-                ErrorCode::OutcomeUnknown => 4,
-                ErrorCode::BackendUnavailable => 3,
-                _ => 2,
-            },
-        ),
+        Err(error) => crate::report::report(Err(error)),
     }
 }
 
@@ -101,6 +82,7 @@ fn run(args: &[OsString]) -> Result<(Json, u8), PlateError> {
         BlobStore::new(path)
             .map(RevisionStore::new)
             .map_err(|error| PlateError {
+                rule_id: None,
                 code: error.code(),
                 message: "rebase store is not usable",
             })

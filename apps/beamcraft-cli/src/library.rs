@@ -148,11 +148,13 @@ impl Library {
             .find(|r| r.designation.as_deref() == Some(designation))
         {
             return Err(PlateError {
+                rule_id: None,
                 code: refused.code,
                 message: refused.message,
             });
         }
         Err(PlateError {
+            rule_id: None,
             code: ErrorCode::NotFound,
             message: "the designation is not in the library",
         })
@@ -160,7 +162,7 @@ impl Library {
 }
 
 fn refuse(code: ErrorCode, message: &'static str) -> PlateError {
-    PlateError { code, message }
+    PlateError::new(code, message)
 }
 
 fn invalid(message: &'static str) -> PlateError {
@@ -1186,7 +1188,7 @@ pub fn add_entry(
         .is_some_and(|e| e.eq_ignore_ascii_case("usdc"))
     {
         return Err(invalid(
-            "library-add writes USDA text and cannot write a .usdc library",
+            "add-library writes USDA text and cannot write a .usdc library",
         ));
     }
     if !label_is_valid(designation) {
@@ -1217,7 +1219,7 @@ pub fn add_entry(
             }
             if library.info.binary {
                 return Err(invalid(
-                    "the library is binary USD; library-add rewrites USDA text only",
+                    "the library is binary USD; add-library rewrites USDA text only",
                 ));
             }
             if !library.rejected.is_empty() {

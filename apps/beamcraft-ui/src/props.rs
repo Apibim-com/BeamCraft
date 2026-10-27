@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! V06.1 properties editor, as pure logic: what the engine reports about the selected plate or
-//! straight member (`plate-inspect`), whether that reading is still current, and the one
+//! straight member (`inspect-elements`), whether that reading is still current, and the one
 //! `beamcraft update-element` command an edit of the supported properties becomes.
 //!
 //! The UI computes no engineering value. Every number shown (mass, volume, dimensions) is the
@@ -70,7 +70,7 @@ pub struct Quantities {
     pub density_kg_m3: Option<f64>,
 }
 
-/// What `plate-inspect` reports about one element, read for the properties panel.
+/// What `inspect-elements` reports about one element, read for the properties panel.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Details {
     /// The element's id.
@@ -139,7 +139,7 @@ fn read_quantities(element: &Json) -> Quantities {
     }
 }
 
-/// Reads the reply of `plate-inspect` for one element. The editable fields (label, material,
+/// Reads the reply of `inspect-elements` for one element. The editable fields (label, material,
 /// translation, a plate's thickness) and the revision are required: without them the element's
 /// properties are unknown and the reply is `UNREADABLE_REPLY`. Everything else is optional and
 /// stays `None` when absent. An id the revision does not hold is `NOT_FOUND`.
@@ -486,6 +486,8 @@ pub struct Properties {
     head: Option<RevisionStamp>,
     /// The editable fields, as typed.
     pub form: Form,
+    /// The author recorded as `--actor-id` of a property edit, when the window has one.
+    pub actor: Option<String>,
     baseline: Form,
     staged: Option<PropertyEdit>,
     busy: bool,
@@ -657,6 +659,7 @@ impl Properties {
         if changed.is_empty() {
             return Err(refuse("Properties", "nothing was changed"));
         }
+        crate::tools::push_actor(&mut args, self.actor.as_deref());
         Ok(PropertyEdit { args, changed })
     }
 
@@ -913,7 +916,8 @@ mod tests {
         let Some(State::Unknown { reason }) = q.state() else {
             panic!("expected unknown");
         };
-        assert!(reason.contains("size limit") && reason.contains("CLI_FAILED"));
+        assert!(reason.contains("size limit"));
+        assert!(!reason.contains("CLI_FAILED"));
         assert!(q.details().is_none());
         assert_eq!(q.form, Form::default());
         let unsupported = ToolError {

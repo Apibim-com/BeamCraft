@@ -31,6 +31,7 @@ type Run<T> = Result<T, PlateError>;
 
 fn invalid(message: &'static str) -> PlateError {
     PlateError {
+        rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
     }
@@ -63,7 +64,10 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
                 ("code", Json::text(e.code.as_str())),
                 ("message", Json::text(e.message)),
                 ("observed_context", Json::Null),
-                ("diagnostics", Json::Array(vec![])),
+                (
+                    "diagnostics",
+                    Json::Array(crate::plate_cmd::domain_diagnostics(&e)),
+                ),
             ]),
             if e.code == ErrorCode::BackendUnavailable {
                 3
@@ -228,6 +232,7 @@ fn document_drawing(options: &BTreeMap<&str, &str>, source: SourceModelPin) -> R
             .ok_or_else(|| invalid("required drawing option is missing"))
     };
     let id_error = |_| PlateError {
+        rule_id: None,
         code: ErrorCode::InvalidId,
         message: "drawing and member identities must be full canonical UUIDv7",
     };
@@ -237,6 +242,7 @@ fn document_drawing(options: &BTreeMap<&str, &str>, source: SourceModelPin) -> R
     let member = ElementId::parse(required("--id")?).map_err(id_error)?;
     let anchor = |key| {
         FeatureId::parse(required(key)?).map_err(|error| PlateError {
+            rule_id: None,
             code: error.f04_code(),
             message: "anchor must be a full semantic FeatureId, never an index",
         })
@@ -502,6 +508,7 @@ fn run_document(args: &[OsString]) -> Run<Json> {
                     return document_json(&previous);
                 }
                 return Err(PlateError {
+                    rule_id: None,
                     code: ErrorCode::OpIdReuse,
                     message: "document operation id was already used for another request",
                 });
@@ -536,6 +543,7 @@ fn run_document(args: &[OsString]) -> Run<Json> {
                     revision.state == State::Published && revision.version == Some(version)
                 })
                 .ok_or(PlateError {
+                    rule_id: None,
                     code: ErrorCode::NotFound,
                     message: "no published document version carries this id",
                 })?;
@@ -567,6 +575,7 @@ fn run_document(args: &[OsString]) -> Run<Json> {
                 drop(file);
                 let _ = std::fs::remove_file(destination);
                 return Err(PlateError {
+                    rule_id: None,
                     code: ErrorCode::BackendUnavailable,
                     message: "drawing export could not be written",
                 });
@@ -609,6 +618,7 @@ fn run_document(args: &[OsString]) -> Run<Json> {
                 Json::Object(fields) => fields,
                 _ => {
                     return Err(PlateError {
+                        rule_id: None,
                         code: ErrorCode::IntegrityError,
                         message: "drawing inspect response is malformed",
                     });
@@ -687,6 +697,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             .ok_or_else(|| invalid("required drawing option is missing"))
     };
     let id_error = |_| PlateError {
+        rule_id: None,
         code: ErrorCode::InvalidId,
         message: "drawing and member identities must be full canonical UUIDv7",
     };
@@ -696,6 +707,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     let member = ElementId::parse(required("--id")?).map_err(id_error)?;
     let anchor = |key| {
         FeatureId::parse(required(key)?).map_err(|e| PlateError {
+            rule_id: None,
             code: e.f04_code(),
             message: "anchor must be a full semantic FeatureId, never an index",
         })
@@ -739,6 +751,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         })?,
     };
     let blobs = BlobStore::new(required("--store")?).map_err(|e| PlateError {
+        rule_id: None,
         code: e.code(),
         message: "store root is not usable",
     })?;
@@ -835,6 +848,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             drop(file);
             let _ = std::fs::remove_file(path);
             return Err(PlateError {
+                rule_id: None,
                 code: ErrorCode::BackendUnavailable,
                 message: "drawing intent could not be written",
             });

@@ -80,6 +80,7 @@ fn property_group(name: &str) -> Option<G> {
         | "steel:member:endOffsetMm"
         | "bim:profile"
         | "bim:elevationMm"
+        | "steel:connection:type"
         | "steel:weld:type"
         | "steel:weld:sizeMm"
         | "steel:weld:location"
@@ -128,6 +129,7 @@ fn geometry_property(name: &str) -> bool {
     matches!(
         name,
         "points"
+            | "purpose"
             | "faceVertexCounts"
             | "faceVertexIndices"
             | "subdivisionScheme"

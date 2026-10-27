@@ -47,8 +47,8 @@
 //! * The same namespace protection as [`crate::storage`] is required: a hostile writer to the
 //!   store directory can still replace files between a check and its use.
 //! * This module never parses USD. Layer content and U03 index checks are done by an injected
-//!   [`ContentVerifier`] (the layer engine runs in a separate process and the host does not
-//!   link it); a commit without a verifier records no index and says so in the manifest.
+//!   [`ContentVerifier`] (the host does not link the layer engine; the caller supplies the
+//!   verifier); a commit without a verifier records no index and says so in the manifest.
 
 mod commit;
 mod floor;
@@ -103,7 +103,7 @@ impl Uuid7 {
     /// Validates the complete canonical text; shortened, upper-case or other versions are
     /// [`RevisionError::InvalidId`].
     pub fn parse(text: &str) -> Result<Self, RevisionError> {
-        if beamcraft_protocol::message::uuid(text) {
+        if canonical_uuid7(text) {
             Ok(Self(text.to_owned()))
         } else {
             Err(RevisionError::InvalidId)
@@ -114,6 +114,22 @@ impl Uuid7 {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+}
+
+/// Canonical lowercase UUIDv7 text: `8-4-4-4-12` hex digits, version 7, RFC 9562 variant.
+fn canonical_uuid7(s: &str) -> bool {
+    s.len() == 36
+        && s.bytes().enumerate().all(|(i, b)| {
+            if matches!(i, 8 | 13 | 18 | 23) {
+                b == b'-'
+            } else if i == 14 {
+                b == b'7'
+            } else if i == 19 {
+                matches!(b, b'8' | b'9' | b'a' | b'b')
+            } else {
+                b.is_ascii_digit() || matches!(b, b'a'..=b'f')
+            }
+        })
 }
 
 impl fmt::Display for Uuid7 {

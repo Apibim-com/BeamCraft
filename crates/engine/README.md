@@ -54,6 +54,12 @@ bounded Cube and triangle/convex-quad Mesh cages become ordinary reference-kind 
 without acquiring certified bodies, quantities or engineering pick features. Source translations
 and explicit R01 units correction are supported; wrapper rotation and other foreign transforms
 are not. See the [R01 viewport profile](../../docs/design/r01-readonly-reference.md#translation-only-viewport-path-issue-137).
+`drawing::projection::resolve` (D02.1) consumes admitted intent and the exact captured snapshot.
+It returns twelve semantic wireframe edges and a projected, scale-independent model-mm dimension,
+or typed unresolved states for lost/unsupported/collapsed geometry. It checks the pin before
+geometry, caps all paper output, and performs fixed work over 26 roles and two anchors. The CLI's
+`drawing-preview` strictly inspects one opened model revision before calling it; no UI geometry
+or buffer address enters a measurement. Drawing USD persistence/publication remains D01.3/D03.
 
 `drawing::projection::resolve` (D02.1) consumes admitted intent and the exact captured snapshot.
 It returns twelve semantic wireframe edges and a projected, scale-independent model-mm dimension,
