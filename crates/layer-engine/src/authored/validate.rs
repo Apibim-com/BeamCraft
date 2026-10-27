@@ -1950,6 +1950,8 @@ pub(super) fn changes(
                     Shape::Plate {
                         contour_mm,
                         thickness_mm,
+                        // A parsed side is one of three closed tokens; nothing to bound.
+                        thickness_side: _,
                         holes,
                         hole_records,
                         cuts,
@@ -2251,6 +2253,7 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                 Shape::Plate {
                     contour_mm,
                     thickness_mm,
+                    thickness_side: _,
                     holes,
                     hole_records,
                     cuts,
