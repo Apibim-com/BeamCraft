@@ -271,18 +271,30 @@ mod tests {
         .unwrap();
         assert_eq!(moved.placement.orientation_xyzw, quarter);
         assert_eq!(moved.placement.translation_mm, [5.0, 6.0, 7.0]);
-        let plate_turned = patch_plate(
+        let turned_plate = patch_plate(
             &plate(),
             &ElementPatch {
                 orientation_xyzw: Some(quarter),
+                ..ElementPatch::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(turned_plate.placement.orientation_xyzw, quarter);
+        let reset = patch_plate(
+            &plate(),
+            &ElementPatch {
+                orientation_xyzw: Some(Placement::IDENTITY.orientation_xyzw),
                 translation_mm: Some([1.0, 0.0, 0.0]),
                 ..ElementPatch::default()
             },
         )
         .unwrap();
-        assert_eq!(plate_turned.placement.orientation_xyzw, quarter);
-        assert_eq!(plate_turned.placement.translation_mm, [1.0, 0.0, 0.0]);
-        assert_eq!(plate_turned.contour_points_mm, plate().contour_points_mm);
+        assert_eq!(
+            reset.placement.orientation_xyzw,
+            Placement::IDENTITY.orientation_xyzw
+        );
+        assert_eq!(reset.placement.translation_mm, [1.0, 0.0, 0.0]);
+        assert_eq!(reset.contour_points_mm, plate().contour_points_mm);
     }
 
     #[test]
@@ -309,6 +321,7 @@ mod tests {
                 .code,
             ErrorCode::NonFiniteNumber
         );
+        // Plates and members use the same typed rigid-pose validation.
         assert_eq!(
             patch_plate(&plate(), &patch([2.0, 0.0, 0.0, 0.0]))
                 .unwrap_err()
