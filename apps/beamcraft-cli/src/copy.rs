@@ -321,6 +321,10 @@ pub fn copy_element(
             let a = &r.authored;
             let [qx, qy, qz, qw] = a.placement.orientation_xyzw;
             vec![
+                Change::PartClass {
+                    id: a.id.to_string(),
+                    class: a.class,
+                },
                 Change::Create(Element {
                     id: a.id.to_string(),
                     name: a.name.clone(),
@@ -348,6 +352,10 @@ pub fn copy_element(
             let a = &r.authored;
             let [qx, qy, qz, qw] = a.placement.orientation_xyzw;
             vec![
+                Change::PartClass {
+                    id: a.id.to_string(),
+                    class: a.class,
+                },
                 Change::Create(Element {
                     id: a.id.to_string(),
                     name: a.name.clone(),
