@@ -20,6 +20,7 @@ pub mod edit;
 pub mod export;
 pub mod history;
 pub mod history_compact;
+pub mod hole;
 pub mod level;
 pub mod library;
 pub mod marks;
