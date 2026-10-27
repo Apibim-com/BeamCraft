@@ -452,6 +452,7 @@ pub(crate) fn dependencies(footprint: &Footprint) -> Vec<Dependency> {
                 Group::Placement => DependencyGroup::Placement,
                 Group::MaterialRef => DependencyGroup::MaterialRef,
                 Group::Relationship => DependencyGroup::Relationship,
+                Group::Mark => DependencyGroup::Mark,
                 Group::Lifecycle => DependencyGroup::Lifecycle,
                 Group::Derived => DependencyGroup::Derived,
             };

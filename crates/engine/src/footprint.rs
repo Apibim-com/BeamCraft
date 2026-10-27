@@ -39,6 +39,8 @@ pub enum Group {
     MaterialRef,
     /// Relationships to other elements or definitions.
     Relationship,
+    /// The element mark and its approval state (A08).
+    Mark,
     /// Existence and identity.
     Lifecycle,
     /// Derived geometry, quantities and their signatures.
@@ -54,6 +56,7 @@ impl Group {
             Self::Placement => "placement",
             Self::MaterialRef => "material_ref",
             Self::Relationship => "relationship",
+            Self::Mark => "mark",
             Self::Lifecycle => "lifecycle",
             Self::Derived => "derived",
         }
