@@ -10,7 +10,7 @@
 //! records the new project as recently opened; a project is created even when that record cannot
 //! be written (`recent_recorded` is then false).
 
-use crate::plate_cmd::{id_error, revision_json};
+use crate::plate_cmd::revision_json;
 use beamcraft_cli::plate::PlateError;
 use beamcraft_cli::project::{
     ENVIRONMENTS_DIR, EnvironmentEntry, EnvironmentState, ProjectContext, ProjectInfo,
@@ -202,7 +202,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             // the project. A damaged settings file never blocks a creation that names its actor.
             let dir = config_dir();
             let actor = match given("--actor-id") {
-                Some(text) => Uuid7::parse(text).map_err(id_error)?,
+                Some(text) => Uuid7::parse(text).map_err(crate::plate_cmd::context_id_error)?,
                 None => {
                     let settings = Settings::load(&dir.clone()?).map_err(settings_error)?;
                     match settings.profile {
@@ -213,20 +213,26 @@ fn run(args: &[OsString]) -> Run<Json> {
             };
             let context = ProjectContext {
                 op_id: match given("--op-id") {
-                    Some(text) => OpId::parse(text).map_err(id_error)?,
+                    Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
                     None => OpId::from_uuid(fresh_id()?),
                 },
                 revision_id: match given("--revision-id") {
-                    Some(text) => RevisionId::parse(text).map_err(id_error)?,
+                    Some(text) => {
+                        RevisionId::parse(text).map_err(crate::plate_cmd::context_id_error)?
+                    }
                     None => RevisionId::from_uuid(fresh_id()?),
                 },
                 actor,
                 project: match given("--project-id") {
-                    Some(text) => ProjectId::parse(text).map_err(id_error)?,
+                    Some(text) => {
+                        ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?
+                    }
                     None => ProjectId::from_uuid(fresh_id()?),
                 },
                 workspace: match given("--workspace-id") {
-                    Some(text) => WorkspaceId::parse(text).map_err(id_error)?,
+                    Some(text) => {
+                        WorkspaceId::parse(text).map_err(crate::plate_cmd::context_id_error)?
+                    }
                     None => WorkspaceId::from_uuid(fresh_id()?),
                 },
             };
