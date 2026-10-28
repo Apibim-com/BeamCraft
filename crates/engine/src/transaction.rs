@@ -102,6 +102,7 @@ mod tests {
         CreatePlate {
             new_id: ElementId::parse("019a7bf0-0000-7000-8000-000000000005").unwrap(),
             name: "Synthetic plate".into(),
+            class: 0,
             contour_points_mm: vec![
                 [0.0, 0.0, 0.0],
                 [width, 0.0, 0.0],
@@ -109,10 +110,11 @@ mod tests {
                 [0.0, 500.0, 0.0],
             ],
             thickness_mm: 10.0,
+            thickness_side: None,
+            corners: Vec::new(),
             placement: Placement::IDENTITY,
             material_digest: None,
             holes_mm: Vec::new(),
-            cut: None,
         }
     }
 

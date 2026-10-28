@@ -3,11 +3,18 @@
 V03: the native window and viewport. It shows the accepted (published) revision of a store.
 
 ```text
+beamcraft-ui
 beamcraft-ui --store ROOT [--cli PATH]
+beamcraft-ui --workspace DIR [--published ROOT] [--cli PATH]
 beamcraft-ui --store ROOT --metrics FRAMES [--width W] [--height H] [--samples 1|4] [--cli PATH]
 beamcraft-ui --synthetic COUNT --metrics FRAMES [--width W] [--height H] [--samples 1|4]
 beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
 ```
+
+- With no arguments the window opens on a per-user default workspace under the system data
+  directory (`~/Library/Application Support/BeamCraft`, `%APPDATA%\BeamCraft`, or
+  `XDG_DATA_HOME`/`~/.local/share`): the published store and the workspace fork are created
+  on demand, so a double-clicked app bundle launches with undo, redo and Publish.
 
 - The model comes from the engine, through the headless CLI in a separate process:
   `beamcraft export-view --store ROOT --out - --with-definitions true --with-grids true` writes the pinned view
@@ -37,6 +44,12 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   pinch and keys keep theirs). Both presets: `+` and `-` zoom from the keyboard, F fits, R
   reloads (`+`, `-`, F and R are ignored while a text field has the keyboard). A click selects,
   Esc clears the selection.
+- Render modes (experimental V16 slice, see [the design note](../../docs/design/v16-render-modes.md)):
+  the View tab's DISPLAY group and `Ctrl+1` to `Ctrl+5` switch the drawing of the one loaded
+  scene between wireframe, transparent, grey, shaded (the default) and selected only; switching
+  never reloads the scene. The bindings are remappable in `shortcuts.json` in the user's
+  configuration directory (`BEAMCRAFT_CONFIG_DIR`, or `--config-dir` with `--store`); a missing
+  file is the defaults, a damaged one keeps them and says so in the Details window.
 - Live refresh: the window watches the store's committed revisions and reloads by itself when
   another process (the CLI, an agent) commits to the store it shows; `R` stays for a manual
   reload. A reload whose framing changed fits the camera, so new content comes into view.

@@ -190,6 +190,31 @@ fn category_paths_are_checked_against_kinds_and_relationships_resolve_exact_path
             ErrorCode::InvalidId
         );
     }
+    // The fastener category answers the same three checks: a section kind at a fastener path,
+    // a fastener kind at a profile path, and a malformed leaf under /Fasteners are refused.
+    let fastener_world = |definitions: &str| {
+        layer(&format!(
+            "def Xform \"World\" {{\n def Scope \"Definitions\" {{\n def Scope \"Fasteners\" {{\n{definitions}\n}}\n}}\n}}"
+        ))
+    };
+    let section_at_fastener = format!(
+        "def Scope \"FST_{digest}\" {{\n custom token bim:definitionKind = \"rectangle\"\n }}"
+    );
+    assert_eq!(
+        code(built(fastener_world(&section_at_fastener))),
+        ErrorCode::InvalidId
+    );
+    let fastener_at_profile = format!(
+        "def Scope \"PRF_{digest}\" {{\n custom token bim:definitionKind = \"fastener\"\n }}"
+    );
+    assert_eq!(
+        code(built(world("", &fastener_at_profile, ""))),
+        ErrorCode::InvalidId
+    );
+    assert_eq!(
+        code(built(fastener_world("def Scope \"FST_abc\" {}"))),
+        ErrorCode::InvalidId
+    );
 }
 fn assemble(opened: &Opened, pages: &[Page]) -> Result<ElementIndex, Diagnostic> {
     let mut builder = IndexBuilder::new(opened)?;
@@ -574,6 +599,14 @@ fn dangling_short_and_unsupported_targets_of_owned_prims_are_rejected() {
         )),
         ErrorCode::InvalidId
     );
+    // A digest-less fastener target reports the digest diagnostic, not a dangling link.
+    assert_eq!(
+        code(with(
+            "custom rel bim:test:to = </World/Definitions/Fasteners/FST_abc>",
+            ""
+        )),
+        ErrorCode::InvalidId
+    );
     assert_eq!(
         code(with("custom rel bim:test:to = </Nowhere>", "")),
         ErrorCode::DanglingRelationship
@@ -839,8 +872,11 @@ fn plate() -> Change {
                 [0.0, 500.0, 0.0],
             ],
             thickness_mm: 10.0,
+            thickness_side: None,
+            corners: Vec::new(),
             holes: Vec::new(),
-            cut: None,
+            hole_records: Vec::new(),
+            cuts: Vec::new(),
         },
         placement: pose(),
         material: Some(resources()[1].digest),
@@ -852,10 +888,11 @@ fn member(id: &str, name: &str) -> Change {
         name: name.into(),
         shape: Shape::Member {
             kind: MemberKind::Beam,
-            axis_mm: [[0.0, 0.0, 0.0], [0.0, 0.0, 2000.0]],
+            axis_mm: vec![[0.0, 0.0, 0.0], [0.0, 0.0, 2000.0]],
             profile: resources()[0].digest,
             roll_rad: Some(0.125),
-            cut: None,
+            placement: None,
+            cuts: Vec::new(),
         },
         placement: pose(),
         material: None,

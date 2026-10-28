@@ -12,8 +12,8 @@ use beamcraft_engine::drawing::projection::{
     self, BodyProjection, DimensionProjection, Projection,
 };
 use beamcraft_engine::drawing::{
-    DEFAULT_SCALE_DENOMINATOR, DimensionSpec, Drawing, DrawingSpec, Plane, SourceModelPin,
-    ViewSpec, svg,
+    DEFAULT_SCALE_DENOMINATOR, DimensionSpec, DraftingGeometry, DraftingSpec, Drawing, DrawingSpec,
+    Plane, SourceModelPin, ViewSpec, print, svg,
 };
 use beamcraft_engine::query::feature::FeatureId;
 use beamcraft_host::revision::{ExpectedBase, RevisionStore};
@@ -21,8 +21,8 @@ use beamcraft_host::storage::BlobStore;
 use beamcraft_json::Json;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{
-    ActorId, DimensionId, DocumentVersionId, DrawingId, DrawingViewId, ElementId, OpId, ProjectId,
-    RevisionId, Uuid7,
+    ActorId, DimensionId, DocumentVersionId, DraftingEntityId, DrawingId, DrawingViewId, ElementId,
+    OpId, ProjectId, RevisionId, Uuid7,
 };
 use std::io::Write;
 use std::{collections::BTreeMap, ffi::OsString};
@@ -45,6 +45,7 @@ pub fn handles(command: &OsString) -> bool {
             "preview-drawing"
                 | "create-drawing"
                 | "refresh-drawing"
+                | "edit-drafting"
                 | "publish-drawing"
                 | "inspect-drawing"
                 | "inspect-drawing-versions"
@@ -131,8 +132,9 @@ fn geometry_json(result: Projection) -> Run<(Json, Json)> {
     Ok((body, dimension))
 }
 
-fn document_options(args: &[OsString]) -> Run<BTreeMap<&str, &str>> {
-    if args.len() > 39 {
+/// Single-value options plus the repeatable `--drafting` values, in caller order.
+fn document_options(args: &[OsString]) -> Run<(BTreeMap<&str, &str>, Vec<&str>)> {
+    if args.len() > 159 {
         return Err(invalid("too many drawing document options"));
     }
     let args = args
@@ -148,8 +150,11 @@ fn document_options(args: &[OsString]) -> Run<BTreeMap<&str, &str>> {
         return Err(invalid("options must be KEY VALUE pairs"));
     }
     let mut options = BTreeMap::new();
+    let mut drafting = Vec::new();
     for [key, value] in args.as_chunks::<2>().0 {
-        if !matches!(
+        if *key == "--drafting" {
+            drafting.push(*value);
+        } else if !matches!(
             *key,
             "--store"
                 | "--document-dir"
@@ -172,12 +177,51 @@ fn document_options(args: &[OsString]) -> Run<BTreeMap<&str, &str>> {
                 | "--version-id"
                 | "--model-store"
                 | "--out"
+                | "--format"
+                | "--sheet"
         ) || options.insert(*key, *value).is_some()
         {
             return Err(invalid("unknown or repeated drawing document option"));
         }
     }
-    Ok(options)
+    Ok((options, drafting))
+}
+
+/// Parses repeatable `--drafting UUID:kind:x,y,...` values into drawn objects. Engine admission
+/// still owns every bound; this only builds the typed values.
+fn drafting_specs(values: &[&str]) -> Run<Vec<DraftingSpec>> {
+    values
+        .iter()
+        .map(|value| {
+            let mut parts = value.splitn(3, ':');
+            let id = parts
+                .next()
+                .ok_or_else(|| invalid("drafting spec requires UUID:kind:x,y"))?;
+            let kind = parts
+                .next()
+                .ok_or_else(|| invalid("drafting spec requires UUID:kind:x,y"))?;
+            let coords = parts
+                .next()
+                .ok_or_else(|| invalid("drafting spec requires UUID:kind:x,y"))?;
+            let id = DraftingEntityId::parse(id)
+                .map_err(|_| invalid("drafting identity must be a full canonical UUIDv7"))?;
+            let coords = coords
+                .split(',')
+                .map(|number| {
+                    number
+                        .parse::<f64>()
+                        .map_err(|_| invalid("invalid drafting coordinate"))
+                })
+                .collect::<Run<Vec<f64>>>()?;
+            let geometry = DraftingGeometry::from_parts(kind, &coords).ok_or_else(|| {
+                invalid(
+                    "drafting kind must be line, polyline, arc, circle or rectangle \
+                     with matching coordinates",
+                )
+            })?;
+            Ok(DraftingSpec { id, geometry })
+        })
+        .collect()
 }
 
 fn document_drawing(options: &BTreeMap<&str, &str>, source: SourceModelPin) -> Run<Drawing> {
@@ -251,12 +295,13 @@ fn document_drawing(options: &BTreeMap<&str, &str>, source: SourceModelPin) -> R
                     .map_err(|_| invalid("invalid decimal count"))
             })?,
         },
+        drafting: Vec::new(),
     })
     .map_err(Into::into)
 }
 
-fn document_json(revision: &beamcraft_cli::drawing::document::DocumentRevision) -> Json {
-    Json::object([
+fn document_json(revision: &beamcraft_cli::drawing::document::DocumentRevision) -> Run<Json> {
+    Ok(Json::object([
         (
             "revision_id",
             Json::text(revision.info.revision().to_string()),
@@ -294,7 +339,35 @@ fn document_json(revision: &beamcraft_cli::drawing::document::DocumentRevision) 
             Json::text(revision.source.pin().manifest.to_string()),
         ),
         ("request_digest", Json::text(revision.request.to_string())),
-    ])
+        (
+            "drafting",
+            Json::Array(
+                revision
+                    .drawing
+                    .drafting()
+                    .iter()
+                    .map(|entity| {
+                        Ok(Json::object([
+                            ("id", Json::text(entity.id.to_string())),
+                            ("kind", Json::text(entity.geometry.kind())),
+                            (
+                                "geometry_mm",
+                                Json::Array(
+                                    entity
+                                        .geometry
+                                        .clone()
+                                        .coordinates()
+                                        .iter()
+                                        .map(|value| num(*value))
+                                        .collect::<Run<Vec<_>>>()?,
+                                ),
+                            ),
+                        ]))
+                    })
+                    .collect::<Run<Vec<_>>>()?,
+            ),
+        ),
+    ]))
 }
 
 fn run_document(args: &[OsString]) -> Run<Json> {
@@ -302,7 +375,7 @@ fn run_document(args: &[OsString]) -> Run<Json> {
         .first()
         .and_then(|value| value.to_str())
         .ok_or_else(|| invalid("drawing command is missing"))?;
-    let options = document_options(args)?;
+    let (options, drafting_values) = document_options(args)?;
     let required = |key| {
         options
             .get(key)
@@ -355,7 +428,59 @@ fn run_document(args: &[OsString]) -> Run<Json> {
                     latest_published,
                 },
             )?;
-            Ok(document_json(&revision))
+            document_json(&revision)
+        }
+        "edit-drafting" => {
+            let documents = DocumentStore::open(std::path::Path::new(required("--document-dir")?))?;
+            let expected = ExpectedBase::Revision(
+                beamcraft_host::revision::Uuid7::parse(required("--expected-head")?)
+                    .map_err(|_| invalid("expected head must be UUIDv7"))?,
+            );
+            let op = OpId::parse(required("--op-id")?)
+                .map_err(|_| invalid("operation id must be UUIDv7"))?;
+            let revision = Uuid7::parse(required("--revision-id")?)
+                .map_err(|_| invalid("revision id must be UUIDv7"))?;
+            let actor = ActorId::parse(required("--actor-id")?)
+                .map_err(|_| invalid("actor id must be UUIDv7"))?;
+            let drafting = drafting_specs(&drafting_values)?;
+            // Replaying the exact accepted operation stays safe after later revisions.
+            if let Some(previous) = documents.query(&op)? {
+                let edited = previous.drawing.clone().with_drafting(drafting)?;
+                let request = request_fingerprint(
+                    &edited,
+                    State::Draft,
+                    None,
+                    previous.latest_published,
+                    actor,
+                    &expected,
+                )?;
+                if previous.request == request {
+                    return document_json(&previous);
+                }
+                return Err(PlateError {
+                    rule_id: None,
+                    code: ErrorCode::OpIdReuse,
+                    message: "document operation id was already used for another request",
+                });
+            }
+            let current = documents.head()?;
+            // Drawn objects belong to the document only: no model store is read, the retained
+            // source archive and every identity carry over unchanged.
+            let edited = current.drawing.clone().with_drafting(drafting)?;
+            let (_, revised) = documents.commit(
+                &expected,
+                DocumentWrite {
+                    revision,
+                    operation: op,
+                    actor,
+                    drawing: &edited,
+                    source: &current.source,
+                    state: State::Draft,
+                    version: None,
+                    latest_published: current.latest_published,
+                },
+            )?;
+            Ok(document_json(&revised)?)
         }
         "publish-drawing" => {
             let documents = DocumentStore::open(std::path::Path::new(required("--document-dir")?))?;
@@ -381,7 +506,7 @@ fn run_document(args: &[OsString]) -> Run<Json> {
                     &expected,
                 )?;
                 if previous.request == request {
-                    return Ok(document_json(&previous));
+                    return document_json(&previous);
                 }
                 return Err(PlateError {
                     rule_id: None,
@@ -403,7 +528,7 @@ fn run_document(args: &[OsString]) -> Run<Json> {
                     latest_published: Some(version),
                 },
             )?;
-            Ok(document_json(&published))
+            document_json(&published)
         }
         "export-drawing" => {
             let documents = DocumentStore::open(std::path::Path::new(required("--document-dir")?))?;
@@ -425,7 +550,17 @@ fn run_document(args: &[OsString]) -> Run<Json> {
                 })?;
             let snapshot = published.source.inspect()?.snapshot;
             let projection = projection::resolve(&published.drawing, &snapshot)?;
-            let bytes = svg::export(&published.drawing, version, &projection)?;
+            let format = options.get("--format").copied().unwrap_or("svg");
+            let bytes = match format {
+                "svg" => svg::export(&published.drawing, version, &projection)?,
+                "pdf" => {
+                    let sheet =
+                        print::Sheet::parse(options.get("--sheet").copied().unwrap_or("a4"))
+                            .ok_or_else(|| invalid("sheet must be a4, a3, a2, a1 or a0"))?;
+                    print::export(&published.drawing, version, &projection, sheet)?
+                }
+                _ => return Err(invalid("format must be svg or pdf")),
+            };
             // Reserve the destination only after the exact version verified and rendered; an
             // existing file is never opened for writing or removed.
             let mut file = std::fs::OpenOptions::new()
@@ -448,6 +583,7 @@ fn run_document(args: &[OsString]) -> Run<Json> {
             }
             Ok(Json::object([
                 ("outcome", Json::text("drawing_export")),
+                ("format", Json::text(format)),
                 (
                     "drawing_id",
                     Json::text(published.drawing.spec().id.to_string()),
@@ -479,7 +615,7 @@ fn run_document(args: &[OsString]) -> Run<Json> {
                 }
                 None => "unknown",
             };
-            let mut fields = match document_json(&current) {
+            let mut fields = match document_json(&current)? {
                 Json::Object(fields) => fields,
                 _ => {
                     return Err(PlateError {
@@ -504,7 +640,7 @@ fn run_document(args: &[OsString]) -> Run<Json> {
                             .iter()
                             .filter(|revision| revision.state == State::Published)
                             .map(document_json)
-                            .collect(),
+                            .collect::<Run<Vec<_>>>()?,
                     ),
                 ),
             ]))
@@ -640,6 +776,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         member,
         view,
         dimension,
+        drafting: Vec::new(),
     })?;
     // Admission precedes the strict kernel-derived inspection. The same opened revision supplies
     // both the complete source pin and the snapshot; a concurrent model head never mixes them.

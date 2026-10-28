@@ -12,13 +12,10 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use beamcraft_json::{Json, Limits};
+use beamcraft_json::Json;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-static NEXT: AtomicU64 = AtomicU64::new(0);
 
 #[path = "drawing/projection.rs"]
 mod drawing_projection;
@@ -35,6 +32,9 @@ mod drawing_derived;
 #[path = "drawing/export.rs"]
 mod drawing_export;
 
+#[path = "drawing/drafting.rs"]
+mod drawing_drafting;
+
 const PLATE: &str = "019a7bf0-0000-7000-8000-000000700001";
 const MEMBER: &str = "019a7bf0-0000-7000-8000-000000700002";
 const COPY: &str = "019a7bf0-0000-7000-8000-000000700003";
@@ -43,32 +43,21 @@ const IBEAM: &str = "019a7bf0-0000-7000-8000-000000700005";
 const REFERENCE: &str = "019a7bf0-0000-7000-8000-000000700006";
 const SITE: &str = "#usda 1.0\n(\n    defaultPrim = \"Site\"\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n)\ndef Xform \"Site\"\n{\n    def Mesh \"Body\"\n    {\n        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0)]\n        int[] faceVertexCounts = [3]\n        int[] faceVertexIndices = [0, 1, 2]\n        uniform token subdivisionScheme = \"none\"\n    }\n}\n";
 
+mod support;
+
+use support::{at, text};
+
 struct Fixture {
-    root: PathBuf,
+    shared: support::StoreFixture,
 }
 impl Fixture {
     fn new() -> Self {
-        let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("v04-tests");
-        fs::create_dir_all(&base).unwrap();
-        let root = base.join(format!(
-            "e2e-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir(&root).unwrap();
-        fs::create_dir(root.join("store")).unwrap();
-        Self { root }
+        Self {
+            shared: support::StoreFixture::new("v04-tests"),
+        }
     }
     fn run(&self, command: &str, extra: &[&str]) -> (i32, Json) {
-        let store = self.root.join("store").to_str().unwrap().to_owned();
-        let mut args = vec![command, "--store", store.as_str()];
-        args.extend_from_slice(extra);
-        let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
-            .args(&args)
-            .output()
-            .unwrap();
-        let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
-        (output.status.code().unwrap(), body)
+        self.shared.run(command, extra)
     }
     fn ok(&self, command: &str, extra: &[&str]) -> Json {
         let (code, body) = self.run(command, extra);
@@ -131,19 +120,7 @@ impl Fixture {
         );
     }
 }
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        assert!(self.root.is_absolute() && self.root.file_name().is_some());
-        let _ = fs::remove_dir_all(&self.root);
-    }
-}
 
-fn text(json: &Json, key: &str) -> String {
-    json.get(key).unwrap().string().unwrap().to_owned()
-}
-fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
-    path.iter().fold(json, |j, k| j.get(k).unwrap())
-}
 fn list<'a>(json: &'a Json, key: &str) -> &'a [Json] {
     at(json, &[key]).array().unwrap()
 }
@@ -160,6 +137,14 @@ fn triple(json: &Json) -> [f64; 3] {
 }
 fn fid(element: &str, local: &str) -> String {
     format!("fid1:{element}:{local}")
+}
+/// World positions of an oblique member carry the rounding of the irrational frame entries:
+/// a 1e-6 absolute slack, far above it and far below any engineering band.
+fn near(json: &Json, want: [f64; 3]) {
+    let got = triple(json);
+    for (g, w) in got.iter().zip(want) {
+        assert!((g - w).abs() < 1e-6, "{got:?} != {want:?}");
+    }
 }
 
 #[test]
@@ -600,7 +585,7 @@ fn foreign_references_are_skipped_and_non_box_bodies_have_resolvable_features() 
             IBEAM,
         ],
     );
-    let source = f.root.join("site.usda");
+    let source = f.shared.root.join("site.usda");
     fs::write(&source, SITE).unwrap();
     f.ok(
         "attach-reference",
@@ -781,6 +766,62 @@ fn bad_query_inputs_are_refused_before_any_scan() {
 }
 
 #[test]
+fn a_selection_switch_that_is_off_removes_its_class_and_writes_nothing() {
+    let f = Fixture::new();
+    f.model();
+    let head = f.head();
+    let ray = |extra: &[&str]| {
+        let mut args = vec![
+            "--origin",
+            "600,450,1000",
+            "--direction",
+            "0,0,-1",
+            "--targets",
+            "face",
+        ];
+        args.extend_from_slice(extra);
+        f.ok("pick", &args)
+    };
+    // Parts on: the plate's top face is the one hit.
+    let on = ray(&[]);
+    assert_eq!(text(&list(&on, "hits")[0], "element_id"), PLATE);
+    // Parts off: the same query over the same snapshot answers with no hit and no skip, and
+    // at exactly the same snapshot token, because a switch changes picking only.
+    let off = ray(&["--exclude", "parts"]);
+    assert!(list(&off, "hits").is_empty(), "{off:?}");
+    assert!(list(&off, "skipped").is_empty());
+    assert_eq!(text(&on, "snapshot_token"), text(&off, "snapshot_token"));
+    assert_eq!(f.head(), head);
+    // Switches that cover no registered kind yet, and the empty text, exclude nothing.
+    for switches in [
+        "bolts,welds,holes,assemblies,grids,construction_objects,items",
+        "",
+    ] {
+        assert_eq!(
+            list(&ray(&["--exclude", switches]), "hits").len(),
+            1,
+            "{switches:?}"
+        );
+    }
+    // An unknown switch is an argument error, never a silent no-op.
+    let refused = f.refused(
+        "pick",
+        &[
+            "--origin",
+            "600,450,1000",
+            "--direction",
+            "0,0,-1",
+            "--targets",
+            "face",
+            "--exclude",
+            "plates",
+        ],
+    );
+    assert_eq!(refused.0, "INVALID_ARGUMENT");
+    assert_eq!(f.head(), head);
+}
+
+#[test]
 fn a_small_member_far_from_the_origin_keeps_its_features() {
     let f = Fixture::new();
     let profile = text(
@@ -842,4 +883,167 @@ fn a_small_member_far_from_the_origin_keeps_its_features() {
     );
     let c = &list(&snapped, "candidates")[0];
     assert!(number(at(c, &["distance_mm"])) < 1e-3);
+}
+
+/// The axis snap of a 45-degree sloped beam (issue #132 acceptance): the F06 Horizontal branch
+/// projects world +Z onto the plane perpendicular to the axis, so `Y_m = (-1,0,1)/sqrt(2)` and
+/// `X_m = +Y`, and the axis is the authored segment `(0,0,0)..(4000,0,4000)` — the snap
+/// endpoints are its world `f.z0`/`f.z1` face centres, the nearest point its projection.
+#[test]
+fn snap_answers_axis_start_end_and_nearest_for_a_45_degree_sloped_beam() {
+    let f = Fixture::new();
+    let profile = text(
+        at(
+            &f.ok("define-profile", &["--width", "100", "--height", "50"]),
+            &["definition"],
+        ),
+        "digest",
+    );
+    f.ok(
+        "create-member",
+        &[
+            "--start",
+            "0,0,0",
+            "--end",
+            "4000,0,4000",
+            "--profile-digest",
+            &profile,
+            "--new-id",
+            MEMBER,
+        ],
+    );
+    // The start endpoint, queried from 1,0,1: on the axis line, sqrt(2) from the start, so only
+    // the start is in band.
+    let snapped = f.ok(
+        "snap",
+        &["--point", "1,0,1", "--radius", "5", "--kinds", "axis_end"],
+    );
+    assert!(list(&snapped, "skipped").is_empty(), "{snapped:?}");
+    let c = &list(&snapped, "candidates")[0];
+    assert_eq!(text(c, "element_id"), MEMBER);
+    assert_eq!(text(c, "kind"), "axis_end");
+    assert_eq!(number(at(c, &["axis_parameter"])), 0.0);
+    near(at(c, &["point_world_mm"]), [0.0, 0.0, 0.0]);
+    assert!((number(at(c, &["distance_mm"])) - 2f64.sqrt()).abs() < 1e-6);
+
+    // The end endpoint, queried just before it.
+    let snapped = f.ok(
+        "snap",
+        &[
+            "--point",
+            "3999,0,3999",
+            "--radius",
+            "5",
+            "--kinds",
+            "axis_end",
+        ],
+    );
+    let c = &list(&snapped, "candidates")[0];
+    assert_eq!(number(at(c, &["axis_parameter"])), 1.0);
+    near(at(c, &["point_world_mm"]), [4000.0, 0.0, 4000.0]);
+
+    // The nearest axis point: 100 mm off the middle of the slope.
+    let snapped = f.ok(
+        "snap",
+        &[
+            "--point",
+            "2000,100,2000",
+            "--radius",
+            "150",
+            "--kinds",
+            "axis",
+        ],
+    );
+    assert!(list(&snapped, "skipped").is_empty(), "{snapped:?}");
+    let c = &list(&snapped, "candidates")[0];
+    assert_eq!(text(c, "kind"), "axis");
+    near(at(c, &["point_world_mm"]), [2000.0, 0.0, 2000.0]);
+    assert!((number(at(c, &["distance_mm"])) - 100.0).abs() < 1e-6);
+    assert!((number(at(c, &["axis_parameter"])) - 0.5).abs() < 1e-6);
+}
+
+/// The axis snap of a member with a rotated placement: the same 90-degree-about-Z beam as
+/// `a_rotated_member_reopens_with_world_bounds_and_unchanged_shape` (members.rs), where the
+/// instance rotation maps the authored axis `(0,0,0)..(4000,0,0)` answers in
+/// world at `(-50,70,1000)..(-50,4070,1000)`. A rotated member must not land in the skipped
+/// bucket (issue #132).
+#[test]
+fn snap_answers_the_axis_of_a_member_with_a_rotated_placement() {
+    let f = Fixture::new();
+    let profile = text(
+        at(
+            &f.ok("define-profile", &["--width", "200", "--height", "300"]),
+            &["definition"],
+        ),
+        "digest",
+    );
+    f.ok(
+        "create-member",
+        &[
+            "--start",
+            "0,0,0",
+            "--end",
+            "4000,0,0",
+            "--orientation-xyzw",
+            "0,0,0.7071067811865476,0.7071067811865476",
+            "--translation",
+            "-50,70,1000",
+            "--profile-digest",
+            &profile,
+            "--new-id",
+            MEMBER,
+        ],
+    );
+    // The start endpoint, queried 1 mm off it.
+    let snapped = f.ok(
+        "snap",
+        &[
+            "--point",
+            "-49,70,1000",
+            "--radius",
+            "5",
+            "--kinds",
+            "axis_end",
+        ],
+    );
+    assert!(list(&snapped, "skipped").is_empty(), "{snapped:?}");
+    let c = &list(&snapped, "candidates")[0];
+    assert_eq!(text(c, "element_id"), MEMBER);
+    assert_eq!(number(at(c, &["axis_parameter"])), 0.0);
+    near(at(c, &["point_world_mm"]), [-50.0, 70.0, 1000.0]);
+    assert!((number(at(c, &["distance_mm"])) - 1.0).abs() < 1e-6);
+
+    // The end endpoint, queried just before it.
+    let snapped = f.ok(
+        "snap",
+        &[
+            "--point",
+            "-49,4069,1000",
+            "--radius",
+            "5",
+            "--kinds",
+            "axis_end",
+        ],
+    );
+    let c = &list(&snapped, "candidates")[0];
+    assert_eq!(number(at(c, &["axis_parameter"])), 1.0);
+    near(at(c, &["point_world_mm"]), [-50.0, 4070.0, 1000.0]);
+
+    // The nearest axis point: 30 mm off the middle of the rotated axis.
+    let snapped = f.ok(
+        "snap",
+        &[
+            "--point",
+            "-50,2070,1030",
+            "--radius",
+            "50",
+            "--kinds",
+            "axis",
+        ],
+    );
+    let c = &list(&snapped, "candidates")[0];
+    assert_eq!(text(c, "kind"), "axis");
+    near(at(c, &["point_world_mm"]), [-50.0, 2070.0, 1000.0]);
+    assert!((number(at(c, &["distance_mm"])) - 30.0).abs() < 1e-6);
+    assert!((number(at(c, &["axis_parameter"])) - 0.5).abs() < 1e-6);
 }

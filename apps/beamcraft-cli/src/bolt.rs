@@ -29,7 +29,7 @@ use crate::plate::{
     decode, digest_of, host_uuid, integrity, load_base, number, open_base, prior_op_with, property,
     replay_summary, summarize, text,
 };
-use crate::publication::{PublishRequest, publish_revision};
+use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::bolt::Bounds;
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::transaction::PriorOp;
@@ -194,24 +194,37 @@ fn world_bounds(
         }
         let (width, height) = profiles(&authored.profile)?.extent_mm();
         // Half the diagonal of the section's bounding box contains every rolled cross-section.
+        // The box spans the whole path (one chord for a straight member, the polyline for a
+        // polybeam) plus that reach.
         let reach = 0.5 * (width * width + height * height).sqrt();
-        let [ax, ay, az] = authored.axis_points_mm[0];
-        let [bx, by, bz] = authored.axis_points_mm[1];
+        let Some(first) = authored.axis_points_mm.first() else {
+            return Err(integrity("a committed member has no path points"));
+        };
+        let mut corner = *first;
+        let mut opposite = *first;
+        for p in &authored.axis_points_mm {
+            corner[0] = corner[0].min(p[0]);
+            corner[1] = corner[1].min(p[1]);
+            corner[2] = corner[2].min(p[2]);
+            opposite[0] = opposite[0].max(p[0]);
+            opposite[1] = opposite[1].max(p[1]);
+            opposite[2] = opposite[2].max(p[2]);
+        }
         let expand =
             |[x, y, z]: [f64; 3], sign: f64| [x + sign * reach, y + sign * reach, z + sign * reach];
         let min = expand(
             [
-                ax.min(bx) + translation[0],
-                ay.min(by) + translation[1],
-                az.min(bz) + translation[2],
+                corner[0] + translation[0],
+                corner[1] + translation[1],
+                corner[2] + translation[2],
             ],
             -1.0,
         );
         let max = expand(
             [
-                ax.max(bx) + translation[0],
-                ay.max(by) + translation[1],
-                az.max(bz) + translation[2],
+                opposite[0] + translation[0],
+                opposite[1] + translation[1],
+                opposite[2] + translation[2],
             ],
             1.0,
         );
@@ -433,12 +446,7 @@ pub fn create_bolt(
         &control,
     )?;
     check_footprint(&prepared, &footprint)?;
-    let changed_layers = prepared
-        .layers
-        .iter()
-        .filter(|l| before.get(&l.name) != Some(&l.digest))
-        .map(|l| l.name.clone())
-        .collect();
+    let changed_layers = changed_layers(&prepared, &before);
     let committed = publish_revision(
         store,
         &PublishRequest {

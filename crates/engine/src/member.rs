@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! F04 command application for `CreateStraightMember` (P03): the member counterpart of
-//! [`crate::command::create_plate`].
+//! F04 command application for `CreateStraightMember` (P03) and `CreatePolybeam` (P12): the
+//! member counterparts of [`crate::command::create_plate`].
 //!
 //! A member is a beam or a column with a required pinned profile and an optional pinned
 //! material. The engine never touches USD: it validates the command, resolves the pinned
@@ -10,18 +10,18 @@
 //! the axis, width along the rolled `X_m`, height along `Y_m`; F06 sections 2, 4 and 6) and
 //! returns the authored state, the body, the quantities and the declared footprint.
 //!
-//! Members admit a rigid placement rotation. The section frame is the axis x up/roll member
-//! frame *composed with the placement quaternion*: the roll is applied about the member axis in
-//! the local frame first, and the placement quaternion maps the result, so the world section
-//! orientation is `R_placement . (axis x up/roll)` and the mesh is the detailed outline in that
-//! composed frame. The placement translation is not part of the body: it stays a scene
-//! placement. A non-normalized or degenerate quaternion is `INVALID_ARGUMENT` (never a crash).
-//! Plates and the other kinds keep the identity-rotation refusal; their frame work is a later
-//! slice.
+//! Members keep their axis, roll, cuts and mesh in element-local coordinates. A rigid placement
+//! is carried by the scene instance and USD Xform; it never changes shape or mass keys. The
+//! world section orientation is the placement rotation applied after the local axis/roll frame.
+//! Placement admission remains mandatory even though it does not enter body evaluation.
+//!
+//! A member with exactly two axis points is straight (P03); one with more is a polybeam (P12):
+//! the one section is swept along the polyline, every interior vertex is mitred (G12), and the
+//! volume is the effective section area times the path length.
 
 use crate::command::{
-    AreaSource, CUT_VOLUME_ALGORITHM, MaterialInfo, MaterialLookup, Quantities, Volumes, apply_cut,
-    map_cut, quantities_with_material,
+    AreaSource, CUT_VOLUME_ALGORITHM, MaterialInfo, MaterialLookup, Quantities, Volumes, map_cut,
+    quantities_with_material, replay_cuts,
 };
 use crate::footprint::Footprint;
 use crate::solid::SolidMesh;
@@ -29,10 +29,14 @@ use crate::transaction::PriorOp;
 use beamcraft_geom::{MemberFrame, Point3};
 use beamcraft_kernel::diagnostic::{Failure, Field};
 use beamcraft_kernel::ops::{Body, OpFailure};
-use beamcraft_kernel::section::{Representation, SectionFailure, SectionMember, section_member};
+use beamcraft_kernel::section::{
+    DETAILED_MIN_SAGITTA_MM, Representation, SectionFailure, SectionMember, section_member,
+};
+use beamcraft_kernel::sweep::{Sweep, SweepFailure, SweepPath, sweep};
 use beamcraft_kernel::{StraightMember, straight_member};
 use beamcraft_model::command::{
-    CommandError, CreateStraightMember, MemberKind, Placement, PlaneCut,
+    CommandError, CreatePolybeam, CreateStraightMember, CutRecord, MemberKind, Placement,
+    SectionPlacement,
 };
 use beamcraft_model::definition::{
     DeclaredAreaWarning, RectangleProfileSpec, SectionProfileSpec, SectionProperties,
@@ -40,7 +44,7 @@ use beamcraft_model::definition::{
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId};
-use beamcraft_model::section::SectionShape;
+use beamcraft_model::section::{CustomSection, SectionShape};
 
 /// Version label of the volume algorithm in the [`Quantities`] record of a rectangle member:
 /// the effective section area (the declared catalogue area, else `width * height`) times the
@@ -53,6 +57,13 @@ pub const MEMBER_VOLUME_ALGORITHM: &str =
 /// axis length. The mesh is still the detailed polygon outline; its volume is not this number.
 pub const SECTION_VOLUME_ALGORITHM: &str =
     "pmass-member-area-x-length/1;section-exact-area;tolerance-policy-3";
+
+/// Version label of the volume algorithm of a polybeam (P12): the effective section area (the
+/// declared catalogue area, else the exact area) times the polyline path length. The G12 seal
+/// cross-checks the mesh against the analytic truncated-prism value, which drops the mitres for
+/// a section centred on the path.
+pub const POLYBEAM_VOLUME_ALGORITHM: &str =
+    "pmass-member-area-x-path-length/1;polybeam;tolerance-policy-3";
 
 /// Labels that earlier slices stored for members. A stored record that carries one is a
 /// superseded value: it reads as `stale` and is recomputed by the next edit that rewrites the
@@ -153,49 +164,98 @@ pub struct AuthoredMember {
     pub kind: MemberKind,
     /// Label.
     pub name: String,
-    /// Element-local axis points `p1`, `p2`.
-    pub axis_points_mm: [[f64; 3]; 2],
+    /// Authored integer part class (P15); zero is the default.
+    pub class: i32,
+    /// Element-local path points in order: exactly two for a straight member, more for a
+    /// polybeam.
+    pub axis_points_mm: Vec<[f64; 3]>,
     /// Pinned profile definition.
     pub profile: ContentDigest,
-    /// Explicit roll; `None` is zero.
+    /// Explicit roll; `None` is zero. A polybeam has no authored roll: the G12 sweep carries the
+    /// section parallel-transported.
     pub roll_rad: Option<f64>,
+    /// Position of the section about the axis (P14); `None` is the centred default.
+    pub section_placement: Option<SectionPlacement>,
     /// Rigid placement as submitted.
     pub placement: Placement,
     /// Pinned material definition, if any.
     pub material: Option<ContentDigest>,
-    /// The authored plane cut (A03, experimental); `None` means no cut.
-    pub cut: Option<PlaneCut>,
+    /// The owned `plane_cut` operation records (A03, amendment A-2), replayed in ascending
+    /// ordinal order. Empty means an uncut member.
+    pub cuts: Vec<CutRecord>,
 }
 
 impl AuthoredMember {
-    /// The authored fields of an accepted command.
+    /// The authored fields of an accepted straight-member command.
     pub fn from_command(command: &CreateStraightMember) -> Self {
         Self {
             id: command.new_id,
             kind: command.kind,
             name: command.name.clone(),
-            axis_points_mm: command.axis_points_mm,
+            class: command.class,
+            axis_points_mm: vec![command.axis_points_mm[0], command.axis_points_mm[1]],
             profile: command.profile_digest,
             roll_rad: command.roll_rad,
+            section_placement: command.section_placement,
             placement: command.placement,
             material: command.material_digest,
-            cut: command.cut,
+            cuts: Vec::new(),
         }
     }
 
-    /// The `CreateStraightMember` that would author exactly this state.
-    pub fn to_command(&self) -> CreateStraightMember {
-        CreateStraightMember {
+    /// The authored fields of an accepted polybeam command.
+    pub fn from_polybeam(command: &CreatePolybeam) -> Self {
+        Self {
+            id: command.new_id,
+            kind: command.kind,
+            name: command.name.clone(),
+            class: command.class,
+            axis_points_mm: command.path_points_mm.clone(),
+            profile: command.profile_digest,
+            roll_rad: None,
+            section_placement: None,
+            placement: command.placement,
+            material: command.material_digest,
+            cuts: Vec::new(),
+        }
+    }
+
+    /// The `CreateStraightMember` that would author exactly this state, or `None` for a
+    /// polybeam member.
+    pub fn to_command(&self) -> Option<CreateStraightMember> {
+        let [p1, p2] = self.axis_points_mm.as_slice() else {
+            return None;
+        };
+        Some(CreateStraightMember {
             new_id: self.id,
             kind: self.kind,
             name: self.name.clone(),
-            axis_points_mm: self.axis_points_mm,
+            class: self.class,
+            axis_points_mm: [*p1, *p2],
             profile_digest: self.profile,
             placement: self.placement,
             roll_rad: self.roll_rad,
+            section_placement: self.section_placement,
             material_digest: self.material,
-            cut: self.cut,
+        })
+    }
+
+    /// The `CreatePolybeam` that would author exactly this state, or `None` for a straight
+    /// member.
+    pub fn to_polybeam_command(&self) -> Option<CreatePolybeam> {
+        if self.axis_points_mm.len() < 3 {
+            return None;
         }
+        Some(CreatePolybeam {
+            new_id: self.id,
+            kind: self.kind,
+            name: self.name.clone(),
+            class: self.class,
+            path_points_mm: self.axis_points_mm.clone(),
+            profile_digest: self.profile,
+            placement: self.placement,
+            material_digest: self.material,
+        })
     }
 }
 
@@ -213,7 +273,8 @@ pub struct MemberBody {
     pub width_mm: f64,
     /// Height of the section's bounding box in millimetres.
     pub height_mm: f64,
-    /// The axis length in millimetres.
+    /// The physical length of the solid along the axis in millimetres: the axis length moved by
+    /// the P14 end offsets (equal to it for the default placement).
     pub axis_length_mm: f64,
     /// The effective section area in mm2 (declared catalogue area, else the exact area).
     pub section_area_mm2: f64,
@@ -238,6 +299,7 @@ fn map_kernel(failure: &Failure) -> CommandError {
                 Field::Axis => "axis_points_mm",
                 Field::Section => "profile",
                 Field::Roll => "roll_rad",
+                Field::SectionPlacement => "section_placement",
                 _ => "geometry",
             };
             CommandError::new(d.code.f04_code(), field, "geometry evaluation failed")
@@ -252,6 +314,115 @@ fn map_section(failure: &SectionFailure) -> CommandError {
     }
 }
 
+/// Maps a G12 sweep refusal to the command field that caused it.
+fn map_sweep(failure: &SweepFailure) -> CommandError {
+    let (field, message) = match failure {
+        SweepFailure::Section(_) | SweepFailure::Profile(_) => {
+            ("profile", "section evaluation failed")
+        }
+        SweepFailure::Path(_) => ("path_points_mm", "polybeam path evaluation failed"),
+        SweepFailure::Body(_) => ("geometry", "polybeam body certification failed"),
+    };
+    CommandError::new(failure.f04_code(), field, message)
+}
+
+/// Total polyline path length in millimetres. A stored axis is untrusted input, so a
+/// non-finite chord or sum is a refusal, never a silent quantity.
+fn path_length_mm(points: &[[f64; 3]]) -> Result<f64, CommandError> {
+    let mut total = 0.0;
+    for (a, b) in points.iter().zip(points.iter().skip(1)) {
+        let [ax, ay, az] = *a;
+        let [bx, by, bz] = *b;
+        let d = [bx - ax, by - ay, bz - az];
+        let length = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+        if !length.is_finite() {
+            return Err(CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "axis_points_mm",
+                "a path chord has no finite length",
+            ));
+        }
+        total += length;
+    }
+    if !total.is_finite() {
+        return Err(CommandError::new(
+            ErrorCode::LimitExceeded,
+            "axis_points_mm",
+            "the path length exceeds the finite range",
+        ));
+    }
+    Ok(total)
+}
+
+/// The centred rectangle of a first-scope profile as an admitted custom outline, the section
+/// the G12 sweep polygon is built from. The admission is the rectangle's own rule: the values
+/// are re-checked because a committed definition is untrusted input.
+fn rectangle_outline(
+    width_mm: f64,
+    height_mm: f64,
+    declared_area_mm2: Option<f64>,
+) -> Result<SectionShape, CommandError> {
+    RectangleProfileSpec {
+        width_mm,
+        height_mm,
+        section: SectionProperties {
+            area_mm2: declared_area_mm2,
+            ..SectionProperties::default()
+        },
+    }
+    .validate()?;
+    let (x, y) = (width_mm / 2.0, height_mm / 2.0);
+    Ok(SectionShape::Custom(CustomSection {
+        outer: vec![[-x, -y], [x, -y], [x, y], [-x, y]],
+        cavities: Vec::new(),
+    }))
+}
+
+/// The body of a polybeam: the one section swept along the polyline path (G12), every interior
+/// vertex mitred. The quantity of record stays analytic — the effective section area times the
+/// path length; a cut replaces both mesh and volume with the certified replay result.
+fn evaluate_polybeam_body(
+    authored: &AuthoredMember,
+    profile: &ProfileInfo,
+    points: &[[f64; 3]],
+) -> Result<(SolidMesh, f64, &'static str, Option<f64>), CommandError> {
+    let shape = match profile {
+        ProfileInfo::Rectangle {
+            width_mm,
+            height_mm,
+            declared_area_mm2,
+        } => rectangle_outline(*width_mm, *height_mm, *declared_area_mm2)?,
+        ProfileInfo::Section { shape, .. } => shape.clone(),
+    };
+    let swept = sweep(&Sweep {
+        path: SweepPath::Polyline(
+            points
+                .iter()
+                .map(|p| Point3::new(p[0], p[1], p[2]))
+                .collect(),
+        ),
+        shape,
+        // The detailed outline of the section, like a straight member of the same section.
+        representation: Representation::Detailed,
+        // Unused by a pure polyline, which has no curve; a positive value is required anyway.
+        chord_deviation_mm: DETAILED_MIN_SAGITTA_MM,
+    })
+    .map_err(|failure| map_sweep(&failure))?;
+    let path_length_mm = path_length_mm(points)?;
+    if authored.cuts.is_empty() {
+        Ok((
+            SolidMesh::from_sweep(&swept),
+            path_length_mm,
+            POLYBEAM_VOLUME_ALGORITHM,
+            None,
+        ))
+    } else {
+        let solid = replay_cuts(swept.body(), SolidMesh::from_sweep(&swept), &authored.cuts)?;
+        let volume = solid.volume_mm3();
+        Ok((solid, path_length_mm, CUT_VOLUME_ALGORITHM, Some(volume)))
+    }
+}
+
 /// Net area in mm2 of the detailed polygon outline of a section shape, as the kernel generates
 /// it for the mesh (shoelace of the polygon, radii as chords on the arcs). It is a display and
 /// geometry figure only: quantities use the exact area ([`ProfileInfo::effective_area`]).
@@ -262,6 +433,7 @@ pub fn section_outline_area_mm2(shape: &SectionShape) -> Result<f64, CommandErro
         shape: shape.clone(),
         representation: Representation::Detailed,
         roll_rad: None,
+        placement: SectionPlacement::default(),
     })
     .map_err(|failure| map_section(&failure))?;
     Ok(result.net_area_mm2())
@@ -286,129 +458,132 @@ pub fn declared_section_area_warning(spec: &SectionProfileSpec) -> Option<Declar
 /// effective area is the declared catalogue area when the profile carries one, else the exact
 /// computed area (P-Mass).
 ///
-/// A non-identity placement rotation composes into the mesh: the placement quaternion maps the
-/// rolled member frame (module documentation), and the mesh keeps the same triangles and volume
-/// with rotated vertices. A non-normalized or degenerate quaternion is `INVALID_ARGUMENT`; the
-/// identity rotation leaves the mesh bytes unchanged.
+/// Placement is validated but excluded from the local body and its keys. The scene instance
+/// applies the complete rigid transform for bounds, picking, features and display.
 pub fn evaluate_member(
     authored: &AuthoredMember,
     profile: ProfileInfo,
 ) -> Result<MemberBody, CommandError> {
-    let [p1, p2] = authored.axis_points_mm;
-    let (start, end) = (
-        Point3::new(p1[0], p1[1], p1[2]),
-        Point3::new(p2[0], p2[1], p2[2]),
-    );
+    authored.placement.validate()?;
+    let points: Vec<Point3> = authored
+        .axis_points_mm
+        .iter()
+        .map(|p| Point3::new(p[0], p[1], p[2]))
+        .collect();
     let (width_mm, height_mm) = profile.extent_mm();
+    // The P14 end offsets lengthen or shorten the solid along the axis; the kernel builders
+    // validate the offsets and refuse a non-positive net length.
+    let section_placement = authored.section_placement.unwrap_or_default();
+    let length_delta_mm = section_placement.end_offset_mm - section_placement.start_offset_mm;
     SectionProperties {
         area_mm2: profile.declared_area_mm2(),
         ..SectionProperties::default()
     }
     .validate()?;
-    let (solid, axis_length_mm, algorithm, cut_volume_mm3) = match &profile {
-        ProfileInfo::Rectangle {
-            width_mm,
-            height_mm,
-            declared_area_mm2,
-        } => {
-            // The declared area is admitted with the rectangle's own rule (it must agree with
-            // width x height within 0.1 percent), so a direct engine caller cannot pair a
-            // rectangle with an area that would give a different volume.
-            RectangleProfileSpec {
-                width_mm: *width_mm,
-                height_mm: *height_mm,
-                section: SectionProperties {
-                    area_mm2: *declared_area_mm2,
-                    ..SectionProperties::default()
-                },
-            }
-            .validate()?;
-            let result = straight_member(StraightMember {
-                start,
-                end,
-                width_mm: *width_mm,
-                height_mm: *height_mm,
-                roll_rad: authored.roll_rad,
-            })
-            .map_err(|failure| map_kernel(&failure))?;
-            // The kernel succeeded, so the frame exists; the same frame gives the same length.
-            let frame = MemberFrame::new(start, end, *width_mm, *height_mm, authored.roll_rad)
-                .map_err(|_| {
-                    CommandError::new(
-                        ErrorCode::UnsupportedGeometry,
-                        "axis_points_mm",
-                        "member frame could not be built",
-                    )
-                })?;
-            // The cut replaces both the mesh and the analytic volume with the certified cut
-            // result; without one the P-Mass `area x length` volume stands.
-            let (solid, cut_volume) = match authored.cut.as_ref() {
-                Some(cut) => {
-                    let body = Body::from_plate(&result).map_err(|f: OpFailure| map_cut(&f))?;
-                    let applied = apply_cut(&body, cut)?;
-                    (
-                        SolidMesh::from_operation(&applied),
-                        Some(applied.volume_mm3().midpoint()),
-                    )
+    let (solid, axis_length_mm, algorithm, cut_volume_mm3) = if points.len() > 2 {
+        // A polybeam (P12) has no P14 section placement yet: the sweep slice carries one centred
+        // section along the path and authors no placement attributes.
+        evaluate_polybeam_body(authored, &profile, &authored.axis_points_mm)?
+    } else {
+        let Some((start, end)) = points.first().zip(points.last()).map(|(a, b)| (*a, *b)) else {
+            return Err(CommandError::new(
+                ErrorCode::UnsupportedGeometry,
+                "axis_points_mm",
+                "the member axis has no ends",
+            ));
+        };
+        match &profile {
+            ProfileInfo::Rectangle {
+                width_mm,
+                height_mm,
+                declared_area_mm2,
+            } => {
+                // The declared area is admitted with the rectangle's own rule (it must agree with
+                // width x height within 0.1 percent), so a direct engine caller cannot pair a
+                // rectangle with an area that would give a different volume.
+                RectangleProfileSpec {
+                    width_mm: *width_mm,
+                    height_mm: *height_mm,
+                    section: SectionProperties {
+                        area_mm2: *declared_area_mm2,
+                        ..SectionProperties::default()
+                    },
                 }
-                None => (SolidMesh::from_box(&result), None),
-            };
-            (
-                solid,
-                frame.scale().axis_length_mm(),
-                if cut_volume.is_some() {
-                    CUT_VOLUME_ALGORITHM
+                .validate()?;
+                let result = straight_member(StraightMember {
+                    start,
+                    end,
+                    width_mm: *width_mm,
+                    height_mm: *height_mm,
+                    roll_rad: authored.roll_rad,
+                    placement: section_placement,
+                })
+                .map_err(|failure| map_kernel(&failure))?;
+                // The kernel succeeded, so the frame exists; the same frame gives the same length.
+                let frame = MemberFrame::new(start, end, *width_mm, *height_mm, authored.roll_rad)
+                    .map_err(|_| {
+                        CommandError::new(
+                            ErrorCode::UnsupportedGeometry,
+                            "axis_points_mm",
+                            "member frame could not be built",
+                        )
+                    })?;
+                let axis_length_mm = frame.scale().axis_length_mm() + length_delta_mm;
+                // The cuts replace both the mesh and the analytic volume with the certified replay
+                // result; without one the P-Mass `area x length` volume stands.
+                let (solid, cut_volume) = if authored.cuts.is_empty() {
+                    (SolidMesh::from_box(&result), None)
                 } else {
-                    MEMBER_VOLUME_ALGORITHM
-                },
-                cut_volume,
-            )
-        }
-        ProfileInfo::Section { shape, .. } => {
-            shape.validate()?;
-            let result = section_member(&SectionMember {
-                start,
-                end,
-                shape: shape.clone(),
-                representation: Representation::Detailed,
-                roll_rad: authored.roll_rad,
-            })
-            .map_err(|failure| map_section(&failure))?;
-            match authored.cut.as_ref() {
-                Some(cut) => {
-                    let applied = apply_cut(result.body(), cut)?;
+                    let body = Body::from_plate(&result).map_err(|f: OpFailure| map_cut(&f))?;
+                    let solid = replay_cuts(&body, SolidMesh::from_box(&result), &authored.cuts)?;
+                    let volume = solid.volume_mm3();
+                    (solid, Some(volume))
+                };
+                (
+                    solid,
+                    axis_length_mm,
+                    if cut_volume.is_some() {
+                        CUT_VOLUME_ALGORITHM
+                    } else {
+                        MEMBER_VOLUME_ALGORITHM
+                    },
+                    cut_volume,
+                )
+            }
+            ProfileInfo::Section { shape, .. } => {
+                shape.validate()?;
+                let result = section_member(&SectionMember {
+                    start,
+                    end,
+                    shape: shape.clone(),
+                    representation: Representation::Detailed,
+                    roll_rad: authored.roll_rad,
+                    placement: section_placement,
+                })
+                .map_err(|failure| map_section(&failure))?;
+                if authored.cuts.is_empty() {
                     (
-                        SolidMesh::from_operation(&applied),
+                        SolidMesh::from_section(&result),
+                        result.axis_length_mm(),
+                        SECTION_VOLUME_ALGORITHM,
+                        None,
+                    )
+                } else {
+                    let solid = replay_cuts(
+                        result.body(),
+                        SolidMesh::from_section(&result),
+                        &authored.cuts,
+                    )?;
+                    let volume = solid.volume_mm3();
+                    (
+                        solid,
                         result.axis_length_mm(),
                         CUT_VOLUME_ALGORITHM,
-                        Some(applied.volume_mm3().midpoint()),
+                        Some(volume),
                     )
                 }
-                None => (
-                    SolidMesh::from_section(&result),
-                    result.axis_length_mm(),
-                    SECTION_VOLUME_ALGORITHM,
-                    None,
-                ),
             }
         }
-    };
-    // The placement rotation composes into the body: the placement quaternion maps the rolled
-    // member frame (module documentation). Identity keeps the mesh bytes, so stored digests stay
-    // stable; the translation is never part of the body.
-    let solid = if authored.placement.is_identity_rotation() {
-        solid
-    } else {
-        authored.placement.validate()?;
-        solid
-            .rotated_by(authored.placement.orientation_xyzw)
-            .ok_or_else(|| {
-                CommandError::new(
-                    ErrorCode::UnsupportedGeometry,
-                    "placement.orientation_xyzw",
-                    "the rotated member mesh failed mesh admission",
-                )
-            })?
     };
     let (section_area_mm2, area_source) = profile.effective_area();
     // A cut member's volume is the certified cut result (A03); otherwise the P-Mass gross
@@ -552,11 +727,85 @@ pub fn admit_create_member(
     }
 }
 
+/// Everything one accepted `CreatePolybeam` produces for the layers and the host; the outcome
+/// record is the straight member's.
+pub type CreatePolybeamOutcome = CreateMemberOutcome;
+
+/// Applies `CreatePolybeam` to an isolated draft in memory: argument admission, duplicate id,
+/// the pinned profile (required) and material (optional) in that order, then the swept
+/// geometry. Nothing is published.
+pub fn create_polybeam(
+    command: &CreatePolybeam,
+    existing: &dyn Fn(&ElementId) -> bool,
+    profiles: ProfileLookup<'_>,
+    materials: MaterialLookup<'_>,
+) -> Result<CreatePolybeamOutcome, CommandError> {
+    command.validate_arguments()?;
+    if existing(&command.new_id) {
+        return Err(CommandError::new(
+            ErrorCode::DuplicateId,
+            "new_id",
+            "element id is already owned",
+        ));
+    }
+    let profile = profiles(&command.profile_digest)?;
+    let material = command
+        .material_digest
+        .as_ref()
+        .map(materials)
+        .transpose()?;
+    let footprint = Footprint::for_create_member(
+        command.new_id,
+        command.profile_digest,
+        command.material_digest,
+    )?;
+    let authored = AuthoredMember::from_polybeam(command);
+    let body = evaluate_member(&authored, profile)?;
+    let quantities = member_quantities(&body, material)?;
+    Ok(CreatePolybeamOutcome {
+        fingerprint: command.content_fingerprint()?,
+        authored,
+        body,
+        quantities,
+        footprint,
+    })
+}
+
+/// Admits one `CreatePolybeam`: the replay decision of [`admit_create_member`] with the P12
+/// content fingerprint.
+pub fn admit_create_polybeam(
+    op_id: OpId,
+    command: &CreatePolybeam,
+    prior: PriorOp,
+    existing: &dyn Fn(&ElementId) -> bool,
+    profiles: ProfileLookup<'_>,
+    materials: MaterialLookup<'_>,
+) -> Result<MemberAdmission, CommandError> {
+    match prior {
+        PriorOp::Accepted { fingerprint } => {
+            if command.content_fingerprint()? == fingerprint {
+                Ok(MemberAdmission::Replay)
+            } else {
+                Err(CommandError::new(
+                    ErrorCode::OpIdReuse,
+                    "op_id",
+                    "operation id was accepted with different content",
+                ))
+            }
+        }
+        PriorOp::Unseen => Ok(MemberAdmission::Apply(Box::new(MemberTransaction {
+            op_id,
+            outcome: create_polybeam(command, existing, profiles, materials)?,
+        }))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::command::no_materials;
     use crate::footprint::{Group, Target};
+    use beamcraft_model::command::{SectionDepthPosition, SectionPlanePosition};
     use beamcraft_model::digest::Sha256;
 
     fn digest(text: &[u8]) -> ContentDigest {
@@ -568,12 +817,13 @@ mod tests {
             new_id: ElementId::parse("019a7bf0-0000-7000-8000-000000000007").unwrap(),
             kind: MemberKind::Beam,
             name: "Synthetic beam".into(),
+            class: 0,
             axis_points_mm: [[0.0; 3], [6000.0, 0.0, 0.0]],
             profile_digest: profile,
             placement: Placement::IDENTITY,
             roll_rad: None,
+            section_placement: None,
             material_digest: None,
-            cut: None,
         }
     }
 
@@ -861,7 +1111,7 @@ mod tests {
             crate::command::QuantityStatus::Unknown
         );
         assert_eq!(out.quantities.algorithm, MEMBER_VOLUME_ALGORITHM);
-        assert_eq!(out.authored.to_command(), command(profile));
+        assert_eq!(out.authored.to_command(), Some(command(profile)));
         assert_eq!(out.body.width_mm, 200.0);
         assert!(out.footprint.reads().iter().any(|e| {
             e.target == Target::Definition(profile) && e.group == Group::Relationship
@@ -870,63 +1120,81 @@ mod tests {
 
     #[test]
     fn a_plane_cut_trims_a_member_of_any_section() {
+        use beamcraft_model::command::KeepSide;
+        use beamcraft_model::id::OpId;
         use beamcraft_model::section::{ParametricSection, SectionFamily};
-        let profile = digest(b"rectangle 200x300");
-        let lookup = |d: &ContentDigest| rectangle(d, profile);
-        let mut c = command(profile);
-        c.cut = Some(PlaneCut {
-            point_mm: [3000.0, 0.0, 0.0],
+        let profile = ProfileInfo::Rectangle {
+            width_mm: 200.0,
+            height_mm: 300.0,
+            declared_area_mm2: None,
+        };
+        let record = |point: [f64; 3]| CutRecord {
+            operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000c7").unwrap(),
+            ordinal: 0,
+            point_mm: point,
             normal: [1.0, 0.0, 0.0],
-        });
-        let out = create_straight_member(&c, &none, &lookup, &no_materials).unwrap();
+            keep: KeepSide::Negative,
+        };
+        let authored = AuthoredMember {
+            id: ElementId::parse("019a7bf0-0000-7000-8000-000000000007").unwrap(),
+            kind: MemberKind::Beam,
+            name: "Cut beam".into(),
+            axis_points_mm: vec![[0.0; 3], [6000.0, 0.0, 0.0]],
+            profile: digest(b"profile"),
+            roll_rad: None,
+            section_placement: None,
+            placement: Placement::IDENTITY,
+            material: None,
+            class: 0,
+            cuts: vec![record([3000.0, 0.0, 0.0])],
+        };
+        let body = evaluate_member(&authored, profile.clone()).unwrap();
         // The kept half is 3000 mm long: 3000 * 200 * 300 = 180,000,000 mm3 = 0.18 m3; the cut
         // result replaces the P-Mass `area x length` volume with the certified cut volume.
-        assert!(
-            (out.quantities.volume_mm3 - 180_000_000.0).abs() <= 1e-6,
-            "{out:?}"
-        );
-        assert_eq!(out.quantities.algorithm, CUT_VOLUME_ALGORITHM);
-        assert_eq!(out.authored.cut, c.cut);
-        assert_eq!(out.authored.to_command(), c);
+        let quantities = member_quantities(&body, None).unwrap();
+        assert!((quantities.volume_mm3 - 180_000_000.0).abs() <= 1e-6);
+        assert_eq!(quantities.algorithm, CUT_VOLUME_ALGORITHM);
         // A cut section member is the certified cut of the detailed outline, about half of it.
         let shape = SectionShape::Parametric(
             ParametricSection::new(SectionFamily::IShape, vec![300.0, 150.0, 7.0, 10.0, 15.0])
                 .unwrap(),
         );
-        let section_lookup = |d: &ContentDigest| {
-            if *d == profile {
-                Ok(ProfileInfo::Section {
-                    shape: shape.clone(),
-                    declared_area_mm2: None,
-                })
-            } else {
-                no_profiles(d)
-            }
-        };
-        let uncut =
-            create_straight_member(&command(profile), &none, &section_lookup, &no_materials)
-                .unwrap();
-        let cut = create_straight_member(&c, &none, &section_lookup, &no_materials).unwrap();
-        assert_eq!(cut.quantities.algorithm, CUT_VOLUME_ALGORITHM);
+        let uncut = evaluate_member(
+            &AuthoredMember {
+                cuts: Vec::new(),
+                ..authored.clone()
+            },
+            ProfileInfo::Section {
+                shape: shape.clone(),
+                declared_area_mm2: None,
+            },
+        )
+        .unwrap();
+        let cut = evaluate_member(
+            &authored,
+            ProfileInfo::Section {
+                shape,
+                declared_area_mm2: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(cut.algorithm, CUT_VOLUME_ALGORITHM);
         // The uncut quantity is the P-Mass exact-area volume; the cut quantity is the certified
         // volume of the polygon mesh, whose arc approximation (sagitta at most max(0.25 mm,
         // 0.5% r)) moves the section area by tens of mm2 (~35 000 mm3 per half here).
         assert!(
-            (cut.quantities.volume_mm3 - uncut.quantities.volume_mm3 / 2.0).abs() <= 50_000.0,
+            (cut.volume_mm3 - uncut.volume_mm3 / 2.0).abs() <= 50_000.0,
             "cut {} vs uncut/2 {}",
-            cut.quantities.volume_mm3,
-            uncut.quantities.volume_mm3 / 2.0
+            cut.volume_mm3,
+            uncut.volume_mm3 / 2.0
         );
-        // A plane that misses the member entirely refuses the command.
-        let mut missing = command(profile);
-        missing.cut = Some(PlaneCut {
-            point_mm: [9000.0, 0.0, 0.0],
-            normal: [1.0, 0.0, 0.0],
-        });
+        // A plane that misses the member entirely refuses the evaluation.
+        let missing = AuthoredMember {
+            cuts: vec![record([9000.0, 0.0, 0.0])],
+            ..authored.clone()
+        };
         assert_eq!(
-            create_straight_member(&missing, &none, &lookup, &no_materials)
-                .unwrap_err()
-                .code,
+            evaluate_member(&missing, profile).unwrap_err().code,
             ErrorCode::InvalidArgument
         );
     }
@@ -973,7 +1241,7 @@ mod tests {
     }
 
     #[test]
-    fn a_rigid_member_rotation_composes_into_the_mesh_and_keeps_quantities() {
+    fn a_rigid_member_rotation_keeps_the_local_mesh_and_quantities() {
         let profile = digest(b"rectangle 200x300");
         let lookup = |d: &ContentDigest| rectangle(d, profile);
         let mut c = command(profile);
@@ -999,20 +1267,7 @@ mod tests {
             rotated.body.section_area_mm2,
             identity.body.section_area_mm2
         );
-        // The mesh is the local one mapped by R_z(90 degrees): (x, y, z) -> (-y, x, z).
-        let close = |a: f64, b: f64| (a - b).abs() <= 1e-6 * a.abs().max(b.abs()).max(1.0);
-        for (v, r) in identity
-            .body
-            .solid
-            .vertices()
-            .iter()
-            .zip(rotated.body.solid.vertices())
-        {
-            assert!(
-                close(-v[1], r[0]) && close(v[0], r[1]) && close(v[2], r[2]),
-                "{v:?} vs {r:?}"
-            );
-        }
+        assert_eq!(rotated.body.solid, identity.body.solid);
         // `q` and `-q` are the same rotation, and x = y = z = 0 keeps the mesh bytes.
         let mut flip = c.clone();
         flip.placement.orientation_xyzw = [0.0, 0.0, 0.0, -1.0];
@@ -1046,6 +1301,74 @@ mod tests {
             .unwrap_err();
             assert_eq!(error.code, expected, "{w} x {h}");
         }
+        // The same for a committed member's section placement: `evaluate_member` runs without
+        // the model admission, so the kernel's own cap refusal is the only guard here.
+        let mut authored = AuthoredMember::from_command(&command(profile));
+        authored.section_placement = Some(SectionPlacement {
+            end_offset_mm: 2_000_000.0,
+            ..SectionPlacement::default()
+        });
+        let error = evaluate_member(
+            &authored,
+            ProfileInfo::Rectangle {
+                width_mm: 200.0,
+                height_mm: 300.0,
+                declared_area_mm2: None,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.code, ErrorCode::LimitExceeded);
+        assert_eq!(error.field, "section_placement");
+    }
+
+    #[test]
+    fn a_section_placement_moves_the_body_and_changes_the_volume() {
+        let profile = digest(b"rectangle 200x300");
+        let lookup = |d: &ContentDigest| rectangle(d, profile);
+        // Left and front: the box occupies -X_m..0 and -Y_m..0 over a beam along +X, i.e. the
+        // world -Y and -Z directions of the default frame.
+        let mut shifted = command(profile);
+        shifted.axis_points_mm = [[0.0; 3], [6000.0, 0.0, 0.0]];
+        shifted.section_placement = Some(SectionPlacement {
+            plane: SectionPlanePosition::Left,
+            depth: SectionDepthPosition::Front,
+            ..SectionPlacement::default()
+        });
+        let out = create_straight_member(&shifted, &none, &lookup, &no_materials).unwrap();
+        // Volume is unchanged by a pure shift.
+        assert_eq!(out.quantities.volume_mm3, 360_000_000.0);
+        let vertices = out.body.solid.vertices();
+        let (y_lo, y_hi, z_lo, z_hi) = vertices.iter().fold(
+            (f64::MAX, f64::MIN, f64::MAX, f64::MIN),
+            |(ylo, yhi, zlo, zhi), p| (ylo.min(p[1]), yhi.max(p[1]), zlo.min(p[2]), zhi.max(p[2])),
+        );
+        assert_eq!((y_lo, y_hi), (-200.0, 0.0));
+        assert_eq!((z_lo, z_hi), (-300.0, 0.0));
+        // The default command keeps the centred body.
+        let plain =
+            create_straight_member(&command(profile), &none, &lookup, &no_materials).unwrap();
+        assert_eq!(plain.body.solid.vertices()[0][1], -100.0);
+        assert_eq!(plain.body.solid.vertices()[0][2], -150.0);
+        // End offsets stretch the solid past the axis and its volume follows the length.
+        let mut extended = command(profile);
+        extended.axis_points_mm = [[0.0; 3], [6000.0, 0.0, 0.0]];
+        extended.section_placement = Some(SectionPlacement {
+            start_offset_mm: -100.0,
+            end_offset_mm: 100.0,
+            ..SectionPlacement::default()
+        });
+        let out = create_straight_member(&extended, &none, &lookup, &no_materials).unwrap();
+        assert_eq!(out.quantities.volume_mm3, 200.0 * 300.0 * 6200.0);
+        assert_eq!(out.body.axis_length_mm, 6200.0);
+        // A placement that consumes the whole axis is refused by the kernel.
+        let mut consumed = command(profile);
+        consumed.section_placement = Some(SectionPlacement {
+            end_offset_mm: -6000.0,
+            ..SectionPlacement::default()
+        });
+        let error = create_straight_member(&consumed, &none, &lookup, &no_materials).unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidArgument);
+        assert_eq!(error.field, "section_placement");
     }
 
     #[test]
@@ -1088,5 +1411,176 @@ mod tests {
             .unwrap(),
             MemberAdmission::Apply(_)
         ));
+    }
+
+    fn polybeam_command(profile: ContentDigest) -> CreatePolybeam {
+        CreatePolybeam {
+            new_id: ElementId::parse("019a7bf0-0000-7000-8000-000000000017").unwrap(),
+            kind: MemberKind::Beam,
+            name: "L polybeam".into(),
+            class: 0,
+            // An L: a 3000 mm leg, a right-angle mitre, a 4000 mm leg.
+            path_points_mm: vec![[0.0; 3], [3000.0, 0.0, 0.0], [3000.0, 4000.0, 0.0]],
+            profile_digest: profile,
+            placement: Placement::IDENTITY,
+            material_digest: None,
+        }
+    }
+
+    fn polybeam_with(profile: ProfileInfo, density: Option<f64>) -> CreateMemberOutcome {
+        let digest = digest(b"profile");
+        let lookup = |d: &ContentDigest| {
+            if *d == digest {
+                Ok(profile.clone())
+            } else {
+                no_profiles(d)
+            }
+        };
+        let materials = |_: &ContentDigest| {
+            Ok(MaterialInfo {
+                density_kg_m3: density,
+            })
+        };
+        let mut c = polybeam_command(digest);
+        c.material_digest = Some(self::digest(b"steel"));
+        create_polybeam(&c, &none, &lookup, &materials).unwrap()
+    }
+
+    #[test]
+    fn a_polybeam_volume_is_area_times_path_length_across_the_mitre() {
+        // P12 acceptance: the section is constant along the path and the mitre drops out of the
+        // volume (G12 corollary 1). 200 x 300 over 3000 + 4000 mm.
+        let area = 200.0 * 300.0;
+        let length = 7000.0;
+        let out = polybeam_with(
+            ProfileInfo::Rectangle {
+                width_mm: 200.0,
+                height_mm: 300.0,
+                declared_area_mm2: None,
+            },
+            Some(7850.0),
+        );
+        assert_eq!(out.body.algorithm, POLYBEAM_VOLUME_ALGORITHM);
+        assert_eq!(out.body.axis_length_mm, length);
+        assert!((out.body.volume_mm3 - area * length).abs() <= 1e-9 * area * length);
+        assert_eq!(out.quantities.volume_mm3, out.body.volume_mm3);
+        // The certified mesh agrees with the analytic mitre volume to the seal slack.
+        let mesh = out.body.solid.volume_mm3();
+        assert!(
+            (mesh - area * length).abs() <= 1e-6 * area * length,
+            "{mesh}"
+        );
+        assert_eq!(out.quantities.mass_kg, Some(area * length * 7850.0 / 1e9));
+        // A straight member does not masquerade as a polybeam, and the command round-trips.
+        let straight = AuthoredMember::from_command(&command(digest(b"profile")));
+        assert!(straight.to_polybeam_command().is_none());
+        assert_eq!(straight.to_command(), Some(command(digest(b"profile"))));
+        assert!(out.authored.to_command().is_none());
+        let mut same = polybeam_command(out.authored.profile);
+        same.material_digest = Some(self::digest(b"steel"));
+        assert_eq!(out.authored.to_polybeam_command().unwrap(), same);
+    }
+
+    #[test]
+    fn a_polybeam_of_a_section_family_sweeps_its_detailed_outline() {
+        let out = polybeam_with(
+            ProfileInfo::Section {
+                shape: i_section(13.0),
+                declared_area_mm2: None,
+            },
+            Some(7850.0),
+        );
+        let exact = 3935.0 + (4.0 - core::f64::consts::PI) * 169.0;
+        let (width_mm, height_mm) = i_section(13.0).extent_mm();
+        assert_eq!(
+            (out.body.width_mm, out.body.height_mm),
+            (width_mm, height_mm)
+        );
+        assert!((out.body.volume_mm3 - exact * 7000.0).abs() <= 1e-9 * exact * 7000.0);
+        // The mesh is the polygon outline (fillet chords overstate the exact area), but the
+        // mitre fraction cancels over the centred section: the mesh volume is the polygon area
+        // times the path length, within the polygon bound of the straight member.
+        let mesh = out.body.solid.volume_mm3();
+        assert!(mesh > out.body.volume_mm3, "{mesh}");
+        assert!(
+            (mesh - out.body.volume_mm3) / out.body.volume_mm3 < 0.0025,
+            "{mesh}"
+        );
+    }
+
+    #[test]
+    fn a_polybeam_refuses_a_bad_path_or_profile_and_replays_by_content() {
+        let profile = digest(b"rectangle 200x300");
+        let lookup = |d: &ContentDigest| rectangle(d, profile);
+        // A zero-length chord is the kernel's refusal, not an argument check.
+        let mut c = polybeam_command(profile);
+        c.path_points_mm = vec![[0.0; 3], [3000.0, 0.0, 0.0], [3000.0, 0.0, 0.0]];
+        assert_eq!(
+            create_polybeam(&c, &none, &lookup, &no_materials)
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidArgument
+        );
+        // An absent profile is `NOT_FOUND` before any geometry.
+        let c = polybeam_command(digest(b"absent"));
+        assert_eq!(
+            create_polybeam(&c, &none, &lookup, &no_materials)
+                .unwrap_err()
+                .code,
+            ErrorCode::NotFound
+        );
+        // Replay follows the P12 content fingerprint.
+        let op = OpId::parse("019a7bf0-0000-7000-8000-000000000004").unwrap();
+        let accepted = PriorOp::Accepted {
+            fingerprint: polybeam_command(profile).content_fingerprint().unwrap(),
+        };
+        assert_eq!(
+            admit_create_polybeam(
+                op,
+                &polybeam_command(profile),
+                accepted,
+                &none,
+                &lookup,
+                &no_materials
+            )
+            .unwrap(),
+            MemberAdmission::Replay
+        );
+        let mut changed = polybeam_command(profile);
+        changed.path_points_mm[1][1] = 1000.0;
+        assert_eq!(
+            admit_create_polybeam(op, &changed, accepted, &none, &lookup, &no_materials)
+                .unwrap_err()
+                .code,
+            ErrorCode::OpIdReuse
+        );
+    }
+
+    #[test]
+    fn a_polybeam_cut_is_the_certified_replay_volume() {
+        use beamcraft_model::command::KeepSide;
+        let profile = ProfileInfo::Rectangle {
+            width_mm: 200.0,
+            height_mm: 300.0,
+            declared_area_mm2: None,
+        };
+        let mut authored = AuthoredMember::from_polybeam(&polybeam_command(digest(b"profile")));
+        authored.cuts = vec![CutRecord {
+            operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000c7").unwrap(),
+            ordinal: 0,
+            point_mm: [4000.0, 1000.0, 0.0],
+            normal: [0.0, 1.0, 0.0],
+            keep: KeepSide::Negative,
+        }];
+        let body = evaluate_member(&authored, profile).unwrap();
+        // The plane keeps the first leg and a 1000 mm stub of the second: the certified replay
+        // volume replaces the analytic `area x path length`.
+        assert_eq!(body.algorithm, CUT_VOLUME_ALGORITHM);
+        let analytic = 200.0 * 300.0 * 4000.0;
+        assert!(
+            (body.volume_mm3 - analytic).abs() <= 1e-6 * analytic,
+            "{}",
+            body.volume_mm3
+        );
     }
 }

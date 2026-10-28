@@ -99,6 +99,7 @@ fn member(
         new_id: ElementId::parse("019a7bf0-0000-7000-8000-000000001102").unwrap(),
         kind: MemberKind::Beam,
         name: "F06 K2 member".into(),
+        class: 0,
         axis_points_mm: body
             .get("axis_points_mm")
             .unwrap()
@@ -112,8 +113,8 @@ fn member(
         profile_digest: Sha256::digest(b"F06 synthetic profile").unwrap(),
         placement,
         roll_rad: body.get("roll_rad").ok().map(number),
+        section_placement: None,
         material_digest: density.map(|_| Sha256::digest(b"F06 synthetic material").unwrap()),
-        cut: None,
     };
     let out = create_straight_member(&command, &|_| false, &|_| Ok(shape.clone()), &|_| {
         Ok(MaterialInfo {
@@ -122,7 +123,7 @@ fn member(
     })?;
     assert_eq!(
         out.authored.to_command(),
-        command,
+        Some(command),
         "authored inputs changed"
     );
     Ok(out)
@@ -292,6 +293,7 @@ fn the_thirty_f06_member_and_mixed_cases_have_explicit_evidence() {
                 &CreatePlate {
                     new_id: ElementId::parse("019a7bf0-0000-7000-8000-000000001101").unwrap(),
                     name: "F06 thin plate".into(),
+                    class: 0,
                     contour_points_mm: plate
                         .get("contour_points_mm")
                         .unwrap()
@@ -301,10 +303,11 @@ fn the_thirty_f06_member_and_mixed_cases_have_explicit_evidence() {
                         .map(vector)
                         .collect(),
                     thickness_mm: number(plate.get("thickness_mm").unwrap()),
+                    thickness_side: None,
+                    corners: Vec::new(),
                     placement: Placement::IDENTITY,
                     material_digest: None,
                     holes_mm: Vec::new(),
-                    cut: None,
                 },
                 &|_| false,
                 &no_materials,

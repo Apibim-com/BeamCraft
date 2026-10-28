@@ -50,19 +50,34 @@ fn property_group(name: &str) -> Option<G> {
     Some(match name {
         "bim:id" | "bim:elementKind" | "bim:geometryMode" | "bim:schemaVersion"
         | "bim:createdBy" | "bim:revision" => G::Lifecycle,
-        "bim:name" => G::Label,
+        "bim:name" | "steel:class" => G::Label,
         "steel:numbering:series" | "steel:numbering:number" | "steel:numbering:basis" => G::Mark,
         "xformOp:translate" | "xformOp:orient" | "xformOpOrder" => G::Placement,
         "bim:material" => G::MaterialRef,
-        "bim:partOf" | "bim:level" | "bim:connects" => G::Relationship,
+        "bim:partOf" | "bim:level" | "bim:connects" | "bim:instanceOf" => G::Relationship,
         "steel:plate:contourPointsMm"
         | "steel:plate:thicknessMm"
+        | "steel:plate:thicknessSide"
+        | "steel:plate:cornerVertex"
+        | "steel:plate:cornerKind"
+        | "steel:plate:cornerD1Mm"
+        | "steel:plate:cornerD2Mm"
+        | "steel:plate:cornerRadiusMm"
         | "steel:plate:holePointsMm"
         | "steel:plate:holeVertexCounts"
+        | "steel:cut:operationId"
+        | "steel:cut:ordinal"
         | "steel:cut:pointMm"
         | "steel:cut:normal"
+        | "steel:cut:keep"
         | "bim:axisPointsMm"
         | "steel:member:rollRad"
+        | "steel:member:planePosition"
+        | "steel:member:planeOffsetMm"
+        | "steel:member:depthPosition"
+        | "steel:member:depthOffsetMm"
+        | "steel:member:startOffsetMm"
+        | "steel:member:endOffsetMm"
         | "bim:profile"
         | "bim:elevationMm"
         | "steel:connection:type"

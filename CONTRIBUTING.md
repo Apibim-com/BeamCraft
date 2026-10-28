@@ -21,6 +21,29 @@ Thanks for helping. Humans and AI agents follow the same rules.
    The full list of CI checks is in [`docs/development.md`](docs/development.md).
 4. Add a test for new behaviour. For a bug fix, confirm the test fails without the fix.
 5. Open a PR with the template filled in. CI must be green.
+6. Keep the fork aligned with upstream: `bash tools/fork-sync.sh status` inspects the
+   divergence, `bash tools/fork-sync.sh sync` merges `upstream/master`, gates it on the local
+   triple and pushes `master`. Conflicting files keep their entire fork version
+   (including fork deletions); other files merge normally. Skipped upstream changes need
+   manual integration in a separate branch: the merge records upstream commits as integrated,
+   so later syncs do not retry those skipped changes. If a conflict cannot be cleared, sync aborts
+   the merge and exits 2 with the file list; after a green sync it lists the
+   fork-only commits upstream does not have yet, with the exact commands for their upstream
+   Upstream commits that touch `.github/workflows/` can only be pushed by the
+   optional `FORK_SYNC_TOKEN` secret (a PAT with repo and workflow scopes):
+   granting the default token the `workflows` permission makes GitHub reject
+   the whole workflow file as invalid, so without the secret such a sync stops
+   at the push (exit 4) until one is set. A PAT push also carries the account
+   identity, so every synced master tip gets a CI run. The script doubles as the
+   reference example for the small, single-purpose shell tools that live in [`tools/`](tools/).
+7. Mirror a merged fork PR to upstream: `bash tools/upstream-mirror.sh mirror <pr-number>`
+   replays the PR's reviewed commits (the merge commit's second parent) on a fresh
+   `upstream/master` and opens a mirror PR in `Apibim-com/BeamCraft` whose head is the replay
+   branch. Commits already upstream drop out as empty cherry-picks; a PR touching only
+   fork-only paths (the sync tooling, the fork icon pipeline) is skipped; any other conflict
+   stops the run for manual resolution — the mirror never auto-merges. The same workflow runs
+   automatically when a PR merges into fork `master` and on `workflow_dispatch` with a PR
+   number. Direct pushes to fork `master` bypass the PR trigger: mirror those by hand.
 
 Mirrors (forks) of this repository keep their own `master` aligned with this one. This
 repository ships only [`tools/sync.schema.example`](tools/sync.schema.example) — the schema

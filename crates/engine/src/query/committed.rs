@@ -18,7 +18,9 @@ use crate::member::{
 use crate::scene::SceneElement;
 use crate::solid::SolidMesh;
 use beamcraft_geom::Translation3;
-use beamcraft_model::command::{CommandError, MemberKind, PlaneCut, label_is_valid};
+use beamcraft_model::command::{
+    CommandError, CornerTreatment, CutRecord, KeepSide, MemberKind, PlateSide, label_is_valid,
+};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
 use beamcraft_model::section::{CustomSection, SectionShape};
@@ -124,6 +126,8 @@ impl BodyCache {
         member: &AuthoredMember,
         profile: ProfileInfo,
     ) -> Result<MemberBody, CommandError> {
+        // Placement is excluded from the body key, but every caller still receives admission.
+        member.placement.validate()?;
         if self.budget == 0 {
             return evaluate_member(member, profile);
         }
@@ -192,69 +196,117 @@ fn push_points<const N: usize>(key: &mut Vec<u8>, points: &[[f64; N]]) {
     }
 }
 
-fn push_cut(key: &mut Vec<u8>, cut: Option<&PlaneCut>) {
-    match cut {
-        Some(PlaneCut { point_mm, normal }) => {
-            key.push(1);
-            for value in point_mm.iter().chain(normal) {
-                push_f64(key, *value);
-            }
+fn push_cut(key: &mut Vec<u8>, cuts: &[CutRecord]) {
+    push_len(key, cuts.len());
+    for cut in cuts {
+        push_f64(key, f64::from(cut.ordinal));
+        key.push(match cut.keep {
+            KeepSide::Positive => 1,
+            KeepSide::Negative => 0,
+        });
+        for value in cut.point_mm.iter().chain(cut.normal.iter()) {
+            push_f64(key, *value);
         }
-        None => key.push(0),
     }
 }
 
 /// The key of a plate body. Every field is named, so a field added to [`AuthoredPlate`] does not
-/// compile here until it is classified as a shape input or not.
+/// compile here until it is classified as a shape input or not. The record ids and ordinals of
+/// the A04 hole records are identity, not geometry: the body is a function of the polygons
+/// alone, so only they enter the key.
 fn plate_key(plate: &AuthoredPlate) -> Vec<u8> {
     let AuthoredPlate {
         id: _,
         name: _,
+        class: _,
         contour_points_mm,
         thickness_mm,
+        thickness_side,
+        corners,
         placement: _,
         material: _,
         holes_mm,
-        cut,
+        hole_records,
+        cuts,
     } = plate;
     let mut key = Vec::with_capacity(160);
-    key.extend_from_slice(b"BeamCraft/BodyCache/Plate/v1\0");
+    key.extend_from_slice(b"BeamCraft/BodyCache/Plate/v4\0");
     push_points(&mut key, contour_points_mm);
     push_f64(&mut key, *thickness_mm);
+    // The side changes the body: the mesh is laid off from the contour plane (A12.1).
+    key.push(match thickness_side {
+        None => 0,
+        Some(PlateSide::Top) => 1,
+        Some(PlateSide::Middle) => 2,
+        Some(PlateSide::Bottom) => 3,
+    });
+    // The treatments change the evaluated outline the body is extruded from (A12.2).
+    push_len(&mut key, corners.len());
+    for corner in corners {
+        push_len(&mut key, corner.vertex);
+        key.push(match corner.treatment {
+            CornerTreatment::Chamfer { .. } => 1,
+            CornerTreatment::Round { .. } => 2,
+        });
+        match corner.treatment {
+            CornerTreatment::Chamfer { d1_mm, d2_mm } => {
+                push_f64(&mut key, d1_mm);
+                push_f64(&mut key, d2_mm);
+            }
+            CornerTreatment::Round { radius_mm } => push_f64(&mut key, radius_mm),
+        }
+    }
     push_len(&mut key, holes_mm.len());
     for hole in holes_mm {
         push_points(&mut key, hole);
     }
-    push_cut(&mut key, cut.as_ref());
+    push_len(&mut key, hole_records.len());
+    for record in hole_records {
+        push_points(&mut key, &record.polygon_mm);
+    }
+    push_cut(&mut key, cuts);
     key
 }
 
 /// The key of a member body with its resolved profile. Every field of [`AuthoredMember`] and of
 /// the profile is named, as for [`plate_key`]; the pinned profile digest is not an input, its
-/// resolved values are. The placement rotation is a shape input (it composes into the member
-/// mesh); the translation is not.
+/// resolved values are. Placement is excluded: both translation and rotation belong to the
+/// instance and never change the element-local body.
 fn member_key(member: &AuthoredMember, profile: &ProfileInfo) -> Vec<u8> {
     let AuthoredMember {
         id: _,
         kind: _,
         name: _,
+        class: _,
         axis_points_mm,
         profile: _,
         roll_rad,
-        placement,
+        section_placement,
+        placement: _,
         material: _,
-        cut,
+        cuts,
     } = member;
-    let mut key = Vec::with_capacity(192);
-    key.extend_from_slice(b"BeamCraft/BodyCache/Member/v1\0");
+    let mut key = Vec::with_capacity(224);
+    key.extend_from_slice(b"BeamCraft/BodyCache/Member/v4\0");
     push_points(&mut key, axis_points_mm);
     push_option(&mut key, *roll_rad);
-    push_cut(&mut key, cut.as_ref());
-    let [qx, qy, qz, qw] = placement.orientation_xyzw;
-    push_f64(&mut key, qx);
-    push_f64(&mut key, qy);
-    push_f64(&mut key, qz);
-    push_f64(&mut key, qw);
+    match section_placement {
+        None => key.push(0),
+        Some(p) => {
+            key.push(1);
+            key.extend_from_slice(p.plane.as_str().as_bytes());
+            key.extend_from_slice(p.depth.as_str().as_bytes());
+            for v in [
+                p.plane_offset_mm,
+                p.depth_offset_mm,
+                p.start_offset_mm,
+                p.end_offset_mm,
+            ] {
+                push_f64(&mut key, v);
+            }
+        }
+    }
+    push_cut(&mut key, cuts);
     match profile {
         ProfileInfo::Rectangle {
             width_mm,
@@ -427,29 +479,21 @@ pub fn evaluate_committed_members_cached(
     Ok(records)
 }
 
-/// The snapshot-builder input for committed plates. Plate placement remains translation-only in
-/// this slice.
+/// The snapshot-builder input for committed plates, including their complete rigid pose.
 pub fn scene_elements(records: &[PlateRecord]) -> Result<Vec<SceneElement>, CommandError> {
     scene_elements_with_members(records, &[])
 }
 
 /// The snapshot-builder input for committed plates and members, in element-id order.
 ///
-/// A scene placement is a translation for both kinds: a member's placement rotation is already
-/// composed into its body mesh (the section frame), and a plate keeps the identity-rotation
-/// refusal, so no scene element carries an orientation.
+/// Plates keep their meshes local and carry their authored quaternion. A member's rotation
+/// is carried by its scene instance, just as for a plate.
 pub fn scene_elements_with_members(
     plates: &[PlateRecord],
     members: &[MemberRecord],
 ) -> Result<Vec<SceneElement>, CommandError> {
     let translation = |placement: &beamcraft_model::command::Placement| {
-        if !placement.is_identity_rotation() {
-            return Err(CommandError::new(
-                ErrorCode::UnsupportedGeometry,
-                "placement.orientation_xyzw",
-                "rotated plate placement is not evaluated in this slice",
-            ));
-        }
+        placement.validate()?;
         let [x, y, z] = placement.translation_mm;
         Translation3::new(x, y, z).map_err(|_| {
             CommandError::new(
@@ -461,19 +505,22 @@ pub fn scene_elements_with_members(
     };
     let mut elements = Vec::with_capacity(plates.len().saturating_add(members.len()));
     for r in plates {
-        elements.push(SceneElement::new(
-            r.authored.id,
-            ElementKind::Plate,
-            translation(&r.authored.placement)?,
-            r.body.solid.scene_mesh(),
-        ));
+        elements.push(
+            SceneElement::new(
+                r.authored.id,
+                ElementKind::Plate,
+                translation(&r.authored.placement)?,
+                r.body.solid.scene_mesh(),
+            )
+            .with_orientation(r.authored.placement.orientation_xyzw),
+        );
     }
     for r in members {
         let kind = match r.authored.kind {
             MemberKind::Beam => ElementKind::Beam,
             MemberKind::Column => ElementKind::Column,
         };
-        // The member mesh carries the composed section frame; only the translation remains.
+        // Every mesh stays local; the instance carries the complete rigid placement.
         let [x, y, z] = r.authored.placement.translation_mm;
         let translation = Translation3::new(x, y, z).map_err(|_| {
             CommandError::new(
@@ -482,12 +529,10 @@ pub fn scene_elements_with_members(
                 "value is not finite",
             )
         })?;
-        elements.push(SceneElement::new(
-            r.authored.id,
-            kind,
-            translation,
-            r.body.solid.scene_mesh(),
-        ));
+        elements.push(
+            SceneElement::new(r.authored.id, kind, translation, r.body.solid.scene_mesh())
+                .with_orientation(r.authored.placement.orientation_xyzw),
+        );
     }
     elements.sort_by_key(SceneElement::id);
     Ok(elements)
@@ -504,6 +549,7 @@ mod tests {
     use crate::command::{MaterialInfo, no_materials};
     use beamcraft_model::command::Placement;
     use beamcraft_model::digest::{ContentDigest, Sha256};
+    use beamcraft_model::id::OpId;
 
     // Shadows the glob import: these tests have no material definitions unless they say so.
     fn evaluate_committed(plates: &[AuthoredPlate]) -> Result<Vec<PlateRecord>, CommandError> {
@@ -514,6 +560,7 @@ mod tests {
         AuthoredPlate {
             id: ElementId::parse(&format!("019a7bf0-0000-7000-8000-0000000000{n:02x}")).unwrap(),
             name: format!("Plate {n}"),
+            class: 0,
             contour_points_mm: vec![
                 [0.0, 0.0, 0.0],
                 [width, 0.0, 0.0],
@@ -521,13 +568,16 @@ mod tests {
                 [0.0, 500.0, 0.0],
             ],
             thickness_mm: 10.0,
+            thickness_side: None,
+            corners: Vec::new(),
             placement: Placement {
                 translation_mm: [x, 0.0, 0.0],
                 ..Placement::IDENTITY
             },
             material: None,
             holes_mm: Vec::new(),
-            cut: None,
+            hole_records: Vec::new(),
+            cuts: Vec::new(),
         }
     }
 
@@ -550,12 +600,14 @@ mod tests {
             id: ElementId::parse(&format!("019a7bf0-0000-7000-8000-0000000000{n:02x}")).unwrap(),
             kind,
             name: format!("Member {n}"),
-            axis_points_mm: [[0.0; 3], [0.0, 0.0, 3000.0]],
+            class: 0,
+            axis_points_mm: vec![[0.0; 3], [0.0, 0.0, 3000.0]],
             profile,
             roll_rad: None,
+            section_placement: None,
             placement: Placement::IDENTITY,
             material: None,
-            cut: None,
+            cuts: Vec::new(),
         };
         let members = super::evaluate_committed_members(
             &[member(8, MemberKind::Column), member(3, MemberKind::Beam)],
@@ -604,15 +656,17 @@ mod tests {
             id: ElementId::parse("019a7bf0-0000-7000-8000-000000001102").unwrap(),
             kind: MemberKind::Beam,
             name: "F06 POS-12".into(),
-            axis_points_mm: [[0.0; 3], [4000.0, 0.0, 0.0]],
+            class: 0,
+            axis_points_mm: vec![[0.0; 3], [4000.0, 0.0, 0.0]],
             profile,
             roll_rad: None,
+            section_placement: None,
             placement: Placement {
                 translation_mm: [-50.0, 70.0, 1000.0],
                 orientation_xyzw: [0.0, 0.0, half, half],
             },
             material: None,
-            cut: None,
+            cuts: Vec::new(),
         };
         let records =
             super::evaluate_committed_members(&[member.clone()], &profiles, &no_materials).unwrap();
@@ -621,10 +675,9 @@ mod tests {
             member.placement = Placement::IDENTITY;
             super::evaluate_committed_members(&[member], &profiles, &no_materials).unwrap()
         };
-        // The rotation composes into the mesh (same triangles, rotated vertices), so the body
-        // differs from the identity one while the quantities stay the same.
+        // Placement preserves the local body and quantities; world bounds apply the instance pose.
         assert_eq!(records[0].quantities, identity[0].quantities);
-        assert_ne!(records[0].body.solid, identity[0].body.solid);
+        assert_eq!(records[0].body.solid, identity[0].body.solid);
         let elements = scene_elements_with_members(&[], &records).unwrap();
         let pin = ViewPin::new(Sha256::digest(b"revision").unwrap(), 1);
         let snapshot = ViewSnapshot::build(pin, elements, &Limits::default()).unwrap();
@@ -703,11 +756,14 @@ mod tests {
         ]
     }
 
-    fn end_cut() -> Option<PlaneCut> {
-        Some(PlaneCut {
+    fn end_cut() -> Vec<CutRecord> {
+        vec![CutRecord {
+            operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000c7").unwrap(),
+            ordinal: 0,
             point_mm: [250.0, 0.0, 0.0],
             normal: [1.0, 0.0, 0.0],
-        })
+            keep: KeepSide::Negative,
+        }]
     }
 
     #[test]
@@ -715,7 +771,7 @@ mod tests {
         let mut holed = plate(1, 1000.0, 0.0);
         holed.holes_mm = vec![square_hole()];
         let mut cut = plate(2, 1000.0, 0.0);
-        cut.cut = end_cut();
+        cut.cuts = end_cut();
         let mut holed_contour = l_shape(3);
         holed_contour.holes_mm = vec![square_hole()];
         let plates = [plate(4, 1000.0, 0.0), holed, cut, l_shape(5), holed_contour];
@@ -758,12 +814,9 @@ mod tests {
         moved_hole.holes_mm[0][0][0] = 101.0;
         moved_hole.holes_mm[0][1][0] = 101.0;
         let mut cut = base.clone();
-        cut.cut = end_cut();
+        cut.cuts = end_cut();
         let mut tilted = cut.clone();
-        tilted.cut = Some(PlaneCut {
-            point_mm: [250.0, 0.0, 0.0],
-            normal: [1.0, 0.1, 0.0],
-        });
+        tilted.cuts[0].normal = [1.0, 0.1, 0.0];
         for changed in [thicker, wider, holed, moved_hole, cut, tilted] {
             let misses = cache.misses();
             assert_eq!(
@@ -851,12 +904,14 @@ mod tests {
             id: ElementId::parse(&format!("019a7bf0-0000-7000-8000-0000000000{n:02x}")).unwrap(),
             kind,
             name: format!("Member {n}"),
-            axis_points_mm: [[0.0; 3], [3000.0, 0.0, 0.0]],
+            class: 0,
+            axis_points_mm: vec![[0.0; 3], [3000.0, 0.0, 0.0]],
             profile: Sha256::digest(&[n]).unwrap(),
             roll_rad: None,
+            section_placement: None,
             placement: Placement::IDENTITY,
             material: None,
-            cut: None,
+            cuts: Vec::new(),
         };
         let beam = member(1, MemberKind::Beam);
         let mut other = member(2, MemberKind::Column);
@@ -880,10 +935,7 @@ mod tests {
         let mut longer = beam.clone();
         longer.axis_points_mm[1][0] = 3001.0;
         let mut cut = beam.clone();
-        cut.cut = Some(PlaneCut {
-            point_mm: [1500.0, 0.0, 0.0],
-            normal: [1.0, 0.0, 0.0],
-        });
+        cut.cuts = end_cut();
         let declared = ProfileInfo::Rectangle {
             width_mm: 200.0,
             height_mm: 300.0,
@@ -931,7 +983,7 @@ mod tests {
     }
 
     #[test]
-    fn duplicates_bad_labels_and_unsupported_rotation_are_rejected_without_a_partial_list() {
+    fn duplicate_ids_and_bad_labels_are_refused_and_plate_rotation_is_preserved() {
         assert_eq!(
             evaluate_committed(&[plate(5, 1000.0, 0.0), plate(5, 800.0, 0.0)])
                 .unwrap_err()
@@ -948,10 +1000,8 @@ mod tests {
         let s = core::f64::consts::FRAC_1_SQRT_2;
         rotated.placement.orientation_xyzw = [0.0, 0.0, s, s];
         let records = evaluate_committed(&[rotated]).unwrap();
-        assert_eq!(
-            scene_elements(&records).unwrap_err().code,
-            ErrorCode::UnsupportedGeometry
-        );
+        let scene = scene_elements(&records).unwrap();
+        assert_eq!(scene[0].orientation_xyzw, [0.0, 0.0, s, s]);
         let mut broken = plate(5, 1000.0, 0.0);
         broken.thickness_mm = -1.0;
         assert!(evaluate_committed(&[broken]).is_err());

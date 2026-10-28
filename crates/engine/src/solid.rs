@@ -14,6 +14,7 @@ use beamcraft_kernel::PlateResult;
 use beamcraft_kernel::ops::OpResult;
 use beamcraft_kernel::profile::Extrusion;
 use beamcraft_kernel::section::SectionResult;
+use beamcraft_kernel::sweep::SweepResult;
 use beamcraft_kernel::trimesh::TriMesh;
 use beamcraft_model::digest::{ContentDigest, Sha256};
 
@@ -86,6 +87,53 @@ impl SolidMesh {
             digest: result.mesh_digest(),
             volume_mm3: result.volume_mm3(),
         }
+    }
+
+    /// The mesh of a G12 sweep (a P12 polybeam); the volume is the midpoint of the enclosure of
+    /// the certified signed-volume sum, which the seal checked against the analytic truncated
+    /// prism value.
+    pub fn from_sweep(result: &SweepResult) -> Self {
+        let mesh = result.body().mesh();
+        Self {
+            vertices: mesh.vertices().to_vec(),
+            triangles: mesh.triangles().to_vec(),
+            face_table: result.body().face_table().to_vec(),
+            blob: result.blob().to_vec(),
+            digest: result.mesh_digest(),
+            volume_mm3: result.volume_mm3().midpoint(),
+        }
+    }
+
+    /// The mesh of an engine-composed solid (A15): an admitted, placed triangle set the kernel
+    /// verified segment by segment, with the summed analytic volume. It has no kernel face
+    /// table; a weld solid never reaches the scene, which is the only consumer of one. `None`
+    /// when the merged mesh fails admission or the blob is too long to hash.
+    pub fn composed(mesh: &TriMesh, volume_mm3: f64) -> Option<Self> {
+        let blob = mesh.to_blob();
+        Some(Self {
+            vertices: mesh.vertices().to_vec(),
+            triangles: mesh.triangles().to_vec(),
+            face_table: Vec::new(),
+            blob: blob.clone(),
+            digest: Sha256::digest(&blob).ok()?,
+            volume_mm3,
+        })
+    }
+
+    /// The mesh of an admitted triangle set with the kernel face table of the body it
+    /// certifies (A12.1): a plain plate body translated along the element-local Z. The volume
+    /// is the caller's analytic value, which a translation preserves. `None` when the blob is
+    /// too long to hash.
+    pub fn from_admitted(mesh: &TriMesh, face_table: Vec<String>, volume_mm3: f64) -> Option<Self> {
+        let blob = mesh.to_blob();
+        Some(Self {
+            vertices: mesh.vertices().to_vec(),
+            triangles: mesh.triangles().to_vec(),
+            face_table,
+            blob: blob.clone(),
+            digest: Sha256::digest(&blob).ok()?,
+            volume_mm3,
+        })
     }
 
     /// The mesh rotated by the rigid placement quaternion `(x, y, z, w)` about the element-local

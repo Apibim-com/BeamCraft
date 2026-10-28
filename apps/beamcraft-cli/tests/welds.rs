@@ -12,6 +12,8 @@
 
 mod support;
 
+use support::{at, text};
+
 use beamcraft_host::{
     ids::IdSource,
     revision::{ExpectedBase, LayerEntry, NoFault, RevisionDraft, RevisionStore, Uuid7},
@@ -142,12 +144,6 @@ impl Fixture {
     }
 }
 
-fn text(json: &Json, key: &str) -> String {
-    json.get(key).unwrap().string().unwrap().to_owned()
-}
-fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
-    path.iter().fold(json, |j, k| j.get(k).unwrap())
-}
 fn list<'a>(json: &'a Json, key: &str) -> &'a [Json] {
     at(json, &[key]).array().unwrap()
 }
@@ -373,6 +369,74 @@ fn a_newer_schema_connection_stays_inert_beside_supported_welds() {
     assert_eq!(text(&welds[0], "id"), WELD);
     f.weld(SECOND, &beam, &plate);
     assert_eq!(f.welds().len(), 2);
+}
+
+#[test]
+fn a_path_weld_keeps_its_symbol_data_and_reports_the_analytic_volume() {
+    let f = Fixture::new();
+    let plate = f.plate();
+    let beam = f.beam();
+    // A weld along a world edge: a two-point polyline with symbol data.
+    let op = "019a7bf0-0000-7000-8000-0000006000c1";
+    let mut args = Fixture::weld_args(WELD, &plate, &beam);
+    args.extend_from_slice(&[
+        "--path",
+        "0,0,0;0,500,0",
+        "--all-around",
+        "true",
+        "--contour",
+        "concave",
+        "--op-id",
+        op,
+    ]);
+    let created = f.ok("create-weld", &args);
+    // The solid is derived data: both layers change.
+    let mut changed = strings(&created, "changed_layers");
+    changed.sort();
+    assert_eq!(changed, ["authored.usda", "derived.usda"]);
+    let welds = f.welds();
+    let w = welds.iter().find(|w| text(w, "id") == WELD).unwrap();
+    // Workshop/site and side kept exactly as authored, with the symbol data beside them.
+    assert_eq!(text(w, "location"), "workshop");
+    assert_eq!(text(w, "side"), "both");
+    assert!(at(w, &["all_around"]).boolean().unwrap());
+    assert_eq!(text(w, "contour"), "concave");
+    assert_eq!(text(w, "length_mm"), "500");
+    // The solid volume against the analytical value: s^2/2 * L = 6^2/2 * 500 = 9000 mm3.
+    assert_eq!(text(w, "volume_mm3"), "9000");
+
+    // The same operation replays; different symbol data under its id is reuse.
+    let head = f.head();
+    let again = f.ok("create-weld", &args);
+    assert_eq!(text(&again, "outcome"), "weld_created_replayed");
+    assert_eq!(f.head(), head);
+    let mut other = Fixture::weld_args(SECOND, &plate, &beam);
+    other.extend_from_slice(&[
+        "--path",
+        "0,0,0;0,500,0",
+        "--all-around",
+        "false",
+        "--contour",
+        "concave",
+        "--op-id",
+        op,
+    ]);
+    assert_eq!(f.rejected("create-weld", &other), "OP_ID_REUSE");
+
+    // Symbol data without a path has no supported meaning, and a degenerate path is refused.
+    let mut symbol_only = Fixture::weld_args(SECOND, &plate, &beam);
+    symbol_only.extend_from_slice(&["--all-around", "true"]);
+    assert_eq!(f.rejected("create-weld", &symbol_only), "INVALID_ARGUMENT");
+    let mut degenerate = Fixture::weld_args(SECOND, &plate, &beam);
+    degenerate.extend_from_slice(&["--path", "0,0,0;0,0,0"]);
+    assert_eq!(f.rejected("create-weld", &degenerate), "INVALID_ARGUMENT");
+
+    // An A06 weld beside the geometric one has no path and no volume.
+    f.weld(SECOND, &beam, &plate);
+    let welds = f.welds();
+    assert_eq!(welds.len(), 2);
+    let plain = welds.iter().find(|w| text(w, "id") == SECOND).unwrap();
+    assert_eq!(at(plain, &["path_mm"]), &Json::Null);
 }
 
 fn as_strs(v: &[String]) -> Vec<&str> {

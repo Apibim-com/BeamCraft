@@ -17,7 +17,10 @@ fn command(s: f64) -> CreatePlate {
     CreatePlate {
         new_id: ElementId::parse("019a7bf0-0000-7000-8000-000000000005").unwrap(),
         name: "Near-planar original".into(),
+        class: 0,
         thickness_mm: 10.,
+        thickness_side: None,
+        corners: Vec::new(),
         contour_points_mm: vec![
             [999000000., 0., 0.],
             [999393216., 0., s],
@@ -30,7 +33,6 @@ fn command(s: f64) -> CreatePlate {
         },
         material_digest: None,
         holes_mm: Vec::new(),
-        cut: None,
     }
 }
 
@@ -84,14 +86,12 @@ fn invalid_inputs_and_identity_failures_never_become_unsupported_drafts() {
             .code,
         ErrorCode::InvalidArgument
     );
-    let mut wrong = command(0.75);
-    wrong.placement.orientation_xyzw = [0., 0., 1., 0.];
-    assert_eq!(
-        create_plate_draft(&wrong, &|_| false, &no_materials)
-            .unwrap_err()
-            .code,
-        ErrorCode::UnsupportedGeometry
-    );
+    let mut rotated = command(0.75);
+    rotated.placement.orientation_xyzw = [0., 0., 1., 0.];
+    assert!(matches!(
+        create_plate_draft(&rotated, &|_| false, &no_materials).unwrap(),
+        PlateDraft::Unsupported(_)
+    ));
 }
 
 #[test]

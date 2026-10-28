@@ -9,9 +9,24 @@
 use super::App;
 use crate::edit::EditKind;
 use crate::publish::Phase;
+use crate::selection::Selection;
 use crate::theme::{self, BRAND, INK, Icon, Kind, Palette};
 use crate::tools::{MemberKind, ToolKind};
+use beamcraft_engine::RenderMode;
+use beamcraft_engine::query::pick::{SelectionClass, SnapKind};
 use egui::{Rect, RichText, Sense, Stroke, StrokeKind, Ui, vec2};
+
+/// The panel label of a snap kind.
+fn snap_label(kind: SnapKind) -> &'static str {
+    match kind {
+        SnapKind::Vertex => "Vertex",
+        SnapKind::AxisEnd => "Axis end",
+        SnapKind::Axis => "Axis (nearest point)",
+        SnapKind::GridIntersection => "Grid intersection",
+        SnapKind::GridEnd => "Grid end",
+        SnapKind::GridLine => "Grid line (nearest point)",
+    }
+}
 
 /// What the inspector shows: the tool chosen on the ribbon.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -259,6 +274,7 @@ impl App {
             self.grid_form = crate::grid::GridForm::default();
             self.grid_note = None;
         }
+        self.plane_pick = false;
         self.bench = bench;
         match bench {
             Bench::Plate => self.tools.active = ToolKind::Plate,
@@ -414,6 +430,9 @@ impl App {
                 let edits_free = !self.editor.busy() && !self.other_command_running();
                 let has_workspace = self.source.workspace.is_some();
                 let mut pick = None;
+                let mut mode_pick = None;
+                let mode = self.mode;
+                let shortcuts = self.shortcuts;
                 let (mut undo, mut redo) = (false, false);
                 ui.horizontal(|ui| {
                     if menu_toggle(ui, self.menu_open).clicked() {
@@ -523,8 +542,31 @@ impl App {
                                     }
                                     RibbonTab::View => {
                                         group(ui, "DISPLAY", &mut |ui| {
-                                            tool_button(ui, Icon::Block, "Shaded", true, true);
-                                            tool_button(ui, Icon::Wire, "Wire", false, false);
+                                            for (m, icon, label) in [
+                                                (RenderMode::Shaded, Icon::Block, "Shaded"),
+                                                (RenderMode::Wireframe, Icon::Wire, "Wireframe"),
+                                                (
+                                                    RenderMode::Transparent,
+                                                    Icon::Block,
+                                                    "Transparent",
+                                                ),
+                                                (RenderMode::Grey, Icon::Block, "Grey"),
+                                                (
+                                                    RenderMode::SelectedOnly,
+                                                    Icon::Select,
+                                                    "Selected",
+                                                ),
+                                            ] {
+                                                let response =
+                                                    tool_button(ui, icon, label, mode == m, true);
+                                                if response.clicked() {
+                                                    mode_pick = Some(m);
+                                                }
+                                                response.on_hover_text(format!(
+                                                    "{label} ({})",
+                                                    shortcuts.text(m)
+                                                ));
+                                            }
                                         });
                                         group(ui, "VIEWS", &mut |ui| {
                                             for label in
@@ -596,6 +638,10 @@ impl App {
                     } else {
                         self.set_bench(bench);
                     }
+                }
+                // A render-mode button: the same state a Ctrl+1 to Ctrl+5 key press sets.
+                if let Some(m) = mode_pick {
+                    self.mode = m;
                 }
                 if undo {
                     self.start_edit(Some(EditKind::Undo));
@@ -670,7 +716,7 @@ impl App {
             });
     }
 
-    /// The status bar: the selection, snap switches (not available yet) and Details.
+    /// The status bar: the selection, the selection switches, the Snap switch and Details.
     pub(crate) fn status_bar(&mut self, ui: &mut Ui) {
         let palette = Palette::current(ui);
         egui::Panel::bottom("model-status")
@@ -716,12 +762,74 @@ impl App {
                         {
                             self.details = !self.details;
                         }
-                        for snap in ["Nearest", "Grid", "Middle", "End"] {
-                            ui.add_enabled(false, egui::Button::new(RichText::new(snap).small()))
-                                .on_disabled_hover_text(LATER);
+                        if ui
+                            .selectable_label(
+                                self.selection.snap_open,
+                                RichText::new("Snap").small(),
+                            )
+                            .on_hover_text("Snap switches")
+                            .clicked()
+                        {
+                            self.selection.snap_open = !self.selection.snap_open;
                         }
-                        ui.label(RichText::new("Snap").small().color(palette.muted));
+                        // The selection switches (V11): a switch that is off takes its class
+                        // out of picking, and nothing else — never the model or the snapshot
+                        // on screen.
+                        for class in SelectionClass::ALL.iter().rev() {
+                            let on = self.selection.is_on(*class);
+                            if ui
+                                .selectable_label(
+                                    on,
+                                    RichText::new(Selection::label(*class)).small(),
+                                )
+                                .on_hover_text(Selection::tip(*class))
+                                .clicked()
+                            {
+                                self.selection.set(*class, !on);
+                            }
+                        }
                     });
+                });
+            });
+    }
+
+    /// The snap strip above the status bar: which snap kinds the tools' point resolution asks
+    /// the engine's `snap` for, while the bar's Snap switch is on. Session state only; the
+    /// tools that resolve click points through it arrive with T01.6.
+    pub(crate) fn snap_panel(&mut self, ui: &mut Ui) {
+        if !self.selection.snap_open {
+            return;
+        }
+        let palette = Palette::current(ui);
+        egui::Panel::bottom("snap-panel")
+            .exact_size(30.0)
+            .frame(
+                egui::Frame::new()
+                    .fill(palette.surface)
+                    .inner_margin(egui::Margin::symmetric(14, 0)),
+            )
+            .show(ui, |ui| {
+                let top = ui.max_rect().top();
+                ui.painter().line_segment(
+                    [
+                        egui::pos2(ui.max_rect().left() - 14.0, top),
+                        egui::pos2(ui.max_rect().right() + 14.0, top),
+                    ],
+                    Stroke::new(2.0, palette.ink),
+                );
+                ui.horizontal_centered(|ui| {
+                    ui.label(
+                        RichText::new("Snap")
+                            .small()
+                            .family(theme::bold_family())
+                            .color(palette.muted),
+                    );
+                    for kind in SnapKind::ALL {
+                        let mut on = self.selection.snap_on(kind);
+                        if ui.checkbox(&mut on, snap_label(kind)).changed() {
+                            self.selection.set_snap(kind, on);
+                        }
+                    }
                 });
             });
     }

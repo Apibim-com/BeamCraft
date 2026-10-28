@@ -25,6 +25,7 @@ use crate::source::{Known, Refreshed, Reloaded};
 use crate::stats::Stats;
 use crate::tools::{BeamPlace, Choice, Created, MAX_TEXT, ToolError, ToolKind, Tools};
 use crate::{Error, check_font, command, json_string, source};
+use beamcraft_engine::RenderMode;
 use beamcraft_engine::ViewSnapshot;
 use beamcraft_engine::element::ElementId;
 use beamcraft_engine::member::{AuthoredMember, ProfileInfo};
@@ -60,6 +61,9 @@ pub struct Source {
     pub environment: Option<String>,
     /// The author's name, shown in the header.
     pub author: Option<String>,
+    /// The user's configuration directory (`--config-dir`); `None` is the platform default. The
+    /// render-mode shortcuts are read from it, nothing else.
+    pub config_dir: Option<PathBuf>,
 }
 
 /// The scene on screen: the pinned snapshot, its buffers on the device and what the window
@@ -105,6 +109,8 @@ pub struct App {
     beam: BeamPlace,
     /// Whether viewport clicks place the beam instead of selecting.
     beam_mode: bool,
+    plane_form: crate::work_plane::Form,
+    plane_pick: bool,
     /// The millimetre-quantized hover end the current ghost was built for: the buffers rebuild
     /// only when the preview actually moves.
     ghost_end: Option<[i64; 3]>,
@@ -155,10 +161,22 @@ pub struct App {
     grids_visible: bool,
     grid_edit: Option<grid_panel::GridEdit>,
     grid_refresh_edit: bool,
+    /// The bottom bar's selection switches and snap panel (V11): picking-only state.
+    selection: crate::selection::Selection,
     /// Whether the Details window is open.
     details: bool,
     logo: Option<egui::TextureHandle>,
     logo_tried: bool,
+    /// The active render mode (V16); [`beamcraft_engine::RenderMode::Shaded`] is the default and
+    /// switching never reloads the scene.
+    mode: beamcraft_engine::RenderMode,
+    /// The render-mode shortcuts: the user's file or the defaults.
+    shortcuts: crate::shortcuts::Shortcuts,
+    /// Why the shortcuts file was not used, when it was not.
+    shortcuts_note: Option<String>,
+    /// The selected-only draw and the (selected id, scene origin) it was built for, so the one
+    /// engine query runs on a selection or reload change, not per frame.
+    selected_only: ((String, [f64; 3]), Option<crate::scene::SelectedDraw>),
 }
 
 /// Records a scene swap in the perf counters: the CPU display bytes and the snapshot mesh bytes
@@ -664,6 +682,8 @@ impl App {
             info.name, info.device_type, info.backend
         );
         let publisher = Publisher::new(source.published.clone(), source.workspace.clone());
+        let (shortcuts, shortcuts_note) =
+            crate::shortcuts::Shortcuts::load(source.config_dir.as_deref());
         let perf = perf.map(|(phases, report)| {
             let header = format!(
                 "\"adapter\":{},\"device_type\":{},\"backend\":{},\"samples\":{},\"text\":{}",
@@ -698,6 +718,8 @@ impl App {
             tools: Tools::default(),
             beam: BeamPlace::default(),
             beam_mode: false,
+            plane_form: crate::work_plane::Form::default(),
+            plane_pick: false,
             ghost_end: None,
             job: None,
             reload_job: None,
@@ -737,9 +759,14 @@ impl App {
             grids_visible: true,
             grid_edit: None,
             grid_refresh_edit: false,
+            selection: crate::selection::Selection::default(),
             details: false,
             logo: None,
             logo_tried: false,
+            mode: beamcraft_engine::RenderMode::default(),
+            shortcuts,
+            shortcuts_note,
+            selected_only: ((String::new(), [0.0; 3]), None),
         };
         app.tools.actor.clone_from(&app.source.actor);
         app.editor.actor.clone_from(&app.source.actor);
@@ -893,6 +920,9 @@ impl App {
     fn show(&mut self, loaded: Loaded) {
         note_loaded(&self.stats, &loaded);
         self.loaded = Some(loaded);
+        // A new revision may have moved or replaced the selected element: the selected-only
+        // draw is rebuilt against this scene.
+        self.selected_only = ((String::new(), [0.0; 3]), None);
         self.error = None;
     }
 
@@ -957,11 +987,12 @@ impl App {
         let (tx, rx) = std::sync::mpsc::channel();
         let cancel = self.begin_select(rx);
         let stats = Arc::clone(&self.stats);
+        let selection = self.selection.filter();
         let spawned = std::thread::Builder::new()
             .name("beamcraft-pick".into())
             .spawn(move || {
                 let _ = tx.send(command::select(
-                    &cli, &store, &snapshot, &ray, &cancel, &stats,
+                    &cli, &store, &snapshot, &ray, &cancel, &stats, selection,
                 ));
             });
         if spawned.is_err() {
@@ -1090,6 +1121,19 @@ impl App {
             && ctx.input(|input| input.key_pressed(egui::Key::Delete))
         {
             self.delete_selection();
+        }
+    }
+
+    /// The render-mode shortcuts (V16): one key per mode, the user's bindings. Ignored while a
+    /// text field has the keyboard. Switching a mode changes only the drawing: the loaded
+    /// snapshot, its token and the camera stay as they are.
+    fn render_mode_shortcuts(&mut self, ctx: &egui::Context) {
+        if ctx.egui_wants_keyboard_input() {
+            return;
+        }
+        let pressed = ctx.input(|input| self.shortcuts.pressed(input));
+        if let Some(mode) = pressed {
+            self.mode = mode;
         }
     }
 
@@ -1383,6 +1427,9 @@ impl App {
                 details.kind,
                 details.revision.label()
             ));
+            if let Some((_, count)) = &details.shared_definition {
+                ui.label(format!("Shape and material edits affect all {count} shared parts. Name, position and level affect this part."));
+            }
             // One wrapped row per value: the inspector has a fixed width and values can be long.
             let muted = crate::theme::Palette::current(ui).muted;
             for (label, value) in details.read_only_rows() {
@@ -1397,6 +1444,7 @@ impl App {
             ui.add_enabled_ui(editable && !busy, |ui| {
                 ui.label("Editable, in mm:");
                 field(ui, "Name", &mut self.props.form.name, 140.0);
+                field(ui, "Class", &mut self.props.form.class, 80.0);
                 choice_combo(
                     ui,
                     "props-material",
@@ -1586,6 +1634,10 @@ impl App {
                 point_fields(ui, &mut self.editor.move_to);
             }
             EditKind::Copy => {
+                ui.checkbox(
+                    &mut self.editor.copy_instance,
+                    "Instance: share shape and material edits",
+                );
                 ui.label("Offset of the copy in mm:");
                 point_fields(ui, &mut self.editor.copy_offset);
             }
@@ -1832,6 +1884,11 @@ impl App {
         {
             self.error = Some(e.to_string());
         }
+        // A mode phase measures its mode: the drawing style follows the driver, as a key press
+        // would.
+        if let Some(mode) = request.mode {
+            self.mode = mode;
+        }
         if let Some([width, height]) = request.resize {
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(width, height)));
         }
@@ -1849,8 +1906,23 @@ impl App {
         self.perf = Some((run, report));
     }
 
+    fn install_plane(&mut self, plane: Option<beamcraft_engine::work_plane::WorkPlane>) {
+        self.tools.cancel();
+        self.tools.plane = plane;
+        self.plane_pick = false;
+        self.beam_mode = false;
+        self.beam.reset();
+        self.ghost_end = None;
+        self.renderer
+            .set_ghost(&self.state.device, &self.state.queue, None);
+        self.tool_note = Some(Ok(
+            "Work plane updated for this session; the model is unchanged.".into(),
+        ));
+    }
+
     /// Turns viewport placement of the member on or off (issue #134).
     fn toggle_place(&mut self) {
+        self.plane_pick = false;
         self.beam_mode = !self.beam_mode;
         self.beam.reset();
         self.ghost_end = None;
@@ -1879,11 +1951,29 @@ impl App {
             }
             None => ground_point(&ray),
         };
+        let resolved = if let Some(plane) = self.tools.plane {
+            plane.ray_point(ray.origin, ray.direction)
+        } else {
+            resolved
+        };
         let Some(point) = resolved else {
             self.tool_note = Some(Err(
                 "the click has no world point: aim at the model or the ground plane".into(),
             ));
             return;
+        };
+        let point = match self.beam.start() {
+            Some(start) => match self.tools.plane.map_or_else(
+                || self.tools.member.axis_lock.constrain(start, point),
+                |plane| plane.constrain_world(start, point, self.tools.member.axis_lock),
+            ) {
+                Ok(point) => point,
+                Err(e) => {
+                    self.tool_note = Some(Err(e.to_string()));
+                    return;
+                }
+            },
+            None => point,
         };
         match self.beam.click(point) {
             None => {
@@ -1894,6 +1984,19 @@ impl App {
                 )));
             }
             Some((start, end)) => {
+                let points = self.tools.plane.map(|plane| {
+                    plane
+                        .to_local(start)
+                        .and_then(|start| plane.to_local(end).map(|end| (start, end)))
+                });
+                let (start, end) = match points {
+                    Some(Ok(pair)) => pair,
+                    Some(Err(e)) => {
+                        self.tool_note = Some(Err(e.to_string()));
+                        return;
+                    }
+                    None => (start, end),
+                };
                 self.tools.member.set_endpoints(start, end);
                 self.beam_mode = false;
                 self.ghost_end = None;
@@ -1948,6 +2051,21 @@ impl App {
             ray.origin[1] + t * ray.direction[1],
             ray.origin[2] + t * ray.direction[2],
         ];
+        let end = if let Some(plane) = self.tools.plane {
+            let Some(end) = plane.ray_point(ray.origin, ray.direction) else {
+                return;
+            };
+            end
+        } else {
+            end
+        };
+        let constrained = match self.tools.plane {
+            Some(plane) => plane.constrain_world(start, end, self.tools.member.axis_lock),
+            None => self.tools.member.axis_lock.constrain(start, end),
+        };
+        let Ok(end) = constrained else {
+            return;
+        };
         let key = end.map(|v| v.round() as i64);
         if self.ghost_end == Some(key) {
             return;
@@ -1979,15 +2097,17 @@ impl App {
                 crate::tools::MemberKind::Column => ModelMemberKind::Column,
             },
             name: "ghost".into(),
-            axis_points_mm: [start, end],
+            class: 0,
+            axis_points_mm: vec![start, end],
             profile: self.tools.member.profile.as_deref()?.parse().ok()?,
             roll_rad: self.tools.member.roll.trim().parse::<f64>().ok(),
+            section_placement: None,
             placement: Placement {
                 translation_mm: [0.0; 3],
                 orientation_xyzw: orientation,
             },
             material: None,
-            cut: None,
+            cuts: Vec::new(),
         };
         let body = beamcraft_engine::member::evaluate_member(
             &authored,
@@ -1998,9 +2118,11 @@ impl App {
             },
         )
         .ok()?;
+        // Ghost buffers are display-only world geometry; the committed body stays local.
+        let solid = body.solid.rotated_by(authored.placement.orientation_xyzw)?;
         Some(GhostMesh::of(
-            body.solid.vertices(),
-            body.solid.triangles(),
+            solid.vertices(),
+            solid.triangles(),
             origin_mm,
         ))
     }
@@ -2017,6 +2139,20 @@ impl App {
     }
 
     fn tools_panel(&mut self, ui: &mut egui::Ui) {
+        match self.plane_form.show(ui) {
+            Ok(Some(crate::work_plane::Action::Apply(plane))) => self.install_plane(Some(plane)),
+            Ok(Some(crate::work_plane::Action::Clear)) => self.install_plane(None),
+            Ok(Some(crate::work_plane::Action::PickFace)) => {
+                self.install_plane(self.tools.plane);
+                self.plane_pick = true;
+                self.tool_note = Some(Ok("Click a face to set the session work plane.".into()));
+            }
+            Err(e) => self.tool_note = Some(Err(e.to_string())),
+            _ => {}
+        }
+        if let Some(plane) = self.tools.plane {
+            ui.label(format!("Plane origin: {}", PointText(plane.origin())));
+        }
         ui.label("Dimensions in mm.");
         // Borrowed beside the form (disjoint fields), never copied: the panel is laid out in every
         // frame the window draws.
@@ -2030,6 +2166,7 @@ impl App {
                 field(ui, "Length", &mut form.length, 80.0);
                 field(ui, "Thickness", &mut form.thickness, 80.0);
                 field(ui, "Name", &mut form.name, 140.0);
+                field(ui, "Class", &mut form.class, 80.0);
                 choice_combo(
                     ui,
                     "plate-material",
@@ -2054,7 +2191,18 @@ impl App {
                         }
                     });
                 }
+                field(ui, "Start expression", &mut form.start_input, 180.0);
+                field(ui, "End expression", &mut form.end_input, 180.0);
+                ui.label("X,Y,Z | @DX,DY,DZ | @distance<angle[,DZ] (mm, rad)");
+                ui.horizontal(|ui| {
+                    ui.label("Direction lock");
+                    use beamcraft_engine::coordinate::AxisLock;
+                    for lock in [AxisLock::None, AxisLock::X, AxisLock::Y, AxisLock::Z] {
+                        ui.selectable_value(&mut form.axis_lock, lock, lock.token());
+                    }
+                });
                 field(ui, "Name", &mut form.name, 140.0);
+                field(ui, "Class", &mut form.class, 80.0);
                 choice_combo(
                     ui,
                     "member-profile",
@@ -2173,6 +2321,10 @@ impl App {
         ui.label(format!("{:.0} FPS", self.fps));
         ui.label(&self.adapter);
         ui.label(format!("{}x MSAA", self.renderer.samples));
+        ui.label(format!("Render mode: {}", self.mode.as_token()));
+        if let Some(note) = &self.shortcuts_note {
+            ui.label(format!("Shortcuts: {note}"));
+        }
         ui.separator();
         match &self.loaded {
             Some(l) => {
@@ -2260,10 +2412,12 @@ impl eframe::App for App {
         self.poll_select();
         self.poll_reload();
         self.selection_shortcuts(ui.ctx());
+        self.render_mode_shortcuts(ui.ctx());
         self.perf_step(ui.ctx(), frame.info().cpu_usage);
         if self.menu_open && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.menu_open = false;
         } else if !wants_text && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.plane_pick = false;
             // Esc closes the publish dialog first; it clears the selection only when none is open.
             if self.publisher.phase() == Phase::Confirming {
                 self.publisher.cancel();
@@ -2294,6 +2448,8 @@ impl eframe::App for App {
             self.header(ui);
             self.ribbon(ui);
             self.status_bar(ui);
+            // Registered after the status bar, so the snap strip sits directly above it.
+            self.snap_panel(ui);
             menu::show(ui, &mut self.menu_open);
             self.inspector(ui);
             let ctx = ui.ctx().clone();
@@ -2376,13 +2532,70 @@ impl eframe::App for App {
                     let [r, g, b] = rgb.map(|c: u8| f64::from(c) / 255.0);
                     self.renderer.background = wgpu::Color { r, g, b, a: 1.0 };
                     if let Some(l) = &self.loaded {
-                        self.renderer.draw(
-                            &self.state.device,
-                            &self.state.queue,
-                            &l.uploaded,
-                            view,
-                            &self.stats,
-                        );
+                        // One loaded scene, five drawing styles: the mode picks the pipeline and
+                        // never rewrites the snapshot or its token.
+                        if self.mode == RenderMode::SelectedOnly {
+                            // The one engine query runs on a selection or reload change, not
+                            // per frame; the fields are disjoint, so the cache updates while
+                            // the scene is borrowed.
+                            let key = (
+                                self.editor
+                                    .selected()
+                                    .map(|s| s.id.clone())
+                                    .unwrap_or_default(),
+                                l.summary.origin_mm,
+                            );
+                            if self.selected_only.0 != key {
+                                let draw = self
+                                    .editor
+                                    .selected()
+                                    .and_then(|s| beamcraft_engine::ElementId::parse(&s.id).ok())
+                                    .and_then(|id| {
+                                        crate::scene::SelectedDraw::of(
+                                            &l.snapshot,
+                                            &id,
+                                            l.summary.origin_mm,
+                                        )
+                                    });
+                                self.selected_only = (key, draw);
+                            }
+                        }
+                        match self.mode {
+                            RenderMode::SelectedOnly => match &self.selected_only.1 {
+                                Some(selected) => {
+                                    self.renderer.draw_one(
+                                        &self.state.device,
+                                        &self.state.queue,
+                                        &l.uploaded,
+                                        view,
+                                        &self.stats,
+                                        &selected.digest,
+                                        &selected.instance,
+                                    );
+                                }
+                                // Nothing selected: an empty view, not the whole model.
+                                None => {
+                                    self.renderer.draw(
+                                        &self.state.device,
+                                        &self.state.queue,
+                                        &l.uploaded,
+                                        view,
+                                        &self.stats,
+                                        RenderMode::SelectedOnly,
+                                    );
+                                }
+                            },
+                            mode => {
+                                self.renderer.draw(
+                                    &self.state.device,
+                                    &self.state.queue,
+                                    &l.uploaded,
+                                    view,
+                                    &self.stats,
+                                    mode,
+                                );
+                            }
+                        }
                     }
                     if let Some(l) = &self.loaded {
                         if self.grids_visible {
@@ -2408,7 +2621,14 @@ impl eframe::App for App {
                             )
                             && let Some(ray) = ray_through(&view, ndc, l.summary.origin_mm)
                         {
-                            if !self.beam_mode && self.grids_visible {
+                            // The grids switch (V11) takes grids out of picking; the display
+                            // switch stays `grids_visible`.
+                            if !self.beam_mode
+                                && self.grids_visible
+                                && self
+                                    .selection
+                                    .is_on(beamcraft_engine::query::pick::SelectionClass::Grids)
+                            {
                                 picked_grid = self
                                     .grid_scene
                                     .hit_test(response.rect, &view, l.summary.origin_mm, pos)
@@ -2439,7 +2659,25 @@ impl eframe::App for App {
                     self.select_grid(&id);
                 }
             } else if let Some(ray) = picked {
-                if self.beam_mode {
+                if self.plane_pick {
+                    if let Some(loaded) = &self.loaded {
+                        match beamcraft_engine::work_plane::pick_work_plane(
+                            &loaded.snapshot,
+                            ray.origin,
+                            ray.direction,
+                        ) {
+                            Ok(Some(plane)) => {
+                                self.plane_form.set(plane);
+                                self.install_plane(Some(plane));
+                            }
+                            Ok(None) => {
+                                self.tool_note =
+                                    Some(Err("No face was hit; pick a model face.".into()))
+                            }
+                            Err(e) => self.tool_note = Some(Err(e.to_string())),
+                        }
+                    }
+                } else if self.beam_mode {
                     self.place_beam(ray);
                 } else if !self.other_command_running() {
                     self.start_select(ray);
@@ -2530,7 +2768,7 @@ mod tests {
     use crate::source::{Refreshed, Reloaded};
     use crate::tools::ToolError;
     use beamcraft_engine::synthetic::plate_scene;
-    use beamcraft_engine::{Limits, Representation, ViewPin, ViewSnapshot};
+    use beamcraft_engine::{Limits, RenderMode, Representation, ViewPin, ViewSnapshot};
     use beamcraft_model::digest::Sha256;
     use eframe::egui_wgpu;
     use std::sync::Arc;
@@ -2573,6 +2811,7 @@ mod tests {
             actor: None,
             environment: None,
             author: None,
+            config_dir: None,
         };
         let stats = Arc::new(crate::stats::Stats::default());
         Some(App::new(&cc, source, stats).unwrap())
@@ -2680,6 +2919,222 @@ mod tests {
         assert!(!app.beam_mode && app.beam.start().is_none() && app.ghost_end.is_none());
         assert!(app.grids_visible);
         assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
+    }
+
+    /// The bottom bar (V11): clicking a selection switch toggles it and clicking Snap opens the
+    /// panel; nothing a switch does moves the snapshot token or the loaded scene.
+    #[test]
+    fn the_bottom_bar_toggles_switches_and_opens_the_snap_panel_without_touching_the_model() {
+        let Some(mut app) = headless() else { return };
+        deliver(&mut app, refreshed(2));
+        let token = app.loaded.as_ref().unwrap().snapshot.token().clone();
+        let summary = app.loaded.as_ref().unwrap().summary;
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        fn draw(app: &mut App, ctx: &egui::Context, events: Vec<egui::Event>) -> egui::FullOutput {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1400.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.status_bar(ui);
+                    app.snap_panel(ui);
+                },
+            );
+            // Only layout and input are inspected; this test does not upload textures.
+            output.textures_delta.clear();
+            output
+        }
+        let position = |output: &egui::FullOutput, label: &str| {
+            output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == label => {
+                        Some(text.pos + text.galley.size() / 2.0)
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{label} was not drawn"))
+        };
+        let click = |pos| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        use beamcraft_engine::query::pick::SelectionClass;
+        // Every switch is drawn and starts on.
+        let first = draw(&mut app, &ctx, Vec::new());
+        for label in [
+            "Parts", "Assy", "Bolts", "Welds", "Holes", "Grids", "Constr", "Items",
+        ] {
+            position(&first, label);
+        }
+        // Toggling two switches leaves the rest on and moves nothing.
+        let second = draw(&mut app, &ctx, click(position(&first, "Parts")));
+        let third = draw(&mut app, &ctx, click(position(&second, "Grids")));
+        assert_eq!(
+            app.selection.filter().off_classes(),
+            vec![SelectionClass::Parts, SelectionClass::Grids]
+        );
+        assert!(app.selection.is_on(SelectionClass::Bolts));
+        assert_eq!(app.loaded.as_ref().unwrap().summary, summary);
+        assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
+        // The Snap button opens the panel with one switch per snap kind; a click on a kind
+        // toggles exactly that kind.
+        assert!(!app.selection.snap_open);
+        let fourth = draw(&mut app, &ctx, click(position(&third, "Snap")));
+        assert!(app.selection.snap_open);
+        position(&fourth, "Grid intersection");
+        assert_eq!(
+            app.selection.snap_kinds(),
+            vec![
+                beamcraft_engine::query::pick::SnapKind::Vertex,
+                beamcraft_engine::query::pick::SnapKind::AxisEnd,
+                beamcraft_engine::query::pick::SnapKind::Axis,
+            ]
+        );
+        draw(
+            &mut app,
+            &ctx,
+            click(position(&fourth, "Grid intersection")),
+        );
+        assert!(
+            app.selection
+                .snap_on(beamcraft_engine::query::pick::SnapKind::GridIntersection)
+        );
+        assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
+        // A final frame over the mutated state draws without errors.
+        draw(&mut app, &ctx, Vec::new());
+    }
+
+    #[test]
+    fn ctrl_1_to_5_and_the_ribbon_switch_render_modes_without_touching_the_scene() {
+        let Some(mut app) = headless() else { return };
+        deliver(&mut app, refreshed(2));
+        let token = app.loaded.as_ref().unwrap().snapshot.token().clone();
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        let draw = |app: &mut App, events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1400.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.render_mode_shortcuts(ui.ctx());
+                    app.header(ui);
+                    app.ribbon(ui);
+                },
+            );
+            output.textures_delta.clear();
+            output
+        };
+        // egui tracks modifiers only through ModifiersChanged, as winit delivers them.
+        let press = |key, ctrl| {
+            let modifiers = if ctrl {
+                egui::Modifiers::CTRL
+            } else {
+                egui::Modifiers::NONE
+            };
+            vec![
+                egui::Event::ModifiersChanged(modifiers),
+                egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers,
+                },
+            ]
+        };
+        let position = |output: &egui::FullOutput, label: &str| {
+            output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == label => {
+                        Some(text.pos + text.galley.size() / 2.0)
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{label} was not drawn"))
+        };
+        let click = |pos| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        // A bare digit never switches a mode; Ctrl+1 to Ctrl+5 do, in order.
+        draw(&mut app, press(egui::Key::Num1, false));
+        assert_eq!(app.mode, RenderMode::Shaded);
+        for (key, expected) in [
+            (egui::Key::Num1, RenderMode::Wireframe),
+            (egui::Key::Num2, RenderMode::Transparent),
+            (egui::Key::Num3, RenderMode::Grey),
+            (egui::Key::Num4, RenderMode::Shaded),
+            (egui::Key::Num5, RenderMode::SelectedOnly),
+        ] {
+            draw(&mut app, press(key, true));
+            assert_eq!(app.mode, expected, "{key:?}");
+        }
+        assert_eq!(
+            app.loaded.as_ref().unwrap().snapshot.token(),
+            &token,
+            "a mode switch never reloads the scene"
+        );
+        // A remapped binding replaces the default one; the other modes keep theirs.
+        app.shortcuts
+            .set(
+                RenderMode::Wireframe,
+                crate::shortcuts::Binding::parse("Ctrl+7").unwrap(),
+            )
+            .unwrap();
+        draw(&mut app, press(egui::Key::Num1, true));
+        assert_eq!(app.mode, RenderMode::SelectedOnly);
+        draw(&mut app, press(egui::Key::Num7, true));
+        assert_eq!(app.mode, RenderMode::Wireframe);
+        // The View tab's DISPLAY buttons set the same state a key press does.
+        let first = draw(&mut app, Vec::new());
+        draw(&mut app, click(position(&first, "View")));
+        let view_tab = draw(&mut app, Vec::new());
+        draw(&mut app, click(position(&view_tab, "Transparent")));
+        assert_eq!(app.mode, RenderMode::Transparent);
     }
 
     #[test]

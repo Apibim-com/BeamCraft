@@ -71,6 +71,30 @@ cargo test --workspace
 
 More in [`docs/development.md`](docs/development.md) and [`docs/architecture.md`](docs/architecture.md).
 
+## Drive BeamCraft from Claude Code
+
+This repository is also a Claude Code plugin. It teaches Claude Code to run the `beamcraft`
+binary: create, update and inspect members and plates, open and verify a store, snapshot and
+export views, and pick features at coordinates - and to open the result in the native viewport
+app. There is no MCP server and no background process: the skills drive the CLI for modelling,
+and `/beamcraft:open` only launches the viewport app on the store.
+
+```sh
+claude plugin install beamcraft --marketplace axisrow/BeamCraft
+```
+
+or from a local checkout instead of GitHub:
+
+```sh
+claude plugin install beamcraft --marketplace /path/to/BeamCraft
+```
+
+The workflow is one skill that Claude picks up from the request, also invocable as the slash
+command `/beamcraft:model`; its details live in the `reference/` files next to its `SKILL.md`.
+`/beamcraft:open` only launches the native viewport app on a store.
+See [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json) and the
+`skills/` guides, which embed real captured CLI output as their acceptance evidence.
+
 ## What's next
 
 First, establish model and geometry contracts plus original fixtures. Then demonstrate

@@ -37,12 +37,15 @@ pub mod props;
 pub mod publish;
 pub mod render;
 pub mod scene;
+pub mod selection;
 pub mod shell;
+pub mod shortcuts;
 pub mod source;
 pub mod start;
 pub mod stats;
 pub mod theme;
 pub mod tools;
+pub mod work_plane;
 
 /// A bounded viewport failure; adapter absence is reported, never replaced by a fake result.
 #[derive(Debug)]

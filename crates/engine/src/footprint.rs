@@ -39,6 +39,8 @@ pub enum Group {
     MaterialRef,
     /// Relationships to other elements or definitions.
     Relationship,
+    /// The element mark and its approval state (A08).
+    Mark,
     /// Existence and identity.
     Lifecycle,
     /// Derived geometry, quantities and their signatures.
@@ -54,6 +56,7 @@ impl Group {
             Self::Placement => "placement",
             Self::MaterialRef => "material_ref",
             Self::Relationship => "relationship",
+            Self::Mark => "mark",
             Self::Lifecycle => "lifecycle",
             Self::Derived => "derived",
         }
@@ -205,8 +208,7 @@ impl Footprint {
     /// supported fields it changes, plus the derived group when the shape or the material does.
     /// A rename touches the label alone. A move or an orientation change reads the local shape
     /// and the placement and writes the placement plus the derived group (the world-measurement
-    /// invalidation of F04 section 8; only an orientation change of a member also rebuilds its
-    /// element-local body, as a mesh write inside the derived group).
+    /// invalidation of F04 section 8). The local body is unchanged for either part kind.
     pub fn for_update(
         id: ElementId,
         name: bool,
@@ -332,6 +334,46 @@ impl Footprint {
         Ok(footprint)
     }
 
+    /// The footprint of `SetAssemblyMainPart` (A16.1): the record lives on the assembly, so only
+    /// the assembly's relationship group is written. It reads the assembly's lifecycle and
+    /// relationships (its existence and kind decide acceptance) and the part's lifecycle and
+    /// relationships: its existence and its membership decide whether it is a direct part of the
+    /// assembly, so a concurrent detach of the part must conflict.
+    pub fn for_main_part(assembly: ElementId, part: ElementId) -> Result<Self, CommandError> {
+        let mut reads = BTreeSet::new();
+        for id in [assembly, part] {
+            for group in [Group::Lifecycle, Group::Relationship] {
+                reads.insert(Entry {
+                    target: Target::Element(id),
+                    group,
+                });
+            }
+        }
+        let footprint = Self {
+            reads,
+            writes: BTreeSet::from([Entry {
+                target: Target::Element(assembly),
+                group: Group::Relationship,
+            }]),
+        };
+        footprint.check_bound()?;
+        Ok(footprint)
+    }
+
+    /// The footprint of `ExplodeAssembly` (A16): the assembly element is deleted, so its whole
+    /// authored state is written ([`Self::for_delete`]), and every direct part's `part-of` record
+    /// is removed, so each part's relationship group is written and its lifecycle and
+    /// relationships are read: their existence and membership decide the parts of the assembly,
+    /// so a concurrent attach, detach or delete of any of them must conflict. A part that is a
+    /// nested assembly is only detached; its own parts are neither read nor written.
+    pub fn for_explode(assembly: ElementId, parts: &[ElementId]) -> Result<Self, CommandError> {
+        let mut footprint = Self::for_delete(assembly)?;
+        for part in parts {
+            footprint = footprint.union(Self::for_part_of(*part, &[])?)?;
+        }
+        Ok(footprint)
+    }
+
     /// The footprint of a level assignment or unassignment (D2): the `bim:level` record lives with
     /// its source, so only the element's relationship group is written. It reads the element's
     /// lifecycle and relationships and, for an assignment, the level's lifecycle: its existence and
@@ -357,6 +399,25 @@ impl Footprint {
                 target: Target::Element(element),
                 group: Group::Relationship,
             }]),
+        };
+        footprint.check_bound()?;
+        Ok(footprint)
+    }
+
+    /// The footprint of a mark change (A08: assign, replace, revoke or approve): the record
+    /// lives with its source, so only the element's mark group is written. It reads the element's
+    /// lifecycle (its existence decides acceptance) and its mark group (the current value and
+    /// approval state decide it), so a concurrent change of either must conflict. A mark change
+    /// has no geometric effect and writes no derived group. The withdrawal of an approval under a
+    /// shape-input edit is `for_update` unioned with this.
+    pub fn for_mark(element: ElementId) -> Result<Self, CommandError> {
+        let entry = |group| Entry {
+            target: Target::Element(element),
+            group,
+        };
+        let footprint = Self {
+            reads: BTreeSet::from([entry(Group::Lifecycle), entry(Group::Mark)]),
+            writes: BTreeSet::from([entry(Group::Mark)]),
         };
         footprint.check_bound()?;
         Ok(footprint)
@@ -545,10 +606,76 @@ mod tests {
     }
 
     #[test]
+    fn a_mark_change_writes_only_the_target_mark_and_reads_it_back() {
+        let f = Footprint::for_mark(id(5)).unwrap();
+        assert_eq!(
+            f.writes().iter().copied().collect::<Vec<_>>(),
+            vec![Entry {
+                target: Target::Element(id(5)),
+                group: Group::Mark,
+            }]
+        );
+        assert_eq!(f.reads().len(), 2);
+        // Groups are the conflict unit: two marks of different elements are independent, and a
+        // rename of the same element touches the label group, not the mark group.
+        assert!(!f.conflicts_with(&Footprint::for_mark(id(6)).unwrap()));
+        let rename = Footprint::for_update(id(5), true, false, false, false, None).unwrap();
+        assert!(!f.conflicts_with(&rename));
+        assert!(!rename.conflicts_with(&f));
+        // The same element's mark group conflicts with itself, and a delete conflicts through
+        // the lifecycle read.
+        assert!(f.conflicts_with(&Footprint::for_mark(id(5)).unwrap()));
+        assert!(f.conflicts_with(&Footprint::for_delete(id(5)).unwrap()));
+        assert_eq!(Group::Mark.as_str(), "mark");
+    }
+
+    #[test]
     fn group_tokens_are_the_f04_names() {
         assert_eq!(Group::ShapeInputs.as_str(), "shape_inputs");
         assert_eq!(Group::MaterialRef.as_str(), "material_ref");
     }
+
+    #[test]
+    fn a_main_part_change_writes_the_assembly_and_reads_both_ends() {
+        let f = Footprint::for_main_part(id(5), id(6)).unwrap();
+        assert_eq!(
+            f.writes().iter().copied().collect::<Vec<_>>(),
+            vec![Entry {
+                target: Target::Element(id(5)),
+                group: Group::Relationship,
+            }]
+        );
+        assert_eq!(f.reads().len(), 4);
+        // A concurrent detach of the part conflicts; an unrelated assembly's main does not.
+        assert!(f.conflicts_with(&Footprint::for_part_of(id(6), &[]).unwrap()));
+        assert!(f.conflicts_with(&Footprint::for_delete(id(6)).unwrap()));
+        assert!(!f.conflicts_with(&Footprint::for_main_part(id(7), id(8)).unwrap()));
+    }
+
+    #[test]
+    fn an_explode_writes_the_assembly_and_the_parts_relationships() {
+        let f = Footprint::for_explode(id(5), &[id(6), id(7)]).unwrap();
+        for (target, group) in [
+            (id(5), Group::Lifecycle),
+            (id(5), Group::Relationship),
+            (id(6), Group::Relationship),
+            (id(7), Group::Relationship),
+        ] {
+            assert!(
+                f.writes().contains(&Entry {
+                    target: Target::Element(target),
+                    group
+                }),
+                "{target:?} {group:?}"
+            );
+        }
+        // Every direct part conflicts: a concurrent attach or delete of one must lose.
+        assert!(f.conflicts_with(&Footprint::for_part_of(id(6), &[]).unwrap()));
+        assert!(f.conflicts_with(&Footprint::for_delete(id(6)).unwrap()));
+        // Parts of a nested sub-assembly are untouched by the explode of id(5).
+        assert!(!f.conflicts_with(&Footprint::for_part_of(id(8), &[]).unwrap()));
+    }
+
     #[test]
     fn a_part_of_change_writes_only_the_part_relationship_and_reads_the_chain() {
         let f = Footprint::for_part_of(id(5), &[id(6), id(7)]).unwrap();

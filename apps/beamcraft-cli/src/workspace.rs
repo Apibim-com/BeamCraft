@@ -32,9 +32,11 @@ use std::path::{Path, PathBuf};
 
 mod state;
 pub use state::WorkspaceState;
+pub mod conflicts;
 mod pending;
 pub mod rebase;
 pub mod rebase_receipt;
+pub mod resolve;
 
 const META_FILE: &str = "workspace.json";
 const META_MAGIC: &str = "beamcraft-workspace 1";
@@ -182,6 +184,9 @@ pub struct WorkspaceStatus {
     pub published_head: RevisionSummary,
     /// Whether the published head is still the base (`false`: another change was published).
     pub base_is_current: bool,
+    /// Unresolved semantic conflicts between the unsent work and accepted history (C04);
+    /// empty when none stand. Publication and packaging refuse while this is nonempty.
+    pub pending_conflicts: Vec<beamcraft_engine::rebase::Conflict>,
 }
 
 fn head_of(
@@ -310,6 +315,7 @@ pub fn status(
             "workspace rebase boundary is beyond its draft head",
         ));
     }
+    let pending_conflicts = conflicts::active(workspace, dir, &meta)?;
     let head =
         head_of(published)?.ok_or_else(|| integrity("the published store has no revision"))?;
     Ok(WorkspaceStatus {
@@ -317,8 +323,18 @@ pub fn status(
         base_is_current: head.revision() == &meta.base_revision,
         draft_head: summarize(&draft),
         published_head: summarize(&head),
+        pending_conflicts,
         meta,
     })
+}
+
+/// The still-unresolved semantic conflicts (C04) that gate publication and packaging.
+pub fn pending_conflicts(
+    workspace: &RevisionStore,
+    dir: &Path,
+) -> Result<Vec<beamcraft_engine::rebase::Conflict>, PlateError> {
+    let meta = read_meta(dir)?;
+    conflicts::active(workspace, dir, &meta)
 }
 
 /// Result of `publish`.
@@ -382,11 +398,36 @@ pub fn publish_workspace(
             message: "the workspace has nothing to publish",
         });
     }
+    // C04: a recorded semantic conflict refuses every publication until the draft is resolved.
+    if !conflicts::active(workspace, dir, &meta)?.is_empty() {
+        return Err(conflicts::refusal());
+    }
     if head.info().revision() != &meta.base_revision {
         return Err(PlateError {
             rule_id: None,
             code: ErrorCode::BaseRevisionMismatch,
             message: "the published head moved since the workspace was forked",
+        });
+    }
+    let operations =
+        crate::command_evidence::interval(workspace, meta.synced_sequence, draft_sequence)?;
+    let source = crate::command_evidence::aggregate(workspace, meta.synced_sequence, &operations)?;
+    if source.head.manifest_digest() != draft.info().manifest_digest() {
+        return Err(integrity(
+            "publication source differs from the verified draft head",
+        ));
+    }
+    // A fully renounced draft carries no modelling work: its content equals its accepted base
+    // and a publication of it would ship nothing, so refuse before anything is written.
+    if source
+        .footprint
+        .as_ref()
+        .is_some_and(|work| work.reads().is_empty() && work.writes().is_empty())
+    {
+        return Err(PlateError {
+            rule_id: None,
+            code: ErrorCode::InvalidArgument,
+            message: "the unsent work was renounced; there is nothing to publish",
         });
     }
     let content = draft.manifest().content();
@@ -419,14 +460,6 @@ pub fn publish_workspace(
         root_layer: content.root_layer().to_owned(),
         entries,
     };
-    let operations =
-        crate::command_evidence::interval(workspace, meta.synced_sequence, draft_sequence)?;
-    let source = crate::command_evidence::aggregate(workspace, meta.synced_sequence, &operations)?;
-    if source.head.manifest_digest() != draft.info().manifest_digest() {
-        return Err(integrity(
-            "publication source differs from the verified draft head",
-        ));
-    }
     let evidence = source
         .footprint
         .as_ref()
