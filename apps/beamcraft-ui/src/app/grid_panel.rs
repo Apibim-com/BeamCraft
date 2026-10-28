@@ -152,7 +152,13 @@ impl App {
     fn drawn_line_fields(&mut self, ui: &mut Ui, editing: bool) {
         if editing {
             egui::ComboBox::from_id_salt("grid-line-action")
-                .selected_text(&self.grid_line.action)
+                .selected_text(match self.grid_line.action.as_str() {
+                    "update-grid" => "Grid properties",
+                    "reshape-grid-line" => "Reshape line",
+                    "relabel-grid-line" => "Relabel line",
+                    "remove-grid-line" => "Remove line",
+                    _ => "Add line",
+                })
                 .show_ui(ui, |ui| {
                     for (action, label) in [
                         ("update-grid", "Grid properties"),
@@ -173,12 +179,16 @@ impl App {
                         .as_ref()
                         .is_some_and(|e| e.id == g.id.to_string())
                 });
-                egui::ComboBox::from_id_salt("grid-line-axis")
-                    .selected_text(if self.grid_line.axis.is_empty() {
-                        "Choose axis"
-                    } else {
-                        &self.grid_line.axis
+                let axis_label = selected
+                    .and_then(|grid| beamcraft_engine::grid_query::segments(grid).ok())
+                    .and_then(|lines| {
+                        lines
+                            .into_iter()
+                            .find(|line| line.axis_id.to_string() == self.grid_line.axis)
                     })
+                    .map_or_else(|| "Choose axis".into(), |line| line.label);
+                egui::ComboBox::from_id_salt("grid-line-axis")
+                    .selected_text(axis_label)
                     .show_ui(ui, |ui| {
                         if let Some(grid) = selected
                             && let Ok(lines) = beamcraft_engine::grid_query::segments(grid)
