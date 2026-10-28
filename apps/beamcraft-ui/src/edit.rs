@@ -4,24 +4,18 @@
 //! V05.2 edit tools, as pure logic: selecting by a mouse click, moving, copying and deleting the
 //! selected element, and undo and redo. Every action is the argument list of the same CLI command
 //! a user types (`pick`, `update-element --translation`, `copy-element --offset`,
-//! `delete-element`, `undo-workspace`, `redo-workspace`); the reply is read back into a result or
+//! `delete-element`, `workspace-undo`, `workspace-redo`); the reply is read back into a result or
 //! the CLI's own refusal. Nothing here touches a window, a GPU or a process.
 //!
 //! The UI computes no engineering result. The one piece of arithmetic is the display ray through a
 //! clicked pixel (camera math, like the projection in [`crate::camera`]); what the ray hits is the
-//! engine's `pick`. The window runs that query itself on the snapshot it shows ([`pick_in`], the
-//! same engine call the CLI's `pick` makes), so a click selects what is on screen and starts no
-//! process for it. A move is the absolute translation the user types (the form is pre-filled with
+//! engine's `pick`. A move is the absolute translation the user types (the form is pre-filled with
 //! the element's present translation as the engine reports it), so the UI adds nothing up itself.
 //! Property editing is V06.
 
 use crate::camera::View;
 use crate::tools::{FormError, ToolError, decode, rejection, text};
-use beamcraft_engine::ViewSnapshot;
-use beamcraft_engine::query::feature::FeatureKind;
-use beamcraft_engine::query::pick::{PickQuery, RayPick, pick};
-use beamcraft_json::Json;
-use beamcraft_model::limits::COORDINATE_CAP_MM;
+use beamcraft_protocol::json::Json;
 use std::path::Path;
 
 /// A world-space ray in millimetres.
@@ -122,60 +116,7 @@ pub fn parse_pick(exit_code: Option<i32>, stdout: &[u8]) -> Result<Option<String
     }
 }
 
-/// What the CLI's `pick` with [`pick_args`] answers for `ray`, computed in this process on
-/// `snapshot` by the same engine query: the element of the nearest front face along the ray, or
-/// `None` for empty space. A refusal carries the engine's code, as the CLI's reply would.
-pub fn pick_in(snapshot: &ViewSnapshot, ray: &Ray) -> Result<Option<String>, ToolError> {
-    Ok(face_pick(snapshot, ray)?.map(|(_, id)| id))
-}
-
-/// Where a click lands in 3D (issue #134 placement): the engine's front-face hit point on the
-/// snapshot on screen together with the element it names. `None` for empty space; the caller
-/// falls back to [`ground_point`] then.
-pub fn pick_point_in(
-    snapshot: &ViewSnapshot,
-    ray: &Ray,
-) -> Result<Option<([f64; 3], String)>, ToolError> {
-    face_pick(snapshot, ray)
-}
-
-fn face_pick(snapshot: &ViewSnapshot, ray: &Ray) -> Result<Option<([f64; 3], String)>, ToolError> {
-    let mut query = RayPick::new(ray.origin, ray.direction, vec![FeatureKind::Face]);
-    query.max_hits = 1;
-    let result = pick(snapshot, &PickQuery::Ray(query)).map_err(|e| ToolError {
-        code: e.f04_code().as_str().to_owned(),
-        message: format!("the pick was refused ({})", e.code().as_str()),
-    })?;
-    Ok(result
-        .hits
-        .first()
-        .map(|hit| (hit.point_world_mm, hit.element_id.to_string())))
-}
-
-/// Where `ray` meets the ground plane `z = 0` ahead of the camera: where a placement click
-/// lands when it misses every face. `None` for a parallel ray, a crossing behind the camera or
-/// a point beyond the member endpoint cap `COORDINATE_CAP_MM`: such a point would pass no
-/// `create-member` at Commit, so it is no placement point to begin with.
-pub fn ground_point(ray: &Ray) -> Option<[f64; 3]> {
-    if ray.direction[2].abs() < 1e-9 {
-        return None;
-    }
-    let t = -ray.origin[2] / ray.direction[2];
-    if !(t.is_finite() && t > 0.0) {
-        return None;
-    }
-    let point = [
-        ray.origin[0] + t * ray.direction[0],
-        ray.origin[1] + t * ray.direction[1],
-        0.0,
-    ];
-    (point
-        .iter()
-        .all(|v| v.is_finite() && v.abs() <= COORDINATE_CAP_MM))
-    .then_some(point)
-}
-
-/// What the panel shows about the selected element, as `inspect-elements` reports it.
+/// What the panel shows about the selected element, as `plate-inspect` reports it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ElementInfo {
     /// The element's id.
@@ -188,20 +129,16 @@ pub struct ElementInfo {
     pub translation_mm: [f64; 3],
 }
 
-/// The arguments of the CLI command that reports one element of the accepted revision with its
-/// placement and properties (`inspect-elements --element ID`: a reply of one element, whatever the
-/// size of the model).
-pub fn inspect_element_args(store: &Path, id: &str) -> Vec<String> {
+/// The arguments of the CLI command that lists the elements with their placements.
+pub fn inspect_args(store: &Path) -> Vec<String> {
     vec![
-        "inspect-elements".into(),
+        "plate-inspect".into(),
         "--store".into(),
         store.to_string_lossy().into_owned(),
-        "--element".into(),
-        id.to_owned(),
     ]
 }
 
-/// Reads the reply of `inspect-elements` for one element. An id the revision does not hold is
+/// Reads the reply of `plate-inspect` for one element. An id the revision does not hold is
 /// `NOT_FOUND`.
 pub fn parse_element_info(
     id: &str,
@@ -256,9 +193,9 @@ pub enum EditKind {
     Copy,
     /// `delete-element`.
     Delete,
-    /// `undo-workspace`.
+    /// `workspace-undo`.
     Undo,
-    /// `redo-workspace`.
+    /// `workspace-redo`.
     Redo,
 }
 
@@ -269,8 +206,8 @@ impl EditKind {
             Self::Move => "update-element",
             Self::Copy => "copy-element",
             Self::Delete => "delete-element",
-            Self::Undo => "undo-workspace",
-            Self::Redo => "redo-workspace",
+            Self::Undo => "workspace-undo",
+            Self::Redo => "workspace-redo",
         }
     }
 
@@ -357,64 +294,27 @@ fn point(field: &'static str, parts: &[String; 3]) -> Result<String, FormError> 
 
 /// The edit panel's state: the selection, the two point forms, and the preview / commit state
 /// machine of the destructive and placing actions. Undo and redo run directly.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Editor {
     selected: Option<ElementInfo>,
-    action: EditKind,
     /// `--translation` of a move: the new absolute translation.
     pub move_to: [String; 3],
     /// `--offset` of a copy.
     pub copy_offset: [String; 3],
-    /// The author recorded as `--actor-id` of a move, copy or delete, when the window has one.
-    pub actor: Option<String>,
     staged: Option<Edit>,
     busy: bool,
 }
 
-impl Default for Editor {
-    fn default() -> Self {
-        Self {
-            selected: None,
-            action: EditKind::Move,
-            move_to: Default::default(),
-            copy_offset: Default::default(),
-            actor: None,
-            staged: None,
-            busy: false,
-        }
-    }
-}
-
 impl Editor {
-    /// The action the panel is set to (move, copy or delete).
-    pub fn action(&self) -> EditKind {
-        self.action
-    }
-
-    /// Switches the panel to another action. A staged edit was reviewed for the old action, so
-    /// switching drops it: the new action needs its own preview.
-    pub fn set_action(&mut self, action: EditKind) {
-        if self.action != action {
-            self.staged = None;
-            self.action = action;
-        }
-    }
-
     /// The selected element.
     pub fn selected(&self) -> Option<&ElementInfo> {
         self.selected.as_ref()
     }
 
     /// Selects an element and pre-fills the move form with its present translation, as the
-    /// engine reported it. Selecting the already selected element again keeps the typed
-    /// coordinates, so a confirming click does not undo the typing. Any staged edit is
-    /// dropped: it was for another selection, or the selection was made again.
+    /// engine reported it. Any staged edit is dropped: it was for another selection.
     pub fn select(&mut self, info: ElementInfo) {
-        if self.selected.as_ref() != Some(&info) {
-            // Debug formatting: the shortest round-trip form, which stays within the
-            // `number` length cap for every finite value (exponents included).
-            self.move_to = info.translation_mm.map(|v| format!("{v:?}"));
-        }
+        self.move_to = info.translation_mm.map(|v| format!("{v}"));
         if self.copy_offset.iter().all(String::is_empty) {
             self.copy_offset = ["0".into(), "0".into(), "0".into()];
         }
@@ -456,7 +356,7 @@ impl Editor {
                     message: "click an element first".into(),
                 })
         };
-        let mut args = match kind {
+        let args = match kind {
             EditKind::Move => vec![
                 "update-element".to_owned(),
                 "--store".into(),
@@ -485,7 +385,7 @@ impl Editor {
             EditKind::Undo | EditKind::Redo => {
                 let workspace = target.workspace.ok_or_else(|| FormError {
                     field: "Workspace",
-                    message: "undo and redo need a personal workspace: open the window with --workspace DIR (beamcraft create-workspace makes one)".into(),
+                    message: "undo and redo need a personal workspace: open the window with --workspace DIR (beamcraft workspace-create makes one)".into(),
                 })?;
                 vec![
                     kind.command().to_owned(),
@@ -494,9 +394,6 @@ impl Editor {
                 ]
             }
         };
-        if matches!(kind, EditKind::Move | EditKind::Copy | EditKind::Delete) {
-            crate::tools::push_actor(&mut args, self.actor.as_deref());
-        }
         Ok(Edit { kind, args })
     }
 
@@ -561,26 +458,6 @@ impl Editor {
     }
 }
 
-/// Tells a worker's lookup result whether it is still wanted. Every new lookup, every
-/// invalidation (Esc, an accepted edit) moves the epoch on; a result carries the epoch it was
-/// asked under and is dropped when that is no longer the current one, so a late reply can neither
-/// bring back a cleared selection nor overwrite a newer one with pre-edit details.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Epoch(u64);
-
-impl Epoch {
-    /// Starts a new generation and returns it; every earlier result is now stale.
-    pub fn advance(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(1);
-        self.0
-    }
-
-    /// Whether a result asked for under `asked` is still the wanted one.
-    pub fn is_current(&self, asked: u64) -> bool {
-        self.0 == asked
-    }
-}
-
 /// What an accepted edit reports.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Edited {
@@ -596,7 +473,7 @@ pub struct Edited {
     pub replayed: bool,
 }
 
-pub(crate) fn sequence_of(revision: &Json) -> Option<u64> {
+fn sequence_of(revision: &Json) -> Option<u64> {
     let value = revision.get("sequence").ok()?;
     value
         .string()
@@ -821,7 +698,7 @@ mod tests {
             "Selection"
         );
         editor.select(info());
-        assert_eq!(editor.move_to, ["100.0", "-20.5", "0.0"]);
+        assert_eq!(editor.move_to, ["100", "-20.5", "0"]);
         editor.move_to[0] = " 250 ".into();
         assert_eq!(
             editor.prepare(EditKind::Move, target()).unwrap().args,
@@ -832,7 +709,7 @@ mod tests {
                 "--id",
                 "019a7bf0-0000-7000-8000-000000000001",
                 "--translation",
-                "250,-20.5,0.0"
+                "250,-20.5,0"
             ]
         );
         editor.copy_offset = ["0".into(), "800".into(), "0".into()];
@@ -860,11 +737,11 @@ mod tests {
         );
         assert_eq!(
             editor.prepare(EditKind::Undo, workspace()).unwrap().args,
-            ["undo-workspace", "--workspace-dir", "W"]
+            ["workspace-undo", "--workspace-dir", "W"]
         );
         assert_eq!(
             editor.prepare(EditKind::Redo, workspace()).unwrap().args,
-            ["redo-workspace", "--workspace-dir", "W"]
+            ["workspace-redo", "--workspace-dir", "W"]
         );
     }
 
@@ -892,28 +769,6 @@ mod tests {
         // A huge or negative value is the engine's to judge.
         editor.move_to = ["-1e12".into(), "0".into(), "0".into()];
         assert!(editor.prepare(EditKind::Move, target()).is_ok());
-    }
-
-    #[test]
-    fn a_selection_pre_fills_in_round_trip_form_and_a_reclick_keeps_the_typing() {
-        let mut editor = Editor::default();
-        // A placement with float noise still fits the number length cap and parses back,
-        // because it is written in the shortest round-trip (Debug) form.
-        let noisy = ElementInfo {
-            translation_mm: [5.551115123125783e-17, 1.5e20, 0.0],
-            ..info()
-        };
-        editor.select(noisy.clone());
-        assert_eq!(editor.move_to, ["5.551115123125783e-17", "1.5e20", "0.0"]);
-        assert!(editor.move_to.iter().all(|v| v.len() <= 32));
-        assert!(editor.prepare(EditKind::Move, target()).is_ok());
-        // Selecting the already selected element again keeps the typed coordinates.
-        editor.move_to[0] = "250".into();
-        editor.select(noisy);
-        assert_eq!(editor.move_to[0], "250");
-        // Another selection pre-fills its own translation.
-        editor.select(info());
-        assert_eq!(editor.move_to, ["100.0", "-20.5", "0.0"]);
     }
 
     #[test]
@@ -945,34 +800,6 @@ mod tests {
         assert!(editor.can_commit(target()));
         editor.cancel();
         assert!(editor.staged().is_none());
-    }
-
-    #[test]
-    fn switching_the_action_drops_the_staged_edit() {
-        let mut editor = Editor::default();
-        editor.select(info());
-        editor.set_action(EditKind::Delete);
-        editor.preview(EditKind::Delete, target()).unwrap();
-        assert!(editor.can_commit(target()));
-        editor.set_action(EditKind::Move);
-        assert!(editor.staged().is_none() && !editor.can_commit(target()));
-        assert!(editor.begin_commit(target()).is_none());
-        // Setting the action it already has keeps the preview.
-        editor.preview(EditKind::Move, target()).unwrap();
-        editor.set_action(EditKind::Move);
-        assert!(editor.can_commit(target()));
-    }
-
-    #[test]
-    fn a_late_lookup_result_is_dropped() {
-        let mut epoch = Epoch::default();
-        let asked = epoch.advance();
-        assert!(epoch.is_current(asked));
-        // Esc, or an accepted edit, invalidates what is in flight.
-        epoch.advance();
-        assert!(!epoch.is_current(asked));
-        let refreshed = epoch.advance();
-        assert!(epoch.is_current(refreshed) && !epoch.is_current(asked));
     }
 
     #[test]
@@ -1077,37 +904,5 @@ mod tests {
         editor.select(quoted);
         let edit = editor.prepare(EditKind::Delete, target()).unwrap();
         assert_eq!(edit.argument_list().lines().last(), Some("\"a\\\"b\""));
-    }
-
-    #[test]
-    fn a_placement_click_that_misses_every_face_lands_on_the_ground_plane() {
-        // Down from 100 mm: the crossing is exactly above the origin.
-        let ray = Ray {
-            origin: [500.0, -250.0, 100.0],
-            direction: [0.0, 0.0, -1.0],
-        };
-        assert_eq!(ground_point(&ray), Some([500.0, -250.0, 0.0]));
-        // An oblique ray crosses where its slope says; a negative t is behind the camera.
-        let ray = Ray {
-            origin: [0.0, 0.0, 100.0],
-            direction: [0.6, 0.0, -0.8],
-        };
-        assert_eq!(ground_point(&ray), Some([75.0, 0.0, 0.0]));
-        assert_eq!(
-            ground_point(&Ray {
-                origin: [0.0, 0.0, 100.0],
-                direction: [0.0, 0.0, 1.0]
-            }),
-            None
-        );
-        for parallel in [[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]] {
-            assert_eq!(
-                ground_point(&Ray {
-                    origin: [0.0, 0.0, 100.0],
-                    direction: parallel
-                }),
-                None
-            );
-        }
     }
 }
