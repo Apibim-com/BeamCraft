@@ -50,10 +50,12 @@ evaluated-body API and refuses unsupported geometry without changing state. See 
 ## Limits
 
 Read-only reference display is exposed by `scene::{ReferenceGeometry, reference_element}`:
-bounded Cube and triangle/convex-quad Mesh cages become ordinary reference-kind scene elements,
-without acquiring certified bodies, quantities or engineering pick features. Source translations
-and explicit R01 units correction are supported; wrapper rotation and other foreign transforms
-are not. See the [R01 viewport profile](../../docs/design/r01-readonly-reference.md#translation-only-viewport-path-issue-137).
+bounded Cube and Mesh cages become ordinary reference-kind scene elements, without acquiring
+certified bodies, quantities or engineering pick features. Polygons of more than four corners and
+concave or non-planar quads are fan-triangulated for display only, a surface that cannot be placed
+is left out, and the wrapper rotation and explicit R01 units correction are baked into the drawn
+vertices. The R02 measurement keeps triangles and convex quads. See the
+[R01 note](../../docs/design/r01-readonly-reference.md).
 
 `drawing::projection::resolve` (D02.1) consumes admitted intent and the exact captured snapshot.
 It returns twelve semantic wireframe edges and a projected, scale-independent model-mm dimension,

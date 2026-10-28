@@ -470,7 +470,6 @@ pub struct Opened {
 }
 
 struct Installed {
-    _stage: openusd::usd::Stage,
     context: Context,
     prims: Vec<Prim>,
     budgets: Budgets,
@@ -534,7 +533,6 @@ impl Reader {
             prim_count: candidate.prims.len(),
         };
         self.live = Some(Installed {
-            _stage: candidate.stage,
             context,
             prims: candidate.prims,
             budgets: candidate.budgets,

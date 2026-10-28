@@ -26,6 +26,9 @@ use beamcraft_geom::canonical_f64_bytes;
 /// Largest foreign layer, in bytes: 32 MiB, matching the host blob cap and the U01 model-profile
 /// per-layer budget. The layer engine enforces its stage budgets independently.
 pub const MAX_SOURCE_BYTES: u64 = 32 * 1024 * 1024;
+/// Directory prefix of the virtual name of every stored foreign source layer
+/// (`external/<sha256>.usda`); the layer engine admits only layers under it as displayed sources.
+pub const EXTERNAL_LAYER_PREFIX: &str = "external/";
 /// Smallest `metersPerUnit` a source or an interpretation may state (nanometres).
 pub const MIN_METERS_PER_UNIT: f64 = 1e-9;
 /// Largest `metersPerUnit` a source or an interpretation may state (1000 km).
@@ -199,7 +202,11 @@ impl SourcePin {
     /// (or `.usdc`). It is derived from the digest, so it is stable and cannot collide with an
     /// owned layer.
     pub fn layer_name(&self) -> String {
-        format!("external/{}.{}", self.digest, self.format.as_str())
+        format!(
+            "{EXTERNAL_LAYER_PREFIX}{}.{}",
+            self.digest,
+            self.format.as_str()
+        )
     }
 
     /// Admits the pin: size, default prim name, version, label and declared units.
