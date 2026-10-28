@@ -6,31 +6,20 @@
 //! application layer.
 
 pub mod assembly;
-pub mod bolt;
-pub mod bom;
 pub mod changeset;
-pub mod command_evidence;
 pub mod coordinator;
 pub mod copy;
 pub mod definition;
 pub mod delete;
-pub mod drawing;
 pub mod edit;
 pub mod export;
-pub mod grid;
 pub mod history;
-pub mod history_compact;
 pub mod level;
 pub mod library;
 pub mod member;
 pub mod numbering;
-pub mod numbering_approval;
 pub mod plate;
-pub mod plate_draft;
-pub mod project;
-mod publication;
 pub mod reference;
-mod reference_view;
 pub mod source_file;
 pub mod weld;
 pub mod workspace;
