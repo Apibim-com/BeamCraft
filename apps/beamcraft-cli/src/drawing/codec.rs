@@ -157,6 +157,7 @@ pub fn decode(asset: Asset, identity: Identity, control: &Control) -> Result<Dra
             // The closed semantic reader below still requires exactly two anchors/two origins.
             values: 512,
             array_items: 32,
+            text_bytes: 1024,
             decoded_bytes: 65_536,
             snapshot_bytes: 65_536,
             page_items: 3,
