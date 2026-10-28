@@ -155,6 +155,8 @@ pub struct App {
     /// Whether the workspace panel is expanded along the left side of the window.
     menu_open: bool,
     grid_form: crate::grid::GridForm,
+    grid_line: crate::grid::DrawLineForm,
+    grid_drawn: bool,
     grid_scene: crate::grid::GridScene,
     grid_job: Option<Receiver<Result<crate::grid::CreatedGrid, ToolError>>>,
     grid_note: Option<Result<String, String>>,
@@ -753,6 +755,8 @@ impl App {
             ribbon_tab: workbench::RibbonTab::default(),
             menu_open: false,
             grid_form: crate::grid::GridForm::default(),
+            grid_line: crate::grid::DrawLineForm::default(),
+            grid_drawn: false,
             grid_scene: crate::grid::GridScene::default(),
             grid_job: None,
             grid_note: None,
@@ -1956,12 +1960,50 @@ impl App {
         } else {
             resolved
         };
-        let Some(point) = resolved else {
+        let Some(mut point) = resolved else {
             self.tool_note = Some(Err(
                 "the click has no world point: aim at the model or the ground plane".into(),
             ));
             return;
         };
+        let kinds = self.selection.snap_kinds();
+        if !kinds.is_empty()
+            && let Some(loaded) = &self.loaded
+        {
+            let grids = if self.grids_visible {
+                self.grid_scene.query_grids.as_slice()
+            } else {
+                &[]
+            };
+            let query = beamcraft_engine::query::pick::SnapQuery {
+                point_mm: point,
+                radius_mm: 100.0,
+                kinds,
+                max_hits: 32,
+            };
+            match beamcraft_engine::query::pick::snap_with_grids(
+                &loaded.snapshot,
+                &query,
+                grids,
+                None,
+            ) {
+                Ok(result) => {
+                    if let Some(hit) = result.candidates.iter().find(|hit| {
+                        self.tools.plane.is_none_or(|plane| {
+                            plane
+                                .to_local(hit.point_world_mm)
+                                .is_ok_and(|[_, _, z]| z.abs() <= 1e-6)
+                        })
+                    }) {
+                        point = hit.point_world_mm;
+                    }
+                }
+                Err(error) => {
+                    self.tool_note = Some(Err(error.to_string()));
+                    return;
+                }
+            }
+        }
         let point = match self.beam.start() {
             Some(start) => match self.tools.plane.map_or_else(
                 || self.tools.member.axis_lock.constrain(start, point),
@@ -2417,6 +2459,7 @@ impl eframe::App for App {
         if self.menu_open && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.menu_open = false;
         } else if !wants_text && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.grid_line.click = None;
             self.plane_pick = false;
             // Esc closes the publish dialog first; it clears the selection only when none is open.
             if self.publisher.phase() == Phase::Confirming {
@@ -2624,6 +2667,7 @@ impl eframe::App for App {
                             // The grids switch (V11) takes grids out of picking; the display
                             // switch stays `grids_visible`.
                             if !self.beam_mode
+                                && self.grid_line.click.is_none()
                                 && self.grids_visible
                                 && self
                                     .selection
@@ -2677,6 +2721,8 @@ impl eframe::App for App {
                             Err(e) => self.tool_note = Some(Err(e.to_string())),
                         }
                     }
+                } else if self.grid_line.click.is_some() {
+                    self.place_grid_line(ray);
                 } else if self.beam_mode {
                     self.place_beam(ray);
                 } else if !self.other_command_running() {
@@ -2843,6 +2889,57 @@ mod tests {
         tx.send(reloaded).unwrap();
         app.reload_job = Some(rx);
         app.poll_reload();
+    }
+
+    #[test]
+    fn drawn_grid_clicks_use_engine_snaps_and_cancel_without_a_command() {
+        use beamcraft_engine::query::pick::SnapKind;
+        use beamcraft_model::grid::{DrawnGridLine, Grid, GridFamily};
+        use beamcraft_model::id::ElementId;
+        let mut app = headless().expect("a native or software wgpu adapter is required");
+        deliver(&mut app, refreshed(1));
+        let token = app.loaded.as_ref().unwrap().snapshot.token().clone();
+        let id = ElementId::parse("01990000-0000-7000-8000-000000001001").unwrap();
+        app.grid_scene.query_grids = vec![Grid {
+            id,
+            name: "Drawn".into(),
+            translation_mm: [0.0, 0.0],
+            orientation_zw: [0.0, 1.0],
+            u: GridFamily::Drawn(vec![DrawnGridLine {
+                axis_id: ElementId::parse("01990000-0000-7000-8000-000000001002").unwrap(),
+                label: "D1".into(),
+                start_mm: [0.0, 0.0],
+                end_mm: [3000.0, 4000.0],
+            }]),
+            v: GridFamily::Drawn(vec![DrawnGridLine {
+                axis_id: ElementId::parse("01990000-0000-7000-8000-000000001003").unwrap(),
+                label: "D2".into(),
+                start_mm: [3000.0, 0.0],
+                end_mm: [0.0, 4000.0],
+            }]),
+        }];
+        for kind in SnapKind::ALL {
+            app.selection
+                .set_snap(kind, kind == SnapKind::GridIntersection);
+        }
+        let ray = crate::edit::Ray {
+            origin: [1503.0, 2002.0, 1000.0],
+            direction: [0.0, 0.0, -1.0],
+        };
+        app.grid_line.click = Some(false);
+        app.place_grid_line(ray);
+        assert_eq!(app.grid_line.points[0], ["1500", "2000"]);
+        assert_eq!(app.grid_line.click, Some(true));
+        app.grids_visible = false;
+        app.place_grid_line(ray);
+        assert_eq!(app.grid_line.points[1], ["1503", "2002"]);
+        assert_eq!(app.grid_line.click, None);
+        assert!(app.grid_job.is_none());
+        assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
+        app.grid_line.click = Some(false);
+        app.set_bench(super::workbench::Bench::Select);
+        assert!(app.grid_line.click.is_none());
+        assert!(app.grid_job.is_none());
     }
 
     #[test]
@@ -3175,6 +3272,7 @@ mod tests {
                 editable: true,
                 lines: 0..1,
             }],
+            ..Default::default()
         };
         app.select_grid(id);
         assert_eq!(app.bench, super::workbench::Bench::Select);

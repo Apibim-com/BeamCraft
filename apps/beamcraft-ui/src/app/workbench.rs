@@ -270,6 +270,7 @@ fn caption(ui: &mut Ui, text: &str) {
 impl App {
     /// Switches the inspector to `bench` and points the create or edit forms at it.
     pub(crate) fn set_bench(&mut self, bench: Bench) {
+        self.grid_line.click = None;
         if bench != Bench::Select && self.grid_edit.take().is_some() {
             self.grid_form = crate::grid::GridForm::default();
             self.grid_note = None;
@@ -576,6 +577,20 @@ impl App {
                                             }
                                         });
                                         group(ui, "VISIBILITY", &mut |ui| {
+                                            if tool_button(
+                                                ui,
+                                                Icon::Wire,
+                                                "Grid guides",
+                                                self.grids_visible,
+                                                true,
+                                            )
+                                            .clicked()
+                                            {
+                                                self.grids_visible = !self.grids_visible;
+                                                if !self.grids_visible {
+                                                    self.grid_edit = None;
+                                                }
+                                            }
                                             tool_button(ui, Icon::Block, "Filters", false, false);
                                             tool_button(ui, Icon::Block, "Colours", false, false);
                                         });
