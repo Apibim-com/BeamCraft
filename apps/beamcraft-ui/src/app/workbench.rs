@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! The layout of the model window (design v1): a brand header with the project and Publish, a
+//! The native model workspace: a neutral header with the project and Publish, a
 //! ribbon of tools, the 3D view with its view and zoom controls, an inspector on the right that
 //! shows what the chosen tool needs, and a status bar. The panels it shows run the same commands
 //! as before; tools that do not exist yet are shown disabled, with a tooltip saying so.
@@ -9,7 +9,7 @@
 use super::App;
 use crate::edit::EditKind;
 use crate::publish::Phase;
-use crate::theme::{self, BRAND, INK, Icon, Kind, Palette};
+use crate::theme::{self, Icon, Palette};
 use crate::tools::{MemberKind, ToolKind};
 use egui::{Rect, RichText, Sense, Stroke, StrokeKind, Ui, vec2};
 
@@ -25,6 +25,8 @@ pub(crate) enum Bench {
     Beam,
     /// Create a column.
     Column,
+    /// Create a rectangular project grid.
+    Grid,
     /// Move the selected element.
     Move,
     /// Copy the selected element.
@@ -41,6 +43,7 @@ impl Bench {
             Self::Plate => "New plate",
             Self::Beam => "New beam",
             Self::Column => "New column",
+            Self::Grid => "Rectangular grid",
             Self::Move => "Move",
             Self::Copy => "Copy",
             Self::Delete => "Delete",
@@ -53,7 +56,7 @@ impl Bench {
             Self::Move => Some(EditKind::Move),
             Self::Copy => Some(EditKind::Copy),
             Self::Delete => Some(EditKind::Delete),
-            Self::Select | Self::Plate | Self::Beam | Self::Column => None,
+            Self::Select | Self::Plate | Self::Beam | Self::Column | Self::Grid => None,
         }
     }
 }
@@ -61,7 +64,162 @@ impl Bench {
 /// Why a ribbon tool is disabled, shown as its tooltip.
 const LATER: &str = "Not available yet";
 
-/// One ribbon button: an icon over a label. Active tools are brand cyan with an ink border.
+/// The command families shown on the ribbon.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RibbonTab {
+    Steel,
+    Edit,
+    View,
+    Manage,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum MenuSection {
+    Import,
+    Export,
+    Settings,
+    #[default]
+    Catalogs,
+    Editors,
+    Diagnose,
+    Help,
+    Extend,
+    Profiles,
+    Materials,
+    About,
+}
+
+impl MenuSection {
+    fn heading(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Import => ("Import", "Bring model data into the workspace"),
+            Self::Export => ("Export", "Export model data"),
+            Self::Settings => ("Settings", "Application and workspace preferences"),
+            Self::Catalogs => ("Catalogs", "Profiles, materials and components"),
+            Self::Editors => ("Editors", "Templates, reports and custom components"),
+            Self::Diagnose => ("Diagnose & repair", "Model checks and maintenance"),
+            Self::Help => ("Help", "Navigation and application information"),
+            Self::Extend => ("Extend", "Application extensions"),
+            Self::Profiles => (
+                "Profile catalog",
+                "Profiles in the open model's definitions",
+            ),
+            Self::Materials => (
+                "Material catalog",
+                "Materials in the open model's definitions",
+            ),
+            Self::About => ("About BeamCraft", "Native structural steel detailing"),
+        }
+    }
+
+    fn commands(self) -> &'static [&'static str] {
+        match self {
+            Self::Import => &["BeamCraft file...", "IFC", "DWG / DXF"],
+            Self::Export => &[
+                "BeamCraft file",
+                "IFC",
+                "DWG / DXF",
+                "glTF / GLB",
+                "NC files",
+            ],
+            Self::Settings => &["Options", "Advanced options", "Keyboard shortcuts"],
+            Self::Catalogs => &[
+                "Profile catalog",
+                "Material catalog",
+                "Bolt catalog",
+                "Bolt assembly catalog",
+                "Shape catalog",
+                "Component catalog",
+            ],
+            Self::Editors => &[
+                "Template editor",
+                "Report editor",
+                "Custom component editor",
+            ],
+            Self::Diagnose => &["Diagnose model", "Repair model"],
+            Self::Help => &["Help", "About BeamCraft"],
+            Self::Extend => &["Extensions", "Extension manager"],
+            Self::Profiles | Self::Materials | Self::About => &[],
+        }
+    }
+}
+
+fn menu_navigation(
+    ui: &mut Ui,
+    icon: Icon,
+    label: &str,
+    active: bool,
+    enabled: bool,
+) -> egui::Response {
+    let palette = Palette::current(ui);
+    let response = ui.add_enabled(
+        enabled,
+        egui::Button::new("")
+            .min_size(vec2(ui.available_width(), 34.0))
+            .fill(if active {
+                palette.side_grid
+            } else {
+                egui::Color32::TRANSPARENT
+            })
+            .stroke(Stroke::NONE)
+            .corner_radius(4),
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
+    if !active && enabled && response.hovered() {
+        ui.painter()
+            .rect_filled(response.rect, 4, palette.side_grid);
+    }
+    let color = if enabled {
+        palette.side_text()
+    } else {
+        palette.side_text().gamma_multiply(0.45)
+    };
+    theme::paint_icon(
+        ui.painter(),
+        Rect::from_center_size(
+            response.rect.left_center() + vec2(20.0, 0.0),
+            vec2(18.0, 18.0),
+        ),
+        icon,
+        color,
+    );
+    ui.painter().text(
+        response.rect.left_center() + vec2(44.0, 0.0),
+        egui::Align2::LEFT_CENTER,
+        label,
+        egui::FontId::proportional(12.0),
+        color,
+    );
+    response.on_disabled_hover_text(LATER)
+}
+
+fn menu_command(ui: &mut Ui, label: &str, enabled: bool) -> egui::Response {
+    let palette = Palette::current(ui);
+    let response = ui.add_enabled(
+        enabled,
+        egui::Button::new("")
+            .min_size(vec2(ui.available_width(), 42.0))
+            .frame(false),
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
+    ui.painter().text(
+        response.rect.left_center() + vec2(12.0, 0.0),
+        egui::Align2::LEFT_CENTER,
+        label,
+        egui::FontId::proportional(12.0),
+        if enabled { palette.text } else { palette.muted },
+    );
+    ui.painter().text(
+        response.rect.right_center() - vec2(12.0, 0.0),
+        egui::Align2::RIGHT_CENTER,
+        "→",
+        egui::FontId::proportional(14.0),
+        palette.muted,
+    );
+    response.on_disabled_hover_text(LATER)
+}
+
+/// One keyboard-accessible ribbon button with a contributor-original glyph.
 fn tool_button(
     ui: &mut Ui,
     icon: Icon,
@@ -70,31 +228,49 @@ fn tool_button(
     enabled: bool,
 ) -> egui::Response {
     let palette = Palette::current(ui);
-    let sense = if enabled {
-        Sense::click()
-    } else {
-        Sense::hover()
-    };
-    let (rect, response) = ui.allocate_exact_size(vec2(62.0, 56.0), sense);
+    let label_width = ui
+        .painter()
+        .layout_no_wrap(
+            label.to_owned(),
+            egui::FontId::proportional(11.0),
+            palette.text,
+        )
+        .size()
+        .x;
+    let response = ui.add_enabled(
+        enabled,
+        egui::Button::new("")
+            .min_size(vec2((label_width + 12.0).max(54.0), 64.0))
+            .fill(if active {
+                palette.select
+            } else {
+                egui::Color32::TRANSPARENT
+            })
+            .stroke(Stroke::NONE)
+            .corner_radius(4),
+    );
+    let rect = response.rect;
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
     let painter = ui.painter();
-    let radius = egui::CornerRadius::same(9);
+    let radius = egui::CornerRadius::same(4);
     if active {
-        painter.rect_filled(rect.translate(vec2(2.0, 2.0)), radius, palette.ink);
-        painter.rect_filled(rect, radius, BRAND);
-        painter.rect_stroke(rect, radius, Stroke::new(2.0, INK), StrokeKind::Inside);
-    } else if enabled && response.hovered() {
-        painter.rect_filled(rect, radius, palette.head);
+        painter.rect_stroke(
+            rect,
+            radius,
+            Stroke::new(1.0, palette.rule),
+            StrokeKind::Inside,
+        );
     }
     let alpha = if enabled { 1.0 } else { 0.35 };
-    let line = if active { INK } else { palette.line };
-    let icon_rect = Rect::from_center_size(rect.center() - vec2(0.0, 8.0), vec2(28.0, 28.0));
+    let line = palette.line;
+    let icon_rect = Rect::from_center_size(rect.center() - vec2(0.0, 10.0), vec2(24.0, 24.0));
     // A disabled icon is painted faint on a separate layer of the same painter.
     let mut faint = painter.clone();
     faint.multiply_opacity(alpha);
     theme::paint_icon(&faint, icon_rect, icon, line);
-    let text = if active { INK } else { palette.text };
+    let text = palette.text;
     faint.text(
-        rect.center_bottom() - vec2(0.0, 8.0),
+        rect.center_bottom() - vec2(0.0, 13.0),
         egui::Align2::CENTER_CENTER,
         label,
         egui::FontId::proportional(11.0),
@@ -110,12 +286,7 @@ fn tool_button(
 /// A small group caption under ribbon buttons.
 fn caption(ui: &mut Ui, text: &str) {
     let palette = Palette::current(ui);
-    ui.label(
-        RichText::new(text)
-            .size(10.0)
-            .family(theme::bold_family())
-            .color(palette.muted),
-    );
+    ui.label(RichText::new(text).size(10.0).color(palette.muted));
 }
 
 impl App {
@@ -138,27 +309,58 @@ impl App {
                 }
             }
             Bench::Select => {}
+            Bench::Grid => {
+                self.beam_mode = false;
+                self.beam.reset();
+                self.ghost_end = None;
+                self.renderer
+                    .set_ghost(&self.state.device, &self.state.queue, None);
+            }
         }
     }
 
-    /// The brand header: logo, project, save state, environment and author, Publish.
+    /// The reference-sized title bar: logo, quick history, project and saved state.
     pub(crate) fn header(&mut self, ui: &mut Ui) {
         let palette = Palette::current(ui);
         egui::Panel::top("model-header")
-            .exact_size(52.0)
+            .exact_size(36.0)
             .frame(
                 egui::Frame::new()
-                    .fill(BRAND)
-                    .inner_margin(egui::Margin::symmetric(14, 0)),
+                    .fill(palette.head)
+                    .inner_margin(egui::Margin::symmetric(10, 0)),
             )
             .show(ui, |ui| {
-                let bottom = ui.max_rect().bottom();
+                theme::titlebar_drag(ui);
                 ui.horizontal_centered(|ui| {
                     if self.logo.is_none() && !self.logo_tried {
                         self.logo_tried = true;
                         self.logo = theme::load_logo(ui.ctx(), 96);
                     }
-                    theme::logo(ui, self.logo.as_ref(), 32.0);
+                    theme::logo(ui, self.logo.as_ref(), 20.0);
+                    let free = !self.other_command_running() && !self.editor.busy();
+                    if !self.menu_open {
+                        if theme::icon_button(
+                            ui,
+                            Icon::Undo,
+                            "Undo",
+                            self.source.workspace.is_some() && free,
+                        )
+                        .clicked()
+                        {
+                            self.start_edit(Some(EditKind::Undo));
+                        }
+                        if theme::icon_button(
+                            ui,
+                            Icon::Redo,
+                            "Redo",
+                            self.source.workspace.is_some() && free,
+                        )
+                        .clicked()
+                        {
+                            self.start_edit(Some(EditKind::Redo));
+                        }
+                        ui.separator();
+                    }
                     let name = self
                         .source
                         .store
@@ -166,76 +368,121 @@ impl App {
                         .and_then(|n| n.to_str())
                         .unwrap_or("Model")
                         .to_owned();
-                    ui.label(theme::bold(name, 15.0).color(INK));
+                    ui.label(RichText::new(name).size(12.0).color(palette.text));
+                    ui.label(
+                        RichText::new(if self.menu_open {
+                            "— Menu"
+                        } else {
+                            "— BeamCraft"
+                        })
+                        .size(11.0)
+                        .color(palette.muted),
+                    );
                     let saving = self.other_command_running() || self.reload_job.is_some();
-                    let state = if saving {
-                        "Saving…"
-                    } else {
-                        "All changes saved"
-                    };
-                    // A pill as tall as its text, painted: a frame here would take the
-                    // header's whole height.
-                    let galley = ui.painter().layout_no_wrap(
-                        state.to_owned(),
-                        egui::FontId::new(12.0, theme::bold_family()),
-                        INK,
-                    );
-                    let (pill, _) =
-                        ui.allocate_exact_size(galley.size() + vec2(20.0, 8.0), Sense::hover());
-                    let radius = egui::CornerRadius::same(255);
-                    ui.painter().rect_filled(pill, radius, theme::CREAM);
-                    ui.painter().rect_stroke(
-                        pill,
-                        radius,
-                        Stroke::new(1.5, INK),
-                        StrokeKind::Inside,
-                    );
-                    ui.painter()
-                        .galley(pill.center() - galley.size() / 2.0, galley, INK);
+                    let state = if saving { "Saving…" } else { "Saved locally" };
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let target = self.publisher.target();
-                        let enabled = target.is_ok()
-                            && self.publisher.phase() == Phase::Idle
-                            && !self.other_command_running();
-                        let response = theme::button(ui, Kind::Secondary, "Publish", enabled);
-                        let response = match &target {
-                            Err(why) => response.on_disabled_hover_text(why.to_string()),
-                            Ok(_) => response,
-                        };
-                        if response.clicked()
+                        theme::window_controls(ui);
+                        if let Some(appearance) = &mut self.appearance {
+                            appearance.error_ui(ui, true);
+                        }
+                        if self.menu_open {
+                            return;
+                        }
+                        ui.separator();
+                        ui.label(RichText::new(state).size(11.0).color(palette.muted));
+                        let (dot, _) = ui.allocate_exact_size(vec2(6.0, 6.0), Sense::hover());
+                        ui.painter().circle_filled(
+                            dot.center(),
+                            2.5,
+                            if saving {
+                                palette.muted
+                            } else {
+                                egui::Color32::from_rgb(0x36, 0x78, 0x55)
+                            },
+                        );
+                        if self.publisher.target().is_ok()
+                            && ui
+                                .add_enabled(
+                                    free && self.publisher.phase() == Phase::Idle,
+                                    egui::Button::new("Publish").small(),
+                                )
+                                .clicked()
                             && let Err(why) = self.publisher.request()
                         {
                             self.publisher.note = Some(Err(why.into()));
                         }
-                        let who = [self.source.environment.clone(), self.source.author.clone()]
-                            .into_iter()
-                            .flatten()
-                            .collect::<Vec<_>>()
-                            .join(" · ");
-                        if !who.is_empty() {
-                            ui.label(theme::bold(who, 13.0).color(INK));
-                        }
                     });
                 });
-                ui.painter().line_segment(
-                    [
-                        egui::pos2(ui.max_rect().left() - 14.0, bottom),
-                        egui::pos2(ui.max_rect().right() + 14.0, bottom),
-                    ],
-                    Stroke::new(2.0, palette.ink),
-                );
             });
     }
 
     /// The ribbon of tools.
     pub(crate) fn ribbon(&mut self, ui: &mut Ui) {
         let palette = Palette::current(ui);
-        egui::Panel::top("model-ribbon")
-            .exact_size(86.0)
+        egui::Panel::top("ribbon-families")
+            .exact_size(36.0)
             .frame(
                 egui::Frame::new()
                     .fill(palette.surface)
-                    .inner_margin(egui::Margin::symmetric(10, 4)),
+                    .inner_margin(egui::Margin::symmetric(12, 0)),
+            )
+            .show(ui, |ui| {
+                ui.horizontal_centered(|ui| {
+                    if ui
+                        .add(
+                            egui::Button::new("Menu")
+                                .frame(false)
+                                .min_size(vec2(64.0, 32.0)),
+                        )
+                        .clicked()
+                    {
+                        self.menu_open = true;
+                    }
+                    for (tab, label) in [
+                        (RibbonTab::Steel, "Steel"),
+                        (RibbonTab::Edit, "Edit"),
+                        (RibbonTab::View, "View"),
+                        (RibbonTab::Manage, "Manage"),
+                    ] {
+                        let response = ui.add(
+                            egui::Button::new(label)
+                                .frame(false)
+                                .min_size(vec2(56.0, 32.0)),
+                        );
+                        if self.ribbon_tab == tab {
+                            ui.painter().line_segment(
+                                [response.rect.left_bottom(), response.rect.right_bottom()],
+                                Stroke::new(2.0, palette.text),
+                            );
+                        }
+                        if response.clicked() {
+                            self.ribbon_tab = tab;
+                        }
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new("Find a command")
+                                        .size(11.0)
+                                        .color(palette.muted),
+                                )
+                                .frame(false),
+                            )
+                            .clicked()
+                        {
+                            self.command_search = true;
+                            self.command_focus = true;
+                        }
+                    });
+                });
+            });
+        egui::Panel::top("model-ribbon")
+            .exact_size(106.0)
+            .frame(
+                egui::Frame::new()
+                    .fill(palette.surface)
+                    .inner_margin(egui::Margin::symmetric(14, 8)),
             )
             .show(ui, |ui| {
                 let bottom = ui.max_rect().bottom() + 4.0;
@@ -247,54 +494,93 @@ impl App {
                 ui.horizontal(|ui| {
                     let group = |ui: &mut Ui, name: &str, add: &mut dyn FnMut(&mut Ui)| {
                         ui.vertical(|ui| {
-                            ui.spacing_mut().item_spacing = vec2(4.0, 2.0);
-                            ui.horizontal(|ui| add(ui));
-                            caption(ui, name);
+                            ui.spacing_mut().item_spacing = vec2(4.0, 14.0);
+                            let row = ui.horizontal(|ui| add(ui));
+                            ui.allocate_ui_with_layout(vec2(row.response.rect.width(), 12.0),
+                                egui::Layout::top_down(egui::Align::Center), |ui| caption(ui, name));
                         });
                         ui.separator();
                     };
                     let bench = self.bench;
-                    group(ui, "SELECT", &mut |ui| {
+                    if matches!(self.ribbon_tab, RibbonTab::Steel | RibbonTab::Edit) {
+                    group(ui, "Select", &mut |ui| {
                         if tool_button(ui, Icon::Select, "Select", bench == Bench::Select, true)
                             .clicked()
                         {
                             pick = Some(Bench::Select);
                         }
                     });
-                    group(ui, "STEEL", &mut |ui| {
+                    }
+                    if self.ribbon_tab == RibbonTab::Steel {
+                    group(ui, "Members", &mut |ui| {
                         for (b, icon, label) in [
-                            (Bench::Plate, Icon::Plate, "Plate"),
-                            (Bench::Beam, Icon::Beam, "Beam"),
                             (Bench::Column, Icon::Column, "Column"),
+                            (Bench::Beam, Icon::Beam, "Beam"),
+                            (Bench::Plate, Icon::Plate, "Plate"),
                         ] {
                             if tool_button(ui, icon, label, bench == b, true).clicked() {
                                 pick = Some(b);
                             }
                         }
+                        tool_button(ui, Icon::Beam, "Brace", false, false);
                     });
-                    group(ui, "CONNECT", &mut |ui| {
+                    group(ui, "Connect", &mut |ui| {
                         tool_button(ui, Icon::Bolt, "Bolts", false, false);
                         tool_button(ui, Icon::Weld, "Weld", false, false);
                     });
-                    group(ui, "EDIT", &mut |ui| {
+                    }
+                    if self.ribbon_tab == RibbonTab::Edit {
+                    group(ui, "Modify", &mut |ui| {
                         for (b, icon, label) in [
                             (Bench::Move, Icon::Move, "Move"),
                             (Bench::Copy, Icon::Copy, "Copy"),
                             (Bench::Delete, Icon::Delete, "Delete"),
                         ] {
-                            let response = tool_button(ui, icon, label, bench == b, selected);
+                            let response = tool_button(ui, icon, label, bench == b, selected && edits_free);
                             if response.clicked() {
                                 pick = Some(b);
                             }
                         }
+                    });
+                    group(ui, "History", &mut |ui| {
                         let can = has_workspace && edits_free;
                         undo = tool_button(ui, Icon::Undo, "Undo", false, can).clicked();
                         redo = tool_button(ui, Icon::Redo, "Redo", false, can).clicked();
                     });
-                    group(ui, "DISPLAY", &mut |ui| {
+                    }
+                    if self.ribbon_tab == RibbonTab::View {
+                    group(ui, "Display", &mut |ui| {
                         tool_button(ui, Icon::Block, "Shaded", true, true);
                         tool_button(ui, Icon::Wire, "Wire", false, false);
                     });
+                    group(ui, "Refresh", &mut |ui| {
+                        if tool_button(ui, Icon::Refresh, "Reload", false, true).clicked() {
+                            self.reload();
+                        }
+                    });
+                    }
+                    if matches!(self.ribbon_tab, RibbonTab::Steel | RibbonTab::View) {
+                        group(ui, "Inspect", &mut |ui| {
+                            tool_button(ui, Icon::Plate, "Measure", false, false);
+                            if tool_button(ui, Icon::Fit, "Fit model", false, true).clicked() {
+                                self.pending_fit = true;
+                            }
+                        });
+                    }
+                    if self.ribbon_tab == RibbonTab::Manage {
+                        group(ui, "Grids", &mut |ui| {
+                            if tool_button(ui, Icon::Grid, "Rectangular grid", bench == Bench::Grid, true).clicked() {
+                                pick = Some(Bench::Grid);
+                            }
+                        });
+                        ui.vertical(|ui| {
+                            ui.label(theme::bold("Workspace", 13.0));
+                            ui.label("Publish from the header; inspect revision and navigation in Details.");
+                            if ui.button("Details").clicked() {
+                                self.details = true;
+                            }
+                        });
+                    }
                 });
                 if let Some(bench) = pick {
                     self.set_bench(bench);
@@ -310,7 +596,7 @@ impl App {
                         egui::pos2(ui.max_rect().left() - 10.0, bottom),
                         egui::pos2(ui.max_rect().right() + 10.0, bottom),
                     ],
-                    Stroke::new(2.0, palette.ink),
+                    Stroke::new(1.0, palette.rule),
                 );
             });
     }
@@ -319,12 +605,14 @@ impl App {
     pub(crate) fn inspector(&mut self, ui: &mut Ui) {
         let palette = Palette::current(ui);
         egui::Panel::right("model-inspector")
-            .exact_size(320.0)
-            .resizable(false)
+            .default_size(286.0)
+            .min_size(250.0)
+            .max_size(420.0)
+            .resizable(true)
             .frame(
                 egui::Frame::new()
                     .fill(palette.surface)
-                    .inner_margin(egui::Margin::symmetric(16, 14)),
+                    .inner_margin(egui::Margin::symmetric(14, 12)),
             )
             .show(ui, |ui| {
                 let left = ui.max_rect().left() - 16.0;
@@ -333,18 +621,52 @@ impl App {
                         egui::pos2(left, ui.max_rect().top() - 14.0),
                         egui::pos2(left, ui.max_rect().bottom() + 14.0),
                     ],
-                    Stroke::new(2.0, palette.ink),
+                    Stroke::new(1.0, palette.rule),
                 );
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(self.bench.title()).size(12.0));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if self.bench == Bench::Select
+                            && theme::icon_button(
+                                ui,
+                                Icon::Refresh,
+                                "Reload properties",
+                                self.props.selected().is_some()
+                                    && !self.other_command_running()
+                                    && !self.props.busy(),
+                            )
+                            .clicked()
+                        {
+                            self.reread();
+                        }
+                    });
+                });
+                ui.separator();
+                if self.bench == Bench::Grid {
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                    self.grid_panel(ui);
+                    return;
+                }
+                if self.bench == Bench::Select && self.props.selected().is_some() {
+                    egui::Panel::bottom("property-actions")
+                        .exact_size(54.0)
+                        .frame(
+                            egui::Frame::new()
+                                .fill(palette.surface)
+                                .inner_margin(egui::Margin::symmetric(0, 8)),
+                        )
+                        .show(ui, |ui| self.property_actions(ui));
+                }
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         // The inspector keeps its width: long values and ids wrap instead.
                         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
                         ui.set_max_width(ui.available_width());
-                        ui.label(theme::bold(self.bench.title(), 18.0));
                         match self.bench {
                             Bench::Select => self.props_panel(ui),
                             Bench::Plate | Bench::Beam | Bench::Column => self.tools_panel(ui),
+                            Bench::Grid => self.grid_panel(ui),
                             Bench::Move | Bench::Copy | Bench::Delete => self.edit_panel(ui),
                         }
                         ui.add_space(12.0);
@@ -359,27 +681,41 @@ impl App {
     pub(crate) fn status_bar(&mut self, ui: &mut Ui) {
         let palette = Palette::current(ui);
         egui::Panel::bottom("model-status")
-            .exact_size(34.0)
+            .exact_size(52.0)
             .frame(
                 egui::Frame::new()
                     .fill(palette.surface)
-                    .inner_margin(egui::Margin::symmetric(14, 0)),
+                    .inner_margin(egui::Margin::symmetric(6, 3)),
             )
             .show(ui, |ui| {
+                ui.spacing_mut().interact_size.y = 16.0;
+                ui.spacing_mut().item_spacing.y = 2.0;
                 let top = ui.max_rect().top();
                 ui.painter().line_segment(
                     [
-                        egui::pos2(ui.max_rect().left() - 14.0, top),
-                        egui::pos2(ui.max_rect().right() + 14.0, top),
+                        egui::pos2(ui.max_rect().left() - 6.0, top - 3.0),
+                        egui::pos2(ui.max_rect().right() + 6.0, top - 3.0),
                     ],
-                    Stroke::new(2.0, palette.ink),
+                    Stroke::new(1.0, palette.rule),
                 );
-                ui.horizontal_centered(|ui| {
+                ui.horizontal(|ui| {
+                    if super::switches::entities(ui, self.bench == Bench::Select) {
+                        self.set_bench(Bench::Select);
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.allocate_ui_with_layout(
+                            vec2(super::switches::snaps_width(), 24.0),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            super::switches::snaps,
+                        );
+                    });
+                });
+                ui.horizontal(|ui| {
                     let selection = match self.editor.selected() {
                         Some(info) => format!("1 selected · {} {}", info.kind, info.name),
                         None => "Nothing selected".to_owned(),
                     };
-                    ui.label(theme::bold(selection, 12.0));
+                    ui.label(RichText::new(selection).size(10.0).color(palette.muted));
                     if self.select_job.is_some() {
                         ui.label(RichText::new("Looking up…").small().color(palette.muted));
                     }
@@ -388,16 +724,11 @@ impl App {
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
-                            .selectable_label(self.details, RichText::new("Details").small())
+                            .selectable_label(self.details, RichText::new("Details").size(10.0))
                             .clicked()
                         {
                             self.details = !self.details;
                         }
-                        for snap in ["Nearest", "Grid", "Middle", "End"] {
-                            ui.add_enabled(false, egui::Button::new(RichText::new(snap).small()))
-                                .on_disabled_hover_text(LATER);
-                        }
-                        ui.label(RichText::new("Snap").small().color(palette.muted));
                     });
                 });
             });
@@ -415,48 +746,381 @@ impl App {
         self.details = open;
     }
 
-    /// The view and zoom controls drawn over the 3D view at `rect`.
-    pub(crate) fn view_controls(&mut self, ui: &mut Ui, rect: Rect) {
+    fn command_list(&mut self, ui: &mut Ui, query: &str) -> bool {
+        let query = query.trim().to_lowercase();
+        let editable = self.editor.selected().is_some() && !self.other_command_running();
+        for (label, bench) in [
+            ("Select", Bench::Select),
+            ("Column", Bench::Column),
+            ("Rectangular grid", Bench::Grid),
+            ("Beam", Bench::Beam),
+            ("Plate", Bench::Plate),
+            ("Move", Bench::Move),
+            ("Copy", Bench::Copy),
+            ("Delete", Bench::Delete),
+        ] {
+            if label.to_lowercase().contains(&query)
+                && ui
+                    .add_enabled(
+                        bench.edit().is_none() || editable,
+                        egui::Button::new(label).min_size(vec2(ui.available_width(), 34.0)),
+                    )
+                    .clicked()
+            {
+                self.set_bench(bench);
+                return true;
+            }
+        }
+        for label in [
+            "Undo",
+            "Redo",
+            "Fit model",
+            "Reload model",
+            "Details",
+            "Publish",
+            "Model library",
+        ] {
+            let enabled = match label {
+                "Undo" | "Redo" => self.source.workspace.is_some() && !self.other_command_running(),
+                "Publish" => {
+                    self.publisher.target().is_ok()
+                        && !self.other_command_running()
+                        && self.publisher.phase() == Phase::Idle
+                }
+                "Model library" => self.from_library && !self.other_command_running(),
+                _ => true,
+            };
+            if label.to_lowercase().contains(&query)
+                && ui
+                    .add_enabled(
+                        enabled,
+                        egui::Button::new(label).min_size(vec2(ui.available_width(), 34.0)),
+                    )
+                    .clicked()
+            {
+                match label {
+                    "Undo" => self.start_edit(Some(EditKind::Undo)),
+                    "Redo" => self.start_edit(Some(EditKind::Redo)),
+                    "Fit model" => self.pending_fit = true,
+                    "Reload model" => self.reload(),
+                    "Details" => self.details = true,
+                    "Model library" => self.return_to_library = true,
+                    "Publish" => {
+                        if let Err(why) = self.publisher.request() {
+                            self.publisher.note = Some(Err(why.into()));
+                        }
+                    }
+                    _ => {}
+                }
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Full native application menu, using the same real actions as the ribbon.
+    pub(crate) fn menu_page(&mut self, ui: &mut Ui) {
         let palette = Palette::current(ui);
-        let at = Rect::from_min_size(rect.min + vec2(14.0, 14.0), vec2(320.0, 50.0));
-        let mut bar = ui.new_child(egui::UiBuilder::new().max_rect(at));
-        theme::card(palette, 3)
-            .inner_margin(egui::Margin::same(4))
-            .show(&mut bar, |ui| {
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::Button::new(theme::bold("3D", 12.0).color(INK))
-                            .fill(BRAND)
-                            .stroke(Stroke::new(2.0, INK)),
-                    );
-                    for view in ["Plan", "Grid A"] {
-                        ui.add_enabled(false, egui::Button::new(RichText::new(view).small()))
-                            .on_disabled_hover_text(LATER);
+        if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+            self.menu_open = false;
+        }
+        egui::Panel::left("application-menu-navigation")
+            .exact_size(232.0)
+            .frame(egui::Frame::new().fill(palette.side).inner_margin(12))
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .max_height((ui.available_height() - 84.0).max(0.0))
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 1.0;
+                        if menu_navigation(ui, Icon::Back, "Back to model", false, true).clicked() {
+                            self.menu_open = false;
+                        }
+                        ui.add_space(14.0);
+                        ui.horizontal(|ui| {
+                            ui.add_space(12.0);
+                            ui.label(theme::bold("Menu", 23.0).color(palette.side_text()));
+                        });
+                        ui.add_space(14.0);
+                        let free = self.from_library && !self.other_command_running();
+                        if menu_navigation(ui, Icon::Plus, "New", false, free).clicked() {
+                            self.return_to_create = true;
+                            self.return_to_library = true;
+                        }
+                        if menu_navigation(ui, Icon::Folder, "Open", false, free).clicked() {
+                            self.return_to_library = true;
+                        }
+                        menu_navigation(ui, Icon::Copy, "Save as", false, false);
+                        menu_navigation(ui, Icon::Folder, "Open model folder", false, false);
+                        for (section, icon, label) in [
+                            (MenuSection::Import, Icon::Back, "Import"),
+                            (MenuSection::Export, Icon::Shared, "Export"),
+                        ] {
+                            if menu_navigation(ui, icon, label, self.menu_section == section, true)
+                                .clicked()
+                            {
+                                self.menu_section = section;
+                            }
+                        }
+                        if menu_navigation(ui, Icon::Block, "Project properties", false, true)
+                            .clicked()
+                        {
+                            self.details = true;
+                            self.menu_open = false;
+                        }
+                        for (section, icon, label) in [
+                            (MenuSection::Settings, Icon::Grid, "Settings"),
+                            (MenuSection::Catalogs, Icon::Wire, "Catalogs"),
+                            (MenuSection::Editors, Icon::Plate, "Editors"),
+                        ] {
+                            let active = self.menu_section == section
+                                || (section == MenuSection::Catalogs
+                                    && matches!(
+                                        self.menu_section,
+                                        MenuSection::Profiles | MenuSection::Materials
+                                    ));
+                            if menu_navigation(ui, icon, label, active, true).clicked() {
+                                self.menu_section = section;
+                            }
+                        }
+                        menu_navigation(ui, Icon::Recent, "Logs", false, false);
+                        for (section, icon, label) in [
+                            (MenuSection::Diagnose, Icon::Fit, "Diagnose & repair"),
+                            (MenuSection::Help, Icon::Recent, "Help"),
+                            (MenuSection::Extend, Icon::Plus, "Extend"),
+                        ] {
+                            if menu_navigation(ui, icon, label, self.menu_section == section, true)
+                                .clicked()
+                            {
+                                self.menu_section = section;
+                            }
+                        }
+                        if menu_navigation(
+                            ui,
+                            Icon::Back,
+                            "Exit BeamCraft",
+                            false,
+                            !self.other_command_running(),
+                        )
+                        .clicked()
+                        {
+                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                    });
+                ui.add_space((ui.available_height() - 64.0).max(16.0));
+                ui.label(
+                    RichText::new(
+                        self.source
+                            .store
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .unwrap_or("Model"),
+                    )
+                    .size(12.0)
+                    .color(palette.side_text()),
+                );
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(self.source.store.display().to_string())
+                            .size(10.0)
+                            .color(palette.side_text()),
+                    )
+                    .wrap(),
+                );
+            });
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::new()
+                    .fill(palette.page)
+                    .inner_margin(egui::Margin::symmetric(40, 36)),
+            )
+            .show(ui, |ui| {
+                let (title, description) = self.menu_section.heading();
+                ui.label(theme::bold(title, 28.0));
+                ui.label(RichText::new(description).size(12.0).color(palette.muted));
+                ui.add_space(30.0);
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.set_width(ui.available_width().min(620.0));
+                    ui.separator();
+                    ui.add_space(15.0);
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    for label in self.menu_section.commands() {
+                        let enabled = matches!(
+                            *label,
+                            "Profile catalog" | "Material catalog" | "About BeamCraft"
+                        );
+                        if menu_command(ui, label, enabled).clicked() {
+                            match *label {
+                                "Profile catalog" => self.menu_section = MenuSection::Profiles,
+                                "Material catalog" => self.menu_section = MenuSection::Materials,
+                                "About BeamCraft" => {
+                                    self.menu_section = MenuSection::About;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    let definitions = match self.menu_section {
+                        MenuSection::Profiles => Some(&self.tools.definitions.profiles),
+                        MenuSection::Materials => Some(&self.tools.definitions.materials),
+                        _ => None,
+                    };
+                    if let Some(definitions) = definitions {
+                        if let Some(error) = &self.refresh_error {
+                            ui.colored_label(palette.error, error.to_string());
+                        } else if definitions.is_empty() {
+                            ui.label("No definitions in this model.");
+                        }
+                        for definition in definitions {
+                            ui.add_sized(
+                                vec2(ui.available_width(), 42.0),
+                                egui::Label::new(&definition.label),
+                            );
+                        }
+                    }
+                    if self.menu_section == MenuSection::About {
+                        ui.label(theme::bold(
+                            format!("BeamCraft {}", env!("CARGO_PKG_VERSION")),
+                            16.0,
+                        ));
+                        ui.add_space(12.0);
+                        ui.label("Developed by Apibim.");
+                        ui.label("Native Rust interface with egui and wgpu.");
+                        ui.label("Project code: MPL-2.0. BeamCraft brand rights are reserved.");
                     }
                 });
             });
-        let at = Rect::from_min_size(rect.right_bottom() - vec2(78.0, 160.0), vec2(64.0, 146.0));
-        let mut zoom = ui.new_child(egui::UiBuilder::new().max_rect(at));
-        theme::card(palette, 3)
-            .inner_margin(egui::Margin::same(4))
-            .show(&mut zoom, |ui| {
-                ui.vertical_centered(|ui| {
-                    let small = |ui: &mut Ui, text: &str, tip: &str| {
-                        ui.add(
-                            egui::Button::new(theme::bold(text, 16.0)).min_size(vec2(36.0, 34.0)),
-                        )
-                        .on_hover_text(tip)
-                        .clicked()
-                    };
-                    if small(ui, "+", "Zoom in (+)") {
-                        self.pending_zoom = Some(true);
+    }
+
+    /// Search only the commands supported by the native command client.
+    pub(crate) fn command_dialog(&mut self, ctx: &egui::Context) {
+        if ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::K)) {
+            self.command_search = true;
+            self.command_focus = true;
+        }
+        if self.command_search
+            && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            self.command_search = false;
+        }
+        if !self.command_search {
+            return;
+        }
+        let mut open = true;
+        egui::Window::new("Find a command")
+            .open(&mut open)
+            .title_bar(false)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(420.0)
+            .anchor(egui::Align2::CENTER_TOP, vec2(0.0, 80.0))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(theme::bold("Find a command", 14.0));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("×").on_hover_text("Close search").clicked() {
+                            self.command_search = false;
+                        }
+                    });
+                });
+                let search = ui.add(
+                    egui::TextEdit::singleline(&mut self.command_query)
+                        .hint_text("Search commands")
+                        .desired_width(ui.available_width())
+                        .char_limit(128),
+                );
+                if self.command_focus {
+                    search.request_focus();
+                    self.command_focus = false;
+                }
+                let query = self.command_query.clone();
+                egui::ScrollArea::vertical()
+                    .max_height(380.0)
+                    .show(ui, |ui| {
+                        if self.command_list(ui, &query) {
+                            self.command_search = false;
+                        }
+                    });
+            });
+        self.command_search &= open;
+    }
+
+    /// The project browser shows only views and data actually available in the engine snapshot.
+    pub(crate) fn project_browser(&mut self, ui: &mut Ui) {
+        let palette = Palette::current(ui);
+        egui::Panel::left("project-browser")
+            .default_size(214.0)
+            .min_size(160.0)
+            .max_size(300.0)
+            .resizable(true)
+            .frame(
+                egui::Frame::new()
+                    .fill(palette.surface)
+                    .inner_margin(egui::Margin::symmetric(10, 12)),
+            )
+            .show(ui, |ui| {
+                ui.label(RichText::new("Project browser").size(12.0));
+                ui.separator();
+                ui.add_space(6.0);
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.browser_search)
+                        .hint_text("Search views and sheets")
+                        .desired_width(ui.available_width())
+                        .font(egui::FontId::proportional(11.0))
+                        .char_limit(128),
+                );
+                ui.add_space(12.0);
+                let name = self
+                    .source
+                    .store
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("Model");
+                ui.horizontal(|ui| {
+                    theme::icon(ui, Icon::Block, 16.0, palette.text);
+                    ui.label(RichText::new(name).size(12.0));
+                });
+                ui.add_space(10.0);
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    let needle = self.browser_search.trim().to_lowercase();
+                    if needle.is_empty() || "views 3d model".contains(&needle) {
+                        egui::CollapsingHeader::new("Views (all)")
+                            .default_open(true)
+                            .show(ui, |ui| {
+                                ui.add_enabled(false, egui::Label::new("Floor Plans"))
+                                    .on_disabled_hover_text(LATER);
+                                egui::CollapsingHeader::new("3D Views")
+                                    .default_open(true)
+                                    .show(ui, |ui| {
+                                        if ui.selectable_label(true, "{3D}").clicked() {
+                                            self.pending_fit = true;
+                                        }
+                                    });
+                                for label in ["Elevations", "Sections", "Drafting Views"] {
+                                    ui.add_enabled(false, egui::Label::new(label))
+                                        .on_disabled_hover_text(LATER);
+                                }
+                            });
                     }
-                    if small(ui, "−", "Zoom out (-)") {
-                        self.pending_zoom = Some(false);
+                    for title in ["Schedules / Quantities", "Sheets (all)"] {
+                        if needle.is_empty() || title.to_lowercase().contains(&needle) {
+                            egui::CollapsingHeader::new(title).show(ui, |ui| {
+                                ui.label(
+                                    RichText::new("Not available in the native UI yet")
+                                        .size(10.0)
+                                        .color(palette.muted),
+                                );
+                            });
+                        }
                     }
-                    if small(ui, "Fit", "Fit the model (F)") {
-                        self.pending_fit = true;
-                    }
+                    egui::CollapsingHeader::new("Model information").show(ui, |ui| {
+                        if let Some(loaded) = &self.loaded {
+                            ui.label(format!("Elements: {}", loaded.summary.elements));
+                            ui.label(format!("Triangles: {}", loaded.summary.triangles));
+                        } else {
+                            ui.label("No snapshot loaded");
+                        }
+                        ui.label("Units: mm");
+                    });
                 });
             });
     }

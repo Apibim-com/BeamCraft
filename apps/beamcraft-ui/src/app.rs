@@ -7,6 +7,8 @@
 //! (primary drag orbits, Shift + primary drag pans, pinch zooms). In both the wheel zooms toward
 //! the cursor, F fits and R reloads.
 
+mod grid_panel;
+mod switches;
 mod workbench;
 
 use crate::camera::{Camera, View};
@@ -72,6 +74,9 @@ struct Loaded {
 
 /// The window state.
 pub struct App {
+    pub(crate) appearance: Option<crate::appearance::Appearance>,
+    pub(crate) from_library: bool,
+    pub(crate) return_to_library: bool,
     state: eframe::egui_wgpu::RenderState,
     source: Source,
     renderer: Renderer,
@@ -142,10 +147,22 @@ pub struct App {
     refresh_timings: Vec<RefreshTiming>,
     /// The tool chosen on the ribbon; the inspector shows what it needs.
     bench: workbench::Bench,
+    ribbon_tab: workbench::RibbonTab,
+    menu_open: bool,
+    grid_form: crate::grid::GridForm,
+    grid_scene: crate::grid::GridScene,
+    grid_job: Option<Receiver<Result<crate::grid::CreatedGrid, ToolError>>>,
+    grid_note: Option<Result<String, String>>,
+    grids_visible: bool,
+    menu_section: workbench::MenuSection,
+    pub(crate) return_to_create: bool,
+    command_search: bool,
+    command_focus: bool,
+    command_query: String,
+    browser_search: String,
     /// Whether the Details window is open.
     details: bool,
-    /// A zoom (true: in) or fit asked for by the view buttons, applied in the next frame.
-    pending_zoom: Option<bool>,
+    /// A fit requested by the ribbon or command search, applied in the next frame.
     pending_fit: bool,
     logo: Option<egui::TextureHandle>,
     logo_tried: bool,
@@ -215,7 +232,7 @@ fn navigation(
     let sign = if invert_zoom { -1.0 } else { 1.0 };
     let factor = distance * 0.0008;
     let pan = [-pointer_delta.x * factor, pointer_delta.y * factor];
-    let orbit = [pointer_delta.x * 0.008, -pointer_delta.y * 0.008];
+    let orbit = [-pointer_delta.x * 0.008, pointer_delta.y * 0.008];
     let (orbit, pan) = match preset {
         // The left button is reserved for selection: a primary drag never moves the camera.
         Preset::Mouse => {
@@ -276,9 +293,12 @@ fn choice_combo(
     // The label sits left of the list (as with the text fields): drawn below it, it read as
     // the label of the next drop-down.
     ui.horizontal(|ui| {
-        ui.label(label);
+        ui.add_sized(
+            egui::vec2(70.0, 28.0),
+            egui::Label::new(egui::RichText::new(label).size(11.0)),
+        );
         egui::ComboBox::from_id_salt(id)
-            .width(200.0)
+            .width(ui.available_width().max(80.0))
             .selected_text(selected)
             .show_ui(ui, |ui| {
                 if !required {
@@ -355,7 +375,7 @@ fn draw_selection(
             })
         })
         .collect();
-    let stroke = egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 190, 40));
+    let stroke = egui::Stroke::new(2.0, crate::theme::BRAND);
     for (a, b) in BOX_EDGES {
         if let (Some(Some(p)), Some(Some(q))) = (screen.get(a), screen.get(b)) {
             painter.line_segment([*p, *q], stroke);
@@ -365,10 +385,13 @@ fn draw_selection(
 
 fn field(ui: &mut egui::Ui, label: &str, text: &mut String, width: f32) {
     ui.horizontal(|ui| {
-        ui.label(label);
+        ui.add_sized(
+            egui::vec2(70.0, 28.0),
+            egui::Label::new(egui::RichText::new(label).size(11.0)),
+        );
         ui.add(
             egui::TextEdit::singleline(text)
-                .desired_width(width)
+                .desired_width(width.min(ui.available_width()))
                 .char_limit(MAX_TEXT),
         );
     });
@@ -613,13 +636,17 @@ impl App {
         perf: Option<(Vec<PerfPhase>, PerfReport)>,
         stats: Arc<Stats>,
     ) -> Result<Self, Error> {
-        Self::open(
+        let appearance =
+            crate::appearance::Appearance::new(source.cli.clone(), None, Arc::clone(&stats));
+        let mut app = Self::open(
             &cc.egui_ctx,
             cc.wgpu_render_state.as_ref(),
             source,
             perf,
             stats,
-        )
+        )?;
+        app.appearance = Some(appearance);
+        Ok(app)
     }
 
     /// [`App::with_perf_run`] from a running window's context and render state, so a window that
@@ -672,6 +699,22 @@ impl App {
             None => (None, None),
         };
         let mut app = Self {
+            appearance: None,
+            from_library: false,
+            return_to_library: false,
+            ribbon_tab: workbench::RibbonTab::Steel,
+            menu_open: false,
+            grid_form: crate::grid::GridForm::default(),
+            grid_scene: crate::grid::GridScene::default(),
+            grid_job: None,
+            grid_note: None,
+            grids_visible: true,
+            menu_section: workbench::MenuSection::default(),
+            return_to_create: false,
+            command_search: false,
+            command_focus: false,
+            command_query: String::new(),
+            browser_search: String::new(),
             state,
             source,
             renderer,
@@ -718,7 +761,6 @@ impl App {
             refresh_timings: Vec::new(),
             bench: workbench::Bench::default(),
             details: false,
-            pending_zoom: None,
             pending_fit: false,
             logo: None,
             logo_tried: false,
@@ -783,6 +825,7 @@ impl App {
             self.refresh_timings.push(reloaded.timing);
         }
         self.refresh_error = self.tools.apply_definitions(reloaded.definitions);
+        let grids = reloaded.grids;
         let result = reloaded.scene.and_then(|refreshed| match refreshed {
             Refreshed::Unchanged => Ok(None),
             Refreshed::New(new) => {
@@ -808,7 +851,10 @@ impl App {
             // The snapshot on screen again: nothing to build, upload or draw, unless the
             // viewport changed since it was framed.
             Ok(None) => {
-                if let Some((target, extent)) = self.loaded.as_ref().map(|l| l.summary.framing()) {
+                self.apply_grids(grids);
+                if let Some((target, extent)) =
+                    self.loaded.as_ref().map(|l| self.grid_framing(&l.summary))
+                {
                     let aspect = self.aspect();
                     if needs_refit(self.framed, target, extent, aspect) {
                         match self.camera.fit(target, extent, aspect) {
@@ -824,7 +870,18 @@ impl App {
                 }
             }
             Ok(Some(loaded)) => {
-                let (target, extent) = loaded.summary.framing();
+                let next_grids = match grids {
+                    Ok(grids) => grids,
+                    Err(error) => {
+                        self.grid_note = Some(Err(error.to_string()));
+                        crate::grid::GridScene::default()
+                    }
+                };
+                let (target, extent) = if self.grids_visible {
+                    next_grids.framing(&loaded.summary)
+                } else {
+                    loaded.summary.framing()
+                };
                 let aspect = self.aspect();
                 // A scene the camera cannot frame keeps the previous scene and shows why. An
                 // unchanged framing keeps the user's camera.
@@ -832,17 +889,20 @@ impl App {
                     match self.camera.fit(target, extent, aspect) {
                         Ok(()) => {
                             self.framed = Some((target, extent, aspect));
+                            self.grid_scene = next_grids;
                             self.show(loaded);
                         }
                         Err(e) => self.error = Some(e.to_string()),
                     }
                 } else {
+                    self.grid_scene = next_grids;
                     self.show(loaded);
                 }
             }
             // A store with no revision yet is a normal state, not an error: the definitions
             // listing treats the same NOT_FOUND the same way.
             Err(e) if source::is_no_revision(&e) => {
+                self.grid_scene = crate::grid::GridScene::default();
                 self.loaded = None;
                 self.framed = None;
                 self.error = None;
@@ -1127,6 +1187,7 @@ impl App {
             || self.publish_job.is_some()
             || self.edit_job.is_some()
             || self.job.is_some()
+            || self.grid_job.is_some()
     }
 
     /// Starts the committed property edit on a worker: the same `update-element` the CLI runs.
@@ -1295,12 +1356,10 @@ impl App {
             ui.label("Select a plate or straight member to see its properties.");
             return;
         };
-        ui.label(format!("Element {id}"));
+        let palette = crate::theme::Palette::current(ui);
         let state = self.props.state();
         match &state {
-            Some(State::Current) if self.props.head_known() => {
-                ui.label("State: current");
-            }
+            Some(State::Current) if self.props.head_known() => {}
             Some(State::Current) => {
                 ui.label("State: current (the head revision could not be checked)");
             }
@@ -1312,25 +1371,51 @@ impl App {
         let editable = matches!(state, Some(State::Current));
         let busy = self.props.busy() || self.other_command_running();
         if let Some(details) = self.props.details().cloned() {
-            ui.label(format!(
-                "{} read from revision {}.",
-                details.kind,
-                details.revision.label()
-            ));
-            // One wrapped row per value: the inspector has a fixed width and values can be long.
-            let muted = crate::theme::Palette::current(ui).muted;
-            for (label, value) in details.read_only_rows() {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(egui::RichText::new(label).color(muted));
-                    ui.label(value);
-                });
+            ui.add_space(8.0);
+            ui.label(
+                egui::RichText::new(details.kind.to_uppercase())
+                    .size(10.0)
+                    .color(palette.muted),
+            );
+            ui.label(crate::theme::bold(&details.name, 18.0));
+            let subtitle = [
+                details.profile_name.as_deref(),
+                details.material_name.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" · ");
+            if !subtitle.is_empty() {
+                ui.label(
+                    egui::RichText::new(subtitle)
+                        .size(11.0)
+                        .color(palette.muted),
+                );
             }
+            ui.add_space(12.0);
+            ui.separator();
+            ui.add_space(12.0);
             // Borrowed beside the form (disjoint fields), never copied: the panel is laid out in
             // every frame the window draws.
             let materials = &self.tools.definitions.materials;
             ui.add_enabled_ui(editable && !busy, |ui| {
-                ui.label("Editable, in mm:");
-                field(ui, "Name", &mut self.props.form.name, 140.0);
+                ui.label(egui::RichText::new("General").size(12.0));
+                ui.add_space(8.0);
+                field(ui, "Name", &mut self.props.form.name, 170.0);
+                if let Some(profile) = &details.profile_name {
+                    ui.horizontal(|ui| {
+                        ui.add_sized(
+                            egui::vec2(70.0, 28.0),
+                            egui::Label::new(
+                                egui::RichText::new("Profile")
+                                    .size(11.0)
+                                    .color(palette.muted),
+                            ),
+                        );
+                        ui.label(profile);
+                    });
+                }
                 choice_combo(
                     ui,
                     "props-material",
@@ -1342,8 +1427,25 @@ impl App {
                 if details.is_plate() {
                     field(ui, "Thickness", &mut self.props.form.thickness, 80.0);
                 }
-                ui.label("Position (absolute):");
-                point_fields(ui, &mut self.props.form.translation);
+                ui.add_space(18.0);
+                ui.label(egui::RichText::new("Position / mm").size(12.0));
+                ui.add_space(8.0);
+                for (axis, value) in ["X", "Y", "Z"]
+                    .into_iter()
+                    .zip(&mut self.props.form.translation)
+                {
+                    field(ui, axis, value, 170.0);
+                }
+            });
+            egui::CollapsingHeader::new("Revision and quantities").show(ui, |ui| {
+                ui.label(format!("Element {id}"));
+                ui.label(format!("Revision {}", details.revision.label()));
+                for (label, value) in details.read_only_rows() {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(egui::RichText::new(label).size(11.0).color(palette.muted));
+                        ui.label(egui::RichText::new(value).size(11.0));
+                    });
+                }
             });
             if !editable {
                 ui.label("Editing is off until the properties are current.");
@@ -1351,63 +1453,25 @@ impl App {
         } else if matches!(state, Some(State::Unknown { .. })) {
             ui.label("No property value is shown: none could be read.");
         }
-        // Whether the staged patch is still what the form produces; preparing it builds the whole
-        // argument list, so it is asked once per frame unless a button acted.
-        let fresh = self.props.can_commit(&self.source.store);
-        let staged = self.props.staged().is_some();
-        let (mut preview, mut commit, mut cancel, mut reread) = (false, false, false, false);
-        ui.horizontal(|ui| {
-            preview = ui
-                .add_enabled(editable && !busy, egui::Button::new("Preview"))
-                .clicked();
-            commit = ui
-                .add_enabled(fresh && !busy, egui::Button::new("Commit"))
-                .clicked();
-            cancel = ui
-                .add_enabled(staged && !busy, egui::Button::new("Cancel"))
-                .clicked();
-            reread = ui
-                .add_enabled(!busy, egui::Button::new("Re-read"))
-                .clicked();
-        });
-        if preview {
-            match self.props.preview(&self.source.store) {
-                Ok(_) => self.props_note = None,
-                Err(e) => {
-                    self.props.cancel();
-                    self.props_note = Some(Err(e.to_string()));
+        egui::CollapsingHeader::new("Command preview").show(ui, |ui| {
+            if ui
+                .add_enabled(editable && !busy, egui::Button::new("Preview command"))
+                .clicked()
+            {
+                match self.props.preview(&self.source.store) {
+                    Ok(_) => self.props_note = None,
+                    Err(error) => {
+                        self.props.cancel();
+                        self.props_note = Some(Err(error.to_string()));
+                    }
                 }
             }
-        }
-        if commit {
-            self.start_property_commit();
-        }
-        if cancel {
-            self.props.cancel();
-            self.props_note = Some(Ok("Cancelled; nothing was changed.".into()));
-        }
-        if reread {
-            self.reread();
-        }
-        if let Some(edit) = self.props.staged() {
-            ui.label(format!(
-                "Preview: Commit runs `beamcraft` with exactly these {} arguments, one per line (not a shell command line). It changes: {}.",
-                edit.args.len(),
-                edit.changed.join(", ")
-            ));
-            ui.add(egui::Label::new(egui::RichText::new(edit.argument_list()).monospace()).wrap());
-            let current = if preview || commit || cancel || reread {
-                self.props.can_commit(&self.source.store)
-            } else {
-                fresh
-            };
-            if !current {
-                ui.colored_label(
-                    RED,
-                    "The parameters or the revision changed: preview again.",
+            if let Some(edit) = self.props.staged() {
+                ui.add(
+                    egui::Label::new(egui::RichText::new(edit.argument_list()).size(10.0)).wrap(),
                 );
             }
-        }
+        });
         if self.props.busy() {
             ui.label("Running…");
         }
@@ -1419,6 +1483,40 @@ impl App {
                 ui.colored_label(RED, message);
             }
             None => {}
+        }
+    }
+
+    fn property_actions(&mut self, ui: &mut egui::Ui) {
+        let editable = matches!(self.props.state(), Some(State::Current));
+        let busy = self.props.busy() || self.other_command_running();
+        let mut apply = false;
+        let mut reset = false;
+        ui.columns(2, |columns| {
+            for (column, (kind, label, pressed)) in columns.iter_mut().zip([
+                (crate::theme::Kind::Primary, "Apply", &mut apply),
+                (crate::theme::Kind::Secondary, "Reset", &mut reset),
+            ]) {
+                *pressed = column
+                    .with_layout(
+                        egui::Layout::top_down_justified(egui::Align::Center),
+                        |ui| crate::theme::button(ui, kind, label, editable && !busy).clicked(),
+                    )
+                    .inner;
+            }
+        });
+        if apply {
+            match self.props.preview(&self.source.store) {
+                Ok(_) => self.start_property_commit(),
+                Err(error) => {
+                    self.props.cancel();
+                    self.props_note = Some(Err(error.to_string()));
+                }
+            }
+        }
+        if reset && let Some(details) = self.props.details().cloned() {
+            let id = details.id.clone();
+            self.props.load(&id, Ok(details));
+            self.props_note = None;
         }
     }
 
@@ -2169,6 +2267,9 @@ impl App {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        if let Some(appearance) = &mut self.appearance {
+            appearance.poll(ui.ctx());
+        }
         self.stats.frames.add(1);
         let now = Instant::now();
         let dt = now.duration_since(self.last).as_secs_f32();
@@ -2186,6 +2287,7 @@ impl eframe::App for App {
             )
         });
         self.poll_commit();
+        self.poll_grid();
         self.poll_edit();
         self.poll_props();
         self.poll_publish();
@@ -2213,11 +2315,8 @@ impl eframe::App for App {
             self.reload();
         }
         let fit = fit || std::mem::take(&mut self.pending_fit);
-        let pending_zoom = self.pending_zoom.take();
-        let zoom_in = zoom_in || pending_zoom == Some(true);
-        let zoom_out = zoom_out || pending_zoom == Some(false);
         if fit && let Some(l) = &self.loaded {
-            let (target, extent) = l.summary.framing();
+            let (target, extent) = self.grid_framing(&l.summary);
             if let Err(e) = self.camera.fit(target, extent, self.aspect()) {
                 self.error = Some(e.to_string());
             }
@@ -2226,10 +2325,16 @@ impl eframe::App for App {
             // Header, ribbon and status bar first, then the inspector at a fixed width: the 3D
             // view must not shift sideways when a chosen definition name is wider.
             self.header(ui);
+            let ctx = ui.ctx().clone();
+            self.command_dialog(&ctx);
+            if self.menu_open {
+                self.menu_page(ui);
+                return;
+            }
             self.ribbon(ui);
             self.status_bar(ui);
             self.inspector(ui);
-            let ctx = ui.ctx().clone();
+            self.project_browser(ui);
             self.details_window(&ctx);
             self.publish_dialog(&ctx);
         }
@@ -2299,11 +2404,10 @@ impl eframe::App for App {
                 .and_then(|()| self.camera.view(aspect))
             {
                 Ok(view) => {
-                    // A pale blueprint behind the model in the light theme, a deep one in the dark.
                     let rgb = if ui.ctx().theme() == egui::Theme::Dark {
-                        [0x0B, 0x2A, 0x33]
+                        [0x17, 0x21, 0x2B]
                     } else {
-                        [0xE3, 0xF5, 0xFA]
+                        [0xED, 0xF1, 0xF4]
                     };
                     let [r, g, b] = rgb.map(|c: u8| f64::from(c) / 255.0);
                     self.renderer.background = wgpu::Color { r, g, b, a: 1.0 };
@@ -2317,6 +2421,10 @@ impl eframe::App for App {
                         );
                     }
                     if let Some(l) = &self.loaded {
+                        if self.grids_visible {
+                            self.grid_scene
+                                .paint(ui, response.rect, &view, l.summary.origin_mm);
+                        }
                         if let Some(selected) = self.editor.selected() {
                             let painter = ui.painter_at(response.rect);
                             draw_selection(&painter, response.rect, &view, l, &selected.id);
@@ -2355,9 +2463,6 @@ impl eframe::App for App {
                 } else {
                     self.start_select(ray);
                 }
-            }
-            if self.text {
-                self.view_controls(ui, response.rect);
             }
         });
         ui.ctx().request_repaint();
@@ -2492,10 +2597,291 @@ mod tests {
         Some(App::new(&cc, source, stats).unwrap())
     }
 
+    #[test]
+    fn manage_rectangular_grid_opens_form_and_cancel_does_not_change_snapshot() {
+        let Some(mut app) = headless() else { return };
+        deliver(&mut app, refreshed(2));
+        let token = app.loaded.as_ref().unwrap().snapshot.token().clone();
+        app.ribbon_tab = super::workbench::RibbonTab::Manage;
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        assert!(super::inter(&ctx));
+        let mut frame = |events| {
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1400.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.header(ui);
+                    app.ribbon(ui);
+                    app.status_bar(ui);
+                    app.inspector(ui);
+                    app.project_browser(ui);
+                    egui::CentralPanel::default().show(ui, |_| {});
+                },
+            );
+            let labels: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| {
+                    if let egui::Shape::Text(text) = &shape.shape {
+                        Some((
+                            text.galley.text().to_owned(),
+                            text.pos + text.galley.size() / 2.0,
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            output.drop_without_applying_deltas();
+            labels
+        };
+        let click = |pos| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        let labels = frame(vec![]);
+        let grid = labels
+            .iter()
+            .find(|(text, _)| text == "Rectangular grid")
+            .unwrap()
+            .1;
+        frame(click(grid));
+        let labels = frame(vec![]);
+        for expected in [
+            "U family · X positions",
+            "V family · Y positions",
+            "Create grid",
+            "Cancel",
+        ] {
+            assert!(
+                labels.iter().any(|(text, _)| text == expected),
+                "missing {expected}"
+            );
+        }
+        let cancel = labels.iter().find(|(text, _)| text == "Cancel").unwrap().1;
+        frame(click(cancel));
+        frame(vec![]);
+        assert_eq!(app.bench, super::workbench::Bench::Select);
+        assert!(app.grid_job.is_none());
+        assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
+    }
+
+    #[test]
+    fn workspace_has_dense_entity_and_snap_strips_without_theme_or_shortcut_text() {
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        assert!(crate::app::inter(&ctx));
+        for preference in [egui::ThemePreference::Light, egui::ThemePreference::Dark] {
+            ctx.set_theme(preference);
+            for width in [1100.0, 1400.0] {
+                let mut viewport_bottom = 0.0;
+                let output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 800.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        app.header(ui);
+                        app.ribbon(ui);
+                        app.status_bar(ui);
+                        app.inspector(ui);
+                        app.project_browser(ui);
+                        egui::CentralPanel::default().show(ui, |ui| {
+                            viewport_bottom = ui.max_rect().bottom();
+                        });
+                    },
+                );
+                let labels: Vec<_> = output
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| {
+                        if let egui::Shape::Text(text) = &shape.shape {
+                            Some(text.galley.text().to_owned())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                let bounds: Vec<_> = output
+                    .shapes
+                    .iter()
+                    .filter_map(|clipped| {
+                        if let egui::Shape::Rect(shape) = &clipped.shape {
+                            (shape.rect.size() == egui::vec2(24.0, 24.0)
+                                && shape.rect.top() >= 748.0)
+                                .then_some((shape.rect, clipped.clip_rect))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                output.drop_without_applying_deltas();
+                assert!(labels.iter().any(|label| label == "Find a command"));
+                assert!(!labels.iter().any(|label| label.contains("Ctrl K")
+                    || matches!(label.as_str(), "Theme" | "System" | "Light" | "Dark")));
+                assert_eq!(bounds.len(), 31, "18 entity + 13 snap switches: {bounds:?}");
+                assert!(
+                    bounds.iter().all(|(rect, clip)| rect.left() >= 0.0
+                        && rect.right() <= width
+                        && clip.contains_rect(*rect)
+                        && rect.top() >= viewport_bottom),
+                    "toolbar switches clipped: {bounds:?}"
+                );
+                for (index, (a, _)) in bounds.iter().enumerate() {
+                    assert!(
+                        bounds
+                            .iter()
+                            .skip(index + 1)
+                            .all(|(b, _)| !a.intersects(*b)),
+                        "toolbar switches overlap"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn menu_uses_reference_categories_flat_commands_and_real_new_navigation() {
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        assert!(crate::app::inter(&ctx));
+        app.menu_open = true;
+        app.from_library = true;
+        let mut frame = |events| {
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1280.0, 800.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.header(ui);
+                    app.menu_page(ui);
+                },
+            );
+            let labels: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| {
+                    if let egui::Shape::Text(text) = &shape.shape {
+                        Some((
+                            text.galley.text().to_owned(),
+                            text.pos + text.galley.size() / 2.0,
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            output.drop_without_applying_deltas();
+            labels
+        };
+        let labels = frame(vec![]);
+        for expected in [
+            "Menu",
+            "New",
+            "Open",
+            "Catalogs",
+            "Profile catalog",
+            "Material catalog",
+            "Editors",
+            "Diagnose & repair",
+            "Exit BeamCraft",
+        ] {
+            assert!(
+                labels.iter().any(|(label, _)| label == expected),
+                "Missing menu item {expected}"
+            );
+        }
+        assert!(!labels.iter().any(|(label, _)| label == "Fit model"));
+        let pos = labels.iter().find(|(label, _)| label == "New").unwrap().1;
+        frame(vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]);
+        frame(vec![egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }]);
+        assert!(app.return_to_library && app.return_to_create);
+    }
+
+    #[test]
+    fn command_search_takes_keyboard_focus_and_escape_closes_it() {
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        assert!(crate::app::inter(&ctx));
+        app.command_search = true;
+        app.command_focus = true;
+        let mut frame = |events| {
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1280.0, 800.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |_| app.command_dialog(&ctx),
+            );
+            output.drop_without_applying_deltas();
+        };
+        frame(vec![]);
+        frame(vec![]);
+        frame(vec![egui::Event::Text("fit".into())]);
+        frame(vec![egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }]);
+        assert_eq!(app.command_query, "fit");
+        assert!(!app.command_search);
+    }
+
     /// A refresh that read `scene`.
     fn reloaded(scene: Result<Refreshed, Error>) -> Reloaded {
         Reloaded {
             scene,
+            grids: Ok(crate::grid::GridScene::default()),
             definitions: Err(ToolError::local("NOT_FOUND", "no store in this test")),
             timing: RefreshTiming::default(),
         }
@@ -2691,6 +3077,45 @@ mod navigation_tests {
     }
 
     #[test]
+    fn orbit_drags_the_front_of_the_model_with_the_pointer_in_both_presets() {
+        for preset in [Preset::Mouse, Preset::Trackpad] {
+            for delta in [
+                egui::vec2(10.0, 0.0),
+                egui::vec2(-10.0, 0.0),
+                egui::vec2(0.0, 10.0),
+                egui::vec2(0.0, -10.0),
+            ] {
+                let mut camera = Camera::new([0.0; 3], 1000.0, 1.0).unwrap();
+                let view = camera.view(1.0).unwrap();
+                let [x, y, z, _] = view.back;
+                let point = [x * 200.0, y * 200.0, z * 200.0];
+                let before = view.project(point);
+                let mouse = preset == Preset::Mouse;
+                let (orbit, pan, zoom) = navigate(
+                    preset,
+                    delta,
+                    (!mouse, false, mouse),
+                    mouse,
+                    false,
+                    camera.distance(),
+                    true,
+                    0.0,
+                    1.0,
+                    KEYS_NONE,
+                    false,
+                );
+                camera.navigate(orbit, pan, zoom).unwrap();
+                let after = camera.view(1.0).unwrap().project(point);
+                let movement = egui::vec2(after[0] - before[0], before[1] - after[1]);
+                assert!(
+                    movement.dot(delta) > 0.0,
+                    "{preset:?}: pointer {delta:?}, projected motion {movement:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn mouse_middle_drag_pans_and_ctrl_middle_drag_orbits() {
         let delta = egui::Vec2::new(10.0, -20.0);
         let (orbit, pan, _) = navigate(
@@ -2726,7 +3151,7 @@ mod navigation_tests {
             false,
         );
         assert!(
-            (orbit[0] - 0.08).abs() < 1e-6 && (orbit[1] - 0.16).abs() < 1e-6,
+            (orbit[0] + 0.08).abs() < 1e-6 && (orbit[1] + 0.16).abs() < 1e-6,
             "{orbit:?}"
         );
         assert_eq!(pan, [0.0; 2]);
@@ -2783,7 +3208,7 @@ mod navigation_tests {
             false,
         );
         assert!(
-            (orbit[0] - 0.08).abs() < 1e-6 && (orbit[1] - 0.16).abs() < 1e-6,
+            (orbit[0] + 0.08).abs() < 1e-6 && (orbit[1] + 0.16).abs() < 1e-6,
             "{orbit:?}"
         );
         assert_eq!(pan, [0.0; 2]);

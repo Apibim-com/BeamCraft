@@ -37,17 +37,64 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   pinch and keys keep theirs). Both presets: `+` and `-` zoom from the keyboard, F fits, R
   reloads (`+`, `-`, F and R are ignored while a text field has the keyboard). A click selects,
   Esc clears the selection.
+  Orbit drags move the front of the model with the pointer in both presets, rather than
+  moving the viewpoint with the pointer.
 - Live refresh: the window watches the store's committed revisions and reloads by itself when
   another process (the CLI, an agent) commits to the store it shows; `R` stays for a manual
   reload. A reload whose framing changed fits the camera, so new content comes into view.
-- Layout (design v1, the BeamCraft look of `src/theme.rs`): a brand header with the project, its
-  save state, the environment and author, and Publish; a ribbon of tools (Select; Plate, Beam,
-  Column; Move, Copy, Delete, Undo, Redo; Shaded); the 3D view with view and zoom buttons; an
-  inspector on the right that shows what the chosen tool needs (properties, a create form or an
-  edit form); a status bar with the selection and a Details window (frame rate, adapter,
-  revision, navigation). Tools that do not exist yet (Bolts, Weld, Wire, the Plan and Grid views,
-  snapping) are shown disabled. Model parts are drawn in the logo's colours on a blueprint
-  ground that follows the light or dark theme.
+- Native interface (egui/wgpu, entirely Rust, no HTML, JavaScript or WebView): cool neutral
+  surfaces, one-point separators, compact Inter controls and cyan actions/selection replace the
+  old cream panels, heavy outlines, decorative grids and hard shadows. The model library has a
+  navigation sidebar, a compact model table and selected-model details with an icon-labeled Open
+  action. Recent models has no duplicate header Open/New actions or search. Search (Ctrl+K)
+  is available only in All models and never filters Recent models.
+  Double-click or Enter opens a model. Selected models get a real geometry thumbnail
+  from the CLI snapshot on a single background worker, cached for up to 20 models.
+  Thumbnails have an 8,192-triangle budget; failures and larger models show an explicit message
+  and Retry, not a fabricated or incomplete preview. Uninspected rows retain generic symbols.
+- The model workspace has a custom draggable title bar, native window controls, a project/save-state
+  header and Publish for personal workspaces; Menu, Steel, Edit, View
+  and Manage ribbon tabs; resizable project-browser and inspector panes; the native 3D viewport;
+  and the compact selection/snap toolbar and status line. Views are listed in the browser.
+  The viewport has no floating view tabs, zoom/fit buttons, orientation triad or display-mode
+  caption; mouse/wheel navigation and keyboard shortcuts remain available.
+  The browser reports the loaded engine
+  snapshot, not invented drawings or views. Open in Menu or Model library in Manage returns to the library
+  when launched from the start page. Ctrl+K searches supported commands in a native dialog.
+  Existing create/edit/property/publish commands still use the same CLI paths. Unimplemented
+  tools (Bolts, Weld, Wire, floor-plan views and snapping) remain explicitly disabled.
+- Manage > Rectangular grid restores regular-grid creation in the inspector: U/V coordinate
+  expressions, labels, optional line limits, XY origin and rotation. Create invokes the existing
+  CLI; Cancel does not write. The pinned snapshot includes grid axes for display and framing.
+  This restores creation/display, not later grid editing or snapping tools.
+- Resizable windows use equal 40-by-28-point title-bar buttons with centered, thin line icons,
+  a distinct restore glyph when maximized, neutral hover feedback and a red close hover.
+  The compact welcome window retains equal 28-point minimize/close buttons without maximize.
+- The property inspector pins Apply and Reset at the bottom. Apply validates and submits through
+  the existing CLI property command; Reset restores the last inspected values without writing.
+  Reload re-reads current properties. The optional Command preview section shows exact arguments.
+- Theme is chosen on the welcome screen, not repeated in the library or model title bars:
+  **System** (default), **Light**, **Dark**. System follows live OS theme changes. The preference
+  persists in the user's settings through `beamcraft set-settings --theme system|light|dark`;
+  `--config-dir` also scopes appearance when supplied to the start page. Load/save errors are
+  visible with Retry. `BEAMCRAFT_THEME=light|dark` is a non-persistent override; the selector is
+  disabled while it is active.
+- The welcome window uses a compact content-sized layout and equal minimize/close controls,
+  without maximize or a subtitle. Theme changes discard a mixed-style frame so backgrounds,
+  inputs and dropdowns switch together without color animation; a fresh launch restores the
+  saved preference automatically.
+- New model pre-fills `New model`, then the first unused `New model 1`, `New model 2`, etc. in
+  the chosen directory (including collisions with ordinary files). Suggestions run off-thread,
+  never overwrite a typed name and do not replace the CLI's final exclusive-create check.
+- The native Menu follows the prototype's dark 232-point navigation, section headings and
+  flat 42-point command rows. New/Open use the library, catalogs inspect actual model
+  definitions, and unavailable settings/import/export/editor/maintenance
+  actions stay disabled instead of suggesting unsupported functionality.
+- The bottom toolbar has 18 compact 24-point entity controls and 13 snap/constraint controls,
+  in separate dense rows on the left and right with small group separators. Glyphs are
+  contributor-original Rust drawings. Only the existing Select objects action is enabled;
+  entity filters and all snaps remain disabled, with explanatory tooltips, until their APIs
+  are implemented. Search stays available without displaying its keyboard shortcut.
 - V05.1 Create panel (experimental, now the inspector of Plate, Beam and Column): a plate (width, length, thickness, optional name and material)
   or a straight beam/column (start, end, profile and material chosen from the store's definitions,
   optional name). Preview stages the exact `create-plate` / `create-member` argument list (one per line, not a shell
