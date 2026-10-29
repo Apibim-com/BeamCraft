@@ -527,6 +527,7 @@ fn plate_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
         "steel:hole:vertexCounts",
         "steel:hole:operationIds",
         "steel:hole:ordinals",
+        "steel:hole:kinds",
     ];
     let declared: Vec<bool> = names.iter().map(|name| present(name)).collect();
     if declared.iter().all(|seen| !seen) {
@@ -544,10 +545,13 @@ fn plate_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
     let Value::Array(ordinals) = required(prim, "steel:hole:ordinals", "int[]")? else {
         return Err(invalid());
     };
+    let Value::Array(kinds) = required(prim, "steel:hole:kinds", "token[]")? else {
+        return Err(invalid());
+    };
     if counts.len() > MAX_HOLES
         || counts.len() != ids.len()
         || counts.len() != ordinals.len()
-        || counts.is_empty()
+        || counts.len() != kinds.len()
     {
         return Err(invalid());
     }
@@ -591,6 +595,14 @@ fn plate_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
         }
         last = Some(*n);
     }
+    for kind in kinds {
+        let Value::Text(kind) = kind else {
+            return Err(invalid());
+        };
+        if kind != "hole" && kind != "polygon_cut" {
+            return Err(invalid());
+        }
+    }
     Ok(())
 }
 /// Most through holes of one plate and most points of one hole.
@@ -602,7 +614,7 @@ const MAX_HOLE_POINTS: usize = 1024;
 /// 999; each point is finite and within the coordinate cap and each normal is not the zero
 /// vector. Whether a plane crosses its element is the engine's decision on replay, never
 /// re-derived here. A damaged or half-authored list is invalid, never a default.
-fn element_cut(prim: &Prim) -> Result<Vec<CutRecord>, Diagnostic> {
+pub(super) fn element_cut(prim: &Prim) -> Result<Vec<CutRecord>, Diagnostic> {
     const FIELDS: [&str; 5] = [
         "steel:cut:operationId",
         "steel:cut:ordinal",
@@ -824,6 +836,7 @@ pub(super) fn snapshot(
         ));
     }
     project_record(metadata)?;
+    let mut operation_ids = std::collections::BTreeSet::new();
     for p in prims.iter().filter(|p| p.element_id.is_some()) {
         let id = p.element_id.as_deref().ok_or_else(invalid)?;
         // Foreign content is preserved inertly, not interpreted as engineering input.
@@ -902,18 +915,52 @@ pub(super) fn snapshot(
             return Err(invalid());
         }
         if instance::definition(p, prims)?.is_none() {
+            if matches!(kind, "plate" | "beam" | "column") {
+                let hole_history = cut_history::read_holes(p)?;
+                let history = cut_history::read(p)?;
+                for id in history
+                    .retired
+                    .into_iter()
+                    .chain(hole_history.retired)
+                    .chain(cut_history::ids(p, "steel:cut:operationId")?)
+                    .chain(cut_history::ids(p, "steel:hole:operationIds")?)
+                {
+                    if !operation_ids.insert(id) {
+                        return Err(invalid());
+                    }
+                }
+            }
             match kind {
                 "plate" => {
                     plate(
                         &points(p, "steel:plate:contourPointsMm")?,
                         number(p, "steel:plate:thicknessMm")?,
                     )?;
+                    plate_corner_records(p)?;
                     plate_holes(p)?;
                     plate_hole_records(p)?;
                     element_cut(p)?;
                 }
                 "beam" | "column" => {
                     let axis = points(p, "bim:axisPointsMm")?;
+                    if let Some(prop) = p
+                        .properties
+                        .iter()
+                        .find(|v| v.name == "steel:member:pathType")
+                    {
+                        if prop.type_name != "token"
+                            || text(p, "steel:member:pathType", "token")? != "arc"
+                            || axis.len() != 3
+                        {
+                            return Err(invalid());
+                        }
+                        if p.properties
+                            .iter()
+                            .any(|v| v.name == "steel:member:rollRad")
+                        {
+                            return Err(invalid());
+                        }
+                    }
                     if axis.len() < 2 || axis.len() > MAX_MEMBER_PATH_POINTS {
                         return Err(invalid());
                     }
@@ -1790,7 +1837,9 @@ pub(super) fn changes(
                     return Err(unsupported());
                 }
                 let valid = match change {
-                    Change::Contour { .. } | Change::Thickness { .. } => kind == "plate",
+                    Change::Contour { .. } | Change::Thickness { .. } | Change::Corners { .. } => {
+                        kind == "plate"
+                    }
                     Change::HoleRecords { .. } => kind == "plate",
                     Change::Axis { .. } | Change::Roll { .. } | Change::Profile { .. } => {
                         matches!(kind, "beam" | "column")
@@ -2098,6 +2147,7 @@ pub(super) fn changes(
                         cut_values(cuts)?;
                     }
                     Shape::Member {
+                        curved,
                         axis_mm,
                         roll_rad,
                         profile,
@@ -2106,6 +2156,9 @@ pub(super) fn changes(
                         ..
                     } => {
                         if axis_mm.len() < 2 || axis_mm.len() > MAX_MEMBER_PATH_POINTS {
+                            return Err(invalid());
+                        }
+                        if *curved && (axis_mm.len() != 3 || roll_rad.is_some()) {
                             return Err(invalid());
                         }
                         cap(axis_mm.iter().flatten().copied(), 1e9)?;
@@ -2311,6 +2364,19 @@ pub(super) fn changes(
             Change::Contour { points_mm, .. } => {
                 count_points(points_mm, b)?;
                 cap(points_mm.iter().flatten().copied(), 1e9)?;
+            }
+            Change::Corners { corners, .. } => {
+                if corners.len() > 1024 {
+                    return Err(limit());
+                }
+                let mut seen = Vec::new();
+                for corner in corners {
+                    if corner.vertex >= 1024 || seen.contains(&corner.vertex) {
+                        return Err(invalid());
+                    }
+                    seen.push(corner.vertex);
+                    corner.validate().map_err(|_| invalid())?;
+                }
             }
             Change::Thickness { mm, .. } => cap([*mm], 1e6)?,
             Change::Cuts { cuts, .. } => cut_values(cuts)?,
@@ -2541,6 +2607,86 @@ fn mesh(m: &Mesh, b: Budgets) -> Result<(), Diagnostic> {
             .any(|&n| usize::try_from(n).map_or(true, |i| i >= m.points_mm.len()))
     {
         return Err(invalid());
+    }
+    Ok(())
+}
+
+fn plate_corner_records(p: &Prim) -> Result<(), Diagnostic> {
+    let fields = [
+        ("steel:plate:cornerVertex", "int[]"),
+        ("steel:plate:cornerKind", "token[]"),
+        ("steel:plate:cornerD1Mm", "double[]"),
+        ("steel:plate:cornerD2Mm", "double[]"),
+        ("steel:plate:cornerRadiusMm", "double[]"),
+    ];
+    let mut arrays = Vec::new();
+    let mut absent = 0usize;
+    for (name, ty) in fields {
+        match optional(p, name, ty)? {
+            None => absent += 1,
+            Some(Value::Array(a)) => arrays.push(a),
+            _ => return Err(invalid()),
+        }
+    }
+    if absent == 5 {
+        return Ok(());
+    }
+    if absent != 0 {
+        return Err(invalid());
+    }
+    let [vertices, kinds, d1s, d2s, radii] = arrays.as_slice() else {
+        return Err(invalid());
+    };
+    if vertices.len() > 1024 {
+        return Err(limit());
+    }
+    if [kinds.len(), d1s.len(), d2s.len(), radii.len()]
+        .iter()
+        .any(|n| *n != vertices.len())
+    {
+        return Err(invalid());
+    }
+    let count = points(p, "steel:plate:contourPointsMm")?.len();
+    let mut seen = Vec::new();
+    for ((((v, k), d1), d2), r) in vertices
+        .iter()
+        .zip(kinds.iter())
+        .zip(d1s.iter())
+        .zip(d2s.iter())
+        .zip(radii.iter())
+    {
+        let Value::Int(v) = v else {
+            return Err(invalid());
+        };
+        let v = usize::try_from(*v).map_err(|_| invalid())?;
+        if v >= count || seen.contains(&v) {
+            return Err(invalid());
+        }
+        seen.push(v);
+        let number = |n: &Value| match n {
+            Value::Number(n) => Ok(*n),
+            Value::Int(n) => Ok(*n as f64),
+            _ => Err(invalid()),
+        };
+        let (d1, d2, r) = (number(d1)?, number(d2)?, number(r)?);
+        let treatment = match k {
+            Value::Text(k) if k == "chamfer" && r == 0. => {
+                beamcraft_model::command::CornerTreatment::Chamfer {
+                    d1_mm: d1,
+                    d2_mm: d2,
+                }
+            }
+            Value::Text(k) if k == "round" && d1 == 0. && d2 == 0. => {
+                beamcraft_model::command::CornerTreatment::Round { radius_mm: r }
+            }
+            _ => return Err(invalid()),
+        };
+        PlateCorner {
+            vertex: v,
+            treatment,
+        }
+        .validate()
+        .map_err(|_| invalid())?;
     }
     Ok(())
 }
