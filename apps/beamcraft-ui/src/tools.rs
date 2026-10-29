@@ -84,6 +84,8 @@ impl fmt::Display for FormError {
 /// The plate form, as typed (millimetres).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PlateForm {
+    /// Optional ordered local XY contour from interactive placement; empty uses a rectangle.
+    pub contour: String,
     /// `--width`.
     pub width: String,
     /// `--length`.
@@ -271,13 +273,24 @@ impl PlateForm {
             "create-plate".to_owned(),
             "--store".into(),
             store.to_string_lossy().into_owned(),
-            "--width".into(),
-            number("Width", &self.width)?,
-            "--length".into(),
-            number("Length", &self.length)?,
-            "--thickness".into(),
-            number("Thickness", &self.thickness)?,
         ];
+        if self.contour.is_empty() {
+            args.extend([
+                "--width".into(),
+                number("Width", &self.width)?,
+                "--length".into(),
+                number("Length", &self.length)?,
+            ]);
+        } else {
+            if self.contour.len() > 128 * beamcraft_model::limits::CONTOUR_POINT_CAP {
+                return Err(FormError {
+                    field: "Contour",
+                    message: "Too many contour coordinates.".into(),
+                });
+            }
+            args.extend(["--contour".into(), self.contour.clone()]);
+        }
+        args.extend(["--thickness".into(), number("Thickness", &self.thickness)?]);
         push_name(&mut args, &self.name)?;
         if !self.class.trim().is_empty() {
             let class = self.class.trim().parse::<i32>().map_err(|_| FormError {

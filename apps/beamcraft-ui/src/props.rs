@@ -11,9 +11,9 @@
 //! engine's published limits, [`DIMENSION_CAP_MM`] and [`COORDINATE_CAP_MM`]); the engine stays
 //! the authority and its refusal (a stable code and message) is shown as it is.
 //!
-//! `update-element` supports a label, a material reference, a plate's thickness, an absolute
-//! translation and a level. This editor offers the first four; plate width and length, a
-//! member's profile and axis, and the level assignment have no editing path in this slice.
+//! The editor applies label, class, material, plate thickness, absolute translation and level
+//! assignment through the existing update command. Levels are read from the pinned inspection.
+//! Plate contour editing and member profile/axis editing remain separate tools.
 
 use crate::edit::sequence_of;
 use crate::tools::{FormError, MAX_TEXT, ToolError, decode, rejection, text};
@@ -101,6 +101,8 @@ pub struct Details {
     pub profile_name: Option<String>,
     /// The assigned level's id.
     pub level: Option<String>,
+    /// Pinned level choices as identity, name and elevation in millimetres.
+    pub levels: Vec<(String, String, f64)>,
     /// Shared definition owner and affected part count, when edits are linked.
     pub shared_definition: Option<(String, usize)>,
     /// The engine's quantities.
@@ -213,6 +215,29 @@ pub fn parse_details(
                 Some((owner, count))
             }
         };
+        let mut levels = Vec::new();
+        if let Ok(value) = reply.get("levels") {
+            let records = value.array().map_err(|_| unreadable())?;
+            let mut identities = std::collections::BTreeSet::new();
+            if records.len() > 4096 {
+                return Err(unreadable());
+            }
+            for record in records {
+                let level_id = text(record, "id").ok_or_else(unreadable)?;
+                beamcraft_model::id::ElementId::parse(&level_id).map_err(|_| unreadable())?;
+                if !identities.insert(level_id.clone()) {
+                    return Err(unreadable());
+                }
+                let name = text(record, "name")
+                    .filter(|s| !s.is_empty() && s.len() <= 256)
+                    .ok_or_else(unreadable)?;
+                let elevation = optional_float(record, "elevation_mm").ok_or_else(unreadable)?;
+                if elevation.abs() > COORDINATE_CAP_MM {
+                    return Err(unreadable());
+                }
+                levels.push((level_id, name, elevation));
+            }
+        }
         return Ok(Details {
             id: id.to_owned(),
             kind,
@@ -240,6 +265,7 @@ pub fn parse_details(
             axis_points_mm,
             profile_name: text(element, "profile_name"),
             level: text(element, "level"),
+            levels,
             shared_definition,
             quantities: read_quantities(element),
         });
@@ -402,6 +428,8 @@ fn unknown_reason(error: &ToolError) -> String {
 /// The editable fields, as typed.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Form {
+    /// Existing level identity, or explicit removal.
+    pub level: Option<String>,
     /// Integer part class.
     pub class: String,
     /// `--name`.
@@ -418,6 +446,7 @@ impl Form {
     /// The form as the engine reports the element: nothing is guessed or rounded.
     pub fn of(details: &Details) -> Self {
         Self {
+            level: details.level.clone(),
             class: details.class.to_string(),
             name: details.name.clone(),
             material: details.material.clone(),
@@ -612,6 +641,23 @@ impl Properties {
             id.clone(),
         ];
         let mut changed = Vec::new();
+        if self.form.level != self.baseline.level {
+            if let Some(id) = &self.form.level {
+                beamcraft_model::id::ElementId::parse(id)
+                    .map_err(|_| refuse("Level", "Choose a valid existing level."))?;
+                if !details.levels.iter().any(|(known, _, _)| known == id) {
+                    return Err(refuse(
+                        "Level",
+                        "The selected level is no longer available. Reload the properties.",
+                    ));
+                }
+            }
+            args.extend([
+                "--level".into(),
+                self.form.level.clone().unwrap_or_else(|| "none".into()),
+            ]);
+            changed.push("level");
+        }
         if self.form.class != self.baseline.class {
             let class = self
                 .form

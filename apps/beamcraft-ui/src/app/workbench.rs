@@ -293,10 +293,24 @@ impl App {
     /// Switches the inspector to `bench` and points the create or edit forms at it.
     pub(crate) fn set_bench(&mut self, bench: Bench) {
         self.grid_line.click = None;
+        self.tools.cancel();
         if bench != Bench::Select && self.grid_edit.take().is_some() {
             self.grid_form = crate::grid::GridForm::default();
             self.grid_note = None;
         }
+        self.plate_mode = bench == Bench::Plate;
+        self.plate_draft.clear();
+        self.plate_hover = None;
+        self.tools.plate.contour.clear();
+        if self.tools.plate.thickness.is_empty() {
+            self.tools.plate.thickness = "10".into();
+        }
+        self.beam_mode = matches!(bench, Bench::Beam | Bench::Column);
+        self.beam.reset();
+        self.ghost_end = None;
+        self.beam_hover = None;
+        self.renderer
+            .set_ghost(&self.state.device, &self.state.queue, None);
         self.plane_pick = false;
         self.bench = bench;
         match bench {
