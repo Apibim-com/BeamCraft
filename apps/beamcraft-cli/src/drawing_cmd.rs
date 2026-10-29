@@ -445,9 +445,8 @@ fn run_document(args: &[OsString]) -> Run<Json> {
             let drafting = drafting_specs(&drafting_values)?;
             // Replaying the exact accepted operation stays safe after later revisions.
             if let Some(previous) = documents.query(&op)? {
-                let edited = previous.drawing.clone().with_drafting(drafting)?;
                 let request = request_fingerprint(
-                    &edited,
+                    &previous.drawing,
                     State::Draft,
                     None,
                     previous.latest_published,

@@ -4,6 +4,8 @@
 //! Codeless U02 schema and isolated layer authoring for a trusted command engine.
 //! This is a library boundary, not an F04 command validator or acceptance ledger.
 
+/// Persistent cut ordinal and retired-record identities.
+pub mod cut_history;
 mod derive;
 mod edit;
 pub mod grid;
@@ -50,10 +52,13 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:cut:operationId=string[](optional,uuid7);steel:cut:ordinal=int[](optional,<=999);",
     "steel:cut:pointMm=double3[](optional);steel:cut:normal=double3[](optional,nonzero each);",
     "steel:cut:keep=token[](optional,positive|negative);all five or none,equal lengths,ascending ordinals\n",
+    "steel:cut:nextOrdinal=int(optional,0..1000);steel:cut:retiredOperationIds=string[](optional,sorted unique uuid7,<=1000);retired ids never reactivate\n",
     "steel:hole:pointsMm=double3[](optional,z=0);steel:hole:vertexCounts=int[](optional,>=3 each);",
     "steel:hole:operationIds=string[](uuid7 each);steel:hole:ordinals=int[](strictly increasing);",
-    "all four steel:hole attributes or none, ordinals are engine-assigned and never reused\n",
-    "bim:axisPointsMm=double3[];steel:member:rollRad=double(optional);\n",
+    "steel:hole:kinds=token[](hole|polygon_cut);all five steel:hole attributes or none,",
+    "ordinals are engine-assigned and never reused\n",
+    "steel:hole:nextOrdinal=int(optional,0..1000);steel:hole:retiredOperationIds=string[](optional,sorted unique uuid7,<=1000)\n",
+    "bim:axisPointsMm=double3[];steel:member:pathType=token(arc,optional);steel:member:rollRad=double(optional);\n",
     "steel:member:planePosition=token(left|centre|right);steel:member:planeOffsetMm=double;\n",
     "steel:member:depthPosition=token(front|centre|back);steel:member:depthOffsetMm=double;\n",
     "steel:member:startOffsetMm=double;steel:member:endOffsetMm=double;",
@@ -119,7 +124,7 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "bim:reference:correctionSourceDigest=string(sha256);xformOp:rotateX:bimUpAxis=double(degrees,Y up only);",
     "xformOp:scale:bimUnits=double3(metersPerUnit*1000);xformOpOrder=token[](rotateX,scale;empty without correction)\n",
     "reference/Correction/Source=def without type;references=@external/<sha256>.<usda|usdc>@</defaultPrim>;nothing else owned at or below\n",
-    "changes=Create|Label|Contour|Thickness|ThicknessSide|Axis|Roll|Profile|Material|Placement|Mesh|AttachReference|ReferenceUnits|PartOf|MainPart|Level|Mark|Cuts|HoleRecords|Delete;",
+    "changes=Create|Label|Contour|Thickness|ThicknessSide|Corners|Axis|Roll|Profile|Material|Placement|Mesh|AttachReference|ReferenceUnits|PartOf|MainPart|Level|Mark|Cuts|HoleRecords|Delete;",
     "opinion=Absent|Block|Value|Remove;relationship=Targets|Empty|Remove\n",
     "snapshot=Prim(path,element_id,type_name,active,properties,relationships,sources);",
     "property=(name,type_name,optional-value);relationship=(name,ordered-targets)\n",
@@ -256,6 +261,8 @@ pub enum Shape {
     },
     /// Member (P03 straight, P12 polybeam), with a required pinned profile.
     Member {
+        /// Three authored axis points describe a circular arc (P13).
+        curved: bool,
         /// Explicit beam or column kind.
         kind: MemberKind,
         /// Ordered element-local path points: exactly two for a straight member, at least three
@@ -534,6 +541,14 @@ pub enum Change {
         /// New thickness.
         mm: f64,
     },
+    /// Complete sparse replacement of the plate's corner treatments (A12.2): the list authors
+    /// every treated contour vertex as a whole, an empty list clears them all back to sharp.
+    Corners {
+        /// Canonical plate identity.
+        id: String,
+        /// Complete sparse replacement; empty clears every treatment.
+        corners: Vec<PlateCorner>,
+    },
     /// Replace the thickness side of a plate (A12.1). A plate always has a side (absence is the
     /// `top` default), so the change authors the exact token, `top` included.
     ThicknessSide {
@@ -662,6 +677,7 @@ impl Change {
             Self::Grid { id, .. } => (id, "bim:grid"),
             Self::Contour { id, .. } => (id, "steel:plate:contourPointsMm"),
             Self::Thickness { id, .. } => (id, "steel:plate:thicknessMm"),
+            Self::Corners { id, .. } => (id, "steel:plate:cornerVertex"),
             Self::ThicknessSide { id, .. } => (id, "steel:plate:thicknessSide"),
             Self::Cuts { id, .. } => (id, "steel:cut"),
             Self::Axis { id, .. } => (id, "bim:axisPointsMm"),
@@ -1129,6 +1145,20 @@ mod pin_tests {
     #[test]
     fn only_the_current_mapping_is_accepted() {
         assert!(pin_accepted(&schema_identity().unwrap().digest.to_string()).unwrap());
+        let before_p13 =
+            SCHEMA_DESCRIPTOR.replace("steel:member:pathType=token(arc,optional);", "");
+        assert!(
+            !pin_accepted(&Sha256::digest(before_p13.as_bytes()).unwrap().to_string()).unwrap()
+        );
+        let before_corner_edits = SCHEMA_DESCRIPTOR.replace("|Corners|", "|");
+        assert!(
+            !pin_accepted(
+                &Sha256::digest(before_corner_edits.as_bytes())
+                    .unwrap()
+                    .to_string()
+            )
+            .unwrap()
+        );
         let before_f10 = SCHEMA_DESCRIPTOR
             .replace("bim:isDeactivated=bool(optional,default=false);", "")
             .replace("steel:connection:type=token(weld|bolt_group);", "");
