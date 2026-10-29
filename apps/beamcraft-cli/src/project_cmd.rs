@@ -19,7 +19,7 @@ use beamcraft_cli::project::{
 };
 use beamcraft_host::ids::IdSource;
 use beamcraft_host::revision::NoFault;
-use beamcraft_host::settings::{Settings, SettingsError, default_dir};
+use beamcraft_host::settings::{Settings, SettingsError, ThemePreference, default_dir};
 use beamcraft_json::Json;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, Uuid7, WorkspaceId};
@@ -88,6 +88,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             "--environment",
             "--skip-launcher",
             "--models-dir",
+            "--theme",
         ],
         "create-project" => &[
             "--config-dir",
@@ -155,6 +156,9 @@ fn run(args: &[OsString]) -> Run<Json> {
             }
             if let Some(dir) = given("--models-dir") {
                 settings.models_dir = (dir != "none").then(|| PathBuf::from(dir));
+            }
+            if let Some(theme) = given("--theme") {
+                settings.theme = ThemePreference::parse(theme).map_err(settings_error)?;
             }
             settings.save(&dir).map_err(settings_error)?;
             settings_json("settings_saved", &dir, &settings)
