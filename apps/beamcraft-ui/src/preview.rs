@@ -33,11 +33,8 @@ fn floats<const N: usize>(bytes: &[u8]) -> Result<[f32; N], Error> {
         return Err(Error::Input("invalid preview display buffer"));
     }
     let mut out = [0.0; N];
-    for (value, chunk) in out.iter_mut().zip(bytes.chunks_exact(4)) {
-        let bytes: [u8; 4] = chunk
-            .try_into()
-            .map_err(|_| Error::Input("preview float"))?;
-        *value = f32::from_le_bytes(bytes);
+    for (value, chunk) in out.iter_mut().zip(bytes.as_chunks::<4>().0) {
+        *value = f32::from_le_bytes(*chunk);
     }
     Ok(out)
 }
@@ -70,10 +67,10 @@ impl ModelPreview {
         let view = Camera::new(target, extent, 268.0 / 184.0)?.view(268.0 / 184.0)?;
         let mut faces = Vec::new();
         for mesh in &scene.meshes {
-            for instance in mesh.instances.chunks_exact(INSTANCE_BYTES) {
+            for instance in mesh.instances.as_chunks::<INSTANCE_BYTES>().0 {
                 let [tx, ty, tz, qx, qy, qz, qw] = floats::<7>(instance)?;
                 let quaternion = [qx, qy, qz, qw];
-                for triangle in mesh.vertices.chunks_exact(VERTEX_BYTES * 3) {
+                for triangle in mesh.vertices.as_chunks::<{ VERTEX_BYTES * 3 }>().0 {
                     if faces.len() >= MAX_TRIANGLES {
                         return Err(Error::Input(
                             "model exceeds the library preview triangle budget",
@@ -82,8 +79,9 @@ impl ModelPreview {
                     let mut points = [Pos2::ZERO; 3];
                     let mut depth = 0.0;
                     let mut light = 0.5;
-                    for (point, vertex) in
-                        points.iter_mut().zip(triangle.chunks_exact(VERTEX_BYTES))
+                    for (point, vertex) in points
+                        .iter_mut()
+                        .zip(triangle.as_chunks::<VERTEX_BYTES>().0)
                     {
                         let [x, y, z, nx, ny, nz] = floats::<6>(vertex)?;
                         let [x, y, z] = rotate([x, y, z], quaternion);
