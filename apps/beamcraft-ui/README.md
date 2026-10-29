@@ -104,7 +104,7 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   Search stays available without displaying its keyboard shortcut.
 - Interactive creation: choose Plate, Beam or Column, set thickness/profile/material/class,
   then pick points in the viewport. A member's second point creates it; a plate takes ordered
-  contour vertices and finishes with Enter, right-click, the first vertex, or Finish plate.
+  contour vertices and finishes with Enter, right-click, wheel-click, the first vertex, or Finish plate.
   Backspace removes a draft vertex; Reverse direction explicitly changes contour winding.
   Esc, Cancel or a tool change discards unfinished points without writing. Invalid contours are
   refused by the engine and remain editable. Numeric coordinates remain available for precision.

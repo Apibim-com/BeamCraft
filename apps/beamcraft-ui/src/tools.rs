@@ -282,10 +282,11 @@ impl PlateForm {
                 number("Length", &self.length)?,
             ]);
         } else {
-            if self.contour.len() > 128 * beamcraft_model::limits::CONTOUR_POINT_CAP {
+            // The CLI adapter admits at most 4096 bytes in one argument.
+            if self.contour.len() > 4096 {
                 return Err(FormError {
                     field: "Contour",
-                    message: "Too many contour coordinates.".into(),
+                    message: "The contour exceeds the supported coordinate text limit (4096 bytes). Use fewer vertices or simpler coordinates.".into(),
                 });
             }
             args.extend(["--contour".into(), self.contour.clone()]);
@@ -863,6 +864,13 @@ mod tests {
         assert!(form.prepare(Path::new("S")).is_err());
         form.set_endpoints([0.; 3], [0., 0., 500.]);
         assert!(form.start_input.is_empty() && form.end_input.is_empty());
+    }
+
+    #[test]
+    fn review_contour_cannot_exceed_cli_argument_budget() {
+        let mut form = plate();
+        form.contour = "0,0;".repeat(1024) + "1";
+        assert!(form.prepare(store()).is_err());
     }
 
     #[test]

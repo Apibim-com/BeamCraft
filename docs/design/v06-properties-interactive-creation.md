@@ -27,7 +27,7 @@ as the final click. An axis remains visible when no supported body preview is av
 
 Selecting Plate starts an unpublished contour on the active work plane, or world XY. Set
 thickness/material/class and pick vertices. The outline follows the pointer. Enter,
-right-click, Finish plate or clicking the first vertex closes a contour with at least three
+right-click, wheel-click, Finish plate or clicking the first vertex closes a contour with at least three
 vertices and runs `create-plate --contour`. Backspace removes a vertex; Reverse direction
 explicitly reverses winding. Precision fields add a point in work-plane coordinates.
 
@@ -58,3 +58,18 @@ work. Full global V11 snap-tool coverage remains its own task; this change uses 
 coordinate query paths in these creation tools. No new dependency or shipped asset is added.
 The UI, code and synthetic tests are contributor-original MPL-2.0; no commercial product's
 layout, icons, screenshot or code was copied or traced.
+
+## Review hardening
+
+A head that could not be checked disables property editing and Apply and is refused by
+the property adapter itself. The first draft marker closes a contour within ten screen
+points, regardless of engine vertex-snap switches or zoom. Right-click and wheel-click
+finish a contour with three or more points; dragging the wheel remains navigation. In a
+member tool these clicks end the tool and discard an unfinished first point.
+
+Saving blocks tool changes/Esc so an in-flight command cannot erase its draft before an
+unknown outcome is reported. Contour text observes the existing CLI's 4096-byte argument
+budget before staging. Duplicate level/definition labels gain a unique identifier suffix
+only when needed to tell choices apart. Failed member preview resolution clears the
+visible preview and its coordinate cache. Stored quantity freshness is shown separately
+from newly evaluated current quantities; a stale stored record is never labelled current.

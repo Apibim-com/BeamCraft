@@ -58,6 +58,10 @@ impl RevisionStamp {
 /// `None`: unknown, not zero).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Quantities {
+    /// Freshness of the separately stored volume record, when reported by the engine.
+    pub stored_volume_freshness: Option<String>,
+    /// Freshness of the separately stored mass record, when reported by the engine.
+    pub stored_mass_freshness: Option<String>,
     /// Net volume in mm3.
     pub volume_mm3: Option<f64>,
     /// The engine's status of that volume (`current` or another token).
@@ -133,6 +137,16 @@ fn read_quantities(element: &Json) -> Quantities {
     let volume = element.get("quantities").and_then(|q| q.get("volume")).ok();
     let mass = element.get("quantities").and_then(|q| q.get("mass")).ok();
     Quantities {
+        stored_volume_freshness: element
+            .get("stored_quantities")
+            .ok()
+            .and_then(|q| q.get("volume").ok())
+            .and_then(|q| text(q, "freshness")),
+        stored_mass_freshness: element
+            .get("stored_quantities")
+            .ok()
+            .and_then(|q| q.get("mass").ok())
+            .and_then(|q| text(q, "freshness")),
         volume_mm3: volume.and_then(|v| optional_float(v, "mm3")),
         volume_status: volume.and_then(|v| text(v, "status")),
         mass_kg: mass.and_then(|m| optional_float(m, "kg_display")),
@@ -610,6 +624,12 @@ impl Properties {
             .as_ref()
             .ok_or_else(|| refuse("Selection", "click an element first"))?;
         match self.state() {
+            Some(State::Current) if !self.head_known() => {
+                return Err(refuse(
+                    "Properties",
+                    "Could not verify the current model revision. Reload properties before applying changes.",
+                ));
+            }
             Some(State::Current) => {}
             Some(State::Stale { read, head }) => {
                 return Err(refuse(
@@ -923,6 +943,58 @@ mod tests {
             parse_details(ID, Some(2), refused).unwrap_err().code,
             "BACKEND_UNAVAILABLE"
         );
+    }
+
+    #[test]
+    fn review_stored_freshness_is_kept_separate_from_live_quantity_status() {
+        let mut data =
+            beamcraft_json::decode(&reply(3, "d3"), &beamcraft_json::Limits::DEFAULT).unwrap();
+        let Json::Object(root) = &mut data else {
+            panic!("object");
+        };
+        let Json::Array(plates) = root.get_mut("plates").unwrap() else {
+            panic!("array");
+        };
+        let Json::Object(plate) = plates.first_mut().unwrap() else {
+            panic!("plate");
+        };
+        plate.insert(
+            "stored_quantities".into(),
+            Json::object([
+                ("volume", Json::object([("freshness", Json::text("stale"))])),
+                ("mass", Json::object([("freshness", Json::text("missing"))])),
+            ]),
+        );
+        let details = parse_details(
+            ID,
+            Some(0),
+            &data.encode(&beamcraft_json::Limits::DEFAULT).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(details.quantities.volume_status.as_deref(), Some("current"));
+        assert_eq!(details.quantities.volume_mm3, Some(5_000_000.0));
+        assert_eq!(
+            details.quantities.stored_volume_freshness.as_deref(),
+            Some("stale")
+        );
+        assert_eq!(
+            details.quantities.stored_mass_freshness.as_deref(),
+            Some("missing")
+        );
+    }
+
+    #[test]
+    fn review_unknown_head_blocks_prepared_update() {
+        let mut props = loaded();
+        props.form.name = "Pending rename".into();
+        props.preview(store()).unwrap();
+        props.observe_head(None);
+        assert!(props.prepare(store()).is_err());
+        assert!(!props.can_commit(store()));
+        assert!(props.begin_commit(store()).is_none());
+        assert_eq!(props.form.name, "Pending rename");
+        props.observe_head(Some(head(3, "d3")));
+        assert!(props.prepare(store()).is_ok());
     }
 
     #[test]

@@ -8,6 +8,43 @@ use crate::tools::{ToolError, ToolKind};
 use beamcraft_engine::query::pick::{SnapQuery, snap_with_grids};
 
 impl App {
+    pub(super) fn finish_creation_gesture(
+        &mut self,
+        response: &egui::Response,
+        view: &View,
+    ) -> bool {
+        if self.other_command_running() {
+            return false;
+        }
+        let finish_click = response.clicked_by(egui::PointerButton::Secondary)
+            || response.clicked_by(egui::PointerButton::Middle);
+        if self.beam_mode && finish_click {
+            self.set_bench(Bench::Select);
+            return true;
+        }
+        if !self.plate_mode {
+            return false;
+        }
+        let close_marker = response.clicked_by(egui::PointerButton::Primary)
+            && response.interact_pointer_pos().is_some_and(|point| {
+                self.plate_draft.closes_near(
+                    response.rect,
+                    view,
+                    self.loaded
+                        .as_ref()
+                        .map_or([0.0; 3], |l| l.summary.origin_mm),
+                    point,
+                )
+            });
+        if close_marker
+            || response.clicked_by(egui::PointerButton::Secondary)
+            || response.clicked_by(egui::PointerButton::Middle)
+        {
+            self.finish_plate();
+            return true;
+        }
+        false
+    }
     pub(super) fn creation_point(
         &self,
         ray: crate::edit::Ray,
@@ -216,7 +253,7 @@ impl App {
                     field(ui, "Thickness (mm)", &mut self.tools.plate.thickness, 80.0);
                     choice_combo(ui, "plate-material", "Material", &mut self.tools.plate.material, &self.tools.definitions.materials, false);
                     ui.separator();
-                    ui.label("Pick the contour vertices in the model view. Enter, right-click or Finish creates the plate. Backspace removes the last point.");
+                    ui.label("Pick the contour vertices in the model view. Enter, right-click, wheel-click or Finish creates the plate. Backspace removes the last point.");
                     ui.label(format!("{} vertices", self.plate_draft.points().len()));
                     ui.horizontal(|ui| {
                         if ui.add_enabled(self.plate_draft.points().len() >= 3, egui::Button::new("Finish plate")).clicked() { self.finish_plate(); }
@@ -249,6 +286,7 @@ impl App {
                         self.beam.reset(); self.beam_mode = true; self.beam_hover = None;
                         self.renderer.set_ghost(&self.state.device, &self.state.queue, None);
                     }
+                    ui.label("Right-click or wheel-click ends this tool.");
                     if self.tools.definitions.profiles.is_empty() { ui.label("Add a profile to the model catalogue before creating a member."); }
                     egui::CollapsingHeader::new("Precise placement").show(ui, |ui| {
                         for (label, point) in [("Start (mm)", &mut self.tools.member.start), ("End (mm)", &mut self.tools.member.end)] {

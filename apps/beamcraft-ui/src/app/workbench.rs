@@ -292,6 +292,9 @@ fn caption(ui: &mut Ui, text: &str) {
 impl App {
     /// Switches the inspector to `bench` and points the create or edit forms at it.
     pub(crate) fn set_bench(&mut self, bench: Bench) {
+        if self.other_command_running() {
+            return;
+        }
         self.grid_line.click = None;
         self.tools.cancel();
         if bench != Bench::Select && self.grid_edit.take().is_some() {
@@ -526,7 +529,7 @@ impl App {
                     let bench = self.bench;
                     if matches!(self.ribbon_tab, RibbonTab::Steel | RibbonTab::Edit) {
                     group(ui, "Select", &mut |ui| {
-                        if tool_button(ui, Icon::Select, "Select", bench == Bench::Select, true)
+                        if tool_button(ui, Icon::Select, "Select", bench == Bench::Select, edits_free)
                             .clicked()
                         {
                             pick = Some(Bench::Select);
@@ -540,7 +543,7 @@ impl App {
                             (Bench::Beam, Icon::Beam, "Beam"),
                             (Bench::Plate, Icon::Plate, "Plate"),
                         ] {
-                            if tool_button(ui, icon, label, bench == b, true).clicked() {
+                            if tool_button(ui, icon, label, bench == b, edits_free).clicked() {
                                 pick = Some(b);
                             }
                         }
