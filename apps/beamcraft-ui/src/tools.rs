@@ -9,7 +9,7 @@
 //! The UI never computes engineering geometry. It checks only that a number is a finite decimal
 //! and that required choices are made, then forwards the text. Every rule about shapes, limits,
 //! profiles and materials stays in the engine, and its refusal (a stable code and a message) is
-//! shown as it is.
+//! kept intact; the UI shows the message without its technical code prefix.
 
 use beamcraft_json::{Json, Limits};
 use std::fmt;
@@ -92,6 +92,8 @@ pub struct PlateForm {
     pub thickness: String,
     /// `--name`, optional.
     pub name: String,
+    /// Authored part class, empty means the default zero.
+    pub class: String,
     /// `--material-digest`, optional: a material definition of the store.
     pub material: Option<String>,
 }
@@ -105,12 +107,20 @@ pub struct MemberForm {
     pub start: [String; 3],
     /// `--end X,Y,Z`.
     pub end: [String; 3],
+    /// Optional numeric expression overriding the Cartesian start fields.
+    pub start_input: String,
+    /// Optional numeric expression overriding the Cartesian end fields.
+    pub end_input: String,
+    /// Direction constraint through the start, shared with the engine and CLI.
+    pub axis_lock: beamcraft_engine::coordinate::AxisLock,
     /// `--profile-digest`: a profile definition of the store (required).
     pub profile: Option<String>,
     /// `--material-digest`, optional.
     pub material: Option<String>,
     /// `--name`, optional.
     pub name: String,
+    /// Authored part class, empty means the default zero.
+    pub class: String,
     /// `--roll RAD`, optional (radians; empty means the flag is absent).
     pub roll: String,
     /// `--orientation-xyzw X,Y,Z,W`, optional (empty means the flag is absent).
@@ -123,9 +133,13 @@ impl Default for MemberForm {
             kind: MemberKind::Beam,
             start: ["0".into(), "0".into(), "0".into()],
             end: ["1000".into(), "0".into(), "0".into()],
+            start_input: String::new(),
+            end_input: String::new(),
+            axis_lock: beamcraft_engine::coordinate::AxisLock::None,
             profile: None,
             material: None,
             name: String::new(),
+            class: String::new(),
             roll: String::new(),
             orientation: String::new(),
         }
@@ -265,6 +279,13 @@ impl PlateForm {
             number("Thickness", &self.thickness)?,
         ];
         push_name(&mut args, &self.name)?;
+        if !self.class.trim().is_empty() {
+            let class = self.class.trim().parse::<i32>().map_err(|_| FormError {
+                field: "Class",
+                message: "enter an integer in the int32 range".into(),
+            })?;
+            args.extend(["--class".into(), class.to_string()]);
+        }
         push_material(&mut args, self.material.as_ref());
         Ok(Prepared {
             kind: ToolKind::Plate,
@@ -274,10 +295,44 @@ impl PlateForm {
 }
 
 impl MemberForm {
-    /// The `create-member` command for this form on `store`.
+    /// The `create-member` command in global coordinates.
     pub fn prepare(&self, store: &Path) -> Result<Prepared, FormError> {
-        let start = point("Start", &self.start)?;
-        let end = point("End", &self.end)?;
+        self.prepare_in_plane(store, None)
+    }
+
+    /// The command with numeric inputs admitted in the active plane's axes when supplied.
+    pub fn prepare_in_plane(
+        &self,
+        store: &Path,
+        plane: Option<beamcraft_engine::work_plane::WorkPlane>,
+    ) -> Result<Prepared, FormError> {
+        let start = if self.start_input.trim().is_empty() {
+            point("Start", &self.start)?
+        } else {
+            self.start_input.trim().to_owned()
+        };
+        let end = if self.end_input.trim().is_empty() {
+            point("End", &self.end)?
+        } else {
+            self.end_input.trim().to_owned()
+        };
+        let reject = |e: beamcraft_model::command::CommandError| FormError {
+            field: "Coordinates",
+            message: e.to_string(),
+        };
+        let resolve = |text: &str, reference, lock| {
+            plane.map_or_else(
+                || beamcraft_engine::coordinate::resolve(text, reference, lock),
+                |p| p.resolve_coordinate(text, reference, lock),
+            )
+        };
+        let origin = resolve(
+            &start,
+            [0.0; 3],
+            beamcraft_engine::coordinate::AxisLock::None,
+        )
+        .map_err(reject)?;
+        resolve(&end, origin, self.axis_lock).map_err(reject)?;
         let profile = self.profile.as_ref().ok_or_else(|| FormError {
             field: "Profile",
             message: "choose a profile definition of the store".into(),
@@ -296,9 +351,19 @@ impl MemberForm {
             profile.clone(),
         ];
         push_name(&mut args, &self.name)?;
+        if !self.class.trim().is_empty() {
+            let class = self.class.trim().parse::<i32>().map_err(|_| FormError {
+                field: "Class",
+                message: "enter an integer in the int32 range".into(),
+            })?;
+            args.extend(["--class".into(), class.to_string()]);
+        }
         push_material(&mut args, self.material.as_ref());
         // An empty field keeps the flag absent, so the planar form builds exactly the command it
         // always did; the engine owns every rule about rolls and quaternions.
+        if self.axis_lock != beamcraft_engine::coordinate::AxisLock::None {
+            args.extend(["--axis-lock".into(), self.axis_lock.token().into()]);
+        }
         let roll = self.roll.trim();
         if !roll.is_empty() {
             args.extend(["--roll".into(), number("Roll", roll)?]);
@@ -323,6 +388,8 @@ impl MemberForm {
             let [x, y, z] = p.map(|v| format!("{v}"));
             [x, y, z]
         };
+        self.start_input.clear();
+        self.end_input.clear();
         self.start = text(start);
         self.end = text(end);
     }
@@ -340,7 +407,7 @@ pub struct ToolError {
 
 impl fmt::Display for ToolError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.code, self.message)
+        f.write_str(&self.message)
     }
 }
 
@@ -625,6 +692,8 @@ pub struct Tools {
     pub definitions: Definitions,
     /// The author recorded as `--actor-id` of every create command, when the window has one.
     pub actor: Option<String>,
+    /// Active session frame; no plane is authored in the model.
+    pub plane: Option<beamcraft_engine::work_plane::WorkPlane>,
     staged: Option<Prepared>,
     busy: bool,
 }
@@ -637,6 +706,7 @@ impl Default for Tools {
             member: MemberForm::default(),
             definitions: Definitions::default(),
             actor: None,
+            plane: None,
             staged: None,
             busy: false,
         }
@@ -674,8 +744,17 @@ impl Tools {
     pub fn prepare(&self, store: &Path) -> Result<Prepared, FormError> {
         let mut prepared = match self.active {
             ToolKind::Plate => self.plate.prepare(store),
-            ToolKind::Member => self.member.prepare(store),
+            ToolKind::Member => self.member.prepare_in_plane(store, self.plane),
         }?;
+        if let Some(plane) = self.plane {
+            if self.active == ToolKind::Member && !self.member.orientation.trim().is_empty() {
+                return Err(FormError {
+                    field: "Work plane",
+                    message: "clear the explicit orientation before using a work plane".into(),
+                });
+            }
+            prepared.args.extend(["--plane".into(), plane.expression()]);
+        }
         push_actor(&mut prepared.args, self.actor.as_deref());
         Ok(prepared)
     }
@@ -744,6 +823,34 @@ mod tests {
     }
 
     const DIGEST: &str = "5d660dddce23e62c2544f796a80fd32de3725defa13dee514572833f0d886cb1";
+
+    #[test]
+    fn numeric_input_keeps_cli_expressions_and_uses_the_shared_engine_validation() {
+        use beamcraft_engine::coordinate::{AxisLock, resolve};
+        let mut form = MemberForm {
+            profile: Some("profile".into()),
+            start_input: "100,200,300".into(),
+            end_input: "@300,400,50".into(),
+            axis_lock: AxisLock::Y,
+            ..MemberForm::default()
+        };
+        let prepared = form.prepare(Path::new("S")).unwrap();
+        let option = |name| prepared.args.windows(2).find(|w| w[0] == name).unwrap()[1].clone();
+        let start = resolve(&option("--start"), [0.; 3], AxisLock::None).unwrap();
+        assert_eq!(
+            resolve(
+                &option("--end"),
+                start,
+                AxisLock::parse(&option("--axis-lock")).unwrap()
+            )
+            .unwrap(),
+            [100., 600., 300.]
+        );
+        form.end_input = "@5<NaN".into();
+        assert!(form.prepare(Path::new("S")).is_err());
+        form.set_endpoints([0.; 3], [0., 0., 500.]);
+        assert!(form.start_input.is_empty() && form.end_input.is_empty());
+    }
 
     #[test]
     fn a_plate_maps_to_the_cli_arguments() {
@@ -954,7 +1061,7 @@ mod tests {
             message: "boom".into(),
         };
         let problem = tools.apply_definitions(Err(failure)).unwrap();
-        assert_eq!(problem, "definitions: CLI_FAILED: boom");
+        assert_eq!(problem, "definitions: boom");
         assert!(tools.definitions.profiles.is_empty());
         assert_eq!(tools.member.profile, None);
         // A store with no revision yet simply has no definitions.
@@ -1015,10 +1122,7 @@ mod tests {
         let error = parse_created(ToolKind::Plate, Some(2), reply.as_bytes()).unwrap_err();
         assert_eq!(error.code, "INVALID_ARGUMENT");
         assert_eq!(error.message, "dimension is not positive");
-        assert_eq!(
-            error.to_string(),
-            "INVALID_ARGUMENT: dimension is not positive"
-        );
+        assert_eq!(error.to_string(), "dimension is not positive");
         // Even a zero exit status cannot turn a rejection into a success.
         assert!(parse_created(ToolKind::Plate, Some(0), reply.as_bytes()).is_err());
     }

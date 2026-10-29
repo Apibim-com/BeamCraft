@@ -1,10 +1,11 @@
 # Roadmap
 
-**Stage:** pre-alpha. Last updated 2026-10-23 (`master` at `876124c`).
+**Stage:** pre-alpha. Scope updated 2026-10-27; gate verdicts are unchanged.
 
 This file is the short summary of the [implementation plan](docs/plan/README.md): the stage, the
-acceptance gates, the MVP scope and the next work. Every task ID (F04, U06, A03, ...) is in
-[`docs/plan/tasks.md`](docs/plan/tasks.md) and the owner decisions are in
+acceptance gates, the MVP scope and the next work. Task IDs, scope, dependencies, acceptance and
+status live in [GitHub issues](https://github.com/Apibim-com/BeamCraft/issues/474), grouped by
+[milestone](https://github.com/Apibim-com/BeamCraft/milestones). Owner decisions are in
 [`docs/plan/decisions.md`](docs/plan/decisions.md). It is updated when a gate or the scope changes,
 not for every merge. What each merged
 package does is in its note under [`docs/design/`](docs/design/) and in
@@ -44,8 +45,9 @@ that the gate's acceptance is claimed.
 
 A free single-user desktop product for manual steel detailing without automation (no parametric
 connections or macros). The model is ordinary USD that other USD tools open. The scope was widened
-on 2026-10-21 ([decisions](docs/plan/decisions.md)); package boundaries follow the implementation
-plan and each package keeps its own PR.
+on 2026-10-21 and extended with both IFC input workflows on 2026-10-27
+([decisions](docs/plan/decisions.md)); package boundaries follow the implementation plan and each
+package keeps its own PR.
 
 1. **Modelling:** columns, beams, polybeams, curved beams, plates, bent and lofted plates and
    other plates of complex contour; full section placement; fits, cuts, chamfers, split and
@@ -63,9 +65,17 @@ plan and each package keeps its own PR.
    dimensions, marks and leaders, configurable view titles, drafting tools, PDF and print (D01 to D08).
 7. **Output and packaging:** numbering, schedules and BOM (E03), the alpha scenario (Q01) and
    native installers for Windows, Linux and macOS (Q02; Q02 merged, Q01 open).
+   The owner builds and company-signs Windows x64/ARM64 releases locally. Apple developer
+   registration, Developer ID signing and notarization are after the MVP.
+8. **IFC input:** read-only IFC reference models for authoring one's own section, and a separate
+   steel IFC import through the engineering kernel into an editable project, including KM to KMD.
+   Both are required in the MVP; the import contracts and implementation remain open. This is
+   separate from the deferred I01-I03 mesh-item workflow and IFC export.
 
-Profile and class data stay original or from public standards (`AGENTS.md` §1.2); no commercial
-catalogue, palette or text of another product is copied.
+Regional profile/material coverage targets Australia, Europe, Brazil, Canada, China, Russia,
+India, Middle East, Philippines, South Africa, South America and USA. Exact standards, families
+and admitted sources remain to be specified. All shipped data must satisfy `AGENTS.md` §1.2;
+no commercial-product catalogue, palette or text is copied.
 
 Deferred until after the MVP: items (I01 to I03: the item contract and reading GLB and IFC geometry), IFC export (E01, E02; the experimental `export-ifc` stays in the code
 but is not part of the MVP), multi-client rebase, conflicts, retry and compensation (C03–C06),
@@ -76,13 +86,14 @@ until then everything stays MPL-2.0.
 ## Next work
 
 In this order (milestones M0 to M5; M1 to M5 are those of the decision of 2026-10-21, and the owner
-put grids first on 2026-10-23); the task cards are in [`docs/plan/tasks.md`](docs/plan/tasks.md).
+put grids first on 2026-10-23); the task cards are indexed in the
+[GitHub task catalogue](https://github.com/Apibim-com/BeamCraft/issues/474).
 
-0. **M0, grids:** the [grid contract](docs/contracts/t01-project-grids-draft-v0.1.md) (draft for
-   owner review), then T01.1 to T01.4 (model, layer, engine, CLI, drawn lines, snaps and
-   placement), T01.5 (rights, pinned grids, with U19), T01.6 (UI) and T01.7 (viewer geometry);
-   the magnetic mode (T01.8) waits for the owner's answers. Views by grid line (V12) and the grid
-   switch (V11) build on it.
+0. **M0, grids:** review the [T01/F04/F10 grid contract amendment](docs/contracts/t01-project-grids-draft-v0.1.md)
+   with its MVP defaults, then T01.1 to T01.4 (model, layer, engine, CLI, drawn lines, snaps and
+   placement), T01.5 (rights, pinned grids, with U19), T01.6 (UI) and T01.7 (50 mm derived USD
+   guide tubes). Magnetic mode (T01.8) waits on its ownership/scope decision; curved and radial grids
+   (T01.9) stay after the MVP. Views by grid line (V12) and the grid switch (V11) build on it.
 1. **M1, modelling and the UI shell:** A03/A04 to the operation records (A-2); kernel sweep and
    ruled surfaces (G12, G13); polybeams, curved beams, section placement, complex, bent and lofted
    plates (P12 to P14, A10 to A13); complete bolts, welds and nested assemblies (A14 to A16);
@@ -94,7 +105,8 @@ put grids first on 2026-10-23); the task cards are in [`docs/plan/tasks.md`](doc
 5. **M5, alpha scenario and packaging:** Q01 over the whole scope and a first run of the release
    workflow (Q02); acceptance of the gates K5, K6 and K8 to K11.
 
-Later work expands supported operations, licensed data packs and DSTV NC export. IFC
-import and foreign-to-native conversion require a new scope decision. BeamCraft is desktop-only on
+Later work expands supported operations, additional data packs and DSTV NC export. The owner
+approved IFC reference loading and native steel IFC import for the MVP on 2026-10-27; broader
+persistent source-change coordination remains separate. BeamCraft is desktop-only on
 Windows, Linux and macOS; only `beamcraft-geom`, `beamcraft-model` and `beamcraft-kernel` keep the
 WASM compatibility requirement as a layering discipline.

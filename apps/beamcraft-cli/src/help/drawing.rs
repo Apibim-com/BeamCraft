@@ -14,8 +14,15 @@ pub(super) const PREVIEW: &str = concat!(
 pub(super) const DOCUMENTS: &str = concat!(
     "Drawing documents (D03): create-drawing --store MODEL_ROOT --document-dir NEW_DIR (with ",
     "drawing/view/dimension/member/anchor IDs, op/revision/actor IDs); refresh-drawing ",
-    "--store MODEL_ROOT --document-dir DIR --expected-head UUID (same IDs); publish-drawing ",
+    "--store MODEL_ROOT --document-dir DIR --expected-head UUID (same IDs); edit-drafting ",
+    "--document-dir DIR --expected-head UUID --op-id UUID --revision-id UUID --actor-id UUID ",
+    "[--drafting UUID:kind:x,y,...] (D07; drawn objects replace the set, kinds line, polyline, ",
+    "arc, circle, rectangle; the model store is not read); publish-drawing ",
     "--document-dir DIR --expected-head UUID --op-id UUID --revision-id UUID --actor-id UUID ",
     "--version-id UUID; inspect-drawing --document-dir DIR [--model-store ROOT]; ",
-    "inspect-drawing-versions --document-dir DIR.",
+    "inspect-drawing-versions --document-dir DIR; export-drawing --document-dir DIR ",
+    "--version-id UUID --out NEW_FILE.svg [--format svg|pdf --sheet a4|a3|a2|a1|a0] ",
+    "(one exact published version from its own archived ",
+    "source; deterministic bytes; pdf is a print-ready centred 1:1 sheet page that refuses ",
+    "instead of rescaling; refuses an existing destination; the live model is not read).",
 );

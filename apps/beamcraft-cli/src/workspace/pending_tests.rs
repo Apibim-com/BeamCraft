@@ -80,6 +80,7 @@ impl Fixture {
                 command: CreatePlate {
                     new_id: element(n),
                     name: format!("part {n}"),
+                    class: 0,
                     contour_points_mm: vec![
                         [0.0, 0.0, 0.0],
                         [100.0, 0.0, 0.0],
@@ -87,10 +88,11 @@ impl Fixture {
                         [0.0, 200.0, 0.0],
                     ],
                     thickness_mm: 10.0,
+                    thickness_side: None,
+                    corners: Vec::new(),
                     placement: Placement::IDENTITY,
                     material_digest: None,
                     holes_mm: Vec::new(),
-                    cut: None,
                 },
             },
             &mut NoFault,
@@ -125,7 +127,7 @@ impl Fixture {
             evidence::interval(&self.draft, old_meta.synced_sequence, draft.sequence()).unwrap();
         let footprint = evidence::aggregate(&self.draft, old_meta.synced_sequence, &operations)
             .unwrap()
-            .footprint
+            .raw_footprint
             .unwrap();
         RebaseReceipt {
             op_id: OpId::parse(id(n).as_str()).unwrap(),

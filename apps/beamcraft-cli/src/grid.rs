@@ -7,7 +7,7 @@ use crate::plate::{
     AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, base_of, check_footprint,
     control, host_uuid, integrity, load_base, open_base, prior_op_with, replay_summary, summarize,
 };
-use crate::publication::{PublishRequest, publish_revision};
+use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore};
@@ -39,6 +39,17 @@ pub struct GridChange {
     /// The verified grids at the resulting head.
     pub grids: Vec<Grid>,
 }
+fn guide_change(grid: &Grid) -> Result<Change, PlateError> {
+    let mesh = beamcraft_engine::grid_geometry::guide_mesh(grid)?;
+    Ok(Change::Mesh(beamcraft_layer_engine::authored::Mesh {
+        id: grid.id.to_string(),
+        shape_key: mesh.digest,
+        points_mm: mesh.points_mm,
+        face_counts: mesh.face_counts,
+        indices: mesh.indices,
+        quantities: None,
+    }))
+}
 fn snapshot(request: OpenRequest, c: &Control) -> Result<Vec<Prim>, PlateError> {
     validate_layers(request.clone(), schema_identity()?, c)?;
     let mut reader = Reader::default();
@@ -52,6 +63,14 @@ pub fn grids(store: &RevisionStore) -> Result<Vec<Grid>, PlateError> {
         Err(RevisionError::NoRevision) => return Ok(Vec::new()),
         Err(e) => return Err(e.into()),
     };
+    Ok(storage::read_grids(&snapshot(
+        open_base(&base_of(&revision)?)?,
+        &control(),
+    )?)?)
+}
+/// Grids pinned to an already inspected immutable revision sequence.
+pub fn grids_at(store: &RevisionStore, sequence: u64) -> Result<Vec<Grid>, PlateError> {
+    let revision = store.open_at(sequence)?;
     Ok(storage::read_grids(&snapshot(
         open_base(&base_of(&revision)?)?,
         &control(),
@@ -192,23 +211,21 @@ fn commit_grid(
             actor: context.actor.to_string(),
             schema,
             resources: Vec::new(),
-            changes: vec![Change::Create(Element {
-                id: command.grid.id.to_string(),
-                name: command.grid.name.clone(),
-                shape: Shape::Grid(command.grid.clone()),
-                placement: storage::placement(&command.grid),
-                material: None,
-            })],
+            changes: vec![
+                Change::Create(Element {
+                    id: command.grid.id.to_string(),
+                    name: command.grid.name.clone(),
+                    shape: Shape::Grid(command.grid.clone()),
+                    placement: storage::placement(&command.grid),
+                    material: None,
+                }),
+                guide_change(&command.grid)?,
+            ],
         },
         &c,
     )?;
     check_footprint(&prepared, &footprint)?;
-    let changed_layers = prepared
-        .layers
-        .iter()
-        .filter(|l| before.get(&l.name) != Some(&l.digest))
-        .map(|l| l.name.clone())
-        .collect();
+    let changed_layers = changed_layers(&prepared, &before);
     let committed = publish_revision(
         store,
         &PublishRequest {
@@ -309,7 +326,44 @@ pub fn edit_grid(
     request: &beamcraft_model::grid_edit::GridLineEditRequest,
     hook: &mut dyn CommitHook,
 ) -> Result<GridChange, PlateError> {
-    let fingerprint = request.content_fingerprint()?;
+    mutate_grid(
+        store,
+        context,
+        request.target_id,
+        request.content_fingerprint()?,
+        |source, used, refs| beamcraft_engine::grid_edit::edit(request, source, used, refs),
+        hook,
+    )
+}
+
+/// Atomically update regular families and the grid's label/frame, preserving kept axes by label.
+pub fn update_grid(
+    store: &RevisionStore,
+    context: &GridContext,
+    request: &beamcraft_model::grid_update::UpdateGrid,
+    hook: &mut dyn CommitHook,
+) -> Result<GridChange, PlateError> {
+    mutate_grid(
+        store,
+        context,
+        request.target_id,
+        request.content_fingerprint()?,
+        |source, used, refs| beamcraft_engine::grid_update::update(request, source, used, refs),
+        hook,
+    )
+}
+fn mutate_grid(
+    store: &RevisionStore,
+    context: &GridContext,
+    target_id: ElementId,
+    fingerprint: beamcraft_model::digest::ContentDigest,
+    decide: impl FnOnce(
+        &Grid,
+        &BTreeSet<ElementId>,
+        &BTreeSet<ElementId>,
+    ) -> Result<beamcraft_engine::grid_edit::EditedGrid, CommandError>,
+    hook: &mut dyn CommitHook,
+) -> Result<GridChange, PlateError> {
     if let Some(replayed) = replay(store, context, fingerprint)? {
         return Ok(replayed);
     }
@@ -334,11 +388,11 @@ pub fn edit_grid(
         &c,
     )?;
     let index = author.element_index(&opened.context, &c)?;
-    let id = beamcraft_layer_engine::index::ElementId::parse(&request.target_id.to_string())?;
+    let id = beamcraft_layer_engine::index::ElementId::parse(&target_id.to_string())?;
     author.authorize_write(&index, &id, &c)?;
     let source = model
         .iter()
-        .find(|g| g.id == request.target_id)
+        .find(|g| g.id == target_id)
         .ok_or(CommandError::new(
             ErrorCode::UnsupportedProperty,
             "target_id",
@@ -351,13 +405,37 @@ pub fn edit_grid(
         .collect::<Result<BTreeSet<_>, _>>()
         .map_err(|_| integrity("invalid element identity"))?;
     used.extend(model.iter().flat_map(|g| g.axis_ids()));
-    let mut referenced = BTreeSet::new();
-    if let beamcraft_model::grid_edit::GridLineEdit::Remove { axis_id } = request.edit
-        && !index.delete_blockers(&id)?.is_empty()
-    {
-        referenced.insert(axis_id);
+    let referenced = if index.delete_blockers(&id)?.is_empty() {
+        BTreeSet::new()
+    } else {
+        source.axis_ids().collect()
+    };
+    let edited = decide(source, &used, &referenced)?;
+    let mut attributes = edited.grid.clone();
+    attributes.name = source.name.clone();
+    attributes.translation_mm = source.translation_mm;
+    attributes.orientation_zw = source.orientation_zw;
+    let mut changes = vec![
+        Change::Grid {
+            id: target_id.to_string(),
+            grid: attributes,
+        },
+        guide_change(&edited.grid)?,
+    ];
+    if source.name != edited.grid.name {
+        changes.push(Change::Label {
+            id: target_id.to_string(),
+            name: edited.grid.name.clone(),
+        });
     }
-    let edited = beamcraft_engine::grid_edit::edit(request, source, &used, &referenced)?;
+    if source.translation_mm != edited.grid.translation_mm
+        || source.orientation_zw != edited.grid.orientation_zw
+    {
+        changes.push(Change::Placement {
+            id: target_id.to_string(),
+            placement: storage::placement(&edited.grid),
+        });
+    }
     let prepared = author.prepare(
         Prepare {
             context: opened.context.clone(),
@@ -365,20 +443,12 @@ pub fn edit_grid(
             actor: context.actor.to_string(),
             schema,
             resources: Vec::new(),
-            changes: vec![Change::Grid {
-                id: request.target_id.to_string(),
-                grid: edited.grid,
-            }],
+            changes,
         },
         &c,
     )?;
     check_footprint(&prepared, &edited.footprint)?;
-    let changed_layers = prepared
-        .layers
-        .iter()
-        .filter(|l| before.get(&l.name) != Some(&l.digest))
-        .map(|l| l.name.clone())
-        .collect();
+    let changed_layers = changed_layers(&prepared, &before);
     let Base {
         project,
         workspace,
@@ -412,4 +482,75 @@ pub fn edit_grid(
         changed_layers,
         grids: grids(store)?,
     })
+}
+
+/// Resolve a non-magnetic placement point from a grid address and explicit height source.
+/// Accepted retries read the immutable revision of that operation before consulting today's grids.
+pub fn resolve_placement(
+    store: &RevisionStore,
+    op: &beamcraft_model::id::OpId,
+    address: &str,
+    z: Option<f64>,
+    level: Option<ElementId>,
+    offset: f64,
+) -> Result<[f64; 3], PlateError> {
+    use beamcraft_host::ledger::Outcome;
+    let bad = || {
+        CommandError::new(
+            ErrorCode::InvalidArgument,
+            "grid.placement",
+            "grid placement needs an address and exactly one height source",
+        )
+    };
+    if address.len() > 512 || z.is_some() == level.is_some() || (z.is_some() && offset != 0.0) {
+        return Err(bad().into());
+    }
+    if z.is_some_and(|v| !v.is_finite()) || !offset.is_finite() {
+        return Err(
+            CommandError::new(ErrorCode::NonFiniteNumber, "z", "height is not finite").into(),
+        );
+    }
+    let (selector, labels) = address.split_once(':').ok_or_else(bad)?;
+    let (first, second) = labels
+        .split_once(',')
+        .filter(|(_, b)| !b.contains(','))
+        .ok_or_else(bad)?;
+    let revision = match store.query_outcome(&host_uuid(&op.to_string())?)? {
+        Outcome::Committed { sequence, .. } => {
+            let revision = store.open_at(sequence)?;
+            crate::command_evidence::read(&revision)?
+                .ok_or_else(|| integrity("accepted placement has no command evidence"))?;
+            revision
+        }
+        Outcome::Unknown => {
+            return Err(CommandError::new(
+                ErrorCode::OutcomeUnknown,
+                "op_id",
+                "operation outcome is uncertain",
+            )
+            .into());
+        }
+        Outcome::NotFound | Outcome::Aborted { .. } => store.open()?,
+    };
+    let request = open_base(&base_of(&revision)?)?;
+    let grids = storage::read_grids(&snapshot(request.clone(), &control())?)?;
+    let grid = beamcraft_engine::grid_query::resolve_grid(&grids, selector)?;
+    let [x, y] = beamcraft_engine::grid_query::grid_point(grid, first, second)?;
+    let z = match (z, level) {
+        (Some(z), None) => z,
+        (None, Some(id)) => {
+            crate::level::model_of(&request, &control())?
+                .level(&id)
+                .ok_or_else(|| CommandError::new(ErrorCode::NotFound, "level", "level not found"))?
+                .elevation_mm
+                + offset
+        }
+        _ => return Err(bad().into()),
+    };
+    if !z.is_finite() {
+        return Err(
+            CommandError::new(ErrorCode::NonFiniteNumber, "z", "height is not finite").into(),
+        );
+    }
+    Ok([x, y, z])
 }

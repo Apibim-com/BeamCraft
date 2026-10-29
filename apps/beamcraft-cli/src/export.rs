@@ -341,6 +341,7 @@ fn bodies(inspection: &Inspection) -> BTreeMap<ElementId, Body<'_>> {
         );
     }
     for r in &inspection.members {
+        let placement = r.authored.placement;
         out.insert(
             r.authored.id,
             Body {
@@ -349,7 +350,7 @@ fn bodies(inspection: &Inspection) -> BTreeMap<ElementId, Body<'_>> {
                     beamcraft_model::command::MemberKind::Column => Entity::Column,
                 },
                 mesh: mesh_of(&r.body.solid),
-                placement: r.authored.placement,
+                placement,
                 material: r.authored.material,
                 profile: Some(r.authored.profile),
                 holes: None,
@@ -364,7 +365,7 @@ fn declared_of(definition: &DefinitionRecord) -> Option<Declared> {
     let section = match definition {
         DefinitionRecord::RectangleProfile { section, .. }
         | DefinitionRecord::SectionProfile { section, .. } => section,
-        DefinitionRecord::Material { .. } => return None,
+        DefinitionRecord::Material { .. } | DefinitionRecord::Fastener { .. } => return None,
     };
     let declared = Declared {
         designation: section.designation.clone(),

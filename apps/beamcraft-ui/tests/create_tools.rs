@@ -120,6 +120,69 @@ fn bounds(cli: &Path, store: &Path) -> (Json, Json) {
 }
 
 #[test]
+fn a_duplicate_model_name_explains_how_to_recover() {
+    let Some(cli) = cli() else { return };
+    let stores = Stores::new();
+    let config = stores.root.join("config");
+    let args = beamcraft_ui::start::project_create_args(
+        Some(&config),
+        stores.root.to_str().unwrap(),
+        "Workshop",
+        Some("0199e7a0-0000-7000-8000-0000000000a1"),
+    );
+    let run = || {
+        let output = Command::new(&cli).args(&args).output().unwrap();
+        beamcraft_ui::start::parse_project(output.status.code(), &output.stdout, "project_created")
+    };
+    let created = run().unwrap();
+    assert_eq!(created.name, "Workshop");
+    let error = run().unwrap_err();
+    assert_eq!(error.code, "DUPLICATE_ID");
+    assert!(
+        error
+            .to_string()
+            .contains("Choose a different name or location")
+    );
+    assert!(!error.to_string().contains("DUPLICATE_ID"));
+    assert!(stores.root.join("Workshop/revisions").is_dir());
+}
+
+#[test]
+fn automatic_new_model_names_use_the_same_unique_creation_as_the_cli() {
+    let Some(cli) = cli() else { return };
+    let stores = Stores::new();
+    let config = stores.root.join("config");
+    let args = beamcraft_ui::start::project_create_args(
+        Some(&config),
+        stores.root.to_str().unwrap(),
+        "New Model",
+        Some("0199e7a0-0000-7000-8000-0000000000a1"),
+    );
+    for expected in ["New Model", "New Model 1", "New Model 2"] {
+        let out = Command::new(&cli)
+            .args([
+                "suggest-project-name",
+                "--parent",
+                stores.root.to_str().unwrap(),
+                "--name",
+                "New Model",
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(
+            beamcraft_ui::start::parse_project_name(out.status.code(), &out.stdout).unwrap(),
+            expected
+        );
+        let out = Command::new(&cli).args(&args).output().unwrap();
+        let created =
+            beamcraft_ui::start::parse_project(out.status.code(), &out.stdout, "project_created")
+                .unwrap();
+        assert_eq!(created.name, expected);
+        assert!(Path::new(&created.path).join("revisions").is_dir());
+    }
+}
+
+#[test]
 fn a_plate_from_the_tool_equals_the_plate_made_by_hand() {
     let Some(cli) = cli() else { return };
     let stores = Stores::new();
@@ -127,6 +190,7 @@ fn a_plate_from_the_tool_equals_the_plate_made_by_hand() {
 
     let mut tools = Tools::default();
     tools.plate = PlateForm {
+        class: String::new(),
         width: "1000".into(),
         length: "500".into(),
         thickness: "10".into(),
@@ -258,6 +322,9 @@ fn a_member_from_the_tool_equals_the_member_made_by_hand() {
     tools.member.kind = MemberKind::Column;
     tools.member.start = ["0".into(), "0".into(), "0".into()];
     tools.member.end = ["0".into(), "0".into(), "3000".into()];
+    // T04: the real UI command resolves relative polar input and constrains it to Z.
+    tools.member.end_input = "@500<0,3000".into();
+    tools.member.axis_lock = beamcraft_engine::coordinate::AxisLock::Z;
     tools.member.profile = Some(profile.clone());
     tools.member.material = Some(material.clone());
     tools.member.name = "C1".into();
@@ -507,4 +574,64 @@ fn a_snapshot_export_that_misses_its_deadline_is_a_typed_error() {
         &Stats::default(),
     );
     assert!(matches!(missing, Err(Error::Cli(m)) if m.contains("CLI_UNAVAILABLE")));
+}
+
+#[test]
+fn a_work_plane_plate_from_the_ui_matches_explicit_cli_plane_input() {
+    use beamcraft_engine::work_plane::{WorkPlane, pick_work_plane};
+    let Some(cli) = cli() else { return };
+    let stores = Stores::new();
+    let (ui, hand) = (stores.ui(), stores.hand());
+    let mut tools = Tools::default();
+    tools.plate.width = "200".into();
+    tools.plate.length = "100".into();
+    tools.plate.thickness = "10".into();
+    tools.plane = Some(WorkPlane::parallel("xz", 200.).unwrap());
+    tools.preview(&ui).unwrap();
+    tools.plane = Some(WorkPlane::parallel("yz", 200.).unwrap());
+    assert!(
+        !tools.can_commit(&ui),
+        "a changed session plane invalidates the staged command"
+    );
+    tools.plane = Some(WorkPlane::parallel("xz", 200.).unwrap());
+    let staged = tools.begin_commit(&ui).unwrap();
+    command::commit(&cli, &staged, &Stats::default()).unwrap();
+    tools.finish();
+    ok(
+        &cli,
+        &[
+            "create-plate",
+            "--store",
+            hand.to_str().unwrap(),
+            "--width",
+            "200",
+            "--length",
+            "100",
+            "--thickness",
+            "10",
+            "--plane",
+            "0,200,0,1,0,0,0,0,1",
+        ],
+    );
+    let (a, b) = (
+        inspected(&cli, &ui, "plates"),
+        inspected(&cli, &hand, "plates"),
+    );
+    for key in ["mesh_digest", "quantities", "placement"] {
+        assert_eq!(a.get(key).unwrap(), b.get(key).unwrap(), "{key}");
+    }
+    assert_eq!(bounds(&cli, &ui), bounds(&cli, &hand));
+    let snapshot = source::load(&cli, &ui, &Stats::default()).unwrap();
+    let token = snapshot.token().clone();
+    let plane = pick_work_plane(&snapshot, [100., 0., 50.], [0., 1., 0.])
+        .unwrap()
+        .unwrap();
+    for (a, b) in plane.normal().into_iter().zip([0., -1., 0.]) {
+        assert!((a - b).abs() < 1e-12);
+    }
+    assert_eq!(
+        snapshot.token(),
+        &token,
+        "face plane selection cannot change the model pin"
+    );
 }

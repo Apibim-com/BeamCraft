@@ -396,6 +396,10 @@ pub fn create_changeset(
             message: "the workspace has nothing to send",
         });
     }
+    // C04: an unresolved semantic conflict refuses packaging until the draft is resolved.
+    if !crate::workspace::conflicts::active(workspace, dir, meta)?.is_empty() {
+        return Err(crate::workspace::conflicts::refusal());
+    }
     let unsent = head_sequence - meta.synced_sequence;
     if usize::try_from(unsent).map_or(true, |n| n > MAX_OPERATIONS) {
         return Err(PlateError {
@@ -419,6 +423,19 @@ pub fn create_changeset(
         crate::command_evidence::interval(workspace, meta.synced_sequence, head_sequence)?;
     let evidence =
         crate::command_evidence::aggregate(workspace, meta.synced_sequence, &operations)?;
+    // C04: a fully renounced draft carries no modelling work. Packaging it would ship an
+    // evidence-less no-op revision, so refuse for the same reason publication refuses.
+    if evidence
+        .footprint
+        .as_ref()
+        .is_some_and(|work| work.reads().is_empty() && work.writes().is_empty())
+    {
+        return Err(PlateError {
+            rule_id: None,
+            code: ErrorCode::InvalidArgument,
+            message: "the unsent work was renounced; there is nothing to package",
+        });
+    }
     let dependencies = match evidence.footprint.as_ref() {
         Some(footprint) => crate::command_evidence::dependencies(footprint),
         None => footprint(&prims_of(&base)?, &prims_of(&draft)?)?,

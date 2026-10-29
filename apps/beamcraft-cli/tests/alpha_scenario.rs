@@ -7,6 +7,10 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+mod support;
+
+use support::{at, text};
+
 use beamcraft_json::{Json, Limits};
 use std::collections::BTreeMap;
 use std::fs;
@@ -72,14 +76,6 @@ impl Drop for Story {
     }
 }
 
-fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
-    path.iter().fold(json, |value, key| value.get(key).unwrap())
-}
-
-fn text(json: &Json, key: &str) -> String {
-    json.get(key).unwrap().string().unwrap().to_owned()
-}
-
 fn close(actual: f64, expected: f64) {
     assert!(
         (actual - expected).abs() <= 1e-8 * expected.abs().max(1.0),
@@ -123,32 +119,49 @@ fn a_detailed_frame_is_numbered_published_exported_and_reopened() {
     );
 
     // Two columns and a cut top beam; dimensions are invented, not a catalogue section.
-    for (id, kind, start, end, cut) in [
-        (PARTS[0], "column", "0,0,0", "0,0,1000", false),
-        (PARTS[1], "column", "1000,0,0", "1000,0,1000", false),
-        (PARTS[2], "beam", "0,0,1000", "1000,0,1000", true),
+    for (id, kind, start, end) in [
+        (PARTS[0], "column", "0,0,0", "0,0,1000"),
+        (PARTS[1], "column", "1000,0,0", "1000,0,1000"),
+        (PARTS[2], "beam", "0,0,1000", "1000,0,1000"),
     ] {
-        let mut args = vec![
-            "--new-id",
-            id,
-            "--kind",
-            kind,
-            "--start",
-            start,
-            "--end",
-            end,
-            "--profile",
-            "Q01-RECT",
-            "--material",
-            "Q01-steel",
-            "--name",
-            kind,
-        ];
-        if cut {
-            args.extend_from_slice(&["--cut-point", "950,0,1000", "--cut-normal", "1,0,0"]);
-        }
-        s.ok("draft", "create-member", &args);
+        s.ok(
+            "draft",
+            "create-member",
+            &[
+                "--new-id",
+                id,
+                "--kind",
+                kind,
+                "--start",
+                start,
+                "--end",
+                end,
+                "--profile",
+                "Q01-RECT",
+                "--material",
+                "Q01-steel",
+                "--name",
+                kind,
+            ],
+        );
     }
+    // The beam's end is trimmed by an owned plane-cut record (A03).
+    s.ok(
+        "draft",
+        "cut-by-plane",
+        &[
+            "--id",
+            PARTS[2],
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-000000009013",
+            "--point",
+            "950,0,1000",
+            "--normal",
+            "1,0,0",
+            "--keep",
+            "negative",
+        ],
+    );
     for (id, translation) in [(PARTS[3], "-100,-100,0"), (PARTS[4], "900,-100,0")] {
         s.ok(
             "draft",

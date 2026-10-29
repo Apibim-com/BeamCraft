@@ -5,7 +5,7 @@
 //! `beamcraft_cli::changeset` and print one JSON object with the same error shape and exit codes
 //! as the plate commands.
 
-use crate::plate_cmd::{id_error, revision_json};
+use crate::plate_cmd::revision_json;
 use beamcraft_cli::changeset::{
     CreateChangeset, StoredChangeset, apply_changeset, create_changeset, read_changeset,
 };
@@ -36,7 +36,8 @@ fn invalid(message: &'static str) -> PlateError {
 
 /// Runs one changeset command and returns the JSON result and the process exit code.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
-    crate::report::report(run(args))
+    let mut candidates = Vec::new();
+    crate::report::report_with(run(args, &mut candidates), candidates)
 }
 
 fn store_at(path: &Path, message: &'static str) -> Run<RevisionStore> {
@@ -48,7 +49,7 @@ fn store_at(path: &Path, message: &'static str) -> Run<RevisionStore> {
     Ok(RevisionStore::new(blobs))
 }
 
-fn run(args: &[OsString]) -> Run<Json> {
+fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
     let args: Vec<&str> = args
         .iter()
         .map(|a| {
@@ -109,7 +110,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     }
     let published = store_at(Path::new(published_root), "store root is not usable")?;
     let actor = given("--actor-id")
-        .map(|t| ActorId::parse(t).map_err(id_error))
+        .map(|t| ActorId::parse(t).map_err(crate::plate_cmd::context_id_error))
         .transpose()?;
     if *command == "create-changeset" {
         let mut source = IdSource::system();
@@ -121,14 +122,14 @@ fn run(args: &[OsString]) -> Run<Json> {
             })
         };
         let changeset_id = match given("--changeset-id") {
-            Some(text) => OpId::parse(text).map_err(id_error)?,
+            Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
             None => OpId::from_uuid(fresh()?),
         };
         let revision_id = match given("--revision-id") {
-            Some(text) => RevisionId::parse(text).map_err(id_error)?,
+            Some(text) => RevisionId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
             None => RevisionId::from_uuid(fresh()?),
         };
-        let stored = create_changeset(
+        let stored = match create_changeset(
             &published,
             &workspace,
             dir,
@@ -137,7 +138,19 @@ fn run(args: &[OsString]) -> Run<Json> {
                 revision_id,
                 actor,
             },
-        )?;
+        ) {
+            Ok(stored) => stored,
+            Err(error) if error.code == ErrorCode::DependencyConflict => {
+                // C04: the refusal names every pending conflict in its diagnostics.
+                candidates.extend(
+                    beamcraft_cli::workspace::pending_conflicts(&workspace, dir)?
+                        .iter()
+                        .map(beamcraft_cli::workspace::conflicts::conflict_json),
+                );
+                return Err(error);
+            }
+            Err(error) => return Err(error),
+        };
         return Ok(Json::object([
             ("outcome", Json::text("changeset_created")),
             ("changeset", changeset_json(&stored)),

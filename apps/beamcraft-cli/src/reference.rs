@@ -28,18 +28,19 @@
 //! # Limits
 //!
 //! The foreign layer must be one self-contained USDA or restricted USDC layer within the U01
-//! stage budgets (65536 bytes, 256 prims in total); its own sublayers, payloads, variants and
-//! network references are refused. Replay of an `op_id` is decided from the head state, as in
-//! the other commands. One implicit workspace, in-process layer engine, as in `plate`.
+//! model-profile stage budgets (32 MiB per layer, 64 MiB total); its own sublayers, payloads,
+//! variants and network references are refused. Replay of an `op_id` is decided from the head state,
+//! as in the other commands. One implicit workspace, in-process layer engine, as in `plate`.
 
 use crate::plate::{
     AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, check_footprint, control,
     digest_of, host_uuid, integrity, load_base, open_base, prior_op_with, replay_summary,
     summarize,
 };
-use crate::publication::{PublishRequest, publish_revision};
+use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use crate::source_file::read_file;
 use beamcraft_engine::footprint::Footprint;
+use beamcraft_engine::measure::{ReferenceMeasurement, measure_reference};
 use beamcraft_engine::reference::{
     ReferenceRecord, UnitsStatus, attach, correct_units, move_reference, write_foreign,
 };
@@ -146,7 +147,7 @@ fn command_error(error: CommandError) -> PlateError {
 fn io_error(code: ErrorCode) -> PlateError {
     let message = match code {
         ErrorCode::NotFound => "the source file could not be opened",
-        ErrorCode::LimitExceeded => "the source file is larger than 65536 bytes",
+        ErrorCode::LimitExceeded => "the source file is larger than 32 MiB",
         _ => "the source path is not a readable regular local file",
     };
     PlateError::new(code, message)
@@ -250,7 +251,7 @@ fn pin_source(
     })?;
     let cap = usize::try_from(MAX_SOURCE_BYTES).map_err(|_| integrity("source cap"))?;
     let bytes = read_file(path, cap).map_err(io_error)?;
-    let info = inspect_foreign_layer(&bytes, Budgets::FIRST_SLICE, control)?;
+    let info = inspect_foreign_layer(&bytes, Budgets::MODEL, control)?;
     let default_prim = info.default_prim.ok_or(PlateError {
         rule_id: None,
         code: ErrorCode::UnsupportedProperty,
@@ -519,12 +520,7 @@ fn edit(
         &control,
     )?;
     check_footprint(&prepared, &step.footprint)?;
-    let changed_layers = prepared
-        .layers
-        .iter()
-        .filter(|l| before.get(&l.name) != Some(&l.digest))
-        .map(|l| l.name.clone())
-        .collect();
+    let changed_layers = changed_layers(&prepared, &before);
     let foreign = prepared
         .retained
         .iter()
@@ -647,6 +643,62 @@ pub struct ReferenceInspection {
     /// The external (foreign) layers of the revision: name, digest, size. Each was re-verified
     /// against its digest and size when the revision was opened.
     pub foreign_layers: Vec<(String, ContentDigest, u64)>,
+}
+
+/// One wrapper's R02 measurement, with the identification the report carries.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MeasuredReference {
+    /// Identity of the measured wrapper.
+    pub id: ElementId,
+    /// Composed path of the wrapper element.
+    pub path: String,
+    /// Label of the wrapper.
+    pub name: String,
+    /// The measurement; `mesh: None` inside when the wrapper has no supported surface.
+    pub measurement: ReferenceMeasurement,
+}
+
+/// The result of `measure_references`: one report of the verified head.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MeasurementReport {
+    /// The verified revision the numbers were read from.
+    pub revision: RevisionSummary,
+    /// One measurement per wrapper, in wrapper id order.
+    pub measurements: Vec<MeasuredReference>,
+}
+
+/// Measures the composed foreign surface of every wrapper (or of `id` alone) as the R02 result
+/// objects: kernel certification of the supported profile, units correction and the full
+/// wrapper placement applied, enclosures for a certified shell, no value otherwise. Read-only:
+/// nothing is written, no identity is consumed, no revision is created, and the same head
+/// always answers with the same numbers.
+pub fn measure_references(
+    store: &RevisionStore,
+    id: Option<ElementId>,
+) -> Result<MeasurementReport, PlateError> {
+    let (revision, _reader, _opened, prims) = open_head(store)?;
+    let mut measurements = Vec::new();
+    for (view, geometry) in crate::reference_view::reference_surfaces(&prims)? {
+        let wrapper = wrapper_of(&view)?;
+        if id.is_some_and(|wanted| wanted != wrapper.record.id) {
+            continue;
+        }
+        let measurement =
+            measure_reference(&wrapper.record, &geometry, &mut |_| false).map_err(command_error)?;
+        measurements.push(MeasuredReference {
+            id: wrapper.record.id,
+            path: view.path.clone(),
+            name: wrapper.record.name.clone(),
+            measurement,
+        });
+    }
+    if id.is_some_and(|wanted| !measurements.iter().any(|m| m.id == wanted)) {
+        return Err(not_found());
+    }
+    Ok(MeasurementReport {
+        revision: summarize(revision.info()),
+        measurements,
+    })
 }
 
 fn open_head(store: &RevisionStore) -> Result<(Revision, Reader, Opened, Vec<Prim>), PlateError> {

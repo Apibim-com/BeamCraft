@@ -26,6 +26,11 @@
 //! axis (`axis_end`) and the nearest point of a member's axis segment (`axis`). The axis of a
 //! member box runs between the centres of its `f.z0` and `f.z1` faces, which are the authored
 //! axis points plus the translation (F06 section 6).
+//!
+//! Every query carries a [`SelectionFilter`] (V11), the state of the UI's selection switches:
+//! a class that is off takes its elements out of the scan without a refusal and without a
+//! `skipped` entry. The switches are view state: they change picking, never the model or the
+//! snapshot token.
 
 use crate::element::{ElementId, ElementKind};
 use crate::error::{ViewCode, ViewError};
@@ -59,6 +64,156 @@ const PARALLEL: f64 = 1e-6;
 /// Work bound of the kept candidates before they are sorted and cut back to `max_hits`.
 const KEEP: usize = 1024;
 
+/// One selection switch of the bottom bar (V11): the class of objects a pick may select.
+///
+/// The switches are view state: they change picking, never the model or the snapshot token.
+/// Bolts, welds, holes, construction objects and items have no registered snapshot kinds yet;
+/// their switches are accepted and take nothing out of a query until those kinds arrive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SelectionClass {
+    /// Steel parts: plates, beams, columns and the reserved part kinds.
+    Parts,
+    /// Assemblies and their connections.
+    Assemblies,
+    /// Bolts (no snapshot kind yet).
+    Bolts,
+    /// Welds (no snapshot kind yet).
+    Welds,
+    /// Holes (element attributes today; no snapshot kind yet).
+    Holes,
+    /// Plan grids.
+    Grids,
+    /// Construction objects (helper points, lines and circles; no snapshot kind yet).
+    ConstructionObjects,
+    /// Items (elements with foreign or own mesh geometry; deferred after the MVP).
+    Items,
+}
+
+impl SelectionClass {
+    /// Every switch, in bottom-bar order.
+    pub const ALL: [Self; 8] = [
+        Self::Parts,
+        Self::Assemblies,
+        Self::Bolts,
+        Self::Welds,
+        Self::Holes,
+        Self::Grids,
+        Self::ConstructionObjects,
+        Self::Items,
+    ];
+
+    /// The wire token of the switch.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Parts => "parts",
+            Self::Assemblies => "assemblies",
+            Self::Bolts => "bolts",
+            Self::Welds => "welds",
+            Self::Holes => "holes",
+            Self::Grids => "grids",
+            Self::ConstructionObjects => "construction_objects",
+            Self::Items => "items",
+        }
+    }
+
+    /// Parses an exact wire token.
+    pub fn parse(token: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|c| c.as_str() == token)
+    }
+
+    const fn bit(self) -> u8 {
+        1 << (self as u8)
+    }
+
+    /// Whether an element of `kind` belongs to this switch.
+    const fn covers(self, kind: ElementKind) -> bool {
+        match self {
+            Self::Parts => matches!(
+                kind,
+                ElementKind::Plate
+                    | ElementKind::Beam
+                    | ElementKind::Column
+                    | ElementKind::Wall
+                    | ElementKind::Slab
+                    | ElementKind::Opening
+                    | ElementKind::Penetration
+                    | ElementKind::Pipe
+                    | ElementKind::Duct
+                    | ElementKind::Support
+            ),
+            Self::Assemblies => matches!(kind, ElementKind::Assembly | ElementKind::Connection),
+            Self::Grids => matches!(kind, ElementKind::Grid),
+            Self::Bolts | Self::Welds | Self::Holes | Self::ConstructionObjects | Self::Items => {
+                false
+            }
+        }
+    }
+}
+
+/// The selection switches one pick honours: which classes of objects it may return.
+///
+/// The default is every switch on, which is also what a query built before V11 means: the
+/// switches narrow a query, they never widen it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct SelectionFilter {
+    off: u8,
+}
+
+impl SelectionFilter {
+    /// Every switch on: the pick may return any object.
+    pub const ALL: Self = Self { off: 0 };
+
+    /// The filter with `class` set to `on`.
+    pub const fn with(self, class: SelectionClass, on: bool) -> Self {
+        Self {
+            off: if on {
+                self.off & !class.bit()
+            } else {
+                self.off | class.bit()
+            },
+        }
+    }
+
+    /// Whether the `class` switch is on.
+    pub const fn allows_class(self, class: SelectionClass) -> bool {
+        self.off & class.bit() == 0
+    }
+
+    /// The off switches, in bottom-bar order.
+    pub fn off_classes(self) -> Vec<SelectionClass> {
+        SelectionClass::ALL
+            .into_iter()
+            .filter(|c| !self.allows_class(*c))
+            .collect()
+    }
+
+    /// Whether an element of `kind` may be picked. A read-only reference is never pickable
+    /// whatever the switches say (R01); that rule stays ahead of this one.
+    pub fn allows(self, kind: ElementKind) -> bool {
+        SelectionClass::ALL
+            .iter()
+            .any(|c| self.allows_class(*c) && c.covers(kind))
+    }
+
+    /// The filter with every class of the comma-separated `text` turned off; an empty text
+    /// excludes nothing. The text is at most 256 bytes and an unknown or empty token is
+    /// [`ViewCode::ArgumentInvalid`].
+    pub fn parse_excluded(text: &str) -> Result<Self, ViewError> {
+        let invalid = || ViewError::new(ViewCode::ArgumentInvalid);
+        if text.len() > 256 {
+            return Err(invalid());
+        }
+        let mut filter = Self::ALL;
+        if text.is_empty() {
+            return Ok(filter);
+        }
+        for token in text.split(',') {
+            filter = filter.with(SelectionClass::parse(token).ok_or_else(invalid)?, false);
+        }
+        Ok(filter)
+    }
+}
+
 /// The ray form of a pick.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RayPick {
@@ -76,6 +231,8 @@ pub struct RayPick {
     pub max_hits: u32,
     /// Whether back-facing faces are hit.
     pub include_backfaces: bool,
+    /// The selection switches the query honours; the default is every switch on.
+    pub selection: SelectionFilter,
 }
 
 impl RayPick {
@@ -89,6 +246,7 @@ impl RayPick {
             radius_mm: 0.0,
             max_hits: DEFAULT_MAX_HITS,
             include_backfaces: false,
+            selection: SelectionFilter::ALL,
         }
     }
 }
@@ -104,6 +262,8 @@ pub struct PointPick {
     pub targets: Vec<FeatureKind>,
     /// Most hits returned.
     pub max_hits: u32,
+    /// The selection switches the query honours; the default is every switch on.
+    pub selection: SelectionFilter,
 }
 
 impl PointPick {
@@ -114,6 +274,7 @@ impl PointPick {
             radius_mm: 0.0,
             targets,
             max_hits: DEFAULT_MAX_HITS,
+            selection: SelectionFilter::ALL,
         }
     }
 }
@@ -125,6 +286,16 @@ pub enum PickQuery {
     Ray(RayPick),
     /// Point form.
     Point(PointPick),
+}
+
+impl PickQuery {
+    /// The selection switches of either form.
+    pub const fn selection(&self) -> SelectionFilter {
+        match self {
+            Self::Ray(ray) => ray.selection,
+            Self::Point(point) => point.selection,
+        }
+    }
 }
 
 /// One pick hit (F06 hit record).
@@ -851,6 +1022,11 @@ pub fn pick(snapshot: &ViewSnapshot, query: &PickQuery) -> Result<PickResult, Vi
             skipped.push(entry.id);
             continue;
         }
+        // A switch that is off takes the element out of the query: no hit, no refusal and no
+        // `skipped` entry, because the query understood the element and chose not to select it.
+        if !query.selection().allows(entry.kind) {
+            continue;
+        }
         match BoxFeatures::world(snapshot, entry) {
             Some(features) => hits.extend(hits_of(&features, query, dir)?),
             None => {
@@ -892,15 +1068,34 @@ pub enum SnapKind {
     AxisEnd,
     /// The nearest point of a member's axis segment.
     Axis,
+    /// Intersection of a U and V grid segment.
+    GridIntersection,
+    /// Endpoint of a grid segment.
+    GridEnd,
+    /// Closest point of a grid segment.
+    GridLine,
 }
 
 impl SnapKind {
+    /// Every kind, in rank order: the order the snap panel lists them in.
+    pub const ALL: [Self; 6] = [
+        Self::Vertex,
+        Self::AxisEnd,
+        Self::Axis,
+        Self::GridIntersection,
+        Self::GridEnd,
+        Self::GridLine,
+    ];
+
     /// The wire token.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Vertex => "vertex",
             Self::AxisEnd => "axis_end",
             Self::Axis => "axis",
+            Self::GridIntersection => "grid_intersection",
+            Self::GridEnd => "grid_end",
+            Self::GridLine => "grid_line",
         }
     }
 
@@ -910,6 +1105,9 @@ impl SnapKind {
             "vertex" => Some(Self::Vertex),
             "axis_end" => Some(Self::AxisEnd),
             "axis" => Some(Self::Axis),
+            "grid_intersection" => Some(Self::GridIntersection),
+            "grid_end" => Some(Self::GridEnd),
+            "grid_line" => Some(Self::GridLine),
             _ => None,
         }
     }
@@ -919,6 +1117,9 @@ impl SnapKind {
             Self::Vertex => 0,
             Self::AxisEnd => 1,
             Self::Axis => 2,
+            Self::GridIntersection => 3,
+            Self::GridEnd => 4,
+            Self::GridLine => 5,
         }
     }
 }
@@ -936,9 +1137,24 @@ pub struct SnapQuery {
     pub max_hits: u32,
 }
 
+/// Persistent grid snap address, independent of mesh features.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GridSnapIdentity {
+    /// First axis (U for intersections).
+    pub axis_id: ElementId,
+    /// Second, V axis for intersections.
+    pub other_axis_id: Option<ElementId>,
+    /// First axis label.
+    pub label: String,
+    /// Second axis label.
+    pub other_label: Option<String>,
+}
+
 /// One snap candidate.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SnapCandidate {
+    /// Grid line identities and labels; absent for engineering-body candidates.
+    pub grid: Option<GridSnapIdentity>,
     /// The owning element.
     pub element_id: ElementId,
     /// What it snaps to.
@@ -972,6 +1188,12 @@ fn snap_order(a: &SnapCandidate, b: &SnapCandidate) -> Ordering {
         .total_cmp(&quantum(b.distance_mm))
         .then_with(|| a.kind.rank().cmp(&b.kind.rank()))
         .then_with(|| a.element_id.to_string().cmp(&b.element_id.to_string()))
+        .then_with(|| {
+            a.grid
+                .as_ref()
+                .map(|g| (g.axis_id, g.other_axis_id))
+                .cmp(&b.grid.as_ref().map(|g| (g.axis_id, g.other_axis_id)))
+        })
         .then_with(|| local(a).cmp(&local(b)))
         .then_with(|| {
             canonical(a.axis_parameter.unwrap_or(0.0))
@@ -1012,6 +1234,7 @@ pub fn snap(snapshot: &ViewSnapshot, query: &SnapQuery) -> Result<SnapResult, Vi
                     }
                     if distance <= band {
                         candidates.push(SnapCandidate {
+                            grid: None,
                             element_id: entry.id,
                             kind: SnapKind::Vertex,
                             feature_id: Some(id),
@@ -1038,6 +1261,7 @@ pub fn snap(snapshot: &ViewSnapshot, query: &SnapQuery) -> Result<SnapResult, Vi
             }
             if distance <= band {
                 candidates.push(SnapCandidate {
+                    grid: None,
                     element_id: entry.id,
                     kind,
                     feature_id,
@@ -1080,6 +1304,86 @@ pub fn snap(snapshot: &ViewSnapshot, query: &SnapQuery) -> Result<SnapResult, Vi
         truncated,
         skipped,
     })
+}
+
+/// Snap against engineering bodies and a complete pinned grid set, with an optional visible-id filter.
+pub fn snap_with_grids(
+    snapshot: &ViewSnapshot,
+    query: &SnapQuery,
+    grids: &[beamcraft_model::grid::Grid],
+    visible: Option<&std::collections::BTreeSet<ElementId>>,
+) -> Result<SnapResult, ViewError> {
+    use crate::grid_query::{closest, intersection, local_to_world, segments};
+    crate::grid_query::validate(grids).map_err(|_| input())?;
+    if visible.is_some_and(|v| v.len() > 64) {
+        return Err(limit());
+    }
+    let mut result = snap(snapshot, query)?;
+    let max = usize::try_from(query.max_hits).map_err(|_| limit())?;
+    let band = query.radius_mm + EPS_PICK_MM;
+    let [px, py, pz] = query.point_mm;
+    for grid in grids {
+        if visible.is_some_and(|v| !v.contains(&grid.id)) {
+            continue;
+        }
+        let p = crate::grid_edit::world_to_local(grid, [px, py]);
+        let lines = segments(grid).map_err(|_| input())?;
+        let nearby = lines
+            .iter()
+            .filter(|l| {
+                let [x, y] = closest(l, p);
+                let [lx, ly] = p;
+                (x - lx).hypot(y - ly) <= band
+            })
+            .collect::<Vec<_>>();
+        let mut push = |kind,
+                        a: &crate::grid_query::GridSegment,
+                        b: Option<&crate::grid_query::GridSegment>,
+                        point| {
+            let [x, y] = local_to_world(grid, point);
+            let distance = (x - px).hypot(y - py);
+            if distance <= band {
+                result.candidates.push(SnapCandidate {
+                    element_id: grid.id,
+                    kind,
+                    feature_id: None,
+                    axis_parameter: None,
+                    point_world_mm: [x, y, pz],
+                    distance_mm: distance,
+                    grid: Some(GridSnapIdentity {
+                        axis_id: a.axis_id,
+                        other_axis_id: b.map(|l| l.axis_id),
+                        label: a.label.clone(),
+                        other_label: b.map(|l| l.label.clone()),
+                    }),
+                });
+                // Retain at most two result pages, never the full cross product.
+                if result.candidates.len() > max.saturating_mul(2) {
+                    result.truncated |= keep_best(&mut result.candidates, max, snap_order);
+                }
+            }
+        };
+        for line in &nearby {
+            if query.kinds.contains(&SnapKind::GridLine) {
+                push(SnapKind::GridLine, line, None, closest(line, p));
+            }
+            if query.kinds.contains(&SnapKind::GridEnd) {
+                push(SnapKind::GridEnd, line, None, line.start);
+                push(SnapKind::GridEnd, line, None, line.end);
+            }
+        }
+        if query.kinds.contains(&SnapKind::GridIntersection) {
+            for u in nearby.iter().filter(|l| l.family == 0) {
+                for v in nearby.iter().filter(|l| l.family == 1) {
+                    if let Some(point) = intersection(u, v) {
+                        push(SnapKind::GridIntersection, u, Some(v), point);
+                    }
+                }
+            }
+        }
+    }
+    result.truncated |= keep_best(&mut result.candidates, max, snap_order);
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -1432,5 +1736,110 @@ mod tests {
         let point = PointPick::new([1100.0, 2050.0, 10.0], vec![FeatureKind::Face]);
         let result = pick(&s, &PickQuery::Point(point)).unwrap();
         assert!(result.hits.is_empty() && result.skipped == [id]);
+    }
+
+    #[test]
+    fn a_switch_that_is_off_removes_its_class_and_leaves_the_token_and_model_alone() {
+        let s = snapshot(1);
+        let (min, max) = bounds(&s, 0);
+        let above = [
+            (min[0] + max[0]) / 2.0,
+            (min[1] + max[1]) / 2.0,
+            max[2] + 50.0,
+        ];
+        let ray = RayPick::new(above, [0.0, 0.0, -1.0], vec![FeatureKind::Face]);
+        let on = pick(&s, &PickQuery::Ray(ray.clone())).unwrap();
+        assert_eq!(on.hits.len(), 1);
+        // Parts off: the same query over the same snapshot selects nothing, names no skip and
+        // answers at exactly the same token.
+        let filter = SelectionFilter::ALL.with(SelectionClass::Parts, false);
+        let mut off = ray.clone();
+        off.selection = filter;
+        let result = pick(&s, &PickQuery::Ray(off)).unwrap();
+        assert!(result.hits.is_empty());
+        assert!(result.skipped.is_empty());
+        assert_eq!(result.token, on.token);
+        // The point form honours the same switches.
+        let mut point = PointPick::new([above[0], above[1], max[2]], vec![FeatureKind::Face]);
+        point.selection = filter;
+        assert!(pick(&s, &PickQuery::Point(point)).unwrap().hits.is_empty());
+        // A switch that covers nothing (bolts today) removes no hit.
+        let mut bolts_off = ray;
+        bolts_off.selection = SelectionFilter::ALL.with(SelectionClass::Bolts, false);
+        assert_eq!(pick(&s, &PickQuery::Ray(bolts_off)).unwrap().hits.len(), 1);
+    }
+
+    #[test]
+    fn the_selection_switches_round_trip_tokens_cover_kinds_and_refuse_unknowns() {
+        assert_eq!(SelectionFilter::default(), SelectionFilter::ALL);
+        // Every switch on covers every registered kind except the read-only reference, which
+        // no switch covers at all (R01; the pick refuses it before the filter).
+        assert!(!SelectionFilter::ALL.allows(ElementKind::Reference));
+        assert!(
+            ElementKind::ALL
+                .iter()
+                .filter(|k| **k != ElementKind::Reference)
+                .all(|k| SelectionFilter::ALL.allows(*k))
+        );
+        let excluded = "parts,grids,items,construction_objects";
+        let filter = SelectionFilter::parse_excluded(excluded).unwrap();
+        assert_eq!(
+            filter.off_classes(),
+            vec![
+                SelectionClass::Parts,
+                SelectionClass::Grids,
+                SelectionClass::ConstructionObjects,
+                SelectionClass::Items,
+            ]
+        );
+        for (class, token) in SelectionClass::ALL.iter().map(|c| (*c, c.as_str())) {
+            assert_eq!(SelectionClass::parse(token), Some(class));
+            assert_eq!(SelectionClass::parse(token).unwrap().as_str(), token);
+        }
+        // Coverage: a part kind belongs to parts alone, a grid to grids, a connection to
+        // assemblies; bolts, welds, holes and items cover no registered kind yet.
+        let parts = SelectionFilter::ALL.with(SelectionClass::Parts, false);
+        assert!(!parts.allows(ElementKind::Plate));
+        assert!(parts.allows(ElementKind::Grid));
+        assert!(parts.allows(ElementKind::Assembly));
+        let grids = SelectionFilter::ALL.with(SelectionClass::Grids, false);
+        assert!(!grids.allows(ElementKind::Grid));
+        assert!(grids.allows(ElementKind::Beam));
+        let assemblies = SelectionFilter::ALL.with(SelectionClass::Assemblies, false);
+        assert!(!assemblies.allows(ElementKind::Connection));
+        // Bolts, welds, holes, construction objects and items cover no registered kind yet.
+        for class in [
+            SelectionClass::Bolts,
+            SelectionClass::Welds,
+            SelectionClass::Holes,
+            SelectionClass::ConstructionObjects,
+            SelectionClass::Items,
+        ] {
+            let without = SelectionFilter::ALL.with(class, false);
+            assert!(
+                ElementKind::ALL
+                    .iter()
+                    .filter(|k| **k != ElementKind::Reference)
+                    .all(|k| without.allows(*k)),
+                "{:?} covers nothing yet",
+                class
+            );
+        }
+        // The empty text excludes nothing, as `--exclude ""`.
+        assert_eq!(
+            SelectionFilter::parse_excluded("").unwrap(),
+            SelectionFilter::ALL
+        );
+        assert_eq!(
+            SelectionFilter::parse_excluded("weld").unwrap_err().code(),
+            ViewCode::ArgumentInvalid
+        );
+        for bad in ["parts,", "welds,plates", "Parts", &"parts,".repeat(60)] {
+            assert_eq!(
+                SelectionFilter::parse_excluded(bad).unwrap_err().code(),
+                ViewCode::ArgumentInvalid,
+                "{bad:?}"
+            );
+        }
     }
 }

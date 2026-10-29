@@ -29,6 +29,8 @@ use std::time::Duration;
 const DEADLINE: Duration = Duration::from_secs(60);
 /// Longest text in a field.
 const MAX_FIELD: usize = 1_024;
+/// Initial editable model name; translate with the UI when other languages are added.
+const DEFAULT_MODEL_NAME: &str = "New Model";
 
 /// The author as the settings hold it.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -249,13 +251,26 @@ pub fn parse_recent(exit_code: Option<i32>, stdout: &[u8]) -> Result<Vec<Project
         .collect()
 }
 
+/// Reads a bounded read-only project-name suggestion.
+pub fn parse_project_name(exit_code: Option<i32>, stdout: &[u8]) -> Result<String, ToolError> {
+    let reply = reply(exit_code, stdout, "project_name")?;
+    text(&reply, "name")
+        .filter(|name| !name.is_empty() && name.len() <= 256)
+        .ok_or_else(unreadable)
+}
+
 /// Reads the reply of `create-project` or `add-recent`: the project.
 pub fn parse_project(
     exit_code: Option<i32>,
     stdout: &[u8],
     outcome: &str,
 ) -> Result<ProjectView, ToolError> {
-    let reply = reply(exit_code, stdout, outcome)?;
+    let reply = reply(exit_code, stdout, outcome).map_err(|mut error| {
+        if outcome == "project_created" && error.code == "DUPLICATE_ID" {
+            error.message = "A model or folder with this name already exists in this location. Choose a different name or location.".to_owned();
+        }
+        error
+    })?;
     project_of(reply.get("project").map_err(|_| unreadable())?)
 }
 
@@ -303,6 +318,9 @@ pub fn project_create_args(
         "--name".into(),
         name.to_owned(),
     ];
+    if name == DEFAULT_MODEL_NAME {
+        args.extend(["--unique-name".into(), "true".into()]);
+    }
     if let Some(actor) = actor_id {
         args.push("--actor-id".into());
         args.push(actor.to_owned());
@@ -352,7 +370,8 @@ enum Reply {
     Opened(Result<ProjectView, ToolError>),
     Suggested {
         parent: String,
-        name: Result<String, String>,
+        previous: String,
+        name: Result<String, ToolError>,
     },
 }
 
@@ -383,8 +402,7 @@ pub struct StartPage {
     all: Vec<ProjectView>,
     folder: String,
     new_name: String,
-    automatic_name: bool,
-    name_parent: Option<String>,
+    suggested_name: String,
     new_parent: String,
     note: Option<Result<String, String>>,
     open: Option<PathBuf>,
@@ -417,9 +435,8 @@ impl StartPage {
             recent: Vec::new(),
             all: Vec::new(),
             folder: String::new(),
-            new_name: String::new(),
-            automatic_name: true,
-            name_parent: None,
+            new_name: DEFAULT_MODEL_NAME.to_owned(),
+            suggested_name: DEFAULT_MODEL_NAME.to_owned(),
             new_parent: String::new(),
             note: None,
             open: None,
@@ -575,6 +592,33 @@ impl StartPage {
         }
     }
 
+    fn suggest_project_name(&mut self) {
+        if self.job.is_some()
+            || self.new_name != self.suggested_name
+            || self.new_parent.trim().is_empty()
+        {
+            return;
+        }
+        let parent = self.new_parent.trim().to_owned();
+        let previous = self.new_name.clone();
+        self.spawn(move |cli, stats| {
+            let args = vec![
+                "suggest-project-name".into(),
+                "--parent".into(),
+                parent.clone(),
+                "--name".into(),
+                DEFAULT_MODEL_NAME.into(),
+            ];
+            let name = command::run(cli, &args, DEADLINE, stats)
+                .and_then(|out| parse_project_name(out.code, &out.stdout));
+            Reply::Suggested {
+                parent,
+                previous,
+                name,
+            }
+        });
+    }
+
     fn create_project(&mut self) {
         // A typed location is checked here, so the refusal names the path that was typed.
         let parent = self.new_parent.trim();
@@ -588,7 +632,11 @@ impl StartPage {
         let args = project_create_args(
             self.config_dir.as_deref(),
             self.new_parent.trim(),
-            self.new_name.trim(),
+            if self.new_name == self.suggested_name {
+                DEFAULT_MODEL_NAME
+            } else {
+                self.new_name.trim()
+            },
             self.actor_id().as_deref(),
         );
         self.spawn(move |cli, stats| {
@@ -603,21 +651,7 @@ impl StartPage {
         self.note = None;
         self.tab = Tab::Create;
         self.selected = None;
-        self.automatic_name = true;
-        self.suggest_name();
-    }
-
-    fn suggest_name(&mut self) {
-        self.name_parent = Some(self.new_parent.clone());
-        self.new_name = "New model".into();
-        if self.new_parent.trim().is_empty() {
-            return;
-        }
-        let parent = self.new_parent.clone();
-        self.spawn(move |_, _| Reply::Suggested {
-            name: available_model_name(Path::new(parent.trim())).map_err(|error| error.to_string()),
-            parent,
-        });
+        self.suggest_project_name();
     }
 
     fn adopt(&mut self, settings: SettingsView) {
@@ -648,6 +682,19 @@ impl StartPage {
         };
         self.job = None;
         match reply {
+            Reply::Suggested {
+                parent,
+                previous,
+                name,
+            } => {
+                if self.new_parent.trim() == parent
+                    && self.new_name == previous
+                    && let Ok(name) = name
+                {
+                    self.new_name = name.clone();
+                    self.suggested_name = name;
+                }
+            }
             Reply::Loaded(Ok((settings, environments, recent))) => {
                 self.loaded = true;
                 self.environments = environments;
@@ -677,16 +724,6 @@ impl StartPage {
                 self.recent.retain(|recent| recent.path != project.path);
                 self.recent.insert(0, project);
                 self.recent.truncate(20);
-            }
-            Reply::Suggested { parent, name } => {
-                if parent == self.new_parent && self.automatic_name {
-                    match name {
-                        Ok(name) => self.new_name = name,
-                        Err(error) => {
-                            self.note = Some(Err(format!("Could not choose a model name: {error}")))
-                        }
-                    }
-                }
             }
             Reply::Loaded(Err(e)) | Reply::Saved(Err(e)) => self.note = Some(Err(e.to_string())),
             Reply::Listed(Err(e)) | Reply::Opened(Err(e)) => {
@@ -1504,9 +1541,7 @@ impl StartPage {
             .show(ui, |ui| {
                 ui.set_max_width(800.0);
                 ui.label(theme::bold("Name", 14.0));
-                if field(ui, &mut self.new_name, 100).changed() {
-                    self.automatic_name = false;
-                }
+                field(ui, &mut self.new_name, 100);
                 ui.label(
                     egui::RichText::new("Also the name of the model's folder.")
                         .small()
@@ -1515,7 +1550,7 @@ impl StartPage {
                 ui.add_space(8.0);
                 ui.label(theme::bold("Location", 14.0));
                 ui.horizontal(|ui| {
-                    ui.add(
+                    let location = ui.add(
                         egui::TextEdit::singleline(&mut self.new_parent)
                             .hint_text("Choose a folder with Browse…")
                             .desired_width(ui.available_width() - 130.0)
@@ -1524,18 +1559,16 @@ impl StartPage {
                             .margin(egui::Margin::symmetric(12, 8))
                             .char_limit(MAX_FIELD),
                     );
+                    if location.lost_focus() {
+                        self.suggest_project_name();
+                    }
                     if theme::button(ui, Kind::Secondary, "Browse…", !busy).clicked()
                         && let Some(dir) = self.browse("Where to create the model")
                     {
                         self.new_parent = dir;
+                        self.suggest_project_name();
                     }
                 });
-                if self.name_parent.as_deref() != Some(self.new_parent.as_str())
-                    && self.automatic_name
-                    && !busy
-                {
-                    self.suggest_name();
-                }
                 ui.add_space(8.0);
                 ui.label(theme::bold("Template", 14.0));
                 ui.horizontal(|ui| {
@@ -1590,22 +1623,6 @@ fn field(ui: &mut egui::Ui, text: &mut String, limit: usize) -> egui::Response {
             .margin(egui::Margin::symmetric(12, 8))
             .char_limit(limit),
     )
-}
-
-fn available_model_name(parent: &Path) -> std::io::Result<String> {
-    for suffix in 0..10_000 {
-        let name = if suffix == 0 {
-            "New model".to_owned()
-        } else {
-            format!("New model {suffix}")
-        };
-        if !parent.join(&name).try_exists()? {
-            return Ok(name);
-        }
-    }
-    Err(std::io::Error::other(
-        "No free model name in the first 10,000 candidates; enter a name",
-    ))
 }
 
 fn nav_item(
@@ -1745,38 +1762,19 @@ mod tests {
         page.job = None;
         page.show_create();
         assert_eq!(page.tab, Tab::Create);
-        assert_eq!(page.new_name, "New model");
+        assert_eq!(page.new_name, DEFAULT_MODEL_NAME);
         let (sender, receiver) = std::sync::mpsc::channel();
         page.job = Some(receiver);
         page.new_name = "My structure".into();
-        page.automatic_name = false;
         sender
             .send(Reply::Suggested {
                 parent: page.new_parent.clone(),
+                previous: DEFAULT_MODEL_NAME.into(),
                 name: Ok("New model 3".into()),
             })
             .unwrap();
         page.poll();
         assert_eq!(page.new_name, "My structure");
-    }
-
-    #[test]
-    fn new_model_name_avoids_existing_files_and_folders() {
-        let parent = std::env::temp_dir().join(format!(
-            "beamcraft-name-{}-{}",
-            std::process::id(),
-            now_ms()
-        ));
-        std::fs::create_dir(&parent).unwrap();
-        assert_eq!(available_model_name(&parent).unwrap(), "New model");
-        std::fs::create_dir(parent.join("New model")).unwrap();
-        assert_eq!(available_model_name(&parent).unwrap(), "New model 1");
-        std::fs::write(parent.join("New model 1"), b"occupied").unwrap();
-        std::fs::create_dir(parent.join("New model 2")).unwrap();
-        assert_eq!(available_model_name(&parent).unwrap(), "New model 3");
-        std::fs::remove_file(parent.join("New model 1")).unwrap();
-        assert_eq!(available_model_name(&parent).unwrap(), "New model 1");
-        std::fs::remove_dir_all(parent).unwrap();
     }
 
     #[test]

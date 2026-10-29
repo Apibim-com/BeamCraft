@@ -171,8 +171,11 @@ fn command_of(arguments: &Json) -> Result<CreatePlate, ErrorCode> {
     Ok(CreatePlate {
         new_id,
         name: name.to_owned(),
+        class: 0,
         contour_points_mm: contour,
         thickness_mm: thickness,
+        thickness_side: None,
+        corners: Vec::new(),
         placement: Placement {
             translation_mm: [translation[0], translation[1], translation[2]],
             orientation_xyzw: [
@@ -184,7 +187,6 @@ fn command_of(arguments: &Json) -> Result<CreatePlate, ErrorCode> {
         },
         material_digest: None,
         holes_mm: Vec::new(),
-        cut: None,
     })
 }
 

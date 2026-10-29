@@ -23,7 +23,7 @@ use crate::plate::{
     control, digest_of, host_uuid, integrity, load_base, number, open_base, prior_op_with,
     property, replay_summary, summarize, text,
 };
-use crate::publication::{PublishRequest, publish_revision};
+use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::level::{HolderKind, LevelRecord, Levels};
 use beamcraft_engine::transaction::PriorOp;
@@ -148,7 +148,7 @@ pub(crate) fn levels_of(prims: &[Prim]) -> Result<Levels, PlateError> {
     Ok(levels)
 }
 
-fn model_of(request: &OpenRequest, control: &Control) -> Result<Levels, PlateError> {
+pub(crate) fn model_of(request: &OpenRequest, control: &Control) -> Result<Levels, PlateError> {
     // Stored bytes are verified, not interpreted: the structural rules (D2-V01 among them) run
     // before the levels are read, so a damaged graph is refused rather than reported or replayed.
     validate_layers(request.clone(), schema_identity()?, control)?;
@@ -318,12 +318,7 @@ pub fn create_level(
         &control,
     )?;
     check_footprint(&prepared, &creation.footprint)?;
-    let changed_layers = prepared
-        .layers
-        .iter()
-        .filter(|l| before.get(&l.name) != Some(&l.digest))
-        .map(|l| l.name.clone())
-        .collect();
+    let changed_layers = changed_layers(&prepared, &before);
     let committed = publish_revision(
         store,
         &PublishRequest {

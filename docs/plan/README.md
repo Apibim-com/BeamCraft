@@ -1,18 +1,21 @@
 # Implementation plan
 
-This folder is the project plan: where BeamCraft is going, in which order, and why. It replaces
-the owner's local planning document (Russian, kept outside the repository until 2026-10-20).
+This folder records product boundaries, acceptance gates and dated owner decisions.
+[GitHub issues](https://github.com/Apibim-com/BeamCraft/issues/474) hold task scope, dependencies,
+acceptance, status and delivery evidence; [milestones](https://github.com/Apibim-com/BeamCraft/milestones)
+group delivery work. The [historical table](https://github.com/Apibim-com/BeamCraft/issues/473)
+is archived in GitHub rather than maintained as a second backlog.
 
-| File | Contents |
+| Resource | Contents |
 |------|----------|
 | [README.md](README.md) | Goal and boundaries, principles, gates and their order, what "done" means |
-| [tasks.md](tasks.md) | Every task by ID (F04, U06, A03, ...): dependencies, result, acceptance, status |
+| [GitHub task catalogue](https://github.com/Apibim-com/BeamCraft/issues/474) | Stable task IDs linked to their issues and historical records |
 | [decisions.md](decisions.md) | Owner decisions with dates, and the decisions still open |
 
 [`ROADMAP.md`](../../ROADMAP.md) is the short public summary (stage, gate table, MVP, next work).
 What a merged task actually does is in its note under [`docs/design/`](../design/); the
-contracts it implements are under [`docs/contracts/`](../contracts/). The plan changes only in
-docs-only pull requests.
+contracts it implements are under [`docs/contracts/`](../contracts/). Update authorized task cards
+directly in GitHub. Repository scope, contract, plan and gate-verdict changes use docs-only PRs.
 
 ## 1. Goal and boundaries
 
@@ -25,8 +28,10 @@ Drawings have a milestone of their own.
 The current target is the free single-user desktop MVP widened by the owner on 2026-10-21 (see
 [decisions](decisions.md)): full manual steel modelling without automation, connection objects and
 nested assemblies, user attributes and schedules, model tools, views, filters and
-render modes, and drawings with drafting tools. Items (GLB and IFC), IFC export, multi-client conflicts and parametric
-connections follow after the MVP.
+render modes, and drawings with drafting tools. The 2026-10-27 owner decision adds read-only IFC
+reference loading and separate native steel IFC import through the kernel, including KM to KMD,
+to the MVP. Their contracts and implementation remain open. Items (GLB and IFC mesh items), IFC
+export, multi-client conflicts and parametric connections follow after the MVP.
 
 The first alpha demonstrates the architecture on a limited subset. It does not mean that every
 requirement is met, that any arbitrary USD file can be measured exactly, or that fabrication
@@ -59,7 +64,7 @@ Fixed constraints:
 | Concurrency | Bounded pools for independent immutable work, after a sequential reference and measurements | A commit stays serialisable |
 | UI | `wgpu` + `egui`/`eframe` | Own renderer and interaction; fonts and assets audited |
 | Storage | USD files, immutable blobs, a journal, atomic publication of the root | No database or object store for the first product |
-| IFC | Own Rust writer of a chosen IFC4 subset (E01) | Export only; import needs a new scope decision |
+| IFC | Read-only reference loading and separate native steel import through the kernel (MVP scope approved 2026-10-27); existing own IFC4 writer (E01) | Input contracts and implementation remain open; export and I01-I03 mesh items remain after the MVP |
 | Platforms | Desktop only: Windows, Linux, macOS | Only `geom`, `model` and `kernel` keep the WASM requirement, as a layering discipline |
 
 ### Own logic
@@ -141,6 +146,21 @@ flowchart LR
 
 ## 4. When a task is ready, and when it is done
 
+Use the [implementation-task template](../../.github/ISSUE_TEMPLATE/task.md) for an owner-authorized
+new task. Keep its ID stable and record dependencies, result, acceptance, status, delivery evidence
+and remaining limits in the issue. Split large work into numbered slices and link implementing PRs.
+
+Delivery terms are independent of GitHub's open/closed state:
+
+- **merged:** experimental slices are integrated; acceptance is not claimed.
+- **accepted:** acceptance holds on the integrated result, with recorded evidence.
+- **done:** a research, audit or contract deliverable is recorded.
+- **open**, **deferred** (after the MVP), **later** (needs an owner decision), or **blocked** with a named dependency.
+
+Size **S** means about 2–4 hours of focused work and **M** about 4–8; these are guides, not promises.
+A completed slice does not accept its parent gate. Keep remaining acceptance in a linked open issue;
+do not calculate product readiness from issue closure or milestone percentages.
+
 A task can start when its hard dependencies are merged and verified on `master`, its contract
 version and inputs are known, its write area does not overlap a running task, its acceptance checks
 external behaviour with reproducible commands, the licence and policy questions it depends on are
@@ -180,7 +200,7 @@ Each area below is an epic, split into small verifiable tasks before work starts
 | Area | Later work |
 |------|------------|
 | Parts and operations | Parametric and library connections, further part types |
-| Catalogues and environments | Licensed profile, material and bolt data packs; firm, project and user resolution; aliases and migrations |
+| Catalogues and environments | Expand beyond the regional coverage decided on 2026-10-27; licensed bolt packs, firm/project/user resolution, aliases and migrations |
 | Connections | Full bolt, hole and weld coverage, modifiers and feature dependencies, parametric joints |
 | Measurement and checking | Complex closed meshes, clash detection, supported reference comparisons |
 | UI | Large models, accessibility, further display options |
@@ -188,5 +208,5 @@ Each area below is an epic, split into small verifiable tasks before work starts
 | Drawings | Automatic dimensioning and layout rules beyond the first drawings, further output formats |
 | Fabrication output | DSTV NC to a public specification; DXF and other formats after a scope and licence audit |
 | Synchronisation | Soft leases with expiry, frequent autosync, access between computers, permissions by discipline |
-| Exchange | IFC import and native conversion only by a new owner decision |
+| Exchange | Extend the separately specified MVP IFC reference/native steel-import scope; broader persistent source-change coordination needs its own decision |
 | Presentation | 4D erection sequence as a separate layer; `GeomSubset` for face groups of FeatureIds |

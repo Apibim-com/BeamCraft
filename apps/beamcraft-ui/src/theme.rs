@@ -486,10 +486,10 @@ pub enum Icon {
     Redo,
     /// An outlined block: wireframe display.
     Wire,
+    /// Two families of straight construction axes.
+    Grid,
     /// Four corners framing the current model.
     Fit,
-    /// A regular grid.
-    Grid,
     /// The square endpoint snap marker.
     End,
     /// The triangular midpoint snap marker.
@@ -671,12 +671,6 @@ pub fn paint_icon(painter: &Painter, rect: Rect, icon: Icon, line: Color32) {
         ));
     };
     match icon {
-        Icon::Grid => {
-            for position in [5.0, 12.0, 19.0] {
-                polyline(&[[position, 3.0], [position, 21.0]]);
-                polyline(&[[3.0, position], [21.0, position]]);
-            }
-        }
         Icon::End => {
             painter.rect_stroke(
                 Rect::from_min_max(at([6.0, 6.0]), at([18.0, 18.0])),
@@ -754,6 +748,12 @@ pub fn paint_icon(painter: &Painter, rect: Rect, icon: Icon, line: Color32) {
             ];
             polyline(&arc.map(flip));
             polyline(&[[9.0, 4.0], [4.0, 9.0], [9.0, 14.0]].map(flip));
+        }
+        Icon::Grid => {
+            for offset in [6.0, 12.0, 18.0] {
+                polyline(&[[offset, 3.0], [offset, 21.0]]);
+                polyline(&[[3.0, offset], [21.0, offset]]);
+            }
         }
         Icon::Wire => {
             painter.add(egui::Shape::closed_line(
@@ -854,14 +854,16 @@ pub fn logo_rgba(side: usize) -> Option<Vec<u8>> {
     )
 }
 
-/// The application icon (the official logo on a rounded tile; edge to edge, or on Apple's grid
-/// inside the macOS bundle) as `side` x `side` RGBA pixels; `None` when the file is missing or
+/// The application icon (the official logo on a rounded tile; on Apple's grid on macOS,
+/// edge to edge elsewhere) as `side` x `side` RGBA pixels; `None` when the file is missing or
 /// does not decode.
 pub fn app_icon_rgba(side: usize) -> Option<Vec<u8>> {
-    png_rgba(
-        &asset_candidates("beamcraft-icon.png", "beamcraft-icon.png"),
-        side,
-    )
+    let file = if cfg!(target_os = "macos") {
+        "beamcraft-icon-macos.png"
+    } else {
+        "beamcraft-icon.png"
+    };
+    png_rgba(&asset_candidates(file, "beamcraft-icon.png"), side)
 }
 
 /// The first readable PNG of `candidates` as `side` x `side` RGBA pixels, averaged down.
@@ -1123,10 +1125,18 @@ mod tests {
         // The source tree holds the icon, so a development build always finds it.
         let rgba = app_icon_rgba(256).unwrap();
         assert_eq!(rgba.len(), 256 * 256 * 4);
-        // The tile fills the square edge to edge; only the rounded corners are transparent.
+        // macOS keeps the system-grid margin even when launched from the source tree.
         let alpha = |x: usize, y: usize| rgba[(y * 256 + x) * 4 + 3];
         assert_eq!(alpha(128, 128), 255);
-        assert_eq!(alpha(128, 0), 255);
+        if cfg!(target_os = "macos") {
+            assert_eq!(alpha(128, 0), 0);
+            assert_eq!(alpha(128, 24), 0);
+            assert_eq!(alpha(128, 26), 255);
+            assert_eq!(alpha(128, 229), 255);
+            assert_eq!(alpha(128, 231), 0);
+        } else {
+            assert_eq!(alpha(128, 0), 255);
+        }
         assert_eq!(alpha(1, 1), 0);
         assert!(app_icon_rgba(0).is_none());
     }

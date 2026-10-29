@@ -122,6 +122,7 @@ fn canonical_round_trip_preserves_both_target_types_and_every_atomic_group() {
         Group::Placement,
         Group::MaterialRef,
         Group::Relationship,
+        Group::Mark,
         Group::Lifecycle,
         Group::Derived,
     ]
@@ -210,6 +211,7 @@ fn the_real_cli_persists_exact_reads_writes_and_request_fingerprints() {
     let command = CreatePlate {
         new_id: element(1),
         name: "Plate".into(),
+        class: 0,
         contour_points_mm: vec![
             [0., 0., 0.],
             [1000., 0., 0.],
@@ -217,10 +219,11 @@ fn the_real_cli_persists_exact_reads_writes_and_request_fingerprints() {
             [0., 500., 0.],
         ],
         thickness_mm: 10.,
+        thickness_side: None,
+        corners: Vec::new(),
         placement: Placement::IDENTITY,
         material_digest: None,
         holes_mm: vec![],
-        cut: None,
     };
     assert_eq!(created.fingerprint, command.content_fingerprint().unwrap());
     assert_eq!(

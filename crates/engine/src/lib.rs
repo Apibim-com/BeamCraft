@@ -13,16 +13,25 @@
 pub mod assembly;
 pub mod bolt;
 pub mod bom;
+pub mod class_palette;
 pub mod command;
+pub mod coordinate;
 pub mod copy;
+pub mod corners;
+pub mod cut;
 pub mod drawing;
 pub mod element;
 pub mod error;
 pub mod footprint;
 pub mod grid;
 pub mod grid_edit;
+pub mod grid_geometry;
+pub mod grid_query;
+pub mod grid_update;
+pub mod instance;
 pub mod level;
 pub mod limits;
+pub mod measure;
 pub mod member;
 pub mod numbering;
 pub mod numbering_approval;
@@ -38,12 +47,15 @@ pub mod synthetic;
 pub mod transaction;
 pub mod update;
 pub mod weld;
+pub mod work_plane;
 
 pub use beamcraft_kernel::PlateResult;
 pub use element::{ElementId, ElementKind, KindFilter};
 pub use error::{ViewCode, ViewError};
 pub use limits::Limits;
-pub use presentation::{ProjectedElement, Representation, ViewProjection, ViewSettings};
+pub use presentation::{
+    ProjectedElement, RenderMode, Representation, ViewProjection, ViewSettings,
+};
 pub use query::bounds::Aabb;
 pub use query::changes::{Change, ChangeKind, ChangeSet, ChangedFields, SnapshotHistory, diff};
 pub use query::mesh::MeshEntry;

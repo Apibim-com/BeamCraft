@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! Compact entity and snap strips. Unimplemented switches are display-only and disabled.
+//! Compact engine-backed entity and snap strips, with disabled placeholders for future tools.
 
+use crate::selection::Selection;
 use crate::theme::{self, Icon, Palette};
+use beamcraft_engine::query::pick::{SelectionClass, SnapKind};
 use egui::{Color32, Painter, Rect, Response, Stroke, StrokeKind, Ui, pos2, vec2};
 
 const SIZE: f32 = 24.0;
@@ -50,10 +52,12 @@ const ENTITIES: &[(&str, Glyph)] = &[
     ("Select edges", Glyph::Extension),
     ("Select faces", Glyph::Face),
     ("Select vertices", Glyph::Vertex),
+    ("Select holes", Glyph::Center),
+    ("Select items", Glyph::Component),
 ];
 
 const SNAPS: &[(&str, Glyph)] = &[
-    ("Snap intersections", Glyph::Intersection),
+    ("Snap grid intersections", Glyph::Intersection),
     ("Snap endpoints", Glyph::Existing(Icon::End)),
     ("Snap centers", Glyph::Center),
     ("Snap midpoints", Glyph::Existing(Icon::Middle)),
@@ -64,7 +68,7 @@ const SNAPS: &[(&str, Glyph)] = &[
     ("Snap parallel", Glyph::Parallel),
     ("Snap grid", Glyph::Existing(Icon::Grid)),
     ("Orthogonal constraint", Glyph::Ortho),
-    ("Snap reference points", Glyph::ReferencePoint),
+    ("Snap grid endpoints", Glyph::ReferencePoint),
     ("Snap geometry points", Glyph::GeometryPoint),
 ];
 
@@ -244,8 +248,34 @@ fn separator(ui: &mut Ui) {
     );
 }
 
-/// The real select action plus reserved entity filters, in a single dense row.
-pub(super) fn entities(ui: &mut Ui, selecting: bool) -> bool {
+fn entity_class(label: &str) -> Option<SelectionClass> {
+    match label {
+        "Select parts" => Some(SelectionClass::Parts),
+        "Select assemblies" => Some(SelectionClass::Assemblies),
+        "Select bolts" => Some(SelectionClass::Bolts),
+        "Select welds" => Some(SelectionClass::Welds),
+        "Select holes" => Some(SelectionClass::Holes),
+        "Select grids" => Some(SelectionClass::Grids),
+        "Select construction lines" => Some(SelectionClass::ConstructionObjects),
+        "Select items" => Some(SelectionClass::Items),
+        _ => None,
+    }
+}
+
+fn snap_kind(label: &str) -> Option<SnapKind> {
+    match label {
+        "Snap grid intersections" => Some(SnapKind::GridIntersection),
+        "Snap endpoints" => Some(SnapKind::AxisEnd),
+        "Snap nearest" => Some(SnapKind::Axis),
+        "Snap grid" => Some(SnapKind::GridLine),
+        "Snap grid endpoints" => Some(SnapKind::GridEnd),
+        "Snap geometry points" => Some(SnapKind::Vertex),
+        _ => None,
+    }
+}
+
+/// The real select action, engine filters and reserved entity controls in a single dense row.
+pub(super) fn entities(ui: &mut Ui, selecting: bool, selection: &mut Selection) -> bool {
     let mut select = false;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing = vec2(GAP, 0.0);
@@ -253,7 +283,14 @@ pub(super) fn entities(ui: &mut Ui, selecting: bool) -> bool {
             if matches!(index, 6 | 14) {
                 separator(ui);
             }
-            let response = button(ui, label, *glyph, index == 0 && selecting, index == 0);
+            let class = entity_class(label);
+            let active = class.map_or(index == 0 && selecting, |class| selection.is_on(class));
+            let response = button(ui, label, *glyph, active, index == 0 || class.is_some());
+            if response.clicked()
+                && let Some(class) = class
+            {
+                selection.set(class, !active);
+            }
             if index == 0 && response.clicked() {
                 select = true;
             }
@@ -262,15 +299,21 @@ pub(super) fn entities(ui: &mut Ui, selecting: bool) -> bool {
     select
 }
 
-/// Reserved snap and constraint controls, all disabled until their engine APIs exist.
-pub(super) fn snaps(ui: &mut Ui) {
+/// Engine-backed snap switches with disabled placeholders for unsupported constraints.
+pub(super) fn snaps(ui: &mut Ui, selection: &mut Selection) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing = vec2(GAP, 0.0);
         for (index, (label, glyph)) in SNAPS.iter().enumerate() {
             if matches!(index, 10 | 11) {
                 separator(ui);
             }
-            button(ui, label, *glyph, false, false);
+            let kind = snap_kind(label);
+            let active = kind.is_some_and(|kind| selection.snap_on(kind));
+            if button(ui, label, *glyph, active, kind.is_some()).clicked()
+                && let Some(kind) = kind
+            {
+                selection.set_snap(kind, !active);
+            }
         }
     });
 }
@@ -288,10 +331,28 @@ mod tests {
         let ctx = egui::Context::default();
         theme::install(&ctx);
         let mut labels = std::collections::BTreeSet::new();
-        assert_eq!(ENTITIES.len(), 18);
+        assert_eq!(ENTITIES.len(), 20);
         assert_eq!(SNAPS.len(), 13);
         for (label, _) in ENTITIES.iter().chain(SNAPS) {
             assert!(labels.insert(label));
+        }
+        for class in SelectionClass::ALL {
+            assert_eq!(
+                ENTITIES
+                    .iter()
+                    .filter(|(label, _)| entity_class(label) == Some(class))
+                    .count(),
+                1
+            );
+        }
+        for kind in SnapKind::ALL {
+            assert_eq!(
+                SNAPS
+                    .iter()
+                    .filter(|(label, _)| snap_kind(label) == Some(kind))
+                    .count(),
+                1
+            );
         }
         for preference in [egui::ThemePreference::Light, egui::ThemePreference::Dark] {
             ctx.set_theme(preference);

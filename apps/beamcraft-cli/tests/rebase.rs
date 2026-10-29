@@ -318,17 +318,46 @@ fn semantic_conflicts_include_indirect_reads_and_intermediate_reverted_writes() 
 }
 
 #[test]
-fn absent_evidence_and_wrong_actor_do_not_become_independence() {
+fn a_plain_undo_carries_evidence_rebase_proceeds_and_a_stranger_is_refused() {
     let f = Fixture::new(false);
+    let fork_name = plate::inspect(&store(&f.path("b")))
+        .unwrap()
+        .plates
+        .iter()
+        .find(|p| p.authored.id == ElementId::parse(&id(10)).unwrap())
+        .unwrap()
+        .authored
+        .name
+        .clone();
     f.update("b", 10, &["--name", "temporary"]);
     f.ok(&["undo-workspace", "--workspace-dir", f.s("b")]);
     f.update("a", 11, &["--name", "remote"]);
     f.publish("a");
     let accepted = f.head("published");
     let draft = f.head("b");
+    // The undo revision inherited the undone command's footprint, so the draft interval stays
+    // complete: the rebase plans with it and merges the independent accepted edit.
     let (code, result) = f.rebase(500, &accepted, &draft);
-    assert_eq!(code, 2, "{result:?}");
-    assert_eq!(text(&result, "code"), "DEPENDENCY_UNAVAILABLE");
+    assert_eq!(code, 0, "{result:?}");
+    assert_eq!(text(&result, "outcome"), "workspace_rebased");
+    let report = plate::inspect(&store(&f.path("b"))).unwrap();
+    let ten = report
+        .plates
+        .iter()
+        .find(|p| p.authored.id == ElementId::parse(&id(10)).unwrap())
+        .unwrap();
+    assert_eq!(ten.authored.name, fork_name, "the edit stayed undone");
+    assert_eq!(
+        report
+            .plates
+            .iter()
+            .find(|p| p.authored.id == ElementId::parse(&id(11)).unwrap())
+            .unwrap()
+            .authored
+            .name,
+        "remote"
+    );
+    let merged = f.head("b");
     let (code, result) = f.run(&[
         "rebase-workspace",
         "--store",
@@ -352,14 +381,16 @@ fn absent_evidence_and_wrong_actor_do_not_become_independence() {
             .unwrap()
             .is_none()
     );
-    assert_eq!(f.head("b").manifest_digest(), draft.manifest_digest());
+    assert_eq!(f.head("b").manifest_digest(), merged.manifest_digest());
     assert_eq!(
         f.head("published").manifest_digest(),
         accepted.manifest_digest()
     );
     f.update("a", 11, &["--name", "a later accepted head"]);
     f.publish("a");
-    let (code, retry) = f.rebase(500, &accepted, &draft);
+    // A fresh rebase request against the stale observed head is refused; the completed one
+    // only replays.
+    let (code, retry) = f.rebase(502, &accepted, &draft);
     assert_eq!(code, 2);
     assert_eq!(text(&retry, "code"), "BASE_REVISION_MISMATCH");
 }
@@ -421,4 +452,504 @@ fn accepted_head_is_pinned_while_a_concurrent_local_edit_wins_the_draft_cas() {
             .name,
         "concurrent local"
     );
+}
+
+fn name_of(report: &beamcraft_cli::plate::Inspection, n: usize) -> String {
+    report
+        .plates
+        .iter()
+        .find(|p| p.authored.id == ElementId::parse(&id(n)).unwrap())
+        .unwrap()
+        .authored
+        .name
+        .clone()
+}
+
+fn status_of(f: &Fixture) -> Json {
+    f.ok(&[
+        "inspect-workspace",
+        "--store",
+        f.s("published"),
+        "--workspace-dir",
+        f.s("b"),
+    ])
+}
+
+fn pending(status: &Json) -> Vec<Json> {
+    status
+        .get("workspace")
+        .unwrap()
+        .get("pending_conflicts")
+        .unwrap()
+        .array()
+        .unwrap()
+        .to_vec()
+}
+
+#[test]
+fn a_conflicted_rebase_is_recorded_deterministically_and_blocks_publication_until_resolved() {
+    let f = Fixture::new(false);
+    f.update("a", 10, &["--name", "remote name"]);
+    f.update("b", 10, &["--name", "local name"]);
+    f.publish("a");
+    let accepted = f.head("published");
+    let draft = f.head("b");
+    let metadata = fs::read(f.path("b").join("workspace.json")).unwrap();
+    let (code, result) = f.rebase(500, &accepted, &draft);
+    assert_eq!(code, 2, "{result:?}");
+    assert_eq!(text(&result, "code"), "DEPENDENCY_CONFLICT");
+    let diagnostics = result.get("diagnostics").unwrap().array().unwrap();
+    assert_eq!(diagnostics.len(), 1);
+    let draft_op = store(&f.path("b"))
+        .head()
+        .unwrap()
+        .unwrap()
+        .manifest()
+        .content()
+        .op()
+        .to_string();
+    assert_eq!(text(&diagnostics[0], "draft_op"), draft_op);
+    assert_eq!(
+        text(&diagnostics[0], "accepted_op"),
+        accepted.manifest().content().op().to_string()
+    );
+    assert_eq!(text(&diagnostics[0], "target"), id(10));
+    assert_eq!(text(&diagnostics[0], "group"), "label");
+    assert_eq!(text(&diagnostics[0], "kind"), "write_write");
+
+    // Crash window: every fresh process with the same identity reports byte-stably and
+    // rewrites the same record; another payload under the identity is refused.
+    let record = fs::read(f.path("b").join("conflicts.pending")).unwrap();
+    let (code, replay) = f.rebase(500, &accepted, &draft);
+    assert_eq!(code, 2, "{replay:?}");
+    assert_eq!(replay, result);
+    assert_eq!(
+        fs::read(f.path("b").join("conflicts.pending")).unwrap(),
+        record
+    );
+    let (code, reused) = f.run(&[
+        "rebase-workspace",
+        "--store",
+        f.s("published"),
+        "--workspace-dir",
+        f.s("b"),
+        "--op-id",
+        &id(500),
+        "--expected-head",
+        accepted.revision().as_str(),
+        "--expected-draft",
+        &id(999),
+    ]);
+    assert_eq!(code, 2);
+    assert_eq!(text(&reused, "code"), "OP_ID_REUSE");
+
+    // Status names every pending conflict; publication and packaging refuse identically.
+    assert_eq!(pending(&status_of(&f)), diagnostics);
+    let publish = [
+        "publish-workspace",
+        "--store",
+        f.s("published"),
+        "--workspace-dir",
+        f.s("b"),
+    ];
+    let (code, refused) = f.run(&publish);
+    assert_eq!(code, 2);
+    assert_eq!(text(&refused, "code"), "DEPENDENCY_CONFLICT");
+    assert_eq!(
+        refused.get("diagnostics").unwrap().array().unwrap(),
+        diagnostics
+    );
+    let (code, again) = f.run(&publish);
+    assert_eq!(code, 2);
+    assert_eq!(again, refused);
+    let packaging = [
+        "create-changeset",
+        "--store",
+        f.s("published"),
+        "--workspace-dir",
+        f.s("b"),
+    ];
+    let (code, packaged) = f.run(&packaging);
+    assert_eq!(code, 2);
+    assert_eq!(text(&packaged, "code"), "DEPENDENCY_CONFLICT");
+    assert_eq!(
+        packaged.get("diagnostics").unwrap().array().unwrap(),
+        diagnostics
+    );
+
+    // No lost writes: neither head moved and both values survive on their own side.
+    assert_eq!(f.head("b").manifest_digest(), draft.manifest_digest());
+    assert_eq!(
+        f.head("published").manifest_digest(),
+        accepted.manifest_digest()
+    );
+    assert_eq!(
+        fs::read(f.path("b").join("workspace.json")).unwrap(),
+        metadata
+    );
+    assert_eq!(
+        name_of(&plate::inspect(&store(&f.path("b"))).unwrap(), 10),
+        "local name"
+    );
+    assert_eq!(
+        name_of(&plate::inspect(&store(&f.path("published"))).unwrap(), 10),
+        "remote name"
+    );
+
+    // Explicit resolution by undo lifts the gate, and redo cannot silently reopen a gated
+    // publication: the base check still refuses until a fresh rebase re-plans the draft.
+    f.ok(&["undo-workspace", "--workspace-dir", f.s("b")]);
+    assert!(pending(&status_of(&f)).is_empty());
+    assert!(!f.path("b").join("conflicts.pending").exists());
+    let (code, lifted) = f.run(&publish);
+    assert_eq!(code, 2);
+    assert_eq!(text(&lifted, "code"), "BASE_REVISION_MISMATCH");
+    f.ok(&["redo-workspace", "--workspace-dir", f.s("b")]);
+    assert!(pending(&status_of(&f)).is_empty());
+    let (code, blocked) = f.run(&publish);
+    assert_eq!(code, 2);
+    assert_eq!(text(&blocked, "code"), "BASE_REVISION_MISMATCH");
+}
+
+#[test]
+fn interleaved_publication_accumulates_conflicts_and_loses_no_write() {
+    let f = Fixture::new(false);
+    f.update("b", 10, &["--name", "local name"]);
+    f.update("a", 10, &["--name", "remote one"]);
+    f.publish("a");
+    let first = f.head("published");
+    let draft = f.head("b");
+    let (code, result) = f.rebase(500, &first, &draft);
+    assert_eq!(code, 2, "{result:?}");
+    assert_eq!(result.get("diagnostics").unwrap().array().unwrap().len(), 1);
+    f.update("a", 10, &["--name", "remote two"]);
+    f.publish("a");
+    let second = f.head("published");
+    let (code, result) = f.rebase(501, &second, &draft);
+    assert_eq!(code, 2, "{result:?}");
+    let diagnostics = result.get("diagnostics").unwrap().array().unwrap();
+    assert_eq!(diagnostics.len(), 2);
+    assert_eq!(
+        diagnostics
+            .iter()
+            .map(|d| text(d, "accepted_op"))
+            .collect::<Vec<_>>(),
+        vec![
+            first.manifest().content().op().to_string(),
+            second.manifest().content().op().to_string()
+        ]
+    );
+    assert!(diagnostics.iter().all(|d| text(d, "kind") == "write_write"));
+    // No lost writes across the interleaving: both accepted revisions exist and the draft
+    // keeps its own value untouched.
+    assert_eq!(f.head("b").manifest_digest(), draft.manifest_digest());
+    assert_eq!(
+        name_of(&plate::inspect(&store(&f.path("published"))).unwrap(), 10),
+        "remote two"
+    );
+    assert_eq!(
+        name_of(&plate::inspect(&store(&f.path("b"))).unwrap(), 10),
+        "local name"
+    );
+}
+
+#[test]
+fn reported_kinds_cover_lifecycle_and_read_write_dependencies() {
+    let f = Fixture::new(false);
+    f.ok(&[
+        "create-weld",
+        "--store",
+        f.s("b"),
+        "--name",
+        "weld",
+        "--main",
+        &id(10),
+        "--secondary",
+        &id(11),
+        "--size",
+        "5",
+        "--location",
+        "workshop",
+        "--side",
+        "arrow",
+    ]);
+    f.ok(&["delete-element", "--store", f.s("a"), "--id", &id(11)]);
+    f.publish("a");
+    let accepted = f.head("published");
+    let draft = f.head("b");
+    let (code, result) = f.rebase(500, &accepted, &draft);
+    assert_eq!(code, 2, "{result:?}");
+    let diagnostics = result.get("diagnostics").unwrap().array().unwrap();
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(text(&diagnostics[0], "kind"), "lifecycle");
+    assert_eq!(text(&diagnostics[0], "target"), id(11));
+    assert_eq!(text(&diagnostics[0], "group"), "lifecycle");
+    assert_eq!(
+        pending(&status_of(&f)),
+        diagnostics,
+        "the recorded report matches the rebase answer"
+    );
+
+    let g = Fixture::new(false);
+    g.ok(&[
+        "copy-element",
+        "--store",
+        g.s("b"),
+        "--id",
+        &id(10),
+        "--new-id",
+        &id(12),
+    ]);
+    g.update("a", 10, &["--name", "renamed source"]);
+    g.publish("a");
+    let accepted = g.head("published");
+    let draft = g.head("b");
+    let (code, result) = g.rebase(500, &accepted, &draft);
+    assert_eq!(code, 2, "{result:?}");
+    let diagnostics = result.get("diagnostics").unwrap().array().unwrap();
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(text(&diagnostics[0], "kind"), "read_write");
+    assert_eq!(text(&diagnostics[0], "target"), id(10));
+    assert_eq!(text(&diagnostics[0], "group"), "label");
+}
+
+fn thickness_of(report: &beamcraft_cli::plate::Inspection, n: usize) -> f64 {
+    report
+        .plates
+        .iter()
+        .find(|p| p.authored.id == ElementId::parse(&id(n)).unwrap())
+        .unwrap()
+        .authored
+        .thickness_mm
+}
+
+/// C04-02: the shape inputs are one atomic semantic group. A thickness conflict is a single
+/// report entry, and after the explicit resolution the shape stands whole on every side: the
+/// accepted thickness arrives in the draft through the ordinary rebase, and a fully renounced
+/// draft ships nothing instead of a half-applied or evidence-less revision.
+#[test]
+fn a_shape_conflict_is_one_atomic_entry_and_resolution_leaves_a_whole_shape() {
+    let f = Fixture::new(false);
+    f.update("b", 10, &["--thickness", "20"]);
+    f.update("a", 10, &["--thickness", "30"]);
+    f.publish("a");
+    let accepted = f.head("published");
+    let draft = f.head("b");
+    let (code, result) = f.rebase(500, &accepted, &draft);
+    assert_eq!(code, 2, "{result:?}");
+    assert_eq!(text(&result, "code"), "DEPENDENCY_CONFLICT");
+    // One conflicting pair, reported only on the atomic shape-input entry and its derived
+    // companion: never separately resolvable property conflicts.
+    let diagnostics = result.get("diagnostics").unwrap().array().unwrap();
+    assert_eq!(diagnostics.len(), 2);
+    assert_eq!(
+        diagnostics
+            .iter()
+            .map(|d| text(d, "group"))
+            .collect::<Vec<_>>(),
+        vec!["shape_inputs", "derived"]
+    );
+    assert!(diagnostics.iter().all(|d| text(d, "kind") == "write_write"));
+    assert!(diagnostics.iter().all(|d| text(d, "target") == id(10)
+        && text(d, "draft_op") == draft.manifest().content().op().to_string()
+        && text(d, "accepted_op") == accepted.manifest().content().op().to_string()));
+    assert_eq!(pending(&status_of(&f)), diagnostics);
+
+    // Resolution by discard: the renounced-only draft packages and publishes nothing.
+    let draft_op = store(&f.path("b"))
+        .head()
+        .unwrap()
+        .unwrap()
+        .manifest()
+        .content()
+        .op()
+        .to_string();
+    f.ok(&[
+        "resolve-workspace",
+        "--workspace-dir",
+        f.s("b"),
+        "--op-id",
+        &id(600),
+        "--discard",
+        &draft_op,
+        "--expected-draft",
+        draft.revision().as_str(),
+    ]);
+    assert!(pending(&status_of(&f)).is_empty());
+    assert!(!f.path("b").join("conflicts.pending").exists());
+    // The renounced-only draft ships nothing: the stale base refuses publication before
+    // anything is written, and packaging a no-op changeset is refused for the same reason.
+    let publish = [
+        "publish-workspace",
+        "--store",
+        f.s("published"),
+        "--workspace-dir",
+        f.s("b"),
+    ];
+    let (code, refused) = f.run(&publish);
+    assert_eq!(code, 2);
+    assert_eq!(text(&refused, "code"), "BASE_REVISION_MISMATCH");
+    let (code, packaged) = f.run(&[
+        "create-changeset",
+        "--store",
+        f.s("published"),
+        "--workspace-dir",
+        f.s("b"),
+    ]);
+    assert_eq!(code, 2, "{packaged:?}");
+    assert_eq!(text(&packaged, "code"), "INVALID_ARGUMENT");
+
+    // The draft then reaches the accepted state through the ordinary rebase, whole: A's
+    // thickness with no remnant of B's renounced edit, and nothing published meanwhile.
+    let restored = f.head("b");
+    let (code, merged) = f.rebase(501, &accepted, &restored);
+    assert_eq!(code, 0, "{merged:?}");
+    assert_eq!(text(&merged, "outcome"), "workspace_rebased");
+    assert_eq!(
+        thickness_of(&plate::inspect(&store(&f.path("b"))).unwrap(), 10),
+        30.0
+    );
+    assert_eq!(
+        name_of(&plate::inspect(&store(&f.path("b"))).unwrap(), 10),
+        "Plate"
+    );
+    assert_eq!(
+        f.head("published").manifest_digest(),
+        accepted.manifest_digest()
+    );
+    assert_eq!(
+        thickness_of(&plate::inspect(&store(&f.path("published"))).unwrap(), 10),
+        30.0
+    );
+}
+
+/// C04-07: the crash windows of a conflicted rebase. A kill before the planner writes nothing;
+/// a kill between the temporary record write and its rename leaves only a torn temporary that
+/// the next rebase replaces. Every fresh process reports byte-stably, and neither head nor the
+/// draft ever holds a half-applied plan.
+#[test]
+fn a_killed_conflict_rebase_leaves_no_half_state_and_replays_byte_stably() {
+    let f = Fixture::new(false);
+    f.update("b", 10, &["--name", "local name"]);
+    f.update("a", 10, &["--name", "remote name"]);
+    f.publish("a");
+    let accepted = f.head("published");
+    let draft = f.head("b");
+    let metadata = fs::read(f.path("b").join("workspace.json")).unwrap();
+    // A kill between the temporary write and the rename leaves torn bytes behind.
+    fs::write(
+        f.path("b").join("conflicts.pending.tmp"),
+        b"beamcraft-conflicts 1\nbase_revi",
+    )
+    .unwrap();
+
+    // A kill before the planner: the stale pin is refused and not even the temporary moves.
+    let (code, refused) = f.run(&[
+        "rebase-workspace",
+        "--store",
+        f.s("published"),
+        "--workspace-dir",
+        f.s("b"),
+        "--op-id",
+        &id(499),
+        "--expected-head",
+        accepted.revision().as_str(),
+        "--expected-draft",
+        &id(999),
+    ]);
+    assert_eq!(code, 2, "{refused:?}");
+    assert_eq!(text(&refused, "code"), "BASE_REVISION_MISMATCH");
+    assert_eq!(
+        fs::read(f.path("b").join("conflicts.pending.tmp")).unwrap(),
+        b"beamcraft-conflicts 1\nbase_revi"
+    );
+
+    // The real rebase replaces the torn temporary with the canonical record.
+    let (code, result) = f.rebase(500, &accepted, &draft);
+    assert_eq!(code, 2, "{result:?}");
+    assert_eq!(text(&result, "code"), "DEPENDENCY_CONFLICT");
+    assert!(!f.path("b").join("conflicts.pending.tmp").exists());
+    let record = fs::read(f.path("b").join("conflicts.pending")).unwrap();
+    assert!(record.starts_with(b"beamcraft-conflicts 1\n"));
+
+    // Every fresh process replays the same report and rewrites the same record bytes.
+    let (code, replay) = f.rebase(500, &accepted, &draft);
+    assert_eq!(code, 2, "{replay:?}");
+    assert_eq!(replay, result);
+    assert_eq!(
+        fs::read(f.path("b").join("conflicts.pending")).unwrap(),
+        record
+    );
+    assert_eq!(
+        pending(&status_of(&f)),
+        result.get("diagnostics").unwrap().array().unwrap()
+    );
+
+    // Neither head moved, the metadata is untouched, and the draft holds its own whole state.
+    assert_eq!(f.head("b").manifest_digest(), draft.manifest_digest());
+    assert_eq!(
+        f.head("published").manifest_digest(),
+        accepted.manifest_digest()
+    );
+    assert_eq!(
+        fs::read(f.path("b").join("workspace.json")).unwrap(),
+        metadata
+    );
+    assert_eq!(
+        name_of(&plate::inspect(&store(&f.path("b"))).unwrap(), 10),
+        "local name"
+    );
+}
+
+/// C04-09: the report is complete at the 256-conflict cap and refused one pair above; a report
+/// is never silently truncated and an over-budget plan writes nothing.
+#[test]
+fn the_conflict_report_is_complete_at_the_cap_and_refused_one_above() {
+    let f = Fixture::new(false);
+    for i in 0..16 {
+        let label = format!("local-{i}");
+        f.update("b", 10, &["--name", &label]);
+    }
+    // One publication per accepted revision: sixteen intervening accepted operations.
+    for i in 0..16 {
+        let label = format!("remote-{i}");
+        f.update("a", 10, &["--name", &label]);
+        f.publish("a");
+    }
+    let accepted = f.head("published");
+    let draft = f.head("b");
+    let (code, result) = f.rebase(500, &accepted, &draft);
+    assert_eq!(code, 2, "{result:?}");
+    assert_eq!(text(&result, "code"), "DEPENDENCY_CONFLICT");
+    // 16 draft operations against 16 accepted operations on one entry: the complete report.
+    let diagnostics = result.get("diagnostics").unwrap().array().unwrap();
+    assert_eq!(diagnostics.len(), 256);
+    let record = fs::read(f.path("b").join("conflicts.pending")).unwrap();
+    assert_eq!(
+        record
+            .split(|b| *b == b'\n')
+            .filter(|line| line.starts_with(b"conflict="))
+            .count(),
+        256
+    );
+    assert_eq!(pending(&status_of(&f)), diagnostics);
+
+    // One more accepted write puts the plan over the budget: a typed refusal, and the last
+    // complete report stands unchanged instead of a truncated one.
+    f.update("a", 10, &["--name", "remote-16"]);
+    f.publish("a");
+    let over = f.head("published");
+    let (code, over_budget) = f.rebase(501, &over, &draft);
+    assert_eq!(code, 2, "{over_budget:?}");
+    assert_eq!(text(&over_budget, "code"), "LIMIT_EXCEEDED");
+    assert_eq!(
+        fs::read(f.path("b").join("conflicts.pending")).unwrap(),
+        record
+    );
+    assert_eq!(f.head("b").manifest_digest(), draft.manifest_digest());
+    assert_eq!(
+        f.head("published").manifest_digest(),
+        over.manifest_digest()
+    );
+    assert_eq!(pending(&status_of(&f)), diagnostics);
 }

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! `UpdateElement` for the supported fields (F04 section 7, P04, P08, D2): a typed patch of the
-//! label, the material reference, a plate's thickness, the placement translation (a move), the
-//! placement rotation and the level assignment.
+//! `UpdateElement` for the supported fields (F04 section 7, P04, P08, D2, P12): a typed patch of
+//! the label, the material reference, a plate's thickness, a member's path points, the placement
+//! translation (a move), the placement rotation and the level assignment.
 //!
 //! The engine applies the patch to the authored state, re-evaluates what depends on it and says
 //! which groups changed, so the adapter writes only those:
@@ -13,15 +13,17 @@
 //! | `name` | no | no | untouched |
 //! | `material` | no | yes | quantity record only (same mesh bytes) |
 //! | `thickness_mm` | yes | yes | mesh and quantity record |
+//! | `thickness_side` (A12.1) | yes | yes | mesh and quantity record |
+//! | `axis_points_mm` | yes | yes | mesh and quantity record (a member path, P12) |
 //! | `translation_mm` | no | no | untouched (the body is element-local) |
-//! | `orientation_xyzw` | a member: yes (the rotation is in the mesh), a plate: no | no | the placement attribute; for a member also the mesh |
+//! | `orientation_xyzw` | no | no | untouched (the body is element-local) |
 //! | `level` | no | no | untouched (a relationship of the element only) |
 //!
 //! A move keeps the rotation and never touches the shape, the body or the stored quantities, so
 //! no geometry is copied or rebuilt. An orientation change replaces the stored quaternion as a
-//! whole (a member body is rebuilt with the new rotation, the quantities are unchanged). Fields
-//! outside this list (contour, axis, roll, profile) are `UNSUPPORTED_PROPERTY`: they belong to
-//! later tasks.
+//! whole; local meshes and quantities are unchanged. Fields
+//! outside this list (contour, roll, profile) are `UNSUPPORTED_PROPERTY`: they belong to later
+//! tasks.
 
 use crate::command::AuthoredPlate;
 use crate::member::AuthoredMember;
@@ -33,6 +35,8 @@ use beamcraft_model::error::ErrorCode;
 pub struct UpdateEffect {
     /// The label changes.
     pub name: bool,
+    /// The authored part class changes without changing engineering data.
+    pub class: bool,
     /// The material reference changes (including its removal).
     pub material: bool,
     /// A shape input changes, so the body is rebuilt.
@@ -50,22 +54,36 @@ pub struct UpdateEffect {
 pub const fn effect(patch: &ElementPatch) -> UpdateEffect {
     UpdateEffect {
         name: patch.name.is_some(),
+        class: patch.class.is_some(),
         material: patch.material.is_some(),
-        shape: patch.thickness_mm.is_some(),
+        shape: patch.thickness_mm.is_some()
+            || patch.thickness_side.is_some()
+            || patch.axis_points_mm.is_some(),
         placement: patch.translation_mm.is_some(),
         orientation: patch.orientation_xyzw.is_some(),
         level: patch.level.is_some(),
     }
 }
 
-/// Applies a patch to an authored plate.
+/// Applies a patch to an authored plate. A plate has no path points: that field is
+/// `UNSUPPORTED_PROPERTY`.
 pub fn patch_plate(
     plate: &AuthoredPlate,
     patch: &ElementPatch,
 ) -> Result<AuthoredPlate, CommandError> {
+    if patch.axis_points_mm.is_some() {
+        return Err(CommandError::new(
+            ErrorCode::UnsupportedProperty,
+            "axis_points_mm",
+            "a plate has no path points",
+        ));
+    }
     let mut next = plate.clone();
     if let Some(name) = &patch.name {
         next.name.clone_from(name);
+    }
+    if let Some(class) = patch.class {
+        next.class = class;
     }
     if let Some(material) = patch.material {
         next.material = material;
@@ -73,24 +91,17 @@ pub fn patch_plate(
     if let Some(thickness) = patch.thickness_mm {
         next.thickness_mm = thickness;
     }
-    // A plate keeps the create-time refusal for a non-identity rotation: committed rotated
-    // plates are not evaluated, so accepting the patch here would refuse every later read of
-    // the store. The identity stays the reset.
-    if let Some(xyzw) = patch.orientation_xyzw
-        && xyzw != Placement::IDENTITY.orientation_xyzw
-    {
-        return Err(CommandError::new(
-            ErrorCode::UnsupportedGeometry,
-            "placement.orientation_xyzw",
-            "rotated plate placement is not evaluated in this slice",
-        ));
+    if let Some(side) = patch.thickness_side {
+        next.thickness_side = Some(side);
     }
     next.placement = placement_after(&plate.placement, patch)?;
     Ok(next)
 }
 
-/// Applies a patch to an authored member. A member has no thickness: that field is
-/// `UNSUPPORTED_PROPERTY`.
+/// Applies a patch to an authored member. A member has no thickness: that field and the
+/// thickness side are `UNSUPPORTED_PROPERTY`. A path patch replaces the whole polyline; fewer
+/// than two points is `INVALID_ARGUMENT`, and whether the chords are long enough is the body
+/// evaluation's decision.
 pub fn patch_member(
     member: &AuthoredMember,
     patch: &ElementPatch,
@@ -102,12 +113,38 @@ pub fn patch_member(
             "a member has no thickness",
         ));
     }
+    if patch.thickness_side.is_some() {
+        return Err(CommandError::new(
+            ErrorCode::UnsupportedProperty,
+            "thickness_side",
+            "a member has no thickness side",
+        ));
+    }
     let mut next = member.clone();
     if let Some(name) = &patch.name {
         next.name.clone_from(name);
     }
+    if let Some(class) = patch.class {
+        next.class = class;
+    }
     if let Some(material) = patch.material {
         next.material = material;
+    }
+    if let Some(points) = &patch.axis_points_mm {
+        if points.len() < 2 {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "axis_points_mm",
+                "a member path has at least two points",
+            ));
+        }
+        next.axis_points_mm.clone_from(points);
+        // A polybeam carries no authored roll (the G12 sweep has no roll input): bending a
+        // rolled straight member into a polybeam clears the opinion instead of storing one
+        // the body would silently ignore.
+        if points.len() > 2 {
+            next.roll_rad = None;
+        }
     }
     next.placement = placement_after(&member.placement, patch)?;
     Ok(next)
@@ -140,6 +177,7 @@ mod tests {
         AuthoredPlate {
             id: ElementId::parse("019a7bf0-0000-7000-8000-000000000005").unwrap(),
             name: "Plate".into(),
+            class: 0,
             contour_points_mm: vec![
                 [0.0, 0.0, 0.0],
                 [1000.0, 0.0, 0.0],
@@ -147,10 +185,13 @@ mod tests {
                 [0.0, 500.0, 0.0],
             ],
             thickness_mm: 10.0,
+            thickness_side: None,
+            corners: Vec::new(),
             placement: Placement::IDENTITY,
             material: None,
             holes_mm: Vec::new(),
-            cut: None,
+            hole_records: Vec::new(),
+            cuts: Vec::new(),
         }
     }
 
@@ -163,6 +204,7 @@ mod tests {
         assert_eq!(
             effect(&rename),
             UpdateEffect {
+                class: false,
                 name: true,
                 material: false,
                 shape: false,
@@ -282,19 +324,15 @@ mod tests {
         .unwrap();
         assert_eq!(moved.placement.orientation_xyzw, quarter);
         assert_eq!(moved.placement.translation_mm, [5.0, 6.0, 7.0]);
-        // A plate keeps the create-time refusal for a non-identity orientation patch (a rotated
-        // plate would refuse every later read of the store), and the identity still resets it.
-        let refused = patch_plate(
+        let turned_plate = patch_plate(
             &plate(),
             &ElementPatch {
                 orientation_xyzw: Some(quarter),
-                translation_mm: Some([1.0, 0.0, 0.0]),
                 ..ElementPatch::default()
             },
         )
-        .unwrap_err();
-        assert_eq!(refused.code, ErrorCode::UnsupportedGeometry);
-        assert_eq!(refused.field, "placement.orientation_xyzw");
+        .unwrap();
+        assert_eq!(turned_plate.placement.orientation_xyzw, quarter);
         let reset = patch_plate(
             &plate(),
             &ElementPatch {
@@ -336,14 +374,12 @@ mod tests {
                 .code,
             ErrorCode::NonFiniteNumber
         );
-        // A plate refuses any non-identity orientation patch as unsupported geometry before
-        // validation details, mirroring create_plate; the model layer owns the code-level
-        // validation refusals.
+        // Plates and members use the same typed rigid-pose validation.
         assert_eq!(
             patch_plate(&plate(), &patch([2.0, 0.0, 0.0, 0.0]))
                 .unwrap_err()
                 .code,
-            ErrorCode::UnsupportedGeometry
+            ErrorCode::InvalidArgument
         );
     }
 
@@ -352,13 +388,32 @@ mod tests {
             id: ElementId::parse("019a7bf0-0000-7000-8000-000000000006").unwrap(),
             kind: MemberKind::Beam,
             name: "Beam".into(),
-            axis_points_mm: [[0.0; 3], [1000.0, 0.0, 0.0]],
+            class: 0,
+            axis_points_mm: vec![[0.0; 3], [1000.0, 0.0, 0.0]],
             profile: Sha256::digest(b"profile").unwrap(),
             roll_rad: None,
+            section_placement: None,
             placement: Placement::IDENTITY,
             material: None,
-            cut: None,
+            cuts: Vec::new(),
         }
+    }
+
+    #[test]
+    fn a_thickness_side_patch_is_a_shape_change_and_a_member_refuses_it() {
+        use beamcraft_model::command::PlateSide;
+        let side = ElementPatch {
+            thickness_side: Some(PlateSide::Bottom),
+            ..ElementPatch::default()
+        };
+        assert!(effect(&side).shape && !effect(&side).placement);
+        let next = patch_plate(&plate(), &side).unwrap();
+        assert_eq!(next.thickness_side, Some(PlateSide::Bottom));
+        assert_eq!(next.thickness_mm, 10.0);
+        assert_eq!(
+            patch_member(&member(), &side).unwrap_err().code,
+            ErrorCode::UnsupportedProperty
+        );
     }
 
     #[test]
@@ -368,12 +423,14 @@ mod tests {
             id: ElementId::parse("019a7bf0-0000-7000-8000-000000000006").unwrap(),
             kind: MemberKind::Beam,
             name: "Beam".into(),
-            axis_points_mm: [[0.0; 3], [1000.0, 0.0, 0.0]],
+            class: 0,
+            axis_points_mm: vec![[0.0; 3], [1000.0, 0.0, 0.0]],
             profile,
             roll_rad: None,
+            section_placement: None,
             placement: Placement::IDENTITY,
             material: None,
-            cut: None,
+            cuts: Vec::new(),
         };
         assert_eq!(
             patch_member(
@@ -397,5 +454,89 @@ mod tests {
         .unwrap();
         assert_eq!(renamed.name, "Beam 2");
         assert_eq!(renamed.profile, profile);
+    }
+
+    #[test]
+    fn a_path_patch_replaces_the_whole_member_path_and_is_a_shape_change() {
+        // The effect names the shape group, so the adapter re-evaluates the body.
+        let bent = ElementPatch {
+            axis_points_mm: Some(vec![[0.0; 3], [3000.0, 0.0, 0.0], [3000.0, 4000.0, 0.0]]),
+            ..ElementPatch::default()
+        };
+        assert!(effect(&bent).shape);
+        assert!(!effect(&bent).placement);
+        let patched = patch_member(&member(), &bent).unwrap();
+        assert_eq!(
+            patched.axis_points_mm,
+            vec![[0.0; 3], [3000.0, 0.0, 0.0], [3000.0, 4000.0, 0.0]]
+        );
+        // Fewer than two points is an argument refusal; two points straighten the member.
+        assert_eq!(
+            patch_member(
+                &member(),
+                &ElementPatch {
+                    axis_points_mm: Some(vec![[0.0; 3]]),
+                    ..ElementPatch::default()
+                }
+            )
+            .unwrap_err()
+            .code,
+            ErrorCode::InvalidArgument
+        );
+        let straightened = patch_member(
+            &patched,
+            &ElementPatch {
+                axis_points_mm: Some(vec![[0.0; 3], [7000.0, 0.0, 0.0]]),
+                ..ElementPatch::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(straightened.axis_points_mm.len(), 2);
+        // The untouched patch keeps the path and everything else.
+        let untouched = patch_member(&member(), &ElementPatch::default()).unwrap();
+        assert_eq!(untouched, member());
+    }
+
+    #[test]
+    fn bending_a_rolled_straight_member_clears_the_roll_opinion() {
+        let mut rolled = member();
+        rolled.roll_rad = Some(0.5);
+        let bent = patch_member(
+            &rolled,
+            &ElementPatch {
+                axis_points_mm: Some(vec![[0.0; 3], [3000.0, 0.0, 0.0], [3000.0, 4000.0, 0.0]]),
+                ..ElementPatch::default()
+            },
+        )
+        .unwrap();
+        // A stored polybeam reads rollRad absent: the sweep has no roll input.
+        assert_eq!(bent.roll_rad, None);
+        // Straightening keeps the patch's own two points; a polybeam patch on a member
+        // without roll stays without one.
+        let straight = patch_member(
+            &bent,
+            &ElementPatch {
+                axis_points_mm: Some(vec![[0.0; 3], [7000.0, 0.0, 0.0]]),
+                ..ElementPatch::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(straight.roll_rad, None);
+    }
+
+    #[test]
+    fn a_plate_has_no_path_points() {
+        assert_eq!(
+            patch_plate(
+                &plate(),
+                &ElementPatch {
+                    axis_points_mm: Some(vec![[0.0; 3], [1000.0, 0.0, 0.0]]),
+                    ..ElementPatch::default()
+                }
+            )
+            .unwrap_err()
+            .code,
+            ErrorCode::UnsupportedProperty
+        );
     }
 }

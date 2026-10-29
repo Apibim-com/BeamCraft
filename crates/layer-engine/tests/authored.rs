@@ -22,6 +22,8 @@ const PLATE: &str = "0199e7a0-0000-7000-8000-000000000003";
 const MEMBER: &str = "0199e7a0-0000-7000-8000-000000000004";
 const ACTOR: &str = "0199e7a0-0000-7000-8000-000000000005";
 const OP: &str = "0199e7a0-0000-7000-8000-000000000006";
+/// A second part prim for the A12.2 corner-treatment authoring regression.
+const TREATED: &str = "0199e7a0-0000-7000-8000-000000000007";
 fn digest(bytes: &[u8]) -> ContentDigest {
     Sha256::digest(bytes).unwrap()
 }
@@ -125,8 +127,11 @@ fn elements() -> Vec<Change> {
                     [0.0, 500.0, 0.0],
                 ],
                 thickness_mm: 10.123456789012345,
+                thickness_side: None,
+                corners: Vec::new(),
                 holes: Vec::new(),
-                cut: None,
+                hole_records: Vec::new(),
+                cuts: Vec::new(),
             },
             placement: pose(),
             material: Some(r[1].digest),
@@ -136,10 +141,11 @@ fn elements() -> Vec<Change> {
             name: "Member".into(),
             shape: Shape::Member {
                 kind: MemberKind::Beam,
-                axis_mm: [[0.0, 0.0, 0.0], [0.0, 0.0, 2000.0]],
+                axis_mm: vec![[0.0, 0.0, 0.0], [0.0, 0.0, 2000.0]],
                 profile: r[0].digest,
                 roll_rad: Some(0.125),
-                cut: None,
+                placement: None,
+                cuts: Vec::new(),
             },
             placement: pose(),
             material: None,
@@ -172,11 +178,192 @@ fn batch(context: &Context, changes: Vec<Change>) -> Prepare {
         changes,
     }
 }
+
+#[test]
+fn f10_prepare_keeps_exact_rules_and_leaves_envelope_errors_unclassified() {
+    let (mut author, opened) = populated();
+    let (_, opened) = installed(&mut author, &opened, vec![assembly(FRAME, "Frame")]);
+    let exported = |author: &Author| {
+        author
+            .export(&opened.context, &control())
+            .unwrap()
+            .into_iter()
+            .map(|a| (a.name, a.digest, a.bytes))
+            .collect::<Vec<_>>()
+    };
+    let unchanged = exported(&author);
+    let invalid_id = "not-a-uuid";
+    let cases = [
+        (
+            assembly(invalid_id, "New"),
+            ErrorCode::InvalidId,
+            "DV-BASE-001",
+        ),
+        (
+            Change::Label {
+                id: invalid_id.into(),
+                name: "New".into(),
+            },
+            ErrorCode::InvalidId,
+            "DV-BASE-001",
+        ),
+        (
+            part_of(PLATE, Some(invalid_id)),
+            ErrorCode::InvalidId,
+            "DV-BASE-001",
+        ),
+        (
+            Change::Level {
+                id: PLATE.into(),
+                level: Some(invalid_id.into()),
+            },
+            ErrorCode::InvalidId,
+            "DV-BASE-001",
+        ),
+        (
+            Change::MainPart {
+                id: FRAME.into(),
+                part: invalid_id.into(),
+            },
+            ErrorCode::InvalidId,
+            "DV-BASE-001",
+        ),
+        (
+            create_weld(WELD, weld(invalid_id, MEMBER)),
+            ErrorCode::InvalidId,
+            "DV-BASE-001",
+        ),
+        (
+            create_bolt(BOLT, bolt(PLATE, invalid_id)),
+            ErrorCode::InvalidId,
+            "DV-BASE-001",
+        ),
+        (
+            assembly(PLATE, "Duplicate"),
+            ErrorCode::DuplicateId,
+            "DV-BASE-002",
+        ),
+        (
+            Change::Label {
+                id: PLATE.into(),
+                name: "".into(),
+            },
+            ErrorCode::InvalidArgument,
+            "DV-BASE-003",
+        ),
+        (
+            Change::Label {
+                id: PLATE.into(),
+                name: "x".repeat(257),
+            },
+            ErrorCode::LimitExceeded,
+            "DV-BASE-003",
+        ),
+        (
+            create_weld(WELD, weld(WELD, MEMBER)),
+            ErrorCode::InvalidArgument,
+            "DV-REL-006",
+        ),
+        (
+            create_weld(WELD, weld(PLATE, PLATE)),
+            ErrorCode::InvalidArgument,
+            "DV-REL-007",
+        ),
+        (
+            create_bolt(BOLT, bolt(BOLT, MEMBER)),
+            ErrorCode::InvalidArgument,
+            "DV-REL-006",
+        ),
+        (
+            create_bolt(BOLT, bolt(PLATE, PLATE)),
+            ErrorCode::InvalidArgument,
+            "DV-REL-007",
+        ),
+        (
+            Change::Level {
+                id: PLATE.into(),
+                level: Some(MEMBER.into()),
+            },
+            ErrorCode::InvalidArgument,
+            "DV-REL-003",
+        ),
+    ];
+    for (change, code, rule) in cases {
+        let error = author
+            .prepare(batch(&opened.context, vec![change]), &control())
+            .unwrap_err();
+        assert_eq!(error.code, code, "{rule}: {error:?}");
+        assert_eq!(error.rule_id, Some(rule), "{error:?}");
+    }
+    for actor in [false, true] {
+        let mut input = batch(
+            &opened.context,
+            vec![Change::Label {
+                id: PLATE.into(),
+                name: "Valid".into(),
+            }],
+        );
+        if actor {
+            input.actor = invalid_id.into();
+        } else {
+            input.op_id = invalid_id.into();
+        }
+        let error = author.prepare(input, &control()).unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidId);
+        assert_eq!(error.rule_id, None, "envelope identities are not bim:id");
+    }
+    assert_eq!(exported(&author), unchanged);
+}
 fn prepare_initial(author: &mut Author, context: &Context) -> Prepared {
     let mut input = batch(context, elements());
     input.resources = resources();
     input.changes.push(Change::Mesh(mesh()));
     author.prepare(input, &control()).unwrap()
+}
+
+#[test]
+fn f10_definition_admission_preserves_model_rules() {
+    for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        for definition in [
+            Definition::Material {
+                density_kg_m3: Some(value),
+                grade: None,
+                standard: None,
+                display_name: None,
+            },
+            Definition::RectangleProfile {
+                width_mm: value,
+                height_mm: 50.0,
+                section: SectionProperties::default(),
+            },
+            Definition::RectangleProfile {
+                width_mm: 100.0,
+                height_mm: 50.0,
+                section: SectionProperties {
+                    area_mm2: Some(value),
+                    ..SectionProperties::default()
+                },
+            },
+        ] {
+            let error = Resource::new(definition).unwrap_err();
+            assert_eq!(error.code, ErrorCode::NonFiniteNumber);
+            assert_eq!(error.rule_id, Some("DV-ATTR-003"));
+        }
+    }
+    let error = Resource::new(Definition::RectangleProfile {
+        width_mm: 1_000_001.0,
+        height_mm: 50.0,
+        section: SectionProperties::default(),
+    })
+    .unwrap_err();
+    assert_eq!(error.code, ErrorCode::LimitExceeded);
+    assert_eq!(error.rule_id, Some("DV-LIM-001"));
+    // A pinned resource with a mismatched digest is integrity failure, not a domain finding.
+    let mut resource = resources().remove(0);
+    resource.digest = digest(b"different definition");
+    let error = resource.bytes().unwrap_err();
+    assert_eq!(error.code, ErrorCode::IntegrityError);
+    assert_eq!(error.rule_id, None);
 }
 fn populated() -> (Author, Opened) {
     let (mut a, o) = open(initial());
@@ -1186,8 +1373,11 @@ fn holed_plate(holes: Vec<Vec<[f64; 3]>>) -> Change {
                 [0.0, 500.0, 0.0],
             ],
             thickness_mm: 10.0,
+            thickness_side: None,
+            corners: Vec::new(),
             holes,
-            cut: None,
+            hole_records: Vec::new(),
+            cuts: Vec::new(),
         },
         placement: pose(),
         material: None,
@@ -1304,13 +1494,221 @@ fn through_hole_polygons_are_authored_as_flat_points_and_counts_and_validated() 
 }
 
 #[test]
-fn the_plane_cut_is_authored_as_point_and_normal_and_validated() {
-    let cut = |point: [f64; 3], normal: [f64; 3]| {
-        Some(PlaneCut {
-            point_mm: point,
-            normal,
-        })
+fn corner_treatments_are_authored_as_five_parallel_arrays_and_bounded() {
+    use beamcraft_model::command::{CornerTreatment, PlateCorner};
+    let treated = |corners: Vec<PlateCorner>| Shape::Plate {
+        contour_mm: vec![
+            [0.0, 0.0, 0.0],
+            [1000.0, 0.0, 0.0],
+            [1000.0, 500.0, 0.0],
+            [0.0, 500.0, 0.0],
+        ],
+        thickness_mm: 10.0,
+        thickness_side: None,
+        corners,
+        holes: Vec::new(),
+        hole_records: Vec::new(),
+        cuts: Vec::new(),
     };
+    let chamfer = PlateCorner {
+        vertex: 1,
+        treatment: CornerTreatment::Chamfer {
+            d1_mm: 100.0,
+            d2_mm: 50.0,
+        },
+    };
+    let round = PlateCorner {
+        vertex: 3,
+        treatment: CornerTreatment::Round { radius_mm: 25.0 },
+    };
+    let (mut a, o) = open(initial());
+    let p = a
+        .prepare(
+            batch(
+                &o.context,
+                vec![Change::Create(Element {
+                    id: TREATED.into(),
+                    name: "Treated plate".into(),
+                    shape: treated(vec![chamfer, round]),
+                    placement: pose(),
+                    material: None,
+                })],
+            ),
+            &control(),
+        )
+        .unwrap();
+    let o = a
+        .install(
+            &o.context,
+            &p.token,
+            &p.op_id,
+            Decision::Accepted,
+            &control(),
+        )
+        .unwrap();
+    let prims = snapshot(&a, &o.context);
+    // The five parallel arrays, always together and of equal length; a value its treatment
+    // does not use is zero.
+    assert_eq!(
+        value(&prims, TREATED, "steel:plate:cornerVertex"),
+        Some(&Value::Array(vec![Value::Int(1), Value::Int(3)]))
+    );
+    let kinds = value(&prims, TREATED, "steel:plate:cornerKind").unwrap();
+    let Value::Array(kinds) = kinds else {
+        panic!("corner kinds are missing");
+    };
+    fn kind(k: &Value) -> &str {
+        match k {
+            Value::Text(token) => token.as_str(),
+            _ => panic!("a corner kind must be a token"),
+        }
+    }
+    assert_eq!(
+        kinds.iter().map(kind).collect::<Vec<_>>(),
+        ["chamfer", "round"]
+    );
+    assert_eq!(
+        value(&prims, TREATED, "steel:plate:cornerD1Mm"),
+        Some(&Value::Array(vec![
+            Value::Number(100.0),
+            Value::Number(0.0)
+        ]))
+    );
+    assert_eq!(
+        value(&prims, TREATED, "steel:plate:cornerD2Mm"),
+        Some(&Value::Array(vec![Value::Number(50.0), Value::Number(0.0)]))
+    );
+    assert_eq!(
+        value(&prims, TREATED, "steel:plate:cornerRadiusMm"),
+        Some(&Value::Array(vec![Value::Number(0.0), Value::Number(25.0)]))
+    );
+    // The exported layers pass the structural validator.
+    let layers = a.export(&o.context, &control()).unwrap();
+    let mut request = initial();
+    request.assets = layers;
+    request.manifest = request.manifest_digest().unwrap();
+    validate_layers(request, schema_identity().unwrap(), &control()).unwrap();
+
+    // An untreated plate authors none of the five attributes.
+    let (mut b, ob) = open(initial());
+    let p = b
+        .prepare(
+            batch(
+                &ob.context,
+                vec![Change::Create(Element {
+                    id: TREATED.into(),
+                    name: "Sharp plate".into(),
+                    shape: treated(Vec::new()),
+                    placement: pose(),
+                    material: None,
+                })],
+            ),
+            &control(),
+        )
+        .unwrap();
+    let ob = b
+        .install(
+            &ob.context,
+            &p.token,
+            &p.op_id,
+            Decision::Accepted,
+            &control(),
+        )
+        .unwrap();
+    assert_eq!(
+        value(
+            &snapshot(&b, &ob.context),
+            TREATED,
+            "steel:plate:cornerVertex"
+        ),
+        None
+    );
+
+    // Invalid corner input is refused before anything is written.
+    let (mut c, oc) = open(initial());
+    let mut bad = |corners: Vec<PlateCorner>| {
+        c.prepare(
+            batch(
+                &oc.context,
+                vec![Change::Create(Element {
+                    id: TREATED.into(),
+                    name: "Bad plate".into(),
+                    shape: treated(corners),
+                    placement: pose(),
+                    material: None,
+                })],
+            ),
+            &control(),
+        )
+        .map(|_| ())
+        .unwrap_err()
+        .code
+    };
+    // A vertex that does not exist, one named twice, and unbounded values.
+    assert_eq!(
+        bad(vec![PlateCorner {
+            vertex: 9,
+            treatment: CornerTreatment::Round { radius_mm: 10.0 }
+        }]),
+        ErrorCode::InvalidArgument
+    );
+    assert_eq!(bad(vec![round, round]), ErrorCode::InvalidArgument);
+    assert_eq!(
+        bad(vec![PlateCorner {
+            vertex: 0,
+            treatment: CornerTreatment::Round { radius_mm: 2e9 }
+        }]),
+        ErrorCode::LimitExceeded
+    );
+    assert_eq!(
+        bad(vec![PlateCorner {
+            vertex: 0,
+            treatment: CornerTreatment::Round {
+                radius_mm: f64::NAN
+            }
+        }]),
+        ErrorCode::NonFiniteNumber
+    );
+    assert_eq!(
+        bad(vec![PlateCorner {
+            vertex: 0,
+            treatment: CornerTreatment::Round { radius_mm: 0.0 }
+        }]),
+        ErrorCode::InvalidArgument
+    );
+}
+
+#[test]
+fn the_plane_cut_records_are_authored_as_five_parallel_arrays_and_validated() {
+    use beamcraft_model::command::KeepSide;
+    use beamcraft_model::id::OpId;
+    let record = |ordinal: u16, point: [f64; 3], normal: [f64; 3], keep: KeepSide| CutRecord {
+        operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000c7").unwrap(),
+        ordinal,
+        point_mm: point,
+        normal,
+        keep,
+    };
+    let cuts = |records: Vec<CutRecord>| Shape::Plate {
+        contour_mm: vec![
+            [0.0, 0.0, 0.0],
+            [1000.0, 0.0, 0.0],
+            [1000.0, 500.0, 0.0],
+            [0.0, 500.0, 0.0],
+        ],
+        thickness_mm: 10.0,
+        thickness_side: None,
+        corners: Vec::new(),
+        holes: Vec::new(),
+        hole_records: Vec::new(),
+        cuts: records,
+    };
+    let one = vec![record(
+        0,
+        [250.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        KeepSide::Negative,
+    )];
     let (mut a, o) = open(initial());
     let p = a
         .prepare(
@@ -1319,17 +1717,7 @@ fn the_plane_cut_is_authored_as_point_and_normal_and_validated() {
                 vec![Change::Create(Element {
                     id: PLATE.into(),
                     name: "Cut".into(),
-                    shape: Shape::Plate {
-                        contour_mm: vec![
-                            [0.0, 0.0, 0.0],
-                            [1000.0, 0.0, 0.0],
-                            [1000.0, 500.0, 0.0],
-                            [0.0, 500.0, 0.0],
-                        ],
-                        thickness_mm: 10.0,
-                        holes: Vec::new(),
-                        cut: cut([250.0, 0.0, 0.0], [1.0, 0.0, 0.0]),
-                    },
+                    shape: cuts(one.clone()),
                     placement: pose(),
                     material: None,
                 })],
@@ -1348,20 +1736,18 @@ fn the_plane_cut_is_authored_as_point_and_normal_and_validated() {
         .unwrap();
     let prims = snapshot(&a, &o.context);
     assert_eq!(
-        value(&prims, PLATE, "steel:cut:pointMm"),
-        Some(&Value::Array(vec![
-            Value::Number(250.0),
-            Value::Number(0.0),
-            Value::Number(0.0)
-        ]))
+        value(&prims, PLATE, "steel:cut:operationId"),
+        Some(&Value::Array(vec![Value::Text(
+            "019a7bf0-0000-7000-8000-0000000000c7".into()
+        )]))
     );
     assert_eq!(
-        value(&prims, PLATE, "steel:cut:normal"),
-        Some(&Value::Array(vec![
-            Value::Number(1.0),
-            Value::Number(0.0),
-            Value::Number(0.0)
-        ]))
+        value(&prims, PLATE, "steel:cut:ordinal"),
+        Some(&Value::Array(vec![Value::Int(0)]))
+    );
+    assert_eq!(
+        value(&prims, PLATE, "steel:cut:keep"),
+        Some(&Value::Array(vec![Value::Text("negative".into())]))
     );
     // The exported layers pass the structural validator, so a reader can rely on the shape.
     let layers = a.export(&o.context, &control()).unwrap();
@@ -1379,10 +1765,16 @@ fn the_plane_cut_is_authored_as_point_and_normal_and_validated() {
             name: "Cut beam".into(),
             shape: Shape::Member {
                 kind: MemberKind::Beam,
-                axis_mm: [[0.0, 0.0, 0.0], [6000.0, 0.0, 0.0]],
+                axis_mm: vec![[0.0, 0.0, 0.0], [6000.0, 0.0, 0.0]],
                 profile: resources()[0].digest,
                 roll_rad: None,
-                cut: cut([3000.0, 0.0, 0.0], [1.0, 0.0, 0.0]),
+                placement: None,
+                cuts: vec![record(
+                    0,
+                    [3000.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    KeepSide::Negative,
+                )],
             },
             placement: pose(),
             material: None,
@@ -1423,38 +1815,65 @@ fn the_plane_cut_is_authored_as_point_and_normal_and_validated() {
         .unwrap_err()
         .code
     };
-    let base = |cut: Option<PlaneCut>| Shape::Plate {
-        contour_mm: vec![
-            [0.0, 0.0, 0.0],
-            [1000.0, 0.0, 0.0],
-            [1000.0, 500.0, 0.0],
-            [0.0, 500.0, 0.0],
-        ],
-        thickness_mm: 10.0,
-        holes: Vec::new(),
-        cut,
-    };
-    // A zero normal is not a plane.
+    // A zero normal is not a plane; finiteness and the coordinate cap come first.
     assert_eq!(
-        refuse(base(cut([0.0, 0.0, 0.0], [0.0, 0.0, 0.0]))),
+        refuse(cuts(vec![record(
+            0,
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
+            KeepSide::Negative
+        )])),
         ErrorCode::InvalidArgument
     );
     assert_eq!(
-        refuse(base(cut([f64::NAN, 0.0, 0.0], [1.0, 0.0, 0.0]))),
+        refuse(cuts(vec![record(
+            0,
+            [f64::NAN, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            KeepSide::Negative
+        )])),
         ErrorCode::NonFiniteNumber
     );
     assert_eq!(
-        refuse(base(cut([2e9, 0.0, 0.0], [1.0, 0.0, 0.0]))),
+        refuse(cuts(vec![record(
+            0,
+            [2e9, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            KeepSide::Negative
+        )])),
         ErrorCode::LimitExceeded
     );
-    // Only the point attribute is a damaged record, not "no cut".
+    // Ordinals are strictly ascending and bounded by the kernel's naming capacity.
+    assert_eq!(
+        refuse(cuts(vec![
+            record(0, [250.0, 0.0, 0.0], [1.0, 0.0, 0.0], KeepSide::Negative),
+            record(0, [150.0, 0.0, 0.0], [1.0, 0.0, 0.0], KeepSide::Positive),
+        ])),
+        ErrorCode::InvalidArgument
+    );
+    assert_eq!(
+        refuse(cuts(vec![record(
+            1000,
+            [250.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            KeepSide::Negative
+        )])),
+        ErrorCode::LimitExceeded
+    );
+    // A zero normal never reaches the layer engine either.
     assert_eq!(
         refuse(Shape::Member {
             kind: MemberKind::Beam,
-            axis_mm: [[0.0, 0.0, 0.0], [6000.0, 0.0, 0.0]],
+            axis_mm: vec![[0.0, 0.0, 0.0], [6000.0, 0.0, 0.0]],
             profile: resources()[0].digest,
             roll_rad: None,
-            cut: cut([3000.0, 0.0, 0.0], [0.0, 0.0, 0.0]),
+            placement: None,
+            cuts: vec![record(
+                0,
+                [3000.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                KeepSide::Negative
+            )],
         }),
         ErrorCode::InvalidArgument
     );
@@ -2242,6 +2661,7 @@ fn weld(main: &str, secondary: &str) -> Weld {
         size_mm: 6.0,
         location: "workshop".into(),
         side: "both".into(),
+        geometry: None,
     }
 }
 fn create_weld(id: &str, w: Weld) -> Change {
@@ -2504,6 +2924,95 @@ fn wrong_weld_inputs_targets_and_loaded_records_are_refused() {
             .map(|e| e.code),
         Some(ErrorCode::InvalidArgument)
     );
+}
+
+#[test]
+fn a_path_weld_authors_its_geometry_and_carries_a_derived_solid() {
+    let (mut a, o) = populated();
+    let mut w = weld(PLATE, MEMBER);
+    w.geometry = Some(WeldPath {
+        points_mm: vec![[0.0; 3], [100.0, 0.0, 0.0]],
+        all_around: true,
+        contour: "concave".into(),
+    });
+    // The derived solid is authored in the same batch as the weld, as every create does.
+    let mut body = mesh();
+    body.id = WELD.into();
+    let (_, o) = installed(&mut a, &o, vec![create_weld(WELD, w), Change::Mesh(body)]);
+    let prims = snapshot(&a, &o.context);
+    assert_eq!(
+        value(&prims, WELD, "steel:weld:allAround"),
+        Some(&Value::Text("true".into()))
+    );
+    assert_eq!(
+        value(&prims, WELD, "steel:weld:contour"),
+        Some(&Value::Text("concave".into()))
+    );
+    match value(&prims, WELD, "steel:weld:pathMm") {
+        Some(Value::Array(points)) => {
+            assert_eq!(points.len(), 2);
+        }
+        other => panic!("pathMm is not a point array: {other:?}"),
+    }
+    assert!(
+        snapshot(&a, &o.context)
+            .iter()
+            .any(|p| p.path == format!("{}/Geometry", path(WELD)))
+    );
+
+    // Refusals, against a fresh state so no identity is taken: bad paths and a contour token,
+    // symbol data without a path, and a mesh under a weld without one.
+    let (mut a, o) = populated();
+    let with = |f: &dyn Fn(&mut Weld)| {
+        let mut w = weld(PLATE, MEMBER);
+        f(&mut w);
+        vec![create_weld(WELD, w)]
+    };
+    let path_of = |points: Vec<[f64; 3]>| WeldPath {
+        points_mm: points,
+        all_around: false,
+        contour: "none".into(),
+    };
+    let cases: Vec<(Vec<Change>, ErrorCode)> = vec![
+        (
+            with(&|w| w.geometry = Some(path_of(vec![[0.0; 3]]))),
+            ErrorCode::InvalidArgument,
+        ),
+        (
+            with(&|w| w.geometry = Some(path_of(vec![[0.0; 3], [0.0, 0.0, 0.0]]))),
+            ErrorCode::InvalidArgument,
+        ),
+        (
+            with(&|w| w.geometry = Some(path_of(vec![[0.0; 3], [f64::NAN, 0.0, 0.0]]))),
+            ErrorCode::NonFiniteNumber,
+        ),
+        (
+            with(&|w| w.geometry = Some(path_of(vec![[2.0e10, 0.0, 0.0], [0.0; 3]]))),
+            ErrorCode::LimitExceeded,
+        ),
+        (
+            with(&|w| {
+                let mut g = path_of(vec![[0.0; 3], [100.0, 0.0, 0.0]]);
+                g.contour = "round".into();
+                w.geometry = Some(g);
+            }),
+            ErrorCode::InvalidArgument,
+        ),
+        (with(&|_w| ()), ErrorCode::UnsupportedProperty), // a mesh under this plain weld, added below
+    ];
+    // The last case pairs the plain weld with a mesh change (no path, so no body).
+    for (i, (changes, code)) in cases.iter().enumerate() {
+        let changes = if i + 1 == cases.len() {
+            let mut body = mesh();
+            body.id = WELD.into();
+            let mut changes = changes.clone();
+            changes.push(Change::Mesh(body));
+            changes
+        } else {
+            changes.clone()
+        };
+        assert_eq!(refused_code(&mut a, &o, changes), Some(*code), "case {i}");
+    }
 }
 
 const BOLT: &str = "0199e7a0-0000-7000-8000-000000000301";

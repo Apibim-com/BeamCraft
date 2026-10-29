@@ -19,7 +19,7 @@ use crate::camera::View;
 use crate::tools::{FormError, ToolError, decode, rejection, text};
 use beamcraft_engine::ViewSnapshot;
 use beamcraft_engine::query::feature::FeatureKind;
-use beamcraft_engine::query::pick::{PickQuery, RayPick, pick};
+use beamcraft_engine::query::pick::{PickQuery, RayPick, SelectionFilter, pick};
 use beamcraft_json::Json;
 use beamcraft_model::limits::COORDINATE_CAP_MM;
 use std::path::Path;
@@ -124,24 +124,35 @@ pub fn parse_pick(exit_code: Option<i32>, stdout: &[u8]) -> Result<Option<String
 
 /// What the CLI's `pick` with [`pick_args`] answers for `ray`, computed in this process on
 /// `snapshot` by the same engine query: the element of the nearest front face along the ray, or
-/// `None` for empty space. A refusal carries the engine's code, as the CLI's reply would.
-pub fn pick_in(snapshot: &ViewSnapshot, ray: &Ray) -> Result<Option<String>, ToolError> {
-    Ok(face_pick(snapshot, ray)?.map(|(_, id)| id))
+/// `None` for empty space. `selection` is the window's switches (V11): a class that is off is
+/// never the answer. A refusal carries the engine's code, as the CLI's reply would.
+pub fn pick_in(
+    snapshot: &ViewSnapshot,
+    ray: &Ray,
+    selection: SelectionFilter,
+) -> Result<Option<String>, ToolError> {
+    Ok(face_pick(snapshot, ray, selection)?.map(|(_, id)| id))
 }
 
 /// Where a click lands in 3D (issue #134 placement): the engine's front-face hit point on the
-/// snapshot on screen together with the element it names. `None` for empty space; the caller
+/// snapshot on screen together with the element it names. The selection switches do not apply:
+/// placement is a tool's point resolution, not a selection. `None` for empty space; the caller
 /// falls back to [`ground_point`] then.
 pub fn pick_point_in(
     snapshot: &ViewSnapshot,
     ray: &Ray,
 ) -> Result<Option<([f64; 3], String)>, ToolError> {
-    face_pick(snapshot, ray)
+    face_pick(snapshot, ray, SelectionFilter::ALL)
 }
 
-fn face_pick(snapshot: &ViewSnapshot, ray: &Ray) -> Result<Option<([f64; 3], String)>, ToolError> {
+fn face_pick(
+    snapshot: &ViewSnapshot,
+    ray: &Ray,
+    selection: SelectionFilter,
+) -> Result<Option<([f64; 3], String)>, ToolError> {
     let mut query = RayPick::new(ray.origin, ray.direction, vec![FeatureKind::Face]);
     query.max_hits = 1;
+    query.selection = selection;
     let result = pick(snapshot, &PickQuery::Ray(query)).map_err(|e| ToolError {
         code: e.f04_code().as_str().to_owned(),
         message: format!("the pick was refused ({})", e.code().as_str()),
@@ -365,6 +376,8 @@ pub struct Editor {
     pub move_to: [String; 3],
     /// `--offset` of a copy.
     pub copy_offset: [String; 3],
+    /// Copy as a linked instance of the shared definition.
+    pub copy_instance: bool,
     /// The author recorded as `--actor-id` of a move, copy or delete, when the window has one.
     pub actor: Option<String>,
     staged: Option<Edit>,
@@ -378,6 +391,7 @@ impl Default for Editor {
             action: EditKind::Move,
             move_to: Default::default(),
             copy_offset: Default::default(),
+            copy_instance: false,
             actor: None,
             staged: None,
             busy: false,
@@ -467,7 +481,12 @@ impl Editor {
                 point("Position", &self.move_to)?,
             ],
             EditKind::Copy => vec![
-                "copy-element".to_owned(),
+                if self.copy_instance {
+                    "copy-instance"
+                } else {
+                    "copy-element"
+                }
+                .to_owned(),
                 "--store".into(),
                 store,
                 "--id".into(),

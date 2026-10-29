@@ -6,7 +6,8 @@
 //! commands; exit 0 success, 2 rejection, 3 backend unavailable, 4 outcome unknown).
 
 use crate::report::report_with;
-use beamcraft_cli::copy::{CopiedElement, CopyRequest, copy_element};
+use beamcraft_cli::copy::{CopiedElement, CopyRequest, copy_element, copy_instance};
+use beamcraft_cli::cut::{CutElement, CutRequest, cut_by_plane_record};
 use beamcraft_cli::definition::{
     DefineRequest, Defined, DefinitionRecord, NameResolution, define, definition_path,
     head_definitions, resolve_name,
@@ -14,8 +15,11 @@ use beamcraft_cli::definition::{
 use beamcraft_cli::delete::{DeleteRequest, DeletedKind, delete_element};
 use beamcraft_cli::edit::{UpdateRequest, UpdatedElement, update_element};
 use beamcraft_cli::history::{Direction, Step, step, timeline};
+use beamcraft_cli::hole::{AddHoleRequest, add_hole_command};
 use beamcraft_cli::library::open_lookup;
-use beamcraft_cli::member::{CreateMemberRequest, create_member};
+use beamcraft_cli::member::{
+    CreateMemberRequest, CreatePolybeamRequest, create_member, create_polybeam,
+};
 use beamcraft_cli::plate::{
     AcceptedBinding, CreateRequest, Created, Inspection, PlateError, ProjectClaim, QuantityReport,
     RevisionSummary, accepted_binding, claim_project, ensure_project, inspect,
@@ -38,13 +42,16 @@ use beamcraft_host::{
 };
 use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::{
-    CopyElement, CreatePlate, CreateStraightMember, DeleteElement, ElementPatch, MAX_HOLES,
-    MemberKind, Placement, PlaneCut, UpdateElement,
+    AddHole, CopyElement, CornerTreatment, CreatePlate, CreatePolybeam, CreateStraightMember,
+    CutByPlane, CutRecord, DeleteElement, ElementPatch, HoleSpec, KeepSide, MAX_HOLES, MemberKind,
+    Placement, PlateCorner, PlateSide, SectionDepthPosition, SectionPlacement,
+    SectionPlanePosition, UpdateElement,
 };
 use beamcraft_model::definition::SectionProperties;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use beamcraft_model::limits::MAX_MEMBER_PATH_POINTS;
 use beamcraft_model::section::{CustomSection, ParametricSection, SectionFamily, SectionShape};
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -67,22 +74,42 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
 }
 
 const CREATE_OPTIONS: &[&str] = &[
+    "--class",
+    "--plane",
     "--store",
     "--width",
     "--length",
     "--contour",
     "--thickness",
+    "--thickness-side",
+    "--corners",
     "--name",
     "--translation",
+    "--orientation-xyzw",
     "--material-digest",
     "--material",
     "--hole-rect",
     "--hole-round",
     "--hole-segments",
-    "--cut-point",
-    "--cut-normal",
     "--new-id",
     "--op-id",
+    "--revision-id",
+    "--actor-id",
+    "--project-id",
+    "--workspace-id",
+    "--z",
+    "--level",
+    "--offset",
+    "--origin-at-grid",
+];
+
+const ADD_HOLE_OPTIONS: &[&str] = &[
+    "--store",
+    "--id",
+    "--operation-id",
+    "--polygon",
+    "--hole-rect",
+    "--hole-round",
     "--revision-id",
     "--actor-id",
     "--project-id",
@@ -137,21 +164,66 @@ const SECTION_ONLY_OPTIONS: &[&str] = &[
     "--h", "--b", "--tw", "--tf", "--t", "--r", "--c", "--d", "--outer", "--cavity",
 ];
 
+/// The `define-fastener` options (A14.1): the definition takes every value from one fastener
+/// library entry; there is no explicit-value form and no environment yet.
+const DEFINE_FASTENER_OPTIONS: &[&str] = &[
+    "--store",
+    "--fastener-library",
+    "--designation",
+    "--name",
+    "--revision-id",
+    "--actor-id",
+    "--project-id",
+    "--workspace-id",
+];
+
 const CREATE_MEMBER_OPTIONS: &[&str] = &[
+    "--class",
+    "--plane",
     "--store",
     "--kind",
     "--start",
     "--end",
+    "--axis-lock",
     "--profile-digest",
     "--profile",
     "--roll",
+    "--section-plane",
+    "--section-plane-offset",
+    "--section-depth",
+    "--section-depth-offset",
+    "--start-offset",
+    "--end-offset",
     "--name",
     "--translation",
     "--orientation-xyzw",
     "--material-digest",
     "--material",
-    "--cut-point",
-    "--cut-normal",
+    "--new-id",
+    "--op-id",
+    "--revision-id",
+    "--actor-id",
+    "--project-id",
+    "--workspace-id",
+    "--z",
+    "--level",
+    "--offset",
+    "--start-at-grid",
+    "--end-at-grid",
+];
+
+const CREATE_POLYBEAM_OPTIONS: &[&str] = &[
+    "--class",
+    "--store",
+    "--kind",
+    "--points",
+    "--profile-digest",
+    "--profile",
+    "--name",
+    "--translation",
+    "--orientation-xyzw",
+    "--material-digest",
+    "--material",
     "--new-id",
     "--op-id",
     "--revision-id",
@@ -160,12 +232,29 @@ const CREATE_MEMBER_OPTIONS: &[&str] = &[
     "--workspace-id",
 ];
 
+const CUT_OPTIONS: &[&str] = &[
+    "--store",
+    "--id",
+    "--operation-id",
+    "--point",
+    "--normal",
+    "--keep",
+    "--op-id",
+    "--revision-id",
+    "--actor-id",
+    "--project-id",
+    "--workspace-id",
+];
+
 const UPDATE_OPTIONS: &[&str] = &[
+    "--class",
     "--store",
     "--id",
     "--name",
     "--material-digest",
     "--thickness",
+    "--thickness-side",
+    "--axis-point",
     "--translation",
     "--orientation-xyzw",
     "--level",
@@ -226,14 +315,18 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
     let allowed: &[&str] = match *command {
         "create-plate" => CREATE_OPTIONS,
         "create-member" => CREATE_MEMBER_OPTIONS,
+        "create-polybeam" => CREATE_POLYBEAM_OPTIONS,
+        "add-hole" => ADD_HOLE_OPTIONS,
         "update-element" => UPDATE_OPTIONS,
         "delete-element" => DELETE_OPTIONS,
-        "copy-element" => COPY_OPTIONS,
+        "copy-element" | "copy-instance" => COPY_OPTIONS,
+        "cut-by-plane" => CUT_OPTIONS,
         "create-workspace" | "inspect-workspace" | "publish-workspace" => WORKSPACE_OPTIONS,
         "undo-workspace" | "redo-workspace" => HISTORY_OPTIONS,
         "inspect-workspace-history" => &["--workspace-dir"],
         "define-material" => DEFINE_MATERIAL_OPTIONS,
         "define-profile" => DEFINE_PROFILE_OPTIONS,
+        "define-fastener" => DEFINE_FASTENER_OPTIONS,
         "inspect-elements" => &["--store", "--element"],
         "definitions" => &["--store", "--name", "--offset", "--limit"],
         _ => return Err(invalid("unknown command")),
@@ -272,13 +365,19 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
     match *command {
         "create-plate" => create(&store, &options, candidates),
         "create-member" => create_member_command(&store, &options, candidates),
+        "create-polybeam" => create_polybeam_command(&store, &options, candidates),
+        "add-hole" => add_hole_cli(&store, &options),
         "update-element" => update_command(&store, &options),
         "delete-element" => delete_command(&store, &options),
-        "copy-element" => copy_command(&store, &options),
+        "copy-element" => copy_command(&store, &options, false),
+        "copy-instance" => copy_command(&store, &options, true),
+        "cut-by-plane" => cut_command(&store, &options),
         "create-workspace" | "inspect-workspace" | "publish-workspace" => {
-            workspace_command(&store, command, &options)
+            workspace_command(&store, command, &options, candidates)
         }
-        "define-material" | "define-profile" => define_command(&store, command, &options),
+        "define-material" | "define-profile" | "define-fastener" => {
+            define_command(&store, command, &options)
+        }
         "definitions" => definitions_json(&inspect(&store)?, &options),
         _ => Ok(inspection_json(&inspect(&store)?, element)?),
     }
@@ -326,6 +425,14 @@ pub(crate) fn id_error(error: beamcraft_model::id::IdError) -> PlateError {
     }
 }
 
+/// Command-envelope identities are not the F10 element attribute `bim:id`.
+pub(crate) fn context_id_error(error: beamcraft_model::id::IdError) -> PlateError {
+    PlateError {
+        rule_id: None,
+        ..id_error(error)
+    }
+}
+
 /// D1: an explicit `--project-id` must be the project the store records (a store without a
 /// revision takes it). The early check runs here; the returned claim binds the command's base
 /// loading to that project until it is dropped, so a store initialised by another writer in
@@ -336,7 +443,7 @@ pub(crate) fn check_project_option(
 ) -> Run<Option<ProjectClaim>> {
     match options.get("--project-id") {
         Some(text) => {
-            let project = ProjectId::parse(text).map_err(id_error)?;
+            let project = ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?;
             ensure_project(store, &project)?;
             Ok(Some(claim_project(project)))
         }
@@ -622,6 +729,19 @@ fn define_command(
             display_name: None,
         }
         .named(given("--name"))
+    } else if command == "define-fastener" {
+        // A14.1: the definition takes every value from one fastener library entry, so it never
+        // depends on the file afterwards. One library, no environment yet (O-B2).
+        let path =
+            given("--fastener-library").ok_or_else(|| invalid("--fastener-library is required"))?;
+        let designation =
+            given("--designation").ok_or_else(|| invalid("--designation is required"))?;
+        let library = beamcraft_cli::library::load_fastener(path)?;
+        library
+            .entry(designation)?
+            .record
+            .clone()
+            .named(given("--name"))
     } else if ["--library", "--environment", "--user-library"]
         .iter()
         .any(|option| options.contains_key(option))
@@ -663,7 +783,7 @@ fn define_command(
         profile_record(options)?.named(given("--name"))
     };
     let revision_id = match given("--revision-id") {
-        Some(text) => RevisionId::parse(text).map_err(id_error)?,
+        Some(text) => RevisionId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => RevisionId::from_uuid(fresh()?),
     };
     let actor = match given("--actor-id") {
@@ -671,11 +791,11 @@ fn define_command(
         None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
     };
     let project = match given("--project-id") {
-        Some(text) => ProjectId::parse(text).map_err(id_error)?,
+        Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => ProjectId::from_uuid(fresh()?),
     };
     let workspace = match given("--workspace-id") {
-        Some(text) => WorkspaceId::parse(text).map_err(id_error)?,
+        Some(text) => WorkspaceId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => WorkspaceId::from_uuid(fresh()?),
     };
     let defined = define(
@@ -707,16 +827,17 @@ fn create(
         })
     };
     let given = |key: &str| options.get(key).copied();
+    let plane = command_plane(options)?;
     let new_id = match given("--new-id") {
         Some(text) => ElementId::parse(text).map_err(id_error)?,
         None => ElementId::from_uuid(fresh()?),
     };
     let op_id = match given("--op-id") {
-        Some(text) => OpId::parse(text).map_err(id_error)?,
+        Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => OpId::from_uuid(fresh()?),
     };
     let revision_id = match given("--revision-id") {
-        Some(text) => RevisionId::parse(text).map_err(id_error)?,
+        Some(text) => RevisionId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => RevisionId::from_uuid(fresh()?),
     };
     let actor = match given("--actor-id") {
@@ -724,11 +845,11 @@ fn create(
         None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
     };
     let project = match given("--project-id") {
-        Some(text) => ProjectId::parse(text).map_err(id_error)?,
+        Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => ProjectId::from_uuid(fresh()?),
     };
     let workspace = match given("--workspace-id") {
-        Some(text) => WorkspaceId::parse(text).map_err(id_error)?,
+        Some(text) => WorkspaceId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => WorkspaceId::from_uuid(fresh()?),
     };
     let replay = if options.contains_key("--op-id") && options.contains_key("--material") {
@@ -737,6 +858,8 @@ fn create(
         None
     };
     let thickness = float(options, "--thickness")?;
+    let thickness_side = thickness_side(options)?;
+    let corners = corner_treatments(options)?;
     let contour = match given("--contour") {
         Some(text) => {
             if options.contains_key("--width") || options.contains_key("--length") {
@@ -751,13 +874,37 @@ fn create(
     };
     let name = given("--name").unwrap_or("Plate").to_owned();
     let command = CreatePlate {
+        class: given("--class")
+            .map(|v| {
+                v.parse::<i32>()
+                    .map_err(|_| invalid("class must be an int32"))
+            })
+            .transpose()?
+            .unwrap_or(0),
         new_id,
         name,
         contour_points_mm: contour,
         thickness_mm: thickness,
-        placement: Placement {
-            translation_mm: given("--translation").map_or(Ok([0.0; 3]), translation)?,
-            ..Placement::IDENTITY
+        thickness_side,
+        corners,
+        placement: if let Some(plane) = plane {
+            plane.placement()?
+        } else {
+            Placement {
+                translation_mm: if options.contains_key("--origin-at-grid") {
+                    grid_placement(store, options, &op_id, "--origin-at-grid")?
+                } else {
+                    if ["--z", "--level", "--offset"]
+                        .iter()
+                        .any(|k| options.contains_key(k))
+                    {
+                        return Err(invalid("height options require grid placement"));
+                    }
+                    given("--translation").map_or(Ok([0.0; 3]), translation)?
+                },
+                orientation_xyzw: given("--orientation-xyzw")
+                    .map_or(Ok([0.0, 0.0, 0.0, 1.0]), quaternion)?,
+            }
         },
         material_digest: selected(
             store,
@@ -768,7 +915,6 @@ fn create(
             candidates,
         )?,
         holes_mm: holes(options)?,
-        cut: cut(options)?,
     };
     let created = create_plate_draft(
         store,
@@ -809,21 +955,6 @@ fn create(
 /// the input edge, and are authored as the doubles they round to.
 fn holes(options: &BTreeMap<&str, &str>) -> Run<Vec<Vec<[f64; 2]>>> {
     let given = |key: &str| options.get(key).copied();
-    let numbers = |text: &str, count: usize| -> Run<Vec<f64>> {
-        let values: Vec<f64> = text
-            .split(',')
-            .map(|p| {
-                p.trim()
-                    .parse::<f64>()
-                    .map_err(|_| invalid("a hole value is not a number"))
-            })
-            .collect::<Run<_>>()?;
-        if values.len() == count {
-            Ok(values)
-        } else {
-            Err(invalid("a hole has the wrong number of values"))
-        }
-    };
     let segments = match given("--hole-segments") {
         Some(text) => text
             .parse::<usize>()
@@ -838,7 +969,7 @@ fn holes(options: &BTreeMap<&str, &str>) -> Run<Vec<Vec<[f64; 2]>>> {
     let mut result = Vec::new();
     if let Some(list) = given("--hole-rect") {
         for item in list.split(';').take(MAX_HOLES.saturating_add(1)) {
-            if let [x, y, w, h] = numbers(item, 4)?[..] {
+            if let [x, y, w, h] = numbers_list(item, 4)?[..] {
                 if !size_ok(&[w, h]) {
                     return Err(invalid("a hole width and height must be positive"));
                 }
@@ -848,7 +979,7 @@ fn holes(options: &BTreeMap<&str, &str>) -> Run<Vec<Vec<[f64; 2]>>> {
     }
     if let Some(list) = given("--hole-round") {
         for item in list.split(';').take(MAX_HOLES.saturating_add(1)) {
-            if let [x, y, d] = numbers(item, 3)?[..] {
+            if let [x, y, d] = numbers_list(item, 3)?[..] {
                 if !size_ok(&[d]) {
                     return Err(invalid("a hole diameter must be positive"));
                 }
@@ -867,20 +998,69 @@ fn holes(options: &BTreeMap<&str, &str>) -> Run<Vec<Vec<[f64; 2]>>> {
     Ok(result)
 }
 
-/// The optional single plane cut of `create-plate` and `create-member` (A03, experimental):
-/// `--cut-point X,Y,Z --cut-normal X,Y,Z`, both or neither, element-local millimetres. The kept
-/// half-space is the one the normal points *away from*, so the normal points into the trimmed-off
-/// material; whether the plane crosses the element is the kernel's decision, and a scaled normal
-/// describes the same plane.
-fn cut(options: &BTreeMap<&str, &str>) -> Run<Option<PlaneCut>> {
-    match (options.get("--cut-point"), options.get("--cut-normal")) {
-        (None, None) => Ok(None),
-        (Some(point), Some(normal)) => Ok(Some(PlaneCut {
-            point_mm: translation(point)?,
-            normal: translation(normal)?,
-        })),
-        _ => Err(invalid("--cut-point and --cut-normal are given together")),
-    }
+/// The `--thickness-side` option (A12.1): `top`, `middle` or `bottom`; absent means the
+/// engine's `top` default.
+fn thickness_side(options: &BTreeMap<&str, &str>) -> Run<Option<PlateSide>> {
+    options
+        .get("--thickness-side")
+        .map(|token| {
+            PlateSide::parse(token)
+                .ok_or_else(|| invalid("--thickness-side is top, middle or bottom"))
+        })
+        .transpose()
+}
+
+/// The `--corners` option (A12.2): `vertex=chamfer:d1[,d2]` or `vertex=round:r`, several
+/// separated by `;`, for example `--corners "0=chamfer:100;2=round:50"`. A chamfer with one
+/// distance is the symmetric cut (d2 defaults to d1). The order of the entries is the authored
+/// order; the engine decides whether each treated corner really turns and fits its edges.
+fn corner_treatments(options: &BTreeMap<&str, &str>) -> Run<Vec<PlateCorner>> {
+    let Some(text) = options.get("--corners") else {
+        return Ok(Vec::new());
+    };
+    text.split(';')
+        .map(|entry| {
+            let bad =
+                || invalid("a corner is vertex=chamfer:d1[,d2] or vertex=round:r, `;`-separated");
+            let (vertex, rest) = entry.split_once('=').ok_or_else(bad)?;
+            let vertex: usize = vertex.trim().parse().map_err(|_| bad())?;
+            let (kind, params) = rest.split_once(':').ok_or_else(bad)?;
+            let values: Vec<f64> = params
+                .split(',')
+                .map(|v| v.trim().parse::<f64>())
+                .collect::<Result<_, _>>()
+                .map_err(|_| bad())?;
+            let treatment = match kind.trim() {
+                "chamfer" => match values.as_slice() {
+                    [d1] => CornerTreatment::Chamfer {
+                        d1_mm: *d1,
+                        d2_mm: *d1,
+                    },
+                    [d1, d2] => CornerTreatment::Chamfer {
+                        d1_mm: *d1,
+                        d2_mm: *d2,
+                    },
+                    _ => return Err(bad()),
+                },
+                "round" => match values.as_slice() {
+                    [radius] => CornerTreatment::Round { radius_mm: *radius },
+                    _ => return Err(bad()),
+                },
+                _ => return Err(bad()),
+            };
+            Ok(PlateCorner { vertex, treatment })
+        })
+        .collect()
+}
+
+/// The cutting plane of `cut-by-plane`: `--point X,Y,Z --normal X,Y,Z --keep positive|negative`,
+/// element-local millimetres; whether the plane crosses the element is the kernel's decision, and
+/// a scaled normal describes the same plane.
+fn keep_side(options: &BTreeMap<&str, &str>) -> Run<KeepSide> {
+    options
+        .get("--keep")
+        .and_then(|token| KeepSide::parse(token))
+        .ok_or_else(|| invalid("--keep is positive or negative"))
 }
 
 fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Json> {
@@ -896,11 +1076,11 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
     let target_id = ElementId::parse(given("--id").ok_or_else(|| invalid("--id is required"))?)
         .map_err(id_error)?;
     let op_id = match given("--op-id") {
-        Some(text) => OpId::parse(text).map_err(id_error)?,
+        Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => OpId::from_uuid(fresh()?),
     };
     let revision_id = match given("--revision-id") {
-        Some(text) => RevisionId::parse(text).map_err(id_error)?,
+        Some(text) => RevisionId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => RevisionId::from_uuid(fresh()?),
     };
     let actor = match given("--actor-id") {
@@ -908,14 +1088,20 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
         None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
     };
     let project = match given("--project-id") {
-        Some(text) => ProjectId::parse(text).map_err(id_error)?,
+        Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => ProjectId::from_uuid(fresh()?),
     };
     let workspace = match given("--workspace-id") {
-        Some(text) => WorkspaceId::parse(text).map_err(id_error)?,
+        Some(text) => WorkspaceId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => WorkspaceId::from_uuid(fresh()?),
     };
     let patch = ElementPatch {
+        class: given("--class")
+            .map(|v| {
+                v.parse::<i32>()
+                    .map_err(|_| invalid("class must be an int32"))
+            })
+            .transpose()?,
         name: given("--name").map(str::to_owned),
         material: match given("--material-digest") {
             None => None,
@@ -928,6 +1114,7 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
                     .map_err(|_| invalid("a number is malformed"))
             })
             .transpose()?,
+        thickness_side: thickness_side(options)?,
         translation_mm: given("--translation").map(translation).transpose()?,
         orientation_xyzw: match given("--orientation-xyzw") {
             None => None,
@@ -940,6 +1127,7 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
                 other => ElementId::parse(other).map(Some).map_err(id_error),
             })
             .transpose()?,
+        axis_points_mm: given("--axis-point").map(path_points).transpose()?,
     };
     let updated = update_element(
         store,
@@ -971,6 +1159,7 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
             "effect",
             Json::object([
                 ("name", Json::Bool(updated.effect.name)),
+                ("class", Json::Bool(updated.effect.class)),
                 ("material", Json::Bool(updated.effect.material)),
                 ("shape", Json::Bool(updated.effect.shape)),
                 ("placement", Json::Bool(updated.effect.placement)),
@@ -988,6 +1177,229 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
     ]))
 }
 
+/// The engine's `CutByPlane` (A03, amendment A-2) through the real adapter: appends one
+/// `plane_cut` record, rebuilds the mesh and the quantities, and publishes the revision.
+fn cut_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Json> {
+    let mut source = IdSource::system();
+    let mut fresh = || {
+        source.next_id().map_err(|_| PlateError {
+            rule_id: None,
+            code: ErrorCode::BackendUnavailable,
+            message: "no identity could be generated",
+        })
+    };
+    let given = |key: &str| options.get(key).copied();
+    let target_id = ElementId::parse(given("--id").ok_or_else(|| invalid("--id is required"))?)
+        .map_err(id_error)?;
+    let operation_id =
+        OpId::parse(given("--operation-id").ok_or_else(|| invalid("--operation-id is required"))?)
+            .map_err(id_error)?;
+    let op_id = match given("--op-id") {
+        Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
+        None => OpId::from_uuid(fresh()?),
+    };
+    let revision_id = match given("--revision-id") {
+        Some(text) => RevisionId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
+        None => RevisionId::from_uuid(fresh()?),
+    };
+    let actor = match given("--actor-id") {
+        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+    };
+    let project = match given("--project-id") {
+        Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
+        None => ProjectId::from_uuid(fresh()?),
+    };
+    let workspace = match given("--workspace-id") {
+        Some(text) => WorkspaceId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
+        None => WorkspaceId::from_uuid(fresh()?),
+    };
+    let command = CutByPlane {
+        target_id,
+        operation_id,
+        point_mm: translation(given("--point").ok_or_else(|| invalid("--point is required"))?)?,
+        normal: translation(given("--normal").ok_or_else(|| invalid("--normal is required"))?)?,
+        keep: keep_side(options)?,
+    };
+    let cut = cut_by_plane_record(
+        store,
+        &CutRequest {
+            op_id,
+            revision_id,
+            actor,
+            project,
+            workspace,
+            command,
+        },
+        &mut NoFault,
+    )?;
+    let element = match &cut.element {
+        CutElement::Plate(record) => plate_json(record)?,
+        CutElement::Member(record) => member_json(record)?,
+    };
+    Ok(Json::object([
+        (
+            "outcome",
+            Json::text(if cut.replayed {
+                "cut_replayed"
+            } else {
+                "cut_applied"
+            }),
+        ),
+        ("op_id", Json::text(op_id.to_string())),
+        (
+            "record",
+            Json::object([
+                ("operation_id", Json::text(operation_id.to_string())),
+                ("ordinal", Json::uint(u64::from(cut.ordinal))),
+            ]),
+        ),
+        ("element", element),
+        ("revision", revision_json(&cut.revision)),
+        ("footprint", footprint_json(cut.footprint.as_ref())),
+    ]))
+}
+
+/// Comma-separated numbers, exactly `count` of them (the shared shape of every hole option).
+fn numbers_list(text: &str, count: usize) -> Run<Vec<f64>> {
+    let values: Vec<f64> = text
+        .split(',')
+        .map(|p| {
+            p.trim()
+                .parse::<f64>()
+                .map_err(|_| invalid("a hole value is not a number"))
+        })
+        .collect::<Run<_>>()?;
+    if values.len() == count {
+        Ok(values)
+    } else {
+        Err(invalid("a hole has the wrong number of values"))
+    }
+}
+
+/// The one hole of `add-hole` (A04): `--polygon "X,Y;..."` (the clockwise polygon itself) or a
+/// generator, `--hole-rect "X,Y,W,H"` or `--hole-round "X,Y,D"`, in plate-local millimetres.
+/// Exactly one is accepted, and only the shape is parsed here: finiteness, positivity and the
+/// caps are the model's admission (`hole` field), and a round hole is the regular inscribed
+/// `N`-gon of F06 section 2 (A-2), whose `N` follows the contract's own tolerance, so
+/// `--hole-segments` does not apply.
+fn hole_spec(options: &BTreeMap<&str, &str>) -> Run<HoleSpec> {
+    let given = |key: &str| options.get(key).copied();
+    let given_count = ["--polygon", "--hole-rect", "--hole-round"]
+        .iter()
+        .filter(|key| given(key).is_some())
+        .count();
+    if given_count != 1 {
+        return Err(invalid(
+            "exactly one of --polygon, --hole-rect or --hole-round is required",
+        ));
+    }
+    if let Some(text) = given("--polygon") {
+        let points = text
+            .split(';')
+            .map(|item| match numbers_list(item, 2)?[..] {
+                [x, y] => Ok([x, y]),
+                _ => Err(invalid("a hole has the wrong number of values")),
+            })
+            .collect::<Run<Vec<_>>>()?;
+        return Ok(HoleSpec::Polygon(points));
+    }
+    if let Some(text) = given("--hole-rect") {
+        return match numbers_list(text, 4)?[..] {
+            [x, y, w, h] => Ok(HoleSpec::Rectangle {
+                corner_mm: [x, y],
+                width_mm: w,
+                height_mm: h,
+            }),
+            _ => Err(invalid("a hole has the wrong number of values")),
+        };
+    }
+    let Some(text) = given("--hole-round") else {
+        return Err(invalid(
+            "exactly one of --polygon, --hole-rect or --hole-round is required",
+        ));
+    };
+    match numbers_list(text, 3)?[..] {
+        [x, y, d] => Ok(HoleSpec::Round {
+            centre_mm: [x, y],
+            diameter_mm: d,
+        }),
+        _ => Err(invalid("a hole has the wrong number of values")),
+    }
+}
+
+/// The `add-hole` command (A04): one through-hole operation record on a plate, committed as
+/// the next revision. The `--operation-id` is the record's identity and the logical operation
+/// of the command; absent, a fresh id is generated.
+fn add_hole_cli(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Json> {
+    let mut source = IdSource::system();
+    let mut fresh = || {
+        source.next_id().map_err(|_| PlateError {
+            rule_id: None,
+            code: ErrorCode::BackendUnavailable,
+            message: "no identity could be generated",
+        })
+    };
+    let given = |key: &str| options.get(key).copied();
+    let target_id = ElementId::parse(given("--id").ok_or_else(|| invalid("--id is required"))?)
+        .map_err(id_error)?;
+    let operation_id = match given("--operation-id") {
+        Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
+        None => OpId::from_uuid(fresh()?),
+    };
+    let revision_id = match given("--revision-id") {
+        Some(text) => RevisionId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
+        None => RevisionId::from_uuid(fresh()?),
+    };
+    let actor = match given("--actor-id") {
+        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+    };
+    let project = match given("--project-id") {
+        Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
+        None => ProjectId::from_uuid(fresh()?),
+    };
+    let workspace = match given("--workspace-id") {
+        Some(text) => WorkspaceId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
+        None => WorkspaceId::from_uuid(fresh()?),
+    };
+    let added = add_hole_command(
+        store,
+        &AddHoleRequest {
+            op_id: operation_id,
+            revision_id,
+            actor,
+            project,
+            workspace,
+            command: AddHole {
+                target_id,
+                operation_id,
+                hole: hole_spec(options)?,
+            },
+        },
+        &mut NoFault,
+    )?;
+    let element = plate_json(&added.plate)?;
+    Ok(Json::object([
+        (
+            "outcome",
+            Json::text(if added.replayed {
+                "hole_add_replayed"
+            } else {
+                "hole_added"
+            }),
+        ),
+        ("op_id", Json::text(operation_id.to_string())),
+        (
+            "changed_layers",
+            Json::Array(added.changed_layers.iter().map(Json::text).collect()),
+        ),
+        ("element", element),
+        ("revision", revision_json(&added.revision)),
+        ("footprint", footprint_json(added.footprint.as_ref())),
+    ]))
+}
+
 fn delete_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Json> {
     let mut source = IdSource::system();
     let mut fresh = || {
@@ -1001,11 +1413,11 @@ fn delete_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
     let target_id = ElementId::parse(given("--id").ok_or_else(|| invalid("--id is required"))?)
         .map_err(id_error)?;
     let op_id = match given("--op-id") {
-        Some(text) => OpId::parse(text).map_err(id_error)?,
+        Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => OpId::from_uuid(fresh()?),
     };
     let revision_id = match given("--revision-id") {
-        Some(text) => RevisionId::parse(text).map_err(id_error)?,
+        Some(text) => RevisionId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => RevisionId::from_uuid(fresh()?),
     };
     let actor = match given("--actor-id") {
@@ -1013,11 +1425,11 @@ fn delete_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
         None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
     };
     let project = match given("--project-id") {
-        Some(text) => ProjectId::parse(text).map_err(id_error)?,
+        Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => ProjectId::from_uuid(fresh()?),
     };
     let workspace = match given("--workspace-id") {
-        Some(text) => WorkspaceId::parse(text).map_err(id_error)?,
+        Some(text) => WorkspaceId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => WorkspaceId::from_uuid(fresh()?),
     };
     let deleted = delete_element(
@@ -1066,7 +1478,11 @@ fn delete_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
     ]))
 }
 
-fn copy_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Json> {
+fn copy_command(
+    store: &RevisionStore,
+    options: &BTreeMap<&str, &str>,
+    instance: bool,
+) -> Run<Json> {
     let source_id = ElementId::parse(
         options
             .get("--id")
@@ -1078,6 +1494,9 @@ fn copy_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Js
         .any(|g| g.id == source_id)
         || options.contains_key("--new-axis-ids")
     {
+        if instance {
+            return Err(invalid("a grid cannot be a part instance"));
+        }
         return crate::grid_cmd::copy_command(store, options);
     }
 
@@ -1097,11 +1516,11 @@ fn copy_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Js
         None => ElementId::from_uuid(fresh()?),
     };
     let op_id = match given("--op-id") {
-        Some(text) => OpId::parse(text).map_err(id_error)?,
+        Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => OpId::from_uuid(fresh()?),
     };
     let revision_id = match given("--revision-id") {
-        Some(text) => RevisionId::parse(text).map_err(id_error)?,
+        Some(text) => RevisionId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => RevisionId::from_uuid(fresh()?),
     };
     let actor = match given("--actor-id") {
@@ -1109,14 +1528,19 @@ fn copy_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Js
         None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
     };
     let project = match given("--project-id") {
-        Some(text) => ProjectId::parse(text).map_err(id_error)?,
+        Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => ProjectId::from_uuid(fresh()?),
     };
     let workspace = match given("--workspace-id") {
-        Some(text) => WorkspaceId::parse(text).map_err(id_error)?,
+        Some(text) => WorkspaceId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => WorkspaceId::from_uuid(fresh()?),
     };
-    let copied = copy_element(
+    let copy = if instance {
+        copy_instance
+    } else {
+        copy_element
+    };
+    let copied = copy(
         store,
         &CopyRequest {
             op_id,
@@ -1180,6 +1604,16 @@ fn workspace_json(status: &WorkspaceStatus) -> Json {
         ),
         ("draft_head", revision_json(&status.draft_head)),
         ("published_head", revision_json(&status.published_head)),
+        (
+            "pending_conflicts",
+            Json::Array(
+                status
+                    .pending_conflicts
+                    .iter()
+                    .map(beamcraft_cli::workspace::conflicts::conflict_json)
+                    .collect(),
+            ),
+        ),
     ])
 }
 
@@ -1272,6 +1706,7 @@ fn workspace_command(
     store: &RevisionStore,
     command: &str,
     options: &BTreeMap<&str, &str>,
+    candidates: &mut Vec<Json>,
 ) -> Run<Json> {
     let mut source = IdSource::system();
     let mut fresh = || -> Run<String> {
@@ -1345,7 +1780,19 @@ fn workspace_command(
             ),
         ])),
         _ => {
-            let published = publish_workspace(store, &workspace, dir, &mut NoFault)?;
+            let published = match publish_workspace(store, &workspace, dir, &mut NoFault) {
+                Ok(published) => published,
+                Err(error) if error.code == ErrorCode::DependencyConflict => {
+                    // C04: the refusal names every pending conflict in its diagnostics.
+                    candidates.extend(
+                        beamcraft_cli::workspace::pending_conflicts(&workspace, dir)?
+                            .iter()
+                            .map(beamcraft_cli::workspace::conflicts::conflict_json),
+                    );
+                    return Err(error);
+                }
+                Err(error) => return Err(error),
+            };
             Ok(Json::object([
                 (
                     "outcome",
@@ -1376,16 +1823,17 @@ fn create_member_command(
         })
     };
     let given = |key: &str| options.get(key).copied();
+    let plane = command_plane(options)?;
     let new_id = match given("--new-id") {
         Some(text) => ElementId::parse(text).map_err(id_error)?,
         None => ElementId::from_uuid(fresh()?),
     };
     let op_id = match given("--op-id") {
-        Some(text) => OpId::parse(text).map_err(id_error)?,
+        Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => OpId::from_uuid(fresh()?),
     };
     let revision_id = match given("--revision-id") {
-        Some(text) => RevisionId::parse(text).map_err(id_error)?,
+        Some(text) => RevisionId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => RevisionId::from_uuid(fresh()?),
     };
     let actor = match given("--actor-id") {
@@ -1393,11 +1841,11 @@ fn create_member_command(
         None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
     };
     let project = match given("--project-id") {
-        Some(text) => ProjectId::parse(text).map_err(id_error)?,
+        Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => ProjectId::from_uuid(fresh()?),
     };
     let workspace = match given("--workspace-id") {
-        Some(text) => WorkspaceId::parse(text).map_err(id_error)?,
+        Some(text) => WorkspaceId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => WorkspaceId::from_uuid(fresh()?),
     };
     let kind = match given("--kind") {
@@ -1405,13 +1853,37 @@ fn create_member_command(
         Some("column") => MemberKind::Column,
         Some(_) => return Err(invalid("--kind is beam or column")),
     };
-    let point = |key: &'static str| -> Run<[f64; 3]> {
-        translation(
-            options
-                .get(key)
-                .ok_or_else(|| invalid("--start and --end are required"))?,
-        )
+    use beamcraft_engine::coordinate::AxisLock;
+    if !options.contains_key("--start-at-grid")
+        && !options.contains_key("--end-at-grid")
+        && ["--z", "--level", "--offset"]
+            .iter()
+            .any(|k| options.contains_key(k))
+    {
+        return Err(invalid("height options require grid placement"));
+    }
+    let coordinate = |key: &'static str, grid, origin, lock: AxisLock| -> Run<[f64; 3]> {
+        if options.contains_key(grid) {
+            if options.contains_key(key) {
+                return Err(invalid("point and grid address are mutually exclusive"));
+            }
+            return lock
+                .constrain(origin, grid_placement(store, options, &op_id, grid)?)
+                .map_err(PlateError::from);
+        }
+        let text = options
+            .get(key)
+            .ok_or_else(|| invalid("--start and --end are required"))?;
+        plane
+            .map_or_else(
+                || beamcraft_engine::coordinate::resolve(text, origin, lock),
+                |p| p.resolve_coordinate(text, origin, lock),
+            )
+            .map_err(PlateError::from)
     };
+    let lock = AxisLock::parse(given("--axis-lock").unwrap_or("none")).map_err(PlateError::from)?;
+    let start = coordinate("--start", "--start-at-grid", [0.0; 3], AxisLock::None)?;
+    let end = coordinate("--end", "--end-at-grid", start, lock)?;
     let replay = if options.contains_key("--op-id")
         && (options.contains_key("--profile") || options.contains_key("--material"))
     {
@@ -1440,7 +1912,17 @@ fn create_member_command(
         new_id,
         kind,
         name: given("--name").unwrap_or(kind.as_str()).to_owned(),
-        axis_points_mm: [point("--start")?, point("--end")?],
+        class: given("--class")
+            .map(|v| {
+                v.parse::<i32>()
+                    .map_err(|_| invalid("class must be an int32"))
+            })
+            .transpose()?
+            .unwrap_or(0),
+        axis_points_mm: match plane {
+            Some(p) => [p.to_world(start)?, p.to_world(end)?],
+            None => [start, end],
+        },
         profile_digest,
         placement: Placement {
             translation_mm: given("--translation").map_or(Ok([0.0; 3]), translation)?,
@@ -1453,8 +1935,8 @@ fn create_member_command(
                     .map_err(|_| invalid("a number is malformed"))
             })
             .transpose()?,
+        section_placement: section_placement(options)?,
         material_digest,
-        cut: cut(options)?,
     };
     let created = create_member(
         store,
@@ -1484,6 +1966,249 @@ fn create_member_command(
     ]))
 }
 
+/// The member path of `--points "X,Y,Z;X,Y,Z;..."`: at least three three-component points in
+/// the order given. Chord floors, mitres and the mesh budget are the kernel's to decide.
+fn path_points(text: &str) -> Run<Vec<[f64; 3]>> {
+    if text.split(';').count() > MAX_MEMBER_PATH_POINTS {
+        return Err(PlateError {
+            rule_id: None,
+            code: ErrorCode::LimitExceeded,
+            message: "more than 1024 path points",
+        });
+    }
+    text.split(';')
+        .map(|point| {
+            let bad = || invalid("a path point is not three numbers");
+            let mut parts = point.split(',').map(|v| v.trim().parse::<f64>());
+            let mut next = || parts.next().transpose().map_err(|_| bad());
+            let (x, y, z) = (next()?, next()?, next()?);
+            match (x, y, z, next()?) {
+                (Some(x), Some(y), Some(z), None) => Ok([x, y, z]),
+                _ => Err(bad()),
+            }
+        })
+        .collect()
+}
+
+fn create_polybeam_command(
+    store: &RevisionStore,
+    options: &BTreeMap<&str, &str>,
+    candidates: &mut Vec<Json>,
+) -> Run<Json> {
+    let mut source = IdSource::system();
+    let mut fresh = || {
+        source.next_id().map_err(|_| PlateError {
+            rule_id: None,
+            code: ErrorCode::BackendUnavailable,
+            message: "no identity could be generated",
+        })
+    };
+    let given = |key: &str| options.get(key).copied();
+    let new_id = match given("--new-id") {
+        Some(text) => ElementId::parse(text).map_err(id_error)?,
+        None => ElementId::from_uuid(fresh()?),
+    };
+    let op_id = match given("--op-id") {
+        Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
+        None => OpId::from_uuid(fresh()?),
+    };
+    let revision_id = match given("--revision-id") {
+        Some(text) => RevisionId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
+        None => RevisionId::from_uuid(fresh()?),
+    };
+    let actor = match given("--actor-id") {
+        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+    };
+    let project = match given("--project-id") {
+        Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
+        None => ProjectId::from_uuid(fresh()?),
+    };
+    let workspace = match given("--workspace-id") {
+        Some(text) => WorkspaceId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
+        None => WorkspaceId::from_uuid(fresh()?),
+    };
+    let kind = match given("--kind") {
+        Some("beam") | None => MemberKind::Beam,
+        Some("column") => MemberKind::Column,
+        Some(_) => return Err(invalid("--kind is beam or column")),
+    };
+    let points = path_points(given("--points").ok_or_else(|| invalid("--points is required"))?)?;
+    let replay = if options.contains_key("--op-id")
+        && (options.contains_key("--profile") || options.contains_key("--material"))
+    {
+        accepted_binding(store, &op_id, &new_id)?
+    } else {
+        None
+    };
+    let profile_digest = selected(
+        store,
+        options,
+        ("--profile-digest", "--profile"),
+        true,
+        replay.as_ref(),
+        candidates,
+    )?
+    .ok_or_else(|| invalid("--profile-digest or --profile is required"))?;
+    let material_digest = selected(
+        store,
+        options,
+        ("--material-digest", "--material"),
+        false,
+        replay.as_ref(),
+        candidates,
+    )?;
+    let command = CreatePolybeam {
+        new_id,
+        kind,
+        name: given("--name").unwrap_or(kind.as_str()).to_owned(),
+        class: given("--class")
+            .map(|v| {
+                v.parse::<i32>()
+                    .map_err(|_| invalid("class must be an int32"))
+            })
+            .transpose()?
+            .unwrap_or(0),
+        path_points_mm: points,
+        profile_digest,
+        placement: Placement {
+            translation_mm: given("--translation").map_or(Ok([0.0; 3]), translation)?,
+            orientation_xyzw: given("--orientation-xyzw")
+                .map_or(Ok([0.0, 0.0, 0.0, 1.0]), quaternion)?,
+        },
+        material_digest,
+    };
+    let created = create_polybeam(
+        store,
+        &CreatePolybeamRequest {
+            op_id,
+            revision_id,
+            actor,
+            project,
+            workspace,
+            command,
+        },
+        &mut NoFault,
+    )?;
+    Ok(Json::object([
+        (
+            "outcome",
+            Json::text(if created.replayed {
+                "polybeam_replayed"
+            } else {
+                "polybeam_created"
+            }),
+        ),
+        ("op_id", Json::text(op_id.to_string())),
+        ("member", member_json(&created.member)?),
+        ("revision", revision_json(&created.revision)),
+        ("footprint", footprint_json(created.footprint.as_ref())),
+    ]))
+}
+
+/// The P14 section-placement flags of `create-member`: absence of every flag is `None` (the
+/// centred default); any flag present authors a full `SectionPlacement` with the remaining
+/// values at their defaults. An unknown position token or a malformed number is refused.
+fn section_placement(options: &BTreeMap<&str, &str>) -> Run<Option<SectionPlacement>> {
+    let keys = [
+        "--section-plane",
+        "--section-plane-offset",
+        "--section-depth",
+        "--section-depth-offset",
+        "--start-offset",
+        "--end-offset",
+    ];
+    if !keys.iter().any(|k| options.contains_key(k)) {
+        return Ok(None);
+    }
+    let offset = |key: &str| -> Run<f64> {
+        let Some(text) = options.get(key) else {
+            return Ok(0.0);
+        };
+        text.parse::<f64>()
+            .map_err(|_| invalid("a number is malformed"))
+    };
+    let plane = match options.get("--section-plane") {
+        Some(token) => SectionPlanePosition::parse(token)
+            .ok_or_else(|| invalid("--section-plane is left, centre or right"))?,
+        None => SectionPlanePosition::Centre,
+    };
+    let depth = match options.get("--section-depth") {
+        Some(token) => SectionDepthPosition::parse(token)
+            .ok_or_else(|| invalid("--section-depth is front, centre or back"))?,
+        None => SectionDepthPosition::Centre,
+    };
+    Ok(Some(SectionPlacement {
+        plane,
+        plane_offset_mm: offset("--section-plane-offset")?,
+        depth,
+        depth_offset_mm: offset("--section-depth-offset")?,
+        start_offset_mm: offset("--start-offset")?,
+        end_offset_mm: offset("--end-offset")?,
+    }))
+}
+
+fn command_plane(
+    options: &BTreeMap<&str, &str>,
+) -> Run<Option<beamcraft_engine::work_plane::WorkPlane>> {
+    let Some(text) = options.get("--plane") else {
+        return Ok(None);
+    };
+    if [
+        "--translation",
+        "--orientation-xyzw",
+        "--origin-at-grid",
+        "--start-at-grid",
+        "--end-at-grid",
+        "--z",
+        "--level",
+        "--offset",
+    ]
+    .iter()
+    .any(|key| options.contains_key(key))
+    {
+        return Err(invalid(
+            "--plane cannot be combined with explicit placement or grid placement",
+        ));
+    }
+    beamcraft_engine::work_plane::WorkPlane::parse(text)
+        .map(Some)
+        .map_err(PlateError::from)
+}
+
+fn grid_placement(
+    store: &RevisionStore,
+    options: &BTreeMap<&str, &str>,
+    op: &OpId,
+    key: &str,
+) -> Run<[f64; 3]> {
+    let address = options
+        .get(key)
+        .ok_or_else(|| invalid("missing grid address"))?;
+    let z = options
+        .get("--z")
+        .map(|s| s.parse::<f64>().map_err(|_| invalid("invalid height")))
+        .transpose()?;
+    let level = options
+        .get("--level")
+        .map(|s| ElementId::parse(s).map_err(id_error))
+        .transpose()?;
+    let offset = options
+        .get("--offset")
+        .map(|s| s.parse::<f64>().map_err(|_| invalid("invalid offset")))
+        .transpose()?
+        .unwrap_or(0.0);
+    if options.contains_key("--translation")
+        || options.contains_key("--orientation-xyzw")
+        || (options.contains_key("--offset") && level.is_none())
+    {
+        return Err(invalid(
+            "grid placement conflicts with translation, orientation or an offset without level",
+        ));
+    }
+    beamcraft_cli::grid::resolve_placement(store, op, address, z, level, offset)
+}
+
 fn member_json(record: &MemberRecord) -> Run<Json> {
     let mesh = &record.body.solid;
     let a = &record.authored;
@@ -1495,6 +2220,7 @@ fn member_json(record: &MemberRecord) -> Run<Json> {
         ),
         ("kind", Json::text(a.kind.as_str())),
         ("name", Json::text(a.name.clone())),
+        ("class", num(f64::from(a.class))?),
         ("profile_digest", Json::text(a.profile.to_string())),
         (
             "material_digest",
@@ -1509,12 +2235,28 @@ fn member_json(record: &MemberRecord) -> Run<Json> {
         ),
         (
             "axis_points_mm",
-            Json::Array(vec![
-                triple(a.axis_points_mm[0])?,
-                triple(a.axis_points_mm[1])?,
-            ]),
+            Json::Array(
+                a.axis_points_mm
+                    .iter()
+                    .map(|point| triple(*point))
+                    .collect::<Run<Vec<_>>>()?,
+            ),
         ),
         ("roll_rad", a.roll_rad.map_or(Ok(Json::Null), num)?),
+        (
+            "section_placement",
+            match a.section_placement {
+                None => Json::Null,
+                Some(p) => Json::object([
+                    ("plane", Json::text(p.plane.as_str())),
+                    ("plane_offset_mm", num(p.plane_offset_mm)?),
+                    ("depth", Json::text(p.depth.as_str())),
+                    ("depth_offset_mm", num(p.depth_offset_mm)?),
+                    ("start_offset_mm", num(p.start_offset_mm)?),
+                    ("end_offset_mm", num(p.end_offset_mm)?),
+                ]),
+            },
+        ),
         (
             "placement",
             Json::object([
@@ -1535,19 +2277,47 @@ fn member_json(record: &MemberRecord) -> Run<Json> {
         ("mesh_digest", Json::text(mesh.digest().to_string())),
         ("vertices", Json::uint(mesh.vertices().len() as u64)),
         ("triangles", Json::uint(mesh.triangles().len() as u64)),
-        ("cut", cut_json(record.authored.cut.as_ref())?),
+        ("cuts", cuts_json(&record.authored.cuts)?),
     ]))
 }
 
-/// The optional plane cut of an element as JSON, `null` without one.
-fn cut_json(cut: Option<&PlaneCut>) -> Run<Json> {
-    Ok(match cut {
-        None => Json::Null,
-        Some(cut) => Json::object([
-            ("point_mm", triple(cut.point_mm)?),
-            ("normal", triple(cut.normal)?),
-        ]),
-    })
+/// The owned plane-cut records of an element as JSON; empty means an uncut element.
+fn cuts_json(cuts: &[CutRecord]) -> Run<Json> {
+    let records = cuts
+        .iter()
+        .map(|cut| {
+            Ok(Json::object([
+                ("operation_id", Json::text(cut.operation_id.to_string())),
+                ("ordinal", Json::uint(u64::from(cut.ordinal))),
+                ("point_mm", triple(cut.point_mm)?),
+                ("normal", triple(cut.normal)?),
+                ("keep", Json::text(cut.keep.as_str())),
+            ]))
+        })
+        .collect::<Run<Vec<_>>>()?;
+    Ok(Json::Array(records))
+}
+
+/// The authored corner treatments (A12.2) as authored, vertex position included.
+fn corners_json(corners: &[PlateCorner]) -> Run<Json> {
+    let records = corners
+        .iter()
+        .map(|corner| {
+            let values = match corner.treatment {
+                CornerTreatment::Chamfer { d1_mm, d2_mm } => vec![d1_mm, d2_mm],
+                CornerTreatment::Round { radius_mm } => vec![radius_mm],
+            };
+            Ok(Json::object([
+                ("vertex", Json::uint(corner.vertex as u64)),
+                ("corner", Json::text(corner.treatment.kind())),
+                (
+                    "values_mm",
+                    Json::Array(values.into_iter().map(num).collect::<Run<Vec<_>>>()?),
+                ),
+            ]))
+        })
+        .collect::<Run<Vec<_>>>()?;
+    Ok(Json::Array(records))
 }
 
 pub(crate) fn num(value: f64) -> Run<Json> {
@@ -1693,6 +2463,48 @@ pub(crate) fn definition_json(digest: &ContentDigest, record: &DefinitionRecord)
                     None => Json::Null,
                 },
             ));
+        }
+        DefinitionRecord::Fastener { spec } => {
+            let optional = |value: Option<f64>| -> Run<Json> { value.map_or(Ok(Json::Null), num) };
+            fields.push(("fastener_kind", Json::text(spec.kind.token())));
+            fields.push(("head_kind", Json::text(spec.head_kind.token())));
+            fields.push(("nominal_diameter_mm", num(spec.nominal_diameter_mm)?));
+            fields.push(("head_across_flats_mm", num(spec.head_across_flats_mm)?));
+            fields.push(("head_height_mm", num(spec.head_height_mm)?));
+            fields.push(("nut_across_flats_mm", optional(spec.nut_across_flats_mm)?));
+            fields.push(("nut_height_mm", optional(spec.nut_height_mm)?));
+            match &spec.washer {
+                Some(w) => {
+                    fields.push(("washer_outer_diameter_mm", num(w.outer_diameter_mm)?));
+                    fields.push(("washer_inner_diameter_mm", num(w.inner_diameter_mm)?));
+                    fields.push(("washer_thickness_mm", num(w.thickness_mm)?));
+                }
+                None => fields.push(("washer", Json::Null)),
+            }
+            fields.push(("hole_clearance_mm", num(spec.hole_clearance_mm)?));
+            fields.push((
+                "lengths_mm",
+                Json::Array(
+                    spec.lengths_mm
+                        .iter()
+                        .map(|v| num(*v))
+                        .collect::<Run<Vec<_>>>()?,
+                ),
+            ));
+            fields.push(("thread_protrusion_mm", num(spec.thread_protrusion_mm)?));
+            fields.push(("mass_each_kg", optional(spec.mass_each_kg)?));
+            fields.push(("washer_under_head", Json::Bool(spec.washer_under_head)));
+            fields.push(("washer_under_nut", Json::Bool(spec.washer_under_nut)));
+            fields.push(("hole_mode", Json::text(spec.hole_mode.token())));
+            fields.push((
+                "designation",
+                spec.designation.as_ref().map_or(Json::Null, Json::text),
+            ));
+            fields.push((
+                "standard",
+                spec.standard.as_ref().map_or(Json::Null, Json::text),
+            ));
+            fields.push(("grade", spec.grade.as_ref().map_or(Json::Null, Json::text)));
         }
     }
     Ok(Json::Object(
@@ -1901,6 +2713,10 @@ fn unsupported_plate_json(record: &UnsupportedPlate) -> Run<Json> {
         ),
         ("thickness_mm", num(authored.thickness_mm)?),
         (
+            "thickness_side",
+            Json::text(authored.thickness_side.unwrap_or(PlateSide::Top).as_str()),
+        ),
+        (
             "placement",
             Json::object([
                 ("translation_mm", triple(authored.placement.translation_mm)?),
@@ -1942,6 +2758,7 @@ fn plate_json(record: &PlateRecord) -> Run<Json> {
         ),
         ("kind", Json::text("plate")),
         ("name", Json::text(record.authored.name.clone())),
+        ("class", num(f64::from(record.authored.class))?),
         (
             "material_digest",
             record
@@ -1956,6 +2773,16 @@ fn plate_json(record: &PlateRecord) -> Run<Json> {
                 ("length", num(record.body.length_mm)?),
                 ("thickness", num(record.body.thickness_mm)?),
             ]),
+        ),
+        (
+            "thickness_side",
+            Json::text(
+                record
+                    .authored
+                    .thickness_side
+                    .unwrap_or(PlateSide::Top)
+                    .as_str(),
+            ),
         ),
         (
             "contour_points_mm",
@@ -1975,6 +2802,15 @@ fn plate_json(record: &PlateRecord) -> Run<Json> {
             } else {
                 "contour"
             }),
+        ),
+        ("corners", corners_json(&record.authored.corners)?),
+        (
+            "arc_deviation_mm",
+            if record.body.arc_deviation_mm == 0.0 {
+                Json::Null
+            } else {
+                num(record.body.arc_deviation_mm)?
+            },
         ),
         (
             "placement",
@@ -2003,15 +2839,17 @@ fn plate_json(record: &PlateRecord) -> Run<Json> {
         ("triangles", Json::uint(mesh.triangles().len() as u64)),
         (
             "hole_count",
-            Json::uint(record.authored.holes_mm.len() as u64),
+            Json::uint(
+                (record.authored.holes_mm.len() + record.authored.hole_records.len()) as u64,
+            ),
         ),
-        ("cut", cut_json(record.authored.cut.as_ref())?),
+        ("cuts", cuts_json(&record.authored.cuts)?),
         (
             "holes_mm",
             Json::Array(
                 record
                     .authored
-                    .holes_mm
+                    .hole_polygons_in_replay_order()
                     .iter()
                     .map(|hole| {
                         Ok(Json::Array(
@@ -2021,6 +2859,22 @@ fn plate_json(record: &PlateRecord) -> Run<Json> {
                         ))
                     })
                     .collect::<Run<Vec<_>>>()?,
+            ),
+        ),
+        (
+            "hole_records",
+            Json::Array(
+                record
+                    .authored
+                    .hole_records
+                    .iter()
+                    .map(|r| {
+                        Json::object([
+                            ("operation_id", Json::text(r.operation_id.to_string())),
+                            ("ordinal", Json::uint(r.ordinal as u64)),
+                        ])
+                    })
+                    .collect(),
             ),
         ),
     ]))
@@ -2186,6 +3040,25 @@ fn with_stored(element: Json, id: ElementId, inspection: &Inspection) -> Run<Jso
     let Json::Object(mut object) = element else {
         return Ok(element);
     };
+    let count = match inspection.instances.group_size(id) {
+        Ok(count) => count,
+        Err(error) if error.code == ErrorCode::NotFound => 1,
+        Err(error) => return Err(error.into()),
+    };
+    object.insert(
+        "shared_definition".into(),
+        if count > 1 {
+            Json::object([
+                (
+                    "id",
+                    Json::text(inspection.instances.definition(id)?.to_string()),
+                ),
+                ("part_count", Json::uint(count as u64)),
+            ])
+        } else {
+            Json::Null
+        },
+    );
     if let Some(report) = inspection.quantities.get(&id) {
         object.insert("stored_quantities".into(), stored_json(report)?);
     }

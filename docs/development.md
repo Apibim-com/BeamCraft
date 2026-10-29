@@ -34,6 +34,38 @@ measured fast enough to stay in the inner loop. Nothing is removed or permanentl
 unfiltered `default` profile and CI always run everything, and an explicit command-line filter
 overrides the profile's `default-filter`.
 
+The drawn-grid viewport controller test requires a native wgpu adapter and fails explicitly if
+none is available. On a headless Linux worker, Mesa's software Vulkan driver (`mesa-vulkan-drivers`)
+can provide it; a physical GPU or display server is not required. The Vulkan loader must be able
+to find the driver and its ICD configuration. Build `beamcraft-cli` before running the UI's
+real-binary grid integration tests, which also fail when that executable is missing.
+
+## Faster test execution
+
+The test profile optimizes only `beamcraft-geom`, `beamcraft-model`, `beamcraft-kernel` and
+`openusd` at level 1. These libraries handle the repeated geometry certification, blob hashing
+and USD parsing in the integration tests. Other workspace packages, GUI dependencies and host
+build tools keep Cargo's default optimization settings. Debug assertions and overflow
+checks remain enabled, and the test cases, fuzz seeds, iteration counts and independent oracles
+are unchanged. The first test build recompiles the selected libraries and their dependants;
+subsequent runs reuse those artifacts. Development and release profiles are unaffected.
+`cargo test --workspace` remains supported and uses the same optimized test libraries.
+CI's test archives and all eight partitions per OS use this test profile automatically;
+no partition or platform is excluded.
+
+Compare runtime on the same machine and toolchain after building both variants with
+`cargo test --workspace --no-run --locked`. Time the subsequent `cargo test --workspace --locked`
+commands separately from compilation. To reproduce the unoptimized baseline without editing
+the manifest, pass all four overrides to **both** the build and timed commands:
+
+```sh
+cargo test --workspace --locked \
+  --config 'profile.test.package.beamcraft-geom.opt-level=0' \
+  --config 'profile.test.package.beamcraft-model.opt-level=0' \
+  --config 'profile.test.package.beamcraft-kernel.opt-level=0' \
+  --config 'profile.test.package.openusd.opt-level=0'
+```
+
 ## Optimized local builds and cold timings
 
 For an optimized local build of both applications:
@@ -109,8 +141,11 @@ reference-machine acceptance still needs the Apple M5 run described above.
 
 ## Everything CI checks
 
-CI (`.github/workflows/ci.yml`) runs on every pull request and every push to `master`, on Windows
-and Linux. To run the same checks locally:
+CI (`.github/workflows/ci.yml`) runs on every pull request and every push to `master`. Pull
+requests run on Linux and macOS; the Windows quality and test jobs run on pushes to `master` and on
+manual runs only (owner decision 2026-10-24, #180). For a change to Windows-specific code, start the
+workflow by hand on the branch (`gh workflow run ci.yml --ref <branch>`) before merging. To run the
+same checks locally:
 
 ```sh
 cargo fmt --all -- --check
@@ -143,9 +178,8 @@ deviations are in [K1 acceptance evidence](design/k1-contract-acceptance.md).
 
 ## CI wall time and Windows runner queues
 
-CI wall time is about 15 minutes today (14–17 minutes across the runs of 2026-10-22). The critical
-path is the `test (windows)` job at roughly 13–14 minutes; every other job finishes in under
-3 minutes. Each job carries an explicit `timeout-minutes` sized at about three times the longest
+CI wall time on `master` was about 15 minutes (14–17 minutes across the runs of 2026-10-22), with
+the Windows test path as the critical path; pull requests skip the Windows jobs and finish sooner. Each job carries an explicit `timeout-minutes` sized at about three times the longest
 observed runtime of that job, so a hung job fails within the hour instead of at GitHub's 6-hour
 per-job default, while a cold-cache rebuild is not killed and re-queued onto scarce runners.
 
@@ -172,7 +206,20 @@ When CI looks stuck, first check whether the Windows job is queued rather than r
 for a burst across the account's Actions runs, cancel superseded runs and re-run the starved job
 once the burst subsides.
 
+The scheduled `CI runner queue alert` workflow checks queued jobs every 15 minutes, including
+jobs waiting inside workflows that have already started. If any job has waited for at least 15
+minutes, it opens one issue labelled `ci-queue` with the affected refs, jobs and run links. While
+that issue remains open, later checks do not create duplicates. Close it after the queue drains; a
+later incident then opens a new alert. The workflow uses the repository's `GITHUB_TOKEN` with
+Actions read, Contents read (for checkout) and Issues write permissions.
+
 ## Releases
+
+Owner policy (2026-10-27, [decision](plan/decisions.md#2026-10-27)): Windows x64 and ARM64
+releases are built on the owner's computer and signed there with the company's signing identity.
+Apple developer registration, Developer ID signing and notarization are scheduled after the MVP.
+This records the intended release process; it does not add ARM64 or company-signing automation
+to the workflow below. Existing macOS ad-hoc package signing remains unchanged.
 
 Push a tag such as `v0.1.0`, or run `.github/workflows/release.yml` by hand. It builds unsigned
 packages and attaches them to a GitHub release:

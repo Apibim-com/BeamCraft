@@ -33,9 +33,11 @@ mod plate_cmd;
 mod project_cmd;
 mod rebase_cmd;
 mod reference_cmd;
+mod resolve_cmd;
 mod view;
 mod view_export;
 mod weld_cmd;
+mod work_plane_cmd;
 
 fn invalid() -> HostError {
     HostError::logical(ErrorCode::InvalidArgument)
@@ -101,11 +103,15 @@ fn main() -> std::process::ExitCode {
         c == "create-assembly"
             || c == "attach-to-assembly"
             || c == "detach-from-assembly"
+            || c == "set-main-part"
+            || c == "explode-assembly"
             || c == "assemblies"
     }) {
         assembly_cmd::execute(&args)
     } else if args.first().is_some_and(|c| c == "rebase-workspace") {
         rebase_cmd::execute(&args)
+    } else if args.first().is_some_and(|c| c == "resolve-workspace") {
+        resolve_cmd::execute(&args)
     } else if args.first().is_some_and(|c| {
         c == "create-changeset" || c == "inspect-changeset" || c == "apply-changeset"
     }) {
@@ -114,6 +120,8 @@ fn main() -> std::process::ExitCode {
         coordinator_cmd::execute(&args)
     } else if args.first().is_some_and(drawing_cmd::handles) {
         drawing_cmd::execute(&args)
+    } else if args.first().is_some_and(|c| c == "work-plane") {
+        work_plane_cmd::execute(&args)
     } else if args.first().is_some_and(pick_cmd::handles) {
         pick_cmd::execute(&args)
     } else if args.first().is_some_and(weld_cmd::handles) {
@@ -137,11 +145,16 @@ fn main() -> std::process::ExitCode {
             || c == "inspect-elements"
             || c == "define-material"
             || c == "define-profile"
+            || c == "define-fastener"
             || c == "definitions"
             || c == "create-member"
+            || c == "create-polybeam"
+            || c == "add-hole"
             || c == "update-element"
             || c == "delete-element"
             || c == "copy-element"
+            || c == "copy-instance"
+            || c == "cut-by-plane"
             || c == "create-workspace"
             || c == "inspect-workspace"
             || c == "publish-workspace"

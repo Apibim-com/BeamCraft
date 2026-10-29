@@ -4,8 +4,80 @@ Decisions that shape the plan, newest first. Each names its date and, where one 
 document that records it in detail. A later decision overrides an earlier one where they differ.
 Open questions are at the end.
 
+## 2026-10-27
+
+- **Task tracking moves to GitHub.** The code owner directed removal of the repository task table
+  and creation of the migration PR. [GitHub issues](https://github.com/Apibim-com/BeamCraft/issues/474)
+  hold task scope, dependencies, acceptance, status and evidence; milestones group delivery work.
+  `ROADMAP.md` remains the stage, MVP scope and acceptance-gate overview. Contracts, design notes
+  and dated owner decisions stay in the repository. Update authorized task cards directly in
+  GitHub; repository scope, contract and gate-verdict changes still use docs-only PRs. Preserve
+  task IDs and acceptance boundaries. The [historical table](https://github.com/Apibim-com/BeamCraft/issues/473)
+  is an archive. Migration does not pass gates or reopen delivered slices.
+
+Owner answers to [issue #129](https://github.com/Apibim-com/BeamCraft/issues/129):
+
+- **Windows releases are built and signed locally by the owner.** A local signing capability is
+  available. The owner will build and release Windows x64 and ARM64 versions on their own
+  computer, signing them with the company's signing identity. This is the release policy;
+  it does not claim that ARM64 packaging or signing automation is already implemented.
+- **Apple developer registration and distribution signing are after the MVP.** No Apple developer
+  setup is currently available. Developer registration, the paid membership, Developer ID signing
+  and notarization are deferred to M6 - PostMVP. Native macOS packaging remains in the MVP;
+  this decision does not remove the existing ad-hoc package signing.
+- **Both IFC input workflows are in the MVP.** IFC files can be loaded as read-only reference
+  models so users can author their own discipline/section against them. Separately, steel IFC
+  models can be imported through BeamCraft's engineering kernel into a working, editable project,
+  including the use case of creating steel detailing (KMD) from steel design (KM).
+  Reference loading never makes the reference editable. Native steel import is a separate entry
+  point, not the deferred I01-I03 mesh-item workflow. This supersedes the earlier blanket deferral
+  of these two IFC input workflows. It does not bring IFC export into the MVP or approve the
+  broader persistent R06 `builtFrom`/source-change workflow. Supported IFC subsets, mapping,
+  kernel admission, refusal behavior and end-to-end acceptance still need an import contract;
+  approving scope is not a claim of implementation or acceptance.
+- **DSTV NC export remains after the MVP**, in M6 - PostMVP.
+- **Regional profile and material catalogue coverage:** Australia, Europe, Brazil, Canada, China,
+  Russia, India, Middle East, Philippines, South Africa, South America and USA. Brazil and South
+  America are both retained as requested. Exact standards/editions, families and data sources
+  must be specified per regional pack. The existing asset policy remains binding: every shipped
+  value needs admitted provenance, a provable permitted licence and attribution. Naming a region
+  does not admit any catalogue or commercial-product data.
+- **The open-source/commercial question is resolved for the MVP.** The existing decision stands:
+  BeamCraft's own code stays MPL-2.0 through the MVP; any later split is considered after it.
+- **Acceptance gates are separate from issue #129.** That issue records owner decisions only.
+  Gate verdicts require their own evidence and owner acceptance; this entry changes none of them.
+
+## 2026-10-26
+
+- **T01 MVP defaults.** The user delegated the unanswered grid defaults to project best practices and
+  current conventions. The proposed contract amendment resolves the 2026-10-23 questions for
+  T01.1 to T01.7:
+  - Explicit label lists accept Cyrillic and other permitted Unicode labels; automatic schemes are
+    numeric and Latin alpha only.
+  - A regular-family line drag rewrites the expression and matches lines by label to retain
+    AxisIds. Family mode is selected at grid creation and cannot change in the MVP.
+  - U lines run parallel to local Y, V lines parallel to local X, and the Z rotation moves the full
+    grid frame. Default spans reach 2000 mm beyond the other family's coordinate range, including
+    endpoint projections for drawn lines.
+  - The intersection syntax is `GRID:LABEL,LABEL`; placement height is level elevation plus offset
+    or explicit `--z`.
+  - Other USD viewers receive 50 mm diameter guide tubes at `z = 0` in derived geometry. Labels
+    remain native UI text.
+  - Radial grids remain after the MVP with curves. Magnetic mode remains deferred until its
+    ownership and scope dependencies are resolved.
+  - Exact T01.1 to T01.7 acceptance is in the [T01 contract](../contracts/t01-project-grids-draft-v0.1.md);
+    magnetic mode and curved grids stay separate slices.
+
 ## 2026-10-24
 
+- **Windows CI runs on merge to master only.** Owner decision on
+  [issue #180](https://github.com/Apibim-com/BeamCraft/issues/180): the Windows legs of CI (the
+  Windows quality job and the Windows test archive with its shards) run on pushes to `master` and
+  on manual runs, not on pull requests. This reduces demand instead of buying capacity: pull
+  request bursts no longer queue for the account's scarce Windows runners. Linux and macOS still
+  gate every pull request. A Windows-only failure is found after the merge and fixed in a
+  follow-up; a pull request that touches Windows-specific code can run the full matrix by hand
+  with `workflow_dispatch` on its branch.
 - **Gates K1 and K2 are passed.** Owner decision on [issue #125](https://github.com/Apibim-com/BeamCraft/issues/125):
   the per-gate verdicts of [the K1 and K2 evidence](k1-k2-acceptance-evidence.md) are accepted
   together with the fixes merged since (#174 for the K1 plate contours, #222 for rigid member
@@ -13,7 +85,8 @@ Open questions are at the end.
   waived as passes: a rotated plate placement (F06-POS-11) stays `UNSUPPORTED_GEOMETRY`, the
   face-table strings carry the `plate:f.` prefix, and the F04 envelope, workspace and
   trusted-context cases stay unrun until a decoder and a trusted context exist. The sign-off of
-  K3 to K5 in [issue #129](https://github.com/Apibim-com/BeamCraft/issues/129) stays open.
+  K3 to K5 was still open at that date. Update 2026-10-27: gate acceptance is tracked separately
+  from [issue #129](https://github.com/Apibim-com/BeamCraft/issues/129); this changes no verdict.
 
 ## 2026-10-23
 
@@ -36,7 +109,8 @@ Open questions are at the end.
   - Limits: 64 grids per project, 200 lines per family.
   - Grids are visible to other USD viewers as thin tubes (details open). A **magnetic** mode, in
     which placed elements follow a grid, is wanted (details open).
-  - Open questions are listed in section 12 of the contract (O-G5, O-G7, O-G11 to O-G16).
+  - Open questions at the time were listed in section 12 of the contract (O-G5, O-G7, O-G11 to
+    O-G16). The 2026-10-26 defaults below resolve the MVP questions except magnetic mode O-G5.
   - Grids and levels share one shared scope; an ordinary section edit changes neither. No export
     (IFC, BOM, numbering) carries grids in the MVP.
 
@@ -178,7 +252,7 @@ Open questions are at the end.
   bar, snap panel, projection switch, render modes); M2 model tools, views, filters, cut plane,
   colour by filter, classes; M3 attributes and schedules; M4 drawings; M5 the alpha scenario
   and packaging over the whole scope (Q01, Q02). Gates K9 to K11 are added; K8 (drawings) is no
-  longer deferred. The task cards are in [`tasks.md`](tasks.md).
+  longer deferred. The task cards are now indexed in the [GitHub catalogue](https://github.com/Apibim-com/BeamCraft/issues/474).
 - **Still after the MVP:** items (I01 to I03: the item contract and reading GLB and IFC geometry), IFC export (E01, E02), multi-client rebase and conflicts (C03–C06),
   reference measurements (R02–R03), DSTV NC and DXF output, parametric connections and macros,
   concrete and reinforcement, analysis.
@@ -329,8 +403,8 @@ Open questions are at the end.
 | # | Question | Blocks |
 |---|----------|--------|
 | 1 | Independent IFC validation tool (E01 Q-8) | E02 acceptance |
-| 2 | macOS policy without project hardware | Q02 acceptance |
-| 3 | IFC reference converter, supported subset, budgets and provenance (read-only workflow selected on 2026-10-22) | E04 |
+| 2 | macOS runtime verification without project hardware; Developer ID signing/notarization is deferred after the MVP by the 2026-10-27 decision | Q02 runtime acceptance |
+| 3 | IFC reference conversion and editable steel import: supported subsets, mapping, kernel admission, budgets and provenance (both input workflows in the MVP from 2026-10-27) | E04 reference-loading slice and native steel IFC import |
 | 4 | Live channel and permission model (C07, C08) | C07, C08 |
 | 5 | Grid contract draft: owner answers to O-G5, O-G7 and O-G11 to O-G16 ([contract](../contracts/t01-project-grids-draft-v0.1.md) section 12) | T01.3, T01.4, T01.7, T01.8 |
 | 5 | Where saved views and review notes live: workspace only or a shared review layer | W01, W02 |

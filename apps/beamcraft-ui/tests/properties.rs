@@ -17,6 +17,7 @@
     clippy::panic
 )]
 
+use beamcraft_engine::query::pick::SelectionFilter;
 use beamcraft_json::{Json, Limits};
 use beamcraft_ui::command;
 use beamcraft_ui::edit::Ray;
@@ -284,6 +285,7 @@ fn a_click_selects_what_is_on_screen_with_one_element_lookup() {
         &ray([centre[0], centre[1], max[2] + 1000.0], [0.0, 0.0, -1.0]),
         &cancel,
         &stats,
+        SelectionFilter::ALL,
     )
     .unwrap()
     .unwrap();
@@ -305,6 +307,7 @@ fn a_click_selects_what_is_on_screen_with_one_element_lookup() {
             &ray([centre[0], centre[1], max[2] + 1000.0], [0.0, 0.0, 1.0]),
             &cancel,
             &stats,
+            SelectionFilter::ALL,
         )
         .unwrap()
         .is_none()
@@ -527,15 +530,11 @@ fn publish_is_workspace_publish_and_its_refusals_are_shown() {
     let args = publisher.confirm().unwrap();
     let refused = command::publish(&cli, &args, &Stats::default()).unwrap_err();
     assert_eq!(refused.code, "INVALID_ARGUMENT");
+    let refused_message = refused.message.clone();
     publisher.finish(Err(refused));
-    assert!(
-        publisher
-            .note
-            .clone()
-            .unwrap()
-            .unwrap_err()
-            .contains("INVALID_ARGUMENT")
-    );
+    let shown = publisher.note.clone().unwrap().unwrap_err();
+    assert!(shown.contains(&refused_message));
+    assert!(!shown.contains("INVALID_ARGUMENT"));
     assert_eq!(publisher.phase(), Phase::Idle);
 
     // An edit made in the workspace through the properties editor, then published.
@@ -587,14 +586,10 @@ fn publish_is_workspace_publish_and_its_refusals_are_shown() {
     let args = publisher.confirm().unwrap();
     let refused = command::publish(&cli, &args, &Stats::default()).unwrap_err();
     assert_eq!(refused.code, "BASE_REVISION_MISMATCH");
+    let refused_message = refused.message.clone();
     publisher.finish(Err(refused));
-    assert!(
-        publisher
-            .note
-            .clone()
-            .unwrap()
-            .unwrap_err()
-            .contains("BASE_REVISION_MISMATCH")
-    );
+    let shown = publisher.note.clone().unwrap().unwrap_err();
+    assert!(shown.contains(&refused_message));
+    assert!(!shown.contains("BASE_REVISION_MISMATCH"));
     assert_eq!(head(&cli, &published), before);
 }

@@ -11,7 +11,9 @@
 use crate::assembly::assemblies;
 use crate::numbering_approval::head_marks;
 use crate::plate::{PlateError, inspect};
-use beamcraft_engine::numbering::{AssemblyFact, PartFact, PartKind, Preview, Settings, preview};
+use beamcraft_engine::numbering::{
+    AssemblyFact, PartFact, PartGeometry, PartKind, Preview, Settings, preview,
+};
 use beamcraft_engine::numbering_approval::{Mark, Report, StoredMark, assess};
 use beamcraft_engine::query::committed::PlateRecord;
 use beamcraft_host::revision::RevisionStore;
@@ -58,16 +60,19 @@ fn contour_origin(record: &PlateRecord) -> [f64; 2] {
     ]
 }
 
-/// The outline of a plate whose contour is not the origin rectangle, relative to
+/// The outline of an untreated plate whose contour is not the origin rectangle, relative to
 /// [`contour_origin`]; empty for the origin rectangle (its width and length already say it all).
+/// The evaluated outline carries the corner treatments (A12.2): a treated plate — the treated
+/// origin rectangle included — is compared by its treated outline, so two plates whose treated
+/// outlines differ are different parts, and without treatments it is the authored contour.
 fn outline_of(record: &PlateRecord) -> Vec<[f64; 2]> {
     if record.body.is_rectangular_box() {
         return Vec::new();
     }
     let [low_x, low_y] = contour_origin(record);
     record
-        .authored
-        .contour_points_mm
+        .body
+        .outline_mm
         .iter()
         .map(|p| [p[0] - low_x, p[1] - low_y])
         .collect()
@@ -131,14 +136,18 @@ pub(crate) fn state(store: &RevisionStore) -> Result<State, PlateError> {
                 angles_rad: Vec::new(),
                 holes: holes_of(record),
                 outline: outline_of(record),
+                geometry: Some(
+                    PartGeometry::plate(&record.body.solid)
+                        .map_err(|e| error(ErrorCode::InvalidArgument, e.0))?,
+                ),
                 assembly: holder.get(&a.id).copied(),
             });
         }
         for record in &inspection.members {
             let a = &record.authored;
-            let [p, q] = a.axis_points_mm;
-            let length =
-                ((q[0] - p[0]).powi(2) + (q[1] - p[1]).powi(2) + (q[2] - p[2]).powi(2)).sqrt();
+            // The numbering length is the body's own: the axis chord for a straight member, the
+            // polyline path length for a polybeam.
+            let length = record.body.axis_length_mm;
             parts.push(PartFact {
                 id: a.id,
                 kind: match a.kind {
@@ -152,6 +161,10 @@ pub(crate) fn state(store: &RevisionStore) -> Result<State, PlateError> {
                 angles_rad: vec![a.roll_rad.unwrap_or(0.0)],
                 holes: Vec::new(),
                 outline: Vec::new(),
+                geometry: Some(
+                    PartGeometry::member(a, &record.body)
+                        .map_err(|e| error(ErrorCode::InvalidArgument, e.0))?,
+                ),
                 assembly: holder.get(&a.id).copied(),
             });
         }

@@ -22,7 +22,7 @@ use crate::plate::{
     decode, digest_of, evaluate_decoded, host_uuid, integrity, load_base, member_record,
     mesh_change, open_base, plate_record, prior_op_with, replay_summary, summarize,
 };
-use crate::publication::{PublishRequest, publish_revision};
+use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::copy::{copy_member, copy_plate};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::query::committed::{MemberRecord, PlateRecord};
@@ -99,6 +99,24 @@ pub fn copy_element(
     request: &CopyRequest,
     hook: &mut dyn CommitHook,
 ) -> Result<Copied, PlateError> {
+    copy_with_mode(store, request, hook, false)
+}
+
+/// Copies a part as an instance of its canonical shared definition (P11).
+pub fn copy_instance(
+    store: &RevisionStore,
+    request: &CopyRequest,
+    hook: &mut dyn CommitHook,
+) -> Result<Copied, PlateError> {
+    copy_with_mode(store, request, hook, true)
+}
+
+fn copy_with_mode(
+    store: &RevisionStore,
+    request: &CopyRequest,
+    hook: &mut dyn CommitHook,
+    instance: bool,
+) -> Result<Copied, PlateError> {
     let command = &request.command;
     command.validate_arguments()?;
     let control = control();
@@ -119,7 +137,7 @@ pub fn copy_element(
         expected,
         ..
     } = base;
-    let (plates, members, definitions, levels) = {
+    let (plates, members, definitions, levels, instances) = {
         let mut reader = Reader::default();
         let opened = reader.open(base_request.clone(), &control)?;
         let decoded = decode(&reader, &opened, &control)?;
@@ -137,20 +155,39 @@ pub fn copy_element(
             )
             .into());
         }
-        (plates, members, decoded.definitions, decoded.levels)
+        (
+            plates,
+            members,
+            decoded.definitions,
+            decoded.levels,
+            decoded.instances,
+        )
     };
     // The copy checks that the pinned definitions still resolve, as every create does.
     let materials = material_lookup(&definitions);
 
+    let canonical = match instances.definition(command.source_id) {
+        Ok(id) => id,
+        Err(e) if e.code == ErrorCode::NotFound => command.source_id,
+        Err(e) => return Err(e.into()),
+    };
     let copy = if let Some(source) = plates.iter().find(|r| r.authored.id == command.source_id) {
         CopiedElement::Plate(Box::new(PlateRecord {
-            authored: copy_plate(&source.authored, command)?,
+            authored: if instance {
+                beamcraft_engine::instance::copy_plate_instance(&source.authored, command)?
+            } else {
+                copy_plate(&source.authored, command)?
+            },
             body: source.body.clone(),
             quantities: source.quantities,
         }))
     } else if let Some(source) = members.iter().find(|r| r.authored.id == command.source_id) {
         CopiedElement::Member(Box::new(MemberRecord {
-            authored: copy_member(&source.authored, command)?,
+            authored: if instance {
+                beamcraft_engine::instance::copy_member_instance(&source.authored, command)?
+            } else {
+                copy_member(&source.authored, command)?
+            },
             body: source.body.clone(),
             quantities: source.quantities,
         }))
@@ -207,11 +244,24 @@ pub fn copy_element(
     };
 
     let op_host = host_uuid(&request.op_id.to_string())?;
-    let fingerprint = command.content_fingerprint()?;
+    let fingerprint = if instance {
+        beamcraft_model::instance::CopyInstance {
+            copy: command.clone(),
+        }
+        .content_fingerprint()?
+    } else {
+        command.content_fingerprint()?
+    };
     let (prior, recorded) = prior_op_with(store, &op_host, || {
         // The head already holds this copy exactly when the retry is the same request.
         match &head_copy {
-            Some(held) if same_state(held, &copy) => Ok(fingerprint),
+            Some(held)
+                if same_state(held, &copy)
+                    && instances.is_instance(command.new_id) == instance
+                    && (!instance || instances.definition(command.new_id)? == canonical) =>
+            {
+                Ok(fingerprint)
+            }
             _ => digest_of(b"no accepted request matches the head state"),
         }
     })?;
@@ -237,6 +287,14 @@ pub fn copy_element(
         }
         PriorOp::Unseen => {}
     }
+    if instance && instances.links().count() >= beamcraft_model::instance::MAX_PART_INSTANCES {
+        return Err(CommandError::new(
+            ErrorCode::LimitExceeded,
+            "instances",
+            "too many part instances",
+        )
+        .into());
+    }
     if head_copy.is_some() {
         return Err(CommandError::new(
             ErrorCode::DuplicateId,
@@ -249,6 +307,14 @@ pub fn copy_element(
     // The copy stays on the source's level (D2).
     let level = levels.level_of(&command.source_id);
     let mut footprint = Footprint::for_copy(command.source_id, command.new_id, profile, material)?;
+    if canonical != command.source_id {
+        footprint = footprint.union(Footprint::for_copy(
+            canonical,
+            command.new_id,
+            profile,
+            material,
+        )?)?;
+    }
     if let Some(level) = level {
         footprint = footprint.union(Footprint::for_level(command.new_id, Some(level))?)?;
     }
@@ -302,18 +368,25 @@ pub fn copy_element(
             let a = &r.authored;
             let [qx, qy, qz, qw] = a.placement.orientation_xyzw;
             vec![
+                Change::PartClass {
+                    id: a.id.to_string(),
+                    class: a.class,
+                },
                 Change::Create(Element {
                     id: a.id.to_string(),
                     name: a.name.clone(),
                     shape: Shape::Plate {
                         contour_mm: a.contour_points_mm.clone(),
                         thickness_mm: a.thickness_mm,
+                        thickness_side: a.thickness_side,
+                        corners: a.corners.clone(),
                         holes: a
                             .holes_mm
                             .iter()
                             .map(|h| h.iter().map(|[x, y]| [*x, *y, 0.0]).collect())
                             .collect(),
-                        cut: a.cut,
+                        hole_records: a.hole_records.clone(),
+                        cuts: a.cuts.clone(),
                     },
                     placement: LayerPlacement {
                         translation_mm: a.placement.translation_mm,
@@ -328,6 +401,10 @@ pub fn copy_element(
             let a = &r.authored;
             let [qx, qy, qz, qw] = a.placement.orientation_xyzw;
             vec![
+                Change::PartClass {
+                    id: a.id.to_string(),
+                    class: a.class,
+                },
                 Change::Create(Element {
                     id: a.id.to_string(),
                     name: a.name.clone(),
@@ -336,10 +413,11 @@ pub fn copy_element(
                             MemberKind::Beam => LayerKind::Beam,
                             MemberKind::Column => LayerKind::Column,
                         },
-                        axis_mm: a.axis_points_mm,
+                        axis_mm: a.axis_points_mm.clone(),
                         profile: a.profile,
                         roll_rad: a.roll_rad,
-                        cut: a.cut,
+                        placement: a.section_placement,
+                        cuts: a.cuts.clone(),
                     },
                     placement: LayerPlacement {
                         translation_mm: a.placement.translation_mm,
@@ -351,6 +429,24 @@ pub fn copy_element(
             ]
         }
     };
+    if instance {
+        for change in &mut changes {
+            if let Change::Create(element) = change {
+                let kind = match &copy {
+                    CopiedElement::Plate(_) => beamcraft_model::instance::PartKind::Plate,
+                    CopiedElement::Member(r) => match r.authored.kind {
+                        MemberKind::Beam => beamcraft_model::instance::PartKind::Beam,
+                        MemberKind::Column => beamcraft_model::instance::PartKind::Column,
+                    },
+                };
+                element.shape = Shape::Instance {
+                    kind,
+                    definition: canonical.to_string(),
+                };
+                element.material = None;
+            }
+        }
+    }
     if let Some(level) = level {
         changes.push(Change::Level {
             id: command.new_id.to_string(),
@@ -369,12 +465,7 @@ pub fn copy_element(
         &control,
     )?;
     check_footprint(&prepared, &footprint)?;
-    let changed_layers = prepared
-        .layers
-        .iter()
-        .filter(|l| before.get(&l.name) != Some(&l.digest))
-        .map(|l| l.name.clone())
-        .collect();
+    let changed_layers = changed_layers(&prepared, &before);
     let committed = publish_revision(
         store,
         &PublishRequest {

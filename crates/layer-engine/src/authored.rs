@@ -8,6 +8,7 @@ mod derive;
 mod edit;
 pub mod grid;
 mod guard;
+pub mod instance;
 pub mod rebase;
 mod reference;
 mod validate;
@@ -19,8 +20,12 @@ pub use reference::{
 };
 
 use crate::*;
-pub use beamcraft_model::command::PlaneCut;
+pub use beamcraft_model::command::{
+    CornerTreatment, CutRecord, HoleRecord, KeepSide, PlateCorner, PlateSide, SectionDepthPosition,
+    SectionPlacement, SectionPlanePosition,
+};
 pub use beamcraft_model::definition::SectionProperties;
+pub use beamcraft_model::fastener::FastenerSpec;
 use beamcraft_model::prim::{DefinitionCategory, ElementCategory};
 pub use beamcraft_model::section::SectionShape;
 use std::collections::BTreeMap;
@@ -34,17 +39,36 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "part=/World/Steel/Parts/PRT_<uuid7-32>;kinds=plate|beam|column;type=Xform\n",
     "assembly=/World/Steel/Assemblies/ASM_<uuid7-32>;connection=/World/Steel/Connections/CON_<uuid7-32>;",
     "level=/World/Levels/LVL_<uuid7-32>;reference=/World/References/REF_<uuid7-32>;type=Xform\n",
-    "bim:id=string;bim:name=string;bim:elementKind=token;bim:geometryMode=token(parametric);",
+    "bim:id=string;bim:name=string;steel:class=int;bim:elementKind=token;bim:geometryMode=token(parametric);",
     "bim:isDeactivated=bool(optional,default=false);bim:schemaVersion=string(0.1.0);bim:createdBy=string(uuid7);bim:revision=string(uuid7,optional)\n",
     "steel:plate:contourPointsMm=double3[];steel:plate:thicknessMm=double;",
+    "steel:plate:thicknessSide=token(optional,top|middle|bottom;absent=top);",
+    "steel:plate:cornerVertex=int[](optional);steel:plate:cornerKind=token[](optional,chamfer|round);",
+    "steel:plate:cornerD1Mm=double[](optional);steel:plate:cornerD2Mm=double[](optional);steel:plate:cornerRadiusMm=double[](optional);",
+    "all five steel:plate:corner attributes or none, equal lengths, one vertex at most once, sharp corners store nothing\n",
     "steel:plate:holePointsMm=double3[](optional,z=0);steel:plate:holeVertexCounts=int[](optional,>=3 each);",
-    "steel:cut:pointMm=double3(optional);steel:cut:normal=double3(optional,nonzero,both or neither)\n",
-    "bim:axisPointsMm=double3[];steel:member:rollRad=double(optional)\n",
+    "steel:cut:operationId=string[](optional,uuid7);steel:cut:ordinal=int[](optional,<=999);",
+    "steel:cut:pointMm=double3[](optional);steel:cut:normal=double3[](optional,nonzero each);",
+    "steel:cut:keep=token[](optional,positive|negative);all five or none,equal lengths,ascending ordinals\n",
+    "steel:hole:pointsMm=double3[](optional,z=0);steel:hole:vertexCounts=int[](optional,>=3 each);",
+    "steel:hole:operationIds=string[](uuid7 each);steel:hole:ordinals=int[](strictly increasing);",
+    "all four steel:hole attributes or none, ordinals are engine-assigned and never reused\n",
+    "bim:axisPointsMm=double3[];steel:member:rollRad=double(optional);\n",
+    "steel:member:planePosition=token(left|centre|right);steel:member:planeOffsetMm=double;\n",
+    "steel:member:depthPosition=token(front|centre|back);steel:member:depthOffsetMm=double;\n",
+    "steel:member:startOffsetMm=double;steel:member:endOffsetMm=double;",
+    "all six section-placement attributes or none;absent=centred,unshifted (P14)\n",
+    "memberBody=element-local-v2;placement rotation excluded from shape and mass keys\n",
     "assembly=element;bim:elementKind=assembly;kind=assembly;no shape inputs, material or Geometry;placement=identity\n",
+    "bim:instanceOf=rel(1 canonical owned plate|beam|column of same kind;source instance);shared shape/profile/material/operations;no chains or shadow fields\n",
     "bim:partOf=rel(0..1 element target of kind assembly;source plate|beam|column|assembly;no self;acyclic)\n",
-    "connection=element;bim:elementKind=connection;kind=component;a weld (A06) or bolt group (A05);no material or Geometry;placement=identity\n",
+    "bim:mainPart=rel(0..1 element target that is a direct part of the assembly;source assembly;one main per assembly)\n",
+    "connection=element;bim:elementKind=connection;kind=component;a weld (A06) or bolt group (A05);no material;placement=identity;",
+    "no authored Geometry except a weld with steel:weld:pathMm\n",
     "steel:connection:type=token(weld|bolt_group);steel:weld:type=token(fillet);steel:weld:sizeMm=double(>0,<=1000);steel:weld:location=token(workshop|site);",
-    "steel:weld:side=token(arrow|other|both)\n",
+    "steel:weld:side=token(arrow|other|both);",
+    "steel:weld:pathMm=double3[](optional,2..=1024 world points);steel:weld:allAround=token(true|false,optional);",
+    "steel:weld:contour=token(none|flush|concave|convex,optional)\n",
     "steel:bolt:diameterMm=double(>0,<=1000);steel:bolt:count=int(1..=512);steel:bolt:pitchMm=double(>0,<=1e6);",
     "steel:bolt:originMm=double3;steel:bolt:directionMm=double3(unit)\n",
     "bim:connects=rel(2 distinct ordered element targets of kind plate|beam|column, main part first;source connection)\n",
@@ -69,6 +93,16 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:profile:cavityPointsMm=double3[](optional,z=0);steel:profile:cavityVertexCounts=int[](optional,>=3 each);",
     "bim:densityKgM3=double(optional);bim:materialGrade=string(optional);",
     "bim:materialStandard=string(optional)\n",
+    "fastener definition=bim:definitionKind=token(fastener);steel:fastener:kind=token(bolt|screw);steel:fastener:headKind=token(hex);",
+    "steel:fastener:nominalDiameterMm=double;steel:fastener:headAcrossFlatsMm=double;steel:fastener:headHeightMm=double;",
+    "steel:fastener:nutAcrossFlatsMm=double(optional);steel:fastener:nutHeightMm=double(optional);",
+    "steel:fastener:washerOuterDiameterMm=double(optional);steel:fastener:washerInnerDiameterMm=double(optional);",
+    "steel:fastener:washerThicknessMm=double(optional);",
+    "steel:fastener:holeClearanceMm=double;steel:fastener:lengthsMm=double[](strictly ascending);",
+    "steel:fastener:threadProtrusionMm=double;steel:fastener:massEachKg=double(optional);",
+    "steel:fastener:washerUnderHead=bool;steel:fastener:washerUnderNut=bool;",
+    "steel:fastener:holeMode=token(generate|none);steel:fastener:designation=string(optional);",
+    "steel:fastener:standard=string(optional);steel:fastener:grade=string(optional)\n",
     "definition displayName=prim metadata string(optional,any definition kind;part of the definition content)\n",
     "derived=<element>/Geometry:Mesh;points=point3f[];faceVertexCounts=int[];faceVertexIndices=int[];",
     "subdivisionScheme=token(none);orientation=token(rightHanded);",
@@ -85,7 +119,7 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "bim:reference:correctionSourceDigest=string(sha256);xformOp:rotateX:bimUpAxis=double(degrees,Y up only);",
     "xformOp:scale:bimUnits=double3(metersPerUnit*1000);xformOpOrder=token[](rotateX,scale;empty without correction)\n",
     "reference/Correction/Source=def without type;references=@external/<sha256>.<usda|usdc>@</defaultPrim>;nothing else owned at or below\n",
-    "changes=Create|Label|Contour|Thickness|Axis|Roll|Profile|Material|Placement|Mesh|AttachReference|ReferenceUnits|PartOf|Level|Mark|Delete;",
+    "changes=Create|Label|Contour|Thickness|ThicknessSide|Axis|Roll|Profile|Material|Placement|Mesh|AttachReference|ReferenceUnits|PartOf|MainPart|Level|Mark|Cuts|HoleRecords|Delete;",
     "opinion=Absent|Block|Value|Remove;relationship=Targets|Empty|Remove\n",
     "snapshot=Prim(path,element_id,type_name,active,properties,relationships,sources);",
     "property=(name,type_name,optional-value);relationship=(name,ordered-targets)\n",
@@ -203,24 +237,48 @@ pub enum Shape {
         contour_mm: Vec<[f64; 3]>,
         /// Explicit extrusion thickness in millimetres.
         thickness_mm: f64,
+        /// Where the thickness is laid off from the contour plane (A12.1); absence is the
+        /// `top` default and stores no attribute.
+        thickness_side: Option<PlateSide>,
+        /// Corner treatments of authored contour vertices (A12.2); empty means every corner
+        /// sharp and stores no attribute. The contour keeps its sharp points.
+        corners: Vec<PlateCorner>,
         /// Through-hole polygons in plate-local XY (`z` is zero), each at least three points,
         /// stored as one flat point array plus the vertex counts. Empty means a solid plate.
         holes: Vec<Vec<[f64; 3]>>,
-        /// Optional single plane cut (A03, experimental), stored as its point and normal.
-        cut: Option<PlaneCut>,
+        /// Through-hole operation records (A04) authored with the element. An ordinary create
+        /// carries none (F04 section 4); a copy authors the source's records with fresh
+        /// operation ids and the same ordinals.
+        hole_records: Vec<HoleRecord>,
+        /// The owned `plane_cut` operation records (A03, amendment A-2) in ascending ordinal
+        /// order, stored as five parallel attributes. Empty means an uncut plate.
+        cuts: Vec<CutRecord>,
     },
-    /// Straight member, with a required pinned rectangular profile.
+    /// Member (P03 straight, P12 polybeam), with a required pinned profile.
     Member {
         /// Explicit beam or column kind.
         kind: MemberKind,
-        /// Two element-local axis points.
-        axis_mm: [[f64; 3]; 2],
+        /// Ordered element-local path points: exactly two for a straight member, at least three
+        /// for a polybeam.
+        axis_mm: Vec<[f64; 3]>,
         /// Immutable profile content digest.
         profile: ContentDigest,
-        /// Missing roll has no authored default; engineering default is zero.
+        /// Missing roll has no authored default; engineering default is zero. A polybeam has no
+        /// authored roll.
         roll_rad: Option<f64>,
-        /// Optional single plane cut (A03, experimental), stored as its point and normal.
-        cut: Option<PlaneCut>,
+        /// Position of the section about the axis (P14); `None` is the centred default and
+        /// stores no attributes.
+        placement: Option<SectionPlacement>,
+        /// The owned `plane_cut` operation records (A03, amendment A-2) in ascending ordinal
+        /// order. Empty means an uncut member.
+        cuts: Vec<CutRecord>,
+    },
+    /// P11 instance: shared inputs are read from a canonical part; only metadata and pose are local.
+    Instance {
+        /// Same part kind as the canonical definition.
+        kind: beamcraft_model::instance::PartKind,
+        /// Canonical part identity, never another instance.
+        definition: String,
     },
     /// A01 assembly: a grouping target of `bim:partOf` with no shape inputs, no material and no
     /// derived body. Its placement must be the identity in this slice.
@@ -245,13 +303,16 @@ pub enum Shape {
 }
 
 impl Shape {
-    /// The optional single plane cut of a plate, beam or column (A03); other kinds have none.
-    pub(crate) fn cut(&self) -> Option<&PlaneCut> {
+    /// The owned `plane_cut` records of a plate, beam or column (A03); other kinds have none.
+    pub(crate) fn cuts(&self) -> &[CutRecord] {
         match self {
-            Self::Plate { cut, .. } | Self::Member { cut, .. } => cut.as_ref(),
-            Self::Assembly | Self::Weld(_) | Self::Bolt(_) | Self::Grid(_) | Self::Level { .. } => {
-                None
-            }
+            Self::Plate { cuts, .. } | Self::Member { cuts, .. } => cuts,
+            Self::Instance { .. }
+            | Self::Assembly
+            | Self::Weld(_)
+            | Self::Bolt(_)
+            | Self::Grid(_)
+            | Self::Level { .. } => &[],
         }
     }
 }
@@ -270,6 +331,21 @@ pub struct Weld {
     pub location: String,
     /// `arrow`, `other` or `both`.
     pub side: String,
+    /// Optional geometry (A15): the path the weld runs along and its symbol data. `None` authors
+    /// an A06 weld without a body; `Some` also derives a solid under the connection.
+    pub geometry: Option<WeldPath>,
+}
+
+/// The authored geometry of one weld (A15). The path is an ordered world polyline in
+/// millimetres; the symbol tokens are the exact stored values.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WeldPath {
+    /// Ordered world points of the path, 2 to 1024, each within the coordinate cap.
+    pub points_mm: Vec<[f64; 3]>,
+    /// All-around symbol. Symbol data only.
+    pub all_around: bool,
+    /// `none`, `flush`, `concave` or `convex`.
+    pub contour: String,
 }
 
 /// The authored inputs of a bolt group (A05). The group is `count` bolts in a straight world line
@@ -344,6 +420,11 @@ pub enum Definition {
         standard: Option<String>,
         /// Readable name (prim `displayName` metadata), part of the definition content.
         display_name: Option<String>,
+    },
+    /// A14.1 fastener definition (bolt amendment section 2): one size of one standard.
+    Fastener {
+        /// The complete fastener values, admitted by the model crate.
+        spec: FastenerSpec,
     },
 }
 
@@ -432,6 +513,13 @@ pub enum Change {
         /// Exact new label.
         name: String,
     },
+    /// Set the authored integer class of a steel part.
+    PartClass {
+        /// Full target UUIDv7.
+        id: String,
+        /// Class from the engine's typed command.
+        class: i32,
+    },
     /// Replace the complete contour; engineering validity is a host prerequisite.
     Contour {
         /// Full target UUIDv7.
@@ -446,12 +534,29 @@ pub enum Change {
         /// New thickness.
         mm: f64,
     },
-    /// Replace both member axis points.
+    /// Replace the thickness side of a plate (A12.1). A plate always has a side (absence is the
+    /// `top` default), so the change authors the exact token, `top` included.
+    ThicknessSide {
+        /// Full target UUIDv7.
+        id: String,
+        /// The side to lay the thickness off from the contour plane.
+        side: PlateSide,
+    },
+    /// Replace the owned plane-cut records of a plate, beam or column (A03, amendment A-2) as a
+    /// whole: five parallel attributes, or their removal for an empty list. Engineering validity
+    /// is a host prerequisite; the candidate re-validates the stored form.
+    Cuts {
+        /// Full target UUIDv7.
+        id: String,
+        /// The records in ascending ordinal order.
+        cuts: Vec<CutRecord>,
+    },
+    /// Replace the member's path points as a whole (P03 two, P12 three or more).
     Axis {
         /// Full target UUIDv7.
         id: String,
-        /// Element-local axis.
-        points_mm: [[f64; 3]; 2],
+        /// Ordered element-local path points.
+        points_mm: Vec<[f64; 3]>,
     },
     /// Change the optional roll opinion in the selected authored layer.
     Roll {
@@ -509,6 +614,15 @@ pub enum Change {
         /// Full UUIDv7 of the assembly, or `None` for an explicit empty record (a detach).
         assembly: Option<String>,
     },
+    /// Name the one main part of an assembly (A16.1). The record lives on the assembly; the
+    /// target must be a direct part of it, re-checked on the candidate. There is no clear: the
+    /// record is replaced by naming another part, and detaching the main part is refused.
+    MainPart {
+        /// Full source UUIDv7: the assembly.
+        id: String,
+        /// Full UUIDv7 of the main part.
+        part: String,
+    },
     /// Set or remove the one `bim:level` record of a plate, beam or column (D2). The target must
     /// be an active owned level; kind, cardinality and dangling targets are re-checked on the
     /// candidate.
@@ -527,16 +641,29 @@ pub enum Change {
         /// The mark to store.
         mark: Mark,
     },
+    /// Replace the complete set of through-hole operation records of a plate (A04): the four
+    /// `steel:hole:*` attributes, replaced as a whole and always together. The engine has
+    /// already replayed every record against the base shape and certified the body; this
+    /// writes the authoritative polygons with their operation ids and ordinals.
+    HoleRecords {
+        /// Full target UUIDv7 of the plate.
+        id: String,
+        /// Every record of the plate, ordered by ordinal; at least one.
+        records: Vec<HoleRecord>,
+    },
 }
 impl Change {
     pub(super) fn key(&self) -> (&str, &'static str) {
         match self {
             Self::Create(e) => (&e.id, "lifecycle"),
             Self::Delete { id } => (id, "lifecycle"),
+            Self::PartClass { id, .. } => (id, "steel:class"),
             Self::Label { id, .. } => (id, "bim:name"),
             Self::Grid { id, .. } => (id, "bim:grid"),
             Self::Contour { id, .. } => (id, "steel:plate:contourPointsMm"),
             Self::Thickness { id, .. } => (id, "steel:plate:thicknessMm"),
+            Self::ThicknessSide { id, .. } => (id, "steel:plate:thicknessSide"),
+            Self::Cuts { id, .. } => (id, "steel:cut"),
             Self::Axis { id, .. } => (id, "bim:axisPointsMm"),
             Self::Roll { id, .. } => (id, "steel:member:rollRad"),
             Self::Profile { id, .. } => (id, "bim:profile"),
@@ -546,8 +673,10 @@ impl Change {
             Self::AttachReference(r) => (&r.id, "lifecycle"),
             Self::ReferenceUnits { id, .. } => (id, "reference:units"),
             Self::PartOf { id, .. } => (id, "bim:partOf"),
+            Self::MainPart { id, .. } => (id, "bim:mainPart"),
             Self::Level { id, .. } => (id, "bim:level"),
             Self::Mark { id, .. } => (id, "steel:numbering"),
+            Self::HoleRecords { id, .. } => (id, "steel:hole"),
         }
     }
 }
@@ -932,7 +1061,9 @@ impl Reader {
 pub(super) fn element_path(id: &str, category: ElementCategory) -> Result<String, Diagnostic> {
     beamcraft_model::id::ElementId::parse(id)
         .map(|id| id.prim_path(category))
-        .map_err(|_| fail(ErrorCode::InvalidId, "invalid full element identity"))
+        .map_err(|_| {
+            fail(ErrorCode::InvalidId, "invalid full element identity").with_rule("DV-BASE-001")
+        })
 }
 fn shape_category(shape: &Shape) -> ElementCategory {
     match shape {
@@ -940,7 +1071,9 @@ fn shape_category(shape: &Shape) -> ElementCategory {
         Shape::Weld(_) | Shape::Bolt(_) => ElementCategory::Connection,
         Shape::Level { .. } => ElementCategory::Level,
         Shape::Grid(_) => ElementCategory::Grid,
-        Shape::Plate { .. } | Shape::Member { .. } => ElementCategory::Part,
+        Shape::Plate { .. } | Shape::Member { .. } | Shape::Instance { .. } => {
+            ElementCategory::Part
+        }
     }
 }
 fn change_path(id: &str, input: &Prepare, prims: &[Prim]) -> Result<String, Diagnostic> {
@@ -980,6 +1113,7 @@ fn definition_category(definition: &Definition) -> DefinitionCategory {
         Definition::RectangleProfile { .. } | Definition::SectionProfile { .. } => {
             DefinitionCategory::Profile
         }
+        Definition::Fastener { .. } => DefinitionCategory::Fastener,
     }
 }
 pub(super) fn definition_path(digest: ContentDigest, category: DefinitionCategory) -> String {

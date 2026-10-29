@@ -62,11 +62,15 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   snapshot, not invented drawings or views. Open in Menu or Model library in Manage returns to the library
   when launched from the start page. Ctrl+K searches supported commands in a native dialog.
   Existing create/edit/property/publish commands still use the same CLI paths. Unimplemented
-  tools (Bolts, Weld, Wire, floor-plan views and snapping) remain explicitly disabled.
+  tools (Bolts, Weld and floor-plan views) remain explicitly disabled.
 - Manage > Rectangular grid restores regular-grid creation in the inspector: U/V coordinate
   expressions, labels, optional line limits, XY origin and rotation. Create invokes the existing
   CLI; Cancel does not write. The pinned snapshot includes grid axes for display and framing.
-  This restores creation/display, not later grid editing or snapping tools.
+  Upstream grid selection, properties, local-line editing, intersection snapping and deletion
+  remain available in the inspector. Grid guides can be toggled from View.
+- View retains all five render modes (Wireframe, Transparent, Grey, Shaded, Selected only)
+  and the upstream remappable Ctrl+1 through Ctrl+5 shortcuts. Mode changes never reload the
+  model. See [render modes](../../docs/design/v16-render-modes.md).
 - Resizable windows use equal 40-by-28-point title-bar buttons with centered, thin line icons,
   a distinct restore glyph when maximized, neutral hover feedback and a red close hover.
   The compact welcome window retains equal 28-point minimize/close buttons without maximize.
@@ -83,18 +87,19 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   without maximize or a subtitle. Theme changes discard a mixed-style frame so backgrounds,
   inputs and dropdowns switch together without color animation; a fresh launch restores the
   saved preference automatically.
-- New model pre-fills `New model`, then the first unused `New model 1`, `New model 2`, etc. in
-  the chosen directory (including collisions with ordinary files). Suggestions run off-thread,
-  never overwrite a typed name and do not replace the CLI's final exclusive-create check.
+- New model uses the CLI's `suggest-project-name` and numbered default names (`New Model`,
+  `New Model 1`, etc.). Suggestions run off-thread and never overwrite a typed name; the
+  CLI's final exclusive-create check remains authoritative.
 - The native Menu follows the prototype's dark 232-point navigation, section headings and
   flat 42-point command rows. New/Open use the library, catalogs inspect actual model
   definitions, and unavailable settings/import/export/editor/maintenance
   actions stay disabled instead of suggesting unsupported functionality.
-- The bottom toolbar has 18 compact 24-point entity controls and 13 snap/constraint controls,
+- The bottom toolbar has 20 compact 24-point entity controls and 13 snap/constraint controls,
   in separate dense rows on the left and right with small group separators. Glyphs are
-  contributor-original Rust drawings. Only the existing Select objects action is enabled;
-  entity filters and all snaps remain disabled, with explanatory tooltips, until their APIs
-  are implemented. Search stays available without displaying its keyboard shortcut.
+  contributor-original Rust drawings. The eight upstream selection-class filters and six
+  engine snap kinds are wired to these controls; Snap toggles snapping globally.
+  Unsupported filters/constraints remain disabled with explanatory tooltips.
+  Search stays available without displaying its keyboard shortcut.
 - V05.1 Create panel (experimental, now the inspector of Plate, Beam and Column): a plate (width, length, thickness, optional name and material)
   or a straight beam/column (start, end, profile and material chosen from the store's definitions,
   optional name). Preview stages the exact `create-plate` / `create-member` argument list (one per line, not a shell

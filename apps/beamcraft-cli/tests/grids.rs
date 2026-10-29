@@ -10,12 +10,10 @@ use beamcraft_host::{
     storage::BlobStore,
 };
 use beamcraft_json::Json;
+use support::text;
 const GRID: &str = "01990000-0000-7000-8000-000000000001";
 const OP: &str = "01990000-0000-7000-8000-000000000002";
 const AXES: &str = "01990000-0000-7000-8000-000000000010,01990000-0000-7000-8000-000000000011";
-fn text(j: &Json, key: &str) -> String {
-    j.get(key).unwrap().string().unwrap().to_owned()
-}
 fn list<'a>(j: &'a Json, key: &str) -> &'a [Json] {
     j.get(key).unwrap().array().unwrap()
 }
@@ -93,7 +91,8 @@ fn regular_grids_are_explicit_usd_and_reopen_with_exact_expressions_and_endpoint
     assert!(authored.contains("bim:grid:u:pointsMm"));
     assert!(!authored.contains("def Mesh"));
     let derived = String::from_utf8(revision.layer_bytes("derived.usda").unwrap()).unwrap();
-    assert!(!derived.contains("Geometry"));
+    assert!(derived.contains("Geometry"));
+    assert!(derived.contains("purpose = \"guide\""));
     let inspected = ok(&f, "inspect-elements", &[]);
     assert!(format!("{inspected:?}").contains("grid"));
 }

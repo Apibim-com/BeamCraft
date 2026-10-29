@@ -292,6 +292,12 @@ fn caption(ui: &mut Ui, text: &str) {
 impl App {
     /// Switches the inspector to `bench` and points the create or edit forms at it.
     pub(crate) fn set_bench(&mut self, bench: Bench) {
+        self.grid_line.click = None;
+        if bench != Bench::Select && self.grid_edit.take().is_some() {
+            self.grid_form = crate::grid::GridForm::default();
+            self.grid_note = None;
+        }
+        self.plane_pick = false;
         self.bench = bench;
         match bench {
             Bench::Plate => self.tools.active = ToolKind::Plate,
@@ -486,11 +492,13 @@ impl App {
             )
             .show(ui, |ui| {
                 let bottom = ui.max_rect().bottom() + 4.0;
-                let selected = self.editor.selected().is_some();
+                let grid_selected = self.grid_edit.is_some();
+                let selected = self.editor.selected().is_some() && !grid_selected;
                 let edits_free = !self.editor.busy() && !self.other_command_running();
                 let has_workspace = self.source.workspace.is_some();
                 let mut pick = None;
                 let (mut undo, mut redo) = (false, false);
+                egui::ScrollArea::horizontal().id_salt("ribbon-tools").show(ui, |ui| {
                 ui.horizontal(|ui| {
                     let group = |ui: &mut Ui, name: &str, add: &mut dyn FnMut(&mut Ui)| {
                         ui.vertical(|ui| {
@@ -536,7 +544,7 @@ impl App {
                             (Bench::Copy, Icon::Copy, "Copy"),
                             (Bench::Delete, Icon::Delete, "Delete"),
                         ] {
-                            let response = tool_button(ui, icon, label, bench == b, selected && edits_free);
+                            let response = tool_button(ui, icon, label, bench == b, (selected || b == Bench::Delete && grid_selected) && edits_free);
                             if response.clicked() {
                                 pick = Some(b);
                             }
@@ -550,8 +558,21 @@ impl App {
                     }
                     if self.ribbon_tab == RibbonTab::View {
                     group(ui, "Display", &mut |ui| {
-                        tool_button(ui, Icon::Block, "Shaded", true, true);
-                        tool_button(ui, Icon::Wire, "Wire", false, false);
+                        for (mode, label) in [
+                            (beamcraft_engine::RenderMode::Wireframe, "Wireframe"),
+                            (beamcraft_engine::RenderMode::Transparent, "Transparent"),
+                            (beamcraft_engine::RenderMode::Grey, "Grey"),
+                            (beamcraft_engine::RenderMode::Shaded, "Shaded"),
+                            (beamcraft_engine::RenderMode::SelectedOnly, "Selected only"),
+                        ] {
+                            if tool_button(ui, Icon::Block, label, self.mode == mode, true).clicked() {
+                                self.mode = mode;
+                            }
+                        }
+                        if tool_button(ui, Icon::Grid, "Grid guides", self.grids_visible, true).clicked() {
+                            self.grids_visible = !self.grids_visible;
+                            if !self.grids_visible { self.grid_edit = None; }
+                        }
                     });
                     group(ui, "Refresh", &mut |ui| {
                         if tool_button(ui, Icon::Refresh, "Reload", false, true).clicked() {
@@ -582,8 +603,13 @@ impl App {
                         });
                     }
                 });
+                });
                 if let Some(bench) = pick {
-                    self.set_bench(bench);
+                    if bench == Bench::Delete && grid_selected {
+                        self.delete_selection();
+                    } else {
+                        self.set_bench(bench);
+                    }
                 }
                 if undo {
                     self.start_edit(Some(EditKind::Undo));
@@ -606,8 +632,7 @@ impl App {
         let palette = Palette::current(ui);
         egui::Panel::right("model-inspector")
             .default_size(286.0)
-            .min_size(250.0)
-            .max_size(420.0)
+            .size_range(250.0..=(ui.available_width() * 0.75).max(320.0))
             .resizable(true)
             .frame(
                 egui::Frame::new()
@@ -624,7 +649,14 @@ impl App {
                     Stroke::new(1.0, palette.rule),
                 );
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new(self.bench.title()).size(12.0));
+                    ui.label(
+                        RichText::new(if self.grid_edit.is_some() {
+                            "Grid properties"
+                        } else {
+                            self.bench.title()
+                        })
+                        .size(12.0),
+                    );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if self.bench == Bench::Select
                             && theme::icon_button(
@@ -642,7 +674,9 @@ impl App {
                     });
                 });
                 ui.separator();
-                if self.bench == Bench::Grid {
+                if self.bench == Bench::Grid
+                    || self.bench == Bench::Select && self.grid_edit.is_some()
+                {
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
                     self.grid_panel(ui);
                     return;
@@ -699,21 +733,33 @@ impl App {
                     Stroke::new(1.0, palette.rule),
                 );
                 ui.horizontal(|ui| {
-                    if super::switches::entities(ui, self.bench == Bench::Select) {
+                    if super::switches::entities(
+                        ui,
+                        self.bench == Bench::Select,
+                        &mut self.selection,
+                    ) {
                         self.set_bench(Bench::Select);
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.allocate_ui_with_layout(
                             vec2(super::switches::snaps_width(), 24.0),
                             egui::Layout::left_to_right(egui::Align::Center),
-                            super::switches::snaps,
+                            |ui| super::switches::snaps(ui, &mut self.selection),
                         );
                     });
                 });
                 ui.horizontal(|ui| {
-                    let selection = match self.editor.selected() {
-                        Some(info) => format!("1 selected · {} {}", info.kind, info.name),
-                        None => "Nothing selected".to_owned(),
+                    let selection = if let Some(grid) = self
+                        .grid_edit
+                        .as_ref()
+                        .and_then(|edit| self.grid_scene.get(&edit.id))
+                    {
+                        format!("1 selected · Grid {}", grid.form.name)
+                    } else {
+                        match self.editor.selected() {
+                            Some(info) => format!("1 selected · {} {}", info.kind, info.name),
+                            None => "Nothing selected".to_owned(),
+                        }
                     };
                     ui.label(RichText::new(selection).size(10.0).color(palette.muted));
                     if self.select_job.is_some() {
@@ -723,6 +769,15 @@ impl App {
                         ui.label(RichText::new(error).small().color(palette.error));
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .selectable_label(
+                                self.selection.snap_open,
+                                RichText::new("Snap").size(10.0),
+                            )
+                            .clicked()
+                        {
+                            self.selection.snap_open = !self.selection.snap_open;
+                        }
                         if ui
                             .selectable_label(self.details, RichText::new("Details").size(10.0))
                             .clicked()
@@ -762,12 +817,20 @@ impl App {
             if label.to_lowercase().contains(&query)
                 && ui
                     .add_enabled(
-                        bench.edit().is_none() || editable,
+                        bench.edit().is_none()
+                            || editable
+                            || bench == Bench::Delete
+                                && self.grid_edit.is_some()
+                                && !self.other_command_running(),
                         egui::Button::new(label).min_size(vec2(ui.available_width(), 34.0)),
                     )
                     .clicked()
             {
-                self.set_bench(bench);
+                if bench == Bench::Delete && self.grid_edit.is_some() {
+                    self.delete_selection();
+                } else {
+                    self.set_bench(bench);
+                }
                 return true;
             }
         }

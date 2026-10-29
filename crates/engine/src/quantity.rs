@@ -19,6 +19,7 @@ use crate::command::{AuthoredPlate, Quantities, QuantityStatus, VOLUME_ALGORITHM
 use crate::member::{AuthoredMember, ProfileInfo};
 use beamcraft_geom::canonical_f64_bytes;
 use beamcraft_geom::tolerance::TOLERANCE_POLICY_VERSION;
+use beamcraft_model::command::{CornerTreatment, CutRecord, KeepSide, PlateCorner, PlateSide};
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::section::SectionShape;
 
@@ -151,11 +152,16 @@ fn float(bytes: &mut Vec<u8>, value: f64) {
     bytes.extend_from_slice(&canonical_f64_bytes(value).unwrap_or([0xff; 8]));
 }
 
-/// Signature of the shape inputs of a plate: outline, thickness and holes, with the algorithm
-/// and tolerance policy. Name, placement and material are not shape inputs.
+/// Signature of the shape inputs of a plate: outline, thickness, thickness side (A12.1: the
+/// side changes the body, so the mesh and this signature change with it), corner treatments
+/// (A12.2: they change the evaluated outline) and holes and cut records, with the algorithm and
+/// tolerance policy. Name, placement and material are not shape inputs.
+///
+/// The corner block is appended only when a corner carries a treatment, so the signatures of
+/// plates authored before A12.2 are unchanged and their stored quantity records stay current.
 pub fn plate_shape_signature(plate: &AuthoredPlate, algorithm: &str) -> ContentDigest {
     let mut bytes = Vec::with_capacity(256);
-    bytes.extend_from_slice(b"BeamCraft/P04/PlateShape/v1\0");
+    bytes.extend_from_slice(b"BeamCraft/P04/PlateShape/v2\0");
     bytes.extend_from_slice(&TOLERANCE_POLICY_VERSION.to_le_bytes());
     bytes.extend_from_slice(&(algorithm.len() as u64).to_le_bytes());
     bytes.extend_from_slice(algorithm.as_bytes());
@@ -164,6 +170,13 @@ pub fn plate_shape_signature(plate: &AuthoredPlate, algorithm: &str) -> ContentD
         float(&mut bytes, *v);
     }
     float(&mut bytes, plate.thickness_mm);
+    bytes.push(match plate.thickness_side {
+        None => 0,
+        Some(PlateSide::Top) => 1,
+        Some(PlateSide::Middle) => 2,
+        Some(PlateSide::Bottom) => 3,
+    });
+    push_corners(&mut bytes, &plate.corners);
     bytes.extend_from_slice(&(plate.holes_mm.len() as u64).to_le_bytes());
     for hole in &plate.holes_mm {
         bytes.extend_from_slice(&(hole.len() as u64).to_le_bytes());
@@ -171,17 +184,48 @@ pub fn plate_shape_signature(plate: &AuthoredPlate, algorithm: &str) -> ContentD
             float(&mut bytes, *v);
         }
     }
-    match plate.cut {
-        Some(cut) => {
-            bytes.push(1);
-            cut.point_mm
-                .into_iter()
-                .chain(cut.normal)
-                .for_each(|v| float(&mut bytes, v));
-        }
-        None => bytes.push(0),
-    }
+    push_cuts(&mut bytes, &plate.cuts);
     digest(&bytes)
+}
+
+/// The cut records of a signature: each record's identity-free content in ordinal order. The
+/// operation id is not a shape input; the geometry and the kept side are.
+fn push_cuts(bytes: &mut Vec<u8>, cuts: &[CutRecord]) {
+    bytes.extend_from_slice(&(cuts.len() as u64).to_le_bytes());
+    for cut in cuts {
+        float(bytes, f64::from(cut.ordinal));
+        bytes.push(match cut.keep {
+            KeepSide::Positive => 1,
+            KeepSide::Negative => 0,
+        });
+        cut.point_mm.into_iter().chain(cut.normal).for_each(|v| {
+            float(bytes, v);
+        });
+    }
+}
+
+/// The corner treatments of a signature (A12.2): each treatment's content, vertex position
+/// included, in authored order. Written only for a treated plate, so the block is absent for
+/// every plate authored before A12.2 and no stored record turns stale.
+fn push_corners(bytes: &mut Vec<u8>, corners: &[PlateCorner]) {
+    if corners.is_empty() {
+        return;
+    }
+    bytes.extend_from_slice(&(corners.len() as u64).to_le_bytes());
+    for corner in corners {
+        bytes.extend_from_slice(&(corner.vertex as u64).to_le_bytes());
+        match corner.treatment {
+            CornerTreatment::Chamfer { d1_mm, d2_mm } => {
+                bytes.push(1);
+                float(bytes, d1_mm);
+                float(bytes, d2_mm);
+            }
+            CornerTreatment::Round { radius_mm } => {
+                bytes.push(2);
+                float(bytes, radius_mm);
+            }
+        }
+    }
 }
 
 /// Signature of the GROSS inputs of a plate: the outline and thickness, with the gross algorithm
@@ -198,20 +242,22 @@ pub fn plate_gross_signature(plate: &AuthoredPlate) -> ContentDigest {
         float(&mut bytes, *v);
     }
     float(&mut bytes, plate.thickness_mm);
+    push_corners(&mut bytes, &plate.corners);
     digest(&bytes)
 }
 
-/// Signature of the GROSS inputs of a member: axis, roll, the resolved section values, the area
-/// source with the declared and the effective area, the algorithm and the tolerance policy.
-/// Changing the declared area (or removing it) changes this signature, so a stored quantity
-/// computed from another area is `stale`. The profile digest is not an input; its values are.
+/// Signature of the GROSS inputs of a member: axis, roll, section placement (P14), the resolved
+/// section values, the area source with the declared and the effective area, the algorithm and
+/// the tolerance policy. Changing the declared area (or removing it) changes this signature, so
+/// a stored quantity computed from another area is `stale`. The profile digest is not an input;
+/// its values are.
 pub fn member_gross_signature(
     member: &AuthoredMember,
     profile: &ProfileInfo,
     algorithm: &str,
 ) -> ContentDigest {
-    let mut bytes = Vec::with_capacity(192);
-    bytes.extend_from_slice(b"BeamCraft/PMass/MemberGross/v1\0");
+    let mut bytes = Vec::with_capacity(224);
+    bytes.extend_from_slice(b"BeamCraft/PMass/MemberGross/v2\0");
     bytes.extend_from_slice(&TOLERANCE_POLICY_VERSION.to_le_bytes());
     bytes.extend_from_slice(&(algorithm.len() as u64).to_le_bytes());
     bytes.extend_from_slice(algorithm.as_bytes());
@@ -225,16 +271,25 @@ pub fn member_gross_signature(
         }
         None => bytes.push(0),
     }
-    match member.cut {
-        Some(cut) => {
-            bytes.push(1);
-            cut.point_mm
-                .into_iter()
-                .chain(cut.normal)
-                .for_each(|v| float(&mut bytes, v));
-        }
+    match member.section_placement {
         None => bytes.push(0),
+        Some(p) => {
+            bytes.push(1);
+            bytes.extend_from_slice(p.plane.as_str().as_bytes());
+            bytes.push(0);
+            bytes.extend_from_slice(p.depth.as_str().as_bytes());
+            bytes.push(0);
+            for v in [
+                p.plane_offset_mm,
+                p.depth_offset_mm,
+                p.start_offset_mm,
+                p.end_offset_mm,
+            ] {
+                float(&mut bytes, v);
+            }
+        }
     }
+    push_cuts(&mut bytes, &member.cuts);
     match profile {
         ProfileInfo::Rectangle {
             width_mm,
@@ -383,6 +438,7 @@ mod tests {
         AuthoredPlate {
             id: ElementId::parse("019a7bf0-0000-7000-8000-000000000005").unwrap(),
             name: "Plate".into(),
+            class: 0,
             contour_points_mm: vec![
                 [0.0, 0.0, 0.0],
                 [1000.0, 0.0, 0.0],
@@ -390,10 +446,13 @@ mod tests {
                 [0.0, 500.0, 0.0],
             ],
             thickness_mm: 10.0,
+            thickness_side: None,
+            corners: Vec::new(),
             placement: Placement::IDENTITY,
             material: None,
             holes_mm: Vec::new(),
-            cut: None,
+            hole_records: Vec::new(),
+            cuts: Vec::new(),
         }
     }
 
@@ -468,12 +527,14 @@ mod tests {
             id: ElementId::parse("019a7bf0-0000-7000-8000-000000000009").unwrap(),
             kind: MemberKind::Beam,
             name: "Beam".into(),
-            axis_points_mm: [[0.0; 3], [6000.0, 0.0, 0.0]],
+            class: 0,
+            axis_points_mm: vec![[0.0; 3], [6000.0, 0.0, 0.0]],
             profile: Sha256::digest(b"profile").unwrap(),
             roll_rad: None,
+            section_placement: None,
             placement: Placement::IDENTITY,
             material: None,
-            cut: None,
+            cuts: Vec::new(),
         }
     }
 
