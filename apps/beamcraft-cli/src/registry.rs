@@ -120,6 +120,7 @@ pub const COMMANDS: &[Command] = &[
     core("weld", "welds"),
     core("bolt", "create-bolt"),
     core("bolt", "bolts"),
+    core("bolt", "fastener-geometry"),
     core("level", "create-level"),
     core("level", "levels"),
     core("attribute", "attribute-define"),
