@@ -15,7 +15,10 @@ output, with strings for generations and other lossless integers.
 
 CLI help text is owned by command family under `src/help/` (for example `member.rs`, `drawing.rs`
 and `workspace.rs`); edit that family's text there. The command inventory is one table,
-`src/registry.rs`: add a new command there (name, family, tier) when it is added to its adapter.
+`src/registry.rs`: add a new command there (name, family, tier, adapter route) when it is added to
+its adapter.
+`main.rs` dispatches a command word only through the registry's route, so a word that is not
+registered is refused as unsupported and a registered word cannot be left without an adapter.
 `src/help/mod.rs` renders the inventory from it and composes the sections in their established
 order; register a new family there without adding help text to `main.rs`. `beamcraft commands
 [--tier core|ui-assist]` prints the same registry as JSON; `ui-assist` marks commands that
