@@ -31,6 +31,7 @@ mod plate;
 mod rebase;
 mod reference;
 mod revision;
+mod schedules;
 mod start;
 mod store;
 mod view;
@@ -78,6 +79,7 @@ const SECTIONS: &[&str] = &[
     pick::HELP,
     view_export::HELP,
     bom::HELP,
+    schedules::HELP,
     store::HELP,
     drawing::DOCUMENTS,
 ];

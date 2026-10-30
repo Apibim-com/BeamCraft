@@ -38,3 +38,6 @@ pub mod registry;
 pub mod source_file;
 pub mod weld;
 pub mod workspace;
+
+/// Schedule template decoding and neutral rows (I05).
+pub mod schedules;

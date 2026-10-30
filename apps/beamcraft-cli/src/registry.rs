@@ -160,6 +160,7 @@ pub const COMMANDS: &[Command] = &[
     core("pick", "element-edges"),
     core("view_export", "export-view"),
     core("bom", "export-bom"),
+    core("schedules", "schedule-export"),
     core("drawing", "preview-drawing"),
     core("drawing", "create-drawing"),
     core("drawing", "refresh-drawing"),
