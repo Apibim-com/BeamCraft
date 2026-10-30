@@ -484,3 +484,96 @@ fn the_blank_environment_seeds_only_the_default_materials() {
     let defined = f.raw(&["definitions", "--store", &store]).1;
     assert!(list(&defined, "environment_profiles").is_empty());
 }
+
+#[test]
+fn a_placed_member_changes_its_profile_by_name_and_a_plate_refuses() {
+    let f = Fixture::new();
+    let models = f.path("models");
+    let created = f.ok(&[
+        "create-project",
+        "--parent",
+        &models,
+        "--name",
+        "Swap",
+        "--environment",
+        "starter",
+    ]);
+    let store = text(at(&created, &["project"]), "path");
+    let run = |args: &[&str]| f.raw(args);
+    let beam = run(&[
+        "create-member",
+        "--store",
+        &store,
+        "--start",
+        "0,0,0",
+        "--end",
+        "6000,0,0",
+        "--profile",
+        "I-300x150",
+        "--material",
+        "Steel",
+    ]);
+    assert_eq!(beam.0, 0, "{:?}", beam.1);
+    let id = text(at(&beam.1, &["member"]), "element_id");
+    let before = at(&beam.1, &["member", "quantities", "mass", "kg"])
+        .float()
+        .unwrap();
+    let first_profile = text(at(&beam.1, &["member"]), "profile_digest");
+
+    // A name that the model does not define yet comes from the project's environment.
+    let swap = |extra: &[&str]| {
+        let mut args = vec!["update-element", "--store", &store, "--id", &id];
+        args.extend_from_slice(extra);
+        run(&args)
+    };
+    let changed = swap(&["--profile", "H-300x300", "--op-id", OP]);
+    assert_eq!(changed.0, 0, "{:?}", changed.1);
+    assert_eq!(at(&changed.1, &["effect", "profile"]), &Json::Bool(true));
+    let second_profile = text(at(&changed.1, &["element"]), "profile_digest");
+    assert_ne!(first_profile, second_profile);
+    let shown = f.raw(&["inspect-elements", "--store", &store]).1;
+    assert!(format!("{shown:?}").contains("H-300x300"));
+    let after = at(&changed.1, &["element", "quantities", "mass", "kg"])
+        .float()
+        .unwrap();
+    assert!(after > before * 2.0, "{before} kg became {after} kg");
+
+    // The same operation again replays; the same profile under a new operation changes nothing.
+    let replay = swap(&["--profile", "H-300x300", "--op-id", OP]);
+    assert_eq!(text(&replay.1, "outcome"), "element_update_replayed");
+    let nothing = swap(&["--profile", "H-300x300"]);
+    assert_eq!(nothing.0, 2);
+    assert_eq!(text(&nothing.1, "code"), "INVALID_ARGUMENT");
+    assert_eq!(
+        swap(&["--profile", "NO-SUCH"]).1.get("code").unwrap(),
+        &Json::text("NOT_FOUND")
+    );
+
+    // A plate has no profile.
+    let plate = run(&[
+        "create-plate",
+        "--store",
+        &store,
+        "--width",
+        "100",
+        "--length",
+        "200",
+        "--thickness",
+        "10",
+    ]);
+    assert_eq!(plate.0, 0, "{:?}", plate.1);
+    let plate_id = text(at(&plate.1, &["plate"]), "element_id");
+    let refused = run(&[
+        "update-element",
+        "--store",
+        &store,
+        "--id",
+        &plate_id,
+        "--profile",
+        "H-300x300",
+    ]);
+    assert_eq!(refused.0, 2);
+    assert_eq!(text(&refused.1, "code"), "UNSUPPORTED_PROPERTY");
+}
+
+const OP: &str = "0199e7a0-0000-7000-8000-0000000000c1";

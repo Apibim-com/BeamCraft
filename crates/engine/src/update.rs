@@ -16,15 +16,16 @@
 //! | `thickness_side` (A12.1) | yes | yes | mesh and quantity record |
 //! | `contour_points_mm` (A12.3) | yes | yes | mesh and quantity record (a plate contour) |
 //! | `axis_points_mm` | yes | yes | mesh and quantity record (a member path, P12) |
+//! | `profile` | yes | yes | mesh and quantity record (a member's pinned section) |
 //! | `translation_mm` | no | no | untouched (the body is element-local) |
 //! | `orientation_xyzw` | no | no | untouched (the body is element-local) |
 //! | `level` | no | no | untouched (a relationship of the element only) |
 //!
 //! A move keeps the rotation and never touches the shape, the body or the stored quantities, so
 //! no geometry is copied or rebuilt. An orientation change replaces the stored quaternion as a
-//! whole; local meshes and quantities are unchanged. Fields
-//! outside this list (contour, roll, profile) are `UNSUPPORTED_PROPERTY`: they belong to later
-//! tasks.
+//! whole; local meshes and quantities are unchanged. A profile change replaces the pinned
+//! section of a member (a plate has none). Fields outside this list (roll) are
+//! `UNSUPPORTED_PROPERTY`: they belong to later tasks.
 
 use crate::command::AuthoredPlate;
 use crate::member::AuthoredMember;
@@ -48,6 +49,8 @@ pub struct UpdateEffect {
     pub orientation: bool,
     /// The level assignment changes (D2), including its removal; no geometry is touched.
     pub level: bool,
+    /// The pinned profile of a member changes; the body is rebuilt from the new section.
+    pub profile: bool,
 }
 
 /// The effect of a patch on the element it targets, ignoring whether a value really differs:
@@ -61,10 +64,12 @@ pub const fn effect(patch: &ElementPatch) -> UpdateEffect {
             || patch.contour_points_mm.is_some()
             || patch.thickness_mm.is_some()
             || patch.thickness_side.is_some()
-            || patch.axis_points_mm.is_some(),
+            || patch.axis_points_mm.is_some()
+            || patch.profile.is_some(),
         placement: patch.translation_mm.is_some(),
         orientation: patch.orientation_xyzw.is_some(),
         level: patch.level.is_some(),
+        profile: patch.profile.is_some(),
     }
 }
 
@@ -79,6 +84,13 @@ pub fn patch_plate(
             ErrorCode::UnsupportedProperty,
             "axis_points_mm",
             "a plate has no path points",
+        ));
+    }
+    if patch.profile.is_some() {
+        return Err(CommandError::new(
+            ErrorCode::UnsupportedProperty,
+            "profile",
+            "a plate has no profile",
         ));
     }
     let mut next = plate.clone();
@@ -157,6 +169,9 @@ pub fn patch_member(
     }
     if let Some(material) = patch.material {
         next.material = material;
+    }
+    if let Some(profile) = patch.profile {
+        next.profile = profile;
     }
     if let Some(points) = &patch.axis_points_mm {
         if points.len() < 2 {
@@ -238,7 +253,8 @@ mod tests {
                 shape: false,
                 placement: false,
                 orientation: false,
-                level: false
+                level: false,
+                profile: false
             }
         );
         let clear = ElementPatch {

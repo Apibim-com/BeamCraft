@@ -333,6 +333,8 @@ const A13_COMBINE_OPTIONS_ALL: &[&str] = &[
 
 const UPDATE_OPTIONS: &[&str] = &[
     "--class",
+    "--profile-digest",
+    "--profile",
     "--store",
     "--id",
     "--name",
@@ -495,7 +497,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "add-hole" => add_hole_cli(&store, &options, false, false),
         "update-hole" => add_hole_cli(&store, &options, true, false),
         "remove-hole" => add_hole_cli(&store, &options, false, true),
-        "update-element" => update_command(&store, &options),
+        "update-element" => update_command(&store, &options, candidates),
         "move-plate-vertex" => contour_edit_command(&store, &options, "move-plate-vertex"),
         "move-plate-edge" => contour_edit_command(&store, &options, "move-plate-edge"),
         "insert-plate-vertex" => contour_edit_command(&store, &options, "insert-plate-vertex"),
@@ -1243,7 +1245,11 @@ fn keep_side(options: &BTreeMap<&str, &str>) -> Run<KeepSide> {
         .ok_or_else(|| invalid("--keep is positive or negative"))
 }
 
-fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Json> {
+fn update_command(
+    store: &RevisionStore,
+    options: &BTreeMap<&str, &str>,
+    candidates: &mut Vec<Json>,
+) -> Run<Json> {
     let mut source = IdSource::system();
     let mut fresh = || {
         source.next_id().map_err(|_| PlateError {
@@ -1314,6 +1320,16 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
             })
             .transpose()?,
         axis_points_mm: given("--axis-point").map(path_points).transpose()?,
+        // A member's new section: a digest, or a name looked up in the model and then in the
+        // environment of the project, exactly as when a member is created.
+        profile: selected(
+            store,
+            options,
+            ("--profile-digest", "--profile"),
+            true,
+            None,
+            candidates,
+        )?,
     };
     let updated = update_element(
         store,
@@ -1351,6 +1367,7 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
                 ("placement", Json::Bool(updated.effect.placement)),
                 ("orientation", Json::Bool(updated.effect.orientation)),
                 ("level", Json::Bool(updated.effect.level)),
+                ("profile", Json::Bool(updated.effect.profile)),
             ]),
         ),
         (
