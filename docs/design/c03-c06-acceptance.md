@@ -5,10 +5,13 @@ owner decision. The C05 rows below are executable tests as of 2026-10-27
 (`apps/beamcraft-cli/tests/offline_clients.rs`), at the largest scale the default suite carries —
 the per-commit verification is O(revisions), so the full 1000 + 1000 sweep stays out of it. The
 authenticated coordinator rebase (C03) is executable as of 2026-10-30
-(`apps/beamcraft-cli/tests/coordinator_rebase.rs`), and compensation (C06) as of 2026-10-30
-(`apps/beamcraft-cli/tests/compensation.rs`). The C04 semantic-conflict workflow is executable as
-of 2026-10-26 (`apps/beamcraft-cli/tests/rebase.rs`, `apps/beamcraft-cli/tests/resolve.rs` and
-`apps/beamcraft-cli/tests/coordinator.rs`).**
+(`apps/beamcraft-cli/tests/coordinator_rebase.rs`). The C04 semantic-conflict workflow is
+executable as of 2026-10-26 (`apps/beamcraft-cli/tests/rebase.rs`,
+`apps/beamcraft-cli/tests/resolve.rs` and `apps/beamcraft-cli/tests/coordinator.rs`).
+Compensation (C06) is executable on the fork (`apps/beamcraft-cli/tests/compensation.rs`) but is
+not part of `master`: the combined delivery was closed with the direction that compensating a
+published version ships only together with the post-MVP roles-and-permissions model it needs
+(Apibim-com/BeamCraft#737).**
 Scope: fork issue axisrow/BeamCraft#12 and fork issue axisrow/BeamCraft#160 (upstream #331). The local rebase acceptance cases
 C03-01 to C03-14 in `docs/design/c03-rebase.md` stay required unchanged. This document specifies
 the remaining per-slice acceptance: the authenticated coordinator rebase (C03), the

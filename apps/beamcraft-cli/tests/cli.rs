@@ -25,6 +25,7 @@ mod construction_input;
 mod construction_snaps;
 mod contour_plates;
 mod coordinator;
+mod coordinator_rebase;
 mod copy;
 mod curved_members;
 mod cut_removals;

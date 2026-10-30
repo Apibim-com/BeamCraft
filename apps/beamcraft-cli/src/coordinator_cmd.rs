@@ -2,7 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! C02 headless commands: `serve-coordinator` starts a local coordinator explicitly (nothing
-//! starts it otherwise), `publish-changeset` and `inspect-coordinator-head` are its clients.
+//! starts it otherwise), `publish-changeset`, `coordinator-rebase` and
+//! `inspect-coordinator-head` are its clients.
 //!
 //! `serve-coordinator` prints one `listening` JSON line with the bound loopback address as soon
 //! as it accepts connections, then serves until `--max-requests` requests were handled (or until
@@ -71,6 +72,7 @@ fn exit_for(code: ErrorCode) -> u8 {
 pub fn handles(command: &OsString) -> bool {
     command == "serve-coordinator"
         || command == "publish-changeset"
+        || command == "coordinator-rebase"
         || command == "inspect-coordinator-head"
 }
 
@@ -122,6 +124,14 @@ fn run(args: &[OsString]) -> Run<Json> {
             "--workspace",
             "--changeset",
             "--expected-head",
+        ],
+        "coordinator-rebase" => &[
+            "--address",
+            "--token-file",
+            "--workspace",
+            "--op-id",
+            "--expected-head",
+            "--expected-draft",
         ],
         "inspect-coordinator-head" => &["--address", "--token-file"],
         _ => return Err(invalid("unknown command")),
@@ -207,6 +217,29 @@ fn run(args: &[OsString]) -> Run<Json> {
     )?))?;
     if *command == "inspect-coordinator-head" {
         return Ok(call(address, &token, "head", [])?);
+    }
+    if *command == "coordinator-rebase" {
+        let fields = [
+            (
+                "workspace",
+                required("--workspace", "--workspace is required")?,
+            ),
+            ("op_id", required("--op-id", "--op-id is required")?),
+            (
+                "expected_head",
+                required("--expected-head", "--expected-head is required")?,
+            ),
+            (
+                "expected_draft",
+                required("--expected-draft", "--expected-draft is required")?,
+            ),
+        ];
+        return Ok(call(
+            address,
+            &token,
+            "rebase",
+            fields.map(|(k, v)| (k.to_owned(), Json::text(v))),
+        )?);
     }
     let fields = [
         (
