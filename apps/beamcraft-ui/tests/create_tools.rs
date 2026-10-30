@@ -129,6 +129,7 @@ fn a_duplicate_model_name_explains_how_to_recover() {
         stores.root.to_str().unwrap(),
         "Workshop",
         Some("0199e7a0-0000-7000-8000-0000000000a1"),
+        None,
     );
     let run = || {
         let output = Command::new(&cli).args(&args).output().unwrap();
@@ -157,6 +158,7 @@ fn automatic_new_model_names_use_the_same_unique_creation_as_the_cli() {
         stores.root.to_str().unwrap(),
         "New Model",
         Some("0199e7a0-0000-7000-8000-0000000000a1"),
+        None,
     );
     for expected in ["New Model", "New Model 1", "New Model 2"] {
         let out = Command::new(&cli)

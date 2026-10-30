@@ -10,7 +10,7 @@
 
 use crate::support;
 
-use support::{at, text};
+use support::{at, list, text};
 
 use beamcraft_json::{Json, Limits};
 use std::fs;
@@ -371,4 +371,116 @@ fn a_created_project_opens_lists_and_is_remembered() {
         text(&f.ok(&["add-recent", "--store", &store]), "outcome"),
         "recent_added"
     );
+}
+
+#[test]
+fn a_project_created_from_the_starter_environment_places_members_at_once() {
+    let f = Fixture::new();
+    let models = f.path("models");
+    let created = f.ok(&[
+        "create-project",
+        "--parent",
+        &models,
+        "--name",
+        "Seeded",
+        "--environment",
+        "starter",
+        "--project-id",
+        PROJECT,
+    ]);
+    let seeded = at(&created, &["seeded"]);
+    assert_eq!(text(seeded, "environment"), "starter");
+    assert_eq!(at(seeded, &["materials"]).unsigned().unwrap(), 2);
+    let store = text(at(&created, &["project"]), "path");
+
+    // The project carries its environment, so no command names one: the model starts with the two
+    // default materials and lists the environment's profiles as available.
+    assert!(
+        f.shared
+            .root
+            .join("models/Seeded/environment/environment.usda")
+            .is_file()
+    );
+    let defined = f.raw(&["definitions", "--store", &store]);
+    assert_eq!(defined.0, 0, "{:?}", defined.1);
+    assert_eq!(at(&defined.1, &["definition_count"]).unsigned().unwrap(), 2);
+    let available = list(&defined.1, "environment_profiles");
+    assert!(
+        available.len() >= 15,
+        "{} environment profiles",
+        available.len()
+    );
+    let place = |kind: &str, end: &str, profile: &str, material: &str| {
+        let (code, body) = f.raw(&[
+            "create-member",
+            "--store",
+            &store,
+            "--kind",
+            kind,
+            "--start",
+            "0,0,0",
+            "--end",
+            end,
+            "--profile",
+            profile,
+            "--material",
+            material,
+        ]);
+        assert_eq!(code, 0, "{profile} {material}: {body:?}");
+        body
+    };
+    let beam = place("beam", "6000,0,0", "I-300x150", "Steel");
+    // The profile was defined by its first use and is no longer only available.
+    let after = f.raw(&["definitions", "--store", &store]).1;
+    assert_eq!(at(&after, &["definition_count"]).unsigned().unwrap(), 3);
+    assert_eq!(
+        list(&after, "environment_profiles").len(),
+        available.len() - 1
+    );
+    let mass = at(&beam, &["member", "quantities", "mass"]);
+    assert_eq!(text(mass, "status"), "current");
+    assert!(at(mass, &["kg"]).float().unwrap() > 100.0);
+
+    // Steel_Undefined is the massless material of auxiliary parts: a known zero, not unknown.
+    let column = place("column", "0,0,4000", "H-200x200", "Steel_Undefined");
+    let mass = at(&column, &["member", "quantities", "mass"]);
+    assert_eq!(text(mass, "status"), "current");
+    assert_eq!(at(mass, &["kg"]).float().unwrap(), 0.0);
+}
+
+#[test]
+fn an_unknown_environment_creates_no_project() {
+    let f = Fixture::new();
+    let models = f.path("models");
+    let code = f.code(&[
+        "create-project",
+        "--parent",
+        &models,
+        "--name",
+        "Nothing",
+        "--environment",
+        "no-such-environment",
+    ]);
+    assert_eq!(code, "NOT_FOUND");
+    assert!(!f.shared.root.join("models/Nothing").exists());
+}
+
+#[test]
+fn the_blank_environment_seeds_only_the_default_materials() {
+    let f = Fixture::new();
+    let models = f.path("models");
+    let created = f.ok(&[
+        "create-project",
+        "--parent",
+        &models,
+        "--name",
+        "Empty",
+        "--environment",
+        "blank",
+    ]);
+    let seeded = at(&created, &["seeded"]);
+    assert_eq!(at(seeded, &["materials"]).unsigned().unwrap(), 2);
+    let store = text(at(&created, &["project"]), "path");
+    let defined = f.raw(&["definitions", "--store", &store]).1;
+    assert!(list(&defined, "environment_profiles").is_empty());
 }
