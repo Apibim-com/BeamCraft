@@ -2166,6 +2166,7 @@ impl App {
         // way, so the preview never disagrees with what Commit would build.
         let orientation = crate::tools::orientation_or_identity(&self.tools.member.orientation)?;
         let authored = AuthoredMember {
+            curved: false,
             id: ElementId::parse("01990000-0000-7000-8000-00000000e347").ok()?,
             kind: match self.tools.member.kind {
                 crate::tools::MemberKind::Beam => ModelMemberKind::Beam,
@@ -3620,24 +3621,28 @@ mod tests {
         let origin = app.loaded.as_ref().unwrap().summary.origin_mm;
         let local = std::array::from_fn(|i| ([500., 0., 0.][i] - origin[i]) as f32);
         app.camera.fit(local, 2000., app.aspect()).unwrap();
-        let view = app.camera.view(app.aspect()).unwrap();
-        let [x, y, _] = view.project(local);
-        let ray = crate::edit::ray_through(
-            &view,
-            [x + 4. / (app.viewport_height * app.aspect()), y],
-            origin,
-        )
-        .unwrap();
-        let (point, kind) = app.creation_hit(ray, true).unwrap();
-        assert_eq!(kind, Some(SnapKind::Midpoint));
-        assert!(
-            point
-                .iter()
-                .zip([500., 0., 0.])
-                .all(|(a, b)| (a - b).abs() < 1e-7)
-        );
-        app.place_plate(ray);
-        assert_eq!(app.plate_draft.points(), &[point]);
+        for orthographic in [false, true] {
+            app.camera.set_projection(orthographic);
+            app.plate_draft.clear();
+            let view = app.camera.view(app.aspect()).unwrap();
+            let [x, y, _] = view.project(local);
+            let ray = crate::edit::ray_through(
+                &view,
+                [x + 4. / (app.viewport_height * app.aspect()), y],
+                origin,
+            )
+            .unwrap();
+            let (point, kind) = app.creation_hit(ray, true).unwrap();
+            assert_eq!(kind, Some(SnapKind::Midpoint));
+            assert!(
+                point
+                    .iter()
+                    .zip([500., 0., 0.])
+                    .all(|(a, b)| (a - b).abs() < 1e-7)
+            );
+            app.place_plate(ray);
+            assert_eq!(app.plate_draft.points(), &[point]);
+        }
         let edges = element_edges(&app.loaded.as_ref().unwrap().snapshot, &id).unwrap();
         assert_eq!(edges.len(), 9);
         let view = crate::camera::Camera::new([5500., 5400., 0.], 2000., 1.)

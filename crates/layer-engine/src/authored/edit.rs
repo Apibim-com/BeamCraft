@@ -721,63 +721,7 @@ fn create(
                 )?;
             }
             if !corners.is_empty() {
-                // The five parallel corner attributes (A12.2), always together; a value that
-                // its treatment does not use is written as zero.
-                let mut vertices = Vec::with_capacity(corners.len());
-                let mut kinds: Vec<&str> = Vec::with_capacity(corners.len());
-                let mut d1s = Vec::with_capacity(corners.len());
-                let mut d2s = Vec::with_capacity(corners.len());
-                let mut radii = Vec::with_capacity(corners.len());
-                for corner in corners {
-                    vertices.push(i32::try_from(corner.vertex).map_err(|_| limit())?);
-                    kinds.push(corner.treatment.kind());
-                    let (d1, d2, radius) = match corner.treatment {
-                        beamcraft_model::command::CornerTreatment::Chamfer { d1_mm, d2_mm } => {
-                            (d1_mm, d2_mm, 0.0)
-                        }
-                        beamcraft_model::command::CornerTreatment::Round { radius_mm } => {
-                            (0.0, 0.0, radius_mm)
-                        }
-                    };
-                    d1s.push(d1);
-                    d2s.push(d2);
-                    radii.push(radius);
-                }
-                attr(
-                    data,
-                    &p,
-                    "steel:plate:cornerVertex",
-                    "int[]",
-                    sdf::Value::IntVec(vertices),
-                )?;
-                attr(
-                    data,
-                    &p,
-                    "steel:plate:cornerKind",
-                    "token[]",
-                    sdf::Value::token_vec(kinds),
-                )?;
-                attr(
-                    data,
-                    &p,
-                    "steel:plate:cornerD1Mm",
-                    "double[]",
-                    sdf::Value::DoubleVec(d1s),
-                )?;
-                attr(
-                    data,
-                    &p,
-                    "steel:plate:cornerD2Mm",
-                    "double[]",
-                    sdf::Value::DoubleVec(d2s),
-                )?;
-                attr(
-                    data,
-                    &p,
-                    "steel:plate:cornerRadiusMm",
-                    "double[]",
-                    sdf::Value::DoubleVec(radii),
-                )?;
+                author_corners(data, &p, corners)?;
             }
             if !holes.is_empty() {
                 let flat: Vec<[f64; 3]> = holes.iter().flatten().copied().collect();
@@ -801,15 +745,27 @@ fn create(
                 )?;
             }
             if !hole_records.is_empty() {
+                author_record_history(
+                    data,
+                    &p,
+                    None,
+                    &hole_records
+                        .iter()
+                        .map(|r| (r.operation_id, r.ordinal))
+                        .collect::<Vec<_>>(),
+                    true,
+                )?;
                 let mut flat: Vec<[f64; 3]> = Vec::new();
                 let mut counts = Vec::new();
                 let mut ids = Vec::new();
                 let mut ordinals = Vec::new();
+                let mut kinds = Vec::new();
                 for record in hole_records {
                     flat.extend(record.polygon_mm.iter().map(|[x, y]| [*x, *y, 0.0]));
                     counts.push(i32::try_from(record.polygon_mm.len()).map_err(|_| limit())?);
                     ids.push(record.operation_id.to_string());
                     ordinals.push(i32::try_from(record.ordinal).map_err(|_| limit())?);
+                    kinds.push(record.kind.as_str().into());
                 }
                 attr(data, &p, "steel:hole:pointsMm", "double3[]", points(&flat))?;
                 attr(
@@ -833,9 +789,17 @@ fn create(
                     "int[]",
                     sdf::Value::IntVec(ordinals),
                 )?;
+                attr(
+                    data,
+                    &p,
+                    "steel:hole:kinds",
+                    "token[]",
+                    sdf::Value::TokenVec(kinds),
+                )?;
             }
         }
         Shape::Member {
+            curved,
             axis_mm,
             profile,
             roll_rad,
@@ -843,6 +807,15 @@ fn create(
             ..
         } => {
             attr(data, &p, "bim:axisPointsMm", "double3[]", points(axis_mm))?;
+            if *curved {
+                attr(
+                    data,
+                    &p,
+                    "steel:member:pathType",
+                    "token",
+                    sdf::Value::token("arc"),
+                )?;
+            }
             relationship(data, &p, "bim:profile", MaterialOpinion::Target(*profile))?;
             if let Some(n) = roll_rad {
                 attr(
@@ -1020,33 +993,100 @@ fn create(
     // The owned plane-cut records of a plate, beam or column (A03, amendment A-2), as five
     // parallel attributes in ascending ordinal order.
     if !e.shape.cuts().is_empty() {
-        author_cuts(data, &p, e.shape.cuts())?;
+        author_cuts(data, &p, e.shape.cuts(), None)?;
     }
     pose(data, &p, &e.placement)
 }
 
+fn author_record_history(
+    data: &mut sdf::Data,
+    p: &str,
+    source: Option<&Prim>,
+    records: &[(beamcraft_model::id::OpId, usize)],
+    hole: bool,
+) -> Result<(), Diagnostic> {
+    let (next_name, retired_name, id_name, ordinal_name) = cut_history::fields(hole);
+    let old = source
+        .map(|p| {
+            if hole {
+                cut_history::read_holes(p)
+            } else {
+                cut_history::read(p)
+            }
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let mut next = usize::from(old.next_ordinal);
+    let mut retired = old
+        .retired
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>();
+    let old_pairs = if let Some(source) = source {
+        cut_history::ids(source, id_name)?
+            .into_iter()
+            .zip(cut_history::ordinals(source, ordinal_name)?)
+            .collect::<BTreeMap<_, _>>()
+    } else {
+        BTreeMap::new()
+    };
+    for id in old_pairs.keys() {
+        if !records.iter().any(|(new, _)| new == id) {
+            retired.insert(*id);
+        }
+    }
+    for (id, ordinal) in records {
+        if *ordinal > 999 || retired.contains(id) {
+            return Err(invalid());
+        }
+        match old_pairs.get(id) {
+            Some(old) if usize::from(*old) != *ordinal => return Err(invalid()),
+            None if *ordinal < usize::from(old.next_ordinal) => return Err(invalid()),
+            _ => {}
+        }
+        next = next.max(ordinal + 1);
+    }
+    if next > 1000 || retired.len() > 1000 {
+        return Err(limit());
+    }
+    if next > 0 {
+        attr(
+            data,
+            p,
+            next_name,
+            "int",
+            sdf::Value::Int(i32::try_from(next).map_err(|_| limit())?),
+        )?;
+    }
+    if !retired.is_empty() {
+        attr(
+            data,
+            p,
+            retired_name,
+            "string[]",
+            sdf::Value::StringVec(retired.into_iter().map(|id| id.to_string()).collect()),
+        )?;
+    }
+    Ok(())
+}
+
 /// Writes the five parallel cut-record attributes of one element (A03). An empty list removes
-/// the attributes instead, so a "no records" element authors nothing about cuts.
+/// typed empty arrays, masking weaker opinions; fresh uncut elements still author no cuts.
 pub(super) fn author_cuts(
     data: &mut sdf::Data,
     p: &str,
     cuts: &[CutRecord],
+    source: Option<&Prim>,
 ) -> Result<(), Diagnostic> {
-    if cuts.is_empty() {
-        for name in [
-            "steel:cut:operationId",
-            "steel:cut:ordinal",
-            "steel:cut:pointMm",
-            "steel:cut:normal",
-            "steel:cut:keep",
-        ] {
-            let full = path(&format!("{p}.{name}"))?;
-            if data.has_spec(&full) {
-                data.erase_spec(&full);
-            }
-        }
-        return Ok(());
-    }
+    author_record_history(
+        data,
+        p,
+        source,
+        &cuts
+            .iter()
+            .map(|r| (r.operation_id, usize::from(r.ordinal)))
+            .collect::<Vec<_>>(),
+        false,
+    )?;
     let ids: Vec<String> = cuts.iter().map(|c| c.operation_id.to_string()).collect();
     let ordinals = cuts.iter().map(|c| i32::from(c.ordinal)).collect();
     let cut_points: Vec<[f64; 3]> = cuts.iter().map(|c| c.point_mm).collect();
@@ -1324,6 +1364,7 @@ pub(super) fn apply(
                 "double",
                 sdf::Value::Double(*mm),
             )?,
+            Change::Corners { corners, .. } => author_corners(&mut authored, &p, corners)?,
             Change::ThicknessSide { side, .. } => attr(
                 &mut authored,
                 &p,
@@ -1331,20 +1372,37 @@ pub(super) fn apply(
                 "token",
                 sdf::Value::token(side.as_str()),
             )?,
-            Change::Cuts { cuts, .. } => author_cuts(&mut authored, &p, cuts)?,
+            Change::Cuts { cuts, .. } => author_cuts(
+                &mut authored,
+                &p,
+                cuts,
+                prims.iter().find(|old| old.path == p),
+            )?,
             Change::HoleRecords { records, .. } => {
-                // The four record attributes, always together: the authoritative polygons of
-                // every record, replayed from the base shape in ordinal order, with the id and
-                // the engine-assigned ordinal of each.
+                author_record_history(
+                    &mut authored,
+                    &p,
+                    prims.iter().find(|old| old.path == p),
+                    &records
+                        .iter()
+                        .map(|r| (r.operation_id, r.ordinal))
+                        .collect::<Vec<_>>(),
+                    true,
+                )?;
+                // The five record attributes, always together: the authoritative polygons of
+                // every record, replayed from the base shape in ordinal order, with the id,
+                // the engine-assigned ordinal and the kind (hole or polygon cut) of each.
                 let mut flat = Vec::new();
                 let mut counts = Vec::new();
                 let mut ids = Vec::new();
                 let mut ordinals = Vec::new();
+                let mut kinds = Vec::new();
                 for record in records {
                     flat.extend(record.polygon_mm.iter().map(|[x, y]| [*x, *y, 0.0]));
                     counts.push(i32::try_from(record.polygon_mm.len()).map_err(|_| limit())?);
                     ids.push(record.operation_id.to_string());
                     ordinals.push(i32::try_from(record.ordinal).map_err(|_| limit())?);
+                    kinds.push(record.kind.as_str().into());
                 }
                 attr(
                     &mut authored,
@@ -1373,6 +1431,13 @@ pub(super) fn apply(
                     "steel:hole:ordinals",
                     "int[]",
                     sdf::Value::IntVec(ordinals),
+                )?;
+                attr(
+                    &mut authored,
+                    &p,
+                    "steel:hole:kinds",
+                    "token[]",
+                    sdf::Value::TokenVec(kinds),
                 )?;
             }
             Change::Axis { points_mm, .. } => attr(
@@ -1493,6 +1558,7 @@ pub(super) fn apply(
             Change::Contour { .. }
                 | Change::Thickness { .. }
                 | Change::ThicknessSide { .. }
+                | Change::Corners { .. }
                 | Change::Cuts { .. }
                 | Change::Axis { .. }
                 | Change::Roll { .. }
@@ -1598,6 +1664,8 @@ fn capture(
         ("steel:cut:pointMm", "double3[]"),
         ("steel:cut:normal", "double3[]"),
         ("steel:cut:keep", "token[]"),
+        (cut_history::NEXT, "int"),
+        (cut_history::RETIRED, "string[]"),
     ];
     /// The P14 section-placement attributes of a member, in storage order.
     const MEMBER_PLACEMENT: &[(&str, &str)] = &[
@@ -1665,13 +1733,19 @@ fn capture(
                             add("steel:hole:vertexCounts", "int[]", 0);
                             add("steel:hole:operationIds", "string[]", 0);
                             add("steel:hole:ordinals", "int[]", 0);
+                            add(cut_history::HOLE_NEXT, "int", 0);
+                            add(cut_history::HOLE_RETIRED, "string[]", 0);
                         }
                     }
                     Shape::Member {
                         ref cuts,
                         ref placement,
+                        curved,
                         ..
                     } => {
+                        if curved {
+                            add("steel:member:pathType", "token", 0);
+                        }
                         add("bim:axisPointsMm", "double3[]", 0);
                         add("steel:member:rollRad", "double", 0);
                         if placement.is_some() {
@@ -1742,6 +1816,8 @@ fn capture(
                 add("steel:hole:vertexCounts", "int[]", 0);
                 add("steel:hole:operationIds", "string[]", 0);
                 add("steel:hole:ordinals", "int[]", 0);
+                add(cut_history::HOLE_NEXT, "int", 0);
+                add(cut_history::HOLE_RETIRED, "string[]", 0);
             }
             Change::Delete { .. } => {
                 for (name, ty) in [
@@ -1762,11 +1838,16 @@ fn capture(
                     ("steel:cut:pointMm", "double3[]"),
                     ("steel:cut:normal", "double3[]"),
                     ("steel:cut:keep", "token[]"),
+                    (cut_history::NEXT, "int"),
+                    (cut_history::RETIRED, "string[]"),
                     ("steel:hole:pointsMm", "double3[]"),
                     ("steel:hole:vertexCounts", "int[]"),
                     ("steel:hole:operationIds", "string[]"),
                     ("steel:hole:ordinals", "int[]"),
+                    (cut_history::HOLE_NEXT, "int"),
+                    (cut_history::HOLE_RETIRED, "string[]"),
                     ("bim:axisPointsMm", "double3[]"),
+                    ("steel:member:pathType", "token"),
                     ("steel:member:rollRad", "double"),
                     ("steel:member:planePosition", "token"),
                     ("steel:member:planeOffsetMm", "double"),
@@ -1804,8 +1885,19 @@ fn capture(
             }
             Change::Contour { .. } => add("steel:plate:contourPointsMm", "double3[]", 0),
             Change::Thickness { .. } => add("steel:plate:thicknessMm", "double", 0),
+            Change::Corners { .. } => {
+                for (name, ty) in [
+                    ("steel:plate:cornerVertex", "int[]"),
+                    ("steel:plate:cornerKind", "token[]"),
+                    ("steel:plate:cornerD1Mm", "double[]"),
+                    ("steel:plate:cornerD2Mm", "double[]"),
+                    ("steel:plate:cornerRadiusMm", "double[]"),
+                ] {
+                    add(name, ty, 0);
+                }
+            }
             Change::ThicknessSide { .. } => add("steel:plate:thicknessSide", "token", 0),
-            Change::Cuts { cuts, .. } if !cuts.is_empty() => {
+            Change::Cuts { .. } => {
                 for &(name, ty) in CUT_FIELDS {
                     add(name, ty, 0);
                 }
@@ -1839,14 +1931,13 @@ fn capture(
                     add(name, ty, 1);
                 }
             }
-            // An empty replacement removes the attributes, so there is nothing to report.
-            Change::Cuts { .. } => (),
         }
         if matches!(
             change,
             Change::Contour { .. }
                 | Change::Thickness { .. }
                 | Change::ThicknessSide { .. }
+                | Change::Corners { .. }
                 | Change::Cuts { .. }
                 | Change::Axis { .. }
                 | Change::Roll { .. }
@@ -1903,4 +1994,68 @@ fn capture(
         });
     }
     Ok(result)
+}
+
+fn author_corners(
+    data: &mut sdf::Data,
+    p: &str,
+    corners: &[PlateCorner],
+) -> Result<(), Diagnostic> {
+    // The five parallel corner attributes (A12.2), always together; a value that
+    // its treatment does not use is written as zero.
+    let mut vertices = Vec::with_capacity(corners.len());
+    let mut kinds: Vec<&str> = Vec::with_capacity(corners.len());
+    let mut d1s = Vec::with_capacity(corners.len());
+    let mut d2s = Vec::with_capacity(corners.len());
+    let mut radii = Vec::with_capacity(corners.len());
+    for corner in corners {
+        vertices.push(i32::try_from(corner.vertex).map_err(|_| limit())?);
+        kinds.push(corner.treatment.kind());
+        let (d1, d2, radius) = match corner.treatment {
+            beamcraft_model::command::CornerTreatment::Chamfer { d1_mm, d2_mm } => {
+                (d1_mm, d2_mm, 0.0)
+            }
+            beamcraft_model::command::CornerTreatment::Round { radius_mm } => (0.0, 0.0, radius_mm),
+        };
+        d1s.push(d1);
+        d2s.push(d2);
+        radii.push(radius);
+    }
+    attr(
+        data,
+        p,
+        "steel:plate:cornerVertex",
+        "int[]",
+        sdf::Value::IntVec(vertices),
+    )?;
+    attr(
+        data,
+        p,
+        "steel:plate:cornerKind",
+        "token[]",
+        sdf::Value::token_vec(kinds),
+    )?;
+    attr(
+        data,
+        p,
+        "steel:plate:cornerD1Mm",
+        "double[]",
+        sdf::Value::DoubleVec(d1s),
+    )?;
+    attr(
+        data,
+        p,
+        "steel:plate:cornerD2Mm",
+        "double[]",
+        sdf::Value::DoubleVec(d2s),
+    )?;
+    attr(
+        data,
+        p,
+        "steel:plate:cornerRadiusMm",
+        "double[]",
+        sdf::Value::DoubleVec(radii),
+    )?;
+
+    Ok(())
 }

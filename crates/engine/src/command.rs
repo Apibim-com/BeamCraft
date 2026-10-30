@@ -1012,6 +1012,23 @@ pub fn add_hole(
     command: &AddHole,
     operation_id_used: &dyn Fn(OpId) -> bool,
 ) -> Result<(AuthoredPlate, PlateBody), CommandError> {
+    add_hole_at(head, command, operation_id_used, None)
+}
+/// Append a hole using the persistent counter rather than reusing a retired semantic ordinal.
+pub fn add_hole_after(
+    head: &AuthoredPlate,
+    command: &AddHole,
+    operation_id_used: &dyn Fn(OpId) -> bool,
+    next_ordinal: usize,
+) -> Result<(AuthoredPlate, PlateBody), CommandError> {
+    add_hole_at(head, command, operation_id_used, Some(next_ordinal))
+}
+fn add_hole_at(
+    head: &AuthoredPlate,
+    command: &AddHole,
+    operation_id_used: &dyn Fn(OpId) -> bool,
+    next_ordinal: Option<usize>,
+) -> Result<(AuthoredPlate, PlateBody), CommandError> {
     command.validate_arguments()?;
     if operation_id_used(command.operation_id) {
         return Err(CommandError::new(
@@ -1028,11 +1045,45 @@ pub fn add_hole(
         )
         .with_rule("DV-LIM-001"));
     }
+    if head.id != command.target_id {
+        return Err(CommandError::new(
+            ErrorCode::NotFound,
+            "target_id",
+            "hole target not found",
+        ));
+    }
+    let minimum = head
+        .hole_records
+        .last()
+        .map_or(Some(0), |r| r.ordinal.checked_add(1))
+        .ok_or_else(|| {
+            CommandError::new(
+                ErrorCode::LimitExceeded,
+                "hole.ordinal",
+                "hole ordinal exhausted",
+            )
+        })?;
+    let ordinal = next_ordinal.unwrap_or(minimum);
+    if ordinal > 999 {
+        return Err(CommandError::new(
+            ErrorCode::LimitExceeded,
+            "hole.ordinal",
+            "hole ordinal capacity exhausted",
+        ));
+    }
+    if ordinal < minimum {
+        return Err(CommandError::new(
+            ErrorCode::InvalidArgument,
+            "hole.ordinal",
+            "hole counter regressed",
+        ));
+    }
     let mut next = head.clone();
     next.hole_records.push(HoleRecord {
         operation_id: command.operation_id,
-        ordinal: next.hole_records.last().map_or(0, |r| r.ordinal + 1),
+        ordinal,
         polygon_mm: command.polygon()?,
+        kind: beamcraft_model::command::HoleKind::Hole,
     });
     let body = evaluate_plate(&next).map_err(|error| {
         // The target was valid, so a refusal names the new hole, not the plate's fields.
@@ -1042,6 +1093,90 @@ pub fn add_hole(
             error
         }
     })?;
+    Ok((next, body))
+}
+
+/// Replace an owned hole in memory and replay all holes/cuts before any publication.
+/// The original authored state is unchanged on every refusal.
+pub fn update_hole(
+    head: &AuthoredPlate,
+    command: &beamcraft_model::command::UpdateHole,
+) -> Result<(AuthoredPlate, PlateBody), CommandError> {
+    command.validate_arguments()?;
+    if head.id != command.hole.target_id {
+        return Err(CommandError::new(
+            ErrorCode::NotFound,
+            "target_id",
+            "hole target not found",
+        ));
+    }
+    let mut next = head.clone();
+    let record = next
+        .hole_records
+        .iter_mut()
+        .find(|r| r.operation_id == command.hole.operation_id)
+        .ok_or_else(|| {
+            CommandError::new(
+                ErrorCode::NotFound,
+                "operation_id",
+                "hole record not found on target",
+            )
+        })?;
+    // An A13 polygon cut shares the record list but is not an A04 hole: the adapter refuses
+    // it with a typed result instead of editing one.
+    if record.kind != beamcraft_model::command::HoleKind::Hole {
+        return Err(CommandError::new(
+            ErrorCode::InvalidArgument,
+            "operation_id",
+            "the record is a polygon cut, not a hole",
+        ));
+    }
+    record.polygon_mm = command.hole.polygon()?;
+    let body = evaluate_plate(&next).map_err(|e| {
+        if e.field == "holes_mm" {
+            CommandError::new(e.code, "hole", e.message)
+        } else {
+            e
+        }
+    })?;
+    Ok((next, body))
+}
+
+/// Remove one owned hole and re-evaluate all remaining holes and cuts.
+pub fn remove_hole(
+    head: &AuthoredPlate,
+    command: &beamcraft_model::command::RemoveHole,
+) -> Result<(AuthoredPlate, PlateBody), CommandError> {
+    if head.id != command.target_id {
+        return Err(CommandError::new(
+            ErrorCode::NotFound,
+            "target_id",
+            "hole target not found",
+        ));
+    }
+    let record = head
+        .hole_records
+        .iter()
+        .find(|r| r.operation_id == command.operation_id)
+        .ok_or_else(|| {
+            CommandError::new(
+                ErrorCode::NotFound,
+                "operation_id",
+                "hole record not found on target",
+            )
+        })?;
+    // The same kind guard as `update_hole`: retiring a polygon cut is not an A04 removal.
+    if record.kind != beamcraft_model::command::HoleKind::Hole {
+        return Err(CommandError::new(
+            ErrorCode::InvalidArgument,
+            "operation_id",
+            "the record is a polygon cut, not a hole",
+        ));
+    }
+    let mut next = head.clone();
+    next.hole_records
+        .retain(|r| r.operation_id != command.operation_id);
+    let body = evaluate_plate(&next)?;
     Ok((next, body))
 }
 
@@ -1912,5 +2047,112 @@ mod tests {
             out.fingerprint,
             out.authored.to_command().content_fingerprint().unwrap()
         );
+    }
+    #[test]
+    fn hole_updates_keep_record_order_and_identity_and_reject_bad_geometry() {
+        let head = AuthoredPlate::from_command(&command(rect(1000.0, 500.0), 10.0));
+        let id = OpId::parse("019a7bf0-0000-7000-8000-00000000ad01").unwrap();
+        let c = AddHole {
+            target_id: head.id,
+            operation_id: id,
+            hole: HoleSpec::Rectangle {
+                corner_mm: [100.0, 100.0],
+                width_mm: 100.0,
+                height_mm: 100.0,
+            },
+        };
+        let (head, _) = add_hole(&head, &c, &|_| false).unwrap();
+        let edit = beamcraft_model::command::UpdateHole {
+            hole: AddHole {
+                hole: HoleSpec::Rectangle {
+                    corner_mm: [100.0, 100.0],
+                    width_mm: 200.0,
+                    height_mm: 100.0,
+                },
+                ..c
+            },
+        };
+        let (next, body) = update_hole(&head, &edit).unwrap();
+        assert_eq!(next.hole_records.first().unwrap().ordinal, 0);
+        assert_eq!(next.hole_records.first().unwrap().operation_id, id);
+        assert_eq!(body.quantities_for(None).unwrap().volume_mm3, 4_800_000.0);
+        assert_ne!(
+            edit.content_fingerprint().unwrap(),
+            edit.hole.content_fingerprint().unwrap()
+        );
+        let mut bad = edit.clone();
+        bad.hole.operation_id = OpId::parse("019a7bf0-0000-7000-8000-00000000ad02").unwrap();
+        assert!(update_hole(&head, &bad).is_err());
+        assert_eq!(head.hole_records.first().unwrap().polygon_mm.len(), 4);
+    }
+    #[test]
+    fn hole_removal_preserves_ordinal_history_and_large_ordinals_refuse_without_overflow() {
+        let head = AuthoredPlate::from_command(&command(rect(1000.0, 500.0), 10.0));
+        let id = OpId::parse("019a7bf0-0000-7000-8000-00000000af01").unwrap();
+        let c = AddHole {
+            target_id: head.id,
+            operation_id: id,
+            hole: HoleSpec::Rectangle {
+                corner_mm: [100.0, 100.0],
+                width_mm: 100.0,
+                height_mm: 100.0,
+            },
+        };
+        let (p, _) = add_hole_after(&head, &c, &|_| false, 7).unwrap();
+        let removal = beamcraft_model::command::RemoveHole {
+            target_id: p.id,
+            operation_id: id,
+        };
+        let (next, body) = remove_hole(&p, &removal).unwrap();
+        assert!(next.hole_records.is_empty());
+        assert_eq!(body.quantities_for(None).unwrap().volume_mm3, 5_000_000.0);
+        assert!(remove_hole(&next, &removal).is_err());
+        assert!(add_hole_after(&head, &c, &|_| false, 1000).is_err());
+        let mut extreme = p;
+        extreme.hole_records.first_mut().unwrap().ordinal = usize::MAX;
+        assert!(add_hole(&extreme, &c, &|_| false).is_err());
+    }
+    #[test]
+    fn the_a04_adapter_refuses_an_a13_polygon_cut_record_with_a_typed_result() {
+        // A polygon cut lives in the same record list with kind PolygonCut; update-hole and
+        // remove-hole must never edit or retire one through the hole vocabulary.
+        let head = AuthoredPlate::from_command(&command(rect(1000.0, 500.0), 10.0));
+        let id = OpId::parse("019a7bf0-0000-7000-8000-00000000af11").unwrap();
+        let mut with_cut = head.clone();
+        with_cut.hole_records.push(HoleRecord {
+            operation_id: id,
+            ordinal: 0,
+            polygon_mm: vec![
+                [100.0, 100.0],
+                [200.0, 100.0],
+                [200.0, 200.0],
+                [100.0, 200.0],
+            ],
+            kind: beamcraft_model::command::HoleKind::PolygonCut,
+        });
+        let edit = beamcraft_model::command::UpdateHole {
+            hole: AddHole {
+                target_id: with_cut.id,
+                operation_id: id,
+                hole: HoleSpec::Rectangle {
+                    corner_mm: [100.0, 100.0],
+                    width_mm: 50.0,
+                    height_mm: 50.0,
+                },
+            },
+        };
+        assert_eq!(
+            update_hole(&with_cut, &edit).unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
+        let removal = beamcraft_model::command::RemoveHole {
+            target_id: with_cut.id,
+            operation_id: id,
+        };
+        assert_eq!(
+            remove_hole(&with_cut, &removal).unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
+        assert_eq!(with_cut.hole_records.len(), 1);
     }
 }

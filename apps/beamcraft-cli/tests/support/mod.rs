@@ -3,8 +3,9 @@
 
 //! Mechanical real-binary fixtures; domain expectations stay in each integration suite.
 
-// Suites that share only the JSON accessors never touch the fixture.
-#![allow(dead_code, clippy::panic)]
+// Suites that share only the JSON accessors never touch the fixture. Test-only setup code fails
+// the calling test on any setup error, as each suite's own helpers do.
+#![allow(dead_code, clippy::panic, clippy::unwrap_used)]
 
 use beamcraft_json::{Json, Limits};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -79,4 +80,9 @@ pub(crate) fn text(json: &Json, key: &str) -> String {
 /// The value at a `path` of nested keys, failing the test when a step is absent.
 pub(crate) fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
     path.iter().fold(json, |j, k| j.get(k).unwrap())
+}
+
+/// The array at `key`, failing the test when the key is absent or not an array.
+pub(crate) fn list<'a>(json: &'a Json, key: &str) -> &'a [Json] {
+    at(json, &[key]).array().unwrap()
 }

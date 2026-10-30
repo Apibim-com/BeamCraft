@@ -1309,12 +1309,13 @@ impl SnapContext<'_> {
     }
 }
 
-/// Validated 3D cursor ray with a bounded angular aperture (tangent of the cone half-angle).
+/// Validated 3D cursor ray with a bounded perspective cone or constant orthographic radius.
 #[derive(Debug, Clone, Copy)]
 pub struct SnapCursor {
     origin: V3,
     direction: V3,
     aperture: f64,
+    radius_mm: Option<f64>,
 }
 impl SnapCursor {
     /// Admit and normalize a ray. Aperture is positive and at most 0.1 radians in tangent form.
@@ -1327,7 +1328,18 @@ impl SnapCursor {
             origin: origin_mm,
             direction: validate_ray(&ray)?,
             aperture,
+            radius_mm: None,
         })
+    }
+
+    /// Admit an orthographic cursor with a constant world-space aperture radius.
+    pub fn orthographic(origin_mm: V3, direction: V3, radius_mm: f64) -> Result<Self, ViewError> {
+        if !radius_mm.is_finite() || radius_mm <= 0.0 || radius_mm > MAX_RADIUS_MM {
+            return Err(input());
+        }
+        let mut cursor = Self::new(origin_mm, direction, 0.01)?;
+        cursor.radius_mm = Some(radius_mm);
+        Ok(cursor)
     }
 }
 
@@ -1340,7 +1352,7 @@ fn snap_distance(p: V3, point: V3, band: f64, context: &SnapContext<'_>) -> Opti
         }
         (
             norm(sub(delta, scale(cursor.direction, t))),
-            cursor.aperture * t + EPS_PICK_MM,
+            cursor.radius_mm.unwrap_or(cursor.aperture * t) + EPS_PICK_MM,
         )
     } else {
         (norm(sub(p, point)), band)

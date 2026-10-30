@@ -52,6 +52,8 @@ pub fn shared_property(name: &str) -> bool {
             | "steel:hole:vertexCounts"
             | "steel:hole:operationIds"
             | "steel:hole:ordinals"
+            | "steel:hole:kinds"
+            | "steel:member:pathType"
             | "steel:member:rollRad"
             | "steel:member:planePosition"
             | "steel:member:planeOffsetMm"
@@ -65,6 +67,10 @@ pub fn shared_property(name: &str) -> bool {
             | "steel:cut:pointMm"
             | "steel:cut:normal"
             | "steel:cut:keep"
+            | "steel:cut:nextOrdinal"
+            | "steel:cut:retiredOperationIds"
+            | "steel:hole:nextOrdinal"
+            | "steel:hole:retiredOperationIds"
     )
 }
 /// Whether a relationship belongs to the shared definition.

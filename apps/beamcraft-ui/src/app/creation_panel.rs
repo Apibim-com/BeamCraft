@@ -108,6 +108,7 @@ impl App {
         // Ten logical screen pixels, independent of zoom and monitor scaling. The broad world
         // band includes the foreshortened plane; the final screen test keeps the aperture round.
         let [tan, aspect, _, _] = view.params;
+        let orthographic = view.mode.first().is_some_and(|v| *v > 0.5);
         let depth = point
             .iter()
             .zip(ray.origin)
@@ -115,7 +116,12 @@ impl App {
             .map(|((p, o), b)| (o - p) * f64::from(b))
             .sum::<f64>()
             .abs();
-        let mm_per_pixel = 2.0 * depth * f64::from(tan) / f64::from(self.viewport_height.max(1.0));
+        let scale = if orthographic {
+            f64::from(tan)
+        } else {
+            depth * f64::from(tan)
+        };
+        let mm_per_pixel = 2.0 * scale / f64::from(self.viewport_height.max(1.0));
         let slope = plane
             .map_or(1.0, |plane| {
                 plane
@@ -140,8 +146,19 @@ impl App {
             if forward <= 0.0 {
                 return None;
             }
-            let nx = direction_ndc(&view.right) / forward / f64::from(tan * aspect);
-            let ny = direction_ndc(&view.up) / forward / f64::from(tan);
+            let [nx, ny] = if orthographic {
+                let origin = std::array::from_fn(|i| {
+                    (ray.origin.get(i).copied().unwrap_or(0.0)
+                        - scene_origin.get(i).copied().unwrap_or(0.0)) as f32
+                });
+                let [x, y, _] = view.project(origin);
+                [f64::from(x), f64::from(y)]
+            } else {
+                [
+                    direction_ndc(&view.right) / forward / f64::from(tan * aspect),
+                    direction_ndc(&view.up) / forward / f64::from(tan),
+                ]
+            };
             let local = std::array::from_fn(|i| {
                 (p.get(i).copied().unwrap_or(0.0) - scene_origin.get(i).copied().unwrap_or(0.0))
                     as f32
@@ -174,8 +191,16 @@ impl App {
                 &[]
             };
             let aperture = (20.0 * f64::from(tan) / f64::from(self.viewport_height)).min(0.1);
-            let cursor = SnapCursor::new(ray.origin, ray.direction, aperture)
-                .map_err(|e| ToolError::local("INVALID_ARGUMENT", e.to_string()))?;
+            let cursor = if orthographic {
+                SnapCursor::orthographic(
+                    ray.origin,
+                    ray.direction,
+                    (10.0 * mm_per_pixel).clamp(0.001, 1_000_000.0),
+                )
+            } else {
+                SnapCursor::new(ray.origin, ray.direction, aperture)
+            }
+            .map_err(|e| ToolError::local("INVALID_ARGUMENT", e.to_string()))?;
             let context = SnapContext {
                 grids,
                 member_axes: &self.grid_scene.member_axes,

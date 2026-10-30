@@ -143,6 +143,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             "--origin",
             "--direction",
             "--aperture",
+            "--cursor-radius",
             "--reference-snaps",
             "--geometry-snaps",
             "--grid-snaps",
@@ -294,7 +295,19 @@ fn run(args: &[OsString]) -> Run<Json> {
     let nearest = switch("--nearest")?;
     let snap_cursor = if *command == "snap" {
         match (given("--origin"), given("--direction")) {
-            (None, None) if given("--aperture").is_none() => None,
+            (None, None) if given("--aperture").is_none() && given("--cursor-radius").is_none() => {
+                None
+            }
+            (Some(_), Some(_)) if given("--cursor-radius").is_some() => {
+                if given("--aperture").is_some() {
+                    return Err(invalid("choose aperture or cursor-radius"));
+                }
+                Some(beamcraft_engine::query::pick::SnapCursor::orthographic(
+                    point("--origin")?,
+                    point("--direction")?,
+                    number("--cursor-radius", 0.0)?,
+                )?)
+            }
             (Some(_), Some(_)) => Some(beamcraft_engine::query::pick::SnapCursor::new(
                 point("--origin")?,
                 point("--direction")?,

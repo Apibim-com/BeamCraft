@@ -69,8 +69,9 @@ use beamcraft_layer_engine::{
     Prim, Profile, Reader, Value,
 };
 use beamcraft_model::command::{
-    CommandError, CornerTreatment, CreatePlate, CutRecord, HoleRecord, KeepSide, MemberKind,
-    PlateCorner, PlateSide, SectionDepthPosition, SectionPlacement, SectionPlanePosition,
+    CommandError, CornerTreatment, CreatePlate, CutRecord, HoleKind, HoleRecord, KeepSide,
+    MemberKind, PlateCorner, PlateSide, SectionDepthPosition, SectionPlacement,
+    SectionPlanePosition,
 };
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
@@ -386,6 +387,10 @@ fn element_meta(
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Decoded {
+    pub(crate) hole_history:
+        BTreeMap<ElementId, beamcraft_layer_engine::authored::cut_history::HoleHistory>,
+    pub(crate) cut_history:
+        BTreeMap<ElementId, beamcraft_layer_engine::authored::cut_history::CutHistory>,
     pub(crate) plates: Vec<(AuthoredPlate, Option<DerivedMesh>)>,
     pub(crate) members: Vec<(AuthoredMember, Option<DerivedMesh>)>,
     other_elements: usize,
@@ -451,6 +456,7 @@ fn decode_hole_records(prim: &Prim) -> Result<Vec<HoleRecord>, PlateError> {
         "steel:hole:vertexCounts",
         "steel:hole:operationIds",
         "steel:hole:ordinals",
+        "steel:hole:kinds",
     ];
     let declared: Vec<bool> = names.iter().map(|name| declared(name)).collect();
     if declared.iter().all(|seen| !seen) {
@@ -484,18 +490,32 @@ fn decode_hole_records(prim: &Prim) -> Result<Vec<HoleRecord>, PlateError> {
             _ => None,
         })
         .ok_or_else(bad)?;
-    if polygons.len() != ids.len() || polygons.len() != ordinals.len() || polygons.is_empty() {
+    let kinds = property(prim, "steel:hole:kinds")
+        .and_then(|value| match value {
+            Value::Array(items) => items
+                .iter()
+                .map(|v| text(v).and_then(HoleKind::parse))
+                .collect::<Option<Vec<_>>>(),
+            _ => None,
+        })
+        .ok_or_else(bad)?;
+    if polygons.len() != ids.len()
+        || polygons.len() != ordinals.len()
+        || polygons.len() != kinds.len()
+    {
         return Err(bad());
     }
     let records = polygons
         .into_iter()
         .zip(ids)
         .zip(ordinals)
-        .map(|((polygon_mm, id), ordinal)| {
+        .zip(kinds)
+        .map(|(((polygon_mm, id), ordinal), kind)| {
             Ok(HoleRecord {
                 operation_id: OpId::parse(&id).map_err(|_| bad())?,
                 ordinal: ordinal.ok_or_else(bad)?,
                 polygon_mm,
+                kind,
             })
         })
         .collect::<Result<Vec<_>, PlateError>>()?;
@@ -1109,7 +1129,45 @@ pub(crate) fn decode(
             has_geometry.then_some(plate.id)
         })
         .collect();
+    let cut_history = prims
+        .iter()
+        .filter_map(|p| {
+            p.element_id
+                .as_deref()
+                .and_then(|s| ElementId::parse(s).ok())
+                .map(|id| (id, p))
+        })
+        .filter(|(_, p)| {
+            !p.sources.is_empty()
+                && p.sources.iter().all(|s| s.owned)
+                && property(p, "bim:schemaVersion").and_then(text) == Some("0.1.0")
+                && property(p, "bim:geometryMode").and_then(text) == Some("parametric")
+                && matches!(
+                    property(p, "bim:elementKind").and_then(text),
+                    Some("plate" | "beam" | "column")
+                )
+        })
+        .map(|(id, p)| Ok((id, beamcraft_layer_engine::authored::cut_history::read(p)?)))
+        .collect::<Result<BTreeMap<_, _>, PlateError>>()?;
+    let hole_history = prims
+        .iter()
+        .filter_map(|p| {
+            p.element_id
+                .as_deref()
+                .and_then(|id| ElementId::parse(id).ok())
+                .map(|id| (id, p))
+        })
+        .filter(|(id, _)| cut_history.contains_key(id))
+        .map(|(id, p)| {
+            Ok((
+                id,
+                beamcraft_layer_engine::authored::cut_history::read_holes(p)?,
+            ))
+        })
+        .collect::<Result<BTreeMap<_, _>, PlateError>>()?;
     Ok(Decoded {
+        hole_history,
+        cut_history,
         plates,
         members,
         other_elements: other,
@@ -1164,6 +1222,11 @@ fn decode_member(
         .and_then(numbers::<4>)
         .ok_or_else(bad)?;
     Ok(AuthoredMember {
+        curved: match property(prim, "steel:member:pathType") {
+            None => false,
+            Some(v) if text(v) == Some("arc") => true,
+            _ => return Err(bad()),
+        },
         id,
         kind,
         name: name.to_owned(),

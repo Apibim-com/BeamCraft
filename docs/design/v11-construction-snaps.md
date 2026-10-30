@@ -60,10 +60,13 @@ win a tie. The CLI and both coordinate tools use these same gates.
 
 ## Coordinate resolution and feedback
 
-`SnapCursor` admits a finite forward ray and a bounded angular aperture. Cursor queries can find
+`SnapCursor` admits a finite forward ray and a bounded perspective angular aperture or a constant
+orthographic radius. Cursor queries can find
 geometry above or below the free-point fallback plane; point queries retain their spherical
-band and ordering. The CLI `snap` accepts `--origin`, `--direction` and `--aperture` for this
-read-only query. An optional `--plane` filters before truncation and intersects physical edges
+band and ordering. The CLI `snap` accepts `--origin`, `--direction` and either `--aperture` or
+`--cursor-radius MM` for this read-only query; the two aperture modes are mutually exclusive.
+The UI derives the radius from the projection scale, keeping ten logical pixels in either camera
+mode. An optional `--plane` filters before truncation and intersects physical edges
 and vertical grid guides with the plane. There is no fabricated mesh diagonal or bounding-box
 edge. Reference/display meshes receive no engineering feature names.
 
@@ -136,7 +139,8 @@ an inclined grid working plane and an elevated cursor target. Native GPU/control
 exercise zoom, individual/global switches, hidden grids, preview/click parity, numeric length
 and O, then publish and reopen an independently sized plate. Unequal grid-bay midpoint tests
 check both families, finite crossings, source gates, disabled nearest snaps and inclined planes;
-native acceptance verifies that preview and click resolve the same span midpoint.
+native acceptance verifies that preview and click resolve the same span midpoint in both camera
+projections. A real CLI regression checks that orthographic targets do not depend on view depth.
 Query and switch tests assert
 unchanged revisions/tokens. All shapes and test geometry are contributor-original; no external
 product code, screenshots, catalogs or graphics were used.

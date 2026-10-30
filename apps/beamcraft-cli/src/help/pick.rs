@@ -17,5 +17,5 @@ pub(super) const HELP: &str = concat!(
     "lookup-feature --store ROOT --feature-id FID (kind, owner, local and world geometry); ",
     "element-edges --store ROOT --id UUIDV7 (evaluated world-space boundary edges without triangle diagonals or a bounding-box substitute); ",
     "snap --store ROOT --point X,Y,Z [--radius MM] [--kinds vertex,axis_end,axis,edge,midpoint,center,grid_intersection,grid_end,grid_line] [--max-hits ",
-    "1..64] [--plane OX,OY,OZ,XX,XY,XZ,YX,YY,YZ] [--origin X,Y,Z --direction DX,DY,DZ --aperture TAN_HALF_ANGLE] [--reference-snaps true|false] [--geometry-snaps true|false] [--grid-snaps true|false] [--nearest true|false] (source and point-kind gates apply together before truncation; nearest=false excludes arbitrary points on every line family while retaining requested discrete points; grids also require reference-snaps)",
+    "1..64] [--plane OX,OY,OZ,XX,XY,XZ,YX,YY,YZ] [--origin X,Y,Z --direction DX,DY,DZ [--aperture TAN_HALF_ANGLE | --cursor-radius MM]] [--reference-snaps true|false] [--geometry-snaps true|false] [--grid-snaps true|false] [--nearest true|false] (cursor-radius is the constant orthographic aperture; source and point-kind gates apply together before truncation; nearest=false excludes arbitrary points on every line family while retaining requested discrete points; grids also require reference-snaps)",
 );
