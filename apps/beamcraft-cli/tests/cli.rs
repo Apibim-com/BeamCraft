@@ -19,6 +19,8 @@ mod bom;
 mod changeset;
 mod changeset_base;
 mod command_evidence;
+mod construction_input;
+mod construction_snaps;
 mod contour_plates;
 mod coordinator;
 mod copy;
