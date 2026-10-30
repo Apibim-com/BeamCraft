@@ -3,13 +3,6 @@
 
 //! Help owned by the coordinator command family.
 
-pub(super) const COMMANDS: &[&str] = &[
-    "serve-coordinator",
-    "publish-changeset",
-    "coordinator-rebase",
-    "inspect-coordinator-head",
-];
-
 pub(super) const HELP: &str = concat!(
     "Coordinator (C02, off unless started; loopback only; one publish queue; tokens from ",
     "files, at least 32 printable bytes, not group/world-readable on Unix): serve-coordinator ",

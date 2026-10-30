@@ -3,14 +3,6 @@
 
 //! Help owned by the plate command family.
 
-pub(super) const COMMANDS: &[&str] = &[
-    "create-plate",
-    "add-hole",
-    "update-hole",
-    "remove-hole",
-    "inspect-elements",
-];
-
 pub(super) const HELP: &str = concat!(
     "Remove hole: remove-hole --store ROOT --id PLATE_UUID --operation-id RECORD_UUID [--op-id UUID] [common identities]. Retires its UUID and ordinal; explicit operations only, not legacy polygon indices. One linked-group revision and undo unit.\n",
     "Update hole: update-hole --store ROOT --id PLATE_UUID --operation-id RECORD_UUID (--polygon X,Y;... | --hole-rect X,Y,W,H | --hole-round X,Y,D) [--op-id UUID] [common identity options]. Replaces one record without changing its ordinal; linked instances update atomically and immutable replay returns the original result.\n",

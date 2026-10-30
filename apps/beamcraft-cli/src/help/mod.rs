@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! Compose feature-owned help without changing command dispatch or parsing.
+//! Compose feature-owned help without changing command dispatch or parsing. The command
+//! inventory is rendered from the registry.
+
+use beamcraft_cli::registry;
 
 mod assembly;
 mod attribute;
@@ -9,6 +12,7 @@ mod blobs;
 mod bolt;
 mod bom;
 mod changeset;
+mod commands;
 mod coordinator;
 mod copy;
 mod definitions;
@@ -35,41 +39,9 @@ mod weld;
 mod work_plane;
 mod workspace;
 
-// Keep the established inventory order independently of the detailed section order.
-const COMMAND_GROUPS: &[&[&str]] = &[
-    blobs::COMMANDS,
-    revision::COMMANDS,
-    plate::COMMANDS,
-    definitions::COMMANDS,
-    library::COMMANDS,
-    member::COMMANDS,
-    work_plane::COMMANDS,
-    edit::COMMANDS,
-    delete::COMMANDS,
-    copy::COMMANDS,
-    workspace::COMMANDS,
-    rebase::COMMANDS,
-    reference::COMMANDS,
-    assembly::COMMANDS,
-    weld::COMMANDS,
-    bolt::COMMANDS,
-    level::COMMANDS,
-    attribute::COMMANDS,
-    grid::COMMANDS,
-    export::COMMANDS,
-    numbering::COMMANDS,
-    changeset::COMMANDS,
-    coordinator::COMMANDS,
-    history::COMMANDS,
-    view::COMMANDS,
-    pick::COMMANDS,
-    view_export::COMMANDS,
-    bom::COMMANDS,
-    start::COMMANDS,
-];
-
 const SECTIONS: &[&str] = &[
     start::HELP,
+    commands::HELP,
     blobs::HELP,
     drawing::PREVIEW,
     revision::CONTROL,
@@ -116,10 +88,7 @@ pub(crate) fn print() {
 }
 
 fn render() -> String {
-    let commands: Vec<_> = COMMAND_GROUPS
-        .iter()
-        .flat_map(|group| group.iter().copied())
-        .collect();
+    let commands: Vec<_> = registry::COMMANDS.iter().map(|c| c.name).collect();
     format!(
         "BeamCraft: {}\n{}",
         commands.join(" | "),
