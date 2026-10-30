@@ -116,6 +116,10 @@ pub struct App {
     plate_mode: bool,
     plate_draft: crate::creation::ContourDraft,
     plate_hover: Option<[f64; 3]>,
+    snap_hover: Option<beamcraft_engine::query::pick::SnapKind>,
+    viewport_height: f32,
+    distance_input: String,
+    distance_aim: Option<[f64; 3]>,
     plate_input: [String; 2],
     plane_form: crate::work_plane::Form,
     plane_pick: bool,
@@ -476,6 +480,11 @@ fn draw_selection(
     }
 }
 
+/// Viewport clicks do not capture keyboard focus from construction input.
+fn viewport_sense() -> egui::Sense {
+    egui::Sense::CLICK | egui::Sense::DRAG
+}
+
 fn field(ui: &mut egui::Ui, label: &str, text: &mut String, width: f32) {
     ui.horizontal(|ui| {
         ui.add_sized(
@@ -818,6 +827,10 @@ impl App {
             plate_mode: false,
             plate_draft: crate::creation::ContourDraft::default(),
             plate_hover: None,
+            snap_hover: None,
+            viewport_height: 800.0,
+            distance_input: String::new(),
+            distance_aim: None,
             plate_input: ["0".into(), "0".into()],
             plane_form: crate::work_plane::Form::default(),
             plane_pick: false,
@@ -1884,6 +1897,9 @@ impl App {
                     self.plate_draft.clear();
                     self.plate_hover = None;
                     self.tools.plate.contour.clear();
+                    self.tools.plate_plane = None;
+                    self.distance_input.clear();
+                    self.distance_aim = None;
                     self.plate_mode = self.bench == workbench::Bench::Plate;
                 } else {
                     self.beam_mode = matches!(
@@ -2025,6 +2041,9 @@ impl App {
     fn install_plane(&mut self, plane: Option<beamcraft_engine::work_plane::WorkPlane>) {
         self.tools.cancel();
         self.tools.plane = plane;
+        self.tools.plate_plane = None;
+        self.distance_input.clear();
+        self.distance_aim = None;
         self.plate_draft.clear();
         self.plate_hover = None;
         self.tools.plate.contour.clear();
@@ -2058,6 +2077,11 @@ impl App {
                 return;
             }
         };
+        self.accept_member_point(point);
+    }
+
+    /// Accept a resolved cursor or numeric endpoint through the same member command path.
+    fn accept_member_point(&mut self, point: [f64; 3]) {
         let point = match self.beam.start() {
             Some(start) => match self.tools.plane.map_or_else(
                 || self.tools.member.axis_lock.constrain(start, point),
@@ -2072,6 +2096,9 @@ impl App {
             },
             None => point,
         };
+        self.distance_input.clear();
+        self.distance_aim = None;
+        self.beam_hover = None;
         match self.beam.click(point) {
             None => {
                 self.clear_member_preview();
@@ -2299,7 +2326,10 @@ impl eframe::App for App {
                 !wants_text && i.key_pressed(egui::Key::F),
                 !wants_text && i.key_pressed(egui::Key::R),
                 !wants_text && (i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals)),
-                !wants_text && i.key_pressed(egui::Key::Minus),
+                !wants_text
+                    && (!self.plate_mode || self.plate_draft.points().is_empty())
+                    && (!self.beam_mode || self.beam.start().is_none())
+                    && i.key_pressed(egui::Key::Minus),
             )
         });
         self.poll_commit();
@@ -2313,15 +2343,7 @@ impl eframe::App for App {
         self.selection_shortcuts(ui.ctx());
         self.render_mode_shortcuts(ui.ctx());
         self.perf_step(ui.ctx(), frame.info().cpu_usage);
-        if !wants_text && self.plate_mode && !self.other_command_running() {
-            if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                self.finish_plate();
-            }
-            if ui.input(|i| i.key_pressed(egui::Key::Backspace)) {
-                self.plate_draft.back();
-                self.plate_hover = None;
-            }
-        }
+        self.construction_keyboard(ui.ctx());
         if self.menu_open && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.menu_open = false;
         } else if !wants_text
@@ -2375,13 +2397,13 @@ impl eframe::App for App {
         }
         egui::CentralPanel::default().show(ui, |ui| {
             let size = ui.available_size();
+            self.viewport_height = size.y.max(1.0);
             let scale = ui.ctx().pixels_per_point();
             let [width, height] = target_size([size.x, size.y], scale);
             if let Err(e) = self.resize(width, height) {
                 self.error = Some(e.to_string());
             }
-            let response =
-                ui.add(egui::Image::new((self.texture, size)).sense(egui::Sense::click_and_drag()));
+            let response = ui.add(egui::Image::new((self.texture, size)).sense(viewport_sense()));
             let hovered = response.hovered();
             let (delta, shift, ctrl, scroll_y, pinch) = ui.input(|i| {
                 (
@@ -2573,7 +2595,7 @@ impl eframe::App for App {
                         }
                     }
                     if self.plate_mode {
-                        self.plate_hover = response
+                        let resolved = response
                             .hover_pos()
                             .and_then(|pos| {
                                 ndc_of(
@@ -2591,7 +2613,9 @@ impl eframe::App for App {
                                         .map_or([0.0; 3], |l| l.summary.origin_mm),
                                 )
                             })
-                            .and_then(|ray| self.creation_point(ray, true).ok());
+                            .and_then(|ray| self.creation_hit(ray, true).ok());
+                        self.plate_hover = resolved.map(|(point, _)| point);
+                        self.snap_hover = resolved.and_then(|(_, kind)| kind);
                         self.paint_plate_draft(ui, response.rect, &view);
                     }
                     // The ghost preview follows the pointer on the plane through the armed
@@ -3276,6 +3300,504 @@ mod tests {
     }
 
     #[test]
+    fn typed_length_and_o_create_a_spatial_plate_through_real_keyboard_events() {
+        let mut app =
+            headless().expect("a native/software adapter is required for construction input");
+        let executable = std::env::current_exe().unwrap();
+        let cli = executable
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        assert!(cli.is_file(), "build beamcraft-cli before input acceptance");
+        let root = std::env::temp_dir().join(format!(
+            "bc-length-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        app.source.cli = cli;
+        app.source.store = root.clone();
+        app.loaded = None;
+        app.set_bench(super::workbench::Bench::Plate);
+        let ctx = egui::Context::default();
+        let frame = |app: &mut App, mut events: Vec<egui::Event>| {
+            let released = events
+                .iter()
+                .filter_map(|event| match event {
+                    egui::Event::Key {
+                        key,
+                        physical_key,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } => Some(egui::Event::Key {
+                        key: *key,
+                        physical_key: *physical_key,
+                        pressed: false,
+                        repeat: false,
+                        modifiers: *modifiers,
+                    }),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            events.extend(released);
+            ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ui| app.construction_keyboard(ui.ctx()),
+            )
+            .drop_without_applying_deltas()
+        };
+        let key = |key, repeat| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat,
+            modifiers: egui::Modifiers::NONE,
+        };
+        app.plate_draft.push([0.; 3]).unwrap();
+        app.plate_hover = Some([3., 4., 12.]);
+        frame(
+            &mut app,
+            vec![
+                egui::Event::Text("500".into()),
+                key(egui::Key::Enter, false),
+            ],
+        );
+        let p = *app.plate_draft.points().last().unwrap();
+        assert!((p.iter().map(|v| v * v).sum::<f64>().sqrt() - 500.).abs() < 1e-9);
+        assert!(
+            app.job.is_none(),
+            "numeric Enter adds a vertex, never finishes the plate"
+        );
+        frame(&mut app, vec![key(egui::Key::Enter, true)]);
+        assert_eq!(app.plate_draft.points().len(), 2);
+        assert!(app.job.is_none());
+        app.plate_draft.clear();
+        app.plate_draft.push([0.; 3]).unwrap();
+        frame(&mut app, vec![key(egui::Key::O, false)]);
+        assert!(app.selection.orthogonal);
+        // The same orthogonal engine resolver used by cursor preview selects a genuine Z ray.
+        let z = beamcraft_engine::coordinate::orthogonal_cursor(
+            [0.; 3],
+            [1000., -1000., 1000.],
+            [-1000., 1000., -400.],
+            None,
+        )
+        .unwrap();
+        app.plate_hover = Some(z);
+        frame(
+            &mut app,
+            vec![
+                egui::Event::Text("500".into()),
+                key(egui::Key::Enter, false),
+            ],
+        );
+        assert_eq!(app.plate_draft.points().last(), Some(&[0., 0., 500.]));
+        app.plate_hover = Some([200., 2., 500.]);
+        frame(
+            &mut app,
+            vec![
+                egui::Event::Text("300".into()),
+                key(egui::Key::Enter, false),
+            ],
+        );
+        assert_eq!(app.plate_draft.points().last(), Some(&[300., 0., 500.]));
+        app.plate_hover = Some([300., 0., -10.]);
+        frame(
+            &mut app,
+            vec![
+                egui::Event::Text("500".into()),
+                key(egui::Key::Enter, false),
+            ],
+        );
+        assert_eq!(app.plate_draft.points().last(), Some(&[300., 0., 0.]));
+        assert!(
+            app.tools.plane.is_none(),
+            "contour frame must not replace the session frame"
+        );
+        frame(&mut app, vec![key(egui::Key::Enter, false)]);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while app.job.is_some() && std::time::Instant::now() < deadline {
+            app.poll_commit();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(
+            app.job.is_none() && app.last_commit_ok,
+            "{:?}",
+            app.tool_note
+        );
+        assert!(app.tools.plane.is_none());
+        let output = std::process::Command::new(&app.source.cli)
+            .args(["inspect-elements", "--store", root.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let json =
+            beamcraft_json::decode(&output.stdout, &beamcraft_json::Limits::DEFAULT).unwrap();
+        let plate = &json.get("plates").unwrap().array().unwrap()[0];
+        assert_eq!(
+            plate
+                .get("quantities")
+                .unwrap()
+                .get("volume")
+                .unwrap()
+                .get("mm3")
+                .unwrap()
+                .float()
+                .unwrap(),
+            1_500_000.
+        );
+        let profile = std::process::Command::new(&app.source.cli)
+            .args([
+                "define-profile",
+                "--store",
+                root.to_str().unwrap(),
+                "--width",
+                "100",
+                "--height",
+                "200",
+            ])
+            .output()
+            .unwrap();
+        assert!(profile.status.success());
+        let profile =
+            beamcraft_json::decode(&profile.stdout, &beamcraft_json::Limits::DEFAULT).unwrap();
+        app.tools.member.profile = Some(
+            profile
+                .get("definition")
+                .unwrap()
+                .get("digest")
+                .unwrap()
+                .string()
+                .unwrap()
+                .into(),
+        );
+        app.set_bench(super::workbench::Bench::Beam);
+        app.selection.orthogonal = false;
+        app.loaded = None;
+        app.place_beam(crate::edit::Ray {
+            origin: [0., 0., 5000.],
+            direction: [0., 0., -1.],
+        });
+        app.beam_hover = Some([3., 4., 12.]);
+        // A viewport/button focus is not a text field and must not swallow length input.
+        ctx.memory_mut(|m| m.request_focus(egui::Id::unique("viewport-input-regression")));
+        frame(
+            &mut app,
+            vec![
+                egui::Event::Text("10000".into()),
+                key(egui::Key::Backspace, false),
+            ],
+        );
+        assert_eq!(app.distance_input, "1000");
+        assert_eq!(app.distance_aim, Some([3., 4., 12.]));
+        // Moving the cursor while typing keeps the direction captured by the first digit.
+        app.beam_hover = Some([100., 0., 0.]);
+        frame(&mut app, vec![key(egui::Key::Enter, false)]);
+        assert!(app.job.is_some(), "{:?}", app.tool_note);
+        frame(&mut app, vec![key(egui::Key::Enter, true)]);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while app.job.is_some() && std::time::Instant::now() < deadline {
+            app.poll_commit();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(
+            app.last_commit_ok && app.job.is_none(),
+            "{:?}",
+            app.tool_note
+        );
+        let output = std::process::Command::new(&app.source.cli)
+            .args(["inspect-elements", "--store", root.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let json =
+            beamcraft_json::decode(&output.stdout, &beamcraft_json::Limits::DEFAULT).unwrap();
+        let members = json.get("members").unwrap().array().unwrap();
+        assert_eq!(members.len(), 1);
+        let axis = members[0].get("axis_points_mm").unwrap().array().unwrap();
+        let start = axis[0].array().unwrap();
+        let end = axis[1].array().unwrap();
+        let delta = start
+            .iter()
+            .zip(end)
+            .map(|(a, b)| b.float().unwrap() - a.float().unwrap())
+            .collect::<Vec<_>>();
+        assert!((delta.iter().map(|v| v * v).sum::<f64>().sqrt() - 1000.).abs() < 1e-8);
+        assert!(
+            delta
+                .iter()
+                .zip([3000. / 13., 4000. / 13., 12000. / 13.])
+                .all(|(a, b)| (a - b).abs() < 1e-8)
+        );
+        drop(app);
+        assert!(root.is_absolute() && root.file_name().is_some());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn plate_cursor_snaps_follow_pixels_switches_and_the_real_exported_geometry() {
+        use beamcraft_engine::query::pick::SnapKind;
+        let mut app =
+            headless().expect("a native/software adapter is required for snap acceptance");
+        let executable = std::env::current_exe().unwrap();
+        let cli = executable
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        assert!(cli.is_file(), "build beamcraft-cli before snap acceptance");
+        let root = std::env::temp_dir().join(format!(
+            "bc-snaps-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let run = |command: &str, args: &[&str]| {
+            let out = std::process::Command::new(&cli)
+                .args([command, "--store", root.to_str().unwrap()])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stdout)
+            );
+            beamcraft_json::decode(&out.stdout, &beamcraft_json::Limits::DEFAULT).unwrap()
+        };
+        run(
+            "create-grid",
+            &[
+                "--name",
+                "G",
+                "--u-expression",
+                "0 1000",
+                "--v-expression",
+                "0 2000",
+            ],
+        );
+        run(
+            "create-plate",
+            &[
+                "--width",
+                "1000",
+                "--length",
+                "800",
+                "--thickness",
+                "10",
+                "--translation",
+                "3000,0,0",
+            ],
+        );
+        let profile = run(
+            "define-profile",
+            &[
+                "--family", "i_shape", "--h", "200", "--b", "100", "--tw", "6", "--tf", "10",
+                "--r", "0",
+            ],
+        );
+        let profile = profile
+            .get("definition")
+            .unwrap()
+            .get("digest")
+            .unwrap()
+            .string()
+            .unwrap();
+        run(
+            "create-member",
+            &[
+                "--start",
+                "0,4000,0",
+                "--end",
+                "3000,4000,0",
+                "--profile-digest",
+                profile,
+                "--section-plane-offset",
+                "350",
+            ],
+        );
+        app.source.cli = cli.clone();
+        app.source.store = root.clone();
+        let reload =
+            crate::source::reload(&cli, &root, &crate::source::Known::default(), &app.stats);
+        assert!(
+            reload
+                .grids
+                .as_ref()
+                .is_ok_and(|scene| scene.member_axes.len() == 1)
+        );
+        deliver(&mut app, reload);
+        let token = app.loaded.as_ref().unwrap().snapshot.token().clone();
+        app.set_bench(super::workbench::Bench::Plate);
+        let only = |app: &mut App, kind| {
+            for k in SnapKind::ALL {
+                app.selection.set_snap(k, k == kind);
+            }
+        };
+        let ray_at = |app: &App, point: [f64; 3], pixels: f32| {
+            let origin = app.loaded.as_ref().unwrap().summary.origin_mm;
+            let local = std::array::from_fn(|i| (point[i] - origin[i]) as f32);
+            let view = app.camera.view(app.aspect()).unwrap();
+            let [x, y, _] = view.project(local);
+            let ndc = [x + pixels * 2.0 / (app.viewport_height * app.aspect()), y];
+            crate::edit::ray_through(&view, ndc, origin).unwrap()
+        };
+        // All defaults enabled: a closer grid line must not steal the crossing.
+        for zoom in [0.0, 0.7, -0.7] {
+            app.camera.navigate([0.0; 2], [0.0; 2], zoom).unwrap();
+            let ray = ray_at(&app, [1000.0, 2000.0, 0.0], 3.0);
+            assert_eq!(
+                app.creation_hit(ray, true).unwrap(),
+                ([1000., 2000., 0.], Some(SnapKind::GridIntersection))
+            );
+            app.plate_draft.clear();
+            app.place_plate(ray);
+            assert_eq!(app.plate_draft.points(), &[[1000., 2000., 0.]]);
+        }
+        app.plate_draft.clear();
+        only(&mut app, SnapKind::GridIntersection);
+        let ray = ray_at(&app, [1000., 2000., 0.], 3.0);
+        app.grids_visible = false;
+        assert!(app.creation_hit(ray, true).unwrap().1.is_none());
+        app.grids_visible = true;
+        app.selection.snapping_enabled = false;
+        assert!(app.creation_hit(ray, true).unwrap().1.is_none());
+        app.selection.snapping_enabled = true;
+        // Source switches do not enable a point kind. In particular, grid ON cannot
+        // resurrect nearest points when the hourglass switch is OFF.
+        let previous_camera = app.camera;
+        let origin = app.loaded.as_ref().unwrap().summary.origin_mm;
+        let target = std::array::from_fn(|i| ([0., 611., 0.][i] - origin[i]) as f32);
+        app.camera.fit(target, 1500., app.aspect()).unwrap();
+        for k in SnapKind::ALL {
+            app.selection.set_snap(k, true);
+        }
+        for reference in [false, true] {
+            for geometry in [false, true] {
+                for grids in [false, true] {
+                    for nearest in [false, true] {
+                        app.selection.snap_reference = reference;
+                        app.selection.snap_geometry = geometry;
+                        app.selection.snap_grids = grids;
+                        app.selection.snap_nearest = nearest;
+                        let ray = ray_at(&app, [0., 611., 0.], 0.0);
+                        let (_, kind) = app.creation_hit(ray, true).unwrap();
+                        assert_eq!(
+                            kind,
+                            if reference && grids && nearest {
+                                Some(SnapKind::GridLine)
+                            } else {
+                                None
+                            },
+                            "reference={reference} geometry={geometry} grids={grids} nearest={nearest}"
+                        );
+                        app.grid_line.click = Some(false);
+                        app.place_grid_line(crate::edit::Ray {
+                            origin: [1., 611., 1000.],
+                            direction: [0., 0., -1.],
+                        });
+                        assert_eq!(
+                            app.grid_line.points[0],
+                            if reference && grids && nearest {
+                                ["0".to_owned(), "611".to_owned()]
+                            } else {
+                                ["1".to_owned(), "611".to_owned()]
+                            }
+                        );
+                    }
+                }
+            }
+        }
+        app.camera = previous_camera;
+        app.grid_line.click = None;
+        app.selection.snap_reference = true;
+        app.selection.snap_geometry = true;
+        app.selection.snap_grids = true;
+        app.selection.snap_nearest = true;
+        only(&mut app, SnapKind::GridIntersection);
+        let far = ray_at(&app, [1000., 2000., 0.], 18.0);
+        assert!(app.creation_hit(far, true).unwrap().1.is_none());
+        for (kind, p) in [
+            (SnapKind::Midpoint, [3500., 0., 0.]),
+            (SnapKind::Vertex, [3000., 0., 0.]),
+            (SnapKind::Edge, [3600., 0., 0.]),
+            (SnapKind::Center, [1500., 4000., 0.]),
+            (SnapKind::AxisEnd, [0., 4000., 0.]),
+        ] {
+            only(&mut app, kind);
+            let ray = ray_at(&app, p, 0.0);
+            let (point, snap) = app.creation_hit(ray, true).unwrap();
+            assert_eq!(snap, Some(kind));
+            assert!(
+                point.iter().zip(p).all(|(a, b)| (a - b).abs() < 0.01),
+                "{kind:?}: {point:?}"
+            );
+        }
+        assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
+        assert!(app.job.is_none());
+        // Every clicked vertex is exactly a grid intersection and Finish publishes those points.
+        only(&mut app, SnapKind::GridIntersection);
+        for p in [
+            [0., 0., 0.],
+            [1000., 0., 0.],
+            [1000., 2000., 0.],
+            [0., 2000., 0.],
+        ] {
+            let ray = ray_at(&app, p, 2.0);
+            app.place_plate(ray);
+        }
+        assert_eq!(app.plate_draft.points().len(), 4);
+        app.finish_plate();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while app.job.is_some() && std::time::Instant::now() < deadline {
+            app.poll_commit();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(
+            app.job.is_none() && app.last_commit_ok,
+            "{:?}",
+            app.tool_note
+        );
+        let inspected = run("inspect-elements", &[]);
+        assert!(
+            inspected
+                .get("plates")
+                .unwrap()
+                .array()
+                .unwrap()
+                .iter()
+                .any(|plate| {
+                    plate
+                        .get("quantities")
+                        .unwrap()
+                        .get("volume")
+                        .unwrap()
+                        .get("mm3")
+                        .unwrap()
+                        .float()
+                        .unwrap()
+                        == 20_000_000.
+                })
+        );
+        drop(app);
+        assert!(root.is_absolute() && root.file_name().is_some());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn review_triangle_and_rectangle_finish_with_right_or_wheel_click_and_drags_do_not_finish() {
         use crate::tools::{Created, ToolError};
         let mut app = headless().expect("software/native graphics required for input acceptance");
@@ -3666,11 +4188,29 @@ mod tests {
             app.selection.filter().off_classes(),
             vec![SelectionClass::Parts, SelectionClass::Grids]
         );
-        assert!(!app.selection.snap_open);
+        assert!(app.selection.snapping_enabled);
         draw(&mut app, click(snap.unwrap()));
-        assert!(app.selection.snap_open);
+        assert!(!app.selection.snapping_enabled);
         draw(&mut app, click(rects[20].center()));
-        assert!(app.selection.snap_on(SnapKind::GridIntersection));
+        assert!(!app.selection.snap_on(SnapKind::GridIntersection));
+        draw(&mut app, click(rects[21].center())); // one endpoint type, three source families
+        for kind in [SnapKind::Vertex, SnapKind::AxisEnd, SnapKind::GridEnd] {
+            assert!(!app.selection.snap_on(kind));
+        }
+        draw(&mut app, click(rects[21].center()));
+        // Toolbar source gates and point kinds retain independent state.
+        draw(&mut app, click(rects[24].center())); // nearest/hourglass
+        assert!(!app.selection.snap_nearest);
+        assert!(app.selection.snap_grids);
+        assert!(!app.selection.snap_kinds().contains(&SnapKind::GridLine));
+        draw(&mut app, click(rects[29].center())); // grid source
+        assert!(!app.selection.snap_grids);
+        assert!(!app.selection.snap_nearest);
+        draw(&mut app, click(rects[31].center())); // reference master
+        draw(&mut app, click(rects[32].center())); // physical master
+        assert!(!app.selection.snap_reference && !app.selection.snap_geometry);
+        draw(&mut app, click(snap.unwrap())); // global snap back on
+        assert!(app.selection.snap_kinds().is_empty());
         assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
     }
 

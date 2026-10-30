@@ -25,11 +25,18 @@ available for the next member after success. Exact endpoint fields and coordinat
 are optional precision input. The ghost uses the same resolved/snap-constrained endpoint
 as the final click. An axis remains visible when no supported body preview is available.
 
-Selecting Plate starts an unpublished contour on the active work plane, or world XY. Set
-thickness/material/class and pick vertices. The outline follows the pointer. Enter,
-right-click, wheel-click, Finish plate or clicking the first vertex closes a contour with at least three
-vertices and runs `create-plate --contour`. Backspace removes a vertex; Reverse direction
+Selecting Plate starts an unpublished spatial contour, with the active work plane or world XY
+as the initial free-point fallback. Set thickness/material/class and pick vertices. The outline
+follows the pointer. Type a length and press Enter to add a point in the aimed 3D direction;
+O toggles orthogonal X/Y/Z. Enter without a length, right-click, wheel-click, Finish plate or clicking the
+first vertex closes a contour with at least three vertices and runs `create-plate --contour`.
+Backspace removes a typed digit or vertex; Reverse direction
 explicitly reverses winding. Precision fields add a point in work-plane coordinates.
+Interactive contours pass `--normalize-winding true`: the engine normalizes either local XY
+traversal before evaluating the plate, retaining the first vertex. No intersection is repaired.
+The CLI keeps its authored-winding default for existing scripts; the opt-in mode refuses corner
+treatments whose vertex indexing would otherwise change. Real CLI coverage checks both traversals
+of a concave contour in world XY and a vertical frame, and unchanged revisions on invalid outlines.
 
 The existing engine admits contour topology, winding, thickness, supported geometry and
 limits. The UI repairs no contour or intersection and caps draft vertices at the model limit.
@@ -40,7 +47,11 @@ Work-plane changes discard points from the previous frame. Picking also works be
 first scene exists, so the first object can be created in an empty project.
 
 Snap kinds come from the bottom toolbar; queries use the displayed snapshot and grid records.
-Hidden grids are excluded. Plate candidates must lie on the work plane. No magnetic link is
+Source masters and point kinds must both permit a candidate. The grid source never enables
+nearest points by itself; [the switch matrix](v11-construction-snaps.md) defines every current combination.
+Hidden grids are excluded. Spatial snaps use a cursor ray; the engine infers the contour plane
+from non-collinear points and refuses non-planar contours without flattening them. The session
+plane stays unchanged. No magnetic link is
 created, and view state does not write a revision.
 
 ## Verification and boundaries
