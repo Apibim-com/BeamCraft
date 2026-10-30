@@ -2142,6 +2142,10 @@ pub struct ElementPatch {
     /// P12: the complete replacement of a member's path points, two for a straight member and
     /// at least three for a polybeam. The whole path is replaced; there is no per-point setter.
     pub axis_points_mm: Option<Vec<[f64; 3]>>,
+    /// A member's new pinned profile definition (replaces the standing one; the body is rebuilt
+    /// from it). A plate has no profile. Whether the digest names a profile definition is the
+    /// engine's decision.
+    pub profile: Option<ContentDigest>,
 }
 
 /// F04 section 7 `UpdateElement`: the target element and a typed patch.
@@ -2226,6 +2230,7 @@ impl UpdateElement {
             && patch.orientation_xyzw.is_none()
             && patch.level.is_none()
             && patch.axis_points_mm.is_none()
+            && patch.profile.is_none()
         {
             return Err(CommandError::new(
                 ErrorCode::InvalidArgument,
@@ -2397,6 +2402,11 @@ impl UpdateElement {
                 PlateSide::Middle => 2,
                 PlateSide::Bottom => 3,
             });
+        }
+        // Appended only when present, so the fingerprints of earlier patches are unchanged.
+        if let Some(profile) = &self.patch.profile {
+            bytes.extend_from_slice(&[7, 1]);
+            bytes.extend_from_slice(profile.as_bytes());
         }
         // Appended only when present, so the fingerprints of earlier patches are unchanged.
         if let Some(points) = &self.patch.axis_points_mm {
