@@ -201,6 +201,8 @@ pub struct App {
     /// The selected-only draw and the (selected id, scene origin) it was built for, so the one
     /// engine query runs on a selection or reload change, not per frame.
     selected_only: ((String, [f64; 3]), Option<crate::scene::SelectedDraw>),
+    /// Actual world boundary segments, cached by selected identity and snapshot token.
+    selection_edges: ((String, String), Vec<[[f64; 3]; 2]>),
 }
 
 /// Records a scene swap in the perf counters: the CPU display bytes and the snapshot mesh bytes
@@ -421,61 +423,30 @@ fn point_fields(ui: &mut egui::Ui, point: &mut [String; 3]) {
     });
 }
 
-/// The twelve edges of a box as pairs of corner indices (bit 0 = x, bit 1 = y, bit 2 = z).
-const BOX_EDGES: [(usize, usize); 12] = [
-    (0, 1),
-    (2, 3),
-    (4, 5),
-    (6, 7),
-    (0, 2),
-    (1, 3),
-    (4, 6),
-    (5, 7),
-    (0, 4),
-    (1, 5),
-    (2, 6),
-    (3, 7),
-];
-
-/// Draws the selection as the projected box of the engine's world bounds of the element.
+/// Draws the selected body's evaluated boundary instead of inventing corners from its bounds.
 fn draw_selection(
     painter: &egui::Painter,
     rect: egui::Rect,
     view: &View,
-    loaded: &Loaded,
-    id: &str,
+    origin: [f64; 3],
+    edges: &[[[f64; 3]; 2]],
 ) {
-    let Ok(id) = beamcraft_engine::ElementId::parse(id) else {
-        return;
-    };
-    let Ok(bounds) = loaded.snapshot.element_bounds(&id) else {
-        return;
-    };
-    let origin = loaded.summary.origin_mm;
-    let screen: Vec<Option<egui::Pos2>> = (0..8usize)
-        .map(|corner| {
-            let pick = |axis: usize| {
-                let on = corner >> axis & 1 == 1;
-                let edge = if on {
-                    bounds.max.get(axis)
-                } else {
-                    bounds.min.get(axis)
-                };
-                edge.copied().unwrap_or(0.0) - origin.get(axis).copied().unwrap_or(0.0)
-            };
-            let [x, y, z] = view.project([pick(0) as f32, pick(1) as f32, pick(2) as f32]);
-            ((0.0..1.0).contains(&z) && x.is_finite() && y.is_finite()).then(|| {
-                egui::pos2(
-                    rect.min.x + (x * 0.5 + 0.5) * rect.width(),
-                    rect.min.y + (0.5 - y * 0.5) * rect.height(),
-                )
-            })
+    let project = |point: [f64; 3]| {
+        let local = std::array::from_fn(|i| {
+            (point.get(i).copied().unwrap_or(0.0) - origin.get(i).copied().unwrap_or(0.0)) as f32
+        });
+        let [x, y, z] = view.project(local);
+        ((0.0..1.0).contains(&z) && x.is_finite() && y.is_finite()).then(|| {
+            egui::pos2(
+                rect.min.x + (x * 0.5 + 0.5) * rect.width(),
+                rect.min.y + (0.5 - y * 0.5) * rect.height(),
+            )
         })
-        .collect();
+    };
     let stroke = egui::Stroke::new(2.0, crate::theme::BRAND);
-    for (a, b) in BOX_EDGES {
-        if let (Some(Some(p)), Some(Some(q))) = (screen.get(a), screen.get(b)) {
-            painter.line_segment([*p, *q], stroke);
+    for [a, b] in edges {
+        if let (Some(p), Some(q)) = (project(*a), project(*b)) {
+            painter.line_segment([p, q], stroke);
         }
     }
 }
@@ -878,6 +849,7 @@ impl App {
             shortcuts,
             shortcuts_note,
             selected_only: ((String::new(), [0.0; 3]), None),
+            selection_edges: Default::default(),
         };
         app.tools.actor.clone_from(&app.source.actor);
         app.editor.actor.clone_from(&app.source.actor);
@@ -1034,6 +1006,7 @@ impl App {
         // A new revision may have moved or replaced the selected element: the selected-only
         // draw is rebuilt against this scene.
         self.selected_only = ((String::new(), [0.0; 3]), None);
+        self.selection_edges = Default::default();
         self.error = None;
     }
 
@@ -2546,8 +2519,30 @@ impl eframe::App for App {
                             );
                         }
                         if let Some(selected) = self.editor.selected() {
+                            let key = (selected.id.clone(), l.snapshot.token().as_str().to_owned());
+                            if self.selection_edges.0 != key {
+                                let edges = beamcraft_engine::ElementId::parse(&selected.id)
+                                    .ok()
+                                    .and_then(|id| {
+                                        beamcraft_engine::query::feature::element_edges(
+                                            &l.snapshot,
+                                            &id,
+                                        )
+                                        .ok()
+                                    })
+                                    .unwrap_or_default();
+                                self.selection_edges = (key, edges);
+                            }
                             let painter = ui.painter_at(response.rect);
-                            draw_selection(&painter, response.rect, &view, l, &selected.id);
+                            draw_selection(
+                                &painter,
+                                response.rect,
+                                &view,
+                                l.summary.origin_mm,
+                                &self.selection_edges.1,
+                            );
+                        } else {
+                            self.selection_edges = Default::default();
                         }
                     }
                     let finished_creation = self.finish_creation_gesture(&response, &view);
@@ -3544,6 +3539,142 @@ mod tests {
     }
 
     #[test]
+    fn bay_midpoint_preview_and_triangle_selection_use_real_exported_geometry() {
+        use beamcraft_engine::query::{feature::element_edges, pick::SnapKind};
+        let mut app =
+            headless().expect("a native/software adapter is required for construction acceptance");
+        let executable = std::env::current_exe().unwrap();
+        let cli = executable
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let root = std::env::temp_dir().join(format!(
+            "bc-bay-outline-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let run = |command: &str, args: &[&str]| {
+            let out = std::process::Command::new(&cli)
+                .arg(command)
+                .args(["--store", root.to_str().unwrap()])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stdout)
+            );
+            beamcraft_json::decode(&out.stdout, &beamcraft_json::Limits::DEFAULT).unwrap()
+        };
+        run(
+            "create-grid",
+            &[
+                "--name",
+                "Bays",
+                "--u-expression",
+                "0 1000 2000",
+                "--v-expression",
+                "0 800 1200",
+            ],
+        );
+        let plate = run(
+            "create-plate",
+            &[
+                "--contour",
+                "0,0;0,800;1000,0",
+                "--normalize-winding",
+                "true",
+                "--thickness",
+                "10",
+                "--translation",
+                "5000,5000,0",
+            ],
+        );
+        let id = beamcraft_engine::ElementId::parse(
+            plate
+                .get("plate")
+                .unwrap()
+                .get("element_id")
+                .unwrap()
+                .string()
+                .unwrap(),
+        )
+        .unwrap();
+        app.source.cli = cli.clone();
+        app.source.store = root.clone();
+        let reload =
+            crate::source::reload(&cli, &root, &crate::source::Known::default(), &app.stats);
+        deliver(&mut app, reload);
+        app.set_bench(super::workbench::Bench::Plate);
+        for kind in SnapKind::ALL {
+            app.selection.set_snap(kind, kind == SnapKind::Midpoint);
+        }
+        app.selection.snap_nearest = false;
+        let origin = app.loaded.as_ref().unwrap().summary.origin_mm;
+        let local = std::array::from_fn(|i| ([500., 0., 0.][i] - origin[i]) as f32);
+        app.camera.fit(local, 2000., app.aspect()).unwrap();
+        let view = app.camera.view(app.aspect()).unwrap();
+        let [x, y, _] = view.project(local);
+        let ray = crate::edit::ray_through(
+            &view,
+            [x + 4. / (app.viewport_height * app.aspect()), y],
+            origin,
+        )
+        .unwrap();
+        let (point, kind) = app.creation_hit(ray, true).unwrap();
+        assert_eq!(kind, Some(SnapKind::Midpoint));
+        assert!(
+            point
+                .iter()
+                .zip([500., 0., 0.])
+                .all(|(a, b)| (a - b).abs() < 1e-7)
+        );
+        app.place_plate(ray);
+        assert_eq!(app.plate_draft.points(), &[point]);
+        let edges = element_edges(&app.loaded.as_ref().unwrap().snapshot, &id).unwrap();
+        assert_eq!(edges.len(), 9);
+        let view = crate::camera::Camera::new([5500., 5400., 0.], 2000., 1.)
+            .unwrap()
+            .view(1.)
+            .unwrap();
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800., 800.));
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(rect),
+                ..Default::default()
+            },
+            |ui| {
+                super::draw_selection(ui.painter(), rect, &view, [0.; 3], &edges);
+            },
+        );
+        let lines = output
+            .shapes
+            .iter()
+            .filter_map(|s| match s.shape {
+                egui::Shape::LineSegment { points, .. } => Some(points),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(lines.len(), 9);
+        // The absent fourth corner of the triangle must never become a highlight endpoint.
+        let [x, y, _] = view.project([6000., 5800., 0.]);
+        let phantom = egui::pos2((x + 1.) * 400., (1. - y) * 400.);
+        assert!(lines.iter().flatten().all(|p| p.distance(phantom) > 1.));
+        output.drop_without_applying_deltas();
+        drop(app);
+        assert!(root.is_absolute() && root.file_name().is_some());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn plate_cursor_snaps_follow_pixels_switches_and_the_real_exported_geometry() {
         use beamcraft_engine::query::pick::SnapKind;
         let mut app =
@@ -3862,7 +3993,7 @@ mod tests {
             (3, egui::PointerButton::Primary, true),
         ] {
             app.set_bench(super::workbench::Bench::Plate);
-            let points = if vertices == 3 {
+            let mut points = if vertices == 3 {
                 vec![[0.0, 0.0, 0.0], [4000.0, 0.0, 0.0], [0.0, 3000.0, 0.0]]
             } else {
                 vec![
@@ -3872,6 +4003,9 @@ mod tests {
                     [0.0, 3000.0, 0.0],
                 ]
             };
+            if button == egui::PointerButton::Secondary {
+                points.reverse();
+            }
             for p in points {
                 app.plate_draft.push(p).unwrap();
             }

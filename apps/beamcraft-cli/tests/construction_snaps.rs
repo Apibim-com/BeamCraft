@@ -23,6 +23,138 @@ fn point(value: &Json) -> Vec<f64> {
 }
 
 #[test]
+fn grid_midpoints_include_each_unequal_bay_with_nearest_disabled() {
+    let f = StoreFixture::new("grid-bay-midpoints");
+    ok(
+        &f,
+        "create-grid",
+        &[
+            "--name",
+            "Bays",
+            "--u-expression",
+            "0 1000 2000",
+            "--v-expression",
+            "0 800 1200",
+            "--u-span",
+            "-100,2100",
+            "--v-span",
+            "-100,3100",
+        ],
+    );
+    let before = ok(&f, "open-revision", &[]);
+    for (query, expected) in [
+        ("501,1,300", [500., 0., 300.]),
+        ("2001,1,300", [2000., 0., 300.]),
+        ("1,401,300", [0., 400., 300.]),
+        ("1001,1401,300", [1000., 1400., 300.]),
+    ] {
+        let hit = ok(
+            &f,
+            "snap",
+            &[
+                "--point",
+                query,
+                "--radius",
+                "3",
+                "--kinds",
+                "midpoint",
+                "--nearest",
+                "false",
+            ],
+        );
+        assert!(
+            list(&hit, "candidates")
+                .iter()
+                .any(|h| point(h) == expected),
+            "{hit:?}"
+        );
+        for gate in ["--reference-snaps", "--grid-snaps"] {
+            let off = ok(
+                &f,
+                "snap",
+                &[
+                    "--point", query, "--radius", "3", "--kinds", "midpoint", gate, "false",
+                ],
+            );
+            assert!(list(&off, "candidates").is_empty(), "{off:?}");
+        }
+    }
+    // The span midpoint follows the same inclined-plane lift as every grid target.
+    let hit = ok(
+        &f,
+        "snap",
+        &[
+            "--point",
+            "1,401,401",
+            "--radius",
+            "3",
+            "--kinds",
+            "midpoint",
+            "--nearest",
+            "false",
+            "--plane",
+            "0,0,0,1,0,0,0,0.7071067811865476,0.7071067811865476",
+        ],
+    );
+    assert!(
+        list(&hit, "candidates").iter().any(|h| point(h)
+            .iter()
+            .zip([0., 400., 400.])
+            .all(|(a, b)| (a - b).abs() < 1e-8)),
+        "{hit:?}"
+    );
+    assert_eq!(before, ok(&f, "open-revision", &[]));
+}
+
+#[test]
+fn selection_edges_follow_the_evaluated_triangle_instead_of_its_box() {
+    let f = StoreFixture::new("triangle-outline");
+    let plate = ok(
+        &f,
+        "create-plate",
+        &[
+            "--contour",
+            "0,0;0,800;1000,0",
+            "--normalize-winding",
+            "true",
+            "--thickness",
+            "10",
+            "--translation",
+            "100,200,300",
+        ],
+    );
+    let id = text(at(&plate, &["plate"]), "element_id");
+    let before = ok(&f, "open-revision", &[]);
+    let result = ok(&f, "element-edges", &["--id", &id]);
+    let edges = list(&result, "edges_world_mm");
+    assert_eq!(edges.len(), 9, "{result:?}");
+    for edge in edges {
+        for p in edge.array().unwrap() {
+            let p = p
+                .array()
+                .unwrap()
+                .iter()
+                .map(|v| v.float().unwrap())
+                .collect::<Vec<_>>();
+            assert!(
+                [
+                    [100., 200., 300.],
+                    [1100., 200., 300.],
+                    [100., 1000., 300.],
+                    [100., 200., 310.],
+                    [1100., 200., 310.],
+                    [100., 1000., 310.]
+                ]
+                .iter()
+                .any(|v| p == *v),
+                "invented box corner: {p:?}"
+            );
+        }
+    }
+    assert_eq!(before, ok(&f, "open-revision", &[]));
+}
+
+#[test]
 fn source_and_point_kind_switches_are_independent_for_grids_and_body_midpoints() {
     let f = StoreFixture::new("snap-switch-matrix");
     ok(

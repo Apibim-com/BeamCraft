@@ -32,7 +32,7 @@ Snap toggle temporarily disables queries without changing the stored source/type
 | Point-kind control | Reference source | Physical source | Grid source |
 |---|---|---|---|
 | Endpoints | Authored axis ends | Named body vertices | Finite guide-segment ends |
-| Midpoints, triangle symbol | Halfway along each authored axis segment | Halfway along a named straight edge | Halfway along a finite guide segment |
+| Midpoints, triangle symbol | Halfway along each authored axis segment | Halfway along a named straight edge | Halfway along a finite guide and each span between adjacent opposite-family crossings |
 | Grid intersections | None in this slice | None in this slice | Actual finite U/V crossings |
 | Axis centers | Halfway along an authored member axis segment | None | None |
 | Nearest, hourglass symbol | Arbitrary point on the reference line | Arbitrary point on a physical edge | Arbitrary point on a guide line |
@@ -134,7 +134,10 @@ rules are executable now; the table above distinguishes them from further capabi
 Verification includes real CLI coordinate oracles for a concave plate, an offset I member,
 an inclined grid working plane and an elevated cursor target. Native GPU/controller tests
 exercise zoom, individual/global switches, hidden grids, preview/click parity, numeric length
-and O, then publish and reopen an independently sized plate. Query and switch tests assert
+and O, then publish and reopen an independently sized plate. Unequal grid-bay midpoint tests
+check both families, finite crossings, source gates, disabled nearest snaps and inclined planes;
+native acceptance verifies that preview and click resolve the same span midpoint.
+Query and switch tests assert
 unchanged revisions/tokens. All shapes and test geometry are contributor-original; no external
 product code, screenshots, catalogs or graphics were used.
 

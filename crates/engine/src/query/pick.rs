@@ -1705,6 +1705,27 @@ pub fn snap_with_context(
                     None,
                     [(ax + bx) * 0.5, (ay + by) * 0.5],
                 );
+                // A grid guide can cross many bays: each adjacent pair of finite crossings
+                // defines its own span midpoint, independently of the full guide midpoint.
+                let [dx, dy] = [bx - ax, by - ay];
+                let mut crossings = lines
+                    .iter()
+                    .filter(|other| other.family != line.family)
+                    .filter_map(|other| intersection(line, other))
+                    .collect::<Vec<_>>();
+                crossings.sort_by(|[x, y], [u, v]| {
+                    ((x - ax) * dx + (y - ay) * dy).total_cmp(&((u - ax) * dx + (v - ay) * dy))
+                });
+                crossings.dedup_by(|a, b| a == b);
+                for pair in crossings.windows(2) {
+                    if let [[x, y], [u, v]] = pair {
+                        let midpoint = [(x + u) * 0.5, (y + v) * 0.5];
+                        let full = [(ax + bx) * 0.5, (ay + by) * 0.5];
+                        if midpoint != full {
+                            push(SnapKind::Midpoint, line, None, midpoint);
+                        }
+                    }
+                }
             }
             if query.kinds.contains(&SnapKind::GridLine) {
                 push(SnapKind::GridLine, line, None, closest(line, p));

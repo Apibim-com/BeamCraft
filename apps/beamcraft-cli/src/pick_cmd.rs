@@ -72,6 +72,7 @@ pub fn handles(command: &OsString) -> bool {
     command == "pick"
         || command == "lookup-feature"
         || command == "list-feature"
+        || command == "element-edges"
         || command == "snap"
 }
 
@@ -130,6 +131,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         ],
         "lookup-feature" => &["--store", "--feature-id"],
         "list-feature" => &["--store", "--id"],
+        "element-edges" => &["--store", "--id"],
         "snap" => &[
             "--store",
             "--point",
@@ -185,6 +187,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         Pick(PickQuery),
         Lookup(String),
         List(beamcraft_model::id::ElementId),
+        Edges(beamcraft_model::id::ElementId),
         Snap(SnapQuery),
     }
     let request = match *command {
@@ -245,8 +248,8 @@ fn run(args: &[OsString]) -> Run<Json> {
                 .ok_or_else(|| invalid("--feature-id is required"))?
                 .to_owned(),
         ),
-        "list-feature" => Request::List(
-            beamcraft_model::id::ElementId::parse(
+        "list-feature" | "element-edges" => {
+            let id = beamcraft_model::id::ElementId::parse(
                 given("--id").ok_or_else(|| invalid("--id is required"))?,
             )
             .map_err(|_| Failure {
@@ -254,8 +257,13 @@ fn run(args: &[OsString]) -> Run<Json> {
                 code: ErrorCode::InvalidId,
                 reason: None,
                 message: "--id must be a full canonical UUIDv7",
-            })?,
-        ),
+            })?;
+            if *command == "element-edges" {
+                Request::Edges(id)
+            } else {
+                Request::List(id)
+            }
+        }
         _ => Request::Snap(SnapQuery {
             point_mm: point("--point")?,
             radius_mm: number("--radius", 0.0)?,
@@ -362,6 +370,27 @@ fn run(args: &[OsString]) -> Run<Json> {
                             ])
                         })
                         .collect(),
+                ),
+            ));
+            fields
+        }
+        Request::Edges(id) => {
+            let edges = beamcraft_engine::query::feature::element_edges(snapshot, &id)?;
+            let mut fields = header("element_edges");
+            fields.push(("element_id".into(), Json::text(id.to_string())));
+            fields.push((
+                "edges_world_mm".into(),
+                Json::Array(
+                    edges
+                        .into_iter()
+                        .map(|edge| {
+                            Ok(Json::Array(
+                                edge.into_iter()
+                                    .map(crate::plate_cmd::triple)
+                                    .collect::<Result<Vec<_>, _>>()?,
+                            ))
+                        })
+                        .collect::<Run<Vec<_>>>()?,
                 ),
             ));
             fields

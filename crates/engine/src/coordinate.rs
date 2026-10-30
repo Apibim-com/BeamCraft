@@ -205,7 +205,17 @@ pub fn contour_frame(
         .find(|b| a.iter().zip(b).any(|(a, b)| (a - b).abs() > 1e-9))
         .ok_or_else(invalid)?;
     for c in points {
-        if let Ok(frame) = WorkPlane::three_points(a, b, *c) {
+        if let Ok(mut frame) = WorkPlane::three_points(a, b, *c) {
+            // Inferred thickness direction must not flip when the designer walks the same
+            // spatial outline in the opposite direction. Explicit session frames keep their normal.
+            if frame
+                .normal()
+                .into_iter()
+                .max_by(|a, b| a.abs().total_cmp(&b.abs()))
+                .is_some_and(|n| n < 0.0)
+            {
+                frame = WorkPlane::new(frame.origin(), frame.x(), frame.y().map(|v| -v))?;
+            }
             return if in_plane(frame) {
                 Ok(frame)
             } else {
@@ -406,6 +416,28 @@ mod tests {
                 None
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn inferred_spatial_contour_normal_does_not_depend_on_traversal() {
+        let points = [
+            [0., 0., 0.],
+            [500., 0., 0.],
+            [500., 0., 300.],
+            [0., 0., 300.],
+        ];
+        let mut reversed = points;
+        reversed[1..].reverse();
+        let a = contour_frame(&points, None).unwrap();
+        let b = contour_frame(&reversed, None).unwrap();
+        assert_eq!(a.normal(), b.normal());
+        assert_eq!(a.normal(), [0., 1., 0.]);
+        let preferred =
+            crate::work_plane::WorkPlane::new([0.; 3], [1., 0., 0.], [0., 0., 1.]).unwrap();
+        assert_eq!(
+            contour_frame(&reversed, Some(preferred)).unwrap(),
+            preferred
         );
     }
 }
