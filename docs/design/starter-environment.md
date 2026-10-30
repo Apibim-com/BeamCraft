@@ -37,8 +37,8 @@ only a saved setting.
 its mass is a known `current` 0 kg, not `unknown` (an absent density stays `unknown`). A negative
 density is still refused (`INVALID_ARGUMENT`; `GEO_NOT_POSITIVE` in the kernel). A positive
 density whose product underflows to zero is still `GEO_NUMERIC_UNCERTAIN`: only an explicit zero
-gives a zero mass. This relaxes the F04 admission "density greater than zero" of the frozen
-0.1.0 contract by one value; the contract text has not been amended in this change.
+gives a zero mass. The F04 admission "density greater than zero" is amended to "at least zero" in
+[the density amendment](../contracts/f04-material-density-amendment-v0.1.md).
 
 ## Not done
 
