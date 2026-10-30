@@ -55,6 +55,9 @@ fn main() -> std::process::ExitCode {
         help::print();
         return std::process::ExitCode::SUCCESS;
     }
+    if args.first().is_some_and(|c| c == "commands") {
+        return list_commands(args.get(1..).unwrap_or_default());
+    }
     if args.first().is_some_and(|c| c == "export-view") {
         match view_export::execute(&args) {
             view_export::Output::Raw(bytes) => {
@@ -337,4 +340,26 @@ fn run(args: Vec<std::ffi::OsString>) -> Result<Json, (HostError, Json)> {
 }
 fn read_file(path: &str, cap: usize) -> Result<Vec<u8>, HostError> {
     beamcraft_cli::source_file::read_file(path, cap).map_err(HostError::logical)
+}
+/// `commands [--tier core|ui-assist]`: the registry, with no store involved.
+fn list_commands(tail: &[std::ffi::OsString]) -> std::process::ExitCode {
+    let tier = match tail {
+        [] => Some(None),
+        [flag, value] if flag == "--tier" => value.to_str().map(Some),
+        _ => None,
+    };
+    match tier.and_then(|t| beamcraft_cli::registry::listing(t)) {
+        Some(json) => print_json(&json, 0),
+        None => {
+            let error = invalid();
+            let json = Json::object([
+                ("outcome", Json::text("rejected")),
+                ("code", Json::text(error.code.as_str())),
+                ("message", Json::text(error.message())),
+                ("observed_context", Json::Null),
+                ("diagnostics", Json::Array(vec![])),
+            ]);
+            print_json(&json, error.exit_code())
+        }
+    }
 }

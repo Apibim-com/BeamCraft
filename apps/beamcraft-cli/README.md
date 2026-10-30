@@ -13,11 +13,15 @@ Build offline with `cargo build --offline -p beamcraft-cli --bins`.
 `beamcraft --help` describes the bounded arguments. Results are one JSON object on standard
 output, with strings for generations and other lossless integers.
 
-CLI help is owned by command family under `src/help/` (for example `member.rs`, `drawing.rs`
-and `workspace.rs`). Edit that family's text and command inventory there. `src/help/mod.rs`
-only composes the inventory and sections in their established order; register a new family
-there without adding help text to `main.rs`. Parsing and execution stay in the existing
-command adapters. No arguments, `--help` and `-h` print the same help.
+CLI help text is owned by command family under `src/help/` (for example `member.rs`, `drawing.rs`
+and `workspace.rs`); edit that family's text there. The command inventory is one table,
+`src/registry.rs`: add a new command there (name, family, tier) when it is added to its adapter.
+`src/help/mod.rs` renders the inventory from it and composes the sections in their established
+order; register a new family there without adding help text to `main.rs`. `beamcraft commands
+[--tier core|ui-assist]` prints the same registry as JSON; `ui-assist` marks commands that
+mirror interactive-UI affordances (`snap`, `pick`, start-screen and appearance settings).
+Parsing and execution stay in the existing command adapters. No arguments, `--help` and `-h`
+print the same help.
 
 Application appearance is also headless: `beamcraft show-settings [--config-dir DIR]` reports
 `settings.theme`; `beamcraft set-settings --theme system|light|dark [--config-dir DIR]` saves it

@@ -3,17 +3,6 @@
 
 //! Help owned by the start command family.
 
-pub(super) const COMMANDS: &[&str] = &[
-    "show-settings",
-    "set-settings",
-    "list-environment",
-    "create-project",
-    "suggest-project-name",
-    "list-project",
-    "list-recent",
-    "add-recent",
-];
-
 pub(super) const HELP: &str = concat!(
     "Start (settings of this user, environments and projects; --config-dir DIR replaces the ",
     "user configuration directory, BEAMCRAFT_CONFIG_DIR or the platform default): ",
