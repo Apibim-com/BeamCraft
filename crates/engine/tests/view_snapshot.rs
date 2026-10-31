@@ -7,14 +7,14 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use beamcraft_engine::steel::synthetic::{SyntheticEdit, apply_edit, plate_scene};
+use beamcraft_engine::synthetic::{SyntheticEdit, apply_edit, plate_scene};
 use beamcraft_engine::{
     ChangeKind, ElementId, ElementKind, KindFilter, Limits, Representation, SceneElement,
     Selection, SnapshotHistory, SnapshotToken, ViewCode, ViewError, ViewPin, ViewSettings,
     ViewSnapshot,
 };
 use beamcraft_geom::Translation3;
-use beamcraft_kernel::{steel::RectangularPlate, steel::rectangular_plate};
+use beamcraft_kernel::{RectangularPlate, rectangular_plate};
 use beamcraft_model::digest::Sha256;
 
 fn pin(generation: u64) -> ViewPin {
@@ -25,7 +25,7 @@ fn id(n: u64) -> ElementId {
     ElementId::parse(&format!("01990000-0000-7000-8000-{n:012x}")).unwrap()
 }
 
-fn plate(w: f64, l: f64, t: f64) -> beamcraft_kernel::steel::PlateResult {
+fn plate(w: f64, l: f64, t: f64) -> beamcraft_kernel::PlateResult {
     rectangular_plate(RectangularPlate {
         width_mm: w,
         length_mm: l,

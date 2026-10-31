@@ -22,7 +22,6 @@ use crate::plate::{check_footprint, number, prior_op_with, property, replay_summ
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::level::{HolderKind, LevelRecord, Levels};
-use beamcraft_engine::steel::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
     Author, Change, EditTargets, Element, Placement as LayerPlacement, Prepare, Shape,
@@ -38,6 +37,7 @@ use session::pipeline::{
     integrity, load_base, open_base, summarize,
 };
 use std::collections::BTreeMap;
+use steel::engine::transaction::PriorOp;
 
 /// Identities of one D2 call beyond the command itself.
 #[derive(Debug, Clone)]

@@ -8,7 +8,6 @@ use crate::attribute::attr_model;
 use crate::plate::{check_footprint, inspect, prior_op_with, replay_summary};
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::steel::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore};
 use beamcraft_layer_engine::authored::{
     Author, Change, EditTargets, Element, Prepare, Shape, annotation as storage, schema_identity,
@@ -26,6 +25,7 @@ use session::pipeline::{
     open_base, summarize,
 };
 use std::collections::BTreeSet;
+use steel::engine::transaction::PriorOp;
 
 /// Trusted context for an annotation creation, using the same identities as level creation.
 pub type AnnotationContext = crate::level::LevelContext;

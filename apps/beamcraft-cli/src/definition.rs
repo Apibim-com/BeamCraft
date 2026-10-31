@@ -28,8 +28,6 @@ use crate::plate::{decode, number, text};
 use crate::plate::{decode_polygon, decode_polygons};
 use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
-use beamcraft_engine::steel::command::MaterialInfo;
-use beamcraft_engine::steel::member::{ProfileInfo, declared_section_area_warning};
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
     Author, Definition, EditTargets, Prepare, Resource, schema_identity,
@@ -40,20 +38,20 @@ use beamcraft_model::definition::MaterialSpec;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
-use beamcraft_model::steel::definition::{
-    DeclaredAreaWarning, RectangleProfileSpec, SectionProfileSpec, SectionProperties,
-};
-use beamcraft_model::steel::fastener::{
-    FastenerKind, FastenerSpec, HeadKind, HoleMode, WasherSpec,
-};
-use beamcraft_model::steel::section::{
-    CustomSection, MAX_CUSTOM_CAVITIES, ParametricSection, SectionFamily, SectionShape,
-};
 use session::Refusal;
 use session::pipeline::{
     Base, RevisionSummary, base_of, control, host_uuid, integrity, load_base, open_base, summarize,
 };
 use std::collections::{BTreeMap, BTreeSet};
+use steel::engine::command::MaterialInfo;
+use steel::engine::member::{ProfileInfo, declared_section_area_warning};
+use steel::model::definition::{
+    DeclaredAreaWarning, RectangleProfileSpec, SectionProfileSpec, SectionProperties,
+};
+use steel::model::fastener::{FastenerKind, FastenerSpec, HeadKind, HoleMode, WasherSpec};
+use steel::model::section::{
+    CustomSection, MAX_CUSTOM_CAVITIES, ParametricSection, SectionFamily, SectionShape,
+};
 
 /// Path prefix used by the synthetic profile fixtures.
 #[cfg(test)]

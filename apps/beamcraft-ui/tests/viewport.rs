@@ -14,7 +14,7 @@
     clippy::panic
 )]
 
-use beamcraft_engine::steel::synthetic::plate_scene;
+use beamcraft_engine::synthetic::plate_scene;
 use beamcraft_engine::view_clipping::{ClipPlane, Clipping, WorkArea};
 use beamcraft_engine::{Limits, RenderMode, Representation, ViewPin, ViewSnapshot};
 use beamcraft_model::digest::Sha256;
