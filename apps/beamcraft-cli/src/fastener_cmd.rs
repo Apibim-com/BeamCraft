@@ -9,7 +9,7 @@
 use crate::report::report;
 use beamcraft_cli::definition::DefinitionRecord;
 use beamcraft_cli::library::{Lookup, Source, load_fastener};
-use beamcraft_engine::fastener::{
+use beamcraft_engine::steel::fastener::{
     ComponentQuantity, FastenerBuild, FastenerSolid, MassSource, prototype, quantities,
 };
 use beamcraft_json::Json;

@@ -27,7 +27,7 @@ use beamcraft_engine::query::pick::{
 };
 use beamcraft_engine::scene::SceneMesh;
 use beamcraft_engine::solid::SolidMesh;
-use beamcraft_engine::synthetic::plate_scene;
+use beamcraft_engine::steel::synthetic::plate_scene;
 use beamcraft_engine::{ElementId, ElementKind, Limits, SceneElement, ViewPin, ViewSnapshot};
 use beamcraft_geom::Translation3;
 use beamcraft_kernel::ops::{Body, HoleCutter, through_hole};

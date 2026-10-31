@@ -20,7 +20,7 @@
 //! (see `beamcraft_ui::perf`), prints its report as one JSON object and closes; the exit status
 //! is 1 when a phase failed.
 
-use beamcraft_engine::synthetic::plate_scene;
+use beamcraft_engine::steel::synthetic::plate_scene;
 use beamcraft_engine::{Limits, Representation, ViewPin, ViewSnapshot};
 use beamcraft_model::digest::Sha256;
 use beamcraft_ui::app::{App, Source, load_icon};

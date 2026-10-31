@@ -8,7 +8,7 @@
 //! The engine never touches USD. The commands check the record admission the command layer owes
 //! (target lifecycle, record identity across the project, ordinal capacity), mutate the
 //! authored state and declare the footprint; the adapter re-evaluates the body through the
-//! ordinary [`crate::member::evaluate_member`] replay and commits the result as one
+//! ordinary [`crate::steel::member::evaluate_member`] replay and commits the result as one
 //! transaction. A rejection changes nothing.
 //!
 //! Replay cuts each record with the kernel's certified through-hole operation. The cutter is
@@ -23,8 +23,8 @@
 //! order, so the member keeps its last valid state as F04 section 4 says.
 
 use crate::footprint::Footprint;
-use crate::member::AuthoredMember;
 use crate::solid::SolidMesh;
+use crate::steel::member::AuthoredMember;
 use beamcraft_geom::Frame3;
 use beamcraft_kernel::ops::{Body, HoleCutter, OpCode, OpFailure, through_hole};
 use beamcraft_kernel::profile::{Cavity, Point2};
@@ -515,7 +515,7 @@ pub(crate) fn replay_member_holes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::member::{MemberBody, ProfileInfo, evaluate_member};
+    use crate::steel::member::{MemberBody, ProfileInfo, evaluate_member};
     use beamcraft_model::command::Placement;
     use beamcraft_model::digest::ContentDigest;
     use beamcraft_model::id::{ElementId, OpId};

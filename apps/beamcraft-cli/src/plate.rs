@@ -36,11 +36,8 @@ use crate::definition::{
 };
 use crate::level::levels_of;
 use crate::publication::{PublishRequest, publish_revision};
-use beamcraft_engine::command::AuthoredPlate;
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
 use beamcraft_engine::level::Levels;
-use beamcraft_engine::member::AuthoredMember;
-use beamcraft_engine::plate_draft::{UnsupportedPlate, evaluate_committed_drafts_cached};
 use beamcraft_engine::quantity::{
     Assessment, Freshness, QuantityRecord, StoredRecord, assess, is_superseded_algorithm,
 };
@@ -49,6 +46,9 @@ use beamcraft_engine::query::committed::{
     scene_elements_with_members,
 };
 use beamcraft_engine::solid::SolidMesh;
+use beamcraft_engine::steel::command::AuthoredPlate;
+use beamcraft_engine::steel::member::AuthoredMember;
+use beamcraft_engine::steel::plate_draft::{UnsupportedPlate, evaluate_committed_drafts_cached};
 use beamcraft_engine::transaction::{Admission, PriorOp, admit_create_plate};
 use beamcraft_engine::{Limits, ViewPin, ViewSnapshot};
 use beamcraft_host::ledger::Outcome;
@@ -248,7 +248,7 @@ pub(crate) struct Decoded {
     /// Committed lofted plates (A11), decoded but not re-evaluated by the plate verifier:
     /// their quantities were checked at creation and are read from the derived layer.
     pub(crate) lofted: Vec<(
-        beamcraft_engine::loft_plate::AuthoredLoftedPlate,
+        beamcraft_engine::steel::loft_plate::AuthoredLoftedPlate,
         Option<DerivedMesh>,
     )>,
     other_elements: usize,
@@ -625,7 +625,7 @@ fn decode_plate(prim: &Prim, id: ElementId) -> Result<AuthoredPlate, Refusal> {
 fn decode_lofted(
     prim: &Prim,
     id: ElementId,
-) -> Result<beamcraft_engine::loft_plate::AuthoredLoftedPlate, Refusal> {
+) -> Result<beamcraft_engine::steel::loft_plate::AuthoredLoftedPlate, Refusal> {
     let bad = || integrity("committed lofted plate lacks a required authored input");
     let contour = |name: &str| -> Result<Vec<[f64; 3]>, Refusal> {
         let Some(Value::Array(points)) = property(prim, name) else {
@@ -645,7 +645,7 @@ fn decode_lofted(
     let [w, x, y, z] = property(prim, "xformOp:orient")
         .and_then(numbers::<4>)
         .ok_or_else(bad)?;
-    Ok(beamcraft_engine::loft_plate::AuthoredLoftedPlate {
+    Ok(beamcraft_engine::steel::loft_plate::AuthoredLoftedPlate {
         id,
         name: property(prim, "bim:name")
             .and_then(text)
@@ -1525,7 +1525,7 @@ fn evaluate_with(
 /// The committed plates the kernel cannot evaluate, listed as authored-only records, over this
 /// thread's [`BODIES`] cache: the second pass of an inspection reuses the bodies the first pass
 /// evaluated instead of paying for them twice. The refusals are those of
-/// `beamcraft_engine::plate_draft::evaluate_committed_drafts`.
+/// `beamcraft_engine::steel::plate_draft::evaluate_committed_drafts`.
 pub(crate) fn evaluate_committed_drafts_with_cache(
     decoded: &Decoded,
 ) -> Result<Vec<UnsupportedPlate>, Refusal> {
@@ -2268,8 +2268,8 @@ pub(crate) fn inspect_manifest_assets(
     let pin = ViewPin::new(digest, content.workspace_generation());
     let mut scene = scene_elements_with_members(&plates, &members)?;
     for (authored, _) in &decoded.lofted {
-        let body = beamcraft_engine::loft_plate::evaluate_lofted_plate(authored)?;
-        scene.push(beamcraft_engine::loft_plate::scene_element(
+        let body = beamcraft_engine::steel::loft_plate::evaluate_lofted_plate(authored)?;
+        scene.push(beamcraft_engine::steel::loft_plate::scene_element(
             authored, &body,
         )?);
     }

@@ -13,11 +13,11 @@
 //! refused by the G09 seal inside the loft. A contour the admission accepts only as
 //! near-planar is refused rather than repaired into an exact body, as for framed plates.
 
-use crate::command::{MaterialInfo, MaterialLookup};
 use crate::element::ElementKind;
 use crate::footprint::Footprint;
 use crate::scene::SceneElement;
 use crate::solid::SolidMesh;
+use crate::steel::command::{MaterialInfo, MaterialLookup};
 use beamcraft_geom::Translation3;
 use beamcraft_kernel::profile::Point2;
 use beamcraft_kernel::steel::plate_contour;
@@ -93,9 +93,9 @@ pub struct LoftedPlateBody {
 
 impl LoftedPlateBody {
     /// The quantity records of this body with no material: volume only, mass `unknown`.
-    pub fn quantities(&self) -> crate::command::Quantities {
-        crate::command::quantities_without_material(
-            crate::command::Volumes::unchanged(self.volume_mm3),
+    pub fn quantities(&self) -> crate::steel::command::Quantities {
+        crate::steel::command::quantities_without_material(
+            crate::steel::command::Volumes::unchanged(self.volume_mm3),
             LOFT_VOLUME_ALGORITHM,
         )
     }
@@ -105,9 +105,9 @@ impl LoftedPlateBody {
     pub fn quantities_for(
         &self,
         material: Option<MaterialInfo>,
-    ) -> Result<crate::command::Quantities, CommandError> {
-        crate::command::quantities_with_material(
-            crate::command::Volumes::unchanged(self.volume_mm3),
+    ) -> Result<crate::steel::command::Quantities, CommandError> {
+        crate::steel::command::quantities_with_material(
+            crate::steel::command::Volumes::unchanged(self.volume_mm3),
             LOFT_VOLUME_ALGORITHM,
             material,
         )
@@ -122,7 +122,7 @@ pub struct CreateLoftedPlateOutcome {
     /// The evaluated body for the derived layer.
     pub body: LoftedPlateBody,
     /// Quantity records.
-    pub quantities: crate::command::Quantities,
+    pub quantities: crate::steel::command::Quantities,
     /// Digest of the unmodified typed command arguments.
     pub fingerprint: ContentDigest,
     /// Declared write set of the creation.
@@ -130,7 +130,7 @@ pub struct CreateLoftedPlateOutcome {
 }
 
 /// Applies `CreateLoftedPlate` to an isolated draft in memory, in the order of
-/// [`crate::command::create_plate`]: argument admission, an unused id, the material, then the
+/// [`crate::steel::command::create_plate`]: argument admission, an unused id, the material, then the
 /// kernel evaluation. Nothing is published.
 pub fn create_lofted_plate(
     command: &CreateLoftedPlate,
@@ -282,7 +282,7 @@ fn uncertain(field: &'static str) -> CommandError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::command::no_materials;
+    use crate::steel::command::no_materials;
     use beamcraft_model::command::Placement;
 
     fn authored(start: Vec<[f64; 3]>, end: Vec<[f64; 3]>) -> AuthoredLoftedPlate {

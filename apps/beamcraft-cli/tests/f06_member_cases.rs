@@ -10,8 +10,8 @@
     clippy::panic
 )]
 
-use beamcraft_engine::command::{MaterialInfo, create_plate, no_materials};
-use beamcraft_engine::member::{CreateMemberOutcome, ProfileInfo, create_straight_member};
+use beamcraft_engine::steel::command::{MaterialInfo, create_plate, no_materials};
+use beamcraft_engine::steel::member::{CreateMemberOutcome, ProfileInfo, create_straight_member};
 use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::Placement;
 use beamcraft_model::digest::Sha256;

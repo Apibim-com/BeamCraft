@@ -698,7 +698,7 @@ mod tests {
     use super::*;
     use crate::limits::Limits;
     use crate::query::snapshot::ViewPin;
-    use crate::synthetic::plate_scene;
+    use crate::steel::synthetic::plate_scene;
     use beamcraft_model::digest::Sha256;
 
     fn snapshot() -> ViewSnapshot {

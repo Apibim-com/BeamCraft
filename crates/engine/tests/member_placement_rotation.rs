@@ -7,8 +7,8 @@
 
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 
-use beamcraft_engine::command::{create_plate, no_materials, origin_rectangle_contour};
-use beamcraft_engine::member::{ProfileInfo, create_straight_member, no_profiles};
+use beamcraft_engine::steel::command::{create_plate, no_materials, origin_rectangle_contour};
+use beamcraft_engine::steel::member::{ProfileInfo, create_straight_member, no_profiles};
 use beamcraft_model::command::{CommandError, Placement};
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;

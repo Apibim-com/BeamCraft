@@ -142,7 +142,7 @@ impl ModelPreview {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
-    use beamcraft_engine::{Limits, ViewPin, synthetic::plate_scene};
+    use beamcraft_engine::{Limits, ViewPin, steel::synthetic::plate_scene};
     use beamcraft_model::digest::Sha256;
 
     #[test]

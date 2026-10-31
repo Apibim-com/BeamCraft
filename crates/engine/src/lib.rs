@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! The BeamCraft engine API. V02 adds the renderer-agnostic view snapshot and query contract;
-//! P01 adds `CreatePlate` application ([`command`], [`footprint`], [`transaction`]) and the read
+//! P01 adds `CreatePlate` application ([`steel::command`], [`footprint`], [`transaction`]) and the read
 //! side over committed plates ([`query::committed`]).
 //!
 //! The crate holds pure, bounded, deterministic data and no UI, wgpu, egui, I/O or clock. A
@@ -13,22 +13,14 @@
 pub mod annotation;
 pub mod assembly;
 pub mod attribute;
-pub mod bend;
-pub mod bolt;
 pub mod bom;
 pub mod class_palette;
-pub mod command;
 pub mod construction;
-pub mod contour_edit;
 pub mod coordinate;
 pub mod copy;
-pub mod corners;
-pub mod cut;
 pub mod drawing;
 pub mod element;
 pub mod error;
-pub mod fabricate;
-pub mod fastener;
 pub mod filter;
 pub mod footprint;
 pub mod grid;
@@ -39,13 +31,9 @@ pub mod grid_update;
 pub mod instance;
 pub mod level;
 pub mod limits;
-pub mod loft_plate;
 pub mod measure;
-pub mod member;
-pub mod member_hole;
 pub mod numbering;
 pub mod numbering_approval;
-pub mod plate_draft;
 pub mod presentation;
 pub mod quantity;
 pub mod query;
@@ -53,13 +41,12 @@ pub mod rebase;
 pub mod reference;
 pub mod scene;
 pub mod solid;
-pub mod synthetic;
+pub mod steel;
 pub mod transaction;
 pub mod transform;
 pub mod update;
 pub mod view_clipping;
 pub mod views;
-pub mod weld;
 pub mod work_plane;
 
 pub use beamcraft_kernel::steel::PlateResult;

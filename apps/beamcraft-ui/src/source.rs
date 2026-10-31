@@ -514,7 +514,7 @@ mod tests {
     #[test]
     fn a_refresh_builds_nothing_for_the_snapshot_on_screen_and_reuses_resident_meshes() {
         use beamcraft_engine::ViewPin;
-        use beamcraft_engine::synthetic::plate_scene;
+        use beamcraft_engine::steel::synthetic::plate_scene;
         use beamcraft_model::digest::Sha256;
         let pin = ViewPin::new(Sha256::digest(b"revision").unwrap(), 1);
         let snapshot =
