@@ -10,7 +10,7 @@ use super::{
 };
 use crate::{
     command_evidence as evidence,
-    plate::{self, RevisionSummary, integrity, summarize},
+    plate::{self},
 };
 use beamcraft_engine::rebase::{Conflict, Decision, plan};
 use beamcraft_host::{
@@ -30,6 +30,7 @@ use beamcraft_model::{
     id::OpId,
 };
 use session::Refusal;
+use session::pipeline::{RevisionSummary, integrity, summarize};
 use std::path::Path;
 
 /// Immutable caller inputs. The CLI actor is trusted local context; a coordinator must derive it
@@ -101,7 +102,7 @@ fn replay(
     state: &WorkspaceState,
     request: &RebaseRequest,
 ) -> Result<Option<Rebased>, Refusal> {
-    let op = plate::host_uuid(&request.op_id.to_string())?;
+    let op = session::pipeline::host_uuid(&request.op_id.to_string())?;
     let sequence = match store.query_outcome(&op)? {
         Outcome::Committed { sequence, .. } => Some(sequence),
         Outcome::Unknown => Some(store.sequence_of(&op)?.ok_or_else(|| {
@@ -161,7 +162,7 @@ fn replay(
 }
 
 fn opened(revision: &Revision) -> Result<beamcraft_layer_engine::OpenRequest, Refusal> {
-    plate::open_base(&plate::base_of(revision)?)
+    session::pipeline::open_base(&session::pipeline::base_of(revision)?)
 }
 
 /// Rebase a personal draft onto an exact accepted head, retaining every independent unsent edit.
@@ -206,7 +207,7 @@ pub fn rebase_workspace(
         RevisionPin::from_info(accepted.info()),
     );
     let content = draft.manifest().content();
-    let op = plate::host_uuid(&request.op_id.to_string())?;
+    let op = session::pipeline::host_uuid(&request.op_id.to_string())?;
     workspace.claim_changeset(
         &op,
         &fingerprint(request, &meta, content.project(), content.schema())?,
@@ -285,13 +286,13 @@ pub fn rebase_workspace(
             &opened(&accepted)?,
             &evidence::dependencies(&footprint),
             &EditTargets {
-                authored: plate::AUTHORED_LAYER.into(),
-                derived: plate::DERIVED_LAYER.into(),
+                authored: session::pipeline::AUTHORED_LAYER.into(),
+                derived: session::pipeline::DERIVED_LAYER.into(),
             },
-            &plate::control(),
+            &session::pipeline::control(),
         )?;
         let mut reader = Reader::default();
-        let control = plate::control();
+        let control = session::pipeline::control();
         let (view, _) = reader.open_validated(candidate.clone(), schema_identity()?, &control)?;
         let decoded = plate::decode(&reader, &view, &control)?;
         let (plates, members) = plate::evaluate_decoded(&decoded)?;

@@ -8,13 +8,11 @@
 //! composed: a layer that needs sublayers or references is refused.
 
 use crate::Refusal;
-use beamcraft_layer_engine::{
-    Asset, BACKEND, Budgets, Cancellation, Control, Identity, OpenRequest, Opened, Profile, Reader,
-};
-use beamcraft_model::digest::{ContentDigest, Sha256};
+use crate::pipeline::{control, digest_of, open_request};
+use beamcraft_layer_engine::{Asset, Budgets, Control, Opened, Reader};
+use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use std::collections::BTreeSet;
-use std::time::{Duration, Instant};
 
 /// Largest library or environment layer, in bytes.
 pub const MAX_LAYER_BYTES: usize = 8 * 1024 * 1024;
@@ -57,43 +55,6 @@ pub struct ForeignLayer {
     pub bytes: u64,
 }
 
-fn digest_of(bytes: &[u8]) -> Result<ContentDigest, Refusal> {
-    Sha256::digest(bytes).map_err(|_| Refusal::new(ErrorCode::LimitExceeded, "layer too large"))
-}
-
-fn control() -> Control {
-    Control {
-        cancellation: Cancellation::default(),
-        deadline: Instant::now() + Duration::from_secs(60),
-    }
-}
-
-fn request(name: &str, digest: ContentDigest, bytes: Vec<u8>) -> Result<OpenRequest, Refusal> {
-    let asset = Asset {
-        name: name.into(),
-        digest,
-        bytes,
-    };
-    // Foreign and read-only: the host owns nothing here, so no layer is owned.
-    let mut request = OpenRequest {
-        identity: Identity {
-            project: READ_PROJECT.into(),
-            workspace: READ_WORKSPACE.into(),
-            revision: digest,
-            generation: 0,
-        },
-        root: name.into(),
-        assets: vec![asset],
-        owned_layers: BTreeSet::new(),
-        manifest: digest_of(b"placeholder")?,
-        backend: BACKEND,
-        profile: Profile::StaticLocal,
-        budgets: BUDGETS,
-    };
-    request.manifest = request.manifest_digest()?;
-    Ok(request)
-}
-
 /// Opens the bytes of a library or environment as one foreign, read-only, self-contained layer in
 /// millimetres and Z up. `not_self_contained` is the `INVALID_ARGUMENT` text for a layer that the
 /// engine cannot open on its own (sublayers, references, other units).
@@ -108,7 +69,23 @@ pub fn open(bytes: Vec<u8>, not_self_contained: &'static str) -> Result<ForeignL
         LAYER
     };
     let size = bytes.len() as u64;
-    let request = request(name, digest, bytes)?;
+    let asset = Asset {
+        name: name.into(),
+        digest,
+        bytes,
+    };
+    // Foreign and read-only: the host owns nothing here, so no layer is owned.
+    let mut request = open_request(
+        name,
+        READ_PROJECT,
+        READ_WORKSPACE,
+        digest,
+        0,
+        vec![asset],
+        &BTreeSet::from([name.to_owned()]),
+    )?;
+    request.budgets = BUDGETS;
+    request.manifest = request.manifest_digest()?;
     let control = control();
     let mut reader = Reader::default();
     let opened = reader.open(request, &control).map_err(|diagnostic| {

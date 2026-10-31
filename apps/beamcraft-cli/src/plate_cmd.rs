@@ -26,8 +26,7 @@ use beamcraft_cli::member::{
     create_member, create_polybeam,
 };
 use beamcraft_cli::plate::{
-    AcceptedBinding, CreateRequest, Created, Inspection, ProjectClaim, QuantityReport,
-    RevisionSummary, accepted_binding, claim_project, ensure_project, inspect,
+    AcceptedBinding, CreateRequest, Created, Inspection, QuantityReport, accepted_binding, inspect,
 };
 use beamcraft_cli::plate_draft::{CreatedDraft, create_plate_draft};
 use beamcraft_cli::project::project_environment_file;
@@ -62,6 +61,7 @@ use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use beamcraft_model::limits::MAX_MEMBER_PATH_POINTS;
 use beamcraft_model::section::{CustomSection, ParametricSection, SectionFamily, SectionShape};
 use session::Refusal;
+use session::pipeline::{ProjectClaim, RevisionSummary, claim_project, ensure_project};
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 

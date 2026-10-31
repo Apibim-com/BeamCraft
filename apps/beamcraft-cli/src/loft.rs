@@ -6,9 +6,7 @@
 
 use crate::definition::material_lookup;
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, DerivedMesh, check_footprint, control, decode, digest_of,
-    host_uuid, integrity, load_base, mesh_change, open_base, prior_op_with, replay_summary,
-    summarize,
+    DerivedMesh, check_footprint, decode, mesh_change, prior_op_with, replay_summary,
 };
 use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::footprint::Footprint;
@@ -27,6 +25,10 @@ use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use session::Refusal;
+use session::pipeline::{
+    AUTHORED_LAYER, Base, DERIVED_LAYER, control, digest_of, host_uuid, integrity, load_base,
+    open_base, summarize,
+};
 
 /// Inputs of one `create-lofted-plate` call beyond the command itself.
 #[derive(Debug, Clone)]
@@ -61,7 +63,7 @@ pub struct CreatedLoft {
     /// Triangles of the certified mesh.
     pub triangles: usize,
     /// The revision that holds it.
-    pub revision: crate::plate::RevisionSummary,
+    pub revision: session::pipeline::RevisionSummary,
     /// The footprint the engine declared; `None` for a replay, which applies nothing.
     pub footprint: Option<Footprint>,
 }

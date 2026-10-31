@@ -20,9 +20,7 @@
 
 use crate::definition::material_lookup;
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, decode, digest_of,
-    evaluate_decoded, host_uuid, load_base, mesh_change, open_base, plate_record, prior_op_with,
-    replay_summary, summarize,
+    decode, evaluate_decoded, mesh_change, plate_record, prior_op_with, replay_summary,
 };
 use crate::publication::{PublicationTail, prepare_and_publish};
 use beamcraft_engine::footprint::Footprint;
@@ -35,6 +33,10 @@ use beamcraft_model::command::{CommandError, DeleteElement};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
 use session::Refusal;
+use session::pipeline::{
+    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, digest_of, host_uuid, load_base,
+    open_base, summarize,
+};
 
 /// Inputs of one `delete_element` call beyond the command itself.
 #[derive(Debug, Clone)]

@@ -32,7 +32,7 @@
 //! in this process (no LEW-03 containment), as for every other command.
 
 use crate::definition::{DefinitionRecord, field};
-use crate::plate::{decode_polygon, decode_polygons, digest_of, number, text};
+use crate::plate::{decode_polygon, decode_polygons, number, text};
 use crate::source_file::read_file;
 use beamcraft_layer_engine::{Prim, Reader, Value};
 use beamcraft_model::command::{CommandError, label_is_valid};
@@ -47,6 +47,7 @@ use beamcraft_model::section::{
 use session::Refusal;
 use session::environment::{EnvironmentInfo, MAX_ENVIRONMENT_BYTES, parse_environment};
 use session::foreign;
+use session::pipeline::digest_of;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Largest library file, in bytes.

@@ -21,11 +21,7 @@
 //! is not implemented. Deleting an assembly that still has parts is `DEPENDENCY_CONFLICT`; there
 //! is no cascade. An assembly cannot be renamed or moved yet.
 
-use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, base_of, check_footprint, control,
-    host_uuid, integrity, load_base, open_base, prior_op_with, property, replay_summary, summarize,
-    text,
-};
+use crate::plate::{check_footprint, prior_op_with, property, replay_summary, text};
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::assembly::{Membership, PartKind};
 use beamcraft_engine::footprint::Footprint;
@@ -44,6 +40,10 @@ use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use session::Refusal;
+use session::pipeline::{
+    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, base_of, control, host_uuid, integrity,
+    load_base, open_base, summarize,
+};
 use std::collections::BTreeMap;
 
 /// Identities of one A01 call beyond the command itself.

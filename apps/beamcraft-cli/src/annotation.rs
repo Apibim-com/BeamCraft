@@ -5,10 +5,7 @@
 //! revision pipeline as the construction object commands.
 use crate::assembly::read_prims;
 use crate::attribute::attr_model;
-use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, check_footprint, control, host_uuid,
-    inspect, integrity, load_base, open_base, prior_op_with, replay_summary, summarize,
-};
+use crate::plate::{check_footprint, inspect, prior_op_with, replay_summary};
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::transaction::PriorOp;
@@ -24,6 +21,10 @@ use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
 use session::Refusal;
+use session::pipeline::{
+    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, host_uuid, integrity, load_base,
+    open_base, summarize,
+};
 use std::collections::BTreeSet;
 
 /// Trusted context for an annotation creation, using the same identities as level creation.
@@ -59,7 +60,7 @@ pub fn annotations(store: &RevisionStore) -> Result<Vec<Annotation>, Refusal> {
         Err(e) => return Err(e.into()),
     };
     Ok(storage::read_annotations(&snapshot(
-        open_base(&crate::plate::base_of(&revision)?)?,
+        open_base(&session::pipeline::base_of(&revision)?)?,
         &control(),
     )?)?)
 }

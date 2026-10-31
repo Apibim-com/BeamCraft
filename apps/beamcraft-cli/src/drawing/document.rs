@@ -7,12 +7,12 @@
 //! with the authored intent, derived projection, and exact source archive in one revision.
 
 use crate::drawing::derived::{self, ROOT_LAYER};
-use crate::plate::integrity;
 use beamcraft_layer_engine::Asset;
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ActorId, DocumentVersionId, OpId};
 use session::Refusal;
+use session::pipeline::integrity;
 
 pub mod store;
 pub use store::{DocumentRevision, DocumentStore, DocumentWrite};

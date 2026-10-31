@@ -18,9 +18,8 @@
 
 use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, check_footprint, control, decode,
-    evaluate_decoded, host_uuid, integrity, load_base, member_record, mesh_change, open_base,
-    plate_record, prior_op_with, replay_summary, summarize,
+    check_footprint, decode, evaluate_decoded, member_record, mesh_change, plate_record,
+    prior_op_with, replay_summary,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
@@ -34,6 +33,10 @@ use beamcraft_model::command::{AddHole, CommandError};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
 use session::Refusal;
+use session::pipeline::{
+    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, host_uuid, integrity, load_base,
+    open_base, summarize,
+};
 use std::collections::BTreeMap;
 
 /// Inputs of one `add_hole` call beyond the command itself. The `op_id` is the record's

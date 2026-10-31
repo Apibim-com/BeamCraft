@@ -7,12 +7,12 @@ use super::{
     WorkspaceMeta, WorkspaceState,
     rebase_receipt::{RebaseReceipt, RevisionPin},
 };
-use crate::plate::{RevisionSummary, integrity, summarize};
 use beamcraft_host::revision::{EvidencePin, MAX_OPERATION_EVIDENCE_BYTES, RevisionStore};
 use beamcraft_host::storage::BlobStore;
 use beamcraft_model::digest::Sha256;
 use beamcraft_model::error::ErrorCode;
 use session::Refusal;
+use session::pipeline::{RevisionSummary, integrity, summarize};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
