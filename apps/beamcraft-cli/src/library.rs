@@ -39,9 +39,11 @@ use beamcraft_model::command::{CommandError, label_is_valid};
 use beamcraft_model::definition::SectionProperties;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
-use beamcraft_model::fastener::{FastenerKind, FastenerSpec, HeadKind, HoleMode, WasherSpec};
 use beamcraft_model::reference::check_source_path;
-use beamcraft_model::section::{
+use beamcraft_model::steel::fastener::{
+    FastenerKind, FastenerSpec, HeadKind, HoleMode, WasherSpec,
+};
+use beamcraft_model::steel::section::{
     CustomSection, MAX_CUSTOM_CAVITIES, ParametricSection, SectionFamily, SectionShape,
 };
 use session::Refusal;

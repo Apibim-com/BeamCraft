@@ -9,12 +9,11 @@
 
 use beamcraft_engine::command::{create_plate, no_materials, origin_rectangle_contour};
 use beamcraft_engine::member::{ProfileInfo, create_straight_member, no_profiles};
-use beamcraft_model::command::{
-    CommandError, CreatePlate, CreateStraightMember, MemberKind, Placement,
-};
+use beamcraft_model::command::{CommandError, Placement};
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
+use beamcraft_model::steel::command::{CreatePlate, CreateStraightMember, MemberKind};
 
 const MEMBER_ID: &str = "019a7bf0-0000-7000-8000-000000000007";
 const PLATE_ID: &str = "019a7bf0-0000-7000-8000-000000000005";

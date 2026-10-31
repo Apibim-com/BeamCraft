@@ -345,8 +345,8 @@ fn bodies(inspection: &Inspection) -> BTreeMap<ElementId, Body<'_>> {
             r.authored.id,
             Body {
                 entity: match r.authored.kind {
-                    beamcraft_model::command::MemberKind::Beam => Entity::Beam,
-                    beamcraft_model::command::MemberKind::Column => Entity::Column,
+                    beamcraft_model::steel::command::MemberKind::Beam => Entity::Beam,
+                    beamcraft_model::steel::command::MemberKind::Column => Entity::Column,
                 },
                 mesh: mesh_of(&r.body.solid),
                 placement,

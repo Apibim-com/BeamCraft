@@ -149,9 +149,10 @@ pub fn copy_member_instance(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use beamcraft_model::command::{CutRecord, HoleRecord, KeepSide, Placement};
+    use beamcraft_model::command::Placement;
     use beamcraft_model::digest::ContentDigest;
     use beamcraft_model::id::OpId;
+    use beamcraft_model::steel::command::{CutRecord, HoleRecord, KeepSide};
 
     fn id(n: u8) -> ElementId {
         ElementId::parse(&format!("019a7bf0-0000-7000-8000-0000000000{n:02x}")).unwrap()
@@ -242,7 +243,7 @@ mod tests {
                 operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000aa").unwrap(),
                 ordinal: 0,
                 polygon_mm: vec![[10., 10.], [20., 10.], [20., 20.], [10., 20.]],
-                kind: beamcraft_model::command::HoleKind::Hole,
+                kind: beamcraft_model::steel::command::HoleKind::Hole,
                 owner: None,
             }],
             cuts: vec![],
@@ -288,7 +289,7 @@ mod tests {
         let source = AuthoredMember {
             curved: false,
             id: id(1),
-            kind: beamcraft_model::command::MemberKind::Beam,
+            kind: beamcraft_model::steel::command::MemberKind::Beam,
             name: "Beam".into(),
             class: 0,
             axis_points_mm: vec![[0.; 3], [2000., 0., 0.]],

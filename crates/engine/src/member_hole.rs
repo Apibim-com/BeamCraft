@@ -28,12 +28,13 @@ use crate::solid::SolidMesh;
 use beamcraft_geom::Frame3;
 use beamcraft_kernel::ops::{Body, HoleCutter, OpCode, OpFailure, through_hole};
 use beamcraft_kernel::profile::{Cavity, Point2};
-use beamcraft_model::command::{
-    AddHole, CommandError, HoleExtent, HoleSpec, MAX_HOLES, MemberHoleRecord, UpdateHole,
-};
+use beamcraft_model::command::CommandError;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::OpId;
+use beamcraft_model::steel::command::{
+    AddHole, HoleExtent, HoleSpec, MAX_HOLES, MemberHoleRecord, UpdateHole,
+};
 
 /// Millimetres a through cutter reaches past both faces of the body, as for plate holes.
 const CUTTER_OVERSHOOT_MM: f64 = 1.0;
@@ -59,7 +60,7 @@ pub struct MemberHoleOutcome {
 /// polygon hole in a member is not admitted in this slice).
 fn member_generator(
     command: &AddHole,
-) -> Result<&beamcraft_model::command::MemberHole, CommandError> {
+) -> Result<&beamcraft_model::steel::command::MemberHole, CommandError> {
     match &command.hole {
         HoleSpec::Member(member) => Ok(member),
         _ => Err(CommandError::new(
@@ -197,7 +198,7 @@ pub fn update_member_hole(
 
 /// Removes one member hole while preserving every surviving record's identity and ordinal.
 pub fn remove_member_hole(
-    command: &beamcraft_model::command::RemoveHole,
+    command: &beamcraft_model::steel::command::RemoveHole,
     head: &AuthoredMember,
 ) -> Result<MemberHoleOutcome, CommandError> {
     if head.id != command.target_id {
@@ -515,9 +516,10 @@ pub(crate) fn replay_member_holes(
 mod tests {
     use super::*;
     use crate::member::{MemberBody, ProfileInfo, evaluate_member};
-    use beamcraft_model::command::{MemberKind, Placement, RemoveHole};
+    use beamcraft_model::command::Placement;
     use beamcraft_model::digest::ContentDigest;
     use beamcraft_model::id::{ElementId, OpId};
+    use beamcraft_model::steel::command::{MemberKind, RemoveHole};
 
     fn id(byte: u8) -> ElementId {
         ElementId::parse(&format!("019a7bf0-0000-7000-8000-0000000000{byte:02x}")).unwrap()
@@ -564,7 +566,7 @@ mod tests {
         AddHole {
             target_id: id(9),
             operation_id: op(1),
-            hole: HoleSpec::Member(beamcraft_model::command::MemberHole {
+            hole: HoleSpec::Member(beamcraft_model::steel::command::MemberHole {
                 axis_point_mm: axis_point,
                 axis_direction: direction,
                 extent: HoleExtent::Through,
