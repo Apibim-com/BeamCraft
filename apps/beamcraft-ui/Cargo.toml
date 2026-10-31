@@ -26,6 +26,7 @@ path = "src/main.rs"
 [dependencies]
 beamcraft-model.workspace = true
 beamcraft-json.workspace = true
+beamcraft-host = { path = "../../crates/host", version = "0.0.1" }
 beamcraft-engine = { path = "../../crates/engine", version = "0.0.1" }
 egui = { version = "=0.37.0", default-features = false }
 # No hyperlink widgets or OpenUrl commands: the "links" feature only pulls the

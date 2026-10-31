@@ -12,8 +12,9 @@ use beamcraft_engine::drawing::projection::{
     self, BodyProjection, DimensionProjection, Projection,
 };
 use beamcraft_engine::drawing::{
-    DEFAULT_SCALE_DENOMINATOR, DimensionSpec, DraftingGeometry, DraftingSpec, Drawing, DrawingSpec,
-    Plane, SourceModelPin, ViewSpec, print, svg,
+    CutSide, DEFAULT_SCALE_DENOMINATOR, DetailSpec, DimensionSpec, DraftingGeometry, DraftingSpec,
+    Drawing, DrawingSpec, LayerSpec, LineType, Plane, SectionSpec, SheetFrame, SheetSpec,
+    SourceModelPin, TitleBlock, ViewSpec, print, sheet, svg,
 };
 use beamcraft_engine::query::feature::FeatureId;
 use beamcraft_host::revision::{ExpectedBase, RevisionStore};
@@ -24,6 +25,7 @@ use beamcraft_model::id::{
     ActorId, DimensionId, DocumentVersionId, DraftingEntityId, DrawingId, DrawingViewId, ElementId,
     OpId, ProjectId, RevisionId, Uuid7,
 };
+use beamcraft_model::sheet::Sheet;
 use std::io::Write;
 use std::{collections::BTreeMap, ffi::OsString};
 
@@ -132,12 +134,15 @@ fn geometry_json(result: Projection) -> Run<(Json, Json)> {
     Ok((body, dimension))
 }
 
-/// Single-value options plus the repeatable `--drafting` and `--placed-view` values, in caller
-/// order.
+/// Single-value options plus the repeatable `--drafting`, `--layer`, `--placed-view`,
+/// `--placed-section` and `--placed-detail` values, in caller order.
 struct DocumentOptions<'a> {
     options: BTreeMap<&'a str, &'a str>,
     drafting: Vec<&'a str>,
+    layers: Vec<&'a str>,
     views: Vec<&'a str>,
+    sections: Vec<&'a str>,
+    details: Vec<&'a str>,
 }
 
 fn document_options(args: &[OsString]) -> Run<DocumentOptions<'_>> {
@@ -158,11 +163,17 @@ fn document_options(args: &[OsString]) -> Run<DocumentOptions<'_>> {
     }
     let mut options = BTreeMap::new();
     let mut drafting = Vec::new();
+    let mut layers = Vec::new();
     let mut views = Vec::new();
+    let mut sections = Vec::new();
+    let mut details = Vec::new();
     for [key, value] in args.as_chunks::<2>().0 {
         match *key {
             "--drafting" => drafting.push(*value),
+            "--layer" => layers.push(*value),
             "--placed-view" => views.push(*value),
+            "--placed-section" => sections.push(*value),
+            "--placed-detail" => details.push(*value),
             _ if matches!(
                 *key,
                 "--store"
@@ -180,6 +191,11 @@ fn document_options(args: &[OsString]) -> Run<DocumentOptions<'_>> {
                     | "--origin"
                     | "--offset"
                     | "--decimals"
+                    | "--sheet-size"
+                    | "--sheet-frame"
+                    | "--sheet-project"
+                    | "--sheet-author"
+                    | "--sheet-remove"
                     | "--op-id"
                     | "--revision-id"
                     | "--actor-id"
@@ -195,28 +211,47 @@ fn document_options(args: &[OsString]) -> Run<DocumentOptions<'_>> {
     Ok(DocumentOptions {
         options,
         drafting,
+        layers,
         views,
+        sections,
+        details,
     })
 }
 
-/// Parses repeatable `--drafting UUID:kind:x,y,...` values into drawn objects. Engine admission
-/// still owns every bound; this only builds the typed values.
+/// Parses repeatable `--drafting UUID:kind:x,y:layer:linetype[:payload]` values into drawn
+/// objects. The layer and stroke segments are required; the sixth segment is the string payload
+/// (`text`, `pattern` or `symbol`) the kind requires. Engine admission still owns every bound;
+/// this only builds the typed values.
 fn drafting_specs(values: &[&str]) -> Run<Vec<DraftingSpec>> {
     values
         .iter()
         .map(|value| {
-            let mut parts = value.splitn(3, ':');
-            let id = parts
-                .next()
-                .ok_or_else(|| invalid("drafting spec requires UUID:kind:x,y"))?;
-            let kind = parts
-                .next()
-                .ok_or_else(|| invalid("drafting spec requires UUID:kind:x,y"))?;
-            let coords = parts
-                .next()
-                .ok_or_else(|| invalid("drafting spec requires UUID:kind:x,y"))?;
+            // The first five segments never contain a colon, so the split is exact even for a
+            // text payload holding colons: the payload is the whole remainder.
+            let mut parts = value.splitn(6, ':');
+            let id = parts.next().ok_or_else(|| {
+                invalid("drafting spec requires UUID:kind:x,y:layer:linetype[:payload]")
+            })?;
+            let kind = parts.next().ok_or_else(|| {
+                invalid("drafting spec requires UUID:kind:x,y:layer:linetype[:payload]")
+            })?;
+            let coords = parts.next().ok_or_else(|| {
+                invalid("drafting spec requires UUID:kind:x,y:layer:linetype[:payload]")
+            })?;
+            let layer = parts.next().ok_or_else(|| {
+                invalid("drafting spec requires UUID:kind:x,y:layer:linetype[:payload]")
+            })?;
+            let line_type = parts.next().ok_or_else(|| {
+                invalid("drafting spec requires UUID:kind:x,y:layer:linetype[:payload]")
+            })?;
+            let payload = parts.next();
             let id = DraftingEntityId::parse(id)
                 .map_err(|_| invalid("drafting identity must be a full canonical UUIDv7"))?;
+            let layer = DraftingEntityId::parse(layer)
+                .map_err(|_| invalid("drafting layer must be a full canonical UUIDv7"))?;
+            let line_type = LineType::parse(line_type).ok_or_else(|| {
+                invalid("drafting line type must be continuous, dashed, dotted or dashdot")
+            })?;
             let coords = coords
                 .split(',')
                 .map(|number| {
@@ -225,13 +260,49 @@ fn drafting_specs(values: &[&str]) -> Run<Vec<DraftingSpec>> {
                         .map_err(|_| invalid("invalid drafting coordinate"))
                 })
                 .collect::<Run<Vec<f64>>>()?;
-            let geometry = DraftingGeometry::from_parts(kind, &coords).ok_or_else(|| {
-                invalid(
-                    "drafting kind must be line, polyline, arc, circle or rectangle \
-                     with matching coordinates",
-                )
-            })?;
-            Ok(DraftingSpec { id, geometry })
+            let geometry =
+                DraftingGeometry::from_parts(kind, &coords, payload).ok_or_else(|| {
+                    invalid(
+                        "drafting kind must be line, polyline, arc, circle, rectangle, text, \
+                         hatch, symbol or free_dimension with matching coordinates and payload",
+                    )
+                })?;
+            Ok(DraftingSpec {
+                id,
+                geometry,
+                layer,
+                line_type,
+            })
+        })
+        .collect()
+}
+
+/// Parses repeatable `--layer UUID:name:visible` values into document layers, where the visible
+/// flag is `on` or `off`. Engine admission still owns every bound; this only builds the values.
+fn layer_specs(values: &[&str]) -> Run<Vec<LayerSpec>> {
+    values
+        .iter()
+        .map(|value| {
+            let mut parts = value.splitn(3, ':');
+            let id = parts
+                .next()
+                .ok_or_else(|| invalid("layer requires UUID:name:on|off"))?;
+            let name = parts
+                .next()
+                .ok_or_else(|| invalid("layer requires UUID:name:on|off"))?;
+            let visible = parts
+                .next()
+                .ok_or_else(|| invalid("layer requires UUID:name:on|off"))?;
+            Ok(LayerSpec {
+                id: DraftingEntityId::parse(id)
+                    .map_err(|_| invalid("layer identity must be a full canonical UUIDv7"))?,
+                name: name.to_owned(),
+                visible: match visible {
+                    "on" => true,
+                    "off" => false,
+                    _ => return Err(invalid("layer visibility must be on or off")),
+                },
+            })
         })
         .collect()
 }
@@ -267,6 +338,101 @@ fn placed_view_specs(values: &[&str]) -> Run<Vec<ViewSpec>> {
             })
         })
         .collect()
+}
+
+/// Parses repeatable `--placed-section UUID:plane:cut:side:scale:x,y` values into section
+/// views. Engine admission still owns every bound; this only builds the typed values.
+fn placed_section_specs(values: &[&str]) -> Run<Vec<SectionSpec>> {
+    values
+        .iter()
+        .map(|value| {
+            let mut parts = value.splitn(6, ':');
+            let fail = || invalid("placed section requires UUID:plane:cut:side:scale:x,y");
+            let id = parts.next().ok_or_else(fail)?;
+            let plane = parts.next().ok_or_else(fail)?;
+            let cut = parts.next().ok_or_else(fail)?;
+            let side = parts.next().ok_or_else(fail)?;
+            let scale = parts.next().ok_or_else(fail)?;
+            let origin = parts.next().ok_or_else(fail)?;
+            Ok(SectionSpec {
+                id: DrawingViewId::parse(id).map_err(|_| {
+                    invalid("placed section identity must be a full canonical UUIDv7")
+                })?,
+                plane: Plane::parse(plane)
+                    .ok_or_else(|| invalid("placed section plane must be front, top or right"))?,
+                cut_mm: cut
+                    .parse::<f64>()
+                    .map_err(|_| invalid("invalid placed section cut"))?,
+                side: CutSide::parse(side)
+                    .ok_or_else(|| invalid("placed section side must be positive or negative"))?,
+                scale_denominator: scale
+                    .parse::<f64>()
+                    .map_err(|_| invalid("invalid placed section scale"))?,
+                paper_origin_mm: parse_origin(origin)?,
+            })
+        })
+        .collect()
+}
+
+/// Parses repeatable `--placed-detail UUID:parent:center:radius:scale:x,y` values into detail
+/// views, where center is `x,y` in the parent's paper millimetres. Engine admission still owns
+/// every bound; this only builds the typed values.
+fn placed_detail_specs(values: &[&str]) -> Run<Vec<DetailSpec>> {
+    values
+        .iter()
+        .map(|value| {
+            let mut parts = value.splitn(6, ':');
+            let fail = || invalid("placed detail requires UUID:parent:x,y:radius:scale:x,y");
+            let id = parts.next().ok_or_else(fail)?;
+            let parent = parts.next().ok_or_else(fail)?;
+            let center = parts.next().ok_or_else(fail)?;
+            let radius = parts.next().ok_or_else(fail)?;
+            let scale = parts.next().ok_or_else(fail)?;
+            let origin = parts.next().ok_or_else(fail)?;
+            Ok(DetailSpec {
+                id: DrawingViewId::parse(id).map_err(|_| {
+                    invalid("placed detail identity must be a full canonical UUIDv7")
+                })?,
+                parent: DrawingViewId::parse(parent)
+                    .map_err(|_| invalid("placed detail parent must be a full canonical UUIDv7"))?,
+                center_paper_mm: parse_origin(center)?,
+                radius_mm: radius
+                    .parse::<f64>()
+                    .map_err(|_| invalid("invalid placed detail radius"))?,
+                scale_denominator: scale
+                    .parse::<f64>()
+                    .map_err(|_| invalid("invalid placed detail scale"))?,
+                paper_origin_mm: parse_origin(origin)?,
+            })
+        })
+        .collect()
+}
+/// Builds the sheet intent from `--sheet-size` and its companion options. A `--sheet-size`
+/// requires the project and author fields; every bound is re-checked by engine admission.
+fn document_sheet(options: &BTreeMap<&str, &str>) -> Run<Option<SheetSpec>> {
+    let Some(size) = options.get("--sheet-size") else {
+        return Ok(None);
+    };
+    let required = |key: &str| {
+        options
+            .get(key)
+            .copied()
+            .ok_or_else(|| invalid("required drawing option is missing"))
+    };
+    let size = Sheet::parse(size).ok_or_else(|| invalid("sheet must be a4, a3, a2, a1 or a0"))?;
+    let inset = options.get("--sheet-frame").map_or(Ok(10.0), |value| {
+        value
+            .parse::<f64>()
+            .map_err(|_| invalid("invalid sheet frame inset"))
+    })?;
+    Ok(Some(SheetSpec {
+        size,
+        frame: SheetFrame { inset_mm: inset },
+        title: TitleBlock {
+            project: required("--sheet-project")?.to_owned(),
+            author: required("--sheet-author")?.to_owned(),
+        },
+    }))
 }
 
 fn document_drawing(options: &BTreeMap<&str, &str>, source: SourceModelPin) -> Run<Drawing> {
@@ -330,6 +496,10 @@ fn document_drawing(options: &BTreeMap<&str, &str>, source: SourceModelPin) -> R
         },
         drafting: Vec::new(),
         views: Vec::new(),
+        sections: Vec::new(),
+        details: Vec::new(),
+        sheet: document_sheet(options)?,
+        layers: Vec::new(),
     })
     .map_err(Into::into)
 }
@@ -344,6 +514,40 @@ fn document_json(revision: &beamcraft_cli::drawing::document::DocumentRevision) 
         (
             "drawing_id",
             Json::text(revision.drawing.spec().id.to_string()),
+        ),
+        ("name", Json::text(revision.drawing.spec().name.clone())),
+        (
+            "view",
+            Json::object([
+                (
+                    "id",
+                    Json::text(revision.drawing.spec().view.id.to_string()),
+                ),
+                (
+                    "plane",
+                    Json::text(revision.drawing.spec().view.plane.as_str()),
+                ),
+                (
+                    "scale_denominator",
+                    num(revision.drawing.spec().view.scale_denominator)?,
+                ),
+                (
+                    "paper_origin_mm",
+                    point(revision.drawing.spec().view.paper_origin_mm)?,
+                ),
+            ]),
+        ),
+        (
+            "sheet",
+            match revision.drawing.sheet() {
+                None => Json::Null,
+                Some(sheet) => Json::object([
+                    ("size", Json::text(sheet.size.as_str())),
+                    ("frame_inset_mm", num(sheet.frame.inset_mm)?),
+                    ("project", Json::text(sheet.title.project.clone())),
+                    ("author", Json::text(sheet.title.author.clone())),
+                ]),
+            },
         ),
         (
             "state",
@@ -392,6 +596,75 @@ fn document_json(revision: &beamcraft_cli::drawing::document::DocumentRevision) 
             ),
         ),
         (
+            "placed_sections",
+            Json::Array(
+                revision
+                    .drawing
+                    .sections()
+                    .iter()
+                    .map(|section| {
+                        Ok(Json::object([
+                            ("id", Json::text(section.id.to_string())),
+                            ("plane", Json::text(section.plane.as_str())),
+                            ("cut_mm", num(section.cut_mm)?),
+                            ("side", Json::text(section.side.as_str())),
+                            ("scale_denominator", num(section.scale_denominator)?),
+                            ("paper_origin_mm", point(section.paper_origin_mm)?),
+                        ]))
+                    })
+                    .collect::<Run<Vec<_>>>()?,
+            ),
+        ),
+        (
+            "placed_details",
+            Json::Array(
+                revision
+                    .drawing
+                    .details()
+                    .iter()
+                    .map(|detail| {
+                        Ok(Json::object([
+                            ("id", Json::text(detail.id.to_string())),
+                            ("parent", Json::text(detail.parent.to_string())),
+                            ("center_paper_mm", point(detail.center_paper_mm)?),
+                            ("radius_mm", num(detail.radius_mm)?),
+                            ("scale_denominator", num(detail.scale_denominator)?),
+                            ("paper_origin_mm", point(detail.paper_origin_mm)?),
+                        ]))
+                    })
+                    .collect::<Run<Vec<_>>>()?,
+            ),
+        ),
+        (
+            "layers",
+            Json::Array(
+                revision
+                    .drawing
+                    .layers()
+                    .iter()
+                    .map(|layer| {
+                        Ok(Json::object([
+                            ("id", Json::text(layer.id.to_string())),
+                            ("name", Json::text(&layer.name)),
+                            ("visible", Json::Bool(layer.visible)),
+                        ]))
+                    })
+                    .collect::<Run<Vec<_>>>()?,
+            ),
+        ),
+        // The paper-visible subset of the drawn objects: hiding a layer changes this list and
+        // never the stored document.
+        (
+            "visible_drafting",
+            Json::Array(
+                revision
+                    .drawing
+                    .visible_drafting()
+                    .map(|entity| Json::text(entity.id.to_string()))
+                    .collect(),
+            ),
+        ),
+        (
             "drafting",
             Json::Array(
                 revision
@@ -399,22 +672,32 @@ fn document_json(revision: &beamcraft_cli::drawing::document::DocumentRevision) 
                     .drafting()
                     .iter()
                     .map(|entity| {
-                        Ok(Json::object([
+                        let geometry_mm = Json::Array(
+                            entity
+                                .geometry
+                                .clone()
+                                .coordinates()
+                                .iter()
+                                .map(|value| num(*value))
+                                .collect::<Run<Vec<_>>>()?,
+                        );
+                        let mut fields = vec![
                             ("id", Json::text(entity.id.to_string())),
                             ("kind", Json::text(entity.geometry.kind())),
-                            (
-                                "geometry_mm",
-                                Json::Array(
-                                    entity
-                                        .geometry
-                                        .clone()
-                                        .coordinates()
-                                        .iter()
-                                        .map(|value| num(*value))
-                                        .collect::<Run<Vec<_>>>()?,
-                                ),
-                            ),
-                        ]))
+                            ("layer", Json::text(entity.layer.to_string())),
+                            ("line_type", Json::text(entity.line_type.as_str())),
+                            ("geometry_mm", geometry_mm),
+                        ];
+                        if let Some((name, value)) = entity.geometry.string_payload() {
+                            let name = name.strip_prefix("drawing:").unwrap_or(name);
+                            fields.push((name, Json::text(value)));
+                        }
+                        Ok(Json::Object(
+                            fields
+                                .into_iter()
+                                .map(|(key, value)| (key.into(), value))
+                                .collect(),
+                        ))
                     })
                     .collect::<Run<Vec<_>>>()?,
             ),
@@ -495,12 +778,13 @@ fn run_document(args: &[OsString]) -> Run<Json> {
                 .map_err(|_| invalid("revision id must be UUIDv7"))?;
             let actor = ActorId::parse(required("--actor-id")?)
                 .map_err(|_| invalid("actor id must be UUIDv7"))?;
+            let layers = layer_specs(&parsed.layers)?;
             let drafting = drafting_specs(&parsed.drafting)?;
             // Replaying the exact accepted operation stays safe after later revisions. The
-            // fingerprint binds the incoming drafting too: a retry that drops or changes the
-            // geometry is a different request, never a replay.
+            // fingerprint binds the incoming layers and drafting too: a retry that drops or
+            // changes either is a different request, never a replay.
             if let Some(previous) = documents.query(&op)? {
-                let candidate = previous.drawing.clone().with_drafting(drafting)?;
+                let candidate = previous.drawing.clone().with_drafting(layers, drafting)?;
                 let request = request_fingerprint(
                     &candidate,
                     State::Draft,
@@ -521,7 +805,7 @@ fn run_document(args: &[OsString]) -> Run<Json> {
             let current = documents.head()?;
             // Drawn objects belong to the document only: no model store is read, the retained
             // source archive and every identity carry over unchanged.
-            let edited = current.drawing.clone().with_drafting(drafting)?;
+            let edited = current.drawing.clone().with_drafting(layers, drafting)?;
             let (_, revised) = documents.commit(
                 &expected,
                 DocumentWrite {
@@ -550,10 +834,20 @@ fn run_document(args: &[OsString]) -> Run<Json> {
             let actor = ActorId::parse(required("--actor-id")?)
                 .map_err(|_| invalid("actor id must be UUIDv7"))?;
             let views = placed_view_specs(&parsed.views)?;
-            // Same replay discipline as edit-drafting: the fingerprint binds the incoming views
-            // too, so a retry that drops or changes a placement is a different request.
+            let sections = placed_section_specs(&parsed.sections)?;
+            let details = placed_detail_specs(&parsed.details)?;
+            // Same replay discipline as edit-drafting: the fingerprint binds the incoming
+            // placement of all three collections, so a retry that drops or changes one is a
+            // different request.
+            let spliced = |drawing: &Drawing| {
+                drawing
+                    .clone()
+                    .with_views(views.clone())?
+                    .with_sections(sections.clone())?
+                    .with_details(details.clone())
+            };
             if let Some(previous) = documents.query(&op)? {
-                let candidate = previous.drawing.clone().with_views(views)?;
+                let candidate = spliced(&previous.drawing)?;
                 let request = request_fingerprint(
                     &candidate,
                     State::Draft,
@@ -574,7 +868,84 @@ fn run_document(args: &[OsString]) -> Run<Json> {
             let current = documents.head()?;
             // Placed views belong to the document only: no model store is read, the retained
             // source archive and every identity carry over unchanged.
-            let edited = current.drawing.clone().with_views(views)?;
+            let edited = spliced(&current.drawing)?;
+            let (_, revised) = documents.commit(
+                &expected,
+                DocumentWrite {
+                    revision,
+                    operation: op,
+                    actor,
+                    drawing: &edited,
+                    source: &current.source,
+                    state: State::Draft,
+                    version: None,
+                    latest_published: current.latest_published,
+                },
+            )?;
+            Ok(document_json(&revised)?)
+        }
+        "edit-sheet" => {
+            let documents = DocumentStore::open(std::path::Path::new(required("--document-dir")?))?;
+            let expected = ExpectedBase::Revision(
+                beamcraft_host::revision::Uuid7::parse(required("--expected-head")?)
+                    .map_err(|_| invalid("expected head must be UUIDv7"))?,
+            );
+            let op = OpId::parse(required("--op-id")?)
+                .map_err(|_| invalid("operation id must be UUIDv7"))?;
+            let revision = Uuid7::parse(required("--revision-id")?)
+                .map_err(|_| invalid("revision id must be UUIDv7"))?;
+            let actor = ActorId::parse(required("--actor-id")?)
+                .map_err(|_| invalid("actor id must be UUIDv7"))?;
+            if options
+                .get("--sheet-remove")
+                .is_some_and(|value| *value != "true")
+            {
+                return Err(invalid("--sheet-remove must be true"));
+            }
+            let remove = options.contains_key("--sheet-remove");
+            if remove && options.contains_key("--sheet-size") {
+                return Err(invalid("choose either --sheet-remove true or a new sheet"));
+            }
+            let sheet = if remove {
+                None
+            } else {
+                document_sheet(options)?
+            };
+            // Same replay discipline as edit-views: the fingerprint binds the incoming sheet,
+            // so a retry that drops or changes it is a different request.
+            if let Some(previous) = documents.query(&op)? {
+                let candidate = match sheet.clone() {
+                    Some(value) => previous.drawing.clone().with_sheet(value)?,
+                    None if remove => previous.drawing.clone().without_sheet(),
+                    None => previous.drawing.clone(),
+                };
+                let request = request_fingerprint(
+                    &candidate,
+                    State::Draft,
+                    None,
+                    previous.latest_published,
+                    actor,
+                    &expected,
+                )?;
+                if previous.request == request {
+                    return document_json(&previous);
+                }
+                return Err(PlateError {
+                    rule_id: None,
+                    code: ErrorCode::OpIdReuse,
+                    message: "document operation id was already used for another request",
+                });
+            }
+            let current = documents.head()?;
+            let edited = match sheet {
+                Some(value) => current.drawing.clone().with_sheet(value)?,
+                None if remove => current.drawing.clone().without_sheet(),
+                None => {
+                    return Err(invalid(
+                        "edit-sheet requires --sheet-size with its fields or --sheet-remove true",
+                    ));
+                }
+            };
             let (_, revised) = documents.commit(
                 &expected,
                 DocumentWrite {
@@ -660,11 +1031,31 @@ fn run_document(args: &[OsString]) -> Run<Json> {
             let projection = projection::resolve(&published.drawing, &snapshot)?;
             let format = options.get("--format").copied().unwrap_or("svg");
             let bytes = match format {
-                "svg" => svg::export(&published.drawing, version, &projection)?,
+                // A sheet document renders its whole sheet; a loose document keeps the
+                // earlier tight-bounds export. Both stay bound to the exact version.
+                "svg" => match published.drawing.sheet() {
+                    Some(_) => {
+                        let mut bodies = Vec::with_capacity(published.drawing.views().len());
+                        for view in published.drawing.views() {
+                            bodies.push(projection::resolve_view(
+                                &published.drawing,
+                                view,
+                                &snapshot,
+                            )?);
+                        }
+                        sheet::export_svg(&published.drawing, version, &projection, &bodies)?
+                    }
+                    None => svg::export(&published.drawing, version, &projection)?,
+                },
                 "pdf" => {
-                    let sheet =
-                        print::Sheet::parse(options.get("--sheet").copied().unwrap_or("a4"))
-                            .ok_or_else(|| invalid("sheet must be a4, a3, a2, a1 or a0"))?;
+                    let sheet = print::Sheet::parse(
+                        options
+                            .get("--sheet")
+                            .copied()
+                            .or_else(|| published.drawing.sheet().map(|sheet| sheet.size.as_str()))
+                            .unwrap_or("a4"),
+                    )
+                    .ok_or_else(|| invalid("sheet must be a4, a3, a2, a1 or a0"))?;
                     print::export(&published.drawing, version, &projection, sheet)?
                 }
                 _ => return Err(invalid("format must be svg or pdf")),
@@ -876,6 +1267,10 @@ fn run(args: &[OsString]) -> Run<Json> {
         dimension,
         drafting: Vec::new(),
         views: Vec::new(),
+        sections: Vec::new(),
+        details: Vec::new(),
+        sheet: None,
+        layers: Vec::new(),
     })?;
     // Admission precedes the strict kernel-derived inspection. The same opened revision supplies
     // both the complete source pin and the snapshot; a concurrent model head never mixes them.

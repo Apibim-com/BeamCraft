@@ -6,7 +6,7 @@
 //! real `beamcraft` binary, give exactly what running the CLI by hand gives (same volume, same
 //! mesh digest, same world bounds); a cancelled preview publishes nothing; a refusal reaches the
 //! panel with the engine's code and message. Without the CLI binary next to this package's binary
-//! the tests are skipped and say so (`cargo test --workspace` builds it).
+//! missing prerequisites fail acceptance (`cargo test --workspace` builds it).
 
 #![allow(
     clippy::unwrap_used,
@@ -27,19 +27,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
+mod support;
+
 fn cli() -> Option<PathBuf> {
-    let ui = Path::new(env!("CARGO_BIN_EXE_beamcraft-ui"));
-    let cli = ui
-        .parent()?
-        .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
-    if cli.is_file() {
-        Some(cli)
-    } else {
-        eprintln!(
-            "SKIP create-tools test: build beamcraft-cli first (cargo test --workspace does)"
-        );
-        None
-    }
+    support::cli(Path::new(env!("CARGO_BIN_EXE_beamcraft-ui")))
 }
 
 struct Stores {
@@ -481,7 +472,13 @@ fn a_refresh_runs_off_the_ui_thread_and_keeps_its_two_results_apart() {
     let ui = stores.ui();
     let refresh = |cli: PathBuf, store: PathBuf| {
         std::thread::spawn(move || {
-            source::reload(&cli, &store, &source::Known::default(), &Stats::default())
+            source::reload(
+                &cli,
+                &store,
+                &source::Known::default(),
+                None,
+                &Stats::default(),
+            )
         })
         .join()
         .unwrap()
@@ -539,7 +536,7 @@ fn a_refresh_runs_off_the_ui_thread_and_keeps_its_two_results_apart() {
         resident: scene.meshes.iter().map(|m| m.digest).collect(),
     };
     let stats = Stats::default();
-    let again = std::thread::spawn(move || source::reload(&cli, &ui, &known, &stats))
+    let again = std::thread::spawn(move || source::reload(&cli, &ui, &known, None, &stats))
         .join()
         .unwrap();
     assert!(matches!(again.scene, Ok(source::Refreshed::Unchanged)));

@@ -16,12 +16,14 @@ use beamcraft_json::{Json, Limits};
 use beamcraft_model::{ErrorCode, digest::ContentDigest};
 use std::collections::BTreeMap;
 
+mod annotation_cmd;
 mod assembly_cmd;
 mod attribute_cmd;
 mod bolt_cmd;
 mod bom_cmd;
 mod changeset_cmd;
 mod command_context;
+mod compensate_cmd;
 mod construction_cmd;
 mod coordinator_cmd;
 mod drawing_cmd;
@@ -42,6 +44,7 @@ mod resolve_cmd;
 mod schedule_cmd;
 mod view;
 mod view_export;
+mod views_cmd;
 mod weld_cmd;
 mod work_plane_cmd;
 
@@ -81,11 +84,14 @@ fn main() -> std::process::ExitCode {
     // refuses it.
     let (json, exit) = match route {
         Some(Route::View) => view::execute(&args),
+        Some(Route::Views) => views_cmd::execute(&args),
+        Some(Route::Annotation) => annotation_cmd::execute(&args),
         Some(Route::History) => history_cmd::execute(&args),
         Some(Route::Reference) => reference_cmd::execute(&args),
         Some(Route::Assembly) => assembly_cmd::execute(&args),
         Some(Route::Rebase) => rebase_cmd::execute(&args),
         Some(Route::Resolve) => resolve_cmd::execute(&args),
+        Some(Route::Compensate) => compensate_cmd::execute(&args),
         Some(Route::Changeset) => changeset_cmd::execute(&args),
         Some(Route::Coordinator) => coordinator_cmd::execute(&args),
         Some(Route::Drawing) => drawing_cmd::execute(&args),
