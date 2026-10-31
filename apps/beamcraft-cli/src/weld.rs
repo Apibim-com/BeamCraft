@@ -20,9 +20,7 @@
 
 use crate::assembly::read_prims;
 use crate::plate::{
-    AUTHORED_LAYER, DERIVED_LAYER, RevisionSummary, base_of, check_footprint, control, digest_of,
-    host_uuid, integrity, load_base, mesh_change, number, numbers, open_base, prior_op_with,
-    property, replay_summary, summarize, text,
+    check_footprint, mesh_change, number, numbers, prior_op_with, property, replay_summary, text,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
@@ -43,6 +41,10 @@ use beamcraft_model::digest::Sha256;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use session::Refusal;
+use session::pipeline::{
+    AUTHORED_LAYER, DERIVED_LAYER, RevisionSummary, base_of, control, digest_of, host_uuid,
+    integrity, load_base, open_base, summarize,
+};
 use std::collections::BTreeMap;
 
 /// Identities of one A06 call beyond the command itself.

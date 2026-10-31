@@ -11,7 +11,7 @@
 //! so a query and a bound view cannot disagree.
 
 use crate::assembly::read_prims;
-use crate::plate::{control, integrity, load_base, open_base, property, text};
+use crate::plate::{property, text};
 use beamcraft_engine::attribute::Schema;
 use beamcraft_engine::filter::{Dataset, Field, Operator, Record, Rule};
 use beamcraft_host::revision::{RevisionError, RevisionStore};
@@ -23,6 +23,7 @@ use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, ProjectId, WorkspaceId};
 use session::Refusal;
+use session::pipeline::{control, integrity, load_base, open_base};
 use std::collections::BTreeMap;
 
 fn invalid(message: &'static str) -> Refusal {

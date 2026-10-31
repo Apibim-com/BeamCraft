@@ -4,7 +4,7 @@
 //! D03 immutable source resources. They are not composed into the drawing stage. Reopening
 //! restores original virtual layer names and runs the ordinary strict model/kernel inspection.
 
-use crate::plate::{Inspection, inspect_manifest_assets, integrity};
+use crate::plate::{Inspection, inspect_manifest_assets};
 use beamcraft_engine::drawing::SourceModelPin;
 use beamcraft_host::lease::StoreLease;
 use beamcraft_host::revision::{MAX_MANIFEST_BYTES, MAX_NAME_BYTES, Manifest, RevisionStore};
@@ -15,6 +15,7 @@ use beamcraft_model::digest::Sha256;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ProjectId, RevisionId};
 use session::Refusal;
+use session::pipeline::integrity;
 use std::path::Path;
 
 /// Non-USD provenance metadata asset, excluded from all drawing/model composition requests.

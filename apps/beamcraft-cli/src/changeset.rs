@@ -21,7 +21,6 @@
 //! that context from its token. A moved head is refused; this does not implement C03 rebase or
 //! C04 conflict resolution. A legacy or unverified source interval never earns precise evidence.
 
-use crate::plate::{RevisionSummary, integrity, open_request, summarize};
 use crate::workspace::{WorkspaceMeta, read_meta, write_meta};
 use beamcraft_host::revision::{
     CommitHook, CommitOutcome, ExpectedBase, LayerEntry, LayerRole as HostRole, Revision,
@@ -39,6 +38,7 @@ use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ActorId, ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use beamcraft_model::limits::MAX_FOOTPRINT_ENTRIES;
 use session::Refusal;
+use session::pipeline::{RevisionSummary, integrity, open_request, summarize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::time::{Duration, Instant};

@@ -24,10 +24,7 @@
 //!   whose identity is the content digest and which is therefore idempotent without an `op_id`
 //!   replay record.
 
-use crate::plate::{
-    Base, RevisionSummary, base_of, control, decode, host_uuid, integrity, load_base, number,
-    open_base, summarize, text,
-};
+use crate::plate::{decode, number, text};
 use crate::plate::{decode_polygon, decode_polygons};
 use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::command::MaterialInfo;
@@ -50,6 +47,9 @@ use beamcraft_model::section::{
     CustomSection, MAX_CUSTOM_CAVITIES, ParametricSection, SectionFamily, SectionShape,
 };
 use session::Refusal;
+use session::pipeline::{
+    Base, RevisionSummary, base_of, control, host_uuid, integrity, load_base, open_base, summarize,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Path prefix used by the synthetic profile fixtures.
@@ -732,8 +732,8 @@ pub fn define(
     let (mut author, opened) = Author::open(
         base_request,
         EditTargets {
-            authored: crate::plate::AUTHORED_LAYER.into(),
-            derived: crate::plate::DERIVED_LAYER.into(),
+            authored: session::pipeline::AUTHORED_LAYER.into(),
+            derived: session::pipeline::DERIVED_LAYER.into(),
         },
         schema,
         &control,

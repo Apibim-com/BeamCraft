@@ -9,7 +9,7 @@
 
 use crate::attribute::{AttrModel, attr_model_of};
 use crate::bom;
-use crate::plate::{self, Inspection};
+use crate::plate::Inspection;
 use beamcraft_engine::bom::BomRow;
 use beamcraft_engine::schedule::{
     CellKind, CellValue, Column, Field, InputRow, MAX_COLUMNS, Rule, StandardField, Template,
@@ -61,9 +61,12 @@ fn cell_kind(kind: AttrType) -> CellKind {
 /// command can require the same revision as the report rows.
 pub fn pinned(store: &RevisionStore) -> Result<(AttrModel, String), Refusal> {
     let revision = store.open().map_err(Refusal::from)?;
-    let id = plate::summarize(revision.info()).revision_id;
-    let base = plate::base_of(&revision)?;
-    let model = attr_model_of(&plate::open_base(&base)?, &plate::control())?;
+    let id = session::pipeline::summarize(revision.info()).revision_id;
+    let base = session::pipeline::base_of(&revision)?;
+    let model = attr_model_of(
+        &session::pipeline::open_base(&base)?,
+        &session::pipeline::control(),
+    )?;
     Ok((model, id))
 }
 

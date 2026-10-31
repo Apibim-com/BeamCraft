@@ -7,7 +7,6 @@
 //! USD difference. The host pins its bytes in the immutable manifest. Decoding checks structure
 //! and the creating operation identity; it grants no permissions or missing command provenance.
 
-use crate::plate::integrity;
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
 use beamcraft_host::revision::{
     EvidencePin, MAX_MANIFEST_BYTES, MAX_OPERATION_EVIDENCE_BYTES, Manifest, Revision,
@@ -22,6 +21,7 @@ use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId};
 use beamcraft_model::limits::MAX_FOOTPRINT_ENTRIES;
 use session::Refusal;
+use session::pipeline::integrity;
 use std::fmt::Write as _;
 
 const MAGIC: &str = "beamcraft-command-footprint 1";

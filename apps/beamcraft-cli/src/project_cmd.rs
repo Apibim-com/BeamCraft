@@ -12,7 +12,6 @@
 
 use crate::plate_cmd::revision_json;
 use beamcraft_cli::definition::{DefineRequest, DefinitionRecord, define};
-use beamcraft_cli::plate::summarize;
 use beamcraft_cli::project::{
     ProjectContext, create_project, create_project_unique, install_environment,
 };
@@ -24,6 +23,7 @@ use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, Uuid7, WorkspaceId};
 use session::Refusal;
 use session::environment::{EnvironmentState, environment_folders, list_environments};
+use session::pipeline::summarize;
 use session::project::{ProjectInfo, ProjectState, list_projects};
 use session::settings::{Settings, SettingsError, default_dir};
 use std::collections::BTreeMap;

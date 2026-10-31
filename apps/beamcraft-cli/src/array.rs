@@ -12,11 +12,7 @@
 
 use crate::copy::{CopiedElement, creation_changes, not_found};
 use crate::definition::material_lookup;
-use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, decode, digest_of,
-    evaluate_decoded, host_uuid, integrity, load_base, open_base, prior_op_with, replay_summary,
-    summarize,
-};
+use crate::plate::{decode, evaluate_decoded, prior_op_with, replay_summary};
 use crate::publication::{PublicationTail, prepare_and_publish};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::transaction::PriorOp;
@@ -30,6 +26,10 @@ use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use session::Refusal;
+use session::pipeline::{
+    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, digest_of, host_uuid, integrity,
+    load_base, open_base, summarize,
+};
 
 /// Inputs of one `array-linear` or `array-polar` call beyond the command itself.
 #[derive(Debug, Clone)]

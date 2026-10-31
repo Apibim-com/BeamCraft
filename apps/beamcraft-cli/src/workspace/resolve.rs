@@ -12,10 +12,7 @@
 //! outcome exactly once, and the same identity with another payload is refused.
 
 use super::{WorkspaceMeta, WorkspaceState, rebase_receipt::RevisionPin, unusable};
-use crate::{
-    command_evidence as evidence,
-    plate::{RevisionSummary, host_uuid, integrity, summarize},
-};
+use crate::command_evidence as evidence;
 use beamcraft_host::{
     ledger::Outcome,
     revision::{
@@ -29,6 +26,7 @@ use beamcraft_model::{
     id::OpId,
 };
 use session::Refusal;
+use session::pipeline::{RevisionSummary, host_uuid, integrity, summarize};
 use std::path::Path;
 
 const MAGIC: &str = "beamcraft-workspace-discard 1";

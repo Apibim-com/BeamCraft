@@ -4,7 +4,6 @@
 //! D02 derived drawing USD: ordinary linear BasisCurves and exact double dimension metadata.
 //! Values are always recomputed through the engine before writing or verifying saved bytes.
 
-use crate::plate::integrity;
 use beamcraft_engine::ViewSnapshot;
 use beamcraft_engine::drawing::Drawing;
 use beamcraft_engine::drawing::projection::{self, BodyProjection, DimensionProjection};
@@ -12,6 +11,7 @@ use beamcraft_layer_engine::Asset;
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
 use session::Refusal;
+use session::pipeline::integrity;
 
 /// Derived asset name, composed separately from authored intent.
 pub const DERIVED_LAYER: &str = "drawing-derived.usda";

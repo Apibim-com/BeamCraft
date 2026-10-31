@@ -4,11 +4,10 @@
 //! Shared prepared-layer publication and verified revision commit boundary.
 
 use session::Refusal;
+use session::pipeline::{DERIVED_LAYER, ROOT_LAYER, host_uuid, integrity};
 use std::collections::BTreeMap;
 
-use crate::plate::{
-    DERIVED_LAYER, PlateVerifier, ROOT_LAYER, check_footprint, host_uuid, integrity,
-};
+use crate::plate::{PlateVerifier, check_footprint};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{
     CommitHook, CommitOutcome, Committed, ExpectedBase, LayerEntry, LayerRole, RevisionDraft,

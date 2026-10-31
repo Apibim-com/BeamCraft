@@ -32,10 +32,7 @@
 //! variants and network references are refused. Replay of an `op_id` is decided from the head state,
 //! as in the other commands. One implicit workspace, in-process layer engine, as in `plate`.
 
-use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, check_footprint, control, digest_of,
-    host_uuid, integrity, load_base, open_base, prior_op_with, replay_summary, summarize,
-};
+use crate::plate::{check_footprint, prior_op_with, replay_summary};
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use crate::source_file::read_file;
 use beamcraft_engine::footprint::Footprint;
@@ -61,6 +58,10 @@ use beamcraft_model::reference::{
     WriteForeign, check_source_path,
 };
 use session::Refusal;
+use session::pipeline::{
+    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, digest_of, host_uuid, integrity,
+    load_base, open_base, summarize,
+};
 use std::collections::BTreeSet;
 use std::convert::Infallible;
 
@@ -721,7 +722,7 @@ fn open_head(store: &RevisionStore) -> Result<(Revision, Reader, Opened, Vec<Pri
         .filter(|e| e.role() == LayerRole::External)
         .map(|e| e.name().to_owned())
         .collect();
-    let request = crate::plate::open_request(
+    let request = session::pipeline::open_request(
         content.root_layer(),
         content.project().as_str(),
         content.workspace().as_str(),
