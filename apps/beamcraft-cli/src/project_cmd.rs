@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! Start commands: `create-project` and `list-project`. They call `beamcraft_host::settings` and
+//! Start commands: `create-project` and `list-project`. They call `session::settings` and
 //! `beamcraft_cli::project` and print one JSON object with the same error shape and exit codes as
 //! the plate commands.
 //!
@@ -13,18 +13,19 @@
 use crate::plate_cmd::revision_json;
 use beamcraft_cli::definition::{DefineRequest, DefinitionRecord, define};
 use beamcraft_cli::plate::PlateError;
+use beamcraft_cli::plate::summarize;
 use beamcraft_cli::project::{
-    ENVIRONMENTS_DIR, EnvironmentState, ProjectContext, ProjectInfo, ProjectState,
-    builtin_environment_dirs, create_project, create_project_unique, install_environment,
-    list_environments, list_projects,
+    ProjectContext, create_project, create_project_unique, install_environment,
 };
 use beamcraft_host::ids::IdSource;
 use beamcraft_host::revision::{NoFault, RevisionStore, Uuid7 as HostUuid7};
-use beamcraft_host::settings::{Settings, SettingsError, default_dir};
 use beamcraft_host::storage::BlobStore;
 use beamcraft_json::Json;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, Uuid7, WorkspaceId};
+use session::environment::{EnvironmentState, environment_folders, list_environments};
+use session::project::{ProjectInfo, ProjectState, list_projects};
+use session::settings::{Settings, SettingsError, default_dir};
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -222,11 +223,12 @@ fn now_ms() -> u64 {
 }
 
 fn remember(dir: &Path, project: &Path) -> Run<()> {
-    let mut settings = Settings::load(dir).map_err(settings_error)?;
-    settings
-        .touch_recent(project.to_path_buf(), now_ms())
-        .map_err(settings_error)?;
-    settings.save(dir).map_err(settings_error)
+    Settings::update(dir, |settings| {
+        settings.touch_recent(project.to_path_buf(), now_ms())?;
+        Ok(true)
+    })
+    .map(|_| ())
+    .map_err(settings_error)
 }
 
 fn boolean(text: &str) -> Run<bool> {
@@ -249,13 +251,13 @@ fn project_json(info: &ProjectInfo) -> Run<Json> {
             project_id,
             created_ms,
             modified_ms,
-            revision,
+            head,
         } => (
             Json::text("ready"),
             Json::text(project_id.clone()),
             Json::uint(*created_ms),
             Json::uint(*modified_ms),
-            revision_json(revision),
+            revision_json(&summarize(head)),
         ),
         ProjectState::Empty => (
             Json::text("empty"),
@@ -301,24 +303,6 @@ struct Seeded {
     materials: u64,
 }
 
-/// The folders `list-environment` reads (built-in first, then the user's) and the user's folder.
-fn environment_folders(
-    config_dir: Option<&str>,
-) -> (Vec<(PathBuf, &'static str)>, Option<PathBuf>) {
-    let mut folders: Vec<(PathBuf, &'static str)> = builtin_environment_dirs()
-        .into_iter()
-        .map(|d| (d, "builtin"))
-        .collect();
-    let user = config_dir
-        .map(PathBuf::from)
-        .or_else(default_dir)
-        .map(|d| d.join(ENVIRONMENTS_DIR));
-    if let Some(user) = &user {
-        folders.push((user.clone(), "user"));
-    }
-    (folders, user)
-}
-
 /// Gives the new project at `dir` its environment and its default materials: the environment `id`
 /// is copied into the project folder (`environment/`), so later commands resolve profile names
 /// against it without any option, and the two default materials are published, one revision each.
@@ -330,7 +314,7 @@ fn seed_project(
     config_dir: Option<&str>,
     context: &ProjectContext,
 ) -> Run<Seeded> {
-    let (folders, _) = environment_folders(config_dir);
+    let (folders, _) = environment_folders(config_dir.map(Path::new));
     let file = list_environments(&folders)
         .into_iter()
         .find_map(|entry| match entry.state {

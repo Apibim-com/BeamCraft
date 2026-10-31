@@ -147,6 +147,7 @@ dependencies = [
  "beamcraft-json",
  "beamcraft-layer-engine",
  "beamcraft-model",
+ "session",
 ]
 
 [[package]]
@@ -225,6 +226,7 @@ dependencies = [
  "image",
  "pollster",
  "rfd",
+ "session",
  "skrifa",
  "wgpu",
  "winit",
@@ -2343,6 +2345,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.9",
+]
+
+[[package]]
+name = "session"
+version = "0.0.1"
+dependencies = [
+ "beamcraft-host",
+ "beamcraft-json",
+ "beamcraft-layer-engine",
+ "beamcraft-model",
 ]
 
 [[package]]

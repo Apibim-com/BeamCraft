@@ -23,6 +23,7 @@ use beamcraft_model::id::Uuid7;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 
 /// File name of the settings in the configuration directory.
 pub const FILE_NAME: &str = "settings.json";
@@ -414,8 +415,32 @@ impl Settings {
         Self::decode(&bytes)
     }
 
-    /// Writes the settings into `dir`, creating the directory when it is missing.
+    /// Writes the settings into `dir`, creating the directory when it is missing. Writes of one
+    /// process never overlap: they share one lock, because the temporary file is named after the
+    /// process.
     pub fn save(&self, dir: &Path) -> Result<(), SettingsError> {
+        let _guard = WRITE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+        self.write_file(dir)
+    }
+
+    /// Reads the settings of `dir`, lets `change` edit them and saves the result, all under the
+    /// write lock of this process: two threads that change different fields cannot lose each
+    /// other's edit. `change` returns whether the settings were modified; the file is written only
+    /// then, and nothing is written when the read or `change` fails. Returns the settings as they
+    /// are after the call.
+    pub fn update(
+        dir: &Path,
+        change: impl FnOnce(&mut Self) -> Result<bool, SettingsError>,
+    ) -> Result<Self, SettingsError> {
+        let _guard = WRITE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut settings = Self::load(dir)?;
+        if change(&mut settings)? {
+            settings.write_file(dir)?;
+        }
+        Ok(settings)
+    }
+
+    fn write_file(&self, dir: &Path) -> Result<(), SettingsError> {
         let bytes = self.encode()?;
         fs::create_dir_all(dir)
             .map_err(|e| io_error(&e, "the settings directory could not be created"))?;
@@ -433,6 +458,9 @@ impl Settings {
         Ok(())
     }
 }
+
+/// Serialises the writes of this process; see [`Settings::save`].
+static WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 fn limits() -> Limits {
     Limits {
