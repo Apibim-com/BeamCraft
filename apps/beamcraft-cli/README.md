@@ -29,7 +29,10 @@ required and, for alternatives, a `one_of` group of which exactly one member is 
 request identity options are listed on every command that takes them. A parameter marked optional
 can still be required by a rule that links it to others (for example `--width` with `--length`);
 that rule is in the family help and in the refusal. A test checks that every listed option is
-accepted by its command.
+accepted by its command. [`COMMANDS.md`](COMMANDS.md) is the same registry rendered as a
+reference, one usage line per command; it is generated, a test fails when it is out of date, and
+`BEAMCRAFT_BLESS=1 cargo test -p beamcraft-cli --test cli registry::the_reference_is_current`
+rewrites it.
 Parsing and execution stay in the existing command adapters. No arguments, `--help` and `-h`
 print the same help.
 
