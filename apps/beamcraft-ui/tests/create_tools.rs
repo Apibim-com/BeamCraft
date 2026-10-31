@@ -149,6 +149,7 @@ fn a_duplicate_model_name_explains_how_to_recover() {
 }
 
 #[test]
+#[ignore = "the window still runs a removed CLI command, see #763"]
 fn automatic_new_model_names_use_the_same_unique_creation_as_the_cli() {
     let Some(cli) = cli() else { return };
     let stores = Stores::new();

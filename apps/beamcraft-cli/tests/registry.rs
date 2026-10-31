@@ -5,7 +5,7 @@
 
 #![allow(clippy::expect_used)]
 
-use beamcraft_cli::registry::{Access, COMMANDS, Route, Tier};
+use beamcraft_cli::registry::{Access, COMMANDS, Route};
 use beamcraft_json::{Json, Limits};
 use std::io::Read;
 use std::process::{Command, Stdio};
@@ -81,7 +81,7 @@ fn names(out: &str) -> Vec<String> {
 }
 
 #[test]
-fn commands_lists_the_registry_and_filters_by_tier() {
+fn commands_lists_the_registry() {
     let (code, out) = run(&["commands"]);
     assert_eq!(code, Some(0));
     assert!(out.contains("\"outcome\":\"commands_listed\""), "{out}");
@@ -89,20 +89,21 @@ fn commands_lists_the_registry_and_filters_by_tier() {
     assert_eq!(all.len(), COMMANDS.len());
     assert!(all.iter().any(|n| n == "create-member"));
 
-    let (_, core) = run(&["commands", "--tier", "core"]);
-    let (_, assist) = run(&["commands", "--tier", "ui-assist"]);
-    let (core, assist) = (names(&core), names(&assist));
-    assert_eq!(core.len() + assist.len(), all.len());
-    assert!(assist.iter().any(|n| n == "snap"));
-    assert!(!core.iter().any(|n| n == "snap"));
-    let expected = COMMANDS.iter().filter(|c| c.tier == Tier::UiAssist).count();
-    assert_eq!(assist.len(), expected);
+    for removed in [
+        "pick",
+        "snap",
+        "show-settings",
+        "set-settings",
+        "list-environment",
+    ] {
+        assert!(!all.iter().any(|n| n == removed), "{removed} was removed");
+    }
 }
 
 #[test]
-fn commands_refuses_unknown_tiers_and_stray_arguments() {
+fn commands_takes_no_arguments() {
     for args in [
-        &["commands", "--tier", "human"][..],
+        &["commands", "--tier", "core"][..],
         &["commands", "--tier"],
         &["commands", "extra"],
     ] {

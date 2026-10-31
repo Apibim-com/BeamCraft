@@ -289,16 +289,11 @@ fn run(args: Vec<std::ffi::OsString>) -> Result<Json, (HostError, Json)> {
 fn read_file(path: &str, cap: usize) -> Result<Vec<u8>, HostError> {
     beamcraft_cli::source_file::read_file(path, cap).map_err(HostError::logical)
 }
-/// `commands [--tier core|ui-assist]`: the registry, with no store involved.
+/// `commands`: the registry, with no store involved. It takes no options.
 fn list_commands(tail: &[std::ffi::OsString]) -> std::process::ExitCode {
-    let tier = match tail {
-        [] => Some(None),
-        [flag, value] if flag == "--tier" => value.to_str().map(Some),
-        _ => None,
-    };
-    match tier.and_then(|t| beamcraft_cli::registry::listing(t)) {
-        Some(json) => print_json(&json, 0),
-        None => {
+    match tail {
+        [] => print_json(&beamcraft_cli::registry::listing(), 0),
+        _ => {
             let error = invalid();
             let json = Json::object([
                 ("outcome", Json::text("rejected")),

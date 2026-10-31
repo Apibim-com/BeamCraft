@@ -14,7 +14,6 @@ use support::{at, list, text};
 
 use beamcraft_json::{Json, Limits};
 use std::fs;
-use std::path::PathBuf;
 use std::process::Command;
 
 const ACTOR: &str = "0199e7a0-0000-7000-8000-0000000000a1";
@@ -64,20 +63,9 @@ impl Fixture {
 }
 
 #[test]
-fn default_project_names_skip_existing_files_and_reserve_free_folders() {
+fn unique_project_names_skip_existing_files_and_reserve_free_folders() {
     let f = Fixture::new();
     let parent = f.path("models");
-    let suggest = || {
-        f.raw(&[
-            "suggest-project-name",
-            "--parent",
-            &parent,
-            "--name",
-            "New Model",
-        ])
-    };
-    assert_eq!(text(&suggest().1, "name"), "New Model");
-    assert!(!f.shared.root.join("models/New Model").exists());
     let create = || {
         f.ok(&[
             "create-project",
@@ -92,7 +80,6 @@ fn default_project_names_skip_existing_files_and_reserve_free_folders() {
         ])
     };
     assert_eq!(text(at(&create(), &["project"]), "name"), "New Model");
-    assert_eq!(text(&suggest().1, "name"), "New Model 1");
     fs::write(
         f.shared.root.join("models/New Model 1"),
         b"keep this existing file",
@@ -124,182 +111,11 @@ fn default_project_names_skip_existing_files_and_reserve_free_folders() {
         ]),
         "DUPLICATE_ID"
     );
-    assert_eq!(
-        f.raw(&[
-            "suggest-project-name",
-            "--parent",
-            &parent,
-            "--name",
-            "../bad"
-        ])
-        .0,
-        2
-    );
-}
-
-#[test]
-fn listing_recents_persists_removal_of_missing_models_and_keeps_unreadable_models() {
-    use beamcraft_host::settings::Settings;
-    let f = Fixture::new();
-    let config = f.shared.root.join("config");
-    let models = f.path("models");
-    let created = f.ok(&[
-        "create-project",
-        "--parent",
-        &models,
-        "--name",
-        "Ready",
-        "--actor-id",
-        ACTOR,
-    ]);
-    let ready = PathBuf::from(text(at(&created, &["project"]), "path"));
-    let unreadable = f.shared.root.join("models/unreadable");
-    fs::create_dir_all(unreadable.join("revisions")).unwrap();
-    fs::write(
-        unreadable.join("revisions/corrupt-record"),
-        b"not a revision",
-    )
-    .unwrap();
-    let missing = f.shared.root.join("models/removed");
-    let no_store = f.shared.root.join("models/removed-store");
-    fs::create_dir_all(&no_store).unwrap();
-    let mut settings = Settings::load(&config).unwrap();
-    for path in [&unreadable, &missing, &no_store] {
-        settings.touch_recent(path.clone(), 1).unwrap();
-    }
-    settings.save(&config).unwrap();
-    let listed = f.ok(&["list-recent"]);
-    let entries = at(&listed, &["recent"]).array().unwrap();
-    assert_eq!(entries.len(), 2, "{listed:?}");
-    let saved = Settings::load(&config).unwrap();
-    assert_eq!(
-        saved
-            .recent
-            .iter()
-            .map(|entry| &entry.path)
-            .collect::<Vec<_>>(),
-        [&unreadable, &ready]
-    );
-    assert!(
-        !at(&entries[0], &["project", "state"])
-            .get("unreadable")
-            .unwrap()
-            .string()
-            .unwrap()
-            .is_empty()
-    );
-    let before = fs::read(config.join("settings.json")).unwrap();
-    assert_eq!(listed, f.ok(&["list-recent"]));
-    assert_eq!(before, fs::read(config.join("settings.json")).unwrap());
-}
-
-#[test]
-fn appearance_defaults_to_system_and_persists_without_changing_other_settings() {
-    let f = Fixture::new();
-    assert_eq!(
-        text(at(&f.ok(&["show-settings"]), &["settings"]), "theme"),
-        "system"
-    );
-    f.ok(&["set-settings", "--name", "Ana", "--email", "ana@example.cl"]);
-    for theme in ["dark", "light", "system"] {
-        let saved = f.ok(&["set-settings", "--theme", theme]);
-        assert_eq!(text(at(&saved, &["settings"]), "theme"), theme);
-        let read = f.ok(&["show-settings"]);
-        assert_eq!(text(at(&read, &["settings"]), "theme"), theme);
-        assert_eq!(text(at(&read, &["settings", "profile"]), "name"), "Ana");
-    }
-    let before = fs::read(f.path("config/settings.json")).unwrap();
-    assert_eq!(
-        f.code(&["set-settings", "--theme", "automatic"]),
-        "INVALID_ARGUMENT"
-    );
-    assert_eq!(fs::read(f.path("config/settings.json")).unwrap(), before);
-}
-
-#[test]
-fn the_profile_keeps_its_author_identity() {
-    let f = Fixture::new();
-    let empty = f.ok(&["show-settings"]);
-    assert_eq!(at(&empty, &["settings", "profile"]), &Json::Null);
-    let saved = f.ok(&[
-        "set-settings",
-        "--name",
-        "Юрий",
-        "--email",
-        "yuri@example.cl",
-        "--environment",
-        "blank",
-        "--skip-launcher",
-        "true",
-    ]);
-    let actor = text(at(&saved, &["settings", "profile"]), "actor_id");
-    let changed = f.ok(&["set-settings", "--name", "Yuri", "--email", "y@example.com"]);
-    let profile = at(&changed, &["settings", "profile"]);
-    assert_eq!(text(profile, "actor_id"), actor);
-    assert_eq!(text(profile, "email"), "y@example.com");
-    assert_eq!(text(at(&changed, &["settings"]), "environment"), "blank");
-    assert_eq!(
-        f.code(&["set-settings", "--name", "A", "--email", "not-an-address"]),
-        "INVALID_ARGUMENT"
-    );
-    assert_eq!(f.code(&["set-settings", "--name", "A"]), "INVALID_ARGUMENT");
-    // A damaged settings file is refused, never replaced silently.
-    fs::write(f.shared.root.join("config/settings.json"), b"{").unwrap();
-    assert_eq!(f.code(&["show-settings"]), "INTEGRITY_ERROR");
-}
-
-#[test]
-fn the_blank_environment_is_built_in_and_a_user_one_is_listed_after_it() {
-    let f = Fixture::new();
-    let user = f.shared.root.join("config/environments");
-    fs::create_dir_all(user.join("mine")).unwrap();
-    fs::create_dir_all(user.join("again")).unwrap();
-    fs::create_dir_all(user.join("broken")).unwrap();
-    let env = |id: &str| {
-        format!(
-            "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    customLayerData = {{\n        string \"bim:environment:id\" = \"{id}\"\n        string[] \"bim:environment:libraries\" = [\"profiles.usda\"]\n    }}\n)\n"
-        )
-    };
-    fs::write(user.join("mine/environment.usda"), env("mine")).unwrap();
-    fs::write(user.join("again/environment.usda"), env("blank")).unwrap();
-    fs::write(user.join("broken/environment.usda"), "#usda 1.0\n").unwrap();
-    let listed = f.ok(&["list-environment"]);
-    let entries = at(&listed, &["environments"]).array().unwrap();
-    let first = &entries[0];
-    assert_eq!(
-        (text(first, "id"), text(first, "origin")),
-        ("blank".into(), "builtin".into())
-    );
-    assert_eq!(at(first, &["shadowed"]), &Json::Bool(false));
-    let user_entries: Vec<&Json> = entries
-        .iter()
-        .filter(|e| text(e, "origin") == "user")
-        .collect();
-    assert_eq!(user_entries.len(), 3);
-    let shadowed = user_entries
-        .iter()
-        .find(|e| at(e, &["id"]) == &Json::text("blank"))
-        .unwrap();
-    assert_eq!(at(shadowed, &["shadowed"]), &Json::Bool(true));
-    assert!(
-        user_entries
-            .iter()
-            .any(|e| at(e, &["refused"]) != &Json::Null && at(e, &["id"]) == &Json::Null)
-    );
-    // The built-in environment is an ordinary A07.3 environment.
-    let blank = text(first, "path");
-    let library = f.raw(&["list-library", "--environment", &blank]);
-    assert_eq!(library.0, 0, "{:?}", library.1);
 }
 
 #[test]
 fn a_created_project_opens_lists_and_is_remembered() {
     let f = Fixture::new();
-    f.ok(&["set-settings", "--name", "Ana", "--email", "ana@example.cl"]);
-    let author = text(
-        at(&f.ok(&["show-settings"]), &["settings", "profile"]),
-        "actor_id",
-    );
     let models = f.path("models");
     let created = f.ok(&[
         "create-project",
@@ -309,8 +125,10 @@ fn a_created_project_opens_lists_and_is_remembered() {
         "Каркас A-F 1-14",
         "--project-id",
         PROJECT,
+        "--actor-id",
+        ACTOR,
     ]);
-    assert_eq!(text(&created, "actor_id"), author);
+    assert_eq!(text(&created, "actor_id"), ACTOR);
     assert_eq!(at(&created, &["recent_recorded"]), &Json::Bool(true));
     let project = at(&created, &["project"]);
     assert_eq!(text(project, "state"), "ready");
@@ -358,19 +176,6 @@ fn a_created_project_opens_lists_and_is_remembered() {
     let modified = at(&projects[0], &["modified_ms"]).unsigned().unwrap();
     let created_ms = at(&projects[0], &["created_ms"]).unsigned().unwrap();
     assert!(modified >= created_ms);
-
-    let recent = f.ok(&["list-recent"]);
-    let recent = at(&recent, &["recent"]).array().unwrap();
-    assert_eq!(recent.len(), 1);
-    assert_eq!(text(at(&recent[0], &["project"]), "path"), store);
-    assert_eq!(
-        f.code(&["add-recent", "--store", &f.path("models/plain folder")]),
-        "NOT_FOUND"
-    );
-    assert_eq!(
-        text(&f.ok(&["add-recent", "--store", &store]), "outcome"),
-        "recent_added"
-    );
 }
 
 #[test]
