@@ -337,10 +337,12 @@ pub struct PickResult {
 fn non_finite() -> ViewError {
     ViewError::new(ViewCode::NonFinite)
 }
-pub(crate) fn input() -> ViewError {
+/// Shared with the steel crate.
+pub fn input() -> ViewError {
     ViewError::new(ViewCode::PickInputInvalid)
 }
-pub(crate) fn limit() -> ViewError {
+/// Shared with the steel crate.
+pub fn limit() -> ViewError {
     ViewError::new(ViewCode::PickLimit)
 }
 fn uncertain() -> ViewError {

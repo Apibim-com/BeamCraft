@@ -83,29 +83,35 @@ discipline; the platform never depends on a discipline; both apps may depend on 
 checked mechanically by `apps/boundaries` through a table kind `discipline`, added by the first
 discipline crate (F08 section 2).
 
-## State after the module split
+## State after the split
 
-The steel code of three crates now sits in one subtree each, so the later cut into a crate is a
-move of a directory and not a hunt through mixed files:
+The steel code of `model`, `kernel` and `engine` is one crate, `crates/steel`, with a module for
+each layer it extends (`steel::model`, `steel::kernel`, `steel::engine`). The platform crates do
+not depend on it: `rg "steel"` finds nothing in their `src`. `layer-engine`, the CLI and the
+window depend on it, so `layer-engine` sits above it in the F08 table (layer 5) and `session`
+and the apps above that (6 and 7).
 
-| Crate | Steel subtree | Platform files that still reach into it |
-|---|---|---|
-| `model` | `steel::{command, section, fastener, instance, definition}` | none in production code; `command.rs` names `CreatePlate` in a doc link and a test |
-| `kernel` | `steel::{build, fastener, input, member, member_hole, plate_contour, result, ruled, section, sweep, cross_check, body}` | none in production code; `mesh.rs` has one test import |
-| `engine` | `steel::{bend, bolt, command, committed, contour_edit, copy, corners, cut, fabricate, fastener, instance, loft_plate, member, member_hole, plate_draft, quantity, solid_mesh, synthetic, transaction, transform, update, weld}` | `solid.rs` (`SweepResult`, the sweep mesh constructor), `numbering/geometry.rs` (`AuthoredMember`), and the tests that take `synthetic::plate_scene` (`annotation`, `view_clipping`, `query/{bundle,feature,pick}`) |
+Two corrections to the audit came from reading the code:
 
-Those rows are the complete list of back-edges, and the test is mechanical:
-`rg "crate::steel|beamcraft_(model|kernel)::steel"` outside the subtrees.
+- The rectangular plate builder (`kernel::build`, `input`, `result`), its cross-check,
+  `Body::from_plate`, `SolidMesh::from_box`, the `SceneMesh` conversion and
+  `engine::synthetic::plate_scene` are one box primitive with its demo scenes. The platform
+  tests (pick, bundle, feature, clipping), the window and the headless view commands build
+  their scenes from it, and nothing in it is steel specific, so it stayed in the platform.
+- The update, copy, array, transform, quantity and committed-plate files looked like generic
+  frameworks and are per-kind code on `AuthoredPlate` and `AuthoredMember`, so they moved.
 
-## Why the crate cannot be cut yet
+To let a crate outside `model`, `kernel` and `engine` build their types, some internals became
+`pub` with a "Shared with the steel crate" doc line (a handful of kernel and scene fields and
+helpers, `SolidMesh::from_parts`). The inherent impls that cannot live outside the type's crate
+became free functions in `steel::engine` (`solid_mesh::from_section`, `from_loft`, `from_sweep`,
+`numbering_geometry::member_geometry`).
 
-A discipline crate (kind `discipline`) may depend on the platform, never the other way round, and
-Cargo refuses a cycle. `model`, `kernel` and `engine` are now almost clean in production code
-(the table above), and reading the remaining files showed that most of what looked like platform
-frameworks is steel: `quantity`, `update`, `transform`, `copy`, `transaction` and the
-committed-plate reader work on `AuthoredPlate` and `AuthoredMember`, so they moved with it.
+## What is left
 
-What still ties the platform to steel is the branching on the kind of element:
+The crate is kind `native` because `layer-engine` and the CLI still branch on the kind of
+element and so depend on it; the rule that only an app or a tool may depend on a `discipline`
+holds once they do not. What ties them to steel is:
 
 - `layer-engine`: the `Shape` and `Change` enums and the `validate.rs` and `edit.rs` handlers
   list plate, member, weld and bolt next to grid, level and assembly;
@@ -113,9 +119,9 @@ What still ties the platform to steel is the branching on the kind of element:
 - `ElementPatch`, one structure that carries plate fields; `ElementKind`, `prim.rs` and
   `layer-engine/src/index.rs`, which name plate, beam and column.
 
-The way out is one element interface in the platform, implemented in steel for `Plate` and
-`Beam`/`Column`, so that the engine, the CLI and `layer-engine` call it and no longer branch on a
-steel kind. The operations already exist as symmetric pairs (`copy_plate`/`copy_member`,
+The way out is one element interface in the platform, implemented in `steel` for `Plate` and
+`Beam`/`Column`, so that the engine, the CLI and `layer-engine` call it and no longer branch on
+a steel kind. The operations already exist as symmetric pairs (`copy_plate`/`copy_member`,
 `patch_plate`/`patch_member`, `mirror_plate_local`/`mirror_member_local`,
 `array_plate_copies`/`array_member_copies`), so the interface is taken from them, not guessed.
 The stored `steel:*` attributes and the schema descriptor stay byte-identical. The work is

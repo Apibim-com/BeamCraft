@@ -13,16 +13,14 @@
     clippy::panic
 )]
 
-use beamcraft_engine::steel::command::{
-    CreatePlateOutcome, MaterialInfo, create_plate, no_materials,
-};
 use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::Placement;
 use beamcraft_model::digest::Sha256;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
-use beamcraft_model::steel::command::CreatePlate;
 use std::collections::{BTreeMap, BTreeSet};
+use steel::engine::command::{CreatePlateOutcome, MaterialInfo, create_plate, no_materials};
+use steel::model::command::CreatePlate;
 
 // Explicit lists: a new or removed fixture case must change the evidence inventory. Members,
 // feature/key/query protocols and fault-injection requests need their own adapters, not a
@@ -420,8 +418,8 @@ fn check_success(
             use beamcraft_engine::query::feature::{
                 FeatureGeometry, list_features, lookup_feature,
             };
-            use beamcraft_engine::steel::committed::{evaluate_committed, scene_elements};
             use beamcraft_engine::{Limits as ViewLimits, ViewPin, ViewSnapshot};
+            use steel::engine::committed::{evaluate_committed, scene_elements};
             let records =
                 evaluate_committed(std::slice::from_ref(&out.authored), &no_materials).unwrap();
             let pin = ViewPin::new(Sha256::digest(b"P10 F06 POS-11").unwrap(), 1);
@@ -550,7 +548,7 @@ fn k1_plate_projections_match_the_fixture_or_an_explicit_deviation() {
             deviations.insert(id);
         } else if let Ok(code) = expected.get("f04_code") {
             if id == "POS-56" {
-                use beamcraft_engine::steel::plate_draft::{PlateDraft, create_plate_draft};
+                use steel::engine::plate_draft::{PlateDraft, create_plate_draft};
                 let PlateDraft::Unsupported(plate) =
                     create_plate_draft(&command, &|_| false, &no_materials).unwrap()
                 else {

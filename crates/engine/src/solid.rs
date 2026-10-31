@@ -28,6 +28,27 @@ pub struct SolidMesh {
 }
 
 impl SolidMesh {
+    /// A mesh from the parts of a certified body: the caller vouches that `blob` is the encoded
+    /// form of the vertices, triangles and face table, that `digest` is its digest and that
+    /// `volume_mm3` is the volume the seal measured.
+    pub fn from_parts(
+        vertices: Vec<[f64; 3]>,
+        triangles: Vec<[u32; 3]>,
+        face_table: Vec<String>,
+        blob: Vec<u8>,
+        digest: ContentDigest,
+        volume_mm3: f64,
+    ) -> Self {
+        Self {
+            vertices,
+            triangles,
+            face_table,
+            blob,
+            digest,
+            volume_mm3,
+        }
+    }
+
     /// The mesh of a sealed box.
     pub fn from_box(result: &PlateResult) -> Self {
         let mesh = result.mesh();
@@ -180,7 +201,7 @@ impl SolidMesh {
 
 /// Rotates a vector by the rigid quaternion `(x, y, z, w)`; the quaternion is normalized first,
 /// so any admitted (nonzero, finite) quaternion maps finite input to finite output.
-pub(crate) fn rotate_vector(v: [f64; 3], q: [f64; 4]) -> [f64; 3] {
+pub fn rotate_vector(v: [f64; 3], q: [f64; 4]) -> [f64; 3] {
     let [x, y, z, w] = q;
     let [vx, vy, vz] = v;
     let norm = (((x * x + y * y) + z * z) + (w * w)).sqrt();

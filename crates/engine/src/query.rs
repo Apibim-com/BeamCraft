@@ -6,7 +6,7 @@
 //! Implemented: `ListElements`, `GetMeshSnapshot` (blobs by digest), `QueryBounds` (element and
 //! all, world space), `GetChanges`, the selection API, and (V04) FeatureIds, `LookupFeature`,
 //! `Pick` and snaps for boxes and semantically named contour, operation and profile bodies.
-//! Local-space bounds and dependency keys are separate work. `steel::committed` (P01) turns the
+//! Local-space bounds and dependency keys are separate work. `steel::engine::committed` (P01) turns the
 //! authored plates of a committed revision into the snapshot builder's input.
 
 pub mod bounds;
