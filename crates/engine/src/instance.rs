@@ -4,10 +4,11 @@
 //! P11 shared-definition groups, independent of storage and UI.
 use crate::{steel::command::AuthoredPlate, steel::member::AuthoredMember};
 use beamcraft_model::{
-    command::{CommandError, CopyElement},
+    command::CommandError,
     error::ErrorCode,
     id::ElementId,
-    instance::{InstanceLink, PartKind},
+    steel::command::CopyElement,
+    steel::instance::{InstanceLink, PartKind},
 };
 use std::collections::BTreeMap;
 
@@ -28,7 +29,7 @@ impl InstanceGraph {
         links: &[InstanceLink],
     ) -> Result<Self, CommandError> {
         if parts.len() > crate::limits::MAX_ELEMENTS
-            || links.len() > beamcraft_model::instance::MAX_PART_INSTANCES
+            || links.len() > beamcraft_model::steel::instance::MAX_PART_INSTANCES
         {
             return Err(CommandError::new(
                 ErrorCode::LimitExceeded,

@@ -2,12 +2,11 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! P11 instance copy requests. Independent duplication remains `CopyElement`.
-use crate::{
-    command::{CommandError, CopyElement},
-    digest::{ContentDigest, Sha256},
-    error::ErrorCode,
-    id::ElementId,
-};
+use crate::command::CommandError;
+use crate::digest::{ContentDigest, Sha256};
+use crate::error::ErrorCode;
+use crate::id::ElementId;
+use crate::steel::command::CopyElement;
 
 /// Most linked part instances in one model, keeping an atomic group update within footprint limits.
 pub const MAX_PART_INSTANCES: usize = 256;

@@ -36,10 +36,11 @@ use beamcraft_layer_engine::authored::{
     Author, Change, EditTargets, MaterialOpinion, Opinion, Placement as LayerPlacement,
     schema_identity,
 };
-use beamcraft_model::command::{CommandError, UpdateElement};
+use beamcraft_model::command::CommandError;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
+use beamcraft_model::steel::command::UpdateElement;
 use session::Refusal;
 use session::pipeline::{
     AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, digest_of, host_uuid, integrity,
@@ -299,7 +300,7 @@ pub fn update_element(
     let shared = patch_effect.material || patch_effect.shape;
     let mut shared_records = Vec::new();
     if shared {
-        let patch = beamcraft_model::command::ElementPatch {
+        let patch = beamcraft_model::steel::command::ElementPatch {
             material: command.patch.material,
             thickness_mm: command.patch.thickness_mm,
             corners: command.patch.corners.clone(),
