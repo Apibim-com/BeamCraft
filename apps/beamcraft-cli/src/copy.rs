@@ -23,9 +23,6 @@ use crate::plate::{
 };
 use crate::publication::{PublicationTail, prepare_and_publish};
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::steel::committed::{MemberRecord, PlateRecord};
-use beamcraft_engine::steel::copy::{copy_member, copy_plate};
-use beamcraft_engine::steel::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{
@@ -36,13 +33,16 @@ use beamcraft_layer_engine::index::{ElementId as LayerElementId, LinkTarget};
 use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
-use beamcraft_model::steel::command::CopyElement;
-use beamcraft_model::steel::command::MemberKind;
 use session::Refusal;
 use session::pipeline::{
     AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, digest_of, host_uuid, integrity,
     load_base, open_base, summarize,
 };
+use steel::engine::committed::{MemberRecord, PlateRecord};
+use steel::engine::copy::{copy_member, copy_plate};
+use steel::engine::transaction::PriorOp;
+use steel::model::command::CopyElement;
+use steel::model::command::MemberKind;
 
 /// Inputs of one `copy_element` call beyond the command itself.
 #[derive(Debug, Clone)]
@@ -264,7 +264,7 @@ fn copy_with_mode(
     let copy = if let Some(source) = plates.iter().find(|r| r.authored.id == command.source_id) {
         CopiedElement::Plate(Box::new(PlateRecord {
             authored: if instance {
-                beamcraft_engine::steel::instance::copy_plate_instance(&source.authored, command)?
+                steel::engine::instance::copy_plate_instance(&source.authored, command)?
             } else {
                 copy_plate(&source.authored, command)?
             },
@@ -274,7 +274,7 @@ fn copy_with_mode(
     } else if let Some(source) = members.iter().find(|r| r.authored.id == command.source_id) {
         CopiedElement::Member(Box::new(MemberRecord {
             authored: if instance {
-                beamcraft_engine::steel::instance::copy_member_instance(&source.authored, command)?
+                steel::engine::instance::copy_member_instance(&source.authored, command)?
             } else {
                 copy_member(&source.authored, command)?
             },
@@ -335,7 +335,7 @@ fn copy_with_mode(
 
     let op_host = host_uuid(&request.op_id.to_string())?;
     let fingerprint = if instance {
-        beamcraft_model::steel::instance::CopyInstance {
+        steel::model::instance::CopyInstance {
             copy: command.clone(),
         }
         .content_fingerprint()?
@@ -377,8 +377,7 @@ fn copy_with_mode(
         }
         PriorOp::Unseen => {}
     }
-    if instance && instances.links().count() >= beamcraft_model::steel::instance::MAX_PART_INSTANCES
-    {
+    if instance && instances.links().count() >= steel::model::instance::MAX_PART_INSTANCES {
         return Err(CommandError::new(
             ErrorCode::LimitExceeded,
             "instances",
@@ -459,10 +458,10 @@ fn copy_with_mode(
         for change in &mut changes {
             if let Change::Create(element) = change {
                 let kind = match &copy {
-                    CopiedElement::Plate(_) => beamcraft_model::steel::instance::PartKind::Plate,
+                    CopiedElement::Plate(_) => steel::model::instance::PartKind::Plate,
                     CopiedElement::Member(r) => match r.authored.kind {
-                        MemberKind::Beam => beamcraft_model::steel::instance::PartKind::Beam,
-                        MemberKind::Column => beamcraft_model::steel::instance::PartKind::Column,
+                        MemberKind::Beam => steel::model::instance::PartKind::Beam,
+                        MemberKind::Column => steel::model::instance::PartKind::Column,
                     },
                 };
                 element.shape = Shape::Instance {

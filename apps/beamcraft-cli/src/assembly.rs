@@ -25,7 +25,6 @@ use crate::plate::{check_footprint, prior_op_with, property, replay_summary, tex
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::assembly::{Membership, PartKind};
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::steel::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
     Author, Change, EditTargets, Element, Placement as LayerPlacement, Prepare, Shape,
@@ -45,6 +44,7 @@ use session::pipeline::{
     load_base, open_base, summarize,
 };
 use std::collections::BTreeMap;
+use steel::engine::transaction::PriorOp;
 
 /// Identities of one A01 call beyond the command itself.
 #[derive(Debug, Clone)]

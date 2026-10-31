@@ -17,21 +17,21 @@ use crate::definition::material_lookup;
 use crate::plate::{check_footprint, decode, evaluate_decoded, mesh_change, plate_record};
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::steel::command::evaluate_plate;
-use beamcraft_engine::steel::committed::PlateRecord;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{Author, Change, EditTargets, Prepare, schema_identity};
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
-use beamcraft_model::steel::command::BendPlate;
 use session::Refusal;
 use session::pipeline::{
     AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, host_uuid, integrity, load_base,
     open_base, summarize,
 };
 use std::collections::BTreeMap;
+use steel::engine::command::evaluate_plate;
+use steel::engine::committed::PlateRecord;
+use steel::model::command::BendPlate;
 
 fn not_found() -> Refusal {
     Refusal::from(beamcraft_model::command::CommandError::new(
@@ -144,9 +144,7 @@ pub fn bend_plate_record(
         })
         .collect();
     let outcome =
-        beamcraft_engine::steel::bend::bend_plate(command, Some(&record.authored), &|id| {
-            used.contains(id)
-        })?;
+        steel::engine::bend::bend_plate(command, Some(&record.authored), &|id| used.contains(id))?;
     let materials = material_lookup(&definitions);
     let material = outcome
         .authored

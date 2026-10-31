@@ -9,9 +9,6 @@ use crate::plate::{
 };
 use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::steel::plate_draft::{
-    DraftAdmission, PlateDraft, UnsupportedPlate, admit_create_plate_draft,
-};
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{
@@ -21,6 +18,9 @@ use session::Refusal;
 use session::pipeline::{
     AUTHORED_LAYER, DERIVED_LAYER, RevisionSummary, control, digest_of, host_uuid, integrity,
     load_base, open_base, summarize,
+};
+use steel::engine::plate_draft::{
+    DraftAdmission, PlateDraft, UnsupportedPlate, admit_create_plate_draft,
 };
 
 /// Saved unsupported input with its committed revision and replay result.
@@ -87,7 +87,7 @@ pub fn create_plate_draft(
                 .find(|(p, _)| p.id == request.command.new_id)
                 .map(|(p, _)| p)
                 .ok_or_else(|| integrity("replayed element is absent"))?;
-            let state = beamcraft_engine::steel::plate_draft::create_plate_draft(
+            let state = steel::engine::plate_draft::create_plate_draft(
                 &authored.to_command(),
                 &|_| false,
                 &material_lookup(&decoded.definitions),

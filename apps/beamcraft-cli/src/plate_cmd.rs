@@ -35,11 +35,6 @@ use beamcraft_cli::workspace::{
     status as workspace_status,
 };
 use beamcraft_engine::footprint::{Entry, Footprint, Target};
-use beamcraft_engine::steel::command::{Quantities, origin_rectangle_contour};
-use beamcraft_engine::steel::committed::MemberRecord;
-use beamcraft_engine::steel::committed::PlateRecord;
-use beamcraft_engine::steel::plate_draft::UnsupportedPlate;
-use beamcraft_engine::steel::quantity::{Freshness, is_superseded_algorithm};
 use beamcraft_host::{
     ids::IdSource,
     revision::{NoFault, RevisionStore, Uuid7},
@@ -51,25 +46,28 @@ use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use beamcraft_model::limits::MAX_MEMBER_PATH_POINTS;
-use beamcraft_model::steel::command::{
+use session::Refusal;
+use session::pipeline::{ProjectClaim, RevisionSummary, claim_project, ensure_project};
+use std::collections::BTreeMap;
+use std::ffi::OsString;
+use steel::engine::command::{Quantities, origin_rectangle_contour};
+use steel::engine::committed::MemberRecord;
+use steel::engine::committed::PlateRecord;
+use steel::engine::plate_draft::UnsupportedPlate;
+use steel::engine::quantity::{Freshness, is_superseded_algorithm};
+use steel::model::command::{
     AddHole, BendPlate, BendRecord, BendSpec, ChamferPart, CombineParts, CornerTreatment,
     CreateLoftedPlate, CreatePlate, CreatePolybeam, CreateStraightMember, CutByLine, CutByPart,
     CutByPlane, CutByPolygon, CutRecord, FitEndToPart, HoleExtent, HoleSpec, KeepSide, MAX_HOLES,
     MemberKind, PlateCorner, PlateSide, SectionDepthPosition, SectionPlacement,
     SectionPlanePosition, SplitPart,
 };
-use beamcraft_model::steel::command::{
+use steel::model::command::{
     ArrayElements, ArrayStep, CopyElement, ElementMirror, ElementPatch, ElementRotate,
     UpdateElement,
 };
-use beamcraft_model::steel::definition::SectionProperties;
-use beamcraft_model::steel::section::{
-    CustomSection, ParametricSection, SectionFamily, SectionShape,
-};
-use session::Refusal;
-use session::pipeline::{ProjectClaim, RevisionSummary, claim_project, ensure_project};
-use std::collections::BTreeMap;
-use std::ffi::OsString;
+use steel::model::definition::SectionProperties;
+use steel::model::section::{CustomSection, ParametricSection, SectionFamily, SectionShape};
 
 pub(crate) type Run<T> = Result<T, Refusal>;
 
@@ -1628,30 +1626,30 @@ fn contour_edit_command(
     };
     let authored = &record.authored;
     let (points, corners) = match command {
-        "move-plate-vertex" => beamcraft_engine::steel::contour_edit::move_vertex(
+        "move-plate-vertex" => steel::engine::contour_edit::move_vertex(
             &authored.contour_points_mm,
             &authored.corners,
             index("--vertex")?,
             xy("--to")?,
         )?,
-        "move-plate-edge" => beamcraft_engine::steel::contour_edit::move_edge(
+        "move-plate-edge" => steel::engine::contour_edit::move_edge(
             &authored.contour_points_mm,
             &authored.corners,
             index("--edge")?,
             xy("--delta")?,
         )?,
-        "insert-plate-vertex" => beamcraft_engine::steel::contour_edit::insert_vertex(
+        "insert-plate-vertex" => steel::engine::contour_edit::insert_vertex(
             &authored.contour_points_mm,
             &authored.corners,
             index("--edge")?,
             xy("--point")?,
         )?,
-        "delete-plate-vertex" => beamcraft_engine::steel::contour_edit::delete_vertex(
+        "delete-plate-vertex" => steel::engine::contour_edit::delete_vertex(
             &authored.contour_points_mm,
             &authored.corners,
             index("--vertex")?,
         )?,
-        _ => beamcraft_engine::steel::contour_edit::set_corner(
+        _ => steel::engine::contour_edit::set_corner(
             &authored.contour_points_mm,
             &authored.corners,
             index("--vertex")?,
@@ -1797,7 +1795,7 @@ fn cut_command(
                 actor,
                 project,
                 workspace,
-                command: beamcraft_model::steel::command::RemoveCut {
+                command: steel::model::command::RemoveCut {
                     target_id,
                     operation_id,
                 },
@@ -2256,14 +2254,12 @@ fn hole_spec(options: &BTreeMap<&str, &str>) -> Run<HoleSpec> {
             _ => return Err(invalid("--from and --to are required together")),
         };
         let diameter = numbers_list(given("--diameter").unwrap_or_default(), 1)?;
-        return Ok(HoleSpec::Member(
-            beamcraft_model::steel::command::MemberHole {
-                axis_point_mm,
-                axis_direction,
-                extent,
-                diameter_mm: diameter.first().copied().unwrap_or(0.0),
-            },
-        ));
+        return Ok(HoleSpec::Member(steel::model::command::MemberHole {
+            axis_point_mm,
+            axis_direction,
+            extent,
+            diameter_mm: diameter.first().copied().unwrap_or(0.0),
+        }));
     }
     let given_count = plate_flags;
     if given_count != 1 {
@@ -2371,7 +2367,7 @@ fn add_hole_cli(
                 actor,
                 project,
                 workspace,
-                command: beamcraft_model::steel::command::RemoveHole {
+                command: steel::model::command::RemoveHole {
                     target_id,
                     operation_id,
                 },
@@ -3385,7 +3381,7 @@ fn create_polybeam_command(
                 invalid("radius mode requires --start, --end, --radius and --normal")
             })
         };
-        beamcraft_engine::steel::member::arc_from_radius(
+        steel::engine::member::arc_from_radius(
             translation(required("--start")?)?,
             translation(required("--end")?)?,
             float(options, "--radius")?,
@@ -3448,7 +3444,7 @@ fn create_polybeam_command(
                 actor,
                 project,
                 workspace,
-                command: beamcraft_model::steel::command::CreateCurvedBeam { member: command },
+                command: steel::model::command::CreateCurvedBeam { member: command },
             },
             &mut NoFault,
         )?

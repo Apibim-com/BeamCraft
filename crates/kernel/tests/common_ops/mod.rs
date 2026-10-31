@@ -19,7 +19,7 @@ use crate::common::{mesh_volume, parse_blob, topology};
 use crate::common_mesh::{self, Buf};
 use beamcraft_kernel::ops::{Body, OpResult};
 use beamcraft_kernel::trimesh::TriMesh;
-use beamcraft_kernel::{steel::RectangularPlate, steel::rectangular_plate};
+use beamcraft_kernel::{RectangularPlate, rectangular_plate};
 
 /// A G02 plate as a body (the six `plate:` ids).
 pub fn plate(w: f64, l: f64, t: f64) -> Body {

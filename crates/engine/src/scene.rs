@@ -10,6 +10,7 @@ pub use reference::{ReferenceGeometry, reference_element};
 
 use crate::element::{ElementId, ElementKind};
 use beamcraft_geom::{Point3, Translation3};
+use beamcraft_kernel::PlateResult;
 use beamcraft_model::digest::ContentDigest;
 use std::sync::Arc;
 
@@ -22,11 +23,14 @@ pub(crate) const MAX_FACE_ROLE_BYTES: usize = 1024;
 /// shared, so elements that reuse one mesh (copies) hold it once in memory.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SceneMesh {
-    pub(crate) blob: Arc<[u8]>,
-    pub(crate) digest: ContentDigest,
-    pub(crate) vertices: Arc<[Point3]>,
+    /// The blob.
+    pub blob: Arc<[u8]>,
+    /// The digest.
+    pub digest: ContentDigest,
+    /// The vertices.
+    pub vertices: Arc<[Point3]>,
     /// Stable local face roles kept beside the index-based BCMESH01 face table.
-    pub(crate) face_table: Arc<[String]>,
+    pub face_table: Arc<[String]>,
 }
 
 impl SceneMesh {
@@ -55,6 +59,29 @@ impl SceneMesh {
     }
 }
 
+impl From<&PlateResult> for SceneMesh {
+    fn from(result: &PlateResult) -> Self {
+        let mesh = result.mesh();
+        Self {
+            blob: Arc::from(mesh.blob().as_slice()),
+            digest: mesh.mesh_digest(),
+            vertices: Arc::from(mesh.vertices().as_slice()),
+            face_table: Arc::from(
+                mesh.face_table()
+                    .iter()
+                    .map(|id| (*id).to_owned())
+                    .collect::<Vec<_>>(),
+            ),
+        }
+    }
+}
+
+impl From<PlateResult> for SceneMesh {
+    fn from(result: PlateResult) -> Self {
+        Self::from(&result)
+    }
+}
+
 /// One element offered to the snapshot builder.
 ///
 /// `full` is the representation with all operations applied. `simplified` is the optional
@@ -63,12 +90,18 @@ impl SceneMesh {
 /// snapshot.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SceneElement {
-    pub(crate) id: ElementId,
-    pub(crate) kind: ElementKind,
-    pub(crate) placement: Translation3,
-    pub(crate) orientation_xyzw: [f64; 4],
-    pub(crate) full: SceneMesh,
-    pub(crate) simplified: Option<SceneMesh>,
+    /// The id.
+    pub id: ElementId,
+    /// The kind.
+    pub kind: ElementKind,
+    /// The placement.
+    pub placement: Translation3,
+    /// The orientation xyzw.
+    pub orientation_xyzw: [f64; 4],
+    /// The full.
+    pub full: SceneMesh,
+    /// The simplified.
+    pub simplified: Option<SceneMesh>,
 }
 
 impl SceneElement {

@@ -40,7 +40,6 @@ use beamcraft_engine::measure::{ReferenceMeasurement, measure_reference};
 use beamcraft_engine::reference::{
     ReferenceRecord, UnitsStatus, attach, correct_units, move_reference, write_foreign,
 };
-use beamcraft_engine::steel::transaction::PriorOp;
 use beamcraft_host::revision::{
     CommitHook, CommitOutcome, LayerRole, Revision, RevisionStore, Uuid7,
 };
@@ -64,6 +63,7 @@ use session::pipeline::{
 };
 use std::collections::BTreeSet;
 use std::convert::Infallible;
+use steel::engine::transaction::PriorOp;
 
 /// The identities and trusted context every mutating call carries.
 #[derive(Debug, Clone)]
