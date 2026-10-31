@@ -273,3 +273,19 @@ fn every_listed_option_is_accepted_by_the_command() {
         }
     }
 }
+
+#[test]
+fn the_reference_is_current() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/COMMANDS.md");
+    let expected = beamcraft_cli::registry::reference_markdown();
+    if std::env::var_os("BEAMCRAFT_BLESS").is_some() {
+        std::fs::write(path, &expected).expect("write the reference");
+    }
+    let committed = std::fs::read_to_string(path).expect("COMMANDS.md is committed");
+    // A checkout may convert line endings.
+    assert!(
+        committed.replace("\r\n", "\n") == expected,
+        "COMMANDS.md is out of date: regenerate it with BEAMCRAFT_BLESS=1 \
+         cargo test -p beamcraft-cli --test cli registry::the_reference_is_current"
+    );
+}

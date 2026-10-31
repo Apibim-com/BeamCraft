@@ -696,6 +696,8 @@ pub const COMMANDS: &[Command] = &[
             req("--id", "UUID"),
             opt("--name", "TEXT"),
             opt("--class", "INT32"),
+            opt("--profile-digest", "SHA256"),
+            opt("--profile", "TEXT"),
             opt("--material-digest", "SHA256|none"),
             opt("--thickness", "MM"),
             opt("--thickness-side", "top|middle|bottom"),
@@ -1996,6 +1998,7 @@ pub const COMMANDS: &[Command] = &[
             req("--name", "TEXT"),
             opt("--unique-name", "true|false"),
             opt("--config-dir", "DIR"),
+            opt("--environment", "ID"),
         ],
     ),
     assist(
@@ -2046,6 +2049,114 @@ pub const COMMANDS: &[Command] = &[
 pub fn route(word: &OsStr) -> Option<Route> {
     let word = word.to_str()?;
     COMMANDS.iter().find(|c| c.name == word).map(|c| c.route)
+}
+
+/// One parameter in usage notation: `--name VALUE`, or `--name` for an option without a value.
+fn usage_item(param: &Param) -> String {
+    if param.value.is_empty() {
+        param.name.to_owned()
+    } else {
+        format!("{} {}", param.name, param.value)
+    }
+}
+
+/// The usage items of a command: required options, then each one-of group as `(--a X | --b Y)`,
+/// then optional options in brackets, then the common identity options when it takes them.
+fn usage_items(command: &Command) -> Vec<String> {
+    let mut items: Vec<String> = command
+        .params
+        .iter()
+        .filter(|p| p.need == Need::Required)
+        .map(usage_item)
+        .collect();
+    let mut groups: Vec<u8> = command
+        .params
+        .iter()
+        .filter_map(|p| match p.need {
+            Need::OneOf(group) => Some(group),
+            _ => None,
+        })
+        .collect();
+    groups.sort_unstable();
+    groups.dedup();
+    for group in groups {
+        let members: Vec<String> = command
+            .params
+            .iter()
+            .filter(|p| p.need == Need::OneOf(group))
+            .map(usage_item)
+            .collect();
+        items.push(format!("({})", members.join(" | ")));
+    }
+    items.extend(
+        command
+            .params
+            .iter()
+            .filter(|p| p.need == Need::Optional)
+            .map(|p| format!("[{}]", usage_item(p))),
+    );
+    if command.ids == Ids::Common {
+        items.extend(
+            COMMON_IDENTITY_OPTIONS
+                .iter()
+                .map(|name| format!("[{name} UUID]")),
+        );
+    }
+    items
+}
+
+/// Lays `words` out in lines of at most `width` columns, continuation lines indented.
+fn wrap(words: &[String], width: usize) -> String {
+    let mut out = String::new();
+    let mut line = 0;
+    for word in words {
+        if line == 0 {
+            line = word.len();
+        } else if line + 1 + word.len() > width {
+            out.push_str("\n    ");
+            line = 4 + word.len();
+        } else {
+            out.push(' ');
+            line += 1 + word.len();
+        }
+        out.push_str(word);
+    }
+    out
+}
+
+/// The command reference as Markdown, generated from the registry: for every command its family,
+/// tier, access and one usage line (required options bare, optional ones in brackets, one-of groups
+/// in parentheses). It is committed as `apps/beamcraft-cli/COMMANDS.md`, and a test fails when the
+/// committed file differs from this text.
+pub fn reference_markdown() -> String {
+    let mut out = String::from(
+        "# BeamCraft CLI command reference\n\n\
+         Generated from `src/registry.rs`; do not edit. Regenerate it with\n\
+         `BEAMCRAFT_BLESS=1 cargo test -p beamcraft-cli --test cli registry::the_reference_is_current`.\n\n\
+         A command is `beamcraft COMMAND --option VALUE ...`. In a usage line an option written bare is\n\
+         required, `[--option VALUE]` is optional, and `(--a X | --b Y)` means exactly one of them is\n\
+         required. A rule that links optional options (for example `--width` with `--length`) is in\n\
+         the family help, `beamcraft --help`, and in the refusal. `read` commands change nothing\n\
+         persistent; `write` commands change the store, the settings, a library or an output file.\n\
+         `ui-assist` commands mirror interactive-UI affordances; the rest are `core`.\n",
+    );
+    let mut family = "";
+    for command in COMMANDS {
+        if command.family != family {
+            family = command.family;
+            out.push_str(&format!("\n## {family}\n"));
+        }
+        let mut words = vec![command.name.to_owned()];
+        words.extend(usage_items(command));
+        out.push_str(&format!(
+            "\n### {}\n\n{}, {}.\n\n```text\n{}\n```\n",
+            command.name,
+            command.access.as_str(),
+            command.tier.as_str(),
+            wrap(&words, 98)
+        ));
+    }
+    out
 }
 
 /// One option as the `commands` result prints it.
