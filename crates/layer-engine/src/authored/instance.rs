@@ -5,7 +5,7 @@
 use super::*;
 use beamcraft_model::{
     id::ElementId,
-    instance::{InstanceLink, MAX_PART_INSTANCES, PartKind},
+    steel::instance::{InstanceLink, MAX_PART_INSTANCES, PartKind},
 };
 use openusd::sdf;
 

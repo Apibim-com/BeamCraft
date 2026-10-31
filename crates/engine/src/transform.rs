@@ -25,10 +25,9 @@
 
 use crate::steel::command::AuthoredPlate;
 use crate::steel::member::AuthoredMember;
-use beamcraft_model::command::{
-    ArrayElements, ArrayStep, CommandError, ElementMirror, ElementRotate, Placement,
-};
+use beamcraft_model::command::{CommandError, Placement};
 use beamcraft_model::error::ErrorCode;
+use beamcraft_model::steel::command::{ArrayElements, ArrayStep, ElementMirror, ElementRotate};
 use beamcraft_model::steel::command::{CutRecord, PlateSide};
 
 /// A 3x3 matrix, row-major.
@@ -450,7 +449,7 @@ pub fn array_plate_copies(
         .map(|(new_id, placement)| {
             let mut copy = crate::copy::copy_plate(
                 source,
-                &beamcraft_model::command::CopyElement {
+                &beamcraft_model::steel::command::CopyElement {
                     source_id: command.source_id,
                     new_id: *new_id,
                     name: command.name.clone(),
@@ -476,7 +475,7 @@ pub fn array_member_copies(
         .map(|(new_id, placement)| {
             let mut copy = crate::copy::copy_member(
                 source,
-                &beamcraft_model::command::CopyElement {
+                &beamcraft_model::steel::command::CopyElement {
                     source_id: command.source_id,
                     new_id: *new_id,
                     name: command.name.clone(),

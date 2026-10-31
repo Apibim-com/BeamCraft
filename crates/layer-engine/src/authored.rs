@@ -344,7 +344,7 @@ pub enum Shape {
     /// P11 instance: shared inputs are read from a canonical part; only metadata and pose are local.
     Instance {
         /// Same part kind as the canonical definition.
-        kind: beamcraft_model::instance::PartKind,
+        kind: beamcraft_model::steel::instance::PartKind,
         /// Canonical part identity, never another instance.
         definition: String,
     },
