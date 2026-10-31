@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! The BeamCraft engine API. V02 adds the renderer-agnostic view snapshot and query contract;
-//! P01 adds `CreatePlate` application ([`command`], [`footprint`], [`transaction`]) and the read
+//! P01 adds `CreatePlate` application ([`steel::command`], [`footprint`], [`transaction`]) and the read
 //! side over committed plates ([`query::committed`]).
 //!
 //! The crate holds pure, bounded, deterministic data and no UI, wgpu, egui, I/O or clock. A
