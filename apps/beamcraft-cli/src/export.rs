@@ -13,7 +13,7 @@
 //! omissions, plus the findings of the contract in its deterministic order.
 
 use crate::plate::{ElementMeta, Inspection, PlacementRead, inspect_revision, kernel_mesh};
-use beamcraft_engine::quantity::Freshness;
+use beamcraft_engine::steel::quantity::Freshness;
 use beamcraft_host::output::{Installed, OutputError, Staged, resolve_destination, stage_file};
 use beamcraft_host::revision::{Revision, RevisionError, RevisionStore};
 use beamcraft_ifc::{

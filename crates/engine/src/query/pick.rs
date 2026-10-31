@@ -1262,7 +1262,7 @@ pub struct MemberSnapAxis {
 
 /// Compute reference axes from evaluated records, without inferring them from a section mesh.
 pub fn member_snap_axes(
-    records: &[crate::query::committed::MemberRecord],
+    records: &[crate::steel::committed::MemberRecord],
 ) -> Result<Vec<MemberSnapAxis>, ViewError> {
     if records.len() > MAX_SCANNED_ELEMENTS {
         return Err(limit());

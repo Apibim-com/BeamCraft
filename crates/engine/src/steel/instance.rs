@@ -132,7 +132,7 @@ pub fn copy_plate_instance(
     source: &AuthoredPlate,
     command: &CopyElement,
 ) -> Result<AuthoredPlate, CommandError> {
-    let mut next = crate::copy::copy_plate(source, command)?;
+    let mut next = crate::steel::copy::copy_plate(source, command)?;
     next.cuts.clone_from(&source.cuts);
     next.hole_records.clone_from(&source.hole_records);
     Ok(next)
@@ -142,7 +142,7 @@ pub fn copy_member_instance(
     source: &AuthoredMember,
     command: &CopyElement,
 ) -> Result<AuthoredMember, CommandError> {
-    let mut next = crate::copy::copy_member(source, command)?;
+    let mut next = crate::steel::copy::copy_member(source, command)?;
     next.cuts.clone_from(&source.cuts);
     Ok(next)
 }
@@ -280,7 +280,7 @@ mod tests {
         assert_eq!(copy.hole_records, source.hole_records);
         assert_eq!(copy.cuts, source.cuts);
         // An independent duplicate mints fresh record identities instead.
-        let duplicate = crate::copy::copy_plate(&source, &command()).unwrap();
+        let duplicate = crate::steel::copy::copy_plate(&source, &command()).unwrap();
         assert_ne!(duplicate.hole_records, source.hole_records);
         assert_ne!(duplicate.cuts, source.cuts);
     }

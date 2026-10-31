@@ -8,7 +8,7 @@ use crate::attribute::attr_model;
 use crate::plate::{check_footprint, inspect, prior_op_with, replay_summary};
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::transaction::PriorOp;
+use beamcraft_engine::steel::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore};
 use beamcraft_layer_engine::authored::{
     Author, Change, EditTargets, Element, Prepare, Shape, annotation as storage, schema_identity,

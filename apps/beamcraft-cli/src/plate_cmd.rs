@@ -35,11 +35,11 @@ use beamcraft_cli::workspace::{
     status as workspace_status,
 };
 use beamcraft_engine::footprint::{Entry, Footprint, Target};
-use beamcraft_engine::quantity::{Freshness, is_superseded_algorithm};
-use beamcraft_engine::query::committed::MemberRecord;
-use beamcraft_engine::query::committed::PlateRecord;
 use beamcraft_engine::steel::command::{Quantities, origin_rectangle_contour};
+use beamcraft_engine::steel::committed::MemberRecord;
+use beamcraft_engine::steel::committed::PlateRecord;
 use beamcraft_engine::steel::plate_draft::UnsupportedPlate;
+use beamcraft_engine::steel::quantity::{Freshness, is_superseded_algorithm};
 use beamcraft_host::{
     ids::IdSource,
     revision::{NoFault, RevisionStore, Uuid7},

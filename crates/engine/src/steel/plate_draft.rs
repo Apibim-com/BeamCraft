@@ -5,9 +5,9 @@
 //! An unsupported authored plate has no mesh, bounds, quantity value or current key.
 
 use crate::footprint::Footprint;
-use crate::query::committed::{BodyCache, PlateRecord};
 use crate::steel::command::{AuthoredPlate, CreatePlateOutcome, MaterialLookup, create_plate};
-use crate::transaction::PriorOp;
+use crate::steel::committed::{BodyCache, PlateRecord};
+use crate::steel::transaction::PriorOp;
 use beamcraft_model::command::{CommandError, label_is_valid};
 use beamcraft_model::definition::MaterialSpec;
 use beamcraft_model::digest::ContentDigest;

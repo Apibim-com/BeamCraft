@@ -34,11 +34,11 @@ use crate::plate::{
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::query::committed::{MemberRecord, PlateRecord};
 use beamcraft_engine::steel::command::evaluate_plate;
+use beamcraft_engine::steel::committed::{MemberRecord, PlateRecord};
 use beamcraft_engine::steel::cut::{CutByPlaneOutcome, CutTarget};
 use beamcraft_engine::steel::member::{evaluate_member, member_quantities};
-use beamcraft_engine::transaction::PriorOp;
+use beamcraft_engine::steel::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{
@@ -1379,8 +1379,8 @@ fn mesh_change_of(element: &CutElement) -> Result<Change, Refusal> {
 /// A shared-instance group member re-authored with the canonical part's cut records, carrying
 /// the canonical's fresh body and quantities, exactly as `apply_cut` re-authors its own groups.
 fn shared_with_cuts(
-    plates: &[beamcraft_engine::query::committed::PlateRecord],
-    members: &[beamcraft_engine::query::committed::MemberRecord],
+    plates: &[beamcraft_engine::steel::committed::PlateRecord],
+    members: &[beamcraft_engine::steel::committed::MemberRecord],
     id: ElementId,
     canonical: &CutElement,
 ) -> Result<CutElement, Refusal> {
@@ -1419,7 +1419,7 @@ fn shared_with_cuts(
 /// The same re-authoring for the through-cut vocabulary of a polygon or part cut: a polygon
 /// cut always targets a plate, so the canonical element is one.
 fn shared_with_holes(
-    plates: &[beamcraft_engine::query::committed::PlateRecord],
+    plates: &[beamcraft_engine::steel::committed::PlateRecord],
     id: ElementId,
     canonical: &CutElement,
 ) -> Result<CutElement, Refusal> {

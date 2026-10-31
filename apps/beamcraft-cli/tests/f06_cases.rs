@@ -417,10 +417,10 @@ fn check_success(
             // Area/status are not exposed by this engine API and are NOT claimed here.
         }
         "POS-11" => {
-            use beamcraft_engine::query::committed::{evaluate_committed, scene_elements};
             use beamcraft_engine::query::feature::{
                 FeatureGeometry, list_features, lookup_feature,
             };
+            use beamcraft_engine::steel::committed::{evaluate_committed, scene_elements};
             use beamcraft_engine::{Limits as ViewLimits, ViewPin, ViewSnapshot};
             let records =
                 evaluate_committed(std::slice::from_ref(&out.authored), &no_materials).unwrap();

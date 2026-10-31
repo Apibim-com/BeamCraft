@@ -15,7 +15,7 @@ use beamcraft_engine::bom::BomRow;
 use beamcraft_engine::element::ElementKind;
 use beamcraft_engine::numbering::GroupKind;
 use beamcraft_engine::numbering_approval::StoredMark;
-use beamcraft_engine::query::committed::{MemberRecord, PlateRecord};
+use beamcraft_engine::steel::committed::{MemberRecord, PlateRecord};
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::steel::command::MemberKind;
 use session::Refusal;

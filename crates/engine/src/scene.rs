@@ -10,7 +10,6 @@ pub use reference::{ReferenceGeometry, reference_element};
 
 use crate::element::{ElementId, ElementKind};
 use beamcraft_geom::{Point3, Translation3};
-use beamcraft_kernel::steel::PlateResult;
 use beamcraft_model::digest::ContentDigest;
 use std::sync::Arc;
 
@@ -53,29 +52,6 @@ impl SceneMesh {
     pub(crate) fn with_face_table(mut self, face_table: Vec<String>) -> Self {
         self.face_table = face_table.into();
         self
-    }
-}
-
-impl From<&PlateResult> for SceneMesh {
-    fn from(result: &PlateResult) -> Self {
-        let mesh = result.mesh();
-        Self {
-            blob: Arc::from(mesh.blob().as_slice()),
-            digest: mesh.mesh_digest(),
-            vertices: Arc::from(mesh.vertices().as_slice()),
-            face_table: Arc::from(
-                mesh.face_table()
-                    .iter()
-                    .map(|id| (*id).to_owned())
-                    .collect::<Vec<_>>(),
-            ),
-        }
-    }
-}
-
-impl From<PlateResult> for SceneMesh {
-    fn from(result: PlateResult) -> Self {
-        Self::from(&result)
     }
 }
 

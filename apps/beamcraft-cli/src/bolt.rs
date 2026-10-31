@@ -30,10 +30,10 @@ use crate::plate::{
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::query::committed::PlateRecord;
 use beamcraft_engine::steel::bolt::Bounds;
+use beamcraft_engine::steel::committed::PlateRecord;
+use beamcraft_engine::steel::transaction::PriorOp;
 use beamcraft_engine::steel::weld::{PartKind, Parts};
-use beamcraft_engine::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
     Author, Bolt as LayerBolt, BoltGroup as LayerBoltGroup, Change, EditTargets, Element,

@@ -15,8 +15,8 @@ use crate::definition::material_lookup;
 use crate::plate::{decode, evaluate_decoded, prior_op_with, replay_summary};
 use crate::publication::{PublicationTail, prepare_and_publish};
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::transaction::PriorOp;
-use beamcraft_engine::transform::{array_member_copies, array_plate_copies};
+use beamcraft_engine::steel::transaction::PriorOp;
+use beamcraft_engine::steel::transform::{array_member_copies, array_plate_copies};
 use beamcraft_host::revision::{CommitHook, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{Author, Change, EditTargets, schema_identity};
@@ -161,7 +161,7 @@ pub fn array_elements(
         array_plate_copies(&source.authored, command)?
             .into_iter()
             .map(|authored| {
-                CopiedElement::Plate(Box::new(beamcraft_engine::query::committed::PlateRecord {
+                CopiedElement::Plate(Box::new(beamcraft_engine::steel::committed::PlateRecord {
                     body: source.body.clone(),
                     quantities: source.quantities,
                     authored,
@@ -172,7 +172,7 @@ pub fn array_elements(
         array_member_copies(&source.authored, command)?
             .into_iter()
             .map(|authored| {
-                CopiedElement::Member(Box::new(beamcraft_engine::query::committed::MemberRecord {
+                CopiedElement::Member(Box::new(beamcraft_engine::steel::committed::MemberRecord {
                     body: source.body.clone(),
                     quantities: source.quantities,
                     authored,

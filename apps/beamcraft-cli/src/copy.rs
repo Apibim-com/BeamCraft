@@ -22,10 +22,10 @@ use crate::plate::{
     replay_summary,
 };
 use crate::publication::{PublicationTail, prepare_and_publish};
-use beamcraft_engine::copy::{copy_member, copy_plate};
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::query::committed::{MemberRecord, PlateRecord};
-use beamcraft_engine::transaction::PriorOp;
+use beamcraft_engine::steel::committed::{MemberRecord, PlateRecord};
+use beamcraft_engine::steel::copy::{copy_member, copy_plate};
+use beamcraft_engine::steel::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{
@@ -264,7 +264,7 @@ fn copy_with_mode(
     let copy = if let Some(source) = plates.iter().find(|r| r.authored.id == command.source_id) {
         CopiedElement::Plate(Box::new(PlateRecord {
             authored: if instance {
-                beamcraft_engine::instance::copy_plate_instance(&source.authored, command)?
+                beamcraft_engine::steel::instance::copy_plate_instance(&source.authored, command)?
             } else {
                 copy_plate(&source.authored, command)?
             },
@@ -274,7 +274,7 @@ fn copy_with_mode(
     } else if let Some(source) = members.iter().find(|r| r.authored.id == command.source_id) {
         CopiedElement::Member(Box::new(MemberRecord {
             authored: if instance {
-                beamcraft_engine::instance::copy_member_instance(&source.authored, command)?
+                beamcraft_engine::steel::instance::copy_member_instance(&source.authored, command)?
             } else {
                 copy_member(&source.authored, command)?
             },

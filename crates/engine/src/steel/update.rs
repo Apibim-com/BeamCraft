@@ -141,11 +141,11 @@ pub fn patch_plate(
         next.thickness_side = Some(side);
     }
     next.placement = if let Some(mirror) = &patch.mirror {
-        crate::transform::mirror_plate_local(&mut next)?;
-        crate::transform::mirror_placement(
+        crate::steel::transform::mirror_plate_local(&mut next)?;
+        crate::steel::transform::mirror_placement(
             &plate.placement,
             mirror,
-            &crate::transform::PLATE_SYMMETRY,
+            &crate::steel::transform::PLATE_SYMMETRY,
         )?
     } else {
         placement_after(&plate.placement, patch)?
@@ -228,18 +228,19 @@ pub fn patch_member(
         }
     }
     if let Some(mirror) = &patch.mirror {
-        crate::transform::mirror_member_local(&mut next)?;
+        crate::steel::transform::mirror_member_local(&mut next)?;
         // The placement absorbs the world mirror through the same local symmetry the path
         // reflects by, computed from the original (unmirrored) axis.
-        let symmetry =
-            crate::transform::member_symmetry(&member.axis_points_mm).ok_or_else(|| {
+        let symmetry = crate::steel::transform::member_symmetry(&member.axis_points_mm)
+            .ok_or_else(|| {
                 CommandError::new(
                     ErrorCode::UnsupportedGeometry,
                     "mirror",
                     "a polybeam or curved member has no expressible mirrored path",
                 )
             })?;
-        next.placement = crate::transform::mirror_placement(&member.placement, mirror, &symmetry)?;
+        next.placement =
+            crate::steel::transform::mirror_placement(&member.placement, mirror, &symmetry)?;
     } else {
         next.placement = placement_after(&member.placement, patch)?;
     }
@@ -252,7 +253,7 @@ pub fn patch_member(
 /// the coordinate range, `NON_FINITE_NUMBER` or `INVALID_ARGUMENT` for a hostile quaternion).
 fn placement_after(placement: &Placement, patch: &ElementPatch) -> Result<Placement, CommandError> {
     if let Some(rotate) = &patch.rotate {
-        return crate::transform::rotate_placement(placement, rotate);
+        return crate::steel::transform::rotate_placement(placement, rotate);
     }
     if let Some(move_mm) = patch.move_mm {
         let next = Placement {

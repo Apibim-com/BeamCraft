@@ -25,7 +25,7 @@ use crate::steel::command::{
     AreaSource, CUT_VOLUME_ALGORITHM, MaterialInfo, MaterialLookup, Quantities, Volumes, map_cut,
     quantities_with_material, replay_cuts, replay_cuts_with_body,
 };
-use crate::transaction::PriorOp;
+use crate::steel::transaction::PriorOp;
 use beamcraft_geom::{MemberFrame, Point3};
 use beamcraft_kernel::diagnostic::{Failure, Field};
 use beamcraft_kernel::ops::{Body, OpFailure};
@@ -1803,18 +1803,18 @@ mod tests {
         let mut polygonal = out.authored.clone();
         polygonal.curved = false;
         assert_ne!(
-            crate::quantity::member_gross_signature(
+            crate::steel::quantity::member_gross_signature(
                 &out.authored,
                 &out.body.profile,
                 CUT_VOLUME_ALGORITHM
             ),
-            crate::quantity::member_gross_signature(
+            crate::steel::quantity::member_gross_signature(
                 &polygonal,
                 &out.body.profile,
                 CUT_VOLUME_ALGORITHM
             )
         );
-        let mut cache = crate::query::committed::BodyCache::new();
+        let mut cache = crate::steel::committed::BodyCache::new();
         let arc = cache
             .member(&out.authored, lookup(&profile).unwrap())
             .unwrap();

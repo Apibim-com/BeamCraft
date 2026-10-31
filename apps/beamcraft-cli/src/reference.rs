@@ -40,7 +40,7 @@ use beamcraft_engine::measure::{ReferenceMeasurement, measure_reference};
 use beamcraft_engine::reference::{
     ReferenceRecord, UnitsStatus, attach, correct_units, move_reference, write_foreign,
 };
-use beamcraft_engine::transaction::PriorOp;
+use beamcraft_engine::steel::transaction::PriorOp;
 use beamcraft_host::revision::{
     CommitHook, CommitOutcome, LayerRole, Revision, RevisionStore, Uuid7,
 };
