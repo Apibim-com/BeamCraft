@@ -192,7 +192,7 @@ cargo deny check
   read when a string literal in a `.rs` or `.toml` file names it or a directory above it
   (`tools/ci-changes.py`, tested by `python3 tools/test-ci-changes.py`), so the F08 table, the
   fixture documents and `COMMANDS.md` always run the full CI. Pushes to `master` always run
-  everything, including Windows.
+  everything, including Windows. (Probe of the fast path; this line is never merged.)
 
 The independent-reader gate runs in every `cargo test`: run
 `cargo test -p beamcraft-cli --test cli -- independent_reader:: reference_reader:: --nocapture`.
