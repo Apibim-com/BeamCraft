@@ -440,6 +440,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.prose == 'true'
     runs-on: ubuntu-latest
+    env:
+      # Same as test-archive-ubuntu, so the cache key below is that job's key.
+      CARGO_PROFILE_TEST_DEBUG: 0
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -448,7 +451,13 @@ jobs:
         with:
           toolchain: stable
 
+      # This job never runs on master, so a cache of its own would never be saved where pull
+      # requests can restore it. It reads test-archive-ubuntu's cache (same key, same profile
+      # and environment) and saves nothing.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: test-archive-ubuntu
+          save-if: false
 
       - name: Check module boundaries
         run: cargo run --locked -p beamcraft-boundaries -- check
