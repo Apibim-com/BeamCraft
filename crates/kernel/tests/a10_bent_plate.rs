@@ -14,7 +14,7 @@
 mod common;
 
 use beamcraft_geom::{Point3, Vec3};
-use beamcraft_kernel::ruled::{Loft, LoftResult, RuledContour, loft};
+use beamcraft_kernel::steel::ruled::{Loft, LoftResult, RuledContour, loft};
 use core::f64::consts::{FRAC_PI_2, PI};
 
 fn p3(x: f64, y: f64, z: f64) -> Point3 {

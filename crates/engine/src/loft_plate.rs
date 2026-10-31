@@ -3,7 +3,7 @@
 
 //! A11 lofted plate: a plate between two contours that need not be coplanar.
 //!
-//! The body is the G13 ruled loft (`beamcraft_kernel::ruled::loft`) of the two authored face
+//! The body is the G13 ruled loft (`beamcraft_kernel::steel::ruled::loft`) of the two authored face
 //! contours: one straight ruling per vertex pair, the wall quads along the contour edges and
 //! the two caps as the G05 triangulations. The sheet thickness is the distance between the
 //! contours themselves, so the command carries no thickness, holes, cuts or corner treatments.
@@ -19,9 +19,9 @@ use crate::footprint::Footprint;
 use crate::scene::SceneElement;
 use crate::solid::SolidMesh;
 use beamcraft_geom::Translation3;
-use beamcraft_kernel::plate_contour;
 use beamcraft_kernel::profile::Point2;
-use beamcraft_kernel::ruled::{Loft, LoftFailure, RuledContour};
+use beamcraft_kernel::steel::plate_contour;
+use beamcraft_kernel::steel::ruled::{Loft, LoftFailure, RuledContour};
 use beamcraft_model::command::{CommandError, Placement, label_is_valid};
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
@@ -186,7 +186,7 @@ pub fn evaluate_lofted_plate(
     let start = ruled_contour(&authored.start_points_mm, "start_points_mm")?;
     let end = ruled_contour(&authored.end_points_mm, "end_points_mm")?;
     let result = Loft { start, end };
-    let lofted = beamcraft_kernel::ruled::loft(&result).map_err(loft_error)?;
+    let lofted = beamcraft_kernel::steel::ruled::loft(&result).map_err(loft_error)?;
     let solid = SolidMesh::from_loft(&lofted);
     Ok(LoftedPlateBody {
         volume_mm3: solid.volume_mm3(),

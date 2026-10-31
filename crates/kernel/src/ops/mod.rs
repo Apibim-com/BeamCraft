@@ -38,20 +38,18 @@
 //! The kernel call is the headless API: the CLI commands that wrap these operations (A03 plane
 //! cut, A04 hole) and their end-to-end gates are owned by those tasks, as for G02 and G05.
 
-mod body;
-mod cut;
-mod diagnostic;
-mod hole;
-mod member_hole;
-mod plane;
+pub(crate) mod body;
+pub(crate) mod cut;
+pub(crate) mod diagnostic;
+pub(crate) mod hole;
+pub(crate) mod plane;
 pub(crate) mod seal;
-mod section;
+pub(crate) mod section;
 
 pub use body::{Body, MAX_LOCAL_ID_BYTES, MAX_ORDINAL};
 pub use cut::{Keep, plane_cut, plane_cut_with};
 pub use diagnostic::{OpCode, OpDefect, OpFailure, OpField};
 pub use hole::{HoleCutter, through_hole, through_hole_with};
-pub use member_hole::{MemberHoleCutter, member_through_hole, member_through_hole_with};
 pub use plane::CutPlane;
 pub use seal::{OpKind, OpResult};
 

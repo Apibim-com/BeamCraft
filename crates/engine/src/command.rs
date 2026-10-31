@@ -43,7 +43,7 @@ use beamcraft_kernel::ops::{
 use beamcraft_kernel::profile::diagnostic::{ProfileFailure, ProfileField};
 use beamcraft_kernel::profile::{Cavity, Point2, extrude};
 use beamcraft_kernel::trimesh::TriMesh;
-use beamcraft_kernel::{PlateResult, RectangularPlate, rectangular_plate};
+use beamcraft_kernel::{steel::PlateResult, steel::RectangularPlate, steel::rectangular_plate};
 use beamcraft_model::command::{CommandError, Placement};
 use beamcraft_model::definition::MaterialSpec;
 use beamcraft_model::digest::ContentDigest;
@@ -591,7 +591,7 @@ pub fn evaluate_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandErro
         return crate::bend::evaluate_bent(authored);
     }
     let points = &authored.contour_points_mm;
-    let contour = beamcraft_kernel::plate_contour::admit(points, authored.thickness_mm)?;
+    let contour = beamcraft_kernel::steel::plate_contour::admit(points, authored.thickness_mm)?;
     let offset = side_offset(authored);
     match classify(points) {
         // A treated origin rectangle (A12.2) is no longer the G02 box: the treatments replace
@@ -691,8 +691,10 @@ pub fn evaluate_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandErro
                     "hole records on a framed plate are not evaluated",
                 ));
             }
-            let result =
-                beamcraft_kernel::plate_contour::rectangular_body(points, authored.thickness_mm)?;
+            let result = beamcraft_kernel::steel::plate_contour::rectangular_body(
+                points,
+                authored.thickness_mm,
+            )?;
             let shifted = laid_off(
                 result.mesh().blob(),
                 &result

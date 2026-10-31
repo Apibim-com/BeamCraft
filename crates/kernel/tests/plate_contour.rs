@@ -3,7 +3,7 @@
 //! Contributor-original ordered contour regressions; references are analytic rectangles.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 
-use beamcraft_kernel::plate_contour::{admit, rectangular_body};
+use beamcraft_kernel::steel::plate_contour::{admit, rectangular_body};
 use beamcraft_model::error::ErrorCode;
 
 #[test]

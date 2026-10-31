@@ -10,7 +10,7 @@ pub use reference::{ReferenceGeometry, reference_element};
 
 use crate::element::{ElementId, ElementKind};
 use beamcraft_geom::{Point3, Translation3};
-use beamcraft_kernel::PlateResult;
+use beamcraft_kernel::steel::PlateResult;
 use beamcraft_model::digest::ContentDigest;
 use std::sync::Arc;
 

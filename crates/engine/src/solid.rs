@@ -10,10 +10,10 @@
 
 use crate::scene::SceneMesh;
 use beamcraft_geom::{Frame3, Point3, RigidTransform, Vec3};
-use beamcraft_kernel::PlateResult;
 use beamcraft_kernel::ops::OpResult;
 use beamcraft_kernel::profile::Extrusion;
-use beamcraft_kernel::section::SectionResult;
+use beamcraft_kernel::steel::PlateResult;
+use beamcraft_kernel::steel::section::SectionResult;
 use beamcraft_kernel::sweep::SweepResult;
 use beamcraft_kernel::trimesh::TriMesh;
 use beamcraft_model::digest::{ContentDigest, Sha256};
@@ -122,7 +122,7 @@ impl SolidMesh {
 
     /// The mesh of a G13 ruled loft (an A11 lofted plate); the volume is the midpoint of the
     /// enclosure of the certified signed-volume sum.
-    pub fn from_loft(result: &beamcraft_kernel::ruled::LoftResult) -> Self {
+    pub fn from_loft(result: &beamcraft_kernel::steel::ruled::LoftResult) -> Self {
         Self {
             vertices: result.body().mesh().vertices().to_vec(),
             triangles: result.body().mesh().triangles().to_vec(),

@@ -11,7 +11,7 @@
 mod common;
 
 use beamcraft_geom::{Point3, Vec3};
-use beamcraft_kernel::ruled::{
+use beamcraft_kernel::steel::ruled::{
     ConePatch, CylinderPatch, Loft, LoftCode, LoftFailure, LoftResult, RuledContour, cone_patch,
     cylinder_patch, loft,
 };

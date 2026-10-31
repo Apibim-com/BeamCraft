@@ -11,7 +11,7 @@
 mod common;
 
 use beamcraft_geom::Point3;
-use beamcraft_kernel::section::Representation;
+use beamcraft_kernel::steel::section::Representation;
 use beamcraft_kernel::sweep::{PathCode, Sweep, SweepFailure, SweepPath, SweepResult, sweep};
 use beamcraft_model::steel::section::{
     CustomSection, ParametricSection, SectionFamily, SectionShape,
