@@ -69,9 +69,9 @@ use beamcraft_layer_engine::{
     Prim, Profile, Reader, Value,
 };
 use beamcraft_model::command::{
-    CommandError, CornerTreatment, CreatePlate, CutRecord, HoleKind, HoleRecord, KeepSide,
-    MemberKind, PlateCorner, PlateSide, SectionDepthPosition, SectionPlacement,
-    SectionPlanePosition,
+    BendRecord, BendSpec, CommandError, CornerTreatment, CreatePlate, CutRecord, HoleExtent,
+    HoleKind, HoleRecord, KeepSide, MAX_BENDS, MemberHoleRecord, MemberKind, PlateCorner,
+    PlateSide, SectionDepthPosition, SectionPlacement, SectionPlanePosition,
 };
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
@@ -235,11 +235,11 @@ pub(crate) struct DerivedMesh {
     pub(crate) points: Vec<[f32; 3]>,
     pub(crate) counts: Vec<i64>,
     pub(crate) indices: Vec<i64>,
-    shape_key: String,
+    pub(crate) shape_key: String,
     orientation: String,
     subdivision: String,
     /// The quantity record stored beside the mesh, if any. Not part of the geometry.
-    stored: Option<StoredRecord>,
+    pub(crate) stored: Option<StoredRecord>,
 }
 
 impl DerivedMesh {
@@ -389,16 +389,26 @@ fn element_meta(
 pub(crate) struct Decoded {
     pub(crate) hole_history:
         BTreeMap<ElementId, beamcraft_layer_engine::authored::cut_history::HoleHistory>,
+    pub(crate) member_hole_history:
+        BTreeMap<ElementId, beamcraft_layer_engine::authored::cut_history::HoleHistory>,
     pub(crate) cut_history:
         BTreeMap<ElementId, beamcraft_layer_engine::authored::cut_history::CutHistory>,
     pub(crate) plates: Vec<(AuthoredPlate, Option<DerivedMesh>)>,
     pub(crate) members: Vec<(AuthoredMember, Option<DerivedMesh>)>,
+    /// Committed lofted plates (A11), decoded but not re-evaluated by the plate verifier:
+    /// their quantities were checked at creation and are read from the derived layer.
+    pub(crate) lofted: Vec<(
+        beamcraft_engine::loft_plate::AuthoredLoftedPlate,
+        Option<DerivedMesh>,
+    )>,
     other_elements: usize,
     pub(crate) definitions: BTreeMap<ContentDigest, DefinitionRecord>,
     /// The levels of the model and the level of every plate, beam and column (D2).
     pub(crate) levels: Levels,
     pub(crate) instances: beamcraft_engine::instance::InstanceGraph,
     pub(crate) grids: Vec<beamcraft_model::grid::Grid>,
+    /// T02: validated construction objects, without engineering bodies.
+    pub(crate) constructions: Vec<beamcraft_model::construction::ConstructionObject>,
     /// The common facts of every element except levels, by id.
     pub(crate) elements: BTreeMap<ElementId, ElementMeta>,
     /// Any geometry subtree or derived-value opinion, including malformed/non-mesh prims.
@@ -736,6 +746,50 @@ fn decode_plate(prim: &Prim, id: ElementId) -> Result<AuthoredPlate, PlateError>
         holes_mm: decode_holes(prim)?,
         cuts: decode_cut(prim)?,
         hole_records: decode_hole_records(prim)?,
+        bends: decode_bends(prim)?,
+    })
+}
+
+/// A committed lofted plate's authored inputs (A11): the two face contours as authored. The
+/// three loft attributes appear together; a half-authored or malformed record is an integrity
+/// error, never a default. The stored form token is checked by the caller.
+fn decode_lofted(
+    prim: &Prim,
+    id: ElementId,
+) -> Result<beamcraft_engine::loft_plate::AuthoredLoftedPlate, PlateError> {
+    let bad = || integrity("committed lofted plate lacks a required authored input");
+    let contour = |name: &str| -> Result<Vec<[f64; 3]>, PlateError> {
+        let Some(Value::Array(points)) = property(prim, name) else {
+            return Err(bad());
+        };
+        points
+            .iter()
+            .map(numbers::<3>)
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(bad)
+    };
+    let start = contour("steel:plate:loftStartMm")?;
+    let end = contour("steel:plate:loftEndMm")?;
+    let translation = property(prim, "xformOp:translate")
+        .and_then(numbers::<3>)
+        .ok_or_else(bad)?;
+    let [w, x, y, z] = property(prim, "xformOp:orient")
+        .and_then(numbers::<4>)
+        .ok_or_else(bad)?;
+    Ok(beamcraft_engine::loft_plate::AuthoredLoftedPlate {
+        id,
+        name: property(prim, "bim:name")
+            .and_then(text)
+            .ok_or_else(bad)?
+            .to_owned(),
+        class: decode_class(prim)?,
+        start_points_mm: start,
+        end_points_mm: end,
+        placement: beamcraft_model::command::Placement {
+            translation_mm: translation,
+            orientation_xyzw: [x, y, z, w],
+        },
+        material: decode_material(prim)?,
     })
 }
 
@@ -842,6 +896,117 @@ fn decode_cut(prim: &Prim) -> Result<Vec<CutRecord>, PlateError> {
         .collect()
 }
 
+/// The member-hole operation records of a committed member (A04.2): all nine attributes or
+/// none, aligned with each other, the polygons cut by the vertex counts, every ordinal strictly
+/// increasing and every id a full UUIDv7. A damaged or half-authored record is an integrity
+/// error, never a default.
+fn decode_member_hole_records(prim: &Prim) -> Result<Vec<MemberHoleRecord>, PlateError> {
+    const FIELDS: [&str; 9] = [
+        "steel:mhole:pointsMm",
+        "steel:mhole:vertexCounts",
+        "steel:mhole:operationIds",
+        "steel:mhole:ordinals",
+        "steel:mhole:axisPointsMm",
+        "steel:mhole:axisDirections",
+        "steel:mhole:extents",
+        "steel:mhole:extentFromMm",
+        "steel:mhole:extentToMm",
+    ];
+    let bad = || integrity("committed member has inconsistent hole record attributes");
+    let declared = |name: &str| prim.properties.iter().any(|p| p.name == name);
+    let count = FIELDS.iter().filter(|name| declared(name)).count();
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+    if count != FIELDS.len() {
+        return Err(bad());
+    }
+    let polygons = decode_polygons(
+        prim,
+        FIELDS[0],
+        FIELDS[1],
+        beamcraft_model::command::MAX_HOLES,
+        "committed member has inconsistent hole record attributes",
+    )?;
+    let ids: Vec<String> = match property(prim, FIELDS[2]) {
+        Some(Value::Array(values)) => values
+            .iter()
+            .map(|v| text(v).map(str::to_owned).ok_or_else(bad))
+            .collect::<Result<_, _>>()?,
+        _ => return Err(bad()),
+    };
+    let ordinals: Vec<usize> = match property(prim, FIELDS[3]) {
+        Some(Value::Array(values)) => values
+            .iter()
+            .map(|v| usize::try_from(integer(v).ok_or_else(bad)?).map_err(|_| bad()))
+            .collect::<Result<_, _>>()?,
+        _ => return Err(bad()),
+    };
+    let mut axis_points = Vec::new();
+    let mut directions = Vec::new();
+    for (field, sink) in [(FIELDS[4], &mut axis_points), (FIELDS[5], &mut directions)] {
+        match property(prim, field) {
+            Some(Value::Array(values)) => {
+                for v in values.iter() {
+                    sink.push(numbers::<3>(v).ok_or_else(bad)?);
+                }
+            }
+            _ => return Err(bad()),
+        }
+    }
+    let doubles = |field: &str| -> Result<Vec<f64>, PlateError> {
+        match property(prim, field) {
+            Some(Value::Array(values)) => {
+                values.iter().map(|v| number(v).ok_or_else(bad)).collect()
+            }
+            _ => Err(bad()),
+        }
+    };
+    let extents: Vec<HoleExtent> = match property(prim, FIELDS[6]) {
+        Some(Value::Array(values)) => {
+            let from = doubles(FIELDS[7])?;
+            let to = doubles(FIELDS[8])?;
+            values
+                .iter()
+                .zip(from)
+                .zip(to)
+                .map(|((v, start), end)| {
+                    HoleExtent::parse(text(v).ok_or_else(bad)?, start, end).ok_or_else(bad)
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        }
+        _ => return Err(bad()),
+    };
+    if polygons.len() != ids.len()
+        || polygons.len() != ordinals.len()
+        || polygons.len() != axis_points.len()
+        || polygons.len() != directions.len()
+        || polygons.len() != extents.len()
+    {
+        return Err(bad());
+    }
+    polygons
+        .into_iter()
+        .zip(ids)
+        .zip(ordinals)
+        .zip(axis_points)
+        .zip(directions)
+        .zip(extents)
+        .map(
+            |(((((polygon_mm, id), ordinal), axis_point_mm), axis_direction), extent)| {
+                Ok(MemberHoleRecord {
+                    operation_id: OpId::parse(&id).map_err(|_| bad())?,
+                    ordinal,
+                    axis_point_mm,
+                    axis_direction,
+                    extent,
+                    polygon_mm,
+                })
+            },
+        )
+        .collect()
+}
+
 /// The through-hole polygons of a committed plate: the flat point array cut by the vertex counts.
 /// Both attributes or neither; every count is at least three and every `z` is zero.
 fn decode_holes(prim: &Prim) -> Result<Vec<Vec<[f64; 2]>>, PlateError> {
@@ -852,6 +1017,118 @@ fn decode_holes(prim: &Prim) -> Result<Vec<Vec<[f64; 2]>>, PlateError> {
         beamcraft_model::command::MAX_HOLES,
         "committed plate has inconsistent hole attributes",
     )
+}
+
+/// The owned bend records of a committed plate (A10, amendment A-2): seven parallel attributes,
+/// all seven or none, of one common length. A damaged or half-authored list is an integrity
+/// error, never a default; the engine re-admits every record on replay. A fold stores its
+/// radius twice and a zero angle in the second-radius and angle slots; a roll stores a zero
+/// angle and, for a cylinder, its one radius twice.
+fn decode_bends(prim: &Prim) -> Result<Vec<BendRecord>, PlateError> {
+    const FIELDS: [&str; 7] = [
+        "steel:plate:bendOperationId",
+        "steel:plate:bendKind",
+        "steel:plate:bendLineAMm",
+        "steel:plate:bendLineBMm",
+        "steel:plate:bendRadiusMm",
+        "steel:plate:bendRadiusBMm",
+        "steel:plate:bendAngleRad",
+    ];
+    let bad = || integrity("committed plate has inconsistent bend attributes");
+    let declared = |name: &str| prim.properties.iter().any(|p| p.name == name);
+    let count = FIELDS.iter().filter(|name| declared(name)).count();
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+    if count != FIELDS.len() {
+        return Err(bad());
+    }
+    let strings = |name: &str| -> Result<Vec<String>, PlateError> {
+        match property(prim, name) {
+            Some(Value::Array(values)) => values
+                .iter()
+                .map(|v| text(v).map(|s| s.to_owned()).ok_or_else(bad))
+                .collect(),
+            _ => Err(bad()),
+        }
+    };
+    let ids = strings(FIELDS[0])?;
+    let kinds: Vec<&str> = match property(prim, FIELDS[1]) {
+        Some(Value::Array(values)) => values
+            .iter()
+            .map(|v| text(v).ok_or_else(bad))
+            .collect::<Result<Vec<_>, _>>()?,
+        _ => return Err(bad()),
+    };
+    let read_points = |name: &str| -> Result<Vec<[f64; 3]>, PlateError> {
+        match property(prim, name) {
+            Some(Value::Array(values)) => values
+                .iter()
+                .map(|v| numbers::<3>(v).ok_or_else(bad))
+                .collect(),
+            _ => Err(bad()),
+        }
+    };
+    let lines_a = read_points(FIELDS[2])?;
+    let lines_b = read_points(FIELDS[3])?;
+    let doubles = |name: &str| -> Result<Vec<f64>, PlateError> {
+        match property(prim, name) {
+            Some(Value::Array(values)) => {
+                values.iter().map(|v| number(v).ok_or_else(bad)).collect()
+            }
+            _ => Err(bad()),
+        }
+    };
+    let radii = doubles(FIELDS[4])?;
+    let radii_b = doubles(FIELDS[5])?;
+    let angles = doubles(FIELDS[6])?;
+    let n = ids.len();
+    if kinds.len() != n
+        || lines_a.len() != n
+        || lines_b.len() != n
+        || radii.len() != n
+        || radii_b.len() != n
+        || angles.len() != n
+        || n > MAX_BENDS
+    {
+        return Err(bad());
+    }
+    ids.iter()
+        .zip(kinds.iter())
+        .enumerate()
+        .map(|(i, (id, kind))| {
+            let get = |values: &Vec<[f64; 3]>, index: usize| -> Result<[f64; 3], PlateError> {
+                values.get(index).copied().ok_or_else(bad)
+            };
+            let (a, b) = (get(&lines_a, i)?, get(&lines_b, i)?);
+            let radius = radii.get(i).copied().ok_or_else(bad)?;
+            let radius_b = radii_b.get(i).copied().ok_or_else(bad)?;
+            let angle = angles.get(i).copied().ok_or_else(bad)?;
+            let spec = match *kind {
+                "fold" => BendSpec::Fold {
+                    a_mm: a,
+                    b_mm: b,
+                    radius_mm: radius,
+                    angle_rad: angle,
+                },
+                "roll" => BendSpec::Roll {
+                    a_mm: a,
+                    b_mm: b,
+                    radius_mm: radius,
+                    radius_b_mm: if radius_b == radius {
+                        None
+                    } else {
+                        Some(radius_b)
+                    },
+                },
+                _ => return Err(bad()),
+            };
+            Ok(BendRecord {
+                operation_id: OpId::parse(id).map_err(|_| bad())?,
+                spec,
+            })
+        })
+        .collect()
 }
 
 /// Planar polygons stored as one flat `double3[]` point array cut by an `int[]` of vertex counts:
@@ -1053,6 +1330,7 @@ pub(crate) fn decode(
     let by_path: BTreeMap<&str, &Prim> = prims.iter().map(|p| (p.path.as_str(), p)).collect();
     let mut plates = Vec::new();
     let mut members = Vec::new();
+    let mut lofted = Vec::new();
     let mut other = 0usize;
     let mut elements = BTreeMap::new();
     let ids: BTreeMap<&str, ElementId> = prims
@@ -1093,6 +1371,11 @@ pub(crate) fn decode(
             );
         }
         match kind {
+            Some("plate")
+                if property(prim, "steel:plate:form").and_then(text) == Some("lofted") =>
+            {
+                lofted.push((decode_lofted(prim, id)?, mesh()))
+            }
             Some("plate") => plates.push((decode_plate(prim, id)?, mesh())),
             Some("beam") => members.push((decode_member(prim, id, MemberKind::Beam)?, mesh())),
             Some("column") => {
@@ -1107,10 +1390,10 @@ pub(crate) fn decode(
     let levels = levels_of(&prims)?;
     let derived_elements = plates
         .iter()
-        .filter_map(|(plate, _)| {
-            let path = plate
-                .id
-                .prim_path(beamcraft_model::prim::ElementCategory::Part);
+        .map(|(p, _)| &p.id)
+        .chain(lofted.iter().map(|(p, _)| &p.id))
+        .filter_map(|id| {
+            let path = id.prim_path(beamcraft_model::prim::ElementCategory::Part);
             let geometry = format!("{path}/Geometry");
             let prefix = format!("{path}/");
             let has_geometry = by_path
@@ -1126,7 +1409,7 @@ pub(crate) fn decode(
                                 .any(|prefix| v.name.starts_with(prefix))
                         })
                 });
-            has_geometry.then_some(plate.id)
+            has_geometry.then_some(*id)
         })
         .collect();
     let cut_history = prims
@@ -1165,16 +1448,35 @@ pub(crate) fn decode(
             ))
         })
         .collect::<Result<BTreeMap<_, _>, PlateError>>()?;
+    let member_hole_history = prims
+        .iter()
+        .filter_map(|p| {
+            p.element_id
+                .as_deref()
+                .and_then(|id| ElementId::parse(id).ok())
+                .map(|id| (id, p))
+        })
+        .filter(|(id, _)| cut_history.contains_key(id))
+        .map(|(id, p)| {
+            Ok((
+                id,
+                beamcraft_layer_engine::authored::cut_history::read_member_holes(p)?,
+            ))
+        })
+        .collect::<Result<BTreeMap<_, _>, PlateError>>()?;
     Ok(Decoded {
         hole_history,
+        member_hole_history,
         cut_history,
         plates,
         members,
+        lofted,
         other_elements: other,
         definitions,
         levels,
         instances,
         grids: beamcraft_layer_engine::authored::grid::read_grids(&prims)?,
+        constructions: beamcraft_layer_engine::authored::construction::read_constructions(&prims)?,
         elements,
         derived_elements,
         reference_scene: crate::reference_view::scene_elements(&prims),
@@ -1241,6 +1543,7 @@ fn decode_member(
         },
         material: decode_material(prim)?,
         cuts: decode_cut(prim)?,
+        hole_records: decode_member_hole_records(prim)?,
     })
 }
 
@@ -2127,6 +2430,8 @@ pub fn create_plate(
                         thickness_mm: outcome.authored.thickness_mm,
                         thickness_side: outcome.authored.thickness_side,
                         corners: outcome.authored.corners.clone(),
+                        // A create carries no operation records (F04 section 4).
+                        bends: Vec::new(),
                         holes: outcome
                             .authored
                             .holes_mm
@@ -2134,7 +2439,6 @@ pub fn create_plate(
                             .map(|h| h.iter().map(|[x, y]| [*x, *y, 0.0]).collect())
                             .collect(),
                         cuts: Vec::new(),
-                        // A create carries no operation records (F04 section 4).
                         hole_records: Vec::new(),
                     },
                     placement: LayerPlacement {
@@ -2208,6 +2512,8 @@ pub struct Inspection {
     pub instances: beamcraft_engine::instance::InstanceGraph,
     /// T01: validated project grids, without engineering bodies.
     pub grids: Vec<beamcraft_model::grid::Grid>,
+    /// T02: validated construction objects, without engineering bodies.
+    pub constructions: Vec<beamcraft_model::construction::ConstructionObject>,
     /// The common facts of every element except levels, by id (E02).
     pub elements: BTreeMap<ElementId, ElementMeta>,
 }
@@ -2313,6 +2619,13 @@ pub(crate) fn inspect_manifest_assets(
     let quantities = verify_derived(&plates, &members, &decoded, false)?;
     let pin = ViewPin::new(digest, content.workspace_generation());
     let mut scene = scene_elements_with_members(&plates, &members)?;
+    for (authored, _) in &decoded.lofted {
+        let body = beamcraft_engine::loft_plate::evaluate_lofted_plate(authored)?;
+        scene.push(beamcraft_engine::loft_plate::scene_element(
+            authored, &body,
+        )?);
+    }
+    scene.sort_by_key(beamcraft_engine::SceneElement::id);
     let reference_view_error = match decoded.reference_scene {
         Ok(references) => {
             scene.extend(references);
@@ -2336,6 +2649,7 @@ pub(crate) fn inspect_manifest_assets(
         levels: decoded.levels,
         instances: decoded.instances,
         grids: decoded.grids,
+        constructions: decoded.constructions,
         elements: decoded.elements,
     })
 }

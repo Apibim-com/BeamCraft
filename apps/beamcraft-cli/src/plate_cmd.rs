@@ -6,6 +6,8 @@
 //! commands; exit 0 success, 2 rejection, 3 backend unavailable, 4 outcome unknown).
 
 use crate::report::report_with;
+use beamcraft_cli::array::{ArrayRequest, array_elements};
+use beamcraft_cli::bend::{BendRequest, bend_plate_record};
 use beamcraft_cli::copy::{CopiedElement, CopyRequest, copy_element, copy_instance};
 use beamcraft_cli::cut::{
     A13Command, A13Request, CutElement, CutRequest, a13_record, cut_by_plane_record,
@@ -46,11 +48,12 @@ use beamcraft_host::{
 };
 use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::{
-    AddHole, ChamferPart, CombineParts, CopyElement, CornerTreatment, CreatePlate, CreatePolybeam,
+    AddHole, ArrayElements, ArrayStep, BendPlate, BendRecord, BendSpec, ChamferPart, CombineParts,
+    CopyElement, CornerTreatment, CreateLoftedPlate, CreatePlate, CreatePolybeam,
     CreateStraightMember, CutByLine, CutByPart, CutByPlane, CutByPolygon, CutRecord, DeleteElement,
-    ElementPatch, FitEndToPart, HoleSpec, KeepSide, MAX_HOLES, MemberKind, Placement, PlateCorner,
-    PlateSide, SectionDepthPosition, SectionPlacement, SectionPlanePosition, SplitPart,
-    UpdateElement,
+    ElementMirror, ElementPatch, ElementRotate, FitEndToPart, HoleExtent, HoleSpec, KeepSide,
+    MAX_HOLES, MemberKind, Placement, PlateCorner, PlateSide, SectionDepthPosition,
+    SectionPlacement, SectionPlanePosition, SplitPart, UpdateElement,
 };
 use beamcraft_model::definition::SectionProperties;
 use beamcraft_model::digest::ContentDigest;
@@ -117,6 +120,11 @@ const UPDATE_HOLE_OPTIONS: &[&str] = &[
     "--polygon",
     "--hole-rect",
     "--hole-round",
+    "--axis-point",
+    "--axis-direction",
+    "--diameter",
+    "--from",
+    "--to",
     "--revision-id",
     "--actor-id",
     "--project-id",
@@ -129,6 +137,11 @@ const ADD_HOLE_OPTIONS: &[&str] = &[
     "--polygon",
     "--hole-rect",
     "--hole-round",
+    "--axis-point",
+    "--axis-direction",
+    "--diameter",
+    "--from",
+    "--to",
     "--revision-id",
     "--actor-id",
     "--project-id",
@@ -190,6 +203,26 @@ const DEFINE_FASTENER_OPTIONS: &[&str] = &[
     "--fastener-library",
     "--designation",
     "--name",
+    "--revision-id",
+    "--actor-id",
+    "--project-id",
+    "--workspace-id",
+];
+
+/// The `create-lofted-plate` options (A11): two face contours of the same vertex count; there
+/// is no thickness, hole or corner input on a lofted plate.
+const CREATE_LOFTED_OPTIONS: &[&str] = &[
+    "--class",
+    "--store",
+    "--start",
+    "--end",
+    "--name",
+    "--translation",
+    "--orientation-xyzw",
+    "--material-digest",
+    "--material",
+    "--new-id",
+    "--op-id",
     "--revision-id",
     "--actor-id",
     "--project-id",
@@ -306,6 +339,15 @@ a13_options!(A13_POLYGON_OPTIONS_ALL, "--polygon");
 a13_options!(A13_PART_OPTIONS_ALL, "--tool");
 a13_options!(A13_FIT_OPTIONS_ALL, "--tool");
 a13_options!(
+    BEND_OPTIONS_ALL,
+    "--kind",
+    "--point-a",
+    "--point-b",
+    "--radius",
+    "--radius-b",
+    "--angle-rad"
+);
+a13_options!(
     A13_CHAMFER_OPTIONS_ALL,
     "--vertex-index",
     "--first-distance",
@@ -346,6 +388,13 @@ const UPDATE_OPTIONS: &[&str] = &[
     "--translation",
     "--orientation-xyzw",
     "--level",
+    "--move-from",
+    "--move-to",
+    "--rotate-about",
+    "--rotate-axis",
+    "--rotate-angle",
+    "--mirror-point",
+    "--mirror-normal",
     "--op-id",
     "--revision-id",
     "--actor-id",
@@ -390,7 +439,26 @@ const COPY_OPTIONS: &[&str] = &[
     "--id",
     "--name",
     "--offset",
+    "--copy-from",
+    "--copy-to",
     "--new-id",
+    "--op-id",
+    "--revision-id",
+    "--actor-id",
+    "--project-id",
+    "--workspace-id",
+];
+
+const ARRAY_OPTIONS: &[&str] = &[
+    "--store",
+    "--id",
+    "--name",
+    "--count",
+    "--direction",
+    "--spacing",
+    "--point",
+    "--axis",
+    "--angle",
     "--op-id",
     "--revision-id",
     "--actor-id",
@@ -423,6 +491,8 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         .ok_or_else(|| invalid("missing command"))?;
     let allowed: &[&str] = match *command {
         "create-plate" => CREATE_OPTIONS,
+        "create-lofted-plate" => CREATE_LOFTED_OPTIONS,
+        "inspect-lofted-plates" => &["--store"],
         "create-member" => CREATE_MEMBER_OPTIONS,
         "create-polybeam" | "create-curved-beam" => CREATE_POLYBEAM_OPTIONS,
         "add-hole" => ADD_HOLE_OPTIONS,
@@ -436,6 +506,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "set-plate-corner" => SET_CORNER_OPTIONS,
         "delete-element" => DELETE_OPTIONS,
         "copy-element" | "copy-instance" => COPY_OPTIONS,
+        "array-linear" | "array-polar" => ARRAY_OPTIONS,
         "cut-by-plane" | "update-cut" => CUT_OPTIONS,
         "cut-by-line" => A13_LINE_OPTIONS_ALL,
         "cut-by-polygon" => A13_POLYGON_OPTIONS_ALL,
@@ -444,6 +515,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "chamfer-part" => A13_CHAMFER_OPTIONS_ALL,
         "split-part" => A13_SPLIT_OPTIONS_ALL,
         "combine-parts" => A13_COMBINE_OPTIONS_ALL,
+        "bend-plate" => BEND_OPTIONS_ALL,
         "remove-cut" => REMOVE_CUT_OPTIONS,
         "create-workspace" | "inspect-workspace" | "publish-workspace" => WORKSPACE_OPTIONS,
         "undo-workspace" | "redo-workspace" => HISTORY_OPTIONS,
@@ -491,6 +563,8 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
     let _claim = check_project_option(&store, &options)?;
     match *command {
         "create-plate" => create(&store, &options, candidates),
+        "create-lofted-plate" => lofted_create(&store, &options, candidates),
+        "inspect-lofted-plates" => lofted_inspect(&store),
         "create-member" => create_member_command(&store, &options, candidates),
         "create-polybeam" => create_polybeam_command(&store, &options, candidates, false),
         "create-curved-beam" => create_polybeam_command(&store, &options, candidates, true),
@@ -506,6 +580,8 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "delete-element" => delete_command(&store, &options),
         "copy-element" => copy_command(&store, &options, false),
         "copy-instance" => copy_command(&store, &options, true),
+        "array-linear" => array_command(&store, &options, false),
+        "array-polar" => array_command(&store, &options, true),
         "cut-by-plane" => cut_command(&store, &options, false, false),
         "update-cut" => cut_command(&store, &options, true, false),
         "remove-cut" => cut_command(&store, &options, false, true),
@@ -516,6 +592,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "chamfer-part" => a13_command(&store, "chamfer-part", &options),
         "split-part" => a13_command(&store, "split-part", &options),
         "combine-parts" => a13_command(&store, "combine-parts", &options),
+        "bend-plate" => bend_command(&store, &options),
         "create-workspace" | "inspect-workspace" | "publish-workspace" => {
             workspace_command(&store, command, &options, candidates)
         }
@@ -1281,6 +1358,61 @@ fn update_command(
         Some(text) => WorkspaceId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => WorkspaceId::from_uuid(fresh()?),
     };
+    // T03 input forms. The move and copy deltas are two-point forms of the same translation;
+    // the relative transforms are passed to the engine as their own patch fields, which refuse
+    // any absolute placement field in the same patch.
+    let move_from = given("--move-from").map(translation).transpose()?;
+    let move_to = given("--move-to").map(translation).transpose()?;
+    if move_from.is_some() != move_to.is_some() {
+        return Err(invalid("--move-from and --move-to are given together"));
+    }
+    if move_from.is_some() && given("--translation").is_some() {
+        return Err(invalid(
+            "--translation and --move-from/--move-to are exclusive",
+        ));
+    }
+    let move_mm = move_from
+        .zip(move_to)
+        .map(|(from, to)| [to[0] - from[0], to[1] - from[1], to[2] - from[2]]);
+    let rotate = match (
+        given("--rotate-about"),
+        given("--rotate-axis"),
+        given("--rotate-angle"),
+    ) {
+        (None, None, None) => None,
+        (about, axis, angle) => {
+            let (about, axis, angle) = (
+                about.ok_or_else(|| invalid("--rotate-about is required"))?,
+                axis.ok_or_else(|| invalid("--rotate-axis is required"))?,
+                angle.ok_or_else(|| invalid("--rotate-angle is required"))?,
+            );
+            Some(ElementRotate {
+                pivot_mm: translation(about)?,
+                axis: translation(axis)?,
+                angle_rad: angle
+                    .parse::<f64>()
+                    .map_err(|_| invalid("a number is malformed"))?,
+            })
+        }
+    };
+    let mirror = match (given("--mirror-point"), given("--mirror-normal")) {
+        (None, None) => None,
+        (point, normal) => Some(ElementMirror {
+            point_mm: translation(point.ok_or_else(|| invalid("--mirror-point is required"))?)?,
+            normal: translation(normal.ok_or_else(|| invalid("--mirror-normal is required"))?)?,
+        }),
+    };
+    if rotate.is_some() || mirror.is_some() || move_mm.is_some() {
+        if given("--orientation-xyzw").is_some() {
+            return Err(invalid(
+                "--orientation-xyzw and a relative transform are exclusive",
+            ));
+        }
+        let named = rotate.is_some() as u8 + mirror.is_some() as u8 + move_mm.is_some() as u8;
+        if named > 1 {
+            return Err(invalid("relative transforms are separate updates"));
+        }
+    }
     let patch = ElementPatch {
         corners: if given("--corners").is_some() {
             Some(corner_treatments(options)?)
@@ -1313,6 +1445,9 @@ fn update_command(
             Some("none") => Some([0.0, 0.0, 0.0, 1.0]),
             Some(text) => Some(quaternion(text)?),
         },
+        rotate,
+        mirror,
+        move_mm,
         level: given("--level")
             .map(|text| match text {
                 "none" => Ok(None),
@@ -1367,6 +1502,9 @@ fn update_command(
                 ("placement", Json::Bool(updated.effect.placement)),
                 ("orientation", Json::Bool(updated.effect.orientation)),
                 ("level", Json::Bool(updated.effect.level)),
+                ("rotate", Json::Bool(updated.effect.rotate)),
+                ("mirror", Json::Bool(updated.effect.mirror)),
+                ("move", Json::Bool(updated.effect.move_mm)),
                 ("profile", Json::Bool(updated.effect.profile)),
             ]),
         ),
@@ -1905,6 +2043,149 @@ fn a13_command(store: &RevisionStore, name: &str, options: &BTreeMap<&str, &str>
     ))
 }
 
+/// Runs `bend-plate` (A10): appends one fold or roll record to a plate and republishes the bent
+/// body. The unfolded outline is the plate's authored contour, reported in `contour_points_mm`.
+fn bend_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Json> {
+    let mut source = IdSource::system();
+    let mut fresh = || {
+        source.next_id().map_err(|_| PlateError {
+            rule_id: None,
+            code: ErrorCode::BackendUnavailable,
+            message: "no identity could be generated",
+        })
+    };
+    let given = |key: &str| options.get(key).copied();
+    let id_text = |key: &str| -> Run<ElementId> {
+        ElementId::parse(given(key).ok_or_else(|| invalid("--id is required"))?).map_err(id_error)
+    };
+    let operation_id =
+        OpId::parse(given("--operation-id").ok_or_else(|| invalid("--operation-id is required"))?)
+            .map_err(id_error)?;
+    let op_id = match given("--op-id") {
+        Some(text) => OpId::parse(text).map_err(id_error)?,
+        None => OpId::from_uuid(fresh()?),
+    };
+    let revision_id = match given("--revision-id") {
+        Some(text) => RevisionId::parse(text).map_err(id_error)?,
+        None => RevisionId::from_uuid(fresh()?),
+    };
+    let actor = match given("--actor-id") {
+        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+    };
+    let project = match given("--project-id") {
+        Some(text) => ProjectId::parse(text).map_err(id_error)?,
+        None => ProjectId::from_uuid(fresh()?),
+    };
+    let workspace = match given("--workspace-id") {
+        Some(text) => WorkspaceId::parse(text).map_err(id_error)?,
+        None => WorkspaceId::from_uuid(fresh()?),
+    };
+    let point = |key: &'static str| -> Run<[f64; 3]> {
+        translation(given(key).ok_or_else(|| invalid("a bend line point is required"))?)
+    };
+    let positive = |key: &'static str| -> Run<f64> {
+        let text = given(key).ok_or_else(|| invalid("a bend radius is required"))?;
+        let value = text
+            .parse::<f64>()
+            .map_err(|_| invalid("a number is malformed"))?;
+        if value <= 0.0 || !value.is_finite() {
+            return Err(invalid("a bend radius must be positive"));
+        }
+        Ok(value)
+    };
+    let kind = given("--kind").ok_or_else(|| invalid("--kind is required"))?;
+    let line_a = point("--point-a")?;
+    let line_b = point("--point-b")?;
+    let radius = positive("--radius")?;
+    let spec = match kind {
+        "fold" => {
+            let angle = given("--angle-rad")
+                .ok_or_else(|| invalid("--angle-rad is required for a fold"))?
+                .parse::<f64>()
+                .map_err(|_| invalid("a number is malformed"))?;
+            if !angle.is_finite() || angle.abs() >= core::f64::consts::PI || angle == 0.0 {
+                return Err(invalid(
+                    "the fold angle must be finite, non-zero and inside (-pi, pi)",
+                ));
+            }
+            BendSpec::Fold {
+                a_mm: line_a,
+                b_mm: line_b,
+                radius_mm: radius,
+                angle_rad: angle,
+            }
+        }
+        "roll" => {
+            let radius_b = match given("--radius-b") {
+                Some(text) => {
+                    let value = text
+                        .parse::<f64>()
+                        .map_err(|_| invalid("a number is malformed"))?;
+                    if value <= 0.0 || !value.is_finite() {
+                        return Err(invalid("a bend radius must be positive"));
+                    }
+                    Some(value)
+                }
+                None => None,
+            };
+            BendSpec::Roll {
+                a_mm: line_a,
+                b_mm: line_b,
+                radius_mm: radius,
+                radius_b_mm: radius_b,
+            }
+        }
+        _ => return Err(invalid("--kind is fold or roll")),
+    };
+    let result = bend_plate_record(
+        store,
+        &BendRequest {
+            op_id,
+            revision_id,
+            actor,
+            project,
+            workspace,
+            command: BendPlate {
+                target_id: id_text("--id")?,
+                operation_id,
+                spec,
+            },
+        },
+        &mut NoFault,
+    )?;
+    let outcome = if result.replayed {
+        "bend_replayed"
+    } else {
+        "bend_applied"
+    };
+    let mut fields = vec![
+        ("outcome", Json::text(outcome)),
+        ("op_id", Json::text(op_id.to_string())),
+        ("element", plate_json(&result.plate)?),
+        ("revision", revision_json(&result.revision)),
+        ("footprint", footprint_json(result.footprint.as_ref())),
+    ];
+    if !result.changed_layers.is_empty() {
+        fields.push((
+            "changed_layers",
+            Json::Array(
+                result
+                    .changed_layers
+                    .iter()
+                    .map(|layer| Json::text(layer.clone()))
+                    .collect(),
+            ),
+        ));
+    }
+    Ok(Json::Object(
+        fields
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value))
+            .collect(),
+    ))
+}
+
 /// Comma-separated numbers, exactly `count` of them (the shared shape of every hole option).
 fn numbers_list(text: &str, count: usize) -> Run<Vec<f64>> {
     let values: Vec<f64> = text
@@ -1922,18 +2203,60 @@ fn numbers_list(text: &str, count: usize) -> Run<Vec<f64>> {
     }
 }
 
-/// The one hole of `add-hole` (A04): `--polygon "X,Y;..."` (the clockwise polygon itself) or a
-/// generator, `--hole-rect "X,Y,W,H"` or `--hole-round "X,Y,D"`, in plate-local millimetres.
-/// Exactly one is accepted, and only the shape is parsed here: finiteness, positivity and the
-/// caps are the model's admission (`hole` field), and a round hole is the regular inscribed
-/// `N`-gon of F06 section 2 (A-2), whose `N` follows the contract's own tolerance, so
-/// `--hole-segments` does not apply.
+/// The one hole of `add-hole` (A04, A04.2): a member target, `--axis-point "U,V,W"`
+/// `--axis-direction "X,Y,Z"` `--diameter D` with an optional `--from F --to T` range (the F06
+/// member-hole amendment), or a plate generator, `--polygon "X,Y;..."` (the clockwise polygon
+/// itself), `--hole-rect "X,Y,W,H"` or `--hole-round "X,Y,D"`, in plate-local millimetres.
+/// Exactly one target kind is accepted, and only the shape is parsed here: finiteness,
+/// positivity and the caps are the model's admission (`hole` field), and a round hole is the
+/// regular inscribed `N`-gon of F06 section 2 (A-2), whose `N` follows the contract's own
+/// tolerance, so `--hole-segments` does not apply.
 fn hole_spec(options: &BTreeMap<&str, &str>) -> Run<HoleSpec> {
     let given = |key: &str| options.get(key).copied();
-    let given_count = ["--polygon", "--hole-rect", "--hole-round"]
+    let plate_flags = ["--polygon", "--hole-rect", "--hole-round"]
         .iter()
         .filter(|key| given(key).is_some())
         .count();
+    let member_flags = ["--axis-point", "--axis-direction", "--diameter"]
+        .iter()
+        .filter(|key| given(key).is_some())
+        .count();
+    if member_flags > 0 {
+        if plate_flags > 0 {
+            return Err(invalid(
+                "a member hole takes --axis-point, --axis-direction and --diameter, without the plate generators",
+            ));
+        }
+        if member_flags != 3 {
+            return Err(invalid(
+                "--axis-point, --axis-direction and --diameter are required together",
+            ));
+        }
+        let member = |text: &str, count: usize| -> Run<[f64; 3]> {
+            match numbers_list(text, count)?[..] {
+                [a, b, c] => Ok([a, b, c]),
+                _ => Err(invalid("a member hole has the wrong number of values")),
+            }
+        };
+        let axis_point_mm = member(given("--axis-point").unwrap_or_default(), 3)?;
+        let axis_direction = member(given("--axis-direction").unwrap_or_default(), 3)?;
+        let extent = match (given("--from"), given("--to")) {
+            (None, None) => HoleExtent::Through,
+            (Some(from), Some(to)) => HoleExtent::Range {
+                from_mm: numbers_list(from, 1)?.first().copied().unwrap_or(0.0),
+                to_mm: numbers_list(to, 1)?.first().copied().unwrap_or(0.0),
+            },
+            _ => return Err(invalid("--from and --to are required together")),
+        };
+        let diameter = numbers_list(given("--diameter").unwrap_or_default(), 1)?;
+        return Ok(HoleSpec::Member(beamcraft_model::command::MemberHole {
+            axis_point_mm,
+            axis_direction,
+            extent,
+            diameter_mm: diameter.first().copied().unwrap_or(0.0),
+        }));
+    }
+    let given_count = plate_flags;
     if given_count != 1 {
         return Err(invalid(
             "exactly one of --polygon, --hole-rect or --hole-round is required",
@@ -1970,6 +2293,14 @@ fn hole_spec(options: &BTreeMap<&str, &str>) -> Run<HoleSpec> {
             diameter_mm: d,
         }),
         _ => Err(invalid("a hole has the wrong number of values")),
+    }
+}
+
+/// The `add-hole` element response: a plate or a member, as the hole target decides.
+fn hole_element_json(element: &beamcraft_cli::hole::HoleElement) -> Run<Json> {
+    match element {
+        beamcraft_cli::hole::HoleElement::Plate(record) => plate_json(record),
+        beamcraft_cli::hole::HoleElement::Member(record) => member_json(record),
     }
 }
 
@@ -2049,7 +2380,7 @@ fn add_hole_cli(
             ),
             ("op_id", Json::text(op_id.to_string())),
             ("removed_record", Json::text(operation_id.to_string())),
-            ("element", plate_json(&r.plate)?),
+            ("element", hole_element_json(&r.element)?),
             ("revision", revision_json(&r.revision)),
             ("footprint", footprint_json(r.footprint.as_ref())),
         ]));
@@ -2075,7 +2406,7 @@ fn add_hole_cli(
         },
         &mut NoFault,
     )?;
-    let element = plate_json(&added.plate)?;
+    let element = hole_element_json(&added.element)?;
     Ok(Json::object([
         (
             "outcome",
@@ -2168,6 +2499,7 @@ fn delete_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
                     DeletedKind::Bolt => "bolt",
                     DeletedKind::Level => "level",
                     DeletedKind::Grid => "grid",
+                    DeletedKind::Construction => "construction",
                 })
             }),
         ),
@@ -2242,6 +2574,20 @@ fn copy_command(
     } else {
         copy_element
     };
+    // T03: the two-point form of the copy offset; exclusive with the explicit offset.
+    let copy_from = given("--copy-from").map(translation).transpose()?;
+    let copy_to = given("--copy-to").map(translation).transpose()?;
+    if copy_from.is_some() != copy_to.is_some() {
+        return Err(invalid("--copy-from and --copy-to are given together"));
+    }
+    if copy_from.is_some() && given("--offset").is_some() {
+        return Err(invalid("--offset and --copy-from/--copy-to are exclusive"));
+    }
+    let offset_mm = if let Some((from, to)) = copy_from.zip(copy_to) {
+        [to[0] - from[0], to[1] - from[1], to[2] - from[2]]
+    } else {
+        given("--offset").map_or(Ok([0.0; 3]), translation)?
+    };
     let copied = copy(
         store,
         &CopyRequest {
@@ -2254,7 +2600,7 @@ fn copy_command(
                 source_id,
                 new_id,
                 name: given("--name").map(str::to_owned),
-                offset_mm: given("--offset").map_or(Ok([0.0; 3]), translation)?,
+                offset_mm,
             },
         },
         &mut NoFault,
@@ -2281,6 +2627,285 @@ fn copy_command(
         ("element", element),
         ("revision", revision_json(&copied.revision)),
         ("footprint", footprint_json(copied.footprint.as_ref())),
+    ]))
+}
+
+/// The `create-lofted-plate` command (A11): a plate between two contours that need not be
+/// coplanar. Both contours parse like `--contour` of `create-plate`; winding, planarity, the
+/// equal vertex count and the certified loft are the engine's, and a twisted or
+/// self-intersecting correspondence refuses the command before anything is written.
+fn lofted_create(
+    store: &RevisionStore,
+    options: &BTreeMap<&str, &str>,
+    candidates: &mut Vec<Json>,
+) -> Run<Json> {
+    let mut source = IdSource::system();
+    let mut fresh = || {
+        source.next_id().map_err(|_| PlateError {
+            rule_id: None,
+            code: ErrorCode::BackendUnavailable,
+            message: "no identity could be generated",
+        })
+    };
+    let given = |key: &str| options.get(key).copied();
+    let new_id = match given("--new-id") {
+        Some(text) => ElementId::parse(text).map_err(id_error)?,
+        None => ElementId::from_uuid(fresh()?),
+    };
+    let op_id = match given("--op-id") {
+        Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
+        None => OpId::from_uuid(fresh()?),
+    };
+    let revision_id = match given("--revision-id") {
+        Some(text) => RevisionId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
+        None => RevisionId::from_uuid(fresh()?),
+    };
+    let actor = match given("--actor-id") {
+        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+    };
+    let project = match given("--project-id") {
+        Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
+        None => ProjectId::from_uuid(fresh()?),
+    };
+    let workspace = match given("--workspace-id") {
+        Some(text) => WorkspaceId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
+        None => WorkspaceId::from_uuid(fresh()?),
+    };
+    let start = contour_points(given("--start").ok_or_else(|| invalid("--start is required"))?)?;
+    let end = contour_points(given("--end").ok_or_else(|| invalid("--end is required"))?)?;
+    let command = CreateLoftedPlate {
+        new_id,
+        name: given("--name").unwrap_or("Lofted plate").to_owned(),
+        class: given("--class")
+            .map(|v| {
+                v.parse::<i32>()
+                    .map_err(|_| invalid("class must be an int32"))
+            })
+            .transpose()?
+            .unwrap_or(0),
+        start_points_mm: start,
+        end_points_mm: end,
+        placement: Placement {
+            translation_mm: given("--translation").map_or(Ok([0.0; 3]), translation)?,
+            orientation_xyzw: given("--orientation-xyzw")
+                .map_or(Ok([0.0, 0.0, 0.0, 1.0]), quaternion)?,
+        },
+        material_digest: selected(
+            store,
+            options,
+            ("--material-digest", "--material"),
+            false,
+            None,
+            candidates,
+        )?,
+    };
+    let created = beamcraft_cli::loft::create_lofted(
+        store,
+        &beamcraft_cli::loft::LoftRequest {
+            op_id,
+            revision_id,
+            actor,
+            project,
+            workspace,
+            command,
+        },
+        &mut NoFault,
+    )?;
+    let geometry = Json::object([
+        ("volume_mm3", num(created.volume_mm3)?),
+        ("volume_m3", num(created.volume_mm3 / 1_000_000_000.0)?),
+        ("area_mm2", created.area_mm2.map_or(Ok(Json::Null), num)?),
+        ("mesh_digest", Json::text(created.mesh_digest.as_str())),
+        ("triangles", Json::uint(created.triangles as u64)),
+    ]);
+    Ok(Json::object([
+        (
+            "outcome",
+            Json::text(if created.replayed {
+                "lofted_plate_replayed"
+            } else {
+                "lofted_plate_created"
+            }),
+        ),
+        ("op_id", Json::text(op_id.to_string())),
+        (
+            "plate",
+            Json::object([
+                ("id", Json::text(created.plate.id.to_string())),
+                ("name", Json::text(created.plate.name.as_str())),
+                ("class", num(f64::from(created.plate.class))?),
+            ]),
+        ),
+        (
+            "start_points_mm",
+            Json::Array(
+                created
+                    .plate
+                    .start_points_mm
+                    .iter()
+                    .map(point_json)
+                    .collect(),
+            ),
+        ),
+        (
+            "end_points_mm",
+            Json::Array(created.plate.end_points_mm.iter().map(point_json).collect()),
+        ),
+        ("geometry", geometry),
+        ("revision", revision_json(&created.revision)),
+        ("footprint", footprint_json(created.footprint.as_ref())),
+    ]))
+}
+
+/// One authored contour point as a JSON array.
+fn point_json(point: &[f64; 3]) -> Json {
+    Json::Array(
+        point
+            .iter()
+            .map(|v| num(*v).unwrap_or(Json::Null))
+            .collect(),
+    )
+}
+
+/// The `inspect-lofted-plates` command (A11): the committed lofted plates of the verified
+/// head with their stored quantity records.
+fn lofted_inspect(store: &RevisionStore) -> Run<Json> {
+    let views = beamcraft_cli::loft::lofted_plates(store)?;
+    let plates = views
+        .iter()
+        .map(|view| {
+            Ok(Json::object([
+                ("id", Json::text(view.id.to_string())),
+                ("name", Json::text(view.name.as_str())),
+                ("class", num(f64::from(view.class))?),
+                ("volume_mm3", view.volume_mm3.map_or(Ok(Json::Null), num)?),
+                (
+                    "volume_status",
+                    view.volume_status.as_deref().map_or(Json::Null, Json::text),
+                ),
+                ("mass_kg", view.mass_kg.map_or(Ok(Json::Null), num)?),
+                (
+                    "mass_status",
+                    view.mass_status.as_deref().map_or(Json::Null, Json::text),
+                ),
+                (
+                    "algorithm",
+                    view.algorithm.as_deref().map_or(Json::Null, Json::text),
+                ),
+                ("triangles", Json::uint(view.triangles as u64)),
+            ]))
+        })
+        .collect::<Run<Vec<_>>>()?;
+    Ok(Json::object([
+        ("outcome", Json::text("lofted_plates")),
+        ("count", Json::uint(plates.len() as u64)),
+        ("plates", Json::Array(plates)),
+    ]))
+}
+
+/// The engine's `ArrayElements` (T03) through the real adapter: `--count` independent copies at
+/// the stepped placements, all authored in one revision so one undo step takes them back.
+fn array_command(store: &RevisionStore, options: &BTreeMap<&str, &str>, polar: bool) -> Run<Json> {
+    let mut source = IdSource::system();
+    let mut fresh = || {
+        source.next_id().map_err(|_| PlateError {
+            rule_id: None,
+            code: ErrorCode::BackendUnavailable,
+            message: "no identity could be generated",
+        })
+    };
+    let given = |key: &str| options.get(key).copied();
+    let source_id = ElementId::parse(given("--id").ok_or_else(|| invalid("--id is required"))?)
+        .map_err(id_error)?;
+    let count: usize = given("--count")
+        .ok_or_else(|| invalid("--count is required"))?
+        .parse()
+        .map_err(|_| invalid("count is not a whole number"))?;
+    if count == 0 {
+        return Err(invalid("count must be at least one"));
+    }
+    let mut new_ids = Vec::new();
+    for _ in 0..count {
+        new_ids.push(ElementId::from_uuid(fresh()?));
+    }
+    let op_id = match given("--op-id") {
+        Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
+        None => OpId::from_uuid(fresh()?),
+    };
+    let revision_id = match given("--revision-id") {
+        Some(text) => RevisionId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
+        None => RevisionId::from_uuid(fresh()?),
+    };
+    let actor = match given("--actor-id") {
+        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+    };
+    let project = match given("--project-id") {
+        Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
+        None => ProjectId::from_uuid(fresh()?),
+    };
+    let workspace = match given("--workspace-id") {
+        Some(text) => WorkspaceId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
+        None => WorkspaceId::from_uuid(fresh()?),
+    };
+    let step = if polar {
+        ArrayStep::Polar {
+            point_mm: translation(given("--point").ok_or_else(|| invalid("--point is required"))?)?,
+            axis: translation(given("--axis").ok_or_else(|| invalid("--axis is required"))?)?,
+            angle_rad: float(options, "--angle")?,
+        }
+    } else {
+        ArrayStep::Linear {
+            direction: translation(
+                given("--direction").ok_or_else(|| invalid("--direction is required"))?,
+            )?,
+            spacing_mm: float(options, "--spacing")?,
+        }
+    };
+    let arrayed = array_elements(
+        store,
+        &ArrayRequest {
+            op_id,
+            revision_id,
+            actor,
+            project,
+            workspace,
+            command: ArrayElements {
+                source_id,
+                name: given("--name").map(str::to_owned),
+                new_ids,
+                step,
+            },
+        },
+        &mut NoFault,
+    )?;
+    let elements = arrayed
+        .elements
+        .iter()
+        .map(|record| match record {
+            CopiedElement::Plate(record) => plate_json(record),
+            CopiedElement::Member(record) => member_json(record),
+        })
+        .collect::<Run<Vec<_>>>()?;
+    Ok(Json::object([
+        (
+            "outcome",
+            Json::text(if arrayed.replayed {
+                "element_array_replayed"
+            } else {
+                "element_arrayed"
+            }),
+        ),
+        ("op_id", Json::text(op_id.to_string())),
+        ("source_id", Json::text(source_id.to_string())),
+        (
+            "changed_layers",
+            Json::Array(arrayed.changed_layers.iter().map(Json::text).collect()),
+        ),
+        ("elements", Json::Array(elements)),
+        ("revision", revision_json(&arrayed.revision)),
+        ("footprint", footprint_json(arrayed.footprint.as_ref())),
     ]))
 }
 
@@ -3036,6 +3661,23 @@ fn member_json(record: &MemberRecord) -> Run<Json> {
         ("vertices", Json::uint(mesh.vertices().len() as u64)),
         ("triangles", Json::uint(mesh.triangles().len() as u64)),
         ("cuts", cuts_json(&record.authored.cuts)?),
+        (
+            "hole_records",
+            Json::Array(
+                record
+                    .authored
+                    .hole_records
+                    .iter()
+                    .map(|r| {
+                        Json::object([
+                            ("operation_id", Json::text(r.operation_id.to_string())),
+                            ("ordinal", Json::uint(r.ordinal as u64)),
+                            ("extent", Json::text(r.extent.as_str())),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
     ]))
 }
 
@@ -3072,6 +3714,46 @@ fn corners_json(corners: &[PlateCorner]) -> Run<Json> {
                     "values_mm",
                     Json::Array(values.into_iter().map(num).collect::<Run<Vec<_>>>()?),
                 ),
+            ]))
+        })
+        .collect::<Run<Vec<_>>>()?;
+    Ok(Json::Array(records))
+}
+
+/// The bend records of a plate (A10): kind, identity, line and kind-specific parameters.
+fn bends_json(bends: &[BendRecord]) -> Run<Json> {
+    let records = bends
+        .iter()
+        .map(|bend| {
+            let (values, angle) = match bend.spec {
+                BendSpec::Fold {
+                    radius_mm,
+                    angle_rad,
+                    ..
+                } => (vec![radius_mm], Some(angle_rad)),
+                BendSpec::Roll {
+                    radius_mm,
+                    radius_b_mm,
+                    ..
+                } => (
+                    match radius_b_mm {
+                        Some(radius_b) => vec![radius_mm, radius_b],
+                        None => vec![radius_mm],
+                    },
+                    None,
+                ),
+            };
+            Ok(Json::object([
+                ("bend", Json::text(bend.spec.kind())),
+                ("operation_id", Json::text(bend.operation_id.to_string())),
+                (
+                    "values_mm",
+                    Json::Array(values.into_iter().map(num).collect::<Run<Vec<_>>>()?),
+                ),
+                match angle {
+                    Some(angle) => ("angle_rad", num(angle)?),
+                    None => ("angle_rad", Json::Null),
+                },
             ]))
         })
         .collect::<Run<Vec<_>>>()?;
@@ -3566,6 +4248,7 @@ fn plate_json(record: &PlateRecord) -> Run<Json> {
             }),
         ),
         ("corners", corners_json(&record.authored.corners)?),
+        ("bends", bends_json(&record.authored.bends)?),
         (
             "arc_deviation_mm",
             if record.body.arc_deviation_mm == 0.0 {

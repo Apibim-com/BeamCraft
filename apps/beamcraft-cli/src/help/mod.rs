@@ -13,6 +13,7 @@ mod bolt;
 mod bom;
 mod changeset;
 mod commands;
+mod construction;
 mod coordinator;
 mod copy;
 mod definitions;
@@ -20,6 +21,7 @@ mod delete;
 mod drawing;
 mod edit;
 mod export;
+mod filters;
 mod grid;
 mod history;
 mod level;
@@ -62,7 +64,9 @@ const SECTIONS: &[&str] = &[
     bolt::HELP,
     level::HELP,
     attribute::HELP,
+    filters::HELP,
     grid::HELP,
+    construction::HELP,
     grid::LINES,
     grid::UPDATE,
     grid::QUERIES,
