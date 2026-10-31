@@ -15,14 +15,13 @@ output, with strings for generations and other lossless integers.
 
 CLI help text is owned by command family under `src/help/` (for example `member.rs`, `drawing.rs`
 and `workspace.rs`); edit that family's text there. The command inventory is one table,
-`src/registry.rs`: add a new command there (name, family, tier, adapter route) when it is added to
-its adapter.
+`src/registry.rs`: add a new command there (name, family, access, parameters, adapter
+route) when it is added to its adapter.
 `main.rs` dispatches a command word only through the registry's route, so a word that is not
 registered is refused as unsupported and a registered word cannot be left without an adapter.
 `src/help/mod.rs` renders the inventory from it and composes the sections in their established
-order; register a new family there without adding help text to `main.rs`. `beamcraft commands
-[--tier core|ui-assist]` prints the same registry as JSON; `ui-assist` marks commands that
-mirror interactive-UI affordances (`snap`, `pick`, start-screen and appearance settings).
+order; register a new family there without adding help text to `main.rs`. `beamcraft commands`
+prints the same registry as JSON, without a store.
 Each command also carries its access (`read` changes nothing persistent; `write` changes the
 store, the settings, a library or an output file) and its parameters: value shape, whether it is
 required and, for alternatives, a `one_of` group of which exactly one member is required. The five
@@ -36,11 +35,11 @@ rewrites it.
 Parsing and execution stay in the existing command adapters. No arguments, `--help` and `-h`
 print the same help.
 
-Application appearance is also headless: `beamcraft show-settings [--config-dir DIR]` reports
-`settings.theme`; `beamcraft set-settings --theme system|light|dark [--config-dir DIR]` saves it
-without changing the author, environment or recent models. The default is `system`. Existing
-version-1 settings without the optional theme field remain readable; unknown theme values are
-refused without overwriting the settings.
+Interactive assistance has no CLI command: cursor picking and snapping and the start screen
+(appearance settings, environment list, project-name suggestion, recent projects) are engine APIs
+for the window (`AGENTS.md` section 3). An agent addresses geometry and files directly;
+`list-feature`, `lookup-feature` and `element-edges` stay because `preview-drawing` takes a
+feature id.
 
 Modelling commits also pin the admitted command's exact read/write footprint and typed request
 fingerprint as operation evidence in the revision manifest. This includes unchanged copy sources,

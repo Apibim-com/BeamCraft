@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! Start commands: the user's settings, the environments, and creating, listing and remembering
-//! projects. They call `beamcraft_host::settings` and `beamcraft_cli::project` and print one JSON
-//! object with the same error shape and exit codes as the plate commands.
+//! Start commands: `create-project` and `list-project`. They call `beamcraft_host::settings` and
+//! `beamcraft_cli::project` and print one JSON object with the same error shape and exit codes as
+//! the plate commands.
 //!
 //! The settings live in the user's configuration directory unless `--config-dir` names another.
 //! `create-project` takes its author from the settings profile unless `--actor-id` names one, and
@@ -14,14 +14,13 @@ use crate::plate_cmd::revision_json;
 use beamcraft_cli::definition::{DefineRequest, DefinitionRecord, define};
 use beamcraft_cli::plate::PlateError;
 use beamcraft_cli::project::{
-    ENVIRONMENTS_DIR, EnvironmentEntry, EnvironmentState, ProjectContext, ProjectInfo,
-    ProjectState, builtin_environment_dirs, create_project, create_project_unique,
-    install_environment, list_environments, list_projects, next_project_name, project_info,
-    project_is_missing,
+    ENVIRONMENTS_DIR, EnvironmentState, ProjectContext, ProjectInfo, ProjectState,
+    builtin_environment_dirs, create_project, create_project_unique, install_environment,
+    list_environments, list_projects,
 };
 use beamcraft_host::ids::IdSource;
 use beamcraft_host::revision::{NoFault, RevisionStore, Uuid7 as HostUuid7};
-use beamcraft_host::settings::{Settings, SettingsError, ThemePreference, default_dir};
+use beamcraft_host::settings::{Settings, SettingsError, default_dir};
 use beamcraft_host::storage::BlobStore;
 use beamcraft_json::Json;
 use beamcraft_model::error::ErrorCode;
@@ -67,16 +66,6 @@ fn run(args: &[OsString]) -> Run<Json> {
         .split_first()
         .ok_or_else(|| invalid("missing command"))?;
     let own: &[&str] = match *command {
-        "show-settings" | "list-environment" | "list-recent" => &["--config-dir"],
-        "set-settings" => &[
-            "--config-dir",
-            "--name",
-            "--email",
-            "--environment",
-            "--skip-launcher",
-            "--models-dir",
-            "--theme",
-        ],
         "create-project" => &[
             "--config-dir",
             "--parent",
@@ -89,9 +78,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             "--project-id",
             "--workspace-id",
         ],
-        "suggest-project-name" => &["--parent", "--name"],
         "list-project" => &["--dir"],
-        "add-recent" => &["--config-dir", "--store"],
         _ => return Err(invalid("unknown command")),
     };
     if !tail.len().is_multiple_of(2) || tail.len() > 32 {
@@ -116,67 +103,6 @@ fn run(args: &[OsString]) -> Run<Json> {
         }
     };
     match *command {
-        "show-settings" => {
-            let dir = config_dir()?;
-            let settings = Settings::load(&dir).map_err(settings_error)?;
-            settings_json("settings", &dir, &settings)
-        }
-        "set-settings" => {
-            let dir = config_dir()?;
-            let mut settings = Settings::load(&dir).map_err(settings_error)?;
-            match (given("--name"), given("--email")) {
-                (Some(name), Some(email)) => settings
-                    .set_profile(name, email, || {
-                        fresh_id().map_err(|e| SettingsError {
-                            code: e.code,
-                            message: e.message,
-                        })
-                    })
-                    .map_err(settings_error)?,
-                (None, None) => {}
-                _ => return Err(invalid("--name and --email are given together")),
-            }
-            if let Some(id) = given("--environment") {
-                settings.environment = (id != "none").then(|| id.to_owned());
-            }
-            if let Some(flag) = given("--skip-launcher") {
-                settings.skip_launcher = boolean(flag)?;
-            }
-            if let Some(dir) = given("--models-dir") {
-                settings.models_dir = (dir != "none").then(|| PathBuf::from(dir));
-            }
-            if let Some(theme) = given("--theme") {
-                settings.theme = ThemePreference::parse(theme).map_err(settings_error)?;
-            }
-            settings.save(&dir).map_err(settings_error)?;
-            settings_json("settings_saved", &dir, &settings)
-        }
-        "list-environment" => {
-            let (folders, user) = environment_folders(given("--config-dir"));
-            let entries = list_environments(&folders);
-            Ok(Json::object([
-                ("outcome", Json::text("environments")),
-                (
-                    "user_dir",
-                    user.as_deref().map_or(Ok(Json::Null), path_json)?,
-                ),
-                (
-                    "environments",
-                    Json::Array(entries.iter().map(environment_json).collect::<Run<_>>()?),
-                ),
-            ]))
-        }
-        "suggest-project-name" => {
-            let parent = given("--parent").ok_or_else(|| invalid("--parent is required"))?;
-            let name = given("--name").ok_or_else(|| invalid("--name is required"))?;
-            Ok(Json::object([
-                ("outcome", Json::text("project_name")),
-                (
-                    "name",
-                    Json::text(next_project_name(Path::new(parent), name)?),
-                ),
-            ]))
-        }
         "create-project" => {
             let parent = given("--parent").ok_or_else(|| invalid("--parent is required"))?;
             let name = given("--name").ok_or_else(|| invalid("--name is required"))?;
@@ -277,44 +203,6 @@ fn run(args: &[OsString]) -> Run<Json> {
                 ),
             ]))
         }
-        "list-recent" => {
-            let dir = config_dir()?;
-            let mut settings = Settings::load(&dir).map_err(settings_error)?;
-            let previous_count = settings.recent.len();
-            settings.recent.retain(|r| !project_is_missing(&r.path));
-            if settings.recent.len() != previous_count {
-                settings.save(&dir).map_err(settings_error)?;
-            }
-            let mut recent = Vec::with_capacity(settings.recent.len());
-            for r in &settings.recent {
-                let project = project_info(&r.path)?;
-                recent.push(Json::object([
-                    ("opened_ms", Json::uint(r.opened_ms)),
-                    ("project", project_json(&project)?),
-                ]));
-            }
-            Ok(Json::object([
-                ("outcome", Json::text("recent")),
-                ("recent", Json::Array(recent)),
-            ]))
-        }
-        "add-recent" => {
-            let store = given("--store").ok_or_else(|| invalid("--store is required"))?;
-            let info = project_info(Path::new(store))?;
-            if !matches!(info.state, ProjectState::Ready { .. }) {
-                return Err(PlateError {
-                    rule_id: None,
-                    code: ErrorCode::NotFound,
-                    message: "the folder holds no readable project",
-                });
-            }
-            let dir = config_dir()?;
-            remember(&dir, &info.path)?;
-            Ok(Json::object([
-                ("outcome", Json::text("recent_added")),
-                ("project", project_json(&info)?),
-            ]))
-        }
         _ => Err(invalid("unknown command")),
     }
 }
@@ -353,14 +241,6 @@ fn path_json(path: &Path) -> Run<Json> {
     path.to_str()
         .map(Json::text)
         .ok_or_else(|| invalid("a path is not UTF-8"))
-}
-
-fn settings_json(outcome: &str, dir: &Path, settings: &Settings) -> Run<Json> {
-    Ok(Json::object([
-        ("outcome", Json::text(outcome)),
-        ("config_dir", path_json(dir)?),
-        ("settings", settings.to_json().map_err(settings_error)?),
-    ]))
 }
 
 fn project_json(info: &ProjectInfo) -> Run<Json> {
@@ -408,39 +288,6 @@ fn project_json(info: &ProjectInfo) -> Run<Json> {
         ("modified_ms", modified),
         ("revision", revision),
     ]))
-}
-
-fn environment_json(entry: &EnvironmentEntry) -> Run<Json> {
-    let path = path_json(&entry.path)?;
-    let origin = Json::text(entry.origin);
-    Ok(match &entry.state {
-        EnvironmentState::Ready {
-            id,
-            title,
-            shadowed,
-        } => Json::object([
-            ("id", Json::text(id.clone())),
-            ("title", title.clone().map_or(Json::Null, Json::text)),
-            ("origin", origin),
-            ("path", path),
-            ("shadowed", Json::Bool(*shadowed)),
-            ("refused", Json::Null),
-        ]),
-        EnvironmentState::Refused(error) => Json::object([
-            ("id", Json::Null),
-            ("title", Json::Null),
-            ("origin", origin),
-            ("path", path),
-            ("shadowed", Json::Bool(false)),
-            (
-                "refused",
-                Json::object([
-                    ("code", Json::text(error.code.as_str())),
-                    ("message", Json::text(error.message)),
-                ]),
-            ),
-        ]),
-    })
 }
 
 /// The materials every seeded project starts with: a name and a density in kg/m3. A density of

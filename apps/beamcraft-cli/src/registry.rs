@@ -3,7 +3,7 @@
 
 //! The single inventory of `beamcraft` commands.
 //!
-//! Every command the binary dispatches is listed here once, with its family, tier and the
+//! Every command the binary dispatches is listed here once, with its family, access, parameters and the
 //! adapter that runs it. The binary routes a command word through [`route`], and the help
 //! inventory and the `commands` command are rendered from this table, so a word that is not
 //! listed here is not dispatched and a listed word cannot be left without a route. Add a command
@@ -11,26 +11,6 @@
 
 use beamcraft_json::Json;
 use std::ffi::OsStr;
-
-/// Who a command is meant for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Tier {
-    /// Part of the headless modelling, query and exchange surface an agent drives.
-    Core,
-    /// Mirrors an interactive-UI affordance (cursor snapping, picking, start screen and
-    /// appearance settings). Kept for tests and debugging; an agent addresses geometry directly.
-    UiAssist,
-}
-
-impl Tier {
-    /// The stable name used by `commands --tier`.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Core => "core",
-            Self::UiAssist => "ui-assist",
-        }
-    }
-}
 
 /// The adapter in the binary that runs a command.
 ///
@@ -66,7 +46,7 @@ pub enum Route {
     Drawing,
     /// The work plane and construction point commands.
     WorkPlane,
-    /// The picking and snapping queries.
+    /// The feature queries.
     Pick,
     /// The weld commands.
     Weld,
@@ -80,7 +60,7 @@ pub enum Route {
     Library,
     /// `fastener-geometry`.
     Fastener,
-    /// The project and start-screen commands.
+    /// `create-project` and `list-project`.
     Project,
     /// The grid commands.
     Grid,
@@ -195,8 +175,6 @@ pub struct Command {
     pub name: &'static str,
     /// The command family; it matches the file under `src/help/` that documents the command.
     pub family: &'static str,
-    /// Who the command is meant for.
-    pub tier: Tier,
     /// The adapter that runs the command.
     pub route: Route,
     /// What the command changes.
@@ -207,7 +185,7 @@ pub struct Command {
     pub params: &'static [Param],
 }
 
-const fn core(
+const fn entry(
     route: Route,
     family: &'static str,
     name: &'static str,
@@ -218,26 +196,6 @@ const fn core(
     Command {
         name,
         family,
-        tier: Tier::Core,
-        route,
-        access,
-        ids,
-        params,
-    }
-}
-
-const fn assist(
-    route: Route,
-    family: &'static str,
-    name: &'static str,
-    access: Access,
-    ids: Ids,
-    params: &'static [Param],
-) -> Command {
-    Command {
-        name,
-        family,
-        tier: Tier::UiAssist,
         route,
         access,
         ids,
@@ -247,7 +205,7 @@ const fn assist(
 
 /// Every command, in the order the help inventory lists them.
 pub const COMMANDS: &[Command] = &[
-    core(
+    entry(
         Route::Generic,
         "blobs",
         "put-blob",
@@ -260,7 +218,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--cancel-after-ms", "U64"),
         ],
     ),
-    core(
+    entry(
         Route::Generic,
         "blobs",
         "verify-blob",
@@ -273,7 +231,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--cancel-after-ms", "U64"),
         ],
     ),
-    core(
+    entry(
         Route::Generic,
         "revision",
         "commit-revision",
@@ -294,7 +252,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--cancel-after-ms", "U64"),
         ],
     ),
-    core(
+    entry(
         Route::Generic,
         "revision",
         "open-revision",
@@ -306,7 +264,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--cancel-after-ms", "U64"),
         ],
     ),
-    core(
+    entry(
         Route::Generic,
         "revision",
         "recover-revision",
@@ -319,7 +277,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--cancel-after-ms", "U64"),
         ],
     ),
-    core(
+    entry(
         Route::Generic,
         "revision",
         "inspect-revision-outcome",
@@ -332,7 +290,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--cancel-after-ms", "U64"),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "plate",
         "create-plate",
@@ -364,7 +322,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--new-id", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "plate",
         "add-hole",
@@ -383,7 +341,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--workspace-id", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "plate",
         "update-hole",
@@ -398,7 +356,7 @@ pub const COMMANDS: &[Command] = &[
             one(1, "--hole-round", "X,Y,D"),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "plate",
         "remove-hole",
@@ -410,7 +368,7 @@ pub const COMMANDS: &[Command] = &[
             req("--operation-id", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "plate",
         "inspect-elements",
@@ -418,7 +376,7 @@ pub const COMMANDS: &[Command] = &[
         Ids::None,
         &[req("--store", "ROOT"), opt("--element", "UUID")],
     ),
-    core(
+    entry(
         Route::Plate,
         "definitions",
         "define-material",
@@ -436,7 +394,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--workspace-id", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "definitions",
         "define-profile",
@@ -475,7 +433,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--workspace-id", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "definitions",
         "define-fastener",
@@ -492,7 +450,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--workspace-id", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "definitions",
         "definitions",
@@ -505,7 +463,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--limit", "N"),
         ],
     ),
-    core(
+    entry(
         Route::Library,
         "library",
         "list-library",
@@ -523,7 +481,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--shadow-offset", "N"),
         ],
     ),
-    core(
+    entry(
         Route::Library,
         "library",
         "show-library",
@@ -537,7 +495,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--user-library", "FILE"),
         ],
     ),
-    core(
+    entry(
         Route::Library,
         "library",
         "add-library",
@@ -570,7 +528,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--surface-per-meter-m2", "N"),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "member",
         "create-member",
@@ -606,7 +564,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--new-id", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "member",
         "create-polybeam",
@@ -627,7 +585,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--new-id", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "member",
         "create-curved-beam",
@@ -652,7 +610,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--new-id", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::WorkPlane,
         "work_plane",
         "work-plane",
@@ -669,7 +627,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--direction", "X,Y,Z"),
         ],
     ),
-    core(
+    entry(
         Route::WorkPlane,
         "work_plane",
         "resolve-construction-point",
@@ -685,7 +643,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--plane", "OX,OY,OZ,XX,XY,XZ,YX,YY,YZ"),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "edit",
         "update-element",
@@ -708,7 +666,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--level", "UUID|none"),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "edit",
         "move-plate-vertex",
@@ -721,7 +679,7 @@ pub const COMMANDS: &[Command] = &[
             req("--to", "X,Y"),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "edit",
         "move-plate-edge",
@@ -734,7 +692,7 @@ pub const COMMANDS: &[Command] = &[
             req("--delta", "DX,DY"),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "edit",
         "insert-plate-vertex",
@@ -747,7 +705,7 @@ pub const COMMANDS: &[Command] = &[
             req("--point", "X,Y"),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "edit",
         "delete-plate-vertex",
@@ -759,7 +717,7 @@ pub const COMMANDS: &[Command] = &[
             req("--vertex", "N"),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "edit",
         "set-plate-corner",
@@ -772,7 +730,7 @@ pub const COMMANDS: &[Command] = &[
             req("--corner", "chamfer:D1[,D2]|round:R|sharp"),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "edit",
         "cut-by-plane",
@@ -787,7 +745,7 @@ pub const COMMANDS: &[Command] = &[
             req("--keep", "positive|negative"),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "edit",
         "update-cut",
@@ -802,7 +760,7 @@ pub const COMMANDS: &[Command] = &[
             req("--keep", "positive|negative"),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "edit",
         "remove-cut",
@@ -814,7 +772,7 @@ pub const COMMANDS: &[Command] = &[
             req("--operation-id", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "edit",
         "cut-by-line",
@@ -830,7 +788,7 @@ pub const COMMANDS: &[Command] = &[
             req("--keep", "positive|negative"),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "edit",
         "cut-by-polygon",
@@ -843,7 +801,7 @@ pub const COMMANDS: &[Command] = &[
             req("--polygon", "X,Y;X,Y;..."),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "edit",
         "cut-by-part",
@@ -856,7 +814,7 @@ pub const COMMANDS: &[Command] = &[
             req("--tool", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "edit",
         "fit-end-to-part",
@@ -869,7 +827,7 @@ pub const COMMANDS: &[Command] = &[
             req("--tool", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "edit",
         "chamfer-part",
@@ -884,7 +842,7 @@ pub const COMMANDS: &[Command] = &[
             req("--second-distance", "MM"),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "edit",
         "split-part",
@@ -901,7 +859,7 @@ pub const COMMANDS: &[Command] = &[
             req("--keep", "positive|negative"),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "edit",
         "combine-parts",
@@ -914,7 +872,7 @@ pub const COMMANDS: &[Command] = &[
             req("--operation-id", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "delete",
         "delete-element",
@@ -922,7 +880,7 @@ pub const COMMANDS: &[Command] = &[
         Ids::Common,
         &[req("--store", "ROOT"), req("--id", "UUID")],
     ),
-    core(
+    entry(
         Route::Plate,
         "copy",
         "copy-element",
@@ -937,7 +895,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--new-axis-ids", "UUID,UUID,..."),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "copy",
         "copy-instance",
@@ -951,7 +909,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--new-id", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "workspace",
         "create-workspace",
@@ -966,7 +924,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--op-id", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "workspace",
         "inspect-workspace",
@@ -974,7 +932,7 @@ pub const COMMANDS: &[Command] = &[
         Ids::None,
         &[req("--store", "ROOT"), req("--workspace-dir", "DIR")],
     ),
-    core(
+    entry(
         Route::Plate,
         "workspace",
         "publish-workspace",
@@ -982,7 +940,7 @@ pub const COMMANDS: &[Command] = &[
         Ids::None,
         &[req("--store", "ROOT"), req("--workspace-dir", "DIR")],
     ),
-    core(
+    entry(
         Route::Resolve,
         "workspace",
         "resolve-workspace",
@@ -996,7 +954,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--actor-id", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "workspace",
         "undo-workspace",
@@ -1008,7 +966,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--op-id", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "workspace",
         "redo-workspace",
@@ -1020,7 +978,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--op-id", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Plate,
         "workspace",
         "inspect-workspace-history",
@@ -1028,7 +986,7 @@ pub const COMMANDS: &[Command] = &[
         Ids::None,
         &[req("--workspace-dir", "DIR")],
     ),
-    core(
+    entry(
         Route::Rebase,
         "rebase",
         "rebase-workspace",
@@ -1043,7 +1001,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--actor-id", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Reference,
         "reference",
         "attach-reference",
@@ -1058,7 +1016,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--new-id", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Reference,
         "reference",
         "move-reference",
@@ -1071,7 +1029,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--rotation-z-deg", "DEG"),
         ],
     ),
-    core(
+    entry(
         Route::Reference,
         "reference",
         "correct-reference-units",
@@ -1085,7 +1043,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--clear", "true"),
         ],
     ),
-    core(
+    entry(
         Route::Reference,
         "reference",
         "write-reference",
@@ -1099,7 +1057,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--attribute", "NAME"),
         ],
     ),
-    core(
+    entry(
         Route::Reference,
         "reference",
         "inspect-reference",
@@ -1107,7 +1065,7 @@ pub const COMMANDS: &[Command] = &[
         Ids::None,
         &[req("--store", "ROOT")],
     ),
-    core(
+    entry(
         Route::Reference,
         "reference",
         "measure-reference",
@@ -1115,7 +1073,7 @@ pub const COMMANDS: &[Command] = &[
         Ids::None,
         &[req("--store", "ROOT"), opt("--id", "UUID")],
     ),
-    core(
+    entry(
         Route::Assembly,
         "assembly",
         "create-assembly",
@@ -1127,7 +1085,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--new-id", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Assembly,
         "assembly",
         "attach-to-assembly",
@@ -1139,7 +1097,7 @@ pub const COMMANDS: &[Command] = &[
             req("--assembly-id", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Assembly,
         "assembly",
         "detach-from-assembly",
@@ -1147,7 +1105,7 @@ pub const COMMANDS: &[Command] = &[
         Ids::Common,
         &[req("--store", "ROOT"), req("--id", "UUID")],
     ),
-    core(
+    entry(
         Route::Assembly,
         "assembly",
         "set-main-part",
@@ -1159,7 +1117,7 @@ pub const COMMANDS: &[Command] = &[
             req("--assembly-id", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Assembly,
         "assembly",
         "explode-assembly",
@@ -1167,7 +1125,7 @@ pub const COMMANDS: &[Command] = &[
         Ids::Common,
         &[req("--store", "ROOT"), req("--id", "UUID")],
     ),
-    core(
+    entry(
         Route::Assembly,
         "assembly",
         "assemblies",
@@ -1175,7 +1133,7 @@ pub const COMMANDS: &[Command] = &[
         Ids::None,
         &[req("--store", "ROOT")],
     ),
-    core(
+    entry(
         Route::Weld,
         "weld",
         "create-weld",
@@ -1196,7 +1154,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--new-id", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Weld,
         "weld",
         "welds",
@@ -1204,7 +1162,7 @@ pub const COMMANDS: &[Command] = &[
         Ids::None,
         &[req("--store", "ROOT")],
     ),
-    core(
+    entry(
         Route::Bolt,
         "bolt",
         "create-bolt",
@@ -1223,7 +1181,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--new-id", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Bolt,
         "bolt",
         "bolts",
@@ -1231,7 +1189,7 @@ pub const COMMANDS: &[Command] = &[
         Ids::None,
         &[req("--store", "ROOT")],
     ),
-    core(
+    entry(
         Route::Fastener,
         "bolt",
         "fastener-geometry",
@@ -1247,7 +1205,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--washer-under-nut", "true|false"),
         ],
     ),
-    core(
+    entry(
         Route::Level,
         "level",
         "create-level",
@@ -1260,7 +1218,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--new-id", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Level,
         "level",
         "levels",
@@ -1268,7 +1226,7 @@ pub const COMMANDS: &[Command] = &[
         Ids::None,
         &[req("--store", "ROOT")],
     ),
-    core(
+    entry(
         Route::Attribute,
         "attribute",
         "attribute-define",
@@ -1283,7 +1241,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--set", "TEXT"),
         ],
     ),
-    core(
+    entry(
         Route::Attribute,
         "attribute",
         "attribute-undefine",
@@ -1291,7 +1249,7 @@ pub const COMMANDS: &[Command] = &[
         Ids::Common,
         &[req("--store", "ROOT"), req("--name", "TEXT")],
     ),
-    core(
+    entry(
         Route::Attribute,
         "attribute",
         "attribute-set",
@@ -1304,7 +1262,7 @@ pub const COMMANDS: &[Command] = &[
             req("--value", "TEXT"),
         ],
     ),
-    core(
+    entry(
         Route::Attribute,
         "attribute",
         "attribute-clear",
@@ -1316,7 +1274,7 @@ pub const COMMANDS: &[Command] = &[
             req("--name", "TEXT"),
         ],
     ),
-    core(
+    entry(
         Route::Attribute,
         "attribute",
         "attribute-get",
@@ -1324,7 +1282,7 @@ pub const COMMANDS: &[Command] = &[
         Ids::None,
         &[req("--store", "ROOT"), req("--element", "UUID")],
     ),
-    core(
+    entry(
         Route::Attribute,
         "attribute",
         "attributes",
@@ -1332,7 +1290,7 @@ pub const COMMANDS: &[Command] = &[
         Ids::None,
         &[req("--store", "ROOT")],
     ),
-    core(
+    entry(
         Route::Grid,
         "grid",
         "create-grid",
@@ -1370,7 +1328,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--v-axis-id", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Grid,
         "grid",
         "update-grid",
@@ -1393,7 +1351,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--v-span", "MM,MM"),
         ],
     ),
-    core(
+    entry(
         Route::Grid,
         "grid",
         "list-grids",
@@ -1401,7 +1359,7 @@ pub const COMMANDS: &[Command] = &[
         Ids::None,
         &[req("--store", "ROOT")],
     ),
-    core(
+    entry(
         Route::Grid,
         "grid",
         "resolve-grid-point",
@@ -1413,7 +1371,7 @@ pub const COMMANDS: &[Command] = &[
             req("--labels", "U,V"),
         ],
     ),
-    core(
+    entry(
         Route::Grid,
         "grid",
         "resolve-grid-plane",
@@ -1425,7 +1383,7 @@ pub const COMMANDS: &[Command] = &[
             req("--label", "TEXT"),
         ],
     ),
-    core(
+    entry(
         Route::Grid,
         "grid",
         "draw-grid-line",
@@ -1441,7 +1399,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--new-axis-id", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Grid,
         "grid",
         "reshape-grid-line",
@@ -1455,7 +1413,7 @@ pub const COMMANDS: &[Command] = &[
             req("--to", "X,Y"),
         ],
     ),
-    core(
+    entry(
         Route::Grid,
         "grid",
         "remove-grid-line",
@@ -1467,7 +1425,7 @@ pub const COMMANDS: &[Command] = &[
             req("--axis-id", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Grid,
         "grid",
         "relabel-grid-line",
@@ -1482,7 +1440,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--labels", "TEXT"),
         ],
     ),
-    core(
+    entry(
         Route::Export,
         "export",
         "export-ifc",
@@ -1500,7 +1458,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--overwrite", ""),
         ],
     ),
-    core(
+    entry(
         Route::Export,
         "export",
         "ifc-guid",
@@ -1508,7 +1466,7 @@ pub const COMMANDS: &[Command] = &[
         Ids::None,
         &[one(1, "--id", "UUID"), one(1, "--decode", "GLOBALID")],
     ),
-    core(
+    entry(
         Route::Numbering,
         "numbering",
         "preview-numbering",
@@ -1527,7 +1485,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--limit", "N"),
         ],
     ),
-    core(
+    entry(
         Route::Numbering,
         "numbering",
         "approve-numbering",
@@ -1544,7 +1502,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--compare-name", "true|false"),
         ],
     ),
-    core(
+    entry(
         Route::Numbering,
         "numbering",
         "inspect-numbering",
@@ -1556,7 +1514,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--limit", "N"),
         ],
     ),
-    core(
+    entry(
         Route::Changeset,
         "changeset",
         "create-changeset",
@@ -1570,7 +1528,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--actor-id", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Changeset,
         "changeset",
         "inspect-changeset",
@@ -1578,7 +1536,7 @@ pub const COMMANDS: &[Command] = &[
         Ids::None,
         &[req("--workspace-dir", "DIR"), req("--changeset", "SHA256")],
     ),
-    core(
+    entry(
         Route::Changeset,
         "changeset",
         "apply-changeset",
@@ -1591,7 +1549,7 @@ pub const COMMANDS: &[Command] = &[
             req("--actor-id", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Coordinator,
         "coordinator",
         "serve-coordinator",
@@ -1605,7 +1563,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--max-requests", "N"),
         ],
     ),
-    core(
+    entry(
         Route::Coordinator,
         "coordinator",
         "publish-changeset",
@@ -1619,7 +1577,7 @@ pub const COMMANDS: &[Command] = &[
             req("--expected-head", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Coordinator,
         "coordinator",
         "coordinator-rebase",
@@ -1634,7 +1592,7 @@ pub const COMMANDS: &[Command] = &[
             req("--expected-draft", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Coordinator,
         "coordinator",
         "inspect-coordinator-head",
@@ -1642,7 +1600,7 @@ pub const COMMANDS: &[Command] = &[
         Ids::None,
         &[req("--address", "IP:PORT"), req("--token-file", "FILE")],
     ),
-    core(
+    entry(
         Route::History,
         "history",
         "inspect-history",
@@ -1654,7 +1612,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--workspace-dir", "DIR"),
         ],
     ),
-    core(
+    entry(
         Route::History,
         "history",
         "compact-history",
@@ -1675,7 +1633,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--orphan-grace-secs", "N"),
         ],
     ),
-    core(
+    entry(
         Route::View,
         "view",
         "snapshot-view",
@@ -1691,7 +1649,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--generation", "U64"),
         ],
     ),
-    core(
+    entry(
         Route::View,
         "view",
         "inspect-view-changes",
@@ -1706,29 +1664,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--generation", "U64"),
         ],
     ),
-    assist(
-        Route::Pick,
-        "pick",
-        "pick",
-        Access::Read,
-        Ids::None,
-        &[
-            req("--store", "ROOT"),
-            req("--targets", "face|edge|vertex,..."),
-            one(1, "--origin", "X,Y,Z"),
-            one(1, "--point", "X,Y,Z"),
-            opt("--direction", "X,Y,Z"),
-            opt("--t-max", "MM"),
-            opt("--include-backfaces", "true|false"),
-            opt("--radius", "MM"),
-            opt("--max-hits", "N"),
-            opt(
-                "--exclude",
-                "parts|assemblies|bolts|welds|holes|grids|construction_objects|items,...",
-            ),
-        ],
-    ),
-    core(
+    entry(
         Route::Pick,
         "pick",
         "lookup-feature",
@@ -1736,7 +1672,7 @@ pub const COMMANDS: &[Command] = &[
         Ids::None,
         &[req("--store", "ROOT"), req("--feature-id", "TEXT")],
     ),
-    core(
+    entry(
         Route::Pick,
         "pick",
         "list-feature",
@@ -1744,34 +1680,7 @@ pub const COMMANDS: &[Command] = &[
         Ids::None,
         &[req("--store", "ROOT"), req("--id", "UUID")],
     ),
-    assist(
-        Route::Pick,
-        "pick",
-        "snap",
-        Access::Read,
-        Ids::None,
-        &[
-            req("--store", "ROOT"),
-            req("--point", "X,Y,Z"),
-            opt("--radius", "MM"),
-            opt(
-                "--kinds",
-                "vertex|axis_end|axis|edge|midpoint|center|grid_intersection|grid_end|grid_line,...",
-            ),
-            opt("--max-hits", "N"),
-            opt("--plane", "OX,OY,OZ,XX,XY,XZ,YX,YY,YZ"),
-            opt("--origin", "X,Y,Z"),
-            opt("--direction", "X,Y,Z"),
-            opt("--aperture", "N"),
-            opt("--cursor-radius", "MM"),
-            opt("--grids", "UUID,..."),
-            opt("--reference-snaps", "true|false"),
-            opt("--geometry-snaps", "true|false"),
-            opt("--grid-snaps", "true|false"),
-            opt("--nearest", "true|false"),
-        ],
-    ),
-    core(
+    entry(
         Route::Pick,
         "pick",
         "element-edges",
@@ -1779,7 +1688,7 @@ pub const COMMANDS: &[Command] = &[
         Ids::None,
         &[req("--store", "ROOT"), req("--id", "UUID")],
     ),
-    core(
+    entry(
         Route::ExportView,
         "view_export",
         "export-view",
@@ -1793,7 +1702,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--with-grids", "true|false"),
         ],
     ),
-    core(
+    entry(
         Route::Bom,
         "bom",
         "export-bom",
@@ -1805,7 +1714,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--summary", "FILE"),
         ],
     ),
-    core(
+    entry(
         Route::Schedule,
         "schedules",
         "schedule-export",
@@ -1819,7 +1728,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--html", "FILE"),
         ],
     ),
-    core(
+    entry(
         Route::Drawing,
         "drawing",
         "preview-drawing",
@@ -1842,7 +1751,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--intent-out", "FILE"),
         ],
     ),
-    core(
+    entry(
         Route::Drawing,
         "drawing",
         "create-drawing",
@@ -1868,7 +1777,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--decimals", "0..255"),
         ],
     ),
-    core(
+    entry(
         Route::Drawing,
         "drawing",
         "refresh-drawing",
@@ -1895,7 +1804,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--decimals", "0..255"),
         ],
     ),
-    core(
+    entry(
         Route::Drawing,
         "drawing",
         "edit-drafting",
@@ -1910,7 +1819,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--drafting", "UUID:kind:X,Y,..."),
         ],
     ),
-    core(
+    entry(
         Route::Drawing,
         "drawing",
         "publish-drawing",
@@ -1925,7 +1834,7 @@ pub const COMMANDS: &[Command] = &[
             req("--version-id", "UUID"),
         ],
     ),
-    core(
+    entry(
         Route::Drawing,
         "drawing",
         "inspect-drawing",
@@ -1933,7 +1842,7 @@ pub const COMMANDS: &[Command] = &[
         Ids::None,
         &[req("--document-dir", "DIR"), opt("--model-store", "ROOT")],
     ),
-    core(
+    entry(
         Route::Drawing,
         "drawing",
         "inspect-drawing-versions",
@@ -1941,7 +1850,7 @@ pub const COMMANDS: &[Command] = &[
         Ids::None,
         &[req("--document-dir", "DIR")],
     ),
-    core(
+    entry(
         Route::Drawing,
         "drawing",
         "export-drawing",
@@ -1955,39 +1864,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--sheet", "a4|a3|a2|a1|a0"),
         ],
     ),
-    assist(
-        Route::Project,
-        "start",
-        "show-settings",
-        Access::Read,
-        Ids::None,
-        &[opt("--config-dir", "DIR")],
-    ),
-    assist(
-        Route::Project,
-        "start",
-        "set-settings",
-        Access::Write,
-        Ids::None,
-        &[
-            opt("--config-dir", "DIR"),
-            opt("--name", "TEXT"),
-            opt("--email", "TEXT"),
-            opt("--environment", "ID|none"),
-            opt("--skip-launcher", "true|false"),
-            opt("--models-dir", "DIR|none"),
-            opt("--theme", "system|light|dark"),
-        ],
-    ),
-    assist(
-        Route::Project,
-        "start",
-        "list-environment",
-        Access::Read,
-        Ids::None,
-        &[opt("--config-dir", "DIR")],
-    ),
-    core(
+    entry(
         Route::Project,
         "start",
         "create-project",
@@ -2001,15 +1878,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--environment", "ID"),
         ],
     ),
-    assist(
-        Route::Project,
-        "start",
-        "suggest-project-name",
-        Access::Read,
-        Ids::None,
-        &[req("--parent", "DIR"), req("--name", "TEXT")],
-    ),
-    core(
+    entry(
         Route::Project,
         "start",
         "list-project",
@@ -2017,29 +1886,13 @@ pub const COMMANDS: &[Command] = &[
         Ids::None,
         &[req("--dir", "DIR")],
     ),
-    assist(
-        Route::Project,
-        "start",
-        "list-recent",
-        Access::Write,
-        Ids::None,
-        &[opt("--config-dir", "DIR")],
-    ),
-    assist(
-        Route::Project,
-        "start",
-        "add-recent",
-        Access::Write,
-        Ids::None,
-        &[req("--store", "ROOT"), opt("--config-dir", "DIR")],
-    ),
-    core(
+    entry(
         Route::Commands,
         "commands",
         "commands",
         Access::Read,
         Ids::None,
-        &[opt("--tier", "core|ui-assist")],
+        &[],
     ),
 ];
 
@@ -2125,7 +1978,7 @@ fn wrap(words: &[String], width: usize) -> String {
 }
 
 /// The command reference as Markdown, generated from the registry: for every command its family,
-/// tier, access and one usage line (required options bare, optional ones in brackets, one-of groups
+/// access and one usage line (required options bare, optional ones in brackets, one-of groups
 /// in parentheses). It is committed as `apps/beamcraft-cli/COMMANDS.md`, and a test fails when the
 /// committed file differs from this text.
 pub fn reference_markdown() -> String {
@@ -2137,8 +1990,7 @@ pub fn reference_markdown() -> String {
          required, `[--option VALUE]` is optional, and `(--a X | --b Y)` means exactly one of them is\n\
          required. A rule that links optional options (for example `--width` with `--length`) is in\n\
          the family help, `beamcraft --help`, and in the refusal. `read` commands change nothing\n\
-         persistent; `write` commands change the store, the settings, a library or an output file.\n\
-         `ui-assist` commands mirror interactive-UI affordances; the rest are `core`.\n",
+         persistent; `write` commands change the store, the settings, a library or an output file.\n",
     );
     let mut family = "";
     for command in COMMANDS {
@@ -2149,10 +2001,9 @@ pub fn reference_markdown() -> String {
         let mut words = vec![command.name.to_owned()];
         words.extend(usage_items(command));
         out.push_str(&format!(
-            "\n### {}\n\n{}, {}.\n\n```text\n{}\n```\n",
+            "\n### {}\n\n{}.\n\n```text\n{}\n```\n",
             command.name,
             command.access.as_str(),
-            command.tier.as_str(),
             wrap(&words, 98)
         ));
     }
@@ -2188,35 +2039,23 @@ fn parameters(command: &Command) -> Vec<Json> {
         .collect()
 }
 
-/// The `commands` result: the registry, optionally narrowed to one tier.
-///
-/// `tier` is the value of `--tier` (`core` or `ui-assist`); anything else is `None`.
-pub fn listing(tier: Option<&str>) -> Option<Json> {
-    let wanted = match tier {
-        None => None,
-        Some(name) => Some(
-            [Tier::Core, Tier::UiAssist]
-                .into_iter()
-                .find(|t| t.as_str() == name)?,
-        ),
-    };
+/// The `commands` result: the registry with every command's family, access and parameters.
+pub fn listing() -> Json {
     let commands = COMMANDS
         .iter()
-        .filter(|c| wanted.is_none_or(|t| c.tier == t))
         .map(|c| {
             Json::object([
                 ("name", Json::text(c.name)),
                 ("family", Json::text(c.family)),
-                ("tier", Json::text(c.tier.as_str())),
                 ("access", Json::text(c.access.as_str())),
                 ("parameters", Json::Array(parameters(c))),
             ])
         })
         .collect();
-    Some(Json::object([
+    Json::object([
         ("outcome", Json::text("commands_listed")),
         ("commands", Json::Array(commands)),
-    ]))
+    ])
 }
 
 #[cfg(test)]
@@ -2301,14 +2140,5 @@ mod tests {
                 assert!(members >= 2, "{}: group {g} has one member", c.name);
             }
         }
-    }
-
-    #[test]
-    fn listing_filters_by_tier_and_refuses_unknown_tiers() {
-        let all = listing(None);
-        assert!(all.is_some());
-        assert!(listing(Some("core")).is_some());
-        assert!(listing(Some("ui-assist")).is_some());
-        assert!(listing(Some("human")).is_none());
     }
 }
