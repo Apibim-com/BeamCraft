@@ -55,8 +55,10 @@ pub fn create_plate_draft(
     }
     // Repeat the complete geometric admission: an arbitrary evaluation failure must never
     // become an accepted authored-only draft (in particular numeric uncertainty and bad topology).
-    let contour =
-        beamcraft_kernel::plate_contour::admit(&command.contour_points_mm, command.thickness_mm)?;
+    let contour = beamcraft_kernel::steel::plate_contour::admit(
+        &command.contour_points_mm,
+        command.thickness_mm,
+    )?;
     let unsupported_plane =
         command.contour_points_mm.iter().any(|p| p[2] != 0.0) && contour.rectangle_mm.is_none();
     if !unsupported_plane {

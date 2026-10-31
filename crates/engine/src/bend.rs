@@ -34,7 +34,9 @@ use crate::footprint::Footprint;
 use crate::solid::SolidMesh;
 use beamcraft_geom::{Point3, Vec3};
 use beamcraft_kernel::profile::Point2;
-use beamcraft_kernel::ruled::{Loft, LoftFailure, LoftResult, MAX_LOFT_VERTICES, RuledContour};
+use beamcraft_kernel::steel::ruled::{
+    Loft, LoftFailure, LoftResult, MAX_LOFT_VERTICES, RuledContour,
+};
 use beamcraft_model::command::{BendPlate, BendRecord, BendSpec, CommandError, MAX_BENDS};
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
@@ -486,7 +488,7 @@ fn seal_loft(
 }
 
 fn loft(input: &Loft) -> Result<LoftResult, CommandError> {
-    beamcraft_kernel::ruled::loft(input).map_err(|f| map_loft(&f))
+    beamcraft_kernel::steel::ruled::loft(input).map_err(|f| map_loft(&f))
 }
 
 /// The folded body of a plate with fold records: the bent cross-section derived from the

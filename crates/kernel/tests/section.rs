@@ -10,7 +10,7 @@
 
 use beamcraft_geom::Point3;
 use beamcraft_kernel::profile::Point2;
-use beamcraft_kernel::section::{
+use beamcraft_kernel::steel::section::{
     Representation, SectionMember, SectionOutline, outline, section_member,
 };
 use beamcraft_model::error::ErrorCode;

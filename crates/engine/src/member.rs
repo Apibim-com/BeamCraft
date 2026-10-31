@@ -29,9 +29,11 @@ use crate::transaction::PriorOp;
 use beamcraft_geom::{MemberFrame, Point3};
 use beamcraft_kernel::diagnostic::{Failure, Field};
 use beamcraft_kernel::ops::{Body, OpFailure};
-use beamcraft_kernel::section::{Representation, SectionFailure, SectionMember, section_member};
+use beamcraft_kernel::steel::section::{
+    Representation, SectionFailure, SectionMember, section_member,
+};
 use beamcraft_kernel::sweep::{Sweep, SweepFailure, SweepPath, sweep};
-use beamcraft_kernel::{StraightMember, straight_member};
+use beamcraft_kernel::{steel::StraightMember, steel::straight_member};
 use beamcraft_model::command::{
     CommandError, CreatePolybeam, CreateStraightMember, CutRecord, MemberHoleRecord, MemberKind,
     Placement, SectionPlacement,

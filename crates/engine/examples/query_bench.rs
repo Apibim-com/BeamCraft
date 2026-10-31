@@ -32,7 +32,7 @@ use beamcraft_engine::{ElementId, ElementKind, Limits, SceneElement, ViewPin, Vi
 use beamcraft_geom::Translation3;
 use beamcraft_kernel::ops::{Body, HoleCutter, through_hole};
 use beamcraft_kernel::profile::{Cavity, CurveSpec, Point2};
-use beamcraft_kernel::{RectangularPlate, rectangular_plate};
+use beamcraft_kernel::{steel::RectangularPlate, steel::rectangular_plate};
 use beamcraft_model::digest::Sha256;
 use std::hint::black_box;
 use std::process::ExitCode;

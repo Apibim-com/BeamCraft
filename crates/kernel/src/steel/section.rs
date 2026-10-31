@@ -25,10 +25,10 @@
 //! [`crate::straight_member`]), then certifies the closed single shell with G06 before sealing it.
 
 use crate::diagnostic::{Failure, Field};
-use crate::member::{StraightMember, check_placement, locate, solid_length};
 use crate::ops::{Body, OpFailure, OpField};
 use crate::profile::diagnostic::{ProfileCode, ProfileFailure};
 use crate::profile::{Cavity, CurveSpec, Point2, extrude};
+use crate::steel::member::{StraightMember, check_placement, locate, solid_length};
 use crate::trimesh::TriMesh;
 use beamcraft_geom::tolerance::Tolerance;
 use beamcraft_geom::{MemberFrame, Point3, RigidTransform};

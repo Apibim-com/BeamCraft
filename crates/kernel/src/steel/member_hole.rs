@@ -36,18 +36,18 @@
 //! `cut:f.h<ordinal>.w<k>.s<j>` (provisional, like the plane-cut cap id); the crossed wall
 //! faces keep their own ids.
 
-use super::body::{Body, MAX_ORDINAL};
-use super::diagnostic::{OpCode, OpDefect, OpFailure, OpField};
-use super::hole::cutter_field;
-use super::seal::{Candidate, Expect, OpKind, OpResult, seal};
-use super::section::{
-    CapLoop, ChainError, area_sign, canonical_loop, chain_loops, split_loops, triangulate_cap,
-};
-use super::{ExactBudget, OpLimits, OpStats, poll};
 use crate::bigint::Big;
 use crate::diagnostic::Stage;
 use crate::enclosure::Enclosure;
 use crate::exact::{min_exponent, scaled};
+use crate::ops::body::{Body, MAX_ORDINAL};
+use crate::ops::diagnostic::{OpCode, OpDefect, OpFailure, OpField};
+use crate::ops::hole::cutter_field;
+use crate::ops::seal::{Candidate, Expect, OpKind, OpResult, seal};
+use crate::ops::section::{
+    CapLoop, ChainError, area_sign, canonical_loop, chain_loops, split_loops, triangulate_cap,
+};
+use crate::ops::{ExactBudget, OpLimits, OpStats, poll};
 use crate::profile::predicates::{
     SegRel, boxes_apart, segment_distance, segment_relation, winding_contains,
 };

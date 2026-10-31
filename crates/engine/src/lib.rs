@@ -62,7 +62,7 @@ pub mod views;
 pub mod weld;
 pub mod work_plane;
 
-pub use beamcraft_kernel::PlateResult;
+pub use beamcraft_kernel::steel::PlateResult;
 pub use element::{ElementId, ElementKind, KindFilter};
 pub use error::{ViewCode, ViewError};
 pub use limits::Limits;

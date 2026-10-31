@@ -4,7 +4,7 @@
 //! A14.2 fastener quantities: the prototype of a definition and the per-component quantities of
 //! a group of `n` fasteners (bolt amendment section 3).
 //!
-//! The geometry itself is the kernel's G05 composition ([`beamcraft_kernel::fastener`]); the
+//! The geometry itself is the kernel's G05 composition ([`beamcraft_kernel::steel::fastener`]); the
 //! engine owns the decisions around it: it maps kernel refusals to command fields, it reports
 //! the group totals as the union of the components — the shank runs through the head, so their
 //! overlap is counted once — and it reports the mass with its source: `mass_each` of the
@@ -12,13 +12,13 @@
 //! density is known. A declared mass is never split into components and a component mass is
 //! never invented, so the source is shown exactly as the P-Mass decision does for sections.
 
-use beamcraft_kernel::fastener::FastenerFailure;
+use beamcraft_kernel::steel::fastener::FastenerFailure;
 use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::fastener::FastenerSpec;
 use beamcraft_model::limits::{MAX_BOLT_GROUP_SIZE, MAX_DENSITY_KG_M3};
 
-pub use beamcraft_kernel::fastener::{ComponentKind, FastenerBuild, FastenerSolid};
+pub use beamcraft_kernel::steel::fastener::{ComponentKind, FastenerBuild, FastenerSolid};
 
 /// Where a reported mass comes from (bolt amendment section 3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,7 +43,7 @@ impl MassSource {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ComponentQuantity {
     /// Which component of the stack.
-    pub component: beamcraft_kernel::fastener::ComponentKind,
+    pub component: beamcraft_kernel::steel::fastener::ComponentKind,
     /// How many pieces the group has (`n` for every component).
     pub count: u32,
     /// Volume of one piece in mm3 (the exact polygon volume).
@@ -83,16 +83,15 @@ pub fn prototype(
     washer_under_head: bool,
     washer_under_nut: bool,
 ) -> Result<FastenerBuild, CommandError> {
-    beamcraft_kernel::fastener::build(spec, length_mm, washer_under_head, washer_under_nut).map_err(
-        |failure| match failure {
+    beamcraft_kernel::steel::fastener::build(spec, length_mm, washer_under_head, washer_under_nut)
+        .map_err(|failure| match failure {
             FastenerFailure::Input(error) => error,
             profile => CommandError::new(
                 profile.f04_code(),
                 "geometry",
                 "fastener component certification failed",
             ),
-        },
-    )
+        })
 }
 
 /// Computes the per-component quantities of a group of `count` fasteners over one prototype.

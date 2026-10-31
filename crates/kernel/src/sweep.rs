@@ -23,7 +23,7 @@ use crate::ops::seal::{Candidate, Expect, OpKind, seal};
 use crate::ops::{OpFailure, OpLimits, OpResult};
 use crate::profile::diagnostic::ProfileFailure;
 use crate::profile::{CurveSpec, Point2, Profile, choose_segments};
-use crate::section::{Representation, SectionFailure, SectionOutline, outline};
+use crate::steel::section::{Representation, SectionFailure, SectionOutline, outline};
 use beamcraft_geom::frame::PARALLEL_SQUARED;
 use beamcraft_geom::tolerance::{COORDINATE_CAP_MM, DIMENSION_CAP_MM};
 use beamcraft_geom::{Frame3, Point3, Vec3};

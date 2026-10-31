@@ -12,9 +12,9 @@
 //!
 //! No rotation of the element (placement) and no other profile kind live here.
 
-use crate::PlateResult;
 use crate::diagnostic::{Code, Failure, Field, Stage};
 use crate::mesh::{PLATE_TRIANGLES, PlateMesh, encode, self_check};
+use crate::steel::PlateResult;
 use beamcraft_geom::tolerance::{COORDINATE_CAP_MM, DIMENSION_CAP_MM, ROLL_CAP_RAD};
 use beamcraft_geom::{MathError, MemberFrame, Point3, Vec3};
 use beamcraft_model::command::SectionPlacement;

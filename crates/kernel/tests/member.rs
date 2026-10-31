@@ -9,7 +9,7 @@
 
 use beamcraft_geom::Point3;
 use beamcraft_kernel::diagnostic::{Code, Field};
-use beamcraft_kernel::{PlateResult, StraightMember, straight_member};
+use beamcraft_kernel::{steel::PlateResult, steel::StraightMember, steel::straight_member};
 use beamcraft_model::command::SectionPlacement;
 
 fn member(start: [f64; 3], end: [f64; 3], w: f64, h: f64, roll: Option<f64>) -> StraightMember {

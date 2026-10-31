@@ -15,7 +15,7 @@ use crate::error::{ViewCode, ViewError};
 use crate::limits::MAX_ELEMENTS;
 use crate::scene::SceneElement;
 use beamcraft_geom::Translation3;
-use beamcraft_kernel::{PlateResult, RectangularPlate, rectangular_plate};
+use beamcraft_kernel::{steel::PlateResult, steel::RectangularPlate, steel::rectangular_plate};
 
 /// A scripted change to a synthetic scene, for exercising incremental deltas.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
