@@ -11,12 +11,12 @@ use beamcraft_host::revision::{
 use beamcraft_layer_engine::authored::{EditTargets, rebase};
 use beamcraft_model::command::Placement;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
-use beamcraft_model::steel::command::CreatePlate;
-use beamcraft_model::steel::command::{ElementPatch, UpdateElement};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+use steel::model::command::CreatePlate;
+use steel::model::command::{ElementPatch, UpdateElement};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 fn id(n: usize) -> Uuid7 {

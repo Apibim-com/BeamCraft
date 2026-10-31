@@ -9,6 +9,7 @@
 //! face table (local feature ids and outward normals) that travels beside the BCMESH01 blob.
 
 use super::diagnostic::{OpCode, OpDefect, OpFailure, OpField};
+use crate::PlateResult;
 use crate::diagnostic::Stage;
 use crate::enclosure::Enclosure;
 use crate::measure::measure;
@@ -150,6 +151,20 @@ impl Body {
             analysis,
             volume_mm3,
         })
+    }
+
+    /// Admits a sealed G02 plate with its six local ids and outward normals.
+    pub fn from_plate(plate: &PlateResult) -> Result<Self, OpFailure> {
+        let mesh = TriMesh::from_blob(plate.mesh().blob())
+            .map_err(|e| OpFailure::from_mesh(e, OpField::Body))?;
+        let ids = plate.mesh().face_table().iter().map(|s| (*s).to_owned());
+        let normals = plate.mesh().face_normals().iter().map(|n| Some(unit(*n)));
+        Self::from_mesh(
+            mesh,
+            ids.collect(),
+            normals.collect(),
+            Some(plate.tolerance()),
+        )
     }
 
     /// Admits a sealed G05 extrusion with its provisional `extrusion:` ids and normals.

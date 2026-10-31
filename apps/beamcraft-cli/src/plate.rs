@@ -39,17 +39,6 @@ use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
 use beamcraft_engine::level::Levels;
 use beamcraft_engine::solid::SolidMesh;
-use beamcraft_engine::steel::command::AuthoredPlate;
-use beamcraft_engine::steel::committed::{
-    BodyCache, MemberRecord, PlateRecord, evaluate_committed_members_cached, ids,
-    scene_elements_with_members,
-};
-use beamcraft_engine::steel::member::AuthoredMember;
-use beamcraft_engine::steel::plate_draft::{UnsupportedPlate, evaluate_committed_drafts_cached};
-use beamcraft_engine::steel::quantity::{
-    Assessment, Freshness, QuantityRecord, StoredRecord, assess, is_superseded_algorithm,
-};
-use beamcraft_engine::steel::transaction::{Admission, PriorOp, admit_create_plate};
 use beamcraft_engine::{Limits, ViewPin, ViewSnapshot};
 use beamcraft_host::ledger::Outcome;
 use beamcraft_host::revision::{
@@ -66,11 +55,6 @@ use beamcraft_layer_engine::{Asset, Control, Opened, Prim, Reader, Value};
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
-use beamcraft_model::steel::command::{
-    BendRecord, BendSpec, CornerTreatment, CreatePlate, CutRecord, HoleExtent, HoleKind,
-    HoleRecord, KeepSide, MAX_BENDS, MemberHoleRecord, MemberKind, PlateCorner, PlateSide,
-    SectionDepthPosition, SectionPlacement, SectionPlanePosition,
-};
 use session::Refusal;
 use session::pipeline::{
     AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, base_of, control, digest_of, host_uuid,
@@ -78,6 +62,22 @@ use session::pipeline::{
 };
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
+use steel::engine::command::AuthoredPlate;
+use steel::engine::committed::{
+    BodyCache, MemberRecord, PlateRecord, evaluate_committed_members_cached, ids,
+    scene_elements_with_members,
+};
+use steel::engine::member::AuthoredMember;
+use steel::engine::plate_draft::{UnsupportedPlate, evaluate_committed_drafts_cached};
+use steel::engine::quantity::{
+    Assessment, Freshness, QuantityRecord, StoredRecord, assess, is_superseded_algorithm,
+};
+use steel::engine::transaction::{Admission, PriorOp, admit_create_plate};
+use steel::model::command::{
+    BendRecord, BendSpec, CornerTreatment, CreatePlate, CutRecord, HoleExtent, HoleKind,
+    HoleRecord, KeepSide, MAX_BENDS, MemberHoleRecord, MemberKind, PlateCorner, PlateSide,
+    SectionDepthPosition, SectionPlacement, SectionPlanePosition,
+};
 
 /// Derived mesh as read back from a derived layer.
 #[derive(Debug, Clone, PartialEq)]
@@ -248,14 +248,14 @@ pub(crate) struct Decoded {
     /// Committed lofted plates (A11), decoded but not re-evaluated by the plate verifier:
     /// their quantities were checked at creation and are read from the derived layer.
     pub(crate) lofted: Vec<(
-        beamcraft_engine::steel::loft_plate::AuthoredLoftedPlate,
+        steel::engine::loft_plate::AuthoredLoftedPlate,
         Option<DerivedMesh>,
     )>,
     other_elements: usize,
     pub(crate) definitions: BTreeMap<ContentDigest, DefinitionRecord>,
     /// The levels of the model and the level of every plate, beam and column (D2).
     pub(crate) levels: Levels,
-    pub(crate) instances: beamcraft_engine::steel::instance::InstanceGraph,
+    pub(crate) instances: steel::engine::instance::InstanceGraph,
     pub(crate) grids: Vec<beamcraft_model::grid::Grid>,
     /// T02: validated construction objects, without engineering bodies.
     pub(crate) constructions: Vec<beamcraft_model::construction::ConstructionObject>,
@@ -332,7 +332,7 @@ fn decode_hole_records(prim: &Prim) -> Result<Vec<HoleRecord>, Refusal> {
         prim,
         "steel:hole:pointsMm",
         "steel:hole:vertexCounts",
-        beamcraft_model::steel::command::MAX_HOLES,
+        steel::model::command::MAX_HOLES,
         "committed plate has inconsistent hole record attributes",
     )?;
     let ids = property(prim, "steel:hole:operationIds")
@@ -625,7 +625,7 @@ fn decode_plate(prim: &Prim, id: ElementId) -> Result<AuthoredPlate, Refusal> {
 fn decode_lofted(
     prim: &Prim,
     id: ElementId,
-) -> Result<beamcraft_engine::steel::loft_plate::AuthoredLoftedPlate, Refusal> {
+) -> Result<steel::engine::loft_plate::AuthoredLoftedPlate, Refusal> {
     let bad = || integrity("committed lofted plate lacks a required authored input");
     let contour = |name: &str| -> Result<Vec<[f64; 3]>, Refusal> {
         let Some(Value::Array(points)) = property(prim, name) else {
@@ -645,7 +645,7 @@ fn decode_lofted(
     let [w, x, y, z] = property(prim, "xformOp:orient")
         .and_then(numbers::<4>)
         .ok_or_else(bad)?;
-    Ok(beamcraft_engine::steel::loft_plate::AuthoredLoftedPlate {
+    Ok(steel::engine::loft_plate::AuthoredLoftedPlate {
         id,
         name: property(prim, "bim:name")
             .and_then(text)
@@ -794,7 +794,7 @@ fn decode_member_hole_records(prim: &Prim) -> Result<Vec<MemberHoleRecord>, Refu
         prim,
         FIELDS[0],
         FIELDS[1],
-        beamcraft_model::steel::command::MAX_HOLES,
+        steel::model::command::MAX_HOLES,
         "committed member has inconsistent hole record attributes",
     )?;
     let ids: Vec<String> = match property(prim, FIELDS[2]) {
@@ -883,7 +883,7 @@ fn decode_holes(prim: &Prim) -> Result<Vec<Vec<[f64; 2]>>, Refusal> {
         prim,
         "steel:plate:holePointsMm",
         "steel:plate:holeVertexCounts",
-        beamcraft_model::steel::command::MAX_HOLES,
+        steel::model::command::MAX_HOLES,
         "committed plate has inconsistent hole attributes",
     )
 }
@@ -1188,13 +1188,13 @@ pub(crate) fn decode(
             }
             Some((
                 ElementId::parse(p.element_id.as_deref()?).ok()?,
-                beamcraft_model::steel::instance::PartKind::parse(
+                steel::model::instance::PartKind::parse(
                     property(p, "bim:elementKind").and_then(text)?,
                 )?,
             ))
         })
         .collect();
-    let instances = beamcraft_engine::steel::instance::InstanceGraph::build(parts, &links)?;
+    let instances = steel::engine::instance::InstanceGraph::build(parts, &links)?;
     let prims = beamcraft_layer_engine::authored::instance::resolve(prims)?;
     let by_path: BTreeMap<&str, &Prim> = prims.iter().map(|p| (p.path.as_str(), p)).collect();
     let mut plates = Vec::new();
@@ -1525,7 +1525,7 @@ fn evaluate_with(
 /// The committed plates the kernel cannot evaluate, listed as authored-only records, over this
 /// thread's [`BODIES`] cache: the second pass of an inspection reuses the bodies the first pass
 /// evaluated instead of paying for them twice. The refusals are those of
-/// `beamcraft_engine::steel::plate_draft::evaluate_committed_drafts`.
+/// `steel::engine::plate_draft::evaluate_committed_drafts`.
 pub(crate) fn evaluate_committed_drafts_with_cache(
     decoded: &Decoded,
 ) -> Result<Vec<UnsupportedPlate>, Refusal> {
@@ -1554,7 +1554,7 @@ pub(crate) fn evaluate_committed_drafts_with_cache(
 /// The quantity record the engine expects for a plate: its quantities under the signature of its
 /// shape inputs.
 pub(crate) fn plate_record(record: &PlateRecord) -> QuantityRecord {
-    beamcraft_engine::steel::quantity::plate_record(
+    steel::engine::quantity::plate_record(
         &record.authored,
         record.body.algorithm(),
         &record.quantities,
@@ -1563,7 +1563,7 @@ pub(crate) fn plate_record(record: &PlateRecord) -> QuantityRecord {
 
 /// The quantity record the engine expects for a member.
 pub(crate) fn member_record(record: &MemberRecord) -> QuantityRecord {
-    beamcraft_engine::steel::quantity::member_record(
+    steel::engine::quantity::member_record(
         &record.authored,
         &record.body.profile,
         &record.quantities,
@@ -2155,7 +2155,7 @@ pub struct Inspection {
     /// D2: the levels of the revision and the level of every plate, beam and column.
     pub levels: Levels,
     /// P11: canonical definition owners and linked part instances.
-    pub instances: beamcraft_engine::steel::instance::InstanceGraph,
+    pub instances: steel::engine::instance::InstanceGraph,
     /// T01: validated project grids, without engineering bodies.
     pub grids: Vec<beamcraft_model::grid::Grid>,
     /// T02: validated construction objects, without engineering bodies.
@@ -2268,10 +2268,8 @@ pub(crate) fn inspect_manifest_assets(
     let pin = ViewPin::new(digest, content.workspace_generation());
     let mut scene = scene_elements_with_members(&plates, &members)?;
     for (authored, _) in &decoded.lofted {
-        let body = beamcraft_engine::steel::loft_plate::evaluate_lofted_plate(authored)?;
-        scene.push(beamcraft_engine::steel::loft_plate::scene_element(
-            authored, &body,
-        )?);
+        let body = steel::engine::loft_plate::evaluate_lofted_plate(authored)?;
+        scene.push(steel::engine::loft_plate::scene_element(authored, &body)?);
     }
     scene.sort_by_key(beamcraft_engine::SceneElement::id);
     let reference_view_error = match decoded.reference_scene {

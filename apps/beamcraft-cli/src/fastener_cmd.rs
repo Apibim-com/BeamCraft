@@ -9,14 +9,14 @@
 use crate::report::report;
 use beamcraft_cli::definition::DefinitionRecord;
 use beamcraft_cli::library::{Lookup, Source, load_fastener};
-use beamcraft_engine::steel::fastener::{
-    ComponentQuantity, FastenerBuild, FastenerSolid, MassSource, prototype, quantities,
-};
 use beamcraft_json::Json;
 use beamcraft_model::ErrorCode;
 use session::Refusal;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
+use steel::engine::fastener::{
+    ComponentQuantity, FastenerBuild, FastenerSolid, MassSource, prototype, quantities,
+};
 
 type Run<T> = Result<T, Refusal>;
 

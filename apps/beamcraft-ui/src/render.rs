@@ -919,7 +919,7 @@ mod tests {
         );
         let snapshot = beamcraft_engine::ViewSnapshot::build(
             pin,
-            beamcraft_engine::steel::synthetic::plate_scene(1, false).unwrap(),
+            beamcraft_engine::synthetic::plate_scene(1, false).unwrap(),
             &beamcraft_engine::Limits::default(),
         )
         .unwrap();
@@ -969,7 +969,7 @@ mod tests {
         );
         let snapshot = beamcraft_engine::ViewSnapshot::build(
             pin,
-            beamcraft_engine::steel::synthetic::plate_scene(1, false).unwrap(),
+            beamcraft_engine::synthetic::plate_scene(1, false).unwrap(),
             &beamcraft_engine::Limits::default(),
         )
         .unwrap();
