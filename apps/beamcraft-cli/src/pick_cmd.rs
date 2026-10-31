@@ -12,7 +12,7 @@
 //! so it is never a hit.
 
 use crate::plate_cmd::triple;
-use beamcraft_cli::plate::{PlateError, inspect};
+use beamcraft_cli::plate::inspect;
 use beamcraft_engine::error::{ViewCode, ViewError};
 use beamcraft_engine::query::feature::{
     FeatureGeometry, FeatureLookup, list_features, lookup_feature,
@@ -20,6 +20,7 @@ use beamcraft_engine::query::feature::{
 use beamcraft_host::{revision::RevisionStore, storage::BlobStore};
 use beamcraft_json::Json;
 use beamcraft_model::error::ErrorCode;
+use session::Refusal;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 
@@ -31,8 +32,8 @@ struct Failure {
     message: &'static str,
 }
 
-impl From<PlateError> for Failure {
-    fn from(e: PlateError) -> Self {
+impl From<Refusal> for Failure {
+    fn from(e: Refusal) -> Self {
         Self {
             rule_id: e.rule_id,
             code: e.code,
@@ -77,7 +78,7 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
                 ("observed_context", Json::Null),
                 (
                     "diagnostics",
-                    Json::Array(crate::plate_cmd::domain_diagnostics(&PlateError {
+                    Json::Array(crate::plate_cmd::domain_diagnostics(&Refusal {
                         rule_id: e.rule_id,
                         code: e.code,
                         message: e.message,
@@ -157,7 +158,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             }
         }
     };
-    let blobs = BlobStore::new(store_root).map_err(|e| PlateError {
+    let blobs = BlobStore::new(store_root).map_err(|e| Refusal {
         rule_id: None,
         code: e.code(),
         message: "store root is not usable",
@@ -240,7 +241,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     Ok(Json::Object(fields.into_iter().collect()))
 }
 
-fn geometry_json(g: &FeatureGeometry) -> Result<Json, PlateError> {
+fn geometry_json(g: &FeatureGeometry) -> Result<Json, Refusal> {
     Ok(match g {
         FeatureGeometry::Face {
             normal,
@@ -283,10 +284,10 @@ fn geometry_json(g: &FeatureGeometry) -> Result<Json, PlateError> {
                                 triangle
                                     .iter()
                                     .map(|p| triple(*p))
-                                    .collect::<Result<_, PlateError>>()?,
+                                    .collect::<Result<_, Refusal>>()?,
                             ))
                         })
-                        .collect::<Result<_, PlateError>>()?,
+                        .collect::<Result<_, Refusal>>()?,
                 ),
             ),
             (
@@ -318,7 +319,7 @@ fn geometry_json(g: &FeatureGeometry) -> Result<Json, PlateError> {
     })
 }
 
-fn lookup_json(found: &FeatureLookup) -> Result<Vec<(String, Json)>, PlateError> {
+fn lookup_json(found: &FeatureLookup) -> Result<Vec<(String, Json)>, Refusal> {
     Ok(vec![
         ("feature_id".into(), Json::text(found.id.to_string())),
         ("feature_kind".into(), Json::text(found.id.kind().as_str())),

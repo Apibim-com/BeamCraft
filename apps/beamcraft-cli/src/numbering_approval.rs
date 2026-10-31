@@ -27,9 +27,9 @@
 use crate::assembly::read_prims;
 use crate::numbering::state;
 use crate::plate::{
-    AUTHORED_LAYER, DERIVED_LAYER, PlateError, RevisionSummary, base_of, check_footprint, control,
-    digest_of, host_uuid, integrity, load_base, open_base, prior_op_with, property, replay_summary,
-    summarize, text,
+    AUTHORED_LAYER, DERIVED_LAYER, RevisionSummary, base_of, check_footprint, control, digest_of,
+    host_uuid, integrity, load_base, open_base, prior_op_with, property, replay_summary, summarize,
+    text,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
@@ -47,6 +47,7 @@ use beamcraft_layer_engine::{Control, OpenRequest, Reader, Value};
 use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use session::Refusal;
 use std::collections::BTreeMap;
 
 /// Identities of one A09 call beyond the command itself.
@@ -106,12 +107,12 @@ pub struct StatusView {
     pub marks: Vec<MarkView>,
 }
 
-fn damaged() -> PlateError {
+fn damaged() -> Refusal {
     integrity("a numbering mark record is not readable")
 }
 
-fn refuse(code: ErrorCode, message: &'static str) -> PlateError {
-    PlateError::new(code, message)
+fn refuse(code: ErrorCode, message: &'static str) -> Refusal {
+    Refusal::new(code, message)
 }
 
 /// The marks stored on the supported parts and assemblies of one pinned stage, in element-id
@@ -122,7 +123,7 @@ fn marks_of(
     request: &OpenRequest,
     validate: bool,
     control: &Control,
-) -> Result<Vec<StoredMark>, PlateError> {
+) -> Result<Vec<StoredMark>, Refusal> {
     if validate {
         validate_layers(request.clone(), schema_identity()?, control)?;
     }
@@ -182,7 +183,7 @@ fn marks_of(
 /// The revision id of the verified head and the marks stored on it.
 /// The revision id of the verified head and the marks stored on it. Public for the readers of
 /// the mark named in the module docs (the IFC and BOM exports).
-pub fn head_marks(store: &RevisionStore) -> Result<(String, Vec<StoredMark>), PlateError> {
+pub fn head_marks(store: &RevisionStore) -> Result<(String, Vec<StoredMark>), Refusal> {
     let revision = store.open()?;
     let base = base_of(&revision)?;
     let marks = marks_of(&open_base(&base)?, false, &control())?;
@@ -191,7 +192,7 @@ pub fn head_marks(store: &RevisionStore) -> Result<(String, Vec<StoredMark>), Pl
 
 /// The approval stored in the head and every stored mark, judged against the facts of the head.
 /// Nothing is written.
-pub fn numbering_status(store: &RevisionStore) -> Result<StatusView, PlateError> {
+pub fn numbering_status(store: &RevisionStore) -> Result<StatusView, Refusal> {
     let facts = state(store)?;
     let report = assess(&facts.parts, &facts.assemblies, &facts.stored)
         .map_err(|e| refuse(e.code(), e.message))?;
@@ -216,7 +217,7 @@ pub fn numbering_status(store: &RevisionStore) -> Result<StatusView, PlateError>
     })
 }
 
-fn reuse() -> PlateError {
+fn reuse() -> Refusal {
     CommandError::new(
         ErrorCode::OpIdReuse,
         "op_id",
@@ -225,7 +226,7 @@ fn reuse() -> PlateError {
     .into()
 }
 
-fn layer_mark(assignment: &Assignment, basis: &str) -> Result<Change, PlateError> {
+fn layer_mark(assignment: &Assignment, basis: &str) -> Result<Change, Refusal> {
     Ok(Change::Mark {
         id: assignment.id.to_string(),
         mark: LayerMark {
@@ -244,7 +245,7 @@ fn written_by(
     sequence: u64,
     basis: &str,
     control: &Control,
-) -> Result<bool, PlateError> {
+) -> Result<bool, Refusal> {
     let at = marks_of(
         &open_base(&base_of(&store.open_at(sequence)?)?)?,
         true,
@@ -280,7 +281,7 @@ pub fn approve_numbering(
     context: &ApprovalContext,
     command: &ApproveNumbering,
     hook: &mut dyn CommitHook,
-) -> Result<Approved, PlateError> {
+) -> Result<Approved, Refusal> {
     command.fingerprint()?;
     let control = control();
     let (head, base) = load_base(store, &context.project, &context.workspace)?;

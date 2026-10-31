@@ -9,7 +9,7 @@
 //! window uses as well.
 
 use crate::library::load_environment;
-use crate::plate::{DERIVED_LAYER, PlateError, ROOT_LAYER, claim_project, host_uuid, load_base};
+use crate::plate::{DERIVED_LAYER, ROOT_LAYER, claim_project, host_uuid, load_base};
 use crate::publication::commit_verified;
 use beamcraft_host::revision::{
     CommitHook, CommitOutcome, LayerEntry, LayerRole, RevisionDraft, RevisionStore,
@@ -18,6 +18,7 @@ use beamcraft_host::storage::BlobStore;
 use beamcraft_layer_engine::authored::schema_identity;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, Uuid7, WorkspaceId};
+use session::Refusal;
 use session::environment::ENVIRONMENT_FILE;
 use session::project::{ProjectInfo, check_project_name, numbered_name, project_info};
 use std::fs;
@@ -28,11 +29,11 @@ use std::path::{Path, PathBuf};
 /// on another machine and the next session needs no setting.
 pub const PROJECT_ENVIRONMENT_DIR: &str = "environment";
 
-const fn refuse(code: ErrorCode, message: &'static str) -> PlateError {
-    PlateError::new(code, message)
+const fn refuse(code: ErrorCode, message: &'static str) -> Refusal {
+    Refusal::new(code, message)
 }
 
-const fn invalid(message: &'static str) -> PlateError {
+const fn invalid(message: &'static str) -> Refusal {
     refuse(ErrorCode::InvalidArgument, message)
 }
 
@@ -60,7 +61,7 @@ pub fn create_project(
     name: &str,
     context: &ProjectContext,
     hook: &mut dyn CommitHook,
-) -> Result<ProjectInfo, PlateError> {
+) -> Result<ProjectInfo, Refusal> {
     create_named_project(parent, name, false, context, hook)
 }
 
@@ -71,7 +72,7 @@ pub fn create_project_unique(
     name: &str,
     context: &ProjectContext,
     hook: &mut dyn CommitHook,
-) -> Result<ProjectInfo, PlateError> {
+) -> Result<ProjectInfo, Refusal> {
     create_named_project(parent, name, true, context, hook)
 }
 
@@ -81,7 +82,7 @@ fn create_named_project(
     unique: bool,
     context: &ProjectContext,
     hook: &mut dyn CommitHook,
-) -> Result<ProjectInfo, PlateError> {
+) -> Result<ProjectInfo, Refusal> {
     check_project_name(name)?;
     let parent =
         std::path::absolute(parent).map_err(|_| invalid("the path cannot be made absolute"))?;
@@ -140,7 +141,7 @@ fn first_revision(
     dir: &Path,
     context: &ProjectContext,
     hook: &mut dyn CommitHook,
-) -> Result<(), PlateError> {
+) -> Result<(), Refusal> {
     let blobs = BlobStore::new(dir).map_err(|e| refuse(e.code(), "store root is not usable"))?;
     let store = RevisionStore::new(blobs);
     let _claim = claim_project(context.project);
@@ -196,7 +197,7 @@ pub fn project_environment_file(dir: &Path) -> Option<PathBuf> {
 /// Copies the environment `file` and the libraries it lists into the project at `dir`
 /// (`environment/`). The environment is read and admitted first, so a refused one writes nothing.
 /// Commands of the project then resolve profile names against this copy.
-pub fn install_environment(dir: &Path, file: &Path) -> Result<(), PlateError> {
+pub fn install_environment(dir: &Path, file: &Path) -> Result<(), Refusal> {
     let path = file
         .to_str()
         .ok_or_else(|| invalid("the environment path is not UTF-8"))?;

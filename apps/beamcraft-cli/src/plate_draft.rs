@@ -5,9 +5,9 @@
 
 use crate::definition::material_lookup;
 use crate::plate::{
-    self, AUTHORED_LAYER, CreateRequest, Created, DERIVED_LAYER, PlateError, RevisionSummary,
-    check_footprint, control, decode, digest_of, host_uuid, integrity, load_base, open_base,
-    prior_op_with, replay_summary, summarize,
+    self, AUTHORED_LAYER, CreateRequest, Created, DERIVED_LAYER, RevisionSummary, check_footprint,
+    control, decode, digest_of, host_uuid, integrity, load_base, open_base, prior_op_with,
+    replay_summary, summarize,
 };
 use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::footprint::Footprint;
@@ -19,6 +19,7 @@ use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{
     Author, Change, EditTargets, Element, Placement, Prepare, Shape, schema_identity,
 };
+use session::Refusal;
 
 /// Saved unsupported input with its committed revision and replay result.
 #[derive(Debug, Clone, PartialEq)]
@@ -48,7 +49,7 @@ pub fn create_plate_draft(
     store: &RevisionStore,
     request: &CreateRequest,
     hook: &mut dyn CommitHook,
-) -> Result<CreatedDraft, PlateError> {
+) -> Result<CreatedDraft, Refusal> {
     let control = control();
     let (head, base) = load_base(store, &request.project, &request.workspace)?;
     let open_request = open_base(&base)?;

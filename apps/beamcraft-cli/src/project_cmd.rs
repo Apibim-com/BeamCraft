@@ -12,7 +12,6 @@
 
 use crate::plate_cmd::revision_json;
 use beamcraft_cli::definition::{DefineRequest, DefinitionRecord, define};
-use beamcraft_cli::plate::PlateError;
 use beamcraft_cli::plate::summarize;
 use beamcraft_cli::project::{
     ProjectContext, create_project, create_project_unique, install_environment,
@@ -23,6 +22,7 @@ use beamcraft_host::storage::BlobStore;
 use beamcraft_json::Json;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, Uuid7, WorkspaceId};
+use session::Refusal;
 use session::environment::{EnvironmentState, environment_folders, list_environments};
 use session::project::{ProjectInfo, ProjectState, list_projects};
 use session::settings::{Settings, SettingsError, default_dir};
@@ -31,18 +31,18 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-type Run<T> = Result<T, PlateError>;
+type Run<T> = Result<T, Refusal>;
 
-const fn invalid(message: &'static str) -> PlateError {
-    PlateError {
+const fn invalid(message: &'static str) -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
     }
 }
 
-fn settings_error(error: SettingsError) -> PlateError {
-    PlateError {
+fn settings_error(error: SettingsError) -> Refusal {
+    Refusal {
         rule_id: None,
         code: error.code,
         message: error.message,
@@ -96,7 +96,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     let config_dir = || -> Run<PathBuf> {
         match given("--config-dir") {
             Some(dir) => Ok(PathBuf::from(dir)),
-            None => default_dir().ok_or(PlateError {
+            None => default_dir().ok_or(Refusal {
                 rule_id: None,
                 code: ErrorCode::NotFound,
                 message: "no configuration directory is known; name one with --config-dir",
@@ -209,7 +209,7 @@ fn run(args: &[OsString]) -> Run<Json> {
 }
 
 fn fresh_id() -> Run<beamcraft_model::id::Uuid7> {
-    IdSource::system().next_id().map_err(|_| PlateError {
+    IdSource::system().next_id().map_err(|_| Refusal {
         rule_id: None,
         code: ErrorCode::BackendUnavailable,
         message: "no identity could be generated",
@@ -325,7 +325,7 @@ fn seed_project(
             } if ready == id => Some(entry.path),
             _ => None,
         })
-        .ok_or(PlateError {
+        .ok_or(Refusal {
             rule_id: None,
             code: ErrorCode::NotFound,
             message: "the environment is not among the built-in or user environments",
@@ -335,7 +335,7 @@ fn seed_project(
         .ok_or(invalid("the environment path is not UTF-8"))?;
     // Read and admitted first; a refused environment copies nothing.
     install_environment(dir, Path::new(file))?;
-    let blobs = BlobStore::new(dir).map_err(|e| PlateError {
+    let blobs = BlobStore::new(dir).map_err(|e| Refusal {
         rule_id: None,
         code: e.code(),
         message: "store root is not usable",
@@ -347,7 +347,7 @@ fn seed_project(
             &DefineRequest {
                 revision_id: RevisionId::from_uuid(fresh_id()?),
                 op_id: OpId::from_uuid(fresh_id()?),
-                actor: HostUuid7::parse(&context.actor.to_string()).map_err(PlateError::from)?,
+                actor: HostUuid7::parse(&context.actor.to_string()).map_err(Refusal::from)?,
                 project: context.project,
                 workspace: context.workspace,
                 definition,

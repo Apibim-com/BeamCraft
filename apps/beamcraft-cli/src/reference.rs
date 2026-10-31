@@ -33,9 +33,8 @@
 //! as in the other commands. One implicit workspace, in-process layer engine, as in `plate`.
 
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, check_footprint, control,
-    digest_of, host_uuid, integrity, load_base, open_base, prior_op_with, replay_summary,
-    summarize,
+    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, check_footprint, control, digest_of,
+    host_uuid, integrity, load_base, open_base, prior_op_with, replay_summary, summarize,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use crate::source_file::read_file;
@@ -61,6 +60,7 @@ use beamcraft_model::reference::{
     AttachReference, CorrectReferenceUnits, ForeignTarget, MAX_SOURCE_BYTES, MoveReference,
     WriteForeign, check_source_path,
 };
+use session::Refusal;
 use std::collections::BTreeSet;
 use std::convert::Infallible;
 
@@ -140,24 +140,24 @@ pub struct Edited {
     pub footprint: Option<Footprint>,
 }
 
-fn command_error(error: CommandError) -> PlateError {
-    PlateError::from(error)
+fn command_error(error: CommandError) -> Refusal {
+    Refusal::from(error)
 }
 
-fn io_error(code: ErrorCode) -> PlateError {
+fn io_error(code: ErrorCode) -> Refusal {
     let message = match code {
         ErrorCode::NotFound => "the source file could not be opened",
         ErrorCode::LimitExceeded => "the source file is larger than 32 MiB",
         _ => "the source path is not a readable regular local file",
     };
-    PlateError::new(code, message)
+    Refusal::new(code, message)
 }
 
 fn read_all_prims(
     reader: &Reader,
     opened: &Opened,
     control: &beamcraft_layer_engine::Control,
-) -> Result<Vec<Prim>, PlateError> {
+) -> Result<Vec<Prim>, Refusal> {
     let mut prims = Vec::new();
     let mut cursor = None;
     loop {
@@ -185,7 +185,7 @@ fn layer_placement(p: &Placement) -> LayerPlacement {
     }
 }
 
-pub(crate) fn wrapper_of(view: &ReferenceView) -> Result<Wrapper, PlateError> {
+pub(crate) fn wrapper_of(view: &ReferenceView) -> Result<Wrapper, Refusal> {
     let record = ReferenceRecord {
         id: ElementId::parse(&view.id)
             .map_err(|_| integrity("a wrapper identity is not a full UUIDv7"))?,
@@ -208,7 +208,7 @@ struct Head {
     wrappers: Vec<Wrapper>,
 }
 
-fn read_head(base: &Base, control: &beamcraft_layer_engine::Control) -> Result<Head, PlateError> {
+fn read_head(base: &Base, control: &beamcraft_layer_engine::Control) -> Result<Head, Refusal> {
     let mut reader = Reader::default();
     let opened = reader.open(open_base(base)?, control)?;
     let prims = read_all_prims(&reader, &opened, control)?;
@@ -223,7 +223,7 @@ fn find(head: &Head, id: ElementId) -> Option<&Wrapper> {
     head.wrappers.iter().find(|w| w.record.id == id)
 }
 
-fn not_found() -> PlateError {
+fn not_found() -> Refusal {
     command_error(CommandError::new(
         ErrorCode::NotFound,
         "target_id",
@@ -243,8 +243,8 @@ fn layer_name_of(path: &str) -> Option<String> {
 fn pin_source(
     path: &str,
     control: &beamcraft_layer_engine::Control,
-) -> Result<(SourcePin, Vec<u8>), PlateError> {
-    let label = layer_name_of(path).ok_or(PlateError {
+) -> Result<(SourcePin, Vec<u8>), Refusal> {
+    let label = layer_name_of(path).ok_or(Refusal {
         rule_id: None,
         code: ErrorCode::InvalidArgument,
         message: "the source path has no file name",
@@ -252,14 +252,14 @@ fn pin_source(
     let cap = usize::try_from(MAX_SOURCE_BYTES).map_err(|_| integrity("source cap"))?;
     let bytes = read_file(path, cap).map_err(io_error)?;
     let info = inspect_foreign_layer(&bytes, Budgets::MODEL, control)?;
-    let default_prim = info.default_prim.ok_or(PlateError {
+    let default_prim = info.default_prim.ok_or(Refusal {
         rule_id: None,
         code: ErrorCode::UnsupportedProperty,
         message: "the source declares no defaultPrim; a root prim is never guessed",
     })?;
     let declared_up_axis = match info.up_axis.as_deref() {
         None => None,
-        Some(text) => Some(UpAxis::parse(text).ok_or(PlateError {
+        Some(text) => Some(UpAxis::parse(text).ok_or(Refusal {
             rule_id: None,
             code: ErrorCode::UnsupportedProperty,
             message: "the source declares an up axis other than Y or Z",
@@ -290,7 +290,7 @@ pub fn attach_reference(
     store: &RevisionStore,
     request: &AttachRequest,
     hook: &mut dyn CommitHook,
-) -> Result<Attached, PlateError> {
+) -> Result<Attached, Refusal> {
     // First of all, and before the store or the file system is touched.
     check_source_path(&request.source_path).map_err(command_error)?;
     let control = control();
@@ -434,7 +434,7 @@ pub fn attach_reference(
 }
 
 /// Opens the head again, fully verified, and returns one wrapper as committed.
-fn reread(store: &RevisionStore, id: ElementId) -> Result<Option<Wrapper>, PlateError> {
+fn reread(store: &RevisionStore, id: ElementId) -> Result<Option<Wrapper>, Refusal> {
     let inspection = inspect_references(store)?;
     Ok(inspection
         .references
@@ -462,7 +462,7 @@ fn edit(
     target: ElementId,
     plan: impl FnOnce(&ReferenceRecord) -> Result<Step, CommandError>,
     hook: &mut dyn CommitHook,
-) -> Result<Edited, PlateError> {
+) -> Result<Edited, Refusal> {
     let control = control();
     let (head, base) = load_base(store, &ids.project, &ids.workspace)?;
     if head.is_none() {
@@ -573,7 +573,7 @@ pub fn move_wrapper(
     ids: &Ids,
     command: &MoveReference,
     hook: &mut dyn CommitHook,
-) -> Result<Edited, PlateError> {
+) -> Result<Edited, Refusal> {
     edit(
         store,
         ids,
@@ -607,7 +607,7 @@ pub fn correct_wrapper_units(
     ids: &Ids,
     command: &CorrectReferenceUnits,
     hook: &mut dyn CommitHook,
-) -> Result<Edited, PlateError> {
+) -> Result<Edited, Refusal> {
     edit(
         store,
         ids,
@@ -675,7 +675,7 @@ pub struct MeasurementReport {
 pub fn measure_references(
     store: &RevisionStore,
     id: Option<ElementId>,
-) -> Result<MeasurementReport, PlateError> {
+) -> Result<MeasurementReport, Refusal> {
     let (revision, _reader, _opened, prims) = open_head(store)?;
     let mut measurements = Vec::new();
     for (view, geometry) in crate::reference_view::reference_surfaces(&prims)? {
@@ -701,7 +701,7 @@ pub fn measure_references(
     })
 }
 
-fn open_head(store: &RevisionStore) -> Result<(Revision, Reader, Opened, Vec<Prim>), PlateError> {
+fn open_head(store: &RevisionStore) -> Result<(Revision, Reader, Opened, Vec<Prim>), Refusal> {
     let revision = store.open()?;
     let content = revision.manifest().content();
     let assets = content
@@ -714,7 +714,7 @@ fn open_head(store: &RevisionStore) -> Result<(Revision, Reader, Opened, Vec<Pri
                 bytes: revision.layer_bytes(e.name())?,
             })
         })
-        .collect::<Result<Vec<_>, PlateError>>()?;
+        .collect::<Result<Vec<_>, Refusal>>()?;
     let external = content
         .entries()
         .iter()
@@ -744,7 +744,7 @@ fn open_head(store: &RevisionStore) -> Result<(Revision, Reader, Opened, Vec<Pri
 /// explicit units, the placement and the foreign prims composed below each. The source layer of
 /// every wrapper must be an external entry of the revision with exactly the pinned digest and
 /// size, or the read fails with `INTEGRITY_ERROR`.
-pub fn inspect_references(store: &RevisionStore) -> Result<ReferenceInspection, PlateError> {
+pub fn inspect_references(store: &RevisionStore) -> Result<ReferenceInspection, Refusal> {
     let (revision, _reader, _opened, prims) = open_head(store)?;
     let content = revision.manifest().content();
     let mut wrappers = Vec::new();
@@ -785,7 +785,7 @@ pub fn inspect_references(store: &RevisionStore) -> Result<ReferenceInspection, 
 pub fn refuse_foreign_write(
     store: &RevisionStore,
     command: &WriteForeign,
-) -> Result<Infallible, PlateError> {
+) -> Result<Infallible, Refusal> {
     command.validate_arguments().map_err(command_error)?;
     let (_revision, reader, opened, prims) = open_head(store)?;
     let views = read_references(&prims)?;

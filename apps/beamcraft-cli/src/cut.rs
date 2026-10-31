@@ -29,9 +29,9 @@
 
 use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, check_footprint, control,
-    decode, digest_of, evaluate_decoded, host_uuid, integrity, load_base, member_record,
-    mesh_change, open_base, plate_record, prior_op_with, replay_summary, summarize,
+    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, check_footprint, control, decode,
+    digest_of, evaluate_decoded, host_uuid, integrity, load_base, member_record, mesh_change,
+    open_base, plate_record, prior_op_with, replay_summary, summarize,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::command::evaluate_plate;
@@ -53,26 +53,27 @@ use beamcraft_model::command::{
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use session::Refusal;
 use std::collections::BTreeMap;
 
-fn not_found() -> PlateError {
-    PlateError::from(CommandError::new(
+fn not_found() -> Refusal {
+    Refusal::from(CommandError::new(
         ErrorCode::NotFound,
         "target_id",
         "the element is not in the head revision",
     ))
 }
 
-fn unsupported_target() -> PlateError {
-    PlateError::from(CommandError::new(
+fn unsupported_target() -> Refusal {
+    Refusal::from(CommandError::new(
         ErrorCode::DependencyUnavailable,
         "target_id",
         "cutting an unsupported element is not implemented",
     ))
 }
 
-fn reuse() -> PlateError {
-    PlateError::from(CommandError::new(
+fn reuse() -> Refusal {
+    Refusal::from(CommandError::new(
         ErrorCode::OpIdReuse,
         "op_id",
         "operation id was accepted with different content",
@@ -134,7 +135,7 @@ pub fn cut_by_plane_record(
     store: &RevisionStore,
     request: &CutRequest,
     hook: &mut dyn CommitHook,
-) -> Result<Cut, PlateError> {
+) -> Result<Cut, Refusal> {
     apply_cut(store, request, hook, Action::Create)
 }
 /// Replace an existing cut with immutable retry evidence and one atomic linked-group update.
@@ -142,7 +143,7 @@ pub fn update_cut_record(
     store: &RevisionStore,
     request: &CutRequest,
     hook: &mut dyn CommitHook,
-) -> Result<Cut, PlateError> {
+) -> Result<Cut, Refusal> {
     apply_cut(store, request, hook, Action::Update)
 }
 /// Context and typed arguments for removal of one existing cut record.
@@ -180,7 +181,7 @@ pub fn remove_cut_record(
     store: &RevisionStore,
     request: &RemoveCutRequest,
     hook: &mut dyn CommitHook,
-) -> Result<RemovedCut, PlateError> {
+) -> Result<RemovedCut, Refusal> {
     let context = CutRequest {
         op_id: request.op_id,
         revision_id: request.revision_id,
@@ -215,7 +216,7 @@ fn replay_cut(
     request: &CutRequest,
     fingerprint: ContentDigest,
     remove: bool,
-) -> Result<Option<Cut>, PlateError> {
+) -> Result<Option<Cut>, Refusal> {
     let op = host_uuid(&request.op_id.to_string())?;
     let Some((evidence, revision)) = crate::command_evidence::accepted(store, &op)? else {
         return Ok(None);
@@ -264,7 +265,7 @@ fn apply_cut(
     request: &CutRequest,
     hook: &mut dyn CommitHook,
     action: Action,
-) -> Result<Cut, PlateError> {
+) -> Result<Cut, Refusal> {
     let update = action == Action::Update;
     let remove = action == Action::Remove;
     let command = &request.command;
@@ -619,7 +620,7 @@ pub fn a13_record(
     store: &RevisionStore,
     request: &A13Request,
     hook: &mut dyn CommitHook,
-) -> Result<A13Result, PlateError> {
+) -> Result<A13Result, Refusal> {
     let control = control();
     let (head, base) = load_base(store, &request.project, &request.workspace)?;
     if head.is_none() {
@@ -977,7 +978,7 @@ pub fn a13_record(
 
     // The real admission, the re-evaluated bodies and the layer changes of one transaction.
     let materials = material_lookup(&definitions);
-    let evaluate_state = |authored: AuthoredState| -> Result<CutElement, PlateError> {
+    let evaluate_state = |authored: AuthoredState| -> Result<CutElement, Refusal> {
         match authored {
             AuthoredState::Plate(a) => {
                 let body = evaluate_plate(&a)?;
@@ -1214,7 +1215,7 @@ pub fn a13_record(
         }
         A13Command::Split(c) => {
             if instances.group_size(c.target_id)? > 1 {
-                return Err(PlateError::from(CommandError::new(
+                return Err(Refusal::from(CommandError::new(
                     ErrorCode::DependencyConflict,
                     "target_id",
                     "the element shares an instance definition; a split is per element",
@@ -1251,7 +1252,7 @@ pub fn a13_record(
         A13Command::Combine(c) => {
             for id in [c.survivor_id, c.consumed_id] {
                 if instances.group_size(id)? > 1 {
-                    return Err(PlateError::from(CommandError::new(
+                    return Err(Refusal::from(CommandError::new(
                         ErrorCode::DependencyConflict,
                         "consumed_id",
                         "a member shares an instance definition; a combine is per element",
@@ -1360,7 +1361,7 @@ pub fn a13_record(
 }
 
 /// The mesh change of one element, for either kind.
-fn mesh_change_of(element: &CutElement) -> Result<Change, PlateError> {
+fn mesh_change_of(element: &CutElement) -> Result<Change, Refusal> {
     match element {
         CutElement::Plate(r) => mesh_change(&r.authored.id, &r.body.solid, &plate_record(r)),
         CutElement::Member(r) => mesh_change(&r.authored.id, &r.body.solid, &member_record(r)),
@@ -1374,7 +1375,7 @@ fn shared_with_cuts(
     members: &[beamcraft_engine::query::committed::MemberRecord],
     id: ElementId,
     canonical: &CutElement,
-) -> Result<CutElement, PlateError> {
+) -> Result<CutElement, Refusal> {
     match canonical {
         CutElement::Plate(r) => {
             let mut authored = plates
@@ -1413,7 +1414,7 @@ fn shared_with_holes(
     plates: &[beamcraft_engine::query::committed::PlateRecord],
     id: ElementId,
     canonical: &CutElement,
-) -> Result<CutElement, PlateError> {
+) -> Result<CutElement, Refusal> {
     let CutElement::Plate(r) = canonical else {
         return Err(integrity("a polygon cut canonical is not a plate"));
     };
@@ -1432,7 +1433,7 @@ fn shared_with_holes(
 }
 
 /// The layer-engine `Create` element of a split's created half.
-fn created_element(state: &AuthoredState) -> Result<Element, PlateError> {
+fn created_element(state: &AuthoredState) -> Result<Element, Refusal> {
     let pose = |placement: beamcraft_model::command::Placement| Placement {
         translation_mm: placement.translation_mm,
         orientation_xyzw: placement.orientation_xyzw,

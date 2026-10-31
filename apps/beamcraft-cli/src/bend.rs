@@ -15,9 +15,9 @@
 
 use crate::definition::material_lookup;
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, check_footprint, control,
-    decode, evaluate_decoded, host_uuid, integrity, load_base, mesh_change, open_base,
-    plate_record, summarize,
+    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, check_footprint, control, decode,
+    evaluate_decoded, host_uuid, integrity, load_base, mesh_change, open_base, plate_record,
+    summarize,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::command::evaluate_plate;
@@ -30,18 +30,19 @@ use beamcraft_model::command::BendPlate;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
+use session::Refusal;
 use std::collections::BTreeMap;
 
-fn not_found() -> PlateError {
-    PlateError::from(beamcraft_model::command::CommandError::new(
+fn not_found() -> Refusal {
+    Refusal::from(beamcraft_model::command::CommandError::new(
         ErrorCode::NotFound,
         "target_id",
         "the element is not in the head revision",
     ))
 }
 
-fn reuse() -> PlateError {
-    PlateError::from(beamcraft_model::command::CommandError::new(
+fn reuse() -> Refusal {
+    Refusal::from(beamcraft_model::command::CommandError::new(
         ErrorCode::OpIdReuse,
         "op_id",
         "operation id was accepted with different content",
@@ -90,7 +91,7 @@ pub fn bend_plate_record(
     store: &RevisionStore,
     request: &BendRequest,
     hook: &mut dyn CommitHook,
-) -> Result<BendApplied, PlateError> {
+) -> Result<BendApplied, Refusal> {
     let command = &request.command;
     command.validate_arguments()?;
     let fingerprint = command.content_fingerprint()?;
@@ -257,7 +258,7 @@ fn replay(
     store: &RevisionStore,
     request: &BendRequest,
     fingerprint: ContentDigest,
-) -> Result<Option<BendApplied>, PlateError> {
+) -> Result<Option<BendApplied>, Refusal> {
     let op = host_uuid(&request.op_id.to_string())?;
     let Some((evidence, revision)) = crate::command_evidence::accepted(store, &op)? else {
         return Ok(None);

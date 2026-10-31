@@ -10,7 +10,7 @@
 //! unnumbered element. No geometry is computed here.
 
 use crate::definition::DefinitionRecord;
-use crate::plate::{Inspection, PlateError};
+use crate::plate::Inspection;
 use beamcraft_engine::bom::BomRow;
 use beamcraft_engine::element::ElementKind;
 use beamcraft_engine::numbering::GroupKind;
@@ -18,8 +18,9 @@ use beamcraft_engine::numbering_approval::StoredMark;
 use beamcraft_engine::query::committed::{MemberRecord, PlateRecord};
 use beamcraft_model::command::MemberKind;
 use beamcraft_model::digest::ContentDigest;
+use session::Refusal;
 
-type Run<T> = Result<T, PlateError>;
+type Run<T> = Result<T, Refusal>;
 
 /// One report row per plate and member of the verified head.
 pub fn rows(inspection: &Inspection, marks: &[StoredMark]) -> Run<Vec<BomRow>> {

@@ -17,10 +17,11 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use crate::support;
+use session::Refusal;
 
 use support::{at, text};
 
-use beamcraft_cli::plate::{CreateRequest, PlateError, create_plate, inspect};
+use beamcraft_cli::plate::{CreateRequest, create_plate, inspect};
 use beamcraft_host::{
     ids::IdSource,
     revision::{CommitPoint, Injected, NoFault, RevisionStore, Uuid7},
@@ -956,7 +957,7 @@ fn a_library_error_is_typed_and_a_failed_commit_leaves_the_old_revision() {
             Ok(())
         }
     };
-    let error: PlateError = create_plate(&store, &second, &mut fail).unwrap_err();
+    let error: Refusal = create_plate(&store, &second, &mut fail).unwrap_err();
     assert_eq!(error.code, ErrorCode::Cancelled);
     assert_eq!(inspect(&store).unwrap().revision, before);
     // The same operation then succeeds exactly once.
