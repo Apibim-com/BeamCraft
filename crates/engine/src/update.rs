@@ -34,8 +34,9 @@
 
 use crate::steel::command::AuthoredPlate;
 use crate::steel::member::AuthoredMember;
-use beamcraft_model::command::{CommandError, ElementPatch, Placement};
+use beamcraft_model::command::{CommandError, Placement};
 use beamcraft_model::error::ErrorCode;
+use beamcraft_model::steel::command::ElementPatch;
 
 /// Which groups of an element a patch changes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -645,7 +646,7 @@ mod tests {
 
     #[test]
     fn a_rotate_patch_turns_the_placement_and_keeps_the_shape() {
-        use beamcraft_model::command::ElementRotate;
+        use beamcraft_model::steel::command::ElementRotate;
         let quarter = ElementRotate {
             pivot_mm: [0.0; 3],
             axis: [0.0, 0.0, 1.0],
@@ -669,7 +670,7 @@ mod tests {
         assert_eq!(turned.axis_points_mm, member().axis_points_mm);
         // Absolute placement fields are refused beside a rotate (the model validates this, the
         // engine honours the rotate alone).
-        let model = beamcraft_model::command::UpdateElement {
+        let model = beamcraft_model::steel::command::UpdateElement {
             target_id: turned.id,
             patch: ElementPatch {
                 rotate: Some(quarter),
@@ -685,7 +686,7 @@ mod tests {
 
     #[test]
     fn a_mirror_patch_reencodes_a_plate_and_rebuilds_the_body() {
-        use beamcraft_model::command::ElementMirror;
+        use beamcraft_model::steel::command::ElementMirror;
         use beamcraft_model::steel::command::PlateSide;
         let patch = ElementPatch {
             mirror: Some(ElementMirror {

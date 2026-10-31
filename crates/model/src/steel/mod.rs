@@ -11,4 +11,5 @@
 
 pub mod command;
 pub mod fastener;
+pub mod instance;
 pub mod section;

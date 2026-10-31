@@ -12,11 +12,12 @@ use beamcraft_host::revision::{
 };
 use beamcraft_host::storage::BlobStore;
 use beamcraft_json::{Json, Limits};
-use beamcraft_model::command::{CopyElement, ElementPatch, Placement, UpdateElement};
+use beamcraft_model::command::Placement;
 use beamcraft_model::digest::Sha256;
 use beamcraft_model::id::{ElementId, OpId};
 use beamcraft_model::limits::MAX_FOOTPRINT_ENTRIES;
 use beamcraft_model::steel::command::CreatePlate;
+use beamcraft_model::steel::command::{CopyElement, ElementPatch, UpdateElement};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;

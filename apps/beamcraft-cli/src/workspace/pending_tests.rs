@@ -9,9 +9,10 @@ use beamcraft_host::revision::{
     CommitPoint, ExpectedBase, LayerEntry, NoFault, RevisionDraft, Uuid7,
 };
 use beamcraft_layer_engine::authored::{EditTargets, rebase};
-use beamcraft_model::command::{ElementPatch, Placement, UpdateElement};
+use beamcraft_model::command::Placement;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use beamcraft_model::steel::command::CreatePlate;
+use beamcraft_model::steel::command::{ElementPatch, UpdateElement};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};

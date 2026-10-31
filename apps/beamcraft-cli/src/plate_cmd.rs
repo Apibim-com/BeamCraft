@@ -46,10 +46,7 @@ use beamcraft_host::{
     storage::BlobStore,
 };
 use beamcraft_json::{Json, Limits};
-use beamcraft_model::command::{
-    ArrayElements, ArrayStep, CopyElement, DeleteElement, ElementMirror, ElementPatch,
-    ElementRotate, Placement, UpdateElement,
-};
+use beamcraft_model::command::{DeleteElement, Placement};
 use beamcraft_model::definition::SectionProperties;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
@@ -61,6 +58,10 @@ use beamcraft_model::steel::command::{
     CutByPlane, CutByPolygon, CutRecord, FitEndToPart, HoleExtent, HoleSpec, KeepSide, MAX_HOLES,
     MemberKind, PlateCorner, PlateSide, SectionDepthPosition, SectionPlacement,
     SectionPlanePosition, SplitPart,
+};
+use beamcraft_model::steel::command::{
+    ArrayElements, ArrayStep, CopyElement, ElementMirror, ElementPatch, ElementRotate,
+    UpdateElement,
 };
 use beamcraft_model::steel::section::{
     CustomSection, ParametricSection, SectionFamily, SectionShape,

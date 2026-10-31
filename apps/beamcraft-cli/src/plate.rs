@@ -1188,7 +1188,7 @@ pub(crate) fn decode(
             }
             Some((
                 ElementId::parse(p.element_id.as_deref()?).ok()?,
-                beamcraft_model::instance::PartKind::parse(
+                beamcraft_model::steel::instance::PartKind::parse(
                     property(p, "bim:elementKind").and_then(text)?,
                 )?,
             ))

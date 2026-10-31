@@ -15,10 +15,11 @@
 use crate::steel::command::AuthoredPlate;
 use crate::steel::member::AuthoredMember;
 use beamcraft_geom::canonical_f64_bytes;
-use beamcraft_model::command::{CommandError, CopyElement, Placement};
+use beamcraft_model::command::{CommandError, Placement};
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, Uuid7};
+use beamcraft_model::steel::command::CopyElement;
 use beamcraft_model::steel::command::{CutRecord, HoleRecord};
 
 fn copied_placement(source: &Placement, command: &CopyElement) -> Result<Placement, CommandError> {
