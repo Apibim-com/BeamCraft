@@ -8,13 +8,12 @@ required, `[--option VALUE]` is optional, and `(--a X | --b Y)` means exactly on
 required. A rule that links optional options (for example `--width` with `--length`) is in
 the family help, `beamcraft --help`, and in the refusal. `read` commands change nothing
 persistent; `write` commands change the store, the settings, a library or an output file.
-`ui-assist` commands mirror interactive-UI affordances; the rest are `core`.
 
 ## blobs
 
 ### put-blob
 
-write, core.
+write.
 
 ```text
 put-blob --store ROOT --file FILE [--timeout-ms U64] [--cancel-after-ms U64]
@@ -22,7 +21,7 @@ put-blob --store ROOT --file FILE [--timeout-ms U64] [--cancel-after-ms U64]
 
 ### verify-blob
 
-read, core.
+read.
 
 ```text
 verify-blob --store ROOT --digest SHA256 [--timeout-ms U64] [--cancel-after-ms U64]
@@ -32,7 +31,7 @@ verify-blob --store ROOT --digest SHA256 [--timeout-ms U64] [--cancel-after-ms U
 
 ### commit-revision
 
-write, core.
+write.
 
 ```text
 commit-revision --store ROOT --project-id UUID --workspace-id UUID --revision-id UUID --op-id UUID
@@ -42,7 +41,7 @@ commit-revision --store ROOT --project-id UUID --workspace-id UUID --revision-id
 
 ### open-revision
 
-read, core.
+read.
 
 ```text
 open-revision --store ROOT [--timeout-ms U64] [--cancel-after-ms U64]
@@ -50,7 +49,7 @@ open-revision --store ROOT [--timeout-ms U64] [--cancel-after-ms U64]
 
 ### recover-revision
 
-write, core.
+write.
 
 ```text
 recover-revision --store ROOT --min-age-secs U64 [--timeout-ms U64] [--cancel-after-ms U64]
@@ -58,7 +57,7 @@ recover-revision --store ROOT --min-age-secs U64 [--timeout-ms U64] [--cancel-af
 
 ### inspect-revision-outcome
 
-read, core.
+read.
 
 ```text
 inspect-revision-outcome --store ROOT --op-id UUID [--timeout-ms U64] [--cancel-after-ms U64]
@@ -68,7 +67,7 @@ inspect-revision-outcome --store ROOT --op-id UUID [--timeout-ms U64] [--cancel-
 
 ### create-plate
 
-write, core.
+write.
 
 ```text
 create-plate --store ROOT --thickness MM [--width MM] [--length MM]
@@ -83,7 +82,7 @@ create-plate --store ROOT --thickness MM [--width MM] [--length MM]
 
 ### add-hole
 
-write, core.
+write.
 
 ```text
 add-hole --store ROOT --id UUID (--polygon X,Y;X,Y;... | --hole-rect X,Y,W,H | --hole-round X,Y,D)
@@ -93,7 +92,7 @@ add-hole --store ROOT --id UUID (--polygon X,Y;X,Y;... | --hole-rect X,Y,W,H | -
 
 ### update-hole
 
-write, core.
+write.
 
 ```text
 update-hole --store ROOT --id UUID --operation-id UUID
@@ -103,7 +102,7 @@ update-hole --store ROOT --id UUID --operation-id UUID
 
 ### remove-hole
 
-write, core.
+write.
 
 ```text
 remove-hole --store ROOT --id UUID --operation-id UUID [--op-id UUID] [--revision-id UUID]
@@ -112,7 +111,7 @@ remove-hole --store ROOT --id UUID --operation-id UUID [--op-id UUID] [--revisio
 
 ### inspect-elements
 
-read, core.
+read.
 
 ```text
 inspect-elements --store ROOT [--element UUID]
@@ -122,7 +121,7 @@ inspect-elements --store ROOT [--element UUID]
 
 ### define-material
 
-write, core.
+write.
 
 ```text
 define-material --store ROOT [--density N] [--grade TEXT] [--standard TEXT] [--name TEXT]
@@ -131,7 +130,7 @@ define-material --store ROOT [--density N] [--grade TEXT] [--standard TEXT] [--n
 
 ### define-profile
 
-write, core.
+write.
 
 ```text
 define-profile --store ROOT [--width MM] [--height MM]
@@ -145,7 +144,7 @@ define-profile --store ROOT [--width MM] [--height MM]
 
 ### define-fastener
 
-write, core.
+write.
 
 ```text
 define-fastener --store ROOT --fastener-library FILE --designation TEXT [--name TEXT]
@@ -154,7 +153,7 @@ define-fastener --store ROOT --fastener-library FILE --designation TEXT [--name 
 
 ### definitions
 
-read, core.
+read.
 
 ```text
 definitions --store ROOT [--name TEXT] [--offset N] [--limit N]
@@ -164,7 +163,7 @@ definitions --store ROOT [--name TEXT] [--offset N] [--limit N]
 
 ### list-library
 
-read, core.
+read.
 
 ```text
 list-library (--library FILE | --environment FILE | --fastener-library FILE) [--user-library FILE]
@@ -173,7 +172,7 @@ list-library (--library FILE | --environment FILE | --fastener-library FILE) [--
 
 ### show-library
 
-read, core.
+read.
 
 ```text
 show-library --designation TEXT (--library FILE | --environment FILE | --fastener-library FILE)
@@ -182,7 +181,7 @@ show-library --designation TEXT (--library FILE | --environment FILE | --fastene
 
 ### add-library
 
-write, core.
+write.
 
 ```text
 add-library --library FILE --designation TEXT [--library-id TEXT] [--title TEXT] [--width MM]
@@ -196,7 +195,7 @@ add-library --library FILE --designation TEXT [--library-id TEXT] [--title TEXT]
 
 ### create-member
 
-write, core.
+write.
 
 ```text
 create-member --store ROOT (--profile-digest SHA256 | --profile TEXT)
@@ -212,7 +211,7 @@ create-member --store ROOT (--profile-digest SHA256 | --profile TEXT)
 
 ### create-polybeam
 
-write, core.
+write.
 
 ```text
 create-polybeam --store ROOT --points X,Y,Z;X,Y,Z;... (--profile-digest SHA256 | --profile TEXT)
@@ -224,7 +223,7 @@ create-polybeam --store ROOT --points X,Y,Z;X,Y,Z;... (--profile-digest SHA256 |
 
 ### create-curved-beam
 
-write, core.
+write.
 
 ```text
 create-curved-beam --store ROOT (--profile-digest SHA256 | --profile TEXT)
@@ -239,7 +238,7 @@ create-curved-beam --store ROOT (--profile-digest SHA256 | --profile TEXT)
 
 ### work-plane
 
-read, core.
+read.
 
 ```text
 work-plane
@@ -249,7 +248,7 @@ work-plane
 
 ### resolve-construction-point
 
-read, core.
+read.
 
 ```text
 resolve-construction-point --reference X,Y,Z (--toward X,Y,Z | --origin X,Y,Z) [--direction X,Y,Z]
@@ -260,7 +259,7 @@ resolve-construction-point --reference X,Y,Z (--toward X,Y,Z | --origin X,Y,Z) [
 
 ### update-element
 
-write, core.
+write.
 
 ```text
 update-element --store ROOT --id UUID [--name TEXT] [--class INT32] [--profile-digest SHA256]
@@ -273,7 +272,7 @@ update-element --store ROOT --id UUID [--name TEXT] [--class INT32] [--profile-d
 
 ### move-plate-vertex
 
-write, core.
+write.
 
 ```text
 move-plate-vertex --store ROOT --id UUID --vertex N --to X,Y [--op-id UUID] [--revision-id UUID]
@@ -282,7 +281,7 @@ move-plate-vertex --store ROOT --id UUID --vertex N --to X,Y [--op-id UUID] [--r
 
 ### move-plate-edge
 
-write, core.
+write.
 
 ```text
 move-plate-edge --store ROOT --id UUID --edge N --delta DX,DY [--op-id UUID] [--revision-id UUID]
@@ -291,7 +290,7 @@ move-plate-edge --store ROOT --id UUID --edge N --delta DX,DY [--op-id UUID] [--
 
 ### insert-plate-vertex
 
-write, core.
+write.
 
 ```text
 insert-plate-vertex --store ROOT --id UUID --edge N --point X,Y [--op-id UUID]
@@ -300,7 +299,7 @@ insert-plate-vertex --store ROOT --id UUID --edge N --point X,Y [--op-id UUID]
 
 ### delete-plate-vertex
 
-write, core.
+write.
 
 ```text
 delete-plate-vertex --store ROOT --id UUID --vertex N [--op-id UUID] [--revision-id UUID]
@@ -309,7 +308,7 @@ delete-plate-vertex --store ROOT --id UUID --vertex N [--op-id UUID] [--revision
 
 ### set-plate-corner
 
-write, core.
+write.
 
 ```text
 set-plate-corner --store ROOT --id UUID --vertex N --corner chamfer:D1[,D2]|round:R|sharp
@@ -319,7 +318,7 @@ set-plate-corner --store ROOT --id UUID --vertex N --corner chamfer:D1[,D2]|roun
 
 ### cut-by-plane
 
-write, core.
+write.
 
 ```text
 cut-by-plane --store ROOT --id UUID --operation-id UUID --point X,Y,Z --normal X,Y,Z
@@ -329,7 +328,7 @@ cut-by-plane --store ROOT --id UUID --operation-id UUID --point X,Y,Z --normal X
 
 ### update-cut
 
-write, core.
+write.
 
 ```text
 update-cut --store ROOT --id UUID --operation-id UUID --point X,Y,Z --normal X,Y,Z
@@ -339,7 +338,7 @@ update-cut --store ROOT --id UUID --operation-id UUID --point X,Y,Z --normal X,Y
 
 ### remove-cut
 
-write, core.
+write.
 
 ```text
 remove-cut --store ROOT --id UUID --operation-id UUID [--op-id UUID] [--revision-id UUID]
@@ -348,7 +347,7 @@ remove-cut --store ROOT --id UUID --operation-id UUID [--op-id UUID] [--revision
 
 ### cut-by-line
 
-write, core.
+write.
 
 ```text
 cut-by-line --store ROOT --id UUID --operation-id UUID --point-a X,Y,Z --point-b X,Y,Z
@@ -358,7 +357,7 @@ cut-by-line --store ROOT --id UUID --operation-id UUID --point-a X,Y,Z --point-b
 
 ### cut-by-polygon
 
-write, core.
+write.
 
 ```text
 cut-by-polygon --store ROOT --id UUID --operation-id UUID --polygon X,Y;X,Y;... [--op-id UUID]
@@ -367,7 +366,7 @@ cut-by-polygon --store ROOT --id UUID --operation-id UUID --polygon X,Y;X,Y;... 
 
 ### cut-by-part
 
-write, core.
+write.
 
 ```text
 cut-by-part --store ROOT --id UUID --operation-id UUID --tool UUID [--op-id UUID]
@@ -376,7 +375,7 @@ cut-by-part --store ROOT --id UUID --operation-id UUID --tool UUID [--op-id UUID
 
 ### fit-end-to-part
 
-write, core.
+write.
 
 ```text
 fit-end-to-part --store ROOT --id UUID --operation-id UUID --tool UUID [--op-id UUID]
@@ -385,7 +384,7 @@ fit-end-to-part --store ROOT --id UUID --operation-id UUID --tool UUID [--op-id 
 
 ### chamfer-part
 
-write, core.
+write.
 
 ```text
 chamfer-part --store ROOT --id UUID --operation-id UUID --vertex-index N --first-distance MM
@@ -395,7 +394,7 @@ chamfer-part --store ROOT --id UUID --operation-id UUID --vertex-index N --first
 
 ### split-part
 
-write, core.
+write.
 
 ```text
 split-part --store ROOT --id UUID --new-id UUID --new-name TEXT --operation-id UUID --point X,Y,Z
@@ -405,7 +404,7 @@ split-part --store ROOT --id UUID --new-id UUID --new-name TEXT --operation-id U
 
 ### combine-parts
 
-write, core.
+write.
 
 ```text
 combine-parts --store ROOT --survivor UUID --consumed UUID --operation-id UUID [--op-id UUID]
@@ -416,7 +415,7 @@ combine-parts --store ROOT --survivor UUID --consumed UUID --operation-id UUID [
 
 ### delete-element
 
-write, core.
+write.
 
 ```text
 delete-element --store ROOT --id UUID [--op-id UUID] [--revision-id UUID] [--actor-id UUID]
@@ -427,7 +426,7 @@ delete-element --store ROOT --id UUID [--op-id UUID] [--revision-id UUID] [--act
 
 ### copy-element
 
-write, core.
+write.
 
 ```text
 copy-element --store ROOT --id UUID [--name TEXT] [--offset X,Y,Z] [--new-id UUID]
@@ -437,7 +436,7 @@ copy-element --store ROOT --id UUID [--name TEXT] [--offset X,Y,Z] [--new-id UUI
 
 ### copy-instance
 
-write, core.
+write.
 
 ```text
 copy-instance --store ROOT --id UUID [--name TEXT] [--offset X,Y,Z] [--new-id UUID] [--op-id UUID]
@@ -448,7 +447,7 @@ copy-instance --store ROOT --id UUID [--name TEXT] [--offset X,Y,Z] [--new-id UU
 
 ### create-workspace
 
-write, core.
+write.
 
 ```text
 create-workspace --store ROOT --workspace-dir DIR [--workspace-id UUID] [--user-id UUID]
@@ -457,7 +456,7 @@ create-workspace --store ROOT --workspace-dir DIR [--workspace-id UUID] [--user-
 
 ### inspect-workspace
 
-read, core.
+read.
 
 ```text
 inspect-workspace --store ROOT --workspace-dir DIR
@@ -465,7 +464,7 @@ inspect-workspace --store ROOT --workspace-dir DIR
 
 ### publish-workspace
 
-write, core.
+write.
 
 ```text
 publish-workspace --store ROOT --workspace-dir DIR
@@ -473,7 +472,7 @@ publish-workspace --store ROOT --workspace-dir DIR
 
 ### resolve-workspace
 
-write, core.
+write.
 
 ```text
 resolve-workspace --workspace-dir DIR --op-id UUID --discard UUID --expected-draft UUID
@@ -482,7 +481,7 @@ resolve-workspace --workspace-dir DIR --op-id UUID --discard UUID --expected-dra
 
 ### undo-workspace
 
-write, core.
+write.
 
 ```text
 undo-workspace --workspace-dir DIR [--revision-id UUID] [--op-id UUID]
@@ -490,7 +489,7 @@ undo-workspace --workspace-dir DIR [--revision-id UUID] [--op-id UUID]
 
 ### redo-workspace
 
-write, core.
+write.
 
 ```text
 redo-workspace --workspace-dir DIR [--revision-id UUID] [--op-id UUID]
@@ -498,7 +497,7 @@ redo-workspace --workspace-dir DIR [--revision-id UUID] [--op-id UUID]
 
 ### inspect-workspace-history
 
-read, core.
+read.
 
 ```text
 inspect-workspace-history --workspace-dir DIR
@@ -508,7 +507,7 @@ inspect-workspace-history --workspace-dir DIR
 
 ### rebase-workspace
 
-write, core.
+write.
 
 ```text
 rebase-workspace --store ROOT --workspace-dir DIR --op-id UUID --expected-head UUID
@@ -519,7 +518,7 @@ rebase-workspace --store ROOT --workspace-dir DIR --op-id UUID --expected-head U
 
 ### attach-reference
 
-write, core.
+write.
 
 ```text
 attach-reference --store ROOT --source FILE [--name TEXT] [--translation X,Y,Z]
@@ -529,7 +528,7 @@ attach-reference --store ROOT --source FILE [--name TEXT] [--translation X,Y,Z]
 
 ### move-reference
 
-write, core.
+write.
 
 ```text
 move-reference --store ROOT --id UUID [--translation X,Y,Z] [--rotation-z-deg DEG] [--op-id UUID]
@@ -538,7 +537,7 @@ move-reference --store ROOT --id UUID [--translation X,Y,Z] [--rotation-z-deg DE
 
 ### correct-reference-units
 
-write, core.
+write.
 
 ```text
 correct-reference-units --store ROOT --id UUID [--meters-per-unit F] [--up-axis Y|Z]
@@ -548,7 +547,7 @@ correct-reference-units --store ROOT --id UUID [--meters-per-unit F] [--up-axis 
 
 ### write-reference
 
-read, core.
+read.
 
 ```text
 write-reference --store ROOT --id UUID (--target source | --prim /DefaultPrim/Path)
@@ -557,7 +556,7 @@ write-reference --store ROOT --id UUID (--target source | --prim /DefaultPrim/Pa
 
 ### inspect-reference
 
-read, core.
+read.
 
 ```text
 inspect-reference --store ROOT
@@ -565,7 +564,7 @@ inspect-reference --store ROOT
 
 ### measure-reference
 
-read, core.
+read.
 
 ```text
 measure-reference --store ROOT [--id UUID]
@@ -575,7 +574,7 @@ measure-reference --store ROOT [--id UUID]
 
 ### create-assembly
 
-write, core.
+write.
 
 ```text
 create-assembly --store ROOT --name TEXT [--new-id UUID] [--op-id UUID] [--revision-id UUID]
@@ -584,7 +583,7 @@ create-assembly --store ROOT --name TEXT [--new-id UUID] [--op-id UUID] [--revis
 
 ### attach-to-assembly
 
-write, core.
+write.
 
 ```text
 attach-to-assembly --store ROOT --id UUID --assembly-id UUID [--op-id UUID] [--revision-id UUID]
@@ -593,7 +592,7 @@ attach-to-assembly --store ROOT --id UUID --assembly-id UUID [--op-id UUID] [--r
 
 ### detach-from-assembly
 
-write, core.
+write.
 
 ```text
 detach-from-assembly --store ROOT --id UUID [--op-id UUID] [--revision-id UUID] [--actor-id UUID]
@@ -602,7 +601,7 @@ detach-from-assembly --store ROOT --id UUID [--op-id UUID] [--revision-id UUID] 
 
 ### set-main-part
 
-write, core.
+write.
 
 ```text
 set-main-part --store ROOT --id UUID --assembly-id UUID [--op-id UUID] [--revision-id UUID]
@@ -611,7 +610,7 @@ set-main-part --store ROOT --id UUID --assembly-id UUID [--op-id UUID] [--revisi
 
 ### explode-assembly
 
-write, core.
+write.
 
 ```text
 explode-assembly --store ROOT --id UUID [--op-id UUID] [--revision-id UUID] [--actor-id UUID]
@@ -620,7 +619,7 @@ explode-assembly --store ROOT --id UUID [--op-id UUID] [--revision-id UUID] [--a
 
 ### assemblies
 
-read, core.
+read.
 
 ```text
 assemblies --store ROOT
@@ -630,7 +629,7 @@ assemblies --store ROOT
 
 ### create-weld
 
-write, core.
+write.
 
 ```text
 create-weld --store ROOT --name TEXT --main UUID --secondary UUID --size MM
@@ -641,7 +640,7 @@ create-weld --store ROOT --name TEXT --main UUID --secondary UUID --size MM
 
 ### welds
 
-read, core.
+read.
 
 ```text
 welds --store ROOT
@@ -651,7 +650,7 @@ welds --store ROOT
 
 ### create-bolt
 
-write, core.
+write.
 
 ```text
 create-bolt --store ROOT --name TEXT --main UUID --secondary UUID --origin X,Y,Z --direction X,Y,Z
@@ -661,7 +660,7 @@ create-bolt --store ROOT --name TEXT --main UUID --secondary UUID --origin X,Y,Z
 
 ### bolts
 
-read, core.
+read.
 
 ```text
 bolts --store ROOT
@@ -669,7 +668,7 @@ bolts --store ROOT
 
 ### fastener-geometry
 
-read, core.
+read.
 
 ```text
 fastener-geometry --fastener-library FILE --designation TEXT --length MM [--count N]
@@ -680,7 +679,7 @@ fastener-geometry --fastener-library FILE --designation TEXT --length MM [--coun
 
 ### create-level
 
-write, core.
+write.
 
 ```text
 create-level --store ROOT --name TEXT --elevation MM [--new-id UUID] [--op-id UUID]
@@ -689,7 +688,7 @@ create-level --store ROOT --name TEXT --elevation MM [--new-id UUID] [--op-id UU
 
 ### levels
 
-read, core.
+read.
 
 ```text
 levels --store ROOT
@@ -699,7 +698,7 @@ levels --store ROOT
 
 ### attribute-define
 
-write, core.
+write.
 
 ```text
 attribute-define --store ROOT --name TEXT --type text|number|integer|boolean|choice [--unit TEXT]
@@ -709,7 +708,7 @@ attribute-define --store ROOT --name TEXT --type text|number|integer|boolean|cho
 
 ### attribute-undefine
 
-write, core.
+write.
 
 ```text
 attribute-undefine --store ROOT --name TEXT [--op-id UUID] [--revision-id UUID] [--actor-id UUID]
@@ -718,7 +717,7 @@ attribute-undefine --store ROOT --name TEXT [--op-id UUID] [--revision-id UUID] 
 
 ### attribute-set
 
-write, core.
+write.
 
 ```text
 attribute-set --store ROOT --element UUID --name TEXT --value TEXT [--op-id UUID]
@@ -727,7 +726,7 @@ attribute-set --store ROOT --element UUID --name TEXT --value TEXT [--op-id UUID
 
 ### attribute-clear
 
-write, core.
+write.
 
 ```text
 attribute-clear --store ROOT --element UUID --name TEXT [--op-id UUID] [--revision-id UUID]
@@ -736,7 +735,7 @@ attribute-clear --store ROOT --element UUID --name TEXT [--op-id UUID] [--revisi
 
 ### attribute-get
 
-read, core.
+read.
 
 ```text
 attribute-get --store ROOT --element UUID
@@ -744,7 +743,7 @@ attribute-get --store ROOT --element UUID
 
 ### attributes
 
-read, core.
+read.
 
 ```text
 attributes --store ROOT
@@ -754,7 +753,7 @@ attributes --store ROOT
 
 ### create-grid
 
-write, core.
+write.
 
 ```text
 create-grid --store ROOT --name TEXT [--new-id UUID] [--origin X,Y] [--rotation DEG]
@@ -770,7 +769,7 @@ create-grid --store ROOT --name TEXT [--new-id UUID] [--origin X,Y] [--rotation 
 
 ### update-grid
 
-write, core.
+write.
 
 ```text
 update-grid --store ROOT --id UUID [--name TEXT] [--origin X,Y] [--rotation DEG]
@@ -782,7 +781,7 @@ update-grid --store ROOT --id UUID [--name TEXT] [--origin X,Y] [--rotation DEG]
 
 ### list-grids
 
-read, core.
+read.
 
 ```text
 list-grids --store ROOT
@@ -790,7 +789,7 @@ list-grids --store ROOT
 
 ### resolve-grid-point
 
-read, core.
+read.
 
 ```text
 resolve-grid-point --store ROOT --grid UUID|TEXT --labels U,V
@@ -798,7 +797,7 @@ resolve-grid-point --store ROOT --grid UUID|TEXT --labels U,V
 
 ### resolve-grid-plane
 
-read, core.
+read.
 
 ```text
 resolve-grid-plane --store ROOT --grid UUID|TEXT --label TEXT
@@ -806,7 +805,7 @@ resolve-grid-plane --store ROOT --grid UUID|TEXT --label TEXT
 
 ### draw-grid-line
 
-write, core.
+write.
 
 ```text
 draw-grid-line --store ROOT --id UUID --family u|v --label TEXT --from X,Y --to X,Y
@@ -816,7 +815,7 @@ draw-grid-line --store ROOT --id UUID --family u|v --label TEXT --from X,Y --to 
 
 ### reshape-grid-line
 
-write, core.
+write.
 
 ```text
 reshape-grid-line --store ROOT --id UUID --axis-id UUID --from X,Y --to X,Y [--op-id UUID]
@@ -825,7 +824,7 @@ reshape-grid-line --store ROOT --id UUID --axis-id UUID --from X,Y --to X,Y [--o
 
 ### remove-grid-line
 
-write, core.
+write.
 
 ```text
 remove-grid-line --store ROOT --id UUID --axis-id UUID [--op-id UUID] [--revision-id UUID]
@@ -834,7 +833,7 @@ remove-grid-line --store ROOT --id UUID --axis-id UUID [--op-id UUID] [--revisio
 
 ### relabel-grid-line
 
-write, core.
+write.
 
 ```text
 relabel-grid-line --store ROOT --id UUID [--axis-id UUID] [--label TEXT] [--family u|v]
@@ -846,7 +845,7 @@ relabel-grid-line --store ROOT --id UUID [--axis-id UUID] [--label TEXT] [--fami
 
 ### export-ifc
 
-write, core.
+write.
 
 ```text
 export-ifc --store ROOT --out FILE [--revision UUID] [--project-name TEXT] [--schema IFC4]
@@ -855,7 +854,7 @@ export-ifc --store ROOT --out FILE [--revision UUID] [--project-name TEXT] [--sc
 
 ### ifc-guid
 
-read, core.
+read.
 
 ```text
 ifc-guid (--id UUID | --decode GLOBALID)
@@ -865,7 +864,7 @@ ifc-guid (--id UUID | --decode GLOBALID)
 
 ### preview-numbering
 
-read, core.
+read.
 
 ```text
 preview-numbering --store ROOT [--plate-series PREFIX:START] [--beam-series PREFIX:START]
@@ -875,7 +874,7 @@ preview-numbering --store ROOT [--plate-series PREFIX:START] [--beam-series PREF
 
 ### approve-numbering
 
-write, core.
+write.
 
 ```text
 approve-numbering --store ROOT --preview-token SHA256 [--plate-series PREFIX:START]
@@ -886,7 +885,7 @@ approve-numbering --store ROOT --preview-token SHA256 [--plate-series PREFIX:STA
 
 ### inspect-numbering
 
-read, core.
+read.
 
 ```text
 inspect-numbering --store ROOT [--offset N] [--limit N]
@@ -896,7 +895,7 @@ inspect-numbering --store ROOT [--offset N] [--limit N]
 
 ### create-changeset
 
-write, core.
+write.
 
 ```text
 create-changeset --store ROOT --workspace-dir DIR [--changeset-id UUID] [--revision-id UUID]
@@ -905,7 +904,7 @@ create-changeset --store ROOT --workspace-dir DIR [--changeset-id UUID] [--revis
 
 ### inspect-changeset
 
-read, core.
+read.
 
 ```text
 inspect-changeset --workspace-dir DIR --changeset SHA256
@@ -913,7 +912,7 @@ inspect-changeset --workspace-dir DIR --changeset SHA256
 
 ### apply-changeset
 
-write, core.
+write.
 
 ```text
 apply-changeset --store ROOT --workspace-dir DIR --changeset SHA256 --actor-id UUID
@@ -923,7 +922,7 @@ apply-changeset --store ROOT --workspace-dir DIR --changeset SHA256 --actor-id U
 
 ### serve-coordinator
 
-write, core.
+write.
 
 ```text
 serve-coordinator --store ROOT --workspaces-root DIR --client ACTOR_UUID:TOKEN_FILE [--port N]
@@ -932,7 +931,7 @@ serve-coordinator --store ROOT --workspaces-root DIR --client ACTOR_UUID:TOKEN_F
 
 ### publish-changeset
 
-write, core.
+write.
 
 ```text
 publish-changeset --address IP:PORT --token-file FILE --workspace NAME --changeset SHA256
@@ -941,7 +940,7 @@ publish-changeset --address IP:PORT --token-file FILE --workspace NAME --changes
 
 ### coordinator-rebase
 
-write, core.
+write.
 
 ```text
 coordinator-rebase --address IP:PORT --token-file FILE --workspace NAME --op-id UUID
@@ -950,7 +949,7 @@ coordinator-rebase --address IP:PORT --token-file FILE --workspace NAME --op-id 
 
 ### inspect-coordinator-head
 
-read, core.
+read.
 
 ```text
 inspect-coordinator-head --address IP:PORT --token-file FILE
@@ -960,7 +959,7 @@ inspect-coordinator-head --address IP:PORT --token-file FILE
 
 ### inspect-history
 
-read, core.
+read.
 
 ```text
 inspect-history --store ROOT [--workspaces-root DIR] [--workspace-dir DIR]
@@ -968,7 +967,7 @@ inspect-history --store ROOT [--workspaces-root DIR] [--workspace-dir DIR]
 
 ### compact-history
 
-write, core.
+write.
 
 ```text
 compact-history --store ROOT (--keep-head | --keep N) [--dry-run] [--yes] [--backup DIR]
@@ -980,7 +979,7 @@ compact-history --store ROOT (--keep-head | --keep N) [--dry-run] [--yes] [--bac
 
 ### snapshot-view
 
-read, core.
+read.
 
 ```text
 snapshot-view --plates N [--hide KIND,...] [--representation full|simplified]
@@ -989,7 +988,7 @@ snapshot-view --plates N [--hide KIND,...] [--representation full|simplified]
 
 ### inspect-view-changes
 
-read, core.
+read.
 
 ```text
 inspect-view-changes --plates N --edit move-first|resize-first|add-one|remove-last,...
@@ -998,19 +997,9 @@ inspect-view-changes --plates N --edit move-first|resize-first|add-one|remove-la
 
 ## pick
 
-### pick
-
-read, ui-assist.
-
-```text
-pick --store ROOT --targets face|edge|vertex,... (--origin X,Y,Z | --point X,Y,Z)
-    [--direction X,Y,Z] [--t-max MM] [--include-backfaces true|false] [--radius MM] [--max-hits N]
-    [--exclude parts|assemblies|bolts|welds|holes|grids|construction_objects|items,...]
-```
-
 ### lookup-feature
 
-read, core.
+read.
 
 ```text
 lookup-feature --store ROOT --feature-id TEXT
@@ -1018,27 +1007,15 @@ lookup-feature --store ROOT --feature-id TEXT
 
 ### list-feature
 
-read, core.
+read.
 
 ```text
 list-feature --store ROOT --id UUID
 ```
 
-### snap
-
-read, ui-assist.
-
-```text
-snap --store ROOT --point X,Y,Z [--radius MM]
-    [--kinds vertex|axis_end|axis|edge|midpoint|center|grid_intersection|grid_end|grid_line,...]
-    [--max-hits N] [--plane OX,OY,OZ,XX,XY,XZ,YX,YY,YZ] [--origin X,Y,Z] [--direction X,Y,Z]
-    [--aperture N] [--cursor-radius MM] [--grids UUID,...] [--reference-snaps true|false]
-    [--geometry-snaps true|false] [--grid-snaps true|false] [--nearest true|false]
-```
-
 ### element-edges
 
-read, core.
+read.
 
 ```text
 element-edges --store ROOT --id UUID
@@ -1048,7 +1025,7 @@ element-edges --store ROOT --id UUID
 
 ### export-view
 
-write, core.
+write.
 
 ```text
 export-view --store ROOT --out FILE [--with-definitions true|false] [--with-element UUID]
@@ -1059,7 +1036,7 @@ export-view --store ROOT --out FILE [--with-definitions true|false] [--with-elem
 
 ### export-bom
 
-write, core.
+write.
 
 ```text
 export-bom --store ROOT --out FILE [--summary FILE]
@@ -1069,7 +1046,7 @@ export-bom --store ROOT --out FILE [--summary FILE]
 
 ### schedule-export
 
-write, core.
+write.
 
 ```text
 schedule-export --store ROOT --template FILE --out FILE [--summary FILE] [--html FILE]
@@ -1079,7 +1056,7 @@ schedule-export --store ROOT --template FILE --out FILE [--summary FILE] [--html
 
 ### preview-drawing
 
-write, core.
+write.
 
 ```text
 preview-drawing --store ROOT --id UUID --drawing-id UUID --view-id UUID --dimension-id UUID
@@ -1089,7 +1066,7 @@ preview-drawing --store ROOT --id UUID --drawing-id UUID --view-id UUID --dimens
 
 ### create-drawing
 
-write, core.
+write.
 
 ```text
 create-drawing --store ROOT --document-dir DIR --op-id UUID --revision-id UUID --actor-id UUID
@@ -1100,7 +1077,7 @@ create-drawing --store ROOT --document-dir DIR --op-id UUID --revision-id UUID -
 
 ### refresh-drawing
 
-write, core.
+write.
 
 ```text
 refresh-drawing --store ROOT --document-dir DIR --expected-head UUID --op-id UUID
@@ -1111,7 +1088,7 @@ refresh-drawing --store ROOT --document-dir DIR --expected-head UUID --op-id UUI
 
 ### edit-drafting
 
-write, core.
+write.
 
 ```text
 edit-drafting --document-dir DIR --expected-head UUID --op-id UUID --revision-id UUID
@@ -1120,7 +1097,7 @@ edit-drafting --document-dir DIR --expected-head UUID --op-id UUID --revision-id
 
 ### publish-drawing
 
-write, core.
+write.
 
 ```text
 publish-drawing --document-dir DIR --expected-head UUID --op-id UUID --revision-id UUID
@@ -1129,7 +1106,7 @@ publish-drawing --document-dir DIR --expected-head UUID --op-id UUID --revision-
 
 ### inspect-drawing
 
-read, core.
+read.
 
 ```text
 inspect-drawing --document-dir DIR [--model-store ROOT]
@@ -1137,7 +1114,7 @@ inspect-drawing --document-dir DIR [--model-store ROOT]
 
 ### inspect-drawing-versions
 
-read, core.
+read.
 
 ```text
 inspect-drawing-versions --document-dir DIR
@@ -1145,7 +1122,7 @@ inspect-drawing-versions --document-dir DIR
 
 ### export-drawing
 
-write, core.
+write.
 
 ```text
 export-drawing --document-dir DIR --version-id UUID --out FILE [--format svg|pdf]
@@ -1154,34 +1131,9 @@ export-drawing --document-dir DIR --version-id UUID --out FILE [--format svg|pdf
 
 ## start
 
-### show-settings
-
-read, ui-assist.
-
-```text
-show-settings [--config-dir DIR]
-```
-
-### set-settings
-
-write, ui-assist.
-
-```text
-set-settings [--config-dir DIR] [--name TEXT] [--email TEXT] [--environment ID|none]
-    [--skip-launcher true|false] [--models-dir DIR|none] [--theme system|light|dark]
-```
-
-### list-environment
-
-read, ui-assist.
-
-```text
-list-environment [--config-dir DIR]
-```
-
 ### create-project
 
-write, core.
+write.
 
 ```text
 create-project --parent DIR --name TEXT [--unique-name true|false] [--config-dir DIR]
@@ -1189,44 +1141,20 @@ create-project --parent DIR --name TEXT [--unique-name true|false] [--config-dir
     [--workspace-id UUID]
 ```
 
-### suggest-project-name
-
-read, ui-assist.
-
-```text
-suggest-project-name --parent DIR --name TEXT
-```
-
 ### list-project
 
-read, core.
+read.
 
 ```text
 list-project --dir DIR
-```
-
-### list-recent
-
-write, ui-assist.
-
-```text
-list-recent [--config-dir DIR]
-```
-
-### add-recent
-
-write, ui-assist.
-
-```text
-add-recent --store ROOT [--config-dir DIR]
 ```
 
 ## commands
 
 ### commands
 
-read, core.
+read.
 
 ```text
-commands [--tier core|ui-assist]
+commands
 ```
