@@ -4,6 +4,16 @@ Decisions that shape the plan, newest first. Each names its date and, where one 
 document that records it in detail. A later decision overrides an earlier one where they differ.
 Open questions are at the end.
 
+## 2026-10-31
+
+- **Interactive-assist commands leave the CLI.** Owner decision: an agent builds a model by giving
+  coordinates and ids directly, so the CLI does not need cursor picking, snapping or the start
+  screen. `pick`, `snap`, `show-settings`, `set-settings`, `list-environment`,
+  `suggest-project-name`, `list-recent` and `add-recent` are removed; the engine APIs stay for the
+  window. This narrows the headless-first rule in `AGENTS.md` §3 to features an agent or script
+  needs. `list-feature`, `lookup-feature`, `element-edges` and `work-plane` stay because
+  `preview-drawing` takes a feature id. Tracked in [#753](https://github.com/Apibim-com/BeamCraft/issues/753).
+
 ## 2026-10-30
 
 - **Material density may be zero.** Owner decision: a density of exactly zero is admitted, a
