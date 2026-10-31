@@ -7,7 +7,7 @@
 //! labelled `support` and, with `--stand-in-simplified true`, every third element carries a
 //! distinct stand-in simplified mesh. Both are marked in the output (`stand_ins`).
 
-use beamcraft_engine::synthetic::{SyntheticEdit, apply_edit, plate_scene};
+use beamcraft_engine::steel::synthetic::{SyntheticEdit, apply_edit, plate_scene};
 use beamcraft_engine::view_clipping::{self, ClipPlane, Clipping, WorkArea};
 use beamcraft_engine::{
     Aabb, ChangeSet, ElementEntry, ElementId, KindFilter, Limits, Representation, Selection,

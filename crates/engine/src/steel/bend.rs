@@ -29,9 +29,9 @@
 //! at most [`ARC_CHORD_DEVIATION_MM`] and the kept deviation is reported as
 //! `arc_deviation_mm`; the bent quantities are those of the faceted body.
 
-use crate::command::{AuthoredPlate, PlateBody};
 use crate::footprint::Footprint;
 use crate::solid::SolidMesh;
+use crate::steel::command::{AuthoredPlate, PlateBody};
 use beamcraft_geom::{Point3, Vec3};
 use beamcraft_kernel::profile::Point2;
 use beamcraft_kernel::steel::ruled::{
@@ -160,7 +160,7 @@ pub fn bend_plate(
 }
 
 /// Evaluates a plate that carries bend records. The caller routes here from
-/// [`crate::command::evaluate_plate`] because `bends` is not empty.
+/// [`crate::steel::command::evaluate_plate`] because `bends` is not empty.
 pub fn evaluate_bent(authored: &AuthoredPlate) -> Result<PlateBody, CommandError> {
     if !authored.corners.is_empty() {
         return Err(refused(
@@ -840,8 +840,11 @@ mod tests {
             operation_id: op(2),
             spec: fold(50.0, 8.0, core::f64::consts::FRAC_PI_2),
         }];
-        let body = crate::command::evaluate_plate(&authored).unwrap();
-        assert_eq!(body.algorithm(), crate::command::BENT_VOLUME_ALGORITHM);
+        let body = crate::steel::command::evaluate_plate(&authored).unwrap();
+        assert_eq!(
+            body.algorithm(),
+            crate::steel::command::BENT_VOLUME_ALGORITHM
+        );
         // The faceted bend arcs keep the chords inside, so the mesh volume sits a little below
         // the analytic value, bounded by the reported deviation.
         close(body.quantities().volume_mm3, 2.0 * 100.0 * developed, 2e-3);
@@ -870,11 +873,11 @@ mod tests {
             operation_id: op(3),
             spec: fold(100.0, 20.0, core::f64::consts::FRAC_PI_2),
         }];
-        let thin_volume = crate::command::evaluate_plate(&thin)
+        let thin_volume = crate::steel::command::evaluate_plate(&thin)
             .unwrap()
             .quantities()
             .volume_mm3;
-        let thick_volume = crate::command::evaluate_plate(&thick)
+        let thick_volume = crate::steel::command::evaluate_plate(&thick)
             .unwrap()
             .quantities()
             .volume_mm3;
@@ -896,7 +899,7 @@ mod tests {
                 radius_b_mm: None,
             },
         }];
-        let body = crate::command::evaluate_plate(&authored).unwrap();
+        let body = crate::steel::command::evaluate_plate(&authored).unwrap();
         // The wrap's single arc is faceted to the deviation rule, so the mesh keeps its chords
         // inside the true cylinder section.
         close(body.quantities().volume_mm3, 2.0 * 20.0 * 100.0, 1.5e-2);
@@ -917,7 +920,7 @@ mod tests {
                 radius_b_mm: None,
             },
         }];
-        let body = crate::command::evaluate_plate(&authored).unwrap();
+        let body = crate::steel::command::evaluate_plate(&authored).unwrap();
         // The section is centred on the axis at the loft origin `a`, so the ring's vertices
         // sit within one outer radius of the axis line across, and along the axis the body
         // spans the blank.
@@ -947,7 +950,7 @@ mod tests {
                 radius_b_mm: None,
             },
         }];
-        let other = crate::command::evaluate_plate(&same_line).unwrap();
+        let other = crate::steel::command::evaluate_plate(&same_line).unwrap();
         assert_eq!(other.solid.blob(), body.solid.blob());
     }
 
@@ -977,7 +980,7 @@ mod tests {
                 radius_b_mm: Some(114.0),
             },
         }];
-        let body = crate::command::evaluate_plate(&authored).unwrap();
+        let body = crate::steel::command::evaluate_plate(&authored).unwrap();
         close(body.quantities().volume_mm3, 22_400.0, 2e-3);
     }
 
@@ -1002,14 +1005,16 @@ mod tests {
             2.0,
         );
         l_shape.bends = vec![bend(fold(50.0, 8.0, core::f64::consts::FRAC_PI_2))];
-        let error = crate::command::evaluate_plate(&l_shape).unwrap_err();
+        let error = crate::steel::command::evaluate_plate(&l_shape).unwrap_err();
         assert_eq!(error.code, ErrorCode::UnsupportedGeometry);
         assert_eq!(error.field, "contour_points_mm");
         // The bend regions must fit the blank and must not overlap.
         let mut edge = plate(rectangle(100.0, 200.0), 2.0);
         edge.bends = vec![bend(fold(3.0, 8.0, core::f64::consts::FRAC_PI_2))];
         assert_eq!(
-            crate::command::evaluate_plate(&edge).unwrap_err().code,
+            crate::steel::command::evaluate_plate(&edge)
+                .unwrap_err()
+                .code,
             ErrorCode::UnsupportedGeometry
         );
         let mut overlap = plate(rectangle(100.0, 200.0), 2.0);
@@ -1021,7 +1026,9 @@ mod tests {
             },
         ];
         assert_eq!(
-            crate::command::evaluate_plate(&overlap).unwrap_err().code,
+            crate::steel::command::evaluate_plate(&overlap)
+                .unwrap_err()
+                .code,
             ErrorCode::UnsupportedGeometry
         );
         // A thickness side, holes, treatments and cuts never combine with bends.
@@ -1029,14 +1036,18 @@ mod tests {
         sided.thickness_side = Some(PlateSide::Middle);
         sided.bends = vec![bend(fold(50.0, 8.0, core::f64::consts::FRAC_PI_2))];
         assert_eq!(
-            crate::command::evaluate_plate(&sided).unwrap_err().code,
+            crate::steel::command::evaluate_plate(&sided)
+                .unwrap_err()
+                .code,
             ErrorCode::UnsupportedGeometry
         );
         let mut holed = plate(rectangle(100.0, 200.0), 2.0);
         holed.holes_mm = vec![vec![[10.0, 10.0], [20.0, 10.0], [15.0, 20.0]]];
         holed.bends = vec![bend(fold(50.0, 8.0, core::f64::consts::FRAC_PI_2))];
         assert_eq!(
-            crate::command::evaluate_plate(&holed).unwrap_err().code,
+            crate::steel::command::evaluate_plate(&holed)
+                .unwrap_err()
+                .code,
             ErrorCode::UnsupportedGeometry
         );
         // A roll must stay below a full turn: a long blank wraps past the seam.
@@ -1048,7 +1059,9 @@ mod tests {
             radius_b_mm: None,
         })];
         assert_eq!(
-            crate::command::evaluate_plate(&long).unwrap_err().code,
+            crate::steel::command::evaluate_plate(&long)
+                .unwrap_err()
+                .code,
             ErrorCode::UnsupportedGeometry
         );
         // Cone consistency: the two radii must share one apex ratio with the sector.
@@ -1060,14 +1073,18 @@ mod tests {
             radius_b_mm: Some(114.0),
         })];
         assert_eq!(
-            crate::command::evaluate_plate(&cone).unwrap_err().code,
+            crate::steel::command::evaluate_plate(&cone)
+                .unwrap_err()
+                .code,
             ErrorCode::UnsupportedGeometry
         );
         // A zero fold angle is refused at the argument level.
         let mut flat = plate(rectangle(100.0, 200.0), 2.0);
         flat.bends = vec![bend(fold(50.0, 8.0, 0.0))];
         assert_eq!(
-            crate::command::evaluate_plate(&flat).unwrap_err().code,
+            crate::steel::command::evaluate_plate(&flat)
+                .unwrap_err()
+                .code,
             ErrorCode::InvalidArgument
         );
         // A clockwise blank publishes a negative analytic area: refused like the flat paths
@@ -1082,7 +1099,7 @@ mod tests {
             2.0,
         );
         clockwise.bends = vec![bend(fold(50.0, 8.0, core::f64::consts::FRAC_PI_2))];
-        let error = crate::command::evaluate_plate(&clockwise).unwrap_err();
+        let error = crate::steel::command::evaluate_plate(&clockwise).unwrap_err();
         assert_eq!(error.code, ErrorCode::InvalidArgument);
         assert_eq!(error.field, "contour_points_mm");
         // A cone whose two radii are equal is refused: it is a cylinder, and the stored
@@ -1095,7 +1112,7 @@ mod tests {
             radius_b_mm: Some(54.0),
         })];
         assert_eq!(
-            crate::command::evaluate_plate(&equal_radii)
+            crate::steel::command::evaluate_plate(&equal_radii)
                 .unwrap_err()
                 .code,
             ErrorCode::InvalidArgument
@@ -1185,7 +1202,7 @@ mod tests {
             operation_id: op(2),
             spec: fold(50.0, 8.0, core::f64::consts::FRAC_PI_2),
         }];
-        let body = crate::command::evaluate_plate(&authored).unwrap();
+        let body = crate::steel::command::evaluate_plate(&authored).unwrap();
         let element = crate::scene::SceneElement::new(
             authored.id,
             ElementKind::Plate,

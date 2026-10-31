@@ -238,7 +238,7 @@ pub fn delete_element(
             let mut next = plate.authored.clone();
             next.hole_records
                 .retain(|r| r.owner != Some(command.target_id));
-            let body = beamcraft_engine::command::evaluate_plate(&next)?;
+            let body = beamcraft_engine::steel::command::evaluate_plate(&next)?;
             let quantities =
                 body.quantities_for(next.material.as_ref().map(&materials).transpose()?)?;
             let record = beamcraft_engine::query::committed::PlateRecord {

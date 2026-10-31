@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! F04 command application for `CreateStraightMember` (P03) and `CreatePolybeam` (P12): the
-//! member counterparts of [`crate::command::create_plate`].
+//! member counterparts of [`crate::steel::command::create_plate`].
 //!
 //! A member is a beam or a column with a required pinned profile and an optional pinned
 //! material. The engine never touches USD: it validates the command, resolves the pinned
@@ -19,12 +19,12 @@
 //! the one section is swept along the polyline, every interior vertex is mitred (G12), and the
 //! volume is the effective section area times the path length.
 
-use crate::command::{
+use crate::footprint::Footprint;
+use crate::solid::SolidMesh;
+use crate::steel::command::{
     AreaSource, CUT_VOLUME_ALGORITHM, MaterialInfo, MaterialLookup, Quantities, Volumes, map_cut,
     quantities_with_material, replay_cuts, replay_cuts_with_body,
 };
-use crate::footprint::Footprint;
-use crate::solid::SolidMesh;
 use crate::transaction::PriorOp;
 use beamcraft_geom::{MemberFrame, Point3};
 use beamcraft_kernel::diagnostic::{Failure, Field};
@@ -587,7 +587,7 @@ pub fn evaluate_member(
             || authored.axis_points_mm.len() > 2
             || !matches!(profile, ProfileInfo::Rectangle { .. }))
     {
-        return Err(crate::member_hole::pending_member_holes(
+        return Err(crate::steel::member_hole::pending_member_holes(
             "the member hole needs the kernel slice G14.1: only a straight rectangle-profile member is served in this slice",
         ));
     }
@@ -674,7 +674,7 @@ pub fn evaluate_member(
                         solid
                     } else {
                         let body = cut_body.unwrap_or(body);
-                        crate::member_hole::replay_member_holes(
+                        crate::steel::member_hole::replay_member_holes(
                             &frame.frame(),
                             &body,
                             &authored.hole_records,
@@ -988,8 +988,8 @@ pub fn admit_create_polybeam(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::command::no_materials;
     use crate::footprint::{Group, Target};
+    use crate::steel::command::no_materials;
     use beamcraft_model::digest::Sha256;
     use beamcraft_model::steel::command::{SectionDepthPosition, SectionPlanePosition};
 
@@ -1293,7 +1293,7 @@ mod tests {
         assert!((out.quantities.volume_m3 - 0.36).abs() <= 1e-12);
         assert_eq!(
             out.quantities.mass_status,
-            crate::command::QuantityStatus::Unknown
+            crate::steel::command::QuantityStatus::Unknown
         );
         assert_eq!(out.quantities.algorithm, MEMBER_VOLUME_ALGORITHM);
         assert_eq!(out.authored.to_command(), Some(command(profile)));

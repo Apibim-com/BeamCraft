@@ -82,3 +82,31 @@ A **discipline** crate may depend on the platform and on lower crates, never on 
 discipline; the platform never depends on a discipline; both apps may depend on any. This is
 checked mechanically by `apps/boundaries` through a table kind `discipline`, added by the first
 discipline crate (F08 section 2).
+
+## State after the module split
+
+The steel code of three crates now sits in one subtree each, so the later cut into a crate is a
+move of a directory and not a hunt through mixed files:
+
+| Crate | Steel subtree | Platform files that still reach into it |
+|---|---|---|
+| `model` | `steel::{command, section, fastener}` | `command.rs` (13 uses: `PlateSide`, `PlateCorner`, `CornerTreatment` in `ElementPatch`/`UpdateElement`), `definition.rs` (3: `SectionShape`); also `prim.rs`, `instance.rs`, `limits.rs` carry steel names without importing the subtree |
+| `kernel` | `steel::{build, fastener, input, member, member_hole, plate_contour, result, ruled, section}` | `measure.rs` (`PlateResult`), `mesh.rs`, `ops/body.rs`, `sweep.rs` (1 each) |
+| `engine` | `steel::{bend, bolt, command, contour_edit, corners, cut, fabricate, fastener, loft_plate, member, member_hole, plate_draft, synthetic, weld}` | `quantity.rs` (9), `query/committed.rs` (7), `update.rs`, `transform.rs`, `transaction.rs`, `copy.rs` (2 each), and 1 each in `view_clipping.rs`, `query/{pick,feature,bundle}.rs`, `numbering/geometry.rs`, `annotation.rs`; the files that import the model or kernel steel types are `lib.rs`, `instance.rs`, `copy.rs`, `quantity.rs`, `scene.rs`, `solid.rs`, `transaction.rs`, `transform.rs`, `update.rs`, `query/committed.rs` |
+
+Those rows are the complete list of back-edges, and the test is mechanical:
+`rg "crate::steel|beamcraft_(model|kernel)::steel"` outside the subtrees.
+
+## Why the crate cannot be cut yet
+
+A discipline crate (kind `discipline`) may depend on the platform, never the other way round.
+Today the platform crates depend on the steel types in the table above, and the steel code
+depends on the platform crates. Cargo refuses a cycle, so moving `engine::steel` into a crate
+that depends on `engine` is impossible while `engine::quantity`, `update`, `transform`,
+`transaction`, `copy` and `query::committed` name `AuthoredPlate`, `AuthoredMember` and the
+steel commands. The way out is the same for each of them: the platform file works on a small
+trait or table that the discipline fills (what an element kind is, how its fields are patched,
+what its quantities are, which footprint a command declares), and the steel crate implements it.
+That is a design with several decisions for the owner, not a move, and it is the next piece of
+work; the layer-engine `Shape` and `Change` enums and the closed `ElementKind` enum are the same
+problem in other crates.

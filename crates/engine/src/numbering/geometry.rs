@@ -4,8 +4,8 @@
 //! Canonical evaluated geometry for numbering, independent of mesh indices and placement.
 
 use super::NumberingError;
-use crate::member::{AuthoredMember, MemberBody};
 use crate::solid::SolidMesh;
+use crate::steel::member::{AuthoredMember, MemberBody};
 use beamcraft_geom::{Frame3, MemberFrame, Point3};
 use beamcraft_model::digest::{ContentDigest, Sha256};
 

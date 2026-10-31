@@ -30,7 +30,7 @@ use crate::{Error, check_font, command, json_string, source};
 use beamcraft_engine::RenderMode;
 use beamcraft_engine::ViewSnapshot;
 use beamcraft_engine::element::ElementId;
-use beamcraft_engine::member::{AuthoredMember, ProfileInfo};
+use beamcraft_engine::steel::member::{AuthoredMember, ProfileInfo};
 use beamcraft_engine::views::{NamedView, ViewBook, WorkArea};
 use beamcraft_model::command::Placement;
 use beamcraft_model::steel::command::MemberKind as ModelMemberKind;
@@ -2785,7 +2785,7 @@ impl App {
             cuts: Vec::new(),
             hole_records: Vec::new(),
         };
-        let body = beamcraft_engine::member::evaluate_member(
+        let body = beamcraft_engine::steel::member::evaluate_member(
             &authored,
             ProfileInfo::Rectangle {
                 width_mm: rect[0],
@@ -3379,7 +3379,7 @@ mod tests {
     use crate::scene::Scene;
     use crate::source::{Refreshed, Reloaded};
     use crate::tools::ToolError;
-    use beamcraft_engine::synthetic::plate_scene;
+    use beamcraft_engine::steel::synthetic::plate_scene;
     use beamcraft_engine::{Limits, RenderMode, Representation, ViewPin, ViewSnapshot};
     use beamcraft_model::digest::Sha256;
     use eframe::egui_wgpu;

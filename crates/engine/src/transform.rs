@@ -23,8 +23,8 @@
 //! mirrored-profile definition yet. Arrays reuse the copy rules (fresh identities, freshly
 //! minted records) and give each copy the stepped placement.
 
-use crate::command::AuthoredPlate;
-use crate::member::AuthoredMember;
+use crate::steel::command::AuthoredPlate;
+use crate::steel::member::AuthoredMember;
 use beamcraft_model::command::{
     ArrayElements, ArrayStep, CommandError, ElementMirror, ElementRotate, Placement,
 };

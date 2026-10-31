@@ -11,7 +11,7 @@
 //! compared through [`beamcraft_model::steel::command::CreatePlate::content_fingerprint`], a typed-argument digest; a
 //! canonical-byte comparison (F04 section 3) is planned and replaces it without changing this API.
 
-use crate::command::{CreatePlateOutcome, MaterialLookup, create_plate};
+use crate::steel::command::{CreatePlateOutcome, MaterialLookup, create_plate};
 use beamcraft_model::command::CommandError;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
@@ -86,7 +86,7 @@ pub fn admit_create_plate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::command::no_materials;
+    use crate::steel::command::no_materials;
     use beamcraft_model::command::Placement;
 
     // Shadows the glob import: these tests have no material definitions.

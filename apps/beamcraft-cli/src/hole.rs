@@ -23,8 +23,8 @@ use crate::plate::{
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::member::{evaluate_member, member_quantities};
 use beamcraft_engine::query::committed::{MemberRecord, PlateRecord};
+use beamcraft_engine::steel::member::{evaluate_member, member_quantities};
 use beamcraft_engine::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
@@ -329,11 +329,11 @@ fn apply_hole(
                 .map(&materials)
                 .transpose()?;
             let (authored, body) = if remove {
-                beamcraft_engine::command::remove_hole(&head_plate.authored, &removal)?
+                beamcraft_engine::steel::command::remove_hole(&head_plate.authored, &removal)?
             } else if update {
-                beamcraft_engine::command::update_hole(&head_plate.authored, &edit)?
+                beamcraft_engine::steel::command::update_hole(&head_plate.authored, &edit)?
             } else {
-                beamcraft_engine::command::add_hole_after(
+                beamcraft_engine::steel::command::add_hole_after(
                     &head_plate.authored,
                     command,
                     &used,
@@ -386,11 +386,17 @@ fn apply_hole(
             // A04.2: the member records live on the member; the engine admits the record and
             // the replay here refuses the whole command when the hole no longer fits.
             let outcome = if remove {
-                beamcraft_engine::member_hole::remove_member_hole(&removal, &head_member.authored)?
+                beamcraft_engine::steel::member_hole::remove_member_hole(
+                    &removal,
+                    &head_member.authored,
+                )?
             } else if update {
-                beamcraft_engine::member_hole::update_member_hole(&edit, &head_member.authored)?
+                beamcraft_engine::steel::member_hole::update_member_hole(
+                    &edit,
+                    &head_member.authored,
+                )?
             } else {
-                beamcraft_engine::member_hole::add_member_hole_after(
+                beamcraft_engine::steel::member_hole::add_member_hole_after(
                     command,
                     &head_member.authored,
                     &used,

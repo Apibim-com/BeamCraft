@@ -5,7 +5,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use beamcraft_engine::synthetic::plate_scene;
+use beamcraft_engine::steel::synthetic::plate_scene;
 use beamcraft_engine::{Limits, ViewPin, ViewSnapshot};
 use beamcraft_json::{Json, decode};
 use beamcraft_model::digest::Sha256;

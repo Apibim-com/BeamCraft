@@ -3,8 +3,8 @@
 //! Original synthetic F04 authored-only admission and replay regressions.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 
-use beamcraft_engine::command::{create_plate, no_materials};
-use beamcraft_engine::plate_draft::{
+use beamcraft_engine::steel::command::{create_plate, no_materials};
+use beamcraft_engine::steel::plate_draft::{
     DraftAdmission, PlateDraft, admit_create_plate_draft, create_plate_draft,
     evaluate_committed_drafts,
 };
@@ -120,7 +120,7 @@ fn unsupported_creation_keeps_the_replay_and_reuse_contract() {
 
 #[test]
 fn committed_draft_fields_are_capped_before_owned_command_copies() {
-    let mut plate = beamcraft_engine::command::AuthoredPlate::from_command(&command(0.75));
+    let mut plate = beamcraft_engine::steel::command::AuthoredPlate::from_command(&command(0.75));
     plate.contour_points_mm = vec![[0.; 3]; 1025];
     assert_eq!(
         evaluate_committed_drafts(&[plate], &no_materials)
@@ -128,7 +128,7 @@ fn committed_draft_fields_are_capped_before_owned_command_copies() {
             .code,
         ErrorCode::LimitExceeded
     );
-    let mut plate = beamcraft_engine::command::AuthoredPlate::from_command(&command(0.75));
+    let mut plate = beamcraft_engine::steel::command::AuthoredPlate::from_command(&command(0.75));
     plate.name = "x".repeat(257);
     assert_eq!(
         evaluate_committed_drafts(&[plate], &no_materials)

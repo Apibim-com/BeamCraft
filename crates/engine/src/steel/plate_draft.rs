@@ -4,9 +4,9 @@
 //! F04 authored plate admission independently of supported solid evaluation.
 //! An unsupported authored plate has no mesh, bounds, quantity value or current key.
 
-use crate::command::{AuthoredPlate, CreatePlateOutcome, MaterialLookup, create_plate};
 use crate::footprint::Footprint;
 use crate::query::committed::{BodyCache, PlateRecord};
+use crate::steel::command::{AuthoredPlate, CreatePlateOutcome, MaterialLookup, create_plate};
 use crate::transaction::PriorOp;
 use beamcraft_model::command::{CommandError, label_is_valid};
 use beamcraft_model::definition::MaterialSpec;
@@ -226,7 +226,7 @@ pub fn evaluate_committed_drafts_cached(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::command::no_materials;
+    use crate::steel::command::no_materials;
     use beamcraft_model::command::Placement;
 
     fn plate(n: u8, orientation_xyzw: [f64; 4]) -> AuthoredPlate {

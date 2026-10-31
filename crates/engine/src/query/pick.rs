@@ -1964,7 +1964,7 @@ mod tests {
     use crate::limits::Limits;
     use crate::query::snapshot::ViewPin;
     use crate::scene::{SceneElement, SceneMesh};
-    use crate::synthetic::plate_scene;
+    use crate::steel::synthetic::plate_scene;
     use beamcraft_geom::{Point3, Translation3};
     use beamcraft_kernel::trimesh::TriMesh;
     use beamcraft_model::digest::Sha256;

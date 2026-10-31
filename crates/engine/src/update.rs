@@ -32,8 +32,8 @@
 //! change replaces the pinned section of a member (a plate has none). Fields outside this list
 //! (contour, roll) are `UNSUPPORTED_PROPERTY`: they belong to later tasks.
 
-use crate::command::AuthoredPlate;
-use crate::member::AuthoredMember;
+use crate::steel::command::AuthoredPlate;
+use crate::steel::member::AuthoredMember;
 use beamcraft_model::command::{CommandError, ElementPatch, Placement};
 use beamcraft_model::error::ErrorCode;
 

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! P11 shared-definition groups, independent of storage and UI.
-use crate::{command::AuthoredPlate, member::AuthoredMember};
+use crate::{steel::command::AuthoredPlate, steel::member::AuthoredMember};
 use beamcraft_model::{
     command::{CommandError, CopyElement},
     error::ErrorCode,
