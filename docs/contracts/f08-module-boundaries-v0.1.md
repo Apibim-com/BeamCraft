@@ -62,7 +62,7 @@ Dependencies are checked in `[dependencies]`,
 | beamcraft-ifc | crates/ifc | native | 2 | beamcraft-model | now | E02 (IFC4 STEP writer and structural reader; std only, no file system) |
 | beamcraft-engine | crates/engine | native | 3 | beamcraft-geom, beamcraft-model, beamcraft-kernel | now | V02 (view snapshot and query slice); P01 (`CreatePlate` application, footprints, transactions, committed-plate queries) |
 | beamcraft-host | crates/host | host | 4 | beamcraft-model, beamcraft-json, beamcraft-engine | now | U05 |
-| session | crates/session | host | 5 | beamcraft-model, beamcraft-json, beamcraft-engine, beamcraft-host, beamcraft-layer-engine | planned | #763: settings, recent projects, projects and environments for the window and the CLI |
+| session | crates/session | host | 5 | beamcraft-model, beamcraft-json, beamcraft-engine, beamcraft-host, beamcraft-layer-engine | now | #763: settings, recent projects, projects and environments for the window and the CLI |
 | beamcraft-cli | apps/beamcraft-cli | app | 6 | beamcraft-model, beamcraft-engine, beamcraft-host, beamcraft-json, beamcraft-layer-engine, beamcraft-ifc, session | now | U04: CLI binary; E02 (`export-ifc` adapter) |
 | beamcraft-ui | apps/beamcraft-ui | app | 6 | beamcraft-model, beamcraft-json, beamcraft-engine, beamcraft-host, session | now | V03 (window and viewport; reads the accepted snapshot from the CLI in a separate process); V05.1 (create tools; decodes the CLI's JSON replies with the JSON crate); V05.2 (edit tools; same edges); #763 (settings, recent projects, project names and environments through `session`, no child process) |
 | beamcraft-fixtures | tools/fixtures | tool | 9 | - | now | F07 |

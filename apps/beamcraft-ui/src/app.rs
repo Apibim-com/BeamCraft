@@ -742,8 +742,7 @@ impl App {
         perf: Option<(Vec<PerfPhase>, PerfReport)>,
         stats: Arc<Stats>,
     ) -> Result<Self, Error> {
-        let appearance =
-            crate::appearance::Appearance::new(source.cli.clone(), None, Arc::clone(&stats));
+        let appearance = crate::appearance::Appearance::new(None);
         let mut app = Self::open(
             &cc.egui_ctx,
             cc.wgpu_render_state.as_ref(),
