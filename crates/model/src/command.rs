@@ -7,7 +7,7 @@
 //! regardless of geometry: identity, label, finiteness, caps and the rigid placement. Contour
 //! and thickness *geometry* (floor, winding, supported shapes) is evaluated by the engine with
 //! the kernel. No JSON, envelope or canonical-byte form lives here yet: F04 sections 3 and 6
-//! (`canonical`) remain planned, and [`crate::steel::command::CreatePlate::content_fingerprint`] is a
+//! (`canonical`) remain planned, and `CreatePlate::content_fingerprint` is a
 //! deterministic digest of the typed arguments, not RFC 8785 canonical bytes.
 
 pub use crate::construction::CreateConstructionObject;
@@ -428,7 +428,6 @@ impl ApproveMark {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::steel::command::{ElementPatch, UpdateElement};
 
     fn id(n: u8) -> ElementId {
         ElementId::parse(&format!("019a7bf0-0000-7000-8000-0000000000{n:02x}")).unwrap()
@@ -580,26 +579,5 @@ mod tests {
             assert_ne!(changed.content_fingerprint().unwrap(), base);
         }
         assert_eq!(level.clone().content_fingerprint().unwrap(), base);
-    }
-
-    #[test]
-    fn a_level_patch_counts_as_a_change_and_is_part_of_the_fingerprint() {
-        let patch = |level| UpdateElement {
-            target_id: id(5),
-            patch: ElementPatch {
-                level,
-                ..ElementPatch::default()
-            },
-        };
-        assert!(patch(Some(Some(id(9)))).validate_arguments().is_ok());
-        assert!(patch(Some(None)).validate_arguments().is_ok());
-        assert_eq!(
-            patch(None).validate_arguments().unwrap_err().code,
-            ErrorCode::InvalidArgument
-        );
-        let set = patch(Some(Some(id(9)))).content_fingerprint().unwrap();
-        let other = patch(Some(Some(id(10)))).content_fingerprint().unwrap();
-        let clear = patch(Some(None)).content_fingerprint().unwrap();
-        assert!(set != other && set != clear && other != clear);
     }
 }

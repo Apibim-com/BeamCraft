@@ -16,10 +16,10 @@ use beamcraft_engine::{
 };
 use beamcraft_geom::{Point3, Translation3};
 use beamcraft_kernel::{
+    RectangularPlate,
     ops::{Body, HoleCutter, through_hole},
     profile::{Cavity, CurveSpec, Point2, extrude},
-    steel::RectangularPlate,
-    steel::rectangular_plate,
+    rectangular_plate,
     steel::section::{Representation, SectionMember, section_member},
 };
 use beamcraft_model::{

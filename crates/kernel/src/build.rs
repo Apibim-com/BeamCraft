@@ -5,7 +5,7 @@
 
 use crate::diagnostic::{Code, Diagnostic, Failure, Field, Stage};
 use crate::mesh::{PLATE_TRIANGLES, PlateMesh, encode, self_check};
-use crate::steel::{PlateResult, RectangularPlate};
+use crate::{PlateResult, RectangularPlate};
 use beamcraft_geom::tolerance::{DIMENSION_CAP_MM, Tolerance};
 use beamcraft_geom::{Point3, Vec3};
 

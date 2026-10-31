@@ -223,7 +223,7 @@ pub(crate) fn inspect_blob(bytes: &[u8]) -> Result<(u32, u32), ViewError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use beamcraft_kernel::{steel::RectangularPlate, steel::rectangular_plate};
+    use beamcraft_kernel::{RectangularPlate, rectangular_plate};
 
     fn plate_blob() -> Vec<u8> {
         rectangular_plate(RectangularPlate {

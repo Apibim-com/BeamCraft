@@ -43,7 +43,7 @@ use beamcraft_kernel::ops::{
 use beamcraft_kernel::profile::diagnostic::{ProfileFailure, ProfileField};
 use beamcraft_kernel::profile::{Cavity, Point2, extrude};
 use beamcraft_kernel::trimesh::TriMesh;
-use beamcraft_kernel::{steel::PlateResult, steel::RectangularPlate, steel::rectangular_plate};
+use beamcraft_kernel::{PlateResult, RectangularPlate, rectangular_plate};
 use beamcraft_model::command::{CommandError, Placement};
 use beamcraft_model::definition::MaterialSpec;
 use beamcraft_model::digest::ContentDigest;

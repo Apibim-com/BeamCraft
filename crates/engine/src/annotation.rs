@@ -254,7 +254,7 @@ mod tests {
     use super::*;
     use crate::limits::Limits;
     use crate::query::snapshot::ViewPin;
-    use crate::steel::synthetic::plate_scene;
+    use crate::synthetic::plate_scene;
     use beamcraft_model::annotation::FeatureRef;
     use beamcraft_model::digest::{ContentDigest, Sha256};
 

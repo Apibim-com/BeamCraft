@@ -5,12 +5,12 @@
 //! Exact binary64 rational signs decide area, winding, topology and rectangle support;
 //! the scaled distance band decides planarity admission without moving any input point.
 
+use crate::PlateResult;
 use crate::bigint::{Big, Overflow};
 use crate::exact::{min_exponent, scaled, triangle_cross};
 use crate::mesh::{PLATE_TRIANGLES, PlateMesh, encode, self_check};
 use crate::profile::Point2;
 use crate::profile::predicates::{SegRel, segment_relation};
-use crate::steel::PlateResult;
 use beamcraft_geom::tolerance::Tolerance;
 use beamcraft_geom::{Frame3, MathError, Point3, Vec3};
 use beamcraft_model::command::CommandError;

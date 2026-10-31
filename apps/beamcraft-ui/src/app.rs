@@ -3379,7 +3379,7 @@ mod tests {
     use crate::scene::Scene;
     use crate::source::{Refreshed, Reloaded};
     use crate::tools::ToolError;
-    use beamcraft_engine::steel::synthetic::plate_scene;
+    use beamcraft_engine::synthetic::plate_scene;
     use beamcraft_engine::{Limits, RenderMode, Representation, ViewPin, ViewSnapshot};
     use beamcraft_model::digest::Sha256;
     use eframe::egui_wgpu;

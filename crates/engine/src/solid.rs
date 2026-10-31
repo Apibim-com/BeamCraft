@@ -10,9 +10,9 @@
 
 use crate::scene::SceneMesh;
 use beamcraft_geom::{Frame3, Point3, RigidTransform, Vec3};
+use beamcraft_kernel::PlateResult;
 use beamcraft_kernel::ops::OpResult;
 use beamcraft_kernel::profile::Extrusion;
-use beamcraft_kernel::steel::sweep::SweepResult;
 use beamcraft_kernel::trimesh::TriMesh;
 use beamcraft_model::digest::{ContentDigest, Sha256};
 
@@ -28,6 +28,23 @@ pub struct SolidMesh {
 }
 
 impl SolidMesh {
+    /// The mesh of a sealed box.
+    pub fn from_box(result: &PlateResult) -> Self {
+        let mesh = result.mesh();
+        Self {
+            vertices: mesh.vertices().iter().map(|p| [p.x, p.y, p.z]).collect(),
+            triangles: mesh.triangles().to_vec(),
+            face_table: mesh
+                .face_table()
+                .iter()
+                .map(|id| (*id).to_owned())
+                .collect(),
+            blob: mesh.blob().to_vec(),
+            digest: mesh.mesh_digest(),
+            volume_mm3: result.volume_mm3(),
+        }
+    }
+
     /// The mesh of a certified hole operation. The volume is the midpoint of the enclosure of
     /// the exact signed-volume sum, whose width is rounding only.
     pub fn from_operation(result: &OpResult) -> Self {
@@ -54,21 +71,6 @@ impl SolidMesh {
             digest: Sha256::digest(mesh.blob()).ok()?,
             volume_mm3: extrusion.volume_mm3(),
         })
-    }
-
-    /// The mesh of a G12 sweep (a P12 polybeam); the volume is the midpoint of the enclosure of
-    /// the certified signed-volume sum, which the seal checked against the analytic truncated
-    /// prism value.
-    pub fn from_sweep(result: &SweepResult) -> Self {
-        let mesh = result.body().mesh();
-        Self {
-            vertices: mesh.vertices().to_vec(),
-            triangles: mesh.triangles().to_vec(),
-            face_table: result.body().face_table().to_vec(),
-            blob: result.blob().to_vec(),
-            digest: result.mesh_digest(),
-            volume_mm3: result.volume_mm3().midpoint(),
-        }
     }
 
     /// The mesh of an engine-composed solid (A15): an admitted, placed triangle set the kernel

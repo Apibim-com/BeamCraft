@@ -39,6 +39,7 @@ pub mod reference;
 pub mod scene;
 pub mod solid;
 pub mod steel;
+pub mod synthetic;
 pub mod view_clipping;
 pub mod views;
 pub mod work_plane;
