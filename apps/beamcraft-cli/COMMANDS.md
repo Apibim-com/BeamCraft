@@ -80,12 +80,32 @@ create-plate --store ROOT --thickness MM [--width MM] [--length MM]
     [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
 ```
 
+### create-lofted-plate
+
+write.
+
+```text
+create-lofted-plate --store ROOT --start X,Y,Z;X,Y,Z;... --end X,Y,Z;X,Y,Z;... [--name TEXT]
+    [--class INT32] [--translation X,Y,Z] [--orientation-xyzw X,Y,Z,W] [--material-digest SHA256]
+    [--new-id UUID] [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID]
+    [--workspace-id UUID]
+```
+
+### inspect-lofted-plates
+
+read.
+
+```text
+inspect-lofted-plates --store ROOT
+```
+
 ### add-hole
 
 write.
 
 ```text
 add-hole --store ROOT --id UUID (--polygon X,Y;X,Y;... | --hole-rect X,Y,W,H | --hole-round X,Y,D)
+    [--axis-point X,Y,Z] [--axis-direction X,Y,Z] [--diameter MM] [--from MM] [--to MM]
     [--operation-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID]
     [--workspace-id UUID]
 ```
@@ -96,7 +116,8 @@ write.
 
 ```text
 update-hole --store ROOT --id UUID --operation-id UUID
-    (--polygon X,Y;X,Y;... | --hole-rect X,Y,W,H | --hole-round X,Y,D) [--op-id UUID]
+    (--polygon X,Y;X,Y;... | --hole-rect X,Y,W,H | --hole-round X,Y,D) [--axis-point X,Y,Z]
+    [--axis-direction X,Y,Z] [--diameter MM] [--from MM] [--to MM] [--op-id UUID]
     [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
 ```
 
@@ -266,7 +287,9 @@ update-element --store ROOT --id UUID [--name TEXT] [--class INT32] [--profile-d
     [--profile TEXT] [--material-digest SHA256|none] [--thickness MM]
     [--thickness-side top|middle|bottom] [--corners V=chamfer:D1[,D2];V=round:R|none]
     [--axis-point X,Y,Z;X,Y,Z;...] [--translation X,Y,Z] [--orientation-xyzw X,Y,Z,W|none]
-    [--level UUID|none] [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID]
+    [--level UUID|none] [--rotate-about X,Y,Z] [--rotate-axis X,Y,Z] [--rotate-angle RAD]
+    [--mirror-point X,Y,Z] [--mirror-normal X,Y,Z] [--move-from X,Y,Z] [--move-to X,Y,Z]
+    [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID]
     [--workspace-id UUID]
 ```
 
@@ -411,6 +434,16 @@ combine-parts --store ROOT --survivor UUID --consumed UUID --operation-id UUID [
     [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
 ```
 
+### bend-plate
+
+write.
+
+```text
+bend-plate --store ROOT --id UUID --operation-id UUID --kind fold|roll --point-a X,Y,Z
+    --point-b X,Y,Z --radius MM [--radius-b MM] [--angle-rad RAD] [--op-id UUID]
+    [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
+```
+
 ## delete
 
 ### delete-element
@@ -429,9 +462,9 @@ delete-element --store ROOT --id UUID [--op-id UUID] [--revision-id UUID] [--act
 write.
 
 ```text
-copy-element --store ROOT --id UUID [--name TEXT] [--offset X,Y,Z] [--new-id UUID]
-    [--new-axis-ids UUID,UUID,...] [--op-id UUID] [--revision-id UUID] [--actor-id UUID]
-    [--project-id UUID] [--workspace-id UUID]
+copy-element --store ROOT --id UUID [--name TEXT] [--offset X,Y,Z] [--copy-from X,Y,Z]
+    [--copy-to X,Y,Z] [--new-id UUID] [--new-axis-ids UUID,UUID,...] [--op-id UUID]
+    [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
 ```
 
 ### copy-instance
@@ -441,6 +474,26 @@ write.
 ```text
 copy-instance --store ROOT --id UUID [--name TEXT] [--offset X,Y,Z] [--new-id UUID] [--op-id UUID]
     [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
+```
+
+### array-linear
+
+write.
+
+```text
+array-linear --store ROOT --id UUID --count N --direction X,Y,Z --spacing MM [--name TEXT]
+    [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID]
+    [--workspace-id UUID]
+```
+
+### array-polar
+
+write.
+
+```text
+array-polar --store ROOT --id UUID --count N --point X,Y,Z --axis X,Y,Z --angle RAD [--name TEXT]
+    [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID]
+    [--workspace-id UUID]
 ```
 
 ## workspace
@@ -749,6 +802,16 @@ read.
 attributes --store ROOT
 ```
 
+## filters
+
+### query-elements
+
+read.
+
+```text
+query-elements --store ROOT --rule FILE [--limit N] [--after UUID] [--expected-model SHA256|none]
+```
+
 ## grid
 
 ### create-grid
@@ -839,6 +902,26 @@ write.
 relabel-grid-line --store ROOT --id UUID [--axis-id UUID] [--label TEXT] [--family u|v]
     [--labels TEXT] [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID]
     [--workspace-id UUID]
+```
+
+## construction
+
+### create-construction
+
+write.
+
+```text
+create-construction --store ROOT --name TEXT --kind point|line|circle|plane --a X,Y,Z [--b X,Y,Z]
+    [--radius MM] [--new-id UUID] [--op-id UUID] [--revision-id UUID] [--actor-id UUID]
+    [--project-id UUID] [--workspace-id UUID]
+```
+
+### list-construction
+
+read.
+
+```text
+list-construction --store ROOT
 ```
 
 ## export
@@ -995,6 +1078,15 @@ inspect-view-changes --plates N --edit move-first|resize-first|add-one|remove-la
     [--since TOKEN] [--stand-in-simplified true|false] [--revision SHA256] [--generation U64]
 ```
 
+### clip-view
+
+read.
+
+```text
+clip-view --plates N [--cut X,Y,Z,X,Y,Z;...] [--area MM,MM,MM,MM,MM,MM]
+    [--stand-in-simplified true|false] [--revision SHA256] [--generation U64]
+```
+
 ## pick
 
 ### lookup-feature
@@ -1093,6 +1185,15 @@ write.
 ```text
 edit-drafting --document-dir DIR --expected-head UUID --op-id UUID --revision-id UUID
     --actor-id UUID [--drafting UUID:kind:X,Y,...]
+```
+
+### edit-views
+
+write.
+
+```text
+edit-views --document-dir DIR --expected-head UUID --op-id UUID --revision-id UUID --actor-id UUID
+    --placed-view SPEC
 ```
 
 ### publish-drawing

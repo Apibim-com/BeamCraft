@@ -8,5 +8,7 @@ pub(super) const HELP: &str = concat!(
     "KIND,...] [--representation full|simplified] [--stand-in-simplified true|false] ",
     "[--select ID,...] [--revision SHA256] [--generation U64]; inspect-view-changes --plates ",
     "1..500 --edit move-first|resize-first|add-one|remove-last,... [--since TOKEN] ",
-    "[--stand-in-simplified true|false]",
+    "[--stand-in-simplified true|false]; clip-view --plates 1..500 (--cut ",
+    "px,py,pz,nx,ny,nz;... | --area minx,miny,minz,maxx,maxy,maxz) [--stand-in-simplified ",
+    "true|false] [--revision SHA256] [--generation U64]",
 );

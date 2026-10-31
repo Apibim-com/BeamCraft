@@ -10,13 +10,14 @@
 //! (`canonical`) remain planned, and [`CreatePlate::content_fingerprint`] is a
 //! deterministic digest of the typed arguments, not RFC 8785 canonical bytes.
 
+pub use crate::construction::CreateConstructionObject;
 use crate::digest::{ContentDigest, Sha256};
 use crate::error::ErrorCode;
 pub use crate::grid::CreateGrid;
 pub use crate::grid_update::UpdateGrid;
 use crate::id::{ElementId, OpId};
 use crate::limits::{
-    BOLT_DIAMETER_CAP_MM, CONTOUR_POINT_CAP, COORDINATE_CAP_MM, DIMENSION_CAP_MM,
+    BOLT_DIAMETER_CAP_MM, CONTOUR_POINT_CAP, COORDINATE_CAP_MM, DIMENSION_CAP_MM, MAX_ARRAY_COPIES,
     MAX_BOLT_GROUP_SIZE, MAX_LABEL_BYTES, MAX_MEMBER_PATH_POINTS, MAX_WELD_LENGTH_MM,
     MAX_WELD_PATH_POINTS, MIN_CONTOUR_POINTS, MIN_LABEL_BYTES, MIN_MEMBER_PATH_POINTS,
     MIN_WELD_PATH_POINTS, MIN_WELD_SEGMENT_MM, ORIENTATION_NORM_TOLERANCE, ROLL_CAP_RAD,
@@ -1243,6 +1244,139 @@ impl CreatePlate {
     }
 }
 
+/// The A11 `CreateLoftedPlate`: a plate whose body is the ruled loft between two face
+/// contours that need not be coplanar. The sheet thickness is the distance between the
+/// contours themselves (the G13 ruled primitive takes no separate thickness input), so the
+/// command has no thickness, holes, cuts or corner treatments; those operate on extruded
+/// plates and are refused on a lofted one. The two contours must have the same vertex count:
+/// the rulings join `start[i]` to `end[i]` by index, and a renumbered end contour twists the
+/// walls through the body, which the kernel's certification refuses instead of repairing.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CreateLoftedPlate {
+    /// The new element's full identity; creation also checks that it is unused.
+    pub new_id: ElementId,
+    /// Label, 1 to 256 UTF-8 bytes without control characters. Not an identity.
+    pub name: String,
+    /// Authored integer part class (P15); zero is the default.
+    pub class: i32,
+    /// Element-local start face contour, 3 to 1024 points, closure implicit.
+    pub start_points_mm: Vec<[f64; 3]>,
+    /// Element-local end face contour, the same vertex count as the start contour.
+    pub end_points_mm: Vec<[f64; 3]>,
+    /// Rigid placement.
+    pub placement: Placement,
+    /// Optional pinned material definition.
+    pub material_digest: Option<ContentDigest>,
+}
+
+impl CreateLoftedPlate {
+    /// Admits what does not depend on geometry: label, contour counts, finiteness and the
+    /// coordinate cap, then the placement. Floor, planarity, winding and the certified loft
+    /// are the engine's.
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        if !label_is_valid(&self.name) {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "name",
+                "label must be 1 to 256 bytes without control characters",
+            )
+            .with_rule("DV-BASE-003"));
+        }
+        for (field, points) in [
+            ("start_points_mm", &self.start_points_mm),
+            ("end_points_mm", &self.end_points_mm),
+        ] {
+            if points.len() > CONTOUR_POINT_CAP {
+                return Err(CommandError::new(
+                    ErrorCode::LimitExceeded,
+                    field,
+                    "contour has more than 1024 points",
+                )
+                .with_rule("DV-LIM-001"));
+            }
+            if points.len() < MIN_CONTOUR_POINTS {
+                return Err(CommandError::new(
+                    ErrorCode::InvalidArgument,
+                    field,
+                    "contour needs at least 3 points",
+                ));
+            }
+            if points.iter().flatten().any(|v| !v.is_finite()) {
+                return Err(CommandError::new(
+                    ErrorCode::NonFiniteNumber,
+                    field,
+                    "value is not finite",
+                )
+                .with_rule("DV-ATTR-003"));
+            }
+            if points.iter().flatten().any(|v| v.abs() > COORDINATE_CAP_MM) {
+                return Err(CommandError::new(
+                    ErrorCode::LimitExceeded,
+                    field,
+                    "coordinate exceeds the coordinate cap",
+                )
+                .with_rule("DV-LIM-001"));
+            }
+        }
+        if self.start_points_mm.len() != self.end_points_mm.len() {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "end_points_mm",
+                "the two contours must have the same vertex count",
+            ));
+        }
+        self.placement.validate()
+    }
+
+    /// SHA-256 of a versioned, length-prefixed binary encoding of the validated arguments,
+    /// with signed zero normalized, in the manner of [`CreatePlate::content_fingerprint`].
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        self.validate_arguments()?;
+        let bad = || {
+            CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "start_points_mm",
+                "value cannot be encoded",
+            )
+            .with_rule("DV-ATTR-003")
+        };
+        let mut bytes =
+            Vec::with_capacity(64 + (self.start_points_mm.len() + self.end_points_mm.len()) * 24);
+        bytes.extend_from_slice(b"BeamCraft/A11/CreateLoftedPlate/v1\0");
+        bytes.extend_from_slice(self.new_id.as_bytes());
+        let name = self.name.as_bytes();
+        bytes.extend_from_slice(&(name.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(name);
+        bytes.extend_from_slice(&self.class.to_le_bytes());
+        for points in [&self.start_points_mm, &self.end_points_mm] {
+            bytes.extend_from_slice(&(points.len() as u64).to_le_bytes());
+            for v in points.iter().flatten().copied() {
+                bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| bad())?);
+            }
+        }
+        for v in self
+            .placement
+            .translation_mm
+            .iter()
+            .copied()
+            .chain(self.placement.orientation_xyzw)
+        {
+            bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| bad())?);
+        }
+        match &self.material_digest {
+            Some(digest) => {
+                bytes.push(1);
+                bytes.extend_from_slice(digest.as_bytes());
+            }
+            None => bytes.push(0),
+        }
+        Sha256::digest(&bytes).map_err(|_| {
+            CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
+        })
+    }
+}
+
 /// Most through holes of one plate.
 pub const MAX_HOLES: usize = 64;
 /// Most points of one hole polygon.
@@ -1274,6 +1408,115 @@ pub enum HoleSpec {
         /// Extent along +Y, finite and greater than zero.
         height_mm: f64,
     },
+    /// A round hole in a member (A04.2, the F06 member-hole amendment): a straight prism
+    /// cutter perpendicular to the member axis, stored in the member frame and replayed with
+    /// the member's records. A polygon generator is not admitted for a member in this slice.
+    Member(MemberHole),
+}
+
+/// How far the member-hole cutter reaches along its axis (F06 member-hole amendment section 1):
+/// past the whole body, or an explicit range that must end in free space.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HoleExtent {
+    /// The cutter reaches past the body on both sides.
+    Through,
+    /// A range measured along `axis_direction` from `axis_point_mm`; `from_mm < to_mm`. A range
+    /// that ends inside material would be a blind hole, which is `UNSUPPORTED_GEOMETRY`.
+    Range {
+        /// Range start in millimetres along the axis direction.
+        from_mm: f64,
+        /// Range end in millimetres along the axis direction, greater than `from_mm`.
+        to_mm: f64,
+    },
+}
+
+impl HoleExtent {
+    /// Admits finiteness, the coordinate cap and `from < to`.
+    pub fn validate(&self) -> Result<(), CommandError> {
+        match self {
+            Self::Through => Ok(()),
+            Self::Range { from_mm, to_mm } => {
+                hole_values_finite([*from_mm, *to_mm].into_iter())?;
+                hole_values_in_cap([*from_mm, *to_mm].into_iter())?;
+                if from_mm < to_mm {
+                    Ok(())
+                } else {
+                    Err(CommandError::new(
+                        ErrorCode::InvalidArgument,
+                        "hole",
+                        "a hole range needs from below to",
+                    ))
+                }
+            }
+        }
+    }
+
+    /// The wire token.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Through => "through",
+            Self::Range { .. } => "range",
+        }
+    }
+
+    /// Parses the wire token with its range values; anything else is `None`.
+    pub fn parse(token: &str, from_mm: f64, to_mm: f64) -> Option<Self> {
+        match token {
+            "through" => Some(Self::Through),
+            "range" => Some(Self::Range { from_mm, to_mm }),
+            _ => None,
+        }
+    }
+}
+
+/// The arguments of one member hole (F06 member-hole amendment section 1). The record is stored
+/// in the member frame, so it follows the member when it is moved or rotated: the origin is the
+/// first axis point, `u` along `X_r`, `v` along `Y_r`, `w` along the member axis `Z_m`,
+/// including the roll.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemberHole {
+    /// A point `(u, v, w)` on the hole axis in the member frame, finite, within the coordinate
+    /// cap.
+    pub axis_point_mm: [f64; 3],
+    /// The unit direction of the hole axis in the member frame. The first slice admits exactly
+    /// one of `(+-1, 0, 0)` or `(0, +-1, 0)`, the section directions; any other direction,
+    /// including one with a component along the member axis, is `UNSUPPORTED_GEOMETRY` until
+    /// G14.2.
+    pub axis_direction: [f64; 3],
+    /// How far the cutter reaches.
+    pub extent: HoleExtent,
+    /// The round generator's diameter in millimetres, finite and greater than zero. The stored
+    /// polygon is authoritative (F06 section 1): the regular inscribed `N`-gon of
+    /// [`HoleSpec::polygon`], with vertex 0 on `+Z_m` from the axis point.
+    pub diameter_mm: f64,
+}
+
+impl MemberHole {
+    /// Admits finiteness, the caps, a positive diameter, a section direction and the extent.
+    pub fn validate(&self) -> Result<(), CommandError> {
+        hole_values_finite(self.axis_point_mm.iter().copied())?;
+        hole_values_in_cap(self.axis_point_mm.iter().copied())?;
+        hole_values_finite([self.diameter_mm].into_iter())?;
+        if self.diameter_mm <= 0.0 {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "hole",
+                "a hole diameter must be positive",
+            ));
+        }
+        let is_section_direction = matches!(
+            self.axis_direction,
+            [1.0, 0.0, 0.0] | [-1.0, 0.0, 0.0] | [0.0, 1.0, 0.0] | [0.0, -1.0, 0.0]
+        );
+        if !is_section_direction {
+            return Err(CommandError::new(
+                ErrorCode::UnsupportedGeometry,
+                "hole.axis_direction",
+                "only a section direction (+-X_r, +-Y_r) is supported until G14.2",
+            ));
+        }
+        self.extent.validate()
+    }
 }
 
 /// The largest radius each permitted segment count serves (F06 section 2, A-2): the row at
@@ -1423,6 +1666,7 @@ impl HoleSpec {
                 }
                 Ok(())
             }
+            Self::Member(member) => member.validate(),
         }
     }
 
@@ -1472,6 +1716,14 @@ impl HoleSpec {
                 [x + width_mm, y + height_mm],
                 [x + width_mm, *y],
             ]),
+            // The authoritative member-hole polygon, relative to the axis point in the plane
+            // perpendicular to the axis: the plate round generator at the origin, whose vertex 0
+            // is the hole frame's +x, i.e. `+Z_m` from the axis point (F06 section 1).
+            Self::Member(member) => Self::Round {
+                centre_mm: [0.0, 0.0],
+                diameter_mm: member.diameter_mm,
+            }
+            .polygon(),
         }
     }
 }
@@ -1526,6 +1778,33 @@ pub struct HoleRecord {
     pub kind: HoleKind,
 }
 
+/// One member-hole operation record of a member (A04.2, the F06 member-hole amendment): an
+/// owned record with an engine-assigned ordinal, stored entirely in the member frame, so it
+/// follows the member when it is moved or rotated. The records of one member are replayed from
+/// the base shape in ordinal order. Ordinals are never reused or renumbered; `UpdateHole` and
+/// `RemoveHole` address a record by its `operation_id`. Member records live on the member, so
+/// they never conflate with the plate records (A04) or polygon cuts (A13) under
+/// `update-hole`/`remove-hole`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemberHoleRecord {
+    /// Full UUIDv7 of the record, unused in the project (`DUPLICATE_ID`).
+    pub operation_id: OpId,
+    /// The per-member ordinal in creation order, starting at zero. It names the record's
+    /// FeatureIds (`cut:f.h<ordinal>...`).
+    pub ordinal: usize,
+    /// A point `(u, v, w)` on the hole axis in the member frame.
+    pub axis_point_mm: [f64; 3],
+    /// The unit direction of the hole axis in the member frame: a section direction of the
+    /// first slice (`(+-1, 0, 0)` or `(0, +-1, 0)`).
+    pub axis_direction: [f64; 3],
+    /// How far the cutter reaches.
+    pub extent: HoleExtent,
+    /// The authoritative clockwise polygon relative to the axis point in the plane
+    /// perpendicular to the axis, hole-frame XY (x along `+Z_m`, y along `axis_direction x
+    /// +Z_m`), vertex 0 on `+Z_m`.
+    pub polygon_mm: Vec<[f64; 2]>,
+}
+
 /// Replace one existing hole's authoritative polygon, preserving its identity and ordinal.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UpdateHole {
@@ -1575,15 +1854,16 @@ impl RemoveHole {
     }
 }
 
-/// F04 section 7 `AddHole`: one through-hole operation record on a valid plate (A04). The
-/// record's `operation_id` is also the logical command id: a retry with identical content
-/// replays the recorded result, different content under an accepted id is `OP_ID_REUSE`, and
-/// an id that already names a record of the project is `DUPLICATE_ID`. The engine assigns the
-/// ordinal from the plate's per-element counter; other hole types (member holes, slots, blind
-/// holes) are explicitly unsupported and refused as F06 section 2 failures.
+/// F04 section 7 `AddHole`: one through-hole operation record on a valid plate (A04) or member
+/// (A04.2, the F06 member-hole amendment). The record's `operation_id` is also the logical
+/// command id: a retry with identical content replays the recorded result, different content
+/// under an accepted id is `OP_ID_REUSE`, and an id that already names a record of the project
+/// is `DUPLICATE_ID`. The engine assigns the ordinal from the target's per-element counter. A
+/// member target carries a [`HoleSpec::Member`] generator; a polygon generator on a member is
+/// `UNSUPPORTED_GEOMETRY` in this slice.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AddHole {
-    /// The plate that will own the record; a member target is `UNSUPPORTED_GEOMETRY`.
+    /// The plate or member that will own the record.
     pub target_id: ElementId,
     /// Full UUIDv7 of the record, unused in the project.
     pub operation_id: OpId,
@@ -1642,10 +1922,271 @@ impl AddHole {
                     bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| bad())?);
                 }
             }
+            HoleSpec::Member(member) => {
+                bytes.push(3);
+                for v in member
+                    .axis_point_mm
+                    .iter()
+                    .copied()
+                    .chain(member.axis_direction.iter().copied())
+                    .chain([member.diameter_mm])
+                {
+                    bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| bad())?);
+                }
+                bytes.push(match member.extent {
+                    HoleExtent::Through => 0,
+                    HoleExtent::Range { .. } => 1,
+                });
+                if let HoleExtent::Range { from_mm, to_mm } = member.extent {
+                    for v in [from_mm, to_mm] {
+                        bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| bad())?);
+                    }
+                }
+            }
         }
         bytes.extend_from_slice(&(polygon.len() as u64).to_le_bytes());
         for v in polygon.iter().flatten() {
             bytes.extend_from_slice(&canonical_f64_bytes(*v).map_err(|_| bad())?);
+        }
+        Sha256::digest(&bytes).map_err(|_| {
+            CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
+        })
+    }
+}
+
+/// Most bend records on one bent plate (A10). The records together must describe one
+/// constant-cross-section body; the cap keeps the derived cross-section inside the loft
+/// vertex budget with room for the bend arcs.
+pub const MAX_BENDS: usize = 16;
+
+/// How a plate is bent or rolled (A10). The authored contour of a bent plate is its
+/// developed mid-surface outline (the unfold) in the element-local plane `z = 0`; bending
+/// about the mid-surface preserves it, so the unfolded outline is the authored contour and
+/// the analytic volume stays `outline area x thickness`. All coordinates are element-local
+/// millimetres in the contour plane, angles are radians.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BendSpec {
+    /// The sheet is folded about the line `a_mm`–`b_mm` by `angle_rad` (positive folds the
+    /// far side towards `+Z` by the right-hand rule about `a->b`) on the inner bend radius
+    /// `radius_mm`; the outer radius is `radius_mm + thickness`. Several folds of one plate
+    /// must be parallel.
+    Fold {
+        /// First point of the fold line, in the contour plane.
+        a_mm: [f64; 3],
+        /// Second point of the fold line, in the contour plane; equal to `a_mm` is refused.
+        b_mm: [f64; 3],
+        /// Inner bend radius in millimetres.
+        radius_mm: f64,
+        /// Signed bend angle in radians, inside `(-pi, pi)`, never zero.
+        angle_rad: f64,
+    },
+    /// The sheet is rolled about the axis `a_mm`–`b_mm` into a cylinder section of the inner
+    /// radius `radius_mm` (the arc follows from the developed length of the blank), or, with
+    /// `radius_b_mm`, into a cone section of the two inner mid-surface radii at the axis
+    /// ends. A plate carries at most one roll and no fold beside it.
+    Roll {
+        /// First point of the roll axis, in the contour plane; for a cone it is the centre
+        /// of the blank's inner arc.
+        a_mm: [f64; 3],
+        /// Second point of the roll axis, in the contour plane; equal to `a_mm` is refused.
+        b_mm: [f64; 3],
+        /// Inner radius at `a_mm` in millimetres.
+        radius_mm: f64,
+        /// Inner radius at `b_mm` in millimetres; `None` rolls a cylinder. Equal to
+        /// `radius_mm` is refused: a true cone cannot have equal radii.
+        radius_b_mm: Option<f64>,
+    },
+}
+
+impl BendSpec {
+    /// The wire token of the bend kind.
+    pub const fn kind(self) -> &'static str {
+        match self {
+            Self::Fold { .. } => "fold",
+            Self::Roll { .. } => "roll",
+        }
+    }
+
+    /// Admits what does not depend on the plate: finite values, the coordinate cap for the
+    /// line points, positive radii and a bend angle inside `(-pi, pi)` and away from zero.
+    pub fn validate(&self) -> Result<(), CommandError> {
+        let (points, radii, angle): ([[f64; 3]; 2], &[f64], Option<f64>) = match *self {
+            Self::Fold {
+                a_mm,
+                b_mm,
+                radius_mm,
+                angle_rad,
+            } => ([a_mm, b_mm], &[radius_mm][..], Some(angle_rad)),
+            Self::Roll {
+                a_mm,
+                b_mm,
+                radius_mm,
+                radius_b_mm,
+            } => (
+                [a_mm, b_mm],
+                match radius_b_mm {
+                    Some(rb) => &[radius_mm, rb][..],
+                    None => &[radius_mm][..],
+                },
+                None,
+            ),
+        };
+        if points
+            .iter()
+            .flatten()
+            .copied()
+            .chain(radii.iter().copied())
+            .any(|v| !v.is_finite())
+        {
+            return Err(CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "bend",
+                "bend value is not finite",
+            )
+            .with_rule("DV-ATTR-003"));
+        }
+        if points.iter().flatten().any(|v| v.abs() > COORDINATE_CAP_MM) {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "bend",
+                "bend coordinate exceeds the coordinate cap",
+            )
+            .with_rule("DV-LIM-001"));
+        }
+        if radii.iter().any(|r| *r <= 0.0) {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "bend",
+                "bend radius is not positive",
+            ));
+        }
+        if radii.iter().any(|r| *r > DIMENSION_CAP_MM) {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "bend",
+                "bend radius exceeds the dimension cap",
+            )
+            .with_rule("DV-LIM-001"));
+        }
+        if let Some(angle) = angle
+            && (angle == 0.0 || angle.abs() >= core::f64::consts::PI)
+        {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "bend",
+                "fold angle is outside the open range (-pi, pi)",
+            ));
+        }
+        if points[0] == points[1] {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "bend",
+                "the bend line needs two distinct points",
+            ));
+        }
+        // A cone whose two radii are equal is a cylinder: the stored encoding keeps one radius
+        // for a cylinder and two for a cone, so an equal-radius cone would read back as a
+        // cylinder on replay and refuse its own sector blank. A true cone cannot have them.
+        if let Self::Roll {
+            radius_mm,
+            radius_b_mm: Some(radius_b),
+            ..
+        } = *self
+            && radius_b == radius_mm
+        {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "bend",
+                "a cone roll needs two distinct radii; drop radius_b to roll a cylinder",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// One owned bend operation record (A10). As for a cut, the record is authoritative and
+/// replayed in creation order; a fold appends to the plate's fold set, a roll requires the
+/// plate to carry no other bend.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BendRecord {
+    /// Full UUIDv7 of the record, unused in the project (`DUPLICATE_ID`).
+    pub operation_id: OpId,
+    /// The bend the record authors.
+    pub spec: BendSpec,
+}
+
+impl BendRecord {
+    /// Admits the record's arguments independently of the plate.
+    pub fn validate(&self) -> Result<(), CommandError> {
+        self.spec.validate()
+    }
+}
+
+/// F04 section 7 `BendPlate` (A10): appends one bend operation record to a valid plate and
+/// updates its derived data in one transaction. The record's `operation_id` is also the
+/// logical command id, as for `AddHole`. Whether the records together describe a supported
+/// bent body (a rectangular blank for folds, a cylinder or cone section for a roll, no
+/// overlap) is the engine's decision at evaluation, and a refusal there refuses the command.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BendPlate {
+    /// The plate that will own the record; a member target is `UNSUPPORTED_GEOMETRY`.
+    pub target_id: ElementId,
+    /// Full UUIDv7 of the record, unused in the project.
+    pub operation_id: OpId,
+    /// The bend to author.
+    pub spec: BendSpec,
+}
+
+impl BendPlate {
+    /// Admits the arguments that do not depend on geometry or model state.
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        self.spec.validate()
+    }
+
+    /// SHA-256 of a versioned binary encoding of the validated arguments, with signed zero
+    /// normalized, as for [`AddHole::content_fingerprint`]. It is *not* the F04 canonical
+    /// form and must not be sent over a wire.
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        self.validate_arguments()?;
+        let bad = || {
+            CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "bend",
+                "value cannot be encoded",
+            )
+            .with_rule("DV-ATTR-003")
+        };
+        let (a, b, tail): ([f64; 3], [f64; 3], &[f64]) = match self.spec {
+            BendSpec::Fold {
+                a_mm,
+                b_mm,
+                radius_mm,
+                angle_rad,
+            } => (a_mm, b_mm, &[radius_mm, angle_rad]),
+            BendSpec::Roll {
+                a_mm,
+                b_mm,
+                radius_mm,
+                radius_b_mm,
+            } => (
+                a_mm,
+                b_mm,
+                // A cylinder repeats its one radius; the kind byte already separates the two
+                // encodings, so the fill value cannot collide with a cone's.
+                &[radius_mm, radius_b_mm.unwrap_or(radius_mm)],
+            ),
+        };
+        let mut bytes = Vec::with_capacity(128);
+        bytes.extend_from_slice(b"BeamCraft/A10/BendPlate/v1\0");
+        bytes.extend_from_slice(self.target_id.as_bytes());
+        bytes.extend_from_slice(self.operation_id.as_bytes());
+        bytes.push(match self.spec {
+            BendSpec::Fold { .. } => 0,
+            BendSpec::Roll { .. } => 1,
+        });
+        for v in a.iter().copied().chain(b).chain(tail.iter().copied()) {
+            bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| bad())?);
         }
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
@@ -2108,6 +2649,97 @@ fn push_f64(bytes: &mut Vec<u8>, value: f64) -> Result<(), CommandError> {
     Ok(())
 }
 
+/// T03: a relative rotation of the whole element about a world axis through `pivot_mm` by
+/// `angle_rad`, composed with the element's current placement. The local shape is untouched: the
+/// rotation is absorbed by the placement alone, so a retried command recomputes the same absolute
+/// placement from the head state.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ElementRotate {
+    /// A point on the rotation axis, in world millimetres.
+    pub pivot_mm: [f64; 3],
+    /// Direction of the rotation axis; need not be unit or axis-aligned, must be nonzero.
+    pub axis: [f64; 3],
+    /// Rotation angle in radians, right-handed about `axis`.
+    pub angle_rad: f64,
+}
+
+impl ElementRotate {
+    /// Admits the request: finite numbers (`NON_FINITE_NUMBER`), a nonzero axis
+    /// (`INVALID_ARGUMENT`) and an angle within `TAU` (`LIMIT_EXCEEDED`). Whether the rotated
+    /// placement stays in range is the engine's decision.
+    pub fn validate(&self) -> Result<(), CommandError> {
+        if self
+            .pivot_mm
+            .iter()
+            .chain(self.axis.iter())
+            .any(|v| !v.is_finite())
+            || !self.angle_rad.is_finite()
+        {
+            return Err(CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "rotate",
+                "value is not finite",
+            )
+            .with_rule("DV-ATTR-003"));
+        }
+        if self.axis.iter().all(|v| *v == 0.0) {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "rotate",
+                "the rotation axis is the zero vector",
+            ));
+        }
+        if self.angle_rad.abs() > ROLL_CAP_RAD {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "rotate",
+                "the angle exceeds the rotation cap",
+            )
+            .with_rule("DV-LIM-001"));
+        }
+        Ok(())
+    }
+}
+
+/// T03: a relative mirror of the whole element about the world plane through `point_mm` with
+/// unit-independent `normal`. The engine re-encodes the element through a symmetry of its local
+/// body, so the mirrored part is the same authored shape at a mirrored placement.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ElementMirror {
+    /// A point on the mirror plane, in world millimetres.
+    pub point_mm: [f64; 3],
+    /// Normal of the mirror plane; need not be unit, must be nonzero.
+    pub normal: [f64; 3],
+}
+
+impl ElementMirror {
+    /// Admits the request: finite numbers (`NON_FINITE_NUMBER`) and a nonzero normal
+    /// (`INVALID_ARGUMENT`).
+    pub fn validate(&self) -> Result<(), CommandError> {
+        if self
+            .point_mm
+            .iter()
+            .chain(self.normal.iter())
+            .any(|v| !v.is_finite())
+        {
+            return Err(CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "mirror",
+                "value is not finite",
+            )
+            .with_rule("DV-ATTR-003"));
+        }
+        if self.normal.iter().all(|v| *v == 0.0) {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "mirror",
+                "the mirror normal is the zero vector",
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// A typed patch of supported authored fields (F04 section 7 `UpdateElement`). A field that is
 /// `None` is left unchanged. `material` distinguishes no change (`None`), clearing the reference
 /// (`Some(None)`) and pinning a definition (`Some(Some(digest))`). There is no raw USD setter.
@@ -2142,6 +2774,16 @@ pub struct ElementPatch {
     /// P12: the complete replacement of a member's path points, two for a straight member and
     /// at least three for a polybeam. The whole path is replaced; there is no per-point setter.
     pub axis_points_mm: Option<Vec<[f64; 3]>>,
+    /// T03: rotate the element about a world axis, relative to its current placement. Mutually
+    /// exclusive with `translation_mm`, `orientation_xyzw` and `mirror`.
+    pub rotate: Option<ElementRotate>,
+    /// T03: mirror the element about a world plane, relative to its current state. Mutually
+    /// exclusive with `translation_mm`, `orientation_xyzw` and `rotate`.
+    pub mirror: Option<ElementMirror>,
+    /// T03: translate the element by this world offset, relative to its current placement (the
+    /// two-point move form is its `to - from`). Mutually exclusive with `translation_mm`,
+    /// `rotate` and `mirror`.
+    pub move_mm: Option<[f64; 3]>,
     /// A member's new pinned profile definition (replaces the standing one; the body is rebuilt
     /// from it). A plate has no profile. Whether the digest names a profile definition is the
     /// engine's decision.
@@ -2230,6 +2872,9 @@ impl UpdateElement {
             && patch.orientation_xyzw.is_none()
             && patch.level.is_none()
             && patch.axis_points_mm.is_none()
+            && patch.rotate.is_none()
+            && patch.mirror.is_none()
+            && patch.move_mm.is_none()
             && patch.profile.is_none()
         {
             return Err(CommandError::new(
@@ -2237,6 +2882,52 @@ impl UpdateElement {
                 "changes",
                 "the patch changes nothing",
             ));
+        }
+        // A relative transform composes with the current placement, so naming an absolute
+        // placement field in the same patch would be ambiguous.
+        if patch.rotate.is_some() || patch.mirror.is_some() || patch.move_mm.is_some() {
+            if patch.translation_mm.is_some() || patch.orientation_xyzw.is_some() {
+                return Err(CommandError::new(
+                    ErrorCode::InvalidArgument,
+                    "changes",
+                    "a relative transform takes no absolute placement fields",
+                ));
+            }
+            let named = patch.rotate.is_some() as u8
+                + patch.mirror.is_some() as u8
+                + patch.move_mm.is_some() as u8;
+            if named > 1 {
+                return Err(CommandError::new(
+                    ErrorCode::InvalidArgument,
+                    "changes",
+                    "relative transforms are separate patches; compose them with two updates",
+                ));
+            }
+            if let Some(rotate) = &patch.rotate {
+                rotate.validate()?;
+            }
+            if let Some(mirror) = &patch.mirror {
+                mirror.validate()?;
+            }
+            if let Some(move_mm) = patch.move_mm
+                && move_mm.iter().any(|v| !v.is_finite())
+            {
+                return Err(CommandError::new(
+                    ErrorCode::NonFiniteNumber,
+                    "move_mm",
+                    "value is not finite",
+                )
+                .with_rule("DV-ATTR-003"));
+            }
+            // A mirror re-encodes the member through its path symmetry: replacing the path in
+            // the same patch would mirror through one path and re-encode through another.
+            if patch.mirror.is_some() && patch.axis_points_mm.is_some() {
+                return Err(CommandError::new(
+                    ErrorCode::InvalidArgument,
+                    "changes",
+                    "a mirror takes no path replacement in the same patch",
+                ));
+            }
         }
         if let Some(translation) = patch.translation_mm {
             if translation.iter().any(|v| !v.is_finite()) {
@@ -2456,6 +3147,56 @@ impl UpdateElement {
                 })?);
             }
         }
+        // Appended only when present, so the fingerprints of earlier patches are unchanged.
+        if let Some(rotate) = &self.patch.rotate {
+            bytes.extend_from_slice(b"T03/rotate/v1\0");
+            for v in rotate.pivot_mm.into_iter().chain(rotate.axis) {
+                bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| {
+                    CommandError::new(
+                        ErrorCode::NonFiniteNumber,
+                        "rotate",
+                        "value cannot be encoded",
+                    )
+                    .with_rule("DV-ATTR-003")
+                })?);
+            }
+            bytes.extend_from_slice(&canonical_f64_bytes(rotate.angle_rad).map_err(|_| {
+                CommandError::new(
+                    ErrorCode::NonFiniteNumber,
+                    "rotate",
+                    "value cannot be encoded",
+                )
+                .with_rule("DV-ATTR-003")
+            })?);
+        }
+        // Appended only when present, so the fingerprints of earlier patches are unchanged.
+        if let Some(mirror) = &self.patch.mirror {
+            bytes.extend_from_slice(b"T03/mirror/v1\0");
+            for v in mirror.point_mm.into_iter().chain(mirror.normal) {
+                bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| {
+                    CommandError::new(
+                        ErrorCode::NonFiniteNumber,
+                        "mirror",
+                        "value cannot be encoded",
+                    )
+                    .with_rule("DV-ATTR-003")
+                })?);
+            }
+        }
+        // Appended only when present, so the fingerprints of earlier patches are unchanged.
+        if let Some(move_mm) = self.patch.move_mm {
+            bytes.extend_from_slice(b"T03/move/v1\0");
+            for v in move_mm {
+                bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| {
+                    CommandError::new(
+                        ErrorCode::NonFiniteNumber,
+                        "move_mm",
+                        "value cannot be encoded",
+                    )
+                    .with_rule("DV-ATTR-003")
+                })?);
+            }
+        }
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
                 .with_rule("DV-LIM-001")
@@ -2564,6 +3305,224 @@ impl CopyElement {
                 )
                 .with_rule("DV-ATTR-003")
             })?);
+        }
+        Sha256::digest(&bytes).map_err(|_| {
+            CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
+        })
+    }
+}
+
+/// T03: the placement rule of one array copy. The source stays as it is; the copy at index
+/// `i` (counting from one) takes the step `i` times.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ArrayStep {
+    /// A linear array: copy `i` is the source translated by `direction * (spacing_mm * i)`.
+    Linear {
+        /// Direction of the array; need not be unit, must be nonzero.
+        direction: [f64; 3],
+        /// Distance between neighbouring copies along `direction`, in millimetres.
+        spacing_mm: f64,
+    },
+    /// A polar array: copy `i` is the source rotated by `angle_rad * i` about the world axis
+    /// through `point_mm` along `axis`.
+    Polar {
+        /// A point on the array axis, in world millimetres.
+        point_mm: [f64; 3],
+        /// Direction of the array axis; need not be unit, must be nonzero.
+        axis: [f64; 3],
+        /// Angle between neighbouring copies in radians, right-handed about `axis`.
+        angle_rad: f64,
+    },
+}
+
+/// F04 `ArrayElements` (T03): independent copies of one source part, created in one revision so
+/// one undo step takes them all back. Each copy is a `CopyElement` duplicate with a fresh
+/// identity and freshly minted operation records; the source is only read.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArrayElements {
+    /// The element to copy.
+    pub source_id: ElementId,
+    /// Label of every copy; the source label when `None`.
+    pub name: Option<String>,
+    /// Identities of the copies, in array order. The length is the copy count.
+    pub new_ids: Vec<ElementId>,
+    /// The placement rule between neighbouring copies.
+    pub step: ArrayStep,
+}
+
+impl ArrayElements {
+    /// Admits the request: one to [`MAX_ARRAY_COPIES`] copies (`LIMIT_EXCEEDED`), distinct
+    /// identities that differ from the source (`DUPLICATE_ID`), a valid label, a nonzero
+    /// direction or axis, a positive spacing and finite angles (`NON_FINITE_NUMBER`,
+    /// `INVALID_ARGUMENT`, `LIMIT_EXCEEDED`). That the source exists, the placements stay in
+    /// range and the identities are unused are the engine's decisions.
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        if self.new_ids.is_empty() || self.new_ids.len() > MAX_ARRAY_COPIES {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "new_ids",
+                "an array has one to one hundred copies",
+            )
+            .with_rule("DV-LIM-001"));
+        }
+        if self.new_ids.contains(&self.source_id) {
+            return Err(CommandError::new(
+                ErrorCode::DuplicateId,
+                "new_ids",
+                "a copy identity equals the source",
+            )
+            .with_rule("DV-BASE-002"));
+        }
+        let mut seen = Vec::new();
+        for id in &self.new_ids {
+            if seen.contains(id) {
+                return Err(CommandError::new(
+                    ErrorCode::DuplicateId,
+                    "new_ids",
+                    "a copy identity repeats in the array",
+                )
+                .with_rule("DV-BASE-002"));
+            }
+            seen.push(*id);
+        }
+        if self.name.as_deref().is_some_and(|n| !label_is_valid(n)) {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "name",
+                "label must be 1 to 256 bytes without control characters",
+            )
+            .with_rule("DV-BASE-003"));
+        }
+        let zero = |values: &[f64]| values.iter().all(|v| *v == 0.0);
+        match self.step {
+            ArrayStep::Linear {
+                direction,
+                spacing_mm,
+            } => {
+                if direction.iter().any(|v| !v.is_finite()) || !spacing_mm.is_finite() {
+                    return Err(CommandError::new(
+                        ErrorCode::NonFiniteNumber,
+                        "step",
+                        "value is not finite",
+                    )
+                    .with_rule("DV-ATTR-003"));
+                }
+                if zero(&direction) {
+                    return Err(CommandError::new(
+                        ErrorCode::InvalidArgument,
+                        "step",
+                        "the array direction is the zero vector",
+                    ));
+                }
+                if spacing_mm <= 0.0 || spacing_mm > COORDINATE_CAP_MM {
+                    return Err(CommandError::new(
+                        ErrorCode::LimitExceeded,
+                        "step",
+                        "the spacing must be positive and within the coordinate cap",
+                    )
+                    .with_rule("DV-LIM-001"));
+                }
+            }
+            ArrayStep::Polar {
+                point_mm,
+                axis,
+                angle_rad,
+            } => {
+                if point_mm.iter().chain(axis.iter()).any(|v| !v.is_finite())
+                    || !angle_rad.is_finite()
+                {
+                    return Err(CommandError::new(
+                        ErrorCode::NonFiniteNumber,
+                        "step",
+                        "value is not finite",
+                    )
+                    .with_rule("DV-ATTR-003"));
+                }
+                if zero(&axis) {
+                    return Err(CommandError::new(
+                        ErrorCode::InvalidArgument,
+                        "step",
+                        "the array axis is the zero vector",
+                    ));
+                }
+                if angle_rad == 0.0 || angle_rad.abs() > ROLL_CAP_RAD {
+                    return Err(CommandError::new(
+                        ErrorCode::LimitExceeded,
+                        "step",
+                        "the angle must be nonzero and within the rotation cap",
+                    )
+                    .with_rule("DV-LIM-001"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// SHA-256 of a versioned, length-prefixed encoding of the validated request.
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        self.validate_arguments()?;
+        let mut bytes = Vec::with_capacity(128);
+        bytes.extend_from_slice(b"BeamCraft/T03/ArrayElements/v1\0");
+        bytes.extend_from_slice(self.source_id.as_bytes());
+        match &self.name {
+            Some(name) => {
+                bytes.push(1);
+                bytes.extend_from_slice(&(name.len() as u64).to_le_bytes());
+                bytes.extend_from_slice(name.as_bytes());
+            }
+            None => bytes.push(0),
+        }
+        bytes.extend_from_slice(&(self.new_ids.len() as u64).to_le_bytes());
+        for id in &self.new_ids {
+            bytes.extend_from_slice(id.as_bytes());
+        }
+        let push_vec = |bytes: &mut Vec<u8>, values: [f64; 3]| {
+            for v in values {
+                bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| {
+                    CommandError::new(
+                        ErrorCode::NonFiniteNumber,
+                        "step",
+                        "value cannot be encoded",
+                    )
+                    .with_rule("DV-ATTR-003")
+                })?);
+            }
+            Ok(())
+        };
+        match self.step {
+            ArrayStep::Linear {
+                direction,
+                spacing_mm,
+            } => {
+                bytes.push(1);
+                push_vec(&mut bytes, direction)?;
+                bytes.extend_from_slice(&canonical_f64_bytes(spacing_mm).map_err(|_| {
+                    CommandError::new(
+                        ErrorCode::NonFiniteNumber,
+                        "step",
+                        "value cannot be encoded",
+                    )
+                    .with_rule("DV-ATTR-003")
+                })?);
+            }
+            ArrayStep::Polar {
+                point_mm,
+                axis,
+                angle_rad,
+            } => {
+                bytes.push(2);
+                push_vec(&mut bytes, point_mm)?;
+                push_vec(&mut bytes, axis)?;
+                bytes.extend_from_slice(&canonical_f64_bytes(angle_rad).map_err(|_| {
+                    CommandError::new(
+                        ErrorCode::NonFiniteNumber,
+                        "step",
+                        "value cannot be encoded",
+                    )
+                    .with_rule("DV-ATTR-003")
+                })?);
+            }
         }
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")

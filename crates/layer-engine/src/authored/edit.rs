@@ -660,7 +660,11 @@ fn create(
         Shape::Weld(_) | Shape::Bolt(_) => "connection",
         Shape::Level { .. } => "level",
         Shape::Grid(_) => "grid",
+        Shape::Construction(_) => "construction",
         Shape::Plate { .. } => "plate",
+        // A lofted plate is a plate: its kind token and part path are the plate's, and the
+        // shape token `steel:plate:form` discriminates the record form.
+        Shape::LoftedPlate { .. } => "plate",
         Shape::Member {
             kind: MemberKind::Beam,
             ..
@@ -684,7 +688,10 @@ fn create(
     ] {
         attr(data, &p, name, ty, v)?;
     }
-    if matches!(e.shape, Shape::Plate { .. } | Shape::Member { .. }) {
+    if matches!(
+        e.shape,
+        Shape::Plate { .. } | Shape::Member { .. } | Shape::LoftedPlate { .. }
+    ) {
         attr(data, &p, "steel:class", "int", sdf::Value::Int(0))?;
     }
     match &e.shape {
@@ -693,6 +700,7 @@ fn create(
             thickness_mm,
             thickness_side,
             corners,
+            bends,
             holes,
             hole_records,
             ..
@@ -722,6 +730,9 @@ fn create(
             }
             if !corners.is_empty() {
                 author_corners(data, &p, corners)?;
+            }
+            if !bends.is_empty() {
+                author_bends(data, &p, bends)?;
             }
             if !holes.is_empty() {
                 let flat: Vec<[f64; 3]> = holes.iter().flatten().copied().collect();
@@ -753,7 +764,7 @@ fn create(
                         .iter()
                         .map(|r| (r.operation_id, r.ordinal))
                         .collect::<Vec<_>>(),
-                    true,
+                    cut_history::Family::PlateHole,
                 )?;
                 let mut flat: Vec<[f64; 3]> = Vec::new();
                 let mut counts = Vec::new();
@@ -797,6 +808,29 @@ fn create(
                     sdf::Value::TokenVec(kinds),
                 )?;
             }
+        }
+        Shape::LoftedPlate { start_mm, end_mm } => {
+            attr(
+                data,
+                &p,
+                "steel:plate:form",
+                "token",
+                sdf::Value::token("lofted"),
+            )?;
+            attr(
+                data,
+                &p,
+                "steel:plate:loftStartMm",
+                "double3[]",
+                points(start_mm),
+            )?;
+            attr(
+                data,
+                &p,
+                "steel:plate:loftEndMm",
+                "double3[]",
+                points(end_mm),
+            )?;
         }
         Shape::Member {
             curved,
@@ -978,6 +1012,7 @@ fn create(
             relationship_targets(data, &p, "bim:connects", Some(targets))?;
         }
         Shape::Grid(g) => grid::author(data, &p, g)?,
+        Shape::Construction(o) => construction::author(data, &p, o)?,
         Shape::Instance { definition, .. } => instance::author(data, &p, definition, input, prims)?,
         Shape::Level { elevation_mm } => attr(
             data,
@@ -1003,16 +1038,14 @@ fn author_record_history(
     p: &str,
     source: Option<&Prim>,
     records: &[(beamcraft_model::id::OpId, usize)],
-    hole: bool,
+    family: cut_history::Family,
 ) -> Result<(), Diagnostic> {
-    let (next_name, retired_name, id_name, ordinal_name) = cut_history::fields(hole);
+    let (next_name, retired_name, id_name, ordinal_name) = cut_history::fields(family);
     let old = source
-        .map(|p| {
-            if hole {
-                cut_history::read_holes(p)
-            } else {
-                cut_history::read(p)
-            }
+        .map(|p| match family {
+            cut_history::Family::Cut => cut_history::read(p),
+            cut_history::Family::PlateHole => cut_history::read_holes(p),
+            cut_history::Family::MemberHole => cut_history::read_member_holes(p),
         })
         .transpose()?
         .unwrap_or_default();
@@ -1085,7 +1118,7 @@ pub(super) fn author_cuts(
             .iter()
             .map(|r| (r.operation_id, usize::from(r.ordinal)))
             .collect::<Vec<_>>(),
-        false,
+        cut_history::Family::Cut,
     )?;
     let ids: Vec<String> = cuts.iter().map(|c| c.operation_id.to_string()).collect();
     let ordinals = cuts.iter().map(|c| i32::from(c.ordinal)).collect();
@@ -1436,6 +1469,7 @@ pub(super) fn apply(
                 sdf::Value::Double(*mm),
             )?,
             Change::Corners { corners, .. } => author_corners(&mut authored, &p, corners)?,
+            Change::Bends { bends, .. } => author_bends(&mut authored, &p, bends)?,
             Change::ThicknessSide { side, .. } => attr(
                 &mut authored,
                 &p,
@@ -1458,7 +1492,7 @@ pub(super) fn apply(
                         .iter()
                         .map(|r| (r.operation_id, r.ordinal))
                         .collect::<Vec<_>>(),
-                    true,
+                    cut_history::Family::PlateHole,
                 )?;
                 // The five record attributes, always together: the authoritative polygons of
                 // every record, replayed from the base shape in ordinal order, with the id,
@@ -1510,6 +1544,90 @@ pub(super) fn apply(
                     "token[]",
                     sdf::Value::TokenVec(kinds),
                 )?;
+            }
+            Change::MemberHoles { records, .. } => {
+                author_record_history(
+                    &mut authored,
+                    &p,
+                    prims.iter().find(|old| old.path == p),
+                    &records
+                        .iter()
+                        .map(|r| (r.operation_id, r.ordinal))
+                        .collect::<Vec<_>>(),
+                    cut_history::Family::MemberHole,
+                )?;
+                // The nine record attributes, always together: the authoritative polygons of
+                // every record and their member-frame axis points, directions, extents, ids and
+                // ordinals (A04.2). A through extent stores zero range values.
+                let mut flat = Vec::new();
+                let mut counts = Vec::new();
+                let mut ids = Vec::new();
+                let mut ordinals = Vec::new();
+                let mut axis_points = Vec::new();
+                let mut directions = Vec::new();
+                let mut extents = Vec::new();
+                let mut from = Vec::new();
+                let mut to = Vec::new();
+                for record in records {
+                    flat.extend(record.polygon_mm.iter().map(|[x, y]| [*x, *y, 0.0]));
+                    counts.push(i32::try_from(record.polygon_mm.len()).map_err(|_| limit())?);
+                    ids.push(record.operation_id.to_string());
+                    ordinals.push(i32::try_from(record.ordinal).map_err(|_| limit())?);
+                    axis_points.push(record.axis_point_mm);
+                    directions.push(record.axis_direction);
+                    extents.push(record.extent.as_str().into());
+                    let (start, end) = match record.extent {
+                        HoleExtent::Through => (0.0, 0.0),
+                        HoleExtent::Range { from_mm, to_mm } => (from_mm, to_mm),
+                    };
+                    from.push(start);
+                    to.push(end);
+                }
+                for (name, ty, v) in [
+                    ("steel:mhole:pointsMm", "double3[]", points(&flat)),
+                    (
+                        "steel:mhole:vertexCounts",
+                        "int[]",
+                        sdf::Value::IntVec(counts),
+                    ),
+                    (
+                        "steel:mhole:operationIds",
+                        "string[]",
+                        sdf::Value::StringVec(ids),
+                    ),
+                    (
+                        "steel:mhole:ordinals",
+                        "int[]",
+                        sdf::Value::IntVec(ordinals),
+                    ),
+                    (
+                        "steel:mhole:axisPointsMm",
+                        "double3[]",
+                        points(&axis_points),
+                    ),
+                    (
+                        "steel:mhole:axisDirections",
+                        "double3[]",
+                        points(&directions),
+                    ),
+                    (
+                        "steel:mhole:extents",
+                        "token[]",
+                        sdf::Value::TokenVec(extents),
+                    ),
+                    (
+                        "steel:mhole:extentFromMm",
+                        "double[]",
+                        sdf::Value::DoubleVec(from),
+                    ),
+                    (
+                        "steel:mhole:extentToMm",
+                        "double[]",
+                        sdf::Value::DoubleVec(to),
+                    ),
+                ] {
+                    attr(&mut authored, &p, name, ty, v)?;
+                }
             }
             Change::Axis { points_mm, .. } => attr(
                 &mut authored,
@@ -1664,11 +1782,13 @@ pub(super) fn apply(
                 | Change::Thickness { .. }
                 | Change::ThicknessSide { .. }
                 | Change::Corners { .. }
+                | Change::Bends { .. }
                 | Change::Cuts { .. }
                 | Change::Axis { .. }
                 | Change::Roll { .. }
                 | Change::Profile { .. }
                 | Change::HoleRecords { .. }
+                | Change::MemberHoles { .. }
         ) {
             // Never reveal a weaker stale result after removing the derived opinion.
             let mesh_path = format!("{p}/Geometry");
@@ -1772,6 +1892,20 @@ fn capture(
         (cut_history::NEXT, "int"),
         (cut_history::RETIRED, "string[]"),
     ];
+    /// The A04.2 member-hole record attributes of a member, in storage order.
+    const MHOLE_FIELDS: &[(&str, &str)] = &[
+        ("steel:mhole:pointsMm", "double3[]"),
+        ("steel:mhole:vertexCounts", "int[]"),
+        ("steel:mhole:operationIds", "string[]"),
+        ("steel:mhole:ordinals", "int[]"),
+        ("steel:mhole:axisPointsMm", "double3[]"),
+        ("steel:mhole:axisDirections", "double3[]"),
+        ("steel:mhole:extents", "token[]"),
+        ("steel:mhole:extentFromMm", "double[]"),
+        ("steel:mhole:extentToMm", "double[]"),
+        (cut_history::MHOLE_NEXT, "int"),
+        (cut_history::MHOLE_RETIRED, "string[]"),
+    ];
     /// The P14 section-placement attributes of a member, in storage order.
     const MEMBER_PLACEMENT: &[(&str, &str)] = &[
         ("steel:member:planePosition", "token"),
@@ -1820,10 +1954,24 @@ fn capture(
                         ref holes,
                         ref cuts,
                         ref hole_records,
+                        ref bends,
                         ..
                     } => {
                         add("steel:plate:contourPointsMm", "double3[]", 0);
                         add("steel:plate:thicknessMm", "double", 0);
+                        if !bends.is_empty() {
+                            for (name, ty) in [
+                                ("steel:plate:bendOperationId", "string[]"),
+                                ("steel:plate:bendKind", "token[]"),
+                                ("steel:plate:bendLineAMm", "double3[]"),
+                                ("steel:plate:bendLineBMm", "double3[]"),
+                                ("steel:plate:bendRadiusMm", "double[]"),
+                                ("steel:plate:bendRadiusBMm", "double[]"),
+                                ("steel:plate:bendAngleRad", "double[]"),
+                            ] {
+                                add(name, ty, 0);
+                            }
+                        }
                         if !holes.is_empty() {
                             add("steel:plate:holePointsMm", "double3[]", 0);
                             add("steel:plate:holeVertexCounts", "int[]", 0);
@@ -1865,6 +2013,11 @@ fn capture(
                             }
                         }
                     }
+                    Shape::LoftedPlate { .. } => {
+                        add("steel:plate:form", "token", 0);
+                        add("steel:plate:loftStartMm", "double3[]", 0);
+                        add("steel:plate:loftEndMm", "double3[]", 0);
+                    }
                     Shape::Instance { .. } => add(instance::RELATIONSHIP, "rel", 0),
                     Shape::Assembly => (),
                     Shape::Weld(ref w) => {
@@ -1885,6 +2038,11 @@ fn capture(
                     Shape::Level { .. } => add("bim:elevationMm", "double", 0),
                     Shape::Grid(_) => {
                         for &(name, ty) in grid::FIELDS {
+                            add(name, ty, 0);
+                        }
+                    }
+                    Shape::Construction(_) => {
+                        for &(name, ty) in construction::FIELDS {
                             add(name, ty, 0);
                         }
                     }
@@ -2001,9 +2159,27 @@ fn capture(
                     add(name, ty, 0);
                 }
             }
+            Change::Bends { .. } => {
+                for (name, ty) in [
+                    ("steel:plate:bendOperationId", "string[]"),
+                    ("steel:plate:bendKind", "token[]"),
+                    ("steel:plate:bendLineAMm", "double3[]"),
+                    ("steel:plate:bendLineBMm", "double3[]"),
+                    ("steel:plate:bendRadiusMm", "double[]"),
+                    ("steel:plate:bendRadiusBMm", "double[]"),
+                    ("steel:plate:bendAngleRad", "double[]"),
+                ] {
+                    add(name, ty, 0);
+                }
+            }
             Change::ThicknessSide { .. } => add("steel:plate:thicknessSide", "token", 0),
             Change::Cuts { .. } => {
                 for &(name, ty) in CUT_FIELDS {
+                    add(name, ty, 0);
+                }
+            }
+            Change::MemberHoles { .. } => {
+                for &(name, ty) in MHOLE_FIELDS {
                     add(name, ty, 0);
                 }
             }
@@ -2047,10 +2223,12 @@ fn capture(
                 | Change::Thickness { .. }
                 | Change::ThicknessSide { .. }
                 | Change::Corners { .. }
+                | Change::Bends { .. }
                 | Change::Cuts { .. }
                 | Change::Axis { .. }
                 | Change::Roll { .. }
                 | Change::Profile { .. }
+                | Change::MemberHoles { .. }
         ) {
             for &(name, ty) in MESH {
                 add(name, ty, 1);
@@ -2166,5 +2344,90 @@ fn author_corners(
         sdf::Value::DoubleVec(radii),
     )?;
 
+    Ok(())
+}
+
+/// The seven parallel bend attributes (A10), always together; a value its kind does not use is
+/// written as the neutral fill (the line's first point twice, the radius twice, angle zero).
+fn author_bends(data: &mut sdf::Data, p: &str, bends: &[BendRecord]) -> Result<(), Diagnostic> {
+    let mut ids = Vec::with_capacity(bends.len());
+    let mut kinds: Vec<&str> = Vec::with_capacity(bends.len());
+    let mut lines_a: Vec<[f64; 3]> = Vec::with_capacity(bends.len());
+    let mut lines_b: Vec<[f64; 3]> = Vec::with_capacity(bends.len());
+    let mut radii = Vec::with_capacity(bends.len());
+    let mut radii_b = Vec::with_capacity(bends.len());
+    let mut angles = Vec::with_capacity(bends.len());
+    for bend in bends {
+        ids.push(bend.operation_id.to_string());
+        kinds.push(bend.spec.kind());
+        let (a, b, radius, radius_b, angle) = match bend.spec {
+            beamcraft_model::command::BendSpec::Fold {
+                a_mm,
+                b_mm,
+                radius_mm,
+                angle_rad,
+            } => (a_mm, b_mm, radius_mm, radius_mm, angle_rad),
+            beamcraft_model::command::BendSpec::Roll {
+                a_mm,
+                b_mm,
+                radius_mm,
+                radius_b_mm,
+            } => (a_mm, b_mm, radius_mm, radius_b_mm.unwrap_or(radius_mm), 0.0),
+        };
+        lines_a.push(a);
+        lines_b.push(b);
+        radii.push(radius);
+        radii_b.push(radius_b);
+        angles.push(angle);
+    }
+    attr(
+        data,
+        p,
+        "steel:plate:bendOperationId",
+        "string[]",
+        sdf::Value::StringVec(ids),
+    )?;
+    attr(
+        data,
+        p,
+        "steel:plate:bendKind",
+        "token[]",
+        sdf::Value::token_vec(kinds),
+    )?;
+    attr(
+        data,
+        p,
+        "steel:plate:bendLineAMm",
+        "double3[]",
+        points(&lines_a),
+    )?;
+    attr(
+        data,
+        p,
+        "steel:plate:bendLineBMm",
+        "double3[]",
+        points(&lines_b),
+    )?;
+    attr(
+        data,
+        p,
+        "steel:plate:bendRadiusMm",
+        "double[]",
+        sdf::Value::DoubleVec(radii),
+    )?;
+    attr(
+        data,
+        p,
+        "steel:plate:bendRadiusBMm",
+        "double[]",
+        sdf::Value::DoubleVec(radii_b),
+    )?;
+    attr(
+        data,
+        p,
+        "steel:plate:bendAngleRad",
+        "double[]",
+        sdf::Value::DoubleVec(angles),
+    )?;
     Ok(())
 }

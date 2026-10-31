@@ -4,6 +4,7 @@
 //! Codeless U02 schema and isolated layer authoring for a trusted command engine.
 //! This is a library boundary, not an F04 command validator or acceptance ledger.
 
+pub mod construction;
 /// Persistent cut ordinal and retired-record identities.
 pub mod cut_history;
 mod derive;
@@ -23,8 +24,9 @@ pub use reference::{
 
 use crate::*;
 pub use beamcraft_model::command::{
-    CornerTreatment, CutRecord, HoleRecord, KeepSide, PlateCorner, PlateSide, SectionDepthPosition,
-    SectionPlacement, SectionPlanePosition,
+    BendRecord, BendSpec, CornerTreatment, CutRecord, HoleExtent, HoleRecord, KeepSide, MAX_BENDS,
+    MemberHoleRecord, PlateCorner, PlateSide, SectionDepthPosition, SectionPlacement,
+    SectionPlanePosition,
 };
 pub use beamcraft_model::definition::SectionProperties;
 pub use beamcraft_model::fastener::FastenerSpec;
@@ -48,7 +50,13 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:plate:cornerVertex=int[](optional);steel:plate:cornerKind=token[](optional,chamfer|round);",
     "steel:plate:cornerD1Mm=double[](optional);steel:plate:cornerD2Mm=double[](optional);steel:plate:cornerRadiusMm=double[](optional);",
     "all five steel:plate:corner attributes or none, equal lengths, one vertex at most once, sharp corners store nothing\n",
+    "steel:plate:bendOperationId=string[](optional,uuid7);steel:plate:bendKind=token[](optional,fold|roll);",
+    "steel:plate:bendLineAMm=double3[](optional);steel:plate:bendLineBMm=double3[](optional);",
+    "steel:plate:bendRadiusMm=double[](optional);steel:plate:bendRadiusBMm=double[](optional);steel:plate:bendAngleRad=double[](optional);",
+    "all seven steel:plate:bend attributes or none, equal lengths, at most 16 records, a fold states its radius twice and a cone roll its two radii\n",
     "steel:plate:holePointsMm=double3[](optional,z=0);steel:plate:holeVertexCounts=int[](optional,>=3 each);",
+    "steel:plate:form=token(lofted,optional);steel:plate:loftStartMm=double3[](lofted,3..=1024);steel:plate:loftEndMm=double3[](lofted,same vertex count);",
+    "all three loft attributes or none;an extruded plate stores none\n",
     "steel:cut:operationId=string[](optional,uuid7);steel:cut:ordinal=int[](optional,<=999);",
     "steel:cut:pointMm=double3[](optional);steel:cut:normal=double3[](optional,nonzero each);",
     "steel:cut:keep=token[](optional,positive|negative);all five or none,equal lengths,ascending ordinals\n",
@@ -58,6 +66,12 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:hole:kinds=token[](hole|polygon_cut);all five steel:hole attributes or none,",
     "ordinals are engine-assigned and never reused\n",
     "steel:hole:nextOrdinal=int(optional,0..1000);steel:hole:retiredOperationIds=string[](optional,sorted unique uuid7,<=1000)\n",
+    "steel:mhole:pointsMm=double3[](optional,z=0);steel:mhole:vertexCounts=int[](optional,>=3 each);",
+    "steel:mhole:operationIds=string[](uuid7 each);steel:mhole:ordinals=int[](strictly increasing);",
+    "steel:mhole:axisPointsMm=double3[](member frame);steel:mhole:axisDirections=double3[](unit each);",
+    "steel:mhole:extents=token[](through|range);steel:mhole:extentFromMm=double[];steel:mhole:extentToMm=double[];",
+    "all nine steel:mhole attributes or none, equal lengths, ordinals are engine-assigned and never reused (A04.2)\n",
+    "steel:mhole:nextOrdinal=int(optional,0..1000);steel:mhole:retiredOperationIds=string[](optional,sorted unique uuid7,<=1000)\n",
     "bim:axisPointsMm=double3[];steel:member:pathType=token(arc,optional);steel:member:rollRad=double(optional);\n",
     "steel:member:planePosition=token(left|centre|right);steel:member:planeOffsetMm=double;\n",
     "steel:member:depthPosition=token(front|centre|back);steel:member:depthOffsetMm=double;\n",
@@ -79,6 +93,9 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "bim:connects=rel(2 distinct ordered element targets of kind plate|beam|column, main part first;source connection)\n",
     "grid=/World/Grids/GRD_<uuid7-32>;bim:discipline=token(steel);bim:grid:u|v:mode=token(regular|drawn);expression=string;spanMm=double[];ids=string[];labels=string[];shapes=token[];pointsMm=double[];no authored Geometry or material\n",
     "level=element;bim:elementKind=level;kind=component;bim:elevationMm=double(finite,abs<=1e9);no material or Geometry;placement=identity\n",
+    "construction=/World/Construction/CNS_<uuid7-32>;bim:elementKind=construction;kind=component;bim:discipline=token(steel);",
+    "bim:construction:kind=token(point|line|circle|plane);bim:construction:aMm=double3;bim:construction:bMm=double3;bim:construction:radiusMm=double;",
+    "geometry in world mm;line ends distinct;circle axis nonzero radius>0;plane normal nonzero;no material or Geometry;placement=identity\n",
     "bim:level=rel(0..1 element target of kind level;source plate|beam|column)\n",
     "numbering=approved mark of a plate|beam|column|assembly (A09);steel:numbering:series=string(<=16 of A-Z a-z 0-9 _ -);",
     "steel:numbering:number=int(0..=2147483647);steel:numbering:basis=string(printable ASCII,<=512);",
@@ -129,7 +146,7 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "bim:reference:correctionSourceDigest=string(sha256);xformOp:rotateX:bimUpAxis=double(degrees,Y up only);",
     "xformOp:scale:bimUnits=double3(metersPerUnit*1000);xformOpOrder=token[](rotateX,scale;empty without correction)\n",
     "reference/Correction/Source=def without type;references=@external/<sha256>.<usda|usdc>@</defaultPrim>;nothing else owned at or below\n",
-    "changes=Create|Label|Contour|Thickness|ThicknessSide|Corners|Axis|Roll|Profile|Material|Placement|Mesh|AttachReference|ReferenceUnits|PartOf|MainPart|Level|Mark|Cuts|HoleRecords|Delete;",
+    "changes=Create|Label|Contour|Thickness|ThicknessSide|Corners|Bends|Axis|Roll|Profile|Material|Placement|Mesh|AttachReference|ReferenceUnits|PartOf|MainPart|Level|Mark|Cuts|HoleRecords|Delete;",
     "opinion=Absent|Block|Value|Remove;relationship=Targets|Empty|Remove\n",
     "snapshot=Prim(path,element_id,type_name,active,properties,relationships,sources);",
     "property=(name,type_name,optional-value);relationship=(name,ordered-targets)\n",
@@ -260,6 +277,9 @@ pub enum Shape {
         /// Corner treatments of authored contour vertices (A12.2); empty means every corner
         /// sharp and stores no attribute. The contour keeps its sharp points.
         corners: Vec<PlateCorner>,
+        /// The bend operation records (A10); empty means a flat plate. The contour of a bent
+        /// plate is its developed mid-surface outline.
+        bends: Vec<BendRecord>,
         /// Through-hole polygons in plate-local XY (`z` is zero), each at least three points,
         /// stored as one flat point array plus the vertex counts. Empty means a solid plate.
         holes: Vec<Vec<[f64; 3]>>,
@@ -292,6 +312,17 @@ pub enum Shape {
         /// order. Empty means an uncut member.
         cuts: Vec<CutRecord>,
     },
+    /// A11 lofted plate: a plate between two face contours that need not be coplanar, stored
+    /// as two element-local point arrays of the same vertex count. The sheet thickness is the
+    /// distance between the contours themselves, so there is no thickness, hole, cut or corner
+    /// input; the kernel certifies the closed loft and refuses a twisted or self-intersecting
+    /// correspondence.
+    LoftedPlate {
+        /// Ordered start face contour, at most 1024 points and subject to tighter stage budgets.
+        start_mm: Vec<[f64; 3]>,
+        /// Ordered end face contour, the same vertex count as the start contour.
+        end_mm: Vec<[f64; 3]>,
+    },
     /// P11 instance: shared inputs are read from a canonical part; only metadata and pose are local.
     Instance {
         /// Same part kind as the canonical definition.
@@ -312,6 +343,9 @@ pub enum Shape {
     Bolt(Bolt),
     /// T01 grid, with no authored engineering body.
     Grid(beamcraft_model::grid::Grid),
+    /// T02 construction object: a helper point, line, circle or plane with no engineering body,
+    /// authored in world millimetres. Its placement must be the identity.
+    Construction(beamcraft_model::construction::ConstructionObject),
     /// D2 level (a storey): an element of kind `level` with a stored elevation, no material and no
     /// derived body. Plates, beams and columns are assigned to it by [`Change::Level`]. Its
     /// placement must be the identity: the elevation is a value, never a pose.
@@ -326,11 +360,13 @@ impl Shape {
     pub(crate) fn cuts(&self) -> &[CutRecord] {
         match self {
             Self::Plate { cuts, .. } | Self::Member { cuts, .. } => cuts,
-            Self::Instance { .. }
+            Self::LoftedPlate { .. }
+            | Self::Instance { .. }
             | Self::Assembly
             | Self::Weld(_)
             | Self::Bolt(_)
             | Self::Grid(_)
+            | Self::Construction(_)
             | Self::Level { .. } => &[],
         }
     }
@@ -561,6 +597,15 @@ pub enum Change {
         /// Complete sparse replacement; empty clears every treatment.
         corners: Vec<PlateCorner>,
     },
+    /// Replace the owned bend operation records of a plate (A10) as a whole: seven parallel
+    /// attributes, or their removal for an empty list. Engineering validity is a host
+    /// prerequisite; the candidate re-validates the stored form.
+    Bends {
+        /// Canonical plate identity.
+        id: String,
+        /// The records in creation order.
+        bends: Vec<BendRecord>,
+    },
     /// Replace the thickness side of a plate (A12.1). A plate always has a side (absence is the
     /// `top` default), so the change authors the exact token, `top` included.
     ThicknessSide {
@@ -678,6 +723,16 @@ pub enum Change {
         /// Every record of the plate, ordered by ordinal; at least one.
         records: Vec<HoleRecord>,
     },
+    /// Replace the complete set of member-hole operation records of a beam or column (A04.2):
+    /// the `steel:mhole:*` attributes, replaced as a whole and always together. The engine has
+    /// already replayed every record against the base shape and certified the body; this writes
+    /// the authoritative member-frame records with their operation ids and ordinals.
+    MemberHoles {
+        /// Full target UUIDv7 of the member.
+        id: String,
+        /// Every record of the member, ordered by ordinal; at least one.
+        records: Vec<MemberHoleRecord>,
+    },
     /// Define one user attribute in the schema scope (I04): the complete definition prim
     /// `/World/Definitions/Attributes/<name>`. The engine has refused a duplicate name.
     AttrDefine {
@@ -713,8 +768,10 @@ impl Change {
             Self::Contour { id, .. } => (id, "steel:plate:contourPointsMm"),
             Self::Thickness { id, .. } => (id, "steel:plate:thicknessMm"),
             Self::Corners { id, .. } => (id, "steel:plate:cornerVertex"),
+            Self::Bends { id, .. } => (id, "steel:plate:bendOperationId"),
             Self::ThicknessSide { id, .. } => (id, "steel:plate:thicknessSide"),
             Self::Cuts { id, .. } => (id, "steel:cut"),
+            Self::MemberHoles { id, .. } => (id, "steel:mhole"),
             Self::Axis { id, .. } => (id, "bim:axisPointsMm"),
             Self::Roll { id, .. } => (id, "steel:member:rollRad"),
             Self::Profile { id, .. } => (id, "bim:profile"),
@@ -1128,9 +1185,11 @@ fn shape_category(shape: &Shape) -> ElementCategory {
         Shape::Weld(_) | Shape::Bolt(_) => ElementCategory::Connection,
         Shape::Level { .. } => ElementCategory::Level,
         Shape::Grid(_) => ElementCategory::Grid,
-        Shape::Plate { .. } | Shape::Member { .. } | Shape::Instance { .. } => {
-            ElementCategory::Part
-        }
+        Shape::Construction(_) => ElementCategory::Construction,
+        Shape::Plate { .. }
+        | Shape::Member { .. }
+        | Shape::LoftedPlate { .. }
+        | Shape::Instance { .. } => ElementCategory::Part,
     }
 }
 fn change_path(id: &str, input: &Prepare, prims: &[Prim]) -> Result<String, Diagnostic> {

@@ -19,7 +19,8 @@ use crate::scene::SceneElement;
 use crate::solid::SolidMesh;
 use beamcraft_geom::Translation3;
 use beamcraft_model::command::{
-    CommandError, CornerTreatment, CutRecord, KeepSide, MemberKind, PlateSide, label_is_valid,
+    BendSpec, CommandError, CornerTreatment, CutRecord, HoleExtent, KeepSide, MemberKind,
+    PlateSide, label_is_valid,
 };
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
@@ -228,6 +229,7 @@ fn plate_key(plate: &AuthoredPlate) -> Vec<u8> {
         holes_mm,
         hole_records,
         cuts,
+        bends,
     } = plate;
     let mut key = Vec::with_capacity(160);
     key.extend_from_slice(b"BeamCraft/BodyCache/Plate/v4\0");
@@ -265,6 +267,41 @@ fn plate_key(plate: &AuthoredPlate) -> Vec<u8> {
         push_points(&mut key, &record.polygon_mm);
     }
     push_cut(&mut key, cuts);
+    // The bends change the body entirely: the plate evaluates as its bent loft (A10).
+    key.extend_from_slice(b"bends\0");
+    push_len(&mut key, bends.len());
+    for bend in bends {
+        key.push(match bend.spec {
+            BendSpec::Fold { .. } => 1,
+            BendSpec::Roll { .. } => 2,
+        });
+        match bend.spec {
+            BendSpec::Fold {
+                a_mm,
+                b_mm,
+                radius_mm,
+                angle_rad,
+            } => {
+                for value in a_mm.iter().chain(b_mm.iter()) {
+                    push_f64(&mut key, *value);
+                }
+                push_f64(&mut key, radius_mm);
+                push_f64(&mut key, angle_rad);
+            }
+            BendSpec::Roll {
+                a_mm,
+                b_mm,
+                radius_mm,
+                radius_b_mm,
+            } => {
+                for value in a_mm.iter().chain(b_mm.iter()) {
+                    push_f64(&mut key, *value);
+                }
+                push_f64(&mut key, radius_mm);
+                push_f64(&mut key, radius_b_mm.unwrap_or(radius_mm));
+            }
+        }
+    }
     key
 }
 
@@ -286,9 +323,10 @@ fn member_key(member: &AuthoredMember, profile: &ProfileInfo) -> Vec<u8> {
         placement: _,
         material: _,
         cuts,
+        hole_records,
     } = member;
     let mut key = Vec::with_capacity(224);
-    key.extend_from_slice(b"BeamCraft/BodyCache/Member/v4\0");
+    key.extend_from_slice(b"BeamCraft/BodyCache/Member/v5\0");
     key.push(u8::from(*curved));
     push_points(&mut key, axis_points_mm);
     push_option(&mut key, *roll_rad);
@@ -309,6 +347,24 @@ fn member_key(member: &AuthoredMember, profile: &ProfileInfo) -> Vec<u8> {
         }
     }
     push_cut(&mut key, cuts);
+    // A member hole's body is a function of its geometry alone: the axis point and direction
+    // and the extent kind with its range, plus the authoritative polygon. Ids and ordinals are
+    // identity, not geometry.
+    push_len(&mut key, hole_records.len());
+    for record in hole_records {
+        for value in record.axis_point_mm.iter().chain(&record.axis_direction) {
+            push_f64(&mut key, *value);
+        }
+        match record.extent {
+            HoleExtent::Through => key.push(0),
+            HoleExtent::Range { from_mm, to_mm } => {
+                key.push(1);
+                push_f64(&mut key, from_mm);
+                push_f64(&mut key, to_mm);
+            }
+        }
+        push_points(&mut key, &record.polygon_mm);
+    }
     match profile {
         ProfileInfo::Rectangle {
             width_mm,
@@ -580,6 +636,7 @@ mod tests {
             holes_mm: Vec::new(),
             hole_records: Vec::new(),
             cuts: Vec::new(),
+            bends: Vec::new(),
         }
     }
 
@@ -611,6 +668,7 @@ mod tests {
             placement: Placement::IDENTITY,
             material: None,
             cuts: Vec::new(),
+            hole_records: Vec::new(),
         };
         let members = super::evaluate_committed_members(
             &[member(8, MemberKind::Column), member(3, MemberKind::Beam)],
@@ -671,6 +729,7 @@ mod tests {
             },
             material: None,
             cuts: Vec::new(),
+            hole_records: Vec::new(),
         };
         let records =
             super::evaluate_committed_members(&[member.clone()], &profiles, &no_materials).unwrap();
@@ -917,6 +976,7 @@ mod tests {
             placement: Placement::IDENTITY,
             material: None,
             cuts: Vec::new(),
+            hole_records: Vec::new(),
         };
         let beam = member(1, MemberKind::Beam);
         let mut other = member(2, MemberKind::Column);

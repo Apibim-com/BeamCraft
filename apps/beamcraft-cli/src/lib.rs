@@ -5,12 +5,15 @@
 //! shared by the `beamcraft` binary and its tests. Nothing depends on this package; it is the
 //! application layer.
 
+pub mod array;
 pub mod assembly;
 pub mod attribute;
+pub mod bend;
 pub mod bolt;
 pub mod bom;
 pub mod changeset;
 pub mod command_evidence;
+pub mod construction;
 pub mod coordinator;
 pub mod copy;
 pub mod cut;
@@ -19,12 +22,15 @@ pub mod delete;
 pub mod drawing;
 pub mod edit;
 pub mod export;
+/// Shared rule parsing and the admitted head dataset of element filters (V14).
+pub mod filters;
 pub mod grid;
 pub mod history;
 pub mod history_compact;
 pub mod hole;
 pub mod level;
 pub mod library;
+pub mod loft;
 pub mod member;
 pub mod numbering;
 pub mod numbering_approval;
