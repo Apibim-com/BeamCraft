@@ -22,10 +22,12 @@ mod bolt_cmd;
 mod bom_cmd;
 mod changeset_cmd;
 mod command_context;
+mod construction_cmd;
 mod coordinator_cmd;
 mod drawing_cmd;
 mod export_cmd;
 mod fastener_cmd;
+mod filters_cmd;
 mod grid_cmd;
 mod history_cmd;
 mod level_cmd;
@@ -89,6 +91,8 @@ fn main() -> std::process::ExitCode {
         Some(Route::Drawing) => drawing_cmd::execute(&args),
         Some(Route::WorkPlane) => work_plane_cmd::execute(&args),
         Some(Route::Pick) => pick_cmd::execute(&args),
+        Some(Route::Filters) => filters_cmd::execute(&args),
+        Some(Route::Construction) => construction_cmd::execute(&args),
         Some(Route::Weld) => weld_cmd::execute(&args),
         Some(Route::Bolt) => bolt_cmd::execute(&args),
         Some(Route::Bom) => bom_cmd::execute(&args),
