@@ -7,7 +7,7 @@
 //! regardless of geometry: identity, label, finiteness, caps and the rigid placement. Contour
 //! and thickness *geometry* (floor, winding, supported shapes) is evaluated by the engine with
 //! the kernel. No JSON, envelope or canonical-byte form lives here yet: F04 sections 3 and 6
-//! (`canonical`) remain planned, and [`CreatePlate::content_fingerprint`] is a
+//! (`canonical`) remain planned, and [`crate::steel::command::CreatePlate::content_fingerprint`] is a
 //! deterministic digest of the typed arguments, not RFC 8785 canonical bytes.
 
 pub use crate::construction::CreateConstructionObject;
