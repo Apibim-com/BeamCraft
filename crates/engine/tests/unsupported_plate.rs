@@ -9,9 +9,10 @@ use beamcraft_engine::plate_draft::{
     evaluate_committed_drafts,
 };
 use beamcraft_engine::transaction::PriorOp;
-use beamcraft_model::command::{CreatePlate, Placement};
+use beamcraft_model::command::Placement;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId};
+use beamcraft_model::steel::command::CreatePlate;
 
 fn command(s: f64) -> CreatePlate {
     CreatePlate {

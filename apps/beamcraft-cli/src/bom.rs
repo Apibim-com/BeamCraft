@@ -16,8 +16,8 @@ use beamcraft_engine::element::ElementKind;
 use beamcraft_engine::numbering::GroupKind;
 use beamcraft_engine::numbering_approval::StoredMark;
 use beamcraft_engine::query::committed::{MemberRecord, PlateRecord};
-use beamcraft_model::command::MemberKind;
 use beamcraft_model::digest::ContentDigest;
+use beamcraft_model::steel::command::MemberKind;
 use session::Refusal;
 
 type Run<T> = Result<T, Refusal>;

@@ -279,9 +279,9 @@ fn placement_after(placement: &Placement, patch: &ElementPatch) -> Result<Placem
 #[cfg(test)]
 mod tests {
     use super::*;
-    use beamcraft_model::command::MemberKind;
     use beamcraft_model::digest::Sha256;
     use beamcraft_model::id::ElementId;
+    use beamcraft_model::steel::command::MemberKind;
 
     fn plate() -> AuthoredPlate {
         AuthoredPlate {
@@ -518,7 +518,7 @@ mod tests {
 
     #[test]
     fn a_thickness_side_patch_is_a_shape_change_and_a_member_refuses_it() {
-        use beamcraft_model::command::PlateSide;
+        use beamcraft_model::steel::command::PlateSide;
         let side = ElementPatch {
             thickness_side: Some(PlateSide::Bottom),
             ..ElementPatch::default()
@@ -685,7 +685,8 @@ mod tests {
 
     #[test]
     fn a_mirror_patch_reencodes_a_plate_and_rebuilds_the_body() {
-        use beamcraft_model::command::{ElementMirror, PlateSide};
+        use beamcraft_model::command::ElementMirror;
+        use beamcraft_model::steel::command::PlateSide;
         let patch = ElementPatch {
             mirror: Some(ElementMirror {
                 point_mm: [0.0; 3],
@@ -742,7 +743,7 @@ mod tests {
     }
     #[test]
     fn a_contour_patch_replaces_the_whole_contour_and_validates_the_pair() {
-        use beamcraft_model::command::{CornerTreatment, PlateCorner};
+        use beamcraft_model::steel::command::{CornerTreatment, PlateCorner};
         let before = plate();
         let moved = ElementPatch {
             contour_points_mm: Some(vec![
@@ -825,7 +826,7 @@ mod tests {
 
     #[test]
     fn corner_replacement_is_a_shape_patch_and_preserves_the_sharp_contour() {
-        use beamcraft_model::command::{CornerTreatment, PlateCorner};
+        use beamcraft_model::steel::command::{CornerTreatment, PlateCorner};
         let before = plate();
         let corners = vec![PlateCorner {
             vertex: 0,

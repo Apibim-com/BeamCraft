@@ -31,13 +31,13 @@
 use crate::footprint::Footprint;
 use beamcraft_geom::tolerance::ABSOLUTE_FLOOR_MM;
 use beamcraft_geom::tolerance::DIMENSION_CAP_MM;
-use beamcraft_model::command::{
-    BoltGroupInputs, BoltLength, BoltSpacing, CommandError, CreateBolt, CreateBoltGroup,
-    UpdateBoltGroup,
-};
+use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
-use beamcraft_model::fastener::{FastenerKind, HoleMode};
 use beamcraft_model::id::ElementId;
+use beamcraft_model::steel::command::{
+    BoltGroupInputs, BoltLength, BoltSpacing, CreateBolt, CreateBoltGroup, UpdateBoltGroup,
+};
+use beamcraft_model::steel::fastener::{FastenerKind, HoleMode};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Conservative world bounds of one part: componentwise minimum, then maximum, both inclusive.
@@ -483,7 +483,7 @@ pub fn generate_holes(
             ];
             holes.push(GeneratedHole {
                 part: *part,
-                polygon_mm: beamcraft_model::command::HoleSpec::Round {
+                polygon_mm: beamcraft_model::steel::command::HoleSpec::Round {
                     centre_mm: centre,
                     diameter_mm: diameter,
                 }
@@ -584,7 +584,7 @@ impl crate::weld::Parts {
 mod tests {
     use super::*;
     use crate::weld::PartKind;
-    use beamcraft_model::command::BoltSpec;
+    use beamcraft_model::steel::command::BoltSpec;
 
     fn id(n: u32) -> ElementId {
         ElementId::parse(&format!("019a7bf0-0000-7000-8000-0000005{n:05}")).unwrap()
@@ -725,19 +725,19 @@ mod tests {
 
     /// A washered M16 bolt definition with tight lengths, so the auto boundary is exact.
     fn group_inputs() -> BoltGroupInputs {
-        let fastener = beamcraft_model::fastener::FastenerSpec {
+        let fastener = beamcraft_model::steel::fastener::FastenerSpec {
             designation: Some("M16".into()),
             standard: None,
             grade: None,
             display_name: None,
             kind: FastenerKind::Bolt,
-            head_kind: beamcraft_model::fastener::HeadKind::Hex,
+            head_kind: beamcraft_model::steel::fastener::HeadKind::Hex,
             nominal_diameter_mm: 16.0,
             head_across_flats_mm: 24.0,
             head_height_mm: 10.0,
             nut_across_flats_mm: Some(24.0),
             nut_height_mm: Some(14.8),
-            washer: Some(beamcraft_model::fastener::WasherSpec {
+            washer: Some(beamcraft_model::steel::fastener::WasherSpec {
                 outer_diameter_mm: 30.0,
                 inner_diameter_mm: 17.0,
                 thickness_mm: 3.0,
@@ -747,7 +747,7 @@ mod tests {
             thread_protrusion_mm: 5.0,
             washer_under_head: true,
             washer_under_nut: true,
-            hole_mode: beamcraft_model::fastener::HoleMode::Generate,
+            hole_mode: beamcraft_model::steel::fastener::HoleMode::Generate,
             mass_each_kg: None,
         };
         fastener.validate().unwrap();

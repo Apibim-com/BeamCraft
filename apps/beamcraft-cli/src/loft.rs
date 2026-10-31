@@ -44,7 +44,7 @@ pub struct LoftRequest {
     /// Workspace of a store that has no revision yet. Ignored otherwise.
     pub workspace: WorkspaceId,
     /// The command.
-    pub command: beamcraft_model::command::CreateLoftedPlate,
+    pub command: beamcraft_model::steel::command::CreateLoftedPlate,
 }
 
 /// Result of `create_lofted_plate`.

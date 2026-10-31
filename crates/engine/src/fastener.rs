@@ -15,8 +15,8 @@
 use beamcraft_kernel::fastener::FastenerFailure;
 use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
-use beamcraft_model::fastener::FastenerSpec;
 use beamcraft_model::limits::{MAX_BOLT_GROUP_SIZE, MAX_DENSITY_KG_M3};
+use beamcraft_model::steel::fastener::FastenerSpec;
 
 pub use beamcraft_kernel::fastener::{ComponentKind, FastenerBuild, FastenerSolid};
 
@@ -203,7 +203,7 @@ pub fn quantities(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use beamcraft_model::fastener::{HeadKind, HoleMode, WasherSpec};
+    use beamcraft_model::steel::fastener::{HeadKind, HoleMode, WasherSpec};
 
     /// The washered M16 bolt of the kernel suite, mass-declared variant included.
     fn spec(mass_each_kg: Option<f64>) -> FastenerSpec {
@@ -212,7 +212,7 @@ mod tests {
             standard: None,
             grade: None,
             display_name: None,
-            kind: beamcraft_model::fastener::FastenerKind::Bolt,
+            kind: beamcraft_model::steel::fastener::FastenerKind::Bolt,
             head_kind: HeadKind::Hex,
             nominal_diameter_mm: 16.0,
             head_across_flats_mm: 24.0,

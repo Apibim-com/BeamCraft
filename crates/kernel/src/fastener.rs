@@ -20,7 +20,7 @@ use crate::profile::{
 use beamcraft_geom::tolerance::{ABSOLUTE_FLOOR_MM, DIMENSION_CAP_MM};
 use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
-use beamcraft_model::fastener::{FastenerKind, FastenerSpec};
+use beamcraft_model::steel::fastener::{FastenerKind, FastenerSpec};
 
 /// The chord rule of the round fastener parts (F06 A-2 D-2): at most 0.05 mm deviation and a
 /// vertex count that is a multiple of four.
@@ -316,7 +316,7 @@ pub fn build(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use beamcraft_model::fastener::{HeadKind, HoleMode, WasherSpec};
+    use beamcraft_model::steel::fastener::{HeadKind, HoleMode, WasherSpec};
     use core::f64::consts::TAU;
 
     /// The test bolt of the model crate's own suite: a washered M16 bolt.

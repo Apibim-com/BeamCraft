@@ -18,13 +18,13 @@ use crate::member::{
 use crate::scene::SceneElement;
 use crate::solid::SolidMesh;
 use beamcraft_geom::Translation3;
-use beamcraft_model::command::{
-    BendSpec, CommandError, CornerTreatment, CutRecord, HoleExtent, KeepSide, MemberKind,
-    PlateSide, label_is_valid,
-};
+use beamcraft_model::command::{CommandError, label_is_valid};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
-use beamcraft_model::section::{CustomSection, SectionShape};
+use beamcraft_model::steel::command::{
+    BendSpec, CornerTreatment, CutRecord, HoleExtent, KeepSide, MemberKind, PlateSide,
+};
+use beamcraft_model::steel::section::{CustomSection, SectionShape};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Bytes of keys and bodies that a [`BodyCache`] holds at most: 32 MiB.
@@ -950,7 +950,7 @@ mod tests {
 
     #[test]
     fn members_share_a_body_by_shape_inputs_and_profile_content() {
-        use beamcraft_model::section::{ParametricSection, SectionFamily};
+        use beamcraft_model::steel::section::{ParametricSection, SectionFamily};
         let rectangle = |width_mm: f64| ProfileInfo::Rectangle {
             width_mm,
             height_mm: 300.0,

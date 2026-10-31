@@ -63,14 +63,14 @@ use beamcraft_layer_engine::authored::{
 };
 use beamcraft_layer_engine::index::Completeness;
 use beamcraft_layer_engine::{Asset, Control, Opened, Prim, Reader, Value};
-use beamcraft_model::command::{
+use beamcraft_model::digest::{ContentDigest, Sha256};
+use beamcraft_model::error::ErrorCode;
+use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use beamcraft_model::steel::command::{
     BendRecord, BendSpec, CornerTreatment, CreatePlate, CutRecord, HoleExtent, HoleKind,
     HoleRecord, KeepSide, MAX_BENDS, MemberHoleRecord, MemberKind, PlateCorner, PlateSide,
     SectionDepthPosition, SectionPlacement, SectionPlanePosition,
 };
-use beamcraft_model::digest::{ContentDigest, Sha256};
-use beamcraft_model::error::ErrorCode;
-use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use session::Refusal;
 use session::pipeline::{
     AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, base_of, control, digest_of, host_uuid,
@@ -332,7 +332,7 @@ fn decode_hole_records(prim: &Prim) -> Result<Vec<HoleRecord>, Refusal> {
         prim,
         "steel:hole:pointsMm",
         "steel:hole:vertexCounts",
-        beamcraft_model::command::MAX_HOLES,
+        beamcraft_model::steel::command::MAX_HOLES,
         "committed plate has inconsistent hole record attributes",
     )?;
     let ids = property(prim, "steel:hole:operationIds")
@@ -794,7 +794,7 @@ fn decode_member_hole_records(prim: &Prim) -> Result<Vec<MemberHoleRecord>, Refu
         prim,
         FIELDS[0],
         FIELDS[1],
-        beamcraft_model::command::MAX_HOLES,
+        beamcraft_model::steel::command::MAX_HOLES,
         "committed member has inconsistent hole record attributes",
     )?;
     let ids: Vec<String> = match property(prim, FIELDS[2]) {
@@ -883,7 +883,7 @@ fn decode_holes(prim: &Prim) -> Result<Vec<Vec<[f64; 2]>>, Refusal> {
         prim,
         "steel:plate:holePointsMm",
         "steel:plate:holeVertexCounts",
-        beamcraft_model::command::MAX_HOLES,
+        beamcraft_model::steel::command::MAX_HOLES,
         "committed plate has inconsistent hole attributes",
     )
 }
