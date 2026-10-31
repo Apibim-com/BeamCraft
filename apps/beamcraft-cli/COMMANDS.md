@@ -567,6 +567,15 @@ rebase-workspace --store ROOT --workspace-dir DIR --op-id UUID --expected-head U
     --expected-draft UUID [--actor-id UUID]
 ```
 
+### compensate-workspace
+
+write.
+
+```text
+compensate-workspace --store ROOT --workspace-dir DIR --target-revision UUID --op-id UUID
+    --expected-head UUID [--actor-id UUID]
+```
+
 ## reference
 
 ### attach-reference
@@ -701,14 +710,32 @@ welds --store ROOT
 
 ## bolt
 
-### create-bolt
+### create-bolt-group
 
 write.
 
 ```text
-create-bolt --store ROOT --name TEXT --main UUID --secondary UUID --origin X,Y,Z --direction X,Y,Z
-    --count N --pitch MM --diameter MM [--new-id UUID] [--op-id UUID] [--revision-id UUID]
-    [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
+create-bolt-group --store ROOT --name TEXT --parts UUID,UUID,... --fastener-library FILE
+    --designation TEXT --point1 X,Y,Z --point2 X,Y,Z --plane-normal X,Y,Z --offset-start MM
+    [--rotation-deg DEG] [--on-plane MM] [--depth MM] [--spacings MM,MM,...] [--count N]
+    [--pitch MM] [--offset-end MM] [--washer-under-head true|false]
+    [--washer-under-nut true|false] [--length-mode auto|fixed] [--length MM]
+    [--hole-mode generate|none] [--hole-clearance MM] [--new-id UUID] [--op-id UUID]
+    [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
+```
+
+### update-bolt-group
+
+write.
+
+```text
+update-bolt-group --store ROOT --target UUID [--name TEXT] [--parts UUID,UUID,...]
+    [--fastener-library FILE] [--designation TEXT] [--point1 X,Y,Z] [--point2 X,Y,Z]
+    [--plane-normal X,Y,Z] [--rotation-deg DEG] [--on-plane MM] [--depth MM] [--offset-start MM]
+    [--spacings MM,MM,...] [--count N] [--pitch MM] [--offset-end MM]
+    [--washer-under-head true|false] [--washer-under-nut true|false] [--length-mode auto|fixed]
+    [--length MM] [--hole-mode generate|none] [--hole-clearance MM] [--repin true] [--op-id UUID]
+    [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
 ```
 
 ### bolts
@@ -1021,6 +1048,15 @@ publish-changeset --address IP:PORT --token-file FILE --workspace NAME --changes
     --expected-head UUID
 ```
 
+### coordinator-compensate
+
+write.
+
+```text
+coordinator-compensate --address IP:PORT --token-file FILE --workspace NAME --op-id UUID
+    --target-revision UUID --expected-head UUID
+```
+
 ### coordinator-rebase
 
 write.
@@ -1036,6 +1072,64 @@ read.
 
 ```text
 inspect-coordinator-head --address IP:PORT --token-file FILE
+```
+
+## views
+
+### list-views
+
+read.
+
+```text
+list-views --file FILE [--store ROOT]
+```
+
+### save-view
+
+write.
+
+```text
+save-view --file FILE --name TEXT [--store ROOT] [--target X,Y,Z] [--yaw RAD] [--pitch RAD]
+    [--distance MM] [--ortho true|false] [--work-area MM,MM,MM,MM,MM,MM] [--plane-grid SELECTOR]
+    [--plane-line LABEL] [--plane-reverse true|false] [--plane-level true|false] [--from X,Y,Z]
+    [--to X,Y,Z] [--centre X,Y,Z]
+```
+
+### remove-view
+
+write.
+
+```text
+remove-view --file FILE --name TEXT
+```
+
+### apply-view
+
+read.
+
+```text
+apply-view --file FILE --name TEXT
+```
+
+## annotation
+
+### annotation-create
+
+write.
+
+```text
+annotation-create --store ROOT --name TEXT --kind dimension|mark|leader --new-id UUID
+    [--from FEATURE_ID] [--to FEATURE_ID] [--anchor FEATURE_ID] [--attribute TEXT] [--text TEXT]
+    [--end X,Y,Z] [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID]
+    [--workspace-id UUID]
+```
+
+### annotation-list
+
+read.
+
+```text
+annotation-list --store ROOT
 ```
 
 ## history
@@ -1194,6 +1288,16 @@ write.
 ```text
 edit-views --document-dir DIR --expected-head UUID --op-id UUID --revision-id UUID --actor-id UUID
     --placed-view SPEC
+```
+
+### edit-sheet
+
+write.
+
+```text
+edit-sheet --document-dir DIR --expected-head UUID --op-id UUID --revision-id UUID --actor-id UUID
+    [--sheet-size SIZE] [--sheet-frame true|false] [--sheet-project TEXT] [--sheet-author TEXT]
+    [--sheet-remove true]
 ```
 
 ### publish-drawing

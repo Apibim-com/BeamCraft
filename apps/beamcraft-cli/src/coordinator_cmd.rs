@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! C02 headless commands: `serve-coordinator` starts a local coordinator explicitly (nothing
-//! starts it otherwise), `publish-changeset`, `coordinator-rebase` and
+//! starts it otherwise), `publish-changeset`, `coordinator-compensate`, `coordinator-rebase` and
 //! `inspect-coordinator-head` are its clients.
 //!
 //! `serve-coordinator` prints one `listening` JSON line with the bound loopback address as soon
@@ -117,6 +117,14 @@ fn run(args: &[OsString]) -> Run<Json> {
             "--changeset",
             "--expected-head",
         ],
+        "coordinator-compensate" => &[
+            "--address",
+            "--token-file",
+            "--workspace",
+            "--op-id",
+            "--target-revision",
+            "--expected-head",
+        ],
         "coordinator-rebase" => &[
             "--address",
             "--token-file",
@@ -209,6 +217,29 @@ fn run(args: &[OsString]) -> Run<Json> {
     )?))?;
     if *command == "inspect-coordinator-head" {
         return Ok(call(address, &token, "head", [])?);
+    }
+    if *command == "coordinator-compensate" {
+        let fields = [
+            (
+                "workspace",
+                required("--workspace", "--workspace is required")?,
+            ),
+            ("op_id", required("--op-id", "--op-id is required")?),
+            (
+                "target_revision",
+                required("--target-revision", "--target-revision is required")?,
+            ),
+            (
+                "expected_head",
+                required("--expected-head", "--expected-head is required")?,
+            ),
+        ];
+        return Ok(call(
+            address,
+            &token,
+            "compensate",
+            fields.map(|(k, v)| (k.to_owned(), Json::text(v))),
+        )?);
     }
     if *command == "coordinator-rebase" {
         let fields = [
