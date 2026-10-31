@@ -32,7 +32,7 @@
 //! in this process (no LEW-03 containment), as for every other command.
 
 use crate::definition::{DefinitionRecord, field};
-use crate::plate::{PlateError, decode_polygon, decode_polygons, digest_of, number, text};
+use crate::plate::{decode_polygon, decode_polygons, digest_of, number, text};
 use crate::source_file::read_file;
 use beamcraft_layer_engine::{Prim, Reader, Value};
 use beamcraft_model::command::{CommandError, label_is_valid};
@@ -44,6 +44,7 @@ use beamcraft_model::reference::check_source_path;
 use beamcraft_model::section::{
     CustomSection, MAX_CUSTOM_CAVITIES, ParametricSection, SectionFamily, SectionShape,
 };
+use session::Refusal;
 use session::environment::{EnvironmentInfo, MAX_ENVIRONMENT_BYTES, parse_environment};
 use session::foreign;
 use std::collections::{BTreeMap, BTreeSet};
@@ -119,7 +120,7 @@ pub struct Library {
 impl Library {
     /// The entry with exactly this designation. An unknown designation is `NOT_FOUND`, never a
     /// near match; a designation whose entry was refused reports that refusal instead.
-    pub fn entry(&self, designation: &str) -> Result<&LibraryEntry, PlateError> {
+    pub fn entry(&self, designation: &str) -> Result<&LibraryEntry, Refusal> {
         if let Some(entry) = self.entries.iter().find(|e| e.designation == designation) {
             return Ok(entry);
         }
@@ -128,13 +129,13 @@ impl Library {
             .iter()
             .find(|r| r.designation.as_deref() == Some(designation))
         {
-            return Err(PlateError {
+            return Err(Refusal {
                 rule_id: None,
                 code: refused.code,
                 message: refused.message,
             });
         }
-        Err(PlateError {
+        Err(Refusal {
             rule_id: None,
             code: ErrorCode::NotFound,
             message: "the designation is not in the library",
@@ -142,16 +143,16 @@ impl Library {
     }
 }
 
-fn refuse(code: ErrorCode, message: &'static str) -> PlateError {
-    PlateError::new(code, message)
+fn refuse(code: ErrorCode, message: &'static str) -> Refusal {
+    Refusal::new(code, message)
 }
 
-fn invalid(message: &'static str) -> PlateError {
+fn invalid(message: &'static str) -> Refusal {
     refuse(ErrorCode::InvalidArgument, message)
 }
 
 /// A library is not a store: damaged content is the caller's bad input, not an integrity error.
-fn as_input(error: PlateError) -> PlateError {
+fn as_input(error: Refusal) -> Refusal {
     if error.code == ErrorCode::IntegrityError {
         invalid(error.message)
     } else {
@@ -159,7 +160,7 @@ fn as_input(error: PlateError) -> PlateError {
     }
 }
 
-fn io_error(code: ErrorCode) -> PlateError {
+fn io_error(code: ErrorCode) -> Refusal {
     match code {
         ErrorCode::NotFound => refuse(code, "the library file could not be opened"),
         ErrorCode::LimitExceeded => refuse(code, "the library file is larger than 8 MiB"),
@@ -170,7 +171,7 @@ fn io_error(code: ErrorCode) -> PlateError {
     }
 }
 
-fn label(value: Option<&Value>, message: &'static str) -> Result<Option<String>, PlateError> {
+fn label(value: Option<&Value>, message: &'static str) -> Result<Option<String>, Refusal> {
     match value {
         None => Ok(None),
         Some(Value::Text(text)) if label_is_valid(text) => Ok(Some(text.clone())),
@@ -183,7 +184,7 @@ fn read_info(
     digest: ContentDigest,
     bytes: u64,
     binary: bool,
-) -> Result<LibraryInfo, PlateError> {
+) -> Result<LibraryInfo, Refusal> {
     let Some(Value::Dictionary(layer)) = metadata.get("customLayerData") else {
         return Err(invalid("the library declares no bim:library:id"));
     };
@@ -210,7 +211,7 @@ fn read_all(
     reader: &Reader,
     opened: &beamcraft_layer_engine::Opened,
     control: &beamcraft_layer_engine::Control,
-) -> Result<Vec<Prim>, PlateError> {
+) -> Result<Vec<Prim>, Refusal> {
     let mut prims = Vec::new();
     let mut cursor = None;
     loop {
@@ -224,26 +225,26 @@ fn read_all(
     Ok(prims)
 }
 
-fn required_text<'a>(prim: &'a Prim, name: &str, ty: &str) -> Result<&'a str, PlateError> {
+fn required_text<'a>(prim: &'a Prim, name: &str, ty: &str) -> Result<&'a str, Refusal> {
     field(prim, name, ty)
         .map_err(as_input)?
         .and_then(text)
         .ok_or_else(|| invalid("a required entry attribute is missing or mistyped"))
 }
 
-fn optional_number(prim: &Prim, name: &str) -> Result<Option<f64>, PlateError> {
+fn optional_number(prim: &Prim, name: &str) -> Result<Option<f64>, Refusal> {
     field(prim, name, "double")
         .map_err(as_input)?
         .map(|v| number(v).ok_or_else(|| invalid("a number attribute has another type")))
         .transpose()
 }
 
-fn required_number(prim: &Prim, name: &str) -> Result<f64, PlateError> {
+fn required_number(prim: &Prim, name: &str) -> Result<f64, Refusal> {
     optional_number(prim, name)?.ok_or_else(|| invalid("a required dimension is missing"))
 }
 
-fn command(error: CommandError) -> PlateError {
-    PlateError::from(error)
+fn command(error: CommandError) -> Refusal {
+    Refusal::from(error)
 }
 
 const DAMAGED_OUTLINE: &str = "the custom outline attributes are inconsistent";
@@ -251,7 +252,7 @@ const DAMAGED_OUTLINE: &str = "the custom outline attributes are inconsistent";
 /// The profile definition of one entry prim, admitted by the F04 value rules. A declared area
 /// that disagrees with the outline is not a reason to refuse the entry (see
 /// [`DefinitionRecord::declared_area_warning`]).
-fn decode_record(prim: &Prim, designation: &str) -> Result<DefinitionRecord, PlateError> {
+fn decode_record(prim: &Prim, designation: &str) -> Result<DefinitionRecord, Refusal> {
     let section = SectionProperties {
         designation: Some(designation.to_owned()),
         standard: field(prim, "steel:profile:standard", "string")
@@ -317,7 +318,7 @@ fn decode_record(prim: &Prim, designation: &str) -> Result<DefinitionRecord, Pla
 /// layer, a layer with sublayers or references, other units or up axis, a missing
 /// `bim:library:id`, or two entries with the same designation. A refused entry does not fail the
 /// load; it is listed in [`Library::rejected`].
-pub fn load(path: &str) -> Result<Library, PlateError> {
+pub fn load(path: &str) -> Result<Library, Refusal> {
     check_source_path(path).map_err(command)?;
     load_bytes(read_file(path, MAX_LIBRARY_BYTES).map_err(io_error)?)
 }
@@ -328,24 +329,24 @@ type OpenLayer = foreign::ForeignLayer;
 /// Opens the bytes of a library or environment as one foreign, read-only, self-contained layer in
 /// millimetres and Z up. `not_self_contained` is the `INVALID_ARGUMENT` text for a layer that the
 /// engine cannot open on its own (sublayers, references, other units).
-fn open_layer(bytes: Vec<u8>, not_self_contained: &'static str) -> Result<OpenLayer, PlateError> {
-    foreign::open(bytes, not_self_contained).map_err(PlateError::from)
+fn open_layer(bytes: Vec<u8>, not_self_contained: &'static str) -> Result<OpenLayer, Refusal> {
+    foreign::open(bytes, not_self_contained)
 }
 
 /// [`load`] for bytes that were already read (at most 8 MiB, checked again here).
-pub fn load_bytes(bytes: Vec<u8>) -> Result<Library, PlateError> {
+pub fn load_bytes(bytes: Vec<u8>) -> Result<Library, Refusal> {
     load_bytes_as(bytes, ENTRY_PARENT, decode_record)
 }
 
 /// [`load`] for the fastener library at `path` (A14.1): the same layer format and
 /// loading rules, entries under `/Library/Fasteners` carrying `steel:fastener:*` attributes.
-pub fn load_fastener(path: &str) -> Result<Library, PlateError> {
+pub fn load_fastener(path: &str) -> Result<Library, Refusal> {
     check_source_path(path).map_err(command)?;
     load_fastener_bytes(read_file(path, MAX_LIBRARY_BYTES).map_err(io_error)?)
 }
 
 /// [`load_bytes`] for the bytes of a fastener library.
-pub fn load_fastener_bytes(bytes: Vec<u8>) -> Result<Library, PlateError> {
+pub fn load_fastener_bytes(bytes: Vec<u8>) -> Result<Library, Refusal> {
     load_bytes_as(bytes, FASTENER_ENTRY_PARENT, decode_fastener_record)
 }
 
@@ -354,8 +355,8 @@ pub fn load_fastener_bytes(bytes: Vec<u8>) -> Result<Library, PlateError> {
 fn load_bytes_as(
     bytes: Vec<u8>,
     entry_parent: &str,
-    decode: fn(&Prim, &str) -> Result<DefinitionRecord, PlateError>,
-) -> Result<Library, PlateError> {
+    decode: fn(&Prim, &str) -> Result<DefinitionRecord, Refusal>,
+) -> Result<Library, Refusal> {
     if bytes.len() > MAX_LIBRARY_BYTES {
         return Err(io_error(ErrorCode::LimitExceeded));
     }
@@ -447,14 +448,14 @@ fn designation_attribute(entry_parent: &str) -> &'static str {
 
 /// The fastener definition of one entry prim, admitted by the F04 value rules (A14.1). A
 /// declared mass is optional; nothing is inferred from the designation.
-fn decode_fastener_record(prim: &Prim, designation: &str) -> Result<DefinitionRecord, PlateError> {
-    let double = |name: &str| -> Result<Option<f64>, PlateError> {
+fn decode_fastener_record(prim: &Prim, designation: &str) -> Result<DefinitionRecord, Refusal> {
+    let double = |name: &str| -> Result<Option<f64>, Refusal> {
         optional_number(prim, &format!("steel:fastener:{name}"))
     };
-    let required_double = |name: &'static str| -> Result<f64, PlateError> {
+    let required_double = |name: &'static str| -> Result<f64, Refusal> {
         double(name)?.ok_or_else(|| invalid("a required fastener dimension is missing"))
     };
-    let optional_text = |name: &str| -> Result<Option<String>, PlateError> {
+    let optional_text = |name: &str| -> Result<Option<String>, Refusal> {
         field(prim, &format!("steel:fastener:{name}"), "string")
             .map_err(as_input)?
             .map(|v| {
@@ -464,14 +465,14 @@ fn decode_fastener_record(prim: &Prim, designation: &str) -> Result<DefinitionRe
             })
             .transpose()
     };
-    let token = |name: &str| -> Result<String, PlateError> {
+    let token = |name: &str| -> Result<String, Refusal> {
         field(prim, &format!("steel:fastener:{name}"), "token")
             .map_err(as_input)?
             .and_then(text)
             .map(str::to_owned)
             .ok_or_else(|| invalid("a required fastener token is missing or mistyped"))
     };
-    let boolean = |name: &str| -> Result<bool, PlateError> {
+    let boolean = |name: &str| -> Result<bool, Refusal> {
         match field(prim, &format!("steel:fastener:{name}"), "bool").map_err(as_input)? {
             Some(Value::Bool(value)) => Ok(*value),
             _ => Err(invalid("a required fastener switch is missing or mistyped")),
@@ -575,7 +576,7 @@ impl Lookup {
 
     /// The entry that answers for exactly this designation, with its library. `NOT_FOUND` when no
     /// library declares it; the refusal of the first declaring library otherwise.
-    pub fn find(&self, designation: &str) -> Result<(&Source, &LibraryEntry), PlateError> {
+    pub fn find(&self, designation: &str) -> Result<(&Source, &LibraryEntry), Refusal> {
         for source in &self.sources {
             match source.library.entry(designation) {
                 Ok(entry) => return Ok((source, entry)),
@@ -667,7 +668,7 @@ pub struct Environment {
 /// loaded, or two listed libraries with the same `bim:library:id`, refuse the whole environment:
 /// a missing library would silently change which section a designation selects. The containment
 /// of a listed path is lexical; the files themselves are read like any `--library` file.
-pub fn load_environment(path: &str) -> Result<Environment, PlateError> {
+pub fn load_environment(path: &str) -> Result<Environment, Refusal> {
     check_source_path(path).map_err(command)?;
     let bytes = read_file(path, MAX_ENVIRONMENT_BYTES).map_err(|code| match code {
         ErrorCode::NotFound => refuse(code, "the environment file could not be opened"),
@@ -677,7 +678,7 @@ pub fn load_environment(path: &str) -> Result<Environment, PlateError> {
             "the environment path is not a readable regular local file",
         ),
     })?;
-    let info = parse_environment(bytes).map_err(PlateError::from)?;
+    let info = parse_environment(bytes)?;
     let directory = std::path::Path::new(path)
         .parent()
         .map(std::path::Path::to_path_buf)
@@ -711,7 +712,7 @@ pub fn open_lookup(
     library: Option<&str>,
     environment: Option<&str>,
     user_library: Option<&str>,
-) -> Result<(Lookup, Option<EnvironmentInfo>), PlateError> {
+) -> Result<(Lookup, Option<EnvironmentInfo>), Refusal> {
     let mut environment_info = None;
     let base = match (library, environment) {
         (Some(_), Some(_)) => {
@@ -799,7 +800,7 @@ fn points_text(points: &[[f64; 2]]) -> String {
 /// The attribute lines of one entry; the inverse of [`decode_record`]. Fastener entries are not
 /// written here: a fastener library is shipped or maintained by hand, and the shipped files are
 /// the provenance record of their values (A14.1).
-fn entry_body(designation: &str, record: &DefinitionRecord) -> Result<String, PlateError> {
+fn entry_body(designation: &str, record: &DefinitionRecord) -> Result<String, Refusal> {
     let mut lines = vec![format!(
         "string steel:profile:designation = {}",
         usda_string(designation)
@@ -892,7 +893,7 @@ fn entry_body(designation: &str, record: &DefinitionRecord) -> Result<String, Pl
 fn render_library(
     info: &LibraryInfo,
     entries: &[(String, &LibraryEntry)],
-) -> Result<String, PlateError> {
+) -> Result<String, Refusal> {
     let mut text = String::from(
         "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    customLayerData = {\n",
     );
@@ -943,7 +944,7 @@ fn prim_name_for(designation: &str, used: &BTreeSet<String>) -> String {
     name
 }
 
-fn write_failed(_: std::io::Error) -> PlateError {
+fn write_failed(_: std::io::Error) -> Refusal {
     refuse(
         ErrorCode::BackendUnavailable,
         "the library could not be written",
@@ -953,7 +954,7 @@ fn write_failed(_: std::io::Error) -> PlateError {
 /// Writes `text` next to `path` and installs it only when complete: a new file is linked into
 /// place (it never replaces a file that appeared meanwhile), an existing one is renamed over.
 /// Not safe against two writers of the same file at once.
-fn install(path: &str, text: &str, replace: bool) -> Result<(), PlateError> {
+fn install(path: &str, text: &str, replace: bool) -> Result<(), Refusal> {
     use std::io::Write;
     let target = std::path::Path::new(path);
     let name = target
@@ -1010,7 +1011,7 @@ pub fn add_entry(
     mut record: DefinitionRecord,
     designation: &str,
     new: Option<NewLibrary>,
-) -> Result<Added, PlateError> {
+) -> Result<Added, Refusal> {
     check_source_path(path).map_err(command)?;
     if std::path::Path::new(path)
         .extension()
@@ -1175,7 +1176,7 @@ mod tests {
 
     const I_BODY: &str = "            token steel:profile:family = \"i_shape\"\n            double steel:profile:hMm = 300\n            double steel:profile:bMm = 150\n            double steel:profile:twMm = 7\n            double steel:profile:tfMm = 10\n            double steel:profile:rMm = 15\n";
 
-    fn load_text(_name: &str, text: &str) -> Result<Library, PlateError> {
+    fn load_text(_name: &str, text: &str) -> Result<Library, Refusal> {
         load_bytes(text.as_bytes().to_vec())
     }
 

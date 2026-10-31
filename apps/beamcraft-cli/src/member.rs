@@ -13,8 +13,8 @@
 
 use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, Recorded, RevisionSummary, check_footprint,
-    control, decode, digest_of, evaluate_decoded, host_uuid, load_base, member_record, mesh_change,
+    AUTHORED_LAYER, Base, DERIVED_LAYER, Recorded, RevisionSummary, check_footprint, control,
+    decode, digest_of, evaluate_decoded, host_uuid, load_base, member_record, mesh_change,
     open_base, prior_op_with, replay_summary, summarize,
 };
 use crate::publication::{PublishRequest, publish_revision};
@@ -35,6 +35,7 @@ use beamcraft_layer_engine::authored::{
 use beamcraft_model::command::{CreatePolybeam, CreateStraightMember, MemberKind};
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use session::Refusal;
 
 /// Inputs of one `create_member` call beyond the command itself.
 #[derive(Debug, Clone)]
@@ -107,7 +108,7 @@ pub struct CreatedMember {
 fn replay_fingerprint(
     committed: &AuthoredMember,
     straight: bool,
-) -> Result<ContentDigest, PlateError> {
+) -> Result<ContentDigest, Refusal> {
     let command = if straight {
         committed.to_command().map(|c| c.content_fingerprint())
     } else {
@@ -131,7 +132,7 @@ struct MemberBase {
 }
 
 impl MemberBase {
-    fn open(base: Base) -> Result<(Self, OpenRequest), PlateError> {
+    fn open(base: Base) -> Result<(Self, OpenRequest), Refusal> {
         let base_request = open_base(&base)?;
         let Base {
             project,
@@ -198,7 +199,7 @@ pub fn create_member(
     store: &RevisionStore,
     request: &CreateMemberRequest,
     hook: &mut dyn CommitHook,
-) -> Result<CreatedMember, PlateError> {
+) -> Result<CreatedMember, Refusal> {
     let control = control();
     let (head, base) = load_base(store, &request.project, &request.workspace)?;
     let (member_base, base_request) = MemberBase::open(base)?;
@@ -251,7 +252,7 @@ pub fn create_polybeam(
     store: &RevisionStore,
     request: &CreatePolybeamRequest,
     hook: &mut dyn CommitHook,
-) -> Result<CreatedMember, PlateError> {
+) -> Result<CreatedMember, Refusal> {
     let control = control();
     let (head, base) = load_base(store, &request.project, &request.workspace)?;
     let (member_base, base_request) = MemberBase::open(base)?;
@@ -301,11 +302,11 @@ pub fn create_curved_beam(
     store: &RevisionStore,
     request: &CreateCurvedBeamRequest,
     hook: &mut dyn CommitHook,
-) -> Result<CreatedMember, PlateError> {
+) -> Result<CreatedMember, Refusal> {
     request.command.validate_arguments()?;
     let fingerprint = request.command.content_fingerprint()?;
     let op_host = host_uuid(&request.op_id.to_string())?;
-    let replay = || -> Result<Option<CreatedMember>, PlateError> {
+    let replay = || -> Result<Option<CreatedMember>, Refusal> {
         match store.query_outcome(&op_host)? {
             beamcraft_host::ledger::Outcome::Committed {
                 sequence,
@@ -412,7 +413,7 @@ fn finish_member(
     create: MemberCreate<'_>,
     op_host: Uuid7,
     hook: &mut dyn CommitHook,
-) -> Result<CreatedMember, PlateError> {
+) -> Result<CreatedMember, Refusal> {
     let transaction = match admission {
         MemberAdmission::Replay => {
             let member = head_members

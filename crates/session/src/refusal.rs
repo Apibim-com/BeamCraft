@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
+use beamcraft_host::revision::{ContentRejection, RevisionError};
 use beamcraft_layer_engine::Diagnostic;
 use beamcraft_model::ErrorCode;
+use beamcraft_model::command::CommandError;
 
 /// A typed failure: a stable F04 code and a fixed safe message. No paths, no OS text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,3 +52,28 @@ impl std::fmt::Display for Refusal {
 }
 
 impl std::error::Error for Refusal {}
+
+impl From<CommandError> for Refusal {
+    fn from(error: CommandError) -> Self {
+        Self {
+            rule_id: error.rule_id,
+            code: error.code,
+            message: error.message,
+        }
+    }
+}
+
+impl From<ContentRejection> for Refusal {
+    fn from(error: ContentRejection) -> Self {
+        Self::new(error.code, error.message)
+    }
+}
+
+impl From<RevisionError> for Refusal {
+    fn from(error: RevisionError) -> Self {
+        match error {
+            RevisionError::Content(rejection) => rejection.into(),
+            other => Self::new(other.code(), "revision store rejected the operation"),
+        }
+    }
+}

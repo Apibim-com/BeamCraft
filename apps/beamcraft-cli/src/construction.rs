@@ -5,8 +5,8 @@
 //! revision pipeline as the grid commands.
 use crate::assembly::read_prims;
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, check_footprint, control,
-    host_uuid, integrity, load_base, open_base, prior_op_with, replay_summary, summarize,
+    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, check_footprint, control, host_uuid,
+    integrity, load_base, open_base, prior_op_with, replay_summary, summarize,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
@@ -21,6 +21,7 @@ use beamcraft_model::command::{CommandError, CreateConstructionObject};
 use beamcraft_model::construction::ConstructionObject;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
+use session::Refusal;
 use std::collections::BTreeSet;
 
 /// Trusted context for a construction object creation, using the same identities as level
@@ -41,7 +42,7 @@ pub struct ConstructionChange {
     /// The verified construction objects at the resulting head.
     pub constructions: Vec<ConstructionObject>,
 }
-fn snapshot(request: OpenRequest, c: &Control) -> Result<Vec<Prim>, PlateError> {
+fn snapshot(request: OpenRequest, c: &Control) -> Result<Vec<Prim>, Refusal> {
     validate_layers(request.clone(), schema_identity()?, c)?;
     let mut reader = Reader::default();
     let opened = reader.open(request, c)?;
@@ -49,7 +50,7 @@ fn snapshot(request: OpenRequest, c: &Control) -> Result<Vec<Prim>, PlateError> 
 }
 /// Construction objects of the verified head, in identity order. Empty for a store with no
 /// revision.
-pub fn constructions(store: &RevisionStore) -> Result<Vec<ConstructionObject>, PlateError> {
+pub fn constructions(store: &RevisionStore) -> Result<Vec<ConstructionObject>, Refusal> {
     let revision = match store.open() {
         Ok(r) => r,
         Err(RevisionError::NoRevision) => return Ok(Vec::new()),
@@ -66,7 +67,7 @@ pub(crate) fn is_construction(
     request: &OpenRequest,
     id: &ElementId,
     c: &Control,
-) -> Result<bool, PlateError> {
+) -> Result<bool, Refusal> {
     Ok(storage::read_constructions(&snapshot(request.clone(), c)?)?
         .iter()
         .any(|o| o.id == *id))
@@ -75,7 +76,7 @@ fn replay(
     store: &RevisionStore,
     context: &ConstructionContext,
     fingerprint: beamcraft_model::digest::ContentDigest,
-) -> Result<Option<ConstructionChange>, PlateError> {
+) -> Result<Option<ConstructionChange>, Refusal> {
     let (head, base) = load_base(store, &context.project, &context.workspace)?;
     let op = host_uuid(&context.op_id.to_string())?;
     let (prior, recorded) = prior_op_with(store, &op, || Ok(fingerprint))?;
@@ -111,7 +112,7 @@ pub fn create_construction(
     context: &ConstructionContext,
     command: &CreateConstructionObject,
     hook: &mut dyn CommitHook,
-) -> Result<ConstructionChange, PlateError> {
+) -> Result<ConstructionChange, Refusal> {
     command.validate_arguments()?;
     let fingerprint = command.content_fingerprint()?;
     if let Some(replayed) = replay(store, context, fingerprint)? {

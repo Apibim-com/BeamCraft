@@ -13,7 +13,7 @@
 use crate::copy::{CopiedElement, creation_changes, not_found};
 use crate::definition::material_lookup;
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, control, decode, digest_of,
+    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, decode, digest_of,
     evaluate_decoded, host_uuid, integrity, load_base, open_base, prior_op_with, replay_summary,
     summarize,
 };
@@ -29,6 +29,7 @@ use beamcraft_model::command::{ArrayElements, CommandError};
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use session::Refusal;
 
 /// Inputs of one `array-linear` or `array-polar` call beyond the command itself.
 #[derive(Debug, Clone)]
@@ -98,7 +99,7 @@ pub fn array_elements(
     store: &RevisionStore,
     request: &ArrayRequest,
     hook: &mut dyn CommitHook,
-) -> Result<Arrayed, PlateError> {
+) -> Result<Arrayed, Refusal> {
     let command = &request.command;
     command.validate_arguments()?;
     let control = control();
@@ -255,7 +256,7 @@ pub fn array_elements(
                     h.clone()
                         .ok_or_else(|| integrity("replayed element is absent from the head"))
                 })
-                .collect::<Result<Vec<_>, PlateError>>()?;
+                .collect::<Result<Vec<_>, Refusal>>()?;
             return Ok(Arrayed {
                 replayed: true,
                 elements,
