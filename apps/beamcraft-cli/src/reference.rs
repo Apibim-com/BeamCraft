@@ -46,7 +46,7 @@ use beamcraft_host::revision::{
 };
 use beamcraft_layer_engine::authored::{
     Author, Change, EditTargets, ForeignPrim, Placement as LayerPlacement, Prepare, Reference,
-    ReferenceView, SourcePin, UpAxis, read_references, schema_identity, validate_layers,
+    ReferenceView, SourcePin, UpAxis, read_references, schema_identity,
 };
 use beamcraft_layer_engine::{Asset, Budgets, Opened, Prim, Reader, inspect_foreign_layer};
 use beamcraft_model::command::{CommandError, Placement};
@@ -734,9 +734,10 @@ fn open_head(store: &RevisionStore) -> Result<(Revision, Reader, Opened, Vec<Pri
     let control = control();
     // The structural validator also scans the specs of every owned layer, so a layer edited
     // outside BeamCraft to carry an opinion on foreign content is refused on read as well.
-    validate_layers(request.clone(), schema_identity()?, &control)?;
+    // `open_validated` runs those rules on the very stage it installs: one parse and compose
+    // instead of two, with the checks, order, codes and messages of the two calls in sequence.
     let mut reader = Reader::default();
-    let opened = reader.open(request, &control)?;
+    let (opened, _) = reader.open_validated(request, schema_identity()?, &control)?;
     let prims = read_all_prims(&reader, &opened, &control)?;
     Ok((revision, reader, opened, prims))
 }
