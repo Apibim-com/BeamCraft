@@ -34,17 +34,17 @@ use beamcraft_kernel::steel::section::{
 };
 use beamcraft_kernel::sweep::{Sweep, SweepFailure, SweepPath, sweep};
 use beamcraft_kernel::{steel::StraightMember, steel::straight_member};
-use beamcraft_model::command::{
-    CommandError, CreatePolybeam, CreateStraightMember, CutRecord, MemberHoleRecord, MemberKind,
-    Placement, SectionPlacement,
-};
+use beamcraft_model::command::{CommandError, Placement};
 use beamcraft_model::definition::{
     DeclaredAreaWarning, RectangleProfileSpec, SectionProfileSpec, SectionProperties,
 };
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId};
-use beamcraft_model::section::{CustomSection, SectionShape};
+use beamcraft_model::steel::command::{
+    CreatePolybeam, CreateStraightMember, CutRecord, MemberHoleRecord, MemberKind, SectionPlacement,
+};
+use beamcraft_model::steel::section::{CustomSection, SectionShape};
 
 /// Version label of the volume algorithm in the [`Quantities`] record of a rectangle member:
 /// the effective section area (the declared catalogue area, else `width * height`) times the
@@ -918,7 +918,7 @@ pub fn create_polybeam(
 
 /// Prepare a circular-path member without writing external state.
 pub fn create_curved_beam(
-    curved: &beamcraft_model::command::CreateCurvedBeam,
+    curved: &beamcraft_model::steel::command::CreateCurvedBeam,
     existing: &dyn Fn(&ElementId) -> bool,
     profiles: ProfileLookup<'_>,
     materials: MaterialLookup<'_>,
@@ -990,8 +990,8 @@ mod tests {
     use super::*;
     use crate::command::no_materials;
     use crate::footprint::{Group, Target};
-    use beamcraft_model::command::{SectionDepthPosition, SectionPlanePosition};
     use beamcraft_model::digest::Sha256;
+    use beamcraft_model::steel::command::{SectionDepthPosition, SectionPlanePosition};
 
     fn digest(text: &[u8]) -> ContentDigest {
         Sha256::digest(text).unwrap()
@@ -1034,7 +1034,7 @@ mod tests {
     #[test]
     fn a_declared_section_area_beyond_one_percent_of_the_outline_is_a_warning() {
         use beamcraft_model::definition::SectionProperties;
-        use beamcraft_model::section::{ParametricSection, SectionFamily};
+        use beamcraft_model::steel::section::{ParametricSection, SectionFamily};
         let spec = |area: Option<f64>| SectionProfileSpec {
             shape: SectionShape::Parametric(
                 ParametricSection::new(SectionFamily::Chs, vec![114.0, 5.0]).unwrap(),
@@ -1072,7 +1072,7 @@ mod tests {
     }
 
     fn i_section(r: f64) -> SectionShape {
-        use beamcraft_model::section::{ParametricSection, SectionFamily};
+        use beamcraft_model::steel::section::{ParametricSection, SectionFamily};
         SectionShape::Parametric(
             ParametricSection::new(SectionFamily::IShape, vec![298.0, 149.0, 5.5, 8.0, r]).unwrap(),
         )
@@ -1216,7 +1216,7 @@ mod tests {
 
     #[test]
     fn a_custom_outline_uses_its_shoelace_area() {
-        use beamcraft_model::section::CustomSection;
+        use beamcraft_model::steel::section::CustomSection;
         let out = member_with(
             ProfileInfo::Section {
                 shape: SectionShape::Custom(CustomSection {
@@ -1235,7 +1235,7 @@ mod tests {
 
     #[test]
     fn a_section_family_beam_is_the_kernel_detailed_outline_extruded() {
-        use beamcraft_model::section::{ParametricSection, SectionFamily};
+        use beamcraft_model::steel::section::{ParametricSection, SectionFamily};
         let profile = digest(b"i-shape 300");
         let shape = SectionShape::Parametric(
             ParametricSection::new(SectionFamily::IShape, vec![300.0, 150.0, 7.0, 10.0, 15.0])
@@ -1305,9 +1305,9 @@ mod tests {
 
     #[test]
     fn a_plane_cut_trims_a_member_of_any_section() {
-        use beamcraft_model::command::KeepSide;
         use beamcraft_model::id::OpId;
-        use beamcraft_model::section::{ParametricSection, SectionFamily};
+        use beamcraft_model::steel::command::KeepSide;
+        use beamcraft_model::steel::section::{ParametricSection, SectionFamily};
         let profile = ProfileInfo::Rectangle {
             width_mm: 200.0,
             height_mm: 300.0,
@@ -1745,7 +1745,7 @@ mod tests {
 
     #[test]
     fn a_polybeam_cut_is_the_certified_replay_volume() {
-        use beamcraft_model::command::KeepSide;
+        use beamcraft_model::steel::command::KeepSide;
         let profile = ProfileInfo::Rectangle {
             width_mm: 200.0,
             height_mm: 300.0,
@@ -1775,7 +1775,7 @@ mod tests {
         let profile = digest(b"p13-section");
         let mut command = polybeam_command(profile);
         command.path_points_mm = vec![[1000., 0., 0.], [0., 1000., 0.], [-1000., 0., 0.]];
-        let curved = beamcraft_model::command::CreateCurvedBeam {
+        let curved = beamcraft_model::steel::command::CreateCurvedBeam {
             member: command.clone(),
         };
         assert_ne!(

@@ -8,13 +8,12 @@ use crate::command::{AuthoredPlate, CreatePlateOutcome, MaterialLookup, create_p
 use crate::footprint::Footprint;
 use crate::query::committed::{BodyCache, PlateRecord};
 use crate::transaction::PriorOp;
-use beamcraft_model::command::{
-    CommandError, CreatePlate, HOLE_POINT_CAP, MAX_BENDS, MAX_HOLES, label_is_valid,
-};
+use beamcraft_model::command::{CommandError, label_is_valid};
 use beamcraft_model::definition::MaterialSpec;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId};
+use beamcraft_model::steel::command::{CreatePlate, HOLE_POINT_CAP, MAX_BENDS, MAX_HOLES};
 use std::collections::BTreeSet;
 
 /// Valid authored input whose solid is outside the supported contour evaluation scope.

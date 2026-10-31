@@ -45,13 +45,14 @@ use beamcraft_layer_engine::authored::{
     Author, Change, EditTargets, Element, MemberKind, Placement, Prepare, Shape, schema_identity,
 };
 use beamcraft_layer_engine::index::ElementId as LayerElementId;
-use beamcraft_model::command::{
-    ChamferPart, CombineParts, CommandError, CutByLine, CutByPart, CutByPlane, CutByPolygon,
-    CutRecord, FitEndToPart, SplitPart,
-};
+use beamcraft_model::command::CommandError;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use beamcraft_model::steel::command::{
+    ChamferPart, CombineParts, CutByLine, CutByPart, CutByPlane, CutByPolygon, CutRecord,
+    FitEndToPart, SplitPart,
+};
 use session::Refusal;
 use session::pipeline::{
     AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, digest_of, host_uuid, integrity,
@@ -163,7 +164,7 @@ pub struct RemoveCutRequest {
     /// Store workspace context.
     pub workspace: WorkspaceId,
     /// Target and owned record.
-    pub command: beamcraft_model::command::RemoveCut,
+    pub command: beamcraft_model::steel::command::RemoveCut,
 }
 /// Removal response: there is no live ordinal to return for a deleted record.
 #[derive(Debug, Clone, PartialEq)]
@@ -196,7 +197,7 @@ pub fn remove_cut_record(
             operation_id: request.command.operation_id,
             point_mm: [0.0; 3],
             normal: [1.0, 0.0, 0.0],
-            keep: beamcraft_model::command::KeepSide::Negative,
+            keep: beamcraft_model::steel::command::KeepSide::Negative,
         },
     };
     let r = apply_cut(store, &context, hook, Action::Remove)?;
@@ -273,8 +274,8 @@ fn apply_cut(
     let remove = action == Action::Remove;
     let command = &request.command;
     command.validate_arguments()?;
-    let updated = beamcraft_model::command::UpdateCut { cut: *command };
-    let removal = beamcraft_model::command::RemoveCut {
+    let updated = beamcraft_model::steel::command::UpdateCut { cut: *command };
+    let removal = beamcraft_model::steel::command::RemoveCut {
         target_id: command.target_id,
         operation_id: command.operation_id,
     };
@@ -1469,8 +1470,8 @@ fn created_element(state: &AuthoredState) -> Result<Element, Refusal> {
             material: authored.material,
             shape: Shape::Member {
                 kind: match authored.kind {
-                    beamcraft_model::command::MemberKind::Beam => MemberKind::Beam,
-                    beamcraft_model::command::MemberKind::Column => MemberKind::Column,
+                    beamcraft_model::steel::command::MemberKind::Beam => MemberKind::Beam,
+                    beamcraft_model::steel::command::MemberKind::Column => MemberKind::Column,
                 },
                 axis_mm: authored.axis_points_mm.clone(),
                 profile: authored.profile,

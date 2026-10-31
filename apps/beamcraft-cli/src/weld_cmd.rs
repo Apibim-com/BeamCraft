@@ -14,11 +14,11 @@ use beamcraft_host::{
     storage::BlobStore,
 };
 use beamcraft_json::Json;
-use beamcraft_model::command::{
-    CreateWeld, WeldContour, WeldGeometry, WeldLocation, WeldSide, WeldSpec, WeldSymbol, WeldType,
-};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId};
+use beamcraft_model::steel::command::{
+    CreateWeld, WeldContour, WeldGeometry, WeldLocation, WeldSide, WeldSpec, WeldSymbol, WeldType,
+};
 use session::Refusal;
 use std::collections::BTreeMap;
 use std::ffi::OsString;

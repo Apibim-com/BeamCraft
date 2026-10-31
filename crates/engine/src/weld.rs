@@ -19,10 +19,11 @@ use crate::solid::SolidMesh;
 use beamcraft_geom::{Frame3, Point3, RigidTransform, Vec3};
 use beamcraft_kernel::profile::{Point2, extrude};
 use beamcraft_kernel::trimesh::TriMesh;
-use beamcraft_model::command::{CommandError, CreateWeld, WeldGeometry};
+use beamcraft_model::command::CommandError;
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
+use beamcraft_model::steel::command::{CreateWeld, WeldGeometry};
 use std::collections::BTreeMap;
 
 /// The kind of an element as far as a weld is concerned.
@@ -266,7 +267,7 @@ fn signature(size_mm: f64, geometry: &WeldGeometry) -> Result<ContentDigest, Com
 mod tests {
     use super::*;
     use crate::footprint::{Entry, Group, Target};
-    use beamcraft_model::command::{WeldLocation, WeldSide, WeldSpec, WeldType};
+    use beamcraft_model::steel::command::{WeldLocation, WeldSide, WeldSpec, WeldType};
 
     fn id(n: u32) -> ElementId {
         ElementId::parse(&format!("019a7bf0-0000-7000-8000-0000004{n:05}")).unwrap()
@@ -340,9 +341,9 @@ mod tests {
     fn geometry(path: &[[f64; 3]]) -> WeldGeometry {
         WeldGeometry {
             path_mm: path.to_vec(),
-            symbol: beamcraft_model::command::WeldSymbol {
+            symbol: beamcraft_model::steel::command::WeldSymbol {
                 all_around: false,
-                contour: beamcraft_model::command::WeldContour::None,
+                contour: beamcraft_model::steel::command::WeldContour::None,
             },
         }
     }
