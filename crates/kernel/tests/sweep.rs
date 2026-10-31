@@ -8,7 +8,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-mod common;
+use crate::common;
 
 use beamcraft_geom::Point3;
 use beamcraft_kernel::steel::section::Representation;

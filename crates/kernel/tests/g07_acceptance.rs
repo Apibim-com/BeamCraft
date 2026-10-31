@@ -14,9 +14,9 @@
 
 #![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 
-mod common;
-mod common_mesh;
-mod common_ops;
+use crate::common;
+use crate::common_mesh;
+use crate::common_ops;
 
 use beamcraft_geom::Point3;
 use beamcraft_kernel::diagnostic::{Code, Stage};
