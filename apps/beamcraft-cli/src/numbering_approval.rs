@@ -33,7 +33,7 @@ use beamcraft_engine::numbering::GroupKind;
 use beamcraft_engine::numbering_approval::{
     ApproveNumbering, Assignment, Basis, Mark, Report, StoredMark, approve, assess,
 };
-use beamcraft_engine::transaction::PriorOp;
+use beamcraft_engine::steel::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
     Author, Change, EditTargets, MARK_BASIS, MARK_NUMBER, MARK_SERIES, Mark as LayerMark, Prepare,

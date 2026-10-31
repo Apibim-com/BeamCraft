@@ -17,10 +17,10 @@
 //! kernel's; one accepted command is one revision and one undo unit, and a refusal changes
 //! nothing.
 
-use crate::copy::{copied_hole, copied_records};
 use crate::footprint::{Entry, Footprint, Group, Target};
 use crate::solid::rotate_vector;
 use crate::steel::command::AuthoredPlate;
+use crate::steel::copy::{copied_hole, copied_records};
 use crate::steel::cut::{CutByPlaneOutcome, CutTarget, admit_record};
 use crate::steel::member::AuthoredMember;
 use beamcraft_model::command::{CommandError, Placement};

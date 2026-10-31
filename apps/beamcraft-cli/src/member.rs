@@ -18,7 +18,7 @@ use crate::plate::{
 };
 use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::query::committed::{MemberRecord, ids};
+use beamcraft_engine::steel::committed::{MemberRecord, ids};
 use beamcraft_engine::steel::member::{
     AuthoredMember, MemberAdmission, admit_create_member, admit_create_polybeam,
 };

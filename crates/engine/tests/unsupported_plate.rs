@@ -8,7 +8,7 @@ use beamcraft_engine::steel::plate_draft::{
     DraftAdmission, PlateDraft, admit_create_plate_draft, create_plate_draft,
     evaluate_committed_drafts,
 };
-use beamcraft_engine::transaction::PriorOp;
+use beamcraft_engine::steel::transaction::PriorOp;
 use beamcraft_model::command::Placement;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId};

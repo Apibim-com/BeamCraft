@@ -10,11 +10,11 @@ use crate::plate::{
 };
 use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::quantity::{StoredRecord, lofted_plate_record};
 use beamcraft_engine::steel::loft_plate::{
     AuthoredLoftedPlate, LOFT_VOLUME_ALGORITHM, create_lofted_plate,
 };
-use beamcraft_engine::transaction::PriorOp;
+use beamcraft_engine::steel::quantity::{StoredRecord, lofted_plate_record};
+use beamcraft_engine::steel::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{

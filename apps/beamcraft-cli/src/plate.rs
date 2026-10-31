@@ -38,18 +38,18 @@ use crate::level::levels_of;
 use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
 use beamcraft_engine::level::Levels;
-use beamcraft_engine::quantity::{
-    Assessment, Freshness, QuantityRecord, StoredRecord, assess, is_superseded_algorithm,
-};
-use beamcraft_engine::query::committed::{
+use beamcraft_engine::solid::SolidMesh;
+use beamcraft_engine::steel::command::AuthoredPlate;
+use beamcraft_engine::steel::committed::{
     BodyCache, MemberRecord, PlateRecord, evaluate_committed_members_cached, ids,
     scene_elements_with_members,
 };
-use beamcraft_engine::solid::SolidMesh;
-use beamcraft_engine::steel::command::AuthoredPlate;
 use beamcraft_engine::steel::member::AuthoredMember;
 use beamcraft_engine::steel::plate_draft::{UnsupportedPlate, evaluate_committed_drafts_cached};
-use beamcraft_engine::transaction::{Admission, PriorOp, admit_create_plate};
+use beamcraft_engine::steel::quantity::{
+    Assessment, Freshness, QuantityRecord, StoredRecord, assess, is_superseded_algorithm,
+};
+use beamcraft_engine::steel::transaction::{Admission, PriorOp, admit_create_plate};
 use beamcraft_engine::{Limits, ViewPin, ViewSnapshot};
 use beamcraft_host::ledger::Outcome;
 use beamcraft_host::revision::{
@@ -255,7 +255,7 @@ pub(crate) struct Decoded {
     pub(crate) definitions: BTreeMap<ContentDigest, DefinitionRecord>,
     /// The levels of the model and the level of every plate, beam and column (D2).
     pub(crate) levels: Levels,
-    pub(crate) instances: beamcraft_engine::instance::InstanceGraph,
+    pub(crate) instances: beamcraft_engine::steel::instance::InstanceGraph,
     pub(crate) grids: Vec<beamcraft_model::grid::Grid>,
     /// T02: validated construction objects, without engineering bodies.
     pub(crate) constructions: Vec<beamcraft_model::construction::ConstructionObject>,
@@ -1194,7 +1194,7 @@ pub(crate) fn decode(
             ))
         })
         .collect();
-    let instances = beamcraft_engine::instance::InstanceGraph::build(parts, &links)?;
+    let instances = beamcraft_engine::steel::instance::InstanceGraph::build(parts, &links)?;
     let prims = beamcraft_layer_engine::authored::instance::resolve(prims)?;
     let by_path: BTreeMap<&str, &Prim> = prims.iter().map(|p| (p.path.as_str(), p)).collect();
     let mut plates = Vec::new();
@@ -1554,7 +1554,7 @@ pub(crate) fn evaluate_committed_drafts_with_cache(
 /// The quantity record the engine expects for a plate: its quantities under the signature of its
 /// shape inputs.
 pub(crate) fn plate_record(record: &PlateRecord) -> QuantityRecord {
-    beamcraft_engine::quantity::plate_record(
+    beamcraft_engine::steel::quantity::plate_record(
         &record.authored,
         record.body.algorithm(),
         &record.quantities,
@@ -1563,7 +1563,7 @@ pub(crate) fn plate_record(record: &PlateRecord) -> QuantityRecord {
 
 /// The quantity record the engine expects for a member.
 pub(crate) fn member_record(record: &MemberRecord) -> QuantityRecord {
-    beamcraft_engine::quantity::member_record(
+    beamcraft_engine::steel::quantity::member_record(
         &record.authored,
         &record.body.profile,
         &record.quantities,
@@ -2155,7 +2155,7 @@ pub struct Inspection {
     /// D2: the levels of the revision and the level of every plate, beam and column.
     pub levels: Levels,
     /// P11: canonical definition owners and linked part instances.
-    pub instances: beamcraft_engine::instance::InstanceGraph,
+    pub instances: beamcraft_engine::steel::instance::InstanceGraph,
     /// T01: validated project grids, without engineering bodies.
     pub grids: Vec<beamcraft_model::grid::Grid>,
     /// T02: validated construction objects, without engineering bodies.

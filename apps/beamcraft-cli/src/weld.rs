@@ -24,9 +24,9 @@ use crate::plate::{
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::quantity::QuantityRecord;
+use beamcraft_engine::steel::quantity::QuantityRecord;
+use beamcraft_engine::steel::transaction::PriorOp;
 use beamcraft_engine::steel::weld::{PartKind, Parts};
-use beamcraft_engine::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
     Author, Change, EditTargets, Element, Placement as LayerPlacement, Prepare, Shape, Weld,
