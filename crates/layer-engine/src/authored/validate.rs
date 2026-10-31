@@ -2,12 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 use super::*;
-use beamcraft_model::fastener::{FastenerKind, HeadKind, HoleMode, WasherSpec};
 use beamcraft_model::id::OpId;
 use beamcraft_model::limits::{
     MAX_FASTENER_LENGTHS, MAX_MEMBER_PATH_POINTS, MAX_RELATIONSHIP_TARGETS, MIN_WELD_SEGMENT_MM,
 };
-use beamcraft_model::section::{
+use beamcraft_model::steel::fastener::{FastenerKind, HeadKind, HoleMode, WasherSpec};
+use beamcraft_model::steel::section::{
     CustomSection, MAX_CUSTOM_CAVITIES, MAX_CUSTOM_POINTS, ParametricSection, SectionFamily,
 };
 
@@ -3536,13 +3536,13 @@ fn plate_corner_records(p: &Prim) -> Result<(), Diagnostic> {
         let (d1, d2, r) = (number(d1)?, number(d2)?, number(r)?);
         let treatment = match k {
             Value::Text(k) if k == "chamfer" && r == 0. => {
-                beamcraft_model::command::CornerTreatment::Chamfer {
+                beamcraft_model::steel::command::CornerTreatment::Chamfer {
                     d1_mm: d1,
                     d2_mm: d2,
                 }
             }
             Value::Text(k) if k == "round" && d1 == 0. && d2 == 0. => {
-                beamcraft_model::command::CornerTreatment::Round { radius_mm: r }
+                beamcraft_model::steel::command::CornerTreatment::Round { radius_mm: r }
             }
             _ => return Err(invalid()),
         };

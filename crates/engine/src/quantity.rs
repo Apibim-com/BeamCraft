@@ -19,9 +19,11 @@ use crate::command::{AuthoredPlate, Quantities, QuantityStatus, VOLUME_ALGORITHM
 use crate::member::{AuthoredMember, ProfileInfo};
 use beamcraft_geom::canonical_f64_bytes;
 use beamcraft_geom::tolerance::TOLERANCE_POLICY_VERSION;
-use beamcraft_model::command::{CornerTreatment, CutRecord, KeepSide, PlateCorner, PlateSide};
 use beamcraft_model::digest::{ContentDigest, Sha256};
-use beamcraft_model::section::SectionShape;
+use beamcraft_model::steel::command::{
+    CornerTreatment, CutRecord, KeepSide, PlateCorner, PlateSide,
+};
+use beamcraft_model::steel::section::SectionShape;
 
 /// A quantity record as the engine computes it and as the derived layer stores it.
 ///
@@ -558,7 +560,7 @@ mod tests {
     }
 
     fn member() -> AuthoredMember {
-        use beamcraft_model::command::MemberKind;
+        use beamcraft_model::steel::command::MemberKind;
         AuthoredMember {
             curved: false,
             id: ElementId::parse("019a7bf0-0000-7000-8000-000000000009").unwrap(),
@@ -577,7 +579,7 @@ mod tests {
     }
 
     fn i_profile(declared: Option<f64>) -> ProfileInfo {
-        use beamcraft_model::section::{ParametricSection, SectionFamily};
+        use beamcraft_model::steel::section::{ParametricSection, SectionFamily};
         ProfileInfo::Section {
             shape: SectionShape::Parametric(
                 ParametricSection::new(SectionFamily::IShape, vec![298.0, 149.0, 5.5, 8.0, 13.0])

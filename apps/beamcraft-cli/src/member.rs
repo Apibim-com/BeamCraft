@@ -31,9 +31,9 @@ use beamcraft_layer_engine::authored::{
     Author, Change, EditTargets, Element, MemberKind as LayerKind, Placement as LayerPlacement,
     Prepare, Shape, schema_identity,
 };
-use beamcraft_model::command::{CreatePolybeam, CreateStraightMember, MemberKind};
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use beamcraft_model::steel::command::{CreatePolybeam, CreateStraightMember, MemberKind};
 use session::Refusal;
 use session::pipeline::{
     AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, digest_of, host_uuid, load_base,
@@ -88,7 +88,7 @@ pub struct CreateCurvedBeamRequest {
     /// Workspace of a store that has no revision yet. Ignored otherwise.
     pub workspace: WorkspaceId,
     /// The command.
-    pub command: beamcraft_model::command::CreateCurvedBeam,
+    pub command: beamcraft_model::steel::command::CreateCurvedBeam,
 }
 
 /// Result of `create_member` and `create_polybeam`.
