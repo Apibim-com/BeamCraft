@@ -21,3 +21,10 @@ default-filter = '''not (
     or (package(beamcraft-host) and (binary(recovery) or binary(revision) or binary(compaction)))
     or (package(beamcraft-kernel) and (binary(g09_budget_fuzz) or binary(g05_profile_extrusion)))
 )'''
+
+# The test starts two `beamcraft` clients side by side on two threads of its own, so it
+# takes two of nextest's slots: with more threads than cores (CI runs two per core) it
+# would otherwise compete with two other tests for one slot's worth of CPU.
+[[profile.default.overrides]]
+filter = 'package(beamcraft-cli) and test(=offline_clients::two_offline_workspaces_publish_independent_elements_and_lose_nothing)'
+threads-required = 2

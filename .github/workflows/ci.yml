@@ -129,9 +129,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends mesa-vulkan-drivers
 
+      # Two test threads per core: the CLI suites spend part of their time starting `beamcraft`
+      # processes and waiting on the disk, so a second thread per core keeps the cores busier
+      # (whole suite on a 4-core Linux machine: 168 s at 4 threads, 157 s at 8). nextest still
+      # runs each test in its own process.
       - name: Run archived test partition
         shell: bash
-        run: mkdir -p target/tmp && cargo nextest run --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --extract-overwrite --no-fail-fast --partition hash:${{ matrix.shard }}/8
+        run: mkdir -p target/tmp && cargo nextest run --test-threads "$(( $(nproc 2>/dev/null || sysctl -n hw.logicalcpu) * 2 ))" --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --extract-overwrite --no-fail-fast --partition hash:${{ matrix.shard }}/8
 
   test-archive-windows:
     name: build test archive (windows-latest)
@@ -191,9 +195,13 @@ jobs:
           name: nextest-archive-windows-latest
           path: nextest-archive
 
+      # Two test threads per core: the CLI suites spend part of their time starting `beamcraft`
+      # processes and waiting on the disk, so a second thread per core keeps the cores busier
+      # (whole suite on a 4-core Linux machine: 168 s at 4 threads, 157 s at 8). nextest still
+      # runs each test in its own process.
       - name: Run archived test partition
         shell: bash
-        run: mkdir -p target/tmp && cargo nextest run --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --extract-overwrite --no-fail-fast --partition hash:${{ matrix.shard }}/8
+        run: mkdir -p target/tmp && cargo nextest run --test-threads "$(( $(nproc 2>/dev/null || sysctl -n hw.logicalcpu) * 2 ))" --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --extract-overwrite --no-fail-fast --partition hash:${{ matrix.shard }}/8
 
   test-archive-macos:
     name: build test archive (macos-latest)
@@ -256,9 +264,13 @@ jobs:
       # `count:` deals the tests out in list order, so the slow suites of one binary spread over
       # the shards; with five shards it gives a shorter longest shard than `hash:` on the
       # measured test durations. Either way nextest runs every test exactly once.
+      # Two test threads per core: the CLI suites spend part of their time starting `beamcraft`
+      # processes and waiting on the disk, so a second thread per core keeps the cores busier
+      # (whole suite on a 4-core Linux machine: 168 s at 4 threads, 157 s at 8). nextest still
+      # runs each test in its own process.
       - name: Run archived test partition
         shell: bash
-        run: mkdir -p target/tmp && cargo nextest run --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --extract-overwrite --no-fail-fast --partition count:${{ matrix.shard }}/5
+        run: mkdir -p target/tmp && cargo nextest run --test-threads "$(( $(nproc 2>/dev/null || sysctl -n hw.logicalcpu) * 2 ))" --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --extract-overwrite --no-fail-fast --partition count:${{ matrix.shard }}/5
 
   build-timings:
     name: cold release (${{ matrix.target }})
