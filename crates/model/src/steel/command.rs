@@ -5907,4 +5907,25 @@ mod tests {
         v.hole_clearance_mm = Some(0.0);
         assert!(v.validate_arguments().is_ok());
     }
+
+    #[test]
+    fn a_level_patch_counts_as_a_change_and_is_part_of_the_fingerprint() {
+        let patch = |level| UpdateElement {
+            target_id: id(5),
+            patch: ElementPatch {
+                level,
+                ..ElementPatch::default()
+            },
+        };
+        assert!(patch(Some(Some(id(9)))).validate_arguments().is_ok());
+        assert!(patch(Some(None)).validate_arguments().is_ok());
+        assert_eq!(
+            patch(None).validate_arguments().unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
+        let set = patch(Some(Some(id(9)))).content_fingerprint().unwrap();
+        let other = patch(Some(Some(id(10)))).content_fingerprint().unwrap();
+        let clear = patch(Some(None)).content_fingerprint().unwrap();
+        assert!(set != other && set != clear && other != clear);
+    }
 }

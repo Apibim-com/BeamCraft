@@ -194,7 +194,7 @@ pub(crate) fn encode(vertices: &[Point3; 8]) -> Result<([u8; 392], ContentDigest
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::steel::{RectangularPlate, rectangular_plate};
+    use crate::{RectangularPlate, rectangular_plate};
 
     #[test]
     fn corrupted_builder_candidates_never_seal() {

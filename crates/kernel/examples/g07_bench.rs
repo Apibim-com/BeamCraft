@@ -27,8 +27,7 @@ use beamcraft_kernel::topology::analyze;
 use beamcraft_kernel::trimesh::TriMesh;
 use beamcraft_kernel::verdict::ShellStatus;
 use beamcraft_kernel::{
-    steel::RectangularPlate, steel::StraightMember, steel::rectangular_plate,
-    steel::straight_member,
+    RectangularPlate, rectangular_plate, steel::StraightMember, steel::straight_member,
 };
 use beamcraft_model::digest::Sha256;
 use std::hint::black_box;
