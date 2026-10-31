@@ -36,10 +36,10 @@ use crate::plate::{decode_polygon, decode_polygons, number, text};
 use crate::source_file::read_file;
 use beamcraft_layer_engine::{Prim, Reader, Value};
 use beamcraft_model::command::{CommandError, label_is_valid};
-use beamcraft_model::definition::SectionProperties;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::reference::check_source_path;
+use beamcraft_model::steel::definition::SectionProperties;
 use beamcraft_model::steel::fastener::{
     FastenerKind, FastenerSpec, HeadKind, HoleMode, WasherSpec,
 };

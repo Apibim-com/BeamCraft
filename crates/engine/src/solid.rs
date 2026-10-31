@@ -12,7 +12,7 @@ use crate::scene::SceneMesh;
 use beamcraft_geom::{Frame3, Point3, RigidTransform, Vec3};
 use beamcraft_kernel::ops::OpResult;
 use beamcraft_kernel::profile::Extrusion;
-use beamcraft_kernel::sweep::SweepResult;
+use beamcraft_kernel::steel::sweep::SweepResult;
 use beamcraft_kernel::trimesh::TriMesh;
 use beamcraft_model::digest::{ContentDigest, Sha256};
 

@@ -90,23 +90,33 @@ move of a directory and not a hunt through mixed files:
 
 | Crate | Steel subtree | Platform files that still reach into it |
 |---|---|---|
-| `model` | `steel::{command, section, fastener}` | `command.rs` (13 uses: `PlateSide`, `PlateCorner`, `CornerTreatment` in `ElementPatch`/`UpdateElement`), `definition.rs` (3: `SectionShape`); also `prim.rs`, `instance.rs`, `limits.rs` carry steel names without importing the subtree |
-| `kernel` | `steel::{build, fastener, input, member, member_hole, plate_contour, result, ruled, section}` | `measure.rs` (`PlateResult`), `mesh.rs`, `ops/body.rs`, `sweep.rs` (1 each) |
-| `engine` | `steel::{bend, bolt, command, contour_edit, corners, cut, fabricate, fastener, loft_plate, member, member_hole, plate_draft, synthetic, weld}` | `quantity.rs` (9), `query/committed.rs` (7), `update.rs`, `transform.rs`, `transaction.rs`, `copy.rs` (2 each), and 1 each in `view_clipping.rs`, `query/{pick,feature,bundle}.rs`, `numbering/geometry.rs`, `annotation.rs`; the files that import the model or kernel steel types are `lib.rs`, `instance.rs`, `copy.rs`, `quantity.rs`, `scene.rs`, `solid.rs`, `transaction.rs`, `transform.rs`, `update.rs`, `query/committed.rs` |
+| `model` | `steel::{command, section, fastener, instance, definition}` | none in production code; `command.rs` names `CreatePlate` in a doc link and a test |
+| `kernel` | `steel::{build, fastener, input, member, member_hole, plate_contour, result, ruled, section, sweep, cross_check, body}` | none in production code; `mesh.rs` has one test import |
+| `engine` | `steel::{bend, bolt, command, committed, contour_edit, copy, corners, cut, fabricate, fastener, instance, loft_plate, member, member_hole, plate_draft, quantity, solid_mesh, synthetic, transaction, transform, update, weld}` | `solid.rs` (`SweepResult`, the sweep mesh constructor), `numbering/geometry.rs` (`AuthoredMember`), and the tests that take `synthetic::plate_scene` (`annotation`, `view_clipping`, `query/{bundle,feature,pick}`) |
 
 Those rows are the complete list of back-edges, and the test is mechanical:
 `rg "crate::steel|beamcraft_(model|kernel)::steel"` outside the subtrees.
 
 ## Why the crate cannot be cut yet
 
-A discipline crate (kind `discipline`) may depend on the platform, never the other way round.
-Today the platform crates depend on the steel types in the table above, and the steel code
-depends on the platform crates. Cargo refuses a cycle, so moving `engine::steel` into a crate
-that depends on `engine` is impossible while `engine::quantity`, `update`, `transform`,
-`transaction`, `copy` and `query::committed` name `AuthoredPlate`, `AuthoredMember` and the
-steel commands. The way out is the same for each of them: the platform file works on a small
-trait or table that the discipline fills (what an element kind is, how its fields are patched,
-what its quantities are, which footprint a command declares), and the steel crate implements it.
-That is a design with several decisions for the owner, not a move, and it is the next piece of
-work; the layer-engine `Shape` and `Change` enums and the closed `ElementKind` enum are the same
-problem in other crates.
+A discipline crate (kind `discipline`) may depend on the platform, never the other way round, and
+Cargo refuses a cycle. `model`, `kernel` and `engine` are now almost clean in production code
+(the table above), and reading the remaining files showed that most of what looked like platform
+frameworks is steel: `quantity`, `update`, `transform`, `copy`, `transaction` and the
+committed-plate reader work on `AuthoredPlate` and `AuthoredMember`, so they moved with it.
+
+What still ties the platform to steel is the branching on the kind of element:
+
+- `layer-engine`: the `Shape` and `Change` enums and the `validate.rs` and `edit.rs` handlers
+  list plate, member, weld and bolt next to grid, level and assembly;
+- the CLI: `CopiedElement`, `Decoded` and the decoders in `plate.rs`, and the registry;
+- `ElementPatch`, one structure that carries plate fields; `ElementKind`, `prim.rs` and
+  `layer-engine/src/index.rs`, which name plate, beam and column.
+
+The way out is one element interface in the platform, implemented in steel for `Plate` and
+`Beam`/`Column`, so that the engine, the CLI and `layer-engine` call it and no longer branch on a
+steel kind. The operations already exist as symmetric pairs (`copy_plate`/`copy_member`,
+`patch_plate`/`patch_member`, `mirror_plate_local`/`mirror_member_local`,
+`array_plate_copies`/`array_member_copies`), so the interface is taken from them, not guessed.
+The stored `steel:*` attributes and the schema descriptor stay byte-identical. The work is
+tracked in issue #795.
