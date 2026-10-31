@@ -4607,7 +4607,7 @@ impl BoltGroupInputs {
                     "value is not finite",
                 ));
             }
-            if clearance < 0.0 || clearance > DIMENSION_CAP_MM {
+            if !(0.0..=DIMENSION_CAP_MM).contains(&clearance) {
                 return Err(CommandError::new(
                     ErrorCode::InvalidArgument,
                     "hole_clearance_mm",
