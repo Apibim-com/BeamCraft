@@ -36,7 +36,7 @@ const B: &str = "019a7bf0-0000-7000-8000-00000000a002";
 const IBEAM: &str = "019a7bf0-0000-7000-8000-00000000a003";
 const HOLED: &str = "019a7bf0-0000-7000-8000-00000000a004";
 
-mod support;
+use crate::support;
 
 fn cli() -> Option<PathBuf> {
     support::cli(Path::new(env!("CARGO_BIN_EXE_beamcraft-ui")))
