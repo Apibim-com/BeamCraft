@@ -409,6 +409,8 @@ pub(crate) struct Decoded {
     pub(crate) grids: Vec<beamcraft_model::grid::Grid>,
     /// T02: validated construction objects, without engineering bodies.
     pub(crate) constructions: Vec<beamcraft_model::construction::ConstructionObject>,
+    /// D06: validated annotations bound to features, without engineering bodies.
+    pub(crate) annotations: Vec<beamcraft_model::annotation::Annotation>,
     /// The common facts of every element except levels, by id.
     pub(crate) elements: BTreeMap<ElementId, ElementMeta>,
     /// Any geometry subtree or derived-value opinion, including malformed/non-mesh prims.
@@ -467,6 +469,7 @@ fn decode_hole_records(prim: &Prim) -> Result<Vec<HoleRecord>, PlateError> {
         "steel:hole:operationIds",
         "steel:hole:ordinals",
         "steel:hole:kinds",
+        "steel:hole:generatedBy",
     ];
     let declared: Vec<bool> = names.iter().map(|name| declared(name)).collect();
     if declared.iter().all(|seen| !seen) {
@@ -509,9 +512,20 @@ fn decode_hole_records(prim: &Prim) -> Result<Vec<HoleRecord>, PlateError> {
             _ => None,
         })
         .ok_or_else(bad)?;
+    // The generating bolt group of each record (A14.4); the empty string is a hand-placed one.
+    let owners = property(prim, "steel:hole:generatedBy")
+        .and_then(|value| match value {
+            Value::Array(items) => items
+                .iter()
+                .map(|v| text(v).map(str::to_owned))
+                .collect::<Option<Vec<_>>>(),
+            _ => None,
+        })
+        .ok_or_else(bad)?;
     if polygons.len() != ids.len()
         || polygons.len() != ordinals.len()
         || polygons.len() != kinds.len()
+        || polygons.len() != owners.len()
     {
         return Err(bad());
     }
@@ -520,12 +534,17 @@ fn decode_hole_records(prim: &Prim) -> Result<Vec<HoleRecord>, PlateError> {
         .zip(ids)
         .zip(ordinals)
         .zip(kinds)
-        .map(|(((polygon_mm, id), ordinal), kind)| {
+        .zip(owners)
+        .map(|((((polygon_mm, id), ordinal), kind), owner)| {
             Ok(HoleRecord {
                 operation_id: OpId::parse(&id).map_err(|_| bad())?,
                 ordinal: ordinal.ok_or_else(bad)?,
                 polygon_mm,
                 kind,
+                owner: match owner.as_str() {
+                    "" => None,
+                    text => Some(ElementId::parse(text).map_err(|_| bad())?),
+                },
             })
         })
         .collect::<Result<Vec<_>, PlateError>>()?;
@@ -1477,6 +1496,7 @@ pub(crate) fn decode(
         instances,
         grids: beamcraft_layer_engine::authored::grid::read_grids(&prims)?,
         constructions: beamcraft_layer_engine::authored::construction::read_constructions(&prims)?,
+        annotations: beamcraft_layer_engine::authored::annotation::read_annotations(&prims)?,
         elements,
         derived_elements,
         reference_scene: crate::reference_view::scene_elements(&prims),
@@ -2514,6 +2534,8 @@ pub struct Inspection {
     pub grids: Vec<beamcraft_model::grid::Grid>,
     /// T02: validated construction objects, without engineering bodies.
     pub constructions: Vec<beamcraft_model::construction::ConstructionObject>,
+    /// D06: validated annotations bound to features, without engineering bodies.
+    pub annotations: Vec<beamcraft_model::annotation::Annotation>,
     /// The common facts of every element except levels, by id (E02).
     pub elements: BTreeMap<ElementId, ElementMeta>,
 }
@@ -2650,6 +2672,7 @@ pub(crate) fn inspect_manifest_assets(
         instances: decoded.instances,
         grids: decoded.grids,
         constructions: decoded.constructions,
+        annotations: decoded.annotations,
         elements: decoded.elements,
     })
 }

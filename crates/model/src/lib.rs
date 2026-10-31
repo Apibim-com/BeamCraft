@@ -3,6 +3,7 @@
 
 //! The structural model for BeamCraft.
 
+pub mod annotation;
 pub mod attribute;
 pub mod changeset;
 pub mod command;
@@ -21,6 +22,7 @@ pub mod limits;
 pub mod prim;
 pub mod reference;
 pub mod section;
+pub mod sheet;
 
 pub use error::ErrorCode;
 

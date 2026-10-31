@@ -6,9 +6,12 @@
 
 use crate::plate::{PlateError, integrity};
 use beamcraft_engine::drawing::{
-    self, DimensionSpec, DraftingGeometry, DraftingSpec, Drawing, DrawingSpec,
-    MAX_DRAFTING_ENTITIES, MAX_VIEWS, Plane, SourceModelPin, ViewSpec,
+    self, CutSide, DetailSpec, DimensionSpec, DraftingGeometry, DraftingSpec, Drawing, DrawingSpec,
+    LayerSpec, LineType, MAX_DETAILS, MAX_DRAFTING_ENTITIES, MAX_INTENT_PAGE_ITEMS, MAX_LAYERS,
+    MAX_SECTIONS, MAX_VIEWS, Plane, SectionSpec, SheetFrame, SheetSpec, SourceModelPin, TitleBlock,
+    ViewSpec,
 };
+
 use beamcraft_engine::query::feature::FeatureId;
 use beamcraft_layer_engine::{
     Asset, BACKEND, Budgets, Control, Identity, OpenRequest, Prim, Profile, Reader, Value,
@@ -18,14 +21,18 @@ use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{
     DimensionId, DraftingEntityId, DrawingId, DrawingViewId, ElementId, ProjectId, RevisionId,
 };
+use beamcraft_model::sheet::Sheet;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Sole authored drawing asset, distinct from any engineering-model root.
 pub const INTENT_LAYER: &str = "drawing.usda";
-/// Tight cap checked before copying or parsing a document intent.
-pub const MAX_INTENT_BYTES: usize = 16_384;
+/// Cap checked before copying or parsing a document intent. It must hold the densest intent
+/// admission accepts: fifty-eight sixteen-point hatches whose coordinates all take the longest
+/// bounded canonical form fill roughly seventy-six kilobytes, so the cap sits above any
+/// page-maximal document instead of refusing admitted state at encode time.
+pub const MAX_INTENT_BYTES: usize = 131_072;
 /// Closed descriptor whose SHA-256 is the drawing schema identity.
-pub const SCHEMA_DESCRIPTOR: &str = "beamcraft-drawing-usd/1;root=/Drawing;view=/Drawing/View;views=/Drawing/Views;views-cap=16;page-items=64;dimension=/Drawing/Dimension;drafting=/Drawing/Drafting;drafting-entities=line,polyline,arc,circle,rectangle;drafting-cap=60;intent=beamcraft-drawing/1;source=project,revision,manifest,schema,generation;anchors=qualified-member-vertices;units=mm;projection=front,top,right;canonical-usda";
+pub const SCHEMA_DESCRIPTOR: &str = "beamcraft-drawing-usd/4;intent-bytes=131072;number-text-bytes=24;root=/Drawing;view=/Drawing/View;views=/Drawing/Views;views-cap=16;sections=/Drawing/Sections;sections-cap=16;details=/Drawing/Details;details-cap=16;page-items=64;dimension=/Drawing/Dimension;sheet=/Drawing/Sheet;sheet-sizes=a4,a3,a2,a1,a0;drafting=/Drawing/Drafting;drafting-entities=line,polyline,arc,circle,rectangle,text,hatch,symbol,free_dimension;drafting-cap=60;drafting-attrs=layer,linetype;linetypes=continuous,dashed,dotted,dashdot;layers=/Drawing/Layers;layers-cap=16;intent=beamcraft-drawing/1;source=project,revision,manifest,schema,generation;anchors=qualified-member-vertices;units=mm;projection=front,top,right;canonical-usda";
 
 /// Independent drawing schema digest; never interchangeable with the engineering-model schema.
 pub fn schema_identity() -> Result<ContentDigest, PlateError> {
@@ -82,6 +89,9 @@ pub fn encode(drawing: &Drawing) -> Result<Asset, PlateError> {
     }
     text.push_str(&format!("    custom uint64 drawing:sourceGeneration = {}\n    def Scope \"View\"\n    {{\n        custom string drawing:id = {}\n        custom token drawing:plane = {}\n        custom double drawing:scale = {}\n        custom double[] drawing:origin = [{x}, {y}]\n    }}\n", source.generation, quote(&s.view.id.to_string()), quote(s.view.plane.as_str()), s.view.scale_denominator));
     text.push_str(&format!("    def Scope \"Dimension\"\n    {{\n        custom string drawing:id = {}\n        custom string[] drawing:anchors = [{}, {}]\n        custom double drawing:offset = {}\n        custom uint drawing:decimals = {}\n    }}\n", quote(&s.dimension.id.to_string()), quote(&a.to_string()), quote(&b.to_string()), s.dimension.paper_offset_mm, s.dimension.decimal_places));
+    if let Some(sheet) = &s.sheet {
+        text.push_str(&format!("    def Scope \"Sheet\"\n    {{\n        custom token drawing:size = {}\n        custom double drawing:frameInset = {}\n        custom string drawing:titleProject = {}\n        custom string drawing:titleAuthor = {}\n    }}\n", quote(sheet.size.as_str()), sheet.frame.inset_mm, quote(&sheet.title.project), quote(&sheet.title.author)));
+    }
     if !s.views.is_empty() {
         text.push_str("    def Scope \"Views\"\n    {\n");
         for (ordinal, view) in s.views.iter().enumerate() {
@@ -89,6 +99,40 @@ pub fn encode(drawing: &Drawing) -> Result<Asset, PlateError> {
             // identity lives in the drawing:id attribute.
             let [x, y] = view.paper_origin_mm;
             text.push_str(&format!("        def Scope \"V{}\"\n        {{\n            custom string drawing:id = {}\n            custom token drawing:plane = {}\n            custom double drawing:scale = {}\n            custom double[] drawing:origin = [{x}, {y}]\n        }}\n", ordinal + 1, quote(&view.id.to_string()), quote(view.plane.as_str()), view.scale_denominator));
+        }
+        text.push_str("    }\n");
+    }
+    if !s.sections.is_empty() {
+        text.push_str("    def Scope \"Sections\"\n    {\n");
+        for (ordinal, section) in s.sections.iter().enumerate() {
+            // Canonical ordinal names, not view UUIDs: the prim name is derived state, the
+            // identity lives in the drawing:id attribute.
+            let [x, y] = section.paper_origin_mm;
+            text.push_str(&format!("        def Scope \"S{}\"\n        {{\n            custom string drawing:id = {}\n            custom token drawing:plane = {}\n            custom double drawing:cut = {}\n            custom token drawing:side = {}\n            custom double drawing:scale = {}\n            custom double[] drawing:origin = [{x}, {y}]\n        }}\n", ordinal + 1, quote(&section.id.to_string()), quote(section.plane.as_str()), section.cut_mm, quote(section.side.as_str()), section.scale_denominator));
+        }
+        text.push_str("    }\n");
+    }
+    if !s.details.is_empty() {
+        text.push_str("    def Scope \"Details\"\n    {\n");
+        for (ordinal, detail) in s.details.iter().enumerate() {
+            let [cx, cy] = detail.center_paper_mm;
+            let [x, y] = detail.paper_origin_mm;
+            text.push_str(&format!("        def Scope \"D{}\"\n        {{\n            custom string drawing:id = {}\n            custom string drawing:parent = {}\n            custom double[] drawing:center = [{cx}, {cy}]\n            custom double drawing:radius = {}\n            custom double drawing:scale = {}\n            custom double[] drawing:origin = [{x}, {y}]\n        }}\n", ordinal + 1, quote(&detail.id.to_string()), quote(&detail.parent.to_string()), detail.radius_mm, detail.scale_denominator));
+        }
+        text.push_str("    }\n");
+    }
+    if !s.layers.is_empty() {
+        text.push_str("    def Scope \"Layers\"\n    {\n");
+        for (ordinal, layer) in s.layers.iter().enumerate() {
+            // Canonical ordinal names, not layer UUIDs: the prim name is derived state, the
+            // identity lives in the drawing:id attribute.
+            text.push_str(&format!(
+                "        def Scope \"L{}\"\n        {{\n            custom string drawing:id = {}\n            custom string drawing:name = {}\n            custom bool drawing:visible = {}\n        }}\n",
+                ordinal + 1,
+                quote(&layer.id.to_string()),
+                quote(&layer.name),
+                layer.visible
+            ));
         }
         text.push_str("    }\n");
     }
@@ -105,12 +149,21 @@ pub fn encode(drawing: &Drawing) -> Result<Asset, PlateError> {
                 .map(f64::to_string)
                 .collect::<Vec<_>>()
                 .join(", ");
+            let payload = match entity.geometry.string_payload() {
+                Some((name, value)) => {
+                    format!("            custom string {name} = {}\n", quote(value))
+                }
+                None => String::new(),
+            };
             text.push_str(&format!(
-                "        def Scope \"E{}\"\n        {{\n            custom string drawing:id = {}\n            custom token drawing:kind = {}\n            custom double[] drawing:geometry = [{}]\n        }}\n",
+                "        def Scope \"E{}\"\n        {{\n            custom string drawing:id = {}\n            custom token drawing:kind = {}\n            custom string drawing:layer = {}\n            custom token drawing:linetype = {}\n            custom double[] drawing:geometry = [{}]\n{}        }}\n",
                 ordinal + 1,
                 quote(&entity.id.to_string()),
                 quote(entity.geometry.kind()),
-                numbers
+                quote(&entity.layer.to_string()),
+                quote(entity.line_type.as_str()),
+                numbers,
+                payload
             ));
         }
         text.push_str("    }\n");
@@ -173,6 +226,41 @@ fn paper_origin(prim: &Prim) -> Result<[f64; 2], PlateError> {
     }
 }
 
+/// Collects one scope's canonical ordinal children in order, refusing foreign prims, duplicate
+/// or non-contiguous ordinals and counts over the cap.
+fn ordinal_children<'a>(
+    items: &'a [Prim],
+    prefix: &str,
+    cap: usize,
+) -> Result<Vec<&'a Prim>, PlateError> {
+    let mut children: BTreeMap<usize, &Prim> = BTreeMap::new();
+    for item in items {
+        let Some(name) = item.path.strip_prefix(prefix) else {
+            continue;
+        };
+        if item.type_name.as_deref() != Some("Scope") || !item.active {
+            return Err(integrity("drawing scope holds a foreign prim"));
+        }
+        let ordinal: usize = name
+            .parse()
+            .map_err(|_| integrity("drawing prim name is not a canonical ordinal"))?;
+        if ordinal == 0 || children.insert(ordinal, item).is_some() {
+            return Err(integrity("drawing ordinals must be distinct from one"));
+        }
+    }
+    if children.len() > cap {
+        return Err(limit());
+    }
+    let mut ordered = Vec::with_capacity(children.len());
+    for (expected, (ordinal, item)) in children.iter().enumerate() {
+        if *ordinal != expected + 1 {
+            return Err(integrity("drawing ordinals must be contiguous"));
+        }
+        ordered.push(*item);
+    }
+    Ok(ordered)
+}
+
 /// Verifies an externally pinned intent asset, then parses and re-admits it. `identity` must come
 /// from the authorized document manifest: project is the source project and workspace is DrawingId.
 /// Revision/generation belong to the document; they are not substituted for its source pin.
@@ -198,17 +286,31 @@ pub fn decode(asset: Asset, identity: Identity, control: &Control) -> Result<Dra
             total_bytes: MAX_INTENT_BYTES,
             layers: 1,
             depth: 8,
-            // Root, view, dimension, the optional views and drafting scopes and up to the
-            // entity caps — the whole intent fits one reader page (engine MAX_INTENT_PAGE_ITEMS).
-            prims: 3 + 1 + MAX_DRAFTING_ENTITIES,
-            // Account for Sdf property-child lists and per-attribute metadata as well as values.
+            // Root, view, dimension, the optional sheet/views/sections/details/layers/drafting
+            // scopes and every object — admission caps the whole intent page (engine
+            // MAX_INTENT_PAGE_ITEMS), so the reader budget is that exact bound (plus the stage's
+            // pseudo-root entry the page walk delivers); the semantic reader below still
+            // re-checks everything.
+            prims: MAX_INTENT_PAGE_ITEMS + 1,
+            // The densest admitted page holds ~2,300 semantic values but far more parser
+            // tokens: the text preflight charges one token per numeric character, and a
+            // page of twenty-four-byte coordinates alone is tens of thousands of them.
             // The closed semantic reader below still requires exactly two anchors/two origins.
-            values: 1024,
-            array_items: 32,
-            text_bytes: 1024,
-            decoded_bytes: 65_536,
-            snapshot_bytes: 65_536,
-            page_items: 3 + 1 + MAX_DRAFTING_ENTITIES,
+            values: 16_384,
+            // The text preflight charges every array's leaf bytes against this bound, not its
+            // element count. The largest array the contract can hold is one drawn entity's
+            // `drawing:geometry`: thirty-two coordinates at the twenty-four-byte canonical
+            // maximum, so 768 is exactly the closed ceiling.
+            array_items: 768,
+            // The densest page holds ~6,400 string/token bytes (every identity, kind, layer,
+            // line type and pattern of fifty-eight entities plus the document's own strings).
+            text_bytes: 16_384,
+            decoded_bytes: 131_072,
+            // The typed snapshot charges every prim's provenance paths and every attribute's
+            // key plus value size; a page of sixty-four prims with thirty-two-coordinate
+            // entities crosses a bare byte-parity budget, so this sits well above it.
+            snapshot_bytes: 524_288,
+            page_items: MAX_INTENT_PAGE_ITEMS,
         },
     };
     // Asset digest and identity come from the caller's manifest. This is the wrapper's distinct
@@ -219,12 +321,20 @@ pub fn decode(asset: Asset, identity: Identity, control: &Control) -> Result<Dra
     if opened.meters_per_unit != 0.001 || opened.up_axis != "Z" {
         return Err(integrity("drawing stage profile disagrees"));
     }
-    let page = reader.read(&opened.context, None, control)?;
-    if page.next.is_some() {
-        return Err(limit());
+    // Walk the frozen snapshot to the end: admission bounds the intent to MAX_INTENT_PAGE_ITEMS
+    // semantic prims, and the stage delivers them in page-sized slices behind a cursor.
+    let mut items: Vec<Prim> = Vec::new();
+    let mut cursor = None;
+    loop {
+        let page = reader.read(&opened.context, cursor.as_ref(), control)?;
+        items.extend(page.items);
+        match page.next {
+            Some(next) => cursor = Some(next),
+            None => break,
+        }
     }
     let prim = |path: &str, kind: &str| {
-        page.items
+        items
             .iter()
             .find(|p| p.path == path && p.type_name.as_deref() == Some(kind) && p.active)
             .ok_or_else(|| integrity("drawing prim profile disagrees"))
@@ -276,91 +386,95 @@ pub fn decode(asset: Asset, identity: Identity, control: &Control) -> Result<Dra
     let anchors: [FeatureId; 2] = anchors
         .try_into()
         .map_err(|_| integrity("drawing requires exactly two anchors"))?;
-    let drafting: Vec<DraftingSpec> =
-        match page.items.iter().find(|p| p.path == "/Drawing/Drafting") {
-            None => Vec::new(),
-            Some(scope) if scope.type_name.as_deref() == Some("Scope") && scope.active => {
-                // Canonical ordinal children E1..En with no gaps; the final canonical re-encode
-                // comparison refuses any other topology or stray attribute.
-                const PREFIX: &str = "/Drawing/Drafting/E";
-                let mut children: BTreeMap<usize, &Prim> = BTreeMap::new();
-                for item in &page.items {
-                    let Some(name) = item.path.strip_prefix(PREFIX) else {
-                        continue;
-                    };
-                    if item.type_name.as_deref() != Some("Scope") || !item.active {
-                        return Err(integrity("drafting scope holds a foreign prim"));
-                    }
-                    let ordinal: usize = name.parse().map_err(|_| {
-                        integrity("drafting entity prim name is not a canonical ordinal")
-                    })?;
-                    if ordinal == 0 || children.insert(ordinal, item).is_some() {
-                        return Err(integrity(
-                            "drafting entity ordinals must be distinct from one",
-                        ));
-                    }
-                }
-                if children.len() > MAX_DRAFTING_ENTITIES {
-                    return Err(limit());
-                }
-                let mut entities = Vec::new();
-                for (expected, (ordinal, item)) in children.iter().enumerate() {
-                    if *ordinal != expected + 1 {
-                        return Err(integrity("drafting entity ordinals must be contiguous"));
-                    }
-                    let id = DraftingEntityId::parse(text(item, "drawing:id", "string")?)
-                        .map_err(|_| integrity("drawing identity is not a full UUIDv7"))?;
-                    let kind = text(item, "drawing:kind", "token")?;
-                    let values = match value(item, "drawing:geometry", "double[]")? {
-                        Value::Array(values) => values
-                            .iter()
-                            .map(|value| match value {
-                                Value::Number(number) => Some(*number),
-                                _ => None,
-                            })
-                            .collect::<Option<Vec<f64>>>()
-                            .ok_or_else(|| {
-                                integrity("drafting geometry is not an exact double set")
-                            })?,
-                        _ => return Err(integrity("drafting geometry is not an exact double set")),
-                    };
-                    let geometry = DraftingGeometry::from_parts(kind, &values)
-                        .ok_or_else(|| integrity("drafting geometry disagrees with its kind"))?;
-                    entities.push(DraftingSpec { id, geometry });
-                }
-                entities
+    let sheet: Option<SheetSpec> = match items.iter().find(|p| p.path == "/Drawing/Sheet") {
+        None => None,
+        Some(scope) if scope.type_name.as_deref() == Some("Scope") && scope.active => {
+            // Admission re-validates every bound; the canonical re-encode comparison below
+            // refuses any other topology or stray attribute.
+            Some(SheetSpec {
+                size: Sheet::parse(text(scope, "drawing:size", "token")?)
+                    .ok_or_else(|| integrity("unsupported drawing sheet size"))?,
+                frame: SheetFrame {
+                    inset_mm: number(scope, "drawing:frameInset")?,
+                },
+                title: TitleBlock {
+                    project: text(scope, "drawing:titleProject", "string")?.to_owned(),
+                    author: text(scope, "drawing:titleAuthor", "string")?.to_owned(),
+                },
+            })
+        }
+        Some(_) => return Err(integrity("drawing prim profile disagrees")),
+    };
+    let drafting: Vec<DraftingSpec> = match items.iter().find(|p| p.path == "/Drawing/Drafting") {
+        None => Vec::new(),
+        Some(scope) if scope.type_name.as_deref() == Some("Scope") && scope.active => {
+            // Canonical ordinal children E1..En with no gaps; the final canonical re-encode
+            // comparison refuses any other topology or stray attribute.
+            let mut entities = Vec::new();
+            for item in ordinal_children(&items, "/Drawing/Drafting/E", MAX_DRAFTING_ENTITIES)? {
+                let id = DraftingEntityId::parse(text(item, "drawing:id", "string")?)
+                    .map_err(|_| integrity("drawing identity is not a full UUIDv7"))?;
+                let kind = text(item, "drawing:kind", "token")?;
+                let layer = DraftingEntityId::parse(text(item, "drawing:layer", "string")?)
+                    .map_err(|_| integrity("drawing identity is not a full UUIDv7"))?;
+                let line_type = LineType::parse(text(item, "drawing:linetype", "token")?)
+                    .ok_or_else(|| integrity("invalid drawing line type"))?;
+                let payload = match DraftingGeometry::payload_attribute(kind) {
+                    Some(name) => Some(text(item, name, "string")?),
+                    None => None,
+                };
+                let values = match value(item, "drawing:geometry", "double[]")? {
+                    Value::Array(values) => values
+                        .iter()
+                        .map(|value| match value {
+                            Value::Number(number) => Some(*number),
+                            _ => None,
+                        })
+                        .collect::<Option<Vec<f64>>>()
+                        .ok_or_else(|| integrity("drafting geometry is not an exact double set"))?,
+                    _ => return Err(integrity("drafting geometry is not an exact double set")),
+                };
+                let geometry = DraftingGeometry::from_parts(kind, &values, payload)
+                    .ok_or_else(|| integrity("drafting geometry disagrees with its kind"))?;
+                entities.push(DraftingSpec {
+                    id,
+                    geometry,
+                    layer,
+                    line_type,
+                });
             }
-            Some(_) => return Err(integrity("drawing prim profile disagrees")),
-        };
-    let views: Vec<ViewSpec> = match page.items.iter().find(|p| p.path == "/Drawing/Views") {
+            entities
+        }
+        Some(_) => return Err(integrity("drawing prim profile disagrees")),
+    };
+    let layers: Vec<LayerSpec> = match items.iter().find(|p| p.path == "/Drawing/Layers") {
+        None => Vec::new(),
+        Some(scope) if scope.type_name.as_deref() == Some("Scope") && scope.active => {
+            // Canonical ordinal children L1..Ln with no gaps; the final canonical re-encode
+            // comparison refuses any other topology or stray attribute.
+            let mut layers = Vec::new();
+            for item in ordinal_children(&items, "/Drawing/Layers/L", MAX_LAYERS)? {
+                layers.push(LayerSpec {
+                    id: DraftingEntityId::parse(text(item, "drawing:id", "string")?)
+                        .map_err(|_| integrity("drawing identity is not a full UUIDv7"))?,
+                    name: text(item, "drawing:name", "string")?.to_owned(),
+                    visible: match value(item, "drawing:visible", "bool")? {
+                        Value::Bool(flag) => *flag,
+                        _ => return Err(integrity("layer visibility is not a boolean")),
+                    },
+                });
+            }
+            layers
+        }
+        Some(_) => return Err(integrity("drawing prim profile disagrees")),
+    };
+    let views: Vec<ViewSpec> = match items.iter().find(|p| p.path == "/Drawing/Views") {
         None => Vec::new(),
         Some(scope) if scope.type_name.as_deref() == Some("Scope") && scope.active => {
             // Canonical ordinal children V1..Vn with no gaps; the final canonical re-encode
             // comparison refuses any other topology or stray attribute.
-            const PREFIX: &str = "/Drawing/Views/V";
-            let mut children: BTreeMap<usize, &Prim> = BTreeMap::new();
-            for item in &page.items {
-                let Some(name) = item.path.strip_prefix(PREFIX) else {
-                    continue;
-                };
-                if item.type_name.as_deref() != Some("Scope") || !item.active {
-                    return Err(integrity("views scope holds a foreign prim"));
-                }
-                let ordinal: usize = name
-                    .parse()
-                    .map_err(|_| integrity("view prim name is not a canonical ordinal"))?;
-                if ordinal == 0 || children.insert(ordinal, item).is_some() {
-                    return Err(integrity("view ordinals must be distinct from one"));
-                }
-            }
-            if children.len() > MAX_VIEWS {
-                return Err(limit());
-            }
             let mut views = Vec::new();
-            for (expected, (ordinal, item)) in children.iter().enumerate() {
-                if *ordinal != expected + 1 {
-                    return Err(integrity("view ordinals must be contiguous"));
-                }
+            for item in ordinal_children(&items, "/Drawing/Views/V", MAX_VIEWS)? {
                 views.push(ViewSpec {
                     id: DrawingViewId::parse(text(item, "drawing:id", "string")?)
                         .map_err(|_| integrity("drawing identity is not a full UUIDv7"))?,
@@ -371,6 +485,54 @@ pub fn decode(asset: Asset, identity: Identity, control: &Control) -> Result<Dra
                 });
             }
             views
+        }
+        Some(_) => return Err(integrity("drawing prim profile disagrees")),
+    };
+    let sections: Vec<SectionSpec> = match items.iter().find(|p| p.path == "/Drawing/Sections") {
+        None => Vec::new(),
+        Some(scope) if scope.type_name.as_deref() == Some("Scope") && scope.active => {
+            let mut sections = Vec::new();
+            for item in ordinal_children(&items, "/Drawing/Sections/S", MAX_SECTIONS)? {
+                sections.push(SectionSpec {
+                    id: DrawingViewId::parse(text(item, "drawing:id", "string")?)
+                        .map_err(|_| integrity("drawing identity is not a full UUIDv7"))?,
+                    plane: Plane::parse(text(item, "drawing:plane", "token")?)
+                        .ok_or_else(|| integrity("invalid drawing plane"))?,
+                    cut_mm: number(item, "drawing:cut")?,
+                    side: CutSide::parse(text(item, "drawing:side", "token")?)
+                        .ok_or_else(|| integrity("invalid drawing side"))?,
+                    scale_denominator: number(item, "drawing:scale")?,
+                    paper_origin_mm: paper_origin(item)?,
+                });
+            }
+            sections
+        }
+        Some(_) => return Err(integrity("drawing prim profile disagrees")),
+    };
+    let details: Vec<DetailSpec> = match items.iter().find(|p| p.path == "/Drawing/Details") {
+        None => Vec::new(),
+        Some(scope) if scope.type_name.as_deref() == Some("Scope") && scope.active => {
+            let mut details = Vec::new();
+            for item in ordinal_children(&items, "/Drawing/Details/D", MAX_DETAILS)? {
+                let [cx, cy] = match value(item, "drawing:center", "double[]")? {
+                    Value::Array(values) => match values.as_slice() {
+                        [Value::Number(x), Value::Number(y)] => [*x, *y],
+                        _ => return Err(integrity("invalid drawing center")),
+                    },
+                    _ => return Err(integrity("invalid drawing center")),
+                };
+                details.push(DetailSpec {
+                    id: DrawingViewId::parse(text(item, "drawing:id", "string")?)
+                        .map_err(|_| integrity("drawing identity is not a full UUIDv7"))?,
+                    parent: DrawingViewId::parse(text(item, "drawing:parent", "string")?)
+                        .map_err(|_| integrity("drawing identity is not a full UUIDv7"))?,
+                    center_paper_mm: [cx, cy],
+                    radius_mm: number(item, "drawing:radius")?,
+                    scale_denominator: number(item, "drawing:scale")?,
+                    paper_origin_mm: paper_origin(item)?,
+                });
+            }
+            details
         }
         Some(_) => return Err(integrity("drawing prim profile disagrees")),
     };
@@ -395,6 +557,10 @@ pub fn decode(asset: Asset, identity: Identity, control: &Control) -> Result<Dra
         },
         drafting,
         views,
+        sections,
+        details,
+        sheet,
+        layers,
     })?;
     if encode(&drawing)?.bytes != asset.bytes {
         return Err(integrity(

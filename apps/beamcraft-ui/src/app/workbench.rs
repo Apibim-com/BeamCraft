@@ -35,6 +35,10 @@ pub(crate) enum Bench {
     Delete,
     /// The window's display cut plane (V15); a view filter, never a model change.
     CutPlane,
+    /// Colour by a saved representation set (V17); a display overlay, never a model change.
+    Colour,
+    /// D06 annotations: place dimensions, marks and leaders, watch their binding states.
+    Annotations,
 }
 
 impl Bench {
@@ -50,6 +54,8 @@ impl Bench {
             Self::Copy => "Copy",
             Self::Delete => "Delete",
             Self::CutPlane => "Cut plane",
+            Self::Colour => "Colour",
+            Self::Annotations => "Annotations",
         }
     }
 
@@ -64,7 +70,9 @@ impl Bench {
             | Self::Beam
             | Self::Column
             | Self::Grid
-            | Self::CutPlane => None,
+            | Self::CutPlane
+            | Self::Colour
+            | Self::Annotations => None,
         }
     }
 }
@@ -344,6 +352,8 @@ impl App {
             }
             Bench::Select => {}
             Bench::CutPlane => {}
+            Bench::Colour => {}
+            Bench::Annotations => {}
             Bench::Grid => {
                 self.beam_mode = false;
                 self.beam.reset();
@@ -351,6 +361,9 @@ impl App {
                 self.renderer
                     .set_ghost(&self.state.device, &self.state.queue, None);
             }
+        }
+        if bench == Bench::Annotations {
+            self.annotation_load();
         }
     }
 
@@ -586,6 +599,14 @@ impl App {
                     });
                     }
                     if self.ribbon_tab == RibbonTab::View {
+                    group(ui, "Views", &mut |ui| {
+                        if tool_button(ui, Icon::Block, "Saved views", self.views_panel.window_open, true).clicked() {
+                            self.views_panel.window_open = !self.views_panel.window_open;
+                        }
+                        if tool_button(ui, Icon::Copy, "New view window", false, self.view_windows.len() < crate::views::MAX_WINDOWS).clicked() {
+                            self.open_view_window();
+                        }
+                    });
                     group(ui, "Display", &mut |ui| {
                         for (mode, label) in [
                             (beamcraft_engine::RenderMode::Wireframe, "Wireframe"),
@@ -601,6 +622,13 @@ impl App {
                         if tool_button(ui, Icon::Grid, "Grid guides", self.grids_visible, true).clicked() {
                             self.grids_visible = !self.grids_visible;
                             if !self.grids_visible { self.grid_edit = None; }
+                        }
+                    });
+                    group(ui, "Colour", &mut |ui| {
+                        if tool_button(ui, Icon::Block, "Colour", self.bench == Bench::Colour, true)
+                            .clicked()
+                        {
+                            pick = Some(Bench::Colour);
                         }
                     });
                     group(ui, "Cut", &mut |ui| {
@@ -626,6 +654,9 @@ impl App {
                         group(ui, "Grids", &mut |ui| {
                             if tool_button(ui, Icon::Grid, "Rectangular grid", bench == Bench::Grid, true).clicked() {
                                 pick = Some(Bench::Grid);
+                            }
+                            if tool_button(ui, Icon::Callout, "Annotations", bench == Bench::Annotations, true).clicked() {
+                                pick = Some(Bench::Annotations);
                             }
                         });
                         ui.vertical(|ui| {
@@ -737,11 +768,23 @@ impl App {
                             Bench::Grid => self.grid_panel(ui),
                             Bench::Move | Bench::Copy | Bench::Delete => self.edit_panel(ui),
                             Bench::CutPlane => self.cut_panel(ui),
+                            Bench::Colour => self.colour_panel(ui),
+                            Bench::Annotations => self.annotation_panel(ui),
                         }
                         ui.add_space(12.0);
                         egui::CollapsingHeader::new("Publishing")
                             .default_open(false)
                             .show(ui, |ui| self.publish_panel(ui));
+                        egui::CollapsingHeader::new("Sheet editor")
+                            .default_open(false)
+                            .show(ui, |ui| {
+                                ui.label(
+                                    "Move the placed views of a drawing document on its sheet.",
+                                );
+                                if ui.button("Open sheet editor").clicked() {
+                                    self.sheet_editor.open = true;
+                                }
+                            });
                     });
             });
     }
@@ -1181,6 +1224,9 @@ impl App {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     let needle = self.browser_search.trim().to_lowercase();
                     if needle.is_empty() || "views 3d model".contains(&needle) {
+                        // The named views of the model (V12): clicking restores the view; the
+                        // {3D} entry fits the whole model. Actions run after the panel closes.
+                        let mut pick = None;
                         egui::CollapsingHeader::new("Views (all)")
                             .default_open(true)
                             .show(ui, |ui| {
@@ -1192,12 +1238,55 @@ impl App {
                                         if ui.selectable_label(true, "{3D}").clicked() {
                                             self.pending_fit = true;
                                         }
+                                        for view in self.views.iter() {
+                                            let kind = match &view.plane {
+                                                None => "3D",
+                                                Some(
+                                                    beamcraft_engine::views::PlaneSpec::GridLine {
+                                                        ..
+                                                    },
+                                                ) => "grid line",
+                                                Some(beamcraft_engine::views::PlaneSpec::Level) => {
+                                                    "level"
+                                                }
+                                                Some(
+                                                    beamcraft_engine::views::PlaneSpec::TwoPoints {
+                                                        ..
+                                                    },
+                                                ) => "two points",
+                                            };
+                                            ui.horizontal(|ui| {
+                                                if ui.selectable_label(false, &view.name).clicked()
+                                                {
+                                                    pick = Some(crate::views::Action::Apply(
+                                                        view.name.clone(),
+                                                    ));
+                                                }
+                                                ui.label(
+                                                    RichText::new(kind)
+                                                        .size(10.0)
+                                                        .color(palette.muted),
+                                                );
+                                                if ui
+                                                    .button("×")
+                                                    .on_hover_text("Remove view")
+                                                    .clicked()
+                                                {
+                                                    pick = Some(crate::views::Action::Delete(
+                                                        view.name.clone(),
+                                                    ));
+                                                }
+                                            });
+                                        }
                                     });
                                 for label in ["Elevations", "Sections", "Drafting Views"] {
                                     ui.add_enabled(false, egui::Label::new(label))
                                         .on_disabled_hover_text(LATER);
                                 }
                             });
+                        if let Some(action) = pick {
+                            self.view_action(action);
+                        }
                     }
                     for title in ["Schedules / Quantities", "Sheets (all)"] {
                         if needle.is_empty() || title.to_lowercase().contains(&needle) {

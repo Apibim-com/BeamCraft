@@ -6,6 +6,7 @@
 
 use beamcraft_cli::registry;
 
+mod annotation;
 mod assembly;
 mod attribute;
 mod blobs;
@@ -38,6 +39,7 @@ mod start;
 mod store;
 mod view;
 mod view_export;
+mod views;
 mod weld;
 mod work_plane;
 mod workspace;
@@ -67,6 +69,7 @@ const SECTIONS: &[&str] = &[
     filters::HELP,
     grid::HELP,
     construction::HELP,
+    annotation::HELP,
     grid::LINES,
     grid::UPDATE,
     grid::QUERIES,
@@ -80,6 +83,7 @@ const SECTIONS: &[&str] = &[
     rebase::HELP,
     reference::HELP,
     view::HELP,
+    views::HELP,
     pick::HELP,
     view_export::HELP,
     bom::HELP,
