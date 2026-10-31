@@ -45,8 +45,8 @@ use beamcraft_kernel::profile::{Cavity, Point2, extrude};
 use beamcraft_kernel::trimesh::TriMesh;
 use beamcraft_kernel::{PlateResult, RectangularPlate, rectangular_plate};
 use beamcraft_model::command::{
-    AddHole, CommandError, CreatePlate, CutRecord, HoleRecord, MAX_HOLES, Placement, PlateCorner,
-    PlateSide,
+    AddHole, BendRecord, CommandError, CreatePlate, CutRecord, HoleRecord, MAX_HOLES, Placement,
+    PlateCorner, PlateSide,
 };
 use beamcraft_model::definition::MaterialSpec;
 use beamcraft_model::digest::ContentDigest;
@@ -73,6 +73,10 @@ pub const HOLED_VOLUME_ALGORITHM: &str = "kernel-g09-through-hole-volume/1;toler
 /// Version label of the volume algorithm of an element with a plane cut (A03): the midpoint of
 /// the G06 enclosure of the certified result of the kernel plane cut, taken after any holes.
 pub const CUT_VOLUME_ALGORITHM: &str = "kernel-a03-plane-cut-volume/1;tolerance-policy-3";
+
+/// Algorithm label of a bent plate's volume record (A10): the sealed G13 loft of the derived
+/// cross-section, whose analytic value is the unfolded outline area times the thickness.
+pub const BENT_VOLUME_ALGORITHM: &str = "kernel-a10-bent-plate-volume/1;tolerance-policy-3";
 
 const _: () = assert!(TOLERANCE_POLICY_VERSION == 3);
 
@@ -131,6 +135,10 @@ pub struct AuthoredPlate {
     /// The owned `plane_cut` operation records (A03, amendment A-2), replayed in ascending
     /// ordinal order after every hole. Empty means an uncut element.
     pub cuts: Vec<CutRecord>,
+    /// The owned bend operation records (A10, amendment A-2) in creation order. Empty means a
+    /// flat plate; the authored contour then is the plate itself, otherwise its developed
+    /// mid-surface outline.
+    pub bends: Vec<BendRecord>,
 }
 
 impl AuthoredPlate {
@@ -149,6 +157,7 @@ impl AuthoredPlate {
             holes_mm: command.holes_mm.clone(),
             hole_records: Vec::new(),
             cuts: Vec::new(),
+            bends: Vec::new(),
         }
     }
 
@@ -283,6 +292,9 @@ pub struct PlateBody {
     /// Whether a corner treatment was applied to the authored contour (A12.2). A treated plate
     /// never takes the canonical box path, even when the sharp contour is the origin rectangle.
     pub corner_treated: bool,
+    /// Whether the body is the G13 loft of a bent plate (A10): the authored contour is then the
+    /// developed mid-surface outline, and `outline_mm` reports the unfold.
+    pub bent: bool,
     /// The evaluated outline of a G05 contour plate in the element-local plane `z = 0`: the
     /// treated outline when corners carry treatments (A12.2), the authored contour otherwise.
     /// Empty for a canonical rectangular box. Numbering compares this outline, so two plates
@@ -296,7 +308,9 @@ pub struct PlateBody {
 impl PlateBody {
     /// The algorithm label of this body's volume record.
     pub const fn algorithm(&self) -> &'static str {
-        if self.cut_applied {
+        if self.bent {
+            BENT_VOLUME_ALGORITHM
+        } else if self.cut_applied {
             CUT_VOLUME_ALGORITHM
         } else if self.hole_count != 0 {
             HOLED_VOLUME_ALGORITHM
@@ -571,6 +585,11 @@ fn classify(points: &[[f64; 3]]) -> Contour {
 /// [`CreatePlate::validate_arguments`] for label, placement and the argument-level caps; this
 /// function repeats the checks it depends on and never panics on any input.
 pub fn evaluate_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandError> {
+    // A plate with bend records evaluates as its bent body (A10); the authored contour is the
+    // developed blank and nothing of the flat-plate paths applies.
+    if !authored.bends.is_empty() {
+        return crate::bend::evaluate_bent(authored);
+    }
     let points = &authored.contour_points_mm;
     let contour = beamcraft_kernel::plate_contour::admit(points, authored.thickness_mm)?;
     let offset = side_offset(authored);
@@ -627,6 +646,7 @@ pub fn evaluate_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandErro
                 hole_count: holes.len(),
                 cut_applied: !authored.cuts.is_empty(),
                 corner_treated: false,
+                bent: false,
                 outline_mm: Vec::new(),
                 arc_deviation_mm: 0.0,
             })
@@ -715,6 +735,7 @@ pub fn evaluate_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandErro
                 hole_count: 0,
                 cut_applied: !authored.cuts.is_empty(),
                 corner_treated: false,
+                bent: false,
                 outline_mm: Vec::new(),
                 arc_deviation_mm: 0.0,
             })
@@ -813,6 +834,7 @@ fn evaluate_contour(authored: &AuthoredPlate) -> Result<PlateBody, CommandError>
         hole_count: holes.len(),
         cut_applied: !authored.cuts.is_empty(),
         corner_treated: !authored.corners.is_empty(),
+        bent: false,
         outline_mm: outline.clone(),
         arc_deviation_mm: arc_deviation,
     })
@@ -863,6 +885,17 @@ pub(crate) fn replay_cuts(
     base: SolidMesh,
     cuts: &[CutRecord],
 ) -> Result<SolidMesh, CommandError> {
+    replay_cuts_with_body(body, base, cuts).map(|(solid, _)| solid)
+}
+
+/// [`replay_cuts`] with the final certified `Body` after the last record, for the caller that
+/// keeps operating on the body (the member-hole replay). `None` means no record was applied and
+/// the plain body `body` is still the state.
+pub(crate) fn replay_cuts_with_body(
+    body: &Body,
+    base: SolidMesh,
+    cuts: &[CutRecord],
+) -> Result<(SolidMesh, Option<Body>), CommandError> {
     let mut body = body.clone();
     let mut last = None;
     for cut in cuts {
@@ -871,8 +904,8 @@ pub(crate) fn replay_cuts(
         last = Some(applied);
     }
     match last {
-        Some(applied) => Ok(SolidMesh::from_operation(&applied)),
-        None => Ok(base),
+        Some(applied) => Ok((SolidMesh::from_operation(&applied), Some(body))),
+        None => Ok((base, None)),
     }
 }
 
@@ -1030,6 +1063,14 @@ fn add_hole_at(
     next_ordinal: Option<usize>,
 ) -> Result<(AuthoredPlate, PlateBody), CommandError> {
     command.validate_arguments()?;
+    // A member generator targets a member (A04.2); it never authors a plate hole.
+    if matches!(command.hole, beamcraft_model::command::HoleSpec::Member(_)) {
+        return Err(CommandError::new(
+            ErrorCode::InvalidArgument,
+            "hole",
+            "a member hole needs a member target",
+        ));
+    }
     if operation_id_used(command.operation_id) {
         return Err(CommandError::new(
             ErrorCode::DuplicateId,
@@ -1103,6 +1144,17 @@ pub fn update_hole(
     command: &beamcraft_model::command::UpdateHole,
 ) -> Result<(AuthoredPlate, PlateBody), CommandError> {
     command.validate_arguments()?;
+    // The same generator guard as `add_hole_at`: a member generator targets a member.
+    if matches!(
+        command.hole.hole,
+        beamcraft_model::command::HoleSpec::Member(_)
+    ) {
+        return Err(CommandError::new(
+            ErrorCode::InvalidArgument,
+            "hole",
+            "a member hole needs a member target",
+        ));
+    }
     if head.id != command.hole.target_id {
         return Err(CommandError::new(
             ErrorCode::NotFound,
@@ -1402,6 +1454,7 @@ mod tests {
             holes_mm: Vec::new(),
             hole_records: Vec::new(),
             cuts: vec![cut_record(0, [250.0, 0.0, 0.0], KeepSide::Negative)],
+            bends: Vec::new(),
         };
         let body = evaluate_plate(&authored).unwrap();
         assert!((body.quantities().volume_mm3 - 1_250_000.0).abs() <= 1e-6);
@@ -1469,6 +1522,7 @@ mod tests {
             holes_mm: Vec::new(),
             hole_records: Vec::new(),
             cuts: Vec::new(),
+            bends: Vec::new(),
         };
         let code_of = |cut: CutRecord| {
             evaluate_plate(&AuthoredPlate {
@@ -1774,6 +1828,24 @@ mod tests {
     }
 
     #[test]
+    fn a_member_generator_needs_a_member_target() {
+        let head = AuthoredPlate::from_command(&command(rect(1000.0, 500.0), 10.0));
+        let member_spec = AddHole {
+            target_id: head.id,
+            operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000aa").unwrap(),
+            hole: HoleSpec::Member(beamcraft_model::command::MemberHole {
+                axis_point_mm: [0.0; 3],
+                axis_direction: [1.0, 0.0, 0.0],
+                extent: beamcraft_model::command::HoleExtent::Through,
+                diameter_mm: 20.0,
+            }),
+        };
+        let error = add_hole(&head, &member_spec, &|_| false).unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidArgument);
+        assert_eq!(error.field, "hole");
+    }
+
+    #[test]
     fn an_add_hole_record_follows_a_pilot_hole_and_is_refused_on_a_framed_plate() {
         let square = |x: f64, y: f64, s: f64| vec![[x, y], [x, y + s], [x + s, y + s], [x + s, y]];
         let op = OpId::parse("019a7bf0-0000-7000-8000-000000000006").unwrap();
@@ -2026,6 +2098,7 @@ mod tests {
                 holes_mm: Vec::new(),
                 hole_records: Vec::new(),
                 cuts: Vec::new(),
+                bends: Vec::new(),
             };
             assert!(evaluate_plate(&authored).is_err());
         }
