@@ -205,12 +205,21 @@ the Windows test path as the critical path; pull requests skip the Windows jobs 
 By 2026-10-31 a pull request run took about 4 minutes (median of five runs) and a `master` run
 about 4.6 minutes; the macOS path was the critical path of every pull request.
 
-The account runs at most five macOS jobs at once, across all of its workflows. The macOS tests
-therefore run in five partitions, not six: a sixth partition always waited 30–80 s for another to
-finish. They use nextest's `count:` partitioning, which deals the tests out in list order and
-spreads the slow suites of one test binary over the partitions; on the measured test durations it
-gives a shorter longest partition than `hash:`. Linux and Windows keep eight `hash:` partitions,
-where `count:` measured no better.
+The account runs at most five macOS jobs at once, across all of its workflows, so the macOS
+tests run in five shards: a sixth always waited 30–80 s for another to finish. Shards 1–4 run the
+filtersets in `.config/ci-shards/macos/`, planned from measured test durations by
+`tools/ci-shards.py`; shard 5 runs everything those leave out, so a new or renamed test still runs.
+`ci-ok` checks on every run that the shards ran every test exactly once. Linux and Windows keep
+eight `hash:` shards, which are off the critical path of a pull request.
+
+To re-plan the macOS shards when their test step times drift apart, download the
+JUnit reports of a recent run and write the plan:
+
+```sh
+gh run download <run-id> --pattern 'junit-macos-latest-*' --dir target/junit
+python3 tools/ci-shards.py plan --shards 5 --threads 3 --out .config/ci-shards/macos target/junit/*/junit.xml
+python3 tools/test-ci-shards.py
+```
 
 Each job carries an explicit `timeout-minutes` sized at about three times the longest
 observed runtime of that job, so a hung job fails within the hour instead of at GitHub's 6-hour

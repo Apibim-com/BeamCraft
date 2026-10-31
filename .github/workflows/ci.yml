@@ -314,12 +314,12 @@ jobs:
           name: nextest-archive-macos-latest
           path: nextest-archive
 
-      # `count:` deals the tests out in list order, so the slow suites of one binary spread over
-      # the shards; with five shards it gives a shorter longest shard than `hash:` on the
-      # measured test durations. Either way nextest runs every test exactly once.
+      # Shards 1-4 run the filtersets in .config/ci-shards/macos, balanced on measured test
+      # durations (tools/ci-shards.py); shard 5 runs everything they leave out, so a new test is
+      # never lost, and `ci-ok` checks that every test ran exactly once.
       - name: Run archived test partition
         shell: bash
-        run: mkdir -p target/tmp && cargo nextest run --profile ci --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --extract-overwrite --no-fail-fast --partition count:${{ matrix.shard }}/5
+        run: mkdir -p target/tmp && cargo nextest run --profile ci --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --extract-overwrite --no-fail-fast -E "$(python3 tools/ci-shards.py filter --dir .config/ci-shards/macos --shard ${{ matrix.shard }} --shards 5)"
 
       # The `ci-ok` job checks every shard's report against the platform's test list.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -428,8 +428,10 @@ jobs:
           pattern: "{test-list,junit}-*"
           path: reports
 
-      - name: Test the gate itself
-        run: python3 tools/test-ci-gate.py
+      - name: Test the gate and the shard planner
+        run: |
+          python3 tools/test-ci-gate.py
+          python3 tools/test-ci-shards.py
 
       - name: Every job succeeded and is gated
         env:
