@@ -9,18 +9,11 @@
 //! The G02 builder is dimension-based, not the complete F06 contour/placement
 //! request adapter. No rotation, I/O or dependency keys are exposed.
 
-pub mod build;
 pub mod diagnostic;
-pub mod fastener;
 pub mod feature_id;
-pub mod input;
-pub mod member;
 pub mod mesh;
-pub mod plate_contour;
 pub mod profile;
-pub mod result;
-pub mod ruled;
-pub mod section;
+pub mod steel;
 pub mod sweep;
 
 // G06: shell certification, exact predicates, measurements and a bounded box index.
@@ -34,8 +27,3 @@ pub mod spatial;
 pub mod topology;
 pub mod trimesh;
 pub mod verdict;
-
-pub use build::{rectangular_plate, rectangular_plate_with_cancel};
-pub use input::RectangularPlate;
-pub use member::{StraightMember, straight_member};
-pub use result::PlateResult;

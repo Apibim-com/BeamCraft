@@ -25,12 +25,12 @@ use beamcraft_host::{
     storage::BlobStore,
 };
 use beamcraft_json::Json;
-use beamcraft_model::command::{
+use beamcraft_model::error::ErrorCode;
+use beamcraft_model::id::{ElementId, OpId};
+use beamcraft_model::steel::command::{
     BoltGroupInputs, BoltLength, BoltSpacing, CreateBoltGroup, UpdateBoltGroup,
 };
-use beamcraft_model::error::ErrorCode;
-use beamcraft_model::fastener::HoleMode;
-use beamcraft_model::id::{ElementId, OpId};
+use beamcraft_model::steel::fastener::HoleMode;
 use session::Refusal;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -640,7 +640,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     // --hole-clearance keeps the stored value only when the group keeps generating.
     let stored_hole_mode = current
         .as_ref()
-        .and_then(|g| beamcraft_model::fastener::HoleMode::from_token(&g.spec.hole_mode));
+        .and_then(|g| beamcraft_model::steel::fastener::HoleMode::from_token(&g.spec.hole_mode));
     let hole_mode = match given("--hole-mode") {
         Some(text) => Some(hole_mode(text)?),
         None => stored_hole_mode,
