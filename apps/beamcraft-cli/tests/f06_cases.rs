@@ -13,7 +13,9 @@
     clippy::panic
 )]
 
-use beamcraft_engine::command::{CreatePlateOutcome, MaterialInfo, create_plate, no_materials};
+use beamcraft_engine::steel::command::{
+    CreatePlateOutcome, MaterialInfo, create_plate, no_materials,
+};
 use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::Placement;
 use beamcraft_model::digest::Sha256;
@@ -548,7 +550,7 @@ fn k1_plate_projections_match_the_fixture_or_an_explicit_deviation() {
             deviations.insert(id);
         } else if let Ok(code) = expected.get("f04_code") {
             if id == "POS-56" {
-                use beamcraft_engine::plate_draft::{PlateDraft, create_plate_draft};
+                use beamcraft_engine::steel::plate_draft::{PlateDraft, create_plate_draft};
                 let PlateDraft::Unsupported(plate) =
                     create_plate_draft(&command, &|_| false, &no_materials).unwrap()
                 else {

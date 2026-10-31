@@ -320,7 +320,7 @@ struct Body<'a> {
     material: Option<ContentDigest>,
     profile: Option<ContentDigest>,
     holes: Option<u32>,
-    quantities: &'a beamcraft_engine::command::Quantities,
+    quantities: &'a beamcraft_engine::steel::command::Quantities,
 }
 
 fn bodies(inspection: &Inspection) -> BTreeMap<ElementId, Body<'_>> {

@@ -7,15 +7,15 @@
 //! The engine never touches USD. It checks the record admission the command layer owes (target
 //! lifecycle, record identity, ordinal capacity), appends the record to the authored state and
 //! declares the footprint; the adapter re-evaluates the body through the ordinary
-//! [`crate::command::evaluate_plate`] / [`crate::member::evaluate_member`] replay and commits
+//! [`crate::steel::command::evaluate_plate`] / [`crate::steel::member::evaluate_member`] replay and commits
 //! the result as one transaction. A rejection changes nothing.
 //!
 //! Feature stability follows F06 section 5: the faces of the base body keep their ids, the cap
 //! face of the new record is `cut:f.p<ordinal>`, and a feature the plane removes or splits no
 //! longer resolves — the explicit loss, never a silent rename.
 
-use crate::command::AuthoredPlate;
 use crate::footprint::Footprint;
+use crate::steel::command::AuthoredPlate;
 use beamcraft_model::command::CommandError;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
@@ -32,7 +32,7 @@ pub enum CutTarget {
     /// A plate with the record appended.
     Plate(AuthoredPlate),
     /// A beam or column with the record appended.
-    Member(crate::member::AuthoredMember),
+    Member(crate::steel::member::AuthoredMember),
 }
 
 impl CutTarget {
@@ -69,7 +69,7 @@ pub struct CutByPlaneOutcome {
 /// The found target, borrowed for the record admission.
 pub(crate) enum Found<'a> {
     Plate(&'a AuthoredPlate),
-    Member(&'a crate::member::AuthoredMember),
+    Member(&'a crate::steel::member::AuthoredMember),
 }
 
 impl Found<'_> {
@@ -104,7 +104,7 @@ pub(crate) fn admit_record<'a>(
     target_id: ElementId,
     operation_id: OpId,
     plate: Option<&'a AuthoredPlate>,
-    member: Option<&'a crate::member::AuthoredMember>,
+    member: Option<&'a crate::steel::member::AuthoredMember>,
     operation_used: &dyn Fn(&OpId) -> bool,
 ) -> Result<(Found<'a>, u16), CommandError> {
     let found = match (plate, member) {
@@ -151,7 +151,7 @@ pub(crate) fn admit_record<'a>(
 pub fn cut_by_plane(
     command: &CutByPlane,
     plate: Option<&AuthoredPlate>,
-    member: Option<&crate::member::AuthoredMember>,
+    member: Option<&crate::steel::member::AuthoredMember>,
     operation_used: &dyn Fn(&OpId) -> bool,
 ) -> Result<CutByPlaneOutcome, CommandError> {
     command.validate_arguments()?;
@@ -183,7 +183,7 @@ pub fn cut_by_plane(
 pub fn cut_by_plane_after(
     command: &CutByPlane,
     plate: Option<&AuthoredPlate>,
-    member: Option<&crate::member::AuthoredMember>,
+    member: Option<&crate::steel::member::AuthoredMember>,
     operation_used: &dyn Fn(&OpId) -> bool,
     next_ordinal: u16,
 ) -> Result<CutByPlaneOutcome, CommandError> {
@@ -230,7 +230,7 @@ pub(crate) fn pin_next_ordinal(
 pub fn update_cut(
     command: &beamcraft_model::steel::command::UpdateCut,
     plate: Option<&AuthoredPlate>,
-    member: Option<&crate::member::AuthoredMember>,
+    member: Option<&crate::steel::member::AuthoredMember>,
 ) -> Result<CutByPlaneOutcome, CommandError> {
     command.validate_arguments()?;
     let c = &command.cut;
@@ -276,7 +276,7 @@ pub fn update_cut(
 pub fn remove_cut(
     command: &beamcraft_model::steel::command::RemoveCut,
     plate: Option<&AuthoredPlate>,
-    member: Option<&crate::member::AuthoredMember>,
+    member: Option<&crate::steel::member::AuthoredMember>,
 ) -> Result<CutByPlaneOutcome, CommandError> {
     let mut target = match (plate, member) {
         (Some(p), _) if p.id == command.target_id => CutTarget::Plate(p.clone()),
@@ -316,7 +316,7 @@ pub fn remove_cut(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::command::evaluate_plate;
+    use crate::steel::command::evaluate_plate;
     use beamcraft_model::command::Placement;
     use beamcraft_model::steel::command::KeepSide;
 

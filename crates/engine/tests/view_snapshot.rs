@@ -7,7 +7,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use beamcraft_engine::synthetic::{SyntheticEdit, apply_edit, plate_scene};
+use beamcraft_engine::steel::synthetic::{SyntheticEdit, apply_edit, plate_scene};
 use beamcraft_engine::{
     ChangeKind, ElementId, ElementKind, KindFilter, Limits, Representation, SceneElement,
     Selection, SnapshotHistory, SnapshotToken, ViewCode, ViewError, ViewPin, ViewSettings,

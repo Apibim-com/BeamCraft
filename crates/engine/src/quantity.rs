@@ -15,8 +15,8 @@
 //! the tolerance policy version. They are not the F06 section 7 shape key (`kernel::keys` is
 //! planned): no claim of that key is made.
 
-use crate::command::{AuthoredPlate, Quantities, QuantityStatus, VOLUME_ALGORITHM};
-use crate::member::{AuthoredMember, ProfileInfo};
+use crate::steel::command::{AuthoredPlate, Quantities, QuantityStatus, VOLUME_ALGORITHM};
+use crate::steel::member::{AuthoredMember, ProfileInfo};
 use beamcraft_geom::canonical_f64_bytes;
 use beamcraft_geom::tolerance::TOLERANCE_POLICY_VERSION;
 use beamcraft_model::digest::{ContentDigest, Sha256};
@@ -420,7 +420,7 @@ pub fn plate_record(
 /// algorithm and tolerance policy. Name, placement and material are not shape inputs. With no
 /// operations the net and gross records share this one signature: any shape change moves both.
 pub fn lofted_plate_shape_signature(
-    plate: &crate::loft_plate::AuthoredLoftedPlate,
+    plate: &crate::steel::loft_plate::AuthoredLoftedPlate,
     algorithm: &str,
 ) -> ContentDigest {
     let mut bytes = Vec::with_capacity(256);
@@ -440,7 +440,7 @@ pub fn lofted_plate_shape_signature(
 /// The record the engine expects for a lofted plate (A11): its quantities under its one shape
 /// signature, which serves as both the net and the gross signature.
 pub fn lofted_plate_record(
-    plate: &crate::loft_plate::AuthoredLoftedPlate,
+    plate: &crate::steel::loft_plate::AuthoredLoftedPlate,
     algorithm: &str,
     quantities: &Quantities,
 ) -> QuantityRecord {
@@ -462,7 +462,7 @@ pub fn member_record(
 /// Whether a stored algorithm label is one that an earlier slice wrote for a member. Such a
 /// record is a superseded value (`stale`), not damage.
 pub fn is_superseded_algorithm(label: &str) -> bool {
-    crate::member::SUPERSEDED_MEMBER_ALGORITHMS.contains(&label)
+    crate::steel::member::SUPERSEDED_MEMBER_ALGORITHMS.contains(&label)
 }
 
 #[cfg(test)]
@@ -591,10 +591,10 @@ mod tests {
 
     fn member_record_of(declared: Option<f64>, density: Option<f64>) -> QuantityRecord {
         let profile = i_profile(declared);
-        let body = crate::member::evaluate_member(&member(), profile.clone()).unwrap();
-        let quantities = crate::member::member_quantities(
+        let body = crate::steel::member::evaluate_member(&member(), profile.clone()).unwrap();
+        let quantities = crate::steel::member::member_quantities(
             &body,
-            density.map(|d| crate::command::MaterialInfo {
+            density.map(|d| crate::steel::command::MaterialInfo {
                 density_kg_m3: Some(d),
             }),
         )
@@ -649,7 +649,7 @@ mod tests {
 
     #[test]
     fn a_hole_edit_changes_the_plate_net_and_not_the_gross_signature_or_value() {
-        use crate::command::evaluate_plate;
+        use crate::steel::command::evaluate_plate;
         let record = |holes: Vec<Vec<[f64; 2]>>| {
             let mut p = plate();
             p.holes_mm = holes;

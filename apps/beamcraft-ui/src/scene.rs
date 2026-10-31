@@ -531,7 +531,7 @@ impl Scene {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use beamcraft_engine::synthetic::plate_scene;
+    use beamcraft_engine::steel::synthetic::plate_scene;
     use beamcraft_engine::{Limits, ViewPin};
     use beamcraft_model::digest::Sha256;
 

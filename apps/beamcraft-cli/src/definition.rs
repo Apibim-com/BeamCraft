@@ -27,9 +27,9 @@
 use crate::plate::{decode, number, text};
 use crate::plate::{decode_polygon, decode_polygons};
 use crate::publication::{PublishRequest, publish_revision};
-use beamcraft_engine::command::MaterialInfo;
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
-use beamcraft_engine::member::{ProfileInfo, declared_section_area_warning};
+use beamcraft_engine::steel::command::MaterialInfo;
+use beamcraft_engine::steel::member::{ProfileInfo, declared_section_area_warning};
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
     Author, Definition, EditTargets, Prepare, Resource, schema_identity,

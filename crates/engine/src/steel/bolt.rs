@@ -6,7 +6,7 @@
 //!
 //! A bolt group is a `connection` element whose one `connects` record names exactly two distinct
 //! parts, the main part first. The engine never touches USD: the adapter reads the kinds of the
-//! model's elements into the same [`crate::weld::Parts`] index a weld uses, and the decision
+//! model's elements into the same [`crate::steel::weld::Parts`] index a weld uses, and the decision
 //! here is pure,
 //! bounded and deterministic. The layer engine re-checks the structural rules on the authored
 //! candidate, so a defect in either place fails closed.
@@ -53,7 +53,7 @@ const SLAB_PARALLEL: f64 = 1e-12;
 /// The orthonormal frame of one group: the row `x`, the plane axis `y` and the shank axis `z`.
 type Frame = ([f64; 3], [f64; 3], [f64; 3]);
 
-impl crate::weld::Parts {
+impl crate::steel::weld::Parts {
     /// Decides a bolt group creation and returns its footprint. Errors leave nothing applied.
     ///
     /// `bounds` gives the world box of every part the adapter knows. A supported part without
@@ -84,15 +84,15 @@ impl crate::weld::Parts {
                         "the part is not in the head revision",
                     ));
                 }
-                Some(crate::weld::PartKind::Part) => {}
-                Some(crate::weld::PartKind::Assembly) => {
+                Some(crate::steel::weld::PartKind::Part) => {}
+                Some(crate::steel::weld::PartKind::Assembly) => {
                     return Err(CommandError::new(
                         ErrorCode::UnsupportedGeometry,
                         field,
                         "a bolt group joins plates, beams or columns, not assemblies",
                     ));
                 }
-                Some(crate::weld::PartKind::Other) => {
+                Some(crate::steel::weld::PartKind::Other) => {
                     return Err(CommandError::new(
                         ErrorCode::InvalidArgument,
                         field,
@@ -496,7 +496,7 @@ pub fn generate_holes(
 
 /// Kinds of the listed parts: each exists and is a plate, beam or column (an assembly is
 /// unsupported, as for a weld). Their existence decides acceptance; they are only read.
-fn check_parts(parts: &[ElementId], kinds: &crate::weld::Parts) -> Result<(), CommandError> {
+fn check_parts(parts: &[ElementId], kinds: &crate::steel::weld::Parts) -> Result<(), CommandError> {
     for part in parts {
         match kinds.kind(part) {
             None => {
@@ -506,15 +506,15 @@ fn check_parts(parts: &[ElementId], kinds: &crate::weld::Parts) -> Result<(), Co
                     "a part is not in the head revision",
                 ));
             }
-            Some(crate::weld::PartKind::Part) => {}
-            Some(crate::weld::PartKind::Assembly) => {
+            Some(crate::steel::weld::PartKind::Part) => {}
+            Some(crate::steel::weld::PartKind::Assembly) => {
                 return Err(CommandError::new(
                     ErrorCode::UnsupportedGeometry,
                     "parts",
                     "a bolt group joins plates, beams or columns, not assemblies",
                 ));
             }
-            Some(crate::weld::PartKind::Other) => {
+            Some(crate::steel::weld::PartKind::Other) => {
                 return Err(CommandError::new(
                     ErrorCode::InvalidArgument,
                     "parts",
@@ -526,7 +526,7 @@ fn check_parts(parts: &[ElementId], kinds: &crate::weld::Parts) -> Result<(), Co
     Ok(())
 }
 
-impl crate::weld::Parts {
+impl crate::steel::weld::Parts {
     /// Decides an A14.3 bolt group creation and returns its placement and footprint. Errors
     /// leave nothing applied. The reachability and the length follow
     /// [`place_bolt_group`]; the parts and the pinned definition are only read.
@@ -583,7 +583,7 @@ impl crate::weld::Parts {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::weld::PartKind;
+    use crate::steel::weld::PartKind;
     use beamcraft_model::steel::command::BoltSpec;
 
     fn id(n: u32) -> ElementId {
@@ -611,8 +611,8 @@ mod tests {
         }
     }
 
-    fn parts() -> crate::weld::Parts {
-        let mut parts = crate::weld::Parts::default();
+    fn parts() -> crate::steel::weld::Parts {
+        let mut parts = crate::steel::weld::Parts::default();
         parts.insert(id(1), PartKind::Part);
         parts.insert(id(2), PartKind::Part);
         parts.insert(id(3), PartKind::Assembly);
@@ -1188,7 +1188,7 @@ mod tests {
             parts.update_bolt_group(&edit, &bounds).unwrap_err().code,
             ErrorCode::NotFound
         );
-        let mut with_group = crate::weld::Parts::default();
+        let mut with_group = crate::steel::weld::Parts::default();
         with_group.insert(id(1), PartKind::Part);
         with_group.insert(id(2), PartKind::Part);
         with_group.insert(id(9), PartKind::Other);

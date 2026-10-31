@@ -13,7 +13,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use beamcraft_engine::plate_draft::{
+use beamcraft_engine::steel::plate_draft::{
     DraftAdmission as Admission, admit_create_plate_draft as admit_create_plate,
 };
 use beamcraft_engine::transaction::PriorOp;
@@ -218,7 +218,7 @@ fn run_case(case_id: &str, arguments: &Json, accepted: &BTreeMap<String, CreateP
         &command,
         prior,
         &existing,
-        &beamcraft_engine::command::no_materials,
+        &beamcraft_engine::steel::command::no_materials,
     ) {
         Ok(Admission::Apply(_)) => Verdict::Applied,
         Ok(Admission::Replay) => Verdict::Replayed,

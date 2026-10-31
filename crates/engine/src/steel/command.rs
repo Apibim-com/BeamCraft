@@ -27,7 +27,7 @@
 //! Ordered 3D validity is checked before support: outside-band nonplanarity, clockwise winding,
 //! intersections and touches are `INVALID_ARGUMENT`. Other contours outside `z = 0`, including
 //! valid near-planar input, remain `UNSUPPORTED_GEOMETRY` in this evaluated-body API. Use
-//! [`crate::plate_draft`] to retain supported authored-only states. Rigid placements are applied by the snapshot and export consumers; the body stays local.
+//! [`crate::steel::plate_draft`] to retain supported authored-only states. Rigid placements are applied by the snapshot and export consumers; the body stays local.
 //!
 //! Through holes (A04) apply to the existing `z = 0` bodies. A box reports width and length in
 //! its body frame; a G05 contour reports its element-local XY bounding-box extents.
@@ -588,7 +588,7 @@ pub fn evaluate_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandErro
     // A plate with bend records evaluates as its bent body (A10); the authored contour is the
     // developed blank and nothing of the flat-plate paths applies.
     if !authored.bends.is_empty() {
-        return crate::bend::evaluate_bent(authored);
+        return crate::steel::bend::evaluate_bent(authored);
     }
     let points = &authored.contour_points_mm;
     let contour = beamcraft_kernel::steel::plate_contour::admit(points, authored.thickness_mm)?;
@@ -782,7 +782,7 @@ fn evaluate_contour(authored: &AuthoredPlate) -> Result<PlateBody, CommandError>
         ));
     }
     let (outline, arc_deviation) =
-        crate::corners::treated_outline(&authored.contour_points_mm, &authored.corners)?;
+        crate::steel::corners::treated_outline(&authored.contour_points_mm, &authored.corners)?;
     let outer: Vec<Point2> = outline.iter().map(|[x, y]| Point2::new(*x, *y)).collect();
     let extrusion = extrude(&outer, &[], authored.thickness_mm).map_err(|f| map_profile(&f))?;
     let offset = side_offset(authored);

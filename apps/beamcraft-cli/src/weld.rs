@@ -8,7 +8,7 @@
 //! explicitly authored weld properties (type, size, workshop or site, side) and one
 //! `bim:connects` record naming the main part, then the part welded to it. It has no material and
 //! no derived body: no solid weld geometry is promised. The record lives with the weld, so the
-//! parts are only read. The engine ([`beamcraft_engine::weld`]) decides the identity and the
+//! parts are only read. The engine ([`beamcraft_engine::steel::weld`]) decides the identity and the
 //! parts' kinds from the head model; the layer engine re-checks the same rules on the candidate
 //! and the strict verifier on the committed bytes.
 //!
@@ -25,8 +25,8 @@ use crate::plate::{
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::quantity::QuantityRecord;
+use beamcraft_engine::steel::weld::{PartKind, Parts};
 use beamcraft_engine::transaction::PriorOp;
-use beamcraft_engine::weld::{PartKind, Parts};
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
     Author, Change, EditTargets, Element, Placement as LayerPlacement, Prepare, Shape, Weld,
@@ -157,7 +157,7 @@ fn weld_of(
                 .and_then(number)
                 .ok_or_else(damaged)?;
             Some(WeldSolidView {
-                length_mm: beamcraft_engine::weld::path_length(&path_mm),
+                length_mm: beamcraft_engine::steel::weld::path_length(&path_mm),
                 volume_mm3,
                 geometry: WeldGeometry {
                     path_mm,
@@ -282,7 +282,9 @@ pub(crate) fn is_weld(
 
 /// The quantity record of a weld solid (A15): the analytic volume with its shape signature; a
 /// weld has no material, so its mass is unknown and that absence is part of the mass inputs.
-fn weld_record(solid: &beamcraft_engine::weld::WeldSolid) -> Result<QuantityRecord, Refusal> {
+fn weld_record(
+    solid: &beamcraft_engine::steel::weld::WeldSolid,
+) -> Result<QuantityRecord, Refusal> {
     let damaged = || integrity("the weld solid signature could not be extended");
     let shape = solid.shape_signature();
     let mass = |tag: &[u8]| {
@@ -391,7 +393,7 @@ pub fn create_weld(
     // The optional A15 solid: built by the engine from the same authored inputs, so a segment
     // the kernel refuses refuses the command before anything is written.
     let solid = match &command.geometry {
-        Some(geometry) => Some(beamcraft_engine::weld::solid(
+        Some(geometry) => Some(beamcraft_engine::steel::weld::solid(
             command.weld.size_mm,
             geometry,
         )?),

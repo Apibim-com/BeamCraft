@@ -34,12 +34,12 @@ use beamcraft_cli::workspace::{
     CreateWorkspace, WorkspaceStatus, create_workspace, publish_workspace,
     status as workspace_status,
 };
-use beamcraft_engine::command::{Quantities, origin_rectangle_contour};
 use beamcraft_engine::footprint::{Entry, Footprint, Target};
-use beamcraft_engine::plate_draft::UnsupportedPlate;
 use beamcraft_engine::quantity::{Freshness, is_superseded_algorithm};
 use beamcraft_engine::query::committed::MemberRecord;
 use beamcraft_engine::query::committed::PlateRecord;
+use beamcraft_engine::steel::command::{Quantities, origin_rectangle_contour};
+use beamcraft_engine::steel::plate_draft::UnsupportedPlate;
 use beamcraft_host::{
     ids::IdSource,
     revision::{NoFault, RevisionStore, Uuid7},
@@ -1627,30 +1627,30 @@ fn contour_edit_command(
     };
     let authored = &record.authored;
     let (points, corners) = match command {
-        "move-plate-vertex" => beamcraft_engine::contour_edit::move_vertex(
+        "move-plate-vertex" => beamcraft_engine::steel::contour_edit::move_vertex(
             &authored.contour_points_mm,
             &authored.corners,
             index("--vertex")?,
             xy("--to")?,
         )?,
-        "move-plate-edge" => beamcraft_engine::contour_edit::move_edge(
+        "move-plate-edge" => beamcraft_engine::steel::contour_edit::move_edge(
             &authored.contour_points_mm,
             &authored.corners,
             index("--edge")?,
             xy("--delta")?,
         )?,
-        "insert-plate-vertex" => beamcraft_engine::contour_edit::insert_vertex(
+        "insert-plate-vertex" => beamcraft_engine::steel::contour_edit::insert_vertex(
             &authored.contour_points_mm,
             &authored.corners,
             index("--edge")?,
             xy("--point")?,
         )?,
-        "delete-plate-vertex" => beamcraft_engine::contour_edit::delete_vertex(
+        "delete-plate-vertex" => beamcraft_engine::steel::contour_edit::delete_vertex(
             &authored.contour_points_mm,
             &authored.corners,
             index("--vertex")?,
         )?,
-        _ => beamcraft_engine::contour_edit::set_corner(
+        _ => beamcraft_engine::steel::contour_edit::set_corner(
             &authored.contour_points_mm,
             &authored.corners,
             index("--vertex")?,
@@ -3384,7 +3384,7 @@ fn create_polybeam_command(
                 invalid("radius mode requires --start, --end, --radius and --normal")
             })
         };
-        beamcraft_engine::member::arc_from_radius(
+        beamcraft_engine::steel::member::arc_from_radius(
             translation(required("--start")?)?,
             translation(required("--end")?)?,
             float(options, "--radius")?,

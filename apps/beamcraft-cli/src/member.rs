@@ -18,10 +18,10 @@ use crate::plate::{
 };
 use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::member::{
+use beamcraft_engine::query::committed::{MemberRecord, ids};
+use beamcraft_engine::steel::member::{
     AuthoredMember, MemberAdmission, admit_create_member, admit_create_polybeam,
 };
-use beamcraft_engine::query::committed::{MemberRecord, ids};
 use beamcraft_host::revision::{
     CommitHook, CommitOutcome, ExpectedBase, Revision, RevisionStore, Uuid7,
 };
@@ -380,16 +380,18 @@ pub fn create_curved_beam(
     };
     let mut existing = ids(&head_plates);
     existing.extend(head_members.iter().map(|m| m.authored.id));
-    let outcome = beamcraft_engine::member::create_curved_beam(
+    let outcome = beamcraft_engine::steel::member::create_curved_beam(
         &request.command,
         &|id| existing.contains(id),
         &profile_lookup(&definitions),
         &material_lookup(&definitions),
     )?;
-    let admission = MemberAdmission::Apply(Box::new(beamcraft_engine::member::MemberTransaction {
-        op_id: request.op_id,
-        outcome,
-    }));
+    let admission = MemberAdmission::Apply(Box::new(
+        beamcraft_engine::steel::member::MemberTransaction {
+            op_id: request.op_id,
+            outcome,
+        },
+    ));
     finish_member(
         store,
         admission,

@@ -9,14 +9,14 @@
 //! [`crate::ViewSnapshot`] built from committed data, never from a mock. A [`BodyCache`] lets
 //! elements with bit-identical shape inputs share one kernel evaluation.
 
-use crate::command::{AuthoredPlate, MaterialLookup, PlateBody, Quantities, evaluate_plate};
 use crate::element::ElementKind;
 use crate::limits::MAX_ELEMENTS;
-use crate::member::{
-    AuthoredMember, MemberBody, ProfileInfo, ProfileLookup, evaluate_member, member_quantities,
-};
 use crate::scene::SceneElement;
 use crate::solid::SolidMesh;
+use crate::steel::command::{AuthoredPlate, MaterialLookup, PlateBody, Quantities, evaluate_plate};
+use crate::steel::member::{
+    AuthoredMember, MemberBody, ProfileInfo, ProfileLookup, evaluate_member, member_quantities,
+};
 use beamcraft_geom::Translation3;
 use beamcraft_model::command::{CommandError, label_is_valid};
 use beamcraft_model::error::ErrorCode;
@@ -604,7 +604,7 @@ pub fn ids(records: &[PlateRecord]) -> BTreeSet<ElementId> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::command::{MaterialInfo, no_materials};
+    use crate::steel::command::{MaterialInfo, no_materials};
     use beamcraft_model::command::Placement;
     use beamcraft_model::digest::{ContentDigest, Sha256};
     use beamcraft_model::id::OpId;
@@ -642,7 +642,7 @@ mod tests {
 
     #[test]
     fn committed_members_join_plates_in_one_id_ordered_scene() {
-        use crate::member::ProfileInfo;
+        use crate::steel::member::ProfileInfo;
         let profile: ContentDigest = Sha256::digest(b"profile").unwrap();
         let profiles = |d: &ContentDigest| {
             if *d == profile {
@@ -652,7 +652,7 @@ mod tests {
                     declared_area_mm2: None,
                 })
             } else {
-                crate::member::no_profiles(d)
+                crate::steel::member::no_profiles(d)
             }
         };
         let member = |n: u8, kind: MemberKind| AuthoredMember {
@@ -698,7 +698,7 @@ mod tests {
 
     #[test]
     fn committed_rotated_member_has_f06_pos_12_world_bounds_and_keeps_shape_quantities() {
-        use crate::member::ProfileInfo;
+        use crate::steel::member::ProfileInfo;
         use crate::{Limits, ViewPin, ViewSnapshot};
         let profile = Sha256::digest(b"profile").unwrap();
         let profiles = |d: &ContentDigest| {
@@ -709,7 +709,7 @@ mod tests {
                     declared_area_mm2: None,
                 })
             } else {
-                crate::member::no_profiles(d)
+                crate::steel::member::no_profiles(d)
             }
         };
         let half = core::f64::consts::FRAC_1_SQRT_2;

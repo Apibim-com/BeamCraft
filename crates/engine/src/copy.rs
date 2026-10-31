@@ -12,8 +12,8 @@
 //! Relationship authoring belongs to the adapter and layer engine: a duplicate keeps its
 //! level and immutable definitions, but joins no assembly and takes no connections (DV-REL-011).
 
-use crate::command::AuthoredPlate;
-use crate::member::AuthoredMember;
+use crate::steel::command::AuthoredPlate;
+use crate::steel::member::AuthoredMember;
 use beamcraft_geom::canonical_f64_bytes;
 use beamcraft_model::command::{CommandError, CopyElement, Placement};
 use beamcraft_model::digest::{ContentDigest, Sha256};

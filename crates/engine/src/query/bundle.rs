@@ -272,7 +272,7 @@ impl ViewSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::synthetic::plate_scene;
+    use crate::steel::synthetic::plate_scene;
     use beamcraft_model::digest::Sha256;
 
     fn snapshot(count: u32, simplified: bool) -> ViewSnapshot {

@@ -19,7 +19,7 @@
 //!
 //! The same adapter also runs the A13 fabrication commands (`a13_record`): line and polygon
 //! cuts, a cut by a part, fitting an end to a part, chamfers, split and combine. Each derives
-//! its record or state change at admission through `beamcraft_engine::fabricate`; a split
+//! its record or state change at admission through `beamcraft_engine::steel::fabricate`; a split
 //! creates the second element in the same transaction and a combine deletes the consumed
 //! member, and each is one revision and one undo unit.
 //!
@@ -33,11 +33,11 @@ use crate::plate::{
     prior_op_with, replay_summary,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
-use beamcraft_engine::command::evaluate_plate;
-use beamcraft_engine::cut::{CutByPlaneOutcome, CutTarget};
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::member::{evaluate_member, member_quantities};
 use beamcraft_engine::query::committed::{MemberRecord, PlateRecord};
+use beamcraft_engine::steel::command::evaluate_plate;
+use beamcraft_engine::steel::cut::{CutByPlaneOutcome, CutTarget};
+use beamcraft_engine::steel::member::{evaluate_member, member_quantities};
 use beamcraft_engine::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
@@ -366,11 +366,11 @@ fn apply_cut(
         CutElement::Member(record) => (None, Some(&record.authored)),
     };
     let outcome: CutByPlaneOutcome = if remove {
-        beamcraft_engine::cut::remove_cut(&removal, plate, member)?
+        beamcraft_engine::steel::cut::remove_cut(&removal, plate, member)?
     } else if update {
-        beamcraft_engine::cut::update_cut(&updated, plate, member)?
+        beamcraft_engine::steel::cut::update_cut(&updated, plate, member)?
     } else {
-        beamcraft_engine::cut::cut_by_plane_after(
+        beamcraft_engine::steel::cut::cut_by_plane_after(
             command,
             plate,
             member,
@@ -532,9 +532,9 @@ impl CutElement {
 #[derive(Debug, Clone, PartialEq)]
 enum AuthoredState {
     /// A plate's authored state.
-    Plate(beamcraft_engine::command::AuthoredPlate),
+    Plate(beamcraft_engine::steel::command::AuthoredPlate),
     /// A member's authored state.
-    Member(beamcraft_engine::member::AuthoredMember),
+    Member(beamcraft_engine::steel::member::AuthoredMember),
 }
 
 /// The authored state a cut target carries, without evaluating a body.
@@ -546,12 +546,12 @@ fn state_of_target(target: CutTarget) -> AuthoredState {
 }
 
 /// The authored state a split outcome carries.
-fn state_of_part(part: beamcraft_engine::fabricate::AuthoredPart) -> AuthoredState {
+fn state_of_part(part: beamcraft_engine::steel::fabricate::AuthoredPart) -> AuthoredState {
     match part {
-        beamcraft_engine::fabricate::AuthoredPart::Plate(authored) => {
+        beamcraft_engine::steel::fabricate::AuthoredPart::Plate(authored) => {
             AuthoredState::Plate(authored)
         }
-        beamcraft_engine::fabricate::AuthoredPart::Member(authored) => {
+        beamcraft_engine::steel::fabricate::AuthoredPart::Member(authored) => {
             AuthoredState::Member(authored)
         }
     }
@@ -670,13 +670,13 @@ pub fn a13_record(
             })
     };
     let present = |id: ElementId| find(id).is_some();
-    let plate_of = |id: ElementId| -> Option<beamcraft_engine::command::AuthoredPlate> {
+    let plate_of = |id: ElementId| -> Option<beamcraft_engine::steel::command::AuthoredPlate> {
         match find(id) {
             Some(CutElement::Plate(record)) => Some(record.authored),
             _ => None,
         }
     };
-    let member_of = |id: ElementId| -> Option<beamcraft_engine::member::AuthoredMember> {
+    let member_of = |id: ElementId| -> Option<beamcraft_engine::steel::member::AuthoredMember> {
         match find(id) {
             Some(CutElement::Member(record)) => Some(record.authored),
             _ => None,
@@ -759,30 +759,32 @@ pub fn a13_record(
     // The head states for the probe: on a retry the primary element's own last record carries
     // the command's identity, and the probe must rebuild exactly it, so that record is removed
     // from the probe's input first.
-    let strip =
-        |authored: &mut beamcraft_engine::command::AuthoredPlate, id: ElementId, through: bool| {
-            if id != primary_id {
-                return;
-            }
-            let Some(operation) = record_op else {
-                return;
-            };
-            if through
-                && authored
-                    .hole_records
-                    .last()
-                    .is_some_and(|r| r.operation_id == operation)
-            {
-                authored.hole_records.pop();
-            } else if authored
-                .cuts
+    let strip = |authored: &mut beamcraft_engine::steel::command::AuthoredPlate,
+                 id: ElementId,
+                 through: bool| {
+        if id != primary_id {
+            return;
+        }
+        let Some(operation) = record_op else {
+            return;
+        };
+        if through
+            && authored
+                .hole_records
                 .last()
                 .is_some_and(|r| r.operation_id == operation)
-            {
-                authored.cuts.pop();
-            }
-        };
-    let strip_member = |authored: &mut beamcraft_engine::member::AuthoredMember, id: ElementId| {
+        {
+            authored.hole_records.pop();
+        } else if authored
+            .cuts
+            .last()
+            .is_some_and(|r| r.operation_id == operation)
+        {
+            authored.cuts.pop();
+        }
+    };
+    let strip_member = |authored: &mut beamcraft_engine::steel::member::AuthoredMember,
+                        id: ElementId| {
         if id != primary_id {
             return;
         }
@@ -797,26 +799,28 @@ pub fn a13_record(
             authored.cuts.pop();
         }
     };
-    let probe_plate_of = |id: ElementId| -> Option<beamcraft_engine::command::AuthoredPlate> {
-        match find(id) {
-            Some(CutElement::Plate(record)) => {
-                let mut authored = record.authored.clone();
-                strip(&mut authored, id, true);
-                Some(authored)
+    let probe_plate_of =
+        |id: ElementId| -> Option<beamcraft_engine::steel::command::AuthoredPlate> {
+            match find(id) {
+                Some(CutElement::Plate(record)) => {
+                    let mut authored = record.authored.clone();
+                    strip(&mut authored, id, true);
+                    Some(authored)
+                }
+                _ => None,
             }
-            _ => None,
-        }
-    };
-    let probe_member_of = |id: ElementId| -> Option<beamcraft_engine::member::AuthoredMember> {
-        match find(id) {
-            Some(CutElement::Member(record)) => {
-                let mut authored = record.authored.clone();
-                strip_member(&mut authored, id);
-                Some(authored)
+        };
+    let probe_member_of =
+        |id: ElementId| -> Option<beamcraft_engine::steel::member::AuthoredMember> {
+            match find(id) {
+                Some(CutElement::Member(record)) => {
+                    let mut authored = record.authored.clone();
+                    strip_member(&mut authored, id);
+                    Some(authored)
+                }
+                _ => None,
             }
-            _ => None,
-        }
-    };
+        };
 
     // The probe: what the command would produce from the head with the identity checks
     // relaxed. Comparing its authored states with the head decides replay without the ledger.
@@ -838,7 +842,7 @@ pub fn a13_record(
     let probe = (|| -> Option<Probe> {
         Some(match &request.command {
             A13Command::Line(c) => Probe::One(
-                match beamcraft_engine::fabricate::cut_by_line(
+                match beamcraft_engine::steel::fabricate::cut_by_line(
                     c,
                     probe_plate_of(c.target_id).as_ref(),
                     probe_member_of(c.target_id).as_ref(),
@@ -850,7 +854,7 @@ pub fn a13_record(
                 },
             ),
             A13Command::Fit(c) => Probe::One(
-                match beamcraft_engine::fabricate::fit_end_to_part(
+                match beamcraft_engine::steel::fabricate::fit_end_to_part(
                     c,
                     probe_plate_of(c.target_id).as_ref(),
                     probe_member_of(c.target_id).as_ref(),
@@ -863,7 +867,7 @@ pub fn a13_record(
                 },
             ),
             A13Command::Chamfer(c) => Probe::One(
-                match beamcraft_engine::fabricate::chamfer_part(
+                match beamcraft_engine::steel::fabricate::chamfer_part(
                     c,
                     probe_plate_of(c.target_id).as_ref(),
                     probe_member_of(c.target_id).as_ref(),
@@ -875,7 +879,7 @@ pub fn a13_record(
                 },
             ),
             A13Command::Polygon(c) => Probe::One(
-                match beamcraft_engine::fabricate::cut_by_polygon(
+                match beamcraft_engine::steel::fabricate::cut_by_polygon(
                     c,
                     probe_plate_of(c.target_id).as_ref(),
                     probe_member_of(c.target_id).as_ref(),
@@ -887,7 +891,7 @@ pub fn a13_record(
                 },
             ),
             A13Command::Part(c) => Probe::One(
-                match beamcraft_engine::fabricate::cut_by_part(
+                match beamcraft_engine::steel::fabricate::cut_by_part(
                     c,
                     probe_plate_of(c.target_id).as_ref(),
                     probe_member_of(c.target_id).as_ref(),
@@ -900,7 +904,7 @@ pub fn a13_record(
                 },
             ),
             A13Command::Split(c) => {
-                let outcome = beamcraft_engine::fabricate::split_part(
+                let outcome = beamcraft_engine::steel::fabricate::split_part(
                     c,
                     probe_plate_of(c.target_id).as_ref(),
                     probe_member_of(c.target_id).as_ref(),
@@ -1014,7 +1018,7 @@ pub fn a13_record(
     let mut footprint;
     match &request.command {
         A13Command::Line(c) => {
-            let outcome = beamcraft_engine::fabricate::cut_by_line(
+            let outcome = beamcraft_engine::steel::fabricate::cut_by_line(
                 c,
                 plate_of(c.target_id).as_ref(),
                 member_of(c.target_id).as_ref(),
@@ -1059,7 +1063,7 @@ pub fn a13_record(
             }
         }
         A13Command::Fit(c) => {
-            let outcome = beamcraft_engine::fabricate::fit_end_to_part(
+            let outcome = beamcraft_engine::steel::fabricate::fit_end_to_part(
                 c,
                 plate_of(c.target_id).as_ref(),
                 member_of(c.target_id).as_ref(),
@@ -1105,7 +1109,7 @@ pub fn a13_record(
             }
         }
         A13Command::Chamfer(c) => {
-            let outcome = beamcraft_engine::fabricate::chamfer_part(
+            let outcome = beamcraft_engine::steel::fabricate::chamfer_part(
                 c,
                 plate_of(c.target_id).as_ref(),
                 member_of(c.target_id).as_ref(),
@@ -1150,7 +1154,7 @@ pub fn a13_record(
             }
         }
         A13Command::Polygon(c) => {
-            let outcome = beamcraft_engine::fabricate::cut_by_polygon(
+            let outcome = beamcraft_engine::steel::fabricate::cut_by_polygon(
                 c,
                 plate_of(c.target_id).as_ref(),
                 member_of(c.target_id).as_ref(),
@@ -1184,7 +1188,7 @@ pub fn a13_record(
             }
         }
         A13Command::Part(c) => {
-            let outcome = beamcraft_engine::fabricate::cut_by_part(
+            let outcome = beamcraft_engine::steel::fabricate::cut_by_part(
                 c,
                 plate_of(c.target_id).as_ref(),
                 member_of(c.target_id).as_ref(),
@@ -1225,7 +1229,7 @@ pub fn a13_record(
                     "the element shares an instance definition; a split is per element",
                 )));
             }
-            let outcome = beamcraft_engine::fabricate::split_part(
+            let outcome = beamcraft_engine::steel::fabricate::split_part(
                 c,
                 plate_of(c.target_id).as_ref(),
                 member_of(c.target_id).as_ref(),
@@ -1263,7 +1267,7 @@ pub fn a13_record(
                     )));
                 }
             }
-            let outcome = beamcraft_engine::fabricate::combine_parts(
+            let outcome = beamcraft_engine::steel::fabricate::combine_parts(
                 c,
                 member_of(c.survivor_id).as_ref(),
                 member_of(c.consumed_id).as_ref(),

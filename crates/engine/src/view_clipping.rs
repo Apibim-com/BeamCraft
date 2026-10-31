@@ -216,7 +216,7 @@ pub fn visible_elements(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::synthetic::plate_scene;
+    use crate::steel::synthetic::plate_scene;
     use crate::{Limits, ViewPin};
     use beamcraft_model::digest::Sha256;
     fn snapshot() -> ViewSnapshot {

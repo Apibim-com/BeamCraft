@@ -17,12 +17,12 @@
 //! kernel's; one accepted command is one revision and one undo unit, and a refusal changes
 //! nothing.
 
-use crate::command::AuthoredPlate;
 use crate::copy::{copied_hole, copied_records};
-use crate::cut::{CutByPlaneOutcome, CutTarget, admit_record};
 use crate::footprint::{Entry, Footprint, Group, Target};
-use crate::member::AuthoredMember;
 use crate::solid::rotate_vector;
+use crate::steel::command::AuthoredPlate;
+use crate::steel::cut::{CutByPlaneOutcome, CutTarget, admit_record};
+use crate::steel::member::AuthoredMember;
 use beamcraft_model::command::{CommandError, Placement};
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
@@ -154,7 +154,7 @@ fn append_plane_record(
         footprint: Footprint::for_update(target_id, false, false, true, false, None)?,
         fingerprint,
     };
-    crate::cut::pin_next_ordinal(outcome, next_ordinal)
+    crate::steel::cut::pin_next_ordinal(outcome, next_ordinal)
 }
 
 /// Admits a through-cut polygon on a plate: the shared record identity, the `MAX_HOLES`
@@ -735,7 +735,7 @@ pub fn split_part(
         ..kept_record
     };
     let (kept, created) = match found {
-        crate::cut::Found::Plate(authored) => {
+        crate::steel::cut::Found::Plate(authored) => {
             let mut other_cuts = copied_records(&authored.cuts, &command.new_id)?;
             other_cuts.extend(copied_records(
                 core::slice::from_ref(&other_record),
@@ -750,7 +750,7 @@ pub fn split_part(
                 .map(|record| copied_hole(record, &command.new_id))
                 .collect::<Result<Vec<_>, _>>()?;
             created.cuts = other_cuts;
-            let kept = crate::cut::Found::Plate(authored).appended(kept_record);
+            let kept = crate::steel::cut::Found::Plate(authored).appended(kept_record);
             let CutTarget::Plate(kept) = kept else {
                 return Err(CommandError::new(
                     ErrorCode::UnsupportedGeometry,
@@ -760,7 +760,7 @@ pub fn split_part(
             };
             (AuthoredPart::Plate(kept), AuthoredPart::Plate(created))
         }
-        crate::cut::Found::Member(authored) => {
+        crate::steel::cut::Found::Member(authored) => {
             let mut other_cuts = copied_records(&authored.cuts, &command.new_id)?;
             other_cuts.extend(copied_records(
                 core::slice::from_ref(&other_record),
@@ -770,7 +770,7 @@ pub fn split_part(
             created.id = command.new_id;
             created.name = command.new_name.clone();
             created.cuts = other_cuts;
-            let kept = crate::cut::Found::Member(authored).appended(kept_record);
+            let kept = crate::steel::cut::Found::Member(authored).appended(kept_record);
             let CutTarget::Member(kept) = kept else {
                 return Err(CommandError::new(
                     ErrorCode::UnsupportedGeometry,
@@ -1052,7 +1052,7 @@ fn quat_multiply(a: [f64; 4], b: [f64; 4]) -> [f64; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::command::evaluate_plate;
+    use crate::steel::command::evaluate_plate;
     use beamcraft_model::digest::Sha256;
 
     fn id(byte: u8) -> ElementId {
