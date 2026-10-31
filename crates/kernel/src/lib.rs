@@ -14,7 +14,6 @@ pub mod feature_id;
 pub mod mesh;
 pub mod profile;
 pub mod steel;
-pub mod sweep;
 
 // G06: shell certification, exact predicates, measurements and a bounded box index.
 mod bigint;

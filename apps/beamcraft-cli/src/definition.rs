@@ -36,12 +36,13 @@ use beamcraft_layer_engine::authored::{
 };
 use beamcraft_layer_engine::{Prim, Reader, Value};
 use beamcraft_model::command::{CommandError, label_is_valid};
-use beamcraft_model::definition::{
-    DeclaredAreaWarning, MaterialSpec, RectangleProfileSpec, SectionProfileSpec, SectionProperties,
-};
+use beamcraft_model::definition::MaterialSpec;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
+use beamcraft_model::steel::definition::{
+    DeclaredAreaWarning, RectangleProfileSpec, SectionProfileSpec, SectionProperties,
+};
 use beamcraft_model::steel::fastener::{
     FastenerKind, FastenerSpec, HeadKind, HoleMode, WasherSpec,
 };
