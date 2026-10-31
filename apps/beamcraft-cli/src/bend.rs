@@ -22,10 +22,10 @@ use beamcraft_engine::query::committed::PlateRecord;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{Author, Change, EditTargets, Prepare, schema_identity};
-use beamcraft_model::command::BendPlate;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
+use beamcraft_model::steel::command::BendPlate;
 use session::Refusal;
 use session::pipeline::{
     AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, host_uuid, integrity, load_base,

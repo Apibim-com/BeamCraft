@@ -17,10 +17,10 @@ use beamcraft_engine::numbering::{
 use beamcraft_engine::numbering_approval::{Mark, Report, StoredMark, assess};
 use beamcraft_engine::query::committed::PlateRecord;
 use beamcraft_host::revision::RevisionStore;
-use beamcraft_model::command::MemberKind;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
+use beamcraft_model::steel::command::MemberKind;
 use session::Refusal;
 use std::collections::BTreeMap;
 

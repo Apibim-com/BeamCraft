@@ -16,10 +16,11 @@
 
 use crate::command::AuthoredPlate;
 use crate::footprint::Footprint;
-use beamcraft_model::command::{CommandError, CutByPlane, CutRecord};
+use beamcraft_model::command::CommandError;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId};
+use beamcraft_model::steel::command::{CutByPlane, CutRecord};
 
 /// Largest operation ordinal the kernel names a cap face with (`cut:f.p<ordinal>` inside the
 /// 64-byte FeatureId bound); one more record on one element is an implementation limit.
@@ -227,7 +228,7 @@ pub(crate) fn pin_next_ordinal(
 /// Replace a cut in memory without changing its record UUID, ordinal or placement. The
 /// adapter evaluates the complete replay before publication, including all linked instances.
 pub fn update_cut(
-    command: &beamcraft_model::command::UpdateCut,
+    command: &beamcraft_model::steel::command::UpdateCut,
     plate: Option<&AuthoredPlate>,
     member: Option<&crate::member::AuthoredMember>,
 ) -> Result<CutByPlaneOutcome, CommandError> {
@@ -273,7 +274,7 @@ pub fn update_cut(
 /// Remove one cut while preserving all surviving record IDs/ordinals and the placement.
 /// The layer adapter retires its ID and advances/preserves the lifetime counter atomically.
 pub fn remove_cut(
-    command: &beamcraft_model::command::RemoveCut,
+    command: &beamcraft_model::steel::command::RemoveCut,
     plate: Option<&AuthoredPlate>,
     member: Option<&crate::member::AuthoredMember>,
 ) -> Result<CutByPlaneOutcome, CommandError> {
@@ -316,7 +317,8 @@ pub fn remove_cut(
 mod tests {
     use super::*;
     use crate::command::evaluate_plate;
-    use beamcraft_model::command::{KeepSide, Placement};
+    use beamcraft_model::command::Placement;
+    use beamcraft_model::steel::command::KeepSide;
 
     fn id(byte: u8) -> ElementId {
         ElementId::parse(&format!("019a7bf0-0000-7000-8000-0000000000{byte:02x}")).unwrap()
@@ -440,7 +442,7 @@ mod tests {
         let CutTarget::Plate(p) = added.target else {
             panic!("plate");
         };
-        let edit = beamcraft_model::command::UpdateCut {
+        let edit = beamcraft_model::steel::command::UpdateCut {
             cut: CutByPlane {
                 point_mm: [600.0, 0.0, 0.0],
                 ..c
@@ -458,7 +460,7 @@ mod tests {
         );
         assert!(
             update_cut(
-                &beamcraft_model::command::UpdateCut {
+                &beamcraft_model::steel::command::UpdateCut {
                     cut: CutByPlane {
                         operation_id: op(61),
                         ..c
@@ -495,7 +497,7 @@ mod tests {
             panic!("plate");
         };
         let r = remove_cut(
-            &beamcraft_model::command::RemoveCut {
+            &beamcraft_model::steel::command::RemoveCut {
                 target_id: p.id,
                 operation_id: op(70),
             },

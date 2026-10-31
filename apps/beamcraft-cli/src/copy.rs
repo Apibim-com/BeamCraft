@@ -33,9 +33,10 @@ use beamcraft_layer_engine::authored::{
     Shape, schema_identity,
 };
 use beamcraft_layer_engine::index::{ElementId as LayerElementId, LinkTarget};
-use beamcraft_model::command::{CommandError, CopyElement, MemberKind};
+use beamcraft_model::command::{CommandError, CopyElement};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
+use beamcraft_model::steel::command::MemberKind;
 use session::Refusal;
 use session::pipeline::{
     AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, digest_of, host_uuid, integrity,

@@ -22,10 +22,11 @@ use beamcraft_geom::Translation3;
 use beamcraft_kernel::plate_contour;
 use beamcraft_kernel::profile::Point2;
 use beamcraft_kernel::ruled::{Loft, LoftFailure, RuledContour};
-use beamcraft_model::command::{CommandError, CreateLoftedPlate, Placement, label_is_valid};
+use beamcraft_model::command::{CommandError, Placement, label_is_valid};
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
+use beamcraft_model::steel::command::CreateLoftedPlate;
 
 /// Algorithm label of a lofted plate's volume record.
 pub const LOFT_VOLUME_ALGORITHM: &str = "lofted-plate-ruled-v1";

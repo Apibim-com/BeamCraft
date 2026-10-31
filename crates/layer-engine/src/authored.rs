@@ -24,15 +24,15 @@ pub use reference::{
 };
 
 use crate::*;
-pub use beamcraft_model::command::{
+pub use beamcraft_model::definition::SectionProperties;
+use beamcraft_model::prim::{DefinitionCategory, ElementCategory};
+pub use beamcraft_model::steel::command::{
     BendRecord, BendSpec, CornerTreatment, CutRecord, HoleExtent, HoleRecord, KeepSide, MAX_BENDS,
     MemberHoleRecord, PlateCorner, PlateSide, SectionDepthPosition, SectionPlacement,
     SectionPlanePosition,
 };
-pub use beamcraft_model::definition::SectionProperties;
-pub use beamcraft_model::fastener::FastenerSpec;
-use beamcraft_model::prim::{DefinitionCategory, ElementCategory};
-pub use beamcraft_model::section::SectionShape;
+pub use beamcraft_model::steel::fastener::FastenerSpec;
+pub use beamcraft_model::steel::section::SectionShape;
 use std::collections::BTreeMap;
 
 /// Canonical UTF-8 schema descriptor. Its exact bytes commit the mapping and item profile.

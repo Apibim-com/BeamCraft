@@ -35,10 +35,11 @@ use crate::solid::SolidMesh;
 use beamcraft_geom::{Point3, Vec3};
 use beamcraft_kernel::profile::Point2;
 use beamcraft_kernel::ruled::{Loft, LoftFailure, LoftResult, MAX_LOFT_VERTICES, RuledContour};
-use beamcraft_model::command::{BendPlate, BendRecord, BendSpec, CommandError, MAX_BENDS};
+use beamcraft_model::command::CommandError;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::OpId;
+use beamcraft_model::steel::command::{BendPlate, BendRecord, BendSpec, MAX_BENDS};
 
 /// The largest chord deviation a faceted bend arc keeps (the round-hole rule of F06 A-2 D-2).
 pub const ARC_CHORD_DEVIATION_MM: f64 = 0.05;
@@ -769,8 +770,8 @@ fn cone_loft(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use beamcraft_model::command::PlateSide;
     use beamcraft_model::id::{ElementId, OpId};
+    use beamcraft_model::steel::command::PlateSide;
 
     fn id(n: u8) -> ElementId {
         ElementId::parse(&format!("019a7bf0-0000-7000-8000-0000000000{n:02x}")).unwrap()

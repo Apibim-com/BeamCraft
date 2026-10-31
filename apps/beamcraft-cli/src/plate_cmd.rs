@@ -47,19 +47,24 @@ use beamcraft_host::{
 };
 use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::{
-    AddHole, ArrayElements, ArrayStep, BendPlate, BendRecord, BendSpec, ChamferPart, CombineParts,
-    CopyElement, CornerTreatment, CreateLoftedPlate, CreatePlate, CreatePolybeam,
-    CreateStraightMember, CutByLine, CutByPart, CutByPlane, CutByPolygon, CutRecord, DeleteElement,
-    ElementMirror, ElementPatch, ElementRotate, FitEndToPart, HoleExtent, HoleSpec, KeepSide,
-    MAX_HOLES, MemberKind, Placement, PlateCorner, PlateSide, SectionDepthPosition,
-    SectionPlacement, SectionPlanePosition, SplitPart, UpdateElement,
+    ArrayElements, ArrayStep, CopyElement, DeleteElement, ElementMirror, ElementPatch,
+    ElementRotate, Placement, UpdateElement,
 };
 use beamcraft_model::definition::SectionProperties;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use beamcraft_model::limits::MAX_MEMBER_PATH_POINTS;
-use beamcraft_model::section::{CustomSection, ParametricSection, SectionFamily, SectionShape};
+use beamcraft_model::steel::command::{
+    AddHole, BendPlate, BendRecord, BendSpec, ChamferPart, CombineParts, CornerTreatment,
+    CreateLoftedPlate, CreatePlate, CreatePolybeam, CreateStraightMember, CutByLine, CutByPart,
+    CutByPlane, CutByPolygon, CutRecord, FitEndToPart, HoleExtent, HoleSpec, KeepSide, MAX_HOLES,
+    MemberKind, PlateCorner, PlateSide, SectionDepthPosition, SectionPlacement,
+    SectionPlanePosition, SplitPart,
+};
+use beamcraft_model::steel::section::{
+    CustomSection, ParametricSection, SectionFamily, SectionShape,
+};
 use session::Refusal;
 use session::pipeline::{ProjectClaim, RevisionSummary, claim_project, ensure_project};
 use std::collections::BTreeMap;
@@ -1791,7 +1796,7 @@ fn cut_command(
                 actor,
                 project,
                 workspace,
-                command: beamcraft_model::command::RemoveCut {
+                command: beamcraft_model::steel::command::RemoveCut {
                     target_id,
                     operation_id,
                 },
@@ -2250,12 +2255,14 @@ fn hole_spec(options: &BTreeMap<&str, &str>) -> Run<HoleSpec> {
             _ => return Err(invalid("--from and --to are required together")),
         };
         let diameter = numbers_list(given("--diameter").unwrap_or_default(), 1)?;
-        return Ok(HoleSpec::Member(beamcraft_model::command::MemberHole {
-            axis_point_mm,
-            axis_direction,
-            extent,
-            diameter_mm: diameter.first().copied().unwrap_or(0.0),
-        }));
+        return Ok(HoleSpec::Member(
+            beamcraft_model::steel::command::MemberHole {
+                axis_point_mm,
+                axis_direction,
+                extent,
+                diameter_mm: diameter.first().copied().unwrap_or(0.0),
+            },
+        ));
     }
     let given_count = plate_flags;
     if given_count != 1 {
@@ -2363,7 +2370,7 @@ fn add_hole_cli(
                 actor,
                 project,
                 workspace,
-                command: beamcraft_model::command::RemoveHole {
+                command: beamcraft_model::steel::command::RemoveHole {
                     target_id,
                     operation_id,
                 },
@@ -3440,7 +3447,7 @@ fn create_polybeam_command(
                 actor,
                 project,
                 workspace,
-                command: beamcraft_model::command::CreateCurvedBeam { member: command },
+                command: beamcraft_model::steel::command::CreateCurvedBeam { member: command },
             },
             &mut NoFault,
         )?

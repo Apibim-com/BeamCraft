@@ -15,7 +15,7 @@ use crate::limits::{
     DECLARED_RELATIVE_TOLERANCE, DECLARED_SECTION_AREA_TOLERANCE, DIMENSION_CAP_MM, MAX_AREA_MM2,
     MAX_DENSITY_KG_M3, MAX_MASS_PER_METER_KG, MAX_SURFACE_PER_METER_M2,
 };
-use crate::section::SectionShape;
+use crate::steel::section::SectionShape;
 use beamcraft_geom::tolerance::ABSOLUTE_FLOOR_MM;
 
 /// A physical (engineering) material. Display appearance is a separate reference and signature
@@ -239,7 +239,7 @@ impl SectionProfileSpec {
     }
 
     /// Compares the declared area, if any, with the EXACT area of the section in mm2 (P-Mass:
-    /// the closed-form area of [`crate::section::SectionShape::exact_area_mm2`], supplied by the
+    /// the closed-form area of [`crate::steel::section::SectionShape::exact_area_mm2`], supplied by the
     /// caller; never the polygon of the mesh). A relative gap above 1 percent
     /// (`DECLARED_SECTION_AREA_TOLERANCE`) is a warning, never a refusal: owner decision D3
     /// (2026-10-18), catalogue values are authoritative. No declared area, or an exact area
@@ -363,7 +363,7 @@ mod tests {
 
     #[test]
     fn a_declared_section_area_beyond_one_percent_is_a_warning_not_a_refusal() {
-        use crate::section::{ParametricSection, SectionFamily};
+        use crate::steel::section::{ParametricSection, SectionFamily};
         let spec = |area: Option<f64>| SectionProfileSpec {
             shape: SectionShape::Parametric(
                 ParametricSection::new(SectionFamily::Chs, vec![100.0, 5.0]).unwrap(),

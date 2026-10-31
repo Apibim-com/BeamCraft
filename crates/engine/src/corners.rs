@@ -11,8 +11,9 @@
 //! [`ARC_CHORD_DEVIATION_MM`] (the rule of the round hole, F06 A-2 D-2), with at least two
 //! segments and the end points exactly on the tangent points.
 
-use beamcraft_model::command::{CommandError, CornerTreatment, PlateCorner};
+use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
+use beamcraft_model::steel::command::{CornerTreatment, PlateCorner};
 
 /// The largest chord deviation a faceted arc may keep (the round-hole rule of F06 A-2 D-2).
 pub const ARC_CHORD_DEVIATION_MM: f64 = 0.05;
@@ -234,7 +235,7 @@ pub fn treated_outline(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use beamcraft_model::command::CornerTreatment::{Chamfer, Round};
+    use beamcraft_model::steel::command::CornerTreatment::{Chamfer, Round};
 
     fn chamfer(vertex: usize, d1: f64, d2: f64) -> PlateCorner {
         PlateCorner {

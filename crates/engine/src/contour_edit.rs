@@ -12,8 +12,9 @@
 //! vertex ids); edge `i` joins vertex `i` and vertex `i + 1`, the last joins back to the first.
 
 use beamcraft_geom::tolerance::COORDINATE_CAP_MM;
-use beamcraft_model::command::{CommandError, CornerTreatment, PlateCorner};
+use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
+use beamcraft_model::steel::command::{CornerTreatment, PlateCorner};
 
 fn refused(field: &'static str, message: &'static str) -> CommandError {
     CommandError::new(ErrorCode::InvalidArgument, field, message)

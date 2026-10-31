@@ -33,13 +33,13 @@ use beamcraft_layer_engine::authored::{
     WeldPath, schema_identity, validate_layers,
 };
 use beamcraft_layer_engine::{Control, OpenRequest, Prim, Reader, Value};
-use beamcraft_model::command::{
-    CommandError, CreateWeld, WeldContour, WeldGeometry, WeldLocation, WeldSide, WeldSpec,
-    WeldSymbol, WeldType,
-};
+use beamcraft_model::command::CommandError;
 use beamcraft_model::digest::Sha256;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use beamcraft_model::steel::command::{
+    CreateWeld, WeldContour, WeldGeometry, WeldLocation, WeldSide, WeldSpec, WeldSymbol, WeldType,
+};
 use session::Refusal;
 use session::pipeline::{
     AUTHORED_LAYER, DERIVED_LAYER, RevisionSummary, base_of, control, digest_of, host_uuid,
