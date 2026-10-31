@@ -15,8 +15,6 @@ use crate::definition::material_lookup;
 use crate::plate::{decode, evaluate_decoded, prior_op_with, replay_summary};
 use crate::publication::{PublicationTail, prepare_and_publish};
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::steel::transaction::PriorOp;
-use beamcraft_engine::steel::transform::{array_member_copies, array_plate_copies};
 use beamcraft_host::revision::{CommitHook, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{Author, Change, EditTargets, schema_identity};
@@ -25,12 +23,14 @@ use beamcraft_model::command::CommandError;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
-use beamcraft_model::steel::command::ArrayElements;
 use session::Refusal;
 use session::pipeline::{
     AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, digest_of, host_uuid, integrity,
     load_base, open_base, summarize,
 };
+use steel::engine::transaction::PriorOp;
+use steel::engine::transform::{array_member_copies, array_plate_copies};
+use steel::model::command::ArrayElements;
 
 /// Inputs of one `array-linear` or `array-polar` call beyond the command itself.
 #[derive(Debug, Clone)]
@@ -155,56 +155,55 @@ pub fn array_elements(
     };
     // The engine builds every authored copy; the element-local bodies and quantities are the
     // source's, byte for byte, exactly as for one copy.
-    let copies: Vec<CopiedElement> = if let Some(source) =
-        plates.iter().find(|r| r.authored.id == command.source_id)
-    {
-        array_plate_copies(&source.authored, command)?
-            .into_iter()
-            .map(|authored| {
-                CopiedElement::Plate(Box::new(beamcraft_engine::steel::committed::PlateRecord {
-                    body: source.body.clone(),
-                    quantities: source.quantities,
-                    authored,
-                }))
-            })
-            .collect()
-    } else if let Some(source) = members.iter().find(|r| r.authored.id == command.source_id) {
-        array_member_copies(&source.authored, command)?
-            .into_iter()
-            .map(|authored| {
-                CopiedElement::Member(Box::new(beamcraft_engine::steel::committed::MemberRecord {
-                    body: source.body.clone(),
-                    quantities: source.quantities,
-                    authored,
-                }))
-            })
-            .collect()
-    } else if crate::weld::is_weld(&base_request, &command.source_id, &control)? {
-        return Err(CommandError::new(
-            ErrorCode::DependencyConflict,
-            "source_id",
-            "a weld has element links that an array does not carry over",
-        )
-        .with_rule("DV-REL-011")
-        .into());
-    } else if crate::bolt::is_bolt(&base_request, &command.source_id, &control)? {
-        return Err(CommandError::new(
-            ErrorCode::DependencyConflict,
-            "source_id",
-            "a bolt group has element links that an array does not carry over",
-        )
-        .with_rule("DV-REL-011")
-        .into());
-    } else if crate::level::is_level(&base_request, &command.source_id, &control)? {
-        return Err(CommandError::new(
-            ErrorCode::UnsupportedProperty,
-            "source_id",
-            "a level is not arrayed",
-        )
-        .into());
-    } else {
-        return Err(not_found());
-    };
+    let copies: Vec<CopiedElement> =
+        if let Some(source) = plates.iter().find(|r| r.authored.id == command.source_id) {
+            array_plate_copies(&source.authored, command)?
+                .into_iter()
+                .map(|authored| {
+                    CopiedElement::Plate(Box::new(steel::engine::committed::PlateRecord {
+                        body: source.body.clone(),
+                        quantities: source.quantities,
+                        authored,
+                    }))
+                })
+                .collect()
+        } else if let Some(source) = members.iter().find(|r| r.authored.id == command.source_id) {
+            array_member_copies(&source.authored, command)?
+                .into_iter()
+                .map(|authored| {
+                    CopiedElement::Member(Box::new(steel::engine::committed::MemberRecord {
+                        body: source.body.clone(),
+                        quantities: source.quantities,
+                        authored,
+                    }))
+                })
+                .collect()
+        } else if crate::weld::is_weld(&base_request, &command.source_id, &control)? {
+            return Err(CommandError::new(
+                ErrorCode::DependencyConflict,
+                "source_id",
+                "a weld has element links that an array does not carry over",
+            )
+            .with_rule("DV-REL-011")
+            .into());
+        } else if crate::bolt::is_bolt(&base_request, &command.source_id, &control)? {
+            return Err(CommandError::new(
+                ErrorCode::DependencyConflict,
+                "source_id",
+                "a bolt group has element links that an array does not carry over",
+            )
+            .with_rule("DV-REL-011")
+            .into());
+        } else if crate::level::is_level(&base_request, &command.source_id, &control)? {
+            return Err(CommandError::new(
+                ErrorCode::UnsupportedProperty,
+                "source_id",
+                "a level is not arrayed",
+            )
+            .into());
+        } else {
+            return Err(not_found());
+        };
     for copy in &copies {
         if let Some(digest) = copy_material(copy) {
             materials(&digest)?;

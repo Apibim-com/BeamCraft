@@ -10,7 +10,7 @@
 //! it. Like an A06 weld it has no material and no derived body; unlike a weld it carries a world
 //! placement of its bolts, and the engine refuses a group whose bolts do not lie on both parts
 //! (conservative bounds, see the A05 design note). The record lives with the group, so the parts
-//! are only read. The engine ([`beamcraft_engine::steel::bolt`]) decides the identity, the parts' kinds
+//! are only read. The engine ([`steel::engine::bolt`]) decides the identity, the parts' kinds
 //! and the reachability from the head model; the layer engine re-checks the structural rules on
 //! the candidate and the strict verifier checks the committed bytes.
 //!
@@ -30,10 +30,6 @@ use crate::plate::{
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::steel::bolt::Bounds;
-use beamcraft_engine::steel::committed::PlateRecord;
-use beamcraft_engine::steel::transaction::PriorOp;
-use beamcraft_engine::steel::weld::{PartKind, Parts};
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
     Author, Bolt as LayerBolt, BoltGroup as LayerBoltGroup, Change, EditTargets, Element,
@@ -44,16 +40,20 @@ use beamcraft_model::command::CommandError;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
-use beamcraft_model::steel::command::{
-    BoltGroupInputs, BoltLength, BoltSpacing, BoltSpec, CreateBolt, CreateBoltGroup, HoleKind,
-    HoleRecord, MAX_HOLES, UpdateBoltGroup,
-};
 use session::Refusal;
 use session::pipeline::{
     AUTHORED_LAYER, DERIVED_LAYER, RevisionSummary, base_of, control, digest_of, host_uuid,
     integrity, load_base, open_base, summarize,
 };
 use std::collections::BTreeMap;
+use steel::engine::bolt::Bounds;
+use steel::engine::committed::PlateRecord;
+use steel::engine::transaction::PriorOp;
+use steel::engine::weld::{PartKind, Parts};
+use steel::model::command::{
+    BoltGroupInputs, BoltLength, BoltSpacing, BoltSpec, CreateBolt, CreateBoltGroup, HoleKind,
+    HoleRecord, MAX_HOLES, UpdateBoltGroup,
+};
 
 /// Identities of one A05 call beyond the command itself.
 #[derive(Debug, Clone)]
@@ -551,7 +551,7 @@ pub fn bolt_groups(store: &RevisionStore) -> Result<Vec<BoltGroupView>, Refusal>
 /// the hole mode and clearance follow the inputs and the definition (A14.4).
 fn expected_spec(
     inputs: &BoltGroupInputs,
-    placed: &beamcraft_engine::steel::bolt::BoltGroupPlaced,
+    placed: &steel::engine::bolt::BoltGroupPlaced,
 ) -> GroupSpec {
     let (spacing_mode, spacing_value_mm) = match &inputs.spacing {
         BoltSpacing::Spacings(_) => ("spacings".to_owned(), 0.0),
@@ -578,14 +578,12 @@ fn expected_spec(
         washer_under_head: placed.washer_under_head,
         washer_under_nut: placed.washer_under_nut,
         hole_mode: match inputs.resolved_hole_mode() {
-            beamcraft_model::steel::fastener::HoleMode::Generate => "generate".to_owned(),
-            beamcraft_model::steel::fastener::HoleMode::None => "none".to_owned(),
+            steel::model::fastener::HoleMode::Generate => "generate".to_owned(),
+            steel::model::fastener::HoleMode::None => "none".to_owned(),
         },
         hole_clearance_mm: match inputs.resolved_hole_mode() {
-            beamcraft_model::steel::fastener::HoleMode::Generate => {
-                Some(inputs.resolved_hole_clearance_mm())
-            }
-            beamcraft_model::steel::fastener::HoleMode::None => None,
+            steel::model::fastener::HoleMode::Generate => Some(inputs.resolved_hole_clearance_mm()),
+            steel::model::fastener::HoleMode::None => None,
         },
     }
 }
@@ -620,7 +618,7 @@ fn derived_op_id(op: OpId, index: usize) -> Result<OpId, Refusal> {
 fn hole_changes(
     op_id: OpId,
     group: ElementId,
-    holes: &[beamcraft_engine::steel::bolt::GeneratedHole],
+    holes: &[steel::engine::bolt::GeneratedHole],
     keep: &dyn Fn(&HoleRecord) -> bool,
     base_request: &OpenRequest,
     control: &Control,
@@ -631,7 +629,7 @@ fn hole_changes(
     let decoded = decode(&reader, &opened, control)?;
     let (plates, _) = evaluate_decoded(&decoded)?;
     let materials = material_lookup(&decoded.definitions);
-    let mut by_part: BTreeMap<ElementId, Vec<&beamcraft_engine::steel::bolt::GeneratedHole>> =
+    let mut by_part: BTreeMap<ElementId, Vec<&steel::engine::bolt::GeneratedHole>> =
         BTreeMap::new();
     for hole in holes {
         by_part.entry(hole.part).or_default().push(hole);
@@ -693,7 +691,7 @@ fn hole_changes(
         }
         next.hole_records.sort_by_key(|r| r.ordinal);
         // The replay is the refusal gate: a hole that does not fit refuses the command.
-        let body = beamcraft_engine::steel::command::evaluate_plate(&next)?;
+        let body = steel::engine::command::evaluate_plate(&next)?;
         let quantities =
             body.quantities_for(next.material.as_ref().map(&materials).transpose()?)?;
         let record = PlateRecord {
@@ -774,7 +772,7 @@ fn definition_resource(
 /// Authors the A14.3 shape of one command's inputs and placement.
 fn layer_group(
     inputs: &BoltGroupInputs,
-    placed: &beamcraft_engine::steel::bolt::BoltGroupPlaced,
+    placed: &steel::engine::bolt::BoltGroupPlaced,
 ) -> LayerBoltGroup {
     LayerBoltGroup {
         connects: inputs.parts.iter().map(|part| part.to_string()).collect(),
@@ -805,14 +803,12 @@ fn layer_group(
         washer_under_head: placed.washer_under_head,
         washer_under_nut: placed.washer_under_nut,
         hole_mode: match inputs.resolved_hole_mode() {
-            beamcraft_model::steel::fastener::HoleMode::Generate => "generate".to_owned(),
-            beamcraft_model::steel::fastener::HoleMode::None => "none".to_owned(),
+            steel::model::fastener::HoleMode::Generate => "generate".to_owned(),
+            steel::model::fastener::HoleMode::None => "none".to_owned(),
         },
         hole_clearance_mm: match inputs.resolved_hole_mode() {
-            beamcraft_model::steel::fastener::HoleMode::Generate => {
-                Some(inputs.resolved_hole_clearance_mm())
-            }
-            beamcraft_model::steel::fastener::HoleMode::None => None,
+            steel::model::fastener::HoleMode::Generate => Some(inputs.resolved_hole_clearance_mm()),
+            steel::model::fastener::HoleMode::None => None,
         },
     }
 }
@@ -849,7 +845,7 @@ pub fn create_bolt_group(
     // The replay comparison needs the placement; a request that no longer places (its parts
     // moved away) is not a replay of anything, so a failure here just means "not the same".
     let expected = || {
-        beamcraft_engine::steel::bolt::place_bolt_group(&command.inputs, &model.bounds)
+        steel::engine::bolt::place_bolt_group(&command.inputs, &model.bounds)
             .map(|placed| expected_spec(&command.inputs, &placed))
             .ok()
     };
@@ -889,7 +885,7 @@ pub fn create_bolt_group(
     let (placed, footprint) = model.parts.create_bolt_group(command, &model.bounds)?;
     // The hole decision shares the transaction: generate writes one record per crossing
     // fastener on every plate, none writes no part (A14.4).
-    let holes = beamcraft_engine::steel::bolt::generate_holes(
+    let holes = steel::engine::bolt::generate_holes(
         &command.inputs,
         &placed,
         &model.bounds,
@@ -1016,7 +1012,7 @@ pub fn update_bolt_group(
     })?;
     // A request that no longer places is not a replay of anything (see the create).
     let expected = || {
-        beamcraft_engine::steel::bolt::place_bolt_group(&command.inputs, &model.bounds)
+        steel::engine::bolt::place_bolt_group(&command.inputs, &model.bounds)
             .map(|placed| expected_spec(&command.inputs, &placed))
             .ok()
     };
@@ -1056,7 +1052,7 @@ pub fn update_bolt_group(
     // Editing regenerates the holes (bolt amendment section 6): the new decision replaces the
     // group's old records in the same transaction, and turning generate off removes them. A
     // group that never generated and stays quiet touches no part.
-    let holes = beamcraft_engine::steel::bolt::generate_holes(
+    let holes = steel::engine::bolt::generate_holes(
         &command.inputs,
         &placed,
         &model.bounds,

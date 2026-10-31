@@ -6,8 +6,8 @@ use beamcraft_model::id::OpId;
 use beamcraft_model::limits::{
     MAX_FASTENER_LENGTHS, MAX_MEMBER_PATH_POINTS, MAX_RELATIONSHIP_TARGETS, MIN_WELD_SEGMENT_MM,
 };
-use beamcraft_model::steel::fastener::{FastenerKind, HeadKind, HoleMode, WasherSpec};
-use beamcraft_model::steel::section::{
+use steel::model::fastener::{FastenerKind, HeadKind, HoleMode, WasherSpec};
+use steel::model::section::{
     CustomSection, MAX_CUSTOM_CAVITIES, MAX_CUSTOM_POINTS, ParametricSection, SectionFamily,
 };
 
@@ -164,7 +164,7 @@ pub(super) fn definition(d: &Definition) -> Result<(), Diagnostic> {
             width_mm,
             height_mm,
             section,
-        } => beamcraft_model::steel::definition::RectangleProfileSpec {
+        } => steel::model::definition::RectangleProfileSpec {
             width_mm: *width_mm,
             height_mm: *height_mm,
             section: section.clone(),
@@ -172,7 +172,7 @@ pub(super) fn definition(d: &Definition) -> Result<(), Diagnostic> {
         .validate()
         .map_err(refused),
         Definition::SectionProfile { shape, section } => {
-            beamcraft_model::steel::definition::SectionProfileSpec {
+            steel::model::definition::SectionProfileSpec {
                 shape: shape.clone(),
                 section: section.clone(),
             }
@@ -3536,13 +3536,13 @@ fn plate_corner_records(p: &Prim) -> Result<(), Diagnostic> {
         let (d1, d2, r) = (number(d1)?, number(d2)?, number(r)?);
         let treatment = match k {
             Value::Text(k) if k == "chamfer" && r == 0. => {
-                beamcraft_model::steel::command::CornerTreatment::Chamfer {
+                steel::model::command::CornerTreatment::Chamfer {
                     d1_mm: d1,
                     d2_mm: d2,
                 }
             }
             Value::Text(k) if k == "round" && d1 == 0. && d2 == 0. => {
-                beamcraft_model::steel::command::CornerTreatment::Round { radius_mm: r }
+                steel::model::command::CornerTreatment::Round { radius_mm: r }
             }
             _ => return Err(invalid()),
         };

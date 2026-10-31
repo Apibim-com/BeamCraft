@@ -13,7 +13,6 @@
 //! omissions, plus the findings of the contract in its deterministic order.
 
 use crate::plate::{ElementMeta, Inspection, PlacementRead, inspect_revision, kernel_mesh};
-use beamcraft_engine::steel::quantity::Freshness;
 use beamcraft_host::output::{Installed, OutputError, Staged, resolve_destination, stage_file};
 use beamcraft_host::revision::{Revision, RevisionError, RevisionStore};
 use beamcraft_ifc::{
@@ -27,6 +26,7 @@ use beamcraft_model::id::{ElementId, Uuid7};
 use session::Refusal;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use steel::engine::quantity::Freshness;
 
 use crate::definition::DefinitionRecord;
 
@@ -320,7 +320,7 @@ struct Body<'a> {
     material: Option<ContentDigest>,
     profile: Option<ContentDigest>,
     holes: Option<u32>,
-    quantities: &'a beamcraft_engine::steel::command::Quantities,
+    quantities: &'a steel::engine::command::Quantities,
 }
 
 fn bodies(inspection: &Inspection) -> BTreeMap<ElementId, Body<'_>> {
@@ -345,8 +345,8 @@ fn bodies(inspection: &Inspection) -> BTreeMap<ElementId, Body<'_>> {
             r.authored.id,
             Body {
                 entity: match r.authored.kind {
-                    beamcraft_model::steel::command::MemberKind::Beam => Entity::Beam,
-                    beamcraft_model::steel::command::MemberKind::Column => Entity::Column,
+                    steel::model::command::MemberKind::Beam => Entity::Beam,
+                    steel::model::command::MemberKind::Column => Entity::Column,
                 },
                 mesh: mesh_of(&r.body.solid),
                 placement,

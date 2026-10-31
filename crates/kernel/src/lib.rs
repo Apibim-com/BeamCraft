@@ -16,12 +16,13 @@ pub mod input;
 pub mod mesh;
 pub mod profile;
 pub mod result;
-pub mod steel;
 
 // G06: shell certification, exact predicates, measurements and a bounded box index.
-mod bigint;
+/// Shared with the steel crate.
+pub mod bigint;
 pub mod enclosure;
-mod exact;
+/// Shared with the steel crate.
+pub mod exact;
 mod intersect;
 pub mod measure;
 pub mod ops;

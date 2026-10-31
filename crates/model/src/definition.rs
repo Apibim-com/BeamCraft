@@ -29,10 +29,8 @@ pub struct MaterialSpec {
     pub display_name: Option<String>,
 }
 
-pub(crate) fn declared_label(
-    value: &Option<String>,
-    field: &'static str,
-) -> Result<(), CommandError> {
+/// Shared with the steel crate.
+pub fn declared_label(value: &Option<String>, field: &'static str) -> Result<(), CommandError> {
     match value {
         Some(text) if !label_is_valid(text) => Err(CommandError::new(
             ErrorCode::InvalidArgument,
