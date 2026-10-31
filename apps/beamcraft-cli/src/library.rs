@@ -32,11 +32,9 @@
 //! in this process (no LEW-03 containment), as for every other command.
 
 use crate::definition::{DefinitionRecord, field};
-use crate::plate::{
-    PlateError, control, decode_polygon, decode_polygons, digest_of, number, open_request, text,
-};
+use crate::plate::{PlateError, decode_polygon, decode_polygons, digest_of, number, text};
 use crate::source_file::read_file;
-use beamcraft_layer_engine::{Asset, Budgets, Prim, Reader, Value};
+use beamcraft_layer_engine::{Prim, Reader, Value};
 use beamcraft_model::command::{CommandError, label_is_valid};
 use beamcraft_model::definition::SectionProperties;
 use beamcraft_model::digest::ContentDigest;
@@ -46,37 +44,19 @@ use beamcraft_model::reference::check_source_path;
 use beamcraft_model::section::{
     CustomSection, MAX_CUSTOM_CAVITIES, ParametricSection, SectionFamily, SectionShape,
 };
+use session::environment::{EnvironmentInfo, MAX_ENVIRONMENT_BYTES, parse_environment};
+use session::foreign;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Largest library file, in bytes.
-pub const MAX_LIBRARY_BYTES: usize = 8 * 1024 * 1024;
+pub const MAX_LIBRARY_BYTES: usize = foreign::MAX_LAYER_BYTES;
 /// Most entries one library may hold; more is `LIMIT_EXCEEDED`.
-pub const MAX_LIBRARY_ENTRIES: usize = 4096;
+pub const MAX_LIBRARY_ENTRIES: usize = foreign::MAX_LIBRARY_ENTRIES;
 
 /// Parent path of every profile entry prim.
 const ENTRY_PARENT: &str = "/Library/Profiles";
 /// Parent path of every fastener entry prim (A14.1).
 const FASTENER_ENTRY_PARENT: &str = "/Library/Fasteners";
-const LIBRARY_LAYER: &str = "library.usda";
-const LIBRARY_LAYER_BINARY: &str = "library.usdc";
-/// A fixed read-only identity for the stage of a library: it is not a project or a workspace.
-const READ_PROJECT: &str = "01900000-0000-7000-8000-0000000000a7";
-const READ_WORKSPACE: &str = "01900000-0000-7000-8000-0000000000a8";
-
-/// The stage ceilings of a library: tighter than a model stage, one layer, a few thousand prims.
-const LIBRARY_BUDGETS: Budgets = Budgets {
-    layer_bytes: MAX_LIBRARY_BYTES,
-    total_bytes: MAX_LIBRARY_BYTES,
-    layers: 1,
-    depth: 16,
-    prims: 2 * MAX_LIBRARY_ENTRIES + 16,
-    values: 262_144,
-    array_items: 8192,
-    text_bytes: 1024,
-    decoded_bytes: 64 * 1024 * 1024,
-    snapshot_bytes: 64 * 1024 * 1024,
-    page_items: 64,
-};
 
 /// What the library file declares about itself and what was read.
 #[derive(Debug, Clone, PartialEq)]
@@ -342,61 +322,14 @@ pub fn load(path: &str) -> Result<Library, PlateError> {
     load_bytes(read_file(path, MAX_LIBRARY_BYTES).map_err(io_error)?)
 }
 
-/// One layer opened read-only under the library budgets.
-struct OpenLayer {
-    reader: Reader,
-    opened: beamcraft_layer_engine::Opened,
-    control: beamcraft_layer_engine::Control,
-    digest: ContentDigest,
-    bytes: u64,
-}
+/// One layer opened read-only under the foreign-layer budgets.
+type OpenLayer = foreign::ForeignLayer;
 
 /// Opens the bytes of a library or environment as one foreign, read-only, self-contained layer in
 /// millimetres and Z up. `not_self_contained` is the `INVALID_ARGUMENT` text for a layer that the
 /// engine cannot open on its own (sublayers, references, other units).
 fn open_layer(bytes: Vec<u8>, not_self_contained: &'static str) -> Result<OpenLayer, PlateError> {
-    let digest = digest_of(&bytes)?;
-    let name = if bytes.starts_with(b"PXR-USDC") {
-        LIBRARY_LAYER_BINARY
-    } else {
-        LIBRARY_LAYER
-    };
-    let size = bytes.len() as u64;
-    let asset = Asset {
-        name: name.into(),
-        digest,
-        bytes,
-    };
-    // Foreign and read-only: the host owns nothing here.
-    let mut request = open_request(
-        name,
-        READ_PROJECT,
-        READ_WORKSPACE,
-        digest,
-        0,
-        vec![asset],
-        &BTreeSet::from([name.to_owned()]),
-    )?;
-    request.budgets = LIBRARY_BUDGETS;
-    request.manifest = request.manifest_digest()?;
-    let control = control();
-    let mut reader = Reader::default();
-    let opened = reader.open(request, &control).map_err(|diagnostic| {
-        let error = PlateError::from(diagnostic);
-        match error.code {
-            ErrorCode::IntegrityError | ErrorCode::DependencyUnavailable => {
-                invalid(not_self_contained)
-            }
-            _ => error,
-        }
-    })?;
-    Ok(OpenLayer {
-        reader,
-        opened,
-        control,
-        digest,
-        bytes: size,
-    })
+    foreign::open(bytes, not_self_contained).map_err(PlateError::from)
 }
 
 /// [`load`] for bytes that were already read (at most 8 MiB, checked again here).
@@ -718,27 +651,6 @@ impl Lookup {
     }
 }
 
-/// Largest environment file, in bytes.
-pub const MAX_ENVIRONMENT_BYTES: usize = 1024 * 1024;
-/// Most libraries one environment may list; more is `LIMIT_EXCEEDED`.
-pub const MAX_ENVIRONMENT_LIBRARIES: usize = 32;
-const MAX_LIBRARY_REFERENCE_BYTES: usize = 256;
-
-/// What an environment file declares about itself.
-#[derive(Debug, Clone, PartialEq)]
-pub struct EnvironmentInfo {
-    /// `bim:environment:id`.
-    pub id: String,
-    /// `bim:environment:title`, when declared.
-    pub title: Option<String>,
-    /// SHA-256 of the environment file bytes.
-    pub digest: ContentDigest,
-    /// Size of the environment file in bytes.
-    pub bytes: u64,
-    /// `bim:environment:libraries`, strongest first, exactly as written.
-    pub libraries: Vec<String>,
-}
-
 /// A loaded environment: its libraries in lookup order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Environment {
@@ -746,90 +658,6 @@ pub struct Environment {
     pub info: EnvironmentInfo,
     /// The listed libraries, strongest first.
     pub sources: Vec<Source>,
-}
-
-/// Whether a library reference of an environment is a relative, `/`-separated local path that
-/// cannot leave the environment's directory: no absolute path, drive, scheme, backslash, empty,
-/// `.` or `..` segment.
-fn contained_reference(reference: &str) -> bool {
-    !reference.is_empty()
-        && reference.len() <= MAX_LIBRARY_REFERENCE_BYTES
-        && !reference.starts_with('/')
-        && !reference
-            .chars()
-            .any(|c| c <= '\u{1f}' || c == '\u{7f}' || c == '\\' || c == ':')
-        && reference
-            .split('/')
-            .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
-}
-
-/// Reads the declarations of an environment layer without touching any library.
-///
-/// The environment is a USD layer whose `customLayerData` carries `bim:environment:id`, an
-/// optional `bim:environment:title` and `bim:environment:libraries`, a non-empty ordered list of
-/// contained relative paths, strongest first. A list entry that is not contained is
-/// `PERMISSION_DENIED` and more than 32 libraries is `LIMIT_EXCEEDED`; anything else malformed is
-/// `INVALID_ARGUMENT`. (The layer engine does not expose composition arcs, and composing the
-/// libraries as sublayers would merge entries instead of letting the strongest library answer, so
-/// the order is an explicit list; see the A07 design note.)
-pub fn parse_environment(bytes: Vec<u8>) -> Result<EnvironmentInfo, PlateError> {
-    if bytes.len() > MAX_ENVIRONMENT_BYTES {
-        return Err(refuse(
-            ErrorCode::LimitExceeded,
-            "the environment file is larger than 1 MiB",
-        ));
-    }
-    let layer = open_layer(
-        bytes,
-        "the environment is not a self-contained USD layer in millimetres, Z up",
-    )?;
-    let Some(Value::Dictionary(data)) = layer.opened.metadata.get("customLayerData") else {
-        return Err(invalid("the environment declares no bim:environment:id"));
-    };
-    let get = |key: &str| {
-        label(
-            data.get(key),
-            "a bim:environment value is not a valid string label",
-        )
-    };
-    let id = get("bim:environment:id")?
-        .ok_or_else(|| invalid("the environment declares no bim:environment:id"))?;
-    let title = get("bim:environment:title")?;
-    let Some(Value::Array(items)) = data.get("bim:environment:libraries") else {
-        return Err(invalid("the environment lists no libraries"));
-    };
-    if items.is_empty() {
-        return Err(invalid("the environment lists no libraries"));
-    }
-    if items.len() > MAX_ENVIRONMENT_LIBRARIES {
-        return Err(refuse(
-            ErrorCode::LimitExceeded,
-            "the environment lists more than 32 libraries",
-        ));
-    }
-    let mut libraries = Vec::with_capacity(items.len());
-    for item in items {
-        let Value::Text(reference) = item else {
-            return Err(invalid("an environment library is not a string"));
-        };
-        if !contained_reference(reference) {
-            return Err(refuse(
-                ErrorCode::PermissionDenied,
-                "an environment library is not a relative path inside the environment directory",
-            ));
-        }
-        if libraries.contains(reference) {
-            return Err(invalid("the environment lists a library twice"));
-        }
-        libraries.push(reference.clone());
-    }
-    Ok(EnvironmentInfo {
-        id,
-        title,
-        digest: layer.digest,
-        bytes: layer.bytes,
-        libraries,
-    })
 }
 
 /// Loads an environment file and every library it lists, in order.
@@ -849,7 +677,7 @@ pub fn load_environment(path: &str) -> Result<Environment, PlateError> {
             "the environment path is not a readable regular local file",
         ),
     })?;
-    let info = parse_environment(bytes)?;
+    let info = parse_environment(bytes).map_err(PlateError::from)?;
     let directory = std::path::Path::new(path)
         .parent()
         .map(std::path::Path::to_path_buf)
@@ -1539,29 +1367,6 @@ mod tests {
     }
 
     #[test]
-    fn an_environment_reference_cannot_leave_its_directory() {
-        for good in ["a.usda", "libs/a.usda", "a b/c.usda"] {
-            assert!(contained_reference(good), "{good}");
-        }
-        for bad in [
-            "",
-            "/a.usda",
-            "../a.usda",
-            "libs/../a.usda",
-            "./a.usda",
-            "libs//a.usda",
-            "libs/",
-            "C:/a.usda",
-            "a\\b.usda",
-            "file:///a.usda",
-            "a\u{0}.usda",
-        ] {
-            assert!(!contained_reference(bad), "{bad:?}");
-        }
-        assert!(!contained_reference(&"a".repeat(257)));
-    }
-
-    #[test]
     fn prim_names_are_identifiers_and_unique() {
         let mut used = BTreeSet::new();
         for (designation, expected) in [
@@ -1614,43 +1419,6 @@ mod tests {
             assert_eq!(got.record, want.record);
             assert_eq!(got.designation, want.designation);
         }
-    }
-
-    #[test]
-    fn an_environment_declares_ordered_contained_libraries() {
-        let layer = |list: &str| {
-            format!(
-                "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    customLayerData = {{\n        string \"bim:environment:id\" = \"e\"\n        string[] \"bim:environment:libraries\" = [{list}]\n    }}\n)\n"
-            )
-        };
-        let info = parse_environment(layer("\"b.usda\", \"a/c.usda\"").into_bytes()).unwrap();
-        assert_eq!(info.id, "e");
-        assert_eq!(info.libraries, ["b.usda", "a/c.usda"]);
-        for (list, code) in [
-            ("", ErrorCode::InvalidArgument),
-            ("\"../x.usda\"", ErrorCode::PermissionDenied),
-            ("\"a.usda\", \"a.usda\"", ErrorCode::InvalidArgument),
-        ] {
-            assert_eq!(
-                parse_environment(layer(list).into_bytes())
-                    .unwrap_err()
-                    .code,
-                code
-            );
-        }
-        let many: Vec<String> = (0..=MAX_ENVIRONMENT_LIBRARIES)
-            .map(|n| format!("\"l{n}.usda\""))
-            .collect();
-        assert_eq!(
-            parse_environment(layer(&many.join(", ")).into_bytes())
-                .unwrap_err()
-                .code,
-            ErrorCode::LimitExceeded
-        );
-        assert_eq!(
-            parse_environment(b"not usd".to_vec()).unwrap_err().code,
-            ErrorCode::InvalidArgument
-        );
     }
 
     #[test]

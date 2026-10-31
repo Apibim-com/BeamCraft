@@ -139,6 +139,16 @@ impl From<Diagnostic> for PlateError {
     }
 }
 
+impl From<session::Refusal> for PlateError {
+    fn from(error: session::Refusal) -> Self {
+        Self {
+            code: error.code,
+            message: error.message,
+            rule_id: error.rule_id,
+        }
+    }
+}
+
 impl From<ContentRejection> for PlateError {
     fn from(error: ContentRejection) -> Self {
         Self::new(error.code, error.message)
@@ -1953,7 +1963,8 @@ pub struct RevisionDetails {
     pub index: Option<(ContentDigest, u64)>,
 }
 
-pub(crate) fn summarize(info: &RevisionInfo) -> RevisionSummary {
+/// The summary of a verified head revision, as the commands report it.
+pub fn summarize(info: &RevisionInfo) -> RevisionSummary {
     summarize_manifest(info.manifest(), info.manifest_digest())
 }
 
