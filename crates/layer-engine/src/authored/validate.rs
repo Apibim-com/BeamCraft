@@ -164,7 +164,7 @@ pub(super) fn definition(d: &Definition) -> Result<(), Diagnostic> {
             width_mm,
             height_mm,
             section,
-        } => beamcraft_model::definition::RectangleProfileSpec {
+        } => beamcraft_model::steel::definition::RectangleProfileSpec {
             width_mm: *width_mm,
             height_mm: *height_mm,
             section: section.clone(),
@@ -172,7 +172,7 @@ pub(super) fn definition(d: &Definition) -> Result<(), Diagnostic> {
         .validate()
         .map_err(refused),
         Definition::SectionProfile { shape, section } => {
-            beamcraft_model::definition::SectionProfileSpec {
+            beamcraft_model::steel::definition::SectionProfileSpec {
                 shape: shape.clone(),
                 section: section.clone(),
             }

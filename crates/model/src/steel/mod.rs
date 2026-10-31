@@ -10,6 +10,7 @@
 //! own.
 
 pub mod command;
+pub mod definition;
 pub mod fastener;
 pub mod instance;
 pub mod section;

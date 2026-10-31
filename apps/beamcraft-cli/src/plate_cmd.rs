@@ -47,7 +47,6 @@ use beamcraft_host::{
 };
 use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::{DeleteElement, Placement};
-use beamcraft_model::definition::SectionProperties;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
@@ -63,6 +62,7 @@ use beamcraft_model::steel::command::{
     ArrayElements, ArrayStep, CopyElement, ElementMirror, ElementPatch, ElementRotate,
     UpdateElement,
 };
+use beamcraft_model::steel::definition::SectionProperties;
 use beamcraft_model::steel::section::{
     CustomSection, ParametricSection, SectionFamily, SectionShape,
 };

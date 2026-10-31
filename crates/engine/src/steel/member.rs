@@ -32,17 +32,17 @@ use beamcraft_kernel::ops::{Body, OpFailure};
 use beamcraft_kernel::steel::section::{
     Representation, SectionFailure, SectionMember, section_member,
 };
-use beamcraft_kernel::sweep::{Sweep, SweepFailure, SweepPath, sweep};
+use beamcraft_kernel::steel::sweep::{Sweep, SweepFailure, SweepPath, sweep};
 use beamcraft_kernel::{steel::StraightMember, steel::straight_member};
 use beamcraft_model::command::{CommandError, Placement};
-use beamcraft_model::definition::{
-    DeclaredAreaWarning, RectangleProfileSpec, SectionProfileSpec, SectionProperties,
-};
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId};
 use beamcraft_model::steel::command::{
     CreatePolybeam, CreateStraightMember, CutRecord, MemberHoleRecord, MemberKind, SectionPlacement,
+};
+use beamcraft_model::steel::definition::{
+    DeclaredAreaWarning, RectangleProfileSpec, SectionProfileSpec, SectionProperties,
 };
 use beamcraft_model::steel::section::{CustomSection, SectionShape};
 
@@ -1033,7 +1033,7 @@ mod tests {
 
     #[test]
     fn a_declared_section_area_beyond_one_percent_of_the_outline_is_a_warning() {
-        use beamcraft_model::definition::SectionProperties;
+        use beamcraft_model::steel::definition::SectionProperties;
         use beamcraft_model::steel::section::{ParametricSection, SectionFamily};
         let spec = |area: Option<f64>| SectionProfileSpec {
             shape: SectionShape::Parametric(
