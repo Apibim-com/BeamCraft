@@ -15,7 +15,7 @@ use beamcraft_engine::numbering::{
     AssemblyFact, PartFact, PartGeometry, PartKind, Preview, Settings, preview,
 };
 use beamcraft_engine::numbering_approval::{Mark, Report, StoredMark, assess};
-use beamcraft_engine::query::committed::PlateRecord;
+use beamcraft_engine::steel::committed::PlateRecord;
 use beamcraft_host::revision::RevisionStore;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;

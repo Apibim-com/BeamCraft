@@ -16,7 +16,7 @@
 use beamcraft_engine::steel::plate_draft::{
     DraftAdmission as Admission, admit_create_plate_draft as admit_create_plate,
 };
-use beamcraft_engine::transaction::PriorOp;
+use beamcraft_engine::steel::transaction::PriorOp;
 use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::Placement;
 use beamcraft_model::error::ErrorCode;

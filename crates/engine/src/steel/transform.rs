@@ -447,7 +447,7 @@ pub fn array_plate_copies(
         .iter()
         .zip(placements)
         .map(|(new_id, placement)| {
-            let mut copy = crate::copy::copy_plate(
+            let mut copy = crate::steel::copy::copy_plate(
                 source,
                 &beamcraft_model::steel::command::CopyElement {
                     source_id: command.source_id,
@@ -473,7 +473,7 @@ pub fn array_member_copies(
         .iter()
         .zip(placements)
         .map(|(new_id, placement)| {
-            let mut copy = crate::copy::copy_member(
+            let mut copy = crate::steel::copy::copy_member(
                 source,
                 &beamcraft_model::steel::command::CopyElement {
                     source_id: command.source_id,

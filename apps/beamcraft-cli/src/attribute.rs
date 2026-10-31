@@ -20,7 +20,7 @@ use crate::plate::{check_footprint, prior_op_with, property, replay_summary, tex
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::attribute::{ElementValues, Schema};
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::transaction::PriorOp;
+use beamcraft_engine::steel::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
     ATTR_SCHEMA_PATH, Author, Change, EditTargets, Prepare, schema_identity, validate_layers,

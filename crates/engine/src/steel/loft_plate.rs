@@ -469,8 +469,9 @@ mod tests {
         };
         let outcome = create_lofted_plate(&command, &|_| false, &no_materials).unwrap();
         let algorithm = LOFT_VOLUME_ALGORITHM;
-        let same = crate::quantity::lofted_plate_shape_signature(&outcome.authored, algorithm);
-        let moved = crate::quantity::lofted_plate_shape_signature(
+        let same =
+            crate::steel::quantity::lofted_plate_shape_signature(&outcome.authored, algorithm);
+        let moved = crate::steel::quantity::lofted_plate_shape_signature(
             &AuthoredLoftedPlate {
                 placement: Placement {
                     translation_mm: [10.0, 0.0, 0.0],
@@ -481,7 +482,7 @@ mod tests {
             algorithm,
         );
         assert_eq!(same, moved);
-        let reshaped = crate::quantity::lofted_plate_shape_signature(
+        let reshaped = crate::steel::quantity::lofted_plate_shape_signature(
             &AuthoredLoftedPlate {
                 start_points_mm: rectangle(0.0, 210.0, 100.0),
                 ..outcome.authored.clone()

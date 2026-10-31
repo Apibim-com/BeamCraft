@@ -24,7 +24,7 @@ use crate::plate::{
 };
 use crate::publication::{PublicationTail, prepare_and_publish};
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::transaction::PriorOp;
+use beamcraft_engine::steel::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{Author, Change, EditTargets, schema_identity};
@@ -241,7 +241,7 @@ pub fn delete_element(
             let body = beamcraft_engine::steel::command::evaluate_plate(&next)?;
             let quantities =
                 body.quantities_for(next.material.as_ref().map(&materials).transpose()?)?;
-            let record = beamcraft_engine::query::committed::PlateRecord {
+            let record = beamcraft_engine::steel::committed::PlateRecord {
                 authored: next.clone(),
                 body: body.clone(),
                 quantities,
