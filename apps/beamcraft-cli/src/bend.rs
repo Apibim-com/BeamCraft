@@ -14,11 +14,7 @@
 //! record is removed by undoing its command; there is no removal command in this slice.
 
 use crate::definition::material_lookup;
-use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, check_footprint, control, decode,
-    evaluate_decoded, host_uuid, integrity, load_base, mesh_change, open_base, plate_record,
-    summarize,
-};
+use crate::plate::{check_footprint, decode, evaluate_decoded, mesh_change, plate_record};
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::command::evaluate_plate;
 use beamcraft_engine::footprint::Footprint;
@@ -31,6 +27,10 @@ use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
 use session::Refusal;
+use session::pipeline::{
+    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, host_uuid, integrity, load_base,
+    open_base, summarize,
+};
 use std::collections::BTreeMap;
 
 fn not_found() -> Refusal {

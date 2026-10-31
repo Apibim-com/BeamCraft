@@ -5,7 +5,6 @@
 
 use super::{Metadata, State};
 use crate::drawing::{archive::SourceArchive, codec, derived};
-use crate::plate::{control, host_uuid, integrity};
 use beamcraft_engine::drawing::Drawing;
 use beamcraft_engine::drawing::projection::{self, BodyProjection, DimensionProjection};
 use beamcraft_host::lease::StoreLease;
@@ -22,6 +21,7 @@ use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ActorId, DocumentVersionId, DrawingId, OpId, Uuid7};
 use session::Refusal;
+use session::pipeline::{control, host_uuid, integrity};
 use std::fs;
 use std::path::Path;
 

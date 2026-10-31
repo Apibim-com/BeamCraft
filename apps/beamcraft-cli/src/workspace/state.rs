@@ -95,7 +95,7 @@ impl WorkspaceState {
     /// An absent/lost CAS slot removes an abandoned intent without changing metadata. Missing or
     /// corrupt history/evidence refuses and retains the intent. `open` also runs this recovery
     /// before exposing any workspace state. No revision or published store is changed here.
-    pub fn finish_rebase(&mut self) -> Result<Option<crate::plate::RevisionSummary>, Refusal> {
+    pub fn finish_rebase(&mut self) -> Result<Option<session::pipeline::RevisionSummary>, Refusal> {
         super::pending::recover(self)
     }
 

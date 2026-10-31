@@ -42,7 +42,6 @@
 //! later publish sends the draft head as it is).
 
 use crate::command_evidence as evidence;
-use crate::plate::{RevisionSummary, host_uuid, integrity, summarize};
 use crate::publication::{commit_verified, commit_verified_with_evidence};
 use crate::workspace::WorkspaceState;
 use beamcraft_host::revision::{
@@ -51,6 +50,7 @@ use beamcraft_host::revision::{
 use beamcraft_model::digest::Sha256;
 use beamcraft_model::error::ErrorCode;
 use session::Refusal;
+use session::pipeline::{RevisionSummary, host_uuid, integrity, summarize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Write;

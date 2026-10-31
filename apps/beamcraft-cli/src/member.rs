@@ -13,9 +13,8 @@
 
 use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, Recorded, RevisionSummary, check_footprint, control,
-    decode, digest_of, evaluate_decoded, host_uuid, load_base, member_record, mesh_change,
-    open_base, prior_op_with, replay_summary, summarize,
+    Recorded, check_footprint, decode, evaluate_decoded, member_record, mesh_change, prior_op_with,
+    replay_summary,
 };
 use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::footprint::Footprint;
@@ -36,6 +35,10 @@ use beamcraft_model::command::{CreatePolybeam, CreateStraightMember, MemberKind}
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use session::Refusal;
+use session::pipeline::{
+    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, digest_of, host_uuid, load_base,
+    open_base, summarize,
+};
 
 /// Inputs of one `create_member` call beyond the command itself.
 #[derive(Debug, Clone)]
@@ -319,12 +322,13 @@ pub fn create_curved_beam(
                     || revision.manifest().content().revision() != &accepted_revision
                     || revision.manifest().content().op() != &op_host
                 {
-                    return Err(crate::plate::integrity(
+                    return Err(session::pipeline::integrity(
                         "accepted revision manifest mismatch",
                     ));
                 }
-                let evidence = crate::command_evidence::read(&revision)?
-                    .ok_or_else(|| crate::plate::integrity("accepted request evidence missing"))?;
+                let evidence = crate::command_evidence::read(&revision)?.ok_or_else(|| {
+                    session::pipeline::integrity("accepted request evidence missing")
+                })?;
                 if evidence.fingerprint != fingerprint {
                     return Err(beamcraft_model::command::CommandError::new(
                         beamcraft_model::error::ErrorCode::OpIdReuse,
@@ -338,7 +342,9 @@ pub fn create_curved_beam(
                     .members
                     .into_iter()
                     .find(|m| m.authored.id == request.command.member.new_id)
-                    .ok_or_else(|| crate::plate::integrity("accepted curved member missing"))?;
+                    .ok_or_else(|| {
+                        session::pipeline::integrity("accepted curved member missing")
+                    })?;
                 Ok(Some(CreatedMember {
                     replayed: true,
                     member,
@@ -420,7 +426,9 @@ fn finish_member(
                 .into_iter()
                 .find(|r| r.authored.id == new_id_of(&create))
                 .ok_or_else(|| {
-                    crate::plate::integrity("replayed element is absent from the head revision")
+                    session::pipeline::integrity(
+                        "replayed element is absent from the head revision",
+                    )
                 })?;
             return Ok(CreatedMember {
                 replayed: true,

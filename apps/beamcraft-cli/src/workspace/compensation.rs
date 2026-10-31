@@ -20,7 +20,7 @@
 use super::{WorkspaceState, rebase_receipt::RevisionPin, unusable};
 use crate::{
     command_evidence as evidence,
-    plate::{self, RevisionSummary, integrity, summarize},
+    plate::{self},
     workspace::rebase_receipt::RebaseReceipt,
 };
 use beamcraft_engine::rebase::{Conflict, Decision, Operation as PlannedOperation, plan};
@@ -36,6 +36,7 @@ use beamcraft_model::{
     limits::MAX_FOOTPRINT_ENTRIES,
 };
 use session::Refusal;
+use session::pipeline::{RevisionSummary, integrity, summarize};
 use std::path::Path;
 
 /// Immutable caller inputs. The CLI actor is trusted local context; a coordinator derives it
@@ -115,7 +116,7 @@ fn replay(
     request: &CompensationRequest,
     workspace_id: &Uuid7,
 ) -> Result<Option<Compensated>, Refusal> {
-    let op = plate::host_uuid(&request.op_id.to_string())?;
+    let op = session::pipeline::host_uuid(&request.op_id.to_string())?;
     let sequence = match workspace.query_outcome(&op)? {
         beamcraft_host::ledger::Outcome::Committed { sequence, .. } => Some(sequence),
         beamcraft_host::ledger::Outcome::Unknown => {
@@ -211,7 +212,7 @@ fn later_operations(
 fn opened(
     revision: &beamcraft_host::revision::Revision,
 ) -> Result<beamcraft_layer_engine::OpenRequest, Refusal> {
-    plate::open_base(&plate::base_of(revision)?)
+    session::pipeline::open_base(&session::pipeline::base_of(revision)?)
 }
 
 /// Compensates one accepted operation of this workspace with a new forward draft operation,
@@ -252,7 +253,7 @@ pub fn compensate_workspace(
     let draft = workspace.open()?;
     let accepted_pin = RevisionPin::from_info(accepted.info());
     let draft_pin = RevisionPin::from_info(draft.info());
-    let op = plate::host_uuid(&request.op_id.to_string())?;
+    let op = session::pipeline::host_uuid(&request.op_id.to_string())?;
     let target_sequence = published
         .sequence_of(&request.target_revision)?
         .ok_or_else(|| {
@@ -336,13 +337,13 @@ pub fn compensate_workspace(
         &opened(&accepted)?,
         &evidence::dependencies(&captured.footprint),
         &EditTargets {
-            authored: plate::AUTHORED_LAYER.into(),
-            derived: plate::DERIVED_LAYER.into(),
+            authored: session::pipeline::AUTHORED_LAYER.into(),
+            derived: session::pipeline::DERIVED_LAYER.into(),
         },
-        &plate::control(),
+        &session::pipeline::control(),
     )?;
     let mut reader = Reader::default();
-    let control = plate::control();
+    let control = session::pipeline::control();
     let (view, _) = reader.open_validated(candidate.clone(), schema_identity()?, &control)?;
     let decoded = plate::decode(&reader, &view, &control)?;
     let (plates, members) = plate::evaluate_decoded(&decoded)?;

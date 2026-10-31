@@ -4,7 +4,6 @@
 //! D01 closed, canonical USDA intent. Writing requires admitted engine intent; reading goes
 //! through the bounded layer engine and the same engine admission, never through a raw setter.
 
-use crate::plate::integrity;
 use beamcraft_engine::drawing::{
     self, CutSide, DetailSpec, DimensionSpec, DraftingGeometry, DraftingSpec, Drawing, DrawingSpec,
     LayerSpec, LineType, MAX_DETAILS, MAX_DRAFTING_ENTITIES, MAX_INTENT_PAGE_ITEMS, MAX_LAYERS,
@@ -12,6 +11,7 @@ use beamcraft_engine::drawing::{
     ViewSpec,
 };
 use session::Refusal;
+use session::pipeline::integrity;
 
 use beamcraft_engine::query::feature::FeatureId;
 use beamcraft_layer_engine::{

@@ -20,9 +20,8 @@
 
 use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, decode, digest_of,
-    evaluate_decoded, host_uuid, integrity, load_base, member_record, mesh_change, open_base,
-    plate_record, prior_op_with, replay_summary, summarize,
+    decode, evaluate_decoded, member_record, mesh_change, plate_record, prior_op_with,
+    replay_summary,
 };
 use crate::publication::{PublicationTail, prepare_and_publish};
 use beamcraft_engine::command::evaluate_plate;
@@ -42,6 +41,10 @@ use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
 use session::Refusal;
+use session::pipeline::{
+    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, digest_of, host_uuid, integrity,
+    load_base, open_base, summarize,
+};
 use std::collections::BTreeMap;
 
 /// Inputs of one `update_element` call beyond the command itself.
@@ -54,7 +57,7 @@ pub struct UpdateRequest {
     /// The acting user (trusted context).
     pub actor: Uuid7,
     /// Project of a store that has no revision yet; an update of such a store is `NOT_FOUND`. A
-    /// store with a revision ignores it (see `plate::ensure_project`).
+    /// store with a revision ignores it (see `session::pipeline::ensure_project`).
     pub project: ProjectId,
     /// Workspace of a store that has no revision yet.
     pub workspace: WorkspaceId,

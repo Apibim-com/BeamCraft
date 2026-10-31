@@ -8,6 +8,8 @@
 //! - [`project`]: project folders as people see them: names, listing, reading a head.
 //! - [`environment`]: the environments a session can start with, and their admission.
 //! - [`recent`]: the recent-project list over the settings and the project folders.
+//! - [`pipeline`]: the layer names, the base a revision is authored on, the project claim and the
+//!   revision summary every command shares.
 //! - [`foreign`]: one read-only, self-contained USD layer from outside the project, opened under
 //!   fixed budgets (a library or an environment file).
 //!
@@ -17,6 +19,7 @@
 
 pub mod environment;
 pub mod foreign;
+pub mod pipeline;
 pub mod project;
 pub mod recent;
 mod refusal;

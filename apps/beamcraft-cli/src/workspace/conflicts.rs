@@ -9,7 +9,6 @@
 //! canonical bytes: the same inputs produce the same bytes on every retry and in every process.
 
 use super::WorkspaceMeta;
-use crate::plate::integrity;
 use beamcraft_engine::{
     footprint::{Entry, Group, Target},
     rebase::{Conflict, ConflictKind, MAX_REBASE_CONFLICTS},
@@ -18,6 +17,7 @@ use beamcraft_host::revision::{RevisionStore, Uuid7};
 use beamcraft_json::Json;
 use beamcraft_model::{digest::ContentDigest, error::ErrorCode, id::ElementId};
 use session::Refusal;
+use session::pipeline::integrity;
 use std::{
     fs,
     io::{Read, Write},

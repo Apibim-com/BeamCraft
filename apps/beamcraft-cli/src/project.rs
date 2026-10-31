@@ -9,7 +9,6 @@
 //! window uses as well.
 
 use crate::library::load_environment;
-use crate::plate::{DERIVED_LAYER, ROOT_LAYER, claim_project, host_uuid, load_base};
 use crate::publication::commit_verified;
 use beamcraft_host::revision::{
     CommitHook, CommitOutcome, LayerEntry, LayerRole, RevisionDraft, RevisionStore,
@@ -20,6 +19,7 @@ use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, Uuid7, WorkspaceId};
 use session::Refusal;
 use session::environment::ENVIRONMENT_FILE;
+use session::pipeline::{DERIVED_LAYER, ROOT_LAYER, claim_project, host_uuid, load_base};
 use session::project::{ProjectInfo, check_project_name, numbered_name, project_info};
 use std::fs;
 use std::path::{Path, PathBuf};
