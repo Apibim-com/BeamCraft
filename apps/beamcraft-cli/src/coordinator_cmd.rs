@@ -68,14 +68,6 @@ fn exit_for(code: ErrorCode) -> u8 {
     }
 }
 
-/// Whether `command` is one of the coordinator commands.
-pub fn handles(command: &OsString) -> bool {
-    command == "serve-coordinator"
-        || command == "publish-changeset"
-        || command == "coordinator-rebase"
-        || command == "inspect-coordinator-head"
-}
-
 /// Runs one coordinator command and returns the JSON result and the process exit code.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
     match run(args) {

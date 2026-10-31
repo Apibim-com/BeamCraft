@@ -49,22 +49,6 @@ fn settings_error(error: SettingsError) -> PlateError {
     }
 }
 
-/// Whether `command` is one of the start commands.
-pub fn handles(command: &OsString) -> bool {
-    [
-        "show-settings",
-        "set-settings",
-        "list-environment",
-        "create-project",
-        "suggest-project-name",
-        "list-project",
-        "list-recent",
-        "add-recent",
-    ]
-    .iter()
-    .any(|c| command == c)
-}
-
 /// Runs one start command and returns the JSON result and the process exit code.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
     crate::report::report(run(args))
