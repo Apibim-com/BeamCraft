@@ -19,7 +19,7 @@ use beamcraft_kernel::measure::{
 use beamcraft_kernel::topology::{Limits, analyze, analyze_with};
 use beamcraft_kernel::trimesh::TriMesh;
 use beamcraft_kernel::verdict::{Fault, MeshCode, ShellStatus, Uncertainty};
-use beamcraft_kernel::{RectangularPlate, rectangular_plate};
+use beamcraft_kernel::{steel::RectangularPlate, steel::rectangular_plate};
 use common::*;
 
 fn mesh(b: &Buf) -> TriMesh {

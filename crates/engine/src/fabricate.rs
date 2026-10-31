@@ -23,14 +23,15 @@ use crate::cut::{CutByPlaneOutcome, CutTarget, admit_record};
 use crate::footprint::{Entry, Footprint, Group, Target};
 use crate::member::AuthoredMember;
 use crate::solid::rotate_vector;
-use beamcraft_model::command::{
-    ChamferPart, CombineParts, CommandError, CutByLine, CutByPart, CutByPolygon, CutRecord,
-    FitEndToPart, HoleKind, HoleRecord, KeepSide, MAX_HOLES, Placement, SplitPart,
-};
+use beamcraft_model::command::{CommandError, Placement};
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId};
 use beamcraft_model::limits::CONTOUR_POINT_CAP;
+use beamcraft_model::steel::command::{
+    ChamferPart, CombineParts, CutByLine, CutByPart, CutByPolygon, CutRecord, FitEndToPart,
+    HoleKind, HoleRecord, KeepSide, MAX_HOLES, SplitPart,
+};
 
 /// How far the tool's mapped prism must reach past both faces of the target, in millimetres.
 const TOOL_REACH_MM: f64 = 1e-6;
@@ -1118,7 +1119,7 @@ mod tests {
     ) -> AuthoredMember {
         AuthoredMember {
             id: id(id_byte),
-            kind: beamcraft_model::command::MemberKind::Beam,
+            kind: beamcraft_model::steel::command::MemberKind::Beam,
             name: "Member".into(),
             class: 0,
             axis_points_mm: vec![[0.0, 0.0, 0.0], [length, 0.0, 0.0]],

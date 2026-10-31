@@ -10,11 +10,13 @@
 
 use beamcraft_geom::Point3;
 use beamcraft_kernel::profile::Point2;
-use beamcraft_kernel::section::{
+use beamcraft_kernel::steel::section::{
     Representation, SectionMember, SectionOutline, outline, section_member,
 };
 use beamcraft_model::error::ErrorCode;
-use beamcraft_model::section::{CustomSection, ParametricSection, SectionFamily, SectionShape};
+use beamcraft_model::steel::section::{
+    CustomSection, ParametricSection, SectionFamily, SectionShape,
+};
 use core::f64::consts::PI;
 
 fn shape(family: SectionFamily, values: &[f64]) -> SectionShape {
@@ -234,7 +236,7 @@ fn beam(shape: SectionShape, representation: Representation) -> SectionMember {
         shape,
         representation,
         roll_rad: None,
-        placement: beamcraft_model::command::SectionPlacement::default(),
+        placement: beamcraft_model::steel::command::SectionPlacement::default(),
     }
 }
 

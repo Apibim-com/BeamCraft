@@ -11,10 +11,9 @@ use crate::common;
 use crate::common_mesh;
 use crate::common_ops;
 
-use beamcraft_kernel::ops::{
-    Body, MemberHoleCutter, OpCode, OpDefect, OpField, OpKind, OpResult, member_through_hole,
-};
+use beamcraft_kernel::ops::{Body, OpCode, OpDefect, OpField, OpKind, OpResult};
 use beamcraft_kernel::profile::{Cavity, CurveSpec, Point2, extrude};
+use beamcraft_kernel::steel::member_hole::{MemberHoleCutter, member_through_hole};
 use beamcraft_kernel::trimesh::TriMesh;
 use common::regular_polygon_area;
 use common_ops::assert_sealed;

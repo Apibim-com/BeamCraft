@@ -11,9 +11,11 @@
 use crate::common;
 
 use beamcraft_geom::Point3;
-use beamcraft_kernel::section::Representation;
+use beamcraft_kernel::steel::section::Representation;
 use beamcraft_kernel::sweep::{PathCode, Sweep, SweepFailure, SweepPath, SweepResult, sweep};
-use beamcraft_model::section::{CustomSection, ParametricSection, SectionFamily, SectionShape};
+use beamcraft_model::steel::section::{
+    CustomSection, ParametricSection, SectionFamily, SectionShape,
+};
 use core::f64::consts::PI;
 
 fn p(x: f64, y: f64, z: f64) -> Point3 {

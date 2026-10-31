@@ -15,10 +15,11 @@
 
 use beamcraft_engine::command::{CreatePlateOutcome, MaterialInfo, create_plate, no_materials};
 use beamcraft_json::{Json, Limits};
-use beamcraft_model::command::{CreatePlate, Placement};
+use beamcraft_model::command::Placement;
 use beamcraft_model::digest::Sha256;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
+use beamcraft_model::steel::command::CreatePlate;
 use std::collections::{BTreeMap, BTreeSet};
 
 // Explicit lists: a new or removed fixture case must change the evidence inventory. Members,

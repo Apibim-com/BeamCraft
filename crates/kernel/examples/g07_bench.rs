@@ -26,7 +26,10 @@ use beamcraft_kernel::profile::{Cavity, CurveSpec, Point2, extrude};
 use beamcraft_kernel::topology::analyze;
 use beamcraft_kernel::trimesh::TriMesh;
 use beamcraft_kernel::verdict::ShellStatus;
-use beamcraft_kernel::{RectangularPlate, StraightMember, rectangular_plate, straight_member};
+use beamcraft_kernel::{
+    steel::RectangularPlate, steel::StraightMember, steel::rectangular_plate,
+    steel::straight_member,
+};
 use beamcraft_model::digest::Sha256;
 use std::hint::black_box;
 use std::process::ExitCode;
@@ -196,7 +199,7 @@ fn main() -> ExitCode {
         width_mm: 100.0,
         height_mm: 300.0,
         roll_rad: None,
-        placement: beamcraft_model::command::SectionPlacement::default(),
+        placement: beamcraft_model::steel::command::SectionPlacement::default(),
     };
     let Ok(member) = straight_member(member_input) else {
         return fail("member builds");

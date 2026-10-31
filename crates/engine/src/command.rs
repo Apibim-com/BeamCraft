@@ -43,15 +43,15 @@ use beamcraft_kernel::ops::{
 use beamcraft_kernel::profile::diagnostic::{ProfileFailure, ProfileField};
 use beamcraft_kernel::profile::{Cavity, Point2, extrude};
 use beamcraft_kernel::trimesh::TriMesh;
-use beamcraft_kernel::{PlateResult, RectangularPlate, rectangular_plate};
-use beamcraft_model::command::{
-    AddHole, BendRecord, CommandError, CreatePlate, CutRecord, HoleRecord, MAX_HOLES, Placement,
-    PlateCorner, PlateSide,
-};
+use beamcraft_kernel::{steel::PlateResult, steel::RectangularPlate, steel::rectangular_plate};
+use beamcraft_model::command::{CommandError, Placement};
 use beamcraft_model::definition::MaterialSpec;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId};
+use beamcraft_model::steel::command::{
+    AddHole, BendRecord, CreatePlate, CutRecord, HoleRecord, MAX_HOLES, PlateCorner, PlateSide,
+};
 
 /// Version label of the volume algorithm in a [`Quantities`] record.
 pub const VOLUME_ALGORITHM: &str = "kernel-g02-rectangular-plate-volume/1;tolerance-policy-3";
@@ -591,7 +591,7 @@ pub fn evaluate_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandErro
         return crate::bend::evaluate_bent(authored);
     }
     let points = &authored.contour_points_mm;
-    let contour = beamcraft_kernel::plate_contour::admit(points, authored.thickness_mm)?;
+    let contour = beamcraft_kernel::steel::plate_contour::admit(points, authored.thickness_mm)?;
     let offset = side_offset(authored);
     match classify(points) {
         // A treated origin rectangle (A12.2) is no longer the G02 box: the treatments replace
@@ -691,8 +691,10 @@ pub fn evaluate_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandErro
                     "hole records on a framed plate are not evaluated",
                 ));
             }
-            let result =
-                beamcraft_kernel::plate_contour::rectangular_body(points, authored.thickness_mm)?;
+            let result = beamcraft_kernel::steel::plate_contour::rectangular_body(
+                points,
+                authored.thickness_mm,
+            )?;
             let shifted = laid_off(
                 result.mesh().blob(),
                 &result
@@ -871,8 +873,8 @@ pub(crate) fn map_cut(failure: &OpFailure) -> CommandError {
 pub(crate) fn apply_cut(body: &Body, cut: &CutRecord) -> Result<OpResult, CommandError> {
     let plane = CutPlane::new(cut.point_mm, cut.normal);
     let keep = match cut.keep {
-        beamcraft_model::command::KeepSide::Positive => Keep::Positive,
-        beamcraft_model::command::KeepSide::Negative => Keep::Negative,
+        beamcraft_model::steel::command::KeepSide::Positive => Keep::Positive,
+        beamcraft_model::steel::command::KeepSide::Negative => Keep::Negative,
     };
     plane_cut(body, &plane, keep, cut.ordinal).map_err(|f| map_cut(&f))
 }
@@ -1064,7 +1066,10 @@ fn add_hole_at(
 ) -> Result<(AuthoredPlate, PlateBody), CommandError> {
     command.validate_arguments()?;
     // A member generator targets a member (A04.2); it never authors a plate hole.
-    if matches!(command.hole, beamcraft_model::command::HoleSpec::Member(_)) {
+    if matches!(
+        command.hole,
+        beamcraft_model::steel::command::HoleSpec::Member(_)
+    ) {
         return Err(CommandError::new(
             ErrorCode::InvalidArgument,
             "hole",
@@ -1124,7 +1129,7 @@ fn add_hole_at(
         operation_id: command.operation_id,
         ordinal,
         polygon_mm: command.polygon()?,
-        kind: beamcraft_model::command::HoleKind::Hole,
+        kind: beamcraft_model::steel::command::HoleKind::Hole,
         owner: None,
     });
     let body = evaluate_plate(&next).map_err(|error| {
@@ -1142,13 +1147,13 @@ fn add_hole_at(
 /// The original authored state is unchanged on every refusal.
 pub fn update_hole(
     head: &AuthoredPlate,
-    command: &beamcraft_model::command::UpdateHole,
+    command: &beamcraft_model::steel::command::UpdateHole,
 ) -> Result<(AuthoredPlate, PlateBody), CommandError> {
     command.validate_arguments()?;
     // The same generator guard as `add_hole_at`: a member generator targets a member.
     if matches!(
         command.hole.hole,
-        beamcraft_model::command::HoleSpec::Member(_)
+        beamcraft_model::steel::command::HoleSpec::Member(_)
     ) {
         return Err(CommandError::new(
             ErrorCode::InvalidArgument,
@@ -1177,7 +1182,7 @@ pub fn update_hole(
         })?;
     // An A13 polygon cut shares the record list but is not an A04 hole: the adapter refuses
     // it with a typed result instead of editing one.
-    if record.kind != beamcraft_model::command::HoleKind::Hole {
+    if record.kind != beamcraft_model::steel::command::HoleKind::Hole {
         return Err(CommandError::new(
             ErrorCode::InvalidArgument,
             "operation_id",
@@ -1209,7 +1214,7 @@ pub fn update_hole(
 /// Remove one owned hole and re-evaluate all remaining holes and cuts.
 pub fn remove_hole(
     head: &AuthoredPlate,
-    command: &beamcraft_model::command::RemoveHole,
+    command: &beamcraft_model::steel::command::RemoveHole,
 ) -> Result<(AuthoredPlate, PlateBody), CommandError> {
     if head.id != command.target_id {
         return Err(CommandError::new(
@@ -1230,7 +1235,7 @@ pub fn remove_hole(
             )
         })?;
     // The same kind guard as `update_hole`: retiring a polygon cut is not an A04 removal.
-    if record.kind != beamcraft_model::command::HoleKind::Hole {
+    if record.kind != beamcraft_model::steel::command::HoleKind::Hole {
         return Err(CommandError::new(
             ErrorCode::InvalidArgument,
             "operation_id",
@@ -1256,7 +1261,7 @@ pub fn remove_hole(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use beamcraft_model::command::HoleSpec;
+    use beamcraft_model::steel::command::HoleSpec;
 
     fn command(contour: Vec<[f64; 3]>, thickness: f64) -> CreatePlate {
         CreatePlate {
@@ -1455,8 +1460,8 @@ mod tests {
         }
     }
 
-    use beamcraft_model::command::KeepSide;
     use beamcraft_model::id::OpId;
+    use beamcraft_model::steel::command::KeepSide;
 
     #[test]
     fn cut_records_replay_in_ordinal_order_with_their_kept_side() {
@@ -1854,10 +1859,10 @@ mod tests {
         let member_spec = AddHole {
             target_id: head.id,
             operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000aa").unwrap(),
-            hole: HoleSpec::Member(beamcraft_model::command::MemberHole {
+            hole: HoleSpec::Member(beamcraft_model::steel::command::MemberHole {
                 axis_point_mm: [0.0; 3],
                 axis_direction: [1.0, 0.0, 0.0],
-                extent: beamcraft_model::command::HoleExtent::Through,
+                extent: beamcraft_model::steel::command::HoleExtent::Through,
                 diameter_mm: 20.0,
             }),
         };
@@ -2163,7 +2168,7 @@ mod tests {
             },
         };
         let (head, _) = add_hole(&head, &c, &|_| false).unwrap();
-        let edit = beamcraft_model::command::UpdateHole {
+        let edit = beamcraft_model::steel::command::UpdateHole {
             hole: AddHole {
                 hole: HoleSpec::Rectangle {
                     corner_mm: [100.0, 100.0],
@@ -2200,7 +2205,7 @@ mod tests {
             },
         };
         let (p, _) = add_hole_after(&head, &c, &|_| false, 7).unwrap();
-        let removal = beamcraft_model::command::RemoveHole {
+        let removal = beamcraft_model::steel::command::RemoveHole {
             target_id: p.id,
             operation_id: id,
         };
@@ -2229,10 +2234,10 @@ mod tests {
                 [200.0, 200.0],
                 [100.0, 200.0],
             ],
-            kind: beamcraft_model::command::HoleKind::PolygonCut,
+            kind: beamcraft_model::steel::command::HoleKind::PolygonCut,
             owner: None,
         });
-        let edit = beamcraft_model::command::UpdateHole {
+        let edit = beamcraft_model::steel::command::UpdateHole {
             hole: AddHole {
                 target_id: with_cut.id,
                 operation_id: id,
@@ -2247,7 +2252,7 @@ mod tests {
             update_hole(&with_cut, &edit).unwrap_err().code,
             ErrorCode::InvalidArgument
         );
-        let removal = beamcraft_model::command::RemoveHole {
+        let removal = beamcraft_model::steel::command::RemoveHole {
             target_id: with_cut.id,
             operation_id: id,
         };
@@ -2275,10 +2280,10 @@ mod tests {
                 [200.0, 200.0],
                 [100.0, 200.0],
             ],
-            kind: beamcraft_model::command::HoleKind::Hole,
+            kind: beamcraft_model::steel::command::HoleKind::Hole,
             owner: Some(group),
         });
-        let edit = beamcraft_model::command::UpdateHole {
+        let edit = beamcraft_model::steel::command::UpdateHole {
             hole: AddHole {
                 target_id: with_hole.id,
                 operation_id: id,
@@ -2291,7 +2296,7 @@ mod tests {
         let refused = update_hole(&with_hole, &edit).unwrap_err();
         assert_eq!(refused.code, ErrorCode::DependencyConflict);
         assert_eq!(refused.rule_id, Some("DV-REL-009"));
-        let removal = beamcraft_model::command::RemoveHole {
+        let removal = beamcraft_model::steel::command::RemoveHole {
             target_id: with_hole.id,
             operation_id: id,
         };

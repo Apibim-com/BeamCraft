@@ -8,7 +8,9 @@
 use beamcraft_geom::Point3;
 use beamcraft_kernel::diagnostic::{Code, Field, Stage};
 use beamcraft_kernel::feature_id::{PLATE_EDGE_VERTICES, PLATE_EDGES, PLATE_VERTICES};
-use beamcraft_kernel::{RectangularPlate, rectangular_plate, rectangular_plate_with_cancel};
+use beamcraft_kernel::{
+    steel::RectangularPlate, steel::rectangular_plate, steel::rectangular_plate_with_cancel,
+};
 use beamcraft_model::error::ErrorCode;
 use std::collections::{BTreeMap, BTreeSet};
 

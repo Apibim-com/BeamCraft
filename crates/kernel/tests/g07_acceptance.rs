@@ -29,7 +29,8 @@ use beamcraft_kernel::topology::analyze;
 use beamcraft_kernel::trimesh::TriMesh;
 use beamcraft_kernel::verdict::{MeshCode, ShellStatus};
 use beamcraft_kernel::{
-    PlateResult, RectangularPlate, StraightMember, rectangular_plate, straight_member,
+    steel::PlateResult, steel::RectangularPlate, steel::StraightMember, steel::rectangular_plate,
+    steel::straight_member,
 };
 use beamcraft_model::digest::Sha256;
 use beamcraft_model::error::ErrorCode;
@@ -44,7 +45,7 @@ fn member(start: [f64; 3], end: [f64; 3], w: f64, h: f64, roll: Option<f64>) -> 
         width_mm: w,
         height_mm: h,
         roll_rad: roll,
-        placement: beamcraft_model::command::SectionPlacement::default(),
+        placement: beamcraft_model::steel::command::SectionPlacement::default(),
     }
 }
 

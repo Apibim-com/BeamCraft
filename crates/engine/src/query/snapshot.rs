@@ -596,7 +596,7 @@ mod tests {
     use super::*;
     use crate::scene::{SceneElement, SceneMesh};
     use beamcraft_geom::Translation3;
-    use beamcraft_kernel::{RectangularPlate, rectangular_plate};
+    use beamcraft_kernel::{steel::RectangularPlate, steel::rectangular_plate};
 
     fn plate_mesh() -> SceneMesh {
         SceneMesh::from(

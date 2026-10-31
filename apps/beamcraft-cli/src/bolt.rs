@@ -40,13 +40,14 @@ use beamcraft_layer_engine::authored::{
     Placement as LayerPlacement, Prepare, Resource, Shape, schema_identity, validate_layers,
 };
 use beamcraft_layer_engine::{Control, OpenRequest, Reader, Value};
-use beamcraft_model::command::{
-    BoltGroupInputs, BoltLength, BoltSpacing, BoltSpec, CommandError, CreateBolt, CreateBoltGroup,
-    HoleKind, HoleRecord, MAX_HOLES, UpdateBoltGroup,
-};
+use beamcraft_model::command::CommandError;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use beamcraft_model::steel::command::{
+    BoltGroupInputs, BoltLength, BoltSpacing, BoltSpec, CreateBolt, CreateBoltGroup, HoleKind,
+    HoleRecord, MAX_HOLES, UpdateBoltGroup,
+};
 use session::Refusal;
 use session::pipeline::{
     AUTHORED_LAYER, DERIVED_LAYER, RevisionSummary, base_of, control, digest_of, host_uuid,
@@ -577,14 +578,14 @@ fn expected_spec(
         washer_under_head: placed.washer_under_head,
         washer_under_nut: placed.washer_under_nut,
         hole_mode: match inputs.resolved_hole_mode() {
-            beamcraft_model::fastener::HoleMode::Generate => "generate".to_owned(),
-            beamcraft_model::fastener::HoleMode::None => "none".to_owned(),
+            beamcraft_model::steel::fastener::HoleMode::Generate => "generate".to_owned(),
+            beamcraft_model::steel::fastener::HoleMode::None => "none".to_owned(),
         },
         hole_clearance_mm: match inputs.resolved_hole_mode() {
-            beamcraft_model::fastener::HoleMode::Generate => {
+            beamcraft_model::steel::fastener::HoleMode::Generate => {
                 Some(inputs.resolved_hole_clearance_mm())
             }
-            beamcraft_model::fastener::HoleMode::None => None,
+            beamcraft_model::steel::fastener::HoleMode::None => None,
         },
     }
 }
@@ -804,14 +805,14 @@ fn layer_group(
         washer_under_head: placed.washer_under_head,
         washer_under_nut: placed.washer_under_nut,
         hole_mode: match inputs.resolved_hole_mode() {
-            beamcraft_model::fastener::HoleMode::Generate => "generate".to_owned(),
-            beamcraft_model::fastener::HoleMode::None => "none".to_owned(),
+            beamcraft_model::steel::fastener::HoleMode::Generate => "generate".to_owned(),
+            beamcraft_model::steel::fastener::HoleMode::None => "none".to_owned(),
         },
         hole_clearance_mm: match inputs.resolved_hole_mode() {
-            beamcraft_model::fastener::HoleMode::Generate => {
+            beamcraft_model::steel::fastener::HoleMode::Generate => {
                 Some(inputs.resolved_hole_clearance_mm())
             }
-            beamcraft_model::fastener::HoleMode::None => None,
+            beamcraft_model::steel::fastener::HoleMode::None => None,
         },
     }
 }
