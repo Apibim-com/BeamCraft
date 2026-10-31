@@ -47,7 +47,11 @@ crates from it. Change the table and the manifests together.
 Columns: package; path; kind; layer; allowed internal dependencies (`-` for none); status
 (`now` = a workspace member today, `planned` = created by its own task); the task that creates a
 planned crate or owns a present one. Kind `domain` is reserved for the three WASM-required
-crates; all future crates use a desktop-native kind (`native`, `host`, `app` or `tool`).
+crates; all future crates use a desktop-native kind (`native`, `host`, `discipline`, `app` or
+`tool`). Kind `discipline` is one trade (steel today, concrete or MEP later) with its commands,
+model types and operations: only an app or a tool may depend on a discipline, so a discipline
+never depends on another and the platform (`session`, `host`, `engine`, ...) never depends on a
+discipline (`docs/design/platform-and-steel.md`).
 Dependencies are checked in `[dependencies]`,
 `[dev-dependencies]`, `[build-dependencies]` and target-specific tables alike.
 
