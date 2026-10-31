@@ -69,12 +69,7 @@ use U05 byte storage. They do not publish a project revision.
 
 ## U06 revision commands
 
-```text
-beamcraft commit-revision --store ROOT --project-id UUIDV7 --workspace-id UUIDV7
-  --revision-id UUIDV7 --op-id UUIDV7 --generation U64 --base none|REVISION_UUIDV7
-  --schema SHA256 --root-layer NAME --layers ROLE:NAME:SHA256,...
-beamcraft open-revision --store ROOT
-```
+Usage and options: [`commit-revision`](COMMANDS.md#commit-revision), [`open-revision`](COMMANDS.md#open-revision).
 
 `ROLE` is `authored`, `derived` or `external`; every layer blob must already be in the store
 (`put-blob`), and each size is taken from the verified stored bytes. The commit verifies the
@@ -96,10 +91,7 @@ later reads the revision parses it under the layer engine's budgets. See the
 
 ## U07 recovery commands
 
-```text
-beamcraft recover-revision --store ROOT --min-age-secs U64
-beamcraft inspect-revision-outcome --store ROOT --op-id UUIDV7
-```
+Usage and options: [`recover-revision`](COMMANDS.md#recover-revision), [`inspect-revision-outcome`](COMMANDS.md#inspect-revision-outcome).
 
 Every `commit-revision` now writes a synced intent to `ledger/outcomes.log` before the root
 switch and a committed record after it. `recover-revision` closes unresolved intents from the
@@ -125,12 +117,7 @@ The scene is **synthetic** (see `inspect-elements` for committed plates), built 
 `--stand-in-simplified true`, every third carries a distinct stand-in simplified mesh. The
 output marks both under `stand_ins`.
 
-```text
-beamcraft snapshot-view --plates 20 [--hide plate,support] [--representation full|simplified]
-  [--stand-in-simplified true|false] [--select ID,ID] [--revision SHA256] [--generation U64]
-beamcraft inspect-view-changes --plates 20 --edit move-first,resize-first,add-one,remove-last
-  [--since TOKEN] [--stand-in-simplified true|false] [--revision SHA256] [--generation U64]
-```
+Usage and options: [`snapshot-view`](COMMANDS.md#snapshot-view), [`inspect-view-changes`](COMMANDS.md#inspect-view-changes).
 
 `snapshot-view` reports the pin, the snapshot token (unchanged by `--hide` and
 `--representation`), the projected elements with instance slot, triangle range, mesh digest,
@@ -143,14 +130,7 @@ the engine API. Defaults: revision is the SHA-256 of `beamcraft-synthetic-scene`
 
 ## P01 first plate commands
 
-```text
-beamcraft create-plate --store ROOT --width MM --length MM --thickness MM
-  [--name TEXT] [--translation X,Y,Z] [--material-digest SHA256]
-  [--hole-rect "X,Y,W,H;..."] [--hole-round "X,Y,D;..."] [--hole-segments 8..256]
-  [--new-id UUID] [--op-id UUID]
-  [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
-beamcraft inspect-elements --store ROOT
-```
+Usage and options: [`create-plate`](COMMANDS.md#create-plate), [`inspect-elements`](COMMANDS.md#inspect-elements).
 
 `--hole-rect` and `--hole-round` (A04, see the [design note](../../docs/design/a04-plate-holes.md))
 author through holes together with the plate: axis-aligned rectangles from the corner `X,Y`, and
@@ -207,13 +187,7 @@ the [P01 design note](../../docs/design/p01-first-plate.md) and the current
 
 ## P02 profile and material definitions
 
-```text
-beamcraft define-material --store ROOT [--density KG_M3] [--grade TEXT] [--standard TEXT]
-  [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
-beamcraft define-profile --store ROOT --width MM --height MM [--designation TEXT] [--standard TEXT]
-  [--area-mm2 N] [--mass-per-meter-kg N] [--surface-per-meter-m2 N] [same id options]
-beamcraft definitions --store ROOT
-```
+Usage and options: [`define-material`](COMMANDS.md#define-material), [`define-profile`](COMMANDS.md#define-profile), [`definitions`](COMMANDS.md#definitions).
 
 P02.2: a profile may declare its catalogue identity and section numbers, and a material its grade
 and standard. They are optional, stay unknown when absent and are part of the definition's digest
@@ -250,14 +224,7 @@ is idempotent by content digest; in-process layer engine as above. See the
 
 ### Associative projection preview (D02.1)
 
-```text
-beamcraft preview-drawing --store ROOT --id MEMBER_UUIDV7
-  --drawing-id UUIDV7 --view-id UUIDV7 --dimension-id UUIDV7
-  --anchor-a QUALIFIED_VERTEX_ID --anchor-b QUALIFIED_VERTEX_ID
-  [--plane front|top|right] [--scale 100] [--origin X,Y] [--offset MM]
-  [--decimals 0..3] [--name TEXT]
-  [--intent-out NEW_FILE.usda]
-```
+Usage and options: [`preview-drawing`](COMMANDS.md#preview-drawing).
 
 The engine projects twelve named edges of a real canonical rectangular member and measures the
 projected interval between the selected member's two semantic vertices. Front uses model X/Z,
@@ -322,10 +289,7 @@ This slice does not implement drawing UI, PDF/print, or the full D03 acceptance 
 
 ### Semantic feature addresses (D01.1)
 
-```text
-beamcraft list-feature --store ROOT --id ELEMENT_UUIDV7
-beamcraft lookup-feature --store ROOT --feature-id QUALIFIED_FEATURE_ID
-```
+Usage and options: [`list-feature`](COMMANDS.md#list-feature), [`lookup-feature`](COMMANDS.md#lookup-feature).
 
 `list-feature` opens and strictly verifies the committed model, then enumerates the selected
 canonical box body's 6 face, 12 edge and 8 vertex addresses. Each full `fid1` address includes
@@ -339,12 +303,7 @@ create or publish a drawing.
 
 ### Create a member
 
-```text
-beamcraft create-member --store ROOT --start X,Y,Z --end X,Y,Z --profile-digest SHA256
-  [--kind beam|column] [--roll RAD] [--material-digest SHA256] [--name TEXT]
-  [--translation X,Y,Z] [--orientation-xyzw X,Y,Z,W] [--new-id UUID] [--op-id UUID] [--revision-id UUID] [--actor-id UUID]
-  [--project-id UUID] [--workspace-id UUID]
-```
+Usage and options: [`create-member`](COMMANDS.md#create-member).
 
 `create-member` publishes one beam or column whose rectangle section comes from a profile
 definition published earlier (`define-profile`); the optional material works as for plates. The
@@ -373,11 +332,7 @@ See the [design note](../../docs/design/p03-straight-member.md).
 
 ## P04 update-element and stored quantities
 
-```text
-beamcraft update-element --store ROOT --id UUID
-  [--name TEXT] [--material-digest HEX|none] [--thickness MM]
-  [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
-```
+Usage and options: [`update-element`](COMMANDS.md#update-element).
 
 `update-element` edits one plate or member and writes only the groups that change: a rename
 touches the authored layer alone, a material change rewrites the stored mass record at the same
@@ -392,11 +347,7 @@ quantities.
 
 ## P08 move and delete
 
-```text
-beamcraft update-element --store ROOT --id UUID --translation X,Y,Z [ids as above]
-beamcraft delete-element --store ROOT --id UUID
-  [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
-```
+Usage and options: [`update-element`](COMMANDS.md#update-element), [`delete-element`](COMMANDS.md#delete-element).
 
 A move is the placement patch of `UpdateElement`: the footprint writes the placement and the
 derived invalidation group only, the derived layer is byte for byte unchanged and the stored
@@ -408,10 +359,7 @@ See the [design note](../../docs/design/p08-move-delete.md).
 
 ## P05 copy-element
 
-```text
-beamcraft copy-element --store ROOT --id SOURCE_UUID [--name TEXT] [--offset X,Y,Z] [--new-id UUID]
-  [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
-```
+Usage and options: [`copy-element`](COMMANDS.md#copy-element).
 
 `copy-element` creates one new plate or member with a fresh id and the source's authored inputs;
 the label defaults to the source's and `--offset` is added to the placement translation. The body
@@ -423,12 +371,7 @@ source `NOT_FOUND`, and the same `--op-id` is a replay or `OP_ID_REUSE`. See the
 
 ## P06 personal workspaces
 
-```text
-beamcraft create-workspace  --store PUBLISHED --workspace-dir DIR [--user-id UUID] [--workspace-id UUID]
-  [--revision-id UUID] [--op-id UUID]
-beamcraft inspect-workspace  --store PUBLISHED --workspace-dir DIR
-beamcraft publish-workspace --store PUBLISHED --workspace-dir DIR
-```
+Usage and options: [`create-workspace`](COMMANDS.md#create-workspace), [`inspect-workspace`](COMMANDS.md#inspect-workspace), [`publish-workspace`](COMMANDS.md#publish-workspace).
 
 A workspace is a directory that is its own revision store, forked from the published head. Every
 edit command (`create-plate`, `update-element`, `copy-element`, ...) works on it with
@@ -477,11 +420,7 @@ another payload under that ID is refused, including after a failed attempt.
 
 ## P07 undo and redo
 
-```text
-beamcraft undo-workspace    --workspace-dir DIR [--revision-id UUID] [--op-id UUID]
-beamcraft redo-workspace    --workspace-dir DIR [--revision-id UUID] [--op-id UUID]
-beamcraft inspect-workspace-history --workspace-dir DIR
-```
+Usage and options: [`undo-workspace`](COMMANDS.md#undo-workspace), [`redo-workspace`](COMMANDS.md#redo-workspace), [`inspect-workspace-history`](COMMANDS.md#inspect-workspace-history).
 
 Every accepted command is one revision of the draft and therefore one undo unit. `undo-workspace`
 commits a **new** verified revision whose layers are those of the state before the last unit, so
@@ -494,14 +433,7 @@ See the [design note](../../docs/design/p07-undo-redo.md).
 
 ## R01 read-only references
 
-```text
-beamcraft attach-reference        --store ROOT --source FILE [--name TEXT] [--translation X,Y,Z] [--rotation-z-deg DEG]
-  [--new-id UUID] [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
-beamcraft move-reference          --store ROOT --id UUID [--translation X,Y,Z] [--rotation-z-deg DEG] [same ids]
-beamcraft correct-reference-units --store ROOT --id UUID (--meters-per-unit F --up-axis Y|Z | --clear true) [same ids]
-beamcraft write-reference         --store ROOT --id UUID (--target source | --prim /DefaultPrim/Path [--attribute NAME])
-beamcraft inspect-reference       --store ROOT
-```
+Usage and options: [`attach-reference`](COMMANDS.md#attach-reference), [`move-reference`](COMMANDS.md#move-reference), [`correct-reference-units`](COMMANDS.md#correct-reference-units), [`write-reference`](COMMANDS.md#write-reference), [`inspect-reference`](COMMANDS.md#inspect-reference).
 
 `attach-reference` reads a local USDA or USDC layer (at most 32 MiB, one layer with a
 `defaultPrim`, under the model-profile stage budgets) and publishes
