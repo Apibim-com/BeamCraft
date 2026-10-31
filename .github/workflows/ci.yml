@@ -40,13 +40,12 @@ jobs:
           toolchain: stable
           components: clippy, rustfmt
 
-      # Every rust-cache step saves only on master. Pull requests restore master's caches; a
-      # cache saved from a pull request is visible to that pull request alone, pushes master's
-      # caches out of the repository's 10 GB limit, and its save step delays the jobs that wait
-      # on this one.
+      # rust-cache saves a pull request's own cache when its key (which hashes every Cargo.toml
+      # and Cargo.lock) differs from master's. Without that save, every push of a pull request
+      # that changes a manifest restores master's cache as a partial match, and rust-cache then
+      # deletes every artifact older than a week (restore.ts, cleanup.ts), so the dependencies
+      # that rarely change, the GUI stack first, rebuild on each push (2026-10-31: +40 s on macOS).
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Format
         if: runner.os == 'Linux'
@@ -84,8 +83,6 @@ jobs:
           toolchain: stable
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
@@ -153,8 +150,6 @@ jobs:
           toolchain: stable
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
@@ -215,8 +210,6 @@ jobs:
           toolchain: stable
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
@@ -315,7 +308,6 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: wasm32
-          save-if: ${{ github.ref == 'refs/heads/master' }}
       # WS / owner decision 2026-10-16: only geom, model and kernel require WASM compatibility.
       # The three domain rows in docs/contracts/f08-module-boundaries-v0.1.md define the list.
       - name: Check geom, model and kernel for wasm32
