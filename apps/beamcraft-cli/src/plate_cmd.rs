@@ -26,7 +26,7 @@ use beamcraft_cli::member::{
     create_member, create_polybeam,
 };
 use beamcraft_cli::plate::{
-    AcceptedBinding, CreateRequest, Created, Inspection, PlateError, ProjectClaim, QuantityReport,
+    AcceptedBinding, CreateRequest, Created, Inspection, ProjectClaim, QuantityReport,
     RevisionSummary, accepted_binding, claim_project, ensure_project, inspect,
 };
 use beamcraft_cli::plate_draft::{CreatedDraft, create_plate_draft};
@@ -61,13 +61,14 @@ use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use beamcraft_model::limits::MAX_MEMBER_PATH_POINTS;
 use beamcraft_model::section::{CustomSection, ParametricSection, SectionFamily, SectionShape};
+use session::Refusal;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 
-pub(crate) type Run<T> = Result<T, PlateError>;
+pub(crate) type Run<T> = Result<T, Refusal>;
 
-pub(crate) fn invalid(message: &'static str) -> PlateError {
-    PlateError {
+pub(crate) fn invalid(message: &'static str) -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
@@ -554,7 +555,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
     let store_root = options
         .get("--store")
         .ok_or_else(|| invalid("--store is required"))?;
-    let blobs = BlobStore::new(store_root).map_err(|e| PlateError {
+    let blobs = BlobStore::new(store_root).map_err(|e| Refusal {
         rule_id: None,
         code: e.code(),
         message: "store root is not usable",
@@ -638,8 +639,8 @@ pub(crate) fn quaternion(text: &str) -> Run<[f64; 4]> {
         .map_err(|_| invalid("orientation is not four numbers"))
 }
 
-pub(crate) fn id_error(error: beamcraft_model::id::IdError) -> PlateError {
-    PlateError {
+pub(crate) fn id_error(error: beamcraft_model::id::IdError) -> Refusal {
+    Refusal {
         rule_id: Some("DV-BASE-001"),
         code: error.code(),
         message: "identity is not a full canonical UUIDv7",
@@ -647,8 +648,8 @@ pub(crate) fn id_error(error: beamcraft_model::id::IdError) -> PlateError {
 }
 
 /// Command-envelope identities are not the F10 element attribute `bim:id`.
-pub(crate) fn context_id_error(error: beamcraft_model::id::IdError) -> PlateError {
-    PlateError {
+pub(crate) fn context_id_error(error: beamcraft_model::id::IdError) -> Refusal {
+    Refusal {
         rule_id: None,
         ..id_error(error)
     }
@@ -751,7 +752,7 @@ fn selected(
                     {
                         return Ok(Some(digest));
                     }
-                    Err(PlateError {
+                    Err(Refusal {
                         rule_id: None,
                         code: ErrorCode::NotFound,
                         message: if profiles {
@@ -866,7 +867,7 @@ fn section_shape(family: &str, options: &BTreeMap<&str, &str>) -> Run<SectionSha
 /// given. Winding, simplicity and the size floor are the kernel's to decide.
 fn contour_points(text: &str) -> Run<Vec<[f64; 3]>> {
     if text.split(';').count() > 1024 {
-        return Err(PlateError {
+        return Err(Refusal {
             rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "more than 1024 contour points",
@@ -935,7 +936,7 @@ fn define_command(
 ) -> Run<Json> {
     let mut source = IdSource::system();
     let mut fresh = || {
-        source.next_id().map_err(|_| PlateError {
+        source.next_id().map_err(|_| Refusal {
             rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
@@ -1016,8 +1017,8 @@ fn define_command(
         None => RevisionId::from_uuid(fresh()?),
     };
     let actor = match given("--actor-id") {
-        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
-        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+        Some(text) => Uuid7::parse(text).map_err(Refusal::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(Refusal::from)?,
     };
     let project = match given("--project-id") {
         Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
@@ -1049,7 +1050,7 @@ fn create(
 ) -> Run<Json> {
     let mut source = IdSource::system();
     let mut fresh = || {
-        source.next_id().map_err(|_| PlateError {
+        source.next_id().map_err(|_| Refusal {
             rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
@@ -1070,8 +1071,8 @@ fn create(
         None => RevisionId::from_uuid(fresh()?),
     };
     let actor = match given("--actor-id") {
-        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
-        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+        Some(text) => Uuid7::parse(text).map_err(Refusal::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(Refusal::from)?,
     };
     let project = match given("--project-id") {
         Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
@@ -1099,7 +1100,7 @@ fn create(
             contour_points(text)?
         }
         None => origin_rectangle_contour(float(options, "--width")?, float(options, "--length")?)
-            .map_err(PlateError::from)?,
+            .map_err(Refusal::from)?,
     };
     let contour = match given("--normalize-winding") {
         None | Some("false") => contour,
@@ -1261,7 +1262,7 @@ fn corner_treatments(options: &BTreeMap<&str, &str>) -> Run<Vec<PlateCorner>> {
         return Ok(Vec::new());
     }
     if text.split(';').take(1025).count() > 1024 {
-        return Err(PlateError {
+        return Err(Refusal {
             rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "too many corner treatments",
@@ -1329,7 +1330,7 @@ fn update_command(
 ) -> Run<Json> {
     let mut source = IdSource::system();
     let mut fresh = || {
-        source.next_id().map_err(|_| PlateError {
+        source.next_id().map_err(|_| Refusal {
             rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
@@ -1347,8 +1348,8 @@ fn update_command(
         None => RevisionId::from_uuid(fresh()?),
     };
     let actor = match given("--actor-id") {
-        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
-        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+        Some(text) => Uuid7::parse(text).map_err(Refusal::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(Refusal::from)?,
     };
     let project = match given("--project-id") {
         Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
@@ -1531,7 +1532,7 @@ fn contour_edit_command(
 ) -> Run<Json> {
     let mut source = IdSource::system();
     let mut fresh = || {
-        source.next_id().map_err(|_| PlateError {
+        source.next_id().map_err(|_| Refusal {
             rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
@@ -1569,8 +1570,8 @@ fn contour_edit_command(
         None => RevisionId::from_uuid(fresh()?),
     };
     let actor = match given("--actor-id") {
-        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
-        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+        Some(text) => Uuid7::parse(text).map_err(Refusal::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(Refusal::from)?,
     };
     let project = match given("--project-id") {
         Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
@@ -1594,7 +1595,7 @@ fn contour_edit_command(
             .iter()
             .any(|p| p.authored.id == target_id) =>
         {
-            return Err(PlateError {
+            return Err(Refusal {
                 rule_id: None,
                 code: ErrorCode::DependencyUnavailable,
                 message: "editing an unsupported plate is not implemented",
@@ -1605,14 +1606,14 @@ fn contour_edit_command(
             .iter()
             .any(|m| m.authored.id == target_id) =>
         {
-            return Err(PlateError {
+            return Err(Refusal {
                 rule_id: None,
                 code: ErrorCode::UnsupportedProperty,
                 message: "only plates have a contour",
             });
         }
         None => {
-            return Err(PlateError {
+            return Err(Refusal {
                 rule_id: None,
                 code: ErrorCode::NotFound,
                 message: "the element is not in the head revision",
@@ -1677,7 +1678,7 @@ fn contour_edit_command(
         &mut NoFault,
     )?;
     let UpdatedElement::Plate(edited) = &updated.element else {
-        return Err(PlateError {
+        return Err(Refusal {
             rule_id: None,
             code: ErrorCode::IntegrityError,
             message: "a contour edit reported a non-plate element",
@@ -1730,7 +1731,7 @@ fn cut_command(
 ) -> Run<Json> {
     let mut source = IdSource::system();
     let mut fresh = || {
-        source.next_id().map_err(|_| PlateError {
+        source.next_id().map_err(|_| Refusal {
             rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
@@ -1751,8 +1752,8 @@ fn cut_command(
         None => RevisionId::from_uuid(fresh()?),
     };
     let actor = match given("--actor-id") {
-        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
-        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+        Some(text) => Uuid7::parse(text).map_err(Refusal::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(Refusal::from)?,
     };
     let project = match given("--project-id") {
         Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
@@ -1881,7 +1882,7 @@ fn polygon_pairs(text: &str) -> Run<Vec<[f64; 2]>> {
 fn a13_command(store: &RevisionStore, name: &str, options: &BTreeMap<&str, &str>) -> Run<Json> {
     let mut source = IdSource::system();
     let mut fresh = || {
-        source.next_id().map_err(|_| PlateError {
+        source.next_id().map_err(|_| Refusal {
             rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
@@ -1904,8 +1905,8 @@ fn a13_command(store: &RevisionStore, name: &str, options: &BTreeMap<&str, &str>
         None => RevisionId::from_uuid(fresh()?),
     };
     let actor = match given("--actor-id") {
-        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
-        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+        Some(text) => Uuid7::parse(text).map_err(Refusal::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(Refusal::from)?,
     };
     let project = match given("--project-id") {
         Some(text) => ProjectId::parse(text).map_err(id_error)?,
@@ -2048,7 +2049,7 @@ fn a13_command(store: &RevisionStore, name: &str, options: &BTreeMap<&str, &str>
 fn bend_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Json> {
     let mut source = IdSource::system();
     let mut fresh = || {
-        source.next_id().map_err(|_| PlateError {
+        source.next_id().map_err(|_| Refusal {
             rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
@@ -2070,8 +2071,8 @@ fn bend_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Js
         None => RevisionId::from_uuid(fresh()?),
     };
     let actor = match given("--actor-id") {
-        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
-        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+        Some(text) => Uuid7::parse(text).map_err(Refusal::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(Refusal::from)?,
     };
     let project = match given("--project-id") {
         Some(text) => ProjectId::parse(text).map_err(id_error)?,
@@ -2315,7 +2316,7 @@ fn add_hole_cli(
 ) -> Run<Json> {
     let mut source = IdSource::system();
     let mut fresh = || {
-        source.next_id().map_err(|_| PlateError {
+        source.next_id().map_err(|_| Refusal {
             rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
@@ -2342,8 +2343,8 @@ fn add_hole_cli(
         None => RevisionId::from_uuid(fresh()?),
     };
     let actor = match given("--actor-id") {
-        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
-        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+        Some(text) => Uuid7::parse(text).map_err(Refusal::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(Refusal::from)?,
     };
     let project = match given("--project-id") {
         Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
@@ -2436,7 +2437,7 @@ fn add_hole_cli(
 fn delete_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Json> {
     let mut source = IdSource::system();
     let mut fresh = || {
-        source.next_id().map_err(|_| PlateError {
+        source.next_id().map_err(|_| Refusal {
             rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
@@ -2454,8 +2455,8 @@ fn delete_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
         None => RevisionId::from_uuid(fresh()?),
     };
     let actor = match given("--actor-id") {
-        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
-        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+        Some(text) => Uuid7::parse(text).map_err(Refusal::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(Refusal::from)?,
     };
     let project = match given("--project-id") {
         Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
@@ -2537,7 +2538,7 @@ fn copy_command(
 
     let mut source = IdSource::system();
     let mut fresh = || {
-        source.next_id().map_err(|_| PlateError {
+        source.next_id().map_err(|_| Refusal {
             rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
@@ -2559,8 +2560,8 @@ fn copy_command(
         None => RevisionId::from_uuid(fresh()?),
     };
     let actor = match given("--actor-id") {
-        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
-        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+        Some(text) => Uuid7::parse(text).map_err(Refusal::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(Refusal::from)?,
     };
     let project = match given("--project-id") {
         Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
@@ -2642,7 +2643,7 @@ fn lofted_create(
 ) -> Run<Json> {
     let mut source = IdSource::system();
     let mut fresh = || {
-        source.next_id().map_err(|_| PlateError {
+        source.next_id().map_err(|_| Refusal {
             rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
@@ -2662,8 +2663,8 @@ fn lofted_create(
         None => RevisionId::from_uuid(fresh()?),
     };
     let actor = match given("--actor-id") {
-        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
-        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+        Some(text) => Uuid7::parse(text).map_err(Refusal::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(Refusal::from)?,
     };
     let project = match given("--project-id") {
         Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
@@ -2810,7 +2811,7 @@ fn lofted_inspect(store: &RevisionStore) -> Run<Json> {
 fn array_command(store: &RevisionStore, options: &BTreeMap<&str, &str>, polar: bool) -> Run<Json> {
     let mut source = IdSource::system();
     let mut fresh = || {
-        source.next_id().map_err(|_| PlateError {
+        source.next_id().map_err(|_| Refusal {
             rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
@@ -2839,8 +2840,8 @@ fn array_command(store: &RevisionStore, options: &BTreeMap<&str, &str>, polar: b
         None => RevisionId::from_uuid(fresh()?),
     };
     let actor = match given("--actor-id") {
-        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
-        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+        Some(text) => Uuid7::parse(text).map_err(Refusal::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(Refusal::from)?,
     };
     let project = match given("--project-id") {
         Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
@@ -2951,7 +2952,7 @@ fn history_command(command: &str, options: &BTreeMap<&str, &str>) -> Run<Json> {
             .get("--workspace-dir")
             .ok_or_else(|| invalid("--workspace-dir is required"))?,
     );
-    let blobs = BlobStore::new(dir).map_err(|e| PlateError {
+    let blobs = BlobStore::new(dir).map_err(|e| Refusal {
         rule_id: None,
         code: e.code(),
         message: "workspace directory is not usable",
@@ -2979,15 +2980,15 @@ fn history_command(command: &str, options: &BTreeMap<&str, &str>) -> Run<Json> {
     let mut source = IdSource::system();
     let mut uuid = |key: &str| -> Run<Uuid7> {
         match options.get(key) {
-            Some(text) => Uuid7::parse(text).map_err(PlateError::from),
+            Some(text) => Uuid7::parse(text).map_err(Refusal::from),
             None => source
                 .next_id()
-                .map_err(|_| PlateError {
+                .map_err(|_| Refusal {
                     rule_id: None,
                     code: ErrorCode::BackendUnavailable,
                     message: "no identity could be generated",
                 })
-                .and_then(|id| Uuid7::parse(&id.to_string()).map_err(PlateError::from)),
+                .and_then(|id| Uuid7::parse(&id.to_string()).map_err(Refusal::from)),
         }
     };
     let (direction, done, replayed) = if command == "undo-workspace" {
@@ -3041,7 +3042,7 @@ fn workspace_command(
         source
             .next_id()
             .map(|id| id.to_string())
-            .map_err(|_| PlateError {
+            .map_err(|_| Refusal {
                 rule_id: None,
                 code: ErrorCode::BackendUnavailable,
                 message: "no identity could be generated",
@@ -3057,7 +3058,7 @@ fn workspace_command(
         ));
     }
     if command == "create-workspace" && !dir.exists() {
-        std::fs::create_dir(dir).map_err(|_| PlateError {
+        std::fs::create_dir(dir).map_err(|_| Refusal {
             rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "workspace directory could not be created",
@@ -3069,7 +3070,7 @@ fn workspace_command(
     if same_store(dir, std::path::Path::new(published_root)) {
         return Err(invalid("the workspace directory is the published store"));
     }
-    let blobs = BlobStore::new(dir).map_err(|e| PlateError {
+    let blobs = BlobStore::new(dir).map_err(|e| Refusal {
         rule_id: None,
         code: e.code(),
         message: "workspace directory is not usable",
@@ -3077,8 +3078,8 @@ fn workspace_command(
     let workspace = RevisionStore::new(blobs);
     let uuid = |key: &str, fresh: &mut dyn FnMut() -> Run<String>| -> Run<Uuid7> {
         match given(key) {
-            Some(text) => Uuid7::parse(text).map_err(PlateError::from),
-            None => Uuid7::parse(&fresh()?).map_err(PlateError::from),
+            Some(text) => Uuid7::parse(text).map_err(Refusal::from),
+            None => Uuid7::parse(&fresh()?).map_err(Refusal::from),
         }
     };
     match command {
@@ -3144,7 +3145,7 @@ fn create_member_command(
 ) -> Run<Json> {
     let mut source = IdSource::system();
     let mut fresh = || {
-        source.next_id().map_err(|_| PlateError {
+        source.next_id().map_err(|_| Refusal {
             rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
@@ -3165,8 +3166,8 @@ fn create_member_command(
         None => RevisionId::from_uuid(fresh()?),
     };
     let actor = match given("--actor-id") {
-        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
-        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+        Some(text) => Uuid7::parse(text).map_err(Refusal::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(Refusal::from)?,
     };
     let project = match given("--project-id") {
         Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
@@ -3197,7 +3198,7 @@ fn create_member_command(
             }
             return lock
                 .constrain(origin, grid_placement(store, options, &op_id, grid)?)
-                .map_err(PlateError::from);
+                .map_err(Refusal::from);
         }
         let text = options
             .get(key)
@@ -3207,9 +3208,9 @@ fn create_member_command(
                 || beamcraft_engine::coordinate::resolve(text, origin, lock),
                 |p| p.resolve_coordinate(text, origin, lock),
             )
-            .map_err(PlateError::from)
+            .map_err(Refusal::from)
     };
-    let lock = AxisLock::parse(given("--axis-lock").unwrap_or("none")).map_err(PlateError::from)?;
+    let lock = AxisLock::parse(given("--axis-lock").unwrap_or("none")).map_err(Refusal::from)?;
     let start = coordinate("--start", "--start-at-grid", [0.0; 3], AxisLock::None)?;
     let end = coordinate("--end", "--end-at-grid", start, lock)?;
     let replay = if options.contains_key("--op-id")
@@ -3298,7 +3299,7 @@ fn create_member_command(
 /// the order given. Chord floors, mitres and the mesh budget are the kernel's to decide.
 fn path_points(text: &str) -> Run<Vec<[f64; 3]>> {
     if text.split(';').count() > MAX_MEMBER_PATH_POINTS {
-        return Err(PlateError {
+        return Err(Refusal {
             rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "more than 1024 path points",
@@ -3326,7 +3327,7 @@ fn create_polybeam_command(
 ) -> Run<Json> {
     let mut source = IdSource::system();
     let mut fresh = || {
-        source.next_id().map_err(|_| PlateError {
+        source.next_id().map_err(|_| Refusal {
             rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
@@ -3346,8 +3347,8 @@ fn create_polybeam_command(
         None => RevisionId::from_uuid(fresh()?),
     };
     let actor = match given("--actor-id") {
-        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
-        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+        Some(text) => Uuid7::parse(text).map_err(Refusal::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(Refusal::from)?,
     };
     let project = match given("--project-id") {
         Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
@@ -3548,7 +3549,7 @@ fn command_plane(
     }
     beamcraft_engine::work_plane::WorkPlane::parse(text)
         .map(Some)
-        .map_err(PlateError::from)
+        .map_err(Refusal::from)
 }
 
 fn grid_placement(
@@ -3762,7 +3763,7 @@ fn bends_json(bends: &[BendRecord]) -> Run<Json> {
 }
 
 pub(crate) fn num(value: f64) -> Run<Json> {
-    Json::number(value).map_err(|_| PlateError {
+    Json::number(value).map_err(|_| Refusal {
         rule_id: None,
         code: ErrorCode::NonFiniteNumber,
         message: "a result is not finite",
@@ -4032,7 +4033,7 @@ pub(crate) fn fit_page(
             return Ok(json);
         }
         if count <= 1 {
-            return Err(PlateError {
+            return Err(Refusal {
                 rule_id: None,
                 code: ErrorCode::LimitExceeded,
                 message: "one listing entry exceeds the output budget",
@@ -4736,7 +4737,7 @@ pub(crate) fn inspection_json(inspection: &Inspection, only: Option<ElementId>) 
 }
 
 /// Domain failures retain the exact F10 rule through CLI adapters.
-pub(crate) fn domain_diagnostics(error: &PlateError) -> Vec<Json> {
+pub(crate) fn domain_diagnostics(error: &Refusal) -> Vec<Json> {
     error
         .rule_id
         .into_iter()
@@ -4784,15 +4785,15 @@ fn define_from_environment(
     };
     let mut source = IdSource::system();
     let mut fresh = || {
-        source.next_id().map_err(|_| PlateError {
+        source.next_id().map_err(|_| Refusal {
             rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
         })
     };
     let actor = match options.get("--actor-id") {
-        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
-        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+        Some(text) => Uuid7::parse(text).map_err(Refusal::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(Refusal::from)?,
     };
     let defined = define(
         store,

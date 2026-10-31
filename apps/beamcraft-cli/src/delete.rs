@@ -20,7 +20,7 @@
 
 use crate::definition::material_lookup;
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, control, decode, digest_of,
+    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, decode, digest_of,
     evaluate_decoded, host_uuid, load_base, mesh_change, open_base, plate_record, prior_op_with,
     replay_summary, summarize,
 };
@@ -34,6 +34,7 @@ use beamcraft_layer_engine::index::ElementId as LayerElementId;
 use beamcraft_model::command::{CommandError, DeleteElement};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
+use session::Refusal;
 
 /// Inputs of one `delete_element` call beyond the command itself.
 #[derive(Debug, Clone)]
@@ -90,8 +91,8 @@ pub struct Deleted {
     pub changed_layers: Vec<String>,
 }
 
-fn not_found() -> PlateError {
-    PlateError::from(CommandError::new(
+fn not_found() -> Refusal {
+    Refusal::from(CommandError::new(
         ErrorCode::NotFound,
         "target_id",
         "the element is not in the head revision",
@@ -108,7 +109,7 @@ pub fn delete_element(
     store: &RevisionStore,
     request: &DeleteRequest,
     hook: &mut dyn CommitHook,
-) -> Result<Deleted, PlateError> {
+) -> Result<Deleted, Refusal> {
     let command = &request.command;
     let control = control();
     let (head, base) = load_base(store, &request.project, &request.workspace)?;

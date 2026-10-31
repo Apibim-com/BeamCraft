@@ -25,8 +25,8 @@
 //!   replay record.
 
 use crate::plate::{
-    Base, PlateError, RevisionSummary, base_of, control, decode, host_uuid, integrity, load_base,
-    number, open_base, summarize, text,
+    Base, RevisionSummary, base_of, control, decode, host_uuid, integrity, load_base, number,
+    open_base, summarize, text,
 };
 use crate::plate::{decode_polygon, decode_polygons};
 use crate::publication::{PublishRequest, publish_revision};
@@ -49,6 +49,7 @@ use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
 use beamcraft_model::section::{
     CustomSection, MAX_CUSTOM_CAVITIES, ParametricSection, SectionFamily, SectionShape,
 };
+use session::Refusal;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Path prefix used by the synthetic profile fixtures.
@@ -212,7 +213,7 @@ impl DefinitionRecord {
     }
 
     /// The pinned resource: the definition and the digest of its canonical USD layer.
-    pub fn resource(&self) -> Result<Resource, PlateError> {
+    pub fn resource(&self) -> Result<Resource, Refusal> {
         self.validate()?;
         Ok(Resource::new(self.definition())?)
     }
@@ -241,7 +242,7 @@ pub(crate) fn field<'a>(
     prim: &'a Prim,
     name: &str,
     ty: &str,
-) -> Result<Option<&'a Value>, PlateError> {
+) -> Result<Option<&'a Value>, Refusal> {
     let Some(property) = prim.properties.iter().find(|p| p.name == name) else {
         return Ok(None);
     };
@@ -258,7 +259,7 @@ pub(crate) fn field<'a>(
 fn decode_definition(
     prim: &Prim,
     digest: ContentDigest,
-) -> Result<Option<DefinitionRecord>, PlateError> {
+) -> Result<Option<DefinitionRecord>, Refusal> {
     let bad = || integrity("committed definition lacks a required value");
     let required = |name: &str, ty: &str| field(prim, name, ty)?.ok_or_else(bad);
     let kind = required("bim:definitionKind", "token")?;
@@ -287,7 +288,7 @@ fn decode_definition(
             .map(|v| text(v).map(str::to_owned).ok_or_else(bad))
             .transpose()
     };
-    let section = || -> Result<SectionProperties, PlateError> {
+    let section = || -> Result<SectionProperties, Refusal> {
         Ok(SectionProperties {
             designation: optional_text("steel:profile:designation")?,
             standard: optional_text("steel:profile:standard")?,
@@ -354,27 +355,27 @@ fn decode_definition(
 /// The logical fastener definition of a committed fastener definition prim (A14.1). The writer
 /// never writes a partial washer, so a washer dimension without the other two is an integrity
 /// error; the result is re-admitted by the caller's `record.validate()`.
-fn decode_fastener(prim: &Prim) -> Result<FastenerSpec, PlateError> {
+fn decode_fastener(prim: &Prim) -> Result<FastenerSpec, Refusal> {
     let bad = || integrity("committed fastener definition lacks a required value");
-    let double = |name: &str| -> Result<f64, PlateError> {
+    let double = |name: &str| -> Result<f64, Refusal> {
         number(field(prim, name, "double")?.ok_or_else(bad)?).ok_or_else(bad)
     };
-    let optional_double = |name: &str| -> Result<Option<f64>, PlateError> {
+    let optional_double = |name: &str| -> Result<Option<f64>, Refusal> {
         field(prim, name, "double")?
             .map(|v| number(v).ok_or_else(bad))
             .transpose()
     };
-    let optional_text = |name: &str| -> Result<Option<String>, PlateError> {
+    let optional_text = |name: &str| -> Result<Option<String>, Refusal> {
         field(prim, name, "string")?
             .map(|v| text(v).map(str::to_owned).ok_or_else(bad))
             .transpose()
     };
-    let token = |name: &str| -> Result<String, PlateError> {
+    let token = |name: &str| -> Result<String, Refusal> {
         text(field(prim, name, "token")?.ok_or_else(bad)?)
             .map(str::to_owned)
             .ok_or_else(|| integrity("committed fastener token is not text"))
     };
-    let boolean = |name: &str| -> Result<bool, PlateError> {
+    let boolean = |name: &str| -> Result<bool, Refusal> {
         match field(prim, name, "bool")? {
             Some(Value::Bool(value)) => Ok(*value),
             _ => Err(bad()),
@@ -429,7 +430,7 @@ fn decode_fastener(prim: &Prim) -> Result<FastenerSpec, PlateError> {
 /// digest recomputed from them, because a committed layer is untrusted input.
 pub(crate) fn decode_definitions(
     prims: &[Prim],
-) -> Result<BTreeMap<ContentDigest, DefinitionRecord>, PlateError> {
+) -> Result<BTreeMap<ContentDigest, DefinitionRecord>, Refusal> {
     let mut definitions = BTreeMap::new();
     for prim in prims {
         let Some(digest) = definition_digest(&prim.path) else {
@@ -549,7 +550,7 @@ pub fn resolve_name(
 /// store without a revision.
 pub fn head_definitions(
     store: &RevisionStore,
-) -> Result<BTreeMap<ContentDigest, DefinitionRecord>, PlateError> {
+) -> Result<BTreeMap<ContentDigest, DefinitionRecord>, Refusal> {
     let revision = match store.open() {
         Ok(revision) => revision,
         Err(beamcraft_host::revision::RevisionError::NoRevision) => return Ok(BTreeMap::new()),
@@ -702,7 +703,7 @@ pub fn define(
     store: &RevisionStore,
     request: &DefineRequest,
     hook: &mut dyn CommitHook,
-) -> Result<Defined, PlateError> {
+) -> Result<Defined, Refusal> {
     let control = control();
     let resource = request.definition.resource()?;
     let digest = resource.digest;

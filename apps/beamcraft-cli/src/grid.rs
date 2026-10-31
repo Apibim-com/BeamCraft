@@ -4,8 +4,8 @@
 //! T01 grid commands through the atomic revision pipeline and verified USD records.
 use crate::assembly::read_prims;
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, base_of, check_footprint,
-    control, host_uuid, integrity, load_base, open_base, prior_op_with, replay_summary, summarize,
+    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, base_of, check_footprint, control,
+    host_uuid, integrity, load_base, open_base, prior_op_with, replay_summary, summarize,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
@@ -20,6 +20,7 @@ use beamcraft_model::command::{CommandError, CreateGrid};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::grid::Grid;
 use beamcraft_model::id::ElementId;
+use session::Refusal;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Trusted context for a grid creation, using the same identities as level creation.
@@ -39,7 +40,7 @@ pub struct GridChange {
     /// The verified grids at the resulting head.
     pub grids: Vec<Grid>,
 }
-fn guide_change(grid: &Grid) -> Result<Change, PlateError> {
+fn guide_change(grid: &Grid) -> Result<Change, Refusal> {
     let mesh = beamcraft_engine::grid_geometry::guide_mesh(grid)?;
     Ok(Change::Mesh(beamcraft_layer_engine::authored::Mesh {
         id: grid.id.to_string(),
@@ -50,14 +51,14 @@ fn guide_change(grid: &Grid) -> Result<Change, PlateError> {
         quantities: None,
     }))
 }
-fn snapshot(request: OpenRequest, c: &Control) -> Result<Vec<Prim>, PlateError> {
+fn snapshot(request: OpenRequest, c: &Control) -> Result<Vec<Prim>, Refusal> {
     validate_layers(request.clone(), schema_identity()?, c)?;
     let mut reader = Reader::default();
     let opened = reader.open(request, c)?;
     read_prims(&reader, &opened.context, c)
 }
 /// Grids of the verified head, in identity order. Empty for a store with no revision.
-pub fn grids(store: &RevisionStore) -> Result<Vec<Grid>, PlateError> {
+pub fn grids(store: &RevisionStore) -> Result<Vec<Grid>, Refusal> {
     let revision = match store.open() {
         Ok(r) => r,
         Err(RevisionError::NoRevision) => return Ok(Vec::new()),
@@ -69,7 +70,7 @@ pub fn grids(store: &RevisionStore) -> Result<Vec<Grid>, PlateError> {
     )?)?)
 }
 /// Grids pinned to an already inspected immutable revision sequence.
-pub fn grids_at(store: &RevisionStore, sequence: u64) -> Result<Vec<Grid>, PlateError> {
+pub fn grids_at(store: &RevisionStore, sequence: u64) -> Result<Vec<Grid>, Refusal> {
     let revision = store.open_at(sequence)?;
     Ok(storage::read_grids(&snapshot(
         open_base(&base_of(&revision)?)?,
@@ -77,11 +78,7 @@ pub fn grids_at(store: &RevisionStore, sequence: u64) -> Result<Vec<Grid>, Plate
     )?)?)
 }
 /// Whether a verified snapshot has this owned grid identity.
-pub(crate) fn is_grid(
-    request: &OpenRequest,
-    id: &ElementId,
-    c: &Control,
-) -> Result<bool, PlateError> {
+pub(crate) fn is_grid(request: &OpenRequest, id: &ElementId, c: &Control) -> Result<bool, Refusal> {
     Ok(storage::read_grids(&snapshot(request.clone(), c)?)?
         .iter()
         .any(|g| g.id == *id))
@@ -90,7 +87,7 @@ fn replay(
     store: &RevisionStore,
     context: &GridContext,
     fingerprint: beamcraft_model::digest::ContentDigest,
-) -> Result<Option<GridChange>, PlateError> {
+) -> Result<Option<GridChange>, Refusal> {
     let (head, base) = load_base(store, &context.project, &context.workspace)?;
     let op = host_uuid(&context.op_id.to_string())?;
     let (prior, recorded) = prior_op_with(store, &op, || Ok(fingerprint))?;
@@ -125,7 +122,7 @@ pub fn create_grid(
     context: &GridContext,
     command: &CreateGrid,
     hook: &mut dyn CommitHook,
-) -> Result<GridChange, PlateError> {
+) -> Result<GridChange, Refusal> {
     command.validate_arguments()?;
     let fingerprint = command.content_fingerprint()?;
     commit_grid(store, context, command, fingerprint, None, hook)
@@ -137,7 +134,7 @@ fn commit_grid(
     fingerprint: beamcraft_model::digest::ContentDigest,
     source: Option<&Grid>,
     hook: &mut dyn CommitHook,
-) -> Result<GridChange, PlateError> {
+) -> Result<GridChange, Refusal> {
     if let Some(replayed) = replay(store, context, fingerprint)? {
         return Ok(replayed);
     }
@@ -260,7 +257,7 @@ pub fn copy_grid(
     context: &GridContext,
     request: &beamcraft_model::grid::CopyGrid,
     hook: &mut dyn CommitHook,
-) -> Result<GridChange, PlateError> {
+) -> Result<GridChange, Refusal> {
     let fingerprint = request.content_fingerprint()?;
     if let Some(replayed) = replay(store, context, fingerprint)? {
         return Ok(replayed);
@@ -325,7 +322,7 @@ pub fn edit_grid(
     context: &GridContext,
     request: &beamcraft_model::grid_edit::GridLineEditRequest,
     hook: &mut dyn CommitHook,
-) -> Result<GridChange, PlateError> {
+) -> Result<GridChange, Refusal> {
     mutate_grid(
         store,
         context,
@@ -342,7 +339,7 @@ pub fn update_grid(
     context: &GridContext,
     request: &beamcraft_model::grid_update::UpdateGrid,
     hook: &mut dyn CommitHook,
-) -> Result<GridChange, PlateError> {
+) -> Result<GridChange, Refusal> {
     mutate_grid(
         store,
         context,
@@ -363,7 +360,7 @@ fn mutate_grid(
         &BTreeSet<ElementId>,
     ) -> Result<beamcraft_engine::grid_edit::EditedGrid, CommandError>,
     hook: &mut dyn CommitHook,
-) -> Result<GridChange, PlateError> {
+) -> Result<GridChange, Refusal> {
     if let Some(replayed) = replay(store, context, fingerprint)? {
         return Ok(replayed);
     }
@@ -493,7 +490,7 @@ pub fn resolve_placement(
     z: Option<f64>,
     level: Option<ElementId>,
     offset: f64,
-) -> Result<[f64; 3], PlateError> {
+) -> Result<[f64; 3], Refusal> {
     use beamcraft_host::ledger::Outcome;
     let bad = || {
         CommandError::new(

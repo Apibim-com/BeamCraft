@@ -18,7 +18,7 @@
 
 use crate::definition::material_lookup;
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, control, decode, digest_of,
+    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, decode, digest_of,
     evaluate_decoded, host_uuid, integrity, load_base, member_record, mesh_change, open_base,
     plate_record, prior_op_with, replay_summary, summarize,
 };
@@ -37,6 +37,7 @@ use beamcraft_layer_engine::index::{ElementId as LayerElementId, LinkTarget};
 use beamcraft_model::command::{CommandError, CopyElement, MemberKind};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
+use session::Refusal;
 
 /// Inputs of one `copy_element` call beyond the command itself.
 #[derive(Debug, Clone)]
@@ -79,8 +80,8 @@ pub struct Copied {
     pub changed_layers: Vec<String>,
 }
 
-pub(crate) fn not_found() -> PlateError {
-    PlateError::from(CommandError::new(
+pub(crate) fn not_found() -> Refusal {
+    Refusal::from(CommandError::new(
         ErrorCode::NotFound,
         "source_id",
         "the source element is not in the head revision",
@@ -89,7 +90,7 @@ pub(crate) fn not_found() -> PlateError {
 
 /// The authored changes one copied part needs: its class, its create and its mesh. Shared by
 /// the single copy (P05) and the array copies (T03), which author the same per-copy records.
-pub(crate) fn creation_changes(copy: &CopiedElement) -> Result<Vec<Change>, PlateError> {
+pub(crate) fn creation_changes(copy: &CopiedElement) -> Result<Vec<Change>, Refusal> {
     Ok(match copy {
         CopiedElement::Plate(r) => {
             let a = &r.authored;
@@ -182,7 +183,7 @@ pub fn copy_element(
     store: &RevisionStore,
     request: &CopyRequest,
     hook: &mut dyn CommitHook,
-) -> Result<Copied, PlateError> {
+) -> Result<Copied, Refusal> {
     copy_with_mode(store, request, hook, false)
 }
 
@@ -191,7 +192,7 @@ pub fn copy_instance(
     store: &RevisionStore,
     request: &CopyRequest,
     hook: &mut dyn CommitHook,
-) -> Result<Copied, PlateError> {
+) -> Result<Copied, Refusal> {
     copy_with_mode(store, request, hook, true)
 }
 
@@ -200,7 +201,7 @@ fn copy_with_mode(
     request: &CopyRequest,
     hook: &mut dyn CommitHook,
     instance: bool,
-) -> Result<Copied, PlateError> {
+) -> Result<Copied, Refusal> {
     let command = &request.command;
     command.validate_arguments()?;
     let control = control();

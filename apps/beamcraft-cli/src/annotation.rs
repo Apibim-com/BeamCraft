@@ -6,8 +6,8 @@
 use crate::assembly::read_prims;
 use crate::attribute::attr_model;
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, check_footprint, control,
-    host_uuid, inspect, integrity, load_base, open_base, prior_op_with, replay_summary, summarize,
+    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, check_footprint, control, host_uuid,
+    inspect, integrity, load_base, open_base, prior_op_with, replay_summary, summarize,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
@@ -23,6 +23,7 @@ use beamcraft_model::attribute::AttrValue;
 use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
+use session::Refusal;
 use std::collections::BTreeSet;
 
 /// Trusted context for an annotation creation, using the same identities as level creation.
@@ -43,7 +44,7 @@ pub struct AnnotationChange {
     pub annotations: Vec<Annotation>,
 }
 
-fn snapshot(request: OpenRequest, c: &Control) -> Result<Vec<Prim>, PlateError> {
+fn snapshot(request: OpenRequest, c: &Control) -> Result<Vec<Prim>, Refusal> {
     validate_layers(request.clone(), schema_identity()?, c)?;
     let mut reader = Reader::default();
     let opened = reader.open(request, c)?;
@@ -51,7 +52,7 @@ fn snapshot(request: OpenRequest, c: &Control) -> Result<Vec<Prim>, PlateError> 
 }
 
 /// Annotations of the verified head, in identity order. Empty for a store with no revision.
-pub fn annotations(store: &RevisionStore) -> Result<Vec<Annotation>, PlateError> {
+pub fn annotations(store: &RevisionStore) -> Result<Vec<Annotation>, Refusal> {
     let revision = match store.open() {
         Ok(r) => r,
         Err(RevisionError::NoRevision) => return Ok(Vec::new()),
@@ -68,7 +69,7 @@ pub(crate) fn is_annotation(
     request: &OpenRequest,
     id: &ElementId,
     c: &Control,
-) -> Result<bool, PlateError> {
+) -> Result<bool, Refusal> {
     Ok(storage::read_annotations(&snapshot(request.clone(), c)?)?
         .iter()
         .any(|a| a.id == *id))
@@ -78,7 +79,7 @@ fn replay(
     store: &RevisionStore,
     context: &AnnotationContext,
     fingerprint: beamcraft_model::digest::ContentDigest,
-) -> Result<Option<AnnotationChange>, PlateError> {
+) -> Result<Option<AnnotationChange>, Refusal> {
     let (head, base) = load_base(store, &context.project, &context.workspace)?;
     let op = host_uuid(&context.op_id.to_string())?;
     let (prior, recorded) = prior_op_with(store, &op, || Ok(fingerprint))?;
@@ -116,7 +117,7 @@ pub fn create_annotation(
     context: &AnnotationContext,
     command: &CreateAnnotation,
     hook: &mut dyn CommitHook,
-) -> Result<AnnotationChange, PlateError> {
+) -> Result<AnnotationChange, Refusal> {
     command.validate_arguments()?;
     let fingerprint = command.content_fingerprint()?;
     if let Some(replayed) = replay(store, context, fingerprint)? {
@@ -175,7 +176,7 @@ pub fn create_annotation(
                 .element(&owner)
                 .map(|entry| entry.full.mesh_digest)
                 .ok_or_else(|| {
-                    PlateError::from(CommandError::new(
+                    Refusal::from(CommandError::new(
                         ErrorCode::NotFound,
                         "feature",
                         "the anchored element is not in the head revision",
@@ -254,7 +255,7 @@ fn value_text(value: &AttrValue) -> String {
 
 /// Resolves every annotation of the verified head against its pinned view snapshot, with mark
 /// text from the anchored elements' user attributes (I04).
-pub fn status(store: &RevisionStore) -> Result<Vec<AnnotationReport>, PlateError> {
+pub fn status(store: &RevisionStore) -> Result<Vec<AnnotationReport>, Refusal> {
     let inspection = inspect(store)?;
     let model = attr_model(store)?;
     let text = |id: &ElementId, name: &str| model.values.value_of(id, name).map(value_text);

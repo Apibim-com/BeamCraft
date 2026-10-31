@@ -10,7 +10,7 @@
 
 use crate::assembly::assemblies;
 use crate::numbering_approval::head_marks;
-use crate::plate::{PlateError, inspect};
+use crate::plate::inspect;
 use beamcraft_engine::numbering::{
     AssemblyFact, PartFact, PartGeometry, PartKind, Preview, Settings, preview,
 };
@@ -21,6 +21,7 @@ use beamcraft_model::command::MemberKind;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
+use session::Refusal;
 use std::collections::BTreeMap;
 
 /// A preview and what it was made from.
@@ -44,8 +45,8 @@ pub struct NumberingView {
     pub stored: BTreeMap<ElementId, Mark>,
 }
 
-fn error(code: ErrorCode, message: &'static str) -> PlateError {
-    PlateError::new(code, message)
+fn error(code: ErrorCode, message: &'static str) -> Refusal {
+    Refusal::new(code, message)
 }
 
 /// The minimum corner of the bounding box of a plate's contour. The outline and the holes of a
@@ -101,7 +102,7 @@ pub(crate) struct State {
     pub(crate) stored: Vec<StoredMark>,
 }
 
-pub(crate) fn state(store: &RevisionStore) -> Result<State, PlateError> {
+pub(crate) fn state(store: &RevisionStore) -> Result<State, Refusal> {
     // Plates, assemblies and marks are read by three readers of the head. If the head moves
     // between the reads they describe different revisions, so they are read again (a few times).
     for _ in 0..3 {
@@ -205,7 +206,7 @@ pub fn numbering_preview(
     store: &RevisionStore,
     settings: &Settings,
     previous: Option<ContentDigest>,
-) -> Result<NumberingView, PlateError> {
+) -> Result<NumberingView, Refusal> {
     let State {
         revision_id,
         parts,

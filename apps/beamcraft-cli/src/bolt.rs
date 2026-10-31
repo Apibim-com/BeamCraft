@@ -25,9 +25,9 @@
 use crate::assembly::read_prims;
 use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
-    AUTHORED_LAYER, DERIVED_LAYER, PlateError, RevisionSummary, base_of, check_footprint, control,
-    decode, digest_of, evaluate_decoded, host_uuid, integrity, load_base, mesh_change, number,
-    open_base, plate_record, prior_op_with, property, replay_summary, summarize, text,
+    AUTHORED_LAYER, DERIVED_LAYER, RevisionSummary, base_of, check_footprint, control, decode,
+    digest_of, evaluate_decoded, host_uuid, integrity, load_base, mesh_change, number, open_base,
+    plate_record, prior_op_with, property, replay_summary, summarize, text,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::bolt::Bounds;
@@ -48,6 +48,7 @@ use beamcraft_model::command::{
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use session::Refusal;
 use std::collections::BTreeMap;
 
 /// Identities of one A05 call beyond the command itself.
@@ -114,10 +115,10 @@ fn bolt_of(
     prim: &beamcraft_layer_engine::Prim,
     id: ElementId,
     by_path: &BTreeMap<&str, ElementId>,
-) -> Result<BoltView, PlateError> {
+) -> Result<BoltView, Refusal> {
     let damaged = || integrity("bolt record is not readable");
     let number_of = |name| property(prim, name).and_then(number).ok_or_else(damaged);
-    let vec3 = |name: &str| -> Result<[f64; 3], PlateError> {
+    let vec3 = |name: &str| -> Result<[f64; 3], Refusal> {
         match property(prim, name) {
             Some(Value::Array(items)) => match items.as_slice() {
                 [Value::Number(x), Value::Number(y), Value::Number(z)] => Ok([*x, *y, *z]),
@@ -216,10 +217,10 @@ fn bolt_group_of(
     prim: &beamcraft_layer_engine::Prim,
     id: ElementId,
     by_path: &BTreeMap<&str, ElementId>,
-) -> Result<BoltGroupView, PlateError> {
+) -> Result<BoltGroupView, Refusal> {
     let damaged = || integrity("bolt group record is not readable");
     let number_of = |name| property(prim, name).and_then(number).ok_or_else(damaged);
-    let vec3 = |name: &str| -> Result<[f64; 3], PlateError> {
+    let vec3 = |name: &str| -> Result<[f64; 3], Refusal> {
         match property(prim, name) {
             Some(Value::Array(items)) => match items.as_slice() {
                 [Value::Number(x), Value::Number(y), Value::Number(z)] => Ok([*x, *y, *z]),
@@ -232,7 +233,7 @@ fn bolt_group_of(
         Some(Value::Bool(value)) => Ok(*value),
         _ => Err(damaged()),
     };
-    let token = |name: &str| -> Result<String, PlateError> {
+    let token = |name: &str| -> Result<String, Refusal> {
         property(prim, name)
             .and_then(text)
             .map(str::to_owned)
@@ -306,9 +307,9 @@ type Geometry = (
 /// a non-identity placement rotation is refused as unsupported rather than bounded wrongly.
 /// Alongside the bounds it collects every part's world translation and the member identities
 /// the hole decision (A14.4) needs.
-fn world_bounds(decoded: &crate::plate::Decoded) -> Result<Geometry, PlateError> {
+fn world_bounds(decoded: &crate::plate::Decoded) -> Result<Geometry, Refusal> {
     let unsupported = || {
-        PlateError::from(CommandError::new(
+        Refusal::from(CommandError::new(
             ErrorCode::UnsupportedGeometry,
             "placement.orientation_xyzw",
             "rotated part placement is not supported for bolts in this slice",
@@ -391,7 +392,7 @@ fn world_bounds(decoded: &crate::plate::Decoded) -> Result<Geometry, PlateError>
     Ok((bounds, translations, members))
 }
 
-fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, PlateError> {
+fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, Refusal> {
     // The structural rules (A05-V01 and A06-V01 among them) run before anything is read, so a
     // damaged record is refused rather than reported or replayed.
     validate_layers(request.clone(), schema_identity()?, control)?;
@@ -468,7 +469,7 @@ fn created_by(
     sequence: u64,
     id: &ElementId,
     control: &Control,
-) -> Result<Option<BoltView>, PlateError> {
+) -> Result<Option<BoltView>, Refusal> {
     let at = store.open_at(sequence)?;
     let model = model_of(&open_base(&base_of(&at)?)?, control)?;
     let Some(bolt) = model.bolts.into_iter().find(|b| b.id == *id) else {
@@ -493,7 +494,7 @@ pub(crate) fn is_bolt(
     request: &OpenRequest,
     id: &ElementId,
     control: &Control,
-) -> Result<bool, PlateError> {
+) -> Result<bool, Refusal> {
     let model = model_of(request, control)?;
     Ok(model.bolts.iter().any(|b| b.id == *id) || model.groups.iter().any(|g| g.id == *id))
 }
@@ -501,7 +502,7 @@ pub(crate) fn is_bolt(
 /// Whether the host ledger already accepted this operation. A retry of an accepted edit
 /// reaches the replay comparison instead of a command-line argument guard, so its content —
 /// not its argument shape — decides between `bolt_group_replayed` and `OP_ID_REUSE`.
-pub fn op_accepted(store: &RevisionStore, op_id: &OpId) -> Result<bool, PlateError> {
+pub fn op_accepted(store: &RevisionStore, op_id: &OpId) -> Result<bool, Refusal> {
     let op_host = host_uuid(&op_id.to_string())?;
     let (prior, _) = prior_op_with(store, &op_host, || {
         digest_of(b"the accepted request is decided from the operation's revision")
@@ -510,7 +511,7 @@ pub fn op_accepted(store: &RevisionStore, op_id: &OpId) -> Result<bool, PlateErr
 }
 
 /// The bolt groups of the verified head (empty for a store without a revision).
-pub fn bolts(store: &RevisionStore) -> Result<Vec<BoltView>, PlateError> {
+pub fn bolts(store: &RevisionStore) -> Result<Vec<BoltView>, Refusal> {
     let control = control();
     let revision = match store.open() {
         Ok(revision) => revision,
@@ -526,7 +527,7 @@ pub fn bolts(store: &RevisionStore) -> Result<Vec<BoltView>, PlateError> {
 }
 
 /// The placed A14.3 bolt groups of the verified head (empty for a store without a revision).
-pub fn bolt_groups(store: &RevisionStore) -> Result<Vec<BoltGroupView>, PlateError> {
+pub fn bolt_groups(store: &RevisionStore) -> Result<Vec<BoltGroupView>, Refusal> {
     let control = control();
     let revision = match store.open() {
         Ok(revision) => revision,
@@ -589,7 +590,7 @@ fn expected_spec(
 /// operation's UUIDv7 with its random bits replaced by the hash of the pair. A retry of the
 /// same operation authors the same record identities, so the committed result never depends
 /// on where fresh ids would come from.
-fn derived_op_id(op: OpId, index: usize) -> Result<OpId, PlateError> {
+fn derived_op_id(op: OpId, index: usize) -> Result<OpId, Refusal> {
     let mut seed = Vec::with_capacity(24);
     seed.extend_from_slice(op.as_bytes());
     seed.extend_from_slice(&(index as u64).to_le_bytes());
@@ -620,7 +621,7 @@ fn hole_changes(
     base_request: &OpenRequest,
     control: &Control,
     footprint: Footprint,
-) -> Result<(Vec<Change>, Footprint), PlateError> {
+) -> Result<(Vec<Change>, Footprint), Refusal> {
     let mut reader = Reader::default();
     let opened = reader.open(base_request.clone(), control)?;
     let decoded = decode(&reader, &opened, control)?;
@@ -717,7 +718,7 @@ fn group_at(
     sequence: u64,
     id: &ElementId,
     control: &Control,
-) -> Result<Option<(bool, BoltGroupView)>, PlateError> {
+) -> Result<Option<(bool, BoltGroupView)>, Refusal> {
     let at = store.open_at(sequence)?;
     let model = model_of(&open_base(&base_of(&at)?)?, control)?;
     let Some(group) = model.groups.into_iter().find(|g| g.id == *id) else {
@@ -756,7 +757,7 @@ pub struct GroupChange {
 fn definition_resource(
     definition: &crate::definition::DefinitionRecord,
     command_digest: ContentDigest,
-) -> Result<Resource, PlateError> {
+) -> Result<Resource, Refusal> {
     let resource = definition.resource()?;
     if resource.digest != command_digest {
         return Err(integrity(
@@ -823,7 +824,7 @@ pub fn create_bolt_group(
     command: &CreateBoltGroup,
     definition: &crate::definition::DefinitionRecord,
     hook: &mut dyn CommitHook,
-) -> Result<GroupChange, PlateError> {
+) -> Result<GroupChange, Refusal> {
     command.validate_arguments()?;
     let resource = definition_resource(definition, command.inputs.fastener_digest)?;
     let control = control();
@@ -981,7 +982,7 @@ pub fn update_bolt_group(
     command: &UpdateBoltGroup,
     definition: &crate::definition::DefinitionRecord,
     hook: &mut dyn CommitHook,
-) -> Result<GroupChange, PlateError> {
+) -> Result<GroupChange, Refusal> {
     command.validate_arguments()?;
     let resource = definition_resource(definition, command.inputs.fastener_digest)?;
     let control = control();
@@ -1148,7 +1149,7 @@ pub fn create_bolt(
     context: &BoltContext,
     command: &CreateBolt,
     hook: &mut dyn CommitHook,
-) -> Result<BoltChange, PlateError> {
+) -> Result<BoltChange, Refusal> {
     command.validate_arguments()?;
     let control = control();
     let (head, base) = load_base(store, &context.project, &context.workspace)?;

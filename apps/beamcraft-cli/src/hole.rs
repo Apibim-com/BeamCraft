@@ -18,9 +18,9 @@
 
 use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, check_footprint, control,
-    decode, evaluate_decoded, host_uuid, integrity, load_base, member_record, mesh_change,
-    open_base, plate_record, prior_op_with, replay_summary, summarize,
+    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, check_footprint, control, decode,
+    evaluate_decoded, host_uuid, integrity, load_base, member_record, mesh_change, open_base,
+    plate_record, prior_op_with, replay_summary, summarize,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
@@ -33,6 +33,7 @@ use beamcraft_layer_engine::authored::{Author, Change, EditTargets, Prepare, sch
 use beamcraft_model::command::{AddHole, CommandError};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
+use session::Refusal;
 use std::collections::BTreeMap;
 
 /// Inputs of one `add_hole` call beyond the command itself. The `op_id` is the record's
@@ -77,8 +78,8 @@ pub struct AddedHole {
     pub changed_layers: Vec<String>,
 }
 
-fn not_found() -> PlateError {
-    PlateError::from(CommandError::new(
+fn not_found() -> Refusal {
+    Refusal::from(CommandError::new(
         ErrorCode::NotFound,
         "target_id",
         "the element is not in the head revision",
@@ -99,7 +100,7 @@ pub fn add_hole_command(
     store: &RevisionStore,
     request: &AddHoleRequest,
     hook: &mut dyn CommitHook,
-) -> Result<AddedHole, PlateError> {
+) -> Result<AddedHole, Refusal> {
     apply_hole(store, request, hook, false, false)
 }
 /// Replace one hole record in a canonical instance group, in one atomic revision.
@@ -108,7 +109,7 @@ pub fn update_hole_command(
     store: &RevisionStore,
     request: &AddHoleRequest,
     hook: &mut dyn CommitHook,
-) -> Result<AddedHole, PlateError> {
+) -> Result<AddedHole, Refusal> {
     apply_hole(store, request, hook, true, false)
 }
 /// Removal context with an independent logical request ID.
@@ -134,7 +135,7 @@ pub fn remove_hole_command(
     store: &RevisionStore,
     request: &RemoveHoleRequest,
     hook: &mut dyn CommitHook,
-) -> Result<RemovedHole, PlateError> {
+) -> Result<RemovedHole, Refusal> {
     let request = AddHoleRequest {
         op_id: request.op_id,
         revision_id: request.revision_id,
@@ -159,7 +160,7 @@ fn apply_hole(
     hook: &mut dyn CommitHook,
     update: bool,
     remove: bool,
-) -> Result<AddedHole, PlateError> {
+) -> Result<AddedHole, Refusal> {
     let command = &request.command;
     command.validate_arguments()?;
     let _ = command.polygon()?;
@@ -180,7 +181,7 @@ fn apply_hole(
     let op = host_uuid(&request.op_id.to_string())?;
     if let Some((captured, revision)) = crate::command_evidence::accepted(store, &op)? {
         if captured.fingerprint != fingerprint {
-            return Err(PlateError::new(
+            return Err(Refusal::new(
                 ErrorCode::OpIdReuse,
                 "operation identity was accepted with different arguments",
             ));
