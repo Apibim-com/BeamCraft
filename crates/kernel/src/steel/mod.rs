@@ -22,3 +22,6 @@ pub use build::{rectangular_plate, rectangular_plate_with_cancel};
 pub use input::RectangularPlate;
 pub use member::{StraightMember, straight_member};
 pub use result::PlateResult;
+pub mod body;
+pub mod cross_check;
+pub mod sweep;
