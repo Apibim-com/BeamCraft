@@ -142,7 +142,7 @@ impl PartGeometry {
 mod tests {
     use super::*;
     use beamcraft_kernel::trimesh::TriMesh;
-    use beamcraft_kernel::{RectangularPlate, rectangular_plate};
+    use beamcraft_kernel::{steel::RectangularPlate, steel::rectangular_plate};
 
     #[test]
     fn geometry_hash_ignores_mesh_numbering_and_translation_but_binds_shape() {

@@ -13,7 +13,7 @@ use crate::diagnostic::Stage;
 use crate::enclosure::Enclosure;
 use crate::measure::measure;
 use crate::profile::{Extrusion, FaceRole};
-use crate::result::PlateResult;
+use crate::steel::result::PlateResult;
 use crate::topology::{Analysis, Limits, analyze_with_tolerance};
 use crate::trimesh::{Space, TriMesh};
 use beamcraft_geom::Vec3;

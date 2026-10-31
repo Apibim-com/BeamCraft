@@ -22,13 +22,13 @@
 //!
 //! [`section_member`] extrudes the outline along the member axis with G05 and maps it into the
 //! F06 member frame (`geom::MemberFrame`, the same frame, roll and minima as
-//! [`crate::straight_member`]), then certifies the closed single shell with G06 before sealing it.
+//! [`crate::steel::straight_member`]), then certifies the closed single shell with G06 before sealing it.
 
 use crate::diagnostic::{Failure, Field};
-use crate::member::{StraightMember, check_placement, locate, solid_length};
 use crate::ops::{Body, OpFailure, OpField};
 use crate::profile::diagnostic::{ProfileCode, ProfileFailure};
 use crate::profile::{Cavity, CurveSpec, Point2, extrude};
+use crate::steel::member::{StraightMember, check_placement, locate, solid_length};
 use crate::trimesh::TriMesh;
 use beamcraft_geom::tolerance::Tolerance;
 use beamcraft_geom::{MemberFrame, Point3, RigidTransform};
@@ -549,7 +549,7 @@ impl SectionResult {
 ///
 /// Order: the section shape, then the P14 offsets themselves (finite, within the cap), then the
 /// member frame from the axis, the outline's bounding box and the roll (the
-/// [`crate::straight_member`] rules and codes), then the P14 solid length (the axis length moved
+/// [`crate::steel::straight_member`] rules and codes), then the P14 solid length (the axis length moved
 /// by the end offsets, positive), then the G05 outline admission and extrusion over that length,
 /// then the rigid placement `world = R*local + q1` — with `q1` the shifted start point, or `p1`
 /// itself for the default placement, which keeps the centred body bit for bit — and the G06
