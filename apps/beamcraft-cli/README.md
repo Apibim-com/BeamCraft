@@ -23,6 +23,13 @@ registered is refused as unsupported and a registered word cannot be left withou
 order; register a new family there without adding help text to `main.rs`. `beamcraft commands
 [--tier core|ui-assist]` prints the same registry as JSON; `ui-assist` marks commands that
 mirror interactive-UI affordances (`snap`, `pick`, start-screen and appearance settings).
+Each command also carries its access (`read` changes nothing persistent; `write` changes the
+store, the settings, a library or an output file) and its parameters: value shape, whether it is
+required and, for alternatives, a `one_of` group of which exactly one member is required. The five
+request identity options are listed on every command that takes them. A parameter marked optional
+can still be required by a rule that links it to others (for example `--width` with `--length`);
+that rule is in the family help and in the refusal. A test checks that every listed option is
+accepted by its command.
 Parsing and execution stay in the existing command adapters. No arguments, `--help` and `-h`
 print the same help.
 
