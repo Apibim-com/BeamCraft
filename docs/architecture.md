@@ -35,8 +35,9 @@ Dependencies point one way, down the table. `beamcraft-boundaries` checks this i
 | 2 | `ifc` | IFC4 STEP writer and GlobalId encoding; no file system |
 | 3 | `engine` | Applies commands: builds the new authored state, asks the kernel for bodies, computes quantities, footprints, numbering, picking and the view snapshot |
 | 4 | `host` | Disk: content-addressed blobs, atomic revision commit, journal and recovery, workspaces' storage, coordinator, compaction |
-| 5 | `beamcraft-cli` (binary `beamcraft`) | Every user command; ties the crates together |
-| 5 | `beamcraft-ui` (binary `beamcraft-ui`) | Native window: viewport, tools, properties panel |
+| 5 | `session` | Platform state that is not storage: settings, recent projects, project folders and environments (#763); later the command registry and a long-lived session over a verified revision. Discipline-agnostic, hence no `beamcraft-` prefix |
+| 6 | `beamcraft-cli` (binary `beamcraft`) | Every user command; ties the crates together |
+| 6 | `beamcraft-ui` (binary `beamcraft-ui`) | Native window: viewport, tools, properties panel |
 
 `geom`, `model` and `kernel` are pure: no file system, OS or runtime, and they build for WASM. The
 rest is desktop-native.
@@ -47,11 +48,16 @@ flowchart TD
     ui["beamcraft-ui<br/>window"] -. "runs as a process" .-> cli
     cli["beamcraft-cli<br/>every command"]
 
+    cli --> session
     cli --> host
     cli --> engine
     cli --> le
     cli --> ifc
+    ui --> session
     ui --> engine
+
+    session["session<br/>settings, projects, environments"] --> host
+    session --> le
 
     host["host<br/>store, commit, journal"] --> engine
     host --> json
@@ -93,7 +99,7 @@ Every editing command (`create-plate`, `create-member`, `update-element`, `copy-
 
 A crash at any step leaves either the old or the new complete revision; `recover-revision` closes
 an interrupted commit. Read commands (`inspect-elements`, `definitions`, `preview-numbering`,
-`export-ifc`, `export-bom`, `pick`, `export-view`, ...) do steps 1–2 only.
+`export-ifc`, `export-bom`, `export-view`, ...) do steps 1–2 only.
 
 ## The window
 
@@ -108,6 +114,18 @@ process on the snapshot on screen, reading the element's details from one
 follow-up](design/issue-26-viewport-performance.md)). Create, move, copy, delete, property edits,
 undo and publish run the same CLI commands a user would type; the window shows the result or the
 engine's refusal as it is.
+
+The window's own state is not a CLI command. Settings, recent projects, project folders, the
+next free project name and the list of environments come from `session`, called in the window's
+process on a worker thread; the cursor aids (picking, snapping) call the engine on the snapshot on
+screen. The window therefore opens no project layers, but it reads the small environment layers
+through `session`. It never depends on `beamcraft-cli`: an app does not depend on an app.
+
+The direction is one command layer under both apps, as in a headless-first design where every
+action is a registered command that the CLI, the window and agents all call: the commands now in
+the CLI move into libraries below the apps (platform crates plus one crate per discipline), the
+CLI shrinks to argument parsing and printing, and `session` gains the registry and a long-lived
+session over a verified revision. Until then modelling commands and `export-view` stay processes.
 
 ## Geometry
 
