@@ -18,9 +18,10 @@ use beamcraft_engine::plate_draft::{
 };
 use beamcraft_engine::transaction::PriorOp;
 use beamcraft_json::{Json, Limits};
-use beamcraft_model::command::{CreatePlate, Placement};
+use beamcraft_model::command::Placement;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId};
+use beamcraft_model::steel::command::CreatePlate;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Cases not decided by this typed admission adapter; workspaces have separate runtime tests.

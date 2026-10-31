@@ -17,7 +17,7 @@ use crate::diagnostic::{Code, Failure, Field, Stage};
 use crate::mesh::{PLATE_TRIANGLES, PlateMesh, encode, self_check};
 use beamcraft_geom::tolerance::{COORDINATE_CAP_MM, DIMENSION_CAP_MM, ROLL_CAP_RAD};
 use beamcraft_geom::{MathError, MemberFrame, Point3, Vec3};
-use beamcraft_model::command::SectionPlacement;
+use beamcraft_model::steel::command::SectionPlacement;
 
 /// Raw member input in element-local millimetres and radians.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -249,7 +249,7 @@ pub fn straight_member(input: StraightMember) -> Result<PlateResult, Failure> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use beamcraft_model::command::{SectionDepthPosition, SectionPlanePosition};
+    use beamcraft_model::steel::command::{SectionDepthPosition, SectionPlanePosition};
 
     fn input() -> StraightMember {
         StraightMember {

@@ -29,9 +29,10 @@ use beamcraft_engine::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{Author, Change, EditTargets, Prepare, schema_identity};
-use beamcraft_model::command::{AddHole, CommandError};
+use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
+use beamcraft_model::steel::command::AddHole;
 use session::Refusal;
 use session::pipeline::{
     AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, host_uuid, integrity, load_base,
@@ -129,7 +130,7 @@ pub struct RemoveHoleRequest {
     /// Store workspace.
     pub workspace: WorkspaceId,
     /// Target and record UUID.
-    pub command: beamcraft_model::command::RemoveHole,
+    pub command: beamcraft_model::steel::command::RemoveHole,
 }
 /// Same immutable response shape as other hole record changes; no live ordinal is invented.
 pub type RemovedHole = AddedHole;
@@ -148,7 +149,7 @@ pub fn remove_hole_command(
         command: AddHole {
             target_id: request.command.target_id,
             operation_id: request.command.operation_id,
-            hole: beamcraft_model::command::HoleSpec::Rectangle {
+            hole: beamcraft_model::steel::command::HoleSpec::Rectangle {
                 corner_mm: [0.0; 2],
                 width_mm: 1.0,
                 height_mm: 1.0,
@@ -167,10 +168,10 @@ fn apply_hole(
     let command = &request.command;
     command.validate_arguments()?;
     let _ = command.polygon()?;
-    let edit = beamcraft_model::command::UpdateHole {
+    let edit = beamcraft_model::steel::command::UpdateHole {
         hole: command.clone(),
     };
-    let removal = beamcraft_model::command::RemoveHole {
+    let removal = beamcraft_model::steel::command::RemoveHole {
         target_id: command.target_id,
         operation_id: command.operation_id,
     };
