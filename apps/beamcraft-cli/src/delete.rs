@@ -18,9 +18,11 @@
 //! implicit workspace, in-process layer
 //! engine, as in `plate`.
 
+use crate::definition::material_lookup;
 use crate::plate::{
     AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, control, decode, digest_of,
-    evaluate_decoded, host_uuid, load_base, open_base, prior_op_with, replay_summary, summarize,
+    evaluate_decoded, host_uuid, load_base, mesh_change, open_base, plate_record, prior_op_with,
+    replay_summary, summarize,
 };
 use crate::publication::{PublicationTail, prepare_and_publish};
 use beamcraft_engine::footprint::Footprint;
@@ -69,6 +71,8 @@ pub enum DeletedKind {
     Grid,
     /// A T02 construction object.
     Construction,
+    /// A D06 annotation.
+    Annotation,
 }
 
 /// Result of `delete_element`.
@@ -152,6 +156,8 @@ pub fn delete_element(
         Some(DeletedKind::Grid)
     } else if crate::construction::is_construction(&base_request, &command.target_id, &control)? {
         Some(DeletedKind::Construction)
+    } else if crate::annotation::is_annotation(&base_request, &command.target_id, &control)? {
+        Some(DeletedKind::Annotation)
     } else if crate::level::is_level(&base_request, &command.target_id, &control)? {
         Some(DeletedKind::Level)
     } else {
@@ -202,8 +208,51 @@ pub fn delete_element(
         .into());
     }
 
-    let footprint = Footprint::for_delete(command.target_id)?;
+    let mut footprint = Footprint::for_delete(command.target_id)?;
     let schema = schema_identity()?;
+    let id_text = command.target_id.to_string();
+    let mut changes = vec![Change::Delete {
+        id: id_text.clone(),
+    }];
+    // A14.4: deleting a generating bolt group removes its hole records from every plate in the
+    // same revision and undo unit (bolt amendment section 5); the parts themselves stay. An
+    // A05 annotation group and a quiet A14.3 group touch no part.
+    if kind == DeletedKind::Bolt {
+        let mut reader = Reader::default();
+        let opened = reader.open(base_request.clone(), &control)?;
+        let decoded = decode(&reader, &opened, &control)?;
+        let (plates, _) = evaluate_decoded(&decoded)?;
+        let materials = material_lookup(&decoded.definitions);
+        for plate in &plates {
+            if !plate
+                .authored
+                .hole_records
+                .iter()
+                .any(|r| r.owner == Some(command.target_id))
+            {
+                continue;
+            }
+            let mut next = plate.authored.clone();
+            next.hole_records
+                .retain(|r| r.owner != Some(command.target_id));
+            let body = beamcraft_engine::command::evaluate_plate(&next)?;
+            let quantities =
+                body.quantities_for(next.material.as_ref().map(&materials).transpose()?)?;
+            let record = beamcraft_engine::query::committed::PlateRecord {
+                authored: next.clone(),
+                body: body.clone(),
+                quantities,
+            };
+            changes.push(Change::HoleRecords {
+                id: next.id.to_string(),
+                records: next.hole_records.clone(),
+            });
+            changes.push(mesh_change(&next.id, &body.solid, &plate_record(&record))?);
+            footprint = footprint.union(Footprint::for_update(
+                next.id, false, false, true, false, None,
+            )?)?;
+        }
+    }
     let (mut author, opened) = Author::open(
         base_request,
         EditTargets {
@@ -213,13 +262,12 @@ pub fn delete_element(
         schema,
         &control,
     )?;
-    let id_text = command.target_id.to_string();
     let index = author.element_index(&opened.context, &control)?;
     author.check_delete(&index, &LayerElementId::parse(&id_text)?, &control)?;
     let (committed, changed_layers) = prepare_and_publish(
         &mut author,
         &opened,
-        vec![Change::Delete { id: id_text }],
+        changes,
         &footprint,
         &before,
         PublicationTail {

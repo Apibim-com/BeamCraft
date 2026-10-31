@@ -4,8 +4,8 @@
 
 //! V03 end to end: the accepted revision of a real store, exported by the `beamcraft` CLI in a
 //! separate process, rebuilt by the engine, turned into an instanced scene and rendered offscreen
-//! with an actual pixel readback. Without a native adapter the render step is skipped and says so;
-//! without the CLI binary next to this package's binary the store test is skipped and says so.
+//! with an actual pixel readback. A native/software adapter and the CLI binary next to this package's
+//! binary are required; missing prerequisites fail acceptance.
 
 #![allow(
     clippy::unwrap_used,
@@ -19,9 +19,10 @@ use beamcraft_engine::view_clipping::{ClipPlane, Clipping, WorkArea};
 use beamcraft_engine::{Limits, RenderMode, Representation, ViewPin, ViewSnapshot};
 use beamcraft_model::digest::Sha256;
 use beamcraft_ui::camera::{Camera, View};
+use beamcraft_ui::colour_sets::WHITE;
 use beamcraft_ui::cut_plane::ClipGpu;
 use beamcraft_ui::render::{Gpu, Renderer, Uploaded, wait};
-use beamcraft_ui::scene::{Scene, SelectedDraw};
+use beamcraft_ui::scene::{Scene, SelectedDraw, instance_bytes};
 use beamcraft_ui::stats::Stats;
 use beamcraft_ui::tools::{ToolKind, Tools};
 use beamcraft_ui::{Error, command, source};
@@ -39,8 +40,7 @@ fn gpu() -> Option<Gpu> {
             Some(gpu)
         }
         Err(Error::NoAdapter) => {
-            eprintln!("SKIP render: no native wgpu adapter");
-            None
+            panic!("required native/software GPU adapter is missing")
         }
         Err(e) => panic!("adapter or device failed: {e}"),
     }
@@ -250,7 +250,8 @@ fn a_refresh_reuses_the_meshes_on_the_device_and_still_draws_them() {
     let Some(gpu) = gpu() else { return };
     let old = Uploaded::upload(&gpu.device, &gpu.queue, &before, None).unwrap();
     let resident = old.resident();
-    let after = Scene::from_snapshot_reusing(&second, Representation::Full, &resident).unwrap();
+    let after =
+        Scene::from_snapshot_reusing(&second, Representation::Full, &resident, None).unwrap();
     let kept = after.meshes.iter().filter(|m| m.resident).count();
     assert_eq!(kept, before.meshes.len());
     assert!(
@@ -279,17 +280,10 @@ fn a_refresh_reuses_the_meshes_on_the_device_and_still_draws_them() {
     assert!(Uploaded::upload(&gpu.device, &gpu.queue, &after, None).is_err());
 }
 
+mod support;
+
 fn cli() -> Option<PathBuf> {
-    let ui = Path::new(env!("CARGO_BIN_EXE_beamcraft-ui"));
-    let cli = ui
-        .parent()?
-        .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
-    if cli.is_file() {
-        Some(cli)
-    } else {
-        eprintln!("SKIP store test: build beamcraft-cli first (cargo test --workspace does)");
-        None
-    }
+    support::cli(Path::new(env!("CARGO_BIN_EXE_beamcraft-ui")))
 }
 
 fn run(cli: &Path, args: &[&str]) -> String {
@@ -428,8 +422,10 @@ fn an_attached_reference_is_uploaded_and_renders_visible_pixels() {
     assert_eq!(scene.min, [-1000.0; 3]);
     assert_eq!(scene.max, [1000.0; 3]);
     assert_eq!(scene.meshes[0].vertex_count, 36);
-    let mut identity_instance = vec![0u8; 24];
-    identity_instance.extend_from_slice(&1.0f32.to_le_bytes());
+    // Placement relative to the scene origin is zero, the orientation is the identity and no
+    // overlay colours a reference: the neutral tint.
+    let identity_instance =
+        instance_bytes([0.0; 3], [0.0, 0.0, 0.0, 1.0], [0.0; 3], [0.0; 3], WHITE).unwrap();
     assert_eq!(scene.meshes[0].instances, identity_instance);
     assert_eq!(
         Scene::from_snapshot(&snapshot, Representation::Simplified).unwrap(),
