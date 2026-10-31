@@ -15,10 +15,11 @@
 use crate::command::AuthoredPlate;
 use crate::member::AuthoredMember;
 use beamcraft_geom::canonical_f64_bytes;
-use beamcraft_model::command::{CommandError, CopyElement, CutRecord, HoleRecord, Placement};
+use beamcraft_model::command::{CommandError, CopyElement, Placement};
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, Uuid7};
+use beamcraft_model::steel::command::{CutRecord, HoleRecord};
 
 fn copied_placement(source: &Placement, command: &CopyElement) -> Result<Placement, CommandError> {
     let [ox, oy, oz] = command.offset_mm;
@@ -148,7 +149,7 @@ pub fn copy_plate(
     command: &CopyElement,
 ) -> Result<AuthoredPlate, CommandError> {
     command.validate_arguments()?;
-    if source.hole_records.len() > beamcraft_model::command::MAX_HOLES {
+    if source.hole_records.len() > beamcraft_model::steel::command::MAX_HOLES {
         return Err(CommandError::new(
             ErrorCode::LimitExceeded,
             "hole",
@@ -174,9 +175,9 @@ pub fn copy_plate(
 
 /// The copy's bend records (A10): fresh operation identities, the same specs.
 fn copied_bends(
-    records: &[beamcraft_model::command::BendRecord],
+    records: &[beamcraft_model::steel::command::BendRecord],
     new_id: &ElementId,
-) -> Result<Vec<beamcraft_model::command::BendRecord>, CommandError> {
+) -> Result<Vec<beamcraft_model::steel::command::BendRecord>, CommandError> {
     records
         .iter()
         .map(|record| {
@@ -207,7 +208,7 @@ fn copied_bends(
                     "copied bend identity is invalid",
                 )
             })?;
-            Ok(beamcraft_model::command::BendRecord {
+            Ok(beamcraft_model::steel::command::BendRecord {
                 operation_id,
                 spec: record.spec,
             })
@@ -317,8 +318,8 @@ mod tests {
 
     #[test]
     fn a_copy_mints_fresh_record_ids_keeps_ordinals_and_is_deterministic() {
-        use beamcraft_model::command::KeepSide;
         use beamcraft_model::id::OpId;
+        use beamcraft_model::steel::command::KeepSide;
         let record = |ordinal: u16, point: [f64; 3]| CutRecord {
             operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000aa").unwrap(),
             ordinal,
@@ -352,7 +353,7 @@ mod tests {
             operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000aa").unwrap(),
             ordinal: 3,
             polygon_mm: vec![[10.0, 10.0], [20.0, 10.0], [20.0, 20.0], [10.0, 20.0]],
-            kind: beamcraft_model::command::HoleKind::Hole,
+            kind: beamcraft_model::steel::command::HoleKind::Hole,
             owner: None,
         };
         // A retried copy derives the exact same identity.
@@ -373,8 +374,8 @@ mod tests {
 
     #[test]
     fn a_copy_of_a_drilled_plate_drops_the_source_groups_ownership() {
-        use beamcraft_model::command::HoleKind;
         use beamcraft_model::id::OpId;
+        use beamcraft_model::steel::command::HoleKind;
         let group = ElementId::parse("019a7bf0-0000-7000-8000-0000000000be").unwrap();
         let mut source = plate();
         source.hole_records = vec![HoleRecord {

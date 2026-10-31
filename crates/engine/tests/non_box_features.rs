@@ -24,7 +24,7 @@ use beamcraft_kernel::{
 };
 use beamcraft_model::{
     digest::Sha256,
-    section::{ParametricSection, SectionFamily, SectionShape},
+    steel::section::{ParametricSection, SectionFamily, SectionShape},
 };
 
 const ID: &str = "01990000-0000-7000-8000-000000000001";
@@ -223,7 +223,7 @@ fn i_section_uses_versioned_profile_roles() {
         ),
         representation: Representation::Detailed,
         roll_rad: None,
-        placement: beamcraft_model::command::SectionPlacement::default(),
+        placement: beamcraft_model::steel::command::SectionPlacement::default(),
     })
     .unwrap();
     let s = snapshot(

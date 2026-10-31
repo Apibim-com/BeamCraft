@@ -28,7 +28,7 @@ use beamcraft_geom::frame::PARALLEL_SQUARED;
 use beamcraft_geom::tolerance::{COORDINATE_CAP_MM, DIMENSION_CAP_MM};
 use beamcraft_geom::{Frame3, Point3, Vec3};
 use beamcraft_model::error::ErrorCode;
-use beamcraft_model::section::SectionShape;
+use beamcraft_model::steel::section::SectionShape;
 use core::f64::consts::TAU;
 
 /// Largest number of polyline points of one path. Every valid sweep stays far below it:

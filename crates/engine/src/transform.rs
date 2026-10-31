@@ -26,10 +26,10 @@
 use crate::command::AuthoredPlate;
 use crate::member::AuthoredMember;
 use beamcraft_model::command::{
-    ArrayElements, ArrayStep, CommandError, CutRecord, ElementMirror, ElementRotate, Placement,
-    PlateSide,
+    ArrayElements, ArrayStep, CommandError, ElementMirror, ElementRotate, Placement,
 };
 use beamcraft_model::error::ErrorCode;
+use beamcraft_model::steel::command::{CutRecord, PlateSide};
 
 /// A 3x3 matrix, row-major.
 type Mat3 = [[f64; 3]; 3];
@@ -362,14 +362,14 @@ pub fn mirror_member_local(member: &mut AuthoredMember) -> Result<(), CommandErr
     member.cuts = reflect_cuts(&member.cuts, &symmetry);
     if let Some(section) = &mut member.section_placement {
         section.plane = match section.plane {
-            beamcraft_model::command::SectionPlanePosition::Left => {
-                beamcraft_model::command::SectionPlanePosition::Right
+            beamcraft_model::steel::command::SectionPlanePosition::Left => {
+                beamcraft_model::steel::command::SectionPlanePosition::Right
             }
-            beamcraft_model::command::SectionPlanePosition::Right => {
-                beamcraft_model::command::SectionPlanePosition::Left
+            beamcraft_model::steel::command::SectionPlanePosition::Right => {
+                beamcraft_model::steel::command::SectionPlanePosition::Left
             }
-            beamcraft_model::command::SectionPlanePosition::Centre => {
-                beamcraft_model::command::SectionPlanePosition::Centre
+            beamcraft_model::steel::command::SectionPlanePosition::Centre => {
+                beamcraft_model::steel::command::SectionPlanePosition::Centre
             }
         };
         section.plane_offset_mm = -section.plane_offset_mm;
@@ -492,8 +492,8 @@ pub fn array_member_copies(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use beamcraft_model::command::{BendRecord, BendSpec, KeepSide};
     use beamcraft_model::id::{ElementId, OpId};
+    use beamcraft_model::steel::command::{BendRecord, BendSpec, KeepSide};
 
     fn id(n: u8) -> ElementId {
         ElementId::parse(&format!("019a7bf0-0000-7000-8000-0000000000{n:02x}")).unwrap()
@@ -820,7 +820,7 @@ mod tests {
     }
 
     fn member() -> AuthoredMember {
-        use beamcraft_model::command::MemberKind;
+        use beamcraft_model::steel::command::MemberKind;
         AuthoredMember {
             curved: false,
             id: id(6),
@@ -863,7 +863,7 @@ mod tests {
 
     #[test]
     fn a_member_mirror_reencodes_the_section_for_the_reversed_sweep() {
-        use beamcraft_model::command::{
+        use beamcraft_model::steel::command::{
             SectionDepthPosition, SectionPlacement, SectionPlanePosition,
         };
         let mut source = member();
@@ -907,12 +907,12 @@ mod tests {
         );
         // A04.2 member holes have no expressible mirrored placement.
         let mut drilled = member();
-        drilled.hole_records = vec![beamcraft_model::command::MemberHoleRecord {
+        drilled.hole_records = vec![beamcraft_model::steel::command::MemberHoleRecord {
             operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000ad").unwrap(),
             ordinal: 0,
             axis_point_mm: [500.0, 20.0, 0.0],
             axis_direction: [0.0, 1.0, 0.0],
-            extent: beamcraft_model::command::HoleExtent::Through,
+            extent: beamcraft_model::steel::command::HoleExtent::Through,
             polygon_mm: vec![[10.0, 10.0], [20.0, 10.0], [20.0, 20.0], [10.0, 20.0]],
         }];
         assert_eq!(

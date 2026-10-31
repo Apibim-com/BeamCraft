@@ -2530,10 +2530,12 @@ fn author_corners(
         vertices.push(i32::try_from(corner.vertex).map_err(|_| limit())?);
         kinds.push(corner.treatment.kind());
         let (d1, d2, radius) = match corner.treatment {
-            beamcraft_model::command::CornerTreatment::Chamfer { d1_mm, d2_mm } => {
+            beamcraft_model::steel::command::CornerTreatment::Chamfer { d1_mm, d2_mm } => {
                 (d1_mm, d2_mm, 0.0)
             }
-            beamcraft_model::command::CornerTreatment::Round { radius_mm } => (0.0, 0.0, radius_mm),
+            beamcraft_model::steel::command::CornerTreatment::Round { radius_mm } => {
+                (0.0, 0.0, radius_mm)
+            }
         };
         d1s.push(d1);
         d2s.push(d2);
@@ -2592,13 +2594,13 @@ fn author_bends(data: &mut sdf::Data, p: &str, bends: &[BendRecord]) -> Result<(
         ids.push(bend.operation_id.to_string());
         kinds.push(bend.spec.kind());
         let (a, b, radius, radius_b, angle) = match bend.spec {
-            beamcraft_model::command::BendSpec::Fold {
+            beamcraft_model::steel::command::BendSpec::Fold {
                 a_mm,
                 b_mm,
                 radius_mm,
                 angle_rad,
             } => (a_mm, b_mm, radius_mm, radius_mm, angle_rad),
-            beamcraft_model::command::BendSpec::Roll {
+            beamcraft_model::steel::command::BendSpec::Roll {
                 a_mm,
                 b_mm,
                 radius_mm,
