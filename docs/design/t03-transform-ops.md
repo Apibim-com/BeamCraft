@@ -1,7 +1,8 @@
 # T03 transform operations
 
 Date: 2026-10-31. Status: **implemented; the profile-handedness honesty limit below is the one
-open detail.** Delivery for T03 (upstream #444).
+open detail.** Branch `feat/t03-transform-ops` (fork delivery for
+axisrow/BeamCraft#202), based on `origin/master` `e8c58f87`.
 
 Plan row: T03 / M, depends on V05 (merged), P10, P11. Result: copy, move, rotate, mirror and
 arrays, by vector or two points, linear and polar. Acceptance: one undo step per operation;
