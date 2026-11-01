@@ -237,6 +237,53 @@ class JobsCheck(GateCase):
         self.assertIn("does not wait for", result.stdout)
         self.assertIn("test-archive-windows", result.stdout)
 
+    def prose_jobs(self, event, prose, results):
+        workflow = "jobs:\n" + "".join(f"  {job}:\n    runs-on: x\n" for job in results) + "  ci-ok:\n"
+        needs = {job: {"result": result} for job, result in results.items()}
+        return self.run_gate(
+            "jobs",
+            "--event",
+            event,
+            "--prose",
+            prose,
+            "--needs",
+            self.path("needs.json", needs),
+            "--workflow",
+            self.path("ci.yml", workflow),
+        )
+
+    HEAVY = ("quality", "test-archive-ubuntu", "test-ubuntu", "test-archive-macos", "test-macos",
+             "build-timings", "wasm")
+
+    def results(self, heavy, docs, windows="skipped"):
+        out = {job: heavy for job in self.HEAVY}
+        out.update({"changes": "success", "deny": "success", "docs-checks": docs,
+                    "test-archive-windows": windows, "test-windows": windows})
+        return out
+
+    def test_a_prose_pull_request_may_skip_the_builds_and_runs_the_document_checks(self):
+        result = self.prose_jobs("pull_request", "true", self.results("skipped", "success"))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_prose_pull_request_without_the_document_checks_fails(self):
+        result = self.prose_jobs("pull_request", "true", self.results("skipped", "skipped"))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("docs-checks: skipped is not allowed", result.stdout)
+
+    def test_a_code_pull_request_may_not_skip_the_builds(self):
+        result = self.prose_jobs("pull_request", "false", self.results("skipped", "skipped"))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("quality: skipped is not allowed", result.stdout)
+
+    def test_a_code_pull_request_skips_only_the_document_checks(self):
+        result = self.prose_jobs("pull_request", "false", self.results("success", "skipped"))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_prose_is_ignored_on_a_push(self):
+        result = self.prose_jobs("push", "true", self.results("skipped", "success", "success"))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("quality: skipped is not allowed on a push run", result.stdout)
+
     def test_the_real_workflow_gates_every_job(self):
         workflow = os.path.join(os.path.dirname(GATE), "..", ".github", "workflows", "ci.yml")
         with open(workflow, encoding="utf-8") as handle:
