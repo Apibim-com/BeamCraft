@@ -8,7 +8,7 @@ rust-version.workspace = true
 repository.workspace = true
 authors.workspace = true
 # The integration suites build into one `engine` test binary (`tests/engine.rs`): one link
-# instead of nine.
+# instead of six.
 autotests = false
 
 [[test]]

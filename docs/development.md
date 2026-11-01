@@ -36,7 +36,7 @@ overrides the profile's `default-filter`.
 
 Each crate's integration suites build into one test binary, one module per suite file, so they
 link once and `cargo test` runs all their cases on one thread pool: `cli` (`beamcraft-cli`),
-`ui` (`beamcraft-ui`), `kernel`, `engine`, `host` and `layer_engine`. Run one suite with
+`ui` (`beamcraft-ui`), `kernel`, `steel`, `engine`, `host` and `layer_engine`. Run one suite with
 `cargo test -p beamcraft-cli --test cli -- <suite>::` or
 `cargo nextest run -p beamcraft-cli -E 'test(/^<suite>::/)'`, and list a new suite file in the
 binary's root file (`tests/cli.rs`, `tests/ui.rs`, ...); a guard test in each fails when a suite
