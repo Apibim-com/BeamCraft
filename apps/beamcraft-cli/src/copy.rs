@@ -27,7 +27,7 @@ use beamcraft_host::revision::{CommitHook, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{
     Author, Change, EditTargets, Element, MemberKind as LayerKind, MemberShape,
-    Placement as LayerPlacement, Shape, schema_identity,
+    Placement as LayerPlacement, PlateShape, Shape, schema_identity,
 };
 use beamcraft_layer_engine::index::{ElementId as LayerElementId, LinkTarget};
 use beamcraft_model::command::CommandError;
@@ -108,7 +108,7 @@ pub(crate) fn creation_changes(copy: &CopiedElement) -> Result<Vec<Change>, Refu
                 Change::Create(Element {
                     id: a.id.to_string(),
                     name: a.name.clone(),
-                    shape: Shape::Plate {
+                    shape: Shape::plate(PlateShape {
                         contour_mm: a.contour_points_mm.clone(),
                         thickness_mm: a.thickness_mm,
                         thickness_side: a.thickness_side,
@@ -121,7 +121,7 @@ pub(crate) fn creation_changes(copy: &CopiedElement) -> Result<Vec<Change>, Refu
                             .collect(),
                         hole_records: a.hole_records.clone(),
                         cuts: a.cuts.clone(),
-                    },
+                    }),
                     placement: LayerPlacement {
                         translation_mm: a.placement.translation_mm,
                         orientation_xyzw: [qx, qy, qz, qw],

@@ -80,7 +80,7 @@ fn create(n: usize) -> Change {
     Change::Create(Element {
         id: id(n).to_string(),
         name: format!("part {n}"),
-        shape: Shape::Plate {
+        shape: Shape::plate(PlateShape {
             contour_mm: vec![
                 [0.0, 0.0, 0.0],
                 [100.0, 0.0, 0.0],
@@ -94,7 +94,7 @@ fn create(n: usize) -> Change {
             holes: Vec::new(),
             hole_records: Vec::new(),
             cuts: Vec::new(),
-        },
+        }),
         placement: Placement {
             translation_mm: [0.0; 3],
             orientation_xyzw: [0.0, 0.0, 0.0, 1.0],

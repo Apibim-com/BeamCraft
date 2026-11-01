@@ -37,8 +37,8 @@ use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, Element, MemberKind, MemberShape, Placement, Prepare, Shape,
-    schema_identity,
+    Author, Change, EditTargets, Element, MemberKind, MemberShape, Placement, PlateShape, Prepare,
+    Shape, schema_identity,
 };
 use beamcraft_layer_engine::index::ElementId as LayerElementId;
 use beamcraft_model::command::CommandError;
@@ -1444,7 +1444,7 @@ fn created_element(state: &AuthoredState) -> Result<Element, Refusal> {
             name: authored.name.clone(),
             placement: pose(authored.placement),
             material: authored.material,
-            shape: Shape::Plate {
+            shape: Shape::plate(PlateShape {
                 contour_mm: authored.contour_points_mm.clone(),
                 thickness_mm: authored.thickness_mm,
                 thickness_side: authored.thickness_side,
@@ -1457,7 +1457,7 @@ fn created_element(state: &AuthoredState) -> Result<Element, Refusal> {
                     .collect(),
                 hole_records: authored.hole_records.clone(),
                 cuts: authored.cuts.clone(),
-            },
+            }),
         }),
         AuthoredState::Member(authored) => Ok(Element {
             id: authored.id.to_string(),

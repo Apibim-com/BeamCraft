@@ -16,6 +16,7 @@ mod guard;
 pub mod hook;
 pub mod instance;
 mod member;
+mod plate;
 pub mod rebase;
 mod reference;
 mod validate;
@@ -26,6 +27,7 @@ pub use hook::{
     ValidateCx,
 };
 pub use member::{MemberShape, SetAxis, SetProfile, SetRoll};
+pub use plate::{LoftedPlateShape, PlateShape};
 pub use reference::{
     ForeignPrim, Reference, ReferenceView, SourceFormat, SourcePin, UnitsInterpretation, UpAxis,
     read_references,
@@ -291,43 +293,6 @@ pub struct Placement {
 /// Supported authored shapes; all engineering validation must already have run in the engine.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Shape {
-    /// Element-local contour, preserved exactly; wrapper does not evaluate a solid.
-    Plate {
-        /// Ordered explicit contour, at most 1024 points and subject to tighter stage budgets.
-        contour_mm: Vec<[f64; 3]>,
-        /// Explicit extrusion thickness in millimetres.
-        thickness_mm: f64,
-        /// Where the thickness is laid off from the contour plane (A12.1); absence is the
-        /// `top` default and stores no attribute.
-        thickness_side: Option<PlateSide>,
-        /// Corner treatments of authored contour vertices (A12.2); empty means every corner
-        /// sharp and stores no attribute. The contour keeps its sharp points.
-        corners: Vec<PlateCorner>,
-        /// The bend operation records (A10); empty means a flat plate. The contour of a bent
-        /// plate is its developed mid-surface outline.
-        bends: Vec<BendRecord>,
-        /// Through-hole polygons in plate-local XY (`z` is zero), each at least three points,
-        /// stored as one flat point array plus the vertex counts. Empty means a solid plate.
-        holes: Vec<Vec<[f64; 3]>>,
-        /// Through-hole operation records (A04) authored with the element. An ordinary create
-        /// carries none (F04 section 4); a copy authors the source's records with fresh
-        /// operation ids and the same ordinals.
-        hole_records: Vec<HoleRecord>,
-        /// The owned `plane_cut` operation records (A03, amendment A-2) in ascending ordinal
-        /// order, stored as five parallel attributes. Empty means an uncut plate.
-        cuts: Vec<CutRecord>,
-    },
-    /// A11 lofted plate: a plate between two face contours that need not be coplanar, stored
-    /// as two element-local point arrays of the same vertex count. The sheet thickness is the
-    /// distance between the contours themselves, so there is no thickness, hole, cut or corner
-    /// input; the kernel certifies the closed loft and refuses a twisted or self-intersecting
-    /// correspondence.
-    LoftedPlate {
-        /// Ordered start face contour, at most 1024 points and subject to tighter stage budgets.
-        start_mm: Vec<[f64; 3]>,
-        /// Ordered end face contour, the same vertex count as the start contour.
-        end_mm: Vec<[f64; 3]>,
-    },
     /// P11 instance: shared inputs are read from a canonical part; only metadata and pose are local.
     Instance {
         /// Same part kind as the canonical definition.
@@ -363,10 +328,8 @@ impl Shape {
     /// The owned `plane_cut` records of a plate, beam or column (A03); other kinds have none.
     pub(crate) fn cuts(&self) -> &[CutRecord] {
         match self {
-            Self::Plate { cuts, .. } => cuts,
             Self::Discipline(hook) => hook.0.cuts(),
-            Self::LoftedPlate { .. }
-            | Self::Instance { .. }
+            Self::Instance { .. }
             | Self::Assembly
             | Self::Grid(_)
             | Self::Construction(_)
@@ -1219,9 +1182,7 @@ fn shape_category(shape: &Shape) -> ElementCategory {
         Shape::Grid(_) => ElementCategory::Grid,
         Shape::Construction(_) => ElementCategory::Construction,
         Shape::Annotation(_) => ElementCategory::Annotation,
-        Shape::Plate { .. } | Shape::LoftedPlate { .. } | Shape::Instance { .. } => {
-            ElementCategory::Part
-        }
+        Shape::Instance { .. } => ElementCategory::Part,
     }
 }
 fn change_path(id: &str, input: &Prepare, prims: &[Prim]) -> Result<String, Diagnostic> {

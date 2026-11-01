@@ -890,7 +890,7 @@ fn plate() -> Change {
     Change::Create(Element {
         id: PLATE.into(),
         name: "Plate".into(),
-        shape: Shape::Plate {
+        shape: Shape::plate(PlateShape {
             contour_mm: vec![
                 [0.0, 0.0, 0.0],
                 [1000.0, 0.0, 0.0],
@@ -904,7 +904,7 @@ fn plate() -> Change {
             holes: Vec::new(),
             hole_records: Vec::new(),
             cuts: Vec::new(),
-        },
+        }),
         placement: pose(),
         material: Some(resources()[1].digest),
     })

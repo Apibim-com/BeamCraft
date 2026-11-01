@@ -61,25 +61,8 @@ pub(super) fn input_bounds(input: &Prepare, b: Budgets) -> Result<(), Diagnostic
                 if e.name.len() > 256 {
                     return Err(limit().with_rule("DV-BASE-003"));
                 }
-                if let Shape::Plate {
-                    contour_mm, holes, ..
-                } = &e.shape
-                {
-                    count(contour_mm.len().checked_mul(3).ok_or_else(limit)?, 8)?;
-                    let hole_points = holes.iter().map(Vec::len).sum::<usize>();
-                    count(hole_points.checked_mul(3).ok_or_else(limit)?, 8)?;
-                    count(holes.len(), 4)?;
-                }
-                if let Shape::LoftedPlate { start_mm, end_mm } = &e.shape {
-                    count(
-                        start_mm
-                            .len()
-                            .checked_add(end_mm.len())
-                            .ok_or_else(limit)?
-                            .checked_mul(3)
-                            .ok_or_else(limit)?,
-                        8,
-                    )?;
+                if let Shape::Discipline(hook) = &e.shape {
+                    hook.0.charge(&mut count)?;
                 }
             }
             Change::Label { name, .. } if name.len() > 256 => {
@@ -736,8 +719,8 @@ fn plate_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
     Ok(())
 }
 /// Most through holes of one plate and most points of one hole.
-const MAX_HOLES: usize = 64;
-const MAX_HOLE_POINTS: usize = 1024;
+pub(super) const MAX_HOLES: usize = 64;
+pub(super) const MAX_HOLE_POINTS: usize = 1024;
 
 /// The optional member-hole operation records of a loaded beam or column (A04.2): all nine
 /// attributes or none, the counts add up to the points, every polygon has at least three
@@ -2703,129 +2686,6 @@ pub(super) fn changes(
                 label(&e.name)?;
                 pose(&e.placement)?;
                 match &e.shape {
-                    Shape::Plate {
-                        contour_mm,
-                        thickness_mm,
-                        // A parsed side is one of three closed tokens; nothing to bound.
-                        thickness_side: _,
-                        corners,
-                        bends,
-                        holes,
-                        hole_records,
-                        cuts,
-                    } => {
-                        count_points(contour_mm, b)?;
-                        cap(contour_mm.iter().flatten().copied(), 1e9)?;
-                        cap([*thickness_mm], 1e6)?;
-                        // Corner treatments (A12.2): at most one per vertex, each naming a
-                        // vertex of this contour with bounded values; whether the corner
-                        // really turns and the treatments fit the edges are the engine's.
-                        if corners.len() > contour_mm.len() {
-                            return Err(limit());
-                        }
-                        let mut seen = Vec::new();
-                        for corner in corners {
-                            if corner.vertex >= contour_mm.len() || seen.contains(&corner.vertex) {
-                                return Err(invalid());
-                            }
-                            seen.push(corner.vertex);
-                            let values = match corner.treatment {
-                                CornerTreatment::Chamfer { d1_mm, d2_mm } => [d1_mm, d2_mm],
-                                CornerTreatment::Round { radius_mm } => [radius_mm, radius_mm],
-                            };
-                            if values.iter().any(|v| *v <= 0.0) {
-                                return Err(invalid());
-                            }
-                            cap(values, 1e9)?;
-                        }
-                        if holes.len() + hole_records.len() > MAX_HOLES {
-                            return Err(limit());
-                        }
-                        for hole in holes {
-                            if hole.len() > MAX_HOLE_POINTS {
-                                return Err(limit());
-                            }
-                            if hole.len() < 3 || hole.iter().any(|p| p[2] != 0.0) {
-                                return Err(invalid());
-                            }
-                            cap(hole.iter().flatten().copied(), 1e9)?;
-                        }
-                        for record in hole_records {
-                            // Record polygons are planar XY pairs by type; winding, placement
-                            // and clearance are the engine's replay decision.
-                            if record.polygon_mm.len() > MAX_HOLE_POINTS
-                                || record.polygon_mm.len() < 3
-                            {
-                                return Err(invalid());
-                            }
-                            cap(record.polygon_mm.iter().flatten().copied(), 1e9)?;
-                        }
-                        cut_values(cuts)?;
-                        // Bend records (A10): structural bounds only — finiteness and caps for
-                        // the line points and radii, a finite angle inside (-pi, pi); whether
-                        // the records form one supported bent body is the engine's replay
-                        // decision.
-                        if bends.len() > MAX_BENDS {
-                            return Err(limit());
-                        }
-                        for bend in bends {
-                            let (lines, radii, angle): ([[f64; 3]; 2], &[f64], Option<f64>) =
-                                match bend.spec {
-                                    BendSpec::Fold {
-                                        a_mm,
-                                        b_mm,
-                                        radius_mm,
-                                        angle_rad,
-                                    } => ([a_mm, b_mm], &[radius_mm][..], Some(angle_rad)),
-                                    BendSpec::Roll {
-                                        a_mm,
-                                        b_mm,
-                                        radius_mm,
-                                        radius_b_mm,
-                                    } => (
-                                        [a_mm, b_mm],
-                                        match radius_b_mm {
-                                            Some(rb) => &[radius_mm, rb][..],
-                                            None => &[radius_mm][..],
-                                        },
-                                        None,
-                                    ),
-                                };
-                            cap(lines.iter().flatten().copied(), 1e9)?;
-                            if radii.iter().any(|v| *v <= 0.0) {
-                                return Err(invalid());
-                            }
-                            cap(radii.iter().copied(), 1e9)?;
-                            // A cone with equal radii is a cylinder, and the stored encoding
-                            // keeps one radius for a cylinder: equal radii would read back as
-                            // a cylinder and refuse their own sector blank.
-                            if let BendSpec::Roll {
-                                radius_mm,
-                                radius_b_mm: Some(radius_b),
-                                ..
-                            } = bend.spec
-                                && radius_b == radius_mm
-                            {
-                                return Err(invalid());
-                            }
-                            if let Some(angle) = angle
-                                && (!angle.is_finite()
-                                    || angle == 0.0
-                                    || angle.abs() >= core::f64::consts::PI)
-                            {
-                                return Err(invalid());
-                            }
-                        }
-                    }
-                    Shape::LoftedPlate { start_mm, end_mm } => {
-                        // Both contours of a lofted plate (A11): the shared contour bounds;
-                        // the equal vertex count, floor, winding and planarity are the
-                        // engine's, and the certification refuses a twisted correspondence.
-                        for contour in [start_mm, end_mm] {
-                            count_points(contour, b)?;
-                            cap(contour.iter().flatten().copied(), 1e9)?;
-                        }
-                    }
                     Shape::Assembly => {
                         if e.material.is_some()
                             || e.placement.translation_mm != [0.0; 3]
@@ -2835,6 +2695,7 @@ pub(super) fn changes(
                         }
                     }
                     Shape::Discipline(hook) => hook.0.validate(&mut hook::ValidateCx {
+                        budgets: b,
                         element: e,
                         input,
                         prims,
@@ -2930,6 +2791,7 @@ pub(super) fn changes(
             }
             Change::PartClass { .. } => {}
             Change::Discipline(hook) => hook.0.validate(&mut hook::ChangeValidateCx {
+                budgets: b,
                 input,
                 prims,
                 reads: &mut reads,
@@ -3041,7 +2903,7 @@ pub(super) fn changes(
     }
     Ok((reads, writes))
 }
-fn count_points(points: &[[f64; 3]], b: Budgets) -> Result<(), Diagnostic> {
+pub(super) fn count_points(points: &[[f64; 3]], b: Budgets) -> Result<(), Diagnostic> {
     if points.len() > 1024 || points.len().saturating_mul(3) > b.array_items {
         return Err(limit());
     }
@@ -3083,68 +2945,7 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                     .chain(e.placement.orientation_xyzw),
             )?;
             match &e.shape {
-                Shape::Plate {
-                    contour_mm,
-                    thickness_mm,
-                    thickness_side: _,
-                    corners,
-                    bends,
-                    holes,
-                    hole_records,
-                    cuts,
-                } => finite(
-                    contour_mm
-                        .iter()
-                        .flatten()
-                        .copied()
-                        .chain(holes.iter().flatten().flatten().copied())
-                        .chain(
-                            hole_records
-                                .iter()
-                                .flat_map(|r| r.polygon_mm.iter().flatten().copied()),
-                        )
-                        .chain([*thickness_mm])
-                        .chain(
-                            cuts.iter()
-                                .flat_map(|c| c.point_mm.into_iter().chain(c.normal)),
-                        )
-                        .chain(corners.iter().flat_map(|c| match c.treatment {
-                            CornerTreatment::Chamfer { d1_mm, d2_mm } => [d1_mm, d2_mm],
-                            CornerTreatment::Round { radius_mm } => [radius_mm, radius_mm],
-                        }))
-                        .chain(bends.iter().flat_map(|b| {
-                            match b.spec {
-                                BendSpec::Fold {
-                                    a_mm,
-                                    b_mm,
-                                    radius_mm,
-                                    angle_rad,
-                                } => a_mm
-                                    .into_iter()
-                                    .chain(b_mm)
-                                    .chain([radius_mm, angle_rad])
-                                    .collect::<Vec<_>>(),
-                                BendSpec::Roll {
-                                    a_mm,
-                                    b_mm,
-                                    radius_mm,
-                                    radius_b_mm,
-                                } => a_mm
-                                    .into_iter()
-                                    .chain(b_mm)
-                                    .chain([radius_mm, radius_b_mm.unwrap_or(radius_mm)])
-                                    .collect::<Vec<_>>(),
-                            }
-                        })),
-                ),
                 Shape::Assembly => Ok(()),
-                Shape::LoftedPlate { start_mm, end_mm } => finite(
-                    start_mm
-                        .iter()
-                        .flatten()
-                        .copied()
-                        .chain(end_mm.iter().flatten().copied()),
-                ),
                 Shape::Discipline(hook) => hook.0.check_finite(),
                 Shape::Level { elevation_mm } => finite([*elevation_mm]),
                 Shape::Instance { .. } => Ok(()),

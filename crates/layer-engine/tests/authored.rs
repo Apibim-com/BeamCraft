@@ -121,7 +121,7 @@ fn elements() -> Vec<Change> {
         Change::Create(Element {
             id: PLATE.into(),
             name: "Plate Ω".into(),
-            shape: Shape::Plate {
+            shape: Shape::plate(PlateShape {
                 contour_mm: vec![
                     [0.0, 0.0, 0.0],
                     [1000.0, 0.0, 0.0],
@@ -135,7 +135,7 @@ fn elements() -> Vec<Change> {
                 hole_records: Vec::new(),
                 cuts: Vec::new(),
                 bends: Vec::new(),
-            },
+            }),
             placement: pose(),
             material: Some(r[1].digest),
         }),
@@ -1354,7 +1354,7 @@ fn holed_plate(holes: Vec<Vec<[f64; 3]>>) -> Change {
     Change::Create(Element {
         id: PLATE.into(),
         name: "Holed".into(),
-        shape: Shape::Plate {
+        shape: Shape::plate(PlateShape {
             contour_mm: vec![
                 [0.0, 0.0, 0.0],
                 [1000.0, 0.0, 0.0],
@@ -1368,7 +1368,7 @@ fn holed_plate(holes: Vec<Vec<[f64; 3]>>) -> Change {
             hole_records: Vec::new(),
             cuts: Vec::new(),
             bends: Vec::new(),
-        },
+        }),
         placement: pose(),
         material: None,
     })
@@ -1486,20 +1486,22 @@ fn through_hole_polygons_are_authored_as_flat_points_and_counts_and_validated() 
 #[test]
 fn corner_treatments_are_authored_as_five_parallel_arrays_and_bounded() {
     use steel::model::command::{CornerTreatment, PlateCorner};
-    let treated = |corners: Vec<PlateCorner>| Shape::Plate {
-        contour_mm: vec![
-            [0.0, 0.0, 0.0],
-            [1000.0, 0.0, 0.0],
-            [1000.0, 500.0, 0.0],
-            [0.0, 500.0, 0.0],
-        ],
-        thickness_mm: 10.0,
-        thickness_side: None,
-        corners,
-        holes: Vec::new(),
-        hole_records: Vec::new(),
-        cuts: Vec::new(),
-        bends: Vec::new(),
+    let treated = |corners: Vec<PlateCorner>| {
+        Shape::plate(PlateShape {
+            contour_mm: vec![
+                [0.0, 0.0, 0.0],
+                [1000.0, 0.0, 0.0],
+                [1000.0, 500.0, 0.0],
+                [0.0, 500.0, 0.0],
+            ],
+            thickness_mm: 10.0,
+            thickness_side: None,
+            corners,
+            holes: Vec::new(),
+            hole_records: Vec::new(),
+            cuts: Vec::new(),
+            bends: Vec::new(),
+        })
     };
     let chamfer = PlateCorner {
         vertex: 1,
@@ -1673,20 +1675,22 @@ fn corner_treatments_are_authored_as_five_parallel_arrays_and_bounded() {
 fn bend_records_are_authored_as_seven_parallel_arrays_and_bounded() {
     use beamcraft_model::id::OpId;
     use steel::model::command::BendRecord;
-    let bent = |bends: Vec<BendRecord>| Shape::Plate {
-        contour_mm: vec![
-            [0.0, 0.0, 0.0],
-            [1000.0, 0.0, 0.0],
-            [1000.0, 500.0, 0.0],
-            [0.0, 500.0, 0.0],
-        ],
-        thickness_mm: 10.0,
-        thickness_side: None,
-        corners: Vec::new(),
-        bends,
-        holes: Vec::new(),
-        hole_records: Vec::new(),
-        cuts: Vec::new(),
+    let bent = |bends: Vec<BendRecord>| {
+        Shape::plate(PlateShape {
+            contour_mm: vec![
+                [0.0, 0.0, 0.0],
+                [1000.0, 0.0, 0.0],
+                [1000.0, 500.0, 0.0],
+                [0.0, 500.0, 0.0],
+            ],
+            thickness_mm: 10.0,
+            thickness_side: None,
+            corners: Vec::new(),
+            bends,
+            holes: Vec::new(),
+            hole_records: Vec::new(),
+            cuts: Vec::new(),
+        })
     };
     let fold = BendRecord {
         operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000d1").unwrap(),
@@ -1781,20 +1785,22 @@ fn bend_records_are_authored_as_seven_parallel_arrays_and_bounded() {
 fn a_bend_record_refuses_an_out_of_range_angle_or_radius_before_writing() {
     use beamcraft_model::id::OpId;
     use steel::model::command::BendRecord;
-    let bent = |bends: Vec<BendRecord>| Shape::Plate {
-        contour_mm: vec![
-            [0.0, 0.0, 0.0],
-            [1000.0, 0.0, 0.0],
-            [1000.0, 500.0, 0.0],
-            [0.0, 500.0, 0.0],
-        ],
-        thickness_mm: 10.0,
-        thickness_side: None,
-        corners: Vec::new(),
-        bends,
-        holes: Vec::new(),
-        hole_records: Vec::new(),
-        cuts: Vec::new(),
+    let bent = |bends: Vec<BendRecord>| {
+        Shape::plate(PlateShape {
+            contour_mm: vec![
+                [0.0, 0.0, 0.0],
+                [1000.0, 0.0, 0.0],
+                [1000.0, 500.0, 0.0],
+                [0.0, 500.0, 0.0],
+            ],
+            thickness_mm: 10.0,
+            thickness_side: None,
+            corners: Vec::new(),
+            bends,
+            holes: Vec::new(),
+            hole_records: Vec::new(),
+            cuts: Vec::new(),
+        })
     };
     let spec_of = |angle: f64, radius: f64| BendSpec::Fold {
         a_mm: [0.0, 250.0, 0.0],
@@ -1881,20 +1887,22 @@ fn the_plane_cut_records_are_authored_as_five_parallel_arrays_and_validated() {
         normal,
         keep,
     };
-    let cuts = |records: Vec<CutRecord>| Shape::Plate {
-        contour_mm: vec![
-            [0.0, 0.0, 0.0],
-            [1000.0, 0.0, 0.0],
-            [1000.0, 500.0, 0.0],
-            [0.0, 500.0, 0.0],
-        ],
-        thickness_mm: 10.0,
-        thickness_side: None,
-        corners: Vec::new(),
-        holes: Vec::new(),
-        hole_records: Vec::new(),
-        cuts: records,
-        bends: Vec::new(),
+    let cuts = |records: Vec<CutRecord>| {
+        Shape::plate(PlateShape {
+            contour_mm: vec![
+                [0.0, 0.0, 0.0],
+                [1000.0, 0.0, 0.0],
+                [1000.0, 500.0, 0.0],
+                [0.0, 500.0, 0.0],
+            ],
+            thickness_mm: 10.0,
+            thickness_side: None,
+            corners: Vec::new(),
+            holes: Vec::new(),
+            hole_records: Vec::new(),
+            cuts: records,
+            bends: Vec::new(),
+        })
     };
     let one = vec![record(
         0,
@@ -4133,10 +4141,12 @@ fn removed_cuts_keep_a_monotone_counter_and_cannot_reactivate_their_id() {
     let Change::Create(e) = changes.first_mut().unwrap() else {
         panic!("create");
     };
-    let Shape::Plate { cuts, .. } = &mut e.shape else {
+    let Some(plate) = e.shape.as_plate() else {
         panic!("plate");
     };
-    cuts.push(record);
+    let mut plate = plate.clone();
+    plate.cuts.push(record);
+    e.shape = Shape::plate(plate);
     let mut create = batch(&o.context, changes);
     create.resources = resources();
     let p = a.prepare(create, &control()).unwrap();
@@ -4244,10 +4254,12 @@ fn removed_holes_mask_weaker_opinions_and_keep_their_history() {
     let Change::Create(e) = changes.first_mut().unwrap() else {
         panic!("create");
     };
-    let Shape::Plate { hole_records, .. } = &mut e.shape else {
+    let Some(plate) = e.shape.as_plate() else {
         panic!("plate");
     };
-    hole_records.push(record.clone());
+    let mut plate = plate.clone();
+    plate.hole_records.push(record.clone());
+    e.shape = Shape::plate(plate);
     let mut b = batch(&o.context, changes);
     b.resources = resources();
     let prepared = a.prepare(b, &control()).unwrap();

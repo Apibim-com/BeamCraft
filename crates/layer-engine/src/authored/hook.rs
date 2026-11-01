@@ -32,6 +32,8 @@ pub struct AuthorCx<'a> {
 
 /// What a hook needs to validate a created element.
 pub struct ValidateCx<'a> {
+    /// The byte and item budgets of the batch.
+    pub budgets: Budgets,
     /// The created element.
     pub element: &'a Element,
     /// The whole batch.
@@ -61,6 +63,13 @@ pub trait ShapeHook: Debug + Send + Sync {
     fn validate(&self, cx: &mut ValidateCx<'_>) -> Result<(), Diagnostic>;
     /// Every number of the shape is finite.
     fn check_finite(&self) -> Result<(), Diagnostic>;
+    /// Charges the element's arrays against the batch budget; `count(items, bytes_per_item)`.
+    fn charge(
+        &self,
+        _count: &mut dyn FnMut(usize, usize) -> Result<(), Diagnostic>,
+    ) -> Result<(), Diagnostic> {
+        Ok(())
+    }
     /// The owned `plane_cut` records authored with the element (A03); none by default.
     fn cuts(&self) -> &[CutRecord] {
         &[]
@@ -102,6 +111,8 @@ pub struct ChangeAuthorCx<'a> {
 
 /// What a change hook needs to validate its edit.
 pub struct ChangeValidateCx<'a> {
+    /// The byte and item budgets of the batch.
+    pub budgets: Budgets,
     /// The whole batch.
     pub input: &'a Prepare,
     /// The stage the batch applies to.

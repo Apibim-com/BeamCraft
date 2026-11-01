@@ -21,7 +21,7 @@ use beamcraft_json::{Json, Limits};
 use beamcraft_layer_engine::{
     authored::{
         Author, Change, Decision, Definition, EditTargets, Element, MemberKind, MemberShape, Mesh,
-        Placement, Prepare, Resource, Shape, schema_identity, validate_layers,
+        Placement, PlateShape, Prepare, Resource, Shape, schema_identity, validate_layers,
     },
     index::{Completeness, ElementIndex, IndexBuilder},
     *,
@@ -179,7 +179,7 @@ fn authored_batch() -> Vec<Change> {
         Change::Create(Element {
             id: PLATE.into(),
             name: "Plate".into(),
-            shape: Shape::Plate {
+            shape: Shape::plate(PlateShape {
                 contour_mm: vec![
                     [0.0, 0.0, 0.0],
                     [1000.0, 0.0, 0.0],
@@ -193,7 +193,7 @@ fn authored_batch() -> Vec<Change> {
                 holes: Vec::new(),
                 hole_records: Vec::new(),
                 cuts: Vec::new(),
-            },
+            }),
             placement: pose(),
             material: Some(r[1].digest),
         }),
