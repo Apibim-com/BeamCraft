@@ -36,14 +36,14 @@ overrides the profile's `default-filter`.
 
 Each crate's integration suites build into one test binary, one module per suite file, so they
 link once and `cargo test` runs all their cases on one thread pool: `cli` (`beamcraft-cli`),
-`ui` (`beamcraft-ui`), `kernel`, `engine`, `host` and `layer_engine`. Run one suite with
+`ui` (`beamcraft-ui`), `kernel`, `steel`, `engine`, `host` and `layer_engine`. Run one suite with
 `cargo test -p beamcraft-cli --test cli -- <suite>::` or
 `cargo nextest run -p beamcraft-cli -E 'test(/^<suite>::/)'`, and list a new suite file in the
 binary's root file (`tests/cli.rs`, `tests/ui.rs`, ...); a guard test in each fails when a suite
 file is not listed. `macos_icon` checks the desktop app's icon and `cancel` relies on being
 alone in its process, so both stay their own targets. Linking the GUI stack once instead of once
-per suite matters most: the 73 test binaries became 31, and the nextest archive that each CI
-shard downloads shrank by about 30 %.
+per suite matters most: the workspace's 74 test binaries became 33, and the nextest archive that
+each CI shard downloads shrank by about 30 % (measured when the count went from 73 to 31).
 
 The drawn-grid viewport controller test requires a native wgpu adapter and fails explicitly if
 none is available. On a headless Linux worker, Mesa's software Vulkan driver (`mesa-vulkan-drivers`)
@@ -143,8 +143,11 @@ In PowerShell, set `$env:RUSTC_WRAPPER = 'sccache'` for the build and remove it 
 No wrapper is required by the repository. Cache hits depend on the compiler, target and flags;
 they help repeated builds and do not replace a genuinely cold benchmark. CI already uses
 `Swatinem/rust-cache` for registry and target dependencies, with separate WASM and distribution-target
-keys. CI saves these caches only from `master`; pull requests restore them and save none of their
-own, so they cannot push `master`'s caches out of the repository's cache limit.
+keys. The cache key hashes every `Cargo.toml` and `Cargo.lock`, so a pull request that changes a
+manifest restores `master`'s cache only as a partial match. rust-cache then deletes every artifact
+older than a week before the build, and the dependencies that rarely change, the GUI stack first,
+rebuild (about 40 s on hosted macOS). Such a pull request saves its own cache on its first run, so
+its later pushes match exactly; do not restrict saving to `master`.
 
 The cold release CI jobs deliberately skip compiled caches and upload their timing HTML, log and
 machine metadata as `build-timings-<triple>` artifacts. The Linux job runs on every pull request;

@@ -12,10 +12,7 @@ mod drawing_contract;
 mod grid_geometry;
 mod grid_queries;
 mod grid_updates;
-mod member_placement_rotation;
-mod non_box_features;
 mod reference_scene;
-mod unsupported_plate;
 mod view_snapshot;
 
 /// With `autotests = false` a suite file missing from the list above would never build or run,

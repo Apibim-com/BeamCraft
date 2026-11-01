@@ -8,7 +8,7 @@ rust-version.workspace = true
 repository.workspace = true
 authors.workspace = true
 # The integration suites build into one `kernel` test binary (`tests/kernel.rs`): one link
-# instead of nineteen, and the shared `common*` helpers compile once.
+# instead of eleven, and the shared `common*` helpers compile once.
 autotests = false
 
 [[test]]
