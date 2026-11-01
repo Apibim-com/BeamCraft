@@ -10,11 +10,13 @@ pub mod construction;
 /// Persistent cut ordinal and retired-record identities.
 pub mod cut_history;
 mod derive;
+pub mod disciplines;
 mod edit;
 pub mod grid;
 mod guard;
 pub mod hook;
 pub mod instance;
+mod instance_shape;
 mod member;
 mod plate;
 mod plate_change;
@@ -23,11 +25,13 @@ mod reference;
 mod validate;
 
 pub use connection::ReplaceBoltGroup;
+pub use disciplines::{Discipline, is_part_kind};
 pub use guard::WriteGrant;
 pub use hook::{
     AuthorCx, ChangeAuthorCx, ChangeHook, ChangeValidateCx, HookedChange, HookedShape, ShapeHook,
     ValidateCx,
 };
+pub use instance_shape::InstanceShape;
 pub use member::{MemberShape, SetAxis, SetProfile, SetRoll};
 pub use plate::{LoftedPlateShape, PlateShape};
 pub use plate_change::{
@@ -299,13 +303,6 @@ pub struct Placement {
 /// Supported authored shapes; all engineering validation must already have run in the engine.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Shape {
-    /// P11 instance: shared inputs are read from a canonical part; only metadata and pose are local.
-    Instance {
-        /// Same part kind as the canonical definition.
-        kind: steel::model::instance::PartKind,
-        /// Canonical part identity, never another instance.
-        definition: String,
-    },
     /// A01 assembly: a grouping target of `bim:partOf` with no shape inputs, no material and no
     /// derived body. Its placement must be the identity in this slice.
     Assembly,
@@ -335,8 +332,7 @@ impl Shape {
     pub(crate) fn cuts(&self) -> &[CutRecord] {
         match self {
             Self::Discipline(hook) => hook.0.cuts(),
-            Self::Instance { .. }
-            | Self::Assembly
+            Self::Assembly
             | Self::Grid(_)
             | Self::Construction(_)
             | Self::Annotation(_)
@@ -1112,7 +1108,6 @@ fn shape_category(shape: &Shape) -> ElementCategory {
         Shape::Grid(_) => ElementCategory::Grid,
         Shape::Construction(_) => ElementCategory::Construction,
         Shape::Annotation(_) => ElementCategory::Annotation,
-        Shape::Instance { .. } => ElementCategory::Part,
     }
 }
 fn change_path(id: &str, input: &Prepare, prims: &[Prim]) -> Result<String, Diagnostic> {
