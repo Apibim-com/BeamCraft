@@ -46,8 +46,9 @@ may link a discipline.
 | 5 | `layer-engine` | Our wrapper over `openusd`: reads and writes the project's USD layers, the schema, validation and the UUID index. Authors and validates elements through discipline hooks (#795), so no discipline code lives here |
 | 6 | `steel` | The structural steel discipline: plates, members, holes, bends, welds, bolts and fasteners with their commands (`model`), bodies (`kernel`), engine (`engine`) and the steel half of the layer engine (the hooks behind `Shape::Discipline`/`Change::Discipline` and the facade of free constructors the apps call), and the typed operations on a part (`steel::engine::part`). Kind `discipline`: the platform never depends on it, only the apps do |
 | 6 | `session` | Platform state that is not storage: settings, recent projects, project folders and environments (#763); later the command registry and a long-lived session over a verified revision. Discipline-agnostic, hence no `beamcraft-` prefix |
-| 7 | `beamcraft-cli` (binary `beamcraft`) | Every user command; ties the crates together |
-| 7 | `beamcraft-ui` (binary `beamcraft-ui`) | Native window: viewport, tools, properties panel |
+| 7 | `beamcraft-commands` | The application layer: every modelling, project and publication command as a library (plates, members, bolts, welds, definitions, grids, assemblies, numbering, drawings, exports, workspaces, history, publication, rebase, coordinator). Kind `service`: only the apps depend on it (#208) |
+| 8 | `beamcraft-cli` (binary `beamcraft`) | Argument parsing, help and JSON rendering over `beamcraft-commands` |
+| 8 | `beamcraft-ui` (binary `beamcraft-ui`) | Native window: viewport, tools, properties panel |
 
 `geom`, `model` and `kernel` are pure: no file system, OS or runtime, and they build for WASM. The
 rest is desktop-native.
@@ -56,8 +57,15 @@ rest is desktop-native.
 flowchart TD
     user(["user, scripts, agents"]) --> cli
     ui["beamcraft-ui<br/>window"] -. "runs as a process" .-> cli
-    cli["beamcraft-cli<br/>every command"]
+    cli["beamcraft-cli<br/>arguments and output"]
 
+    cli --> commands
+    commands["beamcraft-commands<br/>every command"] --> session
+    commands --> host
+    commands --> engine
+    commands --> le
+    commands --> ifc
+    commands --> steel
     cli --> session
     cli --> host
     cli --> engine
@@ -151,8 +159,8 @@ record or a member record) chooses between them, so the CLI's `copy`, `array` an
 without naming its kind. The operations are the intersection of the pairs; what exists for one
 kind only (contour edits, corners, bends, lofted plates, welds, bolts) stays behind its own
 commands. The interface is a steel type, not a platform trait, because its inputs
-(`CopyElement`, `ArrayElements`, `ElementPatch`) are steel commands and its only callers are app
-adapters: a platform trait would first need `ElementPatch` split into a generic half and a
+(`CopyElement`, `ArrayElements`, `ElementPatch`) are steel commands and its only callers are the
+application layer (`beamcraft-commands`): a platform trait would first need `ElementPatch` split into a generic half and a
 discipline payload, which puts the `BeamCraft/P04/UpdateElement/v2` fingerprint bytes at risk and
 removes no crate edge. That split is due when a second discipline shares the copy and edit
 commands.
@@ -169,7 +177,7 @@ byte-risky change only a second discipline needs).
 
 ```mermaid
 flowchart TD
-    cli["cli / ui<br/>apps"] --> steel
+    cli["commands, cli, ui<br/>application layer and apps"] --> steel
     cli --> platform
     steel["steel<br/>discipline"] --> le
     steel --> engine
@@ -236,13 +244,13 @@ through `session`, so it installs the steel discipline at start as the CLI does.
 on `beamcraft-cli`: an app does not depend on an app.
 
 The direction is one command layer under both apps, as in a headless-first design where every
-action is a registered command that the CLI, the window and agents all call: the commands now in
-the CLI move into libraries below the apps (platform crates plus one crate per discipline), the
-CLI shrinks to argument parsing and printing, and `session` gains the registry and a long-lived
-session over a verified revision. Until then modelling commands and `export-view` stay processes.
-The steel decoders and `registry.rs` are still in the CLI and move with that command layer; the
-CLI already reaches the per-kind operations only through `PartRecord` ("Platform and
-disciplines").
+action is a registered command that the CLI, the window and agents all call. Its first step is
+done: the commands, the steel decoders and `registry.rs` live in `beamcraft-commands`
+(`crates/commands`, #208), below both apps, and the CLI binary is argument parsing, help and
+rendering over it. The CLI reaches the per-kind operations only through `PartRecord` ("Platform
+and disciplines"). Next, the window calls the same library where it now starts a process, and
+`session` gains a long-lived session over a verified revision (#766). Until then modelling
+commands and `export-view` stay processes.
 
 ## Geometry
 

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! Start commands: `create-project` and `list-project`. They call `session::settings` and
-//! `beamcraft_cli::project` and print one JSON object with the same error shape and exit codes as
+//! `beamcraft_commands::project` and print one JSON object with the same error shape and exit codes as
 //! the plate commands.
 //!
 //! The settings live in the user's configuration directory unless `--config-dir` names another.
@@ -11,8 +11,8 @@
 //! be written (`recent_recorded` is then false).
 
 use crate::plate_cmd::revision_json;
-use beamcraft_cli::definition::{DefineRequest, DefinitionRecord, define};
-use beamcraft_cli::project::{
+use beamcraft_commands::definition::{DefineRequest, DefinitionRecord, define};
+use beamcraft_commands::project::{
     ProjectContext, create_project, create_project_unique, install_environment,
 };
 use beamcraft_host::ids::IdSource;

@@ -125,10 +125,14 @@ cold command on that machine, workspace tests, and opening the window against a 
 
 ## Reusing dependencies
 
-Ordinary Cargo commands reuse the local target directory. For several worktrees, optionally set
-`CARGO_TARGET_DIR` to a persistent directory outside them. Cargo separates profiles and target
-triples there; artifacts for different target ABIs still need separate compilation. Unset this
-variable when following the packaging commands below, which use the repository's `target/`.
+Ordinary Cargo commands reuse the local target directory. Give every worktree its own target
+directory, which is the default (`target/` inside the worktree). Cargo locks a target directory
+for the whole build, so worktrees sharing one through `CARGO_TARGET_DIR` wait for each other.
+To reuse compiled dependencies across worktrees without that lock, use a compiler cache such as
+`sccache` (below) instead of a shared target directory. Cargo separates profiles and target
+triples inside one directory; artifacts for different target ABIs still need separate
+compilation. If you do set `CARGO_TARGET_DIR`, unset it when following the packaging commands
+below, which use the repository's `target/`.
 
 An optional installed `sccache` can reuse dependency compilation after the target directory is
 removed:

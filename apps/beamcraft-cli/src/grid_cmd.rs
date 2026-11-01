@@ -4,7 +4,7 @@
 //! T01 headless grid creation and verified listing.
 use crate::command_context::{self, CONTEXT_OPTIONS};
 use crate::plate_cmd::{check_project_option, footprint_json, id_error, num, revision_json};
-use beamcraft_cli::grid::{GridContext, create_grid, grids};
+use beamcraft_commands::grid::{GridContext, create_grid, grids};
 use beamcraft_host::{
     ids::IdSource,
     revision::{NoFault, RevisionStore},
@@ -652,7 +652,7 @@ pub(crate) fn copy_command(store: &RevisionStore, options: &BTreeMap<&str, &str>
         offset_mm,
         new_axis_ids,
     };
-    let change = beamcraft_cli::grid::copy_grid(store, &context, &request, &mut NoFault)?;
+    let change = beamcraft_commands::grid::copy_grid(store, &context, &request, &mut NoFault)?;
     Ok(Json::object([
         (
             "outcome",
@@ -734,7 +734,7 @@ fn line_command(
         }
         _ => return Err(invalid("unknown grid-line command")),
     };
-    let change = beamcraft_cli::grid::edit_grid(
+    let change = beamcraft_commands::grid::edit_grid(
         store,
         context,
         &GridLineEditRequest { target_id, edit },
@@ -899,7 +899,7 @@ fn update_command(
             Some(_) => return Err(invalid("--fit-spans is true or false")),
         },
     };
-    let change = beamcraft_cli::grid::update_grid(store, context, &request, &mut NoFault)?;
+    let change = beamcraft_commands::grid::update_grid(store, context, &request, &mut NoFault)?;
     Ok(Json::object([
         (
             "outcome",
