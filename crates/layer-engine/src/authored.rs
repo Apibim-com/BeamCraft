@@ -10,6 +10,7 @@ pub mod construction;
 /// Persistent cut ordinal and retired-record identities.
 pub mod cut_history;
 mod derive;
+pub mod disciplines;
 mod edit;
 pub mod grid;
 mod guard;
@@ -24,6 +25,7 @@ mod reference;
 mod validate;
 
 pub use connection::ReplaceBoltGroup;
+pub use disciplines::{Discipline, is_part_kind};
 pub use guard::WriteGrant;
 pub use hook::{
     AuthorCx, ChangeAuthorCx, ChangeHook, ChangeValidateCx, HookedChange, HookedShape, ShapeHook,
