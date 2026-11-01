@@ -11,7 +11,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-mod common;
+use crate::common;
 
 use beamcraft_geom::{Point3, Vec3};
 use core::f64::consts::{FRAC_PI_2, PI};
