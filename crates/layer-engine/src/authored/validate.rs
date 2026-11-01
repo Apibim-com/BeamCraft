@@ -1671,7 +1671,7 @@ fn level_links(prims: &[Prim]) -> Result<(), Diagnostic> {
 
 /// The A15 weld path rules shared by the loaded-content and candidate checks: 2 to 1024 points,
 /// finite and within the coordinate cap, consecutive points at least the minimum apart.
-fn weld_path_points(points: &[[f64; 3]]) -> Result<(), Diagnostic> {
+pub(super) fn weld_path_points(points: &[[f64; 3]]) -> Result<(), Diagnostic> {
     if !(2..=1024).contains(&points.len()) {
         return Err(invalid());
     }
@@ -1729,7 +1729,7 @@ fn weld_properties(p: &Prim) -> Result<(), Diagnostic> {
     }
     Ok(())
 }
-fn weld_tokens(weld_type: &str, location: &str, side: &str) -> Result<(), Diagnostic> {
+pub(super) fn weld_tokens(weld_type: &str, location: &str, side: &str) -> Result<(), Diagnostic> {
     if weld_type != "fillet" {
         return Err(unsupported());
     }
@@ -1738,7 +1738,7 @@ fn weld_tokens(weld_type: &str, location: &str, side: &str) -> Result<(), Diagno
     }
     Ok(())
 }
-fn weld_size(mm: f64) -> Result<(), Diagnostic> {
+pub(super) fn weld_size(mm: f64) -> Result<(), Diagnostic> {
     finite([mm])?;
     if mm <= 0.0 {
         return Err(invalid());
@@ -1832,7 +1832,7 @@ fn bolt_f64s(p: &Prim, name: &str) -> Result<Vec<f64>, Diagnostic> {
 
 /// The `connects` identities of an A14.3 group: 2 to 1024 full UUIDv7s, distinct, never the
 /// group itself (`DV-REL-004`, `DV-REL-006`, `DV-REL-007`).
-fn bolt_group_connects(connects: &[String], self_id: &str) -> Result<(), Diagnostic> {
+pub(super) fn bolt_group_connects(connects: &[String], self_id: &str) -> Result<(), Diagnostic> {
     if connects.len() < 2 || connects.len() > MAX_RELATIONSHIP_TARGETS {
         return Err(fail(
             ErrorCode::DependencyConflict,
@@ -1870,7 +1870,7 @@ fn bolt_group_connects(connects: &[String], self_id: &str) -> Result<(), Diagnos
 /// length record consistent with its mode. The engine's crossing, grip and length decisions
 /// have already run; this re-checks the stored form so a damaged or forged record is refused,
 /// never guessed.
-fn bolt_group_values(b: &BoltGroup) -> Result<(), Diagnostic> {
+pub(super) fn bolt_group_values(b: &BoltGroup) -> Result<(), Diagnostic> {
     finite(b.point1_mm)?;
     finite(b.point2_mm)?;
     cap(b.point1_mm, 1e9)?;
@@ -1952,7 +1952,7 @@ fn bolt_group_values(b: &BoltGroup) -> Result<(), Diagnostic> {
 /// Consistency of a stored A14.3 group with its pinned definition (bolt amendment sections 2
 /// and 4): the resolved length is one of the definition's standard lengths, a washer switch is
 /// true only for a washer the definition carries, and under a nut only for a bolt.
-fn bolt_group_against(spec: &FastenerSpec, b: &BoltGroup) -> Result<(), Diagnostic> {
+pub(super) fn bolt_group_against(spec: &FastenerSpec, b: &BoltGroup) -> Result<(), Diagnostic> {
     if !spec.lengths_mm.contains(&b.length_mm) {
         return Err(invalid());
     }
@@ -1967,7 +1967,7 @@ fn bolt_group_against(spec: &FastenerSpec, b: &BoltGroup) -> Result<(), Diagnost
 
 /// The fastener definition a group places: one this batch pins as a resource, or the pinned
 /// definition the model already holds. Anything else is a dangling reference.
-fn fastener_definition(
+pub(super) fn fastener_definition(
     input: &Prepare,
     prims: &[Prim],
     digest: ContentDigest,
@@ -2876,124 +2876,12 @@ pub(super) fn changes(
                             return Err(unsupported());
                         }
                     }
-                    Shape::Weld(w) => {
-                        if e.material.is_some()
-                            || e.placement.translation_mm != [0.0; 3]
-                            || e.placement.orientation_xyzw != [0.0, 0.0, 0.0, 1.0]
-                        {
-                            return Err(unsupported());
-                        }
-                        weld_tokens(&w.weld_type, &w.location, &w.side)?;
-                        weld_size(w.size_mm)?;
-                        if let Some(geometry) = &w.geometry {
-                            weld_path_points(&geometry.points_mm)?;
-                            if !matches!(
-                                geometry.contour.as_str(),
-                                "none" | "flush" | "concave" | "convex"
-                            ) {
-                                return Err(invalid());
-                            }
-                        }
-                        let [main, secondary] = &w.connects;
-                        if !uuid7(main) || !uuid7(secondary) {
-                            return Err(fail(
-                                ErrorCode::InvalidId,
-                                "invalid full element identity",
-                            )
-                            .with_rule("DV-BASE-001"));
-                        }
-                        if main == secondary || main == &e.id || secondary == &e.id {
-                            return Err(fail(
-                                ErrorCode::InvalidArgument,
-                                "a weld connects two distinct other parts",
-                            )
-                            .with_rule(if main == secondary {
-                                "DV-REL-007"
-                            } else {
-                                "DV-REL-006"
-                            }));
-                        }
-                        // The parts' existence and kinds decide acceptance; they are only read.
-                        for part in [main, secondary] {
-                            reads.insert(Footprint {
-                                identity: part.clone(),
-                                group: Group::Lifecycle,
-                            });
-                        }
-                    }
-                    Shape::Bolt(b) => {
-                        if e.material.is_some()
-                            || e.placement.translation_mm != [0.0; 3]
-                            || e.placement.orientation_xyzw != [0.0, 0.0, 0.0, 1.0]
-                        {
-                            return Err(unsupported());
-                        }
-                        finite([b.diameter_mm])?;
-                        if b.diameter_mm <= 0.0 {
-                            return Err(invalid());
-                        }
-                        cap([b.diameter_mm], 1000.0)?;
-                        if b.count == 0 || b.count > 512 {
-                            return Err(invalid());
-                        }
-                        finite([b.pitch_mm])?;
-                        if b.pitch_mm <= 0.0 {
-                            return Err(invalid());
-                        }
-                        cap([b.pitch_mm], 1e6)?;
-                        finite(b.origin_mm)?;
-                        cap(b.origin_mm, 1e9)?;
-                        finite(b.direction_mm)?;
-                        let squared = b.direction_mm.iter().map(|v| v * v).sum::<f64>();
-                        if (squared - 1.0).abs() > 1e-6 {
-                            return Err(invalid());
-                        }
-                        let [main, secondary] = &b.connects;
-                        if !uuid7(main) || !uuid7(secondary) {
-                            return Err(fail(
-                                ErrorCode::InvalidId,
-                                "invalid full element identity",
-                            )
-                            .with_rule("DV-BASE-001"));
-                        }
-                        if main == secondary || main == &e.id || secondary == &e.id {
-                            return Err(fail(
-                                ErrorCode::InvalidArgument,
-                                "a bolt group connects two distinct other parts",
-                            )
-                            .with_rule(if main == secondary {
-                                "DV-REL-007"
-                            } else {
-                                "DV-REL-006"
-                            }));
-                        }
-                        // The parts' existence and kinds decide acceptance; they are only read.
-                        for part in [main, secondary] {
-                            reads.insert(Footprint {
-                                identity: part.clone(),
-                                group: Group::Lifecycle,
-                            });
-                        }
-                    }
-                    Shape::BoltGroup(b) => {
-                        bolt_group_connects(&b.connects, &e.id)?;
-                        bolt_group_values(b)?;
-                        // The pinned definition travels by digest: either this batch pins it as
-                        // a resource or the model already holds it. Either way the stored
-                        // record must agree with the definition's own values.
-                        let spec = fastener_definition(input, prims, b.fastener)?;
-                        bolt_group_against(&spec, b)?;
-                        for part in &b.connects {
-                            reads.insert(Footprint {
-                                identity: part.clone(),
-                                group: Group::Lifecycle,
-                            });
-                        }
-                        reads.insert(Footprint {
-                            identity: b.fastener.to_string(),
-                            group: Group::Relationship,
-                        });
-                    }
+                    Shape::Discipline(hook) => hook.0.validate(&mut hook::ValidateCx {
+                        element: e,
+                        input,
+                        prims,
+                        reads: &mut reads,
+                    })?,
                     Shape::Instance { kind, definition } => {
                         if e.id == *definition || e.material.is_some() {
                             return Err(invalid());
@@ -3347,28 +3235,7 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                         .copied()
                         .chain(end_mm.iter().flatten().copied()),
                 ),
-                Shape::Weld(w) => finite([w.size_mm]),
-                Shape::Bolt(b) => finite(
-                    [b.diameter_mm, b.pitch_mm]
-                        .into_iter()
-                        .chain(b.origin_mm)
-                        .chain(b.direction_mm),
-                ),
-                Shape::BoltGroup(b) => finite(
-                    b.point1_mm
-                        .into_iter()
-                        .chain(b.point2_mm)
-                        .chain(b.plane_normal_mm)
-                        .chain([
-                            b.rotation_rad,
-                            b.on_plane_mm,
-                            b.depth_mm,
-                            b.offset_start_mm,
-                            b.spacing_value_mm,
-                            b.length_mm,
-                        ])
-                        .chain(b.spacings_mm.iter().copied()),
-                ),
+                Shape::Discipline(hook) => hook.0.check_finite(),
                 Shape::Level { elevation_mm } => finite([*elevation_mm]),
                 Shape::Instance { .. } => Ok(()),
                 Shape::Grid(g) => grid::validate_record(g),

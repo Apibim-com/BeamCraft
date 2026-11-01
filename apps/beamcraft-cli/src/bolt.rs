@@ -923,7 +923,7 @@ pub fn create_bolt_group(
     let mut changes = vec![Change::Create(Element {
         id: command.new_id.to_string(),
         name: command.name.clone(),
-        shape: Shape::BoltGroup(layer_group(&command.inputs, &placed)),
+        shape: Shape::bolt_group(layer_group(&command.inputs, &placed)),
         placement: LayerPlacement {
             translation_mm: [0.0; 3],
             orientation_xyzw: [0.0, 0.0, 0.0, 1.0],
@@ -1219,7 +1219,7 @@ pub fn create_bolt(
             changes: vec![Change::Create(Element {
                 id: command.new_id.to_string(),
                 name: command.name.clone(),
-                shape: Shape::Bolt(LayerBolt {
+                shape: Shape::bolt(LayerBolt {
                     connects: [
                         command.main_id.to_string(),
                         command.secondary_id.to_string(),

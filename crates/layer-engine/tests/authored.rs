@@ -2878,7 +2878,7 @@ fn create_weld(id: &str, w: Weld) -> Change {
     Change::Create(Element {
         id: id.into(),
         name: "W1".into(),
-        shape: Shape::Weld(w),
+        shape: Shape::weld(w),
         placement: Placement {
             translation_mm: [0.0; 3],
             orientation_xyzw: [0.0, 0.0, 0.0, 1.0],
@@ -3240,7 +3240,7 @@ fn create_bolt(id: &str, b: Bolt) -> Change {
     Change::Create(Element {
         id: id.into(),
         name: "B1".into(),
-        shape: Shape::Bolt(b),
+        shape: Shape::bolt(b),
         placement: Placement {
             translation_mm: [0.0; 3],
             orientation_xyzw: [0.0, 0.0, 0.0, 1.0],

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
+use super::connection::{BOLT, BOLT_GROUP, WELD};
 use super::*;
 use openusd::{
     sdf::{self, AbstractData},
@@ -278,7 +279,7 @@ pub(super) fn relationship_targets(
     );
     Ok(())
 }
-fn points(values: &[[f64; 3]]) -> sdf::Value {
+pub(super) fn points(values: &[[f64; 3]]) -> sdf::Value {
     sdf::Value::Vec3dVec(values.iter().map(|p| (*p).into()).collect())
 }
 pub(super) fn pose(data: &mut sdf::Data, p: &str, value: &Placement) -> Result<(), Diagnostic> {
@@ -654,10 +655,10 @@ fn create(
     };
     field(data, &p, "kind", sdf::Value::token(model_kind))?;
     field(data, &p, "displayName", sdf::Value::String(e.name.clone()))?;
-    let kind = match e.shape {
+    let kind = match &e.shape {
         Shape::Instance { kind, .. } => kind.token(),
         Shape::Assembly => "assembly",
-        Shape::Weld(_) | Shape::Bolt(_) | Shape::BoltGroup(_) => "connection",
+        Shape::Discipline(hook) => hook.0.kind_token(),
         Shape::Level { .. } => "level",
         Shape::Grid(_) => "grid",
         Shape::Construction(_) => "construction",
@@ -919,120 +920,13 @@ fn create(
             }
         }
         Shape::Assembly => (),
-        Shape::Weld(w) => {
-            attr(
-                data,
-                &p,
-                "steel:connection:type",
-                "token",
-                sdf::Value::Token("weld".into()),
-            )?;
-            for (name, value) in [
-                ("steel:weld:type", &w.weld_type),
-                ("steel:weld:location", &w.location),
-                ("steel:weld:side", &w.side),
-            ] {
-                attr(data, &p, name, "token", sdf::Value::token(value.as_str()))?;
-            }
-            attr(
-                data,
-                &p,
-                "steel:weld:sizeMm",
-                "double",
-                sdf::Value::Double(w.size_mm),
-            )?;
-            if let Some(geometry) = &w.geometry {
-                attr(
-                    data,
-                    &p,
-                    "steel:weld:pathMm",
-                    "double3[]",
-                    points(&geometry.points_mm),
-                )?;
-                attr(
-                    data,
-                    &p,
-                    "steel:weld:allAround",
-                    "token",
-                    sdf::Value::token(if geometry.all_around { "true" } else { "false" }),
-                )?;
-                attr(
-                    data,
-                    &p,
-                    "steel:weld:contour",
-                    "token",
-                    sdf::Value::token(geometry.contour.as_str()),
-                )?;
-            }
-            let targets = w
-                .connects
-                .iter()
-                .map(|id| path(&target_path(id, ElementCategory::Part, input, prims)?))
-                .collect::<Result<Vec<_>, _>>()?;
-            relationship_targets(data, &p, "bim:connects", Some(targets))?;
-        }
-        Shape::Bolt(b) => {
-            attr(
-                data,
-                &p,
-                "steel:connection:type",
-                "token",
-                sdf::Value::Token("bolt_group".into()),
-            )?;
-            attr(
-                data,
-                &p,
-                "steel:bolt:diameterMm",
-                "double",
-                sdf::Value::Double(b.diameter_mm),
-            )?;
-            // The engine admits 1 to 512 bolts, so the count always fits an int.
-            attr(
-                data,
-                &p,
-                "steel:bolt:count",
-                "int",
-                sdf::Value::Int(i32::try_from(b.count).map_err(|_| limit())?),
-            )?;
-            attr(
-                data,
-                &p,
-                "steel:bolt:pitchMm",
-                "double",
-                sdf::Value::Double(b.pitch_mm),
-            )?;
-            let [ox, oy, oz] = b.origin_mm;
-            attr(
-                data,
-                &p,
-                "steel:bolt:originMm",
-                "double3",
-                sdf::Value::vec3d(ox, oy, oz),
-            )?;
-            let [dx, dy, dz] = b.direction_mm;
-            attr(
-                data,
-                &p,
-                "steel:bolt:directionMm",
-                "double3",
-                sdf::Value::vec3d(dx, dy, dz),
-            )?;
-            let targets = b
-                .connects
-                .iter()
-                .map(|id| path(&target_path(id, ElementCategory::Part, input, prims)?))
-                .collect::<Result<Vec<_>, _>>()?;
-            relationship_targets(data, &p, "bim:connects", Some(targets))?;
-        }
-        Shape::BoltGroup(b) => {
-            author_bolt_group(data, &p, b)?;
-            let targets = b
-                .connects
-                .iter()
-                .map(|id| path(&target_path(id, ElementCategory::Part, input, prims)?))
-                .collect::<Result<Vec<_>, _>>()?;
-            relationship_targets(data, &p, "bim:connects", Some(targets))?;
-        }
+        Shape::Discipline(hook) => hook.0.author(&mut hook::AuthorCx {
+            data,
+            path: &p,
+            element: e,
+            input,
+            prims,
+        })?,
         Shape::Grid(g) => grid::author(data, &p, g)?,
         Shape::Construction(o) => construction::author(data, &p, o)?,
         Shape::Annotation(a) => annotation::author(data, &p, a)?,
@@ -2048,43 +1942,6 @@ fn capture(
         ("xformOp:orient", "quatd"),
         ("xformOpOrder", "token[]"),
     ];
-    const WELD: &[(&str, &str)] = &[
-        ("steel:connection:type", "token"),
-        ("steel:weld:type", "token"),
-        ("steel:weld:sizeMm", "double"),
-        ("steel:weld:location", "token"),
-        ("steel:weld:side", "token"),
-        ("bim:connects", "rel"),
-    ];
-    const BOLT: &[(&str, &str)] = &[
-        ("steel:connection:type", "token"),
-        ("steel:bolt:diameterMm", "double"),
-        ("steel:bolt:count", "int"),
-        ("steel:bolt:pitchMm", "double"),
-        ("steel:bolt:originMm", "double3"),
-        ("steel:bolt:directionMm", "double3"),
-        ("bim:connects", "rel"),
-    ];
-    /// The seventeen authored attributes of an A14.3 bolt group, replaced as a whole.
-    const BOLT_GROUP: &[(&str, &str)] = &[
-        ("steel:bolt:fastener", "string"),
-        ("steel:bolt:point1Mm", "double3"),
-        ("steel:bolt:point2Mm", "double3"),
-        ("steel:bolt:planeNormalMm", "double3"),
-        ("steel:bolt:rotationRad", "double"),
-        ("steel:bolt:onPlaneMm", "double"),
-        ("steel:bolt:depthMm", "double"),
-        ("steel:bolt:offsetStartMm", "double"),
-        ("steel:bolt:spacingMode", "token"),
-        ("steel:bolt:spacingValueMm", "double"),
-        ("steel:bolt:spacingsMm", "double[]"),
-        ("steel:bolt:lengthMode", "token"),
-        ("steel:bolt:lengthMm", "double"),
-        ("steel:bolt:washerUnderHead", "bool"),
-        ("steel:bolt:washerUnderNut", "bool"),
-        ("steel:bolt:holeMode", "token"),
-        ("steel:bolt:holeClearanceMm", "double"),
-    ];
     const CUT_FIELDS: &[(&str, &str)] = &[
         ("steel:cut:operationId", "string[]"),
         ("steel:cut:ordinal", "int[]"),
@@ -2223,29 +2080,9 @@ fn capture(
                     }
                     Shape::Instance { .. } => add(instance::RELATIONSHIP, "rel", 0),
                     Shape::Assembly => (),
-                    Shape::Weld(ref w) => {
-                        for &(name, ty) in WELD {
+                    Shape::Discipline(ref hook) => {
+                        for (name, ty) in hook.0.attributes() {
                             add(name, ty, 0);
-                        }
-                        if w.geometry.is_some() {
-                            add("steel:weld:pathMm", "double3[]", 0);
-                            add("steel:weld:allAround", "token", 0);
-                            add("steel:weld:contour", "token", 0);
-                        }
-                    }
-                    Shape::Bolt(_) => {
-                        for &(name, ty) in BOLT {
-                            add(name, ty, 0);
-                        }
-                    }
-                    Shape::BoltGroup(ref g) => {
-                        add("steel:connection:type", "token", 0);
-                        add("bim:connects", "rel", 0);
-                        for &(name, ty) in BOLT_GROUP {
-                            if name != "steel:bolt:holeClearanceMm" || g.hole_clearance_mm.is_some()
-                            {
-                                add(name, ty, 0);
-                            }
                         }
                     }
                     Shape::Level { .. } => add("bim:elevationMm", "double", 0),

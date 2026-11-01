@@ -5,6 +5,7 @@
 //! This is a library boundary, not an F04 command validator or acceptance ledger.
 
 pub mod annotation;
+mod connection;
 pub mod construction;
 /// Persistent cut ordinal and retired-record identities.
 pub mod cut_history;
@@ -12,12 +13,14 @@ mod derive;
 mod edit;
 pub mod grid;
 mod guard;
+pub mod hook;
 pub mod instance;
 pub mod rebase;
 mod reference;
 mod validate;
 
 pub use guard::WriteGrant;
+pub use hook::{AuthorCx, HookedShape, ShapeHook, ValidateCx};
 pub use reference::{
     ForeignPrim, Reference, ReferenceView, SourceFormat, SourcePin, UnitsInterpretation, UpAxis,
     read_references,
@@ -351,20 +354,10 @@ pub enum Shape {
     /// A01 assembly: a grouping target of `bim:partOf` with no shape inputs, no material and no
     /// derived body. Its placement must be the identity in this slice.
     Assembly,
-    /// A06 weld: a `connection` element with explicitly authored weld properties and one
-    /// `bim:connects` record towards two distinct parts. No material and no derived body; its
-    /// placement must be the identity in this slice.
-    Weld(Weld),
-    /// A05 bolt group: a `connection` element with explicitly authored bolt properties and one
-    /// `bim:connects` record towards two distinct parts. Like a weld it has no material, no
-    /// derived body and the identity placement in this slice.
-    Bolt(Bolt),
-    /// A14.3 bolt group (bolt amendment sections 4 and 6): a `connection` element that places
-    /// one row of identical fasteners of a pinned definition between 2 to 1024 parts. Like an
-    /// A05 group it has no material, no derived body and the identity placement; the definition
-    /// travels by its digest. With `hole_mode = generate` (A14.4) the connected plates carry
-    /// the group-owned hole records this group decides.
-    BoltGroup(BoltGroup),
+    /// An element whose shape belongs to a discipline (#795): its kind, attributes and bounds
+    /// are answered by the shape's own hook. The weld, the A05 bolt group and the A14.3 bolt
+    /// group are built with [`Shape::weld`], [`Shape::bolt`] and [`Shape::bolt_group`].
+    Discipline(HookedShape),
     /// T01 grid, with no authored engineering body.
     Grid(beamcraft_model::grid::Grid),
     /// T02 construction object: a helper point, line, circle or plane with no engineering body,
@@ -390,9 +383,7 @@ impl Shape {
             Self::LoftedPlate { .. }
             | Self::Instance { .. }
             | Self::Assembly
-            | Self::Weld(_)
-            | Self::Bolt(_)
-            | Self::BoltGroup(_)
+            | Self::Discipline(_)
             | Self::Grid(_)
             | Self::Construction(_)
             | Self::Annotation(_)
@@ -1269,7 +1260,7 @@ pub(super) fn element_path(id: &str, category: ElementCategory) -> Result<String
 fn shape_category(shape: &Shape) -> ElementCategory {
     match shape {
         Shape::Assembly => ElementCategory::Assembly,
-        Shape::Weld(_) | Shape::Bolt(_) | Shape::BoltGroup(_) => ElementCategory::Connection,
+        Shape::Discipline(hook) => hook.0.category(),
         Shape::Level { .. } => ElementCategory::Level,
         Shape::Grid(_) => ElementCategory::Grid,
         Shape::Construction(_) => ElementCategory::Construction,
@@ -1297,7 +1288,7 @@ fn change_path(id: &str, input: &Prepare, prims: &[Prim]) -> Result<String, Diag
 }
 /// Resolve a relationship by identity before checking its semantic kind. A missing identity
 /// retains its expected-category path so the candidate reports a dangling relationship.
-fn target_path(
+pub(super) fn target_path(
     id: &str,
     category: ElementCategory,
     input: &Prepare,
