@@ -85,8 +85,9 @@ resolve as explicitly unresolved — that is a projection outcome, not an admiss
 - placed views violating the paper bounds above, colliding with any document-object, drawn
   object or sibling paper-object UUID (checked in both replacement directions);
 - section cuts that are nonfinite or beyond the model coordinate cap, and details whose
-  region centre or radius is nonfinite, non-positive or beyond the paper cap, or whose
-  parent is not the primary view or a placed view;
+  region centre is nonfinite or beyond the paper cap, whose radius is nonfinite,
+  non-positive or beyond the paper cap, or whose parent is not the primary view or a
+  placed view;
 - paper objects (placed views, sections, details, drawn objects and layers) together
   exceeding the one-page intent (`MAX_INTENT_PAGE_ITEMS`, 64 prims), even when each
   collection is under its own cap;
@@ -150,10 +151,10 @@ stored objects or the engineering model.
 
 Admission refuses a drawn object whose layer the same replacement does not define, so no
 admitted state ever holds a dangling layer reference. `Drawing::with_drafting` replaces layers
-and drawn objects as one atomic intent operation. Layer UUIDs are pairwise distinct and distinct
-from the document, placed-view and drawn-object UUIDs. Layers occupy the same one-page intent
-budget as every other paper object: the page formula counts one optional `/Drawing/Layers` scope
-plus each layer.
+and drawn objects as one atomic intent operation. Layer UUIDs are pairwise distinct and
+distinct from the document, placed-view, section, detail and drawn-object UUIDs. Layers
+occupy the same one-page intent budget as every other paper object: the page formula counts
+one optional `/Drawing/Layers` scope plus each layer.
 
 In the intent USD the layers are the canonical ordinal children `L1..Ln` of `/Drawing/Layers`
 (`drawing:id`, `drawing:name`, `drawing:visible`); each drawn entity additionally carries
@@ -181,7 +182,7 @@ placement changes only through the whole-document intent operations `Drawing::wi
 in one operation), never as a side effect of model or drafting edits.
 
 Identity discipline mirrors the drawn objects: every paper object's UUID — placed view,
-section, detail or drawn object — is pairwise distinct and distinct from the
+section, detail, drawn object or layer — is pairwise distinct and distinct from the
 drawing/view/dimension UUIDs, in both replacement directions.
 
 A **section view** (`SectionSpec`) is a cut plane perpendicular to its basis's depth axis
