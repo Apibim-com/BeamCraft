@@ -9,10 +9,12 @@
         together ran every listed test exactly once, nothing was left out by a filter other
         than `#[ignore]`, and the ignored tests are exactly the ones named in IGNORED.txt.
 
-    ci-gate.py jobs --event EVENT --needs NEEDS.json --workflow ci.yml
+    ci-gate.py jobs --event EVENT [--prose true|false] --needs NEEDS.json --workflow ci.yml
         NEEDS.json is `toJSON(needs)` of the `ci-ok` job. Passes only when every job succeeded,
         except the jobs this event is allowed to skip, and when `ci-ok` waits for every other
-        job of the workflow, so a new job cannot bypass the gate.
+        job of the workflow, so a new job cannot bypass the gate. `--prose true` (a pull request
+        that changes only prose, tools/ci-changes.py) allows skipping the Rust builds and tests
+        and requires `docs-checks` instead.
 
 Standard library only, so it runs on any runner's Python 3 without installing anything.
 """
@@ -30,6 +32,27 @@ import xml.etree.ElementTree as ET
 ALLOWED_SKIPS = {
     "pull_request": {"test-archive-windows", "test-windows"},
 }
+# The Rust builds and tests a prose-only pull request skips (tools/ci-changes.py), and the job
+# that runs only for such a pull request. Prose is honoured on pull requests only.
+PROSE_SKIPS = {
+    "quality",
+    "test-archive-ubuntu",
+    "test-ubuntu",
+    "test-archive-macos",
+    "test-macos",
+    "build-timings",
+    "wasm",
+}
+PROSE_ONLY = {"docs-checks"}
+
+
+def allowed_skips(event, prose):
+    allowed = set(ALLOWED_SKIPS.get(event, set()))
+    if event == "pull_request" and prose:
+        allowed |= PROSE_SKIPS
+    else:
+        allowed |= PROSE_ONLY
+    return allowed
 
 
 def fail(message):
@@ -180,7 +203,7 @@ def check_jobs(args):
         fail(f"cannot read {args.needs}: {error}")
     if not isinstance(needs, dict):
         fail(f"{args.needs} is not the `needs` object")
-    allowed = ALLOWED_SKIPS.get(args.event, set())
+    allowed = allowed_skips(args.event, args.prose == "true")
     failed = False
     lines = []
     for job, info in sorted(needs.items()):
@@ -213,6 +236,7 @@ def main(argv):
     jobs.add_argument("--needs", required=True)
     jobs.add_argument("--workflow", required=True)
     jobs.add_argument("--gate", default="ci-ok")
+    jobs.add_argument("--prose", choices=("true", "false"), default="false")
     args = parser.parse_args(argv)
     return check_tests(args) if args.command == "tests" else check_jobs(args)
 
