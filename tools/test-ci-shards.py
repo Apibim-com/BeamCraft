@@ -112,6 +112,24 @@ class ShardsCase(unittest.TestCase):
         self.assertEqual(len(times), 3)
         self.assertLessEqual(max(times) - min(times), 20.0)
 
+    def test_a_test_in_several_reports_takes_its_mean_duration(self):
+        # 10 s in one run and 4 s in the other is 7 s: below --heavy 8, so not a group of its own.
+        def report(path, seconds):
+            cases = [(b, n, seconds if n == "suite1::case0" else t) for b, n, t in CASES]
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(junit(cases))
+        other = os.path.join(self.dir.name, "other.xml")
+        report(self.report, 10.0)
+        report(other, 4.0)
+        for reports, heavy in (([self.report, other], False), ([self.report], True)):
+            result = self.run_script(
+                "plan", "--shards", "3", "--threads", "2", "--split", "10",
+                "--out", self.out, *reports,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            named = "test(=suite1::case0)" in " ".join(self.filters(3))
+            self.assertEqual(named, heavy, reports)
+
     def test_a_shard_count_that_does_not_match_the_plan_fails(self):
         self.plan(shards=3)
         result = self.run_script("filter", "--dir", self.out, "--shard", "1", "--shards", "4")

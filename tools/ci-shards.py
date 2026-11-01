@@ -4,8 +4,10 @@
 """Balanced CI test shards from measured test durations.
 
     ci-shards.py plan --shards N --threads T --out DIR JUNIT.xml...
-        Groups the tests of the JUnit reports: a binary with less than --split seconds of
-        tests is one group, a larger one is split by suite module, and a test of at least
+        Takes each test's mean duration over the reports it appears in, so the reports of
+        several runs give a steadier plan than one run: hosted machines differ by about 10 %,
+        and a heavy test by up to 12 s. Groups the tests: a binary with less than --split
+        seconds of tests is one group, a larger one is split by suite module, and a test of at least
         --heavy seconds is a group of its own. It deals the groups to N shards, longest
         group first, each to the shard that would finish soonest when its tests start in list
         order on T threads, as nextest starts them. It writes the filtersets of shards
@@ -40,8 +42,8 @@ def fail(message):
 
 
 def read_durations(paths):
-    """{(binary_id, test): seconds}, the largest seen when a test appears in several reports."""
-    durations = {}
+    """{(binary_id, test): seconds}, the mean when a test appears in several reports."""
+    samples = collections.defaultdict(list)
     for path in paths:
         try:
             root = ET.parse(path).getroot()
@@ -59,11 +61,10 @@ def read_durations(paths):
                     seconds = float(case.get("time", "0"))
                 except ValueError:
                     fail(f"{path}: {binary_id} {name} has no numeric time")
-                key = (binary_id, name)
-                durations[key] = max(seconds, durations.get(key, 0.0))
-    if not durations:
+                samples[(binary_id, name)].append(seconds)
+    if not samples:
         fail("the reports hold no tests")
-    return durations
+    return {key: sum(values) / len(values) for key, values in samples.items()}
 
 
 def group_key(binary_id, name, heavy, split):

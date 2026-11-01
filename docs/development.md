@@ -224,11 +224,14 @@ filtersets in `.config/ci-shards/macos/`, planned from measured test durations b
 eight `hash:` shards, which are off the critical path of a pull request.
 
 To re-plan the macOS shards when their test step times drift apart, download the
-JUnit reports of a recent run and write the plan:
+JUnit reports of two or more recent runs and write the plan. Each test gets its mean duration,
+because one run is noisy: hosted macOS machines differ by about 10 %, and a heavy test by up to
+12 s.
 
 ```sh
-gh run download <run-id> --pattern 'junit-macos-latest-*' --dir target/junit
-python3 tools/ci-shards.py plan --shards 5 --threads 3 --out .config/ci-shards/macos target/junit/*/junit.xml
+gh run download <run-id> --pattern 'junit-macos-latest-*' --dir target/junit/a
+gh run download <other-run-id> --pattern 'junit-macos-latest-*' --dir target/junit/b
+python3 tools/ci-shards.py plan --shards 5 --threads 3 --out .config/ci-shards/macos target/junit/*/*/junit.xml
 python3 tools/test-ci-shards.py
 ```
 
