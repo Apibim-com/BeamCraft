@@ -12,7 +12,7 @@ use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, Element, Placement, PlateShape, Prepare, Shape, schema_identity,
+    Author, Change, EditTargets, Element, Placement, Prepare, schema_identity,
 };
 use session::Refusal;
 use session::pipeline::{
@@ -22,6 +22,8 @@ use session::pipeline::{
 use steel::engine::plate_draft::{
     DraftAdmission, PlateDraft, UnsupportedPlate, admit_create_plate_draft,
 };
+use steel::layer as steel_layer;
+use steel::layer::PlateShape;
 
 /// Saved unsupported input with its committed revision and replay result.
 #[derive(Debug, Clone, PartialEq)]
@@ -145,7 +147,7 @@ pub fn create_plate_draft(
                 Change::Create(Element {
                     id: authored.id.to_string(),
                     name: authored.name.clone(),
-                    shape: Shape::plate(PlateShape {
+                    shape: steel_layer::plate(PlateShape {
                         contour_mm: authored.contour_points_mm.clone(),
                         thickness_mm: authored.thickness_mm,
                         thickness_side: authored.thickness_side,

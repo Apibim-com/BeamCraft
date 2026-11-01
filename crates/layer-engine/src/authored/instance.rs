@@ -3,12 +3,15 @@
 
 //! P11 canonical definition links and bounded materialization for model readers.
 use super::*;
-use beamcraft_model::id::ElementId;
 use openusd::sdf;
-use steel::model::instance::{InstanceLink, MAX_PART_INSTANCES, PartKind};
 
 /// Persistent shared-definition relationship name.
 pub const RELATIONSHIP: &str = "bim:instanceOf";
+
+/// The command-side cap on part instances of one stage. It mirrors the model's stored cap
+/// (`steel::model::instance::MAX_PART_INSTANCES`), which the steel layer reports its links
+/// against, so a batch and its loaded stage fan out to the same bound.
+const MAX_PART_INSTANCES: usize = 256;
 
 fn text<'a>(p: &'a Prim, name: &str) -> Option<&'a str> {
     match p
@@ -22,7 +25,7 @@ fn text<'a>(p: &'a Prim, name: &str) -> Option<&'a str> {
         _ => None,
     }
 }
-fn owned_part(p: &Prim) -> Option<PartKind> {
+fn owned_part(p: &Prim) -> Option<&'static str> {
     if p.sources.is_empty()
         || p.sources.iter().any(|s| !s.owned)
         || text(p, "bim:schemaVersion") != Some("0.1.0")
@@ -30,54 +33,17 @@ fn owned_part(p: &Prim) -> Option<PartKind> {
     {
         return None;
     }
-    PartKind::parse(text(p, "bim:elementKind")?)
+    disciplines::registered()
+        .into_iter()
+        .find_map(|discipline| discipline.part_kind(text(p, "bim:elementKind")?))
 }
 /// Whether a property belongs to the shared shape/operation definition.
+/// Whether a property belongs to the shared shape/operation definition of a part instance
+/// (P11); answered by the registered disciplines.
 pub fn shared_property(name: &str) -> bool {
-    matches!(
-        name,
-        "steel:plate:contourPointsMm"
-            | "steel:plate:thicknessMm"
-            | "steel:plate:thicknessSide"
-            | "steel:plate:cornerVertex"
-            | "steel:plate:cornerKind"
-            | "steel:plate:cornerD1Mm"
-            | "steel:plate:cornerD2Mm"
-            | "steel:plate:cornerRadiusMm"
-            | "steel:plate:bendOperationId"
-            | "steel:plate:bendKind"
-            | "steel:plate:bendLineAMm"
-            | "steel:plate:bendLineBMm"
-            | "steel:plate:bendRadiusMm"
-            | "steel:plate:bendRadiusBMm"
-            | "steel:plate:bendAngleRad"
-            | "steel:plate:holePointsMm"
-            | "steel:plate:holeVertexCounts"
-            | "steel:hole:pointsMm"
-            | "steel:hole:vertexCounts"
-            | "steel:hole:operationIds"
-            | "steel:hole:ordinals"
-            | "steel:hole:kinds"
-            | "steel:hole:generatedBy"
-            | "steel:member:pathType"
-            | "steel:member:rollRad"
-            | "steel:member:planePosition"
-            | "steel:member:planeOffsetMm"
-            | "steel:member:depthPosition"
-            | "steel:member:depthOffsetMm"
-            | "steel:member:startOffsetMm"
-            | "steel:member:endOffsetMm"
-            | "bim:axisPointsMm"
-            | "steel:cut:operationId"
-            | "steel:cut:ordinal"
-            | "steel:cut:pointMm"
-            | "steel:cut:normal"
-            | "steel:cut:keep"
-            | "steel:cut:nextOrdinal"
-            | "steel:cut:retiredOperationIds"
-            | "steel:hole:nextOrdinal"
-            | "steel:hole:retiredOperationIds"
-    )
+    disciplines::registered()
+        .iter()
+        .any(|discipline| discipline.shared_property(name))
 }
 /// Whether a relationship belongs to the shared definition.
 pub fn shared_relationship(name: &str) -> bool {
@@ -93,8 +59,7 @@ pub fn definition<'a>(p: &Prim, prims: &'a [Prim]) -> Result<Option<&'a Prim>, D
         || text(p, "bim:schemaVersion") != Some("0.1.0")
         || text(p, "bim:geometryMode") != Some("parametric")
         || !text(p, "bim:elementKind").is_some_and(|k| {
-            PartKind::parse(k).is_some()
-                || matches!(k, "assembly" | "connection" | "level" | "grid" | "helper")
+            is_part_kind(k) || matches!(k, "assembly" | "connection" | "level" | "grid" | "helper")
         })
     {
         return Ok(None);
@@ -131,10 +96,11 @@ pub fn definition<'a>(p: &Prim, prims: &'a [Prim]) -> Result<Option<&'a Prim>, D
     Ok(Some(source))
 }
 
-/// Checks a creation's reference to an existing canonical owned part.
-pub(super) fn validate_source<'a>(
+/// Checks a creation's reference to an existing canonical owned part; the seam the instance
+/// shape hook validates its definition through.
+pub fn validate_source<'a>(
     id: &str,
-    kind: PartKind,
+    kind: &str,
     prims: &'a [Prim],
 ) -> Result<&'a Prim, Diagnostic> {
     let path = element_path(id, ElementCategory::Part)?;
@@ -150,31 +116,26 @@ pub(super) fn validate_source<'a>(
     Ok(source)
 }
 
-/// Persistent links of a validated stage. Definitions are canonical parts, never chains.
-pub fn links(prims: &[Prim]) -> Result<Vec<InstanceLink>, Diagnostic> {
-    let mut out = Vec::new();
+/// Caps the part instances of a stage at [`MAX_PART_INSTANCES`]; the platform half of the cap
+/// the steel layer reports its links against. The instance identities themselves are a
+/// discipline concern and stay with the links.
+pub(super) fn cap(prims: &[Prim]) -> Result<(), Diagnostic> {
+    let mut count = 0usize;
     for p in prims {
-        if let Some(source) = definition(p, prims)? {
-            if out.len() >= MAX_PART_INSTANCES {
+        if definition(p, prims)?.is_some() {
+            if count >= MAX_PART_INSTANCES {
                 return Err(fail(ErrorCode::LimitExceeded, "too many part instances"));
             }
-            let id = |p: &Prim| {
-                ElementId::parse(p.element_id.as_deref().ok_or_else(invalid)?)
-                    .map_err(|_| invalid())
-            };
-            out.push(InstanceLink {
-                instance: id(p)?,
-                definition: id(source)?,
-            });
+            count += 1;
         }
     }
-    Ok(out)
+    Ok(())
 }
 
 /// Clones a bounded reader projection with shared inputs resolved onto each instance. This is
 /// transient evaluation state; the authored USD stores the definition once and retains links.
 pub fn resolve(prims: Vec<Prim>) -> Result<Vec<Prim>, Diagnostic> {
-    links(&prims)?;
+    cap(&prims)?;
     // Charge expanded shared values before cloning, including nested point arrays. Unknown
     // properties are never expanded. One million values is a hard cap independent of disk size.
     let mut charge = 0usize;
@@ -240,7 +201,9 @@ pub fn resolve(prims: Vec<Prim>) -> Result<Vec<Prim>, Diagnostic> {
     Ok(out)
 }
 
-pub(super) fn author(
+/// Authors the `bim:instanceOf` relationship of one instance towards its canonical part; the
+/// seam the instance shape hook writes through.
+pub fn author(
     data: &mut sdf::Data,
     path: &str,
     source: &str,

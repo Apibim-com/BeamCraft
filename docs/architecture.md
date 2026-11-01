@@ -43,8 +43,8 @@ may link a discipline.
 | 2 | `ifc` | IFC4 STEP writer and GlobalId encoding; no file system |
 | 3 | `engine` | Queries and presentation: picking, snapping, the view snapshot, scenes, drawings, views, filters, schedules, grids, levels, assemblies |
 | 4 | `host` | Disk: content-addressed blobs, atomic revision commit, journal and recovery, workspaces' storage, coordinator, compaction |
-| 4 | `steel` | The structural steel discipline: plates, members, holes, bends, welds, bolts and fasteners, as `steel::model` (commands, sections, fasteners, instances), `steel::kernel` (bodies) and `steel::engine` (edits, copies, quantities). Kind `native` for now; it becomes `discipline` when the move described in "Platform and disciplines" is done (#795) |
-| 5 | `layer-engine` | Our wrapper over `openusd`: reads and writes the project's USD layers, the schema, validation and the UUID index. It owns the **hook traits** through which a discipline writes and reads its elements; the steel implementations of those hooks still live in this crate and it still depends on `steel` for their types (#795) |
+| 5 | `layer-engine` | Our wrapper over `openusd`: reads and writes the project's USD layers, the schema, validation and the UUID index. Authors and validates elements through discipline hooks (#795), so no discipline code lives here |
+| 6 | `steel` | The structural steel discipline: plates, members, holes, bends, welds, bolts and fasteners with their commands (`model`), bodies (`kernel`), engine (`engine`) and the steel half of the layer engine (the hooks behind `Shape::Discipline`/`Change::Discipline` and the facade of free constructors the apps call), and the typed operations on a part (`steel::engine::part`). Kind `discipline`: the platform never depends on it, only the apps do |
 | 6 | `session` | Platform state that is not storage: settings, recent projects, project folders and environments (#763); later the command registry and a long-lived session over a verified revision. Discipline-agnostic, hence no `beamcraft-` prefix |
 | 7 | `beamcraft-cli` (binary `beamcraft`) | Every user command; ties the crates together |
 | 7 | `beamcraft-ui` (binary `beamcraft-ui`) | Native window: viewport, tools, properties panel |
@@ -74,9 +74,9 @@ flowchart TD
     host["host<br/>store, commit, journal"] --> engine
     host --> json
     engine["engine<br/>applies commands"] --> kernel
-    le["layer-engine<br/>USD read/write, hook traits"] --> model
-    le -. "until the move (#795)" .-> steel
+    le["layer-engine<br/>USD read/write"] --> model
     steel["steel<br/>plates, members, bolts, welds"] --> engine
+    steel --> le
     steel --> kernel
     steel --> model
     ifc["ifc<br/>IFC4 writer"] --> model
@@ -86,8 +86,8 @@ flowchart TD
     model["model<br/>ids, commands, rules"] --> geom["geom<br/>math"]
 ```
 
-Arrows point from a crate to what it uses. The dotted `layer-engine → steel` edge is the one that
-is still wrong by the rule above; "Platform and disciplines" says how it goes away.
+Arrows point from a crate to what it uses. No platform crate points at `steel`: the discipline
+sits above `layer-engine` and only the apps link it ("Platform and disciplines").
 Some direct edges to `model` and `geom` are left out for readability; the exact table is in the
 [module boundaries](contracts/f08-module-boundaries-v0.1.md).
 
@@ -95,65 +95,77 @@ Some direct edges to `model` and `geom` are left out for readability; the exact 
 
 This is the result of the element-interface work ([#795](https://github.com/Apibim-com/BeamCraft/issues/795);
 design in [`design/element-interface.md`](design/element-interface.md), audit in
-[`design/platform-and-steel.md`](design/platform-and-steel.md)). Its goal: no platform crate
-names a steel kind or depends on `steel`, so a second discipline is added without editing the
-platform. Constraint that never moves: the stored `steel:*` attributes, the schema descriptor
+[`design/platform-and-steel.md`](design/platform-and-steel.md)). Its goal, now met: no platform
+crate names a steel kind or depends on `steel`, so a second discipline is added without editing
+the platform. Constraint that never moves: the stored `steel:*` attributes, the schema descriptor
 and every store written today stay byte-identical, and no refusal code or command output changes.
 
-**Where the trade code lives.** All steel code of `model`, `kernel` and `engine` is the crate
-`steel`, one module per layer it extends. The platform crates do not depend on it. What stays in
-the platform is what a second trade could use unchanged: identities, errors, limits, grids,
-levels, assemblies, the box primitive and its demo scenes, queries, scenes, drawings, views,
-filters, schedules and the numbering framework.
+**Where the trade code lives.** All steel code is the crate `steel`, kind `discipline`, one
+module per layer it extends: `steel::model`, `steel::kernel`, `steel::engine` and `steel::layer`.
+It depends on the platform (`model`, `kernel`, `engine`, `layer-engine`); no platform crate
+depends on it, and only the apps link it. What stays in the platform is what a second trade
+could use unchanged: identities, errors, limits, grids, levels, assemblies, the box primitive and
+its demo scenes, queries, scenes, drawings, views, filters, schedules and the numbering
+framework.
 
-**Two seams, not one trait.** Reading the code showed two different places where the platform
-branched on the kind of element, and each gets a form that fits it:
+**Three seams, each in the form that fits it.** Reading the code showed three different places
+where the platform branched on the kind of element:
 
-| Seam | What it is | Form | State |
-|------|-----------|------|-------|
-| **Persistence** (USD layers) | creating, editing, validating and indexing an element in `authored.usda` | Write side: trait objects carried in the change. Read side: a registry of disciplines | Hooks and registry done; the steel half still sits in `layer-engine` |
-| **Typed operations** (engine) | copy, edit, mirror, array, evaluate body and quantities, footprint | A small trait per element kind, implemented by `steel` for plate and member | Not started; today one function pair per kind (`copy_plate`/`copy_member`, ...) |
+| Seam | What it is | Form |
+|------|-----------|------|
+| **Persistence** (USD layers) | creating, editing, validating and indexing an element in `authored.usda` | Write side: trait objects carried in the change. Read side: a registry of disciplines the apps install |
+| **Typed operations** | copy, array, edit, evaluate body and quantities of a part | One steel type, `steel::engine::part::PartRecord`, that the command adapters call without naming the kind |
+| **Kind behaviour** (engine queries) | which kinds are parts, which carry an axis | Properties of the F10 vocabulary, `ElementKind::is_part` and `is_linear_member` |
 
-**Persistence, write side (done, #803).** `Shape` and `Change` in `layer-engine` keep their
-platform variants (assembly, grid, construction, annotation, level; label, placement, material,
-attribute, delete, ...). Everything that belongs to a trade is one variant each,
-`Shape::Discipline` and `Change::Discipline`, holding a hook (`ShapeHook`, `ChangeHook`). The hook
-answers what the platform used to `match` on: the kind token and prim category, the attributes it
-writes (in today's order, so the layer bytes do not change), the engineering bounds, the
-finiteness check, the budget charge, the attribute names for the footprint check, the kinds an
-edit may target, and the semantic write groups it reads and writes. The platform keeps the
-lifecycle, the label, the pose, the material link and the budgets. Steel's shapes and edits
-(weld, bolt, bolt group, member, plate, lofted plate, P11 instance; contour, thickness, corners,
-bends, cuts, holes, axis, roll, profile) are built through constructors such as `Shape::weld` or
-`Change::bolt_group`, never by naming a steel variant.
+**Persistence, write side.** `Shape` and `Change` in `layer-engine` keep their platform variants
+(assembly, grid, construction, annotation, level; label, placement, material, attribute, delete,
+...). Everything that belongs to a trade is one variant each, `Shape::Discipline` and
+`Change::Discipline`, holding a hook (`ShapeHook`, `ChangeHook`). The hook answers what the
+platform used to `match` on: the kind token and prim category, the attributes it writes (in
+today's order, so the layer bytes do not change), the engineering bounds, the finiteness check,
+the budget charge, the attribute names for the footprint check, the kinds an edit may target, and
+the semantic write groups it reads and writes. The platform keeps the lifecycle, the label, the
+pose, the material link and the budgets. The hook implementations live in `steel::layer`, and the
+apps build steel shapes and edits through its free constructors (`steel::layer::plate`,
+`steel::layer::bolt_group`, `steel::layer::part_shape`, ...), never by naming a variant. What the
+hooks need from the platform is the `pub` surface `authored::seam`.
 
-**Persistence, read side (done, #805).** A loaded layer has no element object to carry
-behaviour, so reading goes through a registry of `Discipline`s (`layer-engine`,
-`authored/disciplines.rs`). A discipline answers which `bim:elementKind` tokens are its parts,
-how to validate one part prim and one `connection` prim, and which semantic write group a property
-name belongs to (used by rebase). The validator, the UUID index and the rebase group table ask the
-registry instead of matching `plate`, `beam` and `column`. Today the registry holds the built-in
-steel discipline; the apps will install it from the `steel` crate once the move below is done
-(`steel::install()`, idempotent, a stub for platform tests). A process-wide registry was chosen
-over threading one through every `Author::open`, `Reader` and `element_index` call (28, 51 and 17
-call sites outside `layer-engine`). With a second discipline, `connection` prims need an
-ownership test per prim; today they go to the first registered discipline.
+**Persistence, read side.** A loaded layer has no element object to carry behaviour, so reading
+goes through a registry of `Discipline`s (`layer-engine`, `authored/disciplines.rs`). A
+discipline answers which `bim:elementKind` tokens are its parts, how to validate one part prim and
+one `connection` prim, how to read back a definition it owns, which attributes a whole-record
+delete removes and which semantic write group a property name belongs to (used by rebase). The
+validator, the UUID index and the rebase group table ask the registry instead of matching
+`plate`, `beam` and `column`. The registry starts empty: both apps call `steel::layer::install()`
+at start (idempotent, deduplicated by pointer, registration order kept), and a platform test
+without it reads every part kind as inert vocabulary. A process-wide registry was chosen over
+threading one through every `Author::open`, `Reader` and `element_index` call (28, 51 and 17 call
+sites outside `layer-engine`). With a second discipline, `connection` prims need an ownership test
+per prim; today they go to the first registered discipline.
 
-**What is left for `discipline` (the rest of #795).**
+**Typed operations.** Every operation exists once per kind in `steel::engine`
+(`copy_plate`/`copy_member`, the P11 instance pair, `array_plate_copies`/`array_member_copies`,
+`patch_plate`/`patch_member`, the two evaluations and quantity records). `PartRecord` (a plate
+record or a member record) chooses between them, so the CLI's `copy`, `array` and
+`update-element` adapters find, copy, array, patch and re-evaluate a part, and write its mesh,
+without naming its kind. The operations are the intersection of the pairs; what exists for one
+kind only (contour edits, corners, bends, lofted plates, welds, bolts) stays behind its own
+commands. The interface is a steel type, not a platform trait, because its inputs
+(`CopyElement`, `ArrayElements`, `ElementPatch`) are steel commands and its only callers are app
+adapters: a platform trait would first need `ElementPatch` split into a generic half and a
+discipline payload, which puts the `BeamCraft/P04/UpdateElement/v2` fingerprint bytes at risk and
+removes no crate edge. That split is due when a second discipline shares the copy and edit
+commands.
 
-1. Move the steel half of `layer-engine` into `steel` verbatim: the hook implementations
-   (`connection`, `member`, `plate`, `plate_change`, `instance_shape`), the `steel:*` arms of
-   `validate.rs` and the rebase group table, the profile and fastener definition resources, and
-   the steel tests. The helpers they use become a `pub` facade of `layer-engine` ("Shared with the
-   steel crate").
-2. Flip the Cargo edge: `steel` depends on `layer-engine`, not the reverse. A discipline above the
-   platform is what the crate kind means; moving the code is cheaper and safer than rewriting
-   every writer against a neutral attribute list.
-3. The apps install the discipline at start; the F08 table and `beamcraft-boundaries` follow, and
-   `steel` becomes kind `discipline`.
-4. `SCHEMA_DESCRIPTOR` stays one constant in `layer-engine`. It is the identity of the stored
-   format, not a dependency on the `steel` crate; splitting it into per-discipline segments is a
-   separate, byte-risky change that only a second discipline needs.
+**Kind behaviour.** `ElementKind` is the frozen F10 registry (sixteen kinds, including reserved
+ones such as wall or pipe); it is vocabulary, and a change needs a new vocabulary version. The
+engine no longer decides behaviour by matching `Plate`, `Beam` or `Column`: the picking switch
+asks `is_part`, the member-axis rule and the `extrusion:` role length ask `is_linear_member`.
+What still names the steel kinds is format, not behaviour: the F06 feature-id body tokens
+(`plate`, `member`), the `/World/Steel/...` prim paths and the part category in `model::prim`, the
+numbering series names, and `SCHEMA_DESCRIPTOR`, which stays one constant in `layer-engine`
+because it is the stored format's identity (splitting it into per-discipline segments is a
+byte-risky change only a second discipline needs).
 
 ```mermaid
 flowchart TD
@@ -167,33 +179,11 @@ flowchart TD
     platform --> engine
 ```
 
-*Target after steps 1 to 3: the arrow between `layer-engine` and `steel` points the other way, and
-only the apps link `steel`.*
-
-**Typed operations (follow-up, not started).** After the move, a trait in the platform
-(`ElementKindOps`, names settled in its own slice) is implemented by `steel` for plate and
-member. It is cut from what the pairs share today and nothing more: copy (also as P11 instance),
-apply a patch, mirror the local part, array, evaluate body and quantities, footprint. What exists
-for one kind only (contour edits, corners, bends, lofted plates, welds, bolts, fabrication) stays
-in `steel` behind its own commands. Its callers are few: `copy.rs`, `array.rs`, `edit.rs` and the
-evaluation in `plate.rs` of the CLI, so it thins the CLI rather than removing a crate edge. It
-needs `ElementPatch` split first: the generic fields (`name`, `class`, `material`, `level`,
-placement, `rotate`, `mirror`, `move`) stay in the platform, the kind-specific ones (corners,
-contour, thickness, thickness side, axis, profile) become a discipline-owned payload. The
-content fingerprint `BeamCraft/P04/UpdateElement/v2` keeps its byte layout, and a payload that
-does not fit the kind is still `UNSUPPORTED_PROPERTY` with the same field and message.
-
-**The kind vocabulary stays closed.** `ElementKind` is the frozen F10 registry (sixteen kinds,
-including reserved ones such as wall or pipe); it is vocabulary, not behaviour, and a change needs
-a new vocabulary version. What the platform must stop doing is deciding behaviour by matching
-`Plate`, `Beam` or `Column`: the picking switch, the "member axes" rule, the `extrusion:` role
-length, and the part category and the `/World/Steel/` prefixes in `model::prim`. These become
-kind properties answered by the registered discipline. They are still in the platform today.
-
-**Known limits.** The interface is cut from plate and member only; a second discipline will widen
-it, which is a platform change by design. A wrong down-cast inside `steel` must be an internal
-error with a stable code, never a panic. Command fingerprints are stored in the journal, so a
-changed layout would turn a replayed operation into `OP_ID_REUSE`; every slice keeps the layout.
+**Known limits.** The interfaces are cut from plate and member only; a second discipline will
+widen them, which is a platform change by design. A wrong kind pairing inside `steel` is an
+internal error with a stable code, never a panic. Command fingerprints are stored in the journal,
+so a changed layout would turn a replayed operation into `OP_ID_REUSE`; every change here kept the
+layout.
 
 ## What happens on a command
 
@@ -242,15 +232,17 @@ The window's own state is not a CLI command. Settings, recent projects, project 
 next free project name and the list of environments come from `session`, called in the window's
 process on a worker thread; the cursor aids (picking, snapping) call the engine on the snapshot on
 screen. The window therefore opens no project layers, but it reads the small environment layers
-through `session`. It never depends on `beamcraft-cli`: an app does not depend on an app.
+through `session`, so it installs the steel discipline at start as the CLI does. It never depends
+on `beamcraft-cli`: an app does not depend on an app.
 
 The direction is one command layer under both apps, as in a headless-first design where every
 action is a registered command that the CLI, the window and agents all call: the commands now in
 the CLI move into libraries below the apps (platform crates plus one crate per discipline), the
 CLI shrinks to argument parsing and printing, and `session` gains the registry and a long-lived
 session over a verified revision. Until then modelling commands and `export-view` stay processes.
-The steel decoders, `CopiedElement` and `registry.rs` are still in the CLI; they move to `steel`
-after the typed-operations trait of "Platform and disciplines".
+The steel decoders and `registry.rs` are still in the CLI and move with that command layer; the
+CLI already reaches the per-kind operations only through `PartRecord` ("Platform and
+disciplines").
 
 ## Geometry
 

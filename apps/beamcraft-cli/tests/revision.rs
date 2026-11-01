@@ -20,8 +20,8 @@ use beamcraft_host::{
 use beamcraft_json::{Json, Limits};
 use beamcraft_layer_engine::{
     authored::{
-        Author, Change, Decision, Definition, EditTargets, Element, MemberKind, MemberShape, Mesh,
-        Placement, PlateShape, Prepare, Resource, Shape, schema_identity, validate_layers,
+        Author, Change, Decision, Definition, EditTargets, Element, Mesh, Placement, Prepare,
+        Resource, schema_identity, validate_layers,
     },
     index::{Completeness, ElementIndex, IndexBuilder},
     *,
@@ -37,6 +37,8 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
     time::{Duration, Instant},
 };
+use steel::layer as steel_layer;
+use steel::layer::{MemberKind, MemberShape, PlateShape};
 
 const PROJECT: &str = "0199e7a0-0000-7000-8000-000000000001";
 const WORKSPACE: &str = "0199e7a0-0000-7000-8000-000000000002";
@@ -92,6 +94,7 @@ fn digest(bytes: &[u8]) -> ContentDigest {
     Sha256::digest(bytes).unwrap()
 }
 fn control() -> Control {
+    steel_layer::install();
     Control {
         cancellation: Cancellation::default(),
         deadline: Instant::now() + Duration::from_secs(20),
@@ -158,12 +161,7 @@ fn pose() -> Placement {
 }
 fn resources() -> Vec<Resource> {
     vec![
-        Resource::new(Definition::RectangleProfile {
-            width_mm: 100.0,
-            height_mm: 50.0,
-            section: Default::default(),
-        })
-        .unwrap(),
+        Resource::new(steel_layer::rectangle(100.0, 50.0, Default::default())).unwrap(),
         Resource::new(Definition::Material {
             density_kg_m3: Some(1000.0),
             grade: None,
@@ -179,7 +177,7 @@ fn authored_batch() -> Vec<Change> {
         Change::Create(Element {
             id: PLATE.into(),
             name: "Plate".into(),
-            shape: Shape::plate(PlateShape {
+            shape: steel_layer::plate(PlateShape {
                 contour_mm: vec![
                     [0.0, 0.0, 0.0],
                     [1000.0, 0.0, 0.0],
@@ -200,7 +198,7 @@ fn authored_batch() -> Vec<Change> {
         Change::Create(Element {
             id: MEMBER.into(),
             name: "Member".into(),
-            shape: Shape::member(MemberShape {
+            shape: steel_layer::member(MemberShape {
                 kind: MemberKind::Beam,
                 curved: false,
                 axis_mm: vec![[0.0, 0.0, 0.0], [0.0, 0.0, 2000.0]],
