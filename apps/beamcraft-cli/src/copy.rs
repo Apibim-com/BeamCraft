@@ -464,10 +464,7 @@ fn copy_with_mode(
                         MemberKind::Column => steel::model::instance::PartKind::Column,
                     },
                 };
-                element.shape = Shape::Instance {
-                    kind,
-                    definition: canonical.to_string(),
-                };
+                element.shape = Shape::instance(kind, canonical.to_string());
                 element.material = None;
             }
         }
