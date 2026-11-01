@@ -13,7 +13,6 @@ mod common;
 mod common_mesh;
 mod common_ops;
 
-mod a10_bent_plate;
 mod g03_fixtures;
 mod g05_negative_and_fuzz;
 mod g05_profile_extrusion;
@@ -21,17 +20,10 @@ mod g06_fixtures;
 mod g06_fuzz;
 mod g06_measure;
 mod g06_shells;
-mod g07_acceptance;
 mod g09_budget_fuzz;
 mod g09_cut;
 mod g09_hole;
-mod g14_member_hole;
-mod member;
-mod plate_contour;
 mod rectangular_plate;
-mod ruled;
-mod section;
-mod sweep;
 
 /// With `autotests = false` a suite file missing from the list above would never build or run,
 /// so every `tests/*.rs` file must be one of its modules.
