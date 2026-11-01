@@ -21,3 +21,12 @@ default-filter = '''not (
     or (package(beamcraft-host) and (binary(recovery) or binary(revision) or binary(compaction)))
     or (package(beamcraft-kernel) and (binary(g09_budget_fuzz) or binary(g05_profile_extrusion)))
 )'''
+
+[profile.ci]
+# CI's profile: everything the `default` profile runs, with no filter of its own, plus a
+# JUnit report per shard. The `ci-ok` job checks those reports against the full test list
+# (tools/ci-gate.py), so a shard that loses tests, or a filter that drops some, fails CI.
+retries = 0
+
+[profile.ci.junit]
+path = "junit.xml"

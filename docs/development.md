@@ -180,6 +180,14 @@ cargo deny check
   needs `cargo install cargo-deny --locked`. A check that could not run is not a passed check.
 - **Offline.** Add `--offline --locked` to Cargo commands to work without downloads; never update
   `Cargo.lock` as a side effect.
+- **Completeness gate.** `ci-ok` is the one job to require on `master`. It fails unless every
+  other job succeeded (pull requests may skip the Windows jobs) and, on each platform that ran,
+  the test shards together ran every test that `cargo nextest list --profile ci` lists exactly
+  once, with nothing filtered out. The shards run nextest's `ci` profile, which adds a JUnit
+  report to the `default` profile and nothing else. A test is ignored only by naming it in
+  `.config/ci-ignored.txt`, so `#[ignore]` on a test is a visible change to that file. The checks
+  live in `tools/ci-gate.py` (Python 3 standard library); test it with
+  `python3 tools/test-ci-gate.py`.
 
 The independent-reader gate runs in every `cargo test`: run
 `cargo test -p beamcraft-cli --test cli -- independent_reader:: reference_reader:: --nocapture`.

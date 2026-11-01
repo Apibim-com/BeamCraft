@@ -95,6 +95,18 @@ jobs:
       - name: Test documentation
         run: cargo test --workspace --doc --locked
 
+      # The full test list of this platform, for the `ci-ok` completeness check. It lists the
+      # binaries just built, so it needs no second build and no archive extraction.
+      - name: List the tests
+        shell: bash
+        run: cargo nextest list --workspace --locked --profile ci --message-format json > test-list.json
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-list-ubuntu-latest
+          path: test-list.json
+          if-no-files-found: error
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nextest-archive-ubuntu-latest
@@ -131,7 +143,16 @@ jobs:
 
       - name: Run archived test partition
         shell: bash
-        run: mkdir -p target/tmp && cargo nextest run --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --extract-overwrite --no-fail-fast --partition hash:${{ matrix.shard }}/8
+        run: mkdir -p target/tmp && cargo nextest run --profile ci --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --extract-overwrite --no-fail-fast --partition hash:${{ matrix.shard }}/8
+
+      # The `ci-ok` job checks every shard's report against the platform's test list.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: junit-ubuntu-latest-${{ matrix.shard }}
+          path: target/nextest/ci/junit.xml
+          overwrite: true
+          if-no-files-found: error
 
   test-archive-windows:
     name: build test archive (windows-latest)
@@ -161,6 +182,18 @@ jobs:
       # nextest archives do not contain rustdoc tests; keep them in the full cross-platform gate.
       - name: Test documentation
         run: cargo test --workspace --doc --locked
+
+      # The full test list of this platform, for the `ci-ok` completeness check. It lists the
+      # binaries just built, so it needs no second build and no archive extraction.
+      - name: List the tests
+        shell: bash
+        run: cargo nextest list --workspace --locked --profile ci --message-format json > test-list.json
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-list-windows-latest
+          path: test-list.json
+          if-no-files-found: error
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -193,7 +226,16 @@ jobs:
 
       - name: Run archived test partition
         shell: bash
-        run: mkdir -p target/tmp && cargo nextest run --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --extract-overwrite --no-fail-fast --partition hash:${{ matrix.shard }}/8
+        run: mkdir -p target/tmp && cargo nextest run --profile ci --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --extract-overwrite --no-fail-fast --partition hash:${{ matrix.shard }}/8
+
+      # The `ci-ok` job checks every shard's report against the platform's test list.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: junit-windows-latest-${{ matrix.shard }}
+          path: target/nextest/ci/junit.xml
+          overwrite: true
+          if-no-files-found: error
 
   test-archive-macos:
     name: build test archive (macos-latest)
@@ -221,6 +263,18 @@ jobs:
       # nextest archives do not contain rustdoc tests; keep them in the full cross-platform gate.
       - name: Test documentation
         run: cargo test --workspace --doc --locked
+
+      # The full test list of this platform, for the `ci-ok` completeness check. It lists the
+      # binaries just built, so it needs no second build and no archive extraction.
+      - name: List the tests
+        shell: bash
+        run: cargo nextest list --workspace --locked --profile ci --message-format json > test-list.json
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-list-macos-latest
+          path: test-list.json
+          if-no-files-found: error
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -258,7 +312,16 @@ jobs:
       # measured test durations. Either way nextest runs every test exactly once.
       - name: Run archived test partition
         shell: bash
-        run: mkdir -p target/tmp && cargo nextest run --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --extract-overwrite --no-fail-fast --partition count:${{ matrix.shard }}/5
+        run: mkdir -p target/tmp && cargo nextest run --profile ci --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --extract-overwrite --no-fail-fast --partition count:${{ matrix.shard }}/5
+
+      # The `ci-ok` job checks every shard's report against the platform's test list.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: junit-macos-latest-${{ matrix.shard }}
+          path: target/nextest/ci/junit.xml
+          overwrite: true
+          if-no-files-found: error
 
   build-timings:
     name: cold release (${{ matrix.target }})
@@ -326,3 +389,63 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check
+
+  # The one check to require on master. It passes only when every other job succeeded (a pull
+  # request may skip the Windows jobs, #180) and, on each platform that ran, the shards together
+  # ran every listed test exactly once with nothing filtered out (tools/ci-gate.py). It runs
+  # with `always()`, never `!cancelled()`: GitHub counts a skipped required check as passing,
+  # so the gate must run, and fail, when a job it waits for failed or was cancelled. Keep its
+  # name literal; branch protection refers to it by name.
+  ci-ok:
+    name: ci-ok
+    if: always()
+    needs:
+      - quality
+      - test-archive-ubuntu
+      - test-ubuntu
+      - test-archive-windows
+      - test-windows
+      - test-archive-macos
+      - test-macos
+      - build-timings
+      - wasm
+      - deny
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: "{test-list,junit}-*"
+          path: reports
+
+      - name: Test the gate itself
+        run: python3 tools/test-ci-gate.py
+
+      - name: Every job succeeded and is gated
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          printf '%s' "$NEEDS" > needs.json
+          python3 tools/ci-gate.py jobs --event "$EVENT" --needs needs.json --workflow .github/workflows/ci.yml
+
+      - name: Every test ran exactly once
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          platforms="ubuntu-latest macos-latest"
+          if [ "$EVENT" != pull_request ]; then platforms="$platforms windows-latest"; fi
+          status=0
+          for os in $platforms; do
+            list="reports/test-list-$os/test-list.json"
+            if [ ! -f "$list" ]; then
+              echo "$os: no test list was uploaded"
+              status=1
+              continue
+            fi
+            python3 tools/ci-gate.py tests --label "$os" --list "$list" \
+              --ignored .config/ci-ignored.txt reports/junit-"$os"-*/junit.xml || status=1
+          done
+          exit "$status"
