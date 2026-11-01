@@ -42,8 +42,8 @@ link once and `cargo test` runs all their cases on one thread pool: `cli` (`beam
 binary's root file (`tests/cli.rs`, `tests/ui.rs`, ...); a guard test in each fails when a suite
 file is not listed. `macos_icon` checks the desktop app's icon and `cancel` relies on being
 alone in its process, so both stay their own targets. Linking the GUI stack once instead of once
-per suite matters most: the 73 test binaries became 31, and the nextest archive that each CI
-shard downloads shrank by about 30 %.
+per suite matters most: the workspace's 74 test binaries became 33, and the nextest archive that
+each CI shard downloads shrank by about 30 % (measured when the count went from 73 to 31).
 
 The drawn-grid viewport controller test requires a native wgpu adapter and fails explicitly if
 none is available. On a headless Linux worker, Mesa's software Vulkan driver (`mesa-vulkan-drivers`)
