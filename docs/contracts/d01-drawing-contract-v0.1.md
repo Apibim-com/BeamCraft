@@ -83,9 +83,20 @@ resolve as explicitly unresolved — that is a projection outcome, not an admiss
 - more than three decimal places in a dimension label;
 - anchors that are not distinct qualified vertices of the selected member;
 - placed views violating the paper bounds above, colliding with any document-object, drawn
-  object or sibling placed-view UUID (checked in both replacement directions);
-- placed views and drawn objects together exceeding the one-page intent
-  (`MAX_INTENT_PAGE_ITEMS`, 64 prims), even when each collection is under its own cap.
+  object or sibling paper-object UUID (checked in both replacement directions);
+- section cuts that are nonfinite or beyond the model coordinate cap, and details whose
+  region centre is nonfinite or beyond the paper cap, whose radius is nonfinite,
+  non-positive or beyond the paper cap, or whose parent is not the primary view or a
+  placed view;
+- paper objects (placed views, sections, details, drawn objects and layers) together
+  exceeding the one-page intent (`MAX_INTENT_PAGE_ITEMS`, 64 prims), even when each
+  collection is under its own cap;
+- more than `MAX_LAYERS` (16) layers, a layer name violating the bounded label rule, or layer
+  UUIDs colliding with any other document object;
+- a drawn object naming a layer the same admitted or replaced set does not define;
+- any drawn number (coordinate, radius, height, rotation, scale, offset) whose canonical
+  decimal form exceeds `MAX_NUMBER_TEXT_BYTES` (24) bytes — a pathological binary64 would
+  otherwise overflow the document byte cap at encode time.
 
 ## 6. Resolution and unresolved states
 
@@ -103,7 +114,7 @@ one explicit reason:
 
 There is no fabricated bounding-box fallback and no fabricated position mark in a label.
 
-## 6a. Drawn objects (D07 slice 1)
+## 6a. Drawn objects (D07 slices 1–2)
 
 A document also owns drawn paper-space objects (`drafting`). They are contributor-authored
 geometry, never projections of the model, and they hold no model reference of any kind: editing
@@ -117,53 +128,127 @@ of:
 | `arc` | centre, radius > 0, start/end radians, nonzero sweep (magnitude ≤ one turn) | radius ≤ `MAX_PAPER_MM` |
 | `circle` | centre, radius > 0 | radius ≤ `MAX_PAPER_MM` |
 | `rectangle` | two opposite corners, positive width and height | corners within ±`MAX_PAPER_MM` |
+| `text` | anchor, height > 0, rotation (radians, magnitude ≤ one turn); `drawing:text` string | anchor and height within ±`MAX_PAPER_MM`; text non-empty, no control characters, ≤ 128 bytes |
+| `hatch` | closed outline of 3–16 vertices (closing segment implicit), `drawing:pattern` = `solid`\|`diagonal`\|`crosshatch` | vertices within ±`MAX_PAPER_MM`, positive-length segments |
+| `symbol` | anchor, scale > 0; `drawing:symbol` = `north`\|`section`\|`detail`\|`elevation` | anchor and scale within ±`MAX_PAPER_MM` |
+| `free_dimension` | two distinct points, signed offset, 0–3 decimal places | points and offset within ±`MAX_PAPER_MM` |
+
+A `text`, `hatch` or `symbol` entity additionally carries exactly one string payload attribute —
+`drawing:text`, `drawing:pattern` or `drawing:symbol` — required by its kind; every other kind
+carries none. A free dimension measures the drawn paper interval only: it binds no model feature,
+resolves nothing through the pinned source and never becomes stale through the model. The
+document-wide text volume shares the intent byte cap below, so long labels are limited by
+`MAX_INTENT_BYTES`, not by a separate budget.
+
+## 6a-1. Layers and line types (D07 slice 3)
+
+Every drawn object names the document layer it sits on (`drawing:layer`) and its stroke pattern
+(`drawing:linetype` = `continuous`|`dashed`|`dotted`|`dashdot`, `LineType`). A document holds up
+to `MAX_LAYERS` (16) layers (`LayerSpec`), each a typed UUIDv7, a name under the bounded label
+rule, and a `visible` flag. A layer carries no model semantics and no geometry of its own:
+hiding one is a paper-visibility filter (`Drawing::visible_drafting`) and never touches the
+stored objects or the engineering model.
+
+Admission refuses a drawn object whose layer the same replacement does not define, so no
+admitted state ever holds a dangling layer reference. `Drawing::with_drafting` replaces layers
+and drawn objects as one atomic intent operation. Layer UUIDs are pairwise distinct and
+distinct from the document, placed-view, section, detail and drawn-object UUIDs. Layers
+occupy the same one-page intent budget as every other paper object: the page formula counts
+one optional `/Drawing/Layers` scope plus each layer.
+
+In the intent USD the layers are the canonical ordinal children `L1..Ln` of `/Drawing/Layers`
+(`drawing:id`, `drawing:name`, `drawing:visible`); each drawn entity additionally carries
+`drawing:layer` and `drawing:linetype`. The canonical re-encode comparison refuses any other
+topology.
 
 Admission refuses more than `MAX_DRAFTING_ENTITIES` (60) objects, any entity UUID equal to the
 drawing/view/dimension UUID, and any pair of equal entity UUIDs. Coordinates are exact paper
-millimetres; angles are radians. In the intent USD the entities are the canonical ordinal
-children `E1..En` of `/Drawing/Drafting` (`drawing:id`, `drawing:kind`,
+millimetres; angles are radians. The intent byte cap (`MAX_INTENT_BYTES`, 131 072) holds the
+densest admitted page: even fifty-eight sixteen-point hatches on the longest bounded canonical
+coordinates encode within it, so an admitted document never refuses at encode time.
+
+In the intent USD the entities are the canonical ordinal children `E1..En` of
+`/Drawing/Drafting` (`drawing:id`, `drawing:kind`,
 `drawing:geometry double[]`); the canonical re-encode comparison refuses any other topology.
 
-## 6b. Placed views (D04 slice 1)
+## 6b. Placed views, sections and details (D04 slices 1–2)
 
 Beside the primary view, a document may hold up to `MAX_VIEWS` (16) placed views
 (`DrawingSpec.views`), each a full `ViewSpec` with its own front/top/right basis, scale
 denominator and paper origin under the same bounds as the primary view. Nothing is placed
 automatically: a created or refreshed document carries only the views its caller named, and
-placement changes only through the whole-document intent operation `Drawing::with_views`
-(the CLI `edit-views`), never as a side effect of model or drafting edits.
+placement changes only through the whole-document intent operations `Drawing::with_views`,
+`with_sections` and `with_details` (the CLI `edit-views`, which replaces all three collections
+in one operation), never as a side effect of model or drafting edits.
 
-Identity discipline mirrors the drawn objects: placed-view UUIDs are pairwise distinct and
-distinct from the drawing/view/dimension and drawn-object UUIDs, in both replacement
-directions — `with_views` is cross-checked against existing drafting and `with_drafting`
-against existing views.
+Identity discipline mirrors the drawn objects: every paper object's UUID — placed view,
+section, detail, drawn object or layer — is pairwise distinct and distinct from the
+drawing/view/dimension UUIDs, in both replacement directions.
 
-Each placed view resolves from the document's exact pinned snapshot through
-`projection::resolve_view`: a view outside the document refuses, a snapshot whose pin
-disagrees refuses before geometry, and missing/unsupported geometry stays explicitly
-unresolved. Freshness is unchanged — every placed view shares the document's source pin, so
-a model change marks all views stale together and an explicit refresh re-binds them.
+A **section view** (`SectionSpec`) is a cut plane perpendicular to its basis's depth axis
+(Front looks along Y, Top along Z, Right along X) at `cut_mm`, with `side` picking the visible
+half-space. It resolves through `projection::resolve_section` to the visible half of the
+member wireframe — crossing edges end exactly on the cut — plus the exact cut contour (the
+edge/plane crossings in boundary order, empty when the cut misses the member box). Axis cuts
+only: arbitrary cut planes are outside this contract, exactly as arbitrary cameras are.
 
-The closed canonical intent carries the views as the optional `/Drawing/Views` scope with
-canonical ordinal children `V1..Vn` (`drawing:id`, `drawing:plane`, `drawing:scale`,
-`drawing:origin double[]`). The whole intent must fit one closed reader page:
-`MAX_INTENT_PAGE_ITEMS` (64) prims — the three fixed document prims, one optional scope per
-non-empty collection, and every placed view and drawn object. `edit-views` follows the same
-replay discipline as `edit-drafting`: no model store on the command line, and the request
-fingerprint binds the incoming placement, so an exact replay returns the same revision and a
-changed placement under the same operation id refuses.
+A **detail view** (`DetailSpec`) magnifies one parent view's circular region
+(`center_paper_mm`, `radius_mm` in the parent's paper millimetres) at the detail's own scale.
+The parent must be the primary view or a placed view; details of sections or of other details
+are outside this slice's contract. It resolves through `projection::resolve_detail` to the
+parent wireframe mapped by the scales' ratio and clipped to the region, keeping the parent's
+semantic feature addresses.
+
+Each derived view resolves from the document's exact pinned snapshot: an object outside the
+document refuses, a snapshot whose pin disagrees refuses before geometry, and
+missing/unsupported geometry stays explicitly unresolved. Freshness is unchanged — every
+paper object shares the document's source pin, so a model change marks all views stale
+together and an explicit refresh re-binds them.
+
+The closed canonical intent carries placed views as the optional `/Drawing/Views` scope
+(`V1..Vn`: `drawing:id`, `drawing:plane`, `drawing:scale`, `drawing:origin double[]`),
+sections as `/Drawing/Sections` (`S1..Sn`: plus `drawing:cut`, `drawing:side`) and details as
+`/Drawing/Details` (`D1..Dn`: plus `drawing:parent`, `drawing:center double[]`,
+`drawing:radius`). The whole intent must fit one closed reader page: `MAX_INTENT_PAGE_ITEMS`
+(64) prims — the three fixed document prims, one optional scope per non-empty collection, and
+every paper object. `edit-views` follows the same replay discipline as `edit-drafting`: no
+model store on the command line, and the request fingerprint binds the incoming placement of
+all three collections, so an exact replay returns the same revision and a changed placement
+under the same operation id refuses.
+
+## 6c. Sheets (D05)
+
+A document may be laid on one sheet (`DrawingSpec.sheet`, `beamcraft_model::sheet`): a fixed
+catalogue size (`a4`–`a0`, portrait; any other size refuses, nothing is approximated), a
+uniform frame inset (`SheetFrame`, at least 1 mm and strictly inside the sheet) and two
+authored title block fields (`TitleBlock.project`, `TitleBlock.author`, both under the
+bounded label rule). The sheet holds no UUID: it is document furniture, not a document
+object, so it adds no identity constraints — only one more optional scope to the one-page
+budget. Placement changes only through `Drawing::with_sheet` / `without_sheet` (the CLI
+`edit-sheet`, same replay discipline and no model store).
+
+The whole-sheet export (`drawing::sheet::export_svg`) renders one exact published version as
+deterministic stroke-only SVG: frame, title block (contributor-original stroke glyphs, no
+font or embedded text), every resolved placed view and the primary view's dimension groups.
+Anything unresolved refuses; every stroke must lie inside the frame — content that does not
+fit refuses instead of being rescaled or clipped. A document without a sheet keeps the
+loose-paper export of section 6, and `--format pdf` defaults its print sheet to the
+document's sheet size.
 
 ## 7. Module map
 
 - `beamcraft-model::id` — drawing object identities (typed UUIDv7).
 - `beamcraft-model::drawing` — source pin, live-source and freshness states.
+- `beamcraft-model::sheet` — sheet entities: the fixed A4–A0 catalogue, frame and title
+  block, and their admission.
 - `beamcraft-engine::drawing` — admission (`Drawing::admit`), view/dimension specs, placed
-  views (`views`), drawn objects (`drafting`), re-export of the pin and freshness states;
-  `projection` (including per-view `resolve_view`), `svg`, `pdf` and `print` submodules. `pdf`
-  renders one published version as stroke-only PDF 1.4 (no font is embedded or referenced);
-  `print` is the print pipeline shape: resolved strokes laid out 1:1, centred on a fixed
-  A4–A0 sheet, refusing instead of rescaling.
+  views (`views`), drawn objects (`drafting`), the sheet (`sheet`), re-export of the pin and
+  freshness states; `projection` (including per-view `resolve_view`), `svg`, `pdf`, `print`
+  and `sheet` submodules. `pdf` renders one published version as stroke-only PDF 1.4 (no
+  font is embedded or referenced); `print` is the print pipeline shape: resolved strokes laid
+  out 1:1, centred on a fixed A4–A0 sheet, refusing instead of rescaling; `sheet` is the
+  whole-sheet renderer of section 6c.
 - `apps/beamcraft-cli` — `preview-drawing`, `create-drawing`, `refresh-drawing`,
-  `edit-drafting`, `edit-views`, `publish-drawing`, `inspect-drawing`,
+  `edit-drafting`, `edit-views`, `edit-sheet`, `publish-drawing`, `inspect-drawing`,
   `inspect-drawing-versions`, `export-drawing`, and the drawing document store; it computes
   nothing the engine does not expose.
