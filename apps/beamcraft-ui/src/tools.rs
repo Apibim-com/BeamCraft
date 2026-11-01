@@ -282,13 +282,15 @@ impl PlateForm {
                 number("Length", &self.length)?,
             ]);
         } else {
-            if self.contour.len() > 128 * beamcraft_model::limits::CONTOUR_POINT_CAP {
+            // The CLI adapter admits at most 4096 bytes in one argument.
+            if self.contour.len() > 4096 {
                 return Err(FormError {
                     field: "Contour",
-                    message: "Too many contour coordinates.".into(),
+                    message: "The contour exceeds the supported coordinate text limit (4096 bytes). Use fewer vertices or simpler coordinates.".into(),
                 });
             }
             args.extend(["--contour".into(), self.contour.clone()]);
+            args.extend(["--normalize-winding".into(), "true".into()]);
         }
         args.extend(["--thickness".into(), number("Thickness", &self.thickness)?]);
         push_name(&mut args, &self.name)?;
@@ -707,6 +709,8 @@ pub struct Tools {
     pub actor: Option<String>,
     /// Active session frame; no plane is authored in the model.
     pub plane: Option<beamcraft_engine::work_plane::WorkPlane>,
+    /// Per-contour frame inferred from picked world vertices; never replaces the session plane.
+    pub plate_plane: Option<beamcraft_engine::work_plane::WorkPlane>,
     staged: Option<Prepared>,
     busy: bool,
 }
@@ -720,6 +724,7 @@ impl Default for Tools {
             definitions: Definitions::default(),
             actor: None,
             plane: None,
+            plate_plane: None,
             staged: None,
             busy: false,
         }
@@ -759,7 +764,12 @@ impl Tools {
             ToolKind::Plate => self.plate.prepare(store),
             ToolKind::Member => self.member.prepare_in_plane(store, self.plane),
         }?;
-        if let Some(plane) = self.plane {
+        let plane = if self.active == ToolKind::Plate {
+            self.plate_plane.or(self.plane)
+        } else {
+            self.plane
+        };
+        if let Some(plane) = plane {
             if self.active == ToolKind::Member && !self.member.orientation.trim().is_empty() {
                 return Err(FormError {
                     field: "Work plane",
@@ -863,6 +873,13 @@ mod tests {
         assert!(form.prepare(Path::new("S")).is_err());
         form.set_endpoints([0.; 3], [0., 0., 500.]);
         assert!(form.start_input.is_empty() && form.end_input.is_empty());
+    }
+
+    #[test]
+    fn review_contour_cannot_exceed_cli_argument_budget() {
+        let mut form = plate();
+        form.contour = "0,0;".repeat(1024) + "1";
+        assert!(form.prepare(store()).is_err());
     }
 
     #[test]

@@ -379,6 +379,21 @@ impl Scene {
         representation: Representation,
         resident: &BTreeSet<ContentDigest>,
     ) -> Result<Self, Error> {
+        Self::from_snapshot_filtered(
+            snapshot,
+            representation,
+            resident,
+            beamcraft_engine::KindFilter::SHOW_ALL,
+        )
+    }
+
+    /// A view-local object filter; geometry buffers with unchanged digests remain reusable.
+    pub fn from_snapshot_filtered(
+        snapshot: &ViewSnapshot,
+        representation: Representation,
+        resident: &BTreeSet<ContentDigest>,
+        hidden: beamcraft_engine::KindFilter,
+    ) -> Result<Self, Error> {
         let bounds = snapshot.engineering_bounds();
         let origin_mm = bounds.map_or([0.0; 3], |b| {
             [
@@ -398,6 +413,9 @@ impl Scene {
         let mut total = 0usize;
         let mut triangles = 0u64;
         for element in snapshot.elements() {
+            if !hidden.is_visible(element.kind) {
+                continue;
+            }
             let reference = element.representation(representation);
             let slot = usize::try_from(reference.mesh_slot).map_err(|_| Error::Input("slot"))?;
             let at = match slots.get(slot).copied().flatten() {

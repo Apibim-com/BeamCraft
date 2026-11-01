@@ -121,3 +121,11 @@ selection and a negative test for each error and cap, including the 65,536-eleme
 T01.1 project-grid admission is in `grid`: regular expressions and labels are model values;
 the engine checks project-wide identity absence and capacity before the revision adapter writes
 explicit USD grid records. See [T01.1](../../docs/design/t01-1-project-grids.md).
+
+## Model-view presentation
+
+`model_view` admits named local view properties and constructs offset, point, grid, part,
+assembly and surface planes from evaluated geometry. It plans independent grid-family
+batches, reuses display properties and picks visible geometry through depth and kind filters.
+These pure APIs never mutate engineering snapshots. See
+[local model views](../../docs/design/model-views.md).

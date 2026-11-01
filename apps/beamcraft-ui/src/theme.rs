@@ -468,6 +468,30 @@ pub enum Icon {
     Back,
     /// Refresh arrow.
     Refresh,
+    /// A new view frame with a plus sign.
+    ViewCreate,
+    /// View frame with property sliders.
+    ViewProperties,
+    /// Plane and its viewing direction.
+    ViewPlane,
+    /// Three directional axes.
+    ViewDirection,
+    /// Four tiled view windows.
+    ViewTile,
+    /// View frame with a redraw arrow.
+    ViewRedraw,
+    /// Section through two marked points.
+    ViewTwoPoints,
+    /// Plane through three marked points.
+    ViewThreePoints,
+    /// Overlapping outlines for transparent display.
+    Transparent,
+    /// One uniformly filled model block.
+    Grey,
+    /// A block with differently shaded faces.
+    Shaded,
+    /// A model block inside selection brackets.
+    SelectedOnly,
     /// The selection pointer.
     Select,
     /// A bolt: hexagon head and shank.
@@ -671,6 +695,131 @@ pub fn paint_icon(painter: &Painter, rect: Rect, icon: Icon, line: Color32) {
         ));
     };
     match icon {
+        Icon::ViewCreate | Icon::ViewProperties | Icon::ViewTile | Icon::ViewRedraw => {
+            let frame = |a, b| {
+                painter.rect_stroke(
+                    Rect::from_min_max(at(a), at(b)),
+                    1,
+                    stroke,
+                    egui::StrokeKind::Inside,
+                )
+            };
+            match icon {
+                Icon::ViewCreate => {
+                    polyline(&[[14., 20.], [3., 20.], [3., 4.], [21., 4.], [21., 12.]]);
+                    polyline(&[[3., 8.], [21., 8.]]);
+                    polyline(&[[18., 14.], [18., 22.]]);
+                    polyline(&[[14., 18.], [22., 18.]]);
+                }
+                Icon::ViewProperties => {
+                    frame([3., 4.], [21., 20.]);
+                    for (y, x) in [(8., 9.), (12., 15.), (16., 11.)] {
+                        polyline(&[[6., y], [18., y]]);
+                        painter.circle_filled(at([x, y]), 1.8 * scale, line);
+                    }
+                }
+                Icon::ViewTile => {
+                    for (a, b) in [
+                        ([3., 4.], [11., 11.]),
+                        ([13., 4.], [21., 11.]),
+                        ([3., 13.], [11., 20.]),
+                        ([13., 13.], [21., 20.]),
+                    ] {
+                        frame(a, b);
+                    }
+                }
+                _ => {
+                    frame([2., 3.], [22., 21.]);
+                    paint_icon(
+                        painter,
+                        Rect::from_center_size(rect.center(), rect.size() * 0.6),
+                        Icon::Refresh,
+                        line,
+                    );
+                }
+            }
+        }
+        Icon::ViewPlane => {
+            painter.add(egui::Shape::closed_line(
+                [[3., 16.], [10., 11.], [21., 15.], [14., 20.]]
+                    .map(at)
+                    .to_vec(),
+                stroke,
+            ));
+            polyline(&[[12., 15.], [12., 3.]]);
+            polyline(&[[9., 6.], [12., 3.], [15., 6.]]);
+        }
+        Icon::ViewDirection => {
+            for (end, tip) in [
+                ([21., 17.], [[17., 13.], [21., 17.], [16., 19.]]),
+                ([4., 19.], [[5., 14.], [4., 19.], [9., 20.]]),
+                ([12., 3.], [[9., 7.], [12., 3.], [15., 7.]]),
+            ] {
+                polyline(&[[12., 13.], end]);
+                polyline(&tip);
+            }
+        }
+        Icon::ViewTwoPoints | Icon::ViewThreePoints => {
+            let points = if icon == Icon::ViewTwoPoints {
+                vec![[4., 17.], [20., 7.]]
+            } else {
+                vec![[4., 18.], [12., 4.], [21., 18.], [4., 18.]]
+            };
+            polyline(&points);
+            for point in points
+                .iter()
+                .take(if icon == Icon::ViewTwoPoints { 2 } else { 3 })
+            {
+                painter.circle(at(*point), 2.2 * scale, line, Stroke::NONE);
+            }
+        }
+        Icon::Transparent => {
+            for offset in [0., 5.] {
+                painter.add(egui::Shape::closed_line(
+                    [
+                        [3. + offset, 7.],
+                        [10. + offset, 3.],
+                        [16. + offset, 7.],
+                        [16. + offset, 16.],
+                        [10. + offset, 20.],
+                        [3. + offset, 16.],
+                    ]
+                    .map(at)
+                    .to_vec(),
+                    stroke,
+                ));
+            }
+            polyline(&[[3., 7.], [10., 11.], [16., 7.]]);
+            polyline(&[[10., 11.], [10., 20.]]);
+        }
+        Icon::Grey | Icon::Shaded | Icon::SelectedOnly => {
+            for (points, face) in BLOCK {
+                let opacity = if icon == Icon::Shaded {
+                    match face {
+                        Face::Cream => 0.5,
+                        Face::Teal => 0.25,
+                        _ => 0.1,
+                    }
+                } else {
+                    0.22
+                };
+                painter.add(egui::Shape::convex_polygon(
+                    points.iter().map(|p| at(*p)).collect(),
+                    line.gamma_multiply(opacity),
+                    stroke,
+                ));
+            }
+            if icon == Icon::SelectedOnly {
+                for corner in [
+                    [[2., 7.], [2., 2.], [7., 2.]],
+                    [[17., 2.], [22., 2.], [22., 7.]],
+                    [[22., 17.], [22., 22.], [17., 22.]],
+                    [[7., 22.], [2., 22.], [2., 17.]],
+                ] {
+                    polyline(&corner);
+                }
+            }
+        }
         Icon::End => {
             painter.rect_stroke(
                 Rect::from_min_max(at([6.0, 6.0]), at([18.0, 18.0])),

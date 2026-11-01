@@ -27,6 +27,7 @@ mod grid_cmd;
 mod history_cmd;
 mod level_cmd;
 mod library_cmd;
+mod model_views_cmd;
 mod numbering_cmd;
 mod pick_cmd;
 mod plate_cmd;
@@ -95,6 +96,8 @@ fn main() -> std::process::ExitCode {
         .is_some_and(|c| c == "snapshot-view" || c == "inspect-view-changes")
     {
         view::execute(&args)
+    } else if args.first().is_some_and(model_views_cmd::handles) {
+        model_views_cmd::execute(&args)
     } else if args.first().is_some_and(history_cmd::handles) {
         history_cmd::execute(&args)
     } else if args.first().is_some_and(|c| reference_cmd::handles(c)) {
@@ -120,7 +123,10 @@ fn main() -> std::process::ExitCode {
         coordinator_cmd::execute(&args)
     } else if args.first().is_some_and(drawing_cmd::handles) {
         drawing_cmd::execute(&args)
-    } else if args.first().is_some_and(|c| c == "work-plane") {
+    } else if args
+        .first()
+        .is_some_and(|c| c == "work-plane" || c == "resolve-construction-point")
+    {
         work_plane_cmd::execute(&args)
     } else if args.first().is_some_and(pick_cmd::handles) {
         pick_cmd::execute(&args)

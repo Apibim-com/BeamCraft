@@ -20,6 +20,7 @@ mod history;
 mod level;
 mod library;
 mod member;
+mod model_views;
 mod numbering;
 mod pick;
 mod plate;
@@ -60,6 +61,7 @@ const COMMAND_GROUPS: &[&[&str]] = &[
     coordinator::COMMANDS,
     history::COMMANDS,
     view::COMMANDS,
+    model_views::COMMANDS,
     pick::COMMANDS,
     view_export::COMMANDS,
     bom::COMMANDS,
@@ -100,6 +102,7 @@ const SECTIONS: &[&str] = &[
     rebase::HELP,
     reference::HELP,
     view::HELP,
+    model_views::HELP,
     pick::HELP,
     view_export::HELP,
     bom::HELP,

@@ -59,13 +59,18 @@ pub fn ray_through(view: &View, ndc: [f32; 2], origin_mm: [f64; 3]) -> Option<Ra
         return None;
     }
     let mut direction = [0.0f64; 3];
+    let [orthographic, span, _, _] = view.projection;
     for (axis, slot) in direction.iter_mut().enumerate() {
         let right = f64::from(*view.right.get(axis)?);
         let up = f64::from(*view.up.get(axis)?);
         let back = f64::from(*view.back.get(axis)?);
-        *slot = right * f64::from(nx) * f64::from(tan) * f64::from(aspect)
-            + up * f64::from(ny) * f64::from(tan)
-            - back;
+        *slot = if orthographic > 0.5 {
+            -back
+        } else {
+            right * f64::from(nx) * f64::from(tan) * f64::from(aspect)
+                + up * f64::from(ny) * f64::from(tan)
+                - back
+        };
     }
     let length = direction.iter().map(|v| v * v).sum::<f64>().sqrt();
     if !length.is_finite() || length < 1e-9 {
@@ -74,6 +79,11 @@ pub fn ray_through(view: &View, ndc: [f32; 2], origin_mm: [f64; 3]) -> Option<Ra
     let mut origin = [0.0f64; 3];
     for (axis, slot) in origin.iter_mut().enumerate() {
         *slot = f64::from(*view.eye.get(axis)?) + origin_mm.get(axis).copied()?;
+        if orthographic > 0.5 {
+            *slot += f64::from(
+                *view.right.get(axis)? * nx * span * aspect + *view.up.get(axis)? * ny * span,
+            );
+        }
     }
     Some(Ray {
         origin,

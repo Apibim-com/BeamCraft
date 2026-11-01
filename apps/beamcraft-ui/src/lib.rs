@@ -34,6 +34,7 @@ pub mod dialog;
 pub mod edit;
 pub mod grid;
 pub mod metrics;
+pub mod model_views;
 pub mod perf;
 pub mod preview;
 pub mod props;

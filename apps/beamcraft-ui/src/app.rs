@@ -9,7 +9,10 @@
 
 mod creation_panel;
 mod grid_panel;
+#[cfg(test)]
+mod model_view_tests;
 mod switches;
+mod view_panel;
 mod workbench;
 
 use crate::camera::{Camera, View};
@@ -116,6 +119,10 @@ pub struct App {
     plate_mode: bool,
     plate_draft: crate::creation::ContourDraft,
     plate_hover: Option<[f64; 3]>,
+    snap_hover: Option<beamcraft_engine::query::pick::SnapKind>,
+    viewport_height: f32,
+    distance_input: String,
+    distance_aim: Option<[f64; 3]>,
     plate_input: [String; 2],
     plane_form: crate::work_plane::Form,
     plane_pick: bool,
@@ -181,6 +188,7 @@ pub struct App {
     command_focus: bool,
     command_query: String,
     browser_search: String,
+    views: view_panel::Views,
     /// Whether the Details window is open.
     details: bool,
     /// A fit requested by the ribbon or command search, applied in the next frame.
@@ -197,6 +205,8 @@ pub struct App {
     /// The selected-only draw and the (selected id, scene origin) it was built for, so the one
     /// engine query runs on a selection or reload change, not per frame.
     selected_only: ((String, [f64; 3]), Option<crate::scene::SelectedDraw>),
+    /// Actual world boundary segments, cached by selected identity and snapshot token.
+    selection_edges: ((String, String), Vec<[[f64; 3]; 2]>),
 }
 
 /// Records a scene swap in the perf counters: the CPU display bytes and the snapshot mesh bytes
@@ -315,6 +325,52 @@ fn definition_label(label: &str) -> &str {
         .map_or(label, |(name, _)| name)
 }
 
+fn unique_suffix<'a>(id: &'a str, others: &[&str]) -> &'a str {
+    let mut length = id.len().min(8);
+    loop {
+        let suffix = id.get(id.len().saturating_sub(length)..).unwrap_or(id);
+        if length >= id.len()
+            || !others
+                .iter()
+                .any(|other| *other != id && other.ends_with(suffix))
+        {
+            return suffix;
+        }
+        length += 1;
+    }
+}
+
+fn definition_choice_label(choice: &Choice, choices: &[Choice]) -> String {
+    let label = definition_label(&choice.label);
+    let duplicates = choices
+        .iter()
+        .filter(|c| definition_label(&c.label) == label)
+        .map(|c| c.digest.as_str())
+        .collect::<Vec<_>>();
+    if duplicates.iter().any(|id| *id != choice.digest) {
+        format!("{label} · {}", unique_suffix(&choice.digest, &duplicates))
+    } else {
+        label.to_owned()
+    }
+}
+
+fn level_choice_label(id: &str, levels: &[(String, String, f64)]) -> String {
+    let Some((_, name, elevation)) = levels.iter().find(|(known, _, _)| known == id) else {
+        return "Level unavailable".into();
+    };
+    let duplicates = levels
+        .iter()
+        .filter(|(_, n, e)| n == name && e == elevation)
+        .map(|(known, _, _)| known.as_str())
+        .collect::<Vec<_>>();
+    let label = format!("{name} · {elevation} mm");
+    if duplicates.iter().any(|known| *known != id) {
+        format!("{label} · {}", unique_suffix(id, &duplicates))
+    } else {
+        label
+    }
+}
+
 /// A drop-down of store definitions; `required` removes the "none" entry.
 fn choice_combo(
     ui: &mut egui::Ui,
@@ -329,7 +385,7 @@ fn choice_combo(
         .map(|digest| {
             choices.iter().find(|c| &c.digest == digest).map_or_else(
                 || "Definition unavailable".to_owned(),
-                |c| definition_label(&c.label).to_owned(),
+                |c| definition_choice_label(c, choices),
             )
         })
         .unwrap_or_else(|| if required { "choose…" } else { "none" }.to_owned());
@@ -351,7 +407,7 @@ fn choice_combo(
                     ui.selectable_value(
                         current,
                         Some(choice.digest.clone()),
-                        definition_label(&choice.label),
+                        definition_choice_label(choice, choices),
                     );
                 }
             });
@@ -371,63 +427,37 @@ fn point_fields(ui: &mut egui::Ui, point: &mut [String; 3]) {
     });
 }
 
-/// The twelve edges of a box as pairs of corner indices (bit 0 = x, bit 1 = y, bit 2 = z).
-const BOX_EDGES: [(usize, usize); 12] = [
-    (0, 1),
-    (2, 3),
-    (4, 5),
-    (6, 7),
-    (0, 2),
-    (1, 3),
-    (4, 6),
-    (5, 7),
-    (0, 4),
-    (1, 5),
-    (2, 6),
-    (3, 7),
-];
-
-/// Draws the selection as the projected box of the engine's world bounds of the element.
+/// Draws the selected body's evaluated boundary instead of inventing corners from its bounds.
 fn draw_selection(
     painter: &egui::Painter,
     rect: egui::Rect,
     view: &View,
-    loaded: &Loaded,
-    id: &str,
+    origin: [f64; 3],
+    edges: &[[[f64; 3]; 2]],
 ) {
-    let Ok(id) = beamcraft_engine::ElementId::parse(id) else {
-        return;
-    };
-    let Ok(bounds) = loaded.snapshot.element_bounds(&id) else {
-        return;
-    };
-    let origin = loaded.summary.origin_mm;
-    let screen: Vec<Option<egui::Pos2>> = (0..8usize)
-        .map(|corner| {
-            let pick = |axis: usize| {
-                let on = corner >> axis & 1 == 1;
-                let edge = if on {
-                    bounds.max.get(axis)
-                } else {
-                    bounds.min.get(axis)
-                };
-                edge.copied().unwrap_or(0.0) - origin.get(axis).copied().unwrap_or(0.0)
-            };
-            let [x, y, z] = view.project([pick(0) as f32, pick(1) as f32, pick(2) as f32]);
-            ((0.0..1.0).contains(&z) && x.is_finite() && y.is_finite()).then(|| {
-                egui::pos2(
-                    rect.min.x + (x * 0.5 + 0.5) * rect.width(),
-                    rect.min.y + (0.5 - y * 0.5) * rect.height(),
-                )
-            })
+    let project = |point: [f64; 3]| {
+        let local = std::array::from_fn(|i| {
+            (point.get(i).copied().unwrap_or(0.0) - origin.get(i).copied().unwrap_or(0.0)) as f32
+        });
+        let [x, y, z] = view.project(local);
+        ((0.0..1.0).contains(&z) && x.is_finite() && y.is_finite()).then(|| {
+            egui::pos2(
+                rect.min.x + (x * 0.5 + 0.5) * rect.width(),
+                rect.min.y + (0.5 - y * 0.5) * rect.height(),
+            )
         })
-        .collect();
+    };
     let stroke = egui::Stroke::new(2.0, crate::theme::BRAND);
-    for (a, b) in BOX_EDGES {
-        if let (Some(Some(p)), Some(Some(q))) = (screen.get(a), screen.get(b)) {
-            painter.line_segment([*p, *q], stroke);
+    for [a, b] in edges {
+        if let (Some(p), Some(q)) = (project(*a), project(*b)) {
+            painter.line_segment([p, q], stroke);
         }
     }
+}
+
+/// Viewport clicks do not capture keyboard focus from construction input.
+fn viewport_sense() -> egui::Sense {
+    egui::Sense::CLICK | egui::Sense::DRAG
 }
 
 fn field(ui: &mut egui::Ui, label: &str, text: &mut String, width: f32) {
@@ -754,6 +784,7 @@ impl App {
             command_focus: false,
             command_query: String::new(),
             browser_search: String::new(),
+            views: view_panel::Views::default(),
             state,
             source,
             renderer,
@@ -772,6 +803,10 @@ impl App {
             plate_mode: false,
             plate_draft: crate::creation::ContourDraft::default(),
             plate_hover: None,
+            snap_hover: None,
+            viewport_height: 800.0,
+            distance_input: String::new(),
+            distance_aim: None,
             plate_input: ["0".into(), "0".into()],
             plane_form: crate::work_plane::Form::default(),
             plane_pick: false,
@@ -819,6 +854,7 @@ impl App {
             shortcuts,
             shortcuts_note,
             selected_only: ((String::new(), [0.0; 3]), None),
+            selection_edges: Default::default(),
         };
         app.tools.actor.clone_from(&app.source.actor);
         app.editor.actor.clone_from(&app.source.actor);
@@ -911,7 +947,9 @@ impl App {
                     self.loaded.as_ref().map(|l| self.grid_framing(&l.summary))
                 {
                     let aspect = self.aspect();
-                    if needs_refit(self.framed, target, extent, aspect) {
+                    if self.views.active.is_none()
+                        && needs_refit(self.framed, target, extent, aspect)
+                    {
                         match self.camera.fit(target, extent, aspect) {
                             Ok(()) => {
                                 self.framed = Some((target, extent, aspect));
@@ -937,7 +975,7 @@ impl App {
                 let aspect = self.aspect();
                 // A scene the camera cannot frame keeps the previous scene and shows why. An
                 // unchanged framing keeps the user's camera.
-                if needs_refit(self.framed, target, extent, aspect) {
+                if self.views.active.is_none() && needs_refit(self.framed, target, extent, aspect) {
                     match self.camera.fit(target, extent, aspect) {
                         Ok(()) => {
                             self.framed = Some((target, extent, aspect));
@@ -975,6 +1013,7 @@ impl App {
         // A new revision may have moved or replaced the selected element: the selected-only
         // draw is rebuilt against this scene.
         self.selected_only = ((String::new(), [0.0; 3]), None);
+        self.selection_edges = Default::default();
         self.error = None;
     }
 
@@ -1033,12 +1072,41 @@ impl App {
         let cancel = self.begin_select(rx);
         let stats = Arc::clone(&self.stats);
         let selection = self.selection.filter();
+        let model_view = self
+            .views
+            .active
+            .as_ref()
+            .and_then(|id| {
+                self.views
+                    .collection
+                    .iter()
+                    .find(|v| v.id.to_string() == *id)
+            })
+            .cloned();
         let spawned = std::thread::Builder::new()
             .name("beamcraft-pick".into())
             .spawn(move || {
-                let _ = tx.send(command::select(
-                    &cli, &store, &snapshot, &ray, &cancel, &stats, selection,
-                ));
+                let result = if let Some(view) = model_view {
+                    beamcraft_engine::model_view::pick_visible(
+                        &snapshot,
+                        &view,
+                        ray.origin,
+                        ray.direction,
+                        selection,
+                    )
+                    .map_err(|e| ToolError::local(e.code.as_str(), e.to_string()))
+                    .map(|hit| {
+                        hit.map(|hit| {
+                            let id = hit.element_id.to_string();
+                            let (info, details) =
+                                command::lookup(&cli, &store, &id, &cancel, &stats);
+                            Selected { id, info, details }
+                        })
+                    })
+                } else {
+                    command::select(&cli, &store, &snapshot, &ray, &cancel, &stats, selection)
+                };
+                let _ = tx.send(result);
             });
         if spawned.is_err() {
             self.select_job = None;
@@ -1452,7 +1520,7 @@ impl App {
             }
             None => {}
         }
-        let editable = matches!(state, Some(State::Current));
+        let editable = self.props.head_known() && matches!(state, Some(State::Current));
         let busy = self.props.busy() || self.other_command_running();
         if let Some(details) = self.props.details().cloned() {
             if let Some((_, count)) = &details.shared_definition {
@@ -1516,27 +1584,18 @@ impl App {
                 }
                 let level_label = self.props.form.level.as_ref().map_or_else(
                     || "Not assigned".into(),
-                    |id| {
-                        details
-                            .levels
-                            .iter()
-                            .find(|(known, _, _)| known == id)
-                            .map_or_else(
-                                || "Level unavailable".into(),
-                                |(_, name, elevation)| format!("{name} · {elevation} mm"),
-                            )
-                    },
+                    |id| level_choice_label(id, &details.levels),
                 );
                 ui.label("Level");
                 egui::ComboBox::from_id_salt("props-level")
                     .selected_text(level_label)
                     .show_ui(ui, |ui| {
                         ui.selectable_value(&mut self.props.form.level, None, "Not assigned");
-                        for (id, name, elevation) in &details.levels {
+                        for (id, _, _) in &details.levels {
                             ui.selectable_value(
                                 &mut self.props.form.level,
                                 Some(id.clone()),
-                                format!("{name} · {elevation} mm"),
+                                level_choice_label(id, &details.levels),
                             );
                         }
                     });
@@ -1554,25 +1613,30 @@ impl App {
                 .default_open(true)
                 .show(ui, |ui| {
                     let quantities = &details.quantities;
-                    for (label, number, unit, status) in [
+                    for (label, number, unit, status, stored_freshness) in [
                         (
                             "Volume",
                             quantities.volume_mm3,
                             "mm³",
                             quantities.volume_status.as_deref(),
+                            quantities.stored_volume_freshness.as_deref(),
                         ),
                         (
                             "Mass",
                             quantities.mass_kg,
                             "kg",
                             quantities.mass_status.as_deref(),
+                            quantities.stored_mass_freshness.as_deref(),
                         ),
                     ] {
-                        let value = match (number, status) {
+                        let mut value = match (number, status) {
                             (Some(value), Some("current")) => format!("{value} {unit}"),
                             (Some(value), Some("stale")) => format!("{value} {unit} · out of date"),
                             _ => "Not available".into(),
                         };
+                        if stored_freshness == Some("stale") {
+                            value.push_str(" · stored value out of date");
+                        }
                         ui.horizontal(|ui| {
                             ui.label(label);
                             ui.label(value);
@@ -1600,7 +1664,8 @@ impl App {
     }
 
     fn property_actions(&mut self, ui: &mut egui::Ui) {
-        let editable = matches!(self.props.state(), Some(State::Current));
+        let editable =
+            self.props.head_known() && matches!(self.props.state(), Some(State::Current));
         let busy = self.props.busy() || self.other_command_running();
         let mut apply = false;
         let mut reset = false;
@@ -1841,6 +1906,9 @@ impl App {
                     self.plate_draft.clear();
                     self.plate_hover = None;
                     self.tools.plate.contour.clear();
+                    self.tools.plate_plane = None;
+                    self.distance_input.clear();
+                    self.distance_aim = None;
                     self.plate_mode = self.bench == workbench::Bench::Plate;
                 } else {
                     self.beam_mode = matches!(
@@ -1982,6 +2050,9 @@ impl App {
     fn install_plane(&mut self, plane: Option<beamcraft_engine::work_plane::WorkPlane>) {
         self.tools.cancel();
         self.tools.plane = plane;
+        self.tools.plate_plane = None;
+        self.distance_input.clear();
+        self.distance_aim = None;
         self.plate_draft.clear();
         self.plate_hover = None;
         self.tools.plate.contour.clear();
@@ -2010,10 +2081,16 @@ impl App {
         let point = match self.creation_point(ray, false) {
             Ok(point) => point,
             Err(error) => {
+                self.clear_member_preview();
                 self.tool_note = Some(Err(error.to_string()));
                 return;
             }
         };
+        self.accept_member_point(point);
+    }
+
+    /// Accept a resolved cursor or numeric endpoint through the same member command path.
+    fn accept_member_point(&mut self, point: [f64; 3]) {
         let point = match self.beam.start() {
             Some(start) => match self.tools.plane.map_or_else(
                 || self.tools.member.axis_lock.constrain(start, point),
@@ -2021,15 +2098,19 @@ impl App {
             ) {
                 Ok(point) => point,
                 Err(e) => {
+                    self.clear_member_preview();
                     self.tool_note = Some(Err(e.to_string()));
                     return;
                 }
             },
             None => point,
         };
+        self.distance_input.clear();
+        self.distance_aim = None;
+        self.beam_hover = None;
         match self.beam.click(point) {
             None => {
-                self.ghost_end = None;
+                self.clear_member_preview();
                 self.tool_note = Some(Ok(format!(
                     "Start {}. Pick the end point.",
                     PointText(point)
@@ -2044,6 +2125,7 @@ impl App {
                 let (start, end) = match points {
                     Some(Ok(pair)) => pair,
                     Some(Err(e)) => {
+                        self.clear_member_preview();
                         self.tool_note = Some(Err(e.to_string()));
                         return;
                     }
@@ -2063,6 +2145,13 @@ impl App {
     /// start -> hover, where the pointer ray meets the plane through the start parallel to the
     /// view. Display only: an axis the engine refuses simply draws no ghost, and Commit still
     /// asks the engine.
+    fn clear_member_preview(&mut self) {
+        self.beam_hover = None;
+        self.ghost_end = None;
+        self.renderer
+            .set_ghost(&self.state.device, &self.state.queue, None);
+    }
+
     fn update_ghost(&mut self, view: &View, ndc: [f32; 2]) {
         let Some(start) = self.beam.start() else {
             return;
@@ -2072,12 +2161,11 @@ impl App {
             .as_ref()
             .map_or([0.0; 3], |l| l.summary.origin_mm);
         let Some(ray) = ray_through(view, ndc, origin_mm) else {
+            self.clear_member_preview();
             return;
         };
         let Ok(end) = self.creation_point(ray, false) else {
-            self.beam_hover = None;
-            self.renderer
-                .set_ghost(&self.state.device, &self.state.queue, None);
+            self.clear_member_preview();
             return;
         };
         let constrained = match self.tools.plane {
@@ -2085,6 +2173,7 @@ impl App {
             None => self.tools.member.axis_lock.constrain(start, end),
         };
         let Ok(end) = constrained else {
+            self.clear_member_preview();
             return;
         };
         self.beam_hover = Some(end);
@@ -2246,32 +2335,34 @@ impl eframe::App for App {
                 !wants_text && i.key_pressed(egui::Key::F),
                 !wants_text && i.key_pressed(egui::Key::R),
                 !wants_text && (i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals)),
-                !wants_text && i.key_pressed(egui::Key::Minus),
+                !wants_text
+                    && (!self.plate_mode || self.plate_draft.points().is_empty())
+                    && (!self.beam_mode || self.beam.start().is_none())
+                    && i.key_pressed(egui::Key::Minus),
             )
         });
         self.poll_commit();
         self.poll_grid();
         self.poll_edit();
+        self.poll_views();
         self.poll_props();
         self.poll_publish();
         self.poll_status();
         self.poll_select();
         self.poll_reload();
+        self.refresh_view_display();
         self.selection_shortcuts(ui.ctx());
         self.render_mode_shortcuts(ui.ctx());
+        self.view_shortcuts(ui.ctx());
         self.perf_step(ui.ctx(), frame.info().cpu_usage);
-        if !wants_text && self.plate_mode && !self.other_command_running() {
-            if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                self.finish_plate();
-            }
-            if ui.input(|i| i.key_pressed(egui::Key::Backspace)) {
-                self.plate_draft.back();
-                self.plate_hover = None;
-            }
-        }
+        self.construction_keyboard(ui.ctx());
         if self.menu_open && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.menu_open = false;
-        } else if !wants_text && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        } else if !wants_text
+            && !self.other_command_running()
+            && ui.input(|i| i.key_pressed(egui::Key::Escape))
+        {
+            self.views.picking = false;
             self.grid_line.click = None;
             self.plane_pick = false;
             // Esc closes the publish dialog first; it clears the selection only when none is open.
@@ -2319,13 +2410,13 @@ impl eframe::App for App {
         }
         egui::CentralPanel::default().show(ui, |ui| {
             let size = ui.available_size();
+            self.viewport_height = size.y.max(1.0);
             let scale = ui.ctx().pixels_per_point();
             let [width, height] = target_size([size.x, size.y], scale);
             if let Err(e) = self.resize(width, height) {
                 self.error = Some(e.to_string());
             }
-            let response =
-                ui.add(egui::Image::new((self.texture, size)).sense(egui::Sense::click_and_drag()));
+            let response = ui.add(egui::Image::new((self.texture, size)).sense(viewport_sense()));
             let hovered = response.hovered();
             let (delta, shift, ctrl, scroll_y, pinch) = ui.input(|i| {
                 (
@@ -2421,12 +2512,17 @@ impl eframe::App for App {
                             }
                         }
                         match self.mode {
-                            RenderMode::SelectedOnly => match &self.selected_only.1 {
+                            RenderMode::SelectedOnly => match self
+                                .selected_only
+                                .1
+                                .as_ref()
+                                .filter(|_| self.selected_is_visible())
+                            {
                                 Some(selected) => {
                                     self.renderer.draw_one(
                                         &self.state.device,
                                         &self.state.queue,
-                                        &l.uploaded,
+                                        self.views.filtered.as_ref().unwrap_or(&l.uploaded),
                                         view,
                                         &self.stats,
                                         &selected.digest,
@@ -2438,7 +2534,7 @@ impl eframe::App for App {
                                     self.renderer.draw(
                                         &self.state.device,
                                         &self.state.queue,
-                                        &l.uploaded,
+                                        self.views.filtered.as_ref().unwrap_or(&l.uploaded),
                                         view,
                                         &self.stats,
                                         RenderMode::SelectedOnly,
@@ -2449,7 +2545,7 @@ impl eframe::App for App {
                                 self.renderer.draw(
                                     &self.state.device,
                                     &self.state.queue,
-                                    &l.uploaded,
+                                    self.views.filtered.as_ref().unwrap_or(&l.uploaded),
                                     view,
                                     &self.stats,
                                     mode,
@@ -2467,13 +2563,41 @@ impl eframe::App for App {
                                 self.grid_edit.as_ref().map(|edit| edit.id.as_str()),
                             );
                         }
-                        if let Some(selected) = self.editor.selected() {
+                        if let Some(selected) = self
+                            .editor
+                            .selected()
+                            .filter(|_| self.selected_is_visible())
+                        {
+                            let key = (selected.id.clone(), l.snapshot.token().as_str().to_owned());
+                            if self.selection_edges.0 != key {
+                                let edges = beamcraft_engine::ElementId::parse(&selected.id)
+                                    .ok()
+                                    .and_then(|id| {
+                                        beamcraft_engine::query::feature::element_edges(
+                                            &l.snapshot,
+                                            &id,
+                                        )
+                                        .ok()
+                                    })
+                                    .unwrap_or_default();
+                                self.selection_edges = (key, edges);
+                            }
                             let painter = ui.painter_at(response.rect);
-                            draw_selection(&painter, response.rect, &view, l, &selected.id);
+                            draw_selection(
+                                &painter,
+                                response.rect,
+                                &view,
+                                l.summary.origin_mm,
+                                &self.selection_edges.1,
+                            );
+                        } else {
+                            self.selection_edges = Default::default();
                         }
                     }
-                    // A click (not a drag) picks along the ray through the pixel.
-                    if response.clicked_by(egui::PointerButton::Primary)
+                    let finished_creation = self.finish_creation_gesture(&response, &view);
+                    // A closure gesture consumes the click before it can append another point.
+                    if !finished_creation
+                        && response.clicked_by(egui::PointerButton::Primary)
                         && let Some(pos) = response.interact_pointer_pos()
                         && let Some(ndc) = ndc_of(
                             [pos.x, pos.y],
@@ -2492,6 +2616,7 @@ impl eframe::App for App {
                         // switch stays `grids_visible`.
                         if !self.beam_mode
                             && !self.plate_mode
+                            && !self.views.picking
                             && self.grid_line.click.is_none()
                             && self.grids_visible
                             && self
@@ -2515,7 +2640,7 @@ impl eframe::App for App {
                         }
                     }
                     if self.plate_mode {
-                        self.plate_hover = response
+                        let resolved = response
                             .hover_pos()
                             .and_then(|pos| {
                                 ndc_of(
@@ -2533,11 +2658,10 @@ impl eframe::App for App {
                                         .map_or([0.0; 3], |l| l.summary.origin_mm),
                                 )
                             })
-                            .and_then(|ray| self.creation_point(ray, true).ok());
+                            .and_then(|ray| self.creation_hit(ray, true).ok());
+                        self.plate_hover = resolved.map(|(point, _)| point);
+                        self.snap_hover = resolved.and_then(|(_, kind)| kind);
                         self.paint_plate_draft(ui, response.rect, &view);
-                        if response.clicked_by(egui::PointerButton::Secondary) {
-                            self.finish_plate();
-                        }
                     }
                     // The ghost preview follows the pointer on the plane through the armed
                     // start, parallel to the view; the committed endpoint comes from the click.
@@ -2552,6 +2676,7 @@ impl eframe::App for App {
                         self.update_ghost(&view, ndc);
                         self.paint_member_draft(ui, response.rect, &view);
                     }
+                    self.paint_view_picking(ui, &response, &view);
                 }
                 Err(e) => self.error = Some(e.to_string()),
             }
@@ -2560,7 +2685,9 @@ impl eframe::App for App {
                     self.select_grid(&id);
                 }
             } else if let Some(ray) = picked {
-                if self.plane_pick {
+                if self.views.picking {
+                    self.view_pick(ray);
+                } else if self.plane_pick {
                     if let Some(loaded) = &self.loaded {
                         match beamcraft_engine::work_plane::pick_work_plane(
                             &loaded.snapshot,
@@ -2589,6 +2716,7 @@ impl eframe::App for App {
                 }
             }
         });
+        self.show_view_windows(ui.ctx());
         ui.ctx().request_repaint();
     }
 }
@@ -2683,7 +2811,7 @@ mod tests {
     /// refresh it starts fails and is never read, and a test hands it results itself. `None`,
     /// saying so, without a native adapter. The counters are this test's own, so parallel tests
     /// never count into each other (issue 167).
-    fn headless() -> Option<App> {
+    pub(super) fn headless() -> Option<App> {
         let gpu = match pollster::block_on(Gpu::headless()) {
             Ok(gpu) => gpu,
             Err(Error::NoAdapter) => {
@@ -3013,7 +3141,7 @@ mod tests {
     }
 
     /// A refresh whose scene is `plates` synthetic kernel plates.
-    fn refreshed(plates: u32) -> Reloaded {
+    pub(super) fn refreshed(plates: u32) -> Reloaded {
         let pin = ViewPin::new(Sha256::digest(b"revision").unwrap(), 1);
         let snapshot =
             ViewSnapshot::build(pin, plate_scene(plates, false).unwrap(), &Limits::default())
@@ -3023,7 +3151,7 @@ mod tests {
     }
 
     /// Hands `reloaded` to the window as the result of the refresh in flight.
-    fn deliver(app: &mut App, reloaded: Reloaded) {
+    pub(super) fn deliver(app: &mut App, reloaded: Reloaded) {
         let (tx, rx) = std::sync::mpsc::channel();
         tx.send(reloaded).unwrap();
         app.reload_job = Some(rx);
@@ -3163,13 +3291,14 @@ mod tests {
             .unwrap()
             .string()
             .unwrap();
-        let details = crate::command::element_details(
+        let mut details = crate::command::element_details(
             &cli,
             &app.source.store,
             member_id,
             &crate::stats::Stats::default(),
         )
         .unwrap();
+        details.quantities.stored_volume_freshness = Some("stale".into());
         let stamp = details.revision.clone();
         app.props.load(member_id, Ok(details));
         app.props.observe_head(Some(stamp));
@@ -3204,6 +3333,11 @@ mod tests {
                 "missing {expected}: {labels:?}"
             );
         }
+        assert!(
+            labels
+                .iter()
+                .any(|text| text.contains("stored value out of date"))
+        );
         assert!(!labels.iter().any(|text| text.contains("Command preview")
             || text.contains("Preview command")
             || text.contains("Revision and quantities")
@@ -3212,6 +3346,841 @@ mod tests {
         output.drop_without_applying_deltas();
         drop(app);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn typed_length_and_o_create_a_spatial_plate_through_real_keyboard_events() {
+        let mut app =
+            headless().expect("a native/software adapter is required for construction input");
+        let executable = std::env::current_exe().unwrap();
+        let cli = executable
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        assert!(cli.is_file(), "build beamcraft-cli before input acceptance");
+        let root = std::env::temp_dir().join(format!(
+            "bc-length-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        app.source.cli = cli;
+        app.source.store = root.clone();
+        app.loaded = None;
+        app.set_bench(super::workbench::Bench::Plate);
+        let ctx = egui::Context::default();
+        let frame = |app: &mut App, mut events: Vec<egui::Event>| {
+            let released = events
+                .iter()
+                .filter_map(|event| match event {
+                    egui::Event::Key {
+                        key,
+                        physical_key,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } => Some(egui::Event::Key {
+                        key: *key,
+                        physical_key: *physical_key,
+                        pressed: false,
+                        repeat: false,
+                        modifiers: *modifiers,
+                    }),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            events.extend(released);
+            ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ui| app.construction_keyboard(ui.ctx()),
+            )
+            .drop_without_applying_deltas()
+        };
+        let key = |key, repeat| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat,
+            modifiers: egui::Modifiers::NONE,
+        };
+        app.plate_draft.push([0.; 3]).unwrap();
+        app.plate_hover = Some([3., 4., 12.]);
+        frame(
+            &mut app,
+            vec![
+                egui::Event::Text("500".into()),
+                key(egui::Key::Enter, false),
+            ],
+        );
+        let p = *app.plate_draft.points().last().unwrap();
+        assert!((p.iter().map(|v| v * v).sum::<f64>().sqrt() - 500.).abs() < 1e-9);
+        assert!(
+            app.job.is_none(),
+            "numeric Enter adds a vertex, never finishes the plate"
+        );
+        frame(&mut app, vec![key(egui::Key::Enter, true)]);
+        assert_eq!(app.plate_draft.points().len(), 2);
+        assert!(app.job.is_none());
+        app.plate_draft.clear();
+        app.plate_draft.push([0.; 3]).unwrap();
+        frame(&mut app, vec![key(egui::Key::O, false)]);
+        assert!(app.selection.orthogonal);
+        // The same orthogonal engine resolver used by cursor preview selects a genuine Z ray.
+        let z = beamcraft_engine::coordinate::orthogonal_cursor(
+            [0.; 3],
+            [1000., -1000., 1000.],
+            [-1000., 1000., -400.],
+            None,
+        )
+        .unwrap();
+        app.plate_hover = Some(z);
+        frame(
+            &mut app,
+            vec![
+                egui::Event::Text("500".into()),
+                key(egui::Key::Enter, false),
+            ],
+        );
+        assert_eq!(app.plate_draft.points().last(), Some(&[0., 0., 500.]));
+        app.plate_hover = Some([200., 2., 500.]);
+        frame(
+            &mut app,
+            vec![
+                egui::Event::Text("300".into()),
+                key(egui::Key::Enter, false),
+            ],
+        );
+        assert_eq!(app.plate_draft.points().last(), Some(&[300., 0., 500.]));
+        app.plate_hover = Some([300., 0., -10.]);
+        frame(
+            &mut app,
+            vec![
+                egui::Event::Text("500".into()),
+                key(egui::Key::Enter, false),
+            ],
+        );
+        assert_eq!(app.plate_draft.points().last(), Some(&[300., 0., 0.]));
+        assert!(
+            app.tools.plane.is_none(),
+            "contour frame must not replace the session frame"
+        );
+        frame(&mut app, vec![key(egui::Key::Enter, false)]);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while app.job.is_some() && std::time::Instant::now() < deadline {
+            app.poll_commit();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(
+            app.job.is_none() && app.last_commit_ok,
+            "{:?}",
+            app.tool_note
+        );
+        assert!(app.tools.plane.is_none());
+        let output = std::process::Command::new(&app.source.cli)
+            .args(["inspect-elements", "--store", root.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let json =
+            beamcraft_json::decode(&output.stdout, &beamcraft_json::Limits::DEFAULT).unwrap();
+        let plate = &json.get("plates").unwrap().array().unwrap()[0];
+        assert_eq!(
+            plate
+                .get("quantities")
+                .unwrap()
+                .get("volume")
+                .unwrap()
+                .get("mm3")
+                .unwrap()
+                .float()
+                .unwrap(),
+            1_500_000.
+        );
+        let profile = std::process::Command::new(&app.source.cli)
+            .args([
+                "define-profile",
+                "--store",
+                root.to_str().unwrap(),
+                "--width",
+                "100",
+                "--height",
+                "200",
+            ])
+            .output()
+            .unwrap();
+        assert!(profile.status.success());
+        let profile =
+            beamcraft_json::decode(&profile.stdout, &beamcraft_json::Limits::DEFAULT).unwrap();
+        app.tools.member.profile = Some(
+            profile
+                .get("definition")
+                .unwrap()
+                .get("digest")
+                .unwrap()
+                .string()
+                .unwrap()
+                .into(),
+        );
+        app.set_bench(super::workbench::Bench::Beam);
+        app.selection.orthogonal = false;
+        app.loaded = None;
+        app.place_beam(crate::edit::Ray {
+            origin: [0., 0., 5000.],
+            direction: [0., 0., -1.],
+        });
+        app.beam_hover = Some([3., 4., 12.]);
+        // A viewport/button focus is not a text field and must not swallow length input.
+        ctx.memory_mut(|m| m.request_focus(egui::Id::unique("viewport-input-regression")));
+        frame(
+            &mut app,
+            vec![
+                egui::Event::Text("10000".into()),
+                key(egui::Key::Backspace, false),
+            ],
+        );
+        assert_eq!(app.distance_input, "1000");
+        assert_eq!(app.distance_aim, Some([3., 4., 12.]));
+        // Moving the cursor while typing keeps the direction captured by the first digit.
+        app.beam_hover = Some([100., 0., 0.]);
+        frame(&mut app, vec![key(egui::Key::Enter, false)]);
+        assert!(app.job.is_some(), "{:?}", app.tool_note);
+        frame(&mut app, vec![key(egui::Key::Enter, true)]);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while app.job.is_some() && std::time::Instant::now() < deadline {
+            app.poll_commit();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(
+            app.last_commit_ok && app.job.is_none(),
+            "{:?}",
+            app.tool_note
+        );
+        let output = std::process::Command::new(&app.source.cli)
+            .args(["inspect-elements", "--store", root.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let json =
+            beamcraft_json::decode(&output.stdout, &beamcraft_json::Limits::DEFAULT).unwrap();
+        let members = json.get("members").unwrap().array().unwrap();
+        assert_eq!(members.len(), 1);
+        let axis = members[0].get("axis_points_mm").unwrap().array().unwrap();
+        let start = axis[0].array().unwrap();
+        let end = axis[1].array().unwrap();
+        let delta = start
+            .iter()
+            .zip(end)
+            .map(|(a, b)| b.float().unwrap() - a.float().unwrap())
+            .collect::<Vec<_>>();
+        assert!((delta.iter().map(|v| v * v).sum::<f64>().sqrt() - 1000.).abs() < 1e-8);
+        assert!(
+            delta
+                .iter()
+                .zip([3000. / 13., 4000. / 13., 12000. / 13.])
+                .all(|(a, b)| (a - b).abs() < 1e-8)
+        );
+        drop(app);
+        assert!(root.is_absolute() && root.file_name().is_some());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn bay_midpoint_preview_and_triangle_selection_use_real_exported_geometry() {
+        use beamcraft_engine::query::{feature::element_edges, pick::SnapKind};
+        let mut app =
+            headless().expect("a native/software adapter is required for construction acceptance");
+        let executable = std::env::current_exe().unwrap();
+        let cli = executable
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let root = std::env::temp_dir().join(format!(
+            "bc-bay-outline-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let run = |command: &str, args: &[&str]| {
+            let out = std::process::Command::new(&cli)
+                .arg(command)
+                .args(["--store", root.to_str().unwrap()])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stdout)
+            );
+            beamcraft_json::decode(&out.stdout, &beamcraft_json::Limits::DEFAULT).unwrap()
+        };
+        run(
+            "create-grid",
+            &[
+                "--name",
+                "Bays",
+                "--u-expression",
+                "0 1000 2000",
+                "--v-expression",
+                "0 800 1200",
+            ],
+        );
+        let plate = run(
+            "create-plate",
+            &[
+                "--contour",
+                "0,0;0,800;1000,0",
+                "--normalize-winding",
+                "true",
+                "--thickness",
+                "10",
+                "--translation",
+                "5000,5000,0",
+            ],
+        );
+        let id = beamcraft_engine::ElementId::parse(
+            plate
+                .get("plate")
+                .unwrap()
+                .get("element_id")
+                .unwrap()
+                .string()
+                .unwrap(),
+        )
+        .unwrap();
+        app.source.cli = cli.clone();
+        app.source.store = root.clone();
+        let reload =
+            crate::source::reload(&cli, &root, &crate::source::Known::default(), &app.stats);
+        deliver(&mut app, reload);
+        app.set_bench(super::workbench::Bench::Plate);
+        for kind in SnapKind::ALL {
+            app.selection.set_snap(kind, kind == SnapKind::Midpoint);
+        }
+        app.selection.snap_nearest = false;
+        let origin = app.loaded.as_ref().unwrap().summary.origin_mm;
+        let local = std::array::from_fn(|i| ([500., 0., 0.][i] - origin[i]) as f32);
+        app.camera.fit(local, 2000., app.aspect()).unwrap();
+        let view = app.camera.view(app.aspect()).unwrap();
+        let [x, y, _] = view.project(local);
+        let ray = crate::edit::ray_through(
+            &view,
+            [x + 4. / (app.viewport_height * app.aspect()), y],
+            origin,
+        )
+        .unwrap();
+        let (point, kind) = app.creation_hit(ray, true).unwrap();
+        assert_eq!(kind, Some(SnapKind::Midpoint));
+        assert!(
+            point
+                .iter()
+                .zip([500., 0., 0.])
+                .all(|(a, b)| (a - b).abs() < 1e-7)
+        );
+        app.place_plate(ray);
+        assert_eq!(app.plate_draft.points(), &[point]);
+        let edges = element_edges(&app.loaded.as_ref().unwrap().snapshot, &id).unwrap();
+        assert_eq!(edges.len(), 9);
+        let view = crate::camera::Camera::new([5500., 5400., 0.], 2000., 1.)
+            .unwrap()
+            .view(1.)
+            .unwrap();
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800., 800.));
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(rect),
+                ..Default::default()
+            },
+            |ui| {
+                super::draw_selection(ui.painter(), rect, &view, [0.; 3], &edges);
+            },
+        );
+        let lines = output
+            .shapes
+            .iter()
+            .filter_map(|s| match s.shape {
+                egui::Shape::LineSegment { points, .. } => Some(points),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(lines.len(), 9);
+        // The absent fourth corner of the triangle must never become a highlight endpoint.
+        let [x, y, _] = view.project([6000., 5800., 0.]);
+        let phantom = egui::pos2((x + 1.) * 400., (1. - y) * 400.);
+        assert!(lines.iter().flatten().all(|p| p.distance(phantom) > 1.));
+        output.drop_without_applying_deltas();
+        drop(app);
+        assert!(root.is_absolute() && root.file_name().is_some());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn plate_cursor_snaps_follow_pixels_switches_and_the_real_exported_geometry() {
+        use beamcraft_engine::query::pick::SnapKind;
+        let mut app =
+            headless().expect("a native/software adapter is required for snap acceptance");
+        let executable = std::env::current_exe().unwrap();
+        let cli = executable
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        assert!(cli.is_file(), "build beamcraft-cli before snap acceptance");
+        let root = std::env::temp_dir().join(format!(
+            "bc-snaps-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let run = |command: &str, args: &[&str]| {
+            let out = std::process::Command::new(&cli)
+                .args([command, "--store", root.to_str().unwrap()])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stdout)
+            );
+            beamcraft_json::decode(&out.stdout, &beamcraft_json::Limits::DEFAULT).unwrap()
+        };
+        run(
+            "create-grid",
+            &[
+                "--name",
+                "G",
+                "--u-expression",
+                "0 1000",
+                "--v-expression",
+                "0 2000",
+            ],
+        );
+        run(
+            "create-plate",
+            &[
+                "--width",
+                "1000",
+                "--length",
+                "800",
+                "--thickness",
+                "10",
+                "--translation",
+                "3000,0,0",
+            ],
+        );
+        let profile = run(
+            "define-profile",
+            &[
+                "--family", "i_shape", "--h", "200", "--b", "100", "--tw", "6", "--tf", "10",
+                "--r", "0",
+            ],
+        );
+        let profile = profile
+            .get("definition")
+            .unwrap()
+            .get("digest")
+            .unwrap()
+            .string()
+            .unwrap();
+        run(
+            "create-member",
+            &[
+                "--start",
+                "0,4000,0",
+                "--end",
+                "3000,4000,0",
+                "--profile-digest",
+                profile,
+                "--section-plane-offset",
+                "350",
+            ],
+        );
+        app.source.cli = cli.clone();
+        app.source.store = root.clone();
+        let reload =
+            crate::source::reload(&cli, &root, &crate::source::Known::default(), &app.stats);
+        assert!(
+            reload
+                .grids
+                .as_ref()
+                .is_ok_and(|scene| scene.member_axes.len() == 1)
+        );
+        deliver(&mut app, reload);
+        let token = app.loaded.as_ref().unwrap().snapshot.token().clone();
+        app.set_bench(super::workbench::Bench::Plate);
+        let only = |app: &mut App, kind| {
+            for k in SnapKind::ALL {
+                app.selection.set_snap(k, k == kind);
+            }
+        };
+        let ray_at = |app: &App, point: [f64; 3], pixels: f32| {
+            let origin = app.loaded.as_ref().unwrap().summary.origin_mm;
+            let local = std::array::from_fn(|i| (point[i] - origin[i]) as f32);
+            let view = app.camera.view(app.aspect()).unwrap();
+            let [x, y, _] = view.project(local);
+            let ndc = [x + pixels * 2.0 / (app.viewport_height * app.aspect()), y];
+            crate::edit::ray_through(&view, ndc, origin).unwrap()
+        };
+        // All defaults enabled: a closer grid line must not steal the crossing.
+        for zoom in [0.0, 0.7, -0.7] {
+            app.camera.navigate([0.0; 2], [0.0; 2], zoom).unwrap();
+            let ray = ray_at(&app, [1000.0, 2000.0, 0.0], 3.0);
+            assert_eq!(
+                app.creation_hit(ray, true).unwrap(),
+                ([1000., 2000., 0.], Some(SnapKind::GridIntersection))
+            );
+            app.plate_draft.clear();
+            app.place_plate(ray);
+            assert_eq!(app.plate_draft.points(), &[[1000., 2000., 0.]]);
+        }
+        app.plate_draft.clear();
+        only(&mut app, SnapKind::GridIntersection);
+        let ray = ray_at(&app, [1000., 2000., 0.], 3.0);
+        app.grids_visible = false;
+        assert!(app.creation_hit(ray, true).unwrap().1.is_none());
+        app.grids_visible = true;
+        app.selection.snapping_enabled = false;
+        assert!(app.creation_hit(ray, true).unwrap().1.is_none());
+        app.selection.snapping_enabled = true;
+        // Source switches do not enable a point kind. In particular, grid ON cannot
+        // resurrect nearest points when the hourglass switch is OFF.
+        let previous_camera = app.camera;
+        let origin = app.loaded.as_ref().unwrap().summary.origin_mm;
+        let target = std::array::from_fn(|i| ([0., 611., 0.][i] - origin[i]) as f32);
+        app.camera.fit(target, 1500., app.aspect()).unwrap();
+        for k in SnapKind::ALL {
+            app.selection.set_snap(k, true);
+        }
+        for reference in [false, true] {
+            for geometry in [false, true] {
+                for grids in [false, true] {
+                    for nearest in [false, true] {
+                        app.selection.snap_reference = reference;
+                        app.selection.snap_geometry = geometry;
+                        app.selection.snap_grids = grids;
+                        app.selection.snap_nearest = nearest;
+                        let ray = ray_at(&app, [0., 611., 0.], 0.0);
+                        let (_, kind) = app.creation_hit(ray, true).unwrap();
+                        assert_eq!(
+                            kind,
+                            if reference && grids && nearest {
+                                Some(SnapKind::GridLine)
+                            } else {
+                                None
+                            },
+                            "reference={reference} geometry={geometry} grids={grids} nearest={nearest}"
+                        );
+                        app.grid_line.click = Some(false);
+                        app.place_grid_line(crate::edit::Ray {
+                            origin: [1., 611., 1000.],
+                            direction: [0., 0., -1.],
+                        });
+                        assert_eq!(
+                            app.grid_line.points[0],
+                            if reference && grids && nearest {
+                                ["0".to_owned(), "611".to_owned()]
+                            } else {
+                                ["1".to_owned(), "611".to_owned()]
+                            }
+                        );
+                    }
+                }
+            }
+        }
+        app.camera = previous_camera;
+        app.grid_line.click = None;
+        app.selection.snap_reference = true;
+        app.selection.snap_geometry = true;
+        app.selection.snap_grids = true;
+        app.selection.snap_nearest = true;
+        only(&mut app, SnapKind::GridIntersection);
+        let far = ray_at(&app, [1000., 2000., 0.], 18.0);
+        assert!(app.creation_hit(far, true).unwrap().1.is_none());
+        for (kind, p) in [
+            (SnapKind::Midpoint, [3500., 0., 0.]),
+            (SnapKind::Vertex, [3000., 0., 0.]),
+            (SnapKind::Edge, [3600., 0., 0.]),
+            (SnapKind::Center, [1500., 4000., 0.]),
+            (SnapKind::AxisEnd, [0., 4000., 0.]),
+        ] {
+            only(&mut app, kind);
+            let ray = ray_at(&app, p, 0.0);
+            let (point, snap) = app.creation_hit(ray, true).unwrap();
+            assert_eq!(snap, Some(kind));
+            assert!(
+                point.iter().zip(p).all(|(a, b)| (a - b).abs() < 0.01),
+                "{kind:?}: {point:?}"
+            );
+        }
+        assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
+        assert!(app.job.is_none());
+        // Every clicked vertex is exactly a grid intersection and Finish publishes those points.
+        only(&mut app, SnapKind::GridIntersection);
+        for p in [
+            [0., 0., 0.],
+            [1000., 0., 0.],
+            [1000., 2000., 0.],
+            [0., 2000., 0.],
+        ] {
+            let ray = ray_at(&app, p, 2.0);
+            app.place_plate(ray);
+        }
+        assert_eq!(app.plate_draft.points().len(), 4);
+        app.finish_plate();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while app.job.is_some() && std::time::Instant::now() < deadline {
+            app.poll_commit();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(
+            app.job.is_none() && app.last_commit_ok,
+            "{:?}",
+            app.tool_note
+        );
+        let inspected = run("inspect-elements", &[]);
+        assert!(
+            inspected
+                .get("plates")
+                .unwrap()
+                .array()
+                .unwrap()
+                .iter()
+                .any(|plate| {
+                    plate
+                        .get("quantities")
+                        .unwrap()
+                        .get("volume")
+                        .unwrap()
+                        .get("mm3")
+                        .unwrap()
+                        .float()
+                        .unwrap()
+                        == 20_000_000.
+                })
+        );
+        drop(app);
+        assert!(root.is_absolute() && root.file_name().is_some());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn review_triangle_and_rectangle_finish_with_right_or_wheel_click_and_drags_do_not_finish() {
+        use crate::tools::{Created, ToolError};
+        let mut app = headless().expect("software/native graphics required for input acceptance");
+        let exe = std::env::current_exe().unwrap();
+        let cli = exe
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        assert!(cli.is_file());
+        let root = std::env::temp_dir().join(format!(
+            "bc-finish-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        app.source.cli = cli.clone();
+        app.source.store = root.clone();
+        app.loaded = None;
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::pos2(20.0, 20.0), egui::vec2(600.0, 600.0));
+        let view = crate::camera::Camera::new([0.0; 3], 10_000.0, 1.0)
+            .unwrap()
+            .view(1.0)
+            .unwrap();
+        for kind in beamcraft_engine::query::pick::SnapKind::ALL {
+            app.selection.set_snap(kind, false);
+        }
+        let frame = |app: &mut App, events| {
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(900.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
+                    app.finish_creation_gesture(&response, &view);
+                },
+            );
+            output.drop_without_applying_deltas();
+        };
+        let event = |button, pos, pressed| egui::Event::PointerButton {
+            pos,
+            button,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut count = 0;
+        for (vertices, button, near_first) in [
+            (3, egui::PointerButton::Secondary, false),
+            (3, egui::PointerButton::Middle, false),
+            (4, egui::PointerButton::Secondary, false),
+            (4, egui::PointerButton::Middle, false),
+            (3, egui::PointerButton::Primary, true),
+        ] {
+            app.set_bench(super::workbench::Bench::Plate);
+            let mut points = if vertices == 3 {
+                vec![[0.0, 0.0, 0.0], [4000.0, 0.0, 0.0], [0.0, 3000.0, 0.0]]
+            } else {
+                vec![
+                    [0.0, 0.0, 0.0],
+                    [4000.0, 0.0, 0.0],
+                    [4000.0, 3000.0, 0.0],
+                    [0.0, 3000.0, 0.0],
+                ]
+            };
+            if button == egui::PointerButton::Secondary {
+                points.reverse();
+            }
+            for p in points {
+                app.plate_draft.push(p).unwrap();
+            }
+            let pos = if near_first {
+                rect.center() + egui::vec2(8.0, 0.0)
+            } else {
+                rect.center() + egui::vec2(100.0, 100.0)
+            };
+            frame(&mut app, vec![egui::Event::PointerMoved(pos)]);
+            frame(&mut app, vec![event(button, pos, true)]);
+            frame(&mut app, vec![event(button, pos, false)]);
+            assert!(
+                app.job.is_some(),
+                "{vertices} vertices, {button:?} must save: {:?}",
+                app.tool_note
+            );
+            assert_eq!(app.plate_draft.points().len(), vertices);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            while app.job.is_some() && std::time::Instant::now() < deadline {
+                app.poll_commit();
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            assert!(
+                app.last_commit_ok && app.job.is_none(),
+                "{:?}",
+                app.tool_note
+            );
+            count += 1;
+        }
+        let output = std::process::Command::new(&cli)
+            .args(["inspect-elements", "--store", root.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let inspected =
+            beamcraft_json::decode(&output.stdout, &beamcraft_json::Limits::DEFAULT).unwrap();
+        assert_eq!(
+            inspected.get("plates").unwrap().array().unwrap().len(),
+            count
+        );
+        app.set_bench(super::workbench::Bench::Plate);
+        for p in [[0.0, 0.0, 0.0], [4000.0, 0.0, 0.0], [0.0, 3000.0, 0.0]] {
+            app.plate_draft.push(p).unwrap();
+        }
+        let a = rect.center();
+        let b = a + egui::vec2(80.0, 20.0);
+        frame(&mut app, vec![egui::Event::PointerMoved(a)]);
+        frame(&mut app, vec![event(egui::PointerButton::Middle, a, true)]);
+        frame(&mut app, vec![egui::Event::PointerMoved(b)]);
+        frame(&mut app, vec![event(egui::PointerButton::Middle, b, false)]);
+        assert!(app.job.is_none(), "panning must not finish the contour");
+        assert_eq!(app.plate_draft.points().len(), 3);
+        // Tool changes may not discard the draft/evidence while saving.
+        app.tools.plate.contour = app.plate_draft.contour(None).unwrap();
+        app.tools.preview(&app.source.store).unwrap();
+        let (_tx, rx) = std::sync::mpsc::channel::<Result<Created, ToolError>>();
+        app.job = Some(rx);
+        app.set_bench(super::workbench::Bench::Select);
+        assert_eq!(app.bench, super::workbench::Bench::Plate);
+        assert!(app.tools.staged().is_some());
+        assert_eq!(app.plate_draft.points().len(), 3);
+        app.job = None;
+        // A failed point resolution must discard both visible preview and its cache.
+        app.tools.plane =
+            Some(beamcraft_engine::work_plane::WorkPlane::parallel("xy", 1e9).unwrap());
+        app.beam.click([0.0; 3]);
+        app.beam_hover = Some([1.0; 3]);
+        app.ghost_end = Some([1; 3]);
+        app.update_ghost(&view, [0.0; 2]);
+        assert!(app.beam_hover.is_none() && app.ghost_end.is_none());
+        for button in [egui::PointerButton::Secondary, egui::PointerButton::Middle] {
+            app.set_bench(super::workbench::Bench::Beam);
+            app.beam.click([0.0; 3]);
+            frame(&mut app, vec![egui::Event::PointerMoved(a)]);
+            frame(&mut app, vec![event(button, a, true)]);
+            frame(&mut app, vec![event(button, a, false)]);
+            assert_eq!(app.bench, super::workbench::Bench::Select);
+            assert!(app.beam.start().is_none() && app.job.is_none());
+        }
+        drop(app);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn review_duplicate_choices_have_distinct_labels_without_changing_unique_labels() {
+        let levels: Vec<(String, String, f64)> = vec![
+            (
+                "01990000-0000-7000-8000-000000000001".into(),
+                "Floor".into(),
+                3000.0,
+            ),
+            (
+                "01990000-0000-7000-8000-000000000002".into(),
+                "Floor".into(),
+                3000.0,
+            ),
+        ];
+        assert_ne!(
+            super::level_choice_label(&levels[0].0, &levels),
+            super::level_choice_label(&levels[1].0, &levels)
+        );
+        let choices = vec![
+            crate::tools::Choice {
+                digest: "a000000000000001".into(),
+                label: "Steel (0001)".into(),
+                rect_mm: None,
+            },
+            crate::tools::Choice {
+                digest: "b000000000000001".into(),
+                label: "Steel (0002)".into(),
+                rect_mm: None,
+            },
+        ];
+        assert_ne!(
+            super::definition_choice_label(&choices[0], &choices),
+            super::definition_choice_label(&choices[1], &choices)
+        );
+        assert_eq!(
+            super::definition_choice_label(&choices[0], &choices[..1]),
+            "Steel"
+        );
     }
 
     #[test]
@@ -3407,11 +4376,29 @@ mod tests {
             app.selection.filter().off_classes(),
             vec![SelectionClass::Parts, SelectionClass::Grids]
         );
-        assert!(!app.selection.snap_open);
+        assert!(app.selection.snapping_enabled);
         draw(&mut app, click(snap.unwrap()));
-        assert!(app.selection.snap_open);
+        assert!(!app.selection.snapping_enabled);
         draw(&mut app, click(rects[20].center()));
-        assert!(app.selection.snap_on(SnapKind::GridIntersection));
+        assert!(!app.selection.snap_on(SnapKind::GridIntersection));
+        draw(&mut app, click(rects[21].center())); // one endpoint type, three source families
+        for kind in [SnapKind::Vertex, SnapKind::AxisEnd, SnapKind::GridEnd] {
+            assert!(!app.selection.snap_on(kind));
+        }
+        draw(&mut app, click(rects[21].center()));
+        // Toolbar source gates and point kinds retain independent state.
+        draw(&mut app, click(rects[24].center())); // nearest/hourglass
+        assert!(!app.selection.snap_nearest);
+        assert!(app.selection.snap_grids);
+        assert!(!app.selection.snap_kinds().contains(&SnapKind::GridLine));
+        draw(&mut app, click(rects[29].center())); // grid source
+        assert!(!app.selection.snap_grids);
+        assert!(!app.selection.snap_nearest);
+        draw(&mut app, click(rects[31].center())); // reference master
+        draw(&mut app, click(rects[32].center())); // physical master
+        assert!(!app.selection.snap_reference && !app.selection.snap_geometry);
+        draw(&mut app, click(snap.unwrap())); // global snap back on
+        assert!(app.selection.snap_kinds().is_empty());
         assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
     }
 

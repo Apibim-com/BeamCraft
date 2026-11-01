@@ -348,7 +348,7 @@ fn pipeline(
     let scopes = error_scopes(device);
     let camera = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("BeamCraft camera"),
-        size: 80,
+        size: 176,
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
@@ -356,7 +356,7 @@ fn pipeline(
         label: Some("BeamCraft camera layout"),
         entries: &[wgpu::BindGroupLayoutEntry {
             binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX,
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Uniform,
                 has_dynamic_offset: false,
@@ -396,7 +396,7 @@ fn pipeline(
         step_mode: wgpu::VertexStepMode::Instance,
         attributes: &instance_attributes,
     });
-    let pipeline = |label, fragment, polygon_mode, blend, depth_write| {
+    let pipeline = |label, fragment, polygon_mode, blend: Option<wgpu::BlendState>, depth_write| {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(label),
             layout: Some(&pipeline_layout),
@@ -428,7 +428,7 @@ fn pipeline(
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: FORMAT,
-                    blend,
+                    blend: Some(blend.unwrap_or(wgpu::BlendState::ALPHA_BLENDING)),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),

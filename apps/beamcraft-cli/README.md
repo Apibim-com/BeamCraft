@@ -514,3 +514,12 @@ layer into its revision unchanged. See the [design note](../../docs/design/r01-r
 U16 uses the [category-based prim paths](../../docs/architecture.md#prim-hierarchy-and-naming-rule)
 in saved layers and `prim_path` output. Stores with earlier paths or schema pins are refused;
 there is no migration during this pre-alpha compatibility break.
+
+## Local model views
+
+`model-views`, `create-model-view`, `update-model-view`, `delete-model-view`,
+`create-view-folder` and `delete-view-folder` manage a project-bound local `views.usda`
+presentation layer. `--help` lists coordinate, point, grid, level, part, assembly and surface
+constructors and display settings. View operations preserve immutable model revisions and
+engineering geometry. See [local model views](../../docs/design/model-views.md) for limits
+and the distinction from shared-view publication.

@@ -98,18 +98,26 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   actions stay disabled instead of suggesting unsupported functionality.
 - The bottom toolbar has 20 compact 24-point entity controls and 13 snap/constraint controls,
   in separate dense rows on the left and right with small group separators. Glyphs are
-  contributor-original Rust drawings. The eight upstream selection-class filters and six
+  contributor-original Rust drawings. The eight upstream selection-class filters and nine
   engine snap kinds are wired to these controls; Snap toggles snapping globally.
-  Unsupported filters/constraints remain disabled with explanatory tooltips.
+  Reference and physical geometry are independent source masters. Grids is an additional
+  reference-source gate. Endpoints/midpoints/intersections and Nearest are independent point
+  kinds: grids ON with Nearest OFF permits only the selected discrete grid points. The same
+  rule applies to member axes and physical edges. See [the switch matrix](../../docs/design/v11-construction-snaps.md).
+  O or the orthogonal switch constrains construction to local X/Y/Z. Unsupported filters/constraints remain disabled with explanatory tooltips.
   Search stays available without displaying its keyboard shortcut.
 - Interactive creation: choose Plate, Beam or Column, set thickness/profile/material/class,
   then pick points in the viewport. A member's second point creates it; a plate takes ordered
-  contour vertices and finishes with Enter, right-click, the first vertex, or Finish plate.
-  Backspace removes a draft vertex; Reverse direction explicitly changes contour winding.
+  contour vertices. Aim, type a length in mm and press Enter to add the next point in that 3D direction.
+  Enter without a length, right-click, wheel-click, the first vertex, or Finish plate finishes the contour.
+  Backspace removes a typed digit or draft vertex; Reverse direction explicitly changes contour winding.
   Esc, Cancel or a tool change discards unfinished points without writing. Invalid contours are
   refused by the engine and remain editable. Numeric coordinates remain available for precision.
-  Plate points lie on the active work plane (world XY by default); engine snaps use the displayed
-  snapshot, exclude hidden grids, and preserve the work plane. The contour outline and member axis
+  Free points use the working plane (world XY by default), while cursor snaps can pick spatial geometry.
+  The engine infers a planar contour frame without changing the session plane or flattening vertices.
+  Snaps include physical vertices/edges, midpoints, authored beam axes/centers and grid intersections;
+  hidden grids are excluded, and exact targets take priority over nearest-line candidates.
+  The contour outline, snap marker and member axis
   follow the same resolved point as the final click. Supported member body previews use the engine.
   Move/Copy/Delete also use direct modelling actions, while their existing verified command
   adapters remain internal. See [the design note](../../docs/design/v06-properties-interactive-creation.md).
@@ -129,3 +137,19 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
 
 Linux needs a Vulkan driver and the X11 or Wayland client libraries (including
 `libxkbcommon-x11`) at run time; a missing window-system library is reported, not a crash.
+
+## Model views
+
+The project browser has Views, Drawings and Schedules tabs; this implementation fills Views.
+Use the View ribbon or New view to choose a constructor. Point and surface constructors
+start model picking immediately, with snaps, step prompts and a live preview. The final valid
+click creates the view. Esc cancels; Backspace removes the last point. Ctrl+P aligns the camera
+with the active view plane and preserves point picking. View properties support projection,
+camera rotations, depth, work area and display settings; Apply remains visible while scrolling.
+Saved display settings can be reused for new views and independently for grid families.
+Folders, favourites, previews, Ctrl/Shift selection and cut/copy/paste organize the collection;
+drag a view onto a folder heading to move it. Context commands open, rename, duplicate,
+close or delete a view. Up to nine views can be open, with eight auxiliary viewports.
+Ctrl+Tab cycles open views; Ctrl+P restores a plane-aligned camera and toggles back.
+Temporary views last for this session; named views reopen from the local USD presentation
+layer. See [implementation and limits](../../docs/design/model-views.md).

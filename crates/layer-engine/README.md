@@ -197,3 +197,9 @@ The executable logical-case subset is `DVC-BASE-004-P/N` and `DVC-REL-011-P/N` i
 rule IDs and F04 codes. The remaining logical cases are not claimed as executable F10 acceptance
 by this suite. Additional authoring and CLI tests cover connection types, assembly-free copies,
 level retention, unchanged source relationships and undo/redo.
+
+`authored::view_layer` reads and writes the bounded, standalone local `views.usda`
+presentation layer: native Camera prims and typed application display attributes. It uses
+the ordinary virtual reader, accepts no external assets and performs no disk I/O. It does
+not insert views into an engineering revision or implement shared-view publication. See
+[local model views](../../docs/design/model-views.md).

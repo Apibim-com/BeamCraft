@@ -973,6 +973,12 @@ fn typed_depth(
                 .map(|n| number(*n, max))
                 .collect::<Result<_, _>>()?,
         ),
+        V::Vec2f(v) => array(
+            [v.x, v.y]
+                .into_iter()
+                .map(|n| number(n.into(), max))
+                .collect::<Result<_, _>>()?,
+        ),
         V::Vec3f(v) => array(
             [v.x, v.y, v.z]
                 .into_iter()

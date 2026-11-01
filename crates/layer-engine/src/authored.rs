@@ -12,6 +12,7 @@ pub mod instance;
 pub mod rebase;
 mod reference;
 mod validate;
+pub mod view_layer;
 
 pub use guard::WriteGrant;
 pub use reference::{
