@@ -15,7 +15,7 @@ use beamcraft_kernel::measure::cross_check_plate;
 use beamcraft_kernel::topology::{Limits, analyze, analyze_with_tolerance};
 use beamcraft_kernel::trimesh::TriMesh;
 use beamcraft_kernel::verdict::ShellStatus;
-use beamcraft_kernel::{steel::RectangularPlate, steel::rectangular_plate};
+use beamcraft_kernel::{RectangularPlate, rectangular_plate};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 

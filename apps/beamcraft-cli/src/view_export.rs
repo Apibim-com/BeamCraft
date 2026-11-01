@@ -183,7 +183,7 @@ fn run(args: &[OsString]) -> Result<Output, Refusal> {
         if with_grids {
             let grids = printed(
                 crate::grid_cmd::views_json(&inspection.grids).and_then(|grids| {
-                    let axes = beamcraft_engine::query::pick::member_snap_axes(&inspection.members)
+                    let axes = steel::engine::snap::member_snap_axes(&inspection.members)
                         .map_err(|_| invalid("member snap reference limit exceeded"))?;
                     let axes = axes
                         .iter()

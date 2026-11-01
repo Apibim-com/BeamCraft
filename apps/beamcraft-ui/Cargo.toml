@@ -37,6 +37,7 @@ path = "tests/cancel.rs"
 # (`app::load_icon`).
 [dependencies]
 beamcraft-model.workspace = true
+steel = { path = "../../crates/steel", version = "0.0.1" }
 beamcraft-json.workspace = true
 beamcraft-host = { path = "../../crates/host", version = "0.0.1" }
 session = { path = "../../crates/session", version = "0.0.1" }

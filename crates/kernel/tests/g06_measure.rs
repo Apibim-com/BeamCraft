@@ -13,14 +13,15 @@ mod common;
 use beamcraft_geom::{Frame3, Point3, RigidTransform, Vec3};
 use beamcraft_kernel::diagnostic::{Code, Stage};
 use beamcraft_kernel::enclosure::Enclosure;
+use beamcraft_kernel::measure::cross_check_plate;
 use beamcraft_kernel::measure::{
-    Basis, MassRecord, MeshMeasurement, QuantityStatus, analytic_mass_kg, cross_check_plate,
-    mass_status, measure, measure_with_cancel,
+    Basis, MassRecord, MeshMeasurement, QuantityStatus, analytic_mass_kg, mass_status, measure,
+    measure_with_cancel,
 };
 use beamcraft_kernel::topology::{Limits, analyze, analyze_with};
 use beamcraft_kernel::trimesh::TriMesh;
 use beamcraft_kernel::verdict::{Fault, MeshCode, ShellStatus, Uncertainty};
-use beamcraft_kernel::{steel::RectangularPlate, steel::rectangular_plate};
+use beamcraft_kernel::{RectangularPlate, rectangular_plate};
 use common::*;
 
 fn mesh(b: &Buf) -> TriMesh {

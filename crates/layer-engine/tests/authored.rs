@@ -1500,7 +1500,7 @@ fn through_hole_polygons_are_authored_as_flat_points_and_counts_and_validated() 
 
 #[test]
 fn corner_treatments_are_authored_as_five_parallel_arrays_and_bounded() {
-    use beamcraft_model::steel::command::{CornerTreatment, PlateCorner};
+    use steel::model::command::{CornerTreatment, PlateCorner};
     let treated = |corners: Vec<PlateCorner>| Shape::Plate {
         contour_mm: vec![
             [0.0, 0.0, 0.0],
@@ -1687,7 +1687,7 @@ fn corner_treatments_are_authored_as_five_parallel_arrays_and_bounded() {
 #[test]
 fn bend_records_are_authored_as_seven_parallel_arrays_and_bounded() {
     use beamcraft_model::id::OpId;
-    use beamcraft_model::steel::command::BendRecord;
+    use steel::model::command::BendRecord;
     let bent = |bends: Vec<BendRecord>| Shape::Plate {
         contour_mm: vec![
             [0.0, 0.0, 0.0],
@@ -1795,7 +1795,7 @@ fn bend_records_are_authored_as_seven_parallel_arrays_and_bounded() {
 #[test]
 fn a_bend_record_refuses_an_out_of_range_angle_or_radius_before_writing() {
     use beamcraft_model::id::OpId;
-    use beamcraft_model::steel::command::BendRecord;
+    use steel::model::command::BendRecord;
     let bent = |bends: Vec<BendRecord>| Shape::Plate {
         contour_mm: vec![
             [0.0, 0.0, 0.0],
@@ -1888,7 +1888,7 @@ fn a_bend_record_refuses_an_out_of_range_angle_or_radius_before_writing() {
 #[test]
 fn the_plane_cut_records_are_authored_as_five_parallel_arrays_and_validated() {
     use beamcraft_model::id::OpId;
-    use beamcraft_model::steel::command::KeepSide;
+    use steel::model::command::KeepSide;
     let record = |ordinal: u16, point: [f64; 3], normal: [f64; 3], keep: KeepSide| CutRecord {
         operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000c7").unwrap(),
         ordinal,
@@ -3476,7 +3476,7 @@ fn wrong_bolt_inputs_targets_and_loaded_records_are_refused() {
 
 #[test]
 fn section_profiles_round_trip_and_tampering_is_refused() {
-    use beamcraft_model::steel::section::{CustomSection, ParametricSection, SectionFamily};
+    use steel::model::section::{CustomSection, ParametricSection, SectionFamily};
     let (mut a, mut o) = populated();
     let i_shape = Resource::new(Definition::SectionProfile {
         shape: SectionShape::Parametric(
@@ -4140,7 +4140,8 @@ fn connection_discriminator_roundtrips_and_rejects_missing_unknown_or_conflictin
 
 #[test]
 fn removed_cuts_keep_a_monotone_counter_and_cannot_reactivate_their_id() {
-    use beamcraft_model::{id::OpId, steel::command::KeepSide};
+    use beamcraft_model::id::OpId;
+    use steel::model::command::KeepSide;
     let record = CutRecord {
         operation_id: OpId::parse("019a7bf0-0000-7000-8000-00000000cf01").unwrap(),
         ordinal: 7,
@@ -4247,7 +4248,7 @@ fn removed_holes_mask_weaker_opinions_and_keep_their_history() {
         operation_id: OpId::parse("019a7bf0-0000-7000-8000-00000000af01").unwrap(),
         ordinal: 7,
         polygon_mm: vec![[10.0, 10.0], [10.0, 20.0], [20.0, 20.0], [20.0, 10.0]],
-        kind: beamcraft_model::steel::command::HoleKind::Hole,
+        kind: steel::model::command::HoleKind::Hole,
         owner: None,
     };
     let (mut a, o) = Author::open(
@@ -4398,7 +4399,7 @@ fn circular_member_path_is_explicit_and_invalid_shape_metadata_is_refused() {
 
 #[test]
 fn corner_replacement_bounds_vertices_and_can_clear_the_complete_record() {
-    use beamcraft_model::steel::command::{CornerTreatment, PlateCorner};
+    use steel::model::command::{CornerTreatment, PlateCorner};
     let (mut a, o) = populated();
     let corner = |vertex| PlateCorner {
         vertex,

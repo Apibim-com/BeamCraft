@@ -36,21 +36,19 @@ use crate::plate::{decode_polygon, decode_polygons, number, text};
 use crate::source_file::read_file;
 use beamcraft_layer_engine::{Prim, Reader, Value};
 use beamcraft_model::command::{CommandError, label_is_valid};
-use beamcraft_model::definition::SectionProperties;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::reference::check_source_path;
-use beamcraft_model::steel::fastener::{
-    FastenerKind, FastenerSpec, HeadKind, HoleMode, WasherSpec,
-};
-use beamcraft_model::steel::section::{
-    CustomSection, MAX_CUSTOM_CAVITIES, ParametricSection, SectionFamily, SectionShape,
-};
 use session::Refusal;
 use session::environment::{EnvironmentInfo, MAX_ENVIRONMENT_BYTES, parse_environment};
 use session::foreign;
 use session::pipeline::digest_of;
 use std::collections::{BTreeMap, BTreeSet};
+use steel::model::definition::SectionProperties;
+use steel::model::fastener::{FastenerKind, FastenerSpec, HeadKind, HoleMode, WasherSpec};
+use steel::model::section::{
+    CustomSection, MAX_CUSTOM_CAVITIES, ParametricSection, SectionFamily, SectionShape,
+};
 
 /// Largest library file, in bytes.
 pub const MAX_LIBRARY_BYTES: usize = foreign::MAX_LAYER_BYTES;
