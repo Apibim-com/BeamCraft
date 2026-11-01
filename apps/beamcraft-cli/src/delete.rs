@@ -246,10 +246,10 @@ pub fn delete_element(
                 body: body.clone(),
                 quantities,
             };
-            changes.push(Change::HoleRecords {
-                id: next.id.to_string(),
-                records: next.hole_records.clone(),
-            });
+            changes.push(Change::hole_records(
+                next.id.to_string(),
+                next.hole_records.clone(),
+            ));
             changes.push(mesh_change(&next.id, &body.solid, &plate_record(&record))?);
             footprint = footprint.union(Footprint::for_update(
                 next.id, false, false, true, false, None,

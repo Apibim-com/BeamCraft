@@ -48,7 +48,7 @@ use beamcraft_host::revision::{
 use beamcraft_layer_engine::Property;
 use beamcraft_layer_engine::authored::{
     Author, Change, EditTargets, Element, Group as LayerGroup, Placement as LayerPlacement,
-    Prepare, Prepared, Shape, StoredQuantities, project_record, schema_identity,
+    PlateShape, Prepare, Prepared, Shape, StoredQuantities, project_record, schema_identity,
 };
 use beamcraft_layer_engine::index::Completeness;
 use beamcraft_layer_engine::{Asset, Control, Opened, Prim, Reader, Value};
@@ -2071,7 +2071,7 @@ pub fn create_plate(
                 Change::Create(Element {
                     id: id_text,
                     name: outcome.authored.name.clone(),
-                    shape: Shape::Plate {
+                    shape: Shape::plate(PlateShape {
                         contour_mm: outcome.authored.contour_points_mm.clone(),
                         thickness_mm: outcome.authored.thickness_mm,
                         thickness_side: outcome.authored.thickness_side,
@@ -2086,7 +2086,7 @@ pub fn create_plate(
                             .collect(),
                         cuts: Vec::new(),
                         hole_records: Vec::new(),
-                    },
+                    }),
                     placement: LayerPlacement {
                         translation_mm: placement.translation_mm,
                         orientation_xyzw: [qx, qy, qz, qw],
