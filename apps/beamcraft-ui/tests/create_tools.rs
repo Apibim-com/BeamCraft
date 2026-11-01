@@ -27,7 +27,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
-mod support;
+use crate::support;
 
 fn cli() -> Option<PathBuf> {
     support::cli(Path::new(env!("CARGO_BIN_EXE_beamcraft-ui")))
