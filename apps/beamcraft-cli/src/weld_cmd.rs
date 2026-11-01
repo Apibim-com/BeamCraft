@@ -16,12 +16,12 @@ use beamcraft_host::{
 use beamcraft_json::Json;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId};
-use beamcraft_model::steel::command::{
-    CreateWeld, WeldContour, WeldGeometry, WeldLocation, WeldSide, WeldSpec, WeldSymbol, WeldType,
-};
 use session::Refusal;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
+use steel::model::command::{
+    CreateWeld, WeldContour, WeldGeometry, WeldLocation, WeldSide, WeldSpec, WeldSymbol, WeldType,
+};
 
 type Run<T> = Result<T, Refusal>;
 

@@ -148,6 +148,7 @@ dependencies = [
  "beamcraft-layer-engine",
  "beamcraft-model",
  "session",
+ "steel",
 ]
 
 [[package]]
@@ -204,6 +205,7 @@ version = "0.0.1"
 dependencies = [
  "beamcraft-model",
  "openusd",
+ "steel",
 ]
 
 [[package]]
@@ -228,6 +230,7 @@ dependencies = [
  "rfd",
  "session",
  "skrifa",
+ "steel",
  "wgpu",
  "winit",
 ]
@@ -2502,6 +2505,16 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
+name = "steel"
+version = "0.0.1"
+dependencies = [
+ "beamcraft-engine",
+ "beamcraft-geom",
+ "beamcraft-kernel",
+ "beamcraft-model",
+]
 
 [[package]]
 name = "strum"

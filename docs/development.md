@@ -138,8 +138,11 @@ In PowerShell, set `$env:RUSTC_WRAPPER = 'sccache'` for the build and remove it 
 No wrapper is required by the repository. Cache hits depend on the compiler, target and flags;
 they help repeated builds and do not replace a genuinely cold benchmark. CI already uses
 `Swatinem/rust-cache` for registry and target dependencies, with separate WASM and distribution-target
-keys. CI saves these caches only from `master`; pull requests restore them and save none of their
-own, so they cannot push `master`'s caches out of the repository's cache limit.
+keys. The cache key hashes every `Cargo.toml` and `Cargo.lock`, so a pull request that changes a
+manifest restores `master`'s cache only as a partial match. rust-cache then deletes every artifact
+older than a week before the build, and the dependencies that rarely change, the GUI stack first,
+rebuild (about 40 s on hosted macOS). Such a pull request saves its own cache on its first run, so
+its later pushes match exactly; do not restrict saving to `master`.
 
 The cold release CI jobs deliberately skip compiled caches and upload their timing HTML, log and
 machine metadata as `build-timings-<triple>` artifacts. The Linux job runs on every pull request;

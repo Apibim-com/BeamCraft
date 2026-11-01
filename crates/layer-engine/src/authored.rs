@@ -24,16 +24,16 @@ pub use reference::{
 };
 
 use crate::*;
-pub use beamcraft_model::definition::SectionProperties;
 use beamcraft_model::prim::{DefinitionCategory, ElementCategory};
-pub use beamcraft_model::steel::command::{
+use std::collections::BTreeMap;
+pub use steel::model::command::{
     BendRecord, BendSpec, CornerTreatment, CutRecord, HoleExtent, HoleRecord, KeepSide, MAX_BENDS,
     MemberHoleRecord, PlateCorner, PlateSide, SectionDepthPosition, SectionPlacement,
     SectionPlanePosition,
 };
-pub use beamcraft_model::steel::fastener::FastenerSpec;
-pub use beamcraft_model::steel::section::SectionShape;
-use std::collections::BTreeMap;
+pub use steel::model::definition::SectionProperties;
+pub use steel::model::fastener::FastenerSpec;
+pub use steel::model::section::SectionShape;
 
 /// Canonical UTF-8 schema descriptor. Its exact bytes commit the mapping and item profile.
 /// No generated schema, plugin, fallback values or external schema resources are required.
@@ -344,7 +344,7 @@ pub enum Shape {
     /// P11 instance: shared inputs are read from a canonical part; only metadata and pose are local.
     Instance {
         /// Same part kind as the canonical definition.
-        kind: beamcraft_model::instance::PartKind,
+        kind: steel::model::instance::PartKind,
         /// Canonical part identity, never another instance.
         definition: String,
     },

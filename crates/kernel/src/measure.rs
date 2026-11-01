@@ -16,12 +16,12 @@
 //! `C = sum(det_t * (v0 + v1 + v2)) / (4 * sum(det_t))`, and triangle area
 //! `|(v1 - v0) x (v2 - v0)| / 2`, all derived from that theorem and vector algebra.
 
+use crate::PlateResult;
 use crate::bigint::Big;
 use crate::diagnostic::{Code, Stage};
 use crate::enclosure::Enclosure;
 use crate::exact::{coordinate_sum, min_exponent, triangle_cross, triangle_det};
 use crate::spatial::Aabb;
-use crate::steel::PlateResult;
 use crate::topology::Analysis;
 use crate::trimesh::TriMesh;
 use crate::verdict::{Fault, MeshCode, MeshError, ShellStatus};

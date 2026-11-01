@@ -61,14 +61,15 @@ Dependencies are checked in `[dependencies]`,
 | beamcraft-geom | crates/geom | domain | 0 | - | now | G01 |
 | beamcraft-model | crates/model | domain | 1 | beamcraft-geom | now | P01 |
 | beamcraft-json | crates/json | native | 2 | beamcraft-model | now | U17 (bounded JSON of the CLI output) |
-| beamcraft-layer-engine | crates/layer-engine | host | 2 | beamcraft-model | now | U01/U02/U03; in-process |
+| beamcraft-layer-engine | crates/layer-engine | host | 5 | beamcraft-model, steel | now | U01/U02/U03; in-process; reads and writes the steel elements, so it sits above `steel` until the element interface lands (#795) |
 | beamcraft-kernel | crates/kernel | domain | 2 | beamcraft-geom, beamcraft-model | now | G02 |
 | beamcraft-ifc | crates/ifc | native | 2 | beamcraft-model | now | E02 (IFC4 STEP writer and structural reader; std only, no file system) |
 | beamcraft-engine | crates/engine | native | 3 | beamcraft-geom, beamcraft-model, beamcraft-kernel | now | V02 (view snapshot and query slice); P01 (`CreatePlate` application, footprints, transactions, committed-plate queries) |
 | beamcraft-host | crates/host | host | 4 | beamcraft-model, beamcraft-json, beamcraft-engine | now | U05 |
-| session | crates/session | host | 5 | beamcraft-model, beamcraft-json, beamcraft-engine, beamcraft-host, beamcraft-layer-engine | now | #763: settings, recent projects, projects and environments for the window and the CLI |
-| beamcraft-cli | apps/beamcraft-cli | app | 6 | beamcraft-model, beamcraft-engine, beamcraft-host, beamcraft-json, beamcraft-layer-engine, beamcraft-ifc, session | now | U04: CLI binary; E02 (`export-ifc` adapter) |
-| beamcraft-ui | apps/beamcraft-ui | app | 6 | beamcraft-model, beamcraft-json, beamcraft-engine, beamcraft-host, session | now | V03 (window and viewport; reads the accepted snapshot from the CLI in a separate process); V05.1 (create tools; decodes the CLI's JSON replies with the JSON crate); V05.2 (edit tools; same edges); #763 (settings, recent projects, project names and environments through `session`, no child process) |
+| steel | crates/steel | native | 4 | beamcraft-geom, beamcraft-model, beamcraft-kernel, beamcraft-engine | now | #795: structural steel (plates, members, holes, bends, welds, bolts, fasteners): commands, bodies and engine. Kind `native` until the element interface lands; then `discipline` |
+| session | crates/session | host | 6 | beamcraft-model, beamcraft-json, beamcraft-engine, beamcraft-host, beamcraft-layer-engine | now | #763: settings, recent projects, projects and environments for the window and the CLI |
+| beamcraft-cli | apps/beamcraft-cli | app | 7 | beamcraft-model, beamcraft-engine, beamcraft-host, beamcraft-json, beamcraft-layer-engine, beamcraft-ifc, session, steel | now | U04: CLI binary; E02 (`export-ifc` adapter) |
+| beamcraft-ui | apps/beamcraft-ui | app | 7 | beamcraft-model, beamcraft-json, beamcraft-engine, beamcraft-host, session, steel | now | V03 (window and viewport; reads the accepted snapshot from the CLI in a separate process); V05.1 (create tools; decodes the CLI's JSON replies with the JSON crate); V05.2 (edit tools; same edges); #763 (settings, recent projects, project names and environments through `session`, no child process) |
 | beamcraft-fixtures | tools/fixtures | tool | 9 | - | now | F07 |
 | beamcraft-boundaries | apps/boundaries | tool | 9 | - | now | F08 |
 <!-- module-table:end -->
@@ -151,6 +152,14 @@ by the named task with real code. Allowed dependencies are those of the owning r
   which stays disk-only, and both apps depend on it; a discipline (steel, later concrete or MEP)
   never lives in it. Its dependencies point only to lower layers, and no crate below the apps
   depends on it except through this table.
+- **`steel` (`crates/steel`, native)**, created by #795 with the structural steel code that was in
+  `model`, `kernel` and `engine`: `steel::model` (commands, section families, fastener and
+  profile definitions, instances), `steel::kernel` (steel bodies) and `steel::engine` (plate and
+  member engines, cuts, bends, welds, bolts, edits, copies, quantities). It depends on the
+  platform crates below it, and none of them depends on it. `layer-engine` and the apps do, so
+  `layer-engine` sits above it. It is kind `native` until the element interface that removes the
+  branching on the kind of element in `layer-engine` and the CLI lands, and kind `discipline`
+  after (`docs/design/platform-and-steel.md`).
 - **`beamcraft-engine` (`crates/engine`, native library)**, created by V02 with the real, tested
   view snapshot and query contract: a pinned `ViewSnapshot` built from sealed kernel plate
   results, snapshot tokens, `GetChanges` deltas, view settings (kind filter and representation

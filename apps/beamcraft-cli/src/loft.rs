@@ -10,11 +10,6 @@ use crate::plate::{
 };
 use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::loft_plate::{
-    AuthoredLoftedPlate, LOFT_VOLUME_ALGORITHM, create_lofted_plate,
-};
-use beamcraft_engine::quantity::{StoredRecord, lofted_plate_record};
-use beamcraft_engine::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{
@@ -29,6 +24,9 @@ use session::pipeline::{
     AUTHORED_LAYER, Base, DERIVED_LAYER, control, digest_of, host_uuid, integrity, load_base,
     open_base, summarize,
 };
+use steel::engine::loft_plate::{AuthoredLoftedPlate, LOFT_VOLUME_ALGORITHM, create_lofted_plate};
+use steel::engine::quantity::{StoredRecord, lofted_plate_record};
+use steel::engine::transaction::PriorOp;
 
 /// Inputs of one `create-lofted-plate` call beyond the command itself.
 #[derive(Debug, Clone)]
@@ -44,7 +42,7 @@ pub struct LoftRequest {
     /// Workspace of a store that has no revision yet. Ignored otherwise.
     pub workspace: WorkspaceId,
     /// The command.
-    pub command: beamcraft_model::steel::command::CreateLoftedPlate,
+    pub command: steel::model::command::CreateLoftedPlate,
 }
 
 /// Result of `create_lofted_plate`.
