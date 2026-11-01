@@ -22,6 +22,7 @@ pub mod rebase;
 mod reference;
 mod validate;
 
+pub use connection::ReplaceBoltGroup;
 pub use guard::WriteGrant;
 pub use hook::{
     AuthorCx, ChangeAuthorCx, ChangeHook, ChangeValidateCx, HookedChange, HookedShape, ShapeHook,
