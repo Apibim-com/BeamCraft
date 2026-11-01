@@ -262,6 +262,36 @@ crate depends on `steel`) and the byte-identity constraint stand.
    edges flip, F08 and `beamcraft-boundaries` follow; then (d) the typed-operations trait and the
    patch split as the follow-up that thins the CLI.
 
+### The hook inventory of the move (step a)
+
+About 110 match sites on the steel variants of `Shape` and `Change` sit in two files. They are not
+a uniform list: each needs local state of its function (the budgets, the `reads`/`writes`
+footprint sets, the `finite`, `cap`, `count_points` and `uuid7` closures, `input`, `prims`, the
+open `sdf::Data` and the element path). The hook therefore takes a small context struct that
+exposes exactly these, and the steel side implements one method per role:
+
+| Role | Where it is today | Hook |
+|---|---|---|
+| kind token and prim category of a created element | `edit.rs:650-677`, `Shape::category` | `kind_token`, `category` |
+| initial attributes of a created element | `edit.rs:694-1039` | `author_create` |
+| attribute names a created element will hold (footprint of the create) | `edit.rs:2150-2262` (`capture`) | `capture_create` |
+| byte budget of a create | `validate.rs:64-102` | `charge_create` |
+| engineering bounds of a create | `validate.rs:2712-2998` | `validate_create` |
+| finiteness | `validate.rs:3263-3413` | `check_finite` |
+| which element kind a change may target | `validate.rs:2443-2454` | `targets_kind` |
+| semantic groups a change reads and writes | `validate.rs:2537-2650` | `groups` |
+| bounds, reads and writes of a change | `validate.rs:3085-3198` | `validate_change` |
+| attribute edit of a change | `edit.rs:1584-1973` | `author_change` |
+| attribute names of a change (footprint check) | `edit.rs:2293-2462` | `capture_change` |
+| read side: layer checks over `Prim`s | `validate.rs` `plate_holes`, `member_hole_records`, `weld_properties`, `bolt_*`, `plate_corner_records`, `read_definition`, `read_fastener` | `validate_prims` (registry) |
+| read side: kinds that are parts, copy plan | `index.rs:421`, `prim.rs:43` | `part_kinds` (registry) |
+| read side: attribute name -> group | `rebase.rs:49-135` | `property_group` (registry) |
+
+The first eleven rows ride on the trait objects in `Shape::Discipline` and `Change::Discipline`
+and need no registry; the last three need the registry of step 2. Order inside step (a): the
+connection family first (`Weld`, `Bolt`, `BoltGroup`; six sites each) to settle the context
+struct, then the members, then the plates and cuts, with the suite green after each family.
+
 Known remainder, deliberately left: `SCHEMA_DESCRIPTOR` stays a single constant in
 `layer-engine` (D6's segments are only needed to compose it from several disciplines, and moving
 the steel text out of a pinned constant is a separate, byte-risky change). It is the stored
