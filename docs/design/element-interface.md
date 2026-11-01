@@ -230,3 +230,39 @@ then member and holes, then welds and bolts.
   this seam, they are not part of it.
 - Moving `layer-engine` below `steel`: the owner decision of 2026-10-31 keeps it above until
   slice 5 is done, then slice 7 removes the edge.
+
+## 7. Update 2026-11-01: what the first look at the code changes
+
+Reading the writers before starting slice 2 corrects three points above. The goal (no platform
+crate depends on `steel`) and the byte-identity constraint stand.
+
+1. **Seam A is the critical path, and the neutral description (D2) is the expensive way to build
+   it.** `create`, `capture` and the `Change` arms of `edit.rs` write straight into the USD data
+   (`attr(data, &p, "steel:plate:thicknessMm", "double", ...)`, `edit.rs:634-1039`), through
+   helpers only `layer-engine` can name. A neutral attribute list would mean rewriting every
+   writer and proving the same bytes again. The cheaper and safer form is to **move the steel
+   half of `layer-engine` into `steel` verbatim** (writers, validators, the group table, the
+   tests) and let `steel` depend on `layer-engine`: a discipline above the platform, which is what
+   the F08 kind means. `layer-engine` then defines the hooks (trait objects in `Shape` and
+   `Change` for the write side) and keeps the helpers `pub` with a "Shared with the steel crate"
+   doc line. D2 stays as the fallback if a second USD writer ever appears.
+2. **The read side needs a registry, and a global one is the proportionate answer (D5 revised).**
+   Validating a loaded layer, building the element index and grouping rebased attributes have no
+   element object to carry the behaviour. There are 28 `Author::open`, 51 `Reader`
+   constructions and 17 `element_index` calls outside `layer-engine`, so threading a registry
+   through is the larger change. The apps install the discipline once at start
+   (`steel::install()`); the install is idempotent, and the platform tests that need a discipline
+   use a stub. The write side needs no registry because the trait object travels in the change.
+3. **Slices 2 to 4 are not on the way to `discipline`.** `CopyElement`, `ArrayElements` and
+   `ElementPatch` moved into `steel::model::command` with the rest of the 6,478-line command
+   file (#791), so a platform trait over them needs the patch split (slice 3) first, and its only
+   consumers are `copy.rs`, `array.rs` and `edit.rs` in the CLI, an app that may link any
+   discipline. They remove branching from the CLI; they do not remove an edge. The order becomes:
+   (a) hooks and the registry in `layer-engine`; (b) the steel half and its tests move; (c) the
+   edges flip, F08 and `beamcraft-boundaries` follow; then (d) the typed-operations trait and the
+   patch split as the follow-up that thins the CLI.
+
+Known remainder, deliberately left: `SCHEMA_DESCRIPTOR` stays a single constant in
+`layer-engine` (D6's segments are only needed to compose it from several disciplines, and moving
+the steel text out of a pinned constant is a separate, byte-risky change). It is the stored
+format's identity, not a dependency on the `steel` crate.
