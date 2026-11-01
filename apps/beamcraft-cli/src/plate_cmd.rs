@@ -2,35 +2,35 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! P01 headless commands: `create-plate` and `inspect-elements`. They call the engine API through
-//! the adapter of `beamcraft_cli::plate` and print one JSON object (same error shape as the other
+//! the adapter of `beamcraft_commands::plate` and print one JSON object (same error shape as the other
 //! commands; exit 0 success, 2 rejection, 3 backend unavailable, 4 outcome unknown).
 
 use crate::report::report_with;
-use beamcraft_cli::array::{ArrayRequest, array_elements};
-use beamcraft_cli::bend::{BendRequest, bend_plate_record};
-use beamcraft_cli::copy::{CopyRequest, PartRecord, copy_element, copy_instance};
-use beamcraft_cli::cut::{
+use beamcraft_commands::array::{ArrayRequest, array_elements};
+use beamcraft_commands::bend::{BendRequest, bend_plate_record};
+use beamcraft_commands::copy::{CopyRequest, PartRecord, copy_element, copy_instance};
+use beamcraft_commands::cut::{
     A13Command, A13Request, CutElement, CutRequest, a13_record, cut_by_plane_record,
 };
-use beamcraft_cli::definition::{
+use beamcraft_commands::definition::{
     DefineRequest, Defined, DefinitionRecord, NameResolution, define, definition_path,
     head_definitions, resolve_name,
 };
-use beamcraft_cli::delete::{DeleteRequest, DeletedKind, delete_element};
-use beamcraft_cli::edit::{UpdateRequest, update_element};
-use beamcraft_cli::history::{Direction, Step, step, timeline};
-use beamcraft_cli::hole::{AddHoleRequest, add_hole_command};
-use beamcraft_cli::library::{Lookup, open_lookup};
-use beamcraft_cli::member::{
+use beamcraft_commands::delete::{DeleteRequest, DeletedKind, delete_element};
+use beamcraft_commands::edit::{UpdateRequest, update_element};
+use beamcraft_commands::history::{Direction, Step, step, timeline};
+use beamcraft_commands::hole::{AddHoleRequest, add_hole_command};
+use beamcraft_commands::library::{Lookup, open_lookup};
+use beamcraft_commands::member::{
     CreateCurvedBeamRequest, CreateMemberRequest, CreatePolybeamRequest, create_curved_beam,
     create_member, create_polybeam,
 };
-use beamcraft_cli::plate::{
+use beamcraft_commands::plate::{
     AcceptedBinding, CreateRequest, Created, Inspection, QuantityReport, accepted_binding, inspect,
 };
-use beamcraft_cli::plate_draft::{CreatedDraft, create_plate_draft};
-use beamcraft_cli::project::project_environment_file;
-use beamcraft_cli::workspace::{
+use beamcraft_commands::plate_draft::{CreatedDraft, create_plate_draft};
+use beamcraft_commands::project::project_environment_file;
+use beamcraft_commands::workspace::{
     CreateWorkspace, WorkspaceStatus, create_workspace, publish_workspace,
     status as workspace_status,
 };
@@ -970,7 +970,7 @@ fn define_command(
             given("--fastener-library").ok_or_else(|| invalid("--fastener-library is required"))?;
         let designation =
             given("--designation").ok_or_else(|| invalid("--designation is required"))?;
-        let library = beamcraft_cli::library::load_fastener(path)?;
+        let library = beamcraft_commands::library::load_fastener(path)?;
         library
             .entry(designation)?
             .record
@@ -1787,9 +1787,9 @@ fn cut_command(
         },
     };
     if remove {
-        let r = beamcraft_cli::cut::remove_cut_record(
+        let r = beamcraft_commands::cut::remove_cut_record(
             store,
-            &beamcraft_cli::cut::RemoveCutRequest {
+            &beamcraft_commands::cut::RemoveCutRequest {
                 op_id,
                 revision_id,
                 actor,
@@ -1823,7 +1823,7 @@ fn cut_command(
         ]));
     }
     let apply = if update {
-        beamcraft_cli::cut::update_cut_record
+        beamcraft_commands::cut::update_cut_record
     } else {
         cut_by_plane_record
     };
@@ -2302,10 +2302,10 @@ fn hole_spec(options: &BTreeMap<&str, &str>) -> Run<HoleSpec> {
 }
 
 /// The `add-hole` element response: a plate or a member, as the hole target decides.
-fn hole_element_json(element: &beamcraft_cli::hole::HoleElement) -> Run<Json> {
+fn hole_element_json(element: &beamcraft_commands::hole::HoleElement) -> Run<Json> {
     match element {
-        beamcraft_cli::hole::HoleElement::Plate(record) => plate_json(record),
-        beamcraft_cli::hole::HoleElement::Member(record) => member_json(record),
+        beamcraft_commands::hole::HoleElement::Plate(record) => plate_json(record),
+        beamcraft_commands::hole::HoleElement::Member(record) => member_json(record),
     }
 }
 
@@ -2359,9 +2359,9 @@ fn add_hole_cli(
         None => WorkspaceId::from_uuid(fresh()?),
     };
     if remove {
-        let r = beamcraft_cli::hole::remove_hole_command(
+        let r = beamcraft_commands::hole::remove_hole_command(
             store,
-            &beamcraft_cli::hole::RemoveHoleRequest {
+            &beamcraft_commands::hole::RemoveHoleRequest {
                 op_id,
                 revision_id,
                 actor,
@@ -2391,7 +2391,7 @@ fn add_hole_cli(
         ]));
     }
     let apply = if update {
-        beamcraft_cli::hole::update_hole_command
+        beamcraft_commands::hole::update_hole_command
     } else {
         add_hole_command
     };
@@ -2529,7 +2529,7 @@ fn copy_command(
             .ok_or_else(|| invalid("--id is required"))?,
     )
     .map_err(id_error)?;
-    if beamcraft_cli::grid::grids(store)?
+    if beamcraft_commands::grid::grids(store)?
         .iter()
         .any(|g| g.id == source_id)
         || options.contains_key("--new-axis-ids")
@@ -2706,9 +2706,9 @@ fn lofted_create(
             candidates,
         )?,
     };
-    let created = beamcraft_cli::loft::create_lofted(
+    let created = beamcraft_commands::loft::create_lofted(
         store,
-        &beamcraft_cli::loft::LoftRequest {
+        &beamcraft_commands::loft::LoftRequest {
             op_id,
             revision_id,
             actor,
@@ -2777,7 +2777,7 @@ fn point_json(point: &[f64; 3]) -> Json {
 /// The `inspect-lofted-plates` command (A11): the committed lofted plates of the verified
 /// head with their stored quantity records.
 fn lofted_inspect(store: &RevisionStore) -> Run<Json> {
-    let views = beamcraft_cli::loft::lofted_plates(store)?;
+    let views = beamcraft_commands::loft::lofted_plates(store)?;
     let plates = views
         .iter()
         .map(|view| {
@@ -2943,7 +2943,7 @@ fn workspace_json(status: &WorkspaceStatus) -> Json {
                 status
                     .pending_conflicts
                     .iter()
-                    .map(beamcraft_cli::workspace::conflicts::conflict_json)
+                    .map(beamcraft_commands::workspace::conflicts::conflict_json)
                     .collect(),
             ),
         ),
@@ -3118,9 +3118,9 @@ fn workspace_command(
                 Err(error) if error.code == ErrorCode::DependencyConflict => {
                     // C04: the refusal names every pending conflict in its diagnostics.
                     candidates.extend(
-                        beamcraft_cli::workspace::pending_conflicts(&workspace, dir)?
+                        beamcraft_commands::workspace::pending_conflicts(&workspace, dir)?
                             .iter()
-                            .map(beamcraft_cli::workspace::conflicts::conflict_json),
+                            .map(beamcraft_commands::workspace::conflicts::conflict_json),
                     );
                     return Err(error);
                 }
@@ -3586,7 +3586,7 @@ fn grid_placement(
             "grid placement conflicts with translation, orientation or an offset without level",
         ));
     }
-    beamcraft_cli::grid::resolve_placement(store, op, address, z, level, offset)
+    beamcraft_commands::grid::resolve_placement(store, op, address, z, level, offset)
 }
 
 fn member_json(record: &MemberRecord) -> Run<Json> {
@@ -4714,7 +4714,7 @@ pub(crate) fn inspection_json(inspection: &Inspection, only: Option<ElementId>) 
         ),
         (
             "levels",
-            crate::level_cmd::views_json(&beamcraft_cli::level::views(&inspection.levels))?,
+            crate::level_cmd::views_json(&beamcraft_commands::level::views(&inspection.levels))?,
         ),
         (
             "snapshot",

@@ -5,8 +5,8 @@
 //! commands never write a model store; the only store access is the read-only grid lookup that
 //! resolves a grid-line plane view at save time.
 
-use beamcraft_cli::grid::grids;
-use beamcraft_cli::source_file::read_file;
+use beamcraft_commands::grid::grids;
+use beamcraft_commands::source_file::read_file;
 use beamcraft_engine::views::{self, NamedView, PlaneSpec, ViewBook, ViewPose, WorkArea};
 use beamcraft_host::revision::RevisionStore;
 use beamcraft_host::storage::BlobStore;

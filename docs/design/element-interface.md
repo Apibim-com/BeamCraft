@@ -43,12 +43,12 @@ local shape records (cuts, thickness side, section placement, path).
 
 The platform names the pairs in exactly these places, so the interface has few callers:
 
-- `apps/beamcraft-cli/src/copy.rs:66` (`CopiedElement::{Plate, Member}`), `:98`
+- `crates/commands/src/copy.rs:66` (`CopiedElement::{Plate, Member}`), `:98`
   (`creation_changes`), `:267-279`;
-- `apps/beamcraft-cli/src/array.rs:160`, `:171`;
-- `apps/beamcraft-cli/src/edit.rs:166-169` (`Target::{Plate, Member}`), `:191`, `:209`, `:324`,
+- `crates/commands/src/array.rs:160`, `:171`;
+- `crates/commands/src/edit.rs:166-169` (`Target::{Plate, Member}`), `:191`, `:209`, `:324`,
   `:335`;
-- `apps/beamcraft-cli/src/plate.rs:1471-1516` (the `BodyCache` and the two evaluations);
+- `crates/commands/src/plate.rs:1471-1516` (the `BodyCache` and the two evaluations);
 - the decoders (`Decoded`) and `registry.rs` for the command inventory.
 
 `ElementPatch` (`steel/model/command.rs:3648`) carries one set of fields for both kinds. The

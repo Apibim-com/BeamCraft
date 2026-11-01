@@ -12,7 +12,7 @@
 //! so it is never a hit.
 
 use crate::plate_cmd::triple;
-use beamcraft_cli::plate::inspect;
+use beamcraft_commands::plate::inspect;
 use beamcraft_engine::error::{ViewCode, ViewError};
 use beamcraft_engine::query::feature::{
     FeatureGeometry, FeatureLookup, list_features, lookup_feature,
