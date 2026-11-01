@@ -79,3 +79,66 @@ impl PartialEq for HookedShape {
         self.0.same_as(other.0.as_ref())
     }
 }
+
+/// What a change hook needs to write its edit into the authored layer.
+pub struct ChangeAuthorCx<'a> {
+    /// The authored layer being edited.
+    pub data: &'a mut sdf::Data,
+    /// The target element's prim path.
+    pub path: &'a str,
+    /// The whole batch.
+    pub input: &'a Prepare,
+    /// The stage the batch applies to.
+    pub prims: &'a [Prim],
+}
+
+/// What a change hook needs to validate its edit.
+pub struct ChangeValidateCx<'a> {
+    /// The whole batch.
+    pub input: &'a Prepare,
+    /// The stage the batch applies to.
+    pub prims: &'a [Prim],
+    /// The declared footprint reads; a hook adds the identities its edit depends on.
+    pub reads: &'a mut BTreeSet<Footprint>,
+}
+
+/// The discipline half of an edit of an existing element.
+pub trait ChangeHook: Debug + Send + Sync {
+    /// The hook as `Any`, so equality can compare concrete types.
+    fn as_any(&self) -> &dyn Any;
+    /// Whether `other` is the same concrete change with equal content.
+    fn same_as(&self, other: &dyn ChangeHook) -> bool;
+    /// Full identity of the element the change targets.
+    fn target(&self) -> &str;
+    /// The write group name used to order and to compare changes of one element.
+    fn group_key(&self) -> &'static str;
+    /// Whether an element of the stored `bim:elementKind` may take this change.
+    fn targets_kind(&self, kind: &str) -> bool;
+    /// The semantic groups the change reads and the groups it writes.
+    fn groups(&self) -> (&'static [Group], &'static [Group]);
+    /// Engineering bounds of the edit; adds the reads the edit depends on.
+    fn validate(&self, cx: &mut ChangeValidateCx<'_>) -> Result<(), Diagnostic>;
+    /// Every number of the edit is finite.
+    fn check_finite(&self) -> Result<(), Diagnostic>;
+    /// Writes the edit into the target element's prim.
+    fn author(&self, cx: &mut ChangeAuthorCx<'_>) -> Result<(), Diagnostic>;
+    /// The `(name, type)` of every attribute the edit writes.
+    fn attributes(&self) -> Vec<(&'static str, &'static str)>;
+}
+
+/// A hook change as the platform holds it: cheap to clone, comparable.
+#[derive(Debug, Clone)]
+pub struct HookedChange(pub Arc<dyn ChangeHook>);
+
+impl HookedChange {
+    /// Wraps a discipline change.
+    pub fn new(hook: impl ChangeHook + 'static) -> Self {
+        Self(Arc::new(hook))
+    }
+}
+
+impl PartialEq for HookedChange {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.same_as(other.0.as_ref())
+    }
+}

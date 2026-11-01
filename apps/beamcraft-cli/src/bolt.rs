@@ -1091,10 +1091,10 @@ pub fn update_bolt_group(
         schema,
         &control,
     )?;
-    let mut changes = vec![Change::BoltGroup {
-        id: command.target_id.to_string(),
-        group: layer_group(&command.inputs, &placed),
-    }];
+    let mut changes = vec![Change::bolt_group(
+        command.target_id.to_string(),
+        layer_group(&command.inputs, &placed),
+    )];
     changes.extend(hole_writes);
     let prepared = author.prepare(
         Prepare {

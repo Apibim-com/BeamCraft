@@ -20,7 +20,10 @@ mod reference;
 mod validate;
 
 pub use guard::WriteGrant;
-pub use hook::{AuthorCx, HookedShape, ShapeHook, ValidateCx};
+pub use hook::{
+    AuthorCx, ChangeAuthorCx, ChangeHook, ChangeValidateCx, HookedChange, HookedShape, ShapeHook,
+    ValidateCx,
+};
 pub use reference::{
     ForeignPrim, Reference, ReferenceView, SourceFormat, SourcePin, UnitsInterpretation, UpAxis,
     read_references,
@@ -697,16 +700,10 @@ pub enum Change {
         /// Ordered element-local path points.
         points_mm: Vec<[f64; 3]>,
     },
-    /// Replace the complete authored record of an A14.3 bolt group as a whole (bolt amendment
-    /// section 6): the fifteen `steel:bolt:*` attributes and the `bim:connects` record, with
-    /// the five A05 annotation attributes removed. The engine has already decided the
-    /// placement; this writes it. It is also the upgrade path of a stored A05 group.
-    BoltGroup {
-        /// Full target UUIDv7.
-        id: String,
-        /// The complete new record.
-        group: BoltGroup,
-    },
+    /// An edit that belongs to a discipline (#795): its target kind, groups, bounds and
+    /// attribute writes are answered by the change's own hook. The replacement of an A14.3 bolt
+    /// group is built with [`Change::bolt_group`].
+    Discipline(HookedChange),
     /// Change the optional roll opinion in the selected authored layer.
     Roll {
         /// Full target UUIDv7.
@@ -849,7 +846,7 @@ impl Change {
             Self::ThicknessSide { id, .. } => (id, "steel:plate:thicknessSide"),
             Self::Cuts { id, .. } => (id, "steel:cut"),
             Self::MemberHoles { id, .. } => (id, "steel:mhole"),
-            Self::BoltGroup { id, .. } => (id, "steel:bolt"),
+            Self::Discipline(hook) => (hook.0.target(), hook.0.group_key()),
             Self::Axis { id, .. } => (id, "bim:axisPointsMm"),
             Self::Roll { id, .. } => (id, "steel:member:rollRad"),
             Self::Profile { id, .. } => (id, "bim:profile"),

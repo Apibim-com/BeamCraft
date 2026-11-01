@@ -2451,7 +2451,7 @@ pub(super) fn changes(
                     }
                     Change::PartClass { .. } => matches!(kind, "plate" | "beam" | "column"),
                     Change::Grid { .. } => kind == "grid",
-                    Change::BoltGroup { .. } => kind == "connection",
+                    Change::Discipline(hook) => hook.0.targets_kind(kind),
                     Change::Mesh(m) if kind == "grid" => m.quantities.is_none(),
                     Change::ReferenceUnits { .. } => wrapper,
                     // A rename and a move are the only edits a wrapper takes as an element; an
@@ -2543,10 +2543,7 @@ pub(super) fn changes(
             ),
             // The complete authored inputs and the `connects` record are replaced as a whole
             // (A14.3); a connection derives no body, so no derived group is written.
-            Change::BoltGroup { .. } => (
-                &[Group::Lifecycle, Group::ShapeInputs, Group::Relationship],
-                &[Group::ShapeInputs, Group::Relationship],
-            ),
+            Change::Discipline(hook) => hook.0.groups(),
             Change::Material { .. } => (
                 &[Group::Lifecycle, Group::Derived],
                 &[Group::Material, Group::Relationship, Group::Derived],
@@ -2971,23 +2968,11 @@ pub(super) fn changes(
                 }
             }
             Change::PartClass { .. } => {}
-            Change::BoltGroup { id, group } => {
-                bolt_group_connects(&group.connects, id)?;
-                bolt_group_values(group)?;
-                // A repin in the same batch or the pinned definition the model already holds.
-                let spec = fastener_definition(input, prims, group.fastener)?;
-                bolt_group_against(&spec, group)?;
-                for part in &group.connects {
-                    reads.insert(Footprint {
-                        identity: part.clone(),
-                        group: Group::Lifecycle,
-                    });
-                }
-                reads.insert(Footprint {
-                    identity: group.fastener.to_string(),
-                    group: Group::Relationship,
-                });
-            }
+            Change::Discipline(hook) => hook.0.validate(&mut hook::ChangeValidateCx {
+                input,
+                prims,
+                reads: &mut reads,
+            })?,
             Change::Label { name, .. } => label(name)?,
             Change::AttachReference(r) => reference::check_new(r)?,
             Change::ReferenceUnits { interpretation, .. } => {
@@ -3255,22 +3240,7 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
             finite(interpretation.iter().map(|i| i.meters_per_unit))
         }
         Change::Contour { points_mm, .. } => finite(points_mm.iter().flatten().copied()),
-        Change::BoltGroup { group, .. } => finite(
-            group
-                .point1_mm
-                .into_iter()
-                .chain(group.point2_mm)
-                .chain(group.plane_normal_mm)
-                .chain([
-                    group.rotation_rad,
-                    group.on_plane_mm,
-                    group.depth_mm,
-                    group.offset_start_mm,
-                    group.spacing_value_mm,
-                    group.length_mm,
-                ])
-                .chain(group.spacings_mm.iter().copied()),
-        ),
+        Change::Discipline(hook) => hook.0.check_finite(),
         Change::Cuts { cuts, .. } => finite(
             cuts.iter()
                 .flat_map(|c| c.point_mm.into_iter().chain(c.normal)),

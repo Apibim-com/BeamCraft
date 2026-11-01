@@ -1513,26 +1513,12 @@ pub(super) fn apply(
             )?,
             Change::Corners { corners, .. } => author_corners(&mut authored, &p, corners)?,
             Change::Bends { bends, .. } => author_bends(&mut authored, &p, bends)?,
-            Change::BoltGroup { group, .. } => {
-                // An A05 annotation group is upgraded by removing its five attributes; a group
-                // of this slice replaces its own attributes as a whole.
-                for (name, ty) in [
-                    ("steel:bolt:diameterMm", "double"),
-                    ("steel:bolt:count", "int"),
-                    ("steel:bolt:pitchMm", "double"),
-                    ("steel:bolt:originMm", "double3"),
-                    ("steel:bolt:directionMm", "double3"),
-                ] {
-                    attribute(&mut authored, &p, name, ty, Opinion::Remove, true)?;
-                }
-                author_bolt_group(&mut authored, &p, group)?;
-                let targets = group
-                    .connects
-                    .iter()
-                    .map(|id| path(&target_path(id, ElementCategory::Part, input, prims)?))
-                    .collect::<Result<Vec<_>, _>>()?;
-                relationship_targets(&mut authored, &p, "bim:connects", Some(targets))?;
-            }
+            Change::Discipline(hook) => hook.0.author(&mut hook::ChangeAuthorCx {
+                data: &mut authored,
+                path: &p,
+                input,
+                prims,
+            })?,
             Change::ThicknessSide { side, .. } => attr(
                 &mut authored,
                 &p,
@@ -2129,13 +2115,9 @@ fn capture(
             }
             Change::PartClass { .. } => add("steel:class", "int", 0),
             Change::Label { .. } => add("bim:name", "string", 0),
-            Change::BoltGroup { group, .. } => {
-                add("steel:connection:type", "token", 0);
-                add("bim:connects", "rel", 0);
-                for &(name, ty) in BOLT_GROUP {
-                    if name != "steel:bolt:holeClearanceMm" || group.hole_clearance_mm.is_some() {
-                        add(name, ty, 0);
-                    }
+            Change::Discipline(hook) => {
+                for (name, ty) in hook.0.attributes() {
+                    add(name, ty, 0);
                 }
             }
             Change::HoleRecords { .. } => {

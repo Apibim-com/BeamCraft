@@ -5,8 +5,11 @@
 //! and the A14.3 bolt group. Each body is the arm it replaces in `edit.rs` and `validate.rs`,
 //! moved unchanged, so the bytes written and the refusals returned are the same.
 
-use super::edit::{attr, author_bolt_group, path, points, relationship_targets};
-use super::hook::{AuthorCx, HookedShape, ShapeHook, ValidateCx};
+use super::edit::{attr, attribute, author_bolt_group, path, points, relationship_targets};
+use super::hook::{
+    AuthorCx, ChangeAuthorCx, ChangeHook, ChangeValidateCx, HookedChange, HookedShape, ShapeHook,
+    ValidateCx,
+};
 use super::target_path;
 use super::validate::{
     bolt_group_against, bolt_group_connects, bolt_group_values, cap, fastener_definition, finite,
@@ -440,5 +443,111 @@ impl ShapeHook for BoltGroup {
                 ])
                 .chain(self.spacings_mm.iter().copied()),
         )
+    }
+}
+
+/// The replacement of the complete authored record of an A14.3 bolt group as a whole (bolt
+/// amendment section 6): the seventeen `steel:bolt:*` attributes and the `bim:connects` record,
+/// with the five A05 annotation attributes removed. The engine has already decided the
+/// placement; this writes it. It is also the upgrade path of a stored A05 group.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReplaceBoltGroup {
+    /// Full target UUIDv7.
+    pub id: String,
+    /// The complete new record.
+    pub group: BoltGroup,
+}
+
+impl Change {
+    /// Replace the complete authored record of an A14.3 bolt group; see [`ReplaceBoltGroup`].
+    pub fn bolt_group(id: String, group: BoltGroup) -> Self {
+        Self::Discipline(HookedChange::new(ReplaceBoltGroup { id, group }))
+    }
+}
+
+impl ChangeHook for ReplaceBoltGroup {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn same_as(&self, other: &dyn ChangeHook) -> bool {
+        other.as_any().downcast_ref::<Self>() == Some(self)
+    }
+
+    fn target(&self) -> &str {
+        &self.id
+    }
+
+    fn group_key(&self) -> &'static str {
+        "steel:bolt"
+    }
+
+    fn targets_kind(&self, kind: &str) -> bool {
+        kind == "connection"
+    }
+
+    // The complete authored inputs and the `connects` record are replaced as a whole (A14.3);
+    // a connection derives no body, so no derived group is written.
+    fn groups(&self) -> (&'static [Group], &'static [Group]) {
+        (
+            &[Group::Lifecycle, Group::ShapeInputs, Group::Relationship],
+            &[Group::ShapeInputs, Group::Relationship],
+        )
+    }
+
+    fn validate(&self, cx: &mut ChangeValidateCx<'_>) -> Result<(), Diagnostic> {
+        let group = &self.group;
+        bolt_group_connects(&group.connects, &self.id)?;
+        bolt_group_values(group)?;
+        // A repin in the same batch or the pinned definition the model already holds.
+        let spec = fastener_definition(cx.input, cx.prims, group.fastener)?;
+        bolt_group_against(&spec, group)?;
+        for part in &group.connects {
+            cx.reads.insert(Footprint {
+                identity: part.clone(),
+                group: Group::Lifecycle,
+            });
+        }
+        cx.reads.insert(Footprint {
+            identity: group.fastener.to_string(),
+            group: Group::Relationship,
+        });
+        Ok(())
+    }
+
+    fn check_finite(&self) -> Result<(), Diagnostic> {
+        self.group.check_finite()
+    }
+
+    fn author(&self, cx: &mut ChangeAuthorCx<'_>) -> Result<(), Diagnostic> {
+        // An A05 annotation group is upgraded by removing its five attributes; a group of this
+        // slice replaces its own attributes as a whole.
+        for (name, ty) in [
+            ("steel:bolt:diameterMm", "double"),
+            ("steel:bolt:count", "int"),
+            ("steel:bolt:pitchMm", "double"),
+            ("steel:bolt:originMm", "double3"),
+            ("steel:bolt:directionMm", "double3"),
+        ] {
+            attribute(cx.data, cx.path, name, ty, Opinion::Remove, true)?;
+        }
+        author_bolt_group(cx.data, cx.path, &self.group)?;
+        let targets = self
+            .group
+            .connects
+            .iter()
+            .map(|id| path(&target_path(id, ElementCategory::Part, cx.input, cx.prims)?))
+            .collect::<Result<Vec<_>, _>>()?;
+        relationship_targets(cx.data, cx.path, "bim:connects", Some(targets))
+    }
+
+    fn attributes(&self) -> Vec<(&'static str, &'static str)> {
+        let mut out = vec![("steel:connection:type", "token"), ("bim:connects", "rel")];
+        for &(name, ty) in BOLT_GROUP {
+            if name != "steel:bolt:holeClearanceMm" || self.group.hole_clearance_mm.is_some() {
+                out.push((name, ty));
+            }
+        }
+        out
     }
 }
