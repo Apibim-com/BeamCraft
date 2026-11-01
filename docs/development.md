@@ -34,11 +34,16 @@ measured fast enough to stay in the inner loop. Nothing is removed or permanentl
 unfiltered `default` profile and CI always run everything, and an explicit command-line filter
 overrides the profile's `default-filter`.
 
-The `beamcraft-cli` integration suites build into one `cli` test binary (`tests/cli.rs`, one
-module per suite file), so they link once and `cargo test` runs all their cases on one thread
-pool. Run one suite with `cargo test -p beamcraft-cli --test cli -- <suite>::` or
-`cargo nextest run -p beamcraft-cli -E 'test(/^<suite>::/)'`; list a new suite file in
-`tests/cli.rs`. `macos_icon` checks the desktop app's icon and stays its own target.
+Each crate's integration suites build into one test binary, one module per suite file, so they
+link once and `cargo test` runs all their cases on one thread pool: `cli` (`beamcraft-cli`),
+`ui` (`beamcraft-ui`), `kernel`, `steel`, `engine`, `host` and `layer_engine`. Run one suite with
+`cargo test -p beamcraft-cli --test cli -- <suite>::` or
+`cargo nextest run -p beamcraft-cli -E 'test(/^<suite>::/)'`, and list a new suite file in the
+binary's root file (`tests/cli.rs`, `tests/ui.rs`, ...); a guard test in each fails when a suite
+file is not listed. `macos_icon` checks the desktop app's icon and `cancel` relies on being
+alone in its process, so both stay their own targets. Linking the GUI stack once instead of once
+per suite matters most: the workspace's 74 test binaries became 33, and the nextest archive that
+each CI shard downloads shrank by about 30 % (measured when the count went from 73 to 31).
 
 The drawn-grid viewport controller test requires a native wgpu adapter and fails explicitly if
 none is available. On a headless Linux worker, Mesa's software Vulkan driver (`mesa-vulkan-drivers`)
