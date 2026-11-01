@@ -2693,25 +2693,6 @@ pub(super) fn changes(
                         prims,
                         reads: &mut reads,
                     })?,
-                    Shape::Instance { kind, definition } => {
-                        if e.id == *definition || e.material.is_some() {
-                            return Err(invalid());
-                        }
-                        instance::validate_source(definition, *kind, prims)?;
-                        for group in [
-                            Group::Lifecycle,
-                            Group::Label,
-                            Group::ShapeInputs,
-                            Group::Placement,
-                            Group::Material,
-                            Group::Relationship,
-                        ] {
-                            reads.insert(Footprint {
-                                identity: definition.clone(),
-                                group,
-                            });
-                        }
-                    }
                     Shape::Grid(g) => {
                         grid::validate_record(g)?;
                         if e.id != g.id.to_string()
@@ -2865,7 +2846,6 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                 Shape::Assembly => Ok(()),
                 Shape::Discipline(hook) => hook.0.check_finite(),
                 Shape::Level { elevation_mm } => finite([*elevation_mm]),
-                Shape::Instance { .. } => Ok(()),
                 Shape::Grid(g) => grid::validate_record(g),
                 Shape::Construction(o) => construction::validate_record(o),
                 Shape::Annotation(a) => annotation::validate_record(a),

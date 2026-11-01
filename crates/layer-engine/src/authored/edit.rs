@@ -656,7 +656,6 @@ fn create(
     field(data, &p, "kind", sdf::Value::token(model_kind))?;
     field(data, &p, "displayName", sdf::Value::String(e.name.clone()))?;
     let kind = match &e.shape {
-        Shape::Instance { kind, .. } => kind.token(),
         Shape::Assembly => "assembly",
         Shape::Discipline(hook) => hook.0.kind_token(),
         Shape::Level { .. } => "level",
@@ -693,7 +692,6 @@ fn create(
         Shape::Grid(g) => grid::author(data, &p, g)?,
         Shape::Construction(o) => construction::author(data, &p, o)?,
         Shape::Annotation(a) => annotation::author(data, &p, a)?,
-        Shape::Instance { definition, .. } => instance::author(data, &p, definition, input, prims)?,
         Shape::Level { elevation_mm } => attr(
             data,
             &p,
@@ -1498,7 +1496,6 @@ fn capture(
                     add(name, ty, 0);
                 }
                 match e.shape {
-                    Shape::Instance { .. } => add(instance::RELATIONSHIP, "rel", 0),
                     Shape::Assembly => (),
                     Shape::Discipline(ref hook) => {
                         for (name, ty) in hook.0.attributes() {
