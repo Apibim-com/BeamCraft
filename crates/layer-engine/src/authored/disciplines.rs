@@ -94,6 +94,9 @@ pub(super) fn validate_part(
 }
 
 /// Validates the discipline's properties of a `connection` prim.
+///
+/// Every `connection` prim goes to the first registered discipline, as it went through the steel
+/// checks before the registry. With a second discipline this needs an ownership test per prim.
 pub(super) fn validate_connection(prim: &Prim, prims: &[Prim]) -> Result<(), Diagnostic> {
     match registered().first() {
         Some(discipline) => discipline.validate_connection(prim, prims),
