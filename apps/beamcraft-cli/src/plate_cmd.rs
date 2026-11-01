@@ -8,7 +8,7 @@
 use crate::report::report_with;
 use beamcraft_cli::array::{ArrayRequest, array_elements};
 use beamcraft_cli::bend::{BendRequest, bend_plate_record};
-use beamcraft_cli::copy::{CopiedElement, CopyRequest, copy_element, copy_instance};
+use beamcraft_cli::copy::{CopyRequest, PartRecord, copy_element, copy_instance};
 use beamcraft_cli::cut::{
     A13Command, A13Request, CutElement, CutRequest, a13_record, cut_by_plane_record,
 };
@@ -17,7 +17,7 @@ use beamcraft_cli::definition::{
     head_definitions, resolve_name,
 };
 use beamcraft_cli::delete::{DeleteRequest, DeletedKind, delete_element};
-use beamcraft_cli::edit::{UpdateRequest, UpdatedElement, update_element};
+use beamcraft_cli::edit::{UpdateRequest, update_element};
 use beamcraft_cli::history::{Direction, Step, step, timeline};
 use beamcraft_cli::hole::{AddHoleRequest, add_hole_command};
 use beamcraft_cli::library::{Lookup, open_lookup};
@@ -1484,8 +1484,8 @@ fn update_command(
         &mut NoFault,
     )?;
     let element = match &updated.element {
-        UpdatedElement::Plate(record) => plate_json(record)?,
-        UpdatedElement::Member(record) => member_json(record)?,
+        PartRecord::Plate(record) => plate_json(record)?,
+        PartRecord::Member(record) => member_json(record)?,
     };
     Ok(Json::object([
         (
@@ -1681,7 +1681,7 @@ fn contour_edit_command(
         },
         &mut NoFault,
     )?;
-    let UpdatedElement::Plate(edited) = &updated.element else {
+    let PartRecord::Plate(edited) = &updated.element else {
         return Err(Refusal {
             rule_id: None,
             code: ErrorCode::IntegrityError,
@@ -2612,8 +2612,8 @@ fn copy_command(
         &mut NoFault,
     )?;
     let element = match &copied.element {
-        CopiedElement::Plate(record) => plate_json(record)?,
-        CopiedElement::Member(record) => member_json(record)?,
+        PartRecord::Plate(record) => plate_json(record)?,
+        PartRecord::Member(record) => member_json(record)?,
     };
     Ok(Json::object([
         (
@@ -2890,8 +2890,8 @@ fn array_command(store: &RevisionStore, options: &BTreeMap<&str, &str>, polar: b
         .elements
         .iter()
         .map(|record| match record {
-            CopiedElement::Plate(record) => plate_json(record),
-            CopiedElement::Member(record) => member_json(record),
+            PartRecord::Plate(record) => plate_json(record),
+            PartRecord::Member(record) => member_json(record),
         })
         .collect::<Run<Vec<_>>>()?;
     Ok(Json::object([

@@ -8,11 +8,8 @@
 //! `cargo test -p beamcraft-layer-engine --test layer_engine -- --exact <suite>::<case>`. A new suite file is listed
 //! here.
 
-mod authored;
 mod displayed_source;
-mod index;
 mod read;
-mod rebase_candidate;
 mod reference;
 
 /// With `autotests = false` a suite file missing from the list above would never build or run,

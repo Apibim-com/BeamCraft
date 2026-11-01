@@ -23,7 +23,9 @@ pub struct CutHistory {
     /// UUIDs that cannot be used by a new record.
     pub retired: Vec<OpId>,
 }
-pub(super) fn ids(p: &Prim, name: &str) -> Result<Vec<OpId>, Diagnostic> {
+/// The operation identities stored under one id attribute; the seam a discipline's record
+/// history reads its stored ids through.
+pub fn ids(p: &Prim, name: &str) -> Result<Vec<OpId>, Diagnostic> {
     let Some(value) = validate::optional(p, name, "string[]")? else {
         return Ok(Vec::new());
     };
@@ -49,7 +51,7 @@ pub type HoleHistory = CutHistory;
 /// parallel within one family, so a member hole (A04.2) never mixes with a plate hole (A04) or
 /// a plane cut (A03) even though the history shape is one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Family {
+pub enum Family {
     /// The owned plane cuts of a plate, beam or column.
     Cut,
     /// The hole and polygon-cut records of a plate.
@@ -57,7 +59,9 @@ pub(super) enum Family {
     /// The member-hole records of a beam or column.
     MemberHole,
 }
-pub(super) fn fields(family: Family) -> (&'static str, &'static str, &'static str, &'static str) {
+/// The attribute names of one record family: the next-ordinal and retired fields plus the
+/// record list's own id and ordinal attributes; the seam's history field map.
+pub fn fields(family: Family) -> (&'static str, &'static str, &'static str, &'static str) {
     match family {
         Family::Cut => (NEXT, RETIRED, "steel:cut:operationId", "steel:cut:ordinal"),
         Family::PlateHole => (
@@ -74,7 +78,9 @@ pub(super) fn fields(family: Family) -> (&'static str, &'static str, &'static st
         ),
     }
 }
-pub(super) fn ordinals(p: &Prim, name: &str) -> Result<Vec<u16>, Diagnostic> {
+/// The ordinals stored under one ordinal attribute, ascending; the seam a discipline's record
+/// history reads its stored ordinals through.
+pub fn ordinals(p: &Prim, name: &str) -> Result<Vec<u16>, Diagnostic> {
     let Some(value) = validate::optional(p, name, "int[]")? else {
         return Ok(Vec::new());
     };
