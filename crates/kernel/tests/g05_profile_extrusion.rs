@@ -18,7 +18,7 @@ use crate::common;
 use beamcraft_kernel::profile::{
     Cavity, CurveKind, CurveSpec, FaceRole, Point2, Profile, VolumeStatus, extrude,
 };
-use beamcraft_kernel::{steel::RectangularPlate, steel::rectangular_plate};
+use beamcraft_kernel::{RectangularPlate, rectangular_plate};
 use common::*;
 use std::collections::BTreeSet;
 use std::f64::consts::PI;

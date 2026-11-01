@@ -18,10 +18,6 @@ use crate::plate::{
 };
 use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::member::{
-    AuthoredMember, MemberAdmission, admit_create_member, admit_create_polybeam,
-};
-use beamcraft_engine::query::committed::{MemberRecord, ids};
 use beamcraft_host::revision::{
     CommitHook, CommitOutcome, ExpectedBase, Revision, RevisionStore, Uuid7,
 };
@@ -33,12 +29,16 @@ use beamcraft_layer_engine::authored::{
 };
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
-use beamcraft_model::steel::command::{CreatePolybeam, CreateStraightMember, MemberKind};
 use session::Refusal;
 use session::pipeline::{
     AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, digest_of, host_uuid, load_base,
     open_base, summarize,
 };
+use steel::engine::committed::{MemberRecord, ids};
+use steel::engine::member::{
+    AuthoredMember, MemberAdmission, admit_create_member, admit_create_polybeam,
+};
+use steel::model::command::{CreatePolybeam, CreateStraightMember, MemberKind};
 
 /// Inputs of one `create_member` call beyond the command itself.
 #[derive(Debug, Clone)]
@@ -88,7 +88,7 @@ pub struct CreateCurvedBeamRequest {
     /// Workspace of a store that has no revision yet. Ignored otherwise.
     pub workspace: WorkspaceId,
     /// The command.
-    pub command: beamcraft_model::steel::command::CreateCurvedBeam,
+    pub command: steel::model::command::CreateCurvedBeam,
 }
 
 /// Result of `create_member` and `create_polybeam`.
@@ -380,13 +380,13 @@ pub fn create_curved_beam(
     };
     let mut existing = ids(&head_plates);
     existing.extend(head_members.iter().map(|m| m.authored.id));
-    let outcome = beamcraft_engine::member::create_curved_beam(
+    let outcome = steel::engine::member::create_curved_beam(
         &request.command,
         &|id| existing.contains(id),
         &profile_lookup(&definitions),
         &material_lookup(&definitions),
     )?;
-    let admission = MemberAdmission::Apply(Box::new(beamcraft_engine::member::MemberTransaction {
+    let admission = MemberAdmission::Apply(Box::new(steel::engine::member::MemberTransaction {
         op_id: request.op_id,
         outcome,
     }));

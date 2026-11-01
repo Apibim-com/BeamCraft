@@ -20,7 +20,6 @@ use crate::plate::{check_footprint, prior_op_with, property, replay_summary, tex
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::attribute::{ElementValues, Schema};
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
     ATTR_SCHEMA_PATH, Author, Change, EditTargets, Prepare, schema_identity, validate_layers,
@@ -39,6 +38,7 @@ use session::pipeline::{
     load_base, open_base, summarize,
 };
 use std::collections::BTreeMap;
+use steel::engine::transaction::PriorOp;
 
 /// Identities of one I04 call beyond the command itself.
 #[derive(Debug, Clone)]

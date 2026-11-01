@@ -15,14 +15,14 @@ use beamcraft_engine::numbering::{
     AssemblyFact, PartFact, PartGeometry, PartKind, Preview, Settings, preview,
 };
 use beamcraft_engine::numbering_approval::{Mark, Report, StoredMark, assess};
-use beamcraft_engine::query::committed::PlateRecord;
 use beamcraft_host::revision::RevisionStore;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
-use beamcraft_model::steel::command::MemberKind;
 use session::Refusal;
 use std::collections::BTreeMap;
+use steel::engine::committed::PlateRecord;
+use steel::model::command::MemberKind;
 
 /// A preview and what it was made from.
 #[derive(Debug, Clone, PartialEq)]
@@ -171,7 +171,7 @@ pub(crate) fn state(store: &RevisionStore) -> Result<State, Refusal> {
                 holes: Vec::new(),
                 outline: Vec::new(),
                 geometry: Some(
-                    PartGeometry::member(a, &record.body)
+                    steel::engine::numbering_geometry::member_geometry(a, &record.body)
                         .map_err(|e| error(ErrorCode::InvalidArgument, e.0))?,
                 ),
                 assembly: holder.get(&a.id).copied(),
