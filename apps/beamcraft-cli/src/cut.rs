@@ -37,7 +37,8 @@ use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, Element, MemberKind, Placement, Prepare, Shape, schema_identity,
+    Author, Change, EditTargets, Element, MemberKind, MemberShape, Placement, Prepare, Shape,
+    schema_identity,
 };
 use beamcraft_layer_engine::index::ElementId as LayerElementId;
 use beamcraft_model::command::CommandError;
@@ -1271,10 +1272,10 @@ pub fn a13_record(
                 head.placement.translation_mm != authored.placement.translation_mm
             });
             let survivor = evaluate_state(AuthoredState::Member(authored.clone()))?;
-            changes.push(Change::Axis {
-                id: authored.id.to_string(),
-                points_mm: authored.axis_points_mm,
-            });
+            changes.push(Change::axis(
+                authored.id.to_string(),
+                authored.axis_points_mm,
+            ));
             if moved {
                 changes.push(Change::Placement {
                     id: authored.id.to_string(),
@@ -1463,7 +1464,7 @@ fn created_element(state: &AuthoredState) -> Result<Element, Refusal> {
             name: authored.name.clone(),
             placement: pose(authored.placement),
             material: authored.material,
-            shape: Shape::Member {
+            shape: Shape::member(MemberShape {
                 kind: match authored.kind {
                     steel::model::command::MemberKind::Beam => MemberKind::Beam,
                     steel::model::command::MemberKind::Column => MemberKind::Column,
@@ -1474,7 +1475,7 @@ fn created_element(state: &AuthoredState) -> Result<Element, Refusal> {
                 curved: authored.curved,
                 placement: authored.section_placement,
                 cuts: authored.cuts.clone(),
-            },
+            }),
         }),
     }
 }

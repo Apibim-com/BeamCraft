@@ -913,7 +913,7 @@ fn member(id: &str, name: &str) -> Change {
     Change::Create(Element {
         id: id.into(),
         name: name.into(),
-        shape: Shape::Member {
+        shape: Shape::member(MemberShape {
             kind: MemberKind::Beam,
             curved: false,
             axis_mm: vec![[0.0, 0.0, 0.0], [0.0, 0.0, 2000.0]],
@@ -921,7 +921,7 @@ fn member(id: &str, name: &str) -> Change {
             roll_rad: Some(0.125),
             placement: None,
             cuts: Vec::new(),
-        },
+        }),
         placement: pose(),
         material: None,
     })

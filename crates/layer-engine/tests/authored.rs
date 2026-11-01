@@ -142,7 +142,7 @@ fn elements() -> Vec<Change> {
         Change::Create(Element {
             id: MEMBER.into(),
             name: "Member".into(),
-            shape: Shape::Member {
+            shape: Shape::member(MemberShape {
                 kind: MemberKind::Beam,
                 curved: false,
                 axis_mm: vec![[0.0, 0.0, 0.0], [0.0, 0.0, 2000.0]],
@@ -150,7 +150,7 @@ fn elements() -> Vec<Change> {
                 roll_rad: Some(0.125),
                 placement: None,
                 cuts: Vec::new(),
-            },
+            }),
             placement: pose(),
             material: None,
         }),
@@ -565,13 +565,7 @@ fn absence_block_removal_reveal_weaker_defaults_without_flattening() {
         let expected_local = opinion.clone();
         let p = a
             .prepare(
-                batch(
-                    &o.context,
-                    vec![Change::Roll {
-                        id: MEMBER.into(),
-                        opinion,
-                    }],
-                ),
+                batch(&o.context, vec![Change::roll(MEMBER.into(), opinion)]),
                 &control(),
             )
             .unwrap();
@@ -966,10 +960,7 @@ fn duplicate_keys_wrong_kind_bad_mesh_and_missing_or_forged_definitions_fail() {
         a.prepare(
             batch(
                 &o.context,
-                vec![Change::Roll {
-                    id: PLATE.into(),
-                    opinion: Opinion::Value(0.0)
-                }]
+                vec![Change::roll(PLATE.into(), Opinion::Value(0.0))]
             ),
             &control()
         )
@@ -1073,13 +1064,7 @@ fn material_empty_remove_profile_pin_and_loaded_unknown_schema_preservation() {
         section: SectionProperties::default(),
     })
     .unwrap();
-    let mut input = batch(
-        &o.context,
-        vec![Change::Profile {
-            id: MEMBER.into(),
-            digest: r.digest,
-        }],
-    );
+    let mut input = batch(&o.context, vec![Change::profile(MEMBER.into(), r.digest)]);
     input.resources = vec![r];
     let p = a.prepare(input, &control()).unwrap();
     assert!(p.reads.contains(&Footprint {
@@ -1971,7 +1956,7 @@ fn the_plane_cut_records_are_authored_as_five_parallel_arrays_and_validated() {
         vec![Change::Create(Element {
             id: MEMBER.into(),
             name: "Cut beam".into(),
-            shape: Shape::Member {
+            shape: Shape::member(MemberShape {
                 kind: MemberKind::Beam,
                 curved: false,
                 axis_mm: vec![[0.0, 0.0, 0.0], [6000.0, 0.0, 0.0]],
@@ -1984,7 +1969,7 @@ fn the_plane_cut_records_are_authored_as_five_parallel_arrays_and_validated() {
                     [1.0, 0.0, 0.0],
                     KeepSide::Negative,
                 )],
-            },
+            }),
             placement: pose(),
             material: None,
         })],
@@ -2071,7 +2056,7 @@ fn the_plane_cut_records_are_authored_as_five_parallel_arrays_and_validated() {
     );
     // A zero normal never reaches the layer engine either.
     assert_eq!(
-        refuse(Shape::Member {
+        refuse(Shape::member(MemberShape {
             kind: MemberKind::Beam,
             curved: false,
             axis_mm: vec![[0.0, 0.0, 0.0], [6000.0, 0.0, 0.0]],
@@ -2084,7 +2069,7 @@ fn the_plane_cut_records_are_authored_as_five_parallel_arrays_and_validated() {
                 [0.0, 0.0, 0.0],
                 KeepSide::Negative
             )],
-        }),
+        })),
         ErrorCode::InvalidArgument
     );
 }
@@ -3504,13 +3489,7 @@ fn section_profiles_round_trip_and_tampering_is_refused() {
     .unwrap();
     // The member ends linked to the custom outline; only linked definitions are validated.
     for r in [i_shape, custom] {
-        let mut input = batch(
-            &o.context,
-            vec![Change::Profile {
-                id: MEMBER.into(),
-                digest: r.digest,
-            }],
-        );
+        let mut input = batch(&o.context, vec![Change::profile(MEMBER.into(), r.digest)]);
         input.resources = vec![r];
         let p = a.prepare(input, &control()).unwrap();
         o = a
@@ -4332,7 +4311,7 @@ fn circular_member_path_is_explicit_and_invalid_shape_metadata_is_refused() {
         Change::Create(Element {
             id: MEMBER.into(),
             name: "arc".into(),
-            shape: Shape::Member {
+            shape: Shape::member(MemberShape {
                 kind: MemberKind::Beam,
                 curved: true,
                 axis_mm: points,
@@ -4340,7 +4319,7 @@ fn circular_member_path_is_explicit_and_invalid_shape_metadata_is_refused() {
                 roll_rad: roll,
                 placement: None,
                 cuts: vec![],
-            },
+            }),
             placement: pose(),
             material: None,
         })

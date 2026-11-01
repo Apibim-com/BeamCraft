@@ -218,7 +218,7 @@ pub(super) fn attr(
 ) -> Result<(), Diagnostic> {
     attribute(data, p, name, ty, Opinion::Value(v), true)
 }
-fn relationship(
+pub(super) fn relationship(
     data: &mut sdf::Data,
     p: &str,
     name: &str,
@@ -667,14 +667,6 @@ fn create(
         // A lofted plate is a plate: its kind token and part path are the plate's, and the
         // shape token `steel:plate:form` discriminates the record form.
         Shape::LoftedPlate { .. } => "plate",
-        Shape::Member {
-            kind: MemberKind::Beam,
-            ..
-        } => "beam",
-        Shape::Member {
-            kind: MemberKind::Column,
-            ..
-        } => "column",
     };
     for (name, ty, v) in [
         ("bim:id", "string", sdf::Value::String(e.id.clone())),
@@ -690,10 +682,9 @@ fn create(
     ] {
         attr(data, &p, name, ty, v)?;
     }
-    if matches!(
-        e.shape,
-        Shape::Plate { .. } | Shape::Member { .. } | Shape::LoftedPlate { .. }
-    ) {
+    if matches!(e.shape, Shape::Plate { .. } | Shape::LoftedPlate { .. })
+        || matches!(&e.shape, Shape::Discipline(hook) if hook.0.classed())
+    {
         attr(data, &p, "steel:class", "int", sdf::Value::Int(0))?;
     }
     match &e.shape {
@@ -845,79 +836,6 @@ fn create(
                 "double3[]",
                 points(end_mm),
             )?;
-        }
-        Shape::Member {
-            curved,
-            axis_mm,
-            profile,
-            roll_rad,
-            placement,
-            ..
-        } => {
-            attr(data, &p, "bim:axisPointsMm", "double3[]", points(axis_mm))?;
-            if *curved {
-                attr(
-                    data,
-                    &p,
-                    "steel:member:pathType",
-                    "token",
-                    sdf::Value::token("arc"),
-                )?;
-            }
-            relationship(data, &p, "bim:profile", MaterialOpinion::Target(*profile))?;
-            if let Some(n) = roll_rad {
-                attr(
-                    data,
-                    &p,
-                    "steel:member:rollRad",
-                    "double",
-                    sdf::Value::Double(*n),
-                )?;
-            }
-            if let Some(placement) = placement {
-                attr(
-                    data,
-                    &p,
-                    "steel:member:planePosition",
-                    "token",
-                    sdf::Value::token(placement.plane.as_str()),
-                )?;
-                attr(
-                    data,
-                    &p,
-                    "steel:member:planeOffsetMm",
-                    "double",
-                    sdf::Value::Double(placement.plane_offset_mm),
-                )?;
-                attr(
-                    data,
-                    &p,
-                    "steel:member:depthPosition",
-                    "token",
-                    sdf::Value::token(placement.depth.as_str()),
-                )?;
-                attr(
-                    data,
-                    &p,
-                    "steel:member:depthOffsetMm",
-                    "double",
-                    sdf::Value::Double(placement.depth_offset_mm),
-                )?;
-                attr(
-                    data,
-                    &p,
-                    "steel:member:startOffsetMm",
-                    "double",
-                    sdf::Value::Double(placement.start_offset_mm),
-                )?;
-                attr(
-                    data,
-                    &p,
-                    "steel:member:endOffsetMm",
-                    "double",
-                    sdf::Value::Double(placement.end_offset_mm),
-                )?;
-            }
         }
         Shape::Assembly => (),
         Shape::Discipline(hook) => hook.0.author(&mut hook::AuthorCx {
@@ -1691,38 +1609,9 @@ pub(super) fn apply(
                     attr(&mut authored, &p, name, ty, v)?;
                 }
             }
-            Change::Axis { points_mm, .. } => attr(
-                &mut authored,
-                &p,
-                "bim:axisPointsMm",
-                "double3[]",
-                points(points_mm),
-            )?,
-            Change::Roll { opinion, .. } => {
-                let opinion = match opinion {
-                    Opinion::Value(n) => Opinion::Value(sdf::Value::Double(*n)),
-                    Opinion::Absent => Opinion::Absent,
-                    Opinion::Block => Opinion::Block,
-                    Opinion::Remove => Opinion::Remove,
-                };
-                attribute(
-                    &mut authored,
-                    &p,
-                    "steel:member:rollRad",
-                    "double",
-                    opinion,
-                    true,
-                )?;
-            }
             Change::Material { opinion, .. } => {
                 relationship(&mut authored, &p, "bim:material", opinion.clone())?
             }
-            Change::Profile { digest, .. } => relationship(
-                &mut authored,
-                &p,
-                "bim:profile",
-                MaterialOpinion::Target(*digest),
-            )?,
             Change::Placement { placement, .. } => pose(&mut authored, &p, placement)?,
             Change::PartOf { assembly, .. } => {
                 // A detach authors an explicit empty target list, which also masks a weaker
@@ -1846,12 +1735,10 @@ pub(super) fn apply(
                 | Change::Corners { .. }
                 | Change::Bends { .. }
                 | Change::Cuts { .. }
-                | Change::Axis { .. }
-                | Change::Roll { .. }
-                | Change::Profile { .. }
                 | Change::HoleRecords { .. }
                 | Change::MemberHoles { .. }
-        ) {
+        ) || matches!(c, Change::Discipline(hook) if hook.0.invalidates_derived())
+        {
             // Never reveal a weaker stale result after removing the derived opinion.
             let mesh_path = format!("{p}/Geometry");
             if prims
@@ -1928,15 +1815,6 @@ fn capture(
         ("xformOp:orient", "quatd"),
         ("xformOpOrder", "token[]"),
     ];
-    const CUT_FIELDS: &[(&str, &str)] = &[
-        ("steel:cut:operationId", "string[]"),
-        ("steel:cut:ordinal", "int[]"),
-        ("steel:cut:pointMm", "double3[]"),
-        ("steel:cut:normal", "double3[]"),
-        ("steel:cut:keep", "token[]"),
-        (cut_history::NEXT, "int"),
-        (cut_history::RETIRED, "string[]"),
-    ];
     /// The A04.2 member-hole record attributes of a member, in storage order.
     const MHOLE_FIELDS: &[(&str, &str)] = &[
         ("steel:mhole:pointsMm", "double3[]"),
@@ -1952,14 +1830,6 @@ fn capture(
         (cut_history::MHOLE_RETIRED, "string[]"),
     ];
     /// The P14 section-placement attributes of a member, in storage order.
-    const MEMBER_PLACEMENT: &[(&str, &str)] = &[
-        ("steel:member:planePosition", "token"),
-        ("steel:member:planeOffsetMm", "double"),
-        ("steel:member:depthPosition", "token"),
-        ("steel:member:depthOffsetMm", "double"),
-        ("steel:member:startOffsetMm", "double"),
-        ("steel:member:endOffsetMm", "double"),
-    ];
     const MESH: &[(&str, &str)] = &[
         ("points", "point3f[]"),
         ("faceVertexCounts", "int[]"),
@@ -2034,29 +1904,6 @@ fn capture(
                             add("steel:hole:generatedBy", "string[]", 0);
                             add(cut_history::HOLE_NEXT, "int", 0);
                             add(cut_history::HOLE_RETIRED, "string[]", 0);
-                        }
-                    }
-                    Shape::Member {
-                        ref cuts,
-                        ref placement,
-                        curved,
-                        ..
-                    } => {
-                        if curved {
-                            add("steel:member:pathType", "token", 0);
-                        }
-                        add("bim:axisPointsMm", "double3[]", 0);
-                        add("steel:member:rollRad", "double", 0);
-                        if placement.is_some() {
-                            for &(name, ty) in MEMBER_PLACEMENT {
-                                add(name, ty, 0);
-                            }
-                        }
-                        add("bim:profile", "rel", 0);
-                        if !cuts.is_empty() {
-                            for &(name, ty) in CUT_FIELDS {
-                                add(name, ty, 0);
-                            }
                         }
                     }
                     Shape::LoftedPlate { .. } => {
@@ -2233,9 +2080,6 @@ fn capture(
                     add(name, ty, 0);
                 }
             }
-            Change::Axis { .. } => add("bim:axisPointsMm", "double3[]", 0),
-            Change::Roll { .. } => add("steel:member:rollRad", "double", 0),
-            Change::Profile { .. } => add("bim:profile", "rel", 0),
             Change::Material { .. } => add("bim:material", "rel", 0),
             Change::PartOf { .. } => add("bim:partOf", "rel", 0),
             Change::MainPart { .. } => add("bim:mainPart", "rel", 0),
@@ -2275,11 +2119,9 @@ fn capture(
                 | Change::Corners { .. }
                 | Change::Bends { .. }
                 | Change::Cuts { .. }
-                | Change::Axis { .. }
-                | Change::Roll { .. }
-                | Change::Profile { .. }
                 | Change::MemberHoles { .. }
-        ) {
+        ) || matches!(change, Change::Discipline(hook) if hook.0.invalidates_derived())
+        {
             for &(name, ty) in MESH {
                 add(name, ty, 1);
             }
@@ -2479,3 +2321,20 @@ fn author_bends(data: &mut sdf::Data, p: &str, bends: &[BendRecord]) -> Result<(
     )?;
     Ok(())
 }
+pub(super) const CUT_FIELDS: &[(&str, &str)] = &[
+    ("steel:cut:operationId", "string[]"),
+    ("steel:cut:ordinal", "int[]"),
+    ("steel:cut:pointMm", "double3[]"),
+    ("steel:cut:normal", "double3[]"),
+    ("steel:cut:keep", "token[]"),
+    (cut_history::NEXT, "int"),
+    (cut_history::RETIRED, "string[]"),
+];
+pub(super) const MEMBER_PLACEMENT: &[(&str, &str)] = &[
+    ("steel:member:planePosition", "token"),
+    ("steel:member:planeOffsetMm", "double"),
+    ("steel:member:depthPosition", "token"),
+    ("steel:member:depthOffsetMm", "double"),
+    ("steel:member:startOffsetMm", "double"),
+    ("steel:member:endOffsetMm", "double"),
+];

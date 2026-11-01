@@ -15,6 +15,7 @@ pub mod grid;
 mod guard;
 pub mod hook;
 pub mod instance;
+mod member;
 pub mod rebase;
 mod reference;
 mod validate;
@@ -24,6 +25,7 @@ pub use hook::{
     AuthorCx, ChangeAuthorCx, ChangeHook, ChangeValidateCx, HookedChange, HookedShape, ShapeHook,
     ValidateCx,
 };
+pub use member::{MemberShape, SetAxis, SetProfile, SetRoll};
 pub use reference::{
     ForeignPrim, Reference, ReferenceView, SourceFormat, SourcePin, UnitsInterpretation, UpAxis,
     read_references,
@@ -315,27 +317,6 @@ pub enum Shape {
         /// order, stored as five parallel attributes. Empty means an uncut plate.
         cuts: Vec<CutRecord>,
     },
-    /// Member (P03 straight, P12 polybeam), with a required pinned profile.
-    Member {
-        /// Three authored axis points describe a circular arc (P13).
-        curved: bool,
-        /// Explicit beam or column kind.
-        kind: MemberKind,
-        /// Ordered element-local path points: exactly two for a straight member, at least three
-        /// for a polybeam.
-        axis_mm: Vec<[f64; 3]>,
-        /// Immutable profile content digest.
-        profile: ContentDigest,
-        /// Missing roll has no authored default; engineering default is zero. A polybeam has no
-        /// authored roll.
-        roll_rad: Option<f64>,
-        /// Position of the section about the axis (P14); `None` is the centred default and
-        /// stores no attributes.
-        placement: Option<SectionPlacement>,
-        /// The owned `plane_cut` operation records (A03, amendment A-2) in ascending ordinal
-        /// order. Empty means an uncut member.
-        cuts: Vec<CutRecord>,
-    },
     /// A11 lofted plate: a plate between two face contours that need not be coplanar, stored
     /// as two element-local point arrays of the same vertex count. The sheet thickness is the
     /// distance between the contours themselves, so there is no thickness, hole, cut or corner
@@ -382,11 +363,11 @@ impl Shape {
     /// The owned `plane_cut` records of a plate, beam or column (A03); other kinds have none.
     pub(crate) fn cuts(&self) -> &[CutRecord] {
         match self {
-            Self::Plate { cuts, .. } | Self::Member { cuts, .. } => cuts,
+            Self::Plate { cuts, .. } => cuts,
+            Self::Discipline(hook) => hook.0.cuts(),
             Self::LoftedPlate { .. }
             | Self::Instance { .. }
             | Self::Assembly
-            | Self::Discipline(_)
             | Self::Grid(_)
             | Self::Construction(_)
             | Self::Annotation(_)
@@ -693,31 +674,10 @@ pub enum Change {
         /// The records in ascending ordinal order.
         cuts: Vec<CutRecord>,
     },
-    /// Replace the member's path points as a whole (P03 two, P12 three or more).
-    Axis {
-        /// Full target UUIDv7.
-        id: String,
-        /// Ordered element-local path points.
-        points_mm: Vec<[f64; 3]>,
-    },
     /// An edit that belongs to a discipline (#795): its target kind, groups, bounds and
     /// attribute writes are answered by the change's own hook. The replacement of an A14.3 bolt
     /// group is built with [`Change::bolt_group`].
     Discipline(HookedChange),
-    /// Change the optional roll opinion in the selected authored layer.
-    Roll {
-        /// Full target UUIDv7.
-        id: String,
-        /// Exact authored opinion.
-        opinion: Opinion<f64>,
-    },
-    /// Replace the required immutable member profile.
-    Profile {
-        /// Full target UUIDv7.
-        id: String,
-        /// Verified profile content digest.
-        digest: ContentDigest,
-    },
     /// Change the optional material relationship.
     Material {
         /// Full target UUIDv7.
@@ -847,9 +807,6 @@ impl Change {
             Self::Cuts { id, .. } => (id, "steel:cut"),
             Self::MemberHoles { id, .. } => (id, "steel:mhole"),
             Self::Discipline(hook) => (hook.0.target(), hook.0.group_key()),
-            Self::Axis { id, .. } => (id, "bim:axisPointsMm"),
-            Self::Roll { id, .. } => (id, "steel:member:rollRad"),
-            Self::Profile { id, .. } => (id, "bim:profile"),
             Self::Material { id, .. } => (id, "bim:material"),
             Self::Placement { id, .. } => (id, "placement"),
             Self::Mesh(m) => (&m.id, "derived"),
@@ -1262,10 +1219,9 @@ fn shape_category(shape: &Shape) -> ElementCategory {
         Shape::Grid(_) => ElementCategory::Grid,
         Shape::Construction(_) => ElementCategory::Construction,
         Shape::Annotation(_) => ElementCategory::Annotation,
-        Shape::Plate { .. }
-        | Shape::Member { .. }
-        | Shape::LoftedPlate { .. }
-        | Shape::Instance { .. } => ElementCategory::Part,
+        Shape::Plate { .. } | Shape::LoftedPlate { .. } | Shape::Instance { .. } => {
+            ElementCategory::Part
+        }
     }
 }
 fn change_path(id: &str, input: &Prepare, prims: &[Prim]) -> Result<String, Diagnostic> {

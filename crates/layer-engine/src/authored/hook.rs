@@ -61,6 +61,14 @@ pub trait ShapeHook: Debug + Send + Sync {
     fn validate(&self, cx: &mut ValidateCx<'_>) -> Result<(), Diagnostic>;
     /// Every number of the shape is finite.
     fn check_finite(&self) -> Result<(), Diagnostic>;
+    /// The owned `plane_cut` records authored with the element (A03); none by default.
+    fn cuts(&self) -> &[CutRecord] {
+        &[]
+    }
+    /// Whether the element carries the authored part class `steel:class`.
+    fn classed(&self) -> bool {
+        false
+    }
 }
 
 /// A hook shape as the platform holds it: cheap to clone, comparable.
@@ -124,6 +132,10 @@ pub trait ChangeHook: Debug + Send + Sync {
     fn author(&self, cx: &mut ChangeAuthorCx<'_>) -> Result<(), Diagnostic>;
     /// The `(name, type)` of every attribute the edit writes.
     fn attributes(&self) -> Vec<(&'static str, &'static str)>;
+    /// Whether the edit removes the derived result of its element (a shape input changes).
+    fn invalidates_derived(&self) -> bool {
+        false
+    }
 }
 
 /// A hook change as the platform holds it: cheap to clone, comparable.

@@ -26,8 +26,8 @@ use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, Element, MemberKind as LayerKind, Placement as LayerPlacement,
-    Shape, schema_identity,
+    Author, Change, EditTargets, Element, MemberKind as LayerKind, MemberShape,
+    Placement as LayerPlacement, Shape, schema_identity,
 };
 use beamcraft_layer_engine::index::{ElementId as LayerElementId, LinkTarget};
 use beamcraft_model::command::CommandError;
@@ -153,7 +153,7 @@ pub(crate) fn creation_changes(copy: &CopiedElement) -> Result<Vec<Change>, Refu
                 Change::Create(Element {
                     id: a.id.to_string(),
                     name: a.name.clone(),
-                    shape: Shape::Member {
+                    shape: Shape::member(MemberShape {
                         kind: match a.kind {
                             MemberKind::Beam => LayerKind::Beam,
                             MemberKind::Column => LayerKind::Column,
@@ -164,7 +164,7 @@ pub(crate) fn creation_changes(copy: &CopiedElement) -> Result<Vec<Change>, Refu
                         roll_rad: a.roll_rad,
                         placement: a.section_placement,
                         cuts: a.cuts.clone(),
-                    },
+                    }),
                     placement: LayerPlacement {
                         translation_mm: a.placement.translation_mm,
                         orientation_xyzw: [qx, qy, qz, qw],

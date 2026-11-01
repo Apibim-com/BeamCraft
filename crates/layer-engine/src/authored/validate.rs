@@ -2446,9 +2446,6 @@ pub(super) fn changes(
                     | Change::Bends { .. } => kind == "plate",
                     Change::HoleRecords { .. } => kind == "plate",
                     Change::MemberHoles { .. } => matches!(kind, "beam" | "column"),
-                    Change::Axis { .. } | Change::Roll { .. } | Change::Profile { .. } => {
-                        matches!(kind, "beam" | "column")
-                    }
                     Change::PartClass { .. } => matches!(kind, "plate" | "beam" | "column"),
                     Change::Grid { .. } => kind == "grid",
                     Change::Discipline(hook) => hook.0.targets_kind(kind),
@@ -2829,42 +2826,6 @@ pub(super) fn changes(
                             cap(contour.iter().flatten().copied(), 1e9)?;
                         }
                     }
-                    Shape::Member {
-                        curved,
-                        axis_mm,
-                        roll_rad,
-                        profile,
-                        placement,
-                        cuts,
-                        ..
-                    } => {
-                        if axis_mm.len() < 2 || axis_mm.len() > MAX_MEMBER_PATH_POINTS {
-                            return Err(invalid());
-                        }
-                        if *curved && (axis_mm.len() != 3 || roll_rad.is_some()) {
-                            return Err(invalid());
-                        }
-                        cap(axis_mm.iter().flatten().copied(), 1e9)?;
-                        if let Some(n) = roll_rad {
-                            cap([*n], std::f64::consts::TAU)?;
-                        }
-                        if let Some(p) = placement {
-                            cap(
-                                [
-                                    p.plane_offset_mm,
-                                    p.depth_offset_mm,
-                                    p.start_offset_mm,
-                                    p.end_offset_mm,
-                                ],
-                                1e6,
-                            )?;
-                        }
-                        cut_values(cuts)?;
-                        reads.insert(Footprint {
-                            identity: profile.to_string(),
-                            group: Group::Relationship,
-                        });
-                    }
                     Shape::Assembly => {
                         if e.material.is_some()
                             || e.placement.translation_mm != [0.0; 3]
@@ -3053,11 +3014,6 @@ pub(super) fn changes(
                 }
             }
             Change::Cuts { cuts, .. } => cut_values(cuts)?,
-            Change::Axis { points_mm, .. } => cap(points_mm.iter().flatten().copied(), 1e9)?,
-            Change::Roll {
-                opinion: Opinion::Value(n),
-                ..
-            } => cap([*n], std::f64::consts::TAU)?,
             Change::Placement { placement, .. } => pose(placement)?,
             Change::Material {
                 opinion: MaterialOpinion::Target(d),
@@ -3065,12 +3021,6 @@ pub(super) fn changes(
             } => {
                 reads.insert(Footprint {
                     identity: d.to_string(),
-                    group: Group::Relationship,
-                });
-            }
-            Change::Profile { digest, .. } => {
-                reads.insert(Footprint {
-                    identity: digest.to_string(),
                     group: Group::Relationship,
                 });
             }
@@ -3103,7 +3053,7 @@ fn count_points(points: &[[f64; 3]], b: Budgets) -> Result<(), Diagnostic> {
 /// The authored plane-cut records of a created plate or member (A03): finite and within the
 /// coordinate cap, with a non-zero normal, in ascending ordinals at most 999. Whether a plane
 /// crosses the element is the engine's gate.
-fn cut_values(cuts: &[CutRecord]) -> Result<(), Diagnostic> {
+pub(super) fn cut_values(cuts: &[CutRecord]) -> Result<(), Diagnostic> {
     let mut last_ordinal = None;
     for cut in cuts {
         // The record admission keeps the model's codes: non-finite and a zero normal are
@@ -3187,31 +3137,6 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                             }
                         })),
                 ),
-                Shape::Member {
-                    axis_mm,
-                    roll_rad,
-                    placement,
-                    cuts,
-                    ..
-                } => finite(
-                    axis_mm
-                        .iter()
-                        .flatten()
-                        .copied()
-                        .chain(roll_rad.iter().copied())
-                        .chain(placement.iter().flat_map(|p| {
-                            [
-                                p.plane_offset_mm,
-                                p.depth_offset_mm,
-                                p.start_offset_mm,
-                                p.end_offset_mm,
-                            ]
-                        }))
-                        .chain(
-                            cuts.iter()
-                                .flat_map(|c| c.point_mm.into_iter().chain(c.normal)),
-                        ),
-                ),
                 Shape::Assembly => Ok(()),
                 Shape::LoftedPlate { start_mm, end_mm } => finite(
                     start_mm
@@ -3245,12 +3170,7 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
             cuts.iter()
                 .flat_map(|c| c.point_mm.into_iter().chain(c.normal)),
         ),
-        Change::Axis { points_mm, .. } => finite(points_mm.iter().flatten().copied()),
         Change::Thickness { mm, .. } => finite([*mm]),
-        Change::Roll {
-            opinion: Opinion::Value(n),
-            ..
-        } => finite([*n]),
         Change::Placement { placement, .. } => finite(
             placement
                 .translation_mm
