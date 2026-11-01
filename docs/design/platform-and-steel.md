@@ -125,4 +125,6 @@ a steel kind. The operations already exist as symmetric pairs (`copy_plate`/`cop
 `patch_plate`/`patch_member`, `mirror_plate_local`/`mirror_member_local`,
 `array_plate_copies`/`array_member_copies`), so the interface is taken from them, not guessed.
 The stored `steel:*` attributes and the schema descriptor stay byte-identical. The work is
-tracked in issue #795.
+tracked in issue #795; [`element-interface.md`](element-interface.md) is its design note: the
+two seams (typed operations and layer persistence), the decisions and the order of the code
+slices.

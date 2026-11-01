@@ -84,7 +84,7 @@ Some direct edges to `model` and `geom` are left out for readability; the exact 
 ## What happens on a command
 
 Every editing command (`create-plate`, `create-member`, `update-element`, `copy-element`,
-`delete-element`, `create-bolt`, `approve-numbering`, ...) follows the same path:
+`delete-element`, `create-bolt-group`, `approve-numbering`, ...) follows the same path:
 
 1. **Parse and validate.** The CLI turns arguments into a typed `model` command. Bad numbers,
    limits, identities and references are refused here with an error code; nothing is read yet.
