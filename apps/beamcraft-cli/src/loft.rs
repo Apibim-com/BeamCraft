@@ -13,8 +13,8 @@ use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, Element, Placement as LayerPlacement, Prepare, Shape,
-    schema_identity,
+    Author, Change, EditTargets, Element, LoftedPlateShape, Placement as LayerPlacement, Prepare,
+    Shape, schema_identity,
 };
 use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
@@ -170,10 +170,10 @@ pub fn create_lofted(
                 Change::Create(Element {
                     id: outcome.authored.id.to_string(),
                     name: outcome.authored.name.clone(),
-                    shape: Shape::LoftedPlate {
+                    shape: Shape::lofted_plate(LoftedPlateShape {
                         start_mm: outcome.authored.start_points_mm.clone(),
                         end_mm: outcome.authored.end_points_mm.clone(),
-                    },
+                    }),
                     placement: LayerPlacement {
                         translation_mm: placement.translation_mm,
                         orientation_xyzw: placement.orientation_xyzw,
