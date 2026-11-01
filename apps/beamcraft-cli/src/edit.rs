@@ -24,19 +24,14 @@ use crate::plate::{
     replay_summary,
 };
 use crate::publication::{PublicationTail, prepare_and_publish};
-use beamcraft_engine::command::evaluate_plate;
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::member::{evaluate_member, member_quantities};
-use beamcraft_engine::query::committed::{MemberRecord, PlateRecord};
-use beamcraft_engine::transaction::PriorOp;
-use beamcraft_engine::update::{UpdateEffect, effect, patch_member, patch_plate};
 use beamcraft_host::revision::{CommitHook, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{
     Author, Change, EditTargets, MaterialOpinion, Opinion, Placement as LayerPlacement,
     schema_identity,
 };
-use beamcraft_model::command::{CommandError, UpdateElement};
+use beamcraft_model::command::CommandError;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
@@ -46,6 +41,12 @@ use session::pipeline::{
     load_base, open_base, summarize,
 };
 use std::collections::BTreeMap;
+use steel::engine::command::evaluate_plate;
+use steel::engine::committed::{MemberRecord, PlateRecord};
+use steel::engine::member::{evaluate_member, member_quantities};
+use steel::engine::transaction::PriorOp;
+use steel::engine::update::{UpdateEffect, effect, patch_member, patch_plate};
+use steel::model::command::UpdateElement;
 
 /// Inputs of one `update_element` call beyond the command itself.
 #[derive(Debug, Clone)]
@@ -299,7 +300,7 @@ pub fn update_element(
     let shared = patch_effect.material || patch_effect.shape;
     let mut shared_records = Vec::new();
     if shared {
-        let patch = beamcraft_model::command::ElementPatch {
+        let patch = steel::model::command::ElementPatch {
             material: command.patch.material,
             thickness_mm: command.patch.thickness_mm,
             corners: command.patch.corners.clone(),

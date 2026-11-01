@@ -24,7 +24,6 @@ use crate::plate::{
 };
 use crate::publication::{PublicationTail, prepare_and_publish};
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{Author, Change, EditTargets, schema_identity};
@@ -37,6 +36,7 @@ use session::pipeline::{
     AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, digest_of, host_uuid, load_base,
     open_base, summarize,
 };
+use steel::engine::transaction::PriorOp;
 
 /// Inputs of one `delete_element` call beyond the command itself.
 #[derive(Debug, Clone)]
@@ -238,10 +238,10 @@ pub fn delete_element(
             let mut next = plate.authored.clone();
             next.hole_records
                 .retain(|r| r.owner != Some(command.target_id));
-            let body = beamcraft_engine::command::evaluate_plate(&next)?;
+            let body = steel::engine::command::evaluate_plate(&next)?;
             let quantities =
                 body.quantities_for(next.material.as_ref().map(&materials).transpose()?)?;
-            let record = beamcraft_engine::query::committed::PlateRecord {
+            let record = steel::engine::committed::PlateRecord {
                 authored: next.clone(),
                 body: body.clone(),
                 quantities,

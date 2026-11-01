@@ -6,7 +6,7 @@
 
 #![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 
-use beamcraft_kernel::{steel::PlateResult, steel::RectangularPlate, steel::rectangular_plate};
+use beamcraft_kernel::{PlateResult, RectangularPlate, rectangular_plate};
 use beamcraft_model::digest::Sha256;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
