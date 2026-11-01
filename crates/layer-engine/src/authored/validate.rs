@@ -82,9 +82,7 @@ pub(super) fn input_bounds(input: &Prepare, b: Budgets) -> Result<(), Diagnostic
             Change::AttachReference(r) if r.name.len() > 256 => {
                 return Err(limit().with_rule("DV-BASE-003"));
             }
-            Change::Contour { points_mm, .. } => {
-                count(points_mm.len().checked_mul(3).ok_or_else(limit)?, 8)?
-            }
+            Change::Discipline(hook) => hook.0.charge(&mut count)?,
             Change::Mesh(m) => {
                 count(m.points_mm.len().checked_mul(3).ok_or_else(limit)?, 4)?;
                 count(m.face_counts.len(), 4)?;
@@ -2423,12 +2421,6 @@ pub(super) fn changes(
                     return Err(unsupported());
                 }
                 let valid = match change {
-                    Change::Contour { .. }
-                    | Change::Thickness { .. }
-                    | Change::Corners { .. }
-                    | Change::Bends { .. } => kind == "plate",
-                    Change::HoleRecords { .. } => kind == "plate",
-                    Change::MemberHoles { .. } => matches!(kind, "beam" | "column"),
                     Change::PartClass { .. } => matches!(kind, "plate" | "beam" | "column"),
                     Change::Grid { .. } => kind == "grid",
                     Change::Discipline(hook) => hook.0.targets_kind(kind),
@@ -2801,81 +2793,6 @@ pub(super) fn changes(
             Change::ReferenceUnits { interpretation, .. } => {
                 reference::check_units(interpretation)?
             }
-            Change::Contour { points_mm, .. } => {
-                count_points(points_mm, b)?;
-                cap(points_mm.iter().flatten().copied(), 1e9)?;
-            }
-            Change::Corners { corners, .. } => {
-                if corners.len() > 1024 {
-                    return Err(limit());
-                }
-                let mut seen = Vec::new();
-                for corner in corners {
-                    if corner.vertex >= 1024 || seen.contains(&corner.vertex) {
-                        return Err(invalid());
-                    }
-                    seen.push(corner.vertex);
-                    corner.validate().map_err(|_| invalid())?;
-                }
-            }
-            Change::Thickness { mm, .. } => cap([*mm], 1e6)?,
-            Change::Bends { bends, .. } => {
-                // Structural bounds only: finiteness, caps, positive radii and a finite angle
-                // inside (-pi, pi); whether the records form one supported bent body is the
-                // engine's replay decision.
-                if bends.len() > MAX_BENDS {
-                    return Err(limit());
-                }
-                for bend in bends {
-                    let (lines, radii, angle): ([[f64; 3]; 2], &[f64], Option<f64>) =
-                        match bend.spec {
-                            BendSpec::Fold {
-                                a_mm,
-                                b_mm,
-                                radius_mm,
-                                angle_rad,
-                            } => ([a_mm, b_mm], &[radius_mm][..], Some(angle_rad)),
-                            BendSpec::Roll {
-                                a_mm,
-                                b_mm,
-                                radius_mm,
-                                radius_b_mm,
-                            } => (
-                                [a_mm, b_mm],
-                                match radius_b_mm {
-                                    Some(rb) => &[radius_mm, rb][..],
-                                    None => &[radius_mm][..],
-                                },
-                                None,
-                            ),
-                        };
-                    cap(lines.iter().flatten().copied(), 1e9)?;
-                    if radii.iter().any(|v| *v <= 0.0) {
-                        return Err(invalid());
-                    }
-                    cap(radii.iter().copied(), 1e9)?;
-                    // A cone with equal radii is a cylinder, and the stored encoding keeps one
-                    // radius for a cylinder: equal radii would read back as a cylinder and
-                    // refuse their own sector blank.
-                    if let BendSpec::Roll {
-                        radius_mm,
-                        radius_b_mm: Some(radius_b),
-                        ..
-                    } = bend.spec
-                        && radius_b == radius_mm
-                    {
-                        return Err(invalid());
-                    }
-                    if let Some(angle) = angle
-                        && (!angle.is_finite()
-                            || angle == 0.0
-                            || angle.abs() >= core::f64::consts::PI)
-                    {
-                        return Err(invalid());
-                    }
-                }
-            }
-            Change::Cuts { cuts, .. } => cut_values(cuts)?,
             Change::Placement { placement, .. } => pose(placement)?,
             Change::Material {
                 opinion: MaterialOpinion::Target(d),
@@ -2965,13 +2882,7 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
         Change::ReferenceUnits { interpretation, .. } => {
             finite(interpretation.iter().map(|i| i.meters_per_unit))
         }
-        Change::Contour { points_mm, .. } => finite(points_mm.iter().flatten().copied()),
         Change::Discipline(hook) => hook.0.check_finite(),
-        Change::Cuts { cuts, .. } => finite(
-            cuts.iter()
-                .flat_map(|c| c.point_mm.into_iter().chain(c.normal)),
-        ),
-        Change::Thickness { mm, .. } => finite([*mm]),
         Change::Placement { placement, .. } => finite(
             placement
                 .translation_mm

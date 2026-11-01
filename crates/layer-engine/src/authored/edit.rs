@@ -1260,200 +1260,12 @@ pub(super) fn apply(
                     sdf::Value::String(name.clone()),
                 )?;
             }
-            Change::Contour { points_mm, .. } => attr(
-                &mut authored,
-                &p,
-                "steel:plate:contourPointsMm",
-                "double3[]",
-                points(points_mm),
-            )?,
-            Change::Thickness { mm, .. } => attr(
-                &mut authored,
-                &p,
-                "steel:plate:thicknessMm",
-                "double",
-                sdf::Value::Double(*mm),
-            )?,
-            Change::Corners { corners, .. } => author_corners(&mut authored, &p, corners)?,
-            Change::Bends { bends, .. } => author_bends(&mut authored, &p, bends)?,
             Change::Discipline(hook) => hook.0.author(&mut hook::ChangeAuthorCx {
                 data: &mut authored,
                 path: &p,
                 input,
                 prims,
             })?,
-            Change::ThicknessSide { side, .. } => attr(
-                &mut authored,
-                &p,
-                "steel:plate:thicknessSide",
-                "token",
-                sdf::Value::token(side.as_str()),
-            )?,
-            Change::Cuts { cuts, .. } => author_cuts(
-                &mut authored,
-                &p,
-                cuts,
-                prims.iter().find(|old| old.path == p),
-            )?,
-            Change::HoleRecords { records, .. } => {
-                author_record_history(
-                    &mut authored,
-                    &p,
-                    prims.iter().find(|old| old.path == p),
-                    &records
-                        .iter()
-                        .map(|r| (r.operation_id, r.ordinal))
-                        .collect::<Vec<_>>(),
-                    cut_history::Family::PlateHole,
-                )?;
-                // The six record attributes, always together: the authoritative polygons of
-                // every record, replayed from the base shape in ordinal order, with the id,
-                // the engine-assigned ordinal, the kind (hole or polygon cut) and the
-                // generating bolt group of each (empty for a hand-placed record, A14.4).
-                let mut flat = Vec::new();
-                let mut counts = Vec::new();
-                let mut ids = Vec::new();
-                let mut ordinals = Vec::new();
-                let mut kinds = Vec::new();
-                let mut owners = Vec::new();
-                for record in records {
-                    flat.extend(record.polygon_mm.iter().map(|[x, y]| [*x, *y, 0.0]));
-                    counts.push(i32::try_from(record.polygon_mm.len()).map_err(|_| limit())?);
-                    ids.push(record.operation_id.to_string());
-                    ordinals.push(i32::try_from(record.ordinal).map_err(|_| limit())?);
-                    kinds.push(record.kind.as_str().into());
-                    owners.push(match record.owner {
-                        Some(group) => group.to_string(),
-                        None => String::new(),
-                    });
-                }
-                attr(
-                    &mut authored,
-                    &p,
-                    "steel:hole:pointsMm",
-                    "double3[]",
-                    points(&flat),
-                )?;
-                attr(
-                    &mut authored,
-                    &p,
-                    "steel:hole:vertexCounts",
-                    "int[]",
-                    sdf::Value::IntVec(counts),
-                )?;
-                attr(
-                    &mut authored,
-                    &p,
-                    "steel:hole:operationIds",
-                    "string[]",
-                    sdf::Value::StringVec(ids),
-                )?;
-                attr(
-                    &mut authored,
-                    &p,
-                    "steel:hole:ordinals",
-                    "int[]",
-                    sdf::Value::IntVec(ordinals),
-                )?;
-                attr(
-                    &mut authored,
-                    &p,
-                    "steel:hole:kinds",
-                    "token[]",
-                    sdf::Value::TokenVec(kinds),
-                )?;
-                attr(
-                    &mut authored,
-                    &p,
-                    "steel:hole:generatedBy",
-                    "string[]",
-                    sdf::Value::StringVec(owners),
-                )?;
-            }
-            Change::MemberHoles { records, .. } => {
-                author_record_history(
-                    &mut authored,
-                    &p,
-                    prims.iter().find(|old| old.path == p),
-                    &records
-                        .iter()
-                        .map(|r| (r.operation_id, r.ordinal))
-                        .collect::<Vec<_>>(),
-                    cut_history::Family::MemberHole,
-                )?;
-                // The nine record attributes, always together: the authoritative polygons of
-                // every record and their member-frame axis points, directions, extents, ids and
-                // ordinals (A04.2). A through extent stores zero range values.
-                let mut flat = Vec::new();
-                let mut counts = Vec::new();
-                let mut ids = Vec::new();
-                let mut ordinals = Vec::new();
-                let mut axis_points = Vec::new();
-                let mut directions = Vec::new();
-                let mut extents = Vec::new();
-                let mut from = Vec::new();
-                let mut to = Vec::new();
-                for record in records {
-                    flat.extend(record.polygon_mm.iter().map(|[x, y]| [*x, *y, 0.0]));
-                    counts.push(i32::try_from(record.polygon_mm.len()).map_err(|_| limit())?);
-                    ids.push(record.operation_id.to_string());
-                    ordinals.push(i32::try_from(record.ordinal).map_err(|_| limit())?);
-                    axis_points.push(record.axis_point_mm);
-                    directions.push(record.axis_direction);
-                    extents.push(record.extent.as_str().into());
-                    let (start, end) = match record.extent {
-                        HoleExtent::Through => (0.0, 0.0),
-                        HoleExtent::Range { from_mm, to_mm } => (from_mm, to_mm),
-                    };
-                    from.push(start);
-                    to.push(end);
-                }
-                for (name, ty, v) in [
-                    ("steel:mhole:pointsMm", "double3[]", points(&flat)),
-                    (
-                        "steel:mhole:vertexCounts",
-                        "int[]",
-                        sdf::Value::IntVec(counts),
-                    ),
-                    (
-                        "steel:mhole:operationIds",
-                        "string[]",
-                        sdf::Value::StringVec(ids),
-                    ),
-                    (
-                        "steel:mhole:ordinals",
-                        "int[]",
-                        sdf::Value::IntVec(ordinals),
-                    ),
-                    (
-                        "steel:mhole:axisPointsMm",
-                        "double3[]",
-                        points(&axis_points),
-                    ),
-                    (
-                        "steel:mhole:axisDirections",
-                        "double3[]",
-                        points(&directions),
-                    ),
-                    (
-                        "steel:mhole:extents",
-                        "token[]",
-                        sdf::Value::TokenVec(extents),
-                    ),
-                    (
-                        "steel:mhole:extentFromMm",
-                        "double[]",
-                        sdf::Value::DoubleVec(from),
-                    ),
-                    (
-                        "steel:mhole:extentToMm",
-                        "double[]",
-                        sdf::Value::DoubleVec(to),
-                    ),
-                ] {
-                    attr(&mut authored, &p, name, ty, v)?;
-                }
-            }
             Change::Material { opinion, .. } => {
                 relationship(&mut authored, &p, "bim:material", opinion.clone())?
             }
@@ -1572,18 +1384,7 @@ pub(super) fn apply(
             }
             _ => (),
         }
-        if matches!(
-            c,
-            Change::Contour { .. }
-                | Change::Thickness { .. }
-                | Change::ThicknessSide { .. }
-                | Change::Corners { .. }
-                | Change::Bends { .. }
-                | Change::Cuts { .. }
-                | Change::HoleRecords { .. }
-                | Change::MemberHoles { .. }
-        ) || matches!(c, Change::Discipline(hook) if hook.0.invalidates_derived())
-        {
+        if matches!(c, Change::Discipline(hook) if hook.0.invalidates_derived()) {
             // Never reveal a weaker stale result after removing the derived opinion.
             let mesh_path = format!("{p}/Geometry");
             if prims
@@ -1661,19 +1462,6 @@ fn capture(
         ("xformOpOrder", "token[]"),
     ];
     /// The A04.2 member-hole record attributes of a member, in storage order.
-    const MHOLE_FIELDS: &[(&str, &str)] = &[
-        ("steel:mhole:pointsMm", "double3[]"),
-        ("steel:mhole:vertexCounts", "int[]"),
-        ("steel:mhole:operationIds", "string[]"),
-        ("steel:mhole:ordinals", "int[]"),
-        ("steel:mhole:axisPointsMm", "double3[]"),
-        ("steel:mhole:axisDirections", "double3[]"),
-        ("steel:mhole:extents", "token[]"),
-        ("steel:mhole:extentFromMm", "double[]"),
-        ("steel:mhole:extentToMm", "double[]"),
-        (cut_history::MHOLE_NEXT, "int"),
-        (cut_history::MHOLE_RETIRED, "string[]"),
-    ];
     /// The P14 section-placement attributes of a member, in storage order.
     const MESH: &[(&str, &str)] = &[
         ("points", "point3f[]"),
@@ -1766,15 +1554,6 @@ fn capture(
                     add(name, ty, 0);
                 }
             }
-            Change::HoleRecords { .. } => {
-                add("steel:hole:pointsMm", "double3[]", 0);
-                add("steel:hole:vertexCounts", "int[]", 0);
-                add("steel:hole:operationIds", "string[]", 0);
-                add("steel:hole:ordinals", "int[]", 0);
-                add("steel:hole:generatedBy", "string[]", 0);
-                add(cut_history::HOLE_NEXT, "int", 0);
-                add(cut_history::HOLE_RETIRED, "string[]", 0);
-            }
             Change::Delete { .. } => {
                 for (name, ty) in [
                     ("bim:id", "string"),
@@ -1842,43 +1621,6 @@ fn capture(
                     add(name, ty, 1);
                 }
             }
-            Change::Contour { .. } => add("steel:plate:contourPointsMm", "double3[]", 0),
-            Change::Thickness { .. } => add("steel:plate:thicknessMm", "double", 0),
-            Change::Corners { .. } => {
-                for (name, ty) in [
-                    ("steel:plate:cornerVertex", "int[]"),
-                    ("steel:plate:cornerKind", "token[]"),
-                    ("steel:plate:cornerD1Mm", "double[]"),
-                    ("steel:plate:cornerD2Mm", "double[]"),
-                    ("steel:plate:cornerRadiusMm", "double[]"),
-                ] {
-                    add(name, ty, 0);
-                }
-            }
-            Change::Bends { .. } => {
-                for (name, ty) in [
-                    ("steel:plate:bendOperationId", "string[]"),
-                    ("steel:plate:bendKind", "token[]"),
-                    ("steel:plate:bendLineAMm", "double3[]"),
-                    ("steel:plate:bendLineBMm", "double3[]"),
-                    ("steel:plate:bendRadiusMm", "double[]"),
-                    ("steel:plate:bendRadiusBMm", "double[]"),
-                    ("steel:plate:bendAngleRad", "double[]"),
-                ] {
-                    add(name, ty, 0);
-                }
-            }
-            Change::ThicknessSide { .. } => add("steel:plate:thicknessSide", "token", 0),
-            Change::Cuts { .. } => {
-                for &(name, ty) in CUT_FIELDS {
-                    add(name, ty, 0);
-                }
-            }
-            Change::MemberHoles { .. } => {
-                for &(name, ty) in MHOLE_FIELDS {
-                    add(name, ty, 0);
-                }
-            }
             Change::Material { .. } => add("bim:material", "rel", 0),
             Change::PartOf { .. } => add("bim:partOf", "rel", 0),
             Change::MainPart { .. } => add("bim:mainPart", "rel", 0),
@@ -1910,17 +1652,7 @@ fn capture(
             // and the candidate bytes carry them as usual.
             Change::AttrDefine { .. } | Change::AttrUndefine { .. } | Change::AttrSet { .. } => {}
         }
-        if matches!(
-            change,
-            Change::Contour { .. }
-                | Change::Thickness { .. }
-                | Change::ThicknessSide { .. }
-                | Change::Corners { .. }
-                | Change::Bends { .. }
-                | Change::Cuts { .. }
-                | Change::MemberHoles { .. }
-        ) || matches!(change, Change::Discipline(hook) if hook.0.invalidates_derived())
-        {
+        if matches!(change, Change::Discipline(hook) if hook.0.declares_mesh()) {
             for &(name, ty) in MESH {
                 add(name, ty, 1);
             }
@@ -2140,4 +1872,17 @@ pub(super) const MEMBER_PLACEMENT: &[(&str, &str)] = &[
     ("steel:member:depthOffsetMm", "double"),
     ("steel:member:startOffsetMm", "double"),
     ("steel:member:endOffsetMm", "double"),
+];
+pub(super) const MHOLE_FIELDS: &[(&str, &str)] = &[
+    ("steel:mhole:pointsMm", "double3[]"),
+    ("steel:mhole:vertexCounts", "int[]"),
+    ("steel:mhole:operationIds", "string[]"),
+    ("steel:mhole:ordinals", "int[]"),
+    ("steel:mhole:axisPointsMm", "double3[]"),
+    ("steel:mhole:axisDirections", "double3[]"),
+    ("steel:mhole:extents", "token[]"),
+    ("steel:mhole:extentFromMm", "double[]"),
+    ("steel:mhole:extentToMm", "double[]"),
+    (cut_history::MHOLE_NEXT, "int"),
+    (cut_history::MHOLE_RETIRED, "string[]"),
 ];

@@ -699,10 +699,10 @@ fn hole_changes(
             body: body.clone(),
             quantities,
         };
-        changes.push(Change::HoleRecords {
-            id: part.to_string(),
-            records: next.hole_records.clone(),
-        });
+        changes.push(Change::hole_records(
+            part.to_string(),
+            next.hole_records.clone(),
+        ));
         changes.push(mesh_change(&part, &body.solid, &plate_record(&record))?);
         footprint = footprint.union(Footprint::for_update(
             part, false, false, true, false, None,

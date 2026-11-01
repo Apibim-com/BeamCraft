@@ -468,10 +468,7 @@ fn apply_cut(
         CutElement::Member(r) => mesh_change(&r.authored.id, &r.body.solid, &member_record(r)),
     };
     let mut changes = vec![
-        Change::Cuts {
-            id: id_text,
-            cuts: element.cuts().to_vec(),
-        },
+        Change::cuts(id_text, element.cuts().to_vec()),
         record(&element)?,
     ];
     for other in &others {
@@ -1035,10 +1032,7 @@ pub fn a13_record(
                 .clone()
                 .union(instances.dependencies(c.target_id)?)?;
             ordinal = Some(outcome.ordinal);
-            changes.push(Change::Cuts {
-                id: id_text.clone(),
-                cuts: cuts.clone(),
-            });
+            changes.push(Change::cuts(id_text.clone(), cuts.clone()));
             changes.push(mesh_change_of(&element)?);
             let group = instances.group(c.target_id)?;
             let others: Vec<CutElement> = group
@@ -1081,10 +1075,7 @@ pub fn a13_record(
                 .clone()
                 .union(instances.dependencies(c.target_id)?)?;
             ordinal = Some(outcome.ordinal);
-            changes.push(Change::Cuts {
-                id: id_text.clone(),
-                cuts: cuts.clone(),
-            });
+            changes.push(Change::cuts(id_text.clone(), cuts.clone()));
             changes.push(mesh_change_of(&element)?);
             let group = instances.group(c.target_id)?;
             let others: Vec<CutElement> = group
@@ -1126,10 +1117,7 @@ pub fn a13_record(
                 .clone()
                 .union(instances.dependencies(c.target_id)?)?;
             ordinal = Some(outcome.ordinal);
-            changes.push(Change::Cuts {
-                id: id_text.clone(),
-                cuts: cuts.clone(),
-            });
+            changes.push(Change::cuts(id_text.clone(), cuts.clone()));
             changes.push(mesh_change_of(&element)?);
             let group = instances.group(c.target_id)?;
             let others: Vec<CutElement> = group
@@ -1160,10 +1148,10 @@ pub fn a13_record(
                 .clone()
                 .union(instances.dependencies(c.target_id)?)?;
             ordinal = None;
-            changes.push(Change::HoleRecords {
-                id: authored.id.to_string(),
-                records: authored.hole_records.clone(),
-            });
+            changes.push(Change::hole_records(
+                authored.id.to_string(),
+                authored.hole_records.clone(),
+            ));
             changes.push(mesh_change_of(&element)?);
             let group = instances.group(c.target_id)?;
             let others: Vec<CutElement> = group
@@ -1194,10 +1182,10 @@ pub fn a13_record(
                 .footprint
                 .clone()
                 .union(instances.dependencies(c.target_id)?)?;
-            changes.push(Change::HoleRecords {
-                id: authored.id.to_string(),
-                records: authored.hole_records.clone(),
-            });
+            changes.push(Change::hole_records(
+                authored.id.to_string(),
+                authored.hole_records.clone(),
+            ));
             changes.push(mesh_change_of(&element)?);
             let group = instances.group(c.target_id)?;
             let others: Vec<CutElement> = group
@@ -1239,10 +1227,7 @@ pub fn a13_record(
                 AuthoredState::Plate(a) => (a.cuts.clone(), a.id.to_string()),
                 AuthoredState::Member(a) => (a.cuts.clone(), a.id.to_string()),
             };
-            changes.push(Change::Cuts {
-                id: kept_id,
-                cuts: kept_cuts,
-            });
+            changes.push(Change::cuts(kept_id, kept_cuts));
             changes.push(Change::Create(created_element(&created_state)?));
             changes.push(mesh_change_of(&kept)?);
             changes.push(mesh_change_of(&created)?);

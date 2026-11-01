@@ -147,6 +147,17 @@ pub trait ChangeHook: Debug + Send + Sync {
     fn invalidates_derived(&self) -> bool {
         false
     }
+    /// Whether the edit also declares the derived mesh fields among the attributes it writes.
+    fn declares_mesh(&self) -> bool {
+        self.invalidates_derived()
+    }
+    /// Charges the edit's arrays against the batch budget; `count(items, bytes_per_item)`.
+    fn charge(
+        &self,
+        _count: &mut dyn FnMut(usize, usize) -> Result<(), Diagnostic>,
+    ) -> Result<(), Diagnostic> {
+        Ok(())
+    }
 }
 
 /// A hook change as the platform holds it: cheap to clone, comparable.

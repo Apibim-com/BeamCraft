@@ -317,18 +317,15 @@ fn same_group_is_atomic_even_for_different_properties() {
     let base = initial();
     let source = edit(
         base.clone(),
-        vec![Change::Thickness {
-            id: id(10).to_string(),
-            mm: 20.0,
-        }],
+        vec![Change::thickness(id(10).to_string(), 20.0)],
         Vec::new(),
     );
     let accepted = edit(
         base.clone(),
-        vec![Change::Contour {
-            id: id(10).to_string(),
-            points_mm: vec![[0.0, 0.0, 0.0], [200.0, 0.0, 0.0], [0.0, 100.0, 0.0]],
-        }],
+        vec![Change::contour(
+            id(10).to_string(),
+            vec![[0.0, 0.0, 0.0], [200.0, 0.0, 0.0], [0.0, 100.0, 0.0]],
+        )],
         Vec::new(),
     );
     assert_eq!(

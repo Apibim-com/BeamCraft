@@ -642,10 +642,7 @@ fn foreign_reference_overrides_and_foreign_ancestor_writes_fail_atomically() {
             id: PLATE.into(),
             name: "Attempt".into(),
         },
-        Change::Thickness {
-            id: PLATE.into(),
-            mm: 10.0,
-        },
+        Change::thickness(PLATE.into(), 10.0),
         Change::Material {
             id: PLATE.into(),
             opinion: MaterialOpinion::Empty,
@@ -728,13 +725,7 @@ fn mismatched_schema_pin_corruption_and_nonfinite_never_change_live_state() {
         };
         assert_eq!(
             a.prepare(
-                batch(
-                    &o.context,
-                    vec![Change::Thickness {
-                        id: PLATE.into(),
-                        mm
-                    }]
-                ),
+                batch(&o.context, vec![Change::thickness(PLATE.into(), mm)]),
                 &control()
             )
             .unwrap_err()
@@ -909,13 +900,7 @@ fn hundred_serialized_changes_invalidate_contexts_and_derive_semantic_groups() {
     assert_eq!(o.context.identity().generation, 143);
     let p = a
         .prepare(
-            batch(
-                &o.context,
-                vec![Change::Thickness {
-                    id: PLATE.into(),
-                    mm: 12.0,
-                }],
-            ),
+            batch(&o.context, vec![Change::thickness(PLATE.into(), 12.0)]),
             &control(),
         )
         .unwrap();
@@ -1198,10 +1183,7 @@ fn changed_input_bounds_are_inclusive_and_rejections_keep_the_entire_patch_atomi
             id: PLATE.into(),
             name: "would be valid".into(),
         },
-        Change::Thickness {
-            id: PLATE.into(),
-            mm: f64::INFINITY,
-        },
+        Change::thickness(PLATE.into(), f64::INFINITY),
     ];
     assert_eq!(
         a.prepare(batch(&o.context, bad), &control())
@@ -1212,13 +1194,7 @@ fn changed_input_bounds_are_inclusive_and_rejections_keep_the_entire_patch_atomi
     assert_eq!(snapshot(&a, &o.context), before);
     let p = a
         .prepare(
-            batch(
-                &o.context,
-                vec![Change::Thickness {
-                    id: PLATE.into(),
-                    mm: 0.001,
-                }],
-            ),
+            batch(&o.context, vec![Change::thickness(PLATE.into(), 0.001)]),
             &control(),
         )
         .unwrap();
@@ -2738,14 +2714,7 @@ fn assemblies_and_part_of_records_are_authored_on_the_part_and_validated() {
         Some(ErrorCode::DanglingRelationship)
     );
     // An assembly has no shape and no material, and an identity placement in this slice.
-    let unsupported = refused(
-        &mut a,
-        &o,
-        vec![Change::Thickness {
-            id: FRAME.into(),
-            mm: 5.0,
-        }],
-    );
+    let unsupported = refused(&mut a, &o, vec![Change::thickness(FRAME.into(), 5.0)]);
     assert_eq!(unsupported, Some(ErrorCode::UnsupportedProperty));
     let mut moved = assembly("0199e7a0-0000-7000-8000-000000000103", "Moved");
     if let Change::Create(e) = &mut moved {
@@ -2966,10 +2935,7 @@ fn a_weld_authors_its_properties_and_connects_record_and_writes_only_itself() {
         }],
     );
     for change in [
-        Change::Thickness {
-            id: WELD.into(),
-            mm: 5.0,
-        },
+        Change::thickness(WELD.into(), 5.0),
         Change::Placement {
             id: WELD.into(),
             placement: Placement {
@@ -3672,10 +3638,7 @@ fn levels_and_level_records_are_authored_on_the_element_and_validated() {
         ),
         // A level has no shape inputs, no body, a bounded finite elevation and the identity pose.
         (
-            vec![Change::Thickness {
-                id: STOREY.into(),
-                mm: 5.0,
-            }],
+            vec![Change::thickness(STOREY.into(), 5.0)],
             ErrorCode::UnsupportedProperty,
         ),
         (
@@ -4159,13 +4122,7 @@ fn removed_cuts_keep_a_monotone_counter_and_cannot_reactivate_their_id() {
             &control(),
         )
         .unwrap();
-    let mut b = batch(
-        &o.context,
-        vec![Change::Cuts {
-            id: PLATE.into(),
-            cuts: Vec::new(),
-        }],
-    );
+    let mut b = batch(&o.context, vec![Change::cuts(PLATE.into(), Vec::new())]);
     b.op_id = "019a7bf0-0000-7000-8000-00000000cf02".into();
     let p = a.prepare(b, &control()).unwrap();
     let o = a
@@ -4209,13 +4166,7 @@ fn removed_cuts_keep_a_monotone_counter_and_cannot_reactivate_their_id() {
         value(&prims, PLATE, "steel:cut:operationId"),
         Some(&Value::Array(Vec::new()))
     );
-    let mut b = batch(
-        &o.context,
-        vec![Change::Cuts {
-            id: PLATE.into(),
-            cuts: vec![record],
-        }],
-    );
+    let mut b = batch(&o.context, vec![Change::cuts(PLATE.into(), vec![record])]);
     b.op_id = "019a7bf0-0000-7000-8000-00000000cf03".into();
     assert!(a.prepare(b, &control()).is_err());
     assert_eq!(
@@ -4278,10 +4229,7 @@ fn removed_holes_mask_weaker_opinions_and_keep_their_history() {
     let (mut a, o) = open(input);
     let mut b = batch(
         &o.context,
-        vec![Change::HoleRecords {
-            id: PLATE.into(),
-            records: Vec::new(),
-        }],
+        vec![Change::hole_records(PLATE.into(), Vec::new())],
     );
     b.op_id = "019a7bf0-0000-7000-8000-00000000af02".into();
     let prepared = a.prepare(b, &control()).unwrap();
@@ -4308,10 +4256,7 @@ fn removed_holes_mask_weaker_opinions_and_keep_their_history() {
     );
     let mut b = batch(
         &o.context,
-        vec![Change::HoleRecords {
-            id: PLATE.into(),
-            records: vec![record],
-        }],
+        vec![Change::hole_records(PLATE.into(), vec![record])],
     );
     b.op_id = "019a7bf0-0000-7000-8000-00000000af03".into();
     assert!(a.prepare(b, &control()).is_err());
@@ -4403,13 +4348,7 @@ fn corner_replacement_bounds_vertices_and_can_clear_the_complete_record() {
     ] {
         assert!(
             a.prepare(
-                batch(
-                    &o.context,
-                    vec![Change::Corners {
-                        id: id.into(),
-                        corners
-                    }]
-                ),
+                batch(&o.context, vec![Change::corners(id.into(), corners)]),
                 &control()
             )
             .is_err()
@@ -4419,10 +4358,7 @@ fn corner_replacement_bounds_vertices_and_can_clear_the_complete_record() {
         .prepare(
             batch(
                 &o.context,
-                vec![Change::Corners {
-                    id: PLATE.into(),
-                    corners: vec![corner(0)],
-                }],
+                vec![Change::corners(PLATE.into(), vec![corner(0)])],
             ),
             &control(),
         )
@@ -4438,10 +4374,7 @@ fn corner_replacement_bounds_vertices_and_can_clear_the_complete_record() {
         .unwrap();
     let mut input = batch(
         &installed.context,
-        vec![Change::Corners {
-            id: PLATE.into(),
-            corners: vec![],
-        }],
+        vec![Change::corners(PLATE.into(), vec![])],
     );
     input.op_id = "0199e7a0-0000-7000-8000-000000000099".into();
     let clear = a.prepare(input, &control()).unwrap();

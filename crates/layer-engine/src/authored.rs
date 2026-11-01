@@ -17,6 +17,7 @@ pub mod hook;
 pub mod instance;
 mod member;
 mod plate;
+mod plate_change;
 pub mod rebase;
 mod reference;
 mod validate;
@@ -28,6 +29,10 @@ pub use hook::{
 };
 pub use member::{MemberShape, SetAxis, SetProfile, SetRoll};
 pub use plate::{LoftedPlateShape, PlateShape};
+pub use plate_change::{
+    SetBends, SetContour, SetCorners, SetCuts, SetHoleRecords, SetMemberHoles, SetThickness,
+    SetThicknessSide,
+};
 pub use reference::{
     ForeignPrim, Reference, ReferenceView, SourceFormat, SourcePin, UnitsInterpretation, UpAxis,
     read_references,
@@ -589,54 +594,6 @@ pub enum Change {
         /// Class from the engine's typed command.
         class: i32,
     },
-    /// Replace the complete contour; engineering validity is a host prerequisite.
-    Contour {
-        /// Full target UUIDv7.
-        id: String,
-        /// Ordered contour.
-        points_mm: Vec<[f64; 3]>,
-    },
-    /// Replace a required plate thickness.
-    Thickness {
-        /// Full target UUIDv7.
-        id: String,
-        /// New thickness.
-        mm: f64,
-    },
-    /// Complete sparse replacement of the plate's corner treatments (A12.2): the list authors
-    /// every treated contour vertex as a whole, an empty list clears them all back to sharp.
-    Corners {
-        /// Canonical plate identity.
-        id: String,
-        /// Complete sparse replacement; empty clears every treatment.
-        corners: Vec<PlateCorner>,
-    },
-    /// Replace the owned bend operation records of a plate (A10) as a whole: seven parallel
-    /// attributes, or their removal for an empty list. Engineering validity is a host
-    /// prerequisite; the candidate re-validates the stored form.
-    Bends {
-        /// Canonical plate identity.
-        id: String,
-        /// The records in creation order.
-        bends: Vec<BendRecord>,
-    },
-    /// Replace the thickness side of a plate (A12.1). A plate always has a side (absence is the
-    /// `top` default), so the change authors the exact token, `top` included.
-    ThicknessSide {
-        /// Full target UUIDv7.
-        id: String,
-        /// The side to lay the thickness off from the contour plane.
-        side: PlateSide,
-    },
-    /// Replace the owned plane-cut records of a plate, beam or column (A03, amendment A-2) as a
-    /// whole: five parallel attributes, or their removal for an empty list. Engineering validity
-    /// is a host prerequisite; the candidate re-validates the stored form.
-    Cuts {
-        /// Full target UUIDv7.
-        id: String,
-        /// The records in ascending ordinal order.
-        cuts: Vec<CutRecord>,
-    },
     /// An edit that belongs to a discipline (#795): its target kind, groups, bounds and
     /// attribute writes are answered by the change's own hook. The replacement of an A14.3 bolt
     /// group is built with [`Change::bolt_group`].
@@ -710,26 +667,6 @@ pub enum Change {
         /// The mark to store.
         mark: Mark,
     },
-    /// Replace the complete set of through-hole operation records of a plate (A04): the four
-    /// `steel:hole:*` attributes, replaced as a whole and always together. The engine has
-    /// already replayed every record against the base shape and certified the body; this
-    /// writes the authoritative polygons with their operation ids and ordinals.
-    HoleRecords {
-        /// Full target UUIDv7 of the plate.
-        id: String,
-        /// Every record of the plate, ordered by ordinal; at least one.
-        records: Vec<HoleRecord>,
-    },
-    /// Replace the complete set of member-hole operation records of a beam or column (A04.2):
-    /// the `steel:mhole:*` attributes, replaced as a whole and always together. The engine has
-    /// already replayed every record against the base shape and certified the body; this writes
-    /// the authoritative member-frame records with their operation ids and ordinals.
-    MemberHoles {
-        /// Full target UUIDv7 of the member.
-        id: String,
-        /// Every record of the member, ordered by ordinal; at least one.
-        records: Vec<MemberHoleRecord>,
-    },
     /// Define one user attribute in the schema scope (I04): the complete definition prim
     /// `/World/Definitions/Attributes/<name>`. The engine has refused a duplicate name.
     AttrDefine {
@@ -762,13 +699,6 @@ impl Change {
             Self::PartClass { id, .. } => (id, "steel:class"),
             Self::Label { id, .. } => (id, "bim:name"),
             Self::Grid { id, .. } => (id, "bim:grid"),
-            Self::Contour { id, .. } => (id, "steel:plate:contourPointsMm"),
-            Self::Thickness { id, .. } => (id, "steel:plate:thicknessMm"),
-            Self::Corners { id, .. } => (id, "steel:plate:cornerVertex"),
-            Self::Bends { id, .. } => (id, "steel:plate:bendOperationId"),
-            Self::ThicknessSide { id, .. } => (id, "steel:plate:thicknessSide"),
-            Self::Cuts { id, .. } => (id, "steel:cut"),
-            Self::MemberHoles { id, .. } => (id, "steel:mhole"),
             Self::Discipline(hook) => (hook.0.target(), hook.0.group_key()),
             Self::Material { id, .. } => (id, "bim:material"),
             Self::Placement { id, .. } => (id, "placement"),
@@ -779,7 +709,6 @@ impl Change {
             Self::MainPart { id, .. } => (id, "bim:mainPart"),
             Self::Level { id, .. } => (id, "bim:level"),
             Self::Mark { id, .. } => (id, "steel:numbering"),
-            Self::HoleRecords { id, .. } => (id, "steel:hole"),
             Self::AttrDefine { .. } | Self::AttrUndefine { .. } => {
                 (ATTR_SCHEMA_IDENTITY, "bim:attr:schema")
             }
