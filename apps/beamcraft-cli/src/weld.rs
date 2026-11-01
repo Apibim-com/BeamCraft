@@ -26,8 +26,8 @@ use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, Element, Placement as LayerPlacement, Prepare, Shape, Weld,
-    WeldPath, schema_identity, validate_layers,
+    Author, Change, EditTargets, Element, Placement as LayerPlacement, Prepare, schema_identity,
+    validate_layers,
 };
 use beamcraft_layer_engine::{Control, OpenRequest, Prim, Reader, Value};
 use beamcraft_model::command::CommandError;
@@ -43,6 +43,8 @@ use std::collections::BTreeMap;
 use steel::engine::quantity::QuantityRecord;
 use steel::engine::transaction::PriorOp;
 use steel::engine::weld::{PartKind, Parts};
+use steel::layer as steel_layer;
+use steel::layer::{Weld, WeldPath};
 use steel::model::command::{
     CreateWeld, WeldContour, WeldGeometry, WeldLocation, WeldSide, WeldSpec, WeldSymbol, WeldType,
 };
@@ -407,7 +409,7 @@ pub fn create_weld(
     let mut changes = vec![Change::Create(Element {
         id: command.new_id.to_string(),
         name: command.name.clone(),
-        shape: Shape::weld(Weld {
+        shape: steel_layer::weld(Weld {
             connects: [
                 command.main_id.to_string(),
                 command.secondary_id.to_string(),

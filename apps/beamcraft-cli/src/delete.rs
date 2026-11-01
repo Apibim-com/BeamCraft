@@ -37,6 +37,7 @@ use session::pipeline::{
     open_base, summarize,
 };
 use steel::engine::transaction::PriorOp;
+use steel::layer as steel_layer;
 
 /// Inputs of one `delete_element` call beyond the command itself.
 #[derive(Debug, Clone)]
@@ -246,7 +247,7 @@ pub fn delete_element(
                 body: body.clone(),
                 quantities,
             };
-            changes.push(Change::hole_records(
+            changes.push(steel_layer::hole_records(
                 next.id.to_string(),
                 next.hole_records.clone(),
             ));

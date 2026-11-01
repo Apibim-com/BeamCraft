@@ -32,8 +32,8 @@ use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
-    Author, Bolt as LayerBolt, BoltGroup as LayerBoltGroup, Change, EditTargets, Element,
-    Placement as LayerPlacement, Prepare, Resource, Shape, schema_identity, validate_layers,
+    Author, Change, EditTargets, Element, Placement as LayerPlacement, Prepare, Resource,
+    schema_identity, validate_layers,
 };
 use beamcraft_layer_engine::{Control, OpenRequest, Reader, Value};
 use beamcraft_model::command::CommandError;
@@ -50,6 +50,8 @@ use steel::engine::bolt::Bounds;
 use steel::engine::committed::PlateRecord;
 use steel::engine::transaction::PriorOp;
 use steel::engine::weld::{PartKind, Parts};
+use steel::layer as steel_layer;
+use steel::layer::{Bolt as LayerBolt, BoltGroup as LayerBoltGroup};
 use steel::model::command::{
     BoltGroupInputs, BoltLength, BoltSpacing, BoltSpec, CreateBolt, CreateBoltGroup, HoleKind,
     HoleRecord, MAX_HOLES, UpdateBoltGroup,
@@ -699,7 +701,7 @@ fn hole_changes(
             body: body.clone(),
             quantities,
         };
-        changes.push(Change::hole_records(
+        changes.push(steel_layer::hole_records(
             part.to_string(),
             next.hole_records.clone(),
         ));
@@ -923,7 +925,7 @@ pub fn create_bolt_group(
     let mut changes = vec![Change::Create(Element {
         id: command.new_id.to_string(),
         name: command.name.clone(),
-        shape: Shape::bolt_group(layer_group(&command.inputs, &placed)),
+        shape: steel_layer::bolt_group(layer_group(&command.inputs, &placed)),
         placement: LayerPlacement {
             translation_mm: [0.0; 3],
             orientation_xyzw: [0.0, 0.0, 0.0, 1.0],
@@ -1091,7 +1093,7 @@ pub fn update_bolt_group(
         schema,
         &control,
     )?;
-    let mut changes = vec![Change::bolt_group(
+    let mut changes = vec![steel_layer::replace_bolt_group(
         command.target_id.to_string(),
         layer_group(&command.inputs, &placed),
     )];
@@ -1219,7 +1221,7 @@ pub fn create_bolt(
             changes: vec![Change::Create(Element {
                 id: command.new_id.to_string(),
                 name: command.name.clone(),
-                shape: Shape::bolt(LayerBolt {
+                shape: steel_layer::bolt(LayerBolt {
                     connects: [
                         command.main_id.to_string(),
                         command.secondary_id.to_string(),
