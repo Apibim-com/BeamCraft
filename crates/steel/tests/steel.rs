@@ -15,6 +15,7 @@ mod common_ops;
 
 mod a10_bent_plate;
 mod g07_acceptance;
+mod g11_accuracy;
 mod g14_member_hole;
 mod kernel_member;
 mod kernel_section;
