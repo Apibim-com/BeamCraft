@@ -404,52 +404,34 @@ pub fn update_element(
         });
     }
     if let Some(mm) = command.patch.thickness_mm {
-        changes.push(Change::Thickness {
-            id: definition_text.clone(),
-            mm,
-        });
+        changes.push(Change::thickness(definition_text.clone(), mm));
     }
     // The contour is a shape input of the canonical definition, like the thickness: the
     // instances of the group read their bodies from it and take mesh updates below.
     if let Some(points) = &command.patch.contour_points_mm {
-        changes.push(Change::Contour {
-            id: definition_text.clone(),
-            points_mm: points.clone(),
-        });
+        changes.push(Change::contour(definition_text.clone(), points.clone()));
     }
     if let Some(corners) = &command.patch.corners {
-        changes.push(Change::Corners {
-            id: definition_text.clone(),
-            corners: corners.clone(),
-        });
+        changes.push(Change::corners(definition_text.clone(), corners.clone()));
     }
     if let Some(side) = command.patch.thickness_side {
-        changes.push(Change::ThicknessSide {
-            id: definition_text.clone(),
-            side,
-        });
+        changes.push(Change::thickness_side(definition_text.clone(), side));
     }
     // A member path change (P12) is authored on the canonical part, like a thickness change:
     // the instances of the group read their shape inputs from it.
     if let (UpdatedElement::Member(record), true) = (&next, patch_effect.shape) {
-        changes.push(Change::Axis {
-            id: definition_text.clone(),
-            points_mm: record.authored.axis_points_mm.clone(),
-        });
+        changes.push(Change::axis(
+            definition_text.clone(),
+            record.authored.axis_points_mm.clone(),
+        ));
         // A bent member carries no authored roll: the polybeam sweep has no roll input, so
         // the old straight member's opinion is removed instead of being silently ignored.
         if record.authored.axis_points_mm.len() > 2 {
-            changes.push(Change::Roll {
-                id: definition_text.clone(),
-                opinion: Opinion::Remove,
-            });
+            changes.push(Change::roll(definition_text.clone(), Opinion::Remove));
         }
     }
     if let Some(digest) = command.patch.profile {
-        changes.push(Change::Profile {
-            id: definition_text.clone(),
-            digest,
-        });
+        changes.push(Change::profile(definition_text.clone(), digest));
     }
     // A mirror (T03) re-encodes the local body: the plate's side flips and the cuts of either
     // part kind reflect, both authored on the canonical part.
@@ -457,18 +439,15 @@ pub fn update_element(
         if let UpdatedElement::Plate(record) = &next
             && let Some(side) = record.authored.thickness_side
         {
-            changes.push(Change::ThicknessSide {
-                id: definition_text.clone(),
-                side,
-            });
+            changes.push(Change::thickness_side(definition_text.clone(), side));
         }
-        changes.push(Change::Cuts {
-            id: definition_text.clone(),
-            cuts: match &next {
+        changes.push(Change::cuts(
+            definition_text.clone(),
+            match &next {
                 UpdatedElement::Plate(r) => r.authored.cuts.clone(),
                 UpdatedElement::Member(r) => r.authored.cuts.clone(),
             },
-        });
+        ));
     }
     if patch_effect.placement || patch_effect.orientation {
         let placement = match &next {

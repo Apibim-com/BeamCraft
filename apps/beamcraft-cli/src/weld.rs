@@ -407,7 +407,7 @@ pub fn create_weld(
     let mut changes = vec![Change::Create(Element {
         id: command.new_id.to_string(),
         name: command.name.clone(),
-        shape: Shape::Weld(Weld {
+        shape: Shape::weld(Weld {
             connects: [
                 command.main_id.to_string(),
                 command.secondary_id.to_string(),

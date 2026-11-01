@@ -162,10 +162,10 @@ pub fn bend_plate_record(
     let mut footprint = outcome.footprint.clone();
     footprint = footprint.union(instances.dependencies(command.target_id)?)?;
     let mut changes = vec![
-        Change::Bends {
-            id: command.target_id.to_string(),
-            bends: element.authored.bends.clone(),
-        },
+        Change::bends(
+            command.target_id.to_string(),
+            element.authored.bends.clone(),
+        ),
         mesh_change(
             &element.authored.id,
             &element.body.solid,

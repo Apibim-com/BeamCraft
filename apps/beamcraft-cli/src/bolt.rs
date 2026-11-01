@@ -699,10 +699,10 @@ fn hole_changes(
             body: body.clone(),
             quantities,
         };
-        changes.push(Change::HoleRecords {
-            id: part.to_string(),
-            records: next.hole_records.clone(),
-        });
+        changes.push(Change::hole_records(
+            part.to_string(),
+            next.hole_records.clone(),
+        ));
         changes.push(mesh_change(&part, &body.solid, &plate_record(&record))?);
         footprint = footprint.union(Footprint::for_update(
             part, false, false, true, false, None,
@@ -923,7 +923,7 @@ pub fn create_bolt_group(
     let mut changes = vec![Change::Create(Element {
         id: command.new_id.to_string(),
         name: command.name.clone(),
-        shape: Shape::BoltGroup(layer_group(&command.inputs, &placed)),
+        shape: Shape::bolt_group(layer_group(&command.inputs, &placed)),
         placement: LayerPlacement {
             translation_mm: [0.0; 3],
             orientation_xyzw: [0.0, 0.0, 0.0, 1.0],
@@ -1091,10 +1091,10 @@ pub fn update_bolt_group(
         schema,
         &control,
     )?;
-    let mut changes = vec![Change::BoltGroup {
-        id: command.target_id.to_string(),
-        group: layer_group(&command.inputs, &placed),
-    }];
+    let mut changes = vec![Change::bolt_group(
+        command.target_id.to_string(),
+        layer_group(&command.inputs, &placed),
+    )];
     changes.extend(hole_writes);
     let prepared = author.prepare(
         Prepare {
@@ -1219,7 +1219,7 @@ pub fn create_bolt(
             changes: vec![Change::Create(Element {
                 id: command.new_id.to_string(),
                 name: command.name.clone(),
-                shape: Shape::Bolt(LayerBolt {
+                shape: Shape::bolt(LayerBolt {
                     connects: [
                         command.main_id.to_string(),
                         command.secondary_id.to_string(),

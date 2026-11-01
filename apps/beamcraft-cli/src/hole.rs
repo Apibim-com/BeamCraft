@@ -367,10 +367,7 @@ fn apply_hole(
                 });
             }
             let mut changes = vec![
-                Change::HoleRecords {
-                    id: canonical.to_string(),
-                    records: next.authored.hole_records.clone(),
-                },
+                Change::hole_records(canonical.to_string(), next.authored.hole_records.clone()),
                 mesh_change(&next.authored.id, &next.body.solid, &plate_record(&next))?,
             ];
             for other in &others {
@@ -434,10 +431,7 @@ fn apply_hole(
                 });
             }
             let mut changes = vec![
-                Change::MemberHoles {
-                    id: canonical.to_string(),
-                    records: next.authored.hole_records.clone(),
-                },
+                Change::member_holes(canonical.to_string(), next.authored.hole_records.clone()),
                 mesh_change(&next.authored.id, &next.body.solid, &member_record(&next))?,
             ];
             for other in &others {

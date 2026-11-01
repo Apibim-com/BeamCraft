@@ -37,7 +37,8 @@ use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, Element, MemberKind, Placement, Prepare, Shape, schema_identity,
+    Author, Change, EditTargets, Element, MemberKind, MemberShape, Placement, PlateShape, Prepare,
+    Shape, schema_identity,
 };
 use beamcraft_layer_engine::index::ElementId as LayerElementId;
 use beamcraft_model::command::CommandError;
@@ -467,10 +468,7 @@ fn apply_cut(
         CutElement::Member(r) => mesh_change(&r.authored.id, &r.body.solid, &member_record(r)),
     };
     let mut changes = vec![
-        Change::Cuts {
-            id: id_text,
-            cuts: element.cuts().to_vec(),
-        },
+        Change::cuts(id_text, element.cuts().to_vec()),
         record(&element)?,
     ];
     for other in &others {
@@ -1034,10 +1032,7 @@ pub fn a13_record(
                 .clone()
                 .union(instances.dependencies(c.target_id)?)?;
             ordinal = Some(outcome.ordinal);
-            changes.push(Change::Cuts {
-                id: id_text.clone(),
-                cuts: cuts.clone(),
-            });
+            changes.push(Change::cuts(id_text.clone(), cuts.clone()));
             changes.push(mesh_change_of(&element)?);
             let group = instances.group(c.target_id)?;
             let others: Vec<CutElement> = group
@@ -1080,10 +1075,7 @@ pub fn a13_record(
                 .clone()
                 .union(instances.dependencies(c.target_id)?)?;
             ordinal = Some(outcome.ordinal);
-            changes.push(Change::Cuts {
-                id: id_text.clone(),
-                cuts: cuts.clone(),
-            });
+            changes.push(Change::cuts(id_text.clone(), cuts.clone()));
             changes.push(mesh_change_of(&element)?);
             let group = instances.group(c.target_id)?;
             let others: Vec<CutElement> = group
@@ -1125,10 +1117,7 @@ pub fn a13_record(
                 .clone()
                 .union(instances.dependencies(c.target_id)?)?;
             ordinal = Some(outcome.ordinal);
-            changes.push(Change::Cuts {
-                id: id_text.clone(),
-                cuts: cuts.clone(),
-            });
+            changes.push(Change::cuts(id_text.clone(), cuts.clone()));
             changes.push(mesh_change_of(&element)?);
             let group = instances.group(c.target_id)?;
             let others: Vec<CutElement> = group
@@ -1159,10 +1148,10 @@ pub fn a13_record(
                 .clone()
                 .union(instances.dependencies(c.target_id)?)?;
             ordinal = None;
-            changes.push(Change::HoleRecords {
-                id: authored.id.to_string(),
-                records: authored.hole_records.clone(),
-            });
+            changes.push(Change::hole_records(
+                authored.id.to_string(),
+                authored.hole_records.clone(),
+            ));
             changes.push(mesh_change_of(&element)?);
             let group = instances.group(c.target_id)?;
             let others: Vec<CutElement> = group
@@ -1193,10 +1182,10 @@ pub fn a13_record(
                 .footprint
                 .clone()
                 .union(instances.dependencies(c.target_id)?)?;
-            changes.push(Change::HoleRecords {
-                id: authored.id.to_string(),
-                records: authored.hole_records.clone(),
-            });
+            changes.push(Change::hole_records(
+                authored.id.to_string(),
+                authored.hole_records.clone(),
+            ));
             changes.push(mesh_change_of(&element)?);
             let group = instances.group(c.target_id)?;
             let others: Vec<CutElement> = group
@@ -1238,10 +1227,7 @@ pub fn a13_record(
                 AuthoredState::Plate(a) => (a.cuts.clone(), a.id.to_string()),
                 AuthoredState::Member(a) => (a.cuts.clone(), a.id.to_string()),
             };
-            changes.push(Change::Cuts {
-                id: kept_id,
-                cuts: kept_cuts,
-            });
+            changes.push(Change::cuts(kept_id, kept_cuts));
             changes.push(Change::Create(created_element(&created_state)?));
             changes.push(mesh_change_of(&kept)?);
             changes.push(mesh_change_of(&created)?);
@@ -1271,10 +1257,10 @@ pub fn a13_record(
                 head.placement.translation_mm != authored.placement.translation_mm
             });
             let survivor = evaluate_state(AuthoredState::Member(authored.clone()))?;
-            changes.push(Change::Axis {
-                id: authored.id.to_string(),
-                points_mm: authored.axis_points_mm,
-            });
+            changes.push(Change::axis(
+                authored.id.to_string(),
+                authored.axis_points_mm,
+            ));
             if moved {
                 changes.push(Change::Placement {
                     id: authored.id.to_string(),
@@ -1443,7 +1429,7 @@ fn created_element(state: &AuthoredState) -> Result<Element, Refusal> {
             name: authored.name.clone(),
             placement: pose(authored.placement),
             material: authored.material,
-            shape: Shape::Plate {
+            shape: Shape::plate(PlateShape {
                 contour_mm: authored.contour_points_mm.clone(),
                 thickness_mm: authored.thickness_mm,
                 thickness_side: authored.thickness_side,
@@ -1456,14 +1442,14 @@ fn created_element(state: &AuthoredState) -> Result<Element, Refusal> {
                     .collect(),
                 hole_records: authored.hole_records.clone(),
                 cuts: authored.cuts.clone(),
-            },
+            }),
         }),
         AuthoredState::Member(authored) => Ok(Element {
             id: authored.id.to_string(),
             name: authored.name.clone(),
             placement: pose(authored.placement),
             material: authored.material,
-            shape: Shape::Member {
+            shape: Shape::member(MemberShape {
                 kind: match authored.kind {
                     steel::model::command::MemberKind::Beam => MemberKind::Beam,
                     steel::model::command::MemberKind::Column => MemberKind::Column,
@@ -1474,7 +1460,7 @@ fn created_element(state: &AuthoredState) -> Result<Element, Refusal> {
                 curved: authored.curved,
                 placement: authored.section_placement,
                 cuts: authored.cuts.clone(),
-            },
+            }),
         }),
     }
 }
