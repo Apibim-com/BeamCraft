@@ -691,7 +691,7 @@ pub fn parse_definitions(exit_code: Option<i32>, stdout: &[u8]) -> Result<Defini
                 .filter_map(|entry| text(entry, "designation"))
                 .take(MAX_CHOICES)
                 .map(|designation| Choice {
-                    label: format!("{designation} (environment)"),
+                    label: designation.clone(),
                     digest: format!("{BY_NAME}{designation}"),
                     rect_mm: None,
                 })
@@ -738,11 +738,8 @@ pub fn parse_definitions(exit_code: Option<i32>, stdout: &[u8]) -> Result<Defini
             let grade = display
                 .or_else(|| text(definition, "grade"))
                 .unwrap_or_else(|| "material".into());
-            let density = dimension(definition, "density_kg_m3")
-                .map(|d| format!(" {d} kg/m3"))
-                .unwrap_or_default();
             out.materials.push(Choice {
-                label: format!("{grade}{density} ({})", short(&digest)),
+                label: format!("{grade} ({})", short(&digest)),
                 digest,
                 rect_mm: None,
             });
@@ -897,7 +894,7 @@ impl Tools {
             self.definitions
                 .materials
                 .iter()
-                .find(|c| c.label.starts_with(&format!("{name} ")))
+                .find(|c| c.label.starts_with(&format!("{name} (")))
                 .map(|c| c.digest.clone())
         });
         if kind == "plate" {
@@ -1243,7 +1240,7 @@ mod tests {
         let definitions = parse_definitions(Some(0), reply).unwrap();
         assert_eq!(definitions.profiles.len(), 1);
         assert_eq!(definitions.profiles[0].digest, "name:I-300x150");
-        assert_eq!(definitions.profiles[0].label, "I-300x150 (environment)");
+        assert_eq!(definitions.profiles[0].label, "I-300x150");
 
         let mut tools = Tools::default();
         tools.member.profile = Some("name:I-300x150".into());
@@ -1446,7 +1443,7 @@ mod tests {
         );
         assert_eq!(
             definitions.materials[0].label,
-            "Structural steel 7850 kg/m3 (36281e26)"
+            "Structural steel (36281e26)"
         );
         // Definitions published before A07.2 have no display name: the designation or grade
         // and the kind still label them.
@@ -1459,7 +1456,7 @@ mod tests {
             definitions.profiles[0].label,
             "rectangle 200 x 300 mm (5d660ddd)"
         );
-        assert_eq!(definitions.materials[0].label, "S355 7850 kg/m3 (36281e26)");
+        assert_eq!(definitions.materials[0].label, "S355 (36281e26)");
         let error = parse_definitions(
             Some(2),
             br#"{"code":"NOT_FOUND","message":"no revision","outcome":"rejected"}"#,
