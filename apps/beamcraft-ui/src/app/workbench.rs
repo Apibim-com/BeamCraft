@@ -95,6 +95,7 @@ pub(crate) enum MenuSection {
     Open,
     Import,
     Export,
+    Project,
     Settings,
     #[default]
     Catalogs,
@@ -129,6 +130,10 @@ impl MenuSection {
             Self::Open => ("Open model", "Recent models, or any model folder"),
             Self::Import => ("Import", "Bring model data into the workspace"),
             Self::Export => ("Export", "Export model data"),
+            Self::Project => (
+                "Project properties",
+                "The open model's project and this session",
+            ),
             Self::Settings => ("Settings", "Application and workspace preferences"),
             Self::Catalogs => ("Catalogs", "Profiles, materials and components"),
             Self::Editors => ("Editors", "Templates, reports and custom components"),
@@ -170,7 +175,12 @@ impl MenuSection {
                 "Custom component editor",
             ],
             Self::Help => &["Help", "About BeamCraft"],
-            Self::New | Self::Open | Self::Profiles | Self::Materials | Self::About => &[],
+            Self::New
+            | Self::Open
+            | Self::Project
+            | Self::Profiles
+            | Self::Materials
+            | Self::About => &[],
         }
     }
 }
@@ -1073,14 +1083,17 @@ impl App {
         }
     }
 
-    /// Closes the menu. Every way out goes through here (Esc, Cancel, "Back to model", Project
-    /// properties), so page resets belong here and a reopened menu never shows a stale form: the
-    /// New and Open pages give way to the default page. Nothing happens while `menu_busy`.
+    /// Closes the menu. Every way out goes through here (Esc, Cancel, "Back to model"), so page
+    /// resets belong here and a reopened menu never shows a stale form or stale facts: the New,
+    /// Open and Project pages give way to the default page. Nothing happens while `menu_busy`.
     pub(crate) fn close_menu(&mut self) {
         if self.menu_busy() {
             return;
         }
-        if matches!(self.menu_section, MenuSection::New | MenuSection::Open) {
+        if matches!(
+            self.menu_section,
+            MenuSection::New | MenuSection::Open | MenuSection::Project
+        ) {
             self.menu_section = MenuSection::default();
         }
         self.menu_open = false;
@@ -1123,8 +1136,134 @@ impl App {
         }
     }
 
+    /// Starts reading the open model's project for the Project page, on a worker thread; the
+    /// facts shown before are dropped.
+    fn read_project(&mut self) {
+        self.project_facts = None;
+        let store = self.source.store.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name("beamcraft-project".into())
+            .spawn(move || {
+                let _ = tx.send(crate::library::project_facts(&store));
+            });
+        if spawned.is_ok() {
+            self.project_job = Some(rx);
+        } else {
+            self.project_job = None;
+            self.project_facts = Some(Err("the project could not be read".into()));
+        }
+    }
+
+    /// Takes the Project page's facts once the read has answered, and repaints while it runs.
+    fn poll_project(&mut self, ctx: &egui::Context) {
+        let Some(rx) = &self.project_job else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(facts) => {
+                self.project_job = None;
+                self.project_facts = Some(facts);
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                ctx.request_repaint_after(std::time::Duration::from_millis(50));
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.project_job = None;
+                self.project_facts = Some(Err("the project read ended without an answer".into()));
+            }
+        }
+    }
+
+    /// The menu's Project page: the project as the store's head records it and this window's
+    /// session, read-only. Project information fields do not exist in models yet; the page says
+    /// so instead of offering fields it cannot keep.
+    fn menu_project_page(&mut self, ui: &mut Ui) {
+        let palette = Palette::current(ui);
+        let key = |ui: &mut Ui, text: &str| {
+            ui.label(RichText::new(text).color(palette.muted));
+        };
+        let time = |ms: Option<u64>| {
+            ms.map_or_else(
+                || "—".to_owned(),
+                |ms| format!("{} UTC", crate::start::format_time(ms)),
+            )
+        };
+        ui.label(theme::bold("Project", 14.0));
+        ui.add_space(8.0);
+        match &self.project_facts {
+            Some(Ok(facts)) => {
+                egui::Grid::new("menu-project-facts")
+                    .num_columns(2)
+                    .spacing(vec2(24.0, 8.0))
+                    .show(ui, |ui| {
+                        for (name, value) in [
+                            ("Name", facts.name.clone()),
+                            ("Folder", facts.path.clone()),
+                            (
+                                "Project ID",
+                                facts.project_id.clone().unwrap_or_else(|| "—".to_owned()),
+                            ),
+                            ("Created", time(facts.created_ms)),
+                            ("Last change", time(facts.modified_ms)),
+                            ("State", facts.state.clone()),
+                        ] {
+                            key(ui, name);
+                            ui.add(egui::Label::new(value).wrap());
+                            ui.end_row();
+                        }
+                    });
+            }
+            Some(Err(error)) => {
+                ui.label(RichText::new(error).color(palette.error).strong());
+            }
+            None => {
+                ui.spinner();
+            }
+        }
+        ui.add_space(20.0);
+        ui.label(theme::bold("This session", 14.0));
+        ui.add_space(8.0);
+        let revision = self
+            .revision_on_screen()
+            .unwrap_or_else(|| "No model loaded".to_owned());
+        let elements = self
+            .loaded
+            .as_ref()
+            .map_or_else(|| "—".to_owned(), |l| l.summary.elements.to_string());
+        let or_dash = |text: &Option<String>| text.clone().unwrap_or_else(|| "—".to_owned());
+        egui::Grid::new("menu-project-session")
+            .num_columns(2)
+            .spacing(vec2(24.0, 8.0))
+            .show(ui, |ui| {
+                for (name, value) in [
+                    ("Environment", or_dash(&self.source.environment)),
+                    ("Author", or_dash(&self.source.author)),
+                    ("Units", "mm".to_owned()),
+                    ("Revision on screen", revision),
+                    ("Elements", elements),
+                ] {
+                    key(ui, name);
+                    ui.add(egui::Label::new(value).wrap());
+                    ui.end_row();
+                }
+            });
+        ui.add_space(20.0);
+        ui.add(
+            egui::Label::new(
+                RichText::new(
+                    "Project information (number, client, building and site address, designer, \
+                     dates and custom fields) is not stored in models yet.",
+                )
+                .color(palette.muted),
+            )
+            .wrap(),
+        );
+    }
+
     /// Full native application menu, using the same real actions as the ribbon.
     pub(crate) fn menu_page(&mut self, ui: &mut Ui) {
+        self.poll_project(ui.ctx());
         let shown = self.menu_section;
         self.menu_page_ui(ui);
         // A note belongs to the page it was reported on.
@@ -1201,11 +1340,18 @@ impl App {
                                 self.menu_section = section;
                             }
                         }
-                        if menu_navigation(ui, Icon::Block, "Project properties", false, idle)
-                            .clicked()
+                        let project = MenuSection::Project;
+                        if menu_navigation(
+                            ui,
+                            Icon::Block,
+                            "Project properties",
+                            self.menu_section == project,
+                            idle,
+                        )
+                        .clicked()
                         {
-                            self.details = true;
-                            self.close_menu();
+                            self.menu_section = project;
+                            self.read_project();
                         }
                         for (section, icon, label) in [
                             (MenuSection::Settings, Icon::Grid, "Settings"),
@@ -1298,6 +1444,10 @@ impl App {
                         }
                         MenuSection::Open => {
                             self.menu_open_page(ui);
+                            return;
+                        }
+                        MenuSection::Project => {
+                            self.menu_project_page(ui);
                             return;
                         }
                         _ => {}

@@ -14,6 +14,9 @@
 //!
 //! Each piece runs one job at a time and knows what kind of job it is, so a host can wait for the
 //! jobs that open a model (a create, a remember) without waiting for the background reads.
+//!
+//! `project_facts` reads what the store's head says about the open model's project, for the
+//! menu's read-only Project page; the host runs it on a worker thread.
 
 use crate::command;
 use crate::start::{
@@ -23,7 +26,7 @@ use crate::start::{
 use crate::stats::Stats;
 use crate::theme::{self, Icon, Kind, Palette};
 use crate::tools::ToolError;
-use session::project::next_project_name;
+use session::project::{ProjectState, next_project_name, project_info};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError};
@@ -698,6 +701,52 @@ fn model_row(
     response
 }
 
+/// What the store's head says about the project, as the Project page shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProjectFacts {
+    /// The folder name; the project's name.
+    pub(crate) name: String,
+    /// The store directory.
+    pub(crate) path: String,
+    /// `ready`, `empty`, `missing` or the code of an unreadable store.
+    pub(crate) state: String,
+    /// The ProjectId the head records.
+    pub(crate) project_id: Option<String>,
+    /// Creation time, Unix milliseconds: the timestamp of the ProjectId.
+    pub(crate) created_ms: Option<u64>,
+    /// Time of the last change, Unix milliseconds: the timestamp of the head revision id.
+    pub(crate) modified_ms: Option<u64>,
+}
+
+/// Reads the project of `store` (`session::project::project_info`); nothing is written.
+pub(crate) fn project_facts(store: &Path) -> Result<ProjectFacts, String> {
+    let info = project_info(store).map_err(|e| format!("{}: {}", e.code.as_str(), e.message))?;
+    let (state, project_id, created_ms, modified_ms) = match info.state {
+        ProjectState::Ready {
+            project_id,
+            created_ms,
+            modified_ms,
+            ..
+        } => (
+            "ready".to_owned(),
+            Some(project_id),
+            Some(created_ms),
+            Some(modified_ms),
+        ),
+        ProjectState::Empty => ("empty".to_owned(), None, None, None),
+        ProjectState::Missing => ("missing".to_owned(), None, None, None),
+        ProjectState::Unreadable(code) => (code.as_str().to_owned(), None, None, None),
+    };
+    Ok(ProjectFacts {
+        name: info.name,
+        path: info.path.to_string_lossy().into_owned(),
+        state,
+        project_id,
+        created_ms,
+        modified_ms,
+    })
+}
+
 fn template_card(ui: &mut egui::Ui, title: &str, text: &str, available: bool) {
     let palette = Palette::current(ui);
     let frame = if available {
@@ -912,6 +961,47 @@ mod tests {
             matches!(form.poll(), Some(FormEvent::Created(project)) if project.path == "/m/Nave 1")
         );
         assert!(!form.busy());
+    }
+
+    /// A fresh scratch folder of this test.
+    fn scratch(tag: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "beamcraft-library-{tag}-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_folder_without_a_store_reads_as_missing() {
+        let dir = scratch("facts-missing");
+        let facts = project_facts(&dir).unwrap();
+        assert_eq!(facts.state, "missing");
+        assert_eq!(facts.project_id, None);
+        assert_eq!(facts.created_ms, None);
+        assert_eq!(facts.modified_ms, None);
+        assert_eq!(
+            Some(facts.name.as_str()),
+            dir.file_name().and_then(|n| n.to_str())
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_store_without_revisions_reads_as_empty() {
+        let dir = scratch("facts-empty");
+        std::fs::create_dir_all(dir.join("revisions")).unwrap();
+        std::fs::create_dir_all(dir.join("blobs")).unwrap();
+        let facts = project_facts(&dir).unwrap();
+        assert_eq!(facts.state, "empty");
+        assert_eq!(facts.project_id, None);
+        assert_eq!(facts.created_ms, None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

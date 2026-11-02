@@ -197,6 +197,11 @@ pub struct App {
     /// A model the window should switch to, set by the menu's New and Open; Shell reads it
     /// after the frame.
     pub(crate) open_request: Option<PathBuf>,
+    /// The read of the menu's Project page, running on a worker thread.
+    project_job: Option<Receiver<Result<crate::library::ProjectFacts, String>>>,
+    /// What the Project page shows: the project read from the store's head, or why it could not
+    /// be read; `None` while the read runs or before the page was opened.
+    project_facts: Option<Result<crate::library::ProjectFacts, String>>,
     command_search: bool,
     command_focus: bool,
     command_query: String,
@@ -843,6 +848,8 @@ impl App {
             menu_new: crate::library::NewModelForm::new(),
             menu_models: crate::library::ModelPicker::new(),
             open_request: None,
+            project_job: None,
+            project_facts: None,
             command_search: false,
             command_focus: false,
             command_query: String::new(),
@@ -2680,6 +2687,18 @@ impl App {
             .and_then(|c| c.rect_mm)
     }
 
+    /// The revision of the snapshot on screen, as Details and the menu's Project page show it;
+    /// `None` while no model is loaded.
+    fn revision_on_screen(&self) -> Option<String> {
+        let pin = self.loaded.as_ref()?.snapshot.pin();
+        let revision = pin.revision().to_string();
+        Some(format!(
+            "Revision {}… generation {}",
+            revision.get(..12).unwrap_or(&revision),
+            pin.generation()
+        ))
+    }
+
     fn info(&mut self, ui: &mut egui::Ui) {
         ui.label(format!("{:.0} FPS", self.fps));
         ui.label(&self.adapter);
@@ -2691,14 +2710,8 @@ impl App {
         ui.separator();
         match &self.loaded {
             Some(l) => {
-                let pin = l.snapshot.pin();
                 let (meshes, instances) = l.summary.counts();
-                let revision = pin.revision().to_string();
-                ui.label(format!(
-                    "Revision {}… generation {}",
-                    revision.get(..12).unwrap_or(&revision),
-                    pin.generation()
-                ));
+                ui.label(self.revision_on_screen().unwrap_or_default());
                 ui.label(format!("Elements: {}", l.summary.elements));
                 ui.label(format!("Meshes: {meshes} (instances: {instances})"));
                 ui.label(format!("Triangles: {}", l.summary.triangles));
@@ -3783,6 +3796,89 @@ pub(crate) mod tests {
         assert_eq!(app.open_request, None);
         assert!(app.menu_open);
         let _ = std::fs::remove_dir_all(&config);
+    }
+
+    #[test]
+    fn project_page_shows_existing_facts_and_says_what_is_missing() {
+        use super::workbench::MenuSection;
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        assert!(crate::app::inter(&ctx));
+        on_the_menu(&mut app);
+        app.menu_section = MenuSection::Project;
+        app.project_facts = Some(Ok(crate::library::ProjectFacts {
+            name: "Nave 1".into(),
+            path: "/m/Nave 1".into(),
+            state: "ready".into(),
+            project_id: Some("0190a0b0-0000-7000-8000-000000000000".into()),
+            created_ms: Some(0),
+            modified_ms: Some(0),
+        }));
+        let labels = app_frame(&mut app, &ctx, vec![]);
+        for expected in [
+            "The open model's project and this session",
+            "Nave 1",
+            "/m/Nave 1",
+            "0190a0b0-0000-7000-8000-000000000000",
+            "1970-01-01 00:00 UTC",
+            "Units",
+            "mm",
+            "Revision on screen",
+            "No model loaded",
+        ] {
+            assert!(
+                labels.iter().any(|(l, _)| l == expected),
+                "missing {expected}"
+            );
+        }
+        assert!(
+            labels
+                .iter()
+                .any(|(l, _)| l.contains("not stored in models yet")),
+            "missing the note on project information"
+        );
+        // The row reads the project again, on a worker; the Details window stays closed. The
+        // row is the label in the navigation, left of the page heading of the same text.
+        let row = labels
+            .iter()
+            .find(|(l, pos)| l == "Project properties" && pos.x < 232.0)
+            .unwrap()
+            .1;
+        // A store that cannot exist, so the read below has a known answer.
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        app.source.store = std::env::temp_dir().join(format!(
+            "bc-project-page-missing-{}-{nanos}",
+            std::process::id()
+        ));
+        app.menu_section = MenuSection::Catalogs;
+        let labels = app_frame(&mut app, &ctx, vec![]);
+        assert!(!labels.iter().any(|(l, _)| l == "Nave 1"));
+        app_frame(&mut app, &ctx, click(row));
+        assert_eq!(app.menu_section, MenuSection::Project);
+        assert!(app.project_job.is_some());
+        assert_eq!(app.project_facts, None);
+        assert!(!app.details);
+        assert!(app.menu_open);
+        // The test store does not exist: the read answers that it is missing.
+        for _ in 0..250 {
+            app_frame(&mut app, &ctx, vec![]);
+            if app.project_job.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let Some(Ok(facts)) = app.project_facts.clone() else {
+            panic!("expected the project facts, got {:?}", app.project_facts);
+        };
+        assert_eq!(facts.state, "missing");
+        // Leaving the menu leaves the page: a reopened menu shows the default page.
+        app_frame(&mut app, &ctx, escape());
+        assert!(!app.menu_open);
+        assert_eq!(app.menu_section, MenuSection::default());
     }
 
     /// One real `App::ui` frame with `events`; the centre of every text drawn.

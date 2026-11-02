@@ -103,9 +103,13 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
 - The native Menu follows the prototype's dark 232-point navigation, section headings and
   flat 42-point command rows. New shows the model-creation form and Open lists recent models
   with Browse…, both inside the menu (Esc returns to the model); only windows started from the
-  library offer them. Catalogs inspect actual model definitions, and unavailable settings/import/export/editor actions stay disabled instead
+  library offer them. Project properties is a read-only page of what the store's head records
+  (name, folder, project ID, created and last-change times in UTC, state) and of the session
+  (environment, author, units, the revision on screen); project information fields are not
+  stored in models yet. Catalogs inspect actual model definitions, and unavailable settings/import/export/editor actions stay disabled instead
   of suggesting unsupported functionality. Inner pages (catalog lists, About) have ‹ Back; Esc
-  goes back one level and, on a top-level page, returns to the model.
+  goes back one level and, on a top-level page, returns to the model. See
+  [the menu](../../docs/design/menu-backstage.md).
 - The bottom toolbar has 20 compact 24-point entity controls and 13 snap/constraint controls,
   in separate dense rows on the left and right with small group separators. Glyphs are
   contributor-original Rust drawings. The eight upstream selection-class filters and nine
