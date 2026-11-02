@@ -101,8 +101,9 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   CLI's final exclusive-create check remains authoritative.
 - The native Menu follows the prototype's dark 232-point navigation, section headings and
   flat 42-point command rows. New/Open use the library, catalogs inspect actual model
-  definitions, and unavailable settings/import/export/editor/maintenance
-  actions stay disabled instead of suggesting unsupported functionality.
+  definitions, and unavailable settings/import/export/editor actions stay disabled instead
+  of suggesting unsupported functionality. Inner pages (catalog lists, About) have ‹ Back; Esc
+  goes back one level and, on a top-level page, returns to the model.
 - The bottom toolbar has 20 compact 24-point entity controls and 13 snap/constraint controls,
   in separate dense rows on the left and right with small group separators. Glyphs are
   contributor-original Rust drawings. The eight upstream selection-class filters and nine

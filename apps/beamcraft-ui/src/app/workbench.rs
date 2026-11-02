@@ -9,7 +9,7 @@
 use super::App;
 use crate::edit::EditKind;
 use crate::publish::Phase;
-use crate::theme::{self, Icon, Palette};
+use crate::theme::{self, Icon, Kind, Palette};
 use crate::tools::{MemberKind, ToolKind};
 use egui::{Rect, RichText, Sense, Stroke, StrokeKind, Ui, vec2};
 
@@ -97,15 +97,30 @@ pub(crate) enum MenuSection {
     #[default]
     Catalogs,
     Editors,
-    Diagnose,
     Help,
-    Extend,
     Profiles,
     Materials,
     About,
 }
 
 impl MenuSection {
+    /// The section a sub-page belongs to; `None` for a top-level section.
+    const fn parent(self) -> Option<Self> {
+        match self {
+            Self::Profiles | Self::Materials => Some(Self::Catalogs),
+            Self::About => Some(Self::Help),
+            _ => None,
+        }
+    }
+
+    /// The navigation row that is highlighted for this page.
+    const fn top(self) -> Self {
+        match self.parent() {
+            Some(parent) => parent,
+            None => self,
+        }
+    }
+
     fn heading(self) -> (&'static str, &'static str) {
         match self {
             Self::Import => ("Import", "Bring model data into the workspace"),
@@ -113,9 +128,7 @@ impl MenuSection {
             Self::Settings => ("Settings", "Application and workspace preferences"),
             Self::Catalogs => ("Catalogs", "Profiles, materials and components"),
             Self::Editors => ("Editors", "Templates, reports and custom components"),
-            Self::Diagnose => ("Diagnose & repair", "Model checks and maintenance"),
             Self::Help => ("Help", "Navigation and application information"),
-            Self::Extend => ("Extend", "Application extensions"),
             Self::Profiles => (
                 "Profile catalog",
                 "Profiles in the open model's definitions",
@@ -152,9 +165,7 @@ impl MenuSection {
                 "Report editor",
                 "Custom component editor",
             ],
-            Self::Diagnose => &["Diagnose model", "Repair model"],
             Self::Help => &["Help", "About BeamCraft"],
-            Self::Extend => &["Extensions", "Extension manager"],
             Self::Profiles | Self::Materials | Self::About => &[],
         }
     }
@@ -1031,11 +1042,26 @@ impl App {
         false
     }
 
+    /// Esc and "‹ Back" in the menu: a sub-page returns to its section, a top-level page closes
+    /// the menu and shows the model again.
+    pub(crate) fn menu_back(&mut self) {
+        match self.menu_section.parent() {
+            Some(parent) => self.menu_section = parent,
+            None => self.close_menu(),
+        }
+    }
+
+    /// Closes the menu. Every way out goes through here (Esc, "Back to model", Project
+    /// properties), so page resets belong here and a reopened menu never shows a stale form.
+    pub(crate) fn close_menu(&mut self) {
+        self.menu_open = false;
+    }
+
     /// Full native application menu, using the same real actions as the ribbon.
     pub(crate) fn menu_page(&mut self, ui: &mut Ui) {
         let palette = Palette::current(ui);
         if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
-            self.menu_open = false;
+            self.menu_back();
         }
         egui::Panel::left("application-menu-navigation")
             .exact_size(232.0)
@@ -1046,7 +1072,7 @@ impl App {
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = 1.0;
                         if menu_navigation(ui, Icon::Back, "Back to model", false, true).clicked() {
-                            self.menu_open = false;
+                            self.close_menu();
                         }
                         ui.add_space(14.0);
                         ui.horizontal(|ui| {
@@ -1078,45 +1104,30 @@ impl App {
                             .clicked()
                         {
                             self.details = true;
-                            self.menu_open = false;
+                            self.close_menu();
                         }
                         for (section, icon, label) in [
                             (MenuSection::Settings, Icon::Grid, "Settings"),
                             (MenuSection::Catalogs, Icon::Wire, "Catalogs"),
                             (MenuSection::Editors, Icon::Plate, "Editors"),
                         ] {
-                            let active = self.menu_section == section
-                                || (section == MenuSection::Catalogs
-                                    && matches!(
-                                        self.menu_section,
-                                        MenuSection::Profiles | MenuSection::Materials
-                                    ));
+                            let active = self.menu_section.top() == section;
                             if menu_navigation(ui, icon, label, active, true).clicked() {
                                 self.menu_section = section;
                             }
                         }
                         menu_navigation(ui, Icon::Recent, "Logs", false, false);
-                        for (section, icon, label) in [
-                            (MenuSection::Diagnose, Icon::Fit, "Diagnose & repair"),
-                            (MenuSection::Help, Icon::Recent, "Help"),
-                            (MenuSection::Extend, Icon::Plus, "Extend"),
-                        ] {
-                            if menu_navigation(ui, icon, label, self.menu_section == section, true)
-                                .clicked()
-                            {
-                                self.menu_section = section;
-                            }
-                        }
+                        let help = MenuSection::Help;
                         if menu_navigation(
                             ui,
-                            Icon::Back,
-                            "Exit BeamCraft",
-                            false,
-                            !self.other_command_running(),
+                            Icon::Recent,
+                            "Help",
+                            self.menu_section.top() == help,
+                            true,
                         )
                         .clicked()
                         {
-                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                            self.menu_section = help;
                         }
                     });
                 ui.add_space((ui.available_height() - 64.0).max(16.0));
@@ -1148,7 +1159,14 @@ impl App {
             )
             .show(ui, |ui| {
                 let (title, description) = self.menu_section.heading();
-                ui.label(theme::bold(title, 28.0));
+                ui.horizontal(|ui| {
+                    if self.menu_section.parent().is_some()
+                        && theme::button(ui, Kind::Secondary, "‹ Back", true).clicked()
+                    {
+                        self.menu_back();
+                    }
+                    ui.label(theme::bold(title, 28.0));
+                });
                 ui.label(RichText::new(description).size(12.0).color(palette.muted));
                 ui.add_space(30.0);
                 egui::ScrollArea::vertical().show(ui, |ui| {

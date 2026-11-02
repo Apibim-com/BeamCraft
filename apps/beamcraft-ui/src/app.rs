@@ -185,7 +185,7 @@ pub struct App {
     annotation: annotation_panel::Panel,
     /// The bottom bar's selection switches and snap panel (V11): picking-only state.
     selection: crate::selection::Selection,
-    /// Whether the Details window is open.
+    /// The page the application menu shows.
     menu_section: workbench::MenuSection,
     pub(crate) return_to_create: bool,
     command_search: bool,
@@ -2725,8 +2725,8 @@ impl eframe::App for App {
         self.poll_view_job();
         self.perf_step(ui.ctx(), frame.info().cpu_usage);
         self.construction_keyboard(ui.ctx());
-        if self.menu_open && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.menu_open = false;
+        if self.menu_open {
+            // The menu page handles Esc itself (`menu_back`), level by level.
         } else if !wants_text
             && !self.other_command_running()
             && ui.input(|i| i.key_pressed(egui::Key::Escape))
@@ -3520,12 +3520,17 @@ mod tests {
             "Profile catalog",
             "Material catalog",
             "Editors",
-            "Diagnose & repair",
-            "Exit BeamCraft",
+            "Help",
         ] {
             assert!(
                 labels.iter().any(|(label, _)| label == expected),
                 "Missing menu item {expected}"
+            );
+        }
+        for removed in ["Diagnose & repair", "Extend", "Exit BeamCraft"] {
+            assert!(
+                !labels.iter().any(|(label, _)| label == removed),
+                "Removed menu item {removed} is drawn"
             );
         }
         assert!(!labels.iter().any(|(label, _)| label == "Fit model"));
@@ -3546,6 +3551,108 @@ mod tests {
             modifiers: egui::Modifiers::NONE,
         }]);
         assert!(app.return_to_library && app.return_to_create);
+    }
+
+    /// One real `App::ui` frame with `events`; the centre of every text drawn.
+    fn app_frame(
+        app: &mut App,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+    ) -> Vec<(String, egui::Pos2)> {
+        let mut eframe_frame = eframe::Frame::_new_kittest();
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1280.0, 800.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| eframe::App::ui(app, ui, &mut eframe_frame),
+        );
+        let labels = output
+            .shapes
+            .iter()
+            .filter_map(|shape| {
+                if let egui::Shape::Text(text) = &shape.shape {
+                    Some((
+                        text.galley.text().to_owned(),
+                        text.pos + text.galley.size() / 2.0,
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        output.drop_without_applying_deltas();
+        labels
+    }
+
+    /// The Esc key press event.
+    fn escape() -> Vec<egui::Event> {
+        vec![egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }]
+    }
+
+    #[test]
+    fn menu_sub_pages_go_back_to_their_section_and_escape_walks_up() {
+        use super::workbench::MenuSection;
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        assert!(crate::app::inter(&ctx));
+        app.text = true;
+        app.menu_open = true;
+        for (section, entry, sub_page) in [
+            (MenuSection::Help, "About BeamCraft", MenuSection::About),
+            (
+                MenuSection::Catalogs,
+                "Profile catalog",
+                MenuSection::Profiles,
+            ),
+        ] {
+            app.menu_section = section;
+            // The first frame lays the page out; the click lands on the second.
+            let labels = app_frame(&mut app, &ctx, vec![]);
+            let pos = labels.iter().find(|(l, _)| l == entry).unwrap().1;
+            app_frame(&mut app, &ctx, click(pos));
+            assert_eq!(app.menu_section, sub_page);
+            let labels = app_frame(&mut app, &ctx, vec![]);
+            let back = labels.iter().find(|(l, _)| l == "‹ Back").unwrap().1;
+            // Back button.
+            app_frame(&mut app, &ctx, click(back));
+            assert_eq!(app.menu_section, section);
+            assert!(app.menu_open);
+            // Esc walks up one level at a time.
+            app.menu_section = sub_page;
+            app_frame(&mut app, &ctx, escape());
+            assert_eq!(app.menu_section, section);
+            assert!(app.menu_open);
+            app_frame(&mut app, &ctx, escape());
+            assert!(!app.menu_open);
+            app.menu_open = true;
+        }
+    }
+
+    #[test]
+    fn command_search_over_the_menu_takes_escape_first() {
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        assert!(crate::app::inter(&ctx));
+        app.text = true;
+        app.menu_open = true;
+        app.command_search = true;
+        app_frame(&mut app, &ctx, vec![]);
+        app_frame(&mut app, &ctx, escape());
+        assert!(!app.command_search);
+        assert!(app.menu_open);
     }
 
     #[test]
