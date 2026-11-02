@@ -597,6 +597,34 @@ impl BeamPlace {
     }
 }
 
+/// One part preset of the project's environment: the defaults a new part of `kind` starts from.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PartPreset {
+    /// The preset's id, unique in the environment.
+    pub id: String,
+    /// `beam`, `column` or `plate`.
+    pub kind: String,
+    /// The default part name.
+    pub name: String,
+    /// The default part class.
+    pub class: i32,
+    /// The display name of the default material.
+    pub material: Option<String>,
+    /// The designation of the default profile (members only).
+    pub profile: Option<String>,
+    /// The default thickness in millimetres (plates only).
+    pub thickness_mm: Option<f64>,
+}
+
+/// The preset kind a tool and member kind stand for.
+pub fn preset_kind(tool: ToolKind, member: MemberKind) -> &'static str {
+    match (tool, member) {
+        (ToolKind::Plate, _) => "plate",
+        (ToolKind::Member, MemberKind::Beam) => "beam",
+        (ToolKind::Member, MemberKind::Column) => "column",
+    }
+}
+
 /// The profile and material definitions of the accepted revision.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Definitions {
@@ -604,6 +632,8 @@ pub struct Definitions {
     pub profiles: Vec<Choice>,
     /// Materials, for `--material-digest`.
     pub materials: Vec<Choice>,
+    /// The part presets of the project's environment, defaults first within a kind.
+    pub presets: Vec<PartPreset>,
     /// The revision the listing was read from: the store's head at that moment.
     pub head: Option<RevisionStamp>,
 }
@@ -664,6 +694,30 @@ pub fn parse_definitions(exit_code: Option<i32>, stdout: &[u8]) -> Result<Defini
                     label: format!("{designation} (environment)"),
                     digest: format!("{BY_NAME}{designation}"),
                     rect_mm: None,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    out.presets = reply
+        .get("environment_presets")
+        .and_then(Json::array)
+        .map(|list| {
+            list.iter()
+                .take(MAX_CHOICES)
+                .filter_map(|entry| {
+                    Some(PartPreset {
+                        id: text(entry, "id")?,
+                        kind: text(entry, "kind")?,
+                        name: text(entry, "name")?,
+                        class: match entry.get("class") {
+                            Ok(Json::Number(spelling)) => spelling.parse().unwrap_or(0),
+                            _ => 0,
+                        },
+                        material: text(entry, "material"),
+                        profile: text(entry, "profile"),
+                        thickness_mm: dimension(entry, "thickness_mm")
+                            .and_then(|t| t.parse::<f64>().ok()),
+                    })
                 })
                 .collect()
         })
@@ -738,6 +792,9 @@ pub struct Tools {
     pub plane: Option<beamcraft_engine::work_plane::WorkPlane>,
     /// Per-contour frame inferred from picked world vertices; never replaces the session plane.
     pub plate_plane: Option<beamcraft_engine::work_plane::WorkPlane>,
+    /// The preset the active form was last filled from.
+    pub chosen_preset: Option<String>,
+    pending_preset: Option<&'static str>,
     staged: Option<Prepared>,
     busy: bool,
 }
@@ -752,6 +809,8 @@ impl Default for Tools {
             actor: None,
             plane: None,
             plate_plane: None,
+            chosen_preset: None,
+            pending_preset: None,
             staged: None,
             busy: false,
         }
@@ -795,7 +854,80 @@ impl Tools {
             self.plate.material = None;
         }
         self.definitions = definitions;
+        if let Some(kind) = self.pending_preset.take() {
+            self.use_preset(kind, None);
+        }
         problem
+    }
+
+    /// The presets of `kind` the environment offers, the default first.
+    pub fn presets_of(&self, kind: &str) -> Vec<&PartPreset> {
+        self.definitions
+            .presets
+            .iter()
+            .filter(|p| p.kind == kind)
+            .collect()
+    }
+
+    /// The kind of preset the active tool and member kind stand for.
+    pub fn active_preset_kind(&self) -> &'static str {
+        preset_kind(self.active, self.member.kind)
+    }
+
+    /// Fills the form of the active tool from the preset `id` of `kind`, or from the default
+    /// preset of the kind when `id` is `None`. Without a listing yet (a project that was just
+    /// opened) the default is applied as soon as the definitions arrive. A material or profile
+    /// the model does not offer is left unselected; every field stays editable afterwards.
+    pub fn use_preset(&mut self, kind: &'static str, id: Option<&str>) {
+        let preset = self
+            .definitions
+            .presets
+            .iter()
+            .find(|p| p.kind == kind && id.is_none_or(|id| p.id == id))
+            .cloned();
+        let Some(preset) = preset else {
+            self.chosen_preset = None;
+            if id.is_none() {
+                self.pending_preset = Some(kind);
+            }
+            return;
+        };
+        self.pending_preset = None;
+        let material = preset.material.as_deref().and_then(|name| {
+            self.definitions
+                .materials
+                .iter()
+                .find(|c| c.label.starts_with(&format!("{name} ")))
+                .map(|c| c.digest.clone())
+        });
+        if kind == "plate" {
+            self.plate.name.clone_from(&preset.name);
+            self.plate.class = preset.class.to_string();
+            self.plate.material = material;
+            if let Some(thickness) = preset.thickness_mm {
+                self.plate.thickness = format!("{thickness}");
+            }
+        } else {
+            self.member.name.clone_from(&preset.name);
+            self.member.class = preset.class.to_string();
+            self.member.material = material;
+            self.member.profile = preset.profile.as_deref().and_then(|designation| {
+                let profiles = &self.definitions.profiles;
+                profiles
+                    .iter()
+                    .find(|c| {
+                        !c.digest.starts_with(BY_NAME)
+                            && c.label.starts_with(&format!("{designation} "))
+                    })
+                    .or_else(|| {
+                        profiles
+                            .iter()
+                            .find(|c| c.digest == format!("{BY_NAME}{designation}"))
+                    })
+                    .map(|c| c.digest.clone())
+            });
+        }
+        self.chosen_preset = Some(preset.id);
     }
     /// The command of the selected form.
     pub fn prepare(&self, store: &Path) -> Result<Prepared, FormError> {
@@ -1132,6 +1264,46 @@ mod tests {
         };
         assert_eq!(tools.apply_definitions(Ok(defined)), None);
         assert_eq!(tools.member.profile.as_deref(), Some(DIGEST));
+    }
+
+    #[test]
+    fn a_new_part_starts_from_the_default_preset_of_its_kind() {
+        let reply = br#"{"definition_count":1,"definitions":[{"digest":"m1","kind":"material","display_name":"Steel","density_kg_m3":7850}],"environment_profiles":[{"designation":"H-200x200","kind":"i_shape"}],"environment_presets":[
+            {"id":"Column","kind":"column","name":"Column","class":1,"material":"Steel","profile":"H-200x200","thickness_mm":null},
+            {"id":"Plate","kind":"plate","name":"Plate","class":3,"material":"Steel","profile":null,"thickness_mm":12},
+            {"id":"Plate_Thin","kind":"plate","name":"Thin","class":4,"material":null,"profile":null,"thickness_mm":6}],"outcome":"definitions"}"#;
+        let definitions = parse_definitions(Some(0), reply).unwrap();
+        assert_eq!(definitions.presets.len(), 3);
+
+        let mut tools = Tools::default();
+        // Asked before the listing arrived: applied as soon as it does.
+        tools.member.kind = MemberKind::Column;
+        tools.active = ToolKind::Member;
+        tools.use_preset("column", None);
+        assert_eq!(tools.member.name, "");
+        assert_eq!(tools.apply_definitions(Ok(definitions)), None);
+        assert_eq!(tools.member.name, "Column");
+        assert_eq!(tools.member.class, "1");
+        assert_eq!(tools.member.profile.as_deref(), Some("name:H-200x200"));
+        assert!(tools.member.material.is_some());
+        let args = tools.member.prepare(store()).unwrap().args;
+        assert!(args.windows(2).any(|w| w == ["--profile", "H-200x200"]));
+        assert!(args.windows(2).any(|w| w == ["--class", "1"]));
+
+        tools.active = ToolKind::Plate;
+        tools.use_preset("plate", None);
+        assert_eq!(
+            (tools.plate.name.as_str(), tools.plate.class.as_str()),
+            ("Plate", "3")
+        );
+        assert_eq!(tools.plate.thickness, "12");
+        // A chosen preset replaces the defaults; a missing material stays unselected.
+        tools.use_preset("plate", Some("Plate_Thin"));
+        assert_eq!(tools.plate.thickness, "6");
+        assert_eq!(tools.plate.material, None);
+        assert_eq!(tools.chosen_preset.as_deref(), Some("Plate_Thin"));
+        assert_eq!(tools.presets_of("plate").len(), 2);
+        assert!(tools.presets_of("beam").is_empty());
     }
 
     #[test]

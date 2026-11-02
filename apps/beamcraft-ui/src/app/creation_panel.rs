@@ -9,6 +9,49 @@ use beamcraft_engine::query::pick::{
     SnapContext, SnapCursor, SnapKind, SnapQuery, snap_with_context,
 };
 
+/// The drop-down of the environment's presets for the active part kind; picking one refills the
+/// form (every field stays editable). Nothing is drawn when the environment has no preset.
+fn preset_combo(ui: &mut egui::Ui, tools: &mut crate::tools::Tools) {
+    let kind = tools.active_preset_kind();
+    let options: Vec<(String, String)> = tools
+        .presets_of(kind)
+        .iter()
+        .map(|p| (p.id.clone(), p.name.clone()))
+        .collect();
+    if options.is_empty() {
+        return;
+    }
+    let chosen = tools.chosen_preset.clone();
+    let selected = options
+        .iter()
+        .find(|(id, _)| Some(id) == chosen.as_ref())
+        .map_or("custom", |(_, name)| name.as_str())
+        .to_owned();
+    let mut picked = None;
+    ui.horizontal(|ui| {
+        ui.add_sized(
+            egui::vec2(70.0, 28.0),
+            egui::Label::new(egui::RichText::new("Preset").size(11.0)),
+        );
+        egui::ComboBox::from_id_salt("part-preset")
+            .width(ui.available_width().max(80.0))
+            .selected_text(selected)
+            .show_ui(ui, |ui| {
+                for (id, name) in &options {
+                    if ui
+                        .selectable_label(Some(id) == chosen.as_ref(), name)
+                        .clicked()
+                    {
+                        picked = Some(id.clone());
+                    }
+                }
+            });
+    });
+    if let Some(id) = picked {
+        tools.use_preset(kind, Some(&id));
+    }
+}
+
 impl App {
     pub(super) fn finish_creation_gesture(
         &mut self,
@@ -644,6 +687,7 @@ impl App {
             match self.tools.active {
                 ToolKind::Plate => {
                     ui.label(crate::theme::bold("Plate properties", 16.0));
+                    preset_combo(ui, &mut self.tools);
                     field(ui, "Name", &mut self.tools.plate.name, 160.0);
                     field(ui, "Class", &mut self.tools.plate.class, 80.0);
                     field(ui, "Thickness (mm)", &mut self.tools.plate.thickness, 80.0);
@@ -673,6 +717,7 @@ impl App {
                 }
                 ToolKind::Member => {
                     ui.label(crate::theme::bold(if self.bench == Bench::Column { "Column properties" } else { "Beam properties" }, 16.0));
+                    preset_combo(ui, &mut self.tools);
                     field(ui, "Name", &mut self.tools.member.name, 160.0);
                     field(ui, "Class", &mut self.tools.member.class, 80.0);
                     choice_combo(ui, "member-profile", "Profile", &mut self.tools.member.profile, &self.tools.definitions.profiles, true);

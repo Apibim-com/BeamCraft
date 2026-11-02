@@ -43,6 +43,16 @@ impl Fixture {
         let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
         (output.status.code().unwrap(), body)
     }
+    /// The raw standard output of a run, for replies that are not one JSON object.
+    fn bytes(&self, args: &[&str]) -> Vec<u8> {
+        let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
+            .args(args)
+            .env_remove("BEAMCRAFT_CONFIG_DIR")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{args:?}");
+        output.stdout
+    }
     /// Runs a start command with this fixture's configuration directory.
     fn with_config(&self, args: &[&str]) -> (i32, Json) {
         let config = self.path("config");
@@ -214,6 +224,44 @@ fn a_project_created_from_the_blank_environment_places_members_at_once() {
         available.len() >= 15,
         "{} environment profiles",
         available.len()
+    );
+    // The environment's presets give a new part its name, class, material and profile or
+    // thickness; each kind has a default, and every preset names a profile the environment has.
+    let presets = list(&defined.1, "environment_presets");
+    for kind in ["beam", "column", "plate"] {
+        assert!(
+            presets.iter().any(|p| text(p, "kind") == kind),
+            "no {kind} preset"
+        );
+    }
+    let plate = presets.iter().find(|p| text(p, "kind") == "plate").unwrap();
+    assert_eq!(text(plate, "id"), "Plate");
+    assert_eq!(at(plate, &["thickness_mm"]).float().unwrap(), 10.0);
+    for preset in presets.iter().filter(|p| text(p, "kind") != "plate") {
+        let profile = text(preset, "profile");
+        assert!(
+            available.iter().any(|a| text(a, "designation") == profile),
+            "{profile}"
+        );
+    }
+    // The window reads the same listing from the framed export of every refresh.
+    let framed = f.bytes(&[
+        "export-view",
+        "--store",
+        &store,
+        "--out",
+        "-",
+        "--with-definitions",
+        "true",
+    ]);
+    let framed = String::from_utf8_lossy(&framed);
+    assert!(
+        framed.contains("environment_profiles"),
+        "profiles missing from the frame"
+    );
+    assert!(
+        framed.contains("environment_presets"),
+        "presets missing from the frame"
     );
     let place = |kind: &str, end: &str, profile: &str, material: &str| {
         let (code, body) = f.raw(&[

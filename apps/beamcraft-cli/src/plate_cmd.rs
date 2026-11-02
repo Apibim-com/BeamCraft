@@ -4114,8 +4114,37 @@ pub(crate) fn definitions_json(
                 "environment_profiles",
                 environment_profiles_json(inspection, options)?,
             ),
+            ("environment_presets", environment_presets_json(options)?),
         ]))
     })
+}
+
+/// The part presets of the project's environment (`steel:preset:*`), for pickers and defaults.
+fn environment_presets_json(options: &BTreeMap<&str, &str>) -> Run<Json> {
+    let Some(store) = options.get("--store") else {
+        return Ok(Json::Array(Vec::new()));
+    };
+    let loaded = beamcraft_commands::preset::load_project(std::path::Path::new(store))?;
+    let listed = loaded
+        .presets
+        .iter()
+        .map(|preset| {
+            let optional = |text: &Option<String>| text.clone().map_or(Json::Null, Json::text);
+            Ok(Json::object([
+                ("id", Json::text(preset.id.clone())),
+                ("kind", Json::text(preset.kind.token())),
+                ("name", Json::text(preset.name.clone())),
+                ("class", Json::Number(preset.class.to_string())),
+                ("material", optional(&preset.material)),
+                ("profile", optional(&preset.profile)),
+                (
+                    "thickness_mm",
+                    preset.thickness_mm.map_or(Ok(Json::Null), num)?,
+                ),
+            ]))
+        })
+        .collect::<Run<Vec<_>>>()?;
+    Ok(Json::Array(listed))
 }
 
 fn unsupported_plate_json(record: &UnsupportedPlate) -> Run<Json> {
