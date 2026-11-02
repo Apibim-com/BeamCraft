@@ -35,6 +35,7 @@ pub mod cut_plane;
 pub mod dialog;
 pub mod edit;
 pub mod grid;
+pub mod library;
 pub mod metrics;
 pub mod perf;
 pub mod preview;
