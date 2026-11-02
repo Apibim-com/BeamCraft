@@ -1,13 +1,19 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! The work area of the model window: the view pane drawn in the central panel, its navigation
-//! and the input it hands to the tools. The active pane is the one selection, picking, snapping
-//! and every tool work in; the accessors here read and write its display state.
+//! The work area of the model window: up to eight equal view panes drawn inside the central
+//! panel, each a child window with a title bar, a frame, move, resize, maximize and close. The
+//! topmost pane is the active one: selection, picking, snapping and every tool work in it, and
+//! the accessors here read and write its display state.
 
-use super::{App, View, annotation_panel, draw_selection, navigation, target_size, workbench};
+use super::{
+    App, View, annotation_panel, draw_selection, navigation, target_size, viewport_sense, workbench,
+};
 use crate::edit::{ndc_of, ray_through};
+use crate::panes::{self, Edge};
+use crate::theme;
 use beamcraft_engine::RenderMode;
+use egui::{CornerRadius, Stroke, StrokeKind, pos2, vec2};
 use std::time::Instant;
 
 /// What a drawn pane hands to the input step.
@@ -18,6 +24,24 @@ pub(super) struct PaneDraw {
     pub response: egui::Response,
     /// The camera view it was drawn with.
     pub view: View,
+}
+
+/// What one pane's window asked for this frame, applied after every pane is drawn.
+pub(super) struct PaneOutcome {
+    /// The pane.
+    key: u64,
+    /// Its drawn image, when the camera made a view.
+    draw: Option<PaneDraw>,
+    /// The close button was clicked.
+    close: bool,
+    /// The maximize button was clicked or the title double-clicked.
+    toggle_max: bool,
+    /// How far the title bar was dragged.
+    moved: egui::Vec2,
+    /// The resize handle dragged and how far.
+    resized: Option<(Edge, egui::Vec2)>,
+    /// The title bar was clicked.
+    title_clicked: bool,
 }
 
 impl App {
@@ -73,6 +97,348 @@ impl App {
         }
     }
 
+    /// Whether the click that focused a pane may also select: Select or View bench, nothing
+    /// armed. Otherwise the press only focuses, and the next click places or picks.
+    pub(super) fn focus_click_selects(&self) -> bool {
+        matches!(
+            self.bench,
+            workbench::Bench::Select | workbench::Bench::View
+        ) && !self.beam_mode
+            && !self.plate_mode
+            && !self.plane_pick
+            && self.views.picking.is_none()
+            && self.grid_line.click.is_none()
+    }
+
+    /// The MDI work area: the panes bottom to top, each in its own child Ui (so egui hit-tests
+    /// them in z-order), then focus, window changes and the active pane's input. With no pane
+    /// open it offers to open the free 3D view.
+    pub(super) fn work_area(&mut self, ui: &mut egui::Ui, zoom_in: bool, zoom_out: bool) {
+        let area = ui.available_rect_before_wrap();
+        self.views.area = Some(area);
+        // Clicks between panes land here and do nothing.
+        let _background = ui.interact(area, egui::Id::unique("work-area"), egui::Sense::click());
+        if self.views.panes.is_empty() {
+            self.empty_work_area(ui, area);
+            return;
+        }
+        // "Tile windows" until the Arrange commands replace it.
+        if std::mem::take(&mut self.views.tile) {
+            let count = self.views.panes.len();
+            for (index, pane) in self.views.panes.iter_mut().enumerate() {
+                pane.rect = crate::views::tile_rect(area, index, count);
+                pane.placed = true;
+                pane.maximized = false;
+                pane.restore = None;
+            }
+        }
+        // Panes opened before any work-area frame (the window's first pane, tests) are placed
+        // now: the first one maximized, the others cascaded. Then every pane is kept inside.
+        for (index, pane) in self.views.panes.iter_mut().enumerate() {
+            if !pane.placed {
+                pane.rect = if index == 0 {
+                    area
+                } else {
+                    panes::opening_rect(area, index)
+                };
+                pane.maximized = index == 0;
+                pane.placed = true;
+            }
+            pane.rect = if pane.maximized {
+                area
+            } else {
+                panes::clamp_into(area, pane.rect)
+            };
+        }
+        let active = self.views.active_pane().map(|p| p.key);
+        // A press counts only on the central panel's own layer: a press on a ribbon popup, an
+        // inspector combo, Details, the publish dialog, the sheet editor or the command search
+        // lying over the work area never focuses a pane.
+        let layer = ui.layer_id();
+        let pressed = ui
+            .input(|i| {
+                i.pointer
+                    .primary_pressed()
+                    .then(|| i.pointer.interact_pos())
+                    .flatten()
+            })
+            .filter(|pos| ui.ctx().layer_id_at(*pos) == Some(layer))
+            .and_then(|pos| panes::topmost_at(&self.views.panes, pos));
+        // Panes under the topmost maximized one are covered: they are not drawn this frame.
+        let covered = self
+            .views
+            .panes
+            .iter()
+            .rposition(|p| p.maximized)
+            .unwrap_or(0);
+        let order: Vec<u64> = self
+            .views
+            .panes
+            .iter()
+            .skip(covered)
+            .map(|p| p.key)
+            .collect();
+        let mut outcomes = Vec::new();
+        for key in order {
+            let is_active = Some(key) == active;
+            let keys = is_active.then_some((zoom_in, zoom_out));
+            if let Some(outcome) = self.pane_window(ui, area, key, is_active, keys) {
+                outcomes.push(outcome);
+            }
+        }
+        // 1. Window changes, by key.
+        let mut draws = Vec::new();
+        let mut title_clicked = None;
+        for outcome in outcomes {
+            if outcome.close {
+                self.close_pane(outcome.key);
+                continue;
+            }
+            self.change_window(area, &outcome);
+            if outcome.title_clicked {
+                title_clicked = Some(outcome.key);
+            }
+            if let Some(draw) = outcome.draw {
+                draws.push(draw);
+            }
+        }
+        // 2. Focus on the press; the click its release makes is remembered until then.
+        if let Some(key) = pressed
+            && Some(key) != active
+            && self.views.panes.iter().any(|p| p.key == key)
+        {
+            self.focus_pane(key);
+            self.views.focus_press = Some(key);
+        }
+        let now = self.views.active_pane().map(|p| p.key);
+        // A click on the active pane's title shows its view in the panel, unless a new view's
+        // form is open there.
+        if title_clicked.is_some()
+            && title_clicked == now
+            && matches!(
+                self.bench,
+                workbench::Bench::Select | workbench::Bench::View
+            )
+            && !(self.bench == workbench::Bench::View
+                && self.views.subject == crate::views::Subject::NewView)
+        {
+            self.show_view_properties();
+        }
+        // 3. The active pane's input.
+        if let Some(draw) = draws.iter().find(|d| Some(d.key) == now) {
+            self.pane_input(ui, draw);
+        }
+        // 4. The focusing press ends with its release.
+        if ui.input(|i| i.pointer.primary_released()) {
+            self.views.focus_press = None;
+        }
+    }
+
+    /// The empty work area: a hint and the button that opens the free 3D view.
+    fn empty_work_area(&mut self, ui: &mut egui::Ui, area: egui::Rect) {
+        let palette = theme::Palette::current(ui);
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(area)
+                .id_salt("work-area-empty")
+                .layout(egui::Layout::top_down(egui::Align::Center)),
+        );
+        child.add_space((area.height() / 2.0 - 32.0).max(0.0));
+        child.label(egui::RichText::new("No view is open.").color(palette.muted));
+        child.add_space(8.0);
+        if theme::button(&mut child, theme::Kind::Primary, "Open the 3D view", true).clicked() {
+            self.open_pane(None);
+        }
+    }
+
+    /// Applies a pane's maximize toggle, move or resize; a maximized pane neither moves nor
+    /// resizes.
+    fn change_window(&mut self, area: egui::Rect, outcome: &PaneOutcome) {
+        let Some(pane) = self.views.panes.iter_mut().find(|p| p.key == outcome.key) else {
+            return;
+        };
+        if outcome.toggle_max {
+            if pane.maximized {
+                pane.maximized = false;
+                let back = pane
+                    .restore
+                    .take()
+                    .unwrap_or_else(|| panes::opening_rect(area, 0));
+                pane.rect = panes::clamp_into(area, back);
+            } else {
+                pane.restore = Some(pane.rect);
+                pane.maximized = true;
+                pane.rect = area;
+            }
+            return;
+        }
+        if pane.maximized {
+            return;
+        }
+        if outcome.moved != egui::Vec2::ZERO {
+            pane.rect = panes::moved(area, pane.rect, outcome.moved);
+        }
+        if let Some((edge, delta)) = outcome.resized {
+            pane.rect = panes::resized(area, pane.rect, edge, delta);
+        }
+    }
+
+    /// One pane's window: the title bar, the image, the buttons and the resize handles, all in
+    /// a child Ui clipped to the pane and the work area. The widgets register body first and
+    /// handles last, so the handles win at the borders. `None` when the pane is gone.
+    fn pane_window(
+        &mut self,
+        ui: &mut egui::Ui,
+        area: egui::Rect,
+        key: u64,
+        active: bool,
+        keys: Option<(bool, bool)>,
+    ) -> Option<PaneOutcome> {
+        let (rect, title, maximized) = self
+            .views
+            .panes
+            .iter()
+            .find(|p| p.key == key)
+            .map(|p| (p.rect, p.title.clone(), p.maximized))?;
+        let chrome = panes::chrome(rect);
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).id_salt(("pane", key)));
+        child.set_clip_rect(rect.intersect(area).intersect(ui.clip_rect()));
+        let palette = theme::Palette::current(ui);
+        let (stroke, title_fill) = if active {
+            (Stroke::new(2.0, palette.link), palette.select)
+        } else {
+            (Stroke::new(1.0, palette.rule), palette.head)
+        };
+        let painter = child.painter().clone();
+        painter.rect_filled(
+            chrome.title,
+            CornerRadius {
+                nw: 4,
+                ne: 4,
+                sw: 0,
+                se: 0,
+            },
+            title_fill,
+        );
+        let body = child.interact(
+            chrome.body,
+            egui::Id::unique(("pane-body", key)),
+            viewport_sense(),
+        );
+        let draw = self.draw_pane(&mut child, key, chrome.body, body, keys);
+        let bar = child.interact(
+            chrome.title,
+            egui::Id::unique(("pane-title", key)),
+            egui::Sense::click_and_drag(),
+        );
+        let close = child.interact(
+            chrome.close,
+            egui::Id::unique(("pane-close", key)),
+            egui::Sense::click(),
+        );
+        let maximize = child.interact(
+            chrome.maximize,
+            egui::Id::unique(("pane-max", key)),
+            egui::Sense::click(),
+        );
+        let mut resized = None;
+        for (edge, handle, cursor) in [
+            (Edge::Left, chrome.left, egui::CursorIcon::ResizeHorizontal),
+            (
+                Edge::Right,
+                chrome.right,
+                egui::CursorIcon::ResizeHorizontal,
+            ),
+            (Edge::Top, chrome.top, egui::CursorIcon::ResizeVertical),
+            (
+                Edge::Bottom,
+                chrome.bottom,
+                egui::CursorIcon::ResizeVertical,
+            ),
+            (Edge::Corner, chrome.corner, egui::CursorIcon::ResizeNwSe),
+        ] {
+            let response = child.interact(
+                handle,
+                egui::Id::unique(("pane-edge", key, edge)),
+                egui::Sense::drag(),
+            );
+            if maximized {
+                continue;
+            }
+            if response.hovered() || response.dragged() {
+                ui.ctx().set_cursor_icon(cursor);
+            }
+            if response.dragged_by(egui::PointerButton::Primary) {
+                resized = Some((edge, response.drag_delta()));
+            }
+        }
+        // The chrome is painted over the image.
+        for button in [&close, &maximize] {
+            if button.hovered() {
+                painter.rect_filled(button.rect, 0, palette.rule);
+            }
+        }
+        painter.rect_stroke(rect, 4, stroke, StrokeKind::Inside);
+        let text = painter.with_clip_rect(
+            egui::Rect::from_min_max(
+                chrome.title.min,
+                pos2(chrome.maximize.min.x, chrome.title.max.y),
+            )
+            .intersect(painter.clip_rect()),
+        );
+        text.text(
+            chrome.title.left_center() + vec2(8.0, 0.0),
+            egui::Align2::LEFT_CENTER,
+            title,
+            egui::FontId::proportional(12.0),
+            palette.text,
+        );
+        let line = Stroke::new(1.0, palette.text);
+        let c = chrome.close.center();
+        painter.line_segment([c + vec2(-4.0, -4.0), c + vec2(4.0, 4.0)], line);
+        painter.line_segment([c + vec2(-4.0, 4.0), c + vec2(4.0, -4.0)], line);
+        let m = chrome.maximize.center();
+        if maximized {
+            // Restore: two overlapping frames.
+            painter.rect_stroke(
+                egui::Rect::from_center_size(m + vec2(-1.5, 1.5), vec2(7.0, 7.0)),
+                0,
+                line,
+                StrokeKind::Middle,
+            );
+            painter.line_segment([m + vec2(-2.0, -5.0), m + vec2(5.0, -5.0)], line);
+            painter.line_segment([m + vec2(5.0, -5.0), m + vec2(5.0, 2.0)], line);
+        } else {
+            painter.rect_stroke(
+                egui::Rect::from_center_size(m, vec2(9.0, 9.0)),
+                0,
+                line,
+                StrokeKind::Middle,
+            );
+        }
+        if !maximized {
+            // The corner grip: three short diagonals (egui's own grip is private).
+            let grip = Stroke::new(1.0, palette.muted);
+            let corner = rect.max - vec2(3.0, 3.0);
+            for step in [4.0, 7.0, 10.0] {
+                painter.line_segment([corner - vec2(step, 0.0), corner - vec2(0.0, step)], grip);
+            }
+        }
+        Some(PaneOutcome {
+            key,
+            draw,
+            close: close.clicked(),
+            toggle_max: maximize.clicked() || bar.double_clicked(),
+            moved: if !maximized && bar.dragged_by(egui::PointerButton::Primary) {
+                bar.drag_delta()
+            } else {
+                egui::Vec2::ZERO
+            },
+            resized,
+            title_clicked: bar.clicked(),
+        })
+    }
+
     /// Draws pane `key` over `body` (points): resizes its target, navigates its camera from
     /// `response` (the zoom keys only when `keys` is given), renders with its mode, the view's
     /// tint and clip and the scene's hidden kinds, then paints the grid guides, annotations and
@@ -98,6 +464,10 @@ impl App {
         let tint = crate::views::tint_of(shown);
         // The view adds its depth slab and work area to the display cut (V12).
         let cut = crate::views::display_clip(self.cut.as_ref(), shown);
+        // The loaded scene follows the active pane's hidden kinds; another pane whose view hides
+        // other kinds draws its own filtered upload.
+        let hidden = shown.map_or(beamcraft_engine::KindFilter::SHOW_ALL, |v| v.hidden_kinds);
+        let own_scene = hidden != self.views.shown;
         let scale = ui.ctx().pixels_per_point();
         let [width, height] = target_size([body.width(), body.height()], scale);
         let dark = ui.ctx().theme() == egui::Theme::Dark;
@@ -195,6 +565,39 @@ impl App {
             renderer.background = wgpu::Color { r, g, b, a: 1.0 };
         }
         if let Some(l) = &self.loaded {
+            if own_scene {
+                let token = l.snapshot.token().as_str().to_owned();
+                let stale = pane
+                    .filtered
+                    .as_ref()
+                    .is_none_or(|(t, h, _)| *t != token || *h != hidden);
+                if stale {
+                    let overlay = self.colour.as_ref().map(|(_, o)| std::sync::Arc::clone(o));
+                    let built = crate::scene::Scene::from_snapshot_showing(
+                        &l.snapshot,
+                        beamcraft_engine::Representation::Full,
+                        &l.uploaded.resident(),
+                        overlay.as_deref(),
+                        hidden,
+                    )
+                    .and_then(|scene| {
+                        crate::render::Uploaded::upload(
+                            &self.state.device,
+                            &self.state.queue,
+                            &scene,
+                            Some(&l.uploaded),
+                        )
+                    });
+                    match built {
+                        Ok(uploaded) => pane.filtered = Some((token, hidden, uploaded)),
+                        Err(e) => self.error = Some(e.to_string()),
+                    }
+                }
+            }
+            let uploaded = match &pane.filtered {
+                Some((_, h, uploaded)) if own_scene && *h == hidden => uploaded,
+                _ => &l.uploaded,
+            };
             // The display cut is uniform state: the scene and its snapshot never change.
             // Planes are model millimetres; the uniform is scene-centred.
             let clip = match &cut {
@@ -256,7 +659,7 @@ impl App {
                         renderer.draw(
                             &self.state.device,
                             &self.state.queue,
-                            &l.uploaded,
+                            uploaded,
                             view,
                             &self.stats,
                             mode,
@@ -313,18 +716,21 @@ impl App {
 
     /// The active pane's click, hover previews and tool dispatch: a click selects, picks a grid
     /// line or a view point, or places a point of the armed tool. A pane that is not the active
-    /// one takes none of them.
+    /// one takes none of them, and the click that focused the pane only focuses it unless it may
+    /// select (`focus_click_selects`).
     pub(super) fn pane_input(&mut self, ui: &mut egui::Ui, draw: &PaneDraw) {
         if self.views.active_pane().map(|p| p.key) != Some(draw.key) {
             return;
         }
+        let swallow = self.views.focus_press == Some(draw.key) && !self.focus_click_selects();
         let response = &draw.response;
         let view = &draw.view;
         let mut picked = None;
         let mut picked_grid = None;
-        let finished_creation = self.finish_creation_gesture(response, view);
+        let finished_creation = !swallow && self.finish_creation_gesture(response, view);
         // A closure gesture consumes the click before it can append another point.
-        if !finished_creation
+        if !swallow
+            && !finished_creation
             && response.clicked_by(egui::PointerButton::Primary)
             && let Some(pos) = response.interact_pointer_pos()
             && let Some(ndc) = ndc_of(

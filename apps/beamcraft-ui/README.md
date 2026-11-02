@@ -76,9 +76,11 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   colour and opacity. The view properties are in the right panel: clicking empty space in the
   viewport shows them, and the free 3D view offers "Save as view". The project browser lists them
   by folder with search, quick access, previews and a context menu; 3D / plane (Ctrl+P, shown in
-  its tooltip) toggles 3D and the view plane, Ctrl+Tab cycles the
-  open views, and up to eight view windows tile and dock. Views are display state beside the
-  store and never change the model. See [model views](../../docs/design/v12-named-views.md).
+  its tooltip) toggles 3D and the view plane, and Ctrl+Tab cycles the open views. The work area
+  holds up to eight equal view windows inside it; the active one is highlighted and takes
+  selection, picking, snapping and tools; each moves, resizes, maximizes and closes, and the
+  last one may be closed. Views are display state beside the store and never change the model.
+  See [model views](../../docs/design/v12-named-views.md).
 - View retains all five render modes (Wireframe, Transparent, Grey, Shaded, Selected only)
   and the upstream remappable Ctrl+1 through Ctrl+5 shortcuts. Mode changes never reload the
   model. See [render modes](../../docs/design/v16-render-modes.md).

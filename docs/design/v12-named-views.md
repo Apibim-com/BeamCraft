@@ -81,9 +81,16 @@ previews need no agent and have no command.
   the transparent mode), and adds its slab and work area to the cut. Picking and snapping see
   only what it shows. Each view keeps its session camera; Ctrl+Tab cycles the open views; the
   free 3D view and its work plane come back as they were.
-* Up to eight windows besides the main viewport show a view or the free 3D view with their own
-  camera, cut, tint, hidden kinds, render mode and grid guides; they tile and dock to an edge.
-  Selection and tools stay in the main viewport.
+* The work area holds up to eight equal view windows, drawn inside it and never over the side
+  panels. Each shows a view or the free 3D view with its own camera, cut, tint, hidden kinds,
+  render mode and grid guides, and has a title bar (the view's name, or "3D view"), move,
+  resize, maximize and close. The topmost window is the active one: its frame and title bar are
+  highlighted, and selection, picking, snapping and every tool work in it. A primary press
+  focuses a window (a press on a popup or dialog over the work area does not); with a tool
+  armed that click only focuses, and the next one places. Scroll zoom and middle-drag pan act on
+  the window under the pointer without focusing it. The first window opens maximized; the last
+  one may be closed, which leaves "No view is open." and "Open the 3D view". Window layout is
+  not saved.
 
 ## Not in this slice
 

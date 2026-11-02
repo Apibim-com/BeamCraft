@@ -216,8 +216,8 @@ pub struct App {
     cut_form: crate::cut_plane::Form,
     /// The window's applied display cut; `None` shows the whole model.
     cut: Option<beamcraft_engine::view_clipping::Clipping>,
-    /// The model views of this model (V12): the book, the browser and properties state, the
-    /// work-area panes (the main viewport is the first) and the extra view windows.
+    /// The model views of this model (V12): the book, the browser and properties state and the
+    /// panes of the work area (the last one is active).
     views: crate::views::Views,
     /// The work plane the free 3D view had before a view installed its own.
     views_input: Option<Option<beamcraft_engine::work_plane::WorkPlane>>,
@@ -963,17 +963,14 @@ impl App {
         self.menu_note = Some(Err(why));
     }
 
-    /// Frees the egui textures of this window (every pane, view window and preview) before it is
-    /// dropped. Freeing twice is harmless.
+    /// Frees the egui textures of this window (every pane and preview) before it is dropped.
+    /// Freeing twice is harmless.
     pub(crate) fn release(&mut self) {
         for pane in &mut self.views.panes {
             pane.target.release(&self.state);
         }
-        for window in &mut self.views.windows {
-            window.release(&self.state);
-        }
-        for (_, window) in self.views.previews.values_mut() {
-            window.release(&self.state);
+        for (_, target) in self.views.previews.values_mut() {
+            target.release(&self.state);
         }
     }
 
@@ -1170,12 +1167,14 @@ impl App {
     fn show(&mut self, loaded: Loaded) {
         note_loaded(&self.stats, &loaded);
         // A new scene may centre on another origin: the cameras of the views keep their framing
-        // in model space (V12). The main camera follows only while a view holds it.
+        // in model space (V12). Only the active free pane does not follow: the reload refits it
+        // against its own aspect.
         let previous = self.loaded.as_ref().map(|l| l.summary.origin_mm);
         let next = loaded.summary.origin_mm;
         if let Some(previous) = previous.filter(|p| *p != next) {
-            if let Some(pane) = self.views.active_pane_mut() {
-                if pane.view.is_some() {
+            let active = self.views.active_pane().map(|p| p.key);
+            for pane in &mut self.views.panes {
+                if pane.view.is_some() || Some(pane.key) != active {
                     pane.camera.rebase(previous, next);
                 }
                 if let Some((camera, _, _)) = &mut pane.spatial {
@@ -1184,9 +1183,6 @@ impl App {
             }
             for camera in self.views.cameras.values_mut() {
                 camera.rebase(previous, next);
-            }
-            for window in &mut self.views.windows {
-                window.camera.rebase(previous, next);
             }
         }
         self.views.shown = beamcraft_engine::KindFilter::SHOW_ALL;
@@ -2899,7 +2895,6 @@ impl eframe::App for App {
             self.project_browser(ui);
             self.details_window(&ctx);
             self.publish_dialog(&ctx);
-            self.draw_view_windows(&ctx);
             self.sheet_editor.window(
                 &ctx,
                 &self.source.cli,
@@ -2908,14 +2903,7 @@ impl eframe::App for App {
             );
         }
         egui::CentralPanel::default().show(ui, |ui| {
-            let body = ui.available_rect_before_wrap();
-            let response = ui.allocate_rect(body, viewport_sense());
-            if let Some(key) = self.views.active_pane().map(|p| p.key)
-                && let Some(draw) =
-                    self.draw_pane(ui, key, body, response, Some((zoom_in, zoom_out)))
-            {
-                self.pane_input(ui, &draw);
-            }
+            self.work_area(ui, zoom_in, zoom_out);
         });
         ui.ctx().request_repaint();
     }
@@ -3742,22 +3730,29 @@ pub(crate) mod tests {
     #[test]
     fn release_frees_the_viewport_and_view_window_textures() {
         let Some(mut app) = headless() else { return };
-        let camera = crate::camera::Camera::new([0.0; 3], 1000.0, 1.6).unwrap();
-        let mut window = crate::views::ViewWindow::new(None, camera, 0);
-        window.resize(&app.state, 64, 64, None, &app.stats).unwrap();
-        let window_texture = window.texture().unwrap();
-        app.views.windows.push(window);
         let texture = app.texture_id().unwrap();
+        app.open_pane(None);
+        assert_eq!(app.views.panes.len(), 2);
+        for pane in &mut app.views.panes {
+            pane.target
+                .resize(&app.state, 64, 64, None, &app.stats)
+                .unwrap();
+        }
+        let textures: Vec<egui::TextureId> = app
+            .views
+            .panes
+            .iter()
+            .map(|p| p.target.texture().unwrap())
+            .collect();
+        assert!(textures.contains(&texture));
         {
             let renderer = app.state.renderer.read();
-            assert!(renderer.texture(&texture).is_some());
-            assert!(renderer.texture(&window_texture).is_some());
+            assert!(textures.iter().all(|t| renderer.texture(t).is_some()));
         }
         app.release();
         {
             let renderer = app.state.renderer.read();
-            assert!(renderer.texture(&texture).is_none());
-            assert!(renderer.texture(&window_texture).is_none());
+            assert!(textures.iter().all(|t| renderer.texture(t).is_none()));
         }
         // A second release finds nothing left to free.
         app.release();
@@ -5632,15 +5627,30 @@ pub(crate) mod tests {
         assert_eq!(fallback.rgba.len(), 32 * 32 * 4);
     }
 
-    /// A frame that draws the workspace panels, the inspector (with the view panel) and the
-    /// view windows, returning the centre of every drawn text label and every filled rectangle
-    /// (for the view-window frame, whose close button sits at its right edge).
+    /// A frame that draws the workspace panels, the inspector (with the view panel) and the work
+    /// area, returning the centre of every drawn text label and every drawn rectangle with its
+    /// stroke colour (the active pane's frame is stroked with the link colour).
     fn views_frame(
         app: &mut App,
         ctx: &egui::Context,
         events: Vec<egui::Event>,
         labels: &mut Vec<(String, egui::Pos2)>,
-        rects: &mut Vec<egui::Rect>,
+        rects: &mut Vec<(egui::Rect, egui::Color32)>,
+    ) {
+        views_frame_with(app, ctx, events, labels, rects, true, |_| {});
+    }
+
+    /// [`views_frame`] with `over` drawn too, for areas lying over the work area, and the
+    /// project browser only when `browser` is set (without it the work area reaches the left
+    /// edge, under the ribbon's popups).
+    fn views_frame_with(
+        app: &mut App,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        labels: &mut Vec<(String, egui::Pos2)>,
+        rects: &mut Vec<(egui::Rect, egui::Color32)>,
+        browser: bool,
+        mut over: impl FnMut(&egui::Context),
     ) {
         let output = ctx.run_ui(
             egui::RawInput {
@@ -5653,10 +5663,12 @@ pub(crate) mod tests {
             },
             |ui| {
                 app.ribbon(ui);
-                app.project_browser(ui);
+                if browser {
+                    app.project_browser(ui);
+                }
                 app.inspector(ui);
-                app.draw_view_windows(ui.ctx());
-                egui::CentralPanel::default().show(ui, |_| {});
+                over(ui.ctx());
+                egui::CentralPanel::default().show(ui, |ui| app.work_area(ui, false, false));
             },
         );
         for shape in &output.shapes {
@@ -5665,9 +5677,7 @@ pub(crate) mod tests {
                     text.galley.text().to_owned(),
                     text.pos + text.galley.size() / 2.0,
                 )),
-                egui::Shape::Rect(rect) if rect.fill != egui::Color32::TRANSPARENT => {
-                    rects.push(rect.rect)
-                }
+                egui::Shape::Rect(rect) => rects.push((rect.rect, rect.stroke.color)),
                 _ => {}
             }
         }
@@ -6050,48 +6060,308 @@ pub(crate) mod tests {
         );
         assert_eq!(app.views.book.len(), before);
 
-        // Extra windows are display-only and bounded.
+        // Panes are display-only and bounded; before any work-area frame none is placed.
         for _ in 0..10 {
-            app.open_view_window(None);
+            app.open_pane(None);
         }
-        assert_eq!(app.views.windows.len(), crate::views::MAX_WINDOWS);
-        app.views.tile = true;
+        assert_eq!(app.views.panes.len(), crate::views::MAX_WINDOWS);
+        assert!(app.views.panes.iter().all(|p| !p.placed));
+        assert!(
+            matches!(app.views.note, Some(Err(_))),
+            "the cap is reported"
+        );
         let ctx = egui::Context::default();
         super::inter(&ctx);
         crate::theme::install(&ctx);
         let mut labels = Vec::new();
         let mut rects = Vec::new();
-        let mut title = None;
-        for _ in 0..3 {
-            labels.clear();
-            rects.clear();
-            views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
-            title = labels
-                .iter()
-                .find(|(text, _)| text == "3D view 2")
-                .map(|(_, pos)| *pos);
-            if title.is_some() {
-                break;
-            }
-        }
-        let title = title.unwrap_or_else(|| panic!("the view window did not draw: {labels:?}"));
-        // The close button sits at the right edge of the window's own frame, the smallest
-        // filled rectangle around the title that is wide enough to be a window.
-        let frame = rects
-            .iter()
-            .filter(|r| r.contains(title) && r.width() > 200.0)
-            .min_by(|a, b| a.area().total_cmp(&b.area()))
-            .copied()
-            .unwrap_or_else(|| panic!("no window frame around {title:?} in {rects:?}"));
-        let close = egui::pos2(frame.right() - 11.0, title.y);
+        // The first work-area frame places every pane inside, the first one maximized.
+        views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        let area = app.views.area.unwrap();
+        assert!(app.views.panes.iter().all(|p| p.placed));
+        assert!(app.views.panes.iter().all(|p| area.contains_rect(p.rect)));
+        assert!(app.views.panes[0].maximized);
+        assert_eq!(app.views.panes[0].rect, area);
+        // Tiled, every pane leaves the maximized state.
+        app.views.tile = true;
+        views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        assert!(app.views.panes.iter().all(|p| !p.maximized));
+        assert!(app.views.panes.iter().all(|p| area.contains_rect(p.rect)));
+        // The active pane's close glyph closes it.
+        let close = crate::panes::chrome(app.views.active_pane().unwrap().rect)
+            .close
+            .center();
         views_frame(&mut app, &ctx, click(close), &mut labels, &mut rects);
         views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
         assert_eq!(
-            app.views.windows.len(),
+            app.views.panes.len(),
             crate::views::MAX_WINDOWS - 1,
-            "the close button did not release the window"
+            "the close button did not close the pane"
         );
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A press and, in a later frame, the release of the primary button at `pos`.
+    fn press(pos: egui::Pos2) -> Vec<egui::Event> {
+        vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]
+    }
+
+    /// The release of the primary button at `pos`.
+    fn release(pos: egui::Pos2) -> Vec<egui::Event> {
+        vec![egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }]
+    }
+
+    /// A context with the window's fonts and theme.
+    fn views_context() -> egui::Context {
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        ctx
+    }
+
+    #[test]
+    fn a_click_activates_the_topmost_pane_under_the_pointer() {
+        let Some(mut app) = headless() else { return };
+        app.open_pane(None);
+        app.open_pane(None);
+        assert_eq!(app.views.panes.len(), 3);
+        app.views.tile = true;
+        let ctx = views_context();
+        let (mut labels, mut rects) = (Vec::new(), Vec::new());
+        views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        // A click in the bottom pane's body raises it.
+        let first = app.views.panes[0].key;
+        let rect = app.views.panes[0].rect;
+        let inside = crate::panes::chrome(rect).body.center();
+        views_frame(&mut app, &ctx, click(inside), &mut labels, &mut rects);
+        assert_eq!(app.views.active_pane().unwrap().key, first);
+        // The focus is applied after the drawing: the next frame strokes its frame as active.
+        rects.clear();
+        views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        let link = crate::theme::Palette::of(ctx.theme()).link;
+        assert!(
+            rects.iter().any(|(r, c)| *r == rect && *c == link),
+            "no active frame around {rect:?}: {rects:?}"
+        );
+        // Overlapping panes: a click in the overlap goes to the upper one, which stays active.
+        let area = app.views.area.unwrap();
+        let lower = egui::Rect::from_min_size(area.min, egui::vec2(500.0, 400.0));
+        let upper = lower.translate(egui::vec2(200.0, 150.0));
+        app.views.panes[1].rect = lower;
+        app.views.panes[2].rect = upper;
+        let top = app.views.panes[2].key;
+        app.focus_pane(top);
+        views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        let overlap = lower.intersect(upper).center();
+        views_frame(&mut app, &ctx, click(overlap), &mut labels, &mut rects);
+        assert_eq!(app.views.active_pane().unwrap().key, top);
+    }
+
+    #[test]
+    fn the_focusing_click_is_swallowed_until_its_release() {
+        let Some(mut app) = headless() else { return };
+        app.open_pane(None);
+        app.views.tile = true;
+        let ctx = views_context();
+        let (mut labels, mut rects) = (Vec::new(), Vec::new());
+        views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        app.set_bench(super::workbench::Bench::Beam);
+        let lower = app.views.panes[0].key;
+        let at = crate::panes::chrome(app.views.panes[0].rect).body.center();
+        // The press focuses the lower pane and is remembered.
+        views_frame(&mut app, &ctx, press(at), &mut labels, &mut rects);
+        assert_eq!(app.views.active_pane().unwrap().key, lower);
+        assert_eq!(app.views.focus_press, Some(lower));
+        // Its release places no point.
+        views_frame(&mut app, &ctx, release(at), &mut labels, &mut rects);
+        assert!(app.beam.start().is_none(), "{:?}", app.tool_note);
+        assert_eq!(app.views.focus_press, None);
+        // The next click in the active pane places one.
+        views_frame(&mut app, &ctx, click(at), &mut labels, &mut rects);
+        assert!(app.beam.start().is_some(), "{:?}", app.tool_note);
+
+        // With the Select tool the focusing click also selects.
+        app.set_bench(super::workbench::Bench::Select);
+        deliver(&mut app, refreshed(2));
+        let other = app.views.panes[0].key;
+        let at = crate::panes::chrome(app.views.panes[0].rect).body.center();
+        views_frame(&mut app, &ctx, press(at), &mut labels, &mut rects);
+        assert_eq!(app.views.active_pane().unwrap().key, other);
+        assert!(app.select_job.is_none());
+        views_frame(&mut app, &ctx, release(at), &mut labels, &mut rects);
+        assert!(app.select_job.is_some(), "the focusing click selects");
+    }
+
+    #[test]
+    fn a_press_on_a_popup_over_the_work_area_does_not_focus_a_pane() {
+        let Some(mut app) = headless() else { return };
+        app.open_pane(None);
+        app.views.tile = true;
+        let ctx = views_context();
+        let (mut labels, mut rects) = (Vec::new(), Vec::new());
+        // Without the project browser the work area reaches the left edge, under the ribbon.
+        let mut frame = |app: &mut App,
+                         events: Vec<egui::Event>,
+                         labels: &mut Vec<(String, egui::Pos2)>,
+                         over: &dyn Fn(&egui::Context)| {
+            views_frame_with(app, &ctx, events, labels, &mut rects, false, over);
+        };
+        let none = |_: &egui::Context| {};
+        frame(&mut app, vec![], &mut labels, &none);
+        frame(&mut app, vec![], &mut labels, &none);
+        let active = app.views.active_pane().unwrap().key;
+        let at = crate::panes::chrome(app.views.panes[0].rect).body.center();
+        // An area lying over the lower pane: `layer_id_at` reads last frame's layer rects.
+        let over = |ctx: &egui::Context| {
+            egui::Area::new(egui::Id::unique("over"))
+                .order(egui::Order::Foreground)
+                .fixed_pos(at - egui::vec2(40.0, 12.0))
+                .show(ctx, |ui| {
+                    let _ = ui.button("Over the pane");
+                });
+        };
+        for _ in 0..2 {
+            frame(&mut app, vec![], &mut labels, &over);
+        }
+        frame(&mut app, click(at), &mut labels, &over);
+        assert_eq!(app.views.active_pane().unwrap().key, active);
+
+        // The same with the ribbon's Create view popup: choosing an entry over a pane focuses
+        // nothing.
+        labels.clear();
+        frame(&mut app, vec![], &mut labels, &none);
+        let tab = labels.iter().find(|(t, _)| t == "View").unwrap().1;
+        frame(&mut app, click(tab), &mut labels, &none);
+        labels.clear();
+        frame(&mut app, vec![], &mut labels, &none);
+        let button = labels.iter().find(|(t, _)| t == "Create view").unwrap().1;
+        frame(&mut app, click(button), &mut labels, &none);
+        let entry = "From the current camera";
+        let mut at = None;
+        for _ in 0..3 {
+            labels.clear();
+            frame(&mut app, vec![], &mut labels, &none);
+            at = labels.iter().find(|(t, _)| t == entry).map(|(_, p)| *p);
+            if at.is_some() {
+                break;
+            }
+        }
+        let at = at.unwrap_or_else(|| panic!("the popup did not open: {labels:?}"));
+        let area = app.views.area.unwrap();
+        assert!(area.contains(at), "the entry lies over the work area");
+        let under = crate::panes::topmost_at(&app.views.panes, at);
+        assert!(under.is_some() && under != Some(active), "{under:?}");
+        frame(&mut app, click(at), &mut labels, &none);
+        assert_eq!(app.views.active_pane().unwrap().key, active);
+        assert_eq!(
+            app.views.form.construction,
+            crate::views::Construction::CurrentCamera
+        );
+    }
+
+    #[test]
+    fn the_work_area_may_be_empty_and_nothing_targets_it() {
+        use beamcraft_engine::views::ModelView;
+        use beamcraft_engine::work_plane::WorkPlane;
+        use beamcraft_model::id::Uuid7;
+        let Some(mut app) = headless() else { return };
+        let keys: Vec<u64> = app.views.panes.iter().map(|p| p.key).collect();
+        for key in keys {
+            app.close_pane(key);
+        }
+        assert!(app.views.panes.is_empty());
+        app.set_bench(super::workbench::Bench::Beam);
+        let ctx = views_context();
+        let (mut labels, mut rects) = (Vec::new(), Vec::new());
+        views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        assert!(labels.iter().any(|(t, _)| t == "No view is open."));
+        assert!(labels.iter().any(|(t, _)| t == "Open the 3D view"));
+        // A click, F and Ctrl+P on an empty work area: nothing to act on, and no panic.
+        let key = |key, modifiers| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        // Below the hint's button, which sits in the middle.
+        let mut events = click(egui::pos2(640.0, 600.0));
+        events.push(key(egui::Key::F, egui::Modifiers::NONE));
+        events.push(key(egui::Key::P, egui::Modifiers::COMMAND));
+        app_frame(&mut app, &ctx, events);
+        assert!(app.views.panes.is_empty());
+        let ray = crate::edit::Ray {
+            origin: [0.0, 0.0, 1000.0],
+            direction: [0.0, 0.0, -1.0],
+        };
+        assert!(app.creation_hit(ray, false).is_err());
+        // The hint's button opens the free 3D view (laid out again after the full frame).
+        labels.clear();
+        views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        let open = labels
+            .iter()
+            .find(|(t, _)| t == "Open the 3D view")
+            .map(|(_, p)| *p)
+            .unwrap_or_else(|| panic!("no open button: {labels:?}"));
+        views_frame(&mut app, &ctx, click(open), &mut labels, &mut rects);
+        assert_eq!(app.views.panes.len(), 1);
+        assert_eq!(app.views.active_pane().unwrap().title, "3D view");
+        // Opening a view from the browser on an empty work area opens a pane on it.
+        app.close_pane(app.views.active_pane().unwrap().key);
+        let id = Uuid7::parse("019a7bf0-0000-7000-8000-000000000001").unwrap();
+        app.views
+            .book
+            .insert(ModelView::new(id, "Plan", WorkPlane::default(), 5000.0))
+            .unwrap();
+        app.browser_action(super::view_panel::BrowserAction::Activate(id));
+        assert_eq!(app.views.panes.len(), 1);
+        assert_eq!(app.views.active_pane().unwrap().title, "Plan");
+    }
+
+    #[test]
+    fn focusing_a_pane_installs_its_view_plane() {
+        use beamcraft_engine::views::ModelView;
+        use beamcraft_engine::work_plane::WorkPlane;
+        use beamcraft_model::id::Uuid7;
+        let Some(mut app) = headless() else { return };
+        let free = WorkPlane::parallel("xy", -250.0).unwrap();
+        app.install_plane(Some(free));
+        let id = Uuid7::parse("019a7bf0-0000-7000-8000-000000000001").unwrap();
+        let plane = WorkPlane::parallel("xz", 1200.0).unwrap();
+        app.views
+            .book
+            .insert(ModelView::new(id, "Elevation", plane, 5000.0))
+            .unwrap();
+        let free_pane = app.views.active_pane().unwrap().key;
+        app.open_pane(Some(id));
+        let plan_pane = app.views.active_pane().unwrap().key;
+        assert_eq!(app.tools.plane, Some(plane));
+        app.focus_pane(free_pane);
+        assert_eq!(
+            app.tools.plane,
+            Some(free),
+            "the free work plane comes back"
+        );
+        app.focus_pane(plan_pane);
+        assert_eq!(app.tools.plane, Some(plane));
+        // Closing the view's pane gives the free pane its work plane back.
+        app.close_pane(plan_pane);
+        assert_eq!(app.tools.plane, Some(free));
     }
 }
 

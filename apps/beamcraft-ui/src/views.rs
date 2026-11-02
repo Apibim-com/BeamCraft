@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! V12 model views in the window: the session sidecar, the view-properties form, the browser
-//! state and the extra view windows. A view is display state: the book never touches the loaded
-//! snapshot, and the model is never written.
+//! state and the panes of the work area. A view is display state: the book never touches the
+//! loaded snapshot, and the model is never written.
 
 use crate::camera::Camera;
 use beamcraft_engine::views::{
@@ -481,10 +481,13 @@ pub struct Views {
     pub subject: Subject,
     /// A pick in progress.
     pub picking: Option<Picking>,
-    /// The extra view windows.
-    pub windows: Vec<ViewWindow>,
-    /// Lay the windows out in a grid on the next frame.
+    /// Lay the panes out in a grid on the next work-area frame.
     pub tile: bool,
+    /// The last work-area rect, in points; `None` before the first work-area frame.
+    pub area: Option<egui::Rect>,
+    /// The pane a primary press just focused, until that button is released: its click only
+    /// focuses unless it may select.
+    pub focus_press: Option<u64>,
     /// Browser tab.
     pub tab: BrowserTab,
     /// Browser search.
@@ -507,18 +510,16 @@ pub struct Views {
     pub confirm_delete: Option<Uuid7>,
     /// A store-backed construction running in the CLI.
     pub job: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
-    /// The hidden kinds the main scene was built with.
+    /// The hidden kinds the loaded scene was built with.
     pub shown: KindFilter,
-    /// The last key handed to a view window.
-    pub window_serial: u64,
     /// Whether the browser shows previews.
     pub previews_on: bool,
     /// The rendered previews: the key they were drawn for (snapshot and definition) and the
     /// offscreen target, at most [`MAX_PREVIEWS`].
-    pub previews: BTreeMap<Uuid7, (u64, ViewWindow)>,
+    pub previews: BTreeMap<Uuid7, (u64, crate::panes::RenderTarget)>,
 }
 
-/// Most windows besides the main viewport.
+/// Most view panes open at once in the work area.
 pub const MAX_WINDOWS: usize = 8;
 /// Most previews kept rendered.
 pub const MAX_PREVIEWS: usize = 64;
@@ -640,12 +641,12 @@ impl Views {
         }
     }
 
-    /// Forgets a view in the session: its camera, its window, the active and open marks.
+    /// Forgets a view in the session: its camera, the open and selected marks and the
+    /// clipboard. Its panes are closed by the window.
     pub fn forget(&mut self, id: &Uuid7) {
         self.cameras.remove(id);
         self.open.retain(|v| v != id);
         self.selected.remove(id);
-        self.windows.retain(|w| w.view != Some(*id));
         if self.clipboard.is_some_and(|(c, _)| c == *id) {
             self.clipboard = None;
         }
@@ -698,90 +699,6 @@ pub fn listed_kinds() -> impl Iterator<Item = ElementKind> {
     ElementKind::ALL.into_iter()
 }
 
-/// Where an extra window sits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Dock {
-    /// Where the user drags it.
-    #[default]
-    Float,
-    /// Along the left edge.
-    Left,
-    /// Along the right edge.
-    Right,
-    /// Along the top edge.
-    Top,
-    /// Along the bottom edge.
-    Bottom,
-}
-
-/// One extra view window: a model view (or the free 3D view) through its own camera, on its own
-/// targets. A window draws and navigates; selection and tools stay in the main viewport.
-pub struct ViewWindow {
-    /// The view it shows; `None` is a free 3D window.
-    pub view: Option<Uuid7>,
-    /// Stable identity of the egui window.
-    pub(crate) key: u64,
-    pub(crate) camera: Camera,
-    pub(crate) open: bool,
-    pub(crate) dock: Dock,
-    /// Render mode, its own.
-    pub(crate) mode: RenderMode,
-    /// Grid guides shown.
-    pub(crate) grids: bool,
-    pub(crate) title: String,
-    target: crate::panes::RenderTarget,
-    /// The scene of this window's hidden kinds when they differ from the main scene's, keyed by
-    /// the snapshot token it was built for.
-    pub(crate) filtered: Option<(String, KindFilter, crate::render::Uploaded)>,
-    /// Placement for the next frame (tiling).
-    pub(crate) place: Option<egui::Rect>,
-}
-
-impl ViewWindow {
-    pub(crate) fn new(view: Option<&ModelView>, camera: Camera, index: usize) -> Self {
-        Self {
-            view: view.map(|v| v.id),
-            key: 0,
-            camera,
-            open: true,
-            dock: Dock::Float,
-            mode: view.map_or(RenderMode::Shaded, |v| v.render_mode),
-            grids: view.is_none_or(|v| v.grids_visible),
-            title: view.map_or_else(|| format!("3D view {}", index + 2), |v| v.name.clone()),
-            target: crate::panes::RenderTarget::empty(),
-            filtered: None,
-            place: None,
-        }
-    }
-
-    /// Resizes or creates the offscreen targets, keeping the egui texture in step. Returns the
-    /// aspect of the drawn image.
-    pub(crate) fn resize(
-        &mut self,
-        state: &eframe::egui_wgpu::RenderState,
-        width: u32,
-        height: u32,
-        samples: Option<u32>,
-        stats: &crate::stats::Stats,
-    ) -> Result<f32, crate::Error> {
-        self.target.resize(state, width, height, samples, stats)
-    }
-
-    /// The egui texture of the drawn image, once targets exist.
-    pub(crate) fn texture(&self) -> Option<egui::TextureId> {
-        self.target.texture()
-    }
-
-    pub(crate) fn renderer(&self) -> Option<&crate::render::Renderer> {
-        self.target.renderer()
-    }
-
-    /// Frees the egui texture of a closed window.
-    pub(crate) fn release(&mut self, state: &eframe::egui_wgpu::RenderState) {
-        self.target.release(state);
-    }
-}
-
 /// The rectangle of window `index` of `count` tiled in two columns over `area`.
 pub fn tile_rect(area: egui::Rect, index: usize, count: usize) -> egui::Rect {
     let columns = 2usize.min(count.max(1));
@@ -795,23 +712,6 @@ pub fn tile_rect(area: egui::Rect, index: usize, count: usize) -> egui::Rect {
         egui::vec2(width, height),
     )
     .shrink(4.0)
-}
-
-/// The rectangle a docked window takes inside `area`.
-pub fn dock_rect(area: egui::Rect, dock: Dock) -> Option<egui::Rect> {
-    let (w, h) = (area.width(), area.height());
-    let r = match dock {
-        Dock::Float => return None,
-        Dock::Left => egui::Rect::from_min_size(area.min, egui::vec2(w * 0.4, h)),
-        Dock::Right => {
-            egui::Rect::from_min_size(area.min + egui::vec2(w * 0.6, 0.0), egui::vec2(w * 0.4, h))
-        }
-        Dock::Top => egui::Rect::from_min_size(area.min, egui::vec2(w, h * 0.4)),
-        Dock::Bottom => {
-            egui::Rect::from_min_size(area.min + egui::vec2(0.0, h * 0.6), egui::vec2(w, h * 0.4))
-        }
-    };
-    Some(r.shrink(4.0))
 }
 
 #[cfg(test)]
@@ -969,8 +869,6 @@ mod tests {
         assert_eq!(Construction::TwoPoints.label(), "Section by two points");
         let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
         assert!(tile_rect(rect, 3, 4).min.y > 290.0);
-        assert!(dock_rect(rect, Dock::Float).is_none());
-        assert!(dock_rect(rect, Dock::Right).unwrap().min.x > 470.0);
         assert!(Direction::Front.plane([0.0; 3]).is_ok());
     }
 

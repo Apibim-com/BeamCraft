@@ -2,17 +2,17 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! The window side of the V12 model views: the browser, the view panel in the inspector, view
-//! construction by picking in the model, activation and the 3D/plane toggle, and the extra view
-//! windows. Everything here is display state: the model is never written, and the engine admits
-//! every view before it is kept.
+//! construction by picking in the model, activation and the 3D/plane toggle, and opening,
+//! focusing and closing the view panes of the work area. Everything here is display state: the
+//! model is never written, and the engine admits every view before it is kept.
 
 use super::App;
 use super::workbench::Bench;
 use crate::camera::Camera;
+use crate::panes::{RenderTarget, ViewPane};
 use crate::theme;
 use crate::views::{
-    AxisBatch, Construction, Direction, Dock, Form, MAX_WINDOWS, Picking, SideChoice, Subject,
-    ViewWindow,
+    AxisBatch, Construction, Direction, Form, MAX_WINDOWS, Picking, SideChoice, Subject,
 };
 use beamcraft_engine::RenderMode;
 use beamcraft_engine::views::{self, AxisPick, ModelView, PartSide, Projection};
@@ -83,11 +83,27 @@ impl App {
         }
     }
 
-    /// Shows `id` in the main viewport, or the free 3D view for `None`. The camera of a view
-    /// opened before comes back as the user left it; its render mode, grid guides, hidden kinds
-    /// and plane (the input frame) come from the view.
+    /// Shows `id`, or the free 3D view for `None`: a pane that shows it already is focused;
+    /// otherwise the active pane switches to it, and with no pane open one opens. The camera of a
+    /// view opened before comes back as the user left it; its render mode, grid guides, hidden
+    /// kinds and plane (the input frame) come from the view.
     pub(crate) fn activate_view(&mut self, id: Option<Uuid7>) {
-        if self.views.active() == id {
+        if self.views.active_pane().is_some_and(|p| p.view == id) {
+            return;
+        }
+        if let Some(key) = self
+            .views
+            .panes
+            .iter()
+            .rev()
+            .find(|p| p.view == id)
+            .map(|p| p.key)
+        {
+            self.focus_pane(key);
+            return;
+        }
+        if self.views.panes.is_empty() {
+            self.open_pane(id);
             return;
         }
         let input = self.tools.plane;
@@ -445,28 +461,29 @@ impl App {
         self.views.book.update(view).map_err(|e| e.to_string())?;
         // The camera follows the new definition; a session camera would hide the change.
         self.views.cameras.remove(&id);
-        if self.views.active() == Some(id) {
-            if let Some(pane) = self.views.active_pane_mut() {
-                pane.set_view(None);
-                let display = (pane.camera, pane.mode, pane.grids);
-                pane.spatial.get_or_insert(display);
-            }
-            self.activate_view(Some(id));
+        let Some(view) = self.views.book.get(&id).cloned() else {
+            return Err("the view is gone".to_owned());
+        };
+        let camera = Camera::from_view(&view, self.view_origin(), self.view_extent());
+        if let Err(e) = &camera {
+            self.view_note(Err(e.to_string()));
         }
-        for window in self.views.windows.iter_mut().filter(|w| w.view == Some(id)) {
-            if let Some(view) = self.views.book.get(&id) {
-                window.mode = view.render_mode;
-                window.grids = view.grids_visible;
-                view.name.clone_into(&mut window.title);
-                if let Ok(camera) = Camera::from_view(
-                    view,
-                    self.loaded
-                        .as_ref()
-                        .map_or([0.0; 3], |l| l.summary.origin_mm),
-                    1e6,
-                ) {
-                    window.camera = camera;
-                }
+        // Every pane on the view takes its new display, camera and name.
+        for pane in self.views.panes.iter_mut().filter(|p| p.view == Some(id)) {
+            if let Ok(camera) = &camera {
+                pane.camera = *camera;
+                pane.toggled = None;
+            }
+            pane.mode = view.render_mode;
+            pane.grids = view.grids_visible;
+            pane.set_view(Some(&view));
+            pane.filtered = None;
+        }
+        if self.views.active() == Some(id) {
+            self.install_plane(Some(view.plane));
+            self.tool_note = None;
+            if self.views.shown != self.views.active_hidden() {
+                self.recolour();
             }
         }
         Ok(Some("The view was updated; the model is unchanged.".into()))
@@ -968,7 +985,7 @@ impl App {
                 ui.label(format!("{} selected", self.views.selected.len()));
                 if ui.small_button("Open in windows").clicked() {
                     for id in self.views.selected.clone() {
-                        self.open_view_window(Some(id));
+                        self.open_pane(Some(id));
                     }
                 }
             });
@@ -1118,7 +1135,7 @@ impl App {
                 }
             }
             BrowserAction::Activate(id) => self.activate_view(Some(id)),
-            BrowserAction::Window(id) => self.open_view_window(Some(id)),
+            BrowserAction::Window(id) => self.open_pane(Some(id)),
             BrowserAction::Properties(id) => self.edit_view(id),
             BrowserAction::Favorite(id) => {
                 if let Some(mut view) = self.views.book.get(&id).cloned() {
@@ -1141,18 +1158,11 @@ impl App {
                     view.folder.clone_into(&mut self.views.destination);
                 }
             }
-            BrowserAction::Close(id) => {
-                if self.views.active() == Some(id) {
-                    self.activate_view(None);
-                }
-                self.close_view(id);
-            }
+            // Closing a view closes its panes; the work area may end up empty.
+            BrowserAction::Close(id) => self.close_view(id),
             BrowserAction::Delete(id) => self.views.confirm_delete = Some(id),
             BrowserAction::ConfirmDelete(id) => {
                 self.views.confirm_delete = None;
-                if self.views.active() == Some(id) {
-                    self.activate_view(None);
-                }
                 self.close_view(id);
                 self.views.forget(&id);
                 self.views.book.remove(&id);
@@ -1164,14 +1174,11 @@ impl App {
             },
             BrowserAction::OpenAll(ids) => {
                 for id in ids {
-                    self.open_view_window(Some(id));
+                    self.open_pane(Some(id));
                 }
             }
             BrowserAction::CloseAll(ids) => {
                 for id in ids {
-                    if self.views.active() == Some(id) {
-                        self.activate_view(None);
-                    }
                     self.close_view(id);
                 }
             }
@@ -1226,12 +1233,19 @@ impl App {
         self.views.clipboard = None;
     }
 
-    /// Closes a view in the session: its windows and its kept camera; the definition stays.
+    /// Closes a view in the session: every pane showing it and its kept camera; the definition
+    /// stays.
     fn close_view(&mut self, id: Uuid7) {
-        for window in self.views.windows.iter_mut().filter(|w| w.view == Some(id)) {
-            window.release(&self.state);
+        let keys: Vec<u64> = self
+            .views
+            .panes
+            .iter()
+            .filter(|p| p.view == Some(id))
+            .map(|p| p.key)
+            .collect();
+        for key in keys {
+            self.close_pane(key);
         }
-        self.views.windows.retain(|w| w.view != Some(id));
         self.views.cameras.remove(&id);
         self.views.open.retain(|v| *v != id);
     }
@@ -1242,17 +1256,17 @@ impl App {
     fn view_preview(&mut self, view: &ModelView, budget: &mut bool) -> Option<egui::TextureId> {
         let loaded = self.loaded.as_ref()?;
         let key = crate::views::preview_key(loaded.snapshot.token().as_str(), view);
-        if let Some((drawn, window)) = self.views.previews.get(&view.id)
+        if let Some((drawn, target)) = self.views.previews.get(&view.id)
             && *drawn == key
         {
-            return window.texture();
+            return target.texture();
         }
         if !std::mem::take(budget) {
             return self
                 .views
                 .previews
                 .get(&view.id)
-                .and_then(|(_, w)| w.texture());
+                .and_then(|(_, t)| t.texture());
         }
         let origin = loaded.summary.origin_mm;
         let extent = self.view_extent();
@@ -1264,14 +1278,13 @@ impl App {
         {
             gone.release(&self.state);
         }
-        let (_, window) = self
+        let (_, target) = self
             .views
             .previews
             .entry(view.id)
-            .or_insert_with(|| (0, ViewWindow::new(Some(view), camera, 0)));
-        window.camera = camera;
+            .or_insert_with(|| (0, RenderTarget::empty()));
         let [width, height] = crate::views::PREVIEW_SIZE;
-        let aspect = window
+        let aspect = target
             .resize(&self.state, width, height, Some(1), &self.stats)
             .ok()?;
         let hidden = view.hidden_kinds;
@@ -1296,7 +1309,7 @@ impl App {
             })
             .ok()
         };
-        let mut camera_view = window.camera.view(aspect).ok()?;
+        let mut camera_view = camera.view(aspect).ok()?;
         camera_view.tint = crate::views::tint_of(Some(view));
         let clip = match crate::views::display_clip(None, Some(view)) {
             Some(cut) => crate::cut_plane::ClipGpu::of(&cut, origin),
@@ -1307,7 +1320,7 @@ impl App {
         } else {
             view.render_mode
         };
-        window.renderer()?.draw(
+        target.renderer()?.draw(
             &self.state.device,
             &self.state.queue,
             filtered.as_ref().unwrap_or(&loaded.uploaded),
@@ -1322,7 +1335,7 @@ impl App {
         self.views
             .previews
             .get(&view.id)
-            .and_then(|(_, w)| w.texture())
+            .and_then(|(_, t)| t.texture())
     }
 
     /// The view panel of the inspector: for a new or a saved view the name, folder and marks,
@@ -1802,9 +1815,12 @@ impl App {
         }
     }
 
-    /// Opens an extra window on `view` (or the free 3D view), up to [`MAX_WINDOWS`].
-    pub(crate) fn open_view_window(&mut self, id: Option<Uuid7>) {
-        if self.views.windows.len() >= MAX_WINDOWS {
+    /// Opens a pane on `view` (or the free 3D view) and focuses it, up to [`MAX_WINDOWS`] panes
+    /// in all. A view brings its session camera, or one built from its definition; the free 3D
+    /// view copies the active pane's camera. Before the first work-area frame the pane is left
+    /// unplaced, and that frame places it.
+    pub(crate) fn open_pane(&mut self, id: Option<Uuid7>) {
+        if self.views.panes.len() >= MAX_WINDOWS {
             self.view_note(Err(format!(
                 "At most {MAX_WINDOWS} view windows are open at once."
             )));
@@ -1821,219 +1837,115 @@ impl App {
                 .active_pane()
                 .map_or_else(|| Camera::new([0.0; 3], 1000.0, 1.6), |p| Ok(p.camera)),
         };
-        match camera {
-            Ok(camera) => {
-                let index = self.views.windows.len();
-                self.views.window_serial += 1;
-                let mut window = ViewWindow::new(view.as_ref(), camera, index);
-                window.key = self.views.window_serial;
-                self.views.windows.push(window);
-                if let Some(view) = view
-                    && !self.views.open.contains(&view.id)
-                {
-                    self.views.open.push(view.id);
-                }
+        let camera = match camera {
+            Ok(camera) => camera,
+            Err(e) => {
+                self.view_note(Err(e.to_string()));
+                return;
             }
-            Err(e) => self.view_note(Err(e.to_string())),
+        };
+        let from = self.views.active_pane().map(|p| p.view);
+        self.views.pane_serial = self.views.pane_serial.saturating_add(1);
+        let key = self.views.pane_serial;
+        let mut pane = ViewPane::new(view.as_ref(), camera, key);
+        if let Some(area) = self.views.area {
+            pane.rect = crate::panes::opening_rect(area, self.views.panes.len());
+            pane.placed = true;
+        }
+        self.views.panes.push(pane);
+        if let Some(view) = view
+            && !self.views.open.contains(&view.id)
+        {
+            self.views.open.push(view.id);
+        }
+        self.pane_focused(from);
+    }
+
+    /// Makes pane `key` the active one: raises it to the top and installs its view's plane as
+    /// the input frame (the free 3D view gets its own work plane back).
+    pub(crate) fn focus_pane(&mut self, key: u64) {
+        let Some(at) = self.views.panes.iter().position(|p| p.key == key) else {
+            return;
+        };
+        if at + 1 == self.views.panes.len() {
+            return;
+        }
+        let from = self.views.active_pane().map(|p| p.view);
+        let pane = self.views.panes.remove(at);
+        self.views.panes.push(pane);
+        self.pane_focused(from);
+    }
+
+    /// Closes pane `key`: its view keeps the camera for the session, its target is freed, and
+    /// the pane under it becomes active. The last pane may be closed.
+    pub(crate) fn close_pane(&mut self, key: u64) {
+        let Some(at) = self.views.panes.iter().position(|p| p.key == key) else {
+            return;
+        };
+        let was_active = at + 1 == self.views.panes.len();
+        let mut pane = self.views.panes.remove(at);
+        if let Some(id) = pane.view {
+            self.views.cameras.insert(id, pane.camera);
+        }
+        pane.target.release(&self.state);
+        if self.views.focus_press == Some(key) {
+            self.views.focus_press = None;
+        }
+        if was_active {
+            self.pane_focused(Some(pane.view));
         }
     }
 
-    /// Draws the extra windows: the loaded scene through each window's own camera, with its
-    /// view's cut, tint, render mode, grid guides and hidden kinds. They navigate like the main
-    /// viewport; selection and tools stay in the main viewport.
-    pub(crate) fn draw_view_windows(&mut self, ctx: &egui::Context) {
-        let content = ctx.content_rect();
-        if std::mem::take(&mut self.views.tile) {
-            let count = self.views.windows.len();
-            for (index, window) in self.views.windows.iter_mut().enumerate() {
-                window.dock = Dock::Float;
-                window.place = Some(crate::views::tile_rect(content, index, count));
+    /// The input frame and display follow a newly active pane. `from` is the view of the pane
+    /// that was active before (`Some(None)` the free 3D view, `None` no pane at all). A plane
+    /// change cancels an unfinished view pick and the tool drafts, as `activate_view` does.
+    fn pane_focused(&mut self, from: Option<Option<Uuid7>>) {
+        let to = self.views.active_pane().map(|p| p.view);
+        let plane_of = |views: &crate::views::Views, id: Option<Uuid7>| {
+            id.and_then(|id| views.book.get(&id)).map(|v| v.plane)
+        };
+        let from_view = from.flatten();
+        let to_view = to.flatten();
+        let mut changed = false;
+        match (from_view, to_view) {
+            // Free to view: the free work plane is kept until the free view comes back.
+            (None, Some(_)) => {
+                if let Some(plane) = plane_of(&self.views, to_view) {
+                    self.views_input = Some(self.tools.plane);
+                    self.install_plane(Some(plane));
+                    changed = true;
+                }
+            }
+            // View to free (or to no pane): the free work plane comes back.
+            (Some(_), None) => {
+                if let Some(plane) = self.views_input.take() {
+                    self.install_plane(plane);
+                    changed = true;
+                }
+            }
+            // View to view: only a different plane is installed.
+            (Some(_), Some(_)) => {
+                let next = plane_of(&self.views, to_view);
+                if next.is_some() && next != plane_of(&self.views, from_view) {
+                    self.install_plane(next);
+                    changed = true;
+                }
+            }
+            (None, None) => {}
+        }
+        if changed {
+            self.tool_note = None;
+            if self.views.picking.take().is_some() {
+                self.view_note(Ok("The view pick was cancelled.".into()));
             }
         }
-        let mut released = Vec::new();
-        let mut activate = None;
-        for index in 0..self.views.windows.len() {
-            let Some(window) = self.views.windows.get_mut(index) else {
-                continue;
-            };
-            let view = window.view.and_then(|id| self.views.book.get(&id)).cloned();
-            let mut open = true;
-            let mut builder = egui::Window::new(window.title.clone())
-                .id(egui::Id::unique(("view-window", window.key)))
-                .open(&mut open)
-                .default_size([480.0, 320.0]);
-            if let Some(rect) = crate::views::dock_rect(content, window.dock) {
-                builder = builder.fixed_pos(rect.min).fixed_size(rect.size());
-            } else if let Some(rect) = window.place.take() {
-                builder = builder.current_pos(rect.min).default_size(rect.size());
-            }
-            builder.show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    if ui.small_button("Fit").clicked()
-                        && let Some(l) = &self.loaded
-                    {
-                        let (target, extent) = self.grid_scene.framing(&l.summary);
-                        let _ = window.camera.fit(target, extent, 1.5);
-                    }
-                    if window.view.is_some() && ui.small_button("Show in main view").clicked() {
-                        activate = window.view;
-                    }
-                    ui.menu_button("Dock", |ui| {
-                        for (dock, label) in [
-                            (Dock::Float, "Float"),
-                            (Dock::Left, "Left"),
-                            (Dock::Right, "Right"),
-                            (Dock::Top, "Top"),
-                            (Dock::Bottom, "Bottom"),
-                        ] {
-                            if ui.selectable_label(window.dock == dock, label).clicked() {
-                                window.dock = dock;
-                                ui.close();
-                            }
-                        }
-                    });
-                    egui::ComboBox::from_id_salt(("window-mode", window.key))
-                        .selected_text(window.mode.as_token())
-                        .show_ui(ui, |ui| {
-                            for mode in RenderMode::ALL {
-                                ui.selectable_value(&mut window.mode, mode, mode.as_token());
-                            }
-                        });
-                    ui.checkbox(&mut window.grids, "Grids");
-                });
-                let size = ui.available_size();
-                let scale = ui.ctx().pixels_per_point();
-                let [width, height] = super::target_size([size.x, size.y], scale);
-                let Ok(aspect) =
-                    window.resize(&self.state, width, height, self.source.samples, &self.stats)
-                else {
-                    return;
-                };
-                let Some(loaded) = &self.loaded else {
-                    return;
-                };
-                // The selected-only mode belongs to the main viewport's selection.
-                let mode = if window.mode == RenderMode::SelectedOnly {
-                    RenderMode::Shaded
-                } else {
-                    window.mode
-                };
-                let hidden = view
-                    .as_ref()
-                    .map_or(beamcraft_engine::KindFilter::SHOW_ALL, |v| v.hidden_kinds);
-                let token = loaded.snapshot.token().as_str().to_owned();
-                let stale = window
-                    .filtered
-                    .as_ref()
-                    .is_none_or(|(t, h, _)| *t != token || *h != hidden);
-                if hidden != self.views.shown && stale {
-                    let overlay = self.colour.as_ref().map(|(_, o)| std::sync::Arc::clone(o));
-                    let built = crate::scene::Scene::from_snapshot_showing(
-                        &loaded.snapshot,
-                        beamcraft_engine::Representation::Full,
-                        &loaded.uploaded.resident(),
-                        overlay.as_deref(),
-                        hidden,
-                    )
-                    .and_then(|scene| {
-                        crate::render::Uploaded::upload(
-                            &self.state.device,
-                            &self.state.queue,
-                            &scene,
-                            Some(&loaded.uploaded),
-                        )
-                    });
-                    match built {
-                        Ok(uploaded) => window.filtered = Some((token, hidden, uploaded)),
-                        Err(e) => self.error = Some(e.to_string()),
-                    }
-                }
-                let uploaded = match &window.filtered {
-                    Some((_, h, uploaded)) if hidden != self.views.shown && *h == hidden => {
-                        uploaded
-                    }
-                    _ => &loaded.uploaded,
-                };
-                let Ok(mut camera_view) = window.camera.view(aspect) else {
-                    return;
-                };
-                camera_view.tint = crate::views::tint_of(view.as_ref());
-                if let (Some(renderer), Some(texture)) = (window.renderer(), window.texture()) {
-                    let clip = match crate::views::display_clip(self.cut.as_ref(), view.as_ref()) {
-                        Some(cut) => crate::cut_plane::ClipGpu::of(&cut, loaded.summary.origin_mm),
-                        None => crate::cut_plane::ClipGpu::none(),
-                    };
-                    renderer.draw(
-                        &self.state.device,
-                        &self.state.queue,
-                        uploaded,
-                        camera_view,
-                        &self.stats,
-                        mode,
-                        &clip,
-                    );
-                    let response =
-                        ui.add(egui::Image::new((texture, size)).sense(super::viewport_sense()));
-                    if window.grids {
-                        self.grid_scene.paint(
-                            ui,
-                            response.rect,
-                            &camera_view,
-                            loaded.summary.origin_mm,
-                            None,
-                        );
-                    }
-                    let hovered = response.hovered();
-                    let (delta, shift, ctrl, scroll_y, pinch) = ui.input(|i| {
-                        (
-                            i.pointer.delta(),
-                            i.modifiers.shift,
-                            i.modifiers.ctrl,
-                            if hovered {
-                                i.smooth_scroll_delta.y
-                            } else {
-                                0.0
-                            },
-                            if hovered { i.zoom_delta() } else { 1.0 },
-                        )
-                    });
-                    let (orbit, pan, zoom) = super::navigation(
-                        self.preset,
-                        delta,
-                        response.dragged_by(egui::PointerButton::Primary),
-                        response.dragged_by(egui::PointerButton::Secondary),
-                        response.dragged_by(egui::PointerButton::Middle),
-                        ctrl,
-                        shift,
-                        window.camera.distance(),
-                        hovered,
-                        scroll_y,
-                        pinch,
-                        false,
-                        false,
-                        self.invert_zoom,
-                    );
-                    if let Err(e) = window.camera.navigate(orbit, pan, zoom) {
-                        self.error = Some(e.to_string());
-                    }
-                }
-            });
-            window.open &= open;
-            if !window.open {
-                released.push(index);
-            }
+        self.clear_member_preview();
+        self.plate_hover = None;
+        if self.views.shown != self.views.active_hidden() {
+            self.recolour();
         }
-        for index in released.into_iter().rev() {
-            if index < self.views.windows.len() {
-                let mut window = self.views.windows.remove(index);
-                if let Some(id) = window.view {
-                    self.views.cameras.insert(id, window.camera);
-                }
-                window.release(&self.state);
-            }
-        }
-        if let Some(id) = activate {
-            self.activate_view(Some(id));
+        if self.bench == Bench::View && self.views.subject != Subject::NewView {
+            self.show_view_properties();
         }
     }
 }

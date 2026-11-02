@@ -617,6 +617,8 @@ impl App {
                 let selected = self.editor.selected().is_some() && !grid_selected;
                 let edits_free = !self.editor.busy() && !self.other_command_running();
                 let has_workspace = self.source.workspace.is_some();
+                // Every viewport command needs a pane to act on.
+                let has_pane = self.views.active_pane().is_some();
                 let mut pick = None;
                 let (mut undo, mut redo) = (false, false);
                 egui::ScrollArea::horizontal().id_salt("ribbon-tools").show(ui, |ui| {
@@ -689,24 +691,26 @@ impl App {
                         });
                         let shortcut = ui.ctx().format_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::P));
                         let toggled = self.views.active_pane().is_some_and(|p| p.toggled.is_some());
-                        if tool_button(ui, Icon::Fit, "3D / plane", toggled, true)
+                        if tool_button(ui, Icon::Fit, "3D / plane", toggled, has_pane)
                             .on_hover_text(format!("Look straight at the view plane and back ({shortcut})"))
                             .clicked()
                         {
                             self.toggle_view_plane();
                         }
-                        ui.menu_button("Direction", |ui| {
-                            for (direction, label) in crate::views::Direction::ALL {
-                                if ui.button(label).clicked() {
-                                    self.orient_view(direction);
-                                    ui.close();
+                        ui.add_enabled_ui(has_pane, |ui| {
+                            ui.menu_button("Direction", |ui| {
+                                for (direction, label) in crate::views::Direction::ALL {
+                                    if ui.button(label).clicked() {
+                                        self.orient_view(direction);
+                                        ui.close();
+                                    }
                                 }
-                            }
+                            });
                         });
-                        if tool_button(ui, Icon::Copy, "New view window", false, self.views.windows.len() < crate::views::MAX_WINDOWS).clicked() {
-                            self.open_view_window(self.views.active());
+                        if tool_button(ui, Icon::Copy, "New view window", false, self.views.panes.len() < crate::views::MAX_WINDOWS).clicked() {
+                            self.open_pane(self.views.active());
                         }
-                        if tool_button(ui, Icon::Grid, "Tile windows", false, !self.views.windows.is_empty()).clicked() {
+                        if tool_button(ui, Icon::Grid, "Tile windows", false, has_pane).clicked() {
                             self.views.tile = true;
                         }
                     });
@@ -718,11 +722,11 @@ impl App {
                             (beamcraft_engine::RenderMode::Shaded, "Shaded"),
                             (beamcraft_engine::RenderMode::SelectedOnly, "Selected only"),
                         ] {
-                            if tool_button(ui, Icon::Block, label, self.active_mode() == mode, true).clicked() {
+                            if tool_button(ui, Icon::Block, label, has_pane && self.active_mode() == mode, has_pane).clicked() {
                                 self.set_active_mode(mode);
                             }
                         }
-                        if tool_button(ui, Icon::Grid, "Grid guides", self.grids_shown(), true).clicked() {
+                        if tool_button(ui, Icon::Grid, "Grid guides", self.grids_shown(), has_pane).clicked() {
                             let on = !self.grids_shown();
                             self.set_grids_shown(on);
                             if !on { self.grid_edit = None; }
@@ -745,8 +749,8 @@ impl App {
                             self.reload();
                         }
                         if tool_button(ui, Icon::Refresh, "Redraw views", false, true).clicked() {
-                            for window in &mut self.views.windows {
-                                window.filtered = None;
+                            for pane in &mut self.views.panes {
+                                pane.filtered = None;
                             }
                             self.recolour();
                         }
@@ -755,7 +759,7 @@ impl App {
                     if matches!(self.ribbon_tab, RibbonTab::Steel | RibbonTab::View) {
                         group(ui, "Inspect", &mut |ui| {
                             tool_button(ui, Icon::Plate, "Measure", false, false);
-                            if tool_button(ui, Icon::Fit, "Fit model", false, true).clicked() {
+                            if tool_button(ui, Icon::Fit, "Fit model", false, has_pane).clicked() {
                                 self.pending_fit = true;
                             }
                         });
@@ -1057,7 +1061,7 @@ impl App {
                 match label {
                     "View properties" => self.show_view_properties(),
                     "3D / plane view" => self.toggle_view_plane(),
-                    "New view window" => self.open_view_window(self.views.active()),
+                    "New view window" => self.open_pane(self.views.active()),
                     "Tile view windows" => self.views.tile = true,
                     _ => {
                         if let Some(next) = self.views.next_open() {
