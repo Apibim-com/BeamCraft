@@ -59,8 +59,9 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   The viewport has no floating view tabs, zoom/fit buttons, orientation triad or display-mode
   caption; mouse/wheel navigation and keyboard shortcuts remain available.
   The browser reports the loaded engine
-  snapshot, not invented drawings or views. Open in Menu or Model library in Manage returns to the library
-  when launched from the start page. Ctrl+K searches supported commands in a native dialog.
+  snapshot, not invented drawings or views. Menu → New and Open create or open another model in
+  the same window; Model library (Ctrl+K) returns to the library when launched from the start
+  page. Ctrl+K searches supported commands in a native dialog.
   Existing create/edit/property/publish commands still use the same CLI paths. Unimplemented
   tools (Bolts, Weld and floor-plan views) remain explicitly disabled.
 - Manage > Rectangular grid restores regular-grid creation in the inspector: U/V coordinate
@@ -100,9 +101,15 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   `New Model 1`, etc.). Suggestions run off-thread and never overwrite a typed name; the
   CLI's final exclusive-create check remains authoritative.
 - The native Menu follows the prototype's dark 232-point navigation, section headings and
-  flat 42-point command rows. New/Open use the library, catalogs inspect actual model
-  definitions, and unavailable settings/import/export/editor/maintenance
-  actions stay disabled instead of suggesting unsupported functionality.
+  flat 42-point command rows. New shows the model-creation form and Open lists recent models
+  with Browse…, both inside the menu (Esc returns to the model); only windows started from the
+  library offer them. Project properties is a read-only page of what the store's head records
+  (name, folder, project ID, created and last-change times in UTC, state) and of the session
+  (environment, author, units, the revision on screen); project information fields are not
+  stored in models yet. Catalogs inspect actual model definitions, and unavailable settings/import/export/editor actions stay disabled instead
+  of suggesting unsupported functionality. Inner pages (catalog lists, About) have ‹ Back; Esc
+  goes back one level and, on a top-level page, returns to the model. See
+  [the menu](../../docs/design/menu-backstage.md).
 - The bottom toolbar has 20 compact 24-point entity controls and 13 snap/constraint controls,
   in separate dense rows on the left and right with small group separators. Glyphs are
   contributor-original Rust drawings. The eight upstream selection-class filters and nine
