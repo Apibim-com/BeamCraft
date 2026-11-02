@@ -187,6 +187,8 @@ pub struct App {
     selection: crate::selection::Selection,
     /// The page the application menu shows.
     menu_section: workbench::MenuSection,
+    /// What the last menu action reported, shown under the page heading.
+    pub(crate) menu_note: Option<Result<String, String>>,
     pub(crate) return_to_create: bool,
     command_search: bool,
     command_focus: bool,
@@ -830,6 +832,7 @@ impl App {
             grids_visible: true,
             annotation: annotation_panel::Panel::empty(),
             menu_section: workbench::MenuSection::default(),
+            menu_note: None,
             return_to_create: false,
             command_search: false,
             command_focus: false,
@@ -3653,6 +3656,42 @@ mod tests {
         app_frame(&mut app, &ctx, escape());
         assert!(!app.command_search);
         assert!(app.menu_open);
+    }
+
+    #[test]
+    fn open_model_folder_reports_a_missing_store_in_the_menu() {
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        assert!(crate::app::inter(&ctx));
+        // A store that cannot exist, so no file manager is ever launched by the test.
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        app.source.store = std::env::temp_dir().join(format!(
+            "bc-open-folder-missing-{}-{nanos}",
+            std::process::id()
+        ));
+        assert!(!app.source.store.exists());
+        app.text = true;
+        app.menu_open = true;
+        let labels = app_frame(&mut app, &ctx, vec![]);
+        let pos = labels
+            .iter()
+            .find(|(l, _)| l == "Open model folder")
+            .unwrap()
+            .1;
+        app_frame(&mut app, &ctx, click(pos));
+        let Some(Err(error)) = app.menu_note.clone() else {
+            panic!("expected an error note, got {:?}", app.menu_note);
+        };
+        assert!(error.contains("no longer exists"), "{error}");
+        let labels = app_frame(&mut app, &ctx, vec![]);
+        assert!(labels.iter().any(|(l, _)| *l == error));
+        // The note belongs to the page: leaving the menu clears it.
+        app.close_menu();
+        assert_eq!(app.menu_note, None);
     }
 
     #[test]

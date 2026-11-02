@@ -1055,10 +1055,20 @@ impl App {
     /// properties), so page resets belong here and a reopened menu never shows a stale form.
     pub(crate) fn close_menu(&mut self) {
         self.menu_open = false;
+        self.menu_note = None;
     }
 
     /// Full native application menu, using the same real actions as the ribbon.
     pub(crate) fn menu_page(&mut self, ui: &mut Ui) {
+        let shown = self.menu_section;
+        self.menu_page_ui(ui);
+        // A note belongs to the page it was reported on.
+        if self.menu_section != shown {
+            self.menu_note = None;
+        }
+    }
+
+    fn menu_page_ui(&mut self, ui: &mut Ui) {
         let palette = Palette::current(ui);
         if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
             self.menu_back();
@@ -1089,7 +1099,13 @@ impl App {
                             self.return_to_library = true;
                         }
                         menu_navigation(ui, Icon::Copy, "Save as", false, false);
-                        menu_navigation(ui, Icon::Folder, "Open model folder", false, false);
+                        if menu_navigation(ui, Icon::Folder, "Open model folder", false, true)
+                            .clicked()
+                        {
+                            self.menu_note = crate::dialog::open_folder(&self.source.store)
+                                .err()
+                                .map(Err);
+                        }
                         for (section, icon, label) in [
                             (MenuSection::Import, Icon::Back, "Import"),
                             (MenuSection::Export, Icon::Shared, "Export"),
@@ -1168,6 +1184,17 @@ impl App {
                     ui.label(theme::bold(title, 28.0));
                 });
                 ui.label(RichText::new(description).size(12.0).color(palette.muted));
+                match &self.menu_note {
+                    Some(Ok(note)) => {
+                        ui.add_space(8.0);
+                        ui.label(RichText::new(note).color(palette.muted));
+                    }
+                    Some(Err(error)) => {
+                        ui.add_space(8.0);
+                        ui.label(RichText::new(error).color(palette.error).strong());
+                    }
+                    None => {}
+                }
                 ui.add_space(30.0);
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.set_width(ui.available_width().min(620.0));
