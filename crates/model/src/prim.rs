@@ -18,18 +18,24 @@ pub enum ElementCategory {
     Grid,
     /// Shared level.
     Level,
+    /// T02 construction object: a helper point, line, circle or plane.
+    Construction,
+    /// D06 annotation: a dimension, mark or leader bound to features.
+    Annotation,
     /// Read-only foreign model wrapper.
     Reference,
 }
 
 impl ElementCategory {
     /// Every supported element category.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 8] = [
         Self::Part,
         Self::Assembly,
         Self::Connection,
         Self::Level,
         Self::Grid,
+        Self::Construction,
+        Self::Annotation,
         Self::Reference,
     ];
 
@@ -41,6 +47,8 @@ impl ElementCategory {
             "connection" => Some(Self::Connection),
             "level" => Some(Self::Level),
             "grid" => Some(Self::Grid),
+            "construction" => Some(Self::Construction),
+            "annotation" => Some(Self::Annotation),
             "reference" => Some(Self::Reference),
             _ => None,
         }
@@ -54,6 +62,8 @@ impl ElementCategory {
             Self::Connection => "/World/Steel/Connections/CON_",
             Self::Level => "/World/Levels/LVL_",
             Self::Grid => "/World/Grids/GRD_",
+            Self::Construction => "/World/Construction/CNS_",
+            Self::Annotation => "/World/Annotations/ANN_",
             Self::Reference => "/World/References/REF_",
         }
     }

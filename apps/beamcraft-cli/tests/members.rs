@@ -10,7 +10,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-mod support;
+use crate::support;
 
 use support::{at, text};
 
@@ -326,28 +326,6 @@ fn a_rotated_member_reopens_with_world_bounds_and_unchanged_shape() {
     // World features apply the instance rotation to the element-local mesh before translation.
     let expected = [-local[1] - 50.0, local[0] + 70.0, local[2] + 1000.0];
     for (actual, expected) in world.iter().zip(expected) {
-        assert!((actual - expected).abs() < 1e-8, "{actual} != {expected}");
-    }
-    let picked = f.ok(
-        "pick",
-        &[
-            "--origin",
-            "100,2000,1000",
-            "--direction",
-            "-1,0,0",
-            "--targets",
-            "face",
-        ],
-    );
-    let hit = &at(&picked, &["hits"]).array().unwrap()[0];
-    assert!(text(hit, "feature_id").starts_with(&format!("fid1:{member_id}:member:")));
-    let point = at(hit, &["point_world_mm"])
-        .array()
-        .unwrap()
-        .iter()
-        .map(|v| v.float().unwrap())
-        .collect::<Vec<_>>();
-    for (actual, expected) in point.iter().zip([50.0, 2000.0, 1000.0]) {
         assert!((actual - expected).abs() < 1e-8, "{actual} != {expected}");
     }
 

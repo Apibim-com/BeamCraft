@@ -24,6 +24,8 @@ pub enum Target {
     Element(ElementId),
     /// An immutable definition, by full content digest.
     Definition(ContentDigest),
+    /// The mutable user-attribute schema (I04), as a whole.
+    AttrSchema,
 }
 
 /// The semantic groups of F04 section 8.
@@ -41,6 +43,8 @@ pub enum Group {
     Relationship,
     /// The element mark and its approval state (A08).
     Mark,
+    /// The user-attribute values of an element (I04).
+    Attributes,
     /// Existence and identity.
     Lifecycle,
     /// Derived geometry, quantities and their signatures.
@@ -57,6 +61,7 @@ impl Group {
             Self::MaterialRef => "material_ref",
             Self::Relationship => "relationship",
             Self::Mark => "mark",
+            Self::Attributes => "attributes",
             Self::Lifecycle => "lifecycle",
             Self::Derived => "derived",
         }
@@ -254,6 +259,27 @@ impl Footprint {
         Ok(footprint)
     }
 
+    /// The part of an `UpdateElement` that repins a member's profile: it reads the new profile
+    /// definition and writes the element's relationship group (the `bim:profile` link). The shape
+    /// and derived groups of the rebuild come from [`Footprint::for_update`] with `shape` set.
+    pub fn for_profile_change(
+        id: ElementId,
+        new_profile: ContentDigest,
+    ) -> Result<Self, CommandError> {
+        let footprint = Self {
+            reads: BTreeSet::from([Entry {
+                target: Target::Definition(new_profile),
+                group: Group::Relationship,
+            }]),
+            writes: BTreeSet::from([Entry {
+                target: Target::Element(id),
+                group: Group::Relationship,
+            }]),
+        };
+        footprint.check_bound()?;
+        Ok(footprint)
+    }
+
     /// The footprint of `DeleteElement` (P08): it reads the element's lifecycle and the
     /// relationships (the incoming-relationship index that decides whether deletion is allowed),
     /// and writes the element's whole authored state and its derived group, because removing the
@@ -305,6 +331,75 @@ impl Footprint {
     /// written and a later delete of a part conflicts with a concurrent group creation.
     pub fn for_bolt(id: ElementId, parts: [ElementId; 2]) -> Result<Self, CommandError> {
         Self::for_weld(id, parts)
+    }
+
+    /// The footprint of `CreateBoltGroup` (A14.3): the shape of [`Self::for_bolt`] over 2 to
+    /// 1024 parts, plus the pinned fastener definition the group places: its values and
+    /// existence decide the placement, so a concurrent repin or edit of the definition
+    /// conflicts, and the same transaction may pin it, which writes its entry (as
+    /// [`Self::for_define`] does; a digest already in the model is written with identical
+    /// bytes).
+    pub fn for_bolt_group(
+        id: ElementId,
+        parts: &[ElementId],
+        fastener: ContentDigest,
+    ) -> Result<Self, CommandError> {
+        let mut footprint = Self::for_create_with(id, None, None)?;
+        for part in parts {
+            footprint.reads.insert(Entry {
+                target: Target::Element(*part),
+                group: Group::Lifecycle,
+            });
+        }
+        let definition = Entry {
+            target: Target::Definition(fastener),
+            group: Group::Relationship,
+        };
+        footprint.reads.insert(definition);
+        footprint.writes.insert(definition);
+        footprint.check_bound()?;
+        Ok(footprint)
+    }
+
+    /// The footprint of `UpdateBoltGroup` (A14.3): the complete authored inputs and the
+    /// `connects` record are replaced as a whole, so both groups of the group are read and
+    /// written and no derived group exists for a connection. The parts' lifecycles are only
+    /// read; the definition is read for the placement and written when a `repin` pins it.
+    pub fn for_bolt_group_edit(
+        id: ElementId,
+        parts: &[ElementId],
+        fastener: ContentDigest,
+    ) -> Result<Self, CommandError> {
+        let entry = |group| Entry {
+            target: Target::Element(id),
+            group,
+        };
+        let mut reads = BTreeSet::from([
+            entry(Group::Lifecycle),
+            entry(Group::ShapeInputs),
+            entry(Group::Relationship),
+        ]);
+        for part in parts {
+            reads.insert(Entry {
+                target: Target::Element(*part),
+                group: Group::Lifecycle,
+            });
+        }
+        let definition = Entry {
+            target: Target::Definition(fastener),
+            group: Group::Relationship,
+        };
+        reads.insert(definition);
+        let footprint = Self {
+            reads,
+            writes: BTreeSet::from([
+                entry(Group::ShapeInputs),
+                entry(Group::Relationship),
+                definition,
+            ]),
+        };
+        footprint.check_bound()?;
+        Ok(footprint)
     }
 
     /// The footprint of `AttachToAssembly` and `DetachFromAssembly` (A01): the `part-of` record
@@ -418,6 +513,43 @@ impl Footprint {
         let footprint = Self {
             reads: BTreeSet::from([entry(Group::Lifecycle), entry(Group::Mark)]),
             writes: BTreeSet::from([entry(Group::Mark)]),
+        };
+        footprint.check_bound()?;
+        Ok(footprint)
+    }
+
+    /// The footprint of an I04 schema change (define or undefine one attribute): it reads and
+    /// writes the schema as a whole (`Target::AttrSchema`), so two schema edits conflict and
+    /// neither conflicts with an element edit. Definitions are not elements and no element is
+    /// written; an undefine never touches stored values.
+    pub fn for_attr_schema() -> Result<Self, CommandError> {
+        let footprint = Self {
+            reads: BTreeSet::from([Entry {
+                target: Target::AttrSchema,
+                group: Group::Lifecycle,
+            }]),
+            writes: BTreeSet::from([Entry {
+                target: Target::AttrSchema,
+                group: Group::Lifecycle,
+            }]),
+        };
+        footprint.check_bound()?;
+        Ok(footprint)
+    }
+
+    /// The footprint of an I04 value change (set or clear one attribute of one element): it reads
+    /// the element's lifecycle (existence decides acceptance) and its attributes (the current
+    /// value decides a no-op or a replay), and writes only the element's attributes group, so a
+    /// value edit conflicts with another value edit of the same element and with nothing else.
+    /// It has no geometric effect and writes no derived group.
+    pub fn for_attr_value(element: ElementId) -> Result<Self, CommandError> {
+        let entry = |group| Entry {
+            target: Target::Element(element),
+            group,
+        };
+        let footprint = Self {
+            reads: BTreeSet::from([entry(Group::Lifecycle), entry(Group::Attributes)]),
+            writes: BTreeSet::from([entry(Group::Attributes)]),
         };
         footprint.check_bound()?;
         Ok(footprint)

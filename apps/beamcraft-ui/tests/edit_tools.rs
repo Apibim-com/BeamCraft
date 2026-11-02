@@ -5,10 +5,10 @@
 //! V05.2 end to end: selecting by a click, moving, copying, deleting, undo and redo, driven
 //! through the edit tools' mapping and reply parsing against the real `beamcraft` binary, give
 //! exactly what the CLI gives by hand (same placement, same mesh digest, same world bounds); a
-//! click finds what the CLI's `pick` finds, without starting it; a lookup that is no longer
+//! click finds the element under it in this process, without starting the CLI; a lookup that is no longer
 //! wanted stops its process; a cancelled preview publishes nothing; a refusal
-//! reaches the panel with the engine's code and message. Without the CLI binary next to this
-//! package's binary the tests are skipped and say so (`cargo test --workspace` builds it).
+//! reaches the panel with the engine's code and message. The CLI binary must exist next to this
+//! package's binary; missing prerequisites fail acceptance.
 
 #![allow(
     clippy::unwrap_used,
@@ -21,9 +21,7 @@ use beamcraft_engine::Representation;
 use beamcraft_engine::query::pick::SelectionFilter;
 use beamcraft_json::{Json, Limits};
 use beamcraft_ui::camera::Camera;
-use beamcraft_ui::edit::{
-    EditKind, Editor, Target, ndc_of, parse_pick, pick_args, pick_in, ray_through,
-};
+use beamcraft_ui::edit::{EditKind, Editor, Target, ndc_of, pick_in, pick_point_in, ray_through};
 use beamcraft_ui::scene::Scene;
 use beamcraft_ui::stats::Stats;
 use beamcraft_ui::{command, source};
@@ -38,17 +36,10 @@ const B: &str = "019a7bf0-0000-7000-8000-00000000a002";
 const IBEAM: &str = "019a7bf0-0000-7000-8000-00000000a003";
 const HOLED: &str = "019a7bf0-0000-7000-8000-00000000a004";
 
+use crate::support;
+
 fn cli() -> Option<PathBuf> {
-    let ui = Path::new(env!("CARGO_BIN_EXE_beamcraft-ui"));
-    let cli = ui
-        .parent()?
-        .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
-    if cli.is_file() {
-        Some(cli)
-    } else {
-        eprintln!("SKIP edit-tools test: build beamcraft-cli first (cargo test --workspace does)");
-        None
-    }
+    support::cli(Path::new(env!("CARGO_BIN_EXE_beamcraft-ui")))
 }
 
 struct Stores {
@@ -91,15 +82,6 @@ fn by_hand(cli: &Path, args: &[&str]) -> (i32, Json) {
     let output = Command::new(cli).args(args).output().unwrap();
     let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
     (output.status.code().unwrap(), body)
-}
-
-/// What the CLI's own `pick` answers for `ray` on the store's head.
-fn cli_pick(cli: &Path, store: &Path, ray: &beamcraft_ui::edit::Ray) -> Option<String> {
-    let output = Command::new(cli)
-        .args(pick_args(store, ray))
-        .output()
-        .unwrap();
-    parse_pick(output.status.code(), &output.stdout).unwrap()
 }
 
 fn ok(cli: &Path, args: &[&str]) -> Json {
@@ -226,6 +208,52 @@ fn commit(
     result
 }
 
+/// V13 acceptance: with the orthographic projection on, the pixel of a plate's top-face centre
+/// still names that plate (picking) and the ray meets the plate at the clicked point (snaps).
+#[test]
+fn an_orthographic_click_picks_and_snaps_like_the_perspective_one() {
+    let Some(cli) = cli() else { return };
+    let stores = Stores::new();
+    two_plates(&cli, &stores.ui());
+    let snapshot = source::load(&cli, &stores.ui(), &Stats::default()).unwrap();
+    let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+    let (framing_target, extent) = scene.framing();
+    let aspect = 1.6;
+    let mut camera = Camera::new(framing_target, extent, aspect).unwrap();
+    camera.set_projection(true);
+    let view = camera.view(aspect).unwrap();
+    let size = [1600.0f32, 1000.0];
+    for (id, world) in [(A, [500.0, 250.0, 10.0]), (B, [3500.0, 250.0, 10.0])] {
+        let relative = [0, 1, 2].map(|i| (world[i] - scene.origin_mm[i]) as f32);
+        let [nx, ny, _] = view.project(relative);
+        let pixel = [(nx * 0.5 + 0.5) * size[0], (0.5 - ny * 0.5) * size[1]];
+        let ndc = ndc_of(pixel, [0.0, 0.0], size).unwrap();
+        let ray = ray_through(&view, ndc, scene.origin_mm).unwrap();
+        // Picking: the window's own query finds the plate under the pixel.
+        assert_eq!(
+            pick_in(&snapshot, &ray, SelectionFilter::ALL)
+                .unwrap()
+                .as_deref(),
+            Some(id)
+        );
+        // Snapping: a placement click meets the plate at the point the pixel shows.
+        let (point, element) = pick_point_in(&snapshot, &ray).unwrap().unwrap();
+        assert_eq!(element, id);
+        for axis in 0..3 {
+            assert!(
+                (point[axis] - world[axis]).abs() < 1.0,
+                "{id}: {point:?} vs {world:?}"
+            );
+        }
+    }
+    // A pixel on empty space still selects nothing.
+    let ray = ray_through(&view, [-0.99, 0.99], scene.origin_mm).unwrap();
+    assert_eq!(
+        pick_in(&snapshot, &ray, SelectionFilter::ALL).unwrap(),
+        None
+    );
+}
+
 #[test]
 fn a_click_selects_what_the_engine_picks() {
     let Some(cli) = cli() else { return };
@@ -245,9 +273,7 @@ fn a_click_selects_what_the_engine_picks() {
         let pixel = [(nx * 0.5 + 0.5) * size[0], (0.5 - ny * 0.5) * size[1]];
         let ndc = ndc_of(pixel, [0.0, 0.0], size).unwrap();
         let ray = ray_through(&view, ndc, scene.origin_mm).unwrap();
-        // The window picks in its own process on the snapshot it shows; the CLI's `pick` on
-        // the store's head answers the same.
-        assert_eq!(cli_pick(&cli, &stores.ui(), &ray).as_deref(), Some(id));
+        // The window picks in its own process on the snapshot it shows.
         let selected = command::select(
             &cli,
             &stores.ui(),
@@ -256,6 +282,7 @@ fn a_click_selects_what_the_engine_picks() {
             &AtomicBool::new(false),
             &Stats::default(),
             SelectionFilter::ALL,
+            None,
         )
         .unwrap()
         .unwrap();
@@ -274,9 +301,8 @@ fn a_click_selects_what_the_engine_picks() {
             }
         );
     }
-    // A pixel on empty space (the top-left corner) selects nothing, in the CLI as here.
+    // A pixel on empty space (the top-left corner) selects nothing.
     let ray = ray_through(&view, [-0.99, 0.99], scene.origin_mm).unwrap();
-    assert_eq!(cli_pick(&cli, &stores.ui(), &ray), None);
     assert_eq!(
         pick_in(&snapshot, &ray, SelectionFilter::ALL).unwrap(),
         None
@@ -289,6 +315,7 @@ fn a_click_selects_what_the_engine_picks() {
         &AtomicBool::new(false),
         &Stats::default(),
         SelectionFilter::ALL,
+        None,
     )
     .unwrap();
     assert!(picked.is_none());
@@ -389,7 +416,6 @@ fn a_click_selects_an_i_section_member_and_a_holed_plate() {
         let pixel = [(nx * 0.5 + 0.5) * size[0], (0.5 - ny * 0.5) * size[1]];
         let ndc = ndc_of(pixel, [0.0, 0.0], size).unwrap();
         let ray = ray_through(&view, ndc, scene.origin_mm).unwrap();
-        assert_eq!(cli_pick(&cli, &stores.ui(), &ray).as_deref(), Some(id));
         let selected = command::select(
             &cli,
             &stores.ui(),
@@ -398,6 +424,7 @@ fn a_click_selects_an_i_section_member_and_a_holed_plate() {
             &AtomicBool::new(false),
             &Stats::default(),
             SelectionFilter::ALL,
+            None,
         )
         .unwrap()
         .unwrap();

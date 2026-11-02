@@ -21,10 +21,9 @@
 //! because a workspace's base revision must not be removed. The dry run lists exactly the
 //! revisions whose undo points would be lost.
 
-use beamcraft_cli::history_compact::{
+use beamcraft_commands::history_compact::{
     backup_store, collect_pins, hold_coordinator_lease, is_workspace_store,
 };
-use beamcraft_cli::plate::PlateError;
 use beamcraft_host::compaction::{
     Blocker, Compacted, CompactionError, Keep, NoFault, Pin, PinStatus, Plan, Request, Safeguard,
     Stats, compact, plan, stats,
@@ -34,6 +33,7 @@ use beamcraft_host::revision::RevisionStore;
 use beamcraft_host::storage::BlobStore;
 use beamcraft_json::Json;
 use beamcraft_model::error::ErrorCode;
+use session::Refusal;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -46,14 +46,14 @@ const FORGOTTEN_CAP: usize = 64;
 const DEFAULT_GRACE_SECS: u64 = 3600;
 
 struct Failure {
-    error: PlateError,
+    error: Refusal,
     diagnostics: Vec<Json>,
 }
 
 type Run<T> = Result<T, Failure>;
 
-impl From<PlateError> for Failure {
-    fn from(error: PlateError) -> Self {
+impl From<Refusal> for Failure {
+    fn from(error: Refusal) -> Self {
         Self {
             error,
             diagnostics: Vec::new(),
@@ -68,7 +68,7 @@ impl From<CompactionError> for Failure {
             _ => Vec::new(),
         };
         Self {
-            error: PlateError {
+            error: Refusal {
                 rule_id: None,
                 code: error.code(),
                 message: error.message(),
@@ -79,17 +79,12 @@ impl From<CompactionError> for Failure {
 }
 
 fn invalid(message: &'static str) -> Failure {
-    PlateError {
+    Refusal {
         rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
     }
     .into()
-}
-
-/// Whether `command` is one of the history commands.
-pub fn handles(command: &OsString) -> bool {
-    command == "inspect-history" || command == "compact-history"
 }
 
 /// Runs the command and returns the JSON result and the process exit code.
@@ -101,12 +96,12 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
 }
 
 /// The refusal printed when a coordinator cannot take its store lease.
-pub fn lease_refusal(error: PlateError) -> (Json, u8) {
+pub fn lease_refusal(error: Refusal) -> (Json, u8) {
     crate::report::report(Err(error))
 }
 
 /// Holds the store lease of a starting `serve-coordinator`; see
-/// [`beamcraft_cli::history_compact::hold_coordinator_lease`].
+/// [`beamcraft_commands::history_compact::hold_coordinator_lease`].
 pub fn coordinator_lease(args: &[OsString]) -> Result<Option<StoreLease>, (Json, u8)> {
     hold_coordinator_lease(args).map_err(lease_refusal)
 }
@@ -208,7 +203,7 @@ fn open_store(parsed: &Parsed<'_>) -> Run<(PathBuf, RevisionStore)> {
         .values
         .get("--store")
         .ok_or_else(|| invalid("--store is required"))?;
-    let blobs = BlobStore::new(root).map_err(|e| PlateError {
+    let blobs = BlobStore::new(root).map_err(|e| Refusal {
         rule_id: None,
         code: e.code(),
         message: "store root is not usable",

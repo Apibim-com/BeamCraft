@@ -1,13 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
+use super::disciplines::is_part_kind;
 use super::*;
-use beamcraft_model::fastener::{FastenerKind, HeadKind, HoleMode, WasherSpec};
-use beamcraft_model::id::OpId;
-use beamcraft_model::limits::{MAX_FASTENER_LENGTHS, MAX_MEMBER_PATH_POINTS, MIN_WELD_SEGMENT_MM};
-use beamcraft_model::section::{
-    CustomSection, MAX_CUSTOM_CAVITIES, MAX_CUSTOM_POINTS, ParametricSection, SectionFamily,
-};
 
 pub(super) fn schema(pin: SchemaIdentity) -> Result<(), Diagnostic> {
     if pin != schema_identity()? {
@@ -21,6 +16,24 @@ pub(super) fn schema(pin: SchemaIdentity) -> Result<(), Diagnostic> {
 pub(super) fn input_bounds(input: &Prepare, b: Budgets) -> Result<(), Diagnostic> {
     let mut bytes = 0usize;
     for change in &input.changes {
+        // A schema change names no element: its bounded definition or name is the whole payload.
+        match change {
+            Change::AttrDefine { def } => {
+                def.validate().map_err(|_| invalid())?;
+                let size = def.name.len()
+                    + def.unit.as_ref().map_or(0, |s| s.len())
+                    + def.set.as_ref().map_or(0, |s| s.len())
+                    + def.options.iter().map(|o| o.len()).sum::<usize>();
+                preflight::charge(&mut bytes, size, 1024 * 1024)?;
+                continue;
+            }
+            Change::AttrUndefine { name } => {
+                schema_path_name(name)?;
+                preflight::charge(&mut bytes, name.len(), 1024 * 1024)?;
+                continue;
+            }
+            _ => {}
+        }
         if !uuid7(change.key().0) {
             return Err(fail(ErrorCode::InvalidId, "invalid full element identity")
                 .with_rule("DV-BASE-001"));
@@ -41,26 +54,28 @@ pub(super) fn input_bounds(input: &Prepare, b: Budgets) -> Result<(), Diagnostic
                 if e.name.len() > 256 {
                     return Err(limit().with_rule("DV-BASE-003"));
                 }
-                if let Shape::Plate {
-                    contour_mm, holes, ..
-                } = &e.shape
-                {
-                    count(contour_mm.len().checked_mul(3).ok_or_else(limit)?, 8)?;
-                    let hole_points = holes.iter().map(Vec::len).sum::<usize>();
-                    count(hole_points.checked_mul(3).ok_or_else(limit)?, 8)?;
-                    count(holes.len(), 4)?;
+                if let Shape::Discipline(hook) = &e.shape {
+                    hook.0.charge(&mut count)?;
                 }
             }
             Change::Label { name, .. } if name.len() > 256 => {
                 return Err(limit().with_rule("DV-BASE-003"));
             }
+            Change::AttrSet { name, value, .. } => {
+                // The value's own bounds are model admission; charge its worst stored size.
+                let size = name.len()
+                    + 8
+                    + match value {
+                        Some(v) => v.as_text().map_or(8, str::len),
+                        None => 0,
+                    };
+                preflight::charge(&mut bytes, size, 1024 * 1024)?;
+            }
             Change::Mark { mark: m, .. } => mark(m)?,
             Change::AttachReference(r) if r.name.len() > 256 => {
                 return Err(limit().with_rule("DV-BASE-003"));
             }
-            Change::Contour { points_mm, .. } => {
-                count(points_mm.len().checked_mul(3).ok_or_else(limit)?, 8)?
-            }
+            Change::Discipline(hook) => hook.0.charge(&mut count)?,
             Change::Mesh(m) => {
                 count(m.points_mm.len().checked_mul(3).ok_or_else(limit)?, 4)?;
                 count(m.face_counts.len(), 4)?;
@@ -71,7 +86,8 @@ pub(super) fn input_bounds(input: &Prepare, b: Budgets) -> Result<(), Diagnostic
     }
     Ok(())
 }
-pub(super) fn finite(values: impl IntoIterator<Item = f64>) -> Result<(), Diagnostic> {
+/// Refuses the first non-finite value; the seam's finiteness gate.
+pub fn finite(values: impl IntoIterator<Item = f64>) -> Result<(), Diagnostic> {
     if values.into_iter().any(|n| !n.is_finite()) {
         return Err(
             fail(ErrorCode::NonFiniteNumber, "non-finite authored value").with_rule("DV-ATTR-003"),
@@ -79,7 +95,8 @@ pub(super) fn finite(values: impl IntoIterator<Item = f64>) -> Result<(), Diagno
     }
     Ok(())
 }
-pub(super) fn cap(values: impl IntoIterator<Item = f64>, max: f64) -> Result<(), Diagnostic> {
+/// Caps every value's magnitude; the seam's magnitude gate.
+pub fn cap(values: impl IntoIterator<Item = f64>, max: f64) -> Result<(), Diagnostic> {
     if values.into_iter().any(|n| n.abs() > max) {
         return Err(limit().with_rule("DV-LIM-001"));
     }
@@ -94,6 +111,14 @@ pub(super) fn label(s: &str) -> Result<(), Diagnostic> {
     }
     Ok(())
 }
+/// A user-attribute name, checked on the candidate and at every write (I04).
+pub(super) fn schema_path_name(name: &str) -> Result<&str, Diagnostic> {
+    if beamcraft_model::attribute::attr_name_is_valid(name) {
+        Ok(name)
+    } else {
+        Err(invalid())
+    }
+}
 pub(super) fn pose(p: &Placement) -> Result<(), Diagnostic> {
     cap(p.translation_mm, 1e9)?;
     cap(p.orientation_xyzw, 1.0)?;
@@ -104,32 +129,15 @@ pub(super) fn pose(p: &Placement) -> Result<(), Diagnostic> {
     }
     Ok(())
 }
-pub(super) fn definition(d: &Definition) -> Result<(), Diagnostic> {
+/// Admits one definition. The platform's own material runs its spec; a discipline's definition
+/// is answered by its own hook, so the platform never matches on a discipline's kind.
+pub fn definition(d: &Definition) -> Result<(), Diagnostic> {
     let refused = |e: beamcraft_model::command::CommandError| Diagnostic {
         code: e.code,
         message: "definition value refused by the F04 admission rules",
         rule_id: e.rule_id,
     };
     match d {
-        Definition::RectangleProfile {
-            width_mm,
-            height_mm,
-            section,
-        } => beamcraft_model::definition::RectangleProfileSpec {
-            width_mm: *width_mm,
-            height_mm: *height_mm,
-            section: section.clone(),
-        }
-        .validate()
-        .map_err(refused),
-        Definition::SectionProfile { shape, section } => {
-            beamcraft_model::definition::SectionProfileSpec {
-                shape: shape.clone(),
-                section: section.clone(),
-            }
-            .validate()
-            .map_err(refused)
-        }
         Definition::Material {
             density_kg_m3,
             grade,
@@ -143,16 +151,32 @@ pub(super) fn definition(d: &Definition) -> Result<(), Diagnostic> {
         }
         .validate()
         .map_err(refused),
-        Definition::Fastener { spec } => spec.validate().map_err(refused),
+        Definition::Discipline(hook) => hook.0.validate(),
     }
+}
+/// Reads the logical definition of a definition prim: the platform's own material kind directly,
+/// any other kind through the registered disciplines. A kind no discipline owns has no reader,
+/// so the prim is refused. A stored layer is untrusted input: the definition is re-admitted,
+/// never trusted.
+fn read_definition(p: &Prim, kind: &str) -> Result<Definition, Diagnostic> {
+    if kind == "material" {
+        return Ok(Definition::Material {
+            density_kg_m3: optional_number(p, "bim:densityKgM3")?,
+            grade: optional_text(p, "bim:materialGrade")?,
+            standard: optional_text(p, "bim:materialStandard")?,
+            display_name: p.display_name.clone(),
+        });
+    }
+    for discipline in disciplines::registered() {
+        if let Some(definition) = discipline.read_definition(p, kind)? {
+            return Ok(definition);
+        }
+    }
+    Err(unsupported())
 }
 /// An optional property of an exact USD type. A property declared with another type, blocked or
 /// without a value is invalid; only an absent one is unknown.
-pub(super) fn optional<'a>(
-    prim: &'a Prim,
-    name: &str,
-    ty: &str,
-) -> Result<Option<&'a Value>, Diagnostic> {
+pub fn optional<'a>(prim: &'a Prim, name: &str, ty: &str) -> Result<Option<&'a Value>, Diagnostic> {
     match prim.properties.iter().find(|p| p.name == name) {
         None => Ok(None),
         Some(p) if p.type_name == ty => match &p.value {
@@ -162,191 +186,62 @@ pub(super) fn optional<'a>(
         Some(_) => Err(invalid()),
     }
 }
-pub(super) fn optional_number(prim: &Prim, name: &str) -> Result<Option<f64>, Diagnostic> {
+/// An optional `double` property; the seam's optional-number read.
+pub fn optional_number(prim: &Prim, name: &str) -> Result<Option<f64>, Diagnostic> {
     match optional(prim, name, "double")? {
         None => Ok(None),
         Some(Value::Number(n)) => Ok(Some(*n)),
         Some(_) => Err(invalid()),
     }
 }
-pub(super) fn optional_text(prim: &Prim, name: &str) -> Result<Option<String>, Diagnostic> {
+/// An optional `string` property; the seam's optional-text read.
+pub fn optional_text(prim: &Prim, name: &str) -> Result<Option<String>, Diagnostic> {
     match optional(prim, name, "string")? {
         None => Ok(None),
         Some(Value::Text(s)) => Ok(Some(s.clone())),
         Some(_) => Err(invalid()),
     }
 }
-/// Every definition kind a member's `bim:profile` may target.
-pub(super) const PROFILE_KINDS: [&str; 11] = [
-    "rectangle",
-    "i_shape",
-    "channel",
-    "angle",
-    "rhs",
-    "chs",
-    "lipped_c",
-    "plain_c",
-    "lipped_z",
-    "omega",
-    "custom",
-];
-fn section_properties(p: &Prim) -> Result<SectionProperties, Diagnostic> {
-    Ok(SectionProperties {
-        designation: optional_text(p, "steel:profile:designation")?,
-        standard: optional_text(p, "steel:profile:standard")?,
-        area_mm2: optional_number(p, "steel:profile:areaMm2")?,
-        mass_per_meter_kg: optional_number(p, "steel:profile:massPerMeterKg")?,
-        surface_per_meter_m2: optional_number(p, "steel:profile:surfacePerMeterM2")?,
-        display_name: p.display_name.clone(),
-    })
-}
-/// The authored outline of a custom profile: the outer contour and the optional cavities (both
-/// cavity attributes or neither, counts adding up to the points), all at z = 0 and capped.
-fn custom_section(p: &Prim) -> Result<CustomSection, Diagnostic> {
-    let flat = |points: Vec<[f64; 3]>| -> Result<Vec<[f64; 2]>, Diagnostic> {
-        if points.len() > MAX_CUSTOM_POINTS {
-            return Err(limit());
+/// The user-attribute schema scope (I04): every owned definition prim must be one bounded
+/// segment below the scope and a complete, well-formed definition; foreign or unknown content
+/// stays inert and is never interpreted.
+pub(super) fn attribute_schema(prims: &[Prim]) -> Result<(), Diagnostic> {
+    let scope = format!("{}/", super::ATTR_SCHEMA_PATH);
+    for p in prims.iter().filter(|p| p.path.starts_with(&scope)) {
+        if p.sources.iter().any(|s| !s.owned) {
+            continue;
         }
-        if points.iter().any(|q| q[2] != 0.0) {
-            return Err(invalid());
+        let name = p.path.strip_prefix(&scope).ok_or_else(invalid)?;
+        schema_path_name(name)?;
+        if name.contains('/') {
+            return Err(unsupported());
         }
-        Ok(points.into_iter().map(|[x, y, _]| [x, y]).collect())
-    };
-    let outer = flat(points(p, "steel:profile:outerPointsMm")?)?;
-    let present = |name: &str| p.properties.iter().any(|q| q.name == name);
-    let (has_points, has_counts) = (
-        present("steel:profile:cavityPointsMm"),
-        present("steel:profile:cavityVertexCounts"),
-    );
-    if has_points != has_counts {
-        return Err(invalid());
-    }
-    let mut cavities = Vec::new();
-    if has_points {
-        let all = flat(points(p, "steel:profile:cavityPointsMm")?)?;
-        let Value::Array(counts) = required(p, "steel:profile:cavityVertexCounts", "int[]")? else {
-            return Err(invalid());
-        };
-        if counts.len() > MAX_CUSTOM_CAVITIES {
-            return Err(limit());
-        }
-        let mut at = 0usize;
-        for count in counts {
-            let n = match count {
-                Value::Int(n) => usize::try_from(*n).map_err(|_| invalid())?,
-                _ => return Err(invalid()),
-            };
-            if n < 3 {
-                return Err(invalid());
+        let ty = beamcraft_model::attribute::AttrType::parse(text(p, "bim:attr:type", "token")?)
+            .ok_or_else(unsupported)?;
+        let options = match optional(p, "bim:attr:options", "string[]")? {
+            None => Vec::new(),
+            Some(Value::Array(items)) => {
+                let mut options = Vec::with_capacity(items.len());
+                for item in items {
+                    match item {
+                        Value::Text(option) => options.push(option.clone()),
+                        _ => return Err(invalid()),
+                    }
+                }
+                options
             }
-            let end = at.checked_add(n).ok_or_else(invalid)?;
-            cavities.push(all.get(at..end).ok_or_else(invalid)?.to_vec());
-            at = end;
-        }
-        if at != all.len() {
-            return Err(invalid());
-        }
+            Some(_) => return Err(invalid()),
+        };
+        let def = beamcraft_model::attribute::AttrDef {
+            name: name.to_owned(),
+            ty,
+            unit: optional_text(p, "bim:attr:unit")?,
+            options,
+            set: optional_text(p, "bim:attr:set")?,
+        };
+        def.validate().map_err(|_| invalid())?;
     }
-    Ok(CustomSection { outer, cavities })
-}
-/// The logical definition stored in a definition prim of this kind.
-fn read_definition(p: &Prim, kind: &str) -> Result<Definition, Diagnostic> {
-    if let Some(family) = SectionFamily::from_token(kind) {
-        let values = family
-            .parameters()
-            .iter()
-            .map(|name| number(p, &format!("steel:profile:{name}Mm")))
-            .collect::<Result<Vec<_>, _>>()?;
-        let parametric = ParametricSection::new(family, values).map_err(|_| invalid())?;
-        return Ok(Definition::SectionProfile {
-            shape: SectionShape::Parametric(parametric),
-            section: section_properties(p)?,
-        });
-    }
-    match kind {
-        "rectangle" => Ok(Definition::RectangleProfile {
-            width_mm: number(p, "steel:profile:widthMm")?,
-            height_mm: number(p, "steel:profile:heightMm")?,
-            section: section_properties(p)?,
-        }),
-        "custom" => Ok(Definition::SectionProfile {
-            shape: SectionShape::Custom(custom_section(p)?),
-            section: section_properties(p)?,
-        }),
-        "material" => Ok(Definition::Material {
-            density_kg_m3: optional_number(p, "bim:densityKgM3")?,
-            grade: optional_text(p, "bim:materialGrade")?,
-            standard: optional_text(p, "bim:materialStandard")?,
-            display_name: p.display_name.clone(),
-        }),
-        "fastener" => Ok(Definition::Fastener {
-            spec: read_fastener(p)?,
-        }),
-        _ => Err(unsupported()),
-    }
-}
-
-/// The logical fastener definition stored in a fastener definition prim (A14.1): every value
-/// re-read and re-admitted, because a committed layer is untrusted input.
-fn read_fastener(p: &Prim) -> Result<FastenerSpec, Diagnostic> {
-    let token = |name: &str| text(p, name, "token").map(str::to_owned);
-    let kind = FastenerKind::from_token(&token("steel:fastener:kind")?).ok_or_else(invalid)?;
-    let head_kind = HeadKind::from_token(&token("steel:fastener:headKind")?).ok_or_else(invalid)?;
-    let nut_across_flats_mm = optional_number(p, "steel:fastener:nutAcrossFlatsMm")?;
-    let nut_height_mm = optional_number(p, "steel:fastener:nutHeightMm")?;
-    let washer = match (
-        optional_number(p, "steel:fastener:washerOuterDiameterMm")?,
-        optional_number(p, "steel:fastener:washerInnerDiameterMm")?,
-        optional_number(p, "steel:fastener:washerThicknessMm")?,
-    ) {
-        (None, None, None) => None,
-        (outer, inner, thickness) => Some(WasherSpec {
-            outer_diameter_mm: outer.ok_or_else(invalid)?,
-            inner_diameter_mm: inner.ok_or_else(invalid)?,
-            thickness_mm: thickness.ok_or_else(invalid)?,
-        }),
-    };
-    let lengths = match required(p, "steel:fastener:lengthsMm", "double[]")? {
-        Value::Array(values) => values
-            .iter()
-            .map(|v| match v {
-                Value::Number(n) => Ok(*n),
-                _ => Err(invalid()),
-            })
-            .collect::<Result<Vec<_>, Diagnostic>>()?,
-        _ => return Err(invalid()),
-    };
-    if lengths.len() > MAX_FASTENER_LENGTHS {
-        return Err(limit());
-    }
-    let hole_mode = HoleMode::from_token(&token("steel:fastener:holeMode")?).ok_or_else(invalid)?;
-    Ok(FastenerSpec {
-        designation: optional_text(p, "steel:fastener:designation")?,
-        standard: optional_text(p, "steel:fastener:standard")?,
-        grade: optional_text(p, "steel:fastener:grade")?,
-        display_name: p.display_name.clone(),
-        kind,
-        head_kind,
-        nominal_diameter_mm: number(p, "steel:fastener:nominalDiameterMm")?,
-        head_across_flats_mm: number(p, "steel:fastener:headAcrossFlatsMm")?,
-        head_height_mm: number(p, "steel:fastener:headHeightMm")?,
-        nut_across_flats_mm,
-        nut_height_mm,
-        washer,
-        hole_clearance_mm: number(p, "steel:fastener:holeClearanceMm")?,
-        lengths_mm: lengths,
-        thread_protrusion_mm: number(p, "steel:fastener:threadProtrusionMm")?,
-        mass_each_kg: optional_number(p, "steel:fastener:massEachKg")?,
-        washer_under_head: match required(p, "steel:fastener:washerUnderHead", "bool")? {
-            Value::Bool(v) => *v,
-            _ => return Err(invalid()),
-        },
-        washer_under_nut: match required(p, "steel:fastener:washerUnderNut", "bool")? {
-            Value::Bool(v) => *v,
-            _ => return Err(invalid()),
-        },
-        hole_mode,
-    })
+    Ok(())
 }
 pub(super) fn owned(prims: &[Prim], path: &str, descendants: bool) -> Result<(), Diagnostic> {
     let prefix = format!("{path}/");
@@ -365,7 +260,8 @@ pub(super) fn owned(prims: &[Prim], path: &str, descendants: bool) -> Result<(),
     }
     Ok(())
 }
-pub(super) fn required<'a>(prim: &'a Prim, name: &str, ty: &str) -> Result<&'a Value, Diagnostic> {
+/// A required property of an exact USD type; the seam's typed property read.
+pub fn required<'a>(prim: &'a Prim, name: &str, ty: &str) -> Result<&'a Value, Diagnostic> {
     let p = prim
         .properties
         .iter()
@@ -379,19 +275,22 @@ pub(super) fn required<'a>(prim: &'a Prim, name: &str, ty: &str) -> Result<&'a V
         .filter(|v| !matches!(v, Value::Block))
         .ok_or_else(|| invalid().with_rule("DV-ATTR-001"))
 }
-pub(super) fn text<'a>(prim: &'a Prim, name: &str, ty: &str) -> Result<&'a str, Diagnostic> {
+/// A required property read as exact text; the seam's token/string read.
+pub fn text<'a>(prim: &'a Prim, name: &str, ty: &str) -> Result<&'a str, Diagnostic> {
     match required(prim, name, ty)? {
         Value::Text(s) => Ok(s),
         _ => Err(invalid().with_rule("DV-ATTR-002")),
     }
 }
-pub(super) fn number(prim: &Prim, name: &str) -> Result<f64, Diagnostic> {
+/// A required `double` property; the seam's number read.
+pub fn number(prim: &Prim, name: &str) -> Result<f64, Diagnostic> {
     match required(prim, name, "double")? {
         Value::Number(n) => Ok(*n),
         _ => Err(invalid()),
     }
 }
-pub(super) fn points(prim: &Prim, name: &str) -> Result<Vec<[f64; 3]>, Diagnostic> {
+/// A required `double3[]` property as point triples; the seam's point-array read.
+pub fn points(prim: &Prim, name: &str) -> Result<Vec<[f64; 3]>, Diagnostic> {
     let Value::Array(values) = required(prim, name, "double3[]")? else {
         return Err(invalid());
     };
@@ -427,269 +326,13 @@ pub(super) fn vec3s(value: &Value) -> Result<Vec<[f32; 3]>, Diagnostic> {
         })
         .collect()
 }
-fn norm([x, y, z]: [f64; 3]) -> f64 {
-    ((x * x + y * y) + z * z).sqrt()
-}
-fn difference([x, y, z]: [f64; 3], [a, b, c]: [f64; 3]) -> [f64; 3] {
-    [x - a, y - b, z - c]
-}
-fn plate(points: &[[f64; 3]], thickness: f64) -> Result<(), Diagnostic> {
-    cap(points.iter().flatten().copied(), 1e9)?;
-    cap([thickness], 1e6)?;
-    let Some(&first) = points.first() else {
-        return Err(invalid());
-    };
-    let mut size = 0.0;
-    for &p in points {
-        let n = norm(difference(p, first));
-        if n > size {
-            size = n;
-        }
-    }
-    if size > 2e6 {
-        return Err(limit());
-    }
-    let eps = 0.001f64.max(size / 4194304.0);
-    let mut too_small = points.len() < 3 || thickness < eps;
-    for (&p, &q) in points
-        .iter()
-        .zip(points.iter().cycle().skip(1))
-        .take(points.len())
-    {
-        let length = norm(difference(q, p));
-        if length > 1e6 {
-            return Err(limit());
-        }
-        if length < eps {
-            too_small = true;
-        }
-    }
-    if too_small {
-        return Err(invalid());
-    }
-    // Planarity, exact topology and rectangle support are deliberately the engine's F06 gate.
-    Ok(())
-}
-pub(super) fn relationship<'a>(prim: &'a Prim, name: &str) -> Option<&'a Relationship> {
+/// Finds one composed relationship, if authored; the seam's relationship read.
+pub fn relationship<'a>(prim: &'a Prim, name: &str) -> Option<&'a Relationship> {
     prim.relationships.iter().find(|r| r.name == name)
 }
-/// The optional through-hole polygons of a loaded plate: either both attributes or neither, the
-/// counts add up to the points, every hole has at least three points, and the totals are capped.
-fn plate_holes(prim: &Prim) -> Result<Vec<Vec<[f64; 3]>>, Diagnostic> {
-    let present = |name: &str| prim.properties.iter().any(|p| p.name == name);
-    let (has_points, has_counts) = (
-        present("steel:plate:holePointsMm"),
-        present("steel:plate:holeVertexCounts"),
-    );
-    if !has_points && !has_counts {
-        return Ok(Vec::new());
-    }
-    if has_points != has_counts {
-        return Err(invalid());
-    }
-    let points = points(prim, "steel:plate:holePointsMm")?;
-    let Value::Array(counts) = required(prim, "steel:plate:holeVertexCounts", "int[]")? else {
-        return Err(invalid());
-    };
-    if counts.len() > MAX_HOLES || points.len() > MAX_HOLES * MAX_HOLE_POINTS {
-        return Err(limit());
-    }
-    cap(points.iter().flatten().copied(), 1e9)?;
-    let mut holes = Vec::with_capacity(counts.len());
-    let mut at = 0usize;
-    for count in counts {
-        let n = match count {
-            Value::Int(n) => usize::try_from(*n).map_err(|_| invalid())?,
-            _ => return Err(invalid()),
-        };
-        if !(3..=MAX_HOLE_POINTS).contains(&n) {
-            return Err(invalid());
-        }
-        let end = at.checked_add(n).ok_or_else(invalid)?;
-        holes.push(points.get(at..end).ok_or_else(invalid)?.to_vec());
-        at = end;
-    }
-    if at != points.len() || holes.iter().flatten().any(|p| p[2] != 0.0) {
-        return Err(invalid());
-    }
-    Ok(holes)
-}
-
-/// The optional through-hole operation records of a loaded plate (A04): all four attributes or
-/// none, the counts add up to the points, every polygon has at least three in-cap points with
-/// every `z` zero, there is one full UUIDv7 and one strictly increasing non-negative ordinal
-/// per polygon, and the totals are capped. Winding, placement and clearance are the engine's
-/// decision on replay, never re-derived here.
-fn plate_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
-    let present = |name: &str| prim.properties.iter().any(|p| p.name == name);
-    let names = [
-        "steel:hole:pointsMm",
-        "steel:hole:vertexCounts",
-        "steel:hole:operationIds",
-        "steel:hole:ordinals",
-    ];
-    let declared: Vec<bool> = names.iter().map(|name| present(name)).collect();
-    if declared.iter().all(|seen| !seen) {
-        return Ok(());
-    }
-    if !declared.iter().all(|seen| *seen) {
-        return Err(invalid());
-    }
-    let Value::Array(counts) = required(prim, "steel:hole:vertexCounts", "int[]")? else {
-        return Err(invalid());
-    };
-    let Value::Array(ids) = required(prim, "steel:hole:operationIds", "string[]")? else {
-        return Err(invalid());
-    };
-    let Value::Array(ordinals) = required(prim, "steel:hole:ordinals", "int[]")? else {
-        return Err(invalid());
-    };
-    if counts.len() > MAX_HOLES
-        || counts.len() != ids.len()
-        || counts.len() != ordinals.len()
-        || counts.is_empty()
-    {
-        return Err(invalid());
-    }
-    let points = points(prim, "steel:hole:pointsMm")?;
-    if points.len() > MAX_HOLES * MAX_HOLE_POINTS {
-        return Err(limit());
-    }
-    cap(points.iter().flatten().copied(), 1e9)?;
-    let mut at = 0usize;
-    let mut last: Option<i64> = None;
-    for count in counts {
-        let n = match count {
-            Value::Int(n) => usize::try_from(*n).map_err(|_| invalid())?,
-            _ => return Err(invalid()),
-        };
-        if !(3..=MAX_HOLE_POINTS).contains(&n) {
-            return Err(invalid());
-        }
-        let end = at.checked_add(n).ok_or_else(invalid)?;
-        let hole = points.get(at..end).ok_or_else(invalid)?;
-        if hole.iter().any(|p| p[2] != 0.0) {
-            return Err(invalid());
-        }
-        at = end;
-    }
-    if at != points.len() {
-        return Err(invalid());
-    }
-    for (id, ordinal) in ids.iter().zip(ordinals.iter()) {
-        let Value::Text(id) = id else {
-            return Err(invalid());
-        };
-        if !uuid7(id) {
-            return Err(invalid());
-        }
-        let Value::Int(n) = ordinal else {
-            return Err(invalid());
-        };
-        if *n < 0 || last.is_some_and(|seen| *n <= seen) {
-            return Err(invalid());
-        }
-        last = Some(*n);
-    }
-    Ok(())
-}
-/// Most through holes of one plate and most points of one hole.
-const MAX_HOLES: usize = 64;
-const MAX_HOLE_POINTS: usize = 1024;
-
-/// The owned plane-cut records of a loaded plate, beam or column (A03, amendment A-2): five
-/// parallel attributes, all five or none, of one common length, in ascending ordinals at most
-/// 999; each point is finite and within the coordinate cap and each normal is not the zero
-/// vector. Whether a plane crosses its element is the engine's decision on replay, never
-/// re-derived here. A damaged or half-authored list is invalid, never a default.
-fn element_cut(prim: &Prim) -> Result<Vec<CutRecord>, Diagnostic> {
-    const FIELDS: [&str; 5] = [
-        "steel:cut:operationId",
-        "steel:cut:ordinal",
-        "steel:cut:pointMm",
-        "steel:cut:normal",
-        "steel:cut:keep",
-    ];
-    let present = |name: &str| prim.properties.iter().any(|p| p.name == name);
-    let count = FIELDS.iter().filter(|name| present(name)).count();
-    if count == 0 {
-        return Ok(Vec::new());
-    }
-    if count != FIELDS.len() {
-        return Err(invalid());
-    }
-    let strings = |name: &str| -> Result<Vec<String>, Diagnostic> {
-        let Value::Array(values) = required(prim, name, "string[]")? else {
-            return Err(invalid());
-        };
-        values
-            .iter()
-            .map(|v| match v {
-                Value::Text(s) => Ok(s.clone()),
-                _ => Err(invalid()),
-            })
-            .collect()
-    };
-    let ids = strings(FIELDS[0])?;
-    let Value::Array(ordinal_values) = required(prim, FIELDS[1], "int[]")? else {
-        return Err(invalid());
-    };
-    let mut ordinals = Vec::with_capacity(ordinal_values.len());
-    for value in ordinal_values {
-        let Value::Int(n) = value else {
-            return Err(invalid());
-        };
-        let ordinal = u16::try_from(*n).map_err(|_| invalid())?;
-        if ordinal > 999 {
-            return Err(invalid());
-        }
-        if ordinals.last().is_some_and(|last: &u16| *last >= ordinal) {
-            return Err(invalid());
-        }
-        ordinals.push(ordinal);
-    }
-    let cut_points = points(prim, FIELDS[2])?;
-    let normals = points(prim, FIELDS[3])?;
-    let Value::Array(keeps) = required(prim, FIELDS[4], "token[]")? else {
-        return Err(invalid());
-    };
-    let keep = |value: &Value| match value {
-        Value::Text(s) => KeepSide::parse(s),
-        _ => None,
-    };
-    let keeps = keeps
-        .iter()
-        .map(|value| keep(value).ok_or_else(invalid))
-        .collect::<Result<Vec<_>, Diagnostic>>()?;
-    if ids.len() != ordinals.len()
-        || cut_points.len() != ordinals.len()
-        || normals.len() != ordinals.len()
-        || keeps.len() != ordinals.len()
-    {
-        return Err(invalid());
-    }
-    let records = ids
-        .iter()
-        .zip(
-            ordinals
-                .iter()
-                .zip(cut_points.iter().zip(normals.iter().zip(keeps.iter()))),
-        )
-        .map(|(id, (ordinal, (point, (normal, keep))))| {
-            let record = CutRecord {
-                operation_id: OpId::parse(id).map_err(|_| invalid())?,
-                ordinal: *ordinal,
-                point_mm: *point,
-                normal: *normal,
-                keep: *keep,
-            };
-            record.validate().map_err(|_| invalid())?;
-            Ok(record)
-        })
-        .collect::<Result<Vec<_>, Diagnostic>>()?;
-    Ok(records)
-}
-fn resource<'a>(
+/// Verifies a stored definition prim at a digest: its kind, canonical bytes and pinned digest.
+/// The seam a discipline hook resolves and re-checks pinned definitions through.
+pub fn resource<'a>(
     prims: &'a [Prim],
     digest: ContentDigest,
     kinds: &[&str],
@@ -719,7 +362,9 @@ fn resource<'a>(
     }
     Ok(p)
 }
-fn link<'a>(
+/// Resolves a definition relationship of a prim to its stored, verified definition prim; the
+/// seam a discipline hook follows `bim:profile` and `bim:material` links with.
+pub fn link<'a>(
     p: &Prim,
     prims: &'a [Prim],
     name: &str,
@@ -824,6 +469,8 @@ pub(super) fn snapshot(
         ));
     }
     project_record(metadata)?;
+    let mut operation_ids = std::collections::BTreeSet::new();
+    attribute_schema(prims)?;
     for p in prims.iter().filter(|p| p.element_id.is_some()) {
         let id = p.element_id.as_deref().ok_or_else(invalid)?;
         // Foreign content is preserved inertly, not interpreted as engineering input.
@@ -854,10 +501,10 @@ pub(super) fn snapshot(
         if text(p, "bim:geometryMode", "token")? != "parametric" {
             continue;
         }
-        if !matches!(
-            text(p, "bim:elementKind", "token")?,
-            "plate" | "beam" | "column" | "assembly" | "connection" | "level" | "grid"
-        ) {
+        let element_kind = text(p, "bim:elementKind", "token")?;
+        if !(is_part_kind(element_kind)
+            || matches!(element_kind, "assembly" | "connection" | "level" | "grid"))
+        {
             continue;
         }
         if p.path
@@ -889,12 +536,10 @@ pub(super) fn snapshot(
         if p.type_name.as_deref() != Some("Xform") {
             return Err(unsupported());
         }
-        if !matches!(kind, "plate" | "beam" | "column")
-            && p.properties.iter().any(|p| p.name == "steel:class")
-        {
+        if !is_part_kind(kind) && p.properties.iter().any(|p| p.name == "steel:class") {
             return Err(unsupported());
         }
-        if matches!(kind, "plate" | "beam" | "column")
+        if is_part_kind(kind)
             && let Some(prop) = p.properties.iter().find(|a| a.name == "steel:class")
             && (prop.type_name != "int"
                 || !matches!(prop.value, Some(Value::Int(v)) if i32::try_from(v).is_ok()))
@@ -902,70 +547,11 @@ pub(super) fn snapshot(
             return Err(invalid());
         }
         if instance::definition(p, prims)?.is_none() {
+            if is_part_kind(kind) {
+                disciplines::validate_part(kind, p, prims, &mut operation_ids)?;
+            }
             match kind {
-                "plate" => {
-                    plate(
-                        &points(p, "steel:plate:contourPointsMm")?,
-                        number(p, "steel:plate:thicknessMm")?,
-                    )?;
-                    plate_holes(p)?;
-                    plate_hole_records(p)?;
-                    element_cut(p)?;
-                }
-                "beam" | "column" => {
-                    let axis = points(p, "bim:axisPointsMm")?;
-                    if axis.len() < 2 || axis.len() > MAX_MEMBER_PATH_POINTS {
-                        return Err(invalid());
-                    }
-                    let profile =
-                        link(p, prims, "bim:profile", &PROFILE_KINDS, true)?.ok_or_else(invalid)?;
-                    let profile =
-                        read_definition(profile, text(profile, "bim:definitionKind", "token")?)?;
-                    definition(&profile)?;
-                    let (width, height) = match &profile {
-                        Definition::RectangleProfile {
-                            width_mm,
-                            height_mm,
-                            ..
-                        } => (*width_mm, *height_mm),
-                        Definition::SectionProfile { shape, .. } => shape.extent_mm(),
-                        // A member pins a section profile, never a material or a fastener.
-                        Definition::Material { .. } | Definition::Fastener { .. } => {
-                            return Err(invalid());
-                        }
-                    };
-                    // The size reference is the total path length for a polybeam and the one
-                    // chord for a straight member; both sum the same first chord.
-                    let mut length = 0.0;
-                    for (a, b) in axis.iter().zip(axis.iter().skip(1)) {
-                        length += norm(difference(*b, *a));
-                    }
-                    let half_width = width / 2.0;
-                    let half_height = height / 2.0;
-                    let size =
-                        length.max((half_width * half_width + half_height * half_height).sqrt());
-                    if size > 1e6 {
-                        return Err(limit());
-                    }
-                    let eps = 0.001f64.max(size / 4194304.0);
-                    // Every chord, not only the total, must clear the geometric floor.
-                    let mut short = length < eps;
-                    for (a, b) in axis.iter().zip(axis.iter().skip(1)) {
-                        short |= norm(difference(*b, *a)) < eps;
-                    }
-                    if short || width < eps || height < eps {
-                        return Err(invalid());
-                    }
-                    if let Some(Value::Number(n)) = p
-                        .properties
-                        .iter()
-                        .find(|v| v.name == "steel:member:rollRad")
-                        .and_then(|v| v.value.as_ref())
-                    {
-                        cap([*n], std::f64::consts::TAU)?;
-                    }
-                    element_cut(p)?;
-                }
+                k if is_part_kind(k) => {}
                 // An assembly has no shape inputs and no material of its own; a connection is a weld
                 // (A06) or a bolt group (A05) with its own properties and no material either.
                 "grid" => {
@@ -979,14 +565,7 @@ pub(super) fn snapshot(
                         return Err(invalid());
                     }
                     if kind == "connection" {
-                        let connection_type = text(p, "steel:connection:type", "token")?;
-                        let has =
-                            |prefix: &str| p.properties.iter().any(|v| v.name.starts_with(prefix));
-                        match connection_type {
-                            "weld" if !has("steel:bolt:") => weld_properties(p)?,
-                            "bolt_group" if !has("steel:weld:") => bolt_properties(p)?,
-                            _ => return Err(invalid().with_rule("DV-ATTR-002")),
-                        }
+                        disciplines::validate_connection(p, prims)?;
                     }
                     if kind == "level" {
                         elevation(number(p, "bim:elevationMm")?)?;
@@ -1015,10 +594,10 @@ pub(super) fn snapshot(
         }
     }
     grid::read_grids(prims)?;
-    instance::links(prims)?;
+    instance::cap(prims)?;
     part_of(prims)?;
     main_part(prims)?;
-    connects(prims)?;
+    disciplines::validate_connections(prims)?;
     level_links(prims)?;
     marks(prims)?;
     for p in prims
@@ -1146,7 +725,7 @@ pub(super) fn snapshot(
 }
 
 /// The kind token of an owned, supported 0.1.0 element prim, or `None` for content that stays inert.
-fn supported_kind(p: &Prim) -> Option<&str> {
+pub fn supported_kind(p: &Prim) -> Option<&str> {
     if p.element_id.is_none() || p.sources.is_empty() || p.sources.iter().any(|s| !s.owned) {
         return None;
     }
@@ -1161,12 +740,8 @@ fn supported_kind(p: &Prim) -> Option<&str> {
     if version != "0.1.0" || token("bim:geometryMode")? != "parametric" {
         return None;
     }
-    token("bim:elementKind").filter(|k| {
-        matches!(
-            *k,
-            "plate" | "beam" | "column" | "assembly" | "connection" | "level" | "grid"
-        )
-    })
+    token("bim:elementKind")
+        .filter(|k| is_part_kind(k) || matches!(*k, "assembly" | "connection" | "level" | "grid"))
 }
 
 /// The values of an A09 mark: a series of at most 16 letters, digits, `_` and `-`, a number in
@@ -1205,7 +780,7 @@ fn marks(prims: &[Prim]) -> Result<(), Diagnostic> {
         match (series, number, basis) {
             (None, None, None) => {}
             (Some(Value::Text(series)), Some(number), Some(Value::Text(basis))) => {
-                if !matches!(kind, "plate" | "beam" | "column" | "assembly") {
+                if !(is_part_kind(kind) || matches!(kind, "assembly")) {
                     return Err(unsupported());
                 }
                 let number = match number {
@@ -1263,7 +838,7 @@ fn level_links(prims: &[Prim]) -> Result<(), Diagnostic> {
                 .with_rule("DV-REL-004"));
             }
         };
-        if !matches!(kind, "plate" | "beam" | "column") {
+        if !is_part_kind(kind) {
             return Err(fail(
                 ErrorCode::InvalidArgument,
                 "only a plate, beam or column is assigned to a level",
@@ -1300,218 +875,6 @@ fn level_links(prims: &[Prim]) -> Result<(), Diagnostic> {
                     fail(ErrorCode::DanglingRelationship, "level target unavailable")
                         .with_rule("DV-REL-001"),
                 );
-            }
-        }
-    }
-    Ok(())
-}
-
-/// The A15 weld path rules shared by the loaded-content and candidate checks: 2 to 1024 points,
-/// finite and within the coordinate cap, consecutive points at least the minimum apart.
-fn weld_path_points(points: &[[f64; 3]]) -> Result<(), Diagnostic> {
-    if !(2..=1024).contains(&points.len()) {
-        return Err(invalid());
-    }
-    for point in points {
-        finite(*point)?;
-        cap(*point, 1e9)?;
-    }
-    for pair in points.windows(2) {
-        let [from, to] = pair else {
-            continue;
-        };
-        let [fx, fy, fz] = from;
-        let [tx, ty, tz] = to;
-        let (dx, dy, dz) = (tx - fx, ty - fy, tz - fz);
-        if (dx * dx + dy * dy + dz * dz) < MIN_WELD_SEGMENT_MM * MIN_WELD_SEGMENT_MM {
-            return Err(invalid());
-        }
-    }
-    Ok(())
-}
-
-/// The weld properties of a loaded `connection` (A06): every one is authored, with a supported
-/// token, and the size is finite in `(0, 1000]`. A connection without them is not a weld this
-/// slice can read, so it is refused rather than guessed. The optional geometry attributes (A15)
-/// are validated as a whole when the path is present and refused in part.
-fn weld_properties(p: &Prim) -> Result<(), Diagnostic> {
-    weld_tokens(
-        text(p, "steel:weld:type", "token")?,
-        text(p, "steel:weld:location", "token")?,
-        text(p, "steel:weld:side", "token")?,
-    )?;
-    weld_size(number(p, "steel:weld:sizeMm")?)?;
-    let path = p.properties.iter().any(|v| v.name == "steel:weld:pathMm");
-    let all_around = p
-        .properties
-        .iter()
-        .any(|v| v.name == "steel:weld:allAround");
-    let contour = p.properties.iter().any(|v| v.name == "steel:weld:contour");
-    if path {
-        weld_path_points(&points(p, "steel:weld:pathMm")?)?;
-        if all_around && !matches!(text(p, "steel:weld:allAround", "token")?, "true" | "false") {
-            return Err(invalid());
-        }
-        if contour
-            && !matches!(
-                text(p, "steel:weld:contour", "token")?,
-                "none" | "flush" | "concave" | "convex"
-            )
-        {
-            return Err(invalid());
-        }
-    } else if all_around || contour {
-        // Symbol data without the path it belongs to has no supported meaning.
-        return Err(invalid());
-    }
-    Ok(())
-}
-fn weld_tokens(weld_type: &str, location: &str, side: &str) -> Result<(), Diagnostic> {
-    if weld_type != "fillet" {
-        return Err(unsupported());
-    }
-    if !matches!(location, "workshop" | "site") || !matches!(side, "arrow" | "other" | "both") {
-        return Err(invalid());
-    }
-    Ok(())
-}
-fn weld_size(mm: f64) -> Result<(), Diagnostic> {
-    finite([mm])?;
-    if mm <= 0.0 {
-        return Err(invalid());
-    }
-    cap([mm], 1000.0)
-}
-
-/// A05 bolt properties of a loaded `connection`: every one is authored, the diameter is finite in
-/// `(0, 1000]`, the count is 1 to 512, the pitch is finite in `(0, 1e6]`, the origin is finite
-/// within the coordinate cap and the direction is a finite unit vector. A connection without them
-/// is not a bolt group this slice can read, so it is refused rather than guessed.
-fn bolt_properties(p: &Prim) -> Result<(), Diagnostic> {
-    let diameter = number(p, "steel:bolt:diameterMm")?;
-    finite([diameter])?;
-    if diameter <= 0.0 {
-        return Err(invalid());
-    }
-    cap([diameter], 1000.0)?;
-    let count = match required(p, "steel:bolt:count", "int")? {
-        Value::Int(n) => *n,
-        _ => return Err(invalid()),
-    };
-    if !(1..=512).contains(&count) {
-        return Err(invalid());
-    }
-    let pitch = number(p, "steel:bolt:pitchMm")?;
-    finite([pitch])?;
-    if pitch <= 0.0 {
-        return Err(invalid());
-    }
-    cap([pitch], 1e6)?;
-    let origin = bolt_vec3(p, "steel:bolt:originMm")?;
-    finite(origin)?;
-    cap(origin, 1e9)?;
-    let direction = bolt_vec3(p, "steel:bolt:directionMm")?;
-    finite(direction)?;
-    let squared = direction.iter().map(|v| v * v).sum::<f64>();
-    if (squared - 1.0).abs() > 1e-6 {
-        return Err(invalid());
-    }
-    Ok(())
-}
-
-/// One scalar `double3` property of a prim.
-fn bolt_vec3(p: &Prim, name: &str) -> Result<[f64; 3], Diagnostic> {
-    let Value::Array(values) = required(p, name, "double3")? else {
-        return Err(invalid());
-    };
-    match values.as_slice() {
-        [Value::Number(x), Value::Number(y), Value::Number(z)] => Ok([*x, *y, *z]),
-        _ => Err(invalid()),
-    }
-}
-
-/// A06 and A05 `connects` records (domain vocabulary section 5.1): only a connection — a weld or
-/// a bolt group — carries one, with exactly two distinct targets (`DV-REL-004`, `DV-REL-007`),
-/// never itself (`DV-REL-006`), each an active owned plate, beam or column (`DV-REL-001`
-/// dangling, `DV-REL-003` kind). An assembly is a valid target in the vocabulary but not for a
-/// weld or a bolt group in this slice.
-fn connects(prims: &[Prim]) -> Result<(), Diagnostic> {
-    let elements: BTreeMap<&str, (&Prim, &str)> = prims
-        .iter()
-        .filter_map(|p| supported_kind(p).map(|k| (p.path.as_str(), (p, k))))
-        .collect();
-    for (&path, &(p, kind)) in &elements {
-        let Some(r) = relationship(p, "bim:connects") else {
-            if kind == "connection" {
-                return Err(fail(
-                    ErrorCode::DependencyConflict,
-                    "a connection connects exactly two parts",
-                )
-                .with_rule("DV-REL-004"));
-            }
-            continue;
-        };
-        if kind != "connection" {
-            return Err(fail(
-                ErrorCode::InvalidArgument,
-                "only a connection carries a connects record",
-            )
-            .with_rule("DV-REL-003"));
-        }
-        let [first, second] = r.targets.as_slice() else {
-            return Err(fail(
-                ErrorCode::DependencyConflict,
-                "a connection connects exactly two parts",
-            )
-            .with_rule("DV-REL-004"));
-        };
-        if first == second {
-            return Err(fail(
-                ErrorCode::InvalidArgument,
-                "a connection connects two distinct parts",
-            )
-            .with_rule("DV-REL-007"));
-        }
-        for target in [first, second] {
-            if target == path {
-                return Err(fail(
-                    ErrorCode::InvalidArgument,
-                    "a connection cannot connect itself",
-                ));
-            }
-            match elements.get(target.as_str()) {
-                Some((t, _)) if !t.active => {
-                    return Err(fail(
-                        ErrorCode::DanglingRelationship,
-                        "connects target is not active",
-                    )
-                    .with_rule("DV-REL-001"));
-                }
-                Some((_, "plate" | "beam" | "column")) => {}
-                Some((_, "assembly")) => return Err(unsupported()),
-                Some(_) => {
-                    return Err(fail(
-                        ErrorCode::InvalidArgument,
-                        "connects target is not a plate, beam or column",
-                    ));
-                }
-                None if prims
-                    .iter()
-                    .any(|p| p.path == *target && p.element_id.is_some()) =>
-                {
-                    return Err(fail(
-                        ErrorCode::InvalidArgument,
-                        "connects target is not a supported owned part",
-                    )
-                    .with_rule("DV-REL-003"));
-                }
-                None => {
-                    return Err(fail(
-                        ErrorCode::DanglingRelationship,
-                        "connects target unavailable",
-                    )
-                    .with_rule("DV-REL-001"));
-                }
             }
         }
     }
@@ -1736,6 +1099,19 @@ pub(super) fn changes(
     let mut reads = BTreeSet::new();
     let mut writes = BTreeSet::new();
     for change in &input.changes {
+        // A schema change targets no element: it reads and writes the schema as a whole, so two
+        // schema edits conflict and neither conflicts with an element edit (I04). The candidate
+        // snapshot re-validates the whole scope.
+        if matches!(
+            change,
+            Change::AttrDefine { .. } | Change::AttrUndefine { .. }
+        ) {
+            writes.insert(Footprint {
+                identity: super::ATTR_SCHEMA_IDENTITY.to_owned(),
+                group: Group::Lifecycle,
+            });
+            continue;
+        }
         let (id, _) = change.key();
         let path = change_path(id, input, prims)?;
         let existing = prims.iter().find(|p| p.path == path);
@@ -1790,55 +1166,43 @@ pub(super) fn changes(
                     return Err(unsupported());
                 }
                 let valid = match change {
-                    Change::Contour { .. } | Change::Thickness { .. } => kind == "plate",
-                    Change::HoleRecords { .. } => kind == "plate",
-                    Change::Axis { .. } | Change::Roll { .. } | Change::Profile { .. } => {
-                        matches!(kind, "beam" | "column")
-                    }
-                    Change::PartClass { .. } => matches!(kind, "plate" | "beam" | "column"),
+                    Change::PartClass { .. } => is_part_kind(kind),
                     Change::Grid { .. } => kind == "grid",
+                    Change::Discipline(hook) => hook.0.targets_kind(kind),
                     Change::Mesh(m) if kind == "grid" => m.quantities.is_none(),
                     Change::ReferenceUnits { .. } => wrapper,
                     // A rename and a move are the only edits a wrapper takes as an element; an
                     // assembly can be renamed, deleted and be a part, never moved (identity pose).
                     Change::Placement { .. } => {
-                        matches!(kind, "plate" | "beam" | "column" | "reference" | "grid")
+                        is_part_kind(kind) || matches!(kind, "reference" | "grid")
                     }
                     Change::Label { .. } => {
-                        matches!(
-                            kind,
-                            "plate"
-                                | "beam"
-                                | "column"
-                                | "reference"
-                                | "assembly"
-                                | "connection"
-                                | "level"
-                                | "grid"
-                        )
+                        is_part_kind(kind)
+                            || matches!(
+                                kind,
+                                "reference" | "assembly" | "connection" | "level" | "grid"
+                            )
                     }
                     Change::Delete { .. } => {
-                        matches!(
-                            kind,
-                            "plate"
-                                | "beam"
-                                | "column"
-                                | "assembly"
-                                | "connection"
-                                | "level"
-                                | "grid"
-                        )
+                        is_part_kind(kind)
+                            || matches!(
+                                kind,
+                                "assembly"
+                                    | "connection"
+                                    | "level"
+                                    | "grid"
+                                    | "construction"
+                                    | "annotation"
+                            )
                     }
-                    Change::PartOf { .. } => {
-                        matches!(kind, "plate" | "beam" | "column" | "assembly")
-                    }
+                    Change::PartOf { .. } => is_part_kind(kind) || matches!(kind, "assembly"),
                     // The main-part record lives on the assembly; only it is a source.
                     Change::MainPart { .. } => kind == "assembly",
-                    Change::Level { .. } => matches!(kind, "plate" | "beam" | "column"),
-                    Change::Mark { .. } => {
-                        matches!(kind, "plate" | "beam" | "column" | "assembly")
-                    }
-                    _ => matches!(kind, "plate" | "beam" | "column"),
+                    Change::Level { .. } => is_part_kind(kind),
+                    Change::Mark { .. } => is_part_kind(kind) || matches!(kind, "assembly"),
+                    // A user attribute is carried by any element kind, including a wrapper.
+                    Change::AttrSet { .. } => true,
+                    _ => is_part_kind(kind),
                 };
                 if !valid {
                     return Err(unsupported());
@@ -1870,6 +1234,11 @@ pub(super) fn changes(
             // A mark is stored with the label's group: it conflicts with a rename or another
             // mark of the element and with nothing derived.
             Change::Mark { .. } => (&[Group::Lifecycle, Group::Label], &[Group::Label]),
+            // A value lives with its element and conflicts only with another change of the
+            // element's attributes; no derived result depends on a user attribute.
+            Change::AttrSet { .. } => {
+                (&[Group::Lifecycle, Group::Attributes], &[Group::Attributes])
+            }
             Change::PartClass { .. } | Change::Label { .. } => {
                 (&[Group::Lifecycle, Group::Label], &[Group::Label])
             }
@@ -1877,6 +1246,9 @@ pub(super) fn changes(
                 &[Group::Lifecycle, Group::ShapeInputs, Group::Placement],
                 &[Group::ShapeInputs],
             ),
+            // The complete authored inputs and the `connects` record are replaced as a whole
+            // (A14.3); a connection derives no body, so no derived group is written.
+            Change::Discipline(hook) => hook.0.groups(),
             Change::Material { .. } => (
                 &[Group::Lifecycle, Group::Derived],
                 &[Group::Material, Group::Relationship, Group::Derived],
@@ -2015,12 +1387,8 @@ pub(super) fn changes(
             p.path == definition_path(resource.digest, definition_category(&resource.definition))
         }) {
             let (kind, category) = match &resource.definition {
-                Definition::RectangleProfile { .. } => ("rectangle", DefinitionCategory::Profile),
-                Definition::SectionProfile { shape, .. } => {
-                    (shape.token(), DefinitionCategory::Profile)
-                }
                 Definition::Material { .. } => ("material", DefinitionCategory::Material),
-                Definition::Fastener { .. } => ("fastener", DefinitionCategory::Fastener),
+                Definition::Discipline(hook) => (hook.0.kind_token(), hook.0.category()),
             };
             self::resource(prims, resource.digest, &[kind], category)?;
         } else {
@@ -2039,96 +1407,6 @@ pub(super) fn changes(
                 label(&e.name)?;
                 pose(&e.placement)?;
                 match &e.shape {
-                    Shape::Plate {
-                        contour_mm,
-                        thickness_mm,
-                        // A parsed side is one of three closed tokens; nothing to bound.
-                        thickness_side: _,
-                        corners,
-                        holes,
-                        hole_records,
-                        cuts,
-                    } => {
-                        count_points(contour_mm, b)?;
-                        cap(contour_mm.iter().flatten().copied(), 1e9)?;
-                        cap([*thickness_mm], 1e6)?;
-                        // Corner treatments (A12.2): at most one per vertex, each naming a
-                        // vertex of this contour with bounded values; whether the corner
-                        // really turns and the treatments fit the edges are the engine's.
-                        if corners.len() > contour_mm.len() {
-                            return Err(limit());
-                        }
-                        let mut seen = Vec::new();
-                        for corner in corners {
-                            if corner.vertex >= contour_mm.len() || seen.contains(&corner.vertex) {
-                                return Err(invalid());
-                            }
-                            seen.push(corner.vertex);
-                            let values = match corner.treatment {
-                                CornerTreatment::Chamfer { d1_mm, d2_mm } => [d1_mm, d2_mm],
-                                CornerTreatment::Round { radius_mm } => [radius_mm, radius_mm],
-                            };
-                            if values.iter().any(|v| *v <= 0.0) {
-                                return Err(invalid());
-                            }
-                            cap(values, 1e9)?;
-                        }
-                        if holes.len() + hole_records.len() > MAX_HOLES {
-                            return Err(limit());
-                        }
-                        for hole in holes {
-                            if hole.len() > MAX_HOLE_POINTS {
-                                return Err(limit());
-                            }
-                            if hole.len() < 3 || hole.iter().any(|p| p[2] != 0.0) {
-                                return Err(invalid());
-                            }
-                            cap(hole.iter().flatten().copied(), 1e9)?;
-                        }
-                        for record in hole_records {
-                            // Record polygons are planar XY pairs by type; winding, placement
-                            // and clearance are the engine's replay decision.
-                            if record.polygon_mm.len() > MAX_HOLE_POINTS
-                                || record.polygon_mm.len() < 3
-                            {
-                                return Err(invalid());
-                            }
-                            cap(record.polygon_mm.iter().flatten().copied(), 1e9)?;
-                        }
-                        cut_values(cuts)?;
-                    }
-                    Shape::Member {
-                        axis_mm,
-                        roll_rad,
-                        profile,
-                        placement,
-                        cuts,
-                        ..
-                    } => {
-                        if axis_mm.len() < 2 || axis_mm.len() > MAX_MEMBER_PATH_POINTS {
-                            return Err(invalid());
-                        }
-                        cap(axis_mm.iter().flatten().copied(), 1e9)?;
-                        if let Some(n) = roll_rad {
-                            cap([*n], std::f64::consts::TAU)?;
-                        }
-                        if let Some(p) = placement {
-                            cap(
-                                [
-                                    p.plane_offset_mm,
-                                    p.depth_offset_mm,
-                                    p.start_offset_mm,
-                                    p.end_offset_mm,
-                                ],
-                                1e6,
-                            )?;
-                        }
-                        cut_values(cuts)?;
-                        reads.insert(Footprint {
-                            identity: profile.to_string(),
-                            group: Group::Relationship,
-                        });
-                    }
                     Shape::Assembly => {
                         if e.material.is_some()
                             || e.placement.translation_mm != [0.0; 3]
@@ -2137,124 +1415,13 @@ pub(super) fn changes(
                             return Err(unsupported());
                         }
                     }
-                    Shape::Weld(w) => {
-                        if e.material.is_some()
-                            || e.placement.translation_mm != [0.0; 3]
-                            || e.placement.orientation_xyzw != [0.0, 0.0, 0.0, 1.0]
-                        {
-                            return Err(unsupported());
-                        }
-                        weld_tokens(&w.weld_type, &w.location, &w.side)?;
-                        weld_size(w.size_mm)?;
-                        if let Some(geometry) = &w.geometry {
-                            weld_path_points(&geometry.points_mm)?;
-                            if !matches!(
-                                geometry.contour.as_str(),
-                                "none" | "flush" | "concave" | "convex"
-                            ) {
-                                return Err(invalid());
-                            }
-                        }
-                        let [main, secondary] = &w.connects;
-                        if !uuid7(main) || !uuid7(secondary) {
-                            return Err(fail(
-                                ErrorCode::InvalidId,
-                                "invalid full element identity",
-                            )
-                            .with_rule("DV-BASE-001"));
-                        }
-                        if main == secondary || main == &e.id || secondary == &e.id {
-                            return Err(fail(
-                                ErrorCode::InvalidArgument,
-                                "a weld connects two distinct other parts",
-                            )
-                            .with_rule(if main == secondary {
-                                "DV-REL-007"
-                            } else {
-                                "DV-REL-006"
-                            }));
-                        }
-                        // The parts' existence and kinds decide acceptance; they are only read.
-                        for part in [main, secondary] {
-                            reads.insert(Footprint {
-                                identity: part.clone(),
-                                group: Group::Lifecycle,
-                            });
-                        }
-                    }
-                    Shape::Bolt(b) => {
-                        if e.material.is_some()
-                            || e.placement.translation_mm != [0.0; 3]
-                            || e.placement.orientation_xyzw != [0.0, 0.0, 0.0, 1.0]
-                        {
-                            return Err(unsupported());
-                        }
-                        finite([b.diameter_mm])?;
-                        if b.diameter_mm <= 0.0 {
-                            return Err(invalid());
-                        }
-                        cap([b.diameter_mm], 1000.0)?;
-                        if b.count == 0 || b.count > 512 {
-                            return Err(invalid());
-                        }
-                        finite([b.pitch_mm])?;
-                        if b.pitch_mm <= 0.0 {
-                            return Err(invalid());
-                        }
-                        cap([b.pitch_mm], 1e6)?;
-                        finite(b.origin_mm)?;
-                        cap(b.origin_mm, 1e9)?;
-                        finite(b.direction_mm)?;
-                        let squared = b.direction_mm.iter().map(|v| v * v).sum::<f64>();
-                        if (squared - 1.0).abs() > 1e-6 {
-                            return Err(invalid());
-                        }
-                        let [main, secondary] = &b.connects;
-                        if !uuid7(main) || !uuid7(secondary) {
-                            return Err(fail(
-                                ErrorCode::InvalidId,
-                                "invalid full element identity",
-                            )
-                            .with_rule("DV-BASE-001"));
-                        }
-                        if main == secondary || main == &e.id || secondary == &e.id {
-                            return Err(fail(
-                                ErrorCode::InvalidArgument,
-                                "a bolt group connects two distinct other parts",
-                            )
-                            .with_rule(if main == secondary {
-                                "DV-REL-007"
-                            } else {
-                                "DV-REL-006"
-                            }));
-                        }
-                        // The parts' existence and kinds decide acceptance; they are only read.
-                        for part in [main, secondary] {
-                            reads.insert(Footprint {
-                                identity: part.clone(),
-                                group: Group::Lifecycle,
-                            });
-                        }
-                    }
-                    Shape::Instance { kind, definition } => {
-                        if e.id == *definition || e.material.is_some() {
-                            return Err(invalid());
-                        }
-                        instance::validate_source(definition, *kind, prims)?;
-                        for group in [
-                            Group::Lifecycle,
-                            Group::Label,
-                            Group::ShapeInputs,
-                            Group::Placement,
-                            Group::Material,
-                            Group::Relationship,
-                        ] {
-                            reads.insert(Footprint {
-                                identity: definition.clone(),
-                                group,
-                            });
-                        }
-                    }
+                    Shape::Discipline(hook) => hook.0.validate(&mut hook::ValidateCx {
+                        budgets: b,
+                        element: e,
+                        input,
+                        prims,
+                        reads: &mut reads,
+                    })?,
                     Shape::Grid(g) => {
                         grid::validate_record(g)?;
                         if e.id != g.id.to_string()
@@ -2273,6 +1440,28 @@ pub(super) fn changes(
                             return Err(unsupported());
                         }
                         elevation(*elevation_mm)?;
+                    }
+                    Shape::Construction(o) => {
+                        construction::validate_record(o)?;
+                        if e.id != o.id.to_string()
+                            || e.name != o.name
+                            || e.material.is_some()
+                            || e.placement.translation_mm != [0.0; 3]
+                            || e.placement.orientation_xyzw != [0.0, 0.0, 0.0, 1.0]
+                        {
+                            return Err(invalid());
+                        }
+                    }
+                    Shape::Annotation(a) => {
+                        annotation::validate_record(a)?;
+                        if e.id != a.id.to_string()
+                            || e.name != a.name
+                            || e.material.is_some()
+                            || e.placement.translation_mm != [0.0; 3]
+                            || e.placement.orientation_xyzw != [0.0, 0.0, 0.0, 1.0]
+                        {
+                            return Err(invalid());
+                        }
                     }
                 }
                 if let Some(d) = e.material {
@@ -2303,22 +1492,17 @@ pub(super) fn changes(
                 }
             }
             Change::PartClass { .. } => {}
+            Change::Discipline(hook) => hook.0.validate(&mut hook::ChangeValidateCx {
+                budgets: b,
+                input,
+                prims,
+                reads: &mut reads,
+            })?,
             Change::Label { name, .. } => label(name)?,
             Change::AttachReference(r) => reference::check_new(r)?,
             Change::ReferenceUnits { interpretation, .. } => {
                 reference::check_units(interpretation)?
             }
-            Change::Contour { points_mm, .. } => {
-                count_points(points_mm, b)?;
-                cap(points_mm.iter().flatten().copied(), 1e9)?;
-            }
-            Change::Thickness { mm, .. } => cap([*mm], 1e6)?,
-            Change::Cuts { cuts, .. } => cut_values(cuts)?,
-            Change::Axis { points_mm, .. } => cap(points_mm.iter().flatten().copied(), 1e9)?,
-            Change::Roll {
-                opinion: Opinion::Value(n),
-                ..
-            } => cap([*n], std::f64::consts::TAU)?,
             Change::Placement { placement, .. } => pose(placement)?,
             Change::Material {
                 opinion: MaterialOpinion::Target(d),
@@ -2326,12 +1510,6 @@ pub(super) fn changes(
             } => {
                 reads.insert(Footprint {
                     identity: d.to_string(),
-                    group: Group::Relationship,
-                });
-            }
-            Change::Profile { digest, .. } => {
-                reads.insert(Footprint {
-                    identity: digest.to_string(),
                     group: Group::Relationship,
                 });
             }
@@ -2352,35 +1530,14 @@ pub(super) fn changes(
     }
     Ok((reads, writes))
 }
-fn count_points(points: &[[f64; 3]], b: Budgets) -> Result<(), Diagnostic> {
+/// Bounds a point array by count and total values against the batch budgets; the seam's
+/// point-budget gate.
+pub fn count_points(points: &[[f64; 3]], b: Budgets) -> Result<(), Diagnostic> {
     if points.len() > 1024 || points.len().saturating_mul(3) > b.array_items {
         return Err(limit());
     }
     if points.len() < 3 {
         return Err(invalid());
-    }
-    Ok(())
-}
-/// The authored plane-cut records of a created plate or member (A03): finite and within the
-/// coordinate cap, with a non-zero normal, in ascending ordinals at most 999. Whether a plane
-/// crosses the element is the engine's gate.
-fn cut_values(cuts: &[CutRecord]) -> Result<(), Diagnostic> {
-    let mut last_ordinal = None;
-    for cut in cuts {
-        // The record admission keeps the model's codes: non-finite and a zero normal are
-        // invalid, the coordinate cap is a limit.
-        match cut.validate() {
-            Ok(()) => (),
-            Err(error) if error.code == ErrorCode::LimitExceeded => return Err(limit()),
-            Err(_) => return Err(invalid()),
-        }
-        if cut.ordinal > 999 {
-            return Err(limit());
-        }
-        if last_ordinal.is_some_and(|last| last >= cut.ordinal) {
-            return Err(invalid());
-        }
-        last_ordinal = Some(cut.ordinal);
     }
     Ok(())
 }
@@ -2394,71 +1551,12 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                     .chain(e.placement.orientation_xyzw),
             )?;
             match &e.shape {
-                Shape::Plate {
-                    contour_mm,
-                    thickness_mm,
-                    thickness_side: _,
-                    corners,
-                    holes,
-                    hole_records,
-                    cuts,
-                } => finite(
-                    contour_mm
-                        .iter()
-                        .flatten()
-                        .copied()
-                        .chain(holes.iter().flatten().flatten().copied())
-                        .chain(
-                            hole_records
-                                .iter()
-                                .flat_map(|r| r.polygon_mm.iter().flatten().copied()),
-                        )
-                        .chain([*thickness_mm])
-                        .chain(
-                            cuts.iter()
-                                .flat_map(|c| c.point_mm.into_iter().chain(c.normal)),
-                        )
-                        .chain(corners.iter().flat_map(|c| match c.treatment {
-                            CornerTreatment::Chamfer { d1_mm, d2_mm } => [d1_mm, d2_mm],
-                            CornerTreatment::Round { radius_mm } => [radius_mm, radius_mm],
-                        })),
-                ),
-                Shape::Member {
-                    axis_mm,
-                    roll_rad,
-                    placement,
-                    cuts,
-                    ..
-                } => finite(
-                    axis_mm
-                        .iter()
-                        .flatten()
-                        .copied()
-                        .chain(roll_rad.iter().copied())
-                        .chain(placement.iter().flat_map(|p| {
-                            [
-                                p.plane_offset_mm,
-                                p.depth_offset_mm,
-                                p.start_offset_mm,
-                                p.end_offset_mm,
-                            ]
-                        }))
-                        .chain(
-                            cuts.iter()
-                                .flat_map(|c| c.point_mm.into_iter().chain(c.normal)),
-                        ),
-                ),
                 Shape::Assembly => Ok(()),
-                Shape::Weld(w) => finite([w.size_mm]),
-                Shape::Bolt(b) => finite(
-                    [b.diameter_mm, b.pitch_mm]
-                        .into_iter()
-                        .chain(b.origin_mm)
-                        .chain(b.direction_mm),
-                ),
+                Shape::Discipline(hook) => hook.0.check_finite(),
                 Shape::Level { elevation_mm } => finite([*elevation_mm]),
-                Shape::Instance { .. } => Ok(()),
                 Shape::Grid(g) => grid::validate_record(g),
+                Shape::Construction(o) => construction::validate_record(o),
+                Shape::Annotation(a) => annotation::validate_record(a),
             }
         }
         Change::Grid { grid: g, .. } => grid::validate_record(g),
@@ -2472,17 +1570,7 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
         Change::ReferenceUnits { interpretation, .. } => {
             finite(interpretation.iter().map(|i| i.meters_per_unit))
         }
-        Change::Contour { points_mm, .. } => finite(points_mm.iter().flatten().copied()),
-        Change::Cuts { cuts, .. } => finite(
-            cuts.iter()
-                .flat_map(|c| c.point_mm.into_iter().chain(c.normal)),
-        ),
-        Change::Axis { points_mm, .. } => finite(points_mm.iter().flatten().copied()),
-        Change::Thickness { mm, .. } => finite([*mm]),
-        Change::Roll {
-            opinion: Opinion::Value(n),
-            ..
-        } => finite([*n]),
+        Change::Discipline(hook) => hook.0.check_finite(),
         Change::Placement { placement, .. } => finite(
             placement
                 .translation_mm

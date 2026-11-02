@@ -2,34 +2,29 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! E03 headless command `export-bom`: the verified head revision's bill of materials as CSV
-//! files. It calls the engine's pure tables through `beamcraft_cli::bom` and prints one JSON
+//! files. It calls the engine's pure tables through `beamcraft_commands::bom` and prints one JSON
 //! object with the same error shape and exit codes as the other commands.
 
-use beamcraft_cli::bom::rows;
-use beamcraft_cli::plate::PlateError;
-use beamcraft_cli::plate::inspect;
+use beamcraft_commands::bom::rows;
+use beamcraft_commands::plate::inspect;
 use beamcraft_engine::bom::{elements_csv, summary_csv, tables};
 use beamcraft_engine::limits::MAX_ELEMENTS;
 use beamcraft_host::{revision::RevisionStore, storage::BlobStore};
 use beamcraft_json::Json;
 use beamcraft_model::error::ErrorCode;
+use session::Refusal;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::io::Write;
 
-type Run<T> = Result<T, PlateError>;
+type Run<T> = Result<T, Refusal>;
 
-fn invalid(message: &'static str) -> PlateError {
-    PlateError {
+fn invalid(message: &'static str) -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
     }
-}
-
-/// Whether `command` is `export-bom`.
-pub fn handles(command: &OsString) -> bool {
-    command == "export-bom"
 }
 
 /// Runs `export-bom` and returns the JSON result and the process exit code.
@@ -46,11 +41,11 @@ fn reserve(path: &str) -> Run<std::fs::File> {
         .map_err(|_| invalid("an output file exists or cannot be created"))
 }
 
-/// Writes and syncs a reserved file.
-fn write_sync(file: &mut std::fs::File, bytes: &str) -> Run<()> {
+/// Writes and syncs a reserved file. Shared with the schedule command.
+pub(crate) fn write_sync(file: &mut std::fs::File, bytes: &str) -> Run<()> {
     file.write_all(bytes.as_bytes())
         .and_then(|()| file.sync_all())
-        .map_err(|_| PlateError {
+        .map_err(|_| Refusal {
             rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "the report could not be written",
@@ -59,8 +54,11 @@ fn write_sync(file: &mut std::fs::File, bytes: &str) -> Run<()> {
 
 /// Reserves every output file before any bytes are written, so a refusal on any path — an
 /// existing or uncreatable summary included, and the same path given twice — lands while
-/// nothing exists; the files reserved so far are removed again on the way out.
-fn reserve_all(outputs: Vec<(&str, String)>) -> Run<Vec<(String, std::fs::File, String)>> {
+/// nothing exists; the files reserved so far are removed again on the way out. Shared with
+/// the schedule command, which writes the same atomic discipline.
+pub(crate) fn reserve_all(
+    outputs: Vec<(&str, String)>,
+) -> Run<Vec<(String, std::fs::File, String)>> {
     let mut reserved = Vec::with_capacity(outputs.len());
     for (path, bytes) in outputs {
         match reserve(path) {
@@ -76,8 +74,14 @@ fn reserve_all(outputs: Vec<(&str, String)>) -> Run<Vec<(String, std::fs::File, 
     Ok(reserved)
 }
 
-fn run(args: &[OsString]) -> Run<Json> {
-    let args: Vec<&str> = args
+/// The KEY VALUE options of one file-exporting report command, shared by `export-bom` and
+/// `schedule-export`: bounded UTF-8 arguments, pairs only, every key known and given once.
+pub(crate) fn pairs<'a>(
+    args: &'a [OsString],
+    allowed: &[&str],
+    max: usize,
+) -> Run<Vec<(&'a str, &'a str)>> {
+    let flat: Vec<&str> = args
         .iter()
         .skip(1)
         .map(|a| {
@@ -86,25 +90,31 @@ fn run(args: &[OsString]) -> Run<Json> {
                 .ok_or_else(|| invalid("argument is not bounded UTF-8"))
         })
         .collect::<Run<_>>()?;
-    if !args.len().is_multiple_of(2) || args.len() > 6 {
+    if !flat.len().is_multiple_of(2) || flat.len() > max {
         return Err(invalid("options are KEY VALUE pairs"));
     }
-    let mut options = BTreeMap::new();
-    for pair in args.as_chunks::<2>().0 {
+    let mut options = Vec::new();
+    for pair in flat.as_chunks::<2>().0 {
         let [key, value] = pair;
-        if !matches!(*key, "--store" | "--out" | "--summary")
-            || options.insert(*key, *value).is_some()
-        {
+        if !allowed.contains(key) || options.iter().any(|(k, _): &(&str, &str)| k == key) {
             return Err(invalid("unknown or repeated option"));
         }
+        options.push((*key, *value));
     }
+    Ok(options)
+}
+
+fn run(args: &[OsString]) -> Run<Json> {
+    let options: BTreeMap<&str, &str> = pairs(args, &["--store", "--out", "--summary"], 6)?
+        .into_iter()
+        .collect();
     let store = options
         .get("--store")
         .ok_or_else(|| invalid("--store is required"))?;
     let out = options
         .get("--out")
         .ok_or_else(|| invalid("--out is required"))?;
-    let blobs = BlobStore::new(store).map_err(|e| PlateError {
+    let blobs = BlobStore::new(store).map_err(|e| Refusal {
         rule_id: None,
         code: e.code(),
         message: "store root is not usable",
@@ -113,7 +123,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     let inspection = inspect(&store)?;
     // The approved numbering marks (A09) of the same head; a mark the store does not carry
     // falls back to the element id in the report.
-    let (mark_revision, marks) = beamcraft_cli::numbering_approval::head_marks(&store)?;
+    let (mark_revision, marks) = beamcraft_commands::numbering_approval::head_marks(&store)?;
     if mark_revision != inspection.revision.revision_id {
         return Err(invalid(
             "the store head moved while the report was gathered",

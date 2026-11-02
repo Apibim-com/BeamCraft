@@ -2,14 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! C01 headless commands: `create-changeset`, `inspect-changeset` and `apply-changeset`. They call
-//! `beamcraft_cli::changeset` and print one JSON object with the same error shape and exit codes
+//! `beamcraft_commands::changeset` and print one JSON object with the same error shape and exit codes
 //! as the plate commands.
 
 use crate::plate_cmd::revision_json;
-use beamcraft_cli::changeset::{
+use beamcraft_commands::changeset::{
     CreateChangeset, StoredChangeset, apply_changeset, create_changeset, read_changeset,
 };
-use beamcraft_cli::plate::PlateError;
 use beamcraft_host::{
     ids::IdSource,
     revision::{NoFault, RevisionStore},
@@ -20,14 +19,15 @@ use beamcraft_model::changeset::{Access, DependencyTarget};
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ActorId, OpId, RevisionId};
+use session::Refusal;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::Path;
 
-type Run<T> = Result<T, PlateError>;
+type Run<T> = Result<T, Refusal>;
 
-fn invalid(message: &'static str) -> PlateError {
-    PlateError {
+fn invalid(message: &'static str) -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
@@ -41,7 +41,7 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
 }
 
 fn store_at(path: &Path, message: &'static str) -> Run<RevisionStore> {
-    let blobs = BlobStore::new(path).map_err(|e| PlateError {
+    let blobs = BlobStore::new(path).map_err(|e| Refusal {
         rule_id: None,
         code: e.code(),
         message,
@@ -115,7 +115,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
     if *command == "create-changeset" {
         let mut source = IdSource::system();
         let mut fresh = || {
-            source.next_id().map_err(|_| PlateError {
+            source.next_id().map_err(|_| Refusal {
                 rule_id: None,
                 code: ErrorCode::BackendUnavailable,
                 message: "no identity could be generated",
@@ -143,9 +143,9 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
             Err(error) if error.code == ErrorCode::DependencyConflict => {
                 // C04: the refusal names every pending conflict in its diagnostics.
                 candidates.extend(
-                    beamcraft_cli::workspace::pending_conflicts(&workspace, dir)?
+                    beamcraft_commands::workspace::pending_conflicts(&workspace, dir)?
                         .iter()
-                        .map(beamcraft_cli::workspace::conflicts::conflict_json),
+                        .map(beamcraft_commands::workspace::conflicts::conflict_json),
                 );
                 return Err(error);
             }
@@ -218,6 +218,10 @@ fn changeset_json(stored: &StoredChangeset) -> Json {
                             DependencyTarget::Definition(digest) => {
                                 ("definition", digest.to_string())
                             }
+                            DependencyTarget::AttrSchema => (
+                                "schema",
+                                beamcraft_layer_engine::authored::ATTR_SCHEMA_IDENTITY.to_string(),
+                            ),
                         };
                         Json::object([
                             ("target_kind", Json::text(kind)),

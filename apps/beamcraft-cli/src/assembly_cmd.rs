@@ -2,16 +2,15 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! A01 headless commands: `create-assembly`, `attach-to-assembly`, `detach-from-assembly` and
-//! `assemblies`. They call the engine API through `beamcraft_cli::assembly` and print one JSON
+//! `assemblies`. They call the engine API through `beamcraft_commands::assembly` and print one JSON
 //! object with the same error shape and exit codes as the plate commands.
 
 use crate::command_context::{self, CONTEXT_OPTIONS};
 use crate::plate_cmd::{footprint_json, id_error, revision_json};
-use beamcraft_cli::assembly::{
+use beamcraft_commands::assembly::{
     AssemblyChange, AssemblyContext, AssemblyView, assemblies, attach, create_assembly, detach,
     explode, set_main_part,
 };
-use beamcraft_cli::plate::PlateError;
 use beamcraft_host::{
     ids::IdSource,
     revision::{NoFault, RevisionStore},
@@ -23,13 +22,14 @@ use beamcraft_model::command::{
 };
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId};
+use session::Refusal;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 
-type Run<T> = Result<T, PlateError>;
+type Run<T> = Result<T, Refusal>;
 
-fn invalid(message: &'static str) -> PlateError {
-    PlateError {
+fn invalid(message: &'static str) -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
@@ -77,7 +77,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     let store_root = options
         .get("--store")
         .ok_or_else(|| invalid("--store is required"))?;
-    let blobs = BlobStore::new(store_root).map_err(|e| PlateError {
+    let blobs = BlobStore::new(store_root).map_err(|e| Refusal {
         rule_id: None,
         code: e.code(),
         message: "store root is not usable",
@@ -92,7 +92,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     }
     let mut source = IdSource::system();
     let mut fresh = || {
-        source.next_id().map_err(|_| PlateError {
+        source.next_id().map_err(|_| Refusal {
             rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",

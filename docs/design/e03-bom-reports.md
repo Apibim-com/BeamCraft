@@ -9,7 +9,7 @@ API. IFC export (E02) is a separate task; plain-text and HTML reports stay open.
 
 ## 1. What exists today
 
-* `beamcraft_cli::plate::inspect` opens and verifies the head revision, re-evaluates every plate
+* `beamcraft_commands::plate::inspect` opens and verifies the head revision, re-evaluates every plate
   and member with the kernel, and reports `PlateRecord`/`MemberRecord` (authored inputs, bodies,
   re-evaluated `Quantities`), the definitions by digest, the levels and the stored-quantity
   freshness. This is the same verified read every other reporting command uses.
@@ -33,7 +33,7 @@ API. IFC export (E02) is a separate task; plain-text and HTML reports stay open.
 ```text
 beamcraft_engine::bom      pure computation: rows in, sorted element table and grouped
                            summary out; CSV rendering of both (strings, no I/O)
-beamcraft_cli::bom         maps an Inspection to engine rows (labels, derived areas)
+beamcraft_commands::bom         maps an Inspection to engine rows (labels, derived areas)
 beamcraft export-bom       CLI command: verified head -> rows -> CSV files
 ```
 
@@ -144,7 +144,7 @@ beamcraft export-bom --store ROOT --out ELEMENTS_CSV [--summary SUMMARY_CSV]
 ## 3. Evidence
 
 `cargo test -p beamcraft-engine bom` (sort order, grouping, unknown mass, derived areas, CSV
-quoting), `cargo test -p beamcraft-cli --test bom` (real binary: a store with a material, an
+quoting), `cargo test -p beamcraft-cli --test cli -- bom::` (real binary: a store with a material, an
 I-section with designation, plates and members exports both files; the rows match
 `inspect-elements`; the mass of an element without a material is an empty cell, counted in
 `mass_unknown`, and excluded from totals; a beam numbered by `approve-numbering` reports its mark,

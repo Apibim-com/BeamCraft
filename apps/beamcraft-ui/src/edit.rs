@@ -3,14 +3,13 @@
 
 //! V05.2 edit tools, as pure logic: selecting by a mouse click, moving, copying and deleting the
 //! selected element, and undo and redo. Every action is the argument list of the same CLI command
-//! a user types (`pick`, `update-element --translation`, `copy-element --offset`,
+//! a user types (`update-element --translation`, `copy-element --offset`,
 //! `delete-element`, `undo-workspace`, `redo-workspace`); the reply is read back into a result or
 //! the CLI's own refusal. Nothing here touches a window, a GPU or a process.
 //!
 //! The UI computes no engineering result. The one piece of arithmetic is the display ray through a
 //! clicked pixel (camera math, like the projection in [`crate::camera`]); what the ray hits is the
-//! engine's `pick`. The window runs that query itself on the snapshot it shows ([`pick_in`], the
-//! same engine call the CLI's `pick` makes), so a click selects what is on screen and starts no
+//! engine's `pick`. The window runs that query itself on the snapshot it shows ([`pick_in`]), so a click selects what is on screen and starts no
 //! process for it. A move is the absolute translation the user types (the form is pre-filled with
 //! the element's present translation as the engine reports it), so the UI adds nothing up itself.
 //! Property editing is V06.
@@ -50,40 +49,37 @@ pub fn ndc_of(point: [f32; 2], rect_min: [f32; 2], size: [f32; 2]) -> Option<[f3
 
 /// The world ray through `ndc` for a camera view. Display coordinates are relative to
 /// `origin_mm` (the scene origin), so the ray is shifted back to model millimetres in f64. This is
-/// the inverse of [`View::project`].
+/// the inverse of [`View::project`]: under the perspective projection the ray leaves the eye and
+/// aims through the frustum; under the orthographic one every pixel is a parallel ray from the
+/// laterally offset eye point, so both draw and pick agree in either projection (V13).
 pub fn ray_through(view: &View, ndc: [f32; 2], origin_mm: [f64; 3]) -> Option<Ray> {
-    let [tan, aspect, _, _] = view.params;
+    let [scale, aspect, _, _] = view.params;
     let [nx, ny] = ndc;
-    if !ndc.into_iter().chain([tan, aspect]).all(f32::is_finite) || nx.abs() > 1.0 || ny.abs() > 1.0
+    if !ndc.into_iter().chain([scale, aspect]).all(f32::is_finite)
+        || nx.abs() > 1.0
+        || ny.abs() > 1.0
     {
         return None;
     }
+    let orthographic = view.mode[0] > 0.5;
     let mut direction = [0.0f64; 3];
-    let [orthographic, span, _, _] = view.projection;
-    for (axis, slot) in direction.iter_mut().enumerate() {
+    let mut origin = [0.0f64; 3];
+    for (axis, (slot, start)) in direction.iter_mut().zip(origin.iter_mut()).enumerate() {
         let right = f64::from(*view.right.get(axis)?);
         let up = f64::from(*view.up.get(axis)?);
         let back = f64::from(*view.back.get(axis)?);
-        *slot = if orthographic > 0.5 {
-            -back
-        } else {
-            right * f64::from(nx) * f64::from(tan) * f64::from(aspect)
-                + up * f64::from(ny) * f64::from(tan)
-                - back
-        };
+        let eye = f64::from(*view.eye.get(axis)?);
+        let lateral = right * f64::from(nx) * f64::from(scale) * f64::from(aspect)
+            + up * f64::from(ny) * f64::from(scale);
+        *slot = if orthographic { -back } else { lateral - back };
+        *start = eye + origin_mm.get(axis).copied()?;
+        if orthographic {
+            *start += lateral;
+        }
     }
     let length = direction.iter().map(|v| v * v).sum::<f64>().sqrt();
     if !length.is_finite() || length < 1e-9 {
         return None;
-    }
-    let mut origin = [0.0f64; 3];
-    for (axis, slot) in origin.iter_mut().enumerate() {
-        *slot = f64::from(*view.eye.get(axis)?) + origin_mm.get(axis).copied()?;
-        if orthographic > 0.5 {
-            *slot += f64::from(
-                *view.right.get(axis)? * nx * span * aspect + *view.up.get(axis)? * ny * span,
-            );
-        }
     }
     Some(Ray {
         origin,
@@ -91,57 +87,35 @@ pub fn ray_through(view: &View, ndc: [f32; 2], origin_mm: [f64; 3]) -> Option<Ra
     })
 }
 
-fn triple(values: [f64; 3]) -> String {
-    format!("{},{},{}", values[0], values[1], values[2])
-}
-
-/// The arguments of the CLI `pick` command for a ray: the nearest face hit only.
-pub fn pick_args(store: &Path, ray: &Ray) -> Vec<String> {
-    vec![
-        "pick".into(),
-        "--store".into(),
-        store.to_string_lossy().into_owned(),
-        "--origin".into(),
-        triple(ray.origin),
-        "--direction".into(),
-        triple(ray.direction),
-        "--targets".into(),
-        "face".into(),
-        "--max-hits".into(),
-        "1".into(),
-    ]
-}
-
-/// Reads the reply of `pick`: the element under the ray, or `None` for empty space.
-pub fn parse_pick(exit_code: Option<i32>, stdout: &[u8]) -> Result<Option<String>, ToolError> {
-    let reply = decode(stdout)?;
-    if let Some(error) = rejection(&reply, exit_code) {
-        return Err(error);
-    }
-    let unreadable = || ToolError {
-        code: "UNREADABLE_REPLY".into(),
-        message: "the CLI reply lacks a field".into(),
-    };
-    let hits = reply
-        .get("hits")
-        .and_then(Json::array)
-        .map_err(|_| unreadable())?;
-    match hits.first() {
-        None => Ok(None),
-        Some(hit) => Ok(Some(text(hit, "element_id").ok_or_else(unreadable)?)),
-    }
-}
-
-/// What the CLI's `pick` with [`pick_args`] answers for `ray`, computed in this process on
-/// `snapshot` by the same engine query: the element of the nearest front face along the ray, or
-/// `None` for empty space. `selection` is the window's switches (V11): a class that is off is
-/// never the answer. A refusal carries the engine's code, as the CLI's reply would.
+/// The element under `ray`, computed in this process on `snapshot` by the engine's pick: the
+/// element of the nearest front face along the ray, or `None` for empty space. `selection` is the window's switches (V11): a class that is off is
+/// never the answer. A refusal carries the engine's code.
 pub fn pick_in(
     snapshot: &ViewSnapshot,
     ray: &Ray,
     selection: SelectionFilter,
 ) -> Result<Option<String>, ToolError> {
     Ok(face_pick(snapshot, ray, selection)?.map(|(_, id)| id))
+}
+
+/// The nearest front face's named feature along the ray, with the hit point: the qualified
+/// FeatureId a D06 annotation placement stores. Named features only; unnamed display geometry
+/// is no anchor, and the selection switches do not apply to a placement tool.
+pub fn feature_pick(
+    snapshot: &ViewSnapshot,
+    ray: &Ray,
+) -> Result<Option<(String, [f64; 3])>, ToolError> {
+    let mut query = RayPick::new(ray.origin, ray.direction, vec![FeatureKind::Face]);
+    query.max_hits = 1;
+    let result = pick(snapshot, &PickQuery::Ray(query)).map_err(|e| ToolError {
+        code: e.f04_code().as_str().to_owned(),
+        message: format!("the pick was refused ({})", e.code().as_str()),
+    })?;
+    Ok(result.hits.first().and_then(|hit| {
+        hit.feature_id
+            .as_ref()
+            .map(|id| (id.to_string(), hit.point_world_mm))
+    }))
 }
 
 /// Where a click lands in 3D (issue #134 placement): the engine's front-face hit point on the
@@ -741,82 +715,53 @@ mod tests {
 
     #[test]
     fn the_ray_through_a_projected_point_hits_that_point() {
-        let mut camera = Camera::new([0.0; 3], 4000.0, 1.6).unwrap();
-        camera.navigate([0.3, 0.1], [0.0; 2], 0.0).unwrap();
-        let view = camera.view(1.6).unwrap();
         let origin_mm = [10_000.0, -5_000.0, 200.0];
-        for point in [
-            [0.0f32, 0.0, 0.0],
-            [300.0, -200.0, 100.0],
-            [-500.0, 250.0, 0.0],
-        ] {
-            let [nx, ny, _] = view.project(point);
-            let ray = ray_through(&view, [nx, ny], origin_mm).unwrap();
-            // The point, back in model millimetres, lies on the ray.
-            let p = [
-                f64::from(point[0]) + origin_mm[0],
-                f64::from(point[1]) + origin_mm[1],
-                f64::from(point[2]) + origin_mm[2],
-            ];
-            let to = [
-                p[0] - ray.origin[0],
-                p[1] - ray.origin[1],
-                p[2] - ray.origin[2],
-            ];
-            let along: f64 = (0..3).map(|i| to[i] * ray.direction[i]).sum();
-            assert!(along > 0.0);
-            for (i, (t, d)) in to.iter().zip(&ray.direction).enumerate() {
-                assert!((t - along * d).abs() < 0.05, "{point:?} axis {i}");
+        // Both projections: the ray through a pixel of a point meets the point (V13).
+        for orthographic in [false, true] {
+            let mut camera = Camera::new([0.0; 3], 4000.0, 1.6).unwrap();
+            camera.navigate([0.3, 0.1], [0.0; 2], 0.0).unwrap();
+            camera.set_projection(orthographic);
+            let view = camera.view(1.6).unwrap();
+            for point in [
+                [0.0f32, 0.0, 0.0],
+                [300.0, -200.0, 100.0],
+                [-500.0, 250.0, 0.0],
+            ] {
+                let [nx, ny, _] = view.project(point);
+                let ray = ray_through(&view, [nx, ny], origin_mm).unwrap();
+                // The point, back in model millimetres, lies on the ray.
+                let p = [
+                    f64::from(point[0]) + origin_mm[0],
+                    f64::from(point[1]) + origin_mm[1],
+                    f64::from(point[2]) + origin_mm[2],
+                ];
+                let to = [
+                    p[0] - ray.origin[0],
+                    p[1] - ray.origin[1],
+                    p[2] - ray.origin[2],
+                ];
+                let along: f64 = (0..3).map(|i| to[i] * ray.direction[i]).sum();
+                assert!(along > 0.0);
+                for (i, (t, d)) in to.iter().zip(&ray.direction).enumerate() {
+                    assert!((t - along * d).abs() < 0.05, "{point:?} axis {i}");
+                }
+                let length: f64 = ray.direction.iter().map(|v| v * v).sum::<f64>().sqrt();
+                assert!((length - 1.0).abs() < 1e-9);
+                if orthographic {
+                    // Parallel rays: the direction is the view's -back (renormalized, so the
+                    // f32 basis being only unit to 1e-7 shows up here, not at 1e-9).
+                    for (d, b) in ray.direction.iter().zip(&view.back) {
+                        assert!((d + f64::from(*b)).abs() < 1e-5);
+                    }
+                }
             }
-            let length: f64 = ray.direction.iter().map(|v| v * v).sum::<f64>().sqrt();
-            assert!((length - 1.0).abs() < 1e-9);
         }
+        let view = Camera::new([0.0; 3], 4000.0, 1.6)
+            .unwrap()
+            .view(1.6)
+            .unwrap();
         assert!(ray_through(&view, [1.5, 0.0], origin_mm).is_none());
         assert!(ray_through(&view, [f32::NAN, 0.0], origin_mm).is_none());
-    }
-
-    #[test]
-    fn pick_arguments_are_the_cli_pick_command() {
-        let ray = Ray {
-            origin: [500.0, 250.5, 1000.0],
-            direction: [0.0, 0.0, -1.0],
-        };
-        assert_eq!(
-            pick_args(Path::new("S"), &ray),
-            [
-                "pick",
-                "--store",
-                "S",
-                "--origin",
-                "500,250.5,1000",
-                "--direction",
-                "0,0,-1",
-                "--targets",
-                "face",
-                "--max-hits",
-                "1"
-            ]
-        );
-    }
-
-    #[test]
-    fn a_pick_reply_gives_the_element_or_nothing() {
-        let hit = br#"{"hits":[{"element_id":"019a7bf0-0000-7000-8000-000000000001","feature_kind":"face"}],"outcome":"picked"}"#;
-        assert_eq!(
-            parse_pick(Some(0), hit).unwrap().as_deref(),
-            Some("019a7bf0-0000-7000-8000-000000000001")
-        );
-        assert_eq!(
-            parse_pick(Some(0), br#"{"hits":[],"outcome":"picked"}"#).unwrap(),
-            None
-        );
-        let refused = br#"{"code":"NOT_FOUND","message":"no revision","outcome":"rejected"}"#;
-        assert_eq!(parse_pick(Some(2), refused).unwrap_err().code, "NOT_FOUND");
-        assert_eq!(
-            parse_pick(Some(0), b"nope").unwrap_err().code,
-            "UNREADABLE_REPLY"
-        );
-        assert!(parse_pick(Some(0), br#"{"outcome":"picked"}"#).is_err());
     }
 
     #[test]

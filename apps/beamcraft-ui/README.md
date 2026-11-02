@@ -68,6 +68,13 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   CLI; Cancel does not write. The pinned snapshot includes grid axes for display and framing.
   Upstream grid selection, properties, local-line editing, intersection snapping and deletion
   remain available in the inspector. Grid guides can be toggled from View.
+- Model views (V12): View > Create view builds plan, elevation, section, grid, level, part,
+  assembly, face and camera views, by picking points or a face in the model where needed; each
+  view has its own plane, projection, visible height, depth, work area, render mode, grids,
+  hidden kinds, colour and opacity. The project browser lists them by folder with search, quick
+  access, previews and a context menu; Ctrl+P toggles 3D and the view plane, Ctrl+Tab cycles the
+  open views, and up to eight view windows tile and dock. Views are display state beside the
+  store and never change the model. See [model views](../../docs/design/v12-named-views.md).
 - View retains all five render modes (Wireframe, Transparent, Grey, Shaded, Selected only)
   and the upstream remappable Ctrl+1 through Ctrl+5 shortcuts. Mode changes never reload the
   model. See [render modes](../../docs/design/v16-render-modes.md).
@@ -81,7 +88,7 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   Command arguments, revision hashes and Preview/Commit steps are absent from normal object workflows.
 - Theme is chosen on the welcome screen, not repeated in the library or model title bars:
   **System** (default), **Light**, **Dark**. System follows live OS theme changes. The preference
-  persists in the user's settings through `beamcraft set-settings --theme system|light|dark`;
+  persists in the user's settings file through the `session` crate, on a worker thread;
   `--config-dir` also scopes appearance when supplied to the start page. Load/save errors are
   visible with Retry. `BEAMCRAFT_THEME=light|dark` is a non-persistent override; the selector is
   disabled while it is active.
@@ -89,7 +96,7 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   without maximize or a subtitle. Theme changes discard a mixed-style frame so backgrounds,
   inputs and dropdowns switch together without color animation; a fresh launch restores the
   saved preference automatically.
-- New model uses the CLI's `suggest-project-name` and numbered default names (`New Model`,
+- New model uses `session::project::next_project_name` and numbered default names (`New Model`,
   `New Model 1`, etc.). Suggestions run off-thread and never overwrite a typed name; the
   CLI's final exclusive-create check remains authoritative.
 - The native Menu follows the prototype's dark 232-point navigation, section headings and
@@ -137,19 +144,3 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
 
 Linux needs a Vulkan driver and the X11 or Wayland client libraries (including
 `libxkbcommon-x11`) at run time; a missing window-system library is reported, not a crash.
-
-## Model views
-
-The project browser has Views, Drawings and Schedules tabs; this implementation fills Views.
-Use the View ribbon or New view to choose a constructor. Point and surface constructors
-start model picking immediately, with snaps, step prompts and a live preview. The final valid
-click creates the view. Esc cancels; Backspace removes the last point. Ctrl+P aligns the camera
-with the active view plane and preserves point picking. View properties support projection,
-camera rotations, depth, work area and display settings; Apply remains visible while scrolling.
-Saved display settings can be reused for new views and independently for grid families.
-Folders, favourites, previews, Ctrl/Shift selection and cut/copy/paste organize the collection;
-drag a view onto a folder heading to move it. Context commands open, rename, duplicate,
-close or delete a view. Up to nine views can be open, with eight auxiliary viewports.
-Ctrl+Tab cycles open views; Ctrl+P restores a plane-aligned camera and toggles back.
-Temporary views last for this session; named views reopen from the local USD presentation
-layer. See [implementation and limits](../../docs/design/model-views.md).

@@ -7,7 +7,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-mod support;
+use crate::support;
 
 use support::{at, text};
 
@@ -199,28 +199,6 @@ fn a_detailed_frame_is_numbered_published_exported_and_reopened() {
     }
     s.ok(
         "draft",
-        "create-bolt",
-        &[
-            "--name",
-            "Q01 bolts",
-            "--main",
-            PARTS[3],
-            "--secondary",
-            PARTS[0],
-            "--origin",
-            "-25,0,5",
-            "--direction",
-            "1,0,0",
-            "--count",
-            "2",
-            "--pitch",
-            "50",
-            "--diameter",
-            "16",
-        ],
-    );
-    s.ok(
-        "draft",
         "create-weld",
         &[
             "--name",
@@ -236,15 +214,6 @@ fn a_detailed_frame_is_numbered_published_exported_and_reopened() {
             "--side",
             "both",
         ],
-    );
-    assert_eq!(
-        s.ok("draft", "bolts", &[])
-            .get("bolts")
-            .unwrap()
-            .array()
-            .unwrap()
-            .len(),
-        1
     );
     assert_eq!(
         s.ok("draft", "welds", &[])
@@ -467,7 +436,8 @@ fn drawing_lifecycle(s: &Story, accepted_head: &str) {
 
     // Reopen the stored document through a fresh application reader and verify its actual archive.
     let documents =
-        beamcraft_cli::drawing::document::store::DocumentStore::open(Path::new(&document)).unwrap();
+        beamcraft_commands::drawing::document::store::DocumentStore::open(Path::new(&document))
+            .unwrap();
     let reopened = documents.head().unwrap();
     assert_eq!(reopened.version.unwrap().to_string(), version);
     assert_eq!(reopened.source.pin().revision.to_string(), accepted_head);

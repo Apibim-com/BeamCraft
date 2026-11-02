@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 //! Derived grid guides remain readable standard USD and never become engineering bodies.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
-mod support;
+use crate::support;
 use beamcraft_host::{revision::RevisionStore, storage::BlobStore};
 use beamcraft_json::Json;
 const G: &str = "01990000-0000-7000-8000-000000004001";
@@ -50,19 +50,6 @@ fn guides_are_derived_only_and_relabel_is_geometry_inert() {
     let view = ok(&f, "inspect-elements", &[]);
     assert!(view.get("plates").unwrap().array().unwrap().is_empty());
     assert!(view.get("members").unwrap().array().unwrap().is_empty());
-    let snap = ok(
-        &f,
-        "snap",
-        &[
-            "--point",
-            "1000,2000,0",
-            "--radius",
-            "100",
-            "--kinds",
-            "vertex,axis,axis_end",
-        ],
-    );
-    assert!(snap.get("candidates").unwrap().array().unwrap().is_empty());
     ok(
         &f,
         "relabel-grid-line",

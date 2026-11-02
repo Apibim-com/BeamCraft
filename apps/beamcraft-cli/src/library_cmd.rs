@@ -9,18 +9,14 @@
 
 use crate::plate_cmd::{Run, definition_json, fit_page, invalid, page_of, profile_record};
 use crate::report::report;
-use beamcraft_cli::library::{
-    EnvironmentInfo, LibraryEntry, LibraryInfo, Lookup, NewLibrary, RejectedEntry, Shadowed,
-    Source, add_entry, load_fastener, open_lookup,
+use beamcraft_commands::library::{
+    LibraryEntry, LibraryInfo, Lookup, NewLibrary, RejectedEntry, Shadowed, Source, add_entry,
+    load_fastener, open_lookup,
 };
 use beamcraft_json::Json;
+use session::environment::EnvironmentInfo;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
-
-/// Whether `command` is one of the library commands.
-pub fn handles(command: &OsString) -> bool {
-    command == "list-library" || command == "show-library" || command == "add-library"
-}
 
 /// Runs one library command and returns the JSON result and the process exit code.
 pub fn execute(args: &[OsString]) -> (Json, u8) {

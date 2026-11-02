@@ -7,10 +7,9 @@
 //! (primary drag orbits, Shift + primary drag pans, pinch zooms). In both the wheel zooms toward
 //! the cursor, F fits and R reloads.
 
+mod annotation_panel;
 mod creation_panel;
 mod grid_panel;
-#[cfg(test)]
-mod model_view_tests;
 mod switches;
 mod view_panel;
 mod workbench;
@@ -32,13 +31,14 @@ use crate::{Error, check_font, command, json_string, source};
 use beamcraft_engine::RenderMode;
 use beamcraft_engine::ViewSnapshot;
 use beamcraft_engine::element::ElementId;
-use beamcraft_engine::member::{AuthoredMember, ProfileInfo};
-use beamcraft_model::command::{MemberKind as ModelMemberKind, Placement};
+use beamcraft_model::command::Placement;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant};
+use steel::engine::member::{AuthoredMember, ProfileInfo};
+use steel::model::command::MemberKind as ModelMemberKind;
 
 /// Where a `--perf-run` report goes: the JSON object and whether every phase succeeded.
 pub type PerfReport = Sender<(String, bool)>;
@@ -149,6 +149,8 @@ pub struct App {
     props_job: Option<Receiver<Result<Edited, ToolError>>>,
     /// The result of the last property Preview, Cancel or Commit.
     props_note: Option<Result<String, String>>,
+    /// The D05 sheet editor: hand placement of a drawing document's views.
+    sheet_editor: crate::sheet::SheetEditor,
     publisher: Publisher,
     publish_job: Option<Receiver<Result<Published, ToolError>>>,
     status_job: Option<Receiver<Result<Status, ToolError>>>,
@@ -179,6 +181,8 @@ pub struct App {
     grids_visible: bool,
     grid_edit: Option<grid_panel::GridEdit>,
     grid_refresh_edit: bool,
+    /// D06 annotations: placement tool, listed rows and their jobs.
+    annotation: annotation_panel::Panel,
     /// The bottom bar's selection switches and snap panel (V11): picking-only state.
     selection: crate::selection::Selection,
     /// Whether the Details window is open.
@@ -188,7 +192,6 @@ pub struct App {
     command_focus: bool,
     command_query: String,
     browser_search: String,
-    views: view_panel::Views,
     /// Whether the Details window is open.
     details: bool,
     /// A fit requested by the ribbon or command search, applied in the next frame.
@@ -207,6 +210,32 @@ pub struct App {
     selected_only: ((String, [f64; 3]), Option<crate::scene::SelectedDraw>),
     /// Actual world boundary segments, cached by selected identity and snapshot token.
     selection_edges: ((String, String), Vec<[[f64; 3]; 2]>),
+    /// The uncommitted cut-plane form (V15); applying it fills `cut`.
+    cut_form: crate::cut_plane::Form,
+    /// The window's applied display cut; `None` shows the whole model.
+    cut: Option<beamcraft_engine::view_clipping::Clipping>,
+    /// The model views of this model (V12): the book, the browser and properties state, the
+    /// active view and the extra view windows.
+    views: crate::views::Views,
+    /// The work plane the free 3D view had before a view installed its own.
+    views_input: Option<Option<beamcraft_engine::work_plane::WorkPlane>>,
+    /// The saved representation sets of the user (V17): the class preset plus
+    /// `colour-sets.json`.
+    colour_sets: crate::colour_sets::Sets,
+    /// Why the colour-sets file was not used, when it was not.
+    colour_sets_note: Option<String>,
+    /// The set the colour combo shows; applying it evaluates it and fills `colour`.
+    colour_pick: String,
+    /// The applied colour overlay and the set it was built from; `None` colours nothing (V17).
+    colour: Option<(String, Arc<crate::colour_sets::Overlay>)>,
+    /// A set evaluation in flight.
+    colour_job: Option<ColourJob>,
+    /// The last colour outcome, shown in the colour panel.
+    colour_note: Option<Result<String, String>>,
+    /// The overlay the running refresh builds its scene with (V17): if the user changes or
+    /// clears the set while the refresh runs, the delivered scene is recoloured once, so stale
+    /// colours can never return or outlive their set.
+    reload_overlay: Option<Arc<crate::colour_sets::Overlay>>,
 }
 
 /// Records a scene swap in the perf counters: the CPU display bytes and the snapshot mesh bytes
@@ -229,6 +258,14 @@ fn note_loaded(stats: &Stats, loaded: &Loaded) {
 struct SelectJob {
     asked: u64,
     rx: Receiver<Result<Option<Selected>, ToolError>>,
+    cancel: Arc<AtomicBool>,
+}
+
+/// A set evaluation in flight (V17): the set it colours, its receiver and the flag that gives
+/// it up when the overlay is cleared while the queries still run.
+struct ColourJob {
+    set: String,
+    rx: Receiver<Result<crate::colour_sets::Overlay, String>>,
     cancel: Arc<AtomicBool>,
 }
 
@@ -703,8 +740,7 @@ impl App {
         perf: Option<(Vec<PerfPhase>, PerfReport)>,
         stats: Arc<Stats>,
     ) -> Result<Self, Error> {
-        let appearance =
-            crate::appearance::Appearance::new(source.cli.clone(), None, Arc::clone(&stats));
+        let appearance = crate::appearance::Appearance::new(None);
         let mut app = Self::open(
             &cc.egui_ctx,
             cc.wgpu_render_state.as_ref(),
@@ -749,6 +785,13 @@ impl App {
         let publisher = Publisher::new(source.published.clone(), source.workspace.clone());
         let (shortcuts, shortcuts_note) =
             crate::shortcuts::Shortcuts::load(source.config_dir.as_deref());
+        let (colour_sets, colour_sets_note) =
+            crate::colour_sets::Sets::load(source.config_dir.as_deref());
+        let colour_pick = colour_sets
+            .list()
+            .first()
+            .map(|set| set.name.clone())
+            .unwrap_or_default();
         let perf = perf.map(|(phases, report)| {
             let header = format!(
                 "\"adapter\":{},\"device_type\":{},\"backend\":{},\"samples\":{},\"text\":{}",
@@ -767,6 +810,13 @@ impl App {
             }
             None => (None, None),
         };
+        // The named-view sidecar is display state: a missing file is an empty book, and an
+        // unreadable one only notes, never blocks opening the model.
+        let mut views = crate::views::Views::default();
+        match crate::views::load(&source.store) {
+            Ok(book) => views.book = book,
+            Err(note) => views.note = Some(Err(note)),
+        }
         let mut app = Self {
             appearance: None,
             from_library: false,
@@ -778,13 +828,13 @@ impl App {
             grid_job: None,
             grid_note: None,
             grids_visible: true,
+            annotation: annotation_panel::Panel::empty(),
             menu_section: workbench::MenuSection::default(),
             return_to_create: false,
             command_search: false,
             command_focus: false,
             command_query: String::new(),
             browser_search: String::new(),
-            views: view_panel::Views::default(),
             state,
             source,
             renderer,
@@ -828,6 +878,7 @@ impl App {
             invert_zoom: false,
             preset: Preset::default(),
             props: Properties::default(),
+            sheet_editor: crate::sheet::SheetEditor::default(),
             props_job: None,
             props_note: None,
             publisher,
@@ -851,10 +902,21 @@ impl App {
             logo: None,
             logo_tried: false,
             mode: beamcraft_engine::RenderMode::default(),
+            cut_form: crate::cut_plane::Form::default(),
+            cut: None,
             shortcuts,
             shortcuts_note,
             selected_only: ((String::new(), [0.0; 3]), None),
             selection_edges: Default::default(),
+            views,
+            views_input: None,
+            colour_sets,
+            colour_sets_note,
+            colour_pick,
+            colour: None,
+            colour_job: None,
+            colour_note: None,
+            reload_overlay: None,
         };
         app.tools.actor.clone_from(&app.source.actor);
         app.editor.actor.clone_from(&app.source.actor);
@@ -873,6 +935,10 @@ impl App {
             return;
         }
         let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
+        // The overlay is shared with the worker so the new scene is coloured as it is built;
+        // the window keeps the same Arc to recognise a stale delivery when the set changes.
+        let overlay = self.colour.as_ref().map(|(_, overlay)| Arc::clone(overlay));
+        let delivered = overlay.clone();
         // Only this refresh replaces `loaded`, so what it knows stays true until it is applied.
         let known = self.loaded.as_ref().map_or_else(Known::default, |l| Known {
             token: Some(l.snapshot.token().clone()),
@@ -883,10 +949,19 @@ impl App {
         let spawned = std::thread::Builder::new()
             .name("beamcraft-reload".into())
             .spawn(move || {
-                let _ = tx.send(source::reload(&cli, &store, &known, &stats));
+                let _ = tx.send(source::reload(
+                    &cli,
+                    &store,
+                    &known,
+                    overlay.as_deref(),
+                    &stats,
+                ));
             });
         match spawned {
-            Ok(_) => self.reload_job = Some(rx),
+            Ok(_) => {
+                self.reload_overlay = delivered;
+                self.reload_job = Some(rx);
+            }
             Err(_) => self.error = Some("the reload thread could not be started".into()),
         }
     }
@@ -898,11 +973,15 @@ impl App {
             Err(TryRecvError::Empty) => return,
             Err(TryRecvError::Disconnected) => {
                 self.reload_job = None;
+                self.reload_overlay = None;
                 self.error = Some("the reload thread ended without a result".into());
                 return;
             }
         };
         self.reload_job = None;
+        // What the delivered scene was coloured with, to compare against the set the panel
+        // shows now (a change during the refresh is applied to the delivery, not lost).
+        let delivered = self.reload_overlay.take();
         // The listing carries the head it was read from; an unreadable listing leaves it unknown.
         self.props.observe_head(
             reloaded
@@ -947,6 +1026,7 @@ impl App {
                     self.loaded.as_ref().map(|l| self.grid_framing(&l.summary))
                 {
                     let aspect = self.aspect();
+                    // An active model view keeps its own camera (V12).
                     if self.views.active.is_none()
                         && needs_refit(self.framed, target, extent, aspect)
                     {
@@ -999,6 +1079,20 @@ impl App {
             }
             Err(e) => self.error = Some(e.to_string()),
         }
+        // The delivered scene was built with the overlay captured at spawn (V17): when the user
+        // changed or cleared the set while the refresh ran, the delivery is recoloured once, so
+        // stale colours can neither return after a Hide nor outlive their set behind a legend.
+        if self.loaded.is_some() {
+            let current = self.colour.as_ref().map(|(_, overlay)| Arc::clone(overlay));
+            let stale = match (&delivered, &current) {
+                (Some(built), Some(active)) => !Arc::ptr_eq(built, active),
+                (Some(_), None) | (None, Some(_)) => true,
+                (None, None) => false,
+            } || self.views.active_hidden() != self.views.shown;
+            if stale {
+                self.recolour();
+            }
+        }
         self.sync_grid_selection();
         if std::mem::take(&mut self.reload_queued) {
             self.reload();
@@ -1009,6 +1103,25 @@ impl App {
     /// can still differ from the last image.
     fn show(&mut self, loaded: Loaded) {
         note_loaded(&self.stats, &loaded);
+        // A new scene may centre on another origin: the cameras of the views keep their framing
+        // in model space (V12). The main camera follows only while a view holds it.
+        let previous = self.loaded.as_ref().map(|l| l.summary.origin_mm);
+        let next = loaded.summary.origin_mm;
+        if let Some(previous) = previous.filter(|p| *p != next) {
+            if self.views.active.is_some() {
+                self.camera.rebase(previous, next);
+            }
+            for camera in self.views.cameras.values_mut() {
+                camera.rebase(previous, next);
+            }
+            if let Some((camera, _, _)) = &mut self.views.spatial {
+                camera.rebase(previous, next);
+            }
+            for window in &mut self.views.windows {
+                window.camera.rebase(previous, next);
+            }
+        }
+        self.views.shown = beamcraft_engine::KindFilter::SHOW_ALL;
         self.loaded = Some(loaded);
         // A new revision may have moved or replaced the selected element: the selected-only
         // draw is rebuilt against this scene.
@@ -1072,41 +1185,21 @@ impl App {
         let cancel = self.begin_select(rx);
         let stats = Arc::clone(&self.stats);
         let selection = self.selection.filter();
-        let model_view = self
-            .views
-            .active
-            .as_ref()
-            .and_then(|id| {
-                self.views
-                    .collection
-                    .iter()
-                    .find(|v| v.id.to_string() == *id)
-            })
-            .cloned();
+        // With an active model view only what it shows can be picked (V12).
+        let view = self.views.active_view().cloned();
         let spawned = std::thread::Builder::new()
             .name("beamcraft-pick".into())
             .spawn(move || {
-                let result = if let Some(view) = model_view {
-                    beamcraft_engine::model_view::pick_visible(
-                        &snapshot,
-                        &view,
-                        ray.origin,
-                        ray.direction,
-                        selection,
-                    )
-                    .map_err(|e| ToolError::local(e.code.as_str(), e.to_string()))
-                    .map(|hit| {
-                        hit.map(|hit| {
-                            let id = hit.element_id.to_string();
-                            let (info, details) =
-                                command::lookup(&cli, &store, &id, &cancel, &stats);
-                            Selected { id, info, details }
-                        })
-                    })
-                } else {
-                    command::select(&cli, &store, &snapshot, &ray, &cancel, &stats, selection)
-                };
-                let _ = tx.send(result);
+                let _ = tx.send(command::select(
+                    &cli,
+                    &store,
+                    &snapshot,
+                    &ray,
+                    &cancel,
+                    &stats,
+                    selection,
+                    view.as_ref(),
+                ));
             });
         if spawned.is_err() {
             self.select_job = None;
@@ -1333,11 +1426,10 @@ impl App {
     /// True while a command that writes to the store (or publishes it) is running: the property,
     /// publish and edit actions never run at the same time.
     fn other_command_running(&self) -> bool {
-        self.props_job.is_some()
-            || self.publish_job.is_some()
-            || self.edit_job.is_some()
-            || self.job.is_some()
-            || self.grid_job.is_some()
+        self.other_command_running_pre_colour()
+            || self.colour_job.is_some()
+            || self.annotation.list_job.is_some()
+            || self.annotation.commit_job.is_some()
     }
 
     /// Starts the committed property edit on a worker: the same `update-element` the CLI runs.
@@ -1558,18 +1650,17 @@ impl App {
                 ui.label(egui::RichText::new("General").size(12.0));
                 field(ui, "Name", &mut self.props.form.name, 170.0);
                 field(ui, "Class", &mut self.props.form.class, 80.0);
-                if let Some(profile) = &details.profile_name {
-                    ui.horizontal(|ui| {
-                        ui.add_sized(
-                            egui::vec2(70.0, 28.0),
-                            egui::Label::new(
-                                egui::RichText::new("Profile")
-                                    .size(11.0)
-                                    .color(palette.muted),
-                            ),
-                        );
-                        ui.label(profile);
-                    });
+                if !details.is_plate() {
+                    // A member's profile is chosen from the model's and the project environment's
+                    // profiles; the engine rebuilds the body and the mass (`update-element`).
+                    choice_combo(
+                        ui,
+                        "props-profile",
+                        "Profile",
+                        &mut self.props.form.profile,
+                        &self.tools.definitions.profiles,
+                        false,
+                    );
                 }
                 choice_combo(
                     ui,
@@ -1766,6 +1857,281 @@ impl App {
         } else if cancel {
             self.publisher.cancel();
         }
+    }
+
+    /// The V15 cut plane inspector: the form, the applied state, nothing model-touching.
+    fn cut_panel(&mut self, ui: &mut egui::Ui) {
+        ui.label(
+            "The cut plane hides part of the model in this window only. The model, its \
+             revisions and every measurement stay unchanged.",
+        );
+        let mut note = None;
+        match self.cut_form.show(ui) {
+            Ok(Some(crate::cut_plane::Action::Apply(cut))) => {
+                let planes = cut.effective().map_or(0, |p| p.len());
+                note = Some(Ok(format!(
+                    "Cut applied: {} user plane(s), work-area box {}, {planes} effective \
+                     half-space(s).",
+                    cut.planes.len(),
+                    if cut.area.is_some() { "on" } else { "off" },
+                )));
+                self.cut = Some(cut);
+            }
+            Ok(Some(crate::cut_plane::Action::Clear)) => {
+                note = Some(Ok("Cut removed: the whole model is visible.".into()));
+                self.cut = None;
+            }
+            Err(error) => note = Some(Err(error.to_string())),
+            Ok(None) => {}
+        }
+        match &self.cut {
+            Some(cut) => ui.label(format!(
+                "Applied: {} user plane(s), work-area box {}.",
+                cut.planes.len(),
+                if cut.area.is_some() { "on" } else { "off" },
+            )),
+            None => ui.label("No cut: the whole model is visible."),
+        };
+        if let Some(note) = note {
+            match note {
+                Ok(message) => {
+                    ui.label(message);
+                }
+                Err(message) => {
+                    ui.colored_label(crate::theme::Palette::current(ui).error, message);
+                }
+            }
+        }
+    }
+
+    /// The V17 colour inspector: pick a saved representation set, apply or clear the overlay.
+    /// Everything here is display state: the overlay is never written to the model, and a set
+    /// lives in the user's colour-sets file, not in the store.
+    fn colour_panel(&mut self, ui: &mut egui::Ui) {
+        ui.label(
+            "Colour the model by a saved representation set. Colours are display only: the \
+             model, its revisions and every measurement stay unchanged, and the set lives in \
+             your colour-sets file, never in the model.",
+        );
+        let palette = crate::theme::Palette::current(ui);
+        if let Some(note) = &self.colour_sets_note {
+            ui.colored_label(palette.muted, note);
+        }
+        let busy = self.colour_job.is_some();
+        let applied = self
+            .colour
+            .as_ref()
+            .map(|(name, overlay)| (name.clone(), overlay.len()));
+        let pick = self.colour_pick.clone();
+        ui.add_enabled_ui(!busy, |ui| {
+            egui::ComboBox::from_id_salt("colour-set")
+                .selected_text(if pick.is_empty() { "No set" } else { &pick })
+                .show_ui(ui, |ui| {
+                    for set in self.colour_sets.list() {
+                        ui.selectable_value(&mut self.colour_pick, set.name.clone(), &set.name);
+                    }
+                });
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(!pick.is_empty(), egui::Button::new("Show colours"))
+                    .clicked()
+                {
+                    self.apply_colour(&pick);
+                }
+                if ui
+                    .add_enabled(applied.is_some(), egui::Button::new("Hide colours"))
+                    .clicked()
+                {
+                    self.clear_colour();
+                }
+            });
+        });
+        if busy {
+            ui.label("Evaluating the set…");
+        }
+        // The legend of the applied set: one swatch per rule, in rule order.
+        if let Some((name, coloured)) = &applied {
+            ui.separator();
+            match self.colour_sets.find(name) {
+                Some(set) => {
+                    ui.label(format!("{name}: {} element(s) coloured", coloured));
+                    for rule in &set.rules {
+                        ui.horizontal(|ui| {
+                            let (rect, _) = ui
+                                .allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
+                            ui.painter().rect_filled(
+                                rect,
+                                2.0,
+                                egui::Color32::from_rgb(
+                                    rule.colour[0],
+                                    rule.colour[1],
+                                    rule.colour[2],
+                                ),
+                            );
+                            let mut text = crate::colour_sets::Set::describe(&rule.rule);
+                            if rule.transparency > 0.0 {
+                                text.push_str(&format!(
+                                    ", {}% transparent",
+                                    (rule.transparency * 100.0).round() as u32
+                                ));
+                            }
+                            ui.label(text);
+                        });
+                    }
+                }
+                None => {
+                    ui.label(format!(
+                        "{name}: {coloured} element(s) coloured (the set is no longer in the \
+                         colour-sets file)"
+                    ));
+                }
+            }
+        }
+        if let Some(note) = &self.colour_note {
+            match note {
+                Ok(message) => {
+                    ui.label(message);
+                }
+                Err(message) => {
+                    ui.colored_label(palette.error, message);
+                }
+            }
+        }
+    }
+
+    /// Evaluates the named set on a worker (one paged `query-elements` per rule) and applies
+    /// the resulting overlay when it answers. The model is never written: the queries are the
+    /// CLI's own read-only command.
+    fn apply_colour(&mut self, name: &str) {
+        if self.colour_job.is_some() || self.other_command_running_pre_colour() {
+            self.colour_note = Some(Err("another command is running; wait for it.".into()));
+            return;
+        }
+        let Some(set) = self.colour_sets.find(name).cloned() else {
+            return;
+        };
+        let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
+        let cancel = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&cancel);
+        let stats = Arc::clone(&self.stats);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name("beamcraft-colour".into())
+            .spawn(move || {
+                let _ = tx.send(crate::colour_sets::evaluate(
+                    &cli, &store, &set, &flag, &stats,
+                ));
+            });
+        match spawned {
+            Ok(_) => {
+                self.colour_note = None;
+                self.colour_job = Some(ColourJob {
+                    set: name.to_owned(),
+                    rx,
+                    cancel,
+                });
+            }
+            Err(error) => {
+                self.colour_note = Some(Err(format!(
+                    "the colour worker could not be started: {error}"
+                )));
+            }
+        }
+    }
+
+    /// The other commands worth waiting for, without the colour job itself (which is never
+    /// running when an apply is requested from the panel).
+    fn other_command_running_pre_colour(&self) -> bool {
+        self.props_job.is_some()
+            || self.publish_job.is_some()
+            || self.edit_job.is_some()
+            || self.job.is_some()
+            || self.grid_job.is_some()
+    }
+
+    /// Clears the overlay and colours nothing again.
+    fn clear_colour(&mut self) {
+        if let Some(job) = &self.colour_job {
+            job.cancel.store(true, Ordering::Relaxed);
+        }
+        self.colour_job = None;
+        self.colour = None;
+        self.colour_note = None;
+        self.recolour();
+    }
+
+    /// Applies a finished evaluation. The controls are disabled while a job runs, so the answer
+    /// is always the request the panel still shows.
+    fn poll_colour(&mut self) {
+        let Some(job) = &self.colour_job else { return };
+        let received = match job.rx.try_recv() {
+            Ok(received) => Some(received),
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => None,
+        };
+        let set = job.set.clone();
+        self.colour_job = None;
+        let result = match received {
+            Some(Ok(overlay)) if overlay.is_empty() => {
+                Err(format!("no element in `{set}` matches: nothing to colour"))
+            }
+            Some(Ok(overlay)) => Ok(overlay),
+            Some(Err(message)) => Err(message),
+            None => Err("the colour worker ended without an answer".to_string()),
+        };
+        match result {
+            Ok(overlay) => {
+                self.colour_note =
+                    Some(Ok(format!("`{set}` colours {} element(s).", overlay.len())));
+                self.colour = Some((set, Arc::new(overlay)));
+                self.recolour();
+            }
+            Err(message) => {
+                self.colour = None;
+                self.recolour();
+                self.colour_note = Some(Err(message));
+            }
+        }
+    }
+
+    /// Rebuilds and re-uploads the loaded scene with the current overlay (V17). Display state
+    /// only: the snapshot and its token are untouched, the meshes the device holds are reused,
+    /// and only the instance buffers are sent again. A quiet no-op while nothing is loaded.
+    fn recolour(&mut self) {
+        let Some(mut loaded) = self.loaded.take() else {
+            return;
+        };
+        let overlay = self.colour.as_ref().map(|(_, overlay)| Arc::clone(overlay));
+        // The active view hides its kinds from the main scene (V12).
+        let shown = self.views.active_hidden();
+        let scene = crate::scene::Scene::from_snapshot_showing(
+            &loaded.snapshot,
+            beamcraft_engine::Representation::Full,
+            &loaded.uploaded.resident(),
+            overlay.as_deref(),
+            shown,
+        );
+        match scene.and_then(|scene| {
+            let summary = scene.summary();
+            Uploaded::upload(
+                &self.state.device,
+                &self.state.queue,
+                &scene,
+                Some(&loaded.uploaded),
+            )
+            .map(|uploaded| (summary, uploaded))
+        }) {
+            Ok((summary, uploaded)) => {
+                loaded.summary = summary;
+                loaded.uploaded = uploaded;
+                self.views.shown = shown;
+            }
+            Err(error) => {
+                // The device keeps the previous scene; the overlay is reported as refused.
+                self.error = Some(format!("the coloured scene was not applied: {error}"));
+            }
+        }
+        self.loaded = Some(loaded);
     }
 
     fn edit_panel(&mut self, ui: &mut egui::Ui) {
@@ -2202,6 +2568,7 @@ impl App {
         // way, so the preview never disagrees with what Commit would build.
         let orientation = crate::tools::orientation_or_identity(&self.tools.member.orientation)?;
         let authored = AuthoredMember {
+            curved: false,
             id: ElementId::parse("01990000-0000-7000-8000-00000000e347").ok()?,
             kind: match self.tools.member.kind {
                 crate::tools::MemberKind::Beam => ModelMemberKind::Beam,
@@ -2219,8 +2586,9 @@ impl App {
             },
             material: None,
             cuts: Vec::new(),
+            hole_records: Vec::new(),
         };
-        let body = beamcraft_engine::member::evaluate_member(
+        let body = steel::engine::member::evaluate_member(
             &authored,
             ProfileInfo::Rectangle {
                 width_mm: rect[0],
@@ -2343,17 +2711,18 @@ impl eframe::App for App {
         });
         self.poll_commit();
         self.poll_grid();
+        self.poll_annotations();
         self.poll_edit();
-        self.poll_views();
         self.poll_props();
         self.poll_publish();
         self.poll_status();
         self.poll_select();
         self.poll_reload();
-        self.refresh_view_display();
+        self.poll_colour();
         self.selection_shortcuts(ui.ctx());
         self.render_mode_shortcuts(ui.ctx());
         self.view_shortcuts(ui.ctx());
+        self.poll_view_job();
         self.perf_step(ui.ctx(), frame.info().cpu_usage);
         self.construction_keyboard(ui.ctx());
         if self.menu_open && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -2362,7 +2731,6 @@ impl eframe::App for App {
             && !self.other_command_running()
             && ui.input(|i| i.key_pressed(egui::Key::Escape))
         {
-            self.views.picking = false;
             self.grid_line.click = None;
             self.plane_pick = false;
             // Esc closes the publish dialog first; it clears the selection only when none is open.
@@ -2407,6 +2775,14 @@ impl eframe::App for App {
             self.project_browser(ui);
             self.details_window(&ctx);
             self.publish_dialog(&ctx);
+            self.view_properties_window(&ctx);
+            self.draw_view_windows(&ctx);
+            self.sheet_editor.window(
+                &ctx,
+                &self.source.cli,
+                self.source.actor.as_deref(),
+                &self.stats,
+            );
         }
         egui::CentralPanel::default().show(ui, |ui| {
             let size = ui.available_size();
@@ -2474,7 +2850,9 @@ impl eframe::App for App {
                 .navigate(orbit, pan, zoom)
                 .and_then(|()| self.camera.view(aspect))
             {
-                Ok(view) => {
+                Ok(mut view) => {
+                    // The active model view tints the model (V12); the free 3D view does not.
+                    view.tint = self.views.tint();
                     let rgb = if ui.ctx().theme() == egui::Theme::Dark {
                         [0x17, 0x21, 0x2B]
                     } else {
@@ -2483,6 +2861,16 @@ impl eframe::App for App {
                     let [r, g, b] = rgb.map(|c: u8| f64::from(c) / 255.0);
                     self.renderer.background = wgpu::Color { r, g, b, a: 1.0 };
                     if let Some(l) = &self.loaded {
+                        // The display cut is uniform state: the scene and its snapshot never
+                        // change. Planes are model millimetres; the uniform is scene-centred.
+                        // The active view adds its depth slab and work area to the cut (V12).
+                        let clip = match crate::views::display_clip(
+                            self.cut.as_ref(),
+                            self.views.active_view(),
+                        ) {
+                            Some(cut) => crate::cut_plane::ClipGpu::of(&cut, l.summary.origin_mm),
+                            None => crate::cut_plane::ClipGpu::none(),
+                        };
                         // One loaded scene, five drawing styles: the mode picks the pipeline and
                         // never rewrites the snapshot or its token.
                         if self.mode == RenderMode::SelectedOnly {
@@ -2512,21 +2900,17 @@ impl eframe::App for App {
                             }
                         }
                         match self.mode {
-                            RenderMode::SelectedOnly => match self
-                                .selected_only
-                                .1
-                                .as_ref()
-                                .filter(|_| self.selected_is_visible())
-                            {
+                            RenderMode::SelectedOnly => match &self.selected_only.1 {
                                 Some(selected) => {
                                     self.renderer.draw_one(
                                         &self.state.device,
                                         &self.state.queue,
-                                        self.views.filtered.as_ref().unwrap_or(&l.uploaded),
+                                        &l.uploaded,
                                         view,
                                         &self.stats,
                                         &selected.digest,
                                         &selected.instance,
+                                        &clip,
                                     );
                                 }
                                 // Nothing selected: an empty view, not the whole model.
@@ -2534,10 +2918,11 @@ impl eframe::App for App {
                                     self.renderer.draw(
                                         &self.state.device,
                                         &self.state.queue,
-                                        self.views.filtered.as_ref().unwrap_or(&l.uploaded),
+                                        &l.uploaded,
                                         view,
                                         &self.stats,
                                         RenderMode::SelectedOnly,
+                                        &clip,
                                     );
                                 }
                             },
@@ -2545,10 +2930,11 @@ impl eframe::App for App {
                                 self.renderer.draw(
                                     &self.state.device,
                                     &self.state.queue,
-                                    self.views.filtered.as_ref().unwrap_or(&l.uploaded),
+                                    &l.uploaded,
                                     view,
                                     &self.stats,
                                     mode,
+                                    &clip,
                                 );
                             }
                         }
@@ -2563,11 +2949,18 @@ impl eframe::App for App {
                                 self.grid_edit.as_ref().map(|edit| edit.id.as_str()),
                             );
                         }
-                        if let Some(selected) = self
-                            .editor
-                            .selected()
-                            .filter(|_| self.selected_is_visible())
+                        if let Ok(rows) = self.annotation.rows.as_deref()
+                            && !rows.is_empty()
                         {
+                            annotation_panel::paint(
+                                ui,
+                                response.rect,
+                                &view,
+                                l.summary.origin_mm,
+                                rows,
+                            );
+                        }
+                        if let Some(selected) = self.editor.selected() {
                             let key = (selected.id.clone(), l.snapshot.token().as_str().to_owned());
                             if self.selection_edges.0 != key {
                                 let edges = beamcraft_engine::ElementId::parse(&selected.id)
@@ -2616,7 +3009,7 @@ impl eframe::App for App {
                         // switch stays `grids_visible`.
                         if !self.beam_mode
                             && !self.plate_mode
-                            && !self.views.picking
+                            && self.views.picking.is_none()
                             && self.grid_line.click.is_none()
                             && self.grids_visible
                             && self
@@ -2676,7 +3069,17 @@ impl eframe::App for App {
                         self.update_ghost(&view, ndc);
                         self.paint_member_draft(ui, response.rect, &view);
                     }
-                    self.paint_view_picking(ui, &response, &view);
+                    if self.views.picking.is_some() {
+                        let hover = response.hover_pos().and_then(|pos| {
+                            ndc_of(
+                                [pos.x, pos.y],
+                                [response.rect.min.x, response.rect.min.y],
+                                [response.rect.width(), response.rect.height()],
+                            )
+                            .and_then(|ndc| ray_through(&view, ndc, self.view_origin()))
+                        });
+                        self.paint_view_picking(ui, response.rect, &view, hover);
+                    }
                 }
                 Err(e) => self.error = Some(e.to_string()),
             }
@@ -2685,8 +3088,8 @@ impl eframe::App for App {
                     self.select_grid(&id);
                 }
             } else if let Some(ray) = picked {
-                if self.views.picking {
-                    self.view_pick(ray);
+                if self.views.picking.is_some() {
+                    self.view_click(ray);
                 } else if self.plane_pick {
                     if let Some(loaded) = &self.loaded {
                         match beamcraft_engine::work_plane::pick_work_plane(
@@ -2711,12 +3114,13 @@ impl eframe::App for App {
                     self.place_plate(ray);
                 } else if self.beam_mode {
                     self.place_beam(ray);
+                } else if self.bench == workbench::Bench::Annotations {
+                    self.annotation_click(ray);
                 } else if !self.other_command_running() {
                     self.start_select(ray);
                 }
             }
         });
-        self.show_view_windows(ui.ctx());
         ui.ctx().request_repaint();
     }
 }
@@ -2811,7 +3215,7 @@ mod tests {
     /// refresh it starts fails and is never read, and a test hands it results itself. `None`,
     /// saying so, without a native adapter. The counters are this test's own, so parallel tests
     /// never count into each other (issue 167).
-    pub(super) fn headless() -> Option<App> {
+    fn headless() -> Option<App> {
         let gpu = match pollster::block_on(Gpu::headless()) {
             Ok(gpu) => gpu,
             Err(Error::NoAdapter) => {
@@ -2848,6 +3252,56 @@ mod tests {
         };
         let stats = Arc::new(crate::stats::Stats::default());
         Some(App::new(&cc, source, stats).unwrap())
+    }
+
+    #[test]
+    fn an_applied_overlay_rebuilds_the_scene_and_leaves_the_snapshot_token() {
+        let Some(mut app) = headless() else { return };
+        let pin = ViewPin::new(Sha256::digest(b"revision").unwrap(), 1);
+        let snapshot = Arc::new(
+            ViewSnapshot::build(pin, plate_scene(3, false).unwrap(), &Limits::default()).unwrap(),
+        );
+        let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+        let uploaded =
+            crate::render::Uploaded::new(&app.state.device, &app.state.queue, &scene, &app.stats)
+                .unwrap();
+        app.loaded = Some(super::Loaded {
+            snapshot: Arc::clone(&snapshot),
+            summary: scene.summary(),
+            uploaded,
+        });
+        let ids: std::collections::BTreeSet<beamcraft_model::id::ElementId> =
+            snapshot.elements().iter().map(|e| e.id).collect();
+        app.colour = Some((
+            "Test".into(),
+            Arc::new(crate::colour_sets::Overlay::from_rules(vec![(
+                ids,
+                [0.0, 1.0, 0.0, 1.0],
+            )])),
+        ));
+        let token = snapshot.token().clone();
+        app.recolour();
+        // The loaded snapshot is exactly the one shown before: the overlay is display state
+        // applied to the device, never a new reading of the model.
+        assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
+        assert!(app.colour.is_some());
+    }
+
+    #[test]
+    fn applying_a_set_without_a_cli_reports_and_colours_nothing() {
+        let Some(mut app) = headless() else { return };
+        app.apply_colour(crate::colour_sets::CLASS_SET_NAME);
+        assert!(app.colour_job.is_some());
+        for _ in 0..250 {
+            app.poll_colour();
+            if app.colour_job.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(app.colour_job.is_none(), "the missing CLI answers quickly");
+        assert!(app.colour.is_none());
+        assert!(matches!(app.colour_note, Some(Err(_))));
     }
 
     #[test]
@@ -2996,7 +3450,7 @@ mod tests {
                 assert!(labels.iter().any(|label| label == "Find a command"));
                 assert!(!labels.iter().any(|label| label.contains("Ctrl K")
                     || matches!(label.as_str(), "Theme" | "System" | "Light" | "Dark")));
-                assert_eq!(bounds.len(), 33, "20 entity + 13 snap switches: {bounds:?}");
+                assert_eq!(bounds.len(), 34, "20 entity + 14 snap switches: {bounds:?}");
                 assert!(
                     bounds.iter().all(|(rect, clip)| rect.left() >= 0.0
                         && rect.right() <= width
@@ -3141,7 +3595,7 @@ mod tests {
     }
 
     /// A refresh whose scene is `plates` synthetic kernel plates.
-    pub(super) fn refreshed(plates: u32) -> Reloaded {
+    fn refreshed(plates: u32) -> Reloaded {
         let pin = ViewPin::new(Sha256::digest(b"revision").unwrap(), 1);
         let snapshot =
             ViewSnapshot::build(pin, plate_scene(plates, false).unwrap(), &Limits::default())
@@ -3151,7 +3605,7 @@ mod tests {
     }
 
     /// Hands `reloaded` to the window as the result of the refresh in flight.
-    pub(super) fn deliver(app: &mut App, reloaded: Reloaded) {
+    fn deliver(app: &mut App, reloaded: Reloaded) {
         let (tx, rx) = std::sync::mpsc::channel();
         tx.send(reloaded).unwrap();
         app.reload_job = Some(rx);
@@ -3663,8 +4117,13 @@ mod tests {
         .unwrap();
         app.source.cli = cli.clone();
         app.source.store = root.clone();
-        let reload =
-            crate::source::reload(&cli, &root, &crate::source::Known::default(), &app.stats);
+        let reload = crate::source::reload(
+            &cli,
+            &root,
+            &crate::source::Known::default(),
+            None,
+            &app.stats,
+        );
         deliver(&mut app, reload);
         app.set_bench(super::workbench::Bench::Plate);
         for kind in SnapKind::ALL {
@@ -3674,24 +4133,28 @@ mod tests {
         let origin = app.loaded.as_ref().unwrap().summary.origin_mm;
         let local = std::array::from_fn(|i| ([500., 0., 0.][i] - origin[i]) as f32);
         app.camera.fit(local, 2000., app.aspect()).unwrap();
-        let view = app.camera.view(app.aspect()).unwrap();
-        let [x, y, _] = view.project(local);
-        let ray = crate::edit::ray_through(
-            &view,
-            [x + 4. / (app.viewport_height * app.aspect()), y],
-            origin,
-        )
-        .unwrap();
-        let (point, kind) = app.creation_hit(ray, true).unwrap();
-        assert_eq!(kind, Some(SnapKind::Midpoint));
-        assert!(
-            point
-                .iter()
-                .zip([500., 0., 0.])
-                .all(|(a, b)| (a - b).abs() < 1e-7)
-        );
-        app.place_plate(ray);
-        assert_eq!(app.plate_draft.points(), &[point]);
+        for orthographic in [false, true] {
+            app.camera.set_projection(orthographic);
+            app.plate_draft.clear();
+            let view = app.camera.view(app.aspect()).unwrap();
+            let [x, y, _] = view.project(local);
+            let ray = crate::edit::ray_through(
+                &view,
+                [x + 4. / (app.viewport_height * app.aspect()), y],
+                origin,
+            )
+            .unwrap();
+            let (point, kind) = app.creation_hit(ray, true).unwrap();
+            assert_eq!(kind, Some(SnapKind::Midpoint));
+            assert!(
+                point
+                    .iter()
+                    .zip([500., 0., 0.])
+                    .all(|(a, b)| (a - b).abs() < 1e-7)
+            );
+            app.place_plate(ray);
+            assert_eq!(app.plate_draft.points(), &[point]);
+        }
         let edges = element_edges(&app.loaded.as_ref().unwrap().snapshot, &id).unwrap();
         assert_eq!(edges.len(), 9);
         let view = crate::camera::Camera::new([5500., 5400., 0.], 2000., 1.)
@@ -3816,8 +4279,13 @@ mod tests {
         );
         app.source.cli = cli.clone();
         app.source.store = root.clone();
-        let reload =
-            crate::source::reload(&cli, &root, &crate::source::Known::default(), &app.stats);
+        let reload = crate::source::reload(
+            &cli,
+            &root,
+            &crate::source::Known::default(),
+            None,
+            &app.stats,
+        );
         assert!(
             reload
                 .grids
@@ -4368,7 +4836,7 @@ mod tests {
             ]
         };
         let (rects, snap) = draw(&mut app, vec![]);
-        assert_eq!(rects.len(), 33);
+        assert_eq!(rects.len(), 34);
         draw(&mut app, click(rects[2].center()));
         draw(&mut app, click(rects[7].center()));
         use beamcraft_engine::query::pick::{SelectionClass, SnapKind};
@@ -4394,9 +4862,15 @@ mod tests {
         draw(&mut app, click(rects[29].center())); // grid source
         assert!(!app.selection.snap_grids);
         assert!(!app.selection.snap_nearest);
-        draw(&mut app, click(rects[31].center())); // reference master
-        draw(&mut app, click(rects[32].center())); // physical master
-        assert!(!app.selection.snap_reference && !app.selection.snap_geometry);
+        draw(&mut app, click(rects[30].center())); // construction source (T02)
+        assert!(!app.selection.snap_construction);
+        draw(&mut app, click(rects[32].center())); // reference master
+        draw(&mut app, click(rects[33].center())); // physical master
+        assert!(
+            !app.selection.snap_construction
+                && !app.selection.snap_reference
+                && !app.selection.snap_geometry
+        );
         draw(&mut app, click(snap.unwrap())); // global snap back on
         assert!(app.selection.snap_kinds().is_empty());
         assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
@@ -4851,6 +5325,238 @@ mod tests {
         let fallback = super::icon();
         assert_eq!((fallback.width, fallback.height), (32, 32));
         assert_eq!(fallback.rgba.len(), 32 * 32 * 4);
+    }
+
+    /// A frame that draws the workspace panels and the saved-views window, returning the
+    /// centre of every drawn text label and every filled rectangle (for the view-window
+    /// frame, whose close button sits at its right edge).
+    fn views_frame(
+        app: &mut App,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        labels: &mut Vec<(String, egui::Pos2)>,
+        rects: &mut Vec<egui::Rect>,
+    ) {
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1400.0, 900.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                app.ribbon(ui);
+                app.project_browser(ui);
+                app.view_properties_window(ui.ctx());
+                app.draw_view_windows(ui.ctx());
+                egui::CentralPanel::default().show(ui, |_| {});
+            },
+        );
+        for shape in &output.shapes {
+            match &shape.shape {
+                egui::Shape::Text(text) => labels.push((
+                    text.galley.text().to_owned(),
+                    text.pos + text.galley.size() / 2.0,
+                )),
+                egui::Shape::Rect(rect) if rect.fill != egui::Color32::TRANSPARENT => {
+                    rects.push(rect.rect)
+                }
+                _ => {}
+            }
+        }
+        output.drop_without_applying_deltas();
+    }
+
+    fn click(pos: egui::Pos2) -> Vec<egui::Event> {
+        vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]
+    }
+
+    #[test]
+    fn a_view_created_in_the_window_activates_and_never_changes_the_model() {
+        use crate::views::Construction;
+        let Some(mut app) = headless() else { return };
+        let dir = std::env::temp_dir().join(format!("beamcraft-v12-ui-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        app.source.store = dir.clone();
+        deliver(&mut app, refreshed(2));
+        let token = app.loaded.as_ref().unwrap().snapshot.token().clone();
+        let spatial = app.camera.frame(app.view_origin()).unwrap();
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        // The ribbon's View tab offers the view commands: a real click path to the tab.
+        let mut labels = Vec::new();
+        let mut rects = Vec::new();
+        views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        let tab = labels
+            .iter()
+            .find(|(text, _)| text == "View")
+            .map(|(_, pos)| *pos)
+            .unwrap_or_else(|| panic!("the View tab was not drawn"));
+        views_frame(&mut app, &ctx, click(tab), &mut labels, &mut rects);
+        assert!(
+            labels.iter().any(|(text, _)| text == "Create view"),
+            "the Views group was not drawn: {labels:?}"
+        );
+
+        // A plan 3 m up: the properties window's own Create button builds it.
+        app.begin_view(Construction::PlanXy);
+        app.views.form.name = "Plan +3000".into();
+        app.views.form.offset = "3000".into();
+        let mut create = None;
+        for _ in 0..3 {
+            labels.clear();
+            views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+            create = labels
+                .iter()
+                .find(|(text, _)| text == "Create")
+                .map(|(_, pos)| *pos);
+            if create.is_some() {
+                break;
+            }
+        }
+        let create = create.unwrap_or_else(|| panic!("no Create button: {labels:?}"));
+        views_frame(&mut app, &ctx, click(create), &mut labels, &mut rects);
+        assert_eq!(
+            app.views.book.len(),
+            1,
+            "the Create button did not dispatch"
+        );
+        let plan = app.views.book.views()[0].clone();
+        assert_eq!(plan.plane.origin(), [0.0, 0.0, 3000.0]);
+        assert_eq!(app.views.active, Some(plan.id));
+        assert!(app.camera.is_aligned() && app.camera.is_orthographic());
+        assert_eq!(
+            app.tools.plane,
+            Some(plan.plane),
+            "the view plane is the input frame"
+        );
+        assert!(crate::views::session_path(&dir).is_file());
+
+        // Ctrl+P looks at the plane and back; the free 3D view comes back as it was.
+        let before = app.camera.frame(app.view_origin()).unwrap();
+        app.toggle_view_plane();
+        app.toggle_view_plane();
+        assert_eq!(app.camera.frame(app.view_origin()).unwrap(), before);
+        app.activate_view(None);
+        assert_eq!(app.camera.frame(app.view_origin()).unwrap(), spatial);
+        assert_eq!(app.tools.plane, None);
+        app.activate_view(Some(plan.id));
+
+        // Its properties: a depth slab and a hidden kind, applied to the active view.
+        app.edit_view(plan.id);
+        app.views.form.depth_on = true;
+        app.views.form.depth = ["500".into(), "500".into()];
+        app.views.form.hidden =
+            beamcraft_engine::KindFilter::SHOW_ALL.hiding(beamcraft_engine::ElementKind::Plate);
+        app.submit_view();
+        assert!(
+            matches!(app.views.note, Some(Ok(_))),
+            "{:?}",
+            app.views.note
+        );
+        let clip = crate::views::display_clip(None, app.views.active_view()).unwrap();
+        assert_eq!(clip.planes.len(), 2);
+        assert_eq!(app.views.shown, app.views.active_hidden());
+        assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
+
+        // The book round-trips through the sidecar, and a confirmed delete persists.
+        assert_eq!(crate::views::load(&dir).unwrap().len(), 1);
+        app.browser_action(super::view_panel::BrowserAction::ConfirmDelete(plan.id));
+        assert!(app.views.active.is_none());
+        assert!(crate::views::load(&dir).unwrap().is_empty());
+        assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_view_by_three_picked_points_and_windows_capped_at_eight() {
+        use crate::views::Construction;
+        let Some(mut app) = headless() else { return };
+        let dir = std::env::temp_dir().join(format!("beamcraft-v12-picks-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        app.source.store = dir.clone();
+        deliver(&mut app, refreshed(2));
+        // Picks land on a work plane far from the model, so no snap takes them.
+        let input = beamcraft_engine::work_plane::WorkPlane::parallel("xy", -50_000.0).unwrap();
+        app.install_plane(Some(input));
+        let down = |x: f64, y: f64| crate::edit::Ray {
+            origin: [x, y, 0.0],
+            direction: [0.0, 0.0, -1.0],
+        };
+        app.begin_view(Construction::ThreePoints);
+        app.views.form.name = "Inclined".into();
+        app.view_click(down(500_000.0, 500_000.0));
+        app.view_click(down(501_000.0, 500_000.0));
+        // A third point on the line through the first two makes no plane: it is dropped and the
+        // two earlier points stay for another try.
+        app.view_click(down(502_000.0, 500_000.0));
+        assert_eq!(app.views.picking.as_ref().map(|p| p.points.len()), Some(2));
+        assert!(matches!(app.views.note, Some(Err(_))));
+        app.view_click(down(500_000.0, 501_000.0));
+        assert!(app.views.picking.is_none());
+        let view = app.views.book.find("Inclined").unwrap().clone();
+        assert!((view.plane.normal()[2] - 1.0).abs() < 1e-9);
+        assert_eq!(view.plane.origin(), [500_000.0, 500_000.0, -50_000.0]);
+
+        // Extra windows are display-only and bounded.
+        for _ in 0..10 {
+            app.open_view_window(None);
+        }
+        assert_eq!(app.views.windows.len(), crate::views::MAX_WINDOWS);
+        app.views.tile = true;
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        let mut labels = Vec::new();
+        let mut rects = Vec::new();
+        let mut title = None;
+        for _ in 0..3 {
+            labels.clear();
+            rects.clear();
+            views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+            title = labels
+                .iter()
+                .find(|(text, _)| text == "3D view 2")
+                .map(|(_, pos)| *pos);
+            if title.is_some() {
+                break;
+            }
+        }
+        let title = title.unwrap_or_else(|| panic!("the view window did not draw: {labels:?}"));
+        // The close button sits at the right edge of the window's own frame, the smallest
+        // filled rectangle around the title that is wide enough to be a window.
+        let frame = rects
+            .iter()
+            .filter(|r| r.contains(title) && r.width() > 200.0)
+            .min_by(|a, b| a.area().total_cmp(&b.area()))
+            .copied()
+            .unwrap_or_else(|| panic!("no window frame around {title:?} in {rects:?}"));
+        let close = egui::pos2(frame.right() - 11.0, title.y);
+        views_frame(&mut app, &ctx, click(close), &mut labels, &mut rects);
+        views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        assert_eq!(
+            app.views.windows.len(),
+            crate::views::MAX_WINDOWS - 1,
+            "the close button did not release the window"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
 

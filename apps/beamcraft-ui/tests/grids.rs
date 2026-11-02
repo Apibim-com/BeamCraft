@@ -11,6 +11,7 @@
     clippy::panic
 )]
 
+use beamcraft_engine::query::pick::{SnapContext, SnapKind, SnapQuery, snap_with_context};
 use beamcraft_json::{Json, Limits};
 use beamcraft_ui::camera::Camera;
 use beamcraft_ui::grid::{GridForm, GridScene};
@@ -112,7 +113,13 @@ fn displayed_grid_can_be_picked_edited_and_restored_by_workspace_history() {
         workspace.to_str().unwrap(),
     ]);
     let initial = f.ok(&["list-grids", "--store", workspace.to_str().unwrap()]);
-    let read = source::reload(&f.cli, &workspace, &Known::default(), &Stats::default());
+    let read = source::reload(
+        &f.cli,
+        &workspace,
+        &Known::default(),
+        None,
+        &Stats::default(),
+    );
     let guides = read.grids.unwrap();
     let grid = guides.get(&created.id).unwrap();
     assert!(grid.editable);
@@ -214,9 +221,15 @@ fn displayed_grid_can_be_picked_edited_and_restored_by_workspace_history() {
             assert_eq!(a.get("label"), b.get("label"));
         }
     }
-    let reopened = source::reload(&f.cli, &workspace, &Known::default(), &Stats::default())
-        .grids
-        .unwrap();
+    let reopened = source::reload(
+        &f.cli,
+        &workspace,
+        &Known::default(),
+        None,
+        &Stats::default(),
+    )
+    .grids
+    .unwrap();
     let saved = &reopened.get(&created.id).unwrap().form;
     assert_eq!(saved.u.expression, "0 2*6500");
     assert_eq!(saved.u.labels, "1 2 3");
@@ -257,11 +270,17 @@ fn displayed_grid_can_be_picked_edited_and_restored_by_workspace_history() {
         .unwrap();
     beamcraft_ui::command::commit_edit(&f.cli, &deletion, &Stats::default()).unwrap();
     assert!(
-        source::reload(&f.cli, &workspace, &Known::default(), &Stats::default())
-            .grids
-            .unwrap()
-            .grids
-            .is_empty()
+        source::reload(
+            &f.cli,
+            &workspace,
+            &Known::default(),
+            None,
+            &Stats::default()
+        )
+        .grids
+        .unwrap()
+        .grids
+        .is_empty()
     );
     f.ok(&[
         "undo-workspace",
@@ -348,7 +367,7 @@ fn inserted_grid_matches_the_cli_and_is_displayed_from_one_pinned_read() {
             }
         }
         let stats = Stats::default();
-        let refreshed = source::reload(&f.cli, &store, &Known::default(), &stats);
+        let refreshed = source::reload(&f.cli, &store, &Known::default(), None, &stats);
         assert_eq!(stats.cli_runs.get(), 1);
         let guides = refreshed.grids.unwrap();
         assert_eq!(guides.lines.len(), 6);
@@ -386,7 +405,7 @@ fn growing_both_coordinate_families_keeps_every_line_across_the_whole_grid() {
         &Stats::default(),
     )
     .unwrap();
-    let initial = source::reload(&f.cli, &store, &Known::default(), &Stats::default())
+    let initial = source::reload(&f.cli, &store, &Known::default(), None, &Stats::default())
         .grids
         .unwrap();
     let original = &initial.get(&created.id).unwrap().form;
@@ -398,7 +417,7 @@ fn growing_both_coordinate_families_keeps_every_line_across_the_whole_grid() {
         .unwrap();
     assert!(args.windows(2).any(|pair| pair == ["--fit-spans", "true"]));
     beamcraft_ui::grid::commit(&f.cli, &args, &Stats::default()).unwrap();
-    let enlarged = source::reload(&f.cli, &store, &Known::default(), &Stats::default())
+    let enlarged = source::reload(&f.cli, &store, &Known::default(), None, &Stats::default())
         .grids
         .unwrap();
     let grid = enlarged.get(&created.id).unwrap();
@@ -428,7 +447,7 @@ fn growing_both_coordinate_families_keeps_every_line_across_the_whole_grid() {
     ]);
     let fit = beamcraft_ui::grid::fit_args(&store, &created.id, Some(ACTOR)).unwrap();
     beamcraft_ui::grid::commit(&f.cli, &fit, &Stats::default()).unwrap();
-    let repaired = source::reload(&f.cli, &store, &Known::default(), &Stats::default())
+    let repaired = source::reload(&f.cli, &store, &Known::default(), None, &Stats::default())
         .grids
         .unwrap();
     assert_eq!(enlarged, repaired);
@@ -467,7 +486,7 @@ fn edited_rotated_rectangle_uses_master_queries_and_preserves_placed_parts() {
         "3500",
     ]);
     let before = f.ok(&["inspect-elements", "--store", path]);
-    let initial = source::reload(&f.cli, &store, &Known::default(), &Stats::default())
+    let initial = source::reload(&f.cli, &store, &Known::default(), None, &Stats::default())
         .grids
         .unwrap();
     let original = &initial.get(&created.id).unwrap().form;
@@ -487,6 +506,15 @@ fn edited_rotated_rectangle_uses_master_queries_and_preserves_placed_parts() {
     let after = f.ok(&["inspect-elements", "--store", path]);
     assert_eq!(before.get("plates"), after.get("plates"));
     let head = f.head(&store);
+    // The window snaps in its own process, on the snapshot and the grids it shows.
+    let snapshot = source::load(&f.cli, &store, &Stats::default()).unwrap();
+    let shown = source::reload(&f.cli, &store, &Known::default(), None, &Stats::default())
+        .grids
+        .unwrap();
+    let context = SnapContext {
+        grids: &shown.query_grids,
+        ..Default::default()
+    };
     // Every crossing, including newly added outer axes, must resolve and snap in world XY.
     let angle = 30.0_f64.to_radians();
     for (u, x) in [("1", -3000.0), ("6", 27000.0)] {
@@ -509,32 +537,17 @@ fn edited_rotated_rectangle_uses_master_queries_and_preserves_placed_parts() {
             for (value, expected) in xy.iter().zip(expected) {
                 assert!((value.float().unwrap() - expected).abs() < 1e-7);
             }
-            let point = format!("{},{},3500", xy[0].float().unwrap(), xy[1].float().unwrap());
-            let snapped = f.ok(&[
-                "snap",
-                "--store",
-                path,
-                "--point",
-                &point,
-                "--radius",
-                "0",
-                "--kinds",
-                "grid_intersection",
-                "--grids",
-                &created.id,
-            ]);
-            let hits = snapped.get("candidates").unwrap().array().unwrap();
-            assert_eq!(hits.len(), 1, "{snapped:?}");
-            assert_eq!(
-                at(&hits[0], &["grid", "grid_id"]).string().unwrap(),
-                created.id
-            );
-            assert_eq!(
-                at(&hits[0], &["point_world_mm"]).array().unwrap()[2]
-                    .float()
-                    .unwrap(),
-                3500.0
-            );
+            let query = SnapQuery {
+                point_mm: [xy[0].float().unwrap(), xy[1].float().unwrap(), 3500.0],
+                radius_mm: 0.0,
+                kinds: vec![SnapKind::GridIntersection],
+                max_hits: 16,
+            };
+            let snapped = snap_with_context(&snapshot, &query, &context).unwrap();
+            assert_eq!(snapped.candidates.len(), 1, "{snapped:?}");
+            let hit = &snapped.candidates[0];
+            assert_eq!(hit.element_id.to_string(), created.id);
+            assert_eq!(hit.point_world_mm[2], 3500.0);
         }
     }
     assert_eq!(head, f.head(&store), "grid queries must not publish edits");
@@ -601,7 +614,7 @@ fn drawn_line_forms_round_trip_through_the_real_cli_and_engine_snaps() {
     assert_eq!(before, f.head(&store));
     let created = commit(&f.cli, &args, &stats).unwrap();
     let id = created.id;
-    let properties = source::reload(&f.cli, &store, &Known::default(), &stats)
+    let properties = source::reload(&f.cli, &store, &Known::default(), None, &stats)
         .grids
         .unwrap();
     let original = &properties.get(&id).unwrap().form;
@@ -666,7 +679,7 @@ fn drawn_line_forms_round_trip_through_the_real_cli_and_engine_snaps() {
         .array()
         .unwrap()[0];
     line.axis = v.get("axis_id").unwrap().string().unwrap().into();
-    let read = source::reload(&f.cli, &store, &Known::default(), &stats);
+    let read = source::reload(&f.cli, &store, &Known::default(), None, &stats);
     let guides = read.grids.unwrap();
     assert_eq!(guides.query_grids.len(), 1);
     assert!(!guides.get(&id).unwrap().editable);
@@ -748,7 +761,7 @@ fn drawn_line_forms_round_trip_through_the_real_cli_and_engine_snaps() {
     );
     // New data remains available after a fresh pinned reload.
     assert_eq!(
-        source::reload(&f.cli, &store, &Known::default(), &stats)
+        source::reload(&f.cli, &store, &Known::default(), None, &stats)
             .grids
             .unwrap()
             .lines

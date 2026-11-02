@@ -2,40 +2,35 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! A06 headless commands: `create-weld` and `welds`. They call the engine API through
-//! `beamcraft_cli::weld` and print one JSON object with the same error shape and exit codes as
+//! `beamcraft_commands::weld` and print one JSON object with the same error shape and exit codes as
 //! the plate commands.
 
 use crate::command_context::{self, CONTEXT_OPTIONS};
 use crate::plate_cmd::{footprint_json, id_error, revision_json};
-use beamcraft_cli::plate::PlateError;
-use beamcraft_cli::weld::{WeldChange, WeldContext, WeldView, create_weld, welds};
+use beamcraft_commands::weld::{WeldChange, WeldContext, WeldView, create_weld, welds};
 use beamcraft_host::{
     ids::IdSource,
     revision::{NoFault, RevisionStore},
     storage::BlobStore,
 };
 use beamcraft_json::Json;
-use beamcraft_model::command::{
-    CreateWeld, WeldContour, WeldGeometry, WeldLocation, WeldSide, WeldSpec, WeldSymbol, WeldType,
-};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId};
+use session::Refusal;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
+use steel::model::command::{
+    CreateWeld, WeldContour, WeldGeometry, WeldLocation, WeldSide, WeldSpec, WeldSymbol, WeldType,
+};
 
-type Run<T> = Result<T, PlateError>;
+type Run<T> = Result<T, Refusal>;
 
-fn invalid(message: &'static str) -> PlateError {
-    PlateError {
+fn invalid(message: &'static str) -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
     }
-}
-
-/// Whether `command` is one of the weld commands.
-pub fn handles(command: &OsString) -> bool {
-    command == "create-weld" || command == "welds"
 }
 
 /// Runs one weld command and returns the JSON result and the process exit code.
@@ -107,7 +102,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     let store_root = options
         .get("--store")
         .ok_or_else(|| invalid("--store is required"))?;
-    let blobs = BlobStore::new(store_root).map_err(|e| PlateError {
+    let blobs = BlobStore::new(store_root).map_err(|e| Refusal {
         rule_id: None,
         code: e.code(),
         message: "store root is not usable",
@@ -126,7 +121,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     // which `fillet` is the only supported value.
     let weld = WeldSpec {
         weld_type: match given("--type") {
-            Some(t) => WeldType::parse(t).ok_or(PlateError {
+            Some(t) => WeldType::parse(t).ok_or(Refusal {
                 rule_id: None,
                 code: ErrorCode::UnsupportedGeometry,
                 message: "--type supports fillet only",
@@ -177,7 +172,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     let name = required("--name", "--name is required")?.to_owned();
     let mut source = IdSource::system();
     let mut fresh = || {
-        source.next_id().map_err(|_| PlateError {
+        source.next_id().map_err(|_| Refusal {
             rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",

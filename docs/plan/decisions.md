@@ -4,6 +4,37 @@ Decisions that shape the plan, newest first. Each names its date and, where one 
 document that records it in detail. A later decision overrides an earlier one where they differ.
 Open questions are at the end.
 
+## 2026-10-31
+
+- **`ROADMAP.md` lists no tasks.** Owner decision: it keeps the stage, the acceptance-gate
+  verdicts and the MVP scope with its deferrals, and drops the "Next work" list and the per-gate
+  task status, which duplicated the issues and drifted from them
+  ([#738](https://github.com/Apibim-com/BeamCraft/issues/738)). What to work on, its order and
+  its state are read from the issues, milestones and the GitHub Project. An agent that starts work
+  on an issue adds the label `in progress` to it (`AGENTS.md` §7).
+- **Interactive-assist commands leave the CLI.** Owner decision: an agent builds a model by giving
+  coordinates and ids directly, so the CLI does not need cursor picking, snapping or the start
+  screen. `pick`, `snap`, `show-settings`, `set-settings`, `list-environment`,
+  `suggest-project-name`, `list-recent` and `add-recent` are removed; the engine APIs stay for the
+  window. This narrows the headless-first rule in `AGENTS.md` §3 to features an agent or script
+  needs. `list-feature`, `lookup-feature`, `element-edges` and `work-plane` stay because
+  `preview-drawing` takes a feature id. Tracked in [#753](https://github.com/Apibim-com/BeamCraft/issues/753).
+
+## 2026-10-30
+
+- **Material density may be zero.** Owner decision: a density of exactly zero is admitted, a
+  negative one is not. A zero density gives a `current` mass of zero, which is all a massless
+  auxiliary part needs (`Steel_Undefined`); no other rule for such parts is set now. Recorded in
+  [the density amendment](../contracts/f04-material-density-amendment-v0.1.md).
+- **Profile lookup order is model, project, environment.** A profile name is resolved first among
+  the definitions of the model, then in the libraries of the project, then in the environment the
+  project was created with. The model carries a copy of the environment; libraries inside the
+  project folder are not implemented yet.
+- **The window must create and change profiles.** Creating a profile and changing the profile of
+  a placed member are required in the native window (V05/V06); neither exists yet.
+- **Typed designations and parametric profile templates** (for example `50*50`, `I 300*150*7*10`)
+  are wanted but not scheduled. Real regional catalogues wait for admitted sources.
+
 ## 2026-10-27
 
 - **Task tracking moves to GitHub.** The code owner directed removal of the repository task table
@@ -314,7 +345,7 @@ Owner answers to [issue #129](https://github.com/Apibim-com/BeamCraft/issues/129
   agents) is retired and its documents removed. The asset and provenance rules of `AGENTS.md` §1–2 stay:
   nothing from Tekla or Trimble, no decompiling, no copied documentation, tables or GPL code.
 - **No progress log.** History is git, the pull requests and the design notes; `ROADMAP.md` keeps
-  only the stage, gates, MVP and next work and changes in docs-only PRs. A single log file would
+  only the stage, gate verdicts and MVP scope and changes in docs-only PRs. A single log file would
   conflict in every PR. Release notes are generated from merged PRs at tag time.
 - **Review threshold for contributor PRs.** A contributor PR goes back to its author only for a
   blocking problem: failing tests, a merge conflict, broken store or schema compatibility, or a

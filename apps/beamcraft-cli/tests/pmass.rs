@@ -13,7 +13,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use beamcraft_cli::plate::inspect;
+use beamcraft_commands::plate::inspect;
 use beamcraft_host::{
     ids::IdSource,
     revision::{ExpectedBase, LayerEntry, NoFault, RevisionDraft, RevisionStore, Uuid7},
@@ -27,7 +27,7 @@ const SHIPPED: &str = concat!(
     "/../../assets/libraries/synthetic-sections.usda"
 );
 
-mod support;
+use crate::support;
 
 use support::{at, text};
 

@@ -1,13 +1,20 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! Compose feature-owned help without changing command dispatch or parsing.
+//! Compose feature-owned help without changing command dispatch or parsing. The command
+//! inventory is rendered from the registry.
 
+use beamcraft_commands::registry;
+
+mod annotation;
 mod assembly;
+mod attribute;
 mod blobs;
 mod bolt;
 mod bom;
 mod changeset;
+mod commands;
+mod construction;
 mod coordinator;
 mod copy;
 mod definitions;
@@ -15,61 +22,31 @@ mod delete;
 mod drawing;
 mod edit;
 mod export;
+mod filters;
 mod grid;
 mod history;
 mod level;
 mod library;
 mod member;
-mod model_views;
 mod numbering;
 mod pick;
 mod plate;
 mod rebase;
 mod reference;
 mod revision;
+mod schedules;
 mod start;
 mod store;
 mod view;
 mod view_export;
+mod views;
 mod weld;
 mod work_plane;
 mod workspace;
 
-// Keep the established inventory order independently of the detailed section order.
-const COMMAND_GROUPS: &[&[&str]] = &[
-    blobs::COMMANDS,
-    revision::COMMANDS,
-    plate::COMMANDS,
-    definitions::COMMANDS,
-    library::COMMANDS,
-    member::COMMANDS,
-    work_plane::COMMANDS,
-    edit::COMMANDS,
-    delete::COMMANDS,
-    copy::COMMANDS,
-    workspace::COMMANDS,
-    rebase::COMMANDS,
-    reference::COMMANDS,
-    assembly::COMMANDS,
-    weld::COMMANDS,
-    bolt::COMMANDS,
-    level::COMMANDS,
-    grid::COMMANDS,
-    export::COMMANDS,
-    numbering::COMMANDS,
-    changeset::COMMANDS,
-    coordinator::COMMANDS,
-    history::COMMANDS,
-    view::COMMANDS,
-    model_views::COMMANDS,
-    pick::COMMANDS,
-    view_export::COMMANDS,
-    bom::COMMANDS,
-    start::COMMANDS,
-];
-
 const SECTIONS: &[&str] = &[
     start::HELP,
+    commands::HELP,
     blobs::HELP,
     drawing::PREVIEW,
     revision::CONTROL,
@@ -88,7 +65,11 @@ const SECTIONS: &[&str] = &[
     weld::HELP,
     bolt::HELP,
     level::HELP,
+    attribute::HELP,
+    filters::HELP,
     grid::HELP,
+    construction::HELP,
+    annotation::HELP,
     grid::LINES,
     grid::UPDATE,
     grid::QUERIES,
@@ -102,10 +83,11 @@ const SECTIONS: &[&str] = &[
     rebase::HELP,
     reference::HELP,
     view::HELP,
-    model_views::HELP,
+    views::HELP,
     pick::HELP,
     view_export::HELP,
     bom::HELP,
+    schedules::HELP,
     store::HELP,
     drawing::DOCUMENTS,
 ];
@@ -116,10 +98,7 @@ pub(crate) fn print() {
 }
 
 fn render() -> String {
-    let commands: Vec<_> = COMMAND_GROUPS
-        .iter()
-        .flat_map(|group| group.iter().copied())
-        .collect();
+    let commands: Vec<_> = registry::COMMANDS.iter().map(|c| c.name).collect();
     format!(
         "BeamCraft: {}\n{}",
         commands.join(" | "),

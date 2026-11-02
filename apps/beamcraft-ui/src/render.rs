@@ -107,7 +107,7 @@ struct GpuMesh {
 /// The scene on the device: per distinct mesh one vertex buffer and one instance buffer.
 pub struct Uploaded {
     meshes: Vec<GpuMesh>,
-    /// Exact vertex and instance bytes this upload sent (excludes the fixed 80-byte camera
+    /// Exact vertex and instance bytes this upload sent (excludes the fixed 112-byte camera
     /// uniform); vertex buffers reused from the previous scene are not sent again.
     pub bytes: u64,
     /// Buffer allocation and writes, and for [`Uploaded::new`] the flush to completion.
@@ -344,34 +344,58 @@ fn pipeline(
     device: &wgpu::Device,
     samples: u32,
     stats: &Stats,
-) -> Result<(Pipelines, wgpu::Buffer, wgpu::BindGroup), Error> {
+) -> Result<(Pipelines, wgpu::Buffer, wgpu::Buffer, wgpu::BindGroup), Error> {
     let scopes = error_scopes(device);
     let camera = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("BeamCraft camera"),
-        size: 176,
+        size: 112,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let clip = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("BeamCraft cut planes"),
+        size: crate::cut_plane::ClipGpu::BYTES as u64,
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("BeamCraft camera layout"),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
             },
-            count: None,
-        }],
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
     });
     let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("BeamCraft camera bind"),
         layout: &layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: camera.as_entire_binding(),
-        }],
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: clip.as_entire_binding(),
+            },
+        ],
     });
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("BeamCraft pipeline layout"),
@@ -383,7 +407,7 @@ fn pipeline(
         source: wgpu::ShaderSource::Wgsl(include_str!("viewport.wgsl").into()),
     });
     let attributes = wgpu::vertex_attr_array![0=>Float32x3,1=>Float32x3];
-    let instance_attributes = wgpu::vertex_attr_array![2=>Float32x3,3=>Float32x4];
+    let instance_attributes = wgpu::vertex_attr_array![2=>Float32x3,3=>Float32x4,4=>Float32x4];
     let vertex_layout = || {
         Some(wgpu::VertexBufferLayout {
             array_stride: 24,
@@ -396,7 +420,7 @@ fn pipeline(
         step_mode: wgpu::VertexStepMode::Instance,
         attributes: &instance_attributes,
     });
-    let pipeline = |label, fragment, polygon_mode, blend: Option<wgpu::BlendState>, depth_write| {
+    let pipeline = |label, fragment, polygon_mode, blend, depth_write| {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(label),
             layout: Some(&pipeline_layout),
@@ -428,7 +452,7 @@ fn pipeline(
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: FORMAT,
-                    blend: Some(blend.unwrap_or(wgpu::BlendState::ALPHA_BLENDING)),
+                    blend,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
@@ -477,7 +501,7 @@ fn pipeline(
     };
     finish_scopes(scopes)?;
     stats.pipeline_builds.add(5);
-    Ok((pipelines, camera, bind))
+    Ok((pipelines, camera, clip, bind))
 }
 
 /// The ghost preview's device buffers: one mesh, one instance.
@@ -498,6 +522,8 @@ pub struct Renderer {
     /// The pipelines of the five render modes and the ghost preview.
     pipeline: Pipelines,
     camera: wgpu::Buffer,
+    /// The V15 cut-plane uniform, rewritten per draw.
+    clip: wgpu::Buffer,
     bind: wgpu::BindGroup,
     /// The ghost preview's device buffers, when a placement is armed.
     ghost_buffers: Option<GhostDraw>,
@@ -552,7 +578,7 @@ impl Renderer {
             depth,
             msaa,
         } = targets(device, width, height, samples, stats)?;
-        let (pipeline, camera, bind) = pipeline(device, samples, stats)?;
+        let (pipeline, camera, clip, bind) = pipeline(device, samples, stats)?;
         Ok(Self {
             view,
             texture,
@@ -560,6 +586,7 @@ impl Renderer {
             msaa,
             pipeline,
             camera,
+            clip,
             bind,
             ghost_buffers: None,
             samples,
@@ -641,7 +668,9 @@ impl Renderer {
 
     /// Encodes one lit, depth-tested frame in `mode` and submits it; completion is a separate
     /// measurement. [`RenderMode::SelectedOnly`] draws only the background and the ghost here;
-    /// the selected element goes through [`Renderer::draw_one`].
+    /// the selected element goes through [`Renderer::draw_one`]. The `clip` uniform cuts the
+    /// image, never the data: a zero count draws everything.
+    #[allow(clippy::too_many_arguments)] // one frame needs its scene, camera, mode and cut
     pub fn draw(
         &self,
         device: &wgpu::Device,
@@ -650,10 +679,12 @@ impl Renderer {
         camera: View,
         stats: &Stats,
         mode: RenderMode,
+        clip: &crate::cut_plane::ClipGpu,
     ) -> wgpu::SubmissionIndex {
         stats.viewport_draws.add(1);
         stats.submits.add(1);
         queue.write_buffer(&self.camera, 0, &camera.bytes());
+        queue.write_buffer(&self.clip, 0, &clip.bytes());
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("BeamCraft frame"),
         });
@@ -715,11 +746,13 @@ impl Renderer {
         stats: &Stats,
         digest: &ContentDigest,
         instance: &[u8; INSTANCE_BYTES],
+        clip: &crate::cut_plane::ClipGpu,
     ) -> Option<wgpu::SubmissionIndex> {
         let (vertices, vertex_count) = uploaded.mesh_vertices(digest)?;
         stats.viewport_draws.add(1);
         stats.submits.add(1);
         queue.write_buffer(&self.camera, 0, &camera.bytes());
+        queue.write_buffer(&self.clip, 0, &clip.bytes());
         let one = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("BeamCraft selected instance"),
             size: INSTANCE_BYTES as u64,
@@ -824,6 +857,19 @@ impl Renderer {
 mod tests {
     use super::*;
 
+    fn required_adapter(result: Result<Gpu, Error>) -> Gpu {
+        match result {
+            Ok(gpu) => gpu,
+            Err(error) => panic!("required native/software GPU adapter failed: {error}"),
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "required native/software GPU adapter failed")]
+    fn a_missing_adapter_is_a_failed_check_not_a_successful_skip() {
+        let _ = required_adapter(Err(Error::NoAdapter));
+    }
+
     #[test]
     fn hardware_adapters_default_to_4x_and_software_ones_to_1x() {
         use wgpu::DeviceType::{Cpu, DiscreteGpu, IntegratedGpu, Other, VirtualGpu};
@@ -837,14 +883,7 @@ mod tests {
 
     #[test]
     fn a_resize_rebuilds_the_targets_and_keeps_the_pipeline() {
-        let gpu = match pollster::block_on(Gpu::headless()) {
-            Ok(gpu) => gpu,
-            Err(Error::NoAdapter) => {
-                eprintln!("SKIP resize: no native wgpu adapter");
-                return;
-            }
-            Err(e) => panic!("adapter or device failed: {e}"),
-        };
+        let gpu = required_adapter(pollster::block_on(Gpu::headless()));
         let supports_4x = [FORMAT, DEPTH].into_iter().all(|f| {
             gpu.adapter
                 .get_texture_format_features(f)
@@ -899,6 +938,7 @@ mod tests {
             view,
             &stats,
             RenderMode::Shaded,
+            &crate::cut_plane::ClipGpu::none(),
         );
         wait(&gpu.device, index).unwrap();
         let (pixels, row) = renderer.readback(&gpu.device, &gpu.queue).unwrap();
@@ -907,5 +947,164 @@ mod tests {
         assert!(renderer.resize(&gpu.device, 0, 80, &stats).is_err());
         assert_eq!((renderer.width, renderer.height), (96, 80));
         assert!(Renderer::with_samples(&gpu.adapter, &gpu.device, 8, 8, Some(2), &stats).is_err());
+    }
+
+    #[test]
+    fn an_overlay_tint_reaches_the_drawn_pixels_and_white_leaves_them() {
+        let gpu = required_adapter(pollster::block_on(Gpu::headless()));
+        let supports_4x = [FORMAT, DEPTH].into_iter().all(|f| {
+            gpu.adapter
+                .get_texture_format_features(f)
+                .flags
+                .sample_count_supported(4)
+        });
+        let samples = if supports_4x { 4 } else { 1 };
+        let stats = Stats::default();
+        let mut renderer =
+            Renderer::with_samples(&gpu.adapter, &gpu.device, 64, 48, Some(samples), &stats)
+                .unwrap();
+        let pin = beamcraft_engine::ViewPin::new(
+            beamcraft_model::digest::Sha256::digest(b"revision").unwrap(),
+            1,
+        );
+        let snapshot = beamcraft_engine::ViewSnapshot::build(
+            pin,
+            beamcraft_engine::synthetic::plate_scene(1, false).unwrap(),
+            &beamcraft_engine::Limits::default(),
+        )
+        .unwrap();
+        // Build both scenes: the plain one and the same snapshot fully coloured red.
+        let plain =
+            Scene::from_snapshot(&snapshot, beamcraft_engine::Representation::Full).unwrap();
+        let ids: std::collections::BTreeSet<beamcraft_model::id::ElementId> =
+            snapshot.elements().iter().map(|e| e.id).collect();
+        let overlay = crate::colour_sets::Overlay::from_rules(vec![(ids, [1.0, 0.0, 0.0, 1.0])]);
+        let coloured = Scene::from_snapshot_reusing(
+            &snapshot,
+            beamcraft_engine::Representation::Full,
+            &std::collections::BTreeSet::new(),
+            Some(&overlay),
+        )
+        .unwrap();
+        let (target, extent) = plain.framing();
+        let view = crate::camera::Camera::new(target, extent, 1.2)
+            .unwrap()
+            .view(1.2)
+            .unwrap();
+        let red_pixels = |renderer: &mut Renderer, uploaded: &Uploaded| -> usize {
+            let index = renderer.draw(
+                &gpu.device,
+                &gpu.queue,
+                uploaded,
+                view,
+                &stats,
+                RenderMode::Shaded,
+                &crate::cut_plane::ClipGpu::none(),
+            );
+            wait(&gpu.device, index).unwrap();
+            let (pixels, row) = renderer.readback(&gpu.device, &gpu.queue).unwrap();
+            let _ = row;
+            pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .filter(|p| i16::from(p[0]) > i16::from(p[2]) + 40)
+                .count()
+        };
+        let plain_gpu = Uploaded::new(&gpu.device, &gpu.queue, &plain, &stats).unwrap();
+        assert_eq!(
+            red_pixels(&mut renderer, &plain_gpu),
+            0,
+            "the steel colours are never red-dominant"
+        );
+        let coloured_gpu = Uploaded::new(&gpu.device, &gpu.queue, &coloured, &stats).unwrap();
+        assert!(
+            red_pixels(&mut renderer, &coloured_gpu) > 0,
+            "the overlay tint reaches the shaded faces"
+        );
+    }
+
+    #[test]
+    fn a_view_tint_colours_or_hides_the_model_and_a_hidden_kind_leaves_the_scene() {
+        let gpu = required_adapter(pollster::block_on(Gpu::headless()));
+        let stats = Stats::default();
+        let mut renderer =
+            Renderer::with_samples(&gpu.adapter, &gpu.device, 64, 48, Some(1), &stats).unwrap();
+        let pin = beamcraft_engine::ViewPin::new(
+            beamcraft_model::digest::Sha256::digest(b"revision").unwrap(),
+            1,
+        );
+        let snapshot = beamcraft_engine::ViewSnapshot::build(
+            pin,
+            beamcraft_engine::synthetic::plate_scene(1, false).unwrap(),
+            &beamcraft_engine::Limits::default(),
+        )
+        .unwrap();
+        let scene =
+            Scene::from_snapshot(&snapshot, beamcraft_engine::Representation::Full).unwrap();
+        let (target, extent) = scene.framing();
+        let base = crate::camera::Camera::new(target, extent, 1.2)
+            .unwrap()
+            .view(1.2)
+            .unwrap();
+        let uploaded = Uploaded::new(&gpu.device, &gpu.queue, &scene, &stats).unwrap();
+        let count = |renderer: &mut Renderer,
+                     uploaded: &Uploaded,
+                     tint: [f32; 4],
+                     keep: &dyn Fn(&[u8; 4]) -> bool| {
+            let mut view = base;
+            view.tint = tint;
+            let index = renderer.draw(
+                &gpu.device,
+                &gpu.queue,
+                uploaded,
+                view,
+                &stats,
+                RenderMode::Shaded,
+                &crate::cut_plane::ClipGpu::none(),
+            );
+            wait(&gpu.device, index).unwrap();
+            let (pixels, _) = renderer.readback(&gpu.device, &gpu.queue).unwrap();
+            pixels.as_chunks::<4>().0.iter().filter(|p| keep(p)).count()
+        };
+        let background = renderer.background;
+        let bg = [background.r, background.g, background.b].map(|c| (c * 255.0).round() as i16);
+        let model = |p: &[u8; 4]| {
+            p.iter()
+                .zip(bg)
+                .take(3)
+                .any(|(c, b)| (i16::from(*c) - b).abs() > 8)
+        };
+        let red = |p: &[u8; 4]| i16::from(p[0]) > i16::from(p[2]) + 40;
+        let drawn = count(&mut renderer, &uploaded, crate::camera::NO_TINT, &model);
+        assert!(drawn > 0, "the plate is drawn without a tint");
+        assert_eq!(
+            count(&mut renderer, &uploaded, crate::camera::NO_TINT, &red),
+            0
+        );
+        assert!(
+            count(&mut renderer, &uploaded, [1.0, 0.0, 0.0, 1.0], &red) > 0,
+            "a view colour replaces the model colour"
+        );
+        assert_eq!(
+            count(&mut renderer, &uploaded, [-1.0, 0.0, 0.0, 0.0], &model),
+            0,
+            "a fully transparent view draws nothing"
+        );
+        // A view that hides plates builds a scene without them.
+        let hidden = Scene::from_snapshot_showing(
+            &snapshot,
+            beamcraft_engine::Representation::Full,
+            &std::collections::BTreeSet::new(),
+            None,
+            beamcraft_engine::KindFilter::SHOW_ALL.hiding(beamcraft_engine::ElementKind::Plate),
+        )
+        .unwrap();
+        assert_eq!(hidden.summary().origin_mm, scene.summary().origin_mm);
+        let hidden_gpu = Uploaded::new(&gpu.device, &gpu.queue, &hidden, &stats).unwrap();
+        assert_eq!(
+            count(&mut renderer, &hidden_gpu, crate::camera::NO_TINT, &model),
+            0
+        );
     }
 }

@@ -6,7 +6,7 @@
 //! a captured source interval or substitute another output. Legacy data stays conservative.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use beamcraft_cli::command_evidence::{CapturedFootprint, read};
+use beamcraft_commands::command_evidence::{CapturedFootprint, read};
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
 use beamcraft_host::revision::{
     EvidencePin, ExpectedBase, NoFault, RevisionDraft, RevisionStore, Uuid7,
@@ -112,7 +112,7 @@ impl Fixture {
             .parse()
             .unwrap();
         let stored =
-            beamcraft_cli::changeset::read_changeset(&self.store("draft"), &digest).unwrap();
+            beamcraft_commands::changeset::read_changeset(&self.store("draft"), &digest).unwrap();
         (digest, stored.changeset)
     }
     fn put(&self, changeset: &Changeset) -> ContentDigest {
@@ -325,9 +325,9 @@ fn legacy_intervals_keep_conservative_reads_and_explicitly_absent_destination_ev
             d.target == DependencyTarget::Element(element(2)) && d.access == Access::Read
         }));
         if legacy_v1 {
-            changeset
-                .dependencies
-                .retain(|d| d.group != DependencyGroup::Mark);
+            changeset.dependencies.retain(|d| {
+                d.group != DependencyGroup::Mark && d.group != DependencyGroup::Attributes
+            });
             assert!(
                 changeset
                     .encode()

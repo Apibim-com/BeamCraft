@@ -7,15 +7,15 @@
 
 #![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 
-#[path = "common_mesh/mod.rs"]
-mod common;
+use crate::common_mesh as common;
 
 use beamcraft_geom::{Frame3, Point3, RigidTransform, Vec3};
 use beamcraft_kernel::diagnostic::{Code, Stage};
 use beamcraft_kernel::enclosure::Enclosure;
+use beamcraft_kernel::measure::cross_check_plate;
 use beamcraft_kernel::measure::{
-    Basis, MeshMeasurement, QuantityStatus, analytic_mass_kg, cross_check_plate, mass_status,
-    measure, measure_with_cancel,
+    Basis, MassRecord, MeshMeasurement, QuantityStatus, analytic_mass_kg, mass_status, measure,
+    measure_with_cancel,
 };
 use beamcraft_kernel::topology::{Limits, analyze, analyze_with};
 use beamcraft_kernel::trimesh::TriMesh;
@@ -234,12 +234,30 @@ fn analytic_mass_uses_the_written_order_and_never_defaults_density() {
         analytic_mass_kg(1.0, Some(f64::INFINITY)),
         Err(Code::NonFinite)
     );
-    assert_eq!(analytic_mass_kg(1.0, Some(0.0)), Err(Code::NotPositive));
+    // A zero density is the massless auxiliary material: a current mass of zero.
+    assert_eq!(
+        analytic_mass_kg(1.0, Some(0.0)),
+        Ok(MassRecord {
+            status: QuantityStatus::Current,
+            kg: Some(0.0)
+        })
+    );
     assert_eq!(analytic_mass_kg(1.0, Some(-5.0)), Err(Code::NotPositive));
     // W10: a subnormal density underflows; zero is never a current mass.
     assert_eq!(
         analytic_mass_kg(1e-9, Some(5e-324)),
         Err(Code::NumericUncertain)
+    );
+    // G11: a subnormal mass is refused too. 1 mm3 at 1e-310 kg/m3 is about 1e-319 kg, a
+    // subnormal with a relative error near 1e-5, beyond the comparison rule.
+    assert_eq!(
+        analytic_mass_kg(1.0, Some(1e-310)),
+        Err(Code::NumericUncertain)
+    );
+    // The smallest normal mass is still current.
+    assert_eq!(
+        analytic_mass_kg(1e9, Some(f64::MIN_POSITIVE)).unwrap().kg,
+        Some(f64::MIN_POSITIVE)
     );
     assert_eq!(
         analytic_mass_kg(1e300, Some(1e300)),

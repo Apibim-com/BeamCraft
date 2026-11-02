@@ -55,42 +55,8 @@ fn property_group(name: &str) -> Option<G> {
         "xformOp:translate" | "xformOp:orient" | "xformOpOrder" => G::Placement,
         "bim:material" => G::MaterialRef,
         "bim:partOf" | "bim:level" | "bim:connects" | "bim:instanceOf" => G::Relationship,
-        "steel:plate:contourPointsMm"
-        | "steel:plate:thicknessMm"
-        | "steel:plate:thicknessSide"
-        | "steel:plate:cornerVertex"
-        | "steel:plate:cornerKind"
-        | "steel:plate:cornerD1Mm"
-        | "steel:plate:cornerD2Mm"
-        | "steel:plate:cornerRadiusMm"
-        | "steel:plate:holePointsMm"
-        | "steel:plate:holeVertexCounts"
-        | "steel:cut:operationId"
-        | "steel:cut:ordinal"
-        | "steel:cut:pointMm"
-        | "steel:cut:normal"
-        | "steel:cut:keep"
-        | "bim:axisPointsMm"
-        | "steel:member:rollRad"
-        | "steel:member:planePosition"
-        | "steel:member:planeOffsetMm"
-        | "steel:member:depthPosition"
-        | "steel:member:depthOffsetMm"
-        | "steel:member:startOffsetMm"
-        | "steel:member:endOffsetMm"
-        | "bim:profile"
-        | "bim:elevationMm"
-        | "steel:connection:type"
-        | "steel:weld:type"
-        | "steel:weld:sizeMm"
-        | "steel:weld:location"
-        | "steel:weld:side"
-        | "steel:bolt:diameterMm"
-        | "steel:bolt:count"
-        | "steel:bolt:pitchMm"
-        | "steel:bolt:originMm"
-        | "steel:bolt:directionMm" => G::ShapeInputs,
-        _ => return None,
+        "bim:elevationMm" => G::ShapeInputs,
+        _ => return super::disciplines::property_group(name),
     })
 }
 
@@ -104,25 +70,9 @@ fn definition_property(name: &str) -> bool {
             | "bim:densityKgM3"
             | "bim:materialGrade"
             | "bim:materialStandard"
-            | "steel:profile:widthMm"
-            | "steel:profile:heightMm"
-            | "steel:profile:designation"
-            | "steel:profile:standard"
-            | "steel:profile:areaMm2"
-            | "steel:profile:massPerMeterKg"
-            | "steel:profile:surfacePerMeterM2"
-            | "steel:profile:hMm"
-            | "steel:profile:bMm"
-            | "steel:profile:twMm"
-            | "steel:profile:tfMm"
-            | "steel:profile:rMm"
-            | "steel:profile:tMm"
-            | "steel:profile:dMm"
-            | "steel:profile:cMm"
-            | "steel:profile:outerPointsMm"
-            | "steel:profile:cavityPointsMm"
-            | "steel:profile:cavityVertexCounts"
-    )
+    ) || super::disciplines::registered()
+        .iter()
+        .any(|discipline| discipline.definition_property(name))
 }
 
 fn geometry_property(name: &str) -> bool {
@@ -480,9 +430,14 @@ pub fn prepare(
         let index = reader.element_index(&opened.context, control)?;
         reader.verify_index(&index, control)?;
         for &(target, _) in &writes {
-            let path = match target {
-                T::Element(id) => index.lookup(&id.to_string()).map(|entry| &entry.path),
-                T::Definition(digest) => index.definition(&digest).map(|entry| &entry.path),
+            let path: Result<&str, _> = match target {
+                T::Element(id) => index
+                    .lookup(&id.to_string())
+                    .map(|entry| entry.path.as_str()),
+                T::Definition(digest) => index.definition(&digest).map(|entry| entry.path.as_str()),
+                // The schema scope is authored content like any element folder; a rebase of a
+                // delta under it is refused earlier as an unsupported property.
+                T::AttrSchema => Ok(super::ATTR_SCHEMA_PATH),
             };
             match path {
                 Ok(path) => {

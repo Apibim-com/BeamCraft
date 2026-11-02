@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! U16 end to end: every category, cross-category links, stable paths, view export and picking.
+//! U16 end to end: every category, cross-category links, stable paths, view export.
 //! All generated model data are contributor-original synthetic fixtures (ATTRIBUTION.md).
 
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
@@ -27,6 +27,11 @@ const LEVEL: &str = "019a7bf0-0000-7000-8000-000000139005";
 const WELD: &str = "019a7bf0-0000-7000-8000-000000139006";
 const BOLT: &str = "019a7bf0-0000-7000-8000-000000139007";
 const REFERENCE: &str = "019a7bf0-0000-7000-8000-000000139008";
+/// The shipped synthetic fastener library (contributor-original values).
+const SYNTHETIC: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../assets/libraries/synthetic-fasteners.usda"
+);
 
 struct Fixture(PathBuf);
 impl Fixture {
@@ -221,24 +226,28 @@ fn all_categories_reopen_at_rule_paths_and_keep_identity_through_edits_and_view_
         ],
     );
     f.run(
-        "create-bolt",
+        "create-bolt-group",
         &[
             "--name",
             "Bolts",
-            "--main",
-            PLATE,
-            "--secondary",
-            BEAM,
-            "--origin",
+            "--parts",
+            &format!("{PLATE},{BEAM}"),
+            "--fastener-library",
+            SYNTHETIC,
+            "--designation",
+            "SYN-BOLT-12x50",
+            "--point1",
             "100,0,5",
-            "--direction",
-            "1,0,0",
-            "--count",
-            "2",
-            "--pitch",
+            "--point2",
+            "180,0,5",
+            "--plane-normal",
+            "0,0,1",
+            "--offset-start",
+            "0",
+            "--spacings",
             "80",
-            "--diameter",
-            "16",
+            "--hole-mode",
+            "none",
             "--new-id",
             BOLT,
         ],
@@ -336,29 +345,11 @@ fn all_categories_reopen_at_rule_paths_and_keep_identity_through_edits_and_view_
                 .is_some()
         );
     }
-    let picked = f.run(
-        "pick",
-        &[
-            "--origin",
-            "500,250,100",
-            "--direction",
-            "0,0,-1",
-            "--targets",
-            "face",
-        ],
-    );
-    assert_eq!(
-        string(
-            &picked.get("hits").unwrap().array().unwrap()[0],
-            "element_id"
-        ),
-        PLATE
-    );
     // Deleting non-parts removes the leaf from its category folder as well.
     for id in [WELD, BOLT, ASSEMBLY, LEVEL] {
         f.run("delete-element", &["--id", id]);
     }
-    let inspection = beamcraft_cli::plate::inspect(&f.store()).unwrap();
+    let inspection = beamcraft_commands::plate::inspect(&f.store()).unwrap();
     assert_eq!(inspection.plates.len(), 1);
     assert_eq!(inspection.members.len(), 2);
 }

@@ -33,6 +33,12 @@ pub(crate) enum Bench {
     Copy,
     /// Delete the selected element.
     Delete,
+    /// The window's display cut plane (V15); a view filter, never a model change.
+    CutPlane,
+    /// Colour by a saved representation set (V17); a display overlay, never a model change.
+    Colour,
+    /// D06 annotations: place dimensions, marks and leaders, watch their binding states.
+    Annotations,
 }
 
 impl Bench {
@@ -47,6 +53,9 @@ impl Bench {
             Self::Move => "Move",
             Self::Copy => "Copy",
             Self::Delete => "Delete",
+            Self::CutPlane => "Cut plane",
+            Self::Colour => "Colour",
+            Self::Annotations => "Annotations",
         }
     }
 
@@ -56,7 +65,14 @@ impl Bench {
             Self::Move => Some(EditKind::Move),
             Self::Copy => Some(EditKind::Copy),
             Self::Delete => Some(EditKind::Delete),
-            Self::Select | Self::Plate | Self::Beam | Self::Column | Self::Grid => None,
+            Self::Select
+            | Self::Plate
+            | Self::Beam
+            | Self::Column
+            | Self::Grid
+            | Self::CutPlane
+            | Self::Colour
+            | Self::Annotations => None,
         }
     }
 }
@@ -283,58 +299,6 @@ fn tool_button(
     }
 }
 
-/// A ribbon dropdown uses the same button, glyph and caption as a direct action.
-fn tool_menu(ui: &mut Ui, icon: Icon, label: &str, enabled: bool, contents: impl FnOnce(&mut Ui)) {
-    let response = tool_button(ui, icon, label, false, enabled);
-    let line = Palette::current(ui)
-        .line
-        .gamma_multiply(if enabled { 1. } else { 0.35 });
-    let tip = response.rect.right_top() + vec2(-8., 8.);
-    ui.painter().add(egui::Shape::line(
-        vec![tip + vec2(-3., 0.), tip + vec2(0., 3.), tip + vec2(3., 0.)],
-        Stroke::new(1.2, line),
-    ));
-    if enabled {
-        egui::Popup::menu(&response).width(240.).show(contents);
-    }
-}
-
-/// Full-row menu hit area, with an original vector glyph and a keyboard-accessible label.
-pub(super) fn icon_menu_item(ui: &mut Ui, icon: Icon, label: &str) -> egui::Response {
-    let response =
-        ui.add(egui::Button::new("").min_size(vec2(ui.available_width().max(220.), 30.)));
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
-    let palette = Palette::current(ui);
-    theme::paint_icon(
-        ui.painter(),
-        Rect::from_center_size(response.rect.left_center() + vec2(16., 0.), vec2(20., 20.)),
-        icon,
-        palette.line,
-    );
-    ui.painter().text(
-        response.rect.left_center() + vec2(34., 0.),
-        egui::Align2::LEFT_CENTER,
-        label,
-        egui::FontId::proportional(12.),
-        palette.text,
-    );
-    response
-}
-
-pub(super) fn view_construction_icon(construction: crate::model_views::Construction) -> Icon {
-    use crate::model_views::Construction;
-    match construction {
-        Construction::TwoPoints => Icon::ViewTwoPoints,
-        Construction::ThreePoints => Icon::ViewThreePoints,
-        Construction::Grid => Icon::Grid,
-        Construction::Face | Construction::FaceEdge => Icon::Plate,
-        Construction::PartViews | Construction::AssemblyViews => Icon::ViewTile,
-        Construction::Part3D | Construction::Assembly3D => Icon::Block,
-        Construction::Undeformed => Icon::Beam,
-        _ => Icon::ViewPlane,
-    }
-}
-
 /// A small group caption under ribbon buttons.
 fn caption(ui: &mut Ui, text: &str) {
     let palette = Palette::current(ui);
@@ -347,8 +311,6 @@ impl App {
         if self.other_command_running() {
             return;
         }
-        self.views.editing = false;
-        self.views.picking = false;
         self.grid_line.click = None;
         self.tools.cancel();
         if bench != Bench::Select && self.grid_edit.take().is_some() {
@@ -389,6 +351,9 @@ impl App {
                 }
             }
             Bench::Select => {}
+            Bench::CutPlane => {}
+            Bench::Colour => {}
+            Bench::Annotations => {}
             Bench::Grid => {
                 self.beam_mode = false;
                 self.beam.reset();
@@ -396,6 +361,9 @@ impl App {
                 self.renderer
                     .set_ghost(&self.state.device, &self.state.queue, None);
             }
+        }
+        if bench == Bench::Annotations {
+            self.annotation_load();
         }
     }
 
@@ -631,32 +599,48 @@ impl App {
                     });
                     }
                     if self.ribbon_tab == RibbonTab::View {
-                    group(ui,"Views",&mut |ui| {
-                        tool_menu(ui,Icon::ViewCreate,"Create view",edits_free && self.views.job.is_none(),|ui| {
-                            egui::ScrollArea::vertical().max_height(480.).show(ui,|ui| {
-                                for (mode,label) in crate::model_views::Construction::ALL {
-                                    if icon_menu_item(ui,view_construction_icon(mode),label).clicked() { self.begin_view(mode); ui.close(); }
+                    group(ui, "Views", &mut |ui| {
+                        ui.menu_button("Create view", |ui| {
+                            for (construction, label) in crate::views::Construction::ALL {
+                                if ui.button(label).clicked() {
+                                    self.begin_view(construction);
+                                    ui.close();
                                 }
-                            });
-                        });
-                        if tool_button(ui,Icon::ViewProperties,"Properties",self.views.editing,edits_free).on_hover_text("View properties").clicked() { self.views.editing = true; }
-                        if tool_button(ui,Icon::ViewPlane,"3D / plane",self.views.spatial_camera.is_some(),true).on_hover_text("Toggle plane view (Ctrl+P)").clicked() { self.toggle_view_plane(); }
-                        tool_menu(ui,Icon::ViewDirection,"Direction",true,|ui| {
-                            for side in ["top","bottom","front","back","left","right"] {
-                                if icon_menu_item(ui,Icon::ViewDirection,side).clicked() { self.orient_view(side); ui.close(); }
                             }
                         });
-                        if tool_button(ui,Icon::ViewTile,"Tile windows",false,true).clicked() { self.views.tile_windows = true; }
+                        if tool_button(ui, Icon::Block, "View properties", self.views.editing, true).clicked() {
+                            match self.views.active {
+                                Some(id) => self.edit_view(id),
+                                None => self.views.editing = !self.views.editing,
+                            }
+                        }
+                        if tool_button(ui, Icon::Fit, "3D / plane (Ctrl+P)", self.views.toggled.is_some(), true).clicked() {
+                            self.toggle_view_plane();
+                        }
+                        ui.menu_button("Direction", |ui| {
+                            for (direction, label) in crate::views::Direction::ALL {
+                                if ui.button(label).clicked() {
+                                    self.orient_view(direction);
+                                    ui.close();
+                                }
+                            }
+                        });
+                        if tool_button(ui, Icon::Copy, "New view window", false, self.views.windows.len() < crate::views::MAX_WINDOWS).clicked() {
+                            self.open_view_window(self.views.active);
+                        }
+                        if tool_button(ui, Icon::Grid, "Tile windows", false, !self.views.windows.is_empty()).clicked() {
+                            self.views.tile = true;
+                        }
                     });
                     group(ui, "Display", &mut |ui| {
-                        for (mode, icon, label) in [
-                            (beamcraft_engine::RenderMode::Wireframe, Icon::Wire, "Wireframe"),
-                            (beamcraft_engine::RenderMode::Transparent, Icon::Transparent, "Transparent"),
-                            (beamcraft_engine::RenderMode::Grey, Icon::Grey, "Grey"),
-                            (beamcraft_engine::RenderMode::Shaded, Icon::Shaded, "Shaded"),
-                            (beamcraft_engine::RenderMode::SelectedOnly, Icon::SelectedOnly, "Selected only"),
+                        for (mode, label) in [
+                            (beamcraft_engine::RenderMode::Wireframe, "Wireframe"),
+                            (beamcraft_engine::RenderMode::Transparent, "Transparent"),
+                            (beamcraft_engine::RenderMode::Grey, "Grey"),
+                            (beamcraft_engine::RenderMode::Shaded, "Shaded"),
+                            (beamcraft_engine::RenderMode::SelectedOnly, "Selected only"),
                         ] {
-                            if tool_button(ui, icon, label, self.mode == mode, true).clicked() {
+                            if tool_button(ui, Icon::Block, label, self.mode == mode, true).clicked() {
                                 self.mode = mode;
                             }
                         }
@@ -665,17 +649,28 @@ impl App {
                             if !self.grids_visible { self.grid_edit = None; }
                         }
                     });
+                    group(ui, "Colour", &mut |ui| {
+                        if tool_button(ui, Icon::Block, "Colour", self.bench == Bench::Colour, true)
+                            .clicked()
+                        {
+                            pick = Some(Bench::Colour);
+                        }
+                    });
+                    group(ui, "Cut", &mut |ui| {
+                        if tool_button(ui, Icon::Block, "Cut plane", self.bench == Bench::CutPlane, true).clicked() {
+                            pick = Some(Bench::CutPlane);
+                        }
+                    });
                     group(ui, "Refresh", &mut |ui| {
-                        tool_menu(ui,Icon::Refresh,"Refresh",true,|ui| {
-                            for (all,label) in [(false,"Refresh current view"),(true,"Refresh all views")] {
-                                if icon_menu_item(ui,if all { Icon::ViewTile } else { Icon::Refresh },label).clicked() { self.refresh_current_view(all,false); ui.close(); }
+                        if tool_button(ui, Icon::Refresh, "Reload", false, true).clicked() {
+                            self.reload();
+                        }
+                        if tool_button(ui, Icon::Refresh, "Redraw views", false, true).clicked() {
+                            for window in &mut self.views.windows {
+                                window.filtered = None;
                             }
-                        });
-                        tool_menu(ui,Icon::ViewRedraw,"Redraw",true,|ui| {
-                            for (all,label) in [(false,"Redraw current view"),(true,"Redraw all views")] {
-                                if icon_menu_item(ui,if all { Icon::ViewTile } else { Icon::ViewRedraw },label).clicked() { self.refresh_current_view(all,true); ui.close(); }
-                            }
-                        });
+                            self.recolour();
+                        }
                     });
                     }
                     if matches!(self.ribbon_tab, RibbonTab::Steel | RibbonTab::View) {
@@ -690,6 +685,9 @@ impl App {
                         group(ui, "Grids", &mut |ui| {
                             if tool_button(ui, Icon::Grid, "Rectangular grid", bench == Bench::Grid, true).clicked() {
                                 pick = Some(Bench::Grid);
+                            }
+                            if tool_button(ui, Icon::Callout, "Annotations", bench == Bench::Annotations, true).clicked() {
+                                pick = Some(Bench::Annotations);
                             }
                         });
                         ui.vertical(|ui| {
@@ -748,9 +746,7 @@ impl App {
                 );
                 ui.horizontal(|ui| {
                     ui.label(
-                        RichText::new(if self.views.editing {
-                            "View properties"
-                        } else if self.grid_edit.is_some() {
+                        RichText::new(if self.grid_edit.is_some() {
                             "Grid properties"
                         } else {
                             self.bench.title()
@@ -774,18 +770,6 @@ impl App {
                     });
                 });
                 ui.separator();
-                if self.views.editing {
-                    egui::Panel::bottom("view-property-actions")
-                        .exact_size(112.0)
-                        .frame(
-                            egui::Frame::new()
-                                .fill(palette.surface)
-                                .inner_margin(egui::Margin::symmetric(0, 8)),
-                        )
-                        .show(ui, |ui| self.view_property_actions(ui));
-                    egui::ScrollArea::vertical().show(ui, |ui| self.view_properties(ui));
-                    return;
-                }
                 if self.bench == Bench::Grid
                     || self.bench == Bench::Select && self.grid_edit.is_some()
                 {
@@ -814,11 +798,24 @@ impl App {
                             Bench::Plate | Bench::Beam | Bench::Column => self.tools_panel(ui),
                             Bench::Grid => self.grid_panel(ui),
                             Bench::Move | Bench::Copy | Bench::Delete => self.edit_panel(ui),
+                            Bench::CutPlane => self.cut_panel(ui),
+                            Bench::Colour => self.colour_panel(ui),
+                            Bench::Annotations => self.annotation_panel(ui),
                         }
                         ui.add_space(12.0);
                         egui::CollapsingHeader::new("Publishing")
                             .default_open(false)
                             .show(ui, |ui| self.publish_panel(ui));
+                        egui::CollapsingHeader::new("Sheet editor")
+                            .default_open(false)
+                            .show(ui, |ui| {
+                                ui.label(
+                                    "Move the placed views of a drawing document on its sheet.",
+                                );
+                                if ui.button("Open sheet editor").clicked() {
+                                    self.sheet_editor.open = true;
+                                }
+                            });
                     });
             });
     }
@@ -861,9 +858,7 @@ impl App {
                     });
                 });
                 ui.horizontal(|ui| {
-                    let selection = if self.views.picking {
-                        self.view_pick_prompt().to_owned()
-                    } else if let Some(grid) = self
+                    let selection = if let Some(grid) = self
                         .grid_edit
                         .as_ref()
                         .and_then(|edit| self.grid_scene.get(&edit.id))
@@ -948,14 +943,12 @@ impl App {
                 return true;
             }
         }
-        for (construction, name) in crate::model_views::Construction::ALL {
-            let label = format!("Create view: {name}");
+        // The model views (V12): every way to create one, and the view commands.
+        for (construction, label) in crate::views::Construction::ALL {
+            let label = format!("Create view: {label}");
             if label.to_lowercase().contains(&query)
                 && ui
-                    .add_enabled(
-                        !self.other_command_running() && self.views.job.is_none(),
-                        egui::Button::new(&label).min_size(vec2(ui.available_width(), 34.)),
-                    )
+                    .add(egui::Button::new(&label).min_size(vec2(ui.available_width(), 34.0)))
                     .clicked()
             {
                 self.begin_view(construction);
@@ -964,26 +957,29 @@ impl App {
         }
         for label in [
             "View properties",
-            "3D / plane",
+            "3D / plane view",
+            "New view window",
             "Tile view windows",
-            "Refresh view",
-            "Refresh all views",
-            "Redraw view",
-            "Redraw all views",
+            "Next open view",
         ] {
-            if label.to_lowercase().contains(&query) && ui.button(label).clicked() {
+            if label.to_lowercase().contains(&query)
+                && ui
+                    .add(egui::Button::new(label).min_size(vec2(ui.available_width(), 34.0)))
+                    .clicked()
+            {
                 match label {
-                    "View properties" => {
-                        self.set_bench(Bench::Select);
-                        self.views.editing = true;
+                    "View properties" => match self.views.active {
+                        Some(id) => self.edit_view(id),
+                        None => self.views.editing = true,
+                    },
+                    "3D / plane view" => self.toggle_view_plane(),
+                    "New view window" => self.open_view_window(self.views.active),
+                    "Tile view windows" => self.views.tile = true,
+                    _ => {
+                        if let Some(next) = self.views.next_open() {
+                            self.activate_view(Some(next));
+                        }
                     }
-                    "3D / plane" => self.toggle_view_plane(),
-                    "Tile view windows" => self.views.tile_windows = true,
-                    "Refresh view" => self.refresh_current_view(false, false),
-                    "Refresh all views" => self.refresh_current_view(true, false),
-                    "Redraw view" => self.refresh_current_view(false, true),
-                    "Redraw all views" => self.refresh_current_view(true, true),
-                    _ => {}
                 }
                 return true;
             }
@@ -1261,20 +1257,73 @@ impl App {
         self.command_search &= open;
     }
 
-    /// Independent browser categories with named model-view workflows.
+    /// The project browser shows only views and data actually available in the engine snapshot.
     pub(crate) fn project_browser(&mut self, ui: &mut Ui) {
         let palette = Palette::current(ui);
         egui::Panel::left("project-browser")
-            .default_size(250.0)
-            .min_size(220.0)
-            .max_size(380.0)
+            .default_size(214.0)
+            .min_size(160.0)
+            .max_size(300.0)
             .resizable(true)
             .frame(
                 egui::Frame::new()
                     .fill(palette.surface)
                     .inner_margin(egui::Margin::symmetric(10, 12)),
             )
-            .show(ui, |ui| self.view_browser_contents(ui));
+            .show(ui, |ui| {
+                ui.label(RichText::new("Project browser").size(12.0));
+                ui.separator();
+                ui.add_space(6.0);
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.browser_search)
+                        .hint_text("Search views and sheets")
+                        .desired_width(ui.available_width())
+                        .font(egui::FontId::proportional(11.0))
+                        .char_limit(128),
+                );
+                ui.add_space(12.0);
+                let name = self
+                    .source
+                    .store
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("Model");
+                ui.horizontal(|ui| {
+                    theme::icon(ui, Icon::Block, 16.0, palette.text);
+                    ui.label(RichText::new(name).size(12.0));
+                });
+                ui.add_space(10.0);
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    let needle = self.browser_search.trim().to_lowercase();
+                    if needle.is_empty() || "views 3d model".contains(&needle) {
+                        // The model views (V12): folders, search, quick access and the context
+                        // menu live in the view browser; the {3D} entry is the free view.
+                        egui::CollapsingHeader::new("Views")
+                            .default_open(true)
+                            .show(ui, |ui| self.view_browser(ui));
+                    }
+                    for title in ["Schedules / Quantities", "Sheets (all)"] {
+                        if needle.is_empty() || title.to_lowercase().contains(&needle) {
+                            egui::CollapsingHeader::new(title).show(ui, |ui| {
+                                ui.label(
+                                    RichText::new("Not available in the native UI yet")
+                                        .size(10.0)
+                                        .color(palette.muted),
+                                );
+                            });
+                        }
+                    }
+                    egui::CollapsingHeader::new("Model information").show(ui, |ui| {
+                        if let Some(loaded) = &self.loaded {
+                            ui.label(format!("Elements: {}", loaded.summary.elements));
+                            ui.label(format!("Triangles: {}", loaded.summary.triangles));
+                        } else {
+                            ui.label("No snapshot loaded");
+                        }
+                        ui.label("Units: mm");
+                    });
+                });
+            });
     }
 }
 

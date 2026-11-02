@@ -2,21 +2,22 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! C02 headless commands: `serve-coordinator` starts a local coordinator explicitly (nothing
-//! starts it otherwise), `publish-changeset` and `inspect-coordinator-head` are its clients.
+//! starts it otherwise), `publish-changeset`, `coordinator-compensate`, `coordinator-rebase` and
+//! `inspect-coordinator-head` are its clients.
 //!
 //! `serve-coordinator` prints one `listening` JSON line with the bound loopback address as soon
 //! as it accepts connections, then serves until `--max-requests` requests were handled (or until
 //! it is stopped) and prints its final JSON object. Tokens are read from files only, never from
 //! the command line, where other users could read them.
 
-use beamcraft_cli::coordinator::PublishHandler;
-use beamcraft_cli::plate::PlateError;
+use beamcraft_commands::coordinator::PublishHandler;
 use beamcraft_host::coordinator::{Client, Coordinator, CoordinatorError, Token, call};
 use beamcraft_host::revision::RevisionStore;
 use beamcraft_host::storage::BlobStore;
 use beamcraft_json::{Json, Limits};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ActorId;
+use session::Refusal;
 use std::ffi::OsString;
 use std::io::Write;
 use std::net::SocketAddr;
@@ -29,8 +30,8 @@ struct Failure {
     message: &'static str,
 }
 
-impl From<PlateError> for Failure {
-    fn from(e: PlateError) -> Self {
+impl From<Refusal> for Failure {
+    fn from(e: Refusal) -> Self {
         Self {
             rule_id: e.rule_id,
             code: e.code,
@@ -67,13 +68,6 @@ fn exit_for(code: ErrorCode) -> u8 {
     }
 }
 
-/// Whether `command` is one of the coordinator commands.
-pub fn handles(command: &OsString) -> bool {
-    command == "serve-coordinator"
-        || command == "publish-changeset"
-        || command == "inspect-coordinator-head"
-}
-
 /// Runs one coordinator command and returns the JSON result and the process exit code.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
     match run(args) {
@@ -88,7 +82,7 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
             };
             (json, exit)
         }
-        Err(e) => crate::report::report(Err(beamcraft_cli::plate::PlateError {
+        Err(e) => crate::report::report(Err(session::Refusal {
             rule_id: e.rule_id,
             code: e.code,
             message: e.message,
@@ -122,6 +116,22 @@ fn run(args: &[OsString]) -> Run<Json> {
             "--workspace",
             "--changeset",
             "--expected-head",
+        ],
+        "coordinator-compensate" => &[
+            "--address",
+            "--token-file",
+            "--workspace",
+            "--op-id",
+            "--target-revision",
+            "--expected-head",
+        ],
+        "coordinator-rebase" => &[
+            "--address",
+            "--token-file",
+            "--workspace",
+            "--op-id",
+            "--expected-head",
+            "--expected-draft",
         ],
         "inspect-coordinator-head" => &["--address", "--token-file"],
         _ => return Err(invalid("unknown command")),
@@ -174,7 +184,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             })
             .transpose()?;
         let store_root = required("--store", "--store is required")?;
-        let blobs = BlobStore::new(store_root).map_err(|e| PlateError {
+        let blobs = BlobStore::new(store_root).map_err(|e| Refusal {
             rule_id: None,
             code: e.code(),
             message: "store root is not usable",
@@ -207,6 +217,52 @@ fn run(args: &[OsString]) -> Run<Json> {
     )?))?;
     if *command == "inspect-coordinator-head" {
         return Ok(call(address, &token, "head", [])?);
+    }
+    if *command == "coordinator-compensate" {
+        let fields = [
+            (
+                "workspace",
+                required("--workspace", "--workspace is required")?,
+            ),
+            ("op_id", required("--op-id", "--op-id is required")?),
+            (
+                "target_revision",
+                required("--target-revision", "--target-revision is required")?,
+            ),
+            (
+                "expected_head",
+                required("--expected-head", "--expected-head is required")?,
+            ),
+        ];
+        return Ok(call(
+            address,
+            &token,
+            "compensate",
+            fields.map(|(k, v)| (k.to_owned(), Json::text(v))),
+        )?);
+    }
+    if *command == "coordinator-rebase" {
+        let fields = [
+            (
+                "workspace",
+                required("--workspace", "--workspace is required")?,
+            ),
+            ("op_id", required("--op-id", "--op-id is required")?),
+            (
+                "expected_head",
+                required("--expected-head", "--expected-head is required")?,
+            ),
+            (
+                "expected_draft",
+                required("--expected-draft", "--expected-draft is required")?,
+            ),
+        ];
+        return Ok(call(
+            address,
+            &token,
+            "rebase",
+            fields.map(|(k, v)| (k.to_owned(), Json::text(v))),
+        )?);
     }
     let fields = [
         (

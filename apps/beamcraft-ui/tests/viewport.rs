@@ -4,8 +4,8 @@
 
 //! V03 end to end: the accepted revision of a real store, exported by the `beamcraft` CLI in a
 //! separate process, rebuilt by the engine, turned into an instanced scene and rendered offscreen
-//! with an actual pixel readback. Without a native adapter the render step is skipped and says so;
-//! without the CLI binary next to this package's binary the store test is skipped and says so.
+//! with an actual pixel readback. A native/software adapter and the CLI binary next to this package's
+//! binary are required; missing prerequisites fail acceptance.
 
 #![allow(
     clippy::unwrap_used,
@@ -15,11 +15,14 @@
 )]
 
 use beamcraft_engine::synthetic::plate_scene;
+use beamcraft_engine::view_clipping::{ClipPlane, Clipping, WorkArea};
 use beamcraft_engine::{Limits, RenderMode, Representation, ViewPin, ViewSnapshot};
 use beamcraft_model::digest::Sha256;
-use beamcraft_ui::camera::Camera;
+use beamcraft_ui::camera::{Camera, View};
+use beamcraft_ui::colour_sets::WHITE;
+use beamcraft_ui::cut_plane::ClipGpu;
 use beamcraft_ui::render::{Gpu, Renderer, Uploaded, wait};
-use beamcraft_ui::scene::{Scene, SelectedDraw};
+use beamcraft_ui::scene::{Scene, SelectedDraw, instance_bytes};
 use beamcraft_ui::stats::Stats;
 use beamcraft_ui::tools::{ToolKind, Tools};
 use beamcraft_ui::{Error, command, source};
@@ -37,8 +40,7 @@ fn gpu() -> Option<Gpu> {
             Some(gpu)
         }
         Err(Error::NoAdapter) => {
-            eprintln!("SKIP render: no native wgpu adapter");
-            None
+            panic!("required native/software GPU adapter is missing")
         }
         Err(e) => panic!("adapter or device failed: {e}"),
     }
@@ -48,6 +50,11 @@ fn gpu() -> Option<Gpu> {
 fn render(gpu: &Gpu, scene: &Scene) -> ([u8; 4], [u8; 4], usize) {
     let (target, extent) = scene.framing();
     let view = Camera::new(target, extent, 1.0).unwrap().view(1.0).unwrap();
+    render_view(gpu, scene, view)
+}
+
+/// Renders `scene` with `view`; same evidence as [`render`].
+fn render_view(gpu: &Gpu, scene: &Scene, view: View) -> ([u8; 4], [u8; 4], usize) {
     let stats = Stats::default();
     let renderer = Renderer::new(&gpu.adapter, &gpu.device, 128, 128, &stats).unwrap();
     let uploaded = Uploaded::new(&gpu.device, &gpu.queue, scene, &stats).unwrap();
@@ -59,6 +66,7 @@ fn render(gpu: &Gpu, scene: &Scene) -> ([u8; 4], [u8; 4], usize) {
         view,
         &stats,
         RenderMode::Shaded,
+        &ClipGpu::none(),
     );
     wait(&gpu.device, index).unwrap();
     let (pixels, row) = renderer.readback(&gpu.device, &gpu.queue).unwrap();
@@ -96,6 +104,23 @@ fn an_engine_snapshot_renders_lit_geometry_on_a_background() {
     assert!(is_lit(centre), "lit plate {centre:?}");
 }
 
+/// V13: the orthographic projection draws the same framed scene, in its own scale.
+#[test]
+fn an_orthographic_camera_renders_lit_geometry_on_a_background() {
+    let pin = ViewPin::new(Sha256::digest(b"revision").unwrap(), 1);
+    let snapshot =
+        ViewSnapshot::build(pin, plate_scene(1, false).unwrap(), &Limits::default()).unwrap();
+    let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+    let Some(gpu) = gpu() else { return };
+    let (target, extent) = scene.framing();
+    let mut camera = Camera::new(target, extent, 1.0).unwrap();
+    camera.set_projection(true);
+    let (corner, centre, lit) = render_view(&gpu, &scene, camera.view(1.0).unwrap());
+    assert!(is_background(corner), "background {corner:?}");
+    assert!(is_lit(centre), "lit plate {centre:?}");
+    assert!(lit > 0);
+}
+
 /// Draws `uploaded` framed on `scene` and returns the lit pixel count.
 fn lit_pixels(gpu: &Gpu, scene: &Scene, uploaded: &Uploaded) -> usize {
     let (target, extent) = scene.framing();
@@ -109,6 +134,7 @@ fn lit_pixels(gpu: &Gpu, scene: &Scene, uploaded: &Uploaded) -> usize {
         view,
         &Stats::default(),
         RenderMode::Shaded,
+        &ClipGpu::none(),
     );
     wait(&gpu.device, index).unwrap();
     let (pixels, row) = renderer.readback(&gpu.device, &gpu.queue).unwrap();
@@ -136,7 +162,15 @@ fn the_five_render_modes_draw_five_different_pictures_of_one_scene() {
     let uploaded = Uploaded::new(&gpu.device, &gpu.queue, &scene, &stats).unwrap();
     let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
     let picture = |mode| -> (usize, [u8; 4]) {
-        let index = renderer.draw(&gpu.device, &gpu.queue, &uploaded, view, &stats, mode);
+        let index = renderer.draw(
+            &gpu.device,
+            &gpu.queue,
+            &uploaded,
+            view,
+            &stats,
+            mode,
+            &ClipGpu::none(),
+        );
         wait(&gpu.device, index).unwrap();
         let (pixels, row) = renderer.readback(&gpu.device, &gpu.queue).unwrap();
         let pixel = |x: usize, y: usize| -> [u8; 4] {
@@ -187,6 +221,7 @@ fn the_five_render_modes_draw_five_different_pictures_of_one_scene() {
             &stats,
             &selected.digest,
             &selected.instance,
+            &ClipGpu::none(),
         )
         .expect("the selected element's mesh is on the device");
     wait(&gpu.device, index).unwrap();
@@ -215,7 +250,8 @@ fn a_refresh_reuses_the_meshes_on_the_device_and_still_draws_them() {
     let Some(gpu) = gpu() else { return };
     let old = Uploaded::upload(&gpu.device, &gpu.queue, &before, None).unwrap();
     let resident = old.resident();
-    let after = Scene::from_snapshot_reusing(&second, Representation::Full, &resident).unwrap();
+    let after =
+        Scene::from_snapshot_reusing(&second, Representation::Full, &resident, None).unwrap();
     let kept = after.meshes.iter().filter(|m| m.resident).count();
     assert_eq!(kept, before.meshes.len());
     assert!(
@@ -244,17 +280,10 @@ fn a_refresh_reuses_the_meshes_on_the_device_and_still_draws_them() {
     assert!(Uploaded::upload(&gpu.device, &gpu.queue, &after, None).is_err());
 }
 
+use crate::support;
+
 fn cli() -> Option<PathBuf> {
-    let ui = Path::new(env!("CARGO_BIN_EXE_beamcraft-ui"));
-    let cli = ui
-        .parent()?
-        .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
-    if cli.is_file() {
-        Some(cli)
-    } else {
-        eprintln!("SKIP store test: build beamcraft-cli first (cargo test --workspace does)");
-        None
-    }
+    support::cli(Path::new(env!("CARGO_BIN_EXE_beamcraft-ui")))
 }
 
 fn run(cli: &Path, args: &[&str]) -> String {
@@ -393,8 +422,10 @@ fn an_attached_reference_is_uploaded_and_renders_visible_pixels() {
     assert_eq!(scene.min, [-1000.0; 3]);
     assert_eq!(scene.max, [1000.0; 3]);
     assert_eq!(scene.meshes[0].vertex_count, 36);
-    let mut identity_instance = vec![0u8; 24];
-    identity_instance.extend_from_slice(&1.0f32.to_le_bytes());
+    // Placement relative to the scene origin is zero, the orientation is the identity and no
+    // overlay colours a reference: the neutral tint.
+    let identity_instance =
+        instance_bytes([0.0; 3], [0.0, 0.0, 0.0, 1.0], [0.0; 3], [0.0; 3], WHITE).unwrap();
     assert_eq!(scene.meshes[0].instances, identity_instance);
     assert_eq!(
         Scene::from_snapshot(&snapshot, Representation::Simplified).unwrap(),
@@ -436,13 +467,15 @@ fn an_attached_reference_is_uploaded_and_renders_visible_pixels() {
     assert_eq!(render(&gpu, &moved), (corner, centre, lit));
 }
 
-/// Full readback of the framed scene, for pixel-by-pixel comparisons.
-fn render_pixels(gpu: &Gpu, scene: &Scene) -> Vec<u8> {
+/// Full readback of the framed scene, for pixel-by-pixel comparisons. `clip` is the display
+/// cut uniform: a zero count draws everything.
+fn render_pixels(gpu: &Gpu, scene: &Scene, clip: &ClipGpu) -> Vec<u8> {
     let (target, extent) = scene.framing();
     let view = Camera::new(target, extent, 1.0).unwrap().view(1.0).unwrap();
     let stats = Stats::default();
     let renderer = Renderer::new(&gpu.adapter, &gpu.device, 128, 128, &stats).unwrap();
     let uploaded = Uploaded::new(&gpu.device, &gpu.queue, scene, &stats).unwrap();
+    let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
     let index = renderer.draw(
         &gpu.device,
         &gpu.queue,
@@ -450,8 +483,12 @@ fn render_pixels(gpu: &Gpu, scene: &Scene) -> Vec<u8> {
         view,
         &stats,
         RenderMode::Shaded,
+        clip,
     );
     wait(&gpu.device, index).unwrap();
+    if let Some(e) = pollster::block_on(scope.pop()) {
+        panic!("validation: {e}");
+    }
     renderer.readback(&gpu.device, &gpu.queue).unwrap().0
 }
 
@@ -546,8 +583,8 @@ fn an_oriented_beam_created_through_the_ui_renders_a_rotated_silhouette() {
         Representation::Full,
     )
     .unwrap();
-    let plain_pixels = render_pixels(&gpu, &plain);
-    let rolled_pixels = render_pixels(&gpu, &rolled);
+    let plain_pixels = render_pixels(&gpu, &plain, &ClipGpu::none());
+    let rolled_pixels = render_pixels(&gpu, &rolled, &ClipGpu::none());
     let lit = |pixels: &[u8]| {
         pixels
             .as_chunks::<4>()
@@ -563,4 +600,65 @@ fn an_oriented_beam_created_through_the_ui_renders_a_rotated_silhouette() {
         "the roll must move the silhouette"
     );
     let _ = std::fs::remove_dir_all(&base);
+}
+
+/// V15: a display cut hides pixels in the image only. The masked picture keeps the bodies
+/// that straddle the plane (conservative), an empty work area hides everything, and the cut
+/// leaves the snapshot and its token untouched.
+#[test]
+fn a_cut_plane_hides_pixels_without_touching_the_scene() {
+    let pin = ViewPin::new(Sha256::digest(b"revision").unwrap(), 1);
+    let snapshot =
+        ViewSnapshot::build(pin, plate_scene(12, false).unwrap(), &Limits::default()).unwrap();
+    let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+    let Some(gpu) = gpu() else { return };
+    let whole = render_pixels(&gpu, &scene, &ClipGpu::none());
+    let lit = |pixels: &[u8]| {
+        pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|p| is_lit(**p))
+            .count()
+    };
+    let uncut = lit(&whole);
+    assert!(uncut > 200, "the row must be visible, got {uncut}");
+    // The plane through the scene centre keeps the straddling bodies and hides the row's
+    // left half; planes are model millimetres even though the shader is scene-centred.
+    let mid = scene.origin_mm[0];
+    let cut = Clipping {
+        planes: vec![ClipPlane::new([mid, 0.0, 0.0], [1.0, 0.0, 0.0]).unwrap()],
+        area: None,
+    };
+    let half = lit(&render_pixels(
+        &gpu,
+        &scene,
+        &ClipGpu::of(&cut, scene.origin_mm),
+    ));
+    assert!(half > 0 && half < uncut, "cut {half} of {uncut}");
+    // The same cut reads the same mask from the engine: display and query agree.
+    let visible =
+        beamcraft_engine::view_clipping::visible_elements(&snapshot, &cut.effective().unwrap())
+            .unwrap();
+    assert!(visible.len() < 12 && !visible.is_empty());
+    // A work-area box away from the scene hides everything it contains: nothing.
+    let empty = Clipping {
+        planes: Vec::new(),
+        area: Some(WorkArea::new([1e6; 3], [1e6 + 1.0; 3]).unwrap()),
+    };
+    let empty_gpu = ClipGpu::of(&empty, scene.origin_mm);
+    assert_eq!(empty_gpu.count, 6, "the box expands to six half-spaces");
+    assert_eq!(
+        lit(&render_pixels(&gpu, &scene, &empty_gpu)),
+        0,
+        "an empty work area shows nothing"
+    );
+    // The cut is display state: the snapshot token and bounds are byte-identical.
+    assert_eq!(
+        snapshot.token().as_str(),
+        ViewSnapshot::build(pin, plate_scene(12, false).unwrap(), &Limits::default())
+            .unwrap()
+            .token()
+            .as_str()
+    );
 }

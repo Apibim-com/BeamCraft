@@ -34,6 +34,17 @@ measured fast enough to stay in the inner loop. Nothing is removed or permanentl
 unfiltered `default` profile and CI always run everything, and an explicit command-line filter
 overrides the profile's `default-filter`.
 
+Each crate's integration suites build into one test binary, one module per suite file, so they
+link once and `cargo test` runs all their cases on one thread pool: `cli` (`beamcraft-cli`),
+`ui` (`beamcraft-ui`), `kernel`, `steel`, `engine`, `host` and `layer_engine`. Run one suite with
+`cargo test -p beamcraft-cli --test cli -- <suite>::` or
+`cargo nextest run -p beamcraft-cli -E 'test(/^<suite>::/)'`, and list a new suite file in the
+binary's root file (`tests/cli.rs`, `tests/ui.rs`, ...); a guard test in each fails when a suite
+file is not listed. `macos_icon` checks the desktop app's icon and `cancel` relies on being
+alone in its process, so both stay their own targets. Linking the GUI stack once instead of once
+per suite matters most: the workspace's 74 test binaries became 33, and the nextest archive that
+each CI shard downloads shrank by about 30 % (measured when the count went from 73 to 31).
+
 The drawn-grid viewport controller test requires a native wgpu adapter and fails explicitly if
 none is available. On a headless Linux worker, Mesa's software Vulkan driver (`mesa-vulkan-drivers`)
 can provide it; a physical GPU or display server is not required. The Vulkan loader must be able
@@ -50,8 +61,8 @@ checks remain enabled, and the test cases, fuzz seeds, iteration counts and inde
 are unchanged. The first test build recompiles the selected libraries and their dependants;
 subsequent runs reuse those artifacts. Development and release profiles are unaffected.
 `cargo test --workspace` remains supported and uses the same optimized test libraries.
-CI's test archives and all eight partitions per OS use this test profile automatically;
-no partition or platform is excluded.
+CI's test archives and every partition (eight on Linux and Windows, five on macOS) use this test
+profile automatically; no partition or platform is excluded.
 
 Compare runtime on the same machine and toolchain after building both variants with
 `cargo test --workspace --no-run --locked`. Time the subsequent `cargo test --workspace --locked`
@@ -114,10 +125,14 @@ cold command on that machine, workspace tests, and opening the window against a 
 
 ## Reusing dependencies
 
-Ordinary Cargo commands reuse the local target directory. For several worktrees, optionally set
-`CARGO_TARGET_DIR` to a persistent directory outside them. Cargo separates profiles and target
-triples there; artifacts for different target ABIs still need separate compilation. Unset this
-variable when following the packaging commands below, which use the repository's `target/`.
+Ordinary Cargo commands reuse the local target directory. Give every worktree its own target
+directory, which is the default (`target/` inside the worktree). Cargo locks a target directory
+for the whole build, so worktrees sharing one through `CARGO_TARGET_DIR` wait for each other.
+To reuse compiled dependencies across worktrees without that lock, use a compiler cache such as
+`sccache` (below) instead of a shared target directory. Cargo separates profiles and target
+triples inside one directory; artifacts for different target ABIs still need separate
+compilation. If you do set `CARGO_TARGET_DIR`, unset it when following the packaging commands
+below, which use the repository's `target/`.
 
 An optional installed `sccache` can reuse dependency compilation after the target directory is
 removed:
@@ -132,12 +147,18 @@ In PowerShell, set `$env:RUSTC_WRAPPER = 'sccache'` for the build and remove it 
 No wrapper is required by the repository. Cache hits depend on the compiler, target and flags;
 they help repeated builds and do not replace a genuinely cold benchmark. CI already uses
 `Swatinem/rust-cache` for registry and target dependencies, with separate WASM and distribution-target
-keys.
+keys. The cache key hashes every `Cargo.toml` and `Cargo.lock`, so a pull request that changes a
+manifest restores `master`'s cache only as a partial match. rust-cache then deletes every artifact
+older than a week before the build, and the dependencies that rarely change, the GUI stack first,
+rebuild (about 40 s on hosted macOS). Such a pull request saves its own cache on its first run, so
+its later pushes match exactly; do not restrict saving to `master`.
 
-The cold release CI jobs on Linux and macOS deliberately skip compiled caches and upload their
-timing HTML, log and machine metadata as `build-timings-<triple>` artifacts. Downloads happen before
-the measured command. These artifacts document compiler-cold builds on the hosted runners;
-reference-machine acceptance still needs the Apple M5 run described above.
+The cold release CI jobs deliberately skip compiled caches and upload their timing HTML, log and
+machine metadata as `build-timings-<triple>` artifacts. The Linux job runs on every pull request;
+the macOS job runs on pushes to `master` and on manual runs, so it does not take a macOS runner
+from the pull request's test shards. Downloads happen before the measured command. These artifacts
+document compiler-cold builds on the hosted runners; reference-machine acceptance still needs the
+Apple M5 run described above.
 
 ## Everything CI checks
 
@@ -168,9 +189,25 @@ cargo deny check
   needs `cargo install cargo-deny --locked`. A check that could not run is not a passed check.
 - **Offline.** Add `--offline --locked` to Cargo commands to work without downloads; never update
   `Cargo.lock` as a side effect.
+- **Completeness gate.** `ci-ok` is the one job to require on `master`. It fails unless every
+  other job succeeded (pull requests may skip the Windows jobs) and, on each platform that ran,
+  the test shards together ran every test that `cargo nextest list --profile ci` lists exactly
+  once, with nothing filtered out. The shards run nextest's `ci` profile, which adds a JUnit
+  report to the `default` profile and nothing else. A test is ignored only by naming it in
+  `.config/ci-ignored.txt`, so `#[ignore]` on a test is a visible change to that file. The checks
+  live in `tools/ci-gate.py` (Python 3 standard library); test it with
+  `python3 tools/test-ci-gate.py`.
+- **Prose-only pull requests.** The `changes` job lists a pull request's files. When every one is
+  Markdown that no program reads, the Rust builds and tests are skipped and `docs-checks` runs the
+  three checks whose inputs are documents (boundaries, fixtures, the command reference)
+  instead, on Linux, without the macOS runners. A file counts as
+  read when a string literal in a `.rs` or `.toml` file names it or a directory above it
+  (`tools/ci-changes.py`, tested by `python3 tools/test-ci-changes.py`), so the F08 table, the
+  fixture documents and `COMMANDS.md` always run the full CI. Pushes to `master` always run
+  everything, including Windows.
 
 The independent-reader gate runs in every `cargo test`: run
-`cargo test -p beamcraft-cli --test independent_reader --test reference_reader -- --nocapture`.
+`cargo test -p beamcraft-cli --test cli -- independent_reader:: reference_reader:: --nocapture`.
 The `beamcraft-usd-oracle` process re-reads the committed layer text with its own parser,
 composition and vector algebra and cross-checks the closed forms; a failure fails the tests, and
 no SDK or interpreter is needed. The exact contract case inventory, asserted fields and remaining
@@ -179,7 +216,18 @@ deviations are in [K1 acceptance evidence](design/k1-contract-acceptance.md).
 ## CI wall time and Windows runner queues
 
 CI wall time on `master` was about 15 minutes (14–17 minutes across the runs of 2026-10-22), with
-the Windows test path as the critical path; pull requests skip the Windows jobs and finish sooner. Each job carries an explicit `timeout-minutes` sized at about three times the longest
+the Windows test path as the critical path; pull requests skip the Windows jobs and finish sooner.
+By 2026-10-31 a pull request run took about 4 minutes (median of five runs) and a `master` run
+about 4.6 minutes; the macOS path was the critical path of every pull request.
+
+The account runs at most five macOS jobs at once, across all of its workflows. The macOS tests
+therefore run in five partitions, not six: a sixth partition always waited 30–80 s for another to
+finish. They use nextest's `count:` partitioning, which deals the tests out in list order and
+spreads the slow suites of one test binary over the partitions; on the measured test durations it
+gives a shorter longest partition than `hash:`. Linux and Windows keep eight `hash:` partitions,
+where `count:` measured no better.
+
+Each job carries an explicit `timeout-minutes` sized at about three times the longest
 observed runtime of that job, so a hung job fails within the hour instead of at GitHub's 6-hour
 per-job default, while a cold-cache rebuild is not killed and re-queued onto scarce runners.
 

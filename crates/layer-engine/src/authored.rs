@@ -4,31 +4,36 @@
 //! Codeless U02 schema and isolated layer authoring for a trusted command engine.
 //! This is a library boundary, not an F04 command validator or acceptance ledger.
 
+pub mod annotation;
+pub mod construction;
+/// Persistent cut ordinal and retired-record identities.
+pub mod cut_history;
 mod derive;
+pub mod disciplines;
 mod edit;
 pub mod grid;
 mod guard;
+pub mod hook;
 pub mod instance;
 pub mod rebase;
 mod reference;
+/// The surface a discipline crate's hooks use to author and validate through this platform.
+pub mod seam;
 mod validate;
-pub mod view_layer;
 
+pub use disciplines::{Discipline, is_part_kind};
 pub use guard::WriteGrant;
+pub use hook::{
+    AuthorCx, ChangeAuthorCx, ChangeHook, ChangeValidateCx, DefinitionHook, HookedChange,
+    HookedDefinition, HookedShape, ShapeHook, ValidateCx,
+};
 pub use reference::{
     ForeignPrim, Reference, ReferenceView, SourceFormat, SourcePin, UnitsInterpretation, UpAxis,
     read_references,
 };
 
 use crate::*;
-pub use beamcraft_model::command::{
-    CornerTreatment, CutRecord, HoleRecord, KeepSide, PlateCorner, PlateSide, SectionDepthPosition,
-    SectionPlacement, SectionPlanePosition,
-};
-pub use beamcraft_model::definition::SectionProperties;
-pub use beamcraft_model::fastener::FastenerSpec;
 use beamcraft_model::prim::{DefinitionCategory, ElementCategory};
-pub use beamcraft_model::section::SectionShape;
 use std::collections::BTreeMap;
 
 /// Canonical UTF-8 schema descriptor. Its exact bytes commit the mapping and item profile.
@@ -47,14 +52,31 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:plate:cornerVertex=int[](optional);steel:plate:cornerKind=token[](optional,chamfer|round);",
     "steel:plate:cornerD1Mm=double[](optional);steel:plate:cornerD2Mm=double[](optional);steel:plate:cornerRadiusMm=double[](optional);",
     "all five steel:plate:corner attributes or none, equal lengths, one vertex at most once, sharp corners store nothing\n",
+    "steel:plate:bendOperationId=string[](optional,uuid7);steel:plate:bendKind=token[](optional,fold|roll);",
+    "steel:plate:bendLineAMm=double3[](optional);steel:plate:bendLineBMm=double3[](optional);",
+    "steel:plate:bendRadiusMm=double[](optional);steel:plate:bendRadiusBMm=double[](optional);steel:plate:bendAngleRad=double[](optional);",
+    "all seven steel:plate:bend attributes or none, equal lengths, at most 16 records, a fold states its radius twice and a cone roll its two radii\n",
     "steel:plate:holePointsMm=double3[](optional,z=0);steel:plate:holeVertexCounts=int[](optional,>=3 each);",
+    "steel:plate:form=token(lofted,optional);steel:plate:loftStartMm=double3[](lofted,3..=1024);steel:plate:loftEndMm=double3[](lofted,same vertex count);",
+    "all three loft attributes or none;an extruded plate stores none\n",
     "steel:cut:operationId=string[](optional,uuid7);steel:cut:ordinal=int[](optional,<=999);",
     "steel:cut:pointMm=double3[](optional);steel:cut:normal=double3[](optional,nonzero each);",
     "steel:cut:keep=token[](optional,positive|negative);all five or none,equal lengths,ascending ordinals\n",
+    "steel:cut:nextOrdinal=int(optional,0..1000);steel:cut:retiredOperationIds=string[](optional,sorted unique uuid7,<=1000);retired ids never reactivate\n",
     "steel:hole:pointsMm=double3[](optional,z=0);steel:hole:vertexCounts=int[](optional,>=3 each);",
     "steel:hole:operationIds=string[](uuid7 each);steel:hole:ordinals=int[](strictly increasing);",
-    "all four steel:hole attributes or none, ordinals are engine-assigned and never reused\n",
-    "bim:axisPointsMm=double3[];steel:member:rollRad=double(optional);\n",
+    "steel:hole:kinds=token[](hole|polygon_cut);",
+    "steel:hole:generatedBy=string[](uuid7 or empty,generating bolt group per record,A14.4);",
+    "all six steel:hole attributes or none, equal lengths,",
+    "ordinals are engine-assigned and never reused\n",
+    "steel:hole:nextOrdinal=int(optional,0..1000);steel:hole:retiredOperationIds=string[](optional,sorted unique uuid7,<=1000)\n",
+    "steel:mhole:pointsMm=double3[](optional,z=0);steel:mhole:vertexCounts=int[](optional,>=3 each);",
+    "steel:mhole:operationIds=string[](uuid7 each);steel:mhole:ordinals=int[](strictly increasing);",
+    "steel:mhole:axisPointsMm=double3[](member frame);steel:mhole:axisDirections=double3[](unit each);",
+    "steel:mhole:extents=token[](through|range);steel:mhole:extentFromMm=double[];steel:mhole:extentToMm=double[];",
+    "all nine steel:mhole attributes or none, equal lengths, ordinals are engine-assigned and never reused (A04.2)\n",
+    "steel:mhole:nextOrdinal=int(optional,0..1000);steel:mhole:retiredOperationIds=string[](optional,sorted unique uuid7,<=1000)\n",
+    "bim:axisPointsMm=double3[];steel:member:pathType=token(arc,optional);steel:member:rollRad=double(optional);\n",
     "steel:member:planePosition=token(left|centre|right);steel:member:planeOffsetMm=double;\n",
     "steel:member:depthPosition=token(front|centre|back);steel:member:depthOffsetMm=double;\n",
     "steel:member:startOffsetMm=double;steel:member:endOffsetMm=double;",
@@ -71,10 +93,28 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:weld:pathMm=double3[](optional,2..=1024 world points);steel:weld:allAround=token(true|false,optional);",
     "steel:weld:contour=token(none|flush|concave|convex,optional)\n",
     "steel:bolt:diameterMm=double(>0,<=1000);steel:bolt:count=int(1..=512);steel:bolt:pitchMm=double(>0,<=1e6);",
-    "steel:bolt:originMm=double3;steel:bolt:directionMm=double3(unit)\n",
-    "bim:connects=rel(2 distinct ordered element targets of kind plate|beam|column, main part first;source connection)\n",
+    "steel:bolt:originMm=double3;steel:bolt:directionMm=double3(unit);\n",
+    "bolt group (A14.3)=steel:bolt:fastener=string(sha256);steel:bolt:point1Mm=double3;steel:bolt:point2Mm=double3;",
+    "steel:bolt:planeNormalMm=double3(unit);steel:bolt:rotationRad=double;steel:bolt:onPlaneMm=double;steel:bolt:depthMm=double;",
+    "steel:bolt:offsetStartMm=double;steel:bolt:spacingMode=token(spacings|pitch|offset_end);steel:bolt:spacingValueMm=double;",
+    "steel:bolt:spacingsMm=double[](>0 each);steel:bolt:lengthMode=token(auto|fixed);steel:bolt:lengthMm=double;",
+    "steel:bolt:washerUnderHead=bool;steel:bolt:washerUnderNut=bool;",
+    "steel:bolt:holeMode=token(generate|none);steel:bolt:holeClearanceMm=double(optional,present when generate);",
+    "the seventeen steel:bolt:fastener attributes or none,",
+    "never mixed with the five A05 attributes;spacings give 2..=512 fasteners\n",
+    "bim:connects=rel(2 distinct ordered element targets of kind plate|beam|column, main part first;",
+    "2..=1024 for an A14.3 bolt group;source connection)\n",
     "grid=/World/Grids/GRD_<uuid7-32>;bim:discipline=token(steel);bim:grid:u|v:mode=token(regular|drawn);expression=string;spanMm=double[];ids=string[];labels=string[];shapes=token[];pointsMm=double[];no authored Geometry or material\n",
     "level=element;bim:elementKind=level;kind=component;bim:elevationMm=double(finite,abs<=1e9);no material or Geometry;placement=identity\n",
+    "construction=/World/Construction/CNS_<uuid7-32>;bim:elementKind=construction;kind=component;bim:discipline=token(steel);",
+    "bim:construction:kind=token(point|line|circle|plane);bim:construction:aMm=double3;bim:construction:bMm=double3;bim:construction:radiusMm=double;",
+    "geometry in world mm;line ends distinct;circle axis nonzero radius>0;plane normal nonzero;no material or Geometry;placement=identity\n",
+    "annotation=/World/Annotations/ANN_<uuid7-32>;bim:elementKind=annotation;kind=component;bim:discipline=token(steel);",
+    "bim:annotation:kind=token(dimension|mark|leader);bim:annotation:from=string;bim:annotation:to=string;bim:annotation:anchor=string;",
+    "bim:annotation:attribute=string;bim:annotation:text=string;bim:annotation:endMm=double3;bim:annotation:pinDigest=string[](sha256 each);",
+    "a dimension stores from+to;a mark anchor+attribute;a leader anchor+text+endMm;one pinDigest per anchor is the",
+    "addressed body's full-mesh digest at placement;anchors are verbatim feature ids, never re-numbered or re-bound;",
+    "no material or Geometry;placement=identity\n",
     "bim:level=rel(0..1 element target of kind level;source plate|beam|column)\n",
     "numbering=approved mark of a plate|beam|column|assembly (A09);steel:numbering:series=string(<=16 of A-Z a-z 0-9 _ -);",
     "steel:numbering:number=int(0..=2147483647);steel:numbering:basis=string(printable ASCII,<=512);",
@@ -104,6 +144,11 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:fastener:washerUnderHead=bool;steel:fastener:washerUnderNut=bool;",
     "steel:fastener:holeMode=token(generate|none);steel:fastener:designation=string(optional);",
     "steel:fastener:standard=string(optional);steel:fastener:grade=string(optional)\n",
+    "attributes=/World/Definitions/Attributes/<name>;bim:attr:type=token(text|number|integer|boolean|choice);",
+    "bim:attr:unit=string(optional);bim:attr:options=string[](choice only);bim:attr:set=string(optional);",
+    "definitions are mutable schema metadata with no element identity\n",
+    "element values=bim:attr:<name>=string|double|int|bool on any element;a value may outlive its",
+    "definition and is then an unknown attribute: shown, never dropped\n",
     "definition displayName=prim metadata string(optional,any definition kind;part of the definition content)\n",
     "derived=<element>/Geometry:Mesh;points=point3f[];faceVertexCounts=int[];faceVertexIndices=int[];",
     "subdivisionScheme=token(none);orientation=token(rightHanded);",
@@ -120,7 +165,7 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "bim:reference:correctionSourceDigest=string(sha256);xformOp:rotateX:bimUpAxis=double(degrees,Y up only);",
     "xformOp:scale:bimUnits=double3(metersPerUnit*1000);xformOpOrder=token[](rotateX,scale;empty without correction)\n",
     "reference/Correction/Source=def without type;references=@external/<sha256>.<usda|usdc>@</defaultPrim>;nothing else owned at or below\n",
-    "changes=Create|Label|Contour|Thickness|ThicknessSide|Axis|Roll|Profile|Material|Placement|Mesh|AttachReference|ReferenceUnits|PartOf|MainPart|Level|Mark|Cuts|HoleRecords|Delete;",
+    "changes=Create|Label|Contour|Thickness|ThicknessSide|Corners|Bends|Axis|Roll|Profile|Material|Placement|Mesh|AttachReference|ReferenceUnits|PartOf|MainPart|Level|Mark|Cuts|HoleRecords|Delete;",
     "opinion=Absent|Block|Value|Remove;relationship=Targets|Empty|Remove\n",
     "snapshot=Prim(path,element_id,type_name,active,properties,relationships,sources);",
     "property=(name,type_name,optional-value);relationship=(name,ordered-targets)\n",
@@ -155,6 +200,13 @@ pub(crate) fn pin_accepted(pin: &str) -> Result<bool, Diagnostic> {
 
 /// Key of the D1 project record in the root layer's `customLayerData`.
 pub const PROJECT_RECORD_KEY: &str = "bimProjectId";
+
+/// The reserved footprint identity of the user-attribute schema (I04): neither a UUIDv7 nor a
+/// digest, so it can never name an element or an immutable definition.
+pub const ATTR_SCHEMA_IDENTITY: &str = "bim:attr-schema";
+
+/// The authored-layer scope holding the user-attribute definitions (I04).
+pub const ATTR_SCHEMA_PATH: &str = "/World/Definitions/Attributes";
 
 /// The ProjectId recorded in the metadata of the root layer (D1), or `None` for a store that has
 /// none. A record that is not a text holding a full UUIDv7 is `INVALID_ID`: it is never read as
@@ -232,68 +284,22 @@ pub struct Placement {
 /// Supported authored shapes; all engineering validation must already have run in the engine.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Shape {
-    /// Element-local contour, preserved exactly; wrapper does not evaluate a solid.
-    Plate {
-        /// Ordered explicit contour, at most 1024 points and subject to tighter stage budgets.
-        contour_mm: Vec<[f64; 3]>,
-        /// Explicit extrusion thickness in millimetres.
-        thickness_mm: f64,
-        /// Where the thickness is laid off from the contour plane (A12.1); absence is the
-        /// `top` default and stores no attribute.
-        thickness_side: Option<PlateSide>,
-        /// Corner treatments of authored contour vertices (A12.2); empty means every corner
-        /// sharp and stores no attribute. The contour keeps its sharp points.
-        corners: Vec<PlateCorner>,
-        /// Through-hole polygons in plate-local XY (`z` is zero), each at least three points,
-        /// stored as one flat point array plus the vertex counts. Empty means a solid plate.
-        holes: Vec<Vec<[f64; 3]>>,
-        /// Through-hole operation records (A04) authored with the element. An ordinary create
-        /// carries none (F04 section 4); a copy authors the source's records with fresh
-        /// operation ids and the same ordinals.
-        hole_records: Vec<HoleRecord>,
-        /// The owned `plane_cut` operation records (A03, amendment A-2) in ascending ordinal
-        /// order, stored as five parallel attributes. Empty means an uncut plate.
-        cuts: Vec<CutRecord>,
-    },
-    /// Member (P03 straight, P12 polybeam), with a required pinned profile.
-    Member {
-        /// Explicit beam or column kind.
-        kind: MemberKind,
-        /// Ordered element-local path points: exactly two for a straight member, at least three
-        /// for a polybeam.
-        axis_mm: Vec<[f64; 3]>,
-        /// Immutable profile content digest.
-        profile: ContentDigest,
-        /// Missing roll has no authored default; engineering default is zero. A polybeam has no
-        /// authored roll.
-        roll_rad: Option<f64>,
-        /// Position of the section about the axis (P14); `None` is the centred default and
-        /// stores no attributes.
-        placement: Option<SectionPlacement>,
-        /// The owned `plane_cut` operation records (A03, amendment A-2) in ascending ordinal
-        /// order. Empty means an uncut member.
-        cuts: Vec<CutRecord>,
-    },
-    /// P11 instance: shared inputs are read from a canonical part; only metadata and pose are local.
-    Instance {
-        /// Same part kind as the canonical definition.
-        kind: beamcraft_model::instance::PartKind,
-        /// Canonical part identity, never another instance.
-        definition: String,
-    },
     /// A01 assembly: a grouping target of `bim:partOf` with no shape inputs, no material and no
     /// derived body. Its placement must be the identity in this slice.
     Assembly,
-    /// A06 weld: a `connection` element with explicitly authored weld properties and one
-    /// `bim:connects` record towards two distinct parts. No material and no derived body; its
-    /// placement must be the identity in this slice.
-    Weld(Weld),
-    /// A05 bolt group: a `connection` element with explicitly authored bolt properties and one
-    /// `bim:connects` record towards two distinct parts. Like a weld it has no material, no
-    /// derived body and the identity placement in this slice.
-    Bolt(Bolt),
+    /// An element whose shape belongs to a discipline (#795): its kind, attributes and bounds
+    /// are answered by the shape's own hook. The weld, the A05 bolt group and the A14.3 bolt
+    /// group are built with the steel discipline facade's `weld`, `bolt` and `bolt_group`
+    /// constructors.
+    Discipline(HookedShape),
     /// T01 grid, with no authored engineering body.
     Grid(beamcraft_model::grid::Grid),
+    /// T02 construction object: a helper point, line, circle or plane with no engineering body,
+    /// authored in world millimetres. Its placement must be the identity.
+    Construction(beamcraft_model::construction::ConstructionObject),
+    /// D06 annotation: a hand-placed dimension, mark or leader whose anchors are stored
+    /// qualified FeatureId texts. No engineering body; its placement must be the identity.
+    Annotation(beamcraft_model::annotation::Annotation),
     /// D2 level (a storey): an element of kind `level` with a stored elevation, no material and no
     /// derived body. Plates, beams and columns are assigned to it by [`Change::Level`]. Its
     /// placement must be the identity: the elevation is a value, never a pose.
@@ -301,80 +307,6 @@ pub enum Shape {
         /// Elevation in millimetres, finite and at most 1,000,000,000 in magnitude.
         elevation_mm: f64,
     },
-}
-
-impl Shape {
-    /// The owned `plane_cut` records of a plate, beam or column (A03); other kinds have none.
-    pub(crate) fn cuts(&self) -> &[CutRecord] {
-        match self {
-            Self::Plate { cuts, .. } | Self::Member { cuts, .. } => cuts,
-            Self::Instance { .. }
-            | Self::Assembly
-            | Self::Weld(_)
-            | Self::Bolt(_)
-            | Self::Grid(_)
-            | Self::Level { .. } => &[],
-        }
-    }
-}
-
-/// The authored inputs of a weld (A06). Tokens are the exact stored values.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Weld {
-    /// Full UUIDv7 of the main part, then of the part welded to it. Distinct, each a plate, beam
-    /// or column; the order is significant.
-    pub connects: [String; 2],
-    /// `fillet`, the only supported type.
-    pub weld_type: String,
-    /// Nominal size in millimetres, in `(0, 1000]`.
-    pub size_mm: f64,
-    /// `workshop` or `site`.
-    pub location: String,
-    /// `arrow`, `other` or `both`.
-    pub side: String,
-    /// Optional geometry (A15): the path the weld runs along and its symbol data. `None` authors
-    /// an A06 weld without a body; `Some` also derives a solid under the connection.
-    pub geometry: Option<WeldPath>,
-}
-
-/// The authored geometry of one weld (A15). The path is an ordered world polyline in
-/// millimetres; the symbol tokens are the exact stored values.
-#[derive(Debug, Clone, PartialEq)]
-pub struct WeldPath {
-    /// Ordered world points of the path, 2 to 1024, each within the coordinate cap.
-    pub points_mm: Vec<[f64; 3]>,
-    /// All-around symbol. Symbol data only.
-    pub all_around: bool,
-    /// `none`, `flush`, `concave` or `convex`.
-    pub contour: String,
-}
-
-/// The authored inputs of a bolt group (A05). The group is `count` bolts in a straight world line
-/// `origin + direction * (pitch * i)`; the direction is a stored unit vector.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Bolt {
-    /// Full UUIDv7 of the main part, then of the part bolted to it. Distinct, each a plate, beam
-    /// or column; the order is significant.
-    pub connects: [String; 2],
-    /// Nominal bolt diameter in millimetres, in `(0, 1000]`.
-    pub diameter_mm: f64,
-    /// Bolts in the group, 1 to 512.
-    pub count: usize,
-    /// Centre-to-centre distance along the line in millimetres, in `(0, 1000000]`.
-    pub pitch_mm: f64,
-    /// World position of the first bolt in millimetres, each component within the coordinate cap.
-    pub origin_mm: [f64; 3],
-    /// Unit world direction of the line: finite, squared norm within 1e-6 of one.
-    pub direction_mm: [f64; 3],
-}
-
-/// Closed initial member vocabulary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MemberKind {
-    /// Straight beam.
-    Beam,
-    /// Straight column.
-    Column,
 }
 
 /// Complete initial element, after host authorization and F04/F06 engineering validation.
@@ -395,22 +327,6 @@ pub struct Element {
 /// Contributor/engine-supplied immutable definitions, never a vendor catalogue.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Definition {
-    /// F06 section 2's only initial profile.
-    RectangleProfile {
-        /// Width in millimetres.
-        width_mm: f64,
-        /// Height in millimetres.
-        height_mm: f64,
-        /// Declared designation, standard and section numbers; absent values stay unknown.
-        section: SectionProperties,
-    },
-    /// A07.1 section profile: a parametric family or an authored outline.
-    SectionProfile {
-        /// The section shape.
-        shape: SectionShape,
-        /// Declared designation, standard and section numbers; absent values stay unknown.
-        section: SectionProperties,
-    },
     /// Material with explicitly optional density.
     Material {
         /// Density in kg/m3; None remains unknown.
@@ -422,11 +338,10 @@ pub enum Definition {
         /// Readable name (prim `displayName` metadata), part of the definition content.
         display_name: Option<String>,
     },
-    /// A14.1 fastener definition (bolt amendment section 2): one size of one standard.
-    Fastener {
-        /// The complete fastener values, admitted by the model crate.
-        spec: FastenerSpec,
-    },
+    /// A definition whose content belongs to a discipline (#795): its kind token, its category,
+    /// its attributes, their bounds and its readable name are answered by the definition's own
+    /// hook, so the platform never matches on a discipline's definition kind.
+    Discipline(HookedDefinition),
 }
 
 /// Pinned definition with verified canonical USD bytes, not a second persisted model.
@@ -521,58 +436,10 @@ pub enum Change {
         /// Class from the engine's typed command.
         class: i32,
     },
-    /// Replace the complete contour; engineering validity is a host prerequisite.
-    Contour {
-        /// Full target UUIDv7.
-        id: String,
-        /// Ordered contour.
-        points_mm: Vec<[f64; 3]>,
-    },
-    /// Replace a required plate thickness.
-    Thickness {
-        /// Full target UUIDv7.
-        id: String,
-        /// New thickness.
-        mm: f64,
-    },
-    /// Replace the thickness side of a plate (A12.1). A plate always has a side (absence is the
-    /// `top` default), so the change authors the exact token, `top` included.
-    ThicknessSide {
-        /// Full target UUIDv7.
-        id: String,
-        /// The side to lay the thickness off from the contour plane.
-        side: PlateSide,
-    },
-    /// Replace the owned plane-cut records of a plate, beam or column (A03, amendment A-2) as a
-    /// whole: five parallel attributes, or their removal for an empty list. Engineering validity
-    /// is a host prerequisite; the candidate re-validates the stored form.
-    Cuts {
-        /// Full target UUIDv7.
-        id: String,
-        /// The records in ascending ordinal order.
-        cuts: Vec<CutRecord>,
-    },
-    /// Replace the member's path points as a whole (P03 two, P12 three or more).
-    Axis {
-        /// Full target UUIDv7.
-        id: String,
-        /// Ordered element-local path points.
-        points_mm: Vec<[f64; 3]>,
-    },
-    /// Change the optional roll opinion in the selected authored layer.
-    Roll {
-        /// Full target UUIDv7.
-        id: String,
-        /// Exact authored opinion.
-        opinion: Opinion<f64>,
-    },
-    /// Replace the required immutable member profile.
-    Profile {
-        /// Full target UUIDv7.
-        id: String,
-        /// Verified profile content digest.
-        digest: ContentDigest,
-    },
+    /// An edit that belongs to a discipline (#795): its target kind, groups, bounds and
+    /// attribute writes are answered by the change's own hook. The replacement of an A14.3 bolt
+    /// group is built with the steel discipline facade's `replace_bolt_group`.
+    Discipline(HookedChange),
     /// Change the optional material relationship.
     Material {
         /// Full target UUIDv7.
@@ -642,15 +509,28 @@ pub enum Change {
         /// The mark to store.
         mark: Mark,
     },
-    /// Replace the complete set of through-hole operation records of a plate (A04): the four
-    /// `steel:hole:*` attributes, replaced as a whole and always together. The engine has
-    /// already replayed every record against the base shape and certified the body; this
-    /// writes the authoritative polygons with their operation ids and ordinals.
-    HoleRecords {
-        /// Full target UUIDv7 of the plate.
+    /// Define one user attribute in the schema scope (I04): the complete definition prim
+    /// `/World/Definitions/Attributes/<name>`. The engine has refused a duplicate name.
+    AttrDefine {
+        /// The complete definition, admitted by the model crate.
+        def: beamcraft_model::attribute::AttrDef,
+    },
+    /// Remove one user-attribute definition (I04); stored values are never touched, so an
+    /// unknown attribute stays stored and shown.
+    AttrUndefine {
+        /// The attribute name.
+        name: String,
+    },
+    /// Store or remove one user-attribute value of one element (I04): one targeted
+    /// `bim:attr:<name>` property, never a rewrite of the prim's property set, so unknown
+    /// attributes survive every edit.
+    AttrSet {
+        /// Full target UUIDv7.
         id: String,
-        /// Every record of the plate, ordered by ordinal; at least one.
-        records: Vec<HoleRecord>,
+        /// The attribute name.
+        name: String,
+        /// The value, or `None` to remove the property.
+        value: Option<beamcraft_model::attribute::AttrValue>,
     },
 }
 impl Change {
@@ -661,13 +541,7 @@ impl Change {
             Self::PartClass { id, .. } => (id, "steel:class"),
             Self::Label { id, .. } => (id, "bim:name"),
             Self::Grid { id, .. } => (id, "bim:grid"),
-            Self::Contour { id, .. } => (id, "steel:plate:contourPointsMm"),
-            Self::Thickness { id, .. } => (id, "steel:plate:thicknessMm"),
-            Self::ThicknessSide { id, .. } => (id, "steel:plate:thicknessSide"),
-            Self::Cuts { id, .. } => (id, "steel:cut"),
-            Self::Axis { id, .. } => (id, "bim:axisPointsMm"),
-            Self::Roll { id, .. } => (id, "steel:member:rollRad"),
-            Self::Profile { id, .. } => (id, "bim:profile"),
+            Self::Discipline(hook) => (hook.0.target(), hook.0.group_key()),
             Self::Material { id, .. } => (id, "bim:material"),
             Self::Placement { id, .. } => (id, "placement"),
             Self::Mesh(m) => (&m.id, "derived"),
@@ -677,7 +551,10 @@ impl Change {
             Self::MainPart { id, .. } => (id, "bim:mainPart"),
             Self::Level { id, .. } => (id, "bim:level"),
             Self::Mark { id, .. } => (id, "steel:numbering"),
-            Self::HoleRecords { id, .. } => (id, "steel:hole"),
+            Self::AttrDefine { .. } | Self::AttrUndefine { .. } => {
+                (ATTR_SCHEMA_IDENTITY, "bim:attr:schema")
+            }
+            Self::AttrSet { id, .. } => (id, "bim:attr"),
         }
     }
 }
@@ -699,6 +576,8 @@ pub enum Group {
     Derived,
     /// Links to immutable definitions.
     Relationship,
+    /// The user-attribute values of an element (I04).
+    Attributes,
 }
 /// Engine-derived conservative footprint entry.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -1059,7 +938,9 @@ impl Reader {
     }
 }
 
-pub(super) fn element_path(id: &str, category: ElementCategory) -> Result<String, Diagnostic> {
+/// The authored prim path of an element identity in a category; the seam a discipline hook
+/// resolves target paths with.
+pub fn element_path(id: &str, category: ElementCategory) -> Result<String, Diagnostic> {
     beamcraft_model::id::ElementId::parse(id)
         .map(|id| id.prim_path(category))
         .map_err(|_| {
@@ -1069,12 +950,11 @@ pub(super) fn element_path(id: &str, category: ElementCategory) -> Result<String
 fn shape_category(shape: &Shape) -> ElementCategory {
     match shape {
         Shape::Assembly => ElementCategory::Assembly,
-        Shape::Weld(_) | Shape::Bolt(_) => ElementCategory::Connection,
+        Shape::Discipline(hook) => hook.0.category(),
         Shape::Level { .. } => ElementCategory::Level,
         Shape::Grid(_) => ElementCategory::Grid,
-        Shape::Plate { .. } | Shape::Member { .. } | Shape::Instance { .. } => {
-            ElementCategory::Part
-        }
+        Shape::Construction(_) => ElementCategory::Construction,
+        Shape::Annotation(_) => ElementCategory::Annotation,
     }
 }
 fn change_path(id: &str, input: &Prepare, prims: &[Prim]) -> Result<String, Diagnostic> {
@@ -1094,7 +974,7 @@ fn change_path(id: &str, input: &Prepare, prims: &[Prim]) -> Result<String, Diag
 }
 /// Resolve a relationship by identity before checking its semantic kind. A missing identity
 /// retains its expected-category path so the candidate reports a dangling relationship.
-fn target_path(
+pub fn target_path(
     id: &str,
     category: ElementCategory,
     input: &Prepare,
@@ -1111,16 +991,14 @@ fn target_path(
 fn definition_category(definition: &Definition) -> DefinitionCategory {
     match definition {
         Definition::Material { .. } => DefinitionCategory::Material,
-        Definition::RectangleProfile { .. } | Definition::SectionProfile { .. } => {
-            DefinitionCategory::Profile
-        }
-        Definition::Fastener { .. } => DefinitionCategory::Fastener,
+        Definition::Discipline(hook) => hook.0.category(),
     }
 }
 pub(super) fn definition_path(digest: ContentDigest, category: DefinitionCategory) -> String {
     category.path(digest)
 }
-pub(super) fn invalid() -> Diagnostic {
+/// The refusal for an invalid authored field value; the seam's generic rejection.
+pub fn invalid() -> Diagnostic {
     fail(ErrorCode::InvalidArgument, "invalid authored field value")
 }
 
@@ -1130,6 +1008,20 @@ mod pin_tests {
     #[test]
     fn only_the_current_mapping_is_accepted() {
         assert!(pin_accepted(&schema_identity().unwrap().digest.to_string()).unwrap());
+        let before_p13 =
+            SCHEMA_DESCRIPTOR.replace("steel:member:pathType=token(arc,optional);", "");
+        assert!(
+            !pin_accepted(&Sha256::digest(before_p13.as_bytes()).unwrap().to_string()).unwrap()
+        );
+        let before_corner_edits = SCHEMA_DESCRIPTOR.replace("|Corners|", "|");
+        assert!(
+            !pin_accepted(
+                &Sha256::digest(before_corner_edits.as_bytes())
+                    .unwrap()
+                    .to_string()
+            )
+            .unwrap()
+        );
         let before_f10 = SCHEMA_DESCRIPTOR
             .replace("bim:isDeactivated=bool(optional,default=false);", "")
             .replace("steel:connection:type=token(weld|bolt_group);", "");

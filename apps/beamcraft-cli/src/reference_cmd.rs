@@ -3,7 +3,7 @@
 
 //! R01 headless commands: `attach-reference`, `move-reference`, `correct-reference-units`,
 //! `write-reference`, `inspect-reference` and `measure-reference`. They call the engine API
-//! through the adapter of `beamcraft_cli::reference` and print one JSON object (the same error
+//! through the adapter of `beamcraft_commands::reference` and print one JSON object (the same error
 //! shape and exit codes as the other store commands: 0 success, 2 rejection, 3 backend
 //! unavailable, 4 outcome unknown).
 //!
@@ -11,12 +11,12 @@
 //! foreign prim is an observable, scriptable refusal (`FOREIGN_READ_ONLY`, exit 2) and not only a
 //! missing feature.
 
+use crate::command_context::{self, CONTEXT_OPTIONS};
 use crate::plate_cmd::{
     Run, footprint_json, id_error, invalid, num, revision_json, translation, triple,
 };
 use crate::report::report;
-use beamcraft_cli::plate::PlateError;
-use beamcraft_cli::reference::{
+use beamcraft_commands::reference::{
     AttachRequest, Attached, Edited, Ids, MeasuredReference, ReferenceInspection, Wrapper,
     attach_reference, correct_wrapper_units, inspect_references, measure_references, move_wrapper,
     refuse_foreign_write,
@@ -24,34 +24,20 @@ use beamcraft_cli::reference::{
 use beamcraft_engine::measure::{MeshReading, ReferenceMeasurement};
 use beamcraft_host::{
     ids::IdSource,
-    revision::{NoFault, RevisionStore, Uuid7},
+    revision::{NoFault, RevisionStore},
     storage::BlobStore,
 };
 use beamcraft_json::Json;
 use beamcraft_model::command::Placement;
 use beamcraft_model::error::ErrorCode;
-use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use beamcraft_model::id::{ElementId, OpId};
 use beamcraft_model::reference::{
     CorrectReferenceUnits, ForeignTarget, MoveReference, UnitsInterpretation, UpAxis, WriteForeign,
     check_source_path,
 };
+use session::Refusal;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
-
-/// Whether `command` is one of the reference commands.
-pub fn handles(command: &std::ffi::OsStr) -> bool {
-    command.to_str().is_some_and(|c| {
-        matches!(
-            c,
-            "attach-reference"
-                | "move-reference"
-                | "correct-reference-units"
-                | "write-reference"
-                | "inspect-reference"
-                | "measure-reference"
-        )
-    })
-}
 
 /// Runs one reference command and returns the JSON result and the process exit code.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
@@ -61,14 +47,6 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
 /// Foreign prims a reply lists per wrapper. Every reply is bounded by the JSON token ceiling, and a
 /// real scene composes tens of thousands of prims; `foreign_prim_count` always carries the total.
 const MAX_LISTED_FOREIGN_PRIMS: usize = 512;
-
-const IDS: [&str; 5] = [
-    "--op-id",
-    "--revision-id",
-    "--actor-id",
-    "--project-id",
-    "--workspace-id",
-];
 
 fn options_of(command: &str) -> Option<Vec<&'static str>> {
     let own: &[&str] = match command {
@@ -92,7 +70,7 @@ fn options_of(command: &str) -> Option<Vec<&'static str>> {
         command,
         "attach-reference" | "move-reference" | "correct-reference-units"
     ) {
-        all.extend_from_slice(&IDS);
+        all.extend_from_slice(&CONTEXT_OPTIONS);
     }
     Some(all)
 }
@@ -126,12 +104,12 @@ fn run(args: &[OsString]) -> Run<Json> {
         let source = options
             .get("--source")
             .ok_or_else(|| invalid("--source is required"))?;
-        check_source_path(source).map_err(PlateError::from)?;
+        check_source_path(source).map_err(Refusal::from)?;
     }
     let store_root = options
         .get("--store")
         .ok_or_else(|| invalid("--store is required"))?;
-    let blobs = BlobStore::new(store_root).map_err(|e| PlateError {
+    let blobs = BlobStore::new(store_root).map_err(|e| Refusal {
         rule_id: None,
         code: e.code(),
         message: "store root is not usable",
@@ -151,34 +129,19 @@ fn run(args: &[OsString]) -> Run<Json> {
 fn ids(options: &BTreeMap<&str, &str>) -> Run<Ids> {
     let mut source = IdSource::system();
     let mut fresh = || {
-        source.next_id().map_err(|_| PlateError {
+        source.next_id().map_err(|_| Refusal {
             rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
         })
     };
-    let given = |key: &str| options.get(key).copied();
+    let common = command_context::parse(options, &mut fresh)?;
     Ok(Ids {
-        op_id: match given("--op-id") {
-            Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
-            None => OpId::from_uuid(fresh()?),
-        },
-        revision_id: match given("--revision-id") {
-            Some(text) => RevisionId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
-            None => RevisionId::from_uuid(fresh()?),
-        },
-        actor: match given("--actor-id") {
-            Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
-            None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
-        },
-        project: match given("--project-id") {
-            Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
-            None => ProjectId::from_uuid(fresh()?),
-        },
-        workspace: match given("--workspace-id") {
-            Some(text) => WorkspaceId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
-            None => WorkspaceId::from_uuid(fresh()?),
-        },
+        op_id: common.op_id,
+        revision_id: common.revision_id,
+        actor: common.actor,
+        project: common.project,
+        workspace: common.workspace,
     })
 }
 
@@ -222,7 +185,7 @@ fn attach_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
         Some(text) => ElementId::parse(text).map_err(id_error)?,
         None => {
             let mut source = IdSource::system();
-            ElementId::from_uuid(source.next_id().map_err(|_| PlateError {
+            ElementId::from_uuid(source.next_id().map_err(|_| Refusal {
                 rule_id: None,
                 code: ErrorCode::BackendUnavailable,
                 message: "no identity could be generated",

@@ -6,7 +6,7 @@
 //! real `beamcraft` binary, give exactly what running the CLI by hand gives (same volume, same
 //! mesh digest, same world bounds); a cancelled preview publishes nothing; a refusal reaches the
 //! panel with the engine's code and message. Without the CLI binary next to this package's binary
-//! the tests are skipped and say so (`cargo test --workspace` builds it).
+//! missing prerequisites fail acceptance (`cargo test --workspace` builds it).
 
 #![allow(
     clippy::unwrap_used,
@@ -27,19 +27,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
+use crate::support;
+
 fn cli() -> Option<PathBuf> {
-    let ui = Path::new(env!("CARGO_BIN_EXE_beamcraft-ui"));
-    let cli = ui
-        .parent()?
-        .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
-    if cli.is_file() {
-        Some(cli)
-    } else {
-        eprintln!(
-            "SKIP create-tools test: build beamcraft-cli first (cargo test --workspace does)"
-        );
-        None
-    }
+    support::cli(Path::new(env!("CARGO_BIN_EXE_beamcraft-ui")))
 }
 
 struct Stores {
@@ -129,6 +120,7 @@ fn a_duplicate_model_name_explains_how_to_recover() {
         stores.root.to_str().unwrap(),
         "Workshop",
         Some("0199e7a0-0000-7000-8000-0000000000a1"),
+        None,
     );
     let run = || {
         let output = Command::new(&cli).args(&args).output().unwrap();
@@ -148,7 +140,7 @@ fn a_duplicate_model_name_explains_how_to_recover() {
 }
 
 #[test]
-fn automatic_new_model_names_use_the_same_unique_creation_as_the_cli() {
+fn automatic_new_model_names_are_the_ones_the_unique_creation_takes() {
     let Some(cli) = cli() else { return };
     let stores = Stores::new();
     let config = stores.root.join("config");
@@ -157,20 +149,11 @@ fn automatic_new_model_names_use_the_same_unique_creation_as_the_cli() {
         stores.root.to_str().unwrap(),
         "New Model",
         Some("0199e7a0-0000-7000-8000-0000000000a1"),
+        None,
     );
     for expected in ["New Model", "New Model 1", "New Model 2"] {
-        let out = Command::new(&cli)
-            .args([
-                "suggest-project-name",
-                "--parent",
-                stores.root.to_str().unwrap(),
-                "--name",
-                "New Model",
-            ])
-            .output()
-            .unwrap();
         assert_eq!(
-            beamcraft_ui::start::parse_project_name(out.status.code(), &out.stdout).unwrap(),
+            session::project::next_project_name(&stores.root, "New Model").unwrap(),
             expected
         );
         let out = Command::new(&cli).args(&args).output().unwrap();
@@ -478,7 +461,13 @@ fn a_refresh_runs_off_the_ui_thread_and_keeps_its_two_results_apart() {
     let ui = stores.ui();
     let refresh = |cli: PathBuf, store: PathBuf| {
         std::thread::spawn(move || {
-            source::reload(&cli, &store, &source::Known::default(), &Stats::default())
+            source::reload(
+                &cli,
+                &store,
+                &source::Known::default(),
+                None,
+                &Stats::default(),
+            )
         })
         .join()
         .unwrap()
@@ -536,7 +525,7 @@ fn a_refresh_runs_off_the_ui_thread_and_keeps_its_two_results_apart() {
         resident: scene.meshes.iter().map(|m| m.digest).collect(),
     };
     let stats = Stats::default();
-    let again = std::thread::spawn(move || source::reload(&cli, &ui, &known, &stats))
+    let again = std::thread::spawn(move || source::reload(&cli, &ui, &known, None, &stats))
         .join()
         .unwrap();
     assert!(matches!(again.scene, Ok(source::Refreshed::Unchanged)));

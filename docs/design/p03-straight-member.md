@@ -26,7 +26,7 @@ beamcraft inspect-elements --store ROOT   (plates and members, one pinned view s
 | `beamcraft_model::command` | `CreateStraightMember`, `MemberKind`: label, finiteness, coordinate (1e9 mm) and roll (2 pi) caps, placement; fingerprint including kind, profile, material, roll. |
 | `beamcraft_engine::member` | `ProfileInfo`/`ProfileLookup`, `AuthoredMember`, `evaluate_member` (profile re-admitted), `create_straight_member`, `admit_create_member` (replay/reuse), `Footprint::for_create_member` (profile and material are read, never written). Order: arguments, duplicate id, profile, material, geometry. |
 | `beamcraft_engine::query::committed` | `MemberRecord`, `evaluate_committed_members`, `scene_elements_with_members` (beam and column kinds in the snapshot). |
-| `beamcraft_cli::member` | `create_member`; `plate.rs` now decodes beams and columns, and the publish-time verifier checks their derived mesh against the kernel's. Shared `load_base`, `publish_revision`, `prior_op_with`, `replay_summary`, `check_footprint`, `mesh_change`. |
+| `beamcraft_commands::member` | `create_member`; `plate.rs` now decodes beams and columns, and the publish-time verifier checks their derived mesh against the kernel's. Shared `load_base`, `publish_revision`, `prior_op_with`, `replay_summary`, `check_footprint`, `mesh_change`. |
 
 ## Decisions
 
@@ -56,8 +56,8 @@ beamcraft inspect-elements --store ROOT   (plates and members, one pinned view s
 
 ## Evidence
 
-* `cargo test -p beamcraft-kernel --test member` (6 tests), model, engine and `beamcraft-cli` unit
-  tests, and `cargo test -p beamcraft-cli --test members` (real binary): a 6000 mm beam of
+* `cargo test -p steel --test steel -- kernel_member::` (6 tests), model, engine and `beamcraft-cli` unit
+  tests, and `cargo test -p beamcraft-cli --test cli -- members::` (real binary): a 6000 mm beam of
   200 x 300 mm is 0.36 m3 and 2826 kg at 7850 kg/m3; fresh-process reopen, world bounds from the
   pinned snapshot, a rolled column, plates and members together, `NOT_FOUND`, `INVALID_ARGUMENT`,
   `NON_FINITE_NUMBER`, `LIMIT_EXCEEDED`, replay, `OP_ID_REUSE`, `DUPLICATE_ID` across kinds.

@@ -10,7 +10,7 @@
     clippy::indexing_slicing
 )]
 
-use beamcraft_cli::workspace::{WorkspaceMeta, WorkspaceState, read_meta};
+use beamcraft_commands::workspace::{WorkspaceMeta, WorkspaceState, read_meta};
 use beamcraft_host::lease::{LeaseError, StoreLease};
 use beamcraft_host::revision::{RevisionStore, Uuid7};
 use beamcraft_host::storage::BlobStore;
@@ -403,7 +403,11 @@ fn a_killed_writer_releases_the_lease_and_leaves_old_or_installed_metadata_compl
         let old = f.initialize();
         let mut command = Command::new(std::env::current_exe().unwrap());
         command
-            .args(["--exact", "child_process_holds_state", "--nocapture"])
+            .args([
+                "--exact",
+                "workspace_state::child_process_holds_state",
+                "--nocapture",
+            ])
             .env("BEAMCRAFT_STATE_TEST_CHILD", &f.0)
             .env_remove("BEAMCRAFT_STATE_TEST_INSTALLED")
             .stdout(Stdio::null())

@@ -2,13 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! D2 headless commands: `create-level` and `levels`. They call the engine API through
-//! `beamcraft_cli::level` and print one JSON object with the same error shape and exit codes as
+//! `beamcraft_commands::level` and print one JSON object with the same error shape and exit codes as
 //! the plate commands. Assigning an element to a level is `update-element --level`.
 
 use crate::command_context::{self, CONTEXT_OPTIONS};
 use crate::plate_cmd::{check_project_option, footprint_json, id_error, num, revision_json};
-use beamcraft_cli::level::{LevelChange, LevelContext, LevelView, create_level, levels};
-use beamcraft_cli::plate::PlateError;
+use beamcraft_commands::level::{LevelChange, LevelContext, LevelView, create_level, levels};
 use beamcraft_host::{
     ids::IdSource,
     revision::{NoFault, RevisionStore},
@@ -18,22 +17,18 @@ use beamcraft_json::Json;
 use beamcraft_model::command::CreateLevel;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId};
+use session::Refusal;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 
-type Run<T> = Result<T, PlateError>;
+type Run<T> = Result<T, Refusal>;
 
-fn invalid(message: &'static str) -> PlateError {
-    PlateError {
+fn invalid(message: &'static str) -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
     }
-}
-
-/// Whether `command` is one of the level commands.
-pub fn handles(command: &OsString) -> bool {
-    command == "create-level" || command == "levels"
 }
 
 /// Runs one level command and returns the JSON result and the process exit code.
@@ -72,7 +67,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     let store_root = options
         .get("--store")
         .ok_or_else(|| invalid("--store is required"))?;
-    let blobs = BlobStore::new(store_root).map_err(|e| PlateError {
+    let blobs = BlobStore::new(store_root).map_err(|e| Refusal {
         rule_id: None,
         code: e.code(),
         message: "store root is not usable",
@@ -87,7 +82,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     let _claim = check_project_option(&store, &options)?;
     let mut source = IdSource::system();
     let mut fresh = || {
-        source.next_id().map_err(|_| PlateError {
+        source.next_id().map_err(|_| Refusal {
             rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",

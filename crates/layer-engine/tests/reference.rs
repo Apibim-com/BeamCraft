@@ -635,9 +635,9 @@ fn every_write_aimed_at_foreign_content_is_refused() {
     let (mut a, o) = (a, o);
     for change in [
         Change::Delete { id: WRAPPER.into() },
-        Change::Thickness {
+        Change::PartClass {
             id: WRAPPER.into(),
-            mm: 5.0,
+            class: 0,
         },
         Change::Material {
             id: WRAPPER.into(),

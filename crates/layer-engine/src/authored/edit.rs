@@ -8,7 +8,34 @@ use openusd::{
 };
 use std::io::{self, Write};
 
-pub(super) fn path(text: &str) -> Result<sdf::Path, Diagnostic> {
+/// The optional `double` of a definition the platform authors itself; absent stores nothing.
+fn optional_number(
+    data: &mut sdf::Data,
+    p: &str,
+    name: &str,
+    value: Option<f64>,
+) -> Result<(), Diagnostic> {
+    match value {
+        Some(v) => attr(data, p, name, "double", sdf::Value::Double(v)),
+        None => Ok(()),
+    }
+}
+/// The optional `string` of a definition the platform authors itself; absent stores nothing.
+fn optional_text(
+    data: &mut sdf::Data,
+    p: &str,
+    name: &str,
+    value: &Option<String>,
+) -> Result<(), Diagnostic> {
+    match value {
+        Some(v) => attr(data, p, name, "string", sdf::Value::String(v.clone())),
+        None => Ok(()),
+    }
+}
+
+/// Parses an authored prim or property path; the seam a discipline hook builds target paths
+/// with.
+pub fn path(text: &str) -> Result<sdf::Path, Diagnostic> {
     sdf::Path::new(text).map_err(|_| corrupt())
 }
 pub(super) fn data(asset: &Asset) -> Result<sdf::Data, Diagnostic> {
@@ -172,7 +199,9 @@ pub(super) fn container(
     }
     Ok(())
 }
-pub(super) fn attribute(
+/// Authors one attribute opinion on a prim; the seam a discipline hook writes its attributes
+/// with.
+pub fn attribute(
     data: &mut sdf::Data,
     p: &str,
     name: &str,
@@ -208,7 +237,8 @@ pub(super) fn attribute(
     }
     Ok(())
 }
-pub(super) fn attr(
+/// Authors one custom attribute value; the seam's value-writing shorthand.
+pub fn attr(
     data: &mut sdf::Data,
     p: &str,
     name: &str,
@@ -217,7 +247,9 @@ pub(super) fn attr(
 ) -> Result<(), Diagnostic> {
     attribute(data, p, name, ty, Opinion::Value(v), true)
 }
-fn relationship(
+/// Authors a definition-target relationship (`bim:material`, `bim:profile`); the seam a
+/// discipline hook links immutable definitions with.
+pub fn relationship(
     data: &mut sdf::Data,
     p: &str,
     name: &str,
@@ -238,7 +270,8 @@ fn relationship(
     relationship_targets(data, p, name, targets)
 }
 /// Authors an explicit relationship target list, or removes the relationship spec (`None`).
-pub(super) fn relationship_targets(
+/// The seam a discipline hook writes its element relationships with.
+pub fn relationship_targets(
     data: &mut sdf::Data,
     p: &str,
     name: &str,
@@ -278,7 +311,8 @@ pub(super) fn relationship_targets(
     );
     Ok(())
 }
-fn points(values: &[[f64; 3]]) -> sdf::Value {
+/// Builds the `double3[]` value of a point list; the seam's point-array encoding.
+pub fn points(values: &[[f64; 3]]) -> sdf::Value {
     sdf::Value::Vec3dVec(values.iter().map(|p| (*p).into()).collect())
 }
 pub(super) fn pose(data: &mut sdf::Data, p: &str, value: &Placement) -> Result<(), Diagnostic> {
@@ -326,28 +360,6 @@ fn units(data: &mut sdf::Data, schema: Option<SchemaIdentity>) -> Result<(), Dia
     }
     Ok(())
 }
-/// The optional declared designation, standard and section numbers of any profile definition.
-fn section_properties(
-    data: &mut sdf::Data,
-    p: &str,
-    section: &SectionProperties,
-) -> Result<(), Diagnostic> {
-    optional_text(data, p, "steel:profile:designation", &section.designation)?;
-    optional_text(data, p, "steel:profile:standard", &section.standard)?;
-    optional_number(data, p, "steel:profile:areaMm2", section.area_mm2)?;
-    optional_number(
-        data,
-        p,
-        "steel:profile:massPerMeterKg",
-        section.mass_per_meter_kg,
-    )?;
-    optional_number(
-        data,
-        p,
-        "steel:profile:surfacePerMeterM2",
-        section.surface_per_meter_m2,
-    )
-}
 fn definition(data: &mut sdf::Data, p: &str, value: &Definition) -> Result<(), Diagnostic> {
     prim(data, p, Some("Scope"), true)?;
     attr(
@@ -359,92 +371,6 @@ fn definition(data: &mut sdf::Data, p: &str, value: &Definition) -> Result<(), D
     )?;
     attr(data, p, "bim:units", "token", sdf::Value::token("mm"))?;
     match value {
-        Definition::RectangleProfile {
-            width_mm,
-            height_mm,
-            section,
-        } => {
-            attr(
-                data,
-                p,
-                "bim:definitionKind",
-                "token",
-                sdf::Value::token("rectangle"),
-            )?;
-            attr(
-                data,
-                p,
-                "steel:profile:widthMm",
-                "double",
-                sdf::Value::Double(*width_mm),
-            )?;
-            attr(
-                data,
-                p,
-                "steel:profile:heightMm",
-                "double",
-                sdf::Value::Double(*height_mm),
-            )?;
-            section_properties(data, p, section)?;
-        }
-        Definition::SectionProfile { shape, section } => {
-            attr(
-                data,
-                p,
-                "bim:definitionKind",
-                "token",
-                sdf::Value::token(shape.token()),
-            )?;
-            match shape {
-                SectionShape::Parametric(parametric) => {
-                    let names = parametric.family().parameters();
-                    for (name, value) in names.iter().zip(parametric.values()) {
-                        attr(
-                            data,
-                            p,
-                            &format!("steel:profile:{name}Mm"),
-                            "double",
-                            sdf::Value::Double(*value),
-                        )?;
-                    }
-                }
-                SectionShape::Custom(custom) => {
-                    let flat = |c: &[[f64; 2]]| c.iter().map(|[x, y]| [*x, *y, 0.0]).collect();
-                    let outer: Vec<[f64; 3]> = flat(&custom.outer);
-                    attr(
-                        data,
-                        p,
-                        "steel:profile:outerPointsMm",
-                        "double3[]",
-                        points(&outer),
-                    )?;
-                    if !custom.cavities.is_empty() {
-                        let cavities: Vec<[f64; 3]> =
-                            custom.cavities.iter().flat_map(|c| flat(c)).collect();
-                        let counts = custom
-                            .cavities
-                            .iter()
-                            .map(|c| i32::try_from(c.len()).map_err(|_| limit()))
-                            .collect::<Result<Vec<_>, _>>()?;
-                        attr(
-                            data,
-                            p,
-                            "steel:profile:cavityPointsMm",
-                            "double3[]",
-                            points(&cavities),
-                        )?;
-                        attr(
-                            data,
-                            p,
-                            "steel:profile:cavityVertexCounts",
-                            "int[]",
-                            sdf::Value::IntVec(counts),
-                        )?;
-                    }
-                }
-            }
-            section_properties(data, p, section)?;
-        }
         Definition::Material {
             density_kg_m3,
             grade,
@@ -462,143 +388,16 @@ fn definition(data: &mut sdf::Data, p: &str, value: &Definition) -> Result<(), D
             optional_text(data, p, "bim:materialGrade", grade)?;
             optional_text(data, p, "bim:materialStandard", standard)?;
         }
-        Definition::Fastener { spec } => {
-            attr(
-                data,
-                p,
-                "bim:definitionKind",
-                "token",
-                sdf::Value::token("fastener"),
-            )?;
-            attr(
-                data,
-                p,
-                "steel:fastener:kind",
-                "token",
-                sdf::Value::token(spec.kind.token()),
-            )?;
-            attr(
-                data,
-                p,
-                "steel:fastener:headKind",
-                "token",
-                sdf::Value::token(spec.head_kind.token()),
-            )?;
-            for (name, value) in [
-                ("nominalDiameterMm", spec.nominal_diameter_mm),
-                ("headAcrossFlatsMm", spec.head_across_flats_mm),
-                ("headHeightMm", spec.head_height_mm),
-            ] {
-                attr(
-                    data,
-                    p,
-                    &format!("steel:fastener:{name}"),
-                    "double",
-                    sdf::Value::Double(value),
-                )?;
-            }
-            optional_number(
-                data,
-                p,
-                "steel:fastener:nutAcrossFlatsMm",
-                spec.nut_across_flats_mm,
-            )?;
-            optional_number(data, p, "steel:fastener:nutHeightMm", spec.nut_height_mm)?;
-            if let Some(washer) = &spec.washer {
-                for (name, value) in [
-                    ("washerOuterDiameterMm", washer.outer_diameter_mm),
-                    ("washerInnerDiameterMm", washer.inner_diameter_mm),
-                    ("washerThicknessMm", washer.thickness_mm),
-                ] {
-                    attr(
-                        data,
-                        p,
-                        &format!("steel:fastener:{name}"),
-                        "double",
-                        sdf::Value::Double(value),
-                    )?;
-                }
-            }
-            attr(
-                data,
-                p,
-                "steel:fastener:holeClearanceMm",
-                "double",
-                sdf::Value::Double(spec.hole_clearance_mm),
-            )?;
-            attr(
-                data,
-                p,
-                "steel:fastener:lengthsMm",
-                "double[]",
-                sdf::Value::DoubleVec(spec.lengths_mm.clone()),
-            )?;
-            attr(
-                data,
-                p,
-                "steel:fastener:threadProtrusionMm",
-                "double",
-                sdf::Value::Double(spec.thread_protrusion_mm),
-            )?;
-            optional_number(data, p, "steel:fastener:massEachKg", spec.mass_each_kg)?;
-            attr(
-                data,
-                p,
-                "steel:fastener:washerUnderHead",
-                "bool",
-                sdf::Value::Bool(spec.washer_under_head),
-            )?;
-            attr(
-                data,
-                p,
-                "steel:fastener:washerUnderNut",
-                "bool",
-                sdf::Value::Bool(spec.washer_under_nut),
-            )?;
-            attr(
-                data,
-                p,
-                "steel:fastener:holeMode",
-                "token",
-                sdf::Value::token(spec.hole_mode.token()),
-            )?;
-            optional_text(data, p, "steel:fastener:designation", &spec.designation)?;
-            optional_text(data, p, "steel:fastener:standard", &spec.standard)?;
-            optional_text(data, p, "steel:fastener:grade", &spec.grade)?;
-        }
+        Definition::Discipline(hook) => hook.0.author(data, p)?,
     }
     let display_name = match value {
-        Definition::RectangleProfile { section, .. }
-        | Definition::SectionProfile { section, .. } => &section.display_name,
-        Definition::Material { display_name, .. } => display_name,
-        Definition::Fastener { spec } => &spec.display_name,
+        Definition::Material { display_name, .. } => display_name.as_deref(),
+        Definition::Discipline(hook) => hook.0.display_name(),
     };
     if let Some(name) = display_name {
-        field(data, p, "displayName", sdf::Value::String(name.clone()))?;
+        field(data, p, "displayName", sdf::Value::String(name.to_owned()))?;
     }
     Ok(())
-}
-fn optional_text(
-    data: &mut sdf::Data,
-    p: &str,
-    name: &str,
-    value: &Option<String>,
-) -> Result<(), Diagnostic> {
-    match value {
-        Some(v) => attr(data, p, name, "string", sdf::Value::String(v.clone())),
-        None => Ok(()),
-    }
-}
-fn optional_number(
-    data: &mut sdf::Data,
-    p: &str,
-    name: &str,
-    value: Option<f64>,
-) -> Result<(), Diagnostic> {
-    match value {
-        Some(v) => attr(data, p, name, "double", sdf::Value::Double(v)),
-        None => Ok(()),
-    }
 }
 pub(super) fn definition_bytes(d: &Definition) -> Result<Vec<u8>, Diagnostic> {
     validate::definition(d)?;
@@ -654,21 +453,13 @@ fn create(
     };
     field(data, &p, "kind", sdf::Value::token(model_kind))?;
     field(data, &p, "displayName", sdf::Value::String(e.name.clone()))?;
-    let kind = match e.shape {
-        Shape::Instance { kind, .. } => kind.token(),
+    let kind = match &e.shape {
         Shape::Assembly => "assembly",
-        Shape::Weld(_) | Shape::Bolt(_) => "connection",
+        Shape::Discipline(hook) => hook.0.kind_token(),
         Shape::Level { .. } => "level",
         Shape::Grid(_) => "grid",
-        Shape::Plate { .. } => "plate",
-        Shape::Member {
-            kind: MemberKind::Beam,
-            ..
-        } => "beam",
-        Shape::Member {
-            kind: MemberKind::Column,
-            ..
-        } => "column",
+        Shape::Construction(_) => "construction",
+        Shape::Annotation(_) => "annotation",
     };
     for (name, ty, v) in [
         ("bim:id", "string", sdf::Value::String(e.id.clone())),
@@ -684,328 +475,21 @@ fn create(
     ] {
         attr(data, &p, name, ty, v)?;
     }
-    if matches!(e.shape, Shape::Plate { .. } | Shape::Member { .. }) {
+    if matches!(&e.shape, Shape::Discipline(hook) if hook.0.classed()) {
         attr(data, &p, "steel:class", "int", sdf::Value::Int(0))?;
     }
     match &e.shape {
-        Shape::Plate {
-            contour_mm,
-            thickness_mm,
-            thickness_side,
-            corners,
-            holes,
-            hole_records,
-            ..
-        } => {
-            attr(
-                data,
-                &p,
-                "steel:plate:contourPointsMm",
-                "double3[]",
-                points(contour_mm),
-            )?;
-            attr(
-                data,
-                &p,
-                "steel:plate:thicknessMm",
-                "double",
-                sdf::Value::Double(*thickness_mm),
-            )?;
-            if let Some(side) = thickness_side {
-                attr(
-                    data,
-                    &p,
-                    "steel:plate:thicknessSide",
-                    "token",
-                    sdf::Value::token(side.as_str()),
-                )?;
-            }
-            if !corners.is_empty() {
-                // The five parallel corner attributes (A12.2), always together; a value that
-                // its treatment does not use is written as zero.
-                let mut vertices = Vec::with_capacity(corners.len());
-                let mut kinds: Vec<&str> = Vec::with_capacity(corners.len());
-                let mut d1s = Vec::with_capacity(corners.len());
-                let mut d2s = Vec::with_capacity(corners.len());
-                let mut radii = Vec::with_capacity(corners.len());
-                for corner in corners {
-                    vertices.push(i32::try_from(corner.vertex).map_err(|_| limit())?);
-                    kinds.push(corner.treatment.kind());
-                    let (d1, d2, radius) = match corner.treatment {
-                        beamcraft_model::command::CornerTreatment::Chamfer { d1_mm, d2_mm } => {
-                            (d1_mm, d2_mm, 0.0)
-                        }
-                        beamcraft_model::command::CornerTreatment::Round { radius_mm } => {
-                            (0.0, 0.0, radius_mm)
-                        }
-                    };
-                    d1s.push(d1);
-                    d2s.push(d2);
-                    radii.push(radius);
-                }
-                attr(
-                    data,
-                    &p,
-                    "steel:plate:cornerVertex",
-                    "int[]",
-                    sdf::Value::IntVec(vertices),
-                )?;
-                attr(
-                    data,
-                    &p,
-                    "steel:plate:cornerKind",
-                    "token[]",
-                    sdf::Value::token_vec(kinds),
-                )?;
-                attr(
-                    data,
-                    &p,
-                    "steel:plate:cornerD1Mm",
-                    "double[]",
-                    sdf::Value::DoubleVec(d1s),
-                )?;
-                attr(
-                    data,
-                    &p,
-                    "steel:plate:cornerD2Mm",
-                    "double[]",
-                    sdf::Value::DoubleVec(d2s),
-                )?;
-                attr(
-                    data,
-                    &p,
-                    "steel:plate:cornerRadiusMm",
-                    "double[]",
-                    sdf::Value::DoubleVec(radii),
-                )?;
-            }
-            if !holes.is_empty() {
-                let flat: Vec<[f64; 3]> = holes.iter().flatten().copied().collect();
-                let counts = holes
-                    .iter()
-                    .map(|h| i32::try_from(h.len()).map_err(|_| limit()))
-                    .collect::<Result<Vec<_>, _>>()?;
-                attr(
-                    data,
-                    &p,
-                    "steel:plate:holePointsMm",
-                    "double3[]",
-                    points(&flat),
-                )?;
-                attr(
-                    data,
-                    &p,
-                    "steel:plate:holeVertexCounts",
-                    "int[]",
-                    sdf::Value::IntVec(counts),
-                )?;
-            }
-            if !hole_records.is_empty() {
-                let mut flat: Vec<[f64; 3]> = Vec::new();
-                let mut counts = Vec::new();
-                let mut ids = Vec::new();
-                let mut ordinals = Vec::new();
-                for record in hole_records {
-                    flat.extend(record.polygon_mm.iter().map(|[x, y]| [*x, *y, 0.0]));
-                    counts.push(i32::try_from(record.polygon_mm.len()).map_err(|_| limit())?);
-                    ids.push(record.operation_id.to_string());
-                    ordinals.push(i32::try_from(record.ordinal).map_err(|_| limit())?);
-                }
-                attr(data, &p, "steel:hole:pointsMm", "double3[]", points(&flat))?;
-                attr(
-                    data,
-                    &p,
-                    "steel:hole:vertexCounts",
-                    "int[]",
-                    sdf::Value::IntVec(counts),
-                )?;
-                attr(
-                    data,
-                    &p,
-                    "steel:hole:operationIds",
-                    "string[]",
-                    sdf::Value::StringVec(ids),
-                )?;
-                attr(
-                    data,
-                    &p,
-                    "steel:hole:ordinals",
-                    "int[]",
-                    sdf::Value::IntVec(ordinals),
-                )?;
-            }
-        }
-        Shape::Member {
-            axis_mm,
-            profile,
-            roll_rad,
-            placement,
-            ..
-        } => {
-            attr(data, &p, "bim:axisPointsMm", "double3[]", points(axis_mm))?;
-            relationship(data, &p, "bim:profile", MaterialOpinion::Target(*profile))?;
-            if let Some(n) = roll_rad {
-                attr(
-                    data,
-                    &p,
-                    "steel:member:rollRad",
-                    "double",
-                    sdf::Value::Double(*n),
-                )?;
-            }
-            if let Some(placement) = placement {
-                attr(
-                    data,
-                    &p,
-                    "steel:member:planePosition",
-                    "token",
-                    sdf::Value::token(placement.plane.as_str()),
-                )?;
-                attr(
-                    data,
-                    &p,
-                    "steel:member:planeOffsetMm",
-                    "double",
-                    sdf::Value::Double(placement.plane_offset_mm),
-                )?;
-                attr(
-                    data,
-                    &p,
-                    "steel:member:depthPosition",
-                    "token",
-                    sdf::Value::token(placement.depth.as_str()),
-                )?;
-                attr(
-                    data,
-                    &p,
-                    "steel:member:depthOffsetMm",
-                    "double",
-                    sdf::Value::Double(placement.depth_offset_mm),
-                )?;
-                attr(
-                    data,
-                    &p,
-                    "steel:member:startOffsetMm",
-                    "double",
-                    sdf::Value::Double(placement.start_offset_mm),
-                )?;
-                attr(
-                    data,
-                    &p,
-                    "steel:member:endOffsetMm",
-                    "double",
-                    sdf::Value::Double(placement.end_offset_mm),
-                )?;
-            }
-        }
         Shape::Assembly => (),
-        Shape::Weld(w) => {
-            attr(
-                data,
-                &p,
-                "steel:connection:type",
-                "token",
-                sdf::Value::Token("weld".into()),
-            )?;
-            for (name, value) in [
-                ("steel:weld:type", &w.weld_type),
-                ("steel:weld:location", &w.location),
-                ("steel:weld:side", &w.side),
-            ] {
-                attr(data, &p, name, "token", sdf::Value::token(value.as_str()))?;
-            }
-            attr(
-                data,
-                &p,
-                "steel:weld:sizeMm",
-                "double",
-                sdf::Value::Double(w.size_mm),
-            )?;
-            if let Some(geometry) = &w.geometry {
-                attr(
-                    data,
-                    &p,
-                    "steel:weld:pathMm",
-                    "double3[]",
-                    points(&geometry.points_mm),
-                )?;
-                attr(
-                    data,
-                    &p,
-                    "steel:weld:allAround",
-                    "token",
-                    sdf::Value::token(if geometry.all_around { "true" } else { "false" }),
-                )?;
-                attr(
-                    data,
-                    &p,
-                    "steel:weld:contour",
-                    "token",
-                    sdf::Value::token(geometry.contour.as_str()),
-                )?;
-            }
-            let targets = w
-                .connects
-                .iter()
-                .map(|id| path(&target_path(id, ElementCategory::Part, input, prims)?))
-                .collect::<Result<Vec<_>, _>>()?;
-            relationship_targets(data, &p, "bim:connects", Some(targets))?;
-        }
-        Shape::Bolt(b) => {
-            attr(
-                data,
-                &p,
-                "steel:connection:type",
-                "token",
-                sdf::Value::Token("bolt_group".into()),
-            )?;
-            attr(
-                data,
-                &p,
-                "steel:bolt:diameterMm",
-                "double",
-                sdf::Value::Double(b.diameter_mm),
-            )?;
-            // The engine admits 1 to 512 bolts, so the count always fits an int.
-            attr(
-                data,
-                &p,
-                "steel:bolt:count",
-                "int",
-                sdf::Value::Int(i32::try_from(b.count).map_err(|_| limit())?),
-            )?;
-            attr(
-                data,
-                &p,
-                "steel:bolt:pitchMm",
-                "double",
-                sdf::Value::Double(b.pitch_mm),
-            )?;
-            let [ox, oy, oz] = b.origin_mm;
-            attr(
-                data,
-                &p,
-                "steel:bolt:originMm",
-                "double3",
-                sdf::Value::vec3d(ox, oy, oz),
-            )?;
-            let [dx, dy, dz] = b.direction_mm;
-            attr(
-                data,
-                &p,
-                "steel:bolt:directionMm",
-                "double3",
-                sdf::Value::vec3d(dx, dy, dz),
-            )?;
-            let targets = b
-                .connects
-                .iter()
-                .map(|id| path(&target_path(id, ElementCategory::Part, input, prims)?))
-                .collect::<Result<Vec<_>, _>>()?;
-            relationship_targets(data, &p, "bim:connects", Some(targets))?;
-        }
+        Shape::Discipline(hook) => hook.0.author(&mut hook::AuthorCx {
+            data,
+            path: &p,
+            element: e,
+            input,
+            prims,
+        })?,
         Shape::Grid(g) => grid::author(data, &p, g)?,
-        Shape::Instance { definition, .. } => instance::author(data, &p, definition, input, prims)?,
+        Shape::Construction(o) => construction::author(data, &p, o)?,
+        Shape::Annotation(a) => annotation::author(data, &p, a)?,
         Shape::Level { elevation_mm } => attr(
             data,
             &p,
@@ -1018,55 +502,84 @@ fn create(
         relationship(data, &p, "bim:material", MaterialOpinion::Target(d))?;
     }
     // The owned plane-cut records of a plate, beam or column (A03, amendment A-2), as five
-    // parallel attributes in ascending ordinal order.
-    if !e.shape.cuts().is_empty() {
-        author_cuts(data, &p, e.shape.cuts())?;
+    // parallel attributes in ascending ordinal order; the hook writes them, or nothing.
+    if let Shape::Discipline(hook) = &e.shape {
+        hook.0.author_cuts(data, &p)?;
     }
     pose(data, &p, &e.placement)
 }
 
-/// Writes the five parallel cut-record attributes of one element (A03). An empty list removes
-/// the attributes instead, so a "no records" element authors nothing about cuts.
-pub(super) fn author_cuts(
+/// Authors the persistent ordinal and retired-identity bookkeeping of one operation-record
+/// family; the seam a discipline hook keeps its record history through.
+pub fn author_record_history(
     data: &mut sdf::Data,
     p: &str,
-    cuts: &[CutRecord],
+    source: Option<&Prim>,
+    records: &[(beamcraft_model::id::OpId, usize)],
+    family: cut_history::Family,
 ) -> Result<(), Diagnostic> {
-    if cuts.is_empty() {
-        for name in [
-            "steel:cut:operationId",
-            "steel:cut:ordinal",
-            "steel:cut:pointMm",
-            "steel:cut:normal",
-            "steel:cut:keep",
-        ] {
-            let full = path(&format!("{p}.{name}"))?;
-            if data.has_spec(&full) {
-                data.erase_spec(&full);
-            }
+    let (next_name, retired_name, id_name, ordinal_name) = cut_history::fields(family);
+    let old = source
+        .map(|p| match family {
+            cut_history::Family::Cut => cut_history::read(p),
+            cut_history::Family::PlateHole => cut_history::read_holes(p),
+            cut_history::Family::MemberHole => cut_history::read_member_holes(p),
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let mut next = usize::from(old.next_ordinal);
+    let mut retired = old
+        .retired
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>();
+    let old_pairs = if let Some(source) = source {
+        cut_history::ids(source, id_name)?
+            .into_iter()
+            .zip(cut_history::ordinals(source, ordinal_name)?)
+            .collect::<BTreeMap<_, _>>()
+    } else {
+        BTreeMap::new()
+    };
+    for id in old_pairs.keys() {
+        if !records.iter().any(|(new, _)| new == id) {
+            retired.insert(*id);
         }
-        return Ok(());
     }
-    let ids: Vec<String> = cuts.iter().map(|c| c.operation_id.to_string()).collect();
-    let ordinals = cuts.iter().map(|c| i32::from(c.ordinal)).collect();
-    let cut_points: Vec<[f64; 3]> = cuts.iter().map(|c| c.point_mm).collect();
-    let normals: Vec<[f64; 3]> = cuts.iter().map(|c| c.normal).collect();
-    let keeps = cuts.iter().map(|c| c.keep.as_str()).collect::<Vec<_>>();
-    for (name, ty, v) in [
-        (
-            "steel:cut:operationId",
+    for (id, ordinal) in records {
+        if *ordinal > 999 || retired.contains(id) {
+            return Err(invalid());
+        }
+        match old_pairs.get(id) {
+            Some(old) if usize::from(*old) != *ordinal => return Err(invalid()),
+            None if *ordinal < usize::from(old.next_ordinal) => return Err(invalid()),
+            _ => {}
+        }
+        next = next.max(ordinal + 1);
+    }
+    if next > 1000 || retired.len() > 1000 {
+        return Err(limit());
+    }
+    if next > 0 {
+        attr(
+            data,
+            p,
+            next_name,
+            "int",
+            sdf::Value::Int(i32::try_from(next).map_err(|_| limit())?),
+        )?;
+    }
+    if !retired.is_empty() {
+        attr(
+            data,
+            p,
+            retired_name,
             "string[]",
-            sdf::Value::StringVec(ids),
-        ),
-        ("steel:cut:ordinal", "int[]", sdf::Value::IntVec(ordinals)),
-        ("steel:cut:pointMm", "double3[]", points(&cut_points)),
-        ("steel:cut:normal", "double3[]", points(&normals)),
-        ("steel:cut:keep", "token[]", sdf::Value::token_vec(keeps)),
-    ] {
-        attr(data, p, name, ty, v)?;
+            sdf::Value::StringVec(retired.into_iter().map(|id| id.to_string()).collect()),
+        )?;
     }
     Ok(())
 }
+
 fn mesh(data: &mut sdf::Data, m: &Mesh, parent: &str) -> Result<(), Diagnostic> {
     let p = format!("{parent}/Geometry");
     prim(data, &p, Some("Mesh"), true)?;
@@ -1185,6 +698,61 @@ fn erase_mesh(data: &mut sdf::Data, parent: &str) -> Result<(), Diagnostic> {
     Ok(())
 }
 
+/// Authors the complete definition prim of one user attribute (I04). A definition carries no
+/// opinion beyond its admitted fields: an absent unit, empty options or an absent set remove
+/// their properties, so a redefinition leaves no stale opinion behind.
+fn author_attr_define(
+    data: &mut sdf::Data,
+    def: &beamcraft_model::attribute::AttrDef,
+) -> Result<(), Diagnostic> {
+    let name = validate::schema_path_name(&def.name)?;
+    container(data, "/World", "Xform", Some("assembly"))?;
+    container(data, "/World/Definitions", "Scope", None)?;
+    container(data, super::ATTR_SCHEMA_PATH, "Scope", None)?;
+    let p = format!("{}/{name}", super::ATTR_SCHEMA_PATH);
+    prim(data, &p, Some("Scope"), true)?;
+    attr(
+        data,
+        &p,
+        "bim:attr:type",
+        "token",
+        sdf::Value::token(def.ty.as_str()),
+    )?;
+    let text_opinion = |v: &Option<String>| match v {
+        Some(text) => Opinion::Value(sdf::Value::String(text.clone())),
+        None => Opinion::Remove,
+    };
+    attribute(
+        data,
+        &p,
+        "bim:attr:unit",
+        "string",
+        text_opinion(&def.unit),
+        true,
+    )?;
+    attribute(
+        data,
+        &p,
+        "bim:attr:options",
+        "string[]",
+        match def.ty {
+            beamcraft_model::attribute::AttrType::Choice => {
+                Opinion::Value(sdf::Value::StringVec(def.options.clone()))
+            }
+            _ => Opinion::Remove,
+        },
+        true,
+    )?;
+    attribute(
+        data,
+        &p,
+        "bim:attr:set",
+        "string",
+        text_opinion(&def.set),
+        true,
+    )?;
+    Ok(())
+}
 fn erase_element(data: &mut sdf::Data, parent: &str) -> Result<(), Diagnostic> {
     let name = parent.rsplit_once('/').map_or(parent, |(_, n)| n);
     for path in data.spec_paths() {
@@ -1284,6 +852,22 @@ pub(super) fn apply(
     }
     for c in &input.changes {
         control.check()?;
+        match c {
+            // The schema scope is not an element: its changes resolve no element path and pass
+            // no element kind checks; the candidate snapshot re-validates the scope as a whole.
+            Change::AttrDefine { def } => {
+                author_attr_define(&mut authored, def)?;
+                continue;
+            }
+            Change::AttrUndefine { name } => {
+                erase_element(
+                    &mut authored,
+                    &format!("{}/{name}", super::ATTR_SCHEMA_PATH),
+                )?;
+                continue;
+            }
+            _ => {}
+        }
         let (id, _) = c.key();
         let p = change_path(id, input, prims)?;
         match c {
@@ -1310,103 +894,15 @@ pub(super) fn apply(
                     sdf::Value::String(name.clone()),
                 )?;
             }
-            Change::Contour { points_mm, .. } => attr(
-                &mut authored,
-                &p,
-                "steel:plate:contourPointsMm",
-                "double3[]",
-                points(points_mm),
-            )?,
-            Change::Thickness { mm, .. } => attr(
-                &mut authored,
-                &p,
-                "steel:plate:thicknessMm",
-                "double",
-                sdf::Value::Double(*mm),
-            )?,
-            Change::ThicknessSide { side, .. } => attr(
-                &mut authored,
-                &p,
-                "steel:plate:thicknessSide",
-                "token",
-                sdf::Value::token(side.as_str()),
-            )?,
-            Change::Cuts { cuts, .. } => author_cuts(&mut authored, &p, cuts)?,
-            Change::HoleRecords { records, .. } => {
-                // The four record attributes, always together: the authoritative polygons of
-                // every record, replayed from the base shape in ordinal order, with the id and
-                // the engine-assigned ordinal of each.
-                let mut flat = Vec::new();
-                let mut counts = Vec::new();
-                let mut ids = Vec::new();
-                let mut ordinals = Vec::new();
-                for record in records {
-                    flat.extend(record.polygon_mm.iter().map(|[x, y]| [*x, *y, 0.0]));
-                    counts.push(i32::try_from(record.polygon_mm.len()).map_err(|_| limit())?);
-                    ids.push(record.operation_id.to_string());
-                    ordinals.push(i32::try_from(record.ordinal).map_err(|_| limit())?);
-                }
-                attr(
-                    &mut authored,
-                    &p,
-                    "steel:hole:pointsMm",
-                    "double3[]",
-                    points(&flat),
-                )?;
-                attr(
-                    &mut authored,
-                    &p,
-                    "steel:hole:vertexCounts",
-                    "int[]",
-                    sdf::Value::IntVec(counts),
-                )?;
-                attr(
-                    &mut authored,
-                    &p,
-                    "steel:hole:operationIds",
-                    "string[]",
-                    sdf::Value::StringVec(ids),
-                )?;
-                attr(
-                    &mut authored,
-                    &p,
-                    "steel:hole:ordinals",
-                    "int[]",
-                    sdf::Value::IntVec(ordinals),
-                )?;
-            }
-            Change::Axis { points_mm, .. } => attr(
-                &mut authored,
-                &p,
-                "bim:axisPointsMm",
-                "double3[]",
-                points(points_mm),
-            )?,
-            Change::Roll { opinion, .. } => {
-                let opinion = match opinion {
-                    Opinion::Value(n) => Opinion::Value(sdf::Value::Double(*n)),
-                    Opinion::Absent => Opinion::Absent,
-                    Opinion::Block => Opinion::Block,
-                    Opinion::Remove => Opinion::Remove,
-                };
-                attribute(
-                    &mut authored,
-                    &p,
-                    "steel:member:rollRad",
-                    "double",
-                    opinion,
-                    true,
-                )?;
-            }
+            Change::Discipline(hook) => hook.0.author(&mut hook::ChangeAuthorCx {
+                data: &mut authored,
+                path: &p,
+                input,
+                prims,
+            })?,
             Change::Material { opinion, .. } => {
                 relationship(&mut authored, &p, "bim:material", opinion.clone())?
             }
-            Change::Profile { digest, .. } => relationship(
-                &mut authored,
-                &p,
-                "bim:profile",
-                MaterialOpinion::Target(*digest),
-            )?,
             Change::Placement { placement, .. } => pose(&mut authored, &p, placement)?,
             Change::PartOf { assembly, .. } => {
                 // A detach authors an explicit empty target list, which also masks a weaker
@@ -1458,6 +954,40 @@ pub(super) fn apply(
                     attr(&mut authored, &p, name, ty, value)?;
                 }
             }
+            Change::AttrSet { name, value, .. } => {
+                let property = format!("bim:attr:{}", validate::schema_path_name(name)?);
+                match value {
+                    Some(v) => {
+                        let (ty, stored) = match v {
+                            beamcraft_model::attribute::AttrValue::Text(t) => {
+                                ("string", sdf::Value::String(t.clone()))
+                            }
+                            beamcraft_model::attribute::AttrValue::Choice(t) => {
+                                ("string", sdf::Value::String(t.clone()))
+                            }
+                            beamcraft_model::attribute::AttrValue::Number(n) => {
+                                ("double", sdf::Value::Double(*n))
+                            }
+                            beamcraft_model::attribute::AttrValue::Integer(i) => {
+                                ("int", sdf::Value::Int(*i))
+                            }
+                            beamcraft_model::attribute::AttrValue::Boolean(b) => {
+                                ("bool", sdf::Value::Bool(*b))
+                            }
+                        };
+                        attr(&mut authored, &p, &property, ty, stored)?;
+                    }
+                    // A clear erases the property alone; the rest of the prim is untouched.
+                    None => attribute(
+                        &mut authored,
+                        &p,
+                        &property,
+                        "string",
+                        Opinion::Remove,
+                        true,
+                    )?,
+                }
+            }
             Change::ReferenceUnits { interpretation, .. } => {
                 let wrapper = prims
                     .iter()
@@ -1488,17 +1018,7 @@ pub(super) fn apply(
             }
             _ => (),
         }
-        if matches!(
-            c,
-            Change::Contour { .. }
-                | Change::Thickness { .. }
-                | Change::ThicknessSide { .. }
-                | Change::Cuts { .. }
-                | Change::Axis { .. }
-                | Change::Roll { .. }
-                | Change::Profile { .. }
-                | Change::HoleRecords { .. }
-        ) {
+        if matches!(c, Change::Discipline(hook) if hook.0.invalidates_derived()) {
             // Never reveal a weaker stale result after removing the derived opinion.
             let mesh_path = format!("{p}/Geometry");
             if prims
@@ -1575,39 +1095,8 @@ fn capture(
         ("xformOp:orient", "quatd"),
         ("xformOpOrder", "token[]"),
     ];
-    const WELD: &[(&str, &str)] = &[
-        ("steel:connection:type", "token"),
-        ("steel:weld:type", "token"),
-        ("steel:weld:sizeMm", "double"),
-        ("steel:weld:location", "token"),
-        ("steel:weld:side", "token"),
-        ("bim:connects", "rel"),
-    ];
-    const BOLT: &[(&str, &str)] = &[
-        ("steel:connection:type", "token"),
-        ("steel:bolt:diameterMm", "double"),
-        ("steel:bolt:count", "int"),
-        ("steel:bolt:pitchMm", "double"),
-        ("steel:bolt:originMm", "double3"),
-        ("steel:bolt:directionMm", "double3"),
-        ("bim:connects", "rel"),
-    ];
-    const CUT_FIELDS: &[(&str, &str)] = &[
-        ("steel:cut:operationId", "string[]"),
-        ("steel:cut:ordinal", "int[]"),
-        ("steel:cut:pointMm", "double3[]"),
-        ("steel:cut:normal", "double3[]"),
-        ("steel:cut:keep", "token[]"),
-    ];
+    /// The A04.2 member-hole record attributes of a member, in storage order.
     /// The P14 section-placement attributes of a member, in storage order.
-    const MEMBER_PLACEMENT: &[(&str, &str)] = &[
-        ("steel:member:planePosition", "token"),
-        ("steel:member:planeOffsetMm", "double"),
-        ("steel:member:depthPosition", "token"),
-        ("steel:member:depthOffsetMm", "double"),
-        ("steel:member:startOffsetMm", "double"),
-        ("steel:member:endOffsetMm", "double"),
-    ];
     const MESH: &[(&str, &str)] = &[
         ("points", "point3f[]"),
         ("faceVertexCounts", "int[]"),
@@ -1643,69 +1132,25 @@ fn capture(
                     add(name, ty, 0);
                 }
                 match e.shape {
-                    Shape::Plate {
-                        ref holes,
-                        ref cuts,
-                        ref hole_records,
-                        ..
-                    } => {
-                        add("steel:plate:contourPointsMm", "double3[]", 0);
-                        add("steel:plate:thicknessMm", "double", 0);
-                        if !holes.is_empty() {
-                            add("steel:plate:holePointsMm", "double3[]", 0);
-                            add("steel:plate:holeVertexCounts", "int[]", 0);
-                        }
-                        if !cuts.is_empty() {
-                            for &(name, ty) in CUT_FIELDS {
-                                add(name, ty, 0);
-                            }
-                        }
-                        if !hole_records.is_empty() {
-                            add("steel:hole:pointsMm", "double3[]", 0);
-                            add("steel:hole:vertexCounts", "int[]", 0);
-                            add("steel:hole:operationIds", "string[]", 0);
-                            add("steel:hole:ordinals", "int[]", 0);
-                        }
-                    }
-                    Shape::Member {
-                        ref cuts,
-                        ref placement,
-                        ..
-                    } => {
-                        add("bim:axisPointsMm", "double3[]", 0);
-                        add("steel:member:rollRad", "double", 0);
-                        if placement.is_some() {
-                            for &(name, ty) in MEMBER_PLACEMENT {
-                                add(name, ty, 0);
-                            }
-                        }
-                        add("bim:profile", "rel", 0);
-                        if !cuts.is_empty() {
-                            for &(name, ty) in CUT_FIELDS {
-                                add(name, ty, 0);
-                            }
-                        }
-                    }
-                    Shape::Instance { .. } => add(instance::RELATIONSHIP, "rel", 0),
                     Shape::Assembly => (),
-                    Shape::Weld(ref w) => {
-                        for &(name, ty) in WELD {
-                            add(name, ty, 0);
-                        }
-                        if w.geometry.is_some() {
-                            add("steel:weld:pathMm", "double3[]", 0);
-                            add("steel:weld:allAround", "token", 0);
-                            add("steel:weld:contour", "token", 0);
-                        }
-                    }
-                    Shape::Bolt(_) => {
-                        for &(name, ty) in BOLT {
+                    Shape::Discipline(ref hook) => {
+                        for (name, ty) in hook.0.attributes() {
                             add(name, ty, 0);
                         }
                     }
                     Shape::Level { .. } => add("bim:elevationMm", "double", 0),
                     Shape::Grid(_) => {
                         for &(name, ty) in grid::FIELDS {
+                            add(name, ty, 0);
+                        }
+                    }
+                    Shape::Construction(_) => {
+                        for &(name, ty) in construction::FIELDS {
+                            add(name, ty, 0);
+                        }
+                    }
+                    Shape::Annotation(_) => {
+                        for &(name, ty) in annotation::FIELDS {
                             add(name, ty, 0);
                         }
                     }
@@ -1737,11 +1182,10 @@ fn capture(
             }
             Change::PartClass { .. } => add("steel:class", "int", 0),
             Change::Label { .. } => add("bim:name", "string", 0),
-            Change::HoleRecords { .. } => {
-                add("steel:hole:pointsMm", "double3[]", 0);
-                add("steel:hole:vertexCounts", "int[]", 0);
-                add("steel:hole:operationIds", "string[]", 0);
-                add("steel:hole:ordinals", "int[]", 0);
+            Change::Discipline(hook) => {
+                for (name, ty) in hook.0.attributes() {
+                    add(name, ty, 0);
+                }
             }
             Change::Delete { .. } => {
                 for (name, ty) in [
@@ -1753,28 +1197,7 @@ fn capture(
                     ("bim:schemaVersion", "string"),
                     ("bim:createdBy", "string"),
                     ("bim:material", "rel"),
-                    ("steel:plate:contourPointsMm", "double3[]"),
-                    ("steel:plate:thicknessMm", "double"),
-                    ("steel:plate:holePointsMm", "double3[]"),
-                    ("steel:plate:holeVertexCounts", "int[]"),
-                    ("steel:cut:operationId", "string[]"),
-                    ("steel:cut:ordinal", "int[]"),
-                    ("steel:cut:pointMm", "double3[]"),
-                    ("steel:cut:normal", "double3[]"),
-                    ("steel:cut:keep", "token[]"),
-                    ("steel:hole:pointsMm", "double3[]"),
-                    ("steel:hole:vertexCounts", "int[]"),
-                    ("steel:hole:operationIds", "string[]"),
-                    ("steel:hole:ordinals", "int[]"),
-                    ("bim:axisPointsMm", "double3[]"),
-                    ("steel:member:rollRad", "double"),
-                    ("steel:member:planePosition", "token"),
-                    ("steel:member:planeOffsetMm", "double"),
-                    ("steel:member:depthPosition", "token"),
-                    ("steel:member:depthOffsetMm", "double"),
-                    ("steel:member:startOffsetMm", "double"),
-                    ("steel:member:endOffsetMm", "double"),
-                    ("bim:profile", "rel"),
+                    ("bim:connects", "rel"),
                     ("bim:partOf", "rel"),
                     (instance::RELATIONSHIP, "rel"),
                     ("bim:mainPart", "rel"),
@@ -1786,11 +1209,12 @@ fn capture(
                 ] {
                     add(name, ty, 0);
                 }
-                for &(name, ty) in WELD {
-                    add(name, ty, 0);
-                }
-                for &(name, ty) in BOLT {
-                    add(name, ty, 0);
+                // The attribute names of the registered disciplines: a deleted part or
+                // connection reports their removal opinions too.
+                for discipline in disciplines::registered() {
+                    for &(name, ty) in discipline.delete_attributes() {
+                        add(name, ty, 0);
+                    }
                 }
                 for &(name, ty) in POSE {
                     add(name, ty, 0);
@@ -1802,17 +1226,6 @@ fn capture(
                     add(name, ty, 1);
                 }
             }
-            Change::Contour { .. } => add("steel:plate:contourPointsMm", "double3[]", 0),
-            Change::Thickness { .. } => add("steel:plate:thicknessMm", "double", 0),
-            Change::ThicknessSide { .. } => add("steel:plate:thicknessSide", "token", 0),
-            Change::Cuts { cuts, .. } if !cuts.is_empty() => {
-                for &(name, ty) in CUT_FIELDS {
-                    add(name, ty, 0);
-                }
-            }
-            Change::Axis { .. } => add("bim:axisPointsMm", "double3[]", 0),
-            Change::Roll { .. } => add("steel:member:rollRad", "double", 0),
-            Change::Profile { .. } => add("bim:profile", "rel", 0),
             Change::Material { .. } => add("bim:material", "rel", 0),
             Change::PartOf { .. } => add("bim:partOf", "rel", 0),
             Change::MainPart { .. } => add("bim:mainPart", "rel", 0),
@@ -1839,19 +1252,12 @@ fn capture(
                     add(name, ty, 1);
                 }
             }
-            // An empty replacement removes the attributes, so there is nothing to report.
-            Change::Cuts { .. } => (),
+            // User attributes (I04) are dynamic-named values outside the fixed supported
+            // mapping: they contribute no opinion inventory yet, while their footprint writes
+            // and the candidate bytes carry them as usual.
+            Change::AttrDefine { .. } | Change::AttrUndefine { .. } | Change::AttrSet { .. } => {}
         }
-        if matches!(
-            change,
-            Change::Contour { .. }
-                | Change::Thickness { .. }
-                | Change::ThicknessSide { .. }
-                | Change::Cuts { .. }
-                | Change::Axis { .. }
-                | Change::Roll { .. }
-                | Change::Profile { .. }
-        ) {
+        if matches!(change, Change::Discipline(hook) if hook.0.declares_mesh()) {
             for &(name, ty) in MESH {
                 add(name, ty, 1);
             }

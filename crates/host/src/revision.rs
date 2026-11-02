@@ -116,6 +116,16 @@ impl Uuid7 {
     }
 }
 
+impl From<beamcraft_model::id::Uuid7> for Uuid7 {
+    /// A validated model id needs no re-validation: both types accept exactly the canonical
+    /// lowercase UUIDv7 text, so the derived text of the model id always parses back. There is
+    /// deliberately no constructor from raw bytes — bytes without a checked version and RFC
+    /// 9562 variant would break the invariant every persisted id relies on.
+    fn from(uuid: beamcraft_model::id::Uuid7) -> Self {
+        Self(uuid.to_string())
+    }
+}
+
 /// Canonical lowercase UUIDv7 text: `8-4-4-4-12` hex digits, version 7, RFC 9562 variant.
 fn canonical_uuid7(s: &str) -> bool {
     s.len() == 36
@@ -306,5 +316,19 @@ impl From<LeaseError> for RevisionError {
             LeaseError::Busy => Self::StoreBusy,
             LeaseError::Storage(error) => Self::Storage(error),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Uuid7;
+
+    #[test]
+    fn a_model_id_converts_to_text_that_parses_back() {
+        let text = "019a7bf0-0000-7000-8000-0000000000c2";
+        let model = beamcraft_model::id::Uuid7::parse(text).unwrap();
+        let id = Uuid7::from(model);
+        assert_eq!(id.as_str(), text);
+        assert_eq!(Uuid7::parse(id.as_str()), Ok(id));
     }
 }

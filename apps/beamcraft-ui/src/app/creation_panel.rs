@@ -61,80 +61,39 @@ impl App {
         ray: crate::edit::Ray,
         planar: bool,
     ) -> Result<([f64; 3], Option<SnapKind>), ToolError> {
-        self.resolve_creation_hit(ray, planar, self.tools.plane, false)
-    }
-
-    /// View construction snaps in 3D first, then falls back to the active input plane.
-    pub(super) fn view_point_hit(
-        &self,
-        ray: crate::edit::Ray,
-    ) -> Result<([f64; 3], Option<SnapKind>), ToolError> {
-        self.resolve_creation_hit(ray, false, self.tools.plane, true)
-    }
-
-    /// Constrain a surface-edge endpoint to the selected face, with ordinary model snaps.
-    pub(super) fn point_hit_on_plane(
-        &self,
-        ray: crate::edit::Ray,
-        plane: beamcraft_engine::work_plane::WorkPlane,
-    ) -> Result<([f64; 3], Option<SnapKind>), ToolError> {
-        self.resolve_creation_hit(ray, false, Some(plane), false)
-    }
-
-    fn resolve_creation_hit(
-        &self,
-        ray: crate::edit::Ray,
-        planar: bool,
-        input_plane: Option<beamcraft_engine::work_plane::WorkPlane>,
-        model_first: bool,
-    ) -> Result<([f64; 3], Option<SnapKind>), ToolError> {
         let draft_plane = planar
             .then(|| {
-                beamcraft_engine::coordinate::contour_frame(self.plate_draft.points(), input_plane)
-                    .ok()
+                beamcraft_engine::coordinate::contour_frame(
+                    self.plate_draft.points(),
+                    self.tools.plane,
+                )
+                .ok()
             })
             .flatten();
-        let fallback_plane = draft_plane.or(input_plane).unwrap_or_else(|| {
+        let fallback_plane = draft_plane.or(self.tools.plane).unwrap_or_else(|| {
             let origin = self.plate_draft.points().last().copied().unwrap_or([0.; 3]);
             beamcraft_engine::work_plane::WorkPlane::new(origin, [1., 0., 0.], [0., 1., 0.])
                 .unwrap_or_default()
         });
         let point = if planar {
             fallback_plane.ray_point(ray.origin, ray.direction)
-        } else if model_first {
-            let hit = if let Some(loaded) = &self.loaded {
-                if let Some(definition) = self.views.active.as_ref().and_then(|id| {
-                    self.views
-                        .collection
-                        .iter()
-                        .find(|v| v.id.to_string() == *id)
-                }) {
-                    beamcraft_engine::model_view::pick_visible(
-                        &loaded.snapshot,
-                        definition,
-                        ray.origin,
-                        ray.direction,
-                        beamcraft_engine::query::pick::SelectionFilter::ALL,
-                    )
-                    .map_err(|e| ToolError::local("INVALID_ARGUMENT", e.to_string()))?
-                    .map(|hit| hit.point_world_mm)
-                } else {
-                    pick_point_in(&loaded.snapshot, &ray)?.map(|(p, _)| p)
-                }
-            } else {
-                None
-            };
-            hit.or_else(|| {
-                input_plane
-                    .unwrap_or_default()
-                    .ray_point(ray.origin, ray.direction)
-            })
-        } else if let Some(plane) = input_plane {
+        } else if let Some(plane) = self.tools.plane {
             plane.ray_point(ray.origin, ray.direction)
         } else if let Some(loaded) = &self.loaded {
-            pick_point_in(&loaded.snapshot, &ray)?
-                .map(|(point, _)| point)
-                .or_else(|| ground_point(&ray))
+            // An active model view hits only what it shows (V12).
+            match self.views.active_view() {
+                Some(view) => beamcraft_engine::views::pick_visible(
+                    &loaded.snapshot,
+                    view,
+                    ray.origin,
+                    ray.direction,
+                    beamcraft_engine::query::pick::SelectionFilter::ALL,
+                )
+                .map_err(|e| ToolError::local("INVALID_ARGUMENT", e.to_string()))?
+                .map(|hit| hit.point_world_mm),
+                None => pick_point_in(&loaded.snapshot, &ray)?.map(|(point, _)| point),
+            }
+            .or_else(|| ground_point(&ray))
         } else {
             ground_point(&ray)
         };
@@ -144,12 +103,10 @@ impl App {
                 "Aim at the model or the active work plane.",
             )
         })?;
-        let plane = if model_first {
-            None
-        } else if planar {
+        let plane = if planar {
             draft_plane
         } else {
-            input_plane
+            self.tools.plane
         };
         let view = self
             .camera
@@ -162,7 +119,7 @@ impl App {
         // Ten logical screen pixels, independent of zoom and monitor scaling. The broad world
         // band includes the foreshortened plane; the final screen test keeps the aperture round.
         let [tan, aspect, _, _] = view.params;
-        let [orthographic, span, _, _] = view.projection;
+        let orthographic = view.mode.first().is_some_and(|v| *v > 0.5);
         let depth = point
             .iter()
             .zip(ray.origin)
@@ -170,12 +127,12 @@ impl App {
             .map(|((p, o), b)| (o - p) * f64::from(b))
             .sum::<f64>()
             .abs();
-        let mm_per_pixel =
-            2.0 * if orthographic > 0.5 {
-                f64::from(span)
-            } else {
-                depth * f64::from(tan)
-            } / f64::from(self.viewport_height.max(1.0));
+        let scale = if orthographic {
+            f64::from(tan)
+        } else {
+            depth * f64::from(tan)
+        };
+        let mm_per_pixel = 2.0 * scale / f64::from(self.viewport_height.max(1.0));
         let slope = plane
             .map_or(1.0, |plane| {
                 plane
@@ -200,24 +157,18 @@ impl App {
             if forward <= 0.0 {
                 return None;
             }
-            let origin_ndc = |basis: &[f32; 4]| {
-                ray.origin
-                    .iter()
-                    .zip(scene_origin)
-                    .zip(view.eye)
-                    .zip(basis)
-                    .map(|(((v, o), e), b)| (v - o - f64::from(e)) * f64::from(*b))
-                    .sum::<f64>()
-            };
-            let nx = if orthographic > 0.5 {
-                origin_ndc(&view.right) / f64::from(span * aspect)
+            let [nx, ny] = if orthographic {
+                let origin = std::array::from_fn(|i| {
+                    (ray.origin.get(i).copied().unwrap_or(0.0)
+                        - scene_origin.get(i).copied().unwrap_or(0.0)) as f32
+                });
+                let [x, y, _] = view.project(origin);
+                [f64::from(x), f64::from(y)]
             } else {
-                direction_ndc(&view.right) / forward / f64::from(tan * aspect)
-            };
-            let ny = if orthographic > 0.5 {
-                origin_ndc(&view.up) / f64::from(span)
-            } else {
-                direction_ndc(&view.up) / forward / f64::from(tan)
+                [
+                    direction_ndc(&view.right) / forward / f64::from(tan * aspect),
+                    direction_ndc(&view.up) / forward / f64::from(tan),
+                ]
             };
             let local = std::array::from_fn(|i| {
                 (p.get(i).copied().unwrap_or(0.0) - scene_origin.get(i).copied().unwrap_or(0.0))
@@ -250,16 +201,23 @@ impl App {
             } else {
                 &[]
             };
-            let aperture = if orthographic > 0.5 {
-                (10. * mm_per_pixel / depth.max(1.)).min(0.1)
+            let aperture = (20.0 * f64::from(tan) / f64::from(self.viewport_height)).min(0.1);
+            let cursor = if orthographic {
+                SnapCursor::orthographic(
+                    ray.origin,
+                    ray.direction,
+                    (10.0 * mm_per_pixel).clamp(0.001, 1_000_000.0),
+                )
             } else {
-                (20.0 * f64::from(tan) / f64::from(self.viewport_height)).min(0.1)
-            };
-            let cursor = SnapCursor::new(ray.origin, ray.direction, aperture)
-                .map_err(|e| ToolError::local("INVALID_ARGUMENT", e.to_string()))?;
+                SnapCursor::new(ray.origin, ray.direction, aperture)
+            }
+            .map_err(|e| ToolError::local("INVALID_ARGUMENT", e.to_string()))?;
             let context = SnapContext {
                 grids,
                 member_axes: &self.grid_scene.member_axes,
+                // T02: construction objects reach the UI snap context with the UI slice that
+                // displays them; the engine and the CLI resolve them already.
+                construction: &[],
                 plane,
                 cursor: Some(cursor),
                 sources: self.selection.snap_sources(),
@@ -294,46 +252,22 @@ impl App {
                 if let Some((hit, _)) = result
                     .candidates
                     .iter()
+                    // The active view snaps only to what it shows (V12).
                     .filter(|hit| {
-                        self.views
-                            .active
-                            .as_ref()
-                            .and_then(|id| {
-                                self.views
-                                    .collection
-                                    .iter()
-                                    .find(|v| v.id.to_string() == *id)
-                            })
-                            .is_none_or(|view| {
-                                view.contains(hit.point_world_mm)
-                                    && loaded.snapshot.element(&hit.element_id).is_none_or(
-                                        |entry| view.hidden_kinds.is_visible(entry.kind),
-                                    )
-                            })
+                        self.views.active_view().is_none_or(|view| {
+                            view.contains(hit.point_world_mm)
+                                && loaded
+                                    .snapshot
+                                    .element(&hit.element_id)
+                                    .is_none_or(|e| view.shows_kind(e.kind))
+                        })
                     })
                     .filter_map(|hit| {
                         screen_distance(hit.point_world_mm)
                             .filter(|d| *d <= 10.0)
                             .map(|d| (hit, d))
                     })
-                    .min_by(|(hit_a, a), (hit_b, b)| {
-                        let pixels = a.total_cmp(b);
-                        if model_first {
-                            let depth = |point: [f64; 3]| {
-                                point
-                                    .iter()
-                                    .zip(ray.origin)
-                                    .zip(ray.direction)
-                                    .map(|((p, o), d)| (p - o) * d)
-                                    .sum::<f64>()
-                            };
-                            pixels.then_with(|| {
-                                depth(hit_a.point_world_mm).total_cmp(&depth(hit_b.point_world_mm))
-                            })
-                        } else {
-                            pixels
-                        }
-                    })
+                    .min_by(|(_, a), (_, b)| a.total_cmp(b))
                 {
                     return self.constrain_creation(
                         hit.point_world_mm,
