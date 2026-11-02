@@ -190,6 +190,9 @@ pub struct App {
     /// What the last menu action reported, shown under the page heading.
     pub(crate) menu_note: Option<Result<String, String>>,
     pub(crate) return_to_create: bool,
+    /// A model the window should switch to, set by the menu's New and Open; Shell reads it
+    /// after the frame.
+    pub(crate) open_request: Option<PathBuf>,
     command_search: bool,
     command_focus: bool,
     command_query: String,
@@ -834,6 +837,7 @@ impl App {
             menu_section: workbench::MenuSection::default(),
             menu_note: None,
             return_to_create: false,
+            open_request: None,
             command_search: false,
             command_focus: false,
             command_query: String::new(),
@@ -927,6 +931,53 @@ impl App {
         app.reload();
         app.refresh_status();
         Ok(app)
+    }
+
+    /// The source of the model `open_request` asks for: this window's CLI, samples, author,
+    /// environment and configuration, on a store opened from the library (no workspace, no
+    /// publish target, as the start page opens one). Takes the request.
+    pub(crate) fn take_open_request(&mut self) -> Option<Source> {
+        let store = self.open_request.take()?;
+        Some(Source {
+            store,
+            cli: self.source.cli.clone(),
+            workspace: None,
+            published: None,
+            samples: self.source.samples,
+            actor: self.source.actor.clone(),
+            environment: self.source.environment.clone(),
+            author: self.source.author.clone(),
+            config_dir: self.source.config_dir.clone(),
+        })
+    }
+
+    /// Reports a switch that failed on the menu page; the window keeps its model.
+    pub(crate) fn open_failed(&mut self, why: String) {
+        self.menu_note = Some(Err(why));
+    }
+
+    /// Frees the egui textures of this window (the viewport and every view window and preview)
+    /// before it is dropped. Freeing twice is harmless.
+    pub(crate) fn release(&mut self) {
+        self.state.renderer.write().free_texture(&self.texture);
+        for window in &mut self.views.windows {
+            window.release(&self.state);
+        }
+        for (_, window) in self.views.previews.values_mut() {
+            window.release(&self.state);
+        }
+    }
+
+    /// The egui texture of the main viewport.
+    #[cfg(test)]
+    pub(crate) fn texture_id(&self) -> egui::TextureId {
+        self.texture
+    }
+
+    /// The render state the window draws with.
+    #[cfg(test)]
+    pub(crate) fn render_state(&self) -> &eframe::egui_wgpu::RenderState {
+        &self.state
     }
 
     /// Starts a refresh on a worker thread (the CLI queries and the scene build); the result is
@@ -3129,7 +3180,7 @@ impl eframe::App for App {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::{
         App, Source, WATCH_INTERVAL, load_icon, needs_refit, revisions_token, spawn_watch,
         target_size,
@@ -3218,7 +3269,7 @@ mod tests {
     /// refresh it starts fails and is never read, and a test hands it results itself. `None`,
     /// saying so, without a native adapter. The counters are this test's own, so parallel tests
     /// never count into each other (issue 167).
-    fn headless() -> Option<App> {
+    pub(crate) fn headless() -> Option<App> {
         let gpu = match pollster::block_on(Gpu::headless()) {
             Ok(gpu) => gpu,
             Err(Error::NoAdapter) => {
@@ -3255,6 +3306,13 @@ mod tests {
         };
         let stats = Arc::new(crate::stats::Stats::default());
         Some(App::new(&cc, source, stats).unwrap())
+    }
+
+    /// Shows `app` on its menu with text, as a user who opened the menu sees it: `App::ui` then
+    /// draws the menu page and returns before the viewport.
+    pub(crate) fn on_the_menu(app: &mut App) {
+        app.text = true;
+        app.menu_open = true;
     }
 
     #[test]
@@ -3692,6 +3750,61 @@ mod tests {
         // The note belongs to the page: leaving the menu clears it.
         app.close_menu();
         assert_eq!(app.menu_note, None);
+    }
+
+    #[test]
+    fn release_frees_the_viewport_and_view_window_textures() {
+        let Some(mut app) = headless() else { return };
+        let camera = crate::camera::Camera::new([0.0; 3], 1000.0, 1.6).unwrap();
+        let mut window = crate::views::ViewWindow::new(None, camera, 0);
+        window.resize(&app.state, 64, 64, None, &app.stats).unwrap();
+        let window_texture = window.texture().unwrap();
+        app.views.windows.push(window);
+        let texture = app.texture_id();
+        {
+            let renderer = app.state.renderer.read();
+            assert!(renderer.texture(&texture).is_some());
+            assert!(renderer.texture(&window_texture).is_some());
+        }
+        app.release();
+        {
+            let renderer = app.state.renderer.read();
+            assert!(renderer.texture(&texture).is_none());
+            assert!(renderer.texture(&window_texture).is_none());
+        }
+        // A second release finds nothing left to free.
+        app.release();
+        assert!(app.state.renderer.read().texture(&texture).is_none());
+    }
+
+    #[test]
+    fn an_open_request_keeps_the_window_identity() {
+        let Some(mut app) = headless() else { return };
+        app.source.workspace = Some("/w/personal".into());
+        app.source.published = Some("/w/published".into());
+        app.source.samples = Some(4);
+        app.source.actor = Some("actor".into());
+        app.source.environment = Some("Default".into());
+        app.source.author = Some("Ada".into());
+        app.source.config_dir = Some("/c/config".into());
+        assert!(app.take_open_request().is_none());
+        app.open_request = Some("/m/Model B".into());
+        let source = app.take_open_request().unwrap();
+        assert_eq!(source.store, std::path::PathBuf::from("/m/Model B"));
+        assert_eq!(source.cli, app.source.cli);
+        assert_eq!(source.workspace, None);
+        assert_eq!(source.published, None);
+        assert_eq!(source.samples, Some(4));
+        assert_eq!(source.actor.as_deref(), Some("actor"));
+        assert_eq!(source.environment.as_deref(), Some("Default"));
+        assert_eq!(source.author.as_deref(), Some("Ada"));
+        assert_eq!(
+            source.config_dir,
+            Some(std::path::PathBuf::from("/c/config"))
+        );
+        // The request is consumed.
+        assert_eq!(app.open_request, None);
+        assert!(app.take_open_request().is_none());
     }
 
     #[test]
