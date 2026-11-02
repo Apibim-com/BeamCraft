@@ -397,8 +397,7 @@ impl App {
         self.beam.reset();
         self.ghost_end = None;
         self.beam_hover = None;
-        self.renderer
-            .set_ghost(&self.state.device, &self.state.queue, None);
+        self.clear_ghost();
         self.plane_pick = false;
         self.bench = bench;
         match bench {
@@ -429,8 +428,7 @@ impl App {
                 self.beam_mode = false;
                 self.beam.reset();
                 self.ghost_end = None;
-                self.renderer
-                    .set_ghost(&self.state.device, &self.state.queue, None);
+                self.clear_ghost();
             }
         }
         if bench == Bench::Annotations {
@@ -680,13 +678,14 @@ impl App {
                             }
                         });
                         if tool_button(ui, Icon::Block, "View properties", self.views.editing, true).clicked() {
-                            match self.views.active {
+                            match self.views.active() {
                                 Some(id) => self.edit_view(id),
                                 None => self.views.editing = !self.views.editing,
                             }
                         }
                         let shortcut = ui.ctx().format_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::P));
-                        if tool_button(ui, Icon::Fit, "3D / plane", self.views.toggled.is_some(), true)
+                        let toggled = self.views.active_pane().is_some_and(|p| p.toggled.is_some());
+                        if tool_button(ui, Icon::Fit, "3D / plane", toggled, true)
                             .on_hover_text(format!("Look straight at the view plane and back ({shortcut})"))
                             .clicked()
                         {
@@ -701,7 +700,7 @@ impl App {
                             }
                         });
                         if tool_button(ui, Icon::Copy, "New view window", false, self.views.windows.len() < crate::views::MAX_WINDOWS).clicked() {
-                            self.open_view_window(self.views.active);
+                            self.open_view_window(self.views.active());
                         }
                         if tool_button(ui, Icon::Grid, "Tile windows", false, !self.views.windows.is_empty()).clicked() {
                             self.views.tile = true;
@@ -715,13 +714,14 @@ impl App {
                             (beamcraft_engine::RenderMode::Shaded, "Shaded"),
                             (beamcraft_engine::RenderMode::SelectedOnly, "Selected only"),
                         ] {
-                            if tool_button(ui, Icon::Block, label, self.mode == mode, true).clicked() {
-                                self.mode = mode;
+                            if tool_button(ui, Icon::Block, label, self.active_mode() == mode, true).clicked() {
+                                self.set_active_mode(mode);
                             }
                         }
-                        if tool_button(ui, Icon::Grid, "Grid guides", self.grids_visible, true).clicked() {
-                            self.grids_visible = !self.grids_visible;
-                            if !self.grids_visible { self.grid_edit = None; }
+                        if tool_button(ui, Icon::Grid, "Grid guides", self.grids_shown(), true).clicked() {
+                            let on = !self.grids_shown();
+                            self.set_grids_shown(on);
+                            if !on { self.grid_edit = None; }
                         }
                     });
                     group(ui, "Colour", &mut |ui| {
@@ -1043,12 +1043,12 @@ impl App {
                     .clicked()
             {
                 match label {
-                    "View properties" => match self.views.active {
+                    "View properties" => match self.views.active() {
                         Some(id) => self.edit_view(id),
                         None => self.views.editing = true,
                     },
                     "3D / plane view" => self.toggle_view_plane(),
-                    "New view window" => self.open_view_window(self.views.active),
+                    "New view window" => self.open_view_window(self.views.active()),
                     "Tile view windows" => self.views.tile = true,
                     _ => {
                         if let Some(next) = self.views.next_open() {

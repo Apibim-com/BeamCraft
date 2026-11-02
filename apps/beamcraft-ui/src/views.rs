@@ -435,14 +435,12 @@ pub struct Views {
     pub book: ViewBook,
     /// Why the last action failed, or what it did.
     pub note: Option<Result<String, String>>,
-    /// The view the main viewport shows; `None` is the free 3D view.
-    pub active: Option<Uuid7>,
+    /// The panes of the work area in z-order: the last one is active.
+    pub panes: Vec<crate::panes::ViewPane>,
+    /// The last key handed to a pane.
+    pub pane_serial: u64,
     /// The session camera of each opened view, so returning to a view keeps its navigation.
     pub cameras: BTreeMap<Uuid7, Camera>,
-    /// The free 3D camera and display, kept while a view is active.
-    pub spatial: Option<(Camera, RenderMode, bool)>,
-    /// The camera Ctrl+P returns to.
-    pub toggled: Option<Camera>,
     /// Views opened in this session, in opening order (Ctrl+Tab cycles them).
     pub open: Vec<Uuid7>,
     /// The properties form.
@@ -505,9 +503,24 @@ pub fn preview_key(token: &str, view: &ModelView) -> u64 {
 }
 
 impl Views {
+    /// The view the active pane shows; `None` is the free 3D view or no pane at all.
+    pub fn active(&self) -> Option<Uuid7> {
+        self.panes.last().and_then(|p| p.view)
+    }
+
+    /// The active pane: the last in z-order.
+    pub fn active_pane(&self) -> Option<&crate::panes::ViewPane> {
+        self.panes.last()
+    }
+
+    /// The active pane, to change.
+    pub fn active_pane_mut(&mut self) -> Option<&mut crate::panes::ViewPane> {
+        self.panes.last_mut()
+    }
+
     /// The active view.
     pub fn active_view(&self) -> Option<&ModelView> {
-        self.active.and_then(|id| self.book.get(&id))
+        self.active().and_then(|id| self.book.get(&id))
     }
 
     /// The hidden kinds of the active view.
@@ -586,7 +599,9 @@ impl Views {
             .copied()
             .filter(|id| self.book.get(id).is_some())
             .collect();
-        let at = self.active.and_then(|a| open.iter().position(|v| *v == a));
+        let at = self
+            .active()
+            .and_then(|a| open.iter().position(|v| *v == a));
         match at {
             Some(i) => open.get((i + 1) % open.len().max(1)).copied(),
             None => open.first().copied(),
@@ -682,8 +697,7 @@ pub struct ViewWindow {
     /// Grid guides shown.
     pub(crate) grids: bool,
     pub(crate) title: String,
-    renderer: Option<crate::render::Renderer>,
-    texture: Option<egui::TextureId>,
+    target: crate::panes::RenderTarget,
     /// The scene of this window's hidden kinds when they differ from the main scene's, keyed by
     /// the snapshot token it was built for.
     pub(crate) filtered: Option<(String, KindFilter, crate::render::Uploaded)>,
@@ -702,8 +716,7 @@ impl ViewWindow {
             mode: view.map_or(RenderMode::Shaded, |v| v.render_mode),
             grids: view.is_none_or(|v| v.grids_visible),
             title: view.map_or_else(|| format!("3D view {}", index + 2), |v| v.name.clone()),
-            renderer: None,
-            texture: None,
+            target: crate::panes::RenderTarget::empty(),
             filtered: None,
             place: None,
         }
@@ -719,62 +732,21 @@ impl ViewWindow {
         samples: Option<u32>,
         stats: &crate::stats::Stats,
     ) -> Result<f32, crate::Error> {
-        if width == 0 || height == 0 {
-            // egui reports a zero-size content rect before the window lays out; wait for real
-            // pixels rather than building empty targets.
-            return Err(crate::Error::Input("window not laid out yet"));
-        }
-        if let Some(renderer) = &mut self.renderer {
-            if (renderer.width != width || renderer.height != height)
-                && renderer.resize(&state.device, width, height, stats)?
-                && let Some(texture) = self.texture
-            {
-                // The targets changed: egui's copy of the texture follows them.
-                state
-                    .renderer
-                    .write()
-                    .update_egui_texture_from_wgpu_texture(
-                        &state.device,
-                        &renderer.view,
-                        wgpu::FilterMode::Linear,
-                        texture,
-                    );
-            }
-        } else {
-            let renderer = crate::render::Renderer::with_samples(
-                &state.adapter,
-                &state.device,
-                width,
-                height,
-                samples,
-                stats,
-            )?;
-            let texture = state.renderer.write().register_native_texture(
-                &state.device,
-                &renderer.view,
-                wgpu::FilterMode::Linear,
-            );
-            self.texture = Some(texture);
-            self.renderer = Some(renderer);
-        }
-        let renderer = self.renderer.as_ref().ok_or(crate::Error::NoAdapter)?;
-        Ok((renderer.width as f32 / renderer.height as f32).clamp(0.05, 20.0))
+        self.target.resize(state, width, height, samples, stats)
     }
 
     /// The egui texture of the drawn image, once targets exist.
     pub(crate) fn texture(&self) -> Option<egui::TextureId> {
-        self.texture
+        self.target.texture()
     }
 
     pub(crate) fn renderer(&self) -> Option<&crate::render::Renderer> {
-        self.renderer.as_ref()
+        self.target.renderer()
     }
 
     /// Frees the egui texture of a closed window.
     pub(crate) fn release(&mut self, state: &eframe::egui_wgpu::RenderState) {
-        if let Some(texture) = self.texture.take() {
-            state.renderer.write().free_texture(&texture);
-        }
+        self.target.release(state);
     }
 }
 
@@ -914,9 +886,14 @@ mod tests {
         assert!(!views.selected.contains(&id(1)));
         // Ctrl+Tab cycles the open views.
         views.open = vec![id(1), id(3)];
-        views.active = Some(id(1));
+        assert_eq!(views.active(), None, "no pane is open");
+        let camera = Camera::new([0.0; 3], 1000.0, 1.6).unwrap();
+        views
+            .panes
+            .push(crate::panes::ViewPane::new(None, camera, 1));
+        views.panes.last_mut().unwrap().view = Some(id(1));
         assert_eq!(views.next_open(), Some(id(3)));
-        views.active = Some(id(3));
+        views.panes.last_mut().unwrap().view = Some(id(3));
         assert_eq!(views.next_open(), Some(id(1)));
         views.forget(&id(1));
         assert_eq!(views.open, [id(3)]);

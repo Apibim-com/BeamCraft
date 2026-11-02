@@ -239,7 +239,7 @@ mod tests {
         let mut shell = shell(&ctx, &config);
         on_the_menu(&mut app);
         app.open_request = Some(config.join("Other"));
-        let old = app.texture_id();
+        let old = app.texture_id().unwrap();
         let state = app.render_state().clone();
         assert!(app.appearance.is_some());
         shell.app = Some(app);
@@ -250,7 +250,7 @@ mod tests {
         let next = shell.app.as_ref().unwrap();
         assert!(next.from_library);
         assert!(next.appearance.is_some());
-        assert_ne!(next.texture_id(), old);
+        assert_ne!(next.texture_id(), Some(old));
         let retired = shell.retired.as_ref().unwrap();
         assert!(retired.appearance.is_none());
         // The frame just built may still paint the old texture: it is freed only next frame.

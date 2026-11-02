@@ -37,6 +37,7 @@ pub mod edit;
 pub mod grid;
 pub mod library;
 pub mod metrics;
+pub mod panes;
 pub mod perf;
 pub mod preview;
 pub mod props;

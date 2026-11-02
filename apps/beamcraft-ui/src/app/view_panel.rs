@@ -85,36 +85,50 @@ impl App {
     /// opened before comes back as the user left it; its render mode, grid guides, hidden kinds
     /// and plane (the input frame) come from the view.
     pub(crate) fn activate_view(&mut self, id: Option<Uuid7>) {
-        if self.views.active == id {
+        if self.views.active() == id {
             return;
         }
         let input = self.tools.plane;
-        match self.views.active {
+        let Some((current, camera, mode, grids)) = self
+            .views
+            .active_pane()
+            .map(|p| (p.view, p.camera, p.mode, p.grids))
+        else {
+            return;
+        };
+        match current {
             Some(current) => {
-                self.views.cameras.insert(current, self.camera);
+                self.views.cameras.insert(current, camera);
             }
             None => {
-                self.views.spatial = Some((self.camera, self.mode, self.grids_visible));
+                if let Some(pane) = self.views.active_pane_mut() {
+                    pane.spatial = Some((camera, mode, grids));
+                }
                 self.views_input = Some(input);
             }
         }
-        self.views.toggled = None;
+        if let Some(pane) = self.views.active_pane_mut() {
+            pane.toggled = None;
+        }
         match id.and_then(|id| self.views.book.get(&id).cloned()) {
             Some(view) => {
                 let camera = match self.views.cameras.get(&view.id) {
                     Some(camera) => Ok(*camera),
                     None => Camera::from_view(&view, self.view_origin(), self.view_extent()),
                 };
-                match camera {
-                    Ok(camera) => self.camera = camera,
+                let camera = match camera {
+                    Ok(camera) => camera,
                     Err(e) => {
                         self.view_note(Err(e.to_string()));
                         return;
                     }
+                };
+                if let Some(pane) = self.views.active_pane_mut() {
+                    pane.camera = camera;
+                    pane.mode = view.render_mode;
+                    pane.grids = view.grids_visible;
+                    pane.set_view(Some(&view));
                 }
-                self.mode = view.render_mode;
-                self.grids_visible = view.grids_visible;
-                self.views.active = Some(view.id);
                 if !self.views.open.contains(&view.id) {
                     self.views.open.push(view.id);
                 }
@@ -122,11 +136,13 @@ impl App {
                 self.tool_note = None;
             }
             None => {
-                self.views.active = None;
-                if let Some((camera, mode, grids)) = self.views.spatial.take() {
-                    self.camera = camera;
-                    self.mode = mode;
-                    self.grids_visible = grids;
+                if let Some(pane) = self.views.active_pane_mut() {
+                    pane.set_view(None);
+                    if let Some((camera, mode, grids)) = pane.spatial.take() {
+                        pane.camera = camera;
+                        pane.mode = mode;
+                        pane.grids = grids;
+                    }
                 }
                 if let Some(plane) = self.views_input.take() {
                     self.install_plane(plane);
@@ -141,10 +157,15 @@ impl App {
 
     /// Ctrl+P: looks straight at the active view's plane (or the work plane), and back again.
     pub(crate) fn toggle_view_plane(&mut self) {
-        if let Some(previous) = self.views.toggled.take() {
-            self.camera = previous;
+        if let Some(pane) = self.views.active_pane_mut()
+            && let Some(previous) = pane.toggled.take()
+        {
+            pane.camera = previous;
             return;
         }
+        let Some(camera) = self.views.active_pane().map(|p| p.camera) else {
+            return;
+        };
         let origin = self.view_origin();
         let plane = self
             .views
@@ -152,11 +173,13 @@ impl App {
             .map(|v| v.plane)
             .or(self.tools.plane)
             .unwrap_or_default();
-        let span = self.camera.frame(origin).map_or(10_000.0, |(_, s)| s);
+        let span = camera.frame(origin).map_or(10_000.0, |(_, s)| s);
         match Camera::aligned_to(plane, origin, span, self.view_extent()) {
             Ok(aligned) => {
-                self.views.toggled = Some(self.camera);
-                self.camera = aligned;
+                if let Some(pane) = self.views.active_pane_mut() {
+                    pane.toggled = Some(pane.camera);
+                    pane.camera = aligned;
+                }
             }
             Err(e) => self.view_note(Err(e.to_string())),
         }
@@ -164,8 +187,11 @@ impl App {
 
     /// One of the six directional cameras about the current target; the input plane stays.
     pub(crate) fn orient_view(&mut self, direction: Direction) {
+        let Some(camera) = self.views.active_pane().map(|p| p.camera) else {
+            return;
+        };
         let origin = self.view_origin();
-        let Ok((frame, span)) = self.camera.frame(origin) else {
+        let Ok((frame, span)) = camera.frame(origin) else {
             return;
         };
         let aligned = direction.plane(frame.origin()).and_then(|plane| {
@@ -173,10 +199,12 @@ impl App {
         });
         match aligned {
             Ok(aligned) => {
-                if self.views.toggled.is_none() {
-                    self.views.toggled = Some(self.camera);
+                if let Some(pane) = self.views.active_pane_mut() {
+                    if pane.toggled.is_none() {
+                        pane.toggled = Some(pane.camera);
+                    }
+                    pane.camera = aligned;
                 }
-                self.camera = aligned;
             }
             Err(e) => self.view_note(Err(e)),
         }
@@ -190,17 +218,25 @@ impl App {
             construction,
             ..Form::default()
         };
-        if let Ok((_, span)) = self.camera.frame(self.view_origin()) {
+        let pane = self
+            .views
+            .active_pane()
+            .map(|p| (p.camera, p.mode, p.grids));
+        if let Some((camera, _, _)) = pane
+            && let Ok((_, span)) = camera.frame(self.view_origin())
+        {
             form.span = format!("{}", span.round().max(1.0));
         }
-        if construction == Construction::CurrentCamera {
-            form.projection = if self.camera.is_orthographic() {
+        if construction == Construction::CurrentCamera
+            && let Some((camera, mode, grids)) = pane
+        {
+            form.projection = if camera.is_orthographic() {
                 Projection::Orthographic
             } else {
                 Projection::Perspective
             };
-            form.mode = self.mode;
-            form.grids = self.grids_visible;
+            form.mode = mode;
+            form.grids = grids;
         }
         form.name = self.views.book.next_default_name();
         if matches!(construction, Construction::GridAxes | Construction::Level) {
@@ -358,11 +394,12 @@ impl App {
         self.views.book.update(view).map_err(|e| e.to_string())?;
         // The camera follows the new definition; a session camera would hide the change.
         self.views.cameras.remove(&id);
-        if self.views.active == Some(id) {
-            self.views.active = None;
-            self.views
-                .spatial
-                .get_or_insert((self.camera, self.mode, self.grids_visible));
+        if self.views.active() == Some(id) {
+            if let Some(pane) = self.views.active_pane_mut() {
+                pane.set_view(None);
+                let display = (pane.camera, pane.mode, pane.grids);
+                pane.spatial.get_or_insert(display);
+            }
             self.activate_view(Some(id));
         }
         for window in self.views.windows.iter_mut().filter(|w| w.view == Some(id)) {
@@ -414,7 +451,12 @@ impl App {
             }
             Construction::WorkPlane => single(self.tools.plane.unwrap_or_default()),
             Construction::CurrentCamera => {
-                let (plane, _) = self.camera.frame(origin).map_err(|e| e.to_string())?;
+                let camera = self
+                    .views
+                    .active_pane()
+                    .map(|p| p.camera)
+                    .ok_or_else(|| "Open a view to take its camera.".to_owned())?;
+                let (plane, _) = camera.frame(origin).map_err(|e| e.to_string())?;
                 single(plane)
             }
             Construction::GridAxes => {
@@ -882,7 +924,7 @@ impl App {
         }
         ui.separator();
         if ui
-            .selectable_label(self.views.active.is_none(), "{3D}")
+            .selectable_label(self.views.active().is_none(), "{3D}")
             .on_hover_text("The free 3D view of the whole model")
             .clicked()
         {
@@ -936,7 +978,7 @@ impl App {
                                 }
                             }
                             let selected = self.views.selected.contains(&view.id)
-                                || self.views.active == Some(view.id);
+                                || self.views.active() == Some(view.id);
                             let label = format!(
                                 "{}{}{}",
                                 if view.favorite { "★ " } else { "" },
@@ -1049,7 +1091,7 @@ impl App {
                 }
             }
             BrowserAction::Close(id) => {
-                if self.views.active == Some(id) {
+                if self.views.active() == Some(id) {
                     self.activate_view(None);
                 }
                 self.close_view(id);
@@ -1057,7 +1099,7 @@ impl App {
             BrowserAction::Delete(id) => self.views.confirm_delete = Some(id),
             BrowserAction::ConfirmDelete(id) => {
                 self.views.confirm_delete = None;
-                if self.views.active == Some(id) {
+                if self.views.active() == Some(id) {
                     self.activate_view(None);
                 }
                 self.close_view(id);
@@ -1076,7 +1118,7 @@ impl App {
             }
             BrowserAction::CloseAll(ids) => {
                 for id in ids {
-                    if self.views.active == Some(id) {
+                    if self.views.active() == Some(id) {
                         self.activate_view(None);
                     }
                     self.close_view(id);
@@ -1618,8 +1660,8 @@ impl App {
         if reset && let Some(id) = self.views.form.id {
             self.edit_view(id);
         }
-        if save_camera {
-            match self.camera.frame(self.view_origin()) {
+        if save_camera && let Some(camera) = self.views.active_pane().map(|p| p.camera) {
+            match camera.frame(self.view_origin()) {
                 Ok((plane, span)) => {
                     self.views.form.plane = plane;
                     self.views.form.span = format!("{}", span.round().max(1.0));
@@ -1665,7 +1707,10 @@ impl App {
                 || Camera::from_view(view, self.view_origin(), self.view_extent()),
                 Ok,
             ),
-            None => Ok(self.camera),
+            None => self
+                .views
+                .active_pane()
+                .map_or_else(|| Camera::new([0.0; 3], 1000.0, 1.6), |p| Ok(p.camera)),
         };
         match camera {
             Ok(camera) => {
