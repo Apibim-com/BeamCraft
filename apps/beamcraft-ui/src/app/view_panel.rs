@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! The window side of the V12 model views: the browser, the view-properties window, view
+//! The window side of the V12 model views: the browser, the view panel in the inspector, view
 //! construction by picking in the model, activation and the 3D/plane toggle, and the extra view
 //! windows. Everything here is display state: the model is never written, and the engine admits
 //! every view before it is kept.
@@ -9,8 +9,10 @@
 use super::App;
 use super::workbench::Bench;
 use crate::camera::Camera;
+use crate::theme;
 use crate::views::{
-    AxisBatch, Construction, Direction, Dock, Form, MAX_WINDOWS, Picking, SideChoice, ViewWindow,
+    AxisBatch, Construction, Direction, Dock, Form, MAX_WINDOWS, Picking, SideChoice, Subject,
+    ViewWindow,
 };
 use beamcraft_engine::RenderMode;
 use beamcraft_engine::views::{self, AxisPick, ModelView, PartSide, Projection};
@@ -210,10 +212,14 @@ impl App {
         }
     }
 
-    /// Opens the properties window on a new view built by `construction`; the constructions
-    /// that pick in the model start picking at once.
+    /// Opens the view panel on a new view built by `construction`; the constructions that pick
+    /// in the model start picking at once, and Apply creates the view.
     pub(crate) fn begin_view(&mut self, construction: Construction) {
-        self.set_bench(Bench::Select);
+        self.set_bench(Bench::View);
+        if self.bench != Bench::View {
+            self.view_note(Err("Wait for the running command to finish.".into()));
+            return;
+        }
         let mut form = Form {
             construction,
             ..Form::default()
@@ -246,19 +252,58 @@ impl App {
             };
         }
         self.views.form = form;
-        self.views.editing = true;
+        self.views.subject = Subject::NewView;
         self.views.picking = (construction.picks() > 0).then(|| Picking {
             construction,
             ..Picking::default()
         });
     }
 
-    /// Opens the properties window on an existing view.
+    /// Opens the view panel on an existing view; Apply updates it.
     pub(crate) fn edit_view(&mut self, id: Uuid7) {
-        if let Some(view) = self.views.book.get(&id) {
-            self.views.form = Form::from_view(view);
-            self.views.editing = true;
-            self.views.picking = None;
+        let Some(form) = self.views.book.get(&id).map(Form::from_view) else {
+            return;
+        };
+        // The bench stays while another command runs (`set_bench`); the panel then stays shut.
+        self.set_bench(Bench::View);
+        if self.bench != Bench::View {
+            return;
+        }
+        self.views.form = form;
+        self.views.subject = Subject::SavedView(id);
+        self.views.picking = None;
+    }
+
+    /// Shows the active pane's view in the panel: its properties, or the free 3D view's display.
+    /// A panel that already shows that view (or that free pane) is left as it is, so unsaved edits
+    /// in the form survive another empty click.
+    pub(crate) fn show_view_properties(&mut self) {
+        let pane = self.views.active_pane().map(|p| p.key);
+        let active = self.views.active();
+        let same = self.bench == Bench::View
+            && match (self.views.subject, active) {
+                (Subject::SavedView(shown), Some(id)) => shown == id,
+                (Subject::FreeView(shown), None) => shown == pane,
+                _ => false,
+            };
+        if same {
+            return;
+        }
+        match active {
+            Some(id) => self.edit_view(id),
+            None => {
+                self.set_bench(Bench::View);
+                if self.bench != Bench::View {
+                    return;
+                }
+                self.views.form = Form {
+                    construction: Construction::CurrentCamera,
+                    name: self.views.book.next_default_name(),
+                    ..Form::default()
+                };
+                self.views.picking = None;
+                self.views.subject = Subject::FreeView(pane);
+            }
         }
     }
 
@@ -284,7 +329,8 @@ impl App {
         }
     }
 
-    /// One click while a view pick runs: a face, then points. The last pick builds the view.
+    /// One click while a view pick runs: a face, then points. The last pick fills the plane;
+    /// Apply builds the view.
     pub(crate) fn view_click(&mut self, ray: crate::edit::Ray) {
         let Some(mut picking) = self.views.picking.clone() else {
             return;
@@ -325,8 +371,9 @@ impl App {
         match self.picked_plane(&picking) {
             Ok(plane) => {
                 self.views.form.plane = plane;
+                self.views.form.picked = true;
                 self.views.picking = None;
-                self.submit_view();
+                self.view_note(Ok("Picked. Review the properties and press Apply.".into()));
             }
             Err(e) => {
                 // A degenerate last point is dropped; the earlier points stay.
@@ -364,6 +411,10 @@ impl App {
     /// Builds or updates the views the form describes and keeps them.
     pub(crate) fn submit_view(&mut self) {
         if self.views.job.is_some() {
+            return;
+        }
+        if self.views.picking.is_some() {
+            self.view_note(Err("Pick the points in the model first.".into()));
             return;
         }
         let result = match self.views.form.id {
@@ -442,9 +493,8 @@ impl App {
             | Construction::ThreePoints
             | Construction::Surface
             | Construction::SurfaceEdge => {
-                if let Some(picking) = &self.views.picking
-                    && picking.done() < picking.construction.picks()
-                {
+                // A cancelled pick leaves no plane: never a default one.
+                if !form.picked {
                     return Err("Pick the points in the model first.".into());
                 }
                 single(form.plane)
@@ -563,11 +613,12 @@ impl App {
             .book
             .insert_all(made)
             .map_err(|e| e.to_string())?;
-        self.views.editing = false;
         if let Some(first) = first {
             self.views.selected.clear();
             self.views.selected.insert(first);
             self.activate_view(Some(first));
+            // The panel moves on to the created view's properties.
+            self.edit_view(first);
         }
         Ok(Some(if count == 1 {
             "The view was created; the model is unchanged.".into()
@@ -716,13 +767,13 @@ impl App {
                     .filter(|id| !before.contains(id))
                     .collect();
                 self.views.book = book;
-                self.views.editing = false;
                 self.view_note(Ok(format!(
                     "{} view(s) were created; the model is unchanged.",
                     added.len()
                 )));
                 if let Some(first) = added.first().copied() {
                     self.activate_view(Some(first));
+                    self.edit_view(first);
                 }
             }
             Err(e) => self.view_note(Err(e)),
@@ -1274,13 +1325,14 @@ impl App {
             .and_then(|(_, w)| w.texture())
     }
 
-    /// The view-properties window: the name, folder and marks, how a new view is built, and
-    /// every display property. Nothing changes until Create or Apply.
-    pub(crate) fn view_properties_window(&mut self, ctx: &egui::Context) {
-        if !self.views.editing {
+    /// The view panel of the inspector: for a new or a saved view the name, folder and marks,
+    /// how a new view is built, and every display property, where nothing changes until Apply;
+    /// for the free 3D view its display and "Save as view".
+    pub(crate) fn view_panel(&mut self, ui: &mut egui::Ui) {
+        if matches!(self.views.subject, Subject::FreeView(_)) {
+            self.free_view_panel(ui);
             return;
         }
-        let mut open = true;
         let mut submit = false;
         let mut reset = false;
         let mut save_camera = false;
@@ -1320,338 +1372,314 @@ impl App {
             .map(|v| (v.id, v.name.clone()))
             .collect();
         let picking = self.views.picking.clone();
-        let title = if self.views.form.id.is_some() {
-            "View properties"
+        let footer = if self.views.note.is_some() {
+            140.0
         } else {
-            "New view"
+            90.0
         };
-        egui::Window::new(title)
-            .id(egui::Id::unique("view-properties"))
-            .open(&mut open)
-            .default_width(320.0)
-            .resizable(true)
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical()
-                    .max_height(420.0)
-                    .show(ui, |ui| {
-                        ui.add_enabled_ui(!busy, |ui| {
-                            let form = &mut self.views.form;
-                            text(ui, "Name", &mut form.name);
-                            text(ui, "Folder", &mut form.folder);
-                            ui.horizontal(|ui| {
-                                ui.checkbox(&mut form.favorite, "Favourite");
-                                ui.checkbox(&mut form.temporary, "Temporary");
-                            });
-                            if form.id.is_none() {
-                                ui.separator();
-                                ui.label(egui::RichText::new(form.construction.label()).strong());
-                                match form.construction {
-                                    Construction::PlanXy
-                                    | Construction::ElevationXz
-                                    | Construction::ElevationYz => {
-                                        text(ui, "Plane offset (mm)", &mut form.offset)
-                                    }
-                                    Construction::TwoPoints
-                                    | Construction::ThreePoints
-                                    | Construction::Surface
-                                    | Construction::SurfaceEdge => {
-                                        let done = picking.as_ref().map_or(0, Picking::done);
-                                        ui.label(format!(
-                                            "{done} of {} picked in the model",
-                                            form.construction.picks()
-                                        ));
-                                        if let Some(p) = &picking {
-                                            ui.small(p.construction.prompt(p.done()));
+        egui::ScrollArea::vertical()
+            .id_salt("view-form")
+            .max_height((ui.available_height() - footer).max(0.0))
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.add_enabled_ui(!busy, |ui| {
+                    let form = &mut self.views.form;
+                    text(ui, "Name", &mut form.name);
+                    text(ui, "Folder", &mut form.folder);
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut form.favorite, "Favourite");
+                        ui.checkbox(&mut form.temporary, "Temporary");
+                    });
+                    if form.id.is_none() {
+                        ui.separator();
+                        ui.label(egui::RichText::new(form.construction.label()).strong());
+                        match form.construction {
+                            Construction::PlanXy
+                            | Construction::ElevationXz
+                            | Construction::ElevationYz => {
+                                text(ui, "Plane offset (mm)", &mut form.offset)
+                            }
+                            Construction::TwoPoints
+                            | Construction::ThreePoints
+                            | Construction::Surface
+                            | Construction::SurfaceEdge => {
+                                let done = picking.as_ref().map_or(0, Picking::done);
+                                ui.label(format!(
+                                    "{done} of {} picked in the model",
+                                    form.construction.picks()
+                                ));
+                                if let Some(p) = &picking {
+                                    ui.small(p.construction.prompt(p.done()));
+                                }
+                                restart_pick = ui.button("Restart picking").clicked();
+                            }
+                            Construction::WorkPlane => {
+                                ui.small("The view lies on the current work plane.");
+                            }
+                            Construction::CurrentCamera => {
+                                ui.small("The view keeps the camera as it is now.");
+                            }
+                            Construction::GridAxes => {
+                                if grids.is_empty() {
+                                    ui.small("The model has no grid.");
+                                }
+                                form.grid = form.grid.min(grids.len().saturating_sub(1));
+                                egui::ComboBox::from_id_salt("view-grid")
+                                    .selected_text(
+                                        grids.get(form.grid).map_or("choose…", |(n, _)| n),
+                                    )
+                                    .show_ui(ui, |ui| {
+                                        for (i, (name, _)) in grids.iter().enumerate() {
+                                            ui.selectable_value(&mut form.grid, i, name);
                                         }
-                                        restart_pick = ui.button("Restart picking").clicked();
-                                    }
-                                    Construction::WorkPlane => {
-                                        ui.small("The view lies on the current work plane.");
-                                    }
-                                    Construction::CurrentCamera => {
-                                        ui.small("The view keeps the camera as it is now.");
-                                    }
-                                    Construction::GridAxes => {
-                                        if grids.is_empty() {
-                                            ui.small("The model has no grid.");
-                                        }
-                                        form.grid = form.grid.min(grids.len().saturating_sub(1));
-                                        egui::ComboBox::from_id_salt("view-grid")
-                                            .selected_text(
-                                                grids.get(form.grid).map_or("choose…", |(n, _)| n),
-                                            )
+                                    });
+                                ui.horizontal(|ui| {
+                                    ui.selectable_value(
+                                        &mut form.axis_batch,
+                                        AxisBatch::Single,
+                                        "One axis",
+                                    );
+                                    ui.selectable_value(
+                                        &mut form.axis_batch,
+                                        AxisBatch::Families,
+                                        "Batch by family",
+                                    );
+                                });
+                                match form.axis_batch {
+                                    AxisBatch::Single => {
+                                        let labels = grids
+                                            .get(form.grid)
+                                            .map(|(_, l)| l.clone())
+                                            .unwrap_or_default();
+                                        egui::ComboBox::from_id_salt("view-axis")
+                                            .selected_text(if form.axis.is_empty() {
+                                                "choose an axis"
+                                            } else {
+                                                form.axis.as_str()
+                                            })
                                             .show_ui(ui, |ui| {
-                                                for (i, (name, _)) in grids.iter().enumerate() {
-                                                    ui.selectable_value(&mut form.grid, i, name);
-                                                }
-                                            });
-                                        ui.horizontal(|ui| {
-                                            ui.selectable_value(
-                                                &mut form.axis_batch,
-                                                AxisBatch::Single,
-                                                "One axis",
-                                            );
-                                            ui.selectable_value(
-                                                &mut form.axis_batch,
-                                                AxisBatch::Families,
-                                                "Batch by family",
-                                            );
-                                        });
-                                        match form.axis_batch {
-                                            AxisBatch::Single => {
-                                                let labels = grids
-                                                    .get(form.grid)
-                                                    .map(|(_, l)| l.clone())
-                                                    .unwrap_or_default();
-                                                egui::ComboBox::from_id_salt("view-axis")
-                                                    .selected_text(if form.axis.is_empty() {
-                                                        "choose an axis"
-                                                    } else {
-                                                        form.axis.as_str()
-                                                    })
-                                                    .show_ui(ui, |ui| {
-                                                        for label in labels {
-                                                            ui.selectable_value(
-                                                                &mut form.axis,
-                                                                label.clone(),
-                                                                label,
-                                                            );
-                                                        }
-                                                    });
-                                            }
-                                            AxisBatch::Families => {
-                                                for (i, family) in
-                                                    ["U", "V"].into_iter().enumerate()
-                                                {
-                                                    if let (Some(pick), Some(prefix)) = (
-                                                        form.families.get_mut(i),
-                                                        form.prefixes.get_mut(i),
-                                                    ) {
-                                                        axis_combo(
-                                                            ui,
-                                                            &format!("view-family-{family}"),
-                                                            &format!("{family} axes"),
-                                                            pick,
-                                                        );
-                                                        text(ui, "Name prefix", prefix);
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    Construction::Level => {
-                                        let mut batch = form.levels.is_some();
-                                        ui.horizontal(|ui| {
-                                            ui.selectable_value(&mut batch, false, "One level");
-                                            ui.selectable_value(&mut batch, true, "Batch");
-                                        });
-                                        match (batch, form.levels) {
-                                            (false, _) => {
-                                                form.levels = None;
-                                                text(ui, "Level name", &mut form.level);
-                                            }
-                                            (true, current) => {
-                                                let mut pick = current.unwrap_or(AxisPick::All);
-                                                axis_combo(ui, "view-levels", "Levels", &mut pick);
-                                                form.levels = Some(pick);
-                                            }
-                                        }
-                                        ui.small(
-                                            "Batch views are named by the prefix and the level.",
-                                        );
-                                    }
-                                    Construction::Part | Construction::Assembly => {
-                                        let label = match form.side {
-                                            SideChoice::Four => "four views",
-                                            SideChoice::One(side) => side.as_str(),
-                                        };
-                                        egui::ComboBox::from_id_salt("view-side")
-                                            .selected_text(label)
-                                            .show_ui(ui, |ui| {
-                                                ui.selectable_value(
-                                                    &mut form.side,
-                                                    SideChoice::Four,
-                                                    "four views",
-                                                );
-                                                for side in [
-                                                    PartSide::Front,
-                                                    PartSide::Back,
-                                                    PartSide::Top,
-                                                    PartSide::Bottom,
-                                                    PartSide::End,
-                                                    PartSide::Spatial,
-                                                ] {
+                                                for label in labels {
                                                     ui.selectable_value(
-                                                        &mut form.side,
-                                                        SideChoice::One(side),
-                                                        side.as_str(),
+                                                        &mut form.axis,
+                                                        label.clone(),
+                                                        label,
                                                     );
                                                 }
                                             });
-                                        ui.small(
-                                            "Select the part first; the views frame its geometry.",
-                                        );
                                     }
-                                }
-                                egui::ComboBox::from_id_salt("view-copy-from")
-                                    .selected_text("Copy display settings from…")
-                                    .show_ui(ui, |ui| {
-                                        for (id, name) in &sources {
-                                            if ui.button(name).clicked() {
-                                                copy_from = Some(*id);
+                                    AxisBatch::Families => {
+                                        for (i, family) in ["U", "V"].into_iter().enumerate() {
+                                            if let (Some(pick), Some(prefix)) =
+                                                (form.families.get_mut(i), form.prefixes.get_mut(i))
+                                            {
+                                                axis_combo(
+                                                    ui,
+                                                    &format!("view-family-{family}"),
+                                                    &format!("{family} axes"),
+                                                    pick,
+                                                );
+                                                text(ui, "Name prefix", prefix);
                                             }
                                         }
-                                    });
-                            } else {
+                                    }
+                                }
+                            }
+                            Construction::Level => {
+                                let mut batch = form.levels.is_some();
                                 ui.horizontal(|ui| {
-                                    if ui
-                                        .button("Re-pick the plane")
-                                        .on_hover_text("Pick three points for a new view plane")
-                                        .clicked()
-                                    {
-                                        restart_pick = true;
-                                        form.construction = Construction::ThreePoints;
-                                    }
-                                    save_camera = ui
-                                        .button("Take the current camera")
-                                        .on_hover_text(
-                                            "The view plane and height become the camera's",
-                                        )
-                                        .clicked();
+                                    ui.selectable_value(&mut batch, false, "One level");
+                                    ui.selectable_value(&mut batch, true, "Batch");
                                 });
+                                match (batch, form.levels) {
+                                    (false, _) => {
+                                        form.levels = None;
+                                        text(ui, "Level name", &mut form.level);
+                                    }
+                                    (true, current) => {
+                                        let mut pick = current.unwrap_or(AxisPick::All);
+                                        axis_combo(ui, "view-levels", "Levels", &mut pick);
+                                        form.levels = Some(pick);
+                                    }
+                                }
+                                ui.small("Batch views are named by the prefix and the level.");
                             }
-                            ui.separator();
-                            ui.horizontal(|ui| {
-                                ui.label("Projection");
-                                ui.selectable_value(
-                                    &mut form.projection,
-                                    Projection::Orthographic,
-                                    "Orthographic",
-                                );
-                                ui.selectable_value(
-                                    &mut form.projection,
-                                    Projection::Perspective,
-                                    "Perspective",
-                                );
-                            });
-                            text(ui, "Visible height (mm)", &mut form.span);
-                            ui.label("Camera rotation (degrees)");
-                            ui.horizontal(|ui| {
-                                let [z, x] = &mut form.rotation;
-                                ui.label("about Z");
-                                ui.add(egui::TextEdit::singleline(z).desired_width(50.0));
-                                ui.label("about X");
-                                ui.add(egui::TextEdit::singleline(x).desired_width(50.0));
-                            });
-                            ui.checkbox(&mut form.depth_on, "Limit the view depth");
-                            if form.depth_on {
-                                let [above, below] = &mut form.depth;
-                                text(ui, "Towards the viewer (mm)", above);
-                                text(ui, "Behind the plane (mm)", below);
+                            Construction::Part | Construction::Assembly => {
+                                let label = match form.side {
+                                    SideChoice::Four => "four views",
+                                    SideChoice::One(side) => side.as_str(),
+                                };
+                                egui::ComboBox::from_id_salt("view-side")
+                                    .selected_text(label)
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(
+                                            &mut form.side,
+                                            SideChoice::Four,
+                                            "four views",
+                                        );
+                                        for side in [
+                                            PartSide::Front,
+                                            PartSide::Back,
+                                            PartSide::Top,
+                                            PartSide::Bottom,
+                                            PartSide::End,
+                                            PartSide::Spatial,
+                                        ] {
+                                            ui.selectable_value(
+                                                &mut form.side,
+                                                SideChoice::One(side),
+                                                side.as_str(),
+                                            );
+                                        }
+                                    });
+                                ui.small("Select the part first; the views frame its geometry.");
                             }
-                            ui.horizontal(|ui| {
-                                ui.label(match form.area {
-                                    Some(_) => "Work area: box",
-                                    None => "Work area: whole model",
-                                });
-                                let mut area = None;
-                                if ui
-                                    .add_enabled(model_bounds.is_some(), egui::Button::new("Model"))
-                                    .clicked()
-                                {
-                                    area = model_bounds;
-                                }
-                                if ui
-                                    .add_enabled(
-                                        selection_bounds.is_some(),
-                                        egui::Button::new("Selection"),
-                                    )
-                                    .clicked()
-                                {
-                                    area = selection_bounds;
-                                }
-                                if let Some(b) = area {
-                                    form.area =
-                                        beamcraft_engine::views::WorkArea::new(b.min, b.max).ok();
-                                }
-                                if ui.button("Clear").clicked() {
-                                    form.area = None;
-                                }
-                            });
-                            egui::ComboBox::from_id_salt("view-render-mode")
-                                .selected_text(form.mode.as_token())
-                                .show_ui(ui, |ui| {
-                                    for mode in RenderMode::ALL {
-                                        ui.selectable_value(&mut form.mode, mode, mode.as_token());
-                                    }
-                                });
-                            ui.checkbox(&mut form.grids, "Show grids");
-                            ui.horizontal(|ui| {
-                                ui.checkbox(&mut form.color_on, "Colour");
-                                if form.color_on {
-                                    ui.color_edit_button_rgb(&mut form.color);
-                                }
-                            });
-                            ui.add(egui::Slider::new(&mut form.opacity, 0.0..=1.0).text("Opacity"));
-                            all_appearance = form.id.is_some()
-                                && ui
-                                    .small_button("Apply colour and opacity to every view")
-                                    .clicked();
-                            ui.collapsing("Object visibility", |ui| {
-                                for kind in crate::views::listed_kinds() {
-                                    let mut visible = form.hidden.is_visible(kind);
-                                    if ui.checkbox(&mut visible, kind.as_token()).changed() {
-                                        form.hidden = if visible {
-                                            form.hidden.showing(kind)
-                                        } else {
-                                            form.hidden.hiding(kind)
-                                        };
+                        }
+                        egui::ComboBox::from_id_salt("view-copy-from")
+                            .selected_text("Copy display settings from…")
+                            .show_ui(ui, |ui| {
+                                for (id, name) in &sources {
+                                    if ui.button(name).clicked() {
+                                        copy_from = Some(*id);
                                     }
                                 }
                             });
-                        });
-                    });
-                ui.separator();
-                ui.horizontal(|ui| {
-                    let label = if self.views.form.id.is_some() {
-                        "Apply"
                     } else {
-                        "Create"
-                    };
-                    let waiting = self
-                        .views
-                        .picking
-                        .as_ref()
-                        .is_some_and(|p| p.done() < p.construction.picks());
-                    submit = ui
-                        .add_enabled(!busy && !waiting, egui::Button::new(label))
-                        .clicked();
-                    reset = self.views.form.id.is_some() && ui.button("Reset").clicked();
-                    if ui.button("Close").clicked() {
-                        self.views.editing = false;
-                        self.views.picking = None;
+                        ui.horizontal(|ui| {
+                            if ui
+                                .button("Re-pick the plane")
+                                .on_hover_text("Pick three points for a new view plane")
+                                .clicked()
+                            {
+                                restart_pick = true;
+                                form.construction = Construction::ThreePoints;
+                            }
+                            save_camera = ui
+                                .button("Take the current camera")
+                                .on_hover_text("The view plane and height become the camera's")
+                                .clicked();
+                        });
                     }
-                    if busy {
-                        ui.spinner();
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        ui.label("Projection");
+                        ui.selectable_value(
+                            &mut form.projection,
+                            Projection::Orthographic,
+                            "Orthographic",
+                        );
+                        ui.selectable_value(
+                            &mut form.projection,
+                            Projection::Perspective,
+                            "Perspective",
+                        );
+                    });
+                    text(ui, "Visible height (mm)", &mut form.span);
+                    ui.label("Camera rotation (degrees)");
+                    ui.horizontal(|ui| {
+                        let [z, x] = &mut form.rotation;
+                        ui.label("about Z");
+                        ui.add(egui::TextEdit::singleline(z).desired_width(50.0));
+                        ui.label("about X");
+                        ui.add(egui::TextEdit::singleline(x).desired_width(50.0));
+                    });
+                    ui.checkbox(&mut form.depth_on, "Limit the view depth");
+                    if form.depth_on {
+                        let [above, below] = &mut form.depth;
+                        text(ui, "Towards the viewer (mm)", above);
+                        text(ui, "Behind the plane (mm)", below);
                     }
+                    ui.horizontal(|ui| {
+                        ui.label(match form.area {
+                            Some(_) => "Work area: box",
+                            None => "Work area: whole model",
+                        });
+                        let mut area = None;
+                        if ui
+                            .add_enabled(model_bounds.is_some(), egui::Button::new("Model"))
+                            .clicked()
+                        {
+                            area = model_bounds;
+                        }
+                        if ui
+                            .add_enabled(selection_bounds.is_some(), egui::Button::new("Selection"))
+                            .clicked()
+                        {
+                            area = selection_bounds;
+                        }
+                        if let Some(b) = area {
+                            form.area = beamcraft_engine::views::WorkArea::new(b.min, b.max).ok();
+                        }
+                        if ui.button("Clear").clicked() {
+                            form.area = None;
+                        }
+                    });
+                    egui::ComboBox::from_id_salt("view-render-mode")
+                        .selected_text(form.mode.as_token())
+                        .show_ui(ui, |ui| {
+                            for mode in RenderMode::ALL {
+                                ui.selectable_value(&mut form.mode, mode, mode.as_token());
+                            }
+                        });
+                    ui.checkbox(&mut form.grids, "Show grids");
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut form.color_on, "Colour");
+                        if form.color_on {
+                            ui.color_edit_button_rgb(&mut form.color);
+                        }
+                    });
+                    ui.add(egui::Slider::new(&mut form.opacity, 0.0..=1.0).text("Opacity"));
+                    all_appearance = form.id.is_some()
+                        && ui
+                            .small_button("Apply colour and opacity to every view")
+                            .clicked();
+                    ui.collapsing("Object visibility", |ui| {
+                        for kind in crate::views::listed_kinds() {
+                            let mut visible = form.hidden.is_visible(kind);
+                            if ui.checkbox(&mut visible, kind.as_token()).changed() {
+                                form.hidden = if visible {
+                                    form.hidden.showing(kind)
+                                } else {
+                                    form.hidden.hiding(kind)
+                                };
+                            }
+                        }
+                    });
                 });
-                if let Some(note) = &self.views.note {
-                    let palette = crate::theme::Palette::current(ui);
-                    match note {
-                        Ok(t) => ui.label(t.as_str()),
-                        Err(t) => ui.colored_label(palette.error, t.as_str()),
-                    };
-                }
             });
-        if !open {
-            self.views.editing = false;
+        ui.add_space(8.0);
+        let mut cancel = false;
+        ui.horizontal(|ui| {
+            let waiting = self
+                .views
+                .picking
+                .as_ref()
+                .is_some_and(|p| p.done() < p.construction.picks());
+            let apply = theme::button(ui, theme::Kind::Primary, "Apply", !busy && !waiting);
+            submit = if self.views.form.id.is_none() {
+                apply.on_hover_text("Create the view")
+            } else {
+                apply
+            }
+            .clicked();
+            reset = self.views.form.id.is_some()
+                && theme::button(ui, theme::Kind::Secondary, "Reset", !busy).clicked();
+            cancel = theme::button(ui, theme::Kind::Secondary, "Cancel", true).clicked();
+            if busy {
+                ui.spinner();
+            }
+        });
+        self.view_panel_note(ui);
+        if cancel {
             self.views.picking = None;
+            self.set_bench(Bench::Select);
+            return;
         }
         if let Some(source) = copy_from.and_then(|id| self.views.book.get(&id).cloned()) {
             self.views.form.copy_display(&source);
         }
         if restart_pick {
             let construction = self.views.form.construction;
+            self.views.form.picked = false;
             self.views.picking = Some(Picking {
                 construction,
                 ..Picking::default()
@@ -1689,6 +1717,87 @@ impl App {
             self.persist_views();
         }
         if submit {
+            self.submit_view();
+        }
+    }
+
+    /// The last view note under the panel's buttons.
+    fn view_panel_note(&self, ui: &mut egui::Ui) {
+        if let Some(note) = &self.views.note {
+            let palette = theme::Palette::current(ui);
+            match note {
+                Ok(t) => ui.label(t.as_str()),
+                Err(t) => ui.colored_label(palette.error, t.as_str()),
+            };
+        }
+    }
+
+    /// The panel of the free 3D view: its name for "Save as view", and its render mode and
+    /// grid guides, which change the active pane at once as the ribbon's Display group does.
+    fn free_view_panel(&mut self, ui: &mut egui::Ui) {
+        let Some((camera, mode, grids)) = self
+            .views
+            .active_pane()
+            .map(|p| (p.camera, p.mode, p.grids))
+        else {
+            ui.label("No view is open.");
+            return;
+        };
+        if self.views.active().is_some() {
+            // The active pane switched to a saved view: the panel follows it.
+            self.show_view_properties();
+            return;
+        }
+        let busy = self.views.job.is_some();
+        text(ui, "Name", &mut self.views.form.name);
+        ui.separator();
+        let mut chosen = mode;
+        egui::ComboBox::from_id_salt("free-view-render-mode")
+            .selected_text(chosen.as_token())
+            .show_ui(ui, |ui| {
+                for mode in RenderMode::ALL {
+                    ui.selectable_value(&mut chosen, mode, mode.as_token());
+                }
+            });
+        if chosen != mode {
+            self.set_active_mode(chosen);
+        }
+        let mut shown = grids;
+        if ui.checkbox(&mut shown, "Grid guides").changed() {
+            self.set_grids_shown(shown);
+            if !shown {
+                self.grid_edit = None;
+            }
+        }
+        let projection = if camera.is_orthographic() {
+            Projection::Orthographic
+        } else {
+            Projection::Perspective
+        };
+        ui.label(format!(
+            "Projection: {}",
+            match projection {
+                Projection::Orthographic => "orthographic",
+                Projection::Perspective => "perspective",
+            }
+        ));
+        ui.add_space(8.0);
+        let save = theme::button(ui, theme::Kind::Primary, "Save as view", !busy)
+            .on_hover_text("Keep the camera as it is now as a saved view")
+            .clicked();
+        self.view_panel_note(ui);
+        if save {
+            let origin = self.view_origin();
+            let (mode, grids) = (self.active_mode(), self.grids_shown());
+            let form = &mut self.views.form;
+            form.id = None;
+            form.construction = Construction::CurrentCamera;
+            form.projection = projection;
+            form.mode = mode;
+            form.grids = grids;
+            if let Ok((_, span)) = camera.frame(origin) {
+                form.span = format!("{}", span.round().max(1.0));
+            }
             self.submit_view();
         }
     }

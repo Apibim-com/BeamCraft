@@ -57,16 +57,23 @@ previews need no agent and have no command.
   menu (open, open in a new window, properties, favourite, duplicate, cut, copy, close, delete
   with confirmation), new and empty-folder deletion, and drag to a folder. `{3D}` is the free
   view.
-* The View tab: Create view (an icon dropdown of every construction), View properties,
+* The View tab: Create view (an icon dropdown of every construction),
   3D / plane (Ctrl+P, shown in its tooltip),
   Direction (top, bottom, front, back, left, right: the camera turns, the input plane stays),
-  New view window, Tile windows, and Redraw views. The command palette lists the same.
+  New view window, Tile windows, and Redraw views. The command palette lists the same, and
+  "View properties".
 * Creating by picking: two points, three points, a face, or a face and an edge are picked in
-  the model with the creation snaps; the last pick builds the view. A pick that makes no plane
-  is dropped and the earlier ones stay; Esc cancels and Backspace removes the last pick.
-* The properties window edits the name, folder, marks, projection, visible height, rotation,
-  depth, work area (model or selection bounds), render mode, grids, colour, opacity and object
-  visibility; Create or Apply is the only action that changes the book. "Take the current
+  the model with the creation snaps; the last pick fills the view plane and Apply creates the
+  view. A pick that makes no plane is dropped and the earlier ones stay; Esc cancels the pick
+  and Backspace removes the last pick. Apply refuses while a pick runs or after a cancelled one.
+* The view properties live in the right panel. Clicking empty space in the viewport shows them:
+  "View properties" for a saved view, "3D view" for the free view (its render mode and grid
+  guides, and "Save as view", which keeps the camera as a new view named `View N`). Create
+  view fills a "New view" form there. The form edits the name, folder, marks, projection,
+  visible height, rotation, depth, work area (model or selection bounds), render mode, grids,
+  colour, opacity and object visibility; Apply is the only action that changes the book, and
+  after a create the panel shows the new view's properties. An empty click keeps unsaved edits
+  of the view already shown; Esc, Cancel or the Select tool close the panel. "Take the current
   camera" saves the camera as the view plane.
 * Activating a view builds a plane-aligned camera (`Camera::from_view`), takes its render mode,
   grids and plane, hides its kinds from the scene, tints the model (`View::tint`, a uniform the

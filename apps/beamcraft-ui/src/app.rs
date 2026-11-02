@@ -1223,6 +1223,8 @@ impl App {
         }
         // The pick runs on the snapshot on screen, so a click selects what the user sees.
         let Some(snapshot) = self.loaded.as_ref().map(|l| Arc::clone(&l.snapshot)) else {
+            // Nothing to hit: the click lands on empty space.
+            self.empty_click();
             return;
         };
         let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
@@ -1292,8 +1294,16 @@ impl App {
                 self.editor.deselect();
                 self.props.clear();
                 self.edit_note = None;
+                self.empty_click();
             }
             Ok(Some(Selected { id, info, details })) => {
+                // A part picked from the free 3D view's panel shows its own properties; a new
+                // view's form and a saved view's properties stay, so no edit is thrown away.
+                if self.bench == workbench::Bench::View
+                    && matches!(self.views.subject, crate::views::Subject::FreeView(_))
+                {
+                    self.set_bench(workbench::Bench::Select);
+                }
                 match info {
                     Ok(info) => {
                         self.editor.select(info);
@@ -1310,6 +1320,18 @@ impl App {
                 self.props.load(&id, details);
             }
             Err(e) => self.edit_note = Some(Err(e.to_string())),
+        }
+    }
+
+    /// A click that selected nothing shows the active pane's view in the panel, unless a new
+    /// view's form is open there.
+    fn empty_click(&mut self) {
+        if matches!(
+            self.bench,
+            workbench::Bench::Select | workbench::Bench::View
+        ) && self.views.subject != crate::views::Subject::NewView
+        {
+            self.show_view_properties();
         }
     }
 
@@ -2877,7 +2899,6 @@ impl eframe::App for App {
             self.project_browser(ui);
             self.details_window(&ctx);
             self.publish_dialog(&ctx);
-            self.view_properties_window(&ctx);
             self.draw_view_windows(&ctx);
             self.sheet_editor.window(
                 &ctx,
@@ -5611,9 +5632,9 @@ pub(crate) mod tests {
         assert_eq!(fallback.rgba.len(), 32 * 32 * 4);
     }
 
-    /// A frame that draws the workspace panels and the saved-views window, returning the
-    /// centre of every drawn text label and every filled rectangle (for the view-window
-    /// frame, whose close button sits at its right edge).
+    /// A frame that draws the workspace panels, the inspector (with the view panel) and the
+    /// view windows, returning the centre of every drawn text label and every filled rectangle
+    /// (for the view-window frame, whose close button sits at its right edge).
     fn views_frame(
         app: &mut App,
         ctx: &egui::Context,
@@ -5633,7 +5654,7 @@ pub(crate) mod tests {
             |ui| {
                 app.ribbon(ui);
                 app.project_browser(ui);
-                app.view_properties_window(ui.ctx());
+                app.inspector(ui);
                 app.draw_view_windows(ui.ctx());
                 egui::CentralPanel::default().show(ui, |_| {});
             },
@@ -5705,7 +5726,7 @@ pub(crate) mod tests {
             "the Views group was not drawn: {labels:?}"
         );
 
-        // A plan 3 m up: the properties window's own Create button builds it.
+        // A plan 3 m up: the view panel's own Apply button builds it.
         app.begin_view(Construction::PlanXy);
         app.views.form.name = "Plan +3000".into();
         app.views.form.offset = "3000".into();
@@ -5715,22 +5736,21 @@ pub(crate) mod tests {
             views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
             create = labels
                 .iter()
-                .find(|(text, _)| text == "Create")
+                .find(|(text, _)| text == "Apply")
                 .map(|(_, pos)| *pos);
             if create.is_some() {
                 break;
             }
         }
-        let create = create.unwrap_or_else(|| panic!("no Create button: {labels:?}"));
+        let create = create.unwrap_or_else(|| panic!("no Apply button: {labels:?}"));
         views_frame(&mut app, &ctx, click(create), &mut labels, &mut rects);
-        assert_eq!(
-            app.views.book.len(),
-            1,
-            "the Create button did not dispatch"
-        );
+        assert_eq!(app.views.book.len(), 1, "the Apply button did not dispatch");
         let plan = app.views.book.views()[0].clone();
         assert_eq!(plan.plane.origin(), [0.0, 0.0, 3000.0]);
         assert_eq!(app.views.active(), Some(plan.id));
+        // The panel moves on to the created view's properties.
+        assert_eq!(app.bench, super::workbench::Bench::View);
+        assert_eq!(app.views.subject, crate::views::Subject::SavedView(plan.id));
         let camera = app.views.active_pane().unwrap().camera;
         assert!(camera.is_aligned() && camera.is_orthographic());
         assert_eq!(
@@ -5868,7 +5888,111 @@ pub(crate) mod tests {
             .unwrap_or_else(|| panic!("no Plan item: {labels:?}"));
         views_frame(&mut app, &ctx, click(plan), &mut labels, &mut rects);
         assert_eq!(app.views.form.construction, Construction::PlanXy);
-        assert!(app.views.editing, "choosing a construction opens the form");
+        assert_eq!(
+            app.bench,
+            super::workbench::Bench::View,
+            "choosing a construction opens the form in the panel"
+        );
+        assert_eq!(app.views.subject, crate::views::Subject::NewView);
+    }
+
+    /// Hands `app` a finished click lookup, as the pick worker would.
+    fn answer_select(app: &mut App, result: Result<Option<crate::command::Selected>, ToolError>) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.begin_select(rx);
+        tx.send(result).unwrap();
+        app.poll_select();
+    }
+
+    /// A lookup that hit a part whose details could not be read.
+    fn a_part() -> Result<Option<crate::command::Selected>, ToolError> {
+        Ok(Some(crate::command::Selected {
+            id: "x".into(),
+            info: Err(ToolError::local("NOT_FOUND", "no details")),
+            details: Err(ToolError::local("NOT_FOUND", "no details")),
+        }))
+    }
+
+    #[test]
+    fn an_empty_click_shows_the_view_properties_in_the_panel() {
+        use super::workbench::Bench;
+        use crate::views::Subject;
+        use beamcraft_engine::views::ModelView;
+        use beamcraft_engine::work_plane::WorkPlane;
+        use beamcraft_model::id::Uuid7;
+        let Some(mut app) = headless() else { return };
+        let key = app.views.active_pane().unwrap().key;
+        // The free 3D view: its display and a default name for "Save as view".
+        answer_select(&mut app, Ok(None));
+        assert_eq!(app.bench, Bench::View);
+        assert_eq!(app.views.subject, Subject::FreeView(Some(key)));
+        assert_eq!(app.views.form.name, "View 1");
+        app.views.form.name = "Draft".into();
+        answer_select(&mut app, Ok(None));
+        assert_eq!(
+            app.views.form.name, "Draft",
+            "the same free pane keeps its form"
+        );
+
+        // A saved view: its properties, and an unsaved edit survives another empty click.
+        let id = Uuid7::parse("019a7bf0-0000-7000-8000-000000000001").unwrap();
+        let plan = ModelView::new(id, "Plan", WorkPlane::default(), 5000.0);
+        app.views.book.insert(plan).unwrap();
+        app.activate_view(Some(id));
+        answer_select(&mut app, Ok(None));
+        assert_eq!(app.views.subject, Subject::SavedView(id));
+        app.views.form.span = "1234".into();
+        answer_select(&mut app, Ok(None));
+        assert_eq!(app.views.form.span, "1234");
+
+        // A part picked with a saved view's properties open keeps them; from the free view's
+        // panel it shows its own properties.
+        answer_select(&mut app, a_part());
+        assert_eq!(app.bench, Bench::View);
+        assert_eq!(app.views.subject, Subject::SavedView(id));
+        app.activate_view(None);
+        answer_select(&mut app, Ok(None));
+        assert_eq!(app.views.subject, Subject::FreeView(Some(key)));
+        answer_select(&mut app, a_part());
+        assert_eq!(app.bench, Bench::Select);
+
+        // A new view's form stays through a miss.
+        app.begin_view(crate::views::Construction::PlanXy);
+        answer_select(&mut app, Ok(None));
+        assert_eq!(app.views.subject, Subject::NewView);
+        assert_eq!(app.bench, Bench::View);
+
+        // Leaving the bench resets the subject; Esc closes the panel.
+        app.set_bench(Bench::Select);
+        assert_eq!(app.views.subject, Subject::FreeView(None));
+        app.show_view_properties();
+        assert_eq!(app.bench, Bench::View);
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        app_frame(&mut app, &ctx, escape());
+        assert_eq!(app.bench, Bench::Select);
+    }
+
+    #[test]
+    fn save_as_view_turns_the_free_view_into_a_saved_view() {
+        let Some(mut app) = headless() else { return };
+        let dir =
+            std::env::temp_dir().join(format!("beamcraft-v12-save-as-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        app.source.store = dir.clone();
+        deliver(&mut app, refreshed(2));
+        app.show_view_properties();
+        assert_eq!(
+            app.views.subject,
+            crate::views::Subject::FreeView(app.views.active_pane().map(|p| p.key))
+        );
+        app.submit_view();
+        let view = app.views.book.find("View 1").unwrap().clone();
+        assert_eq!(app.views.active(), Some(view.id));
+        assert_eq!(app.views.active_pane().unwrap().title, "View 1");
+        assert_eq!(app.views.subject, crate::views::Subject::SavedView(view.id));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -5896,10 +6020,35 @@ pub(crate) mod tests {
         assert_eq!(app.views.picking.as_ref().map(|p| p.points.len()), Some(2));
         assert!(matches!(app.views.note, Some(Err(_))));
         app.view_click(down(500_000.0, 501_000.0));
+        // The last pick fills the plane and waits for Apply.
         assert!(app.views.picking.is_none());
+        assert!(app.views.form.picked);
+        assert!(
+            app.views.book.find("Inclined").is_none(),
+            "nothing is created yet"
+        );
+        assert!(
+            matches!(app.views.note, Some(Ok(_))),
+            "{:?}",
+            app.views.note
+        );
+        app.submit_view();
         let view = app.views.book.find("Inclined").unwrap().clone();
         assert!((view.plane.normal()[2] - 1.0).abs() < 1e-9);
         assert_eq!(view.plane.origin(), [500_000.0, 500_000.0, -50_000.0]);
+
+        // Esc mid-pick cancels it; Apply then refuses instead of using a default plane.
+        let before = app.views.book.len();
+        app.begin_view(Construction::ThreePoints);
+        app.view_click(down(600_000.0, 600_000.0));
+        app.view_click(down(601_000.0, 600_000.0));
+        app.views.picking = None;
+        app.submit_view();
+        assert_eq!(
+            app.views.note,
+            Some(Err("Pick the points in the model first.".into()))
+        );
+        assert_eq!(app.views.book.len(), before);
 
         // Extra windows are display-only and bounded.
         for _ in 0..10 {

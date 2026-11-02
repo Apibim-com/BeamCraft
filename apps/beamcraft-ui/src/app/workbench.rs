@@ -39,6 +39,8 @@ pub(crate) enum Bench {
     Colour,
     /// D06 annotations: place dimensions, marks and leaders, watch their binding states.
     Annotations,
+    /// A view's properties, or a new view.
+    View,
 }
 
 impl Bench {
@@ -56,6 +58,7 @@ impl Bench {
             Self::CutPlane => "Cut plane",
             Self::Colour => "Colour",
             Self::Annotations => "Annotations",
+            Self::View => "View properties",
         }
     }
 
@@ -72,7 +75,8 @@ impl Bench {
             | Self::Grid
             | Self::CutPlane
             | Self::Colour
-            | Self::Annotations => None,
+            | Self::Annotations
+            | Self::View => None,
         }
     }
 }
@@ -400,6 +404,11 @@ impl App {
         self.clear_ghost();
         self.plane_pick = false;
         self.bench = bench;
+        // The view panel's pick and subject never outlive the panel.
+        if bench != Bench::View {
+            self.views.picking = None;
+            self.views.subject = crate::views::Subject::default();
+        }
         match bench {
             Bench::Plate => {
                 self.tools.active = ToolKind::Plate;
@@ -424,6 +433,7 @@ impl App {
             Bench::CutPlane => {}
             Bench::Colour => {}
             Bench::Annotations => {}
+            Bench::View => {}
             Bench::Grid => {
                 self.beam_mode = false;
                 self.beam.reset();
@@ -623,7 +633,7 @@ impl App {
                     let bench = self.bench;
                     if matches!(self.ribbon_tab, RibbonTab::Steel | RibbonTab::Edit) {
                     group(ui, "Select", &mut |ui| {
-                        if tool_button(ui, Icon::Select, "Select", bench == Bench::Select, edits_free)
+                        if tool_button(ui, Icon::Select, "Select", matches!(bench, Bench::Select | Bench::View), edits_free)
                             .clicked()
                         {
                             pick = Some(Bench::Select);
@@ -677,12 +687,6 @@ impl App {
                                 }
                             }
                         });
-                        if tool_button(ui, Icon::Block, "View properties", self.views.editing, true).clicked() {
-                            match self.views.active() {
-                                Some(id) => self.edit_view(id),
-                                None => self.views.editing = !self.views.editing,
-                            }
-                        }
                         let shortcut = ui.ctx().format_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::P));
                         let toggled = self.views.active_pane().is_some_and(|p| p.toggled.is_some());
                         if tool_button(ui, Icon::Fit, "3D / plane", toggled, true)
@@ -823,6 +827,8 @@ impl App {
                     ui.label(
                         RichText::new(if self.grid_edit.is_some() {
                             "Grid properties"
+                        } else if self.bench == Bench::View {
+                            self.views.subject.title()
                         } else {
                             self.bench.title()
                         })
@@ -852,6 +858,11 @@ impl App {
                     self.grid_panel(ui);
                     return;
                 }
+                if self.bench == Bench::View {
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                    self.view_panel(ui);
+                    return;
+                }
                 if self.bench == Bench::Select && self.props.selected().is_some() {
                     egui::Panel::bottom("property-actions")
                         .exact_size(54.0)
@@ -876,6 +887,7 @@ impl App {
                             Bench::CutPlane => self.cut_panel(ui),
                             Bench::Colour => self.colour_panel(ui),
                             Bench::Annotations => self.annotation_panel(ui),
+                            Bench::View => self.view_panel(ui),
                         }
                         ui.add_space(12.0);
                         egui::CollapsingHeader::new("Publishing")
@@ -1043,10 +1055,7 @@ impl App {
                     .clicked()
             {
                 match label {
-                    "View properties" => match self.views.active() {
-                        Some(id) => self.edit_view(id),
-                        None => self.views.editing = true,
-                    },
+                    "View properties" => self.show_view_properties(),
                     "3D / plane view" => self.toggle_view_plane(),
                     "New view window" => self.open_view_window(self.views.active()),
                     "Tile view windows" => self.views.tile = true,

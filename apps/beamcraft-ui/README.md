@@ -71,8 +71,10 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   remain available in the inspector. Grid guides can be toggled from View.
 - Model views (V12): View > Create view (an icon dropdown of every construction) builds plan,
   elevation, section, grid, level, part, assembly, face and camera views, by picking points or a
-  face in the model where needed; each view has its own plane, projection, visible height, depth,
-  work area, render mode, grids, hidden kinds, colour and opacity. The project browser lists them
+  face in the model where needed (the picks fill the plane, Apply creates the view); each view has
+  its own plane, projection, visible height, depth, work area, render mode, grids, hidden kinds,
+  colour and opacity. The view properties are in the right panel: clicking empty space in the
+  viewport shows them, and the free 3D view offers "Save as view". The project browser lists them
   by folder with search, quick access, previews and a context menu; 3D / plane (Ctrl+P, shown in
   its tooltip) toggles 3D and the view plane, Ctrl+Tab cycles the
   open views, and up to eight view windows tile and dock. Views are display state beside the

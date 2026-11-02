@@ -279,6 +279,8 @@ pub struct Form {
     pub color: [f32; 3],
     /// Opacity, 0..1.
     pub opacity: f32,
+    /// Whether the picks of a pick-based construction are all in.
+    pub picked: bool,
 }
 
 impl Default for Form {
@@ -312,6 +314,7 @@ impl Default for Form {
             color_on: false,
             color: [0.65, 0.75, 0.8],
             opacity: 1.0,
+            picked: false,
         }
     }
 }
@@ -428,6 +431,35 @@ impl Picking {
     }
 }
 
+/// What the view panel shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Subject {
+    /// The free 3D view of the pane with this key (`None` when no pane is open): its display
+    /// and "Save as view".
+    FreeView(Option<u64>),
+    /// A new view being defined; Apply creates it.
+    NewView,
+    /// A saved view; Apply updates it.
+    SavedView(Uuid7),
+}
+
+impl Default for Subject {
+    fn default() -> Self {
+        Self::FreeView(None)
+    }
+}
+
+impl Subject {
+    /// The inspector title.
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::FreeView(_) => "3D view",
+            Self::NewView => "New view",
+            Self::SavedView(_) => "View properties",
+        }
+    }
+}
+
 /// The views of one opened model in the window.
 #[derive(Default)]
 pub struct Views {
@@ -445,8 +477,8 @@ pub struct Views {
     pub open: Vec<Uuid7>,
     /// The properties form.
     pub form: Form,
-    /// Whether the properties window is shown.
-    pub editing: bool,
+    /// What the view panel shows while the inspector is on the view bench.
+    pub subject: Subject,
     /// A pick in progress.
     pub picking: Option<Picking>,
     /// The extra view windows.
@@ -940,5 +972,14 @@ mod tests {
         assert!(dock_rect(rect, Dock::Float).is_none());
         assert!(dock_rect(rect, Dock::Right).unwrap().min.x > 470.0);
         assert!(Direction::Front.plane([0.0; 3]).is_ok());
+    }
+
+    #[test]
+    fn the_panel_starts_on_the_free_view_with_nothing_picked() {
+        assert!(!Form::default().picked);
+        assert_eq!(Subject::default(), Subject::FreeView(None));
+        assert_eq!(Subject::FreeView(Some(1)).title(), "3D view");
+        assert_eq!(Subject::NewView.title(), "New view");
+        assert_eq!(Subject::SavedView(id(1)).title(), "View properties");
     }
 }
