@@ -60,7 +60,8 @@ previews need no agent and have no command.
 * The View tab: Create view (an icon dropdown of every construction),
   3D / plane (Ctrl+P, shown in its tooltip),
   Direction (top, bottom, front, back, left, right: the camera turns, the input plane stays),
-  New view window, Tile windows, and Redraw views. The command palette lists the same, and
+  New view window, Arrange (an icon dropdown: Cascade, Tile horizontal, Tile vertical,
+  Maximize / restore), and Redraw views. The command palette lists the same, and
   "View properties".
 * Creating by picking: two points, three points, a face, or a face and an edge are picked in
   the model with the creation snaps; the last pick fills the view plane and Apply creates the
@@ -89,8 +90,12 @@ previews need no agent and have no command.
   focuses a window (a press on a popup or dialog over the work area does not); with a tool
   armed that click only focuses, and the next one places. Scroll zoom and middle-drag pan act on
   the window under the pointer without focusing it. The first window opens maximized; the last
-  one may be closed, which leaves "No view is open." and "Open the 3D view". Window layout is
-  not saved.
+  one may be closed, which leaves "No view is open." and "Open the 3D view". Arrange: Cascade
+  steps the windows from the top-left corner with the active one in front; Tile horizontal
+  stacks full-width strips and Tile vertical sets full-height columns side by side, the active
+  window first, falling back to a grid when a strip or column would be smaller than a window
+  can be; both leave no window maximized; Maximize / restore toggles the active window. Window
+  layout is not saved.
 
 ## Not in this slice
 

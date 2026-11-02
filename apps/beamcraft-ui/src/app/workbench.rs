@@ -7,6 +7,7 @@
 //! as before; tools that do not exist yet are shown disabled, with a tooltip saying so.
 
 use super::App;
+use super::work_area::Arrange;
 use crate::edit::EditKind;
 use crate::publish::Phase;
 use crate::theme::{self, Icon, Kind, Palette};
@@ -707,12 +708,28 @@ impl App {
                                 }
                             });
                         });
+                    });
+                    group(ui, "Windows", &mut |ui| {
                         if tool_button(ui, Icon::Copy, "New view window", false, self.views.panes.len() < crate::views::MAX_WINDOWS).clicked() {
                             self.open_pane(self.views.active());
                         }
-                        if tool_button(ui, Icon::Grid, "Tile windows", false, has_pane).clicked() {
-                            self.views.tile = true;
-                        }
+                        dropdown_button(ui, Icon::Arrange, "Arrange", has_pane, |ui| {
+                            for (how, label) in [
+                                (Arrange::Cascade, "Cascade"),
+                                (Arrange::TileHorizontal, "Tile horizontal"),
+                                (Arrange::TileVertical, "Tile vertical"),
+                            ] {
+                                if ui.button(label).clicked() {
+                                    self.arrange(how);
+                                    ui.close();
+                                }
+                            }
+                            ui.separator();
+                            if ui.button("Maximize / restore").clicked() {
+                                self.arrange(Arrange::ToggleMaximize);
+                                ui.close();
+                            }
+                        });
                     });
                     group(ui, "Display", &mut |ui| {
                         for (mode, label) in [
@@ -1050,7 +1067,10 @@ impl App {
             "View properties",
             "3D / plane view",
             "New view window",
-            "Tile view windows",
+            "Cascade view windows",
+            "Tile view windows horizontally",
+            "Tile view windows vertically",
+            "Maximize or restore the view window",
             "Next open view",
         ] {
             if label.to_lowercase().contains(&query)
@@ -1062,7 +1082,10 @@ impl App {
                     "View properties" => self.show_view_properties(),
                     "3D / plane view" => self.toggle_view_plane(),
                     "New view window" => self.open_pane(self.views.active()),
-                    "Tile view windows" => self.views.tile = true,
+                    "Cascade view windows" => self.arrange(Arrange::Cascade),
+                    "Tile view windows horizontally" => self.arrange(Arrange::TileHorizontal),
+                    "Tile view windows vertically" => self.arrange(Arrange::TileVertical),
+                    "Maximize or restore the view window" => self.arrange(Arrange::ToggleMaximize),
                     _ => {
                         if let Some(next) = self.views.next_open() {
                             self.activate_view(Some(next));

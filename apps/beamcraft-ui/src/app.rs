@@ -6083,7 +6083,7 @@ pub(crate) mod tests {
         assert!(app.views.panes[0].maximized);
         assert_eq!(app.views.panes[0].rect, area);
         // Tiled, every pane leaves the maximized state.
-        app.views.tile = true;
+        app.arrange(super::work_area::Arrange::TileVertical);
         views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
         assert!(app.views.panes.iter().all(|p| !p.maximized));
         assert!(app.views.panes.iter().all(|p| area.contains_rect(p.rect)));
@@ -6138,10 +6138,10 @@ pub(crate) mod tests {
         app.open_pane(None);
         app.open_pane(None);
         assert_eq!(app.views.panes.len(), 3);
-        app.views.tile = true;
         let ctx = views_context();
         let (mut labels, mut rects) = (Vec::new(), Vec::new());
         views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        app.arrange(super::work_area::Arrange::TileVertical);
         views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
         // A click in the bottom pane's body raises it.
         let first = app.views.panes[0].key;
@@ -6175,10 +6175,10 @@ pub(crate) mod tests {
     fn the_focusing_click_is_swallowed_until_its_release() {
         let Some(mut app) = headless() else { return };
         app.open_pane(None);
-        app.views.tile = true;
         let ctx = views_context();
         let (mut labels, mut rects) = (Vec::new(), Vec::new());
         views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        app.arrange(super::work_area::Arrange::TileVertical);
         views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
         app.set_bench(super::workbench::Bench::Beam);
         let lower = app.views.panes[0].key;
@@ -6211,7 +6211,6 @@ pub(crate) mod tests {
     fn a_press_on_a_popup_over_the_work_area_does_not_focus_a_pane() {
         let Some(mut app) = headless() else { return };
         app.open_pane(None);
-        app.views.tile = true;
         let ctx = views_context();
         let (mut labels, mut rects) = (Vec::new(), Vec::new());
         // Without the project browser the work area reaches the left edge, under the ribbon.
@@ -6223,8 +6222,14 @@ pub(crate) mod tests {
         };
         let none = |_: &egui::Context| {};
         frame(&mut app, vec![], &mut labels, &none);
+        // Side by side; the tiles start with the active pane on the left, so the right one is
+        // focused to leave the lower pane on the left, under the ribbon's popups.
+        app.arrange(super::work_area::Arrange::TileVertical);
+        let right = app.views.panes[0].key;
+        app.focus_pane(right);
         frame(&mut app, vec![], &mut labels, &none);
         let active = app.views.active_pane().unwrap().key;
+        assert_eq!(active, right);
         let at = crate::panes::chrome(app.views.panes[0].rect).body.center();
         // An area lying over the lower pane: `layer_id_at` reads last frame's layer rects.
         let over = |ctx: &egui::Context| {
@@ -6272,6 +6277,91 @@ pub(crate) mod tests {
             app.views.form.construction,
             crate::views::Construction::CurrentCamera
         );
+    }
+
+    #[test]
+    fn arrange_lays_the_panes_out_inside_the_work_area() {
+        use super::work_area::Arrange;
+        let Some(mut app) = headless() else { return };
+        for _ in 0..3 {
+            app.open_pane(None);
+        }
+        assert_eq!(app.views.panes.len(), 4);
+        let ctx = views_context();
+        let (mut labels, mut rects) = (Vec::new(), Vec::new());
+        // Without the project browser the work area is wide enough for four columns of at
+        // least the minimum width.
+        let mut frame = |app: &mut App, events: Vec<egui::Event>, labels: &mut Vec<_>| {
+            views_frame_with(app, &ctx, events, labels, &mut rects, false, |_| {});
+        };
+        frame(&mut app, vec![], &mut labels);
+        let find = |labels: &[(String, egui::Pos2)], text: &str| {
+            labels.iter().find(|(t, _)| t == text).map(|(_, p)| *p)
+        };
+        let tab = find(&labels, "View").unwrap();
+        labels.clear();
+        frame(&mut app, click(tab), &mut labels);
+        let button = find(&labels, "Arrange").unwrap_or_else(|| panic!("no Arrange: {labels:?}"));
+        labels.clear();
+        frame(&mut app, click(button), &mut labels);
+        let mut entry = find(&labels, "Tile vertical");
+        for _ in 0..3 {
+            if entry.is_some() {
+                break;
+            }
+            labels.clear();
+            frame(&mut app, vec![], &mut labels);
+            entry = find(&labels, "Tile vertical");
+        }
+        let entry = entry.unwrap_or_else(|| panic!("the Arrange popup did not open: {labels:?}"));
+        for item in ["Cascade", "Tile horizontal", "Maximize / restore"] {
+            assert!(find(&labels, item).is_some(), "no {item}: {labels:?}");
+        }
+        let active = app.views.active_pane().unwrap().key;
+        frame(&mut app, click(entry), &mut labels);
+        // Four columns side by side, the active pane leftmost; the z-order is unchanged.
+        let area = app.views.area.unwrap();
+        assert_eq!(app.views.active_pane().unwrap().key, active);
+        let mut columns: Vec<egui::Rect> = app.views.panes.iter().map(|p| p.rect).collect();
+        assert!(app.views.panes.iter().all(|p| !p.maximized));
+        assert!(
+            columns.iter().all(|r| area.contains_rect(*r)),
+            "{columns:?}"
+        );
+        assert!(
+            columns
+                .iter()
+                .all(|r| (r.min.y, r.max.y) == (area.min.y, area.max.y)),
+            "not full height in {area:?}: {columns:?}"
+        );
+        assert_eq!(app.views.active_pane().unwrap().rect.min.x, area.min.x);
+        columns.sort_by(|a, b| a.min.x.total_cmp(&b.min.x));
+        for (r, next) in columns.iter().zip(columns.iter().skip(1)) {
+            assert_eq!(r.max.x, next.min.x, "{columns:?}");
+        }
+        // Cascade keeps the active pane on top.
+        app.arrange(Arrange::Cascade);
+        assert_eq!(app.views.active_pane().unwrap().key, active);
+        assert!(
+            app.views
+                .panes
+                .iter()
+                .all(|p| area.contains_rect(p.rect) && !p.maximized)
+        );
+        // Maximize, then restore.
+        let before = app.views.active_pane().unwrap().rect;
+        app.arrange(Arrange::ToggleMaximize);
+        let pane = app.views.active_pane().unwrap();
+        assert!(pane.maximized);
+        assert_eq!(pane.rect, area);
+        app.arrange(Arrange::ToggleMaximize);
+        let pane = app.views.active_pane().unwrap();
+        assert!(!pane.maximized);
+        assert_eq!(pane.rect, before);
+        // Before any work-area frame there is nothing to lay out over.
+        app.views.area = None;
+        app.arrange(Arrange::TileHorizontal);
+        assert_eq!(app.views.active_pane().unwrap().rect, before);
     }
 
     #[test]

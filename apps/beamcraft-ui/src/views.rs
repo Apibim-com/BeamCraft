@@ -481,8 +481,6 @@ pub struct Views {
     pub subject: Subject,
     /// A pick in progress.
     pub picking: Option<Picking>,
-    /// Lay the panes out in a grid on the next work-area frame.
-    pub tile: bool,
     /// The last work-area rect, in points; `None` before the first work-area frame.
     pub area: Option<egui::Rect>,
     /// The pane a primary press just focused, until that button is released: its click only
@@ -699,21 +697,6 @@ pub fn listed_kinds() -> impl Iterator<Item = ElementKind> {
     ElementKind::ALL.into_iter()
 }
 
-/// The rectangle of window `index` of `count` tiled in two columns over `area`.
-pub fn tile_rect(area: egui::Rect, index: usize, count: usize) -> egui::Rect {
-    let columns = 2usize.min(count.max(1));
-    let rows = count.max(1).div_ceil(columns);
-    let width = area.width() / columns as f32;
-    let height = area.height() / rows as f32;
-    let column = (index % columns) as f32;
-    let row = (index / columns) as f32;
-    egui::Rect::from_min_size(
-        area.min + egui::vec2(column * width, row * height),
-        egui::vec2(width, height),
-    )
-    .shrink(4.0)
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
@@ -867,8 +850,6 @@ mod tests {
         assert!(p.undo() && p.undo());
         assert!(!p.undo());
         assert_eq!(Construction::TwoPoints.label(), "Section by two points");
-        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
-        assert!(tile_rect(rect, 3, 4).min.y > 290.0);
         assert!(Direction::Front.plane([0.0; 3]).is_ok());
     }
 

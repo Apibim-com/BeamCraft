@@ -26,6 +26,43 @@ pub(super) struct PaneDraw {
     pub view: View,
 }
 
+/// How the Arrange commands lay the panes out.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Arrange {
+    /// Cascade from the top-left corner.
+    Cascade,
+    /// Strips stacked top to bottom.
+    TileHorizontal,
+    /// Columns side by side.
+    TileVertical,
+    /// Maximize the active pane, or restore it.
+    ToggleMaximize,
+}
+
+/// Maximizes `pane` over `area`, or restores the rect it had before.
+fn toggle_maximized(pane: &mut panes::ViewPane, area: egui::Rect) {
+    if pane.maximized {
+        pane.maximized = false;
+        let back = pane
+            .restore
+            .take()
+            .unwrap_or_else(|| panes::opening_rect(area, 0));
+        pane.rect = panes::clamp_into(area, back);
+    } else {
+        pane.restore = Some(pane.rect);
+        pane.maximized = true;
+        pane.rect = panes::maximized(area);
+    }
+}
+
+/// Gives `pane` its arranged rect, out of the maximized state.
+fn place(pane: &mut panes::ViewPane, rect: egui::Rect) {
+    pane.rect = rect;
+    pane.placed = true;
+    pane.maximized = false;
+    pane.restore = None;
+}
+
 /// What one pane's window asked for this frame, applied after every pane is drawn.
 pub(super) struct PaneOutcome {
     /// The pane.
@@ -110,6 +147,39 @@ impl App {
             && self.grid_line.click.is_none()
     }
 
+    /// Lays the panes out over `views.area`; a no-op while it is `None` (no work-area frame yet)
+    /// or no pane is open. ToggleMaximize acts on the active pane. Cascade keeps the z-order
+    /// bottom first, so the active pane ends up front-most; the tiles go to the active pane
+    /// first, then down the z-order. The z-order itself never changes, and every layout but
+    /// ToggleMaximize leaves no pane maximized.
+    pub(super) fn arrange(&mut self, how: Arrange) {
+        let Some(area) = self.views.area else {
+            return;
+        };
+        let count = self.views.panes.len();
+        let rects = match how {
+            Arrange::ToggleMaximize => {
+                if let Some(pane) = self.views.active_pane_mut() {
+                    toggle_maximized(pane, area);
+                    pane.placed = true;
+                }
+                return;
+            }
+            Arrange::Cascade => {
+                let rects = panes::cascade(area, count);
+                for (pane, rect) in self.views.panes.iter_mut().zip(rects) {
+                    place(pane, rect);
+                }
+                return;
+            }
+            Arrange::TileHorizontal => panes::tile_horizontal(area, count),
+            Arrange::TileVertical => panes::tile_vertical(area, count),
+        };
+        for (pane, rect) in self.views.panes.iter_mut().rev().zip(rects) {
+            place(pane, rect);
+        }
+    }
+
     /// The MDI work area: the panes bottom to top, each in its own child Ui (so egui hit-tests
     /// them in z-order), then focus, window changes and the active pane's input. With no pane
     /// open it offers to open the free 3D view.
@@ -121,16 +191,6 @@ impl App {
         if self.views.panes.is_empty() {
             self.empty_work_area(ui, area);
             return;
-        }
-        // "Tile windows" until the Arrange commands replace it.
-        if std::mem::take(&mut self.views.tile) {
-            let count = self.views.panes.len();
-            for (index, pane) in self.views.panes.iter_mut().enumerate() {
-                pane.rect = crate::views::tile_rect(area, index, count);
-                pane.placed = true;
-                pane.maximized = false;
-                pane.restore = None;
-            }
         }
         // Panes opened before any work-area frame (the window's first pane, tests) are placed
         // now: the first one maximized, the others cascaded. Then every pane is kept inside.
@@ -258,18 +318,7 @@ impl App {
             return;
         };
         if outcome.toggle_max {
-            if pane.maximized {
-                pane.maximized = false;
-                let back = pane
-                    .restore
-                    .take()
-                    .unwrap_or_else(|| panes::opening_rect(area, 0));
-                pane.rect = panes::clamp_into(area, back);
-            } else {
-                pane.restore = Some(pane.rect);
-                pane.maximized = true;
-                pane.rect = area;
-            }
+            toggle_maximized(pane, area);
             return;
         }
         if pane.maximized {

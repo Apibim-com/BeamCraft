@@ -79,7 +79,8 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   its tooltip) toggles 3D and the view plane, and Ctrl+Tab cycles the open views. The work area
   holds up to eight equal view windows inside it; the active one is highlighted and takes
   selection, picking, snapping and tools; each moves, resizes, maximizes and closes, and the
-  last one may be closed. Views are display state beside the store and never change the model.
+  last one may be closed. Arrange: Cascade, Tile horizontal, Tile vertical, Maximize / restore.
+  Views are display state beside the store and never change the model.
   See [model views](../../docs/design/v12-named-views.md).
 - View retains all five render modes (Wireframe, Transparent, Grey, Shaded, Selected only)
   and the upstream remappable Ctrl+1 through Ctrl+5 shortcuts. Mode changes never reload the
