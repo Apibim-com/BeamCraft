@@ -98,13 +98,9 @@ impl eframe::App for Shell {
             if let Some(source) = request {
                 self.switch(ui.ctx(), frame, source);
             } else if app.return_to_library {
-                let create = app.return_to_create;
                 self.appearance = app.appearance.take();
                 self.retired = self.app.take();
                 self.start.return_to_models();
-                if create {
-                    self.start.show_create();
-                }
                 ui.ctx()
                     .send_viewport_cmd(egui::ViewportCommand::Title("BeamCraft".into()));
             }

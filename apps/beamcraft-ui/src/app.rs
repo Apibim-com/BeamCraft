@@ -189,7 +189,11 @@ pub struct App {
     menu_section: workbench::MenuSection,
     /// What the last menu action reported, shown under the page heading.
     pub(crate) menu_note: Option<Result<String, String>>,
-    pub(crate) return_to_create: bool,
+    /// The menu's New page: the new-model form, kept while the window lives so a typed name
+    /// survives leaving the page.
+    menu_new: crate::library::NewModelForm,
+    /// The menu's Open page: the recent models and "Browse…".
+    menu_models: crate::library::ModelPicker,
     /// A model the window should switch to, set by the menu's New and Open; Shell reads it
     /// after the frame.
     pub(crate) open_request: Option<PathBuf>,
@@ -836,7 +840,8 @@ impl App {
             annotation: annotation_panel::Panel::empty(),
             menu_section: workbench::MenuSection::default(),
             menu_note: None,
-            return_to_create: false,
+            menu_new: crate::library::NewModelForm::new(),
+            menu_models: crate::library::ModelPicker::new(),
             open_request: None,
             command_search: false,
             command_focus: false,
@@ -935,8 +940,12 @@ impl App {
 
     /// The source of the model `open_request` asks for: this window's CLI, samples, author,
     /// environment and configuration, on a store opened from the library (no workspace, no
-    /// publish target, as the start page opens one). Takes the request.
+    /// publish target, as the start page opens one). Takes the request, except while a command
+    /// of this window runs: the request then waits, so no command result is dropped with it.
     pub(crate) fn take_open_request(&mut self) -> Option<Source> {
+        if self.other_command_running() {
+            return None;
+        }
         let store = self.open_request.take()?;
         Some(Source {
             store,
@@ -3533,46 +3542,15 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn menu_uses_reference_categories_flat_commands_and_real_new_navigation() {
+    fn menu_uses_reference_categories_flat_commands_and_in_menu_new() {
+        use super::workbench::MenuSection;
         let Some(mut app) = headless() else { return };
         let ctx = egui::Context::default();
         crate::theme::install(&ctx);
         assert!(crate::app::inter(&ctx));
-        app.menu_open = true;
+        on_the_menu(&mut app);
         app.from_library = true;
-        let mut frame = |events| {
-            let output = ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        egui::vec2(1280.0, 800.0),
-                    )),
-                    events,
-                    ..Default::default()
-                },
-                |ui| {
-                    app.header(ui);
-                    app.menu_page(ui);
-                },
-            );
-            let labels: Vec<_> = output
-                .shapes
-                .iter()
-                .filter_map(|shape| {
-                    if let egui::Shape::Text(text) = &shape.shape {
-                        Some((
-                            text.galley.text().to_owned(),
-                            text.pos + text.galley.size() / 2.0,
-                        ))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            output.drop_without_applying_deltas();
-            labels
-        };
-        let labels = frame(vec![]);
+        let labels = app_frame(&mut app, &ctx, vec![]);
         for expected in [
             "Menu",
             "New",
@@ -3596,22 +3574,215 @@ pub(crate) mod tests {
         }
         assert!(!labels.iter().any(|(label, _)| label == "Fit model"));
         let pos = labels.iter().find(|(label, _)| label == "New").unwrap().1;
-        frame(vec![
-            egui::Event::PointerMoved(pos),
-            egui::Event::PointerButton {
-                pos,
-                button: egui::PointerButton::Primary,
-                pressed: true,
-                modifiers: egui::Modifiers::NONE,
-            },
+        app_frame(&mut app, &ctx, click(pos));
+        // New is a menu page: the window stays on its model.
+        assert_eq!(app.menu_section, MenuSection::New);
+        assert!(!app.return_to_library);
+        let labels = app_frame(&mut app, &ctx, vec![]);
+        for expected in ["New model", "Create and open", "Location", "Cancel"] {
+            assert!(
+                labels.iter().any(|(label, _)| label == expected),
+                "Missing {expected} on the New page"
+            );
+        }
+        // Esc at once, while the name suggestion may still run: it returns to the model.
+        app_frame(&mut app, &ctx, escape());
+        assert!(!app.menu_open);
+        assert_eq!(app.menu_section, MenuSection::default());
+        assert_eq!(app.open_request, None);
+    }
+
+    #[test]
+    fn escape_waits_while_a_menu_create_runs() {
+        use super::workbench::MenuSection;
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        assert!(crate::app::inter(&ctx));
+        on_the_menu(&mut app);
+        app.from_library = true;
+        app.menu_section = MenuSection::New;
+        app.menu_new.hold_create();
+        assert!(app.menu_busy());
+        let labels = app_frame(&mut app, &ctx, escape());
+        assert!(app.menu_open);
+        assert_eq!(app.menu_section, MenuSection::New);
+        let back = labels.iter().find(|(l, _)| l == "Back to model").unwrap().1;
+        app_frame(&mut app, &ctx, click(back));
+        assert!(
+            app.menu_open,
+            "Back to model is disabled while a create runs"
+        );
+        assert_eq!(app.menu_section, MenuSection::New);
+        // Model library in the command search waits too.
+        app.command_query = "Model library".into();
+        app.command_search = true;
+        // The search window lays itself out first; its entry is clicked once it is placed.
+        app_frame(&mut app, &ctx, vec![]);
+        let labels = app_frame(&mut app, &ctx, vec![]);
+        let library = labels.iter().find(|(l, _)| l == "Model library").unwrap().1;
+        app_frame(&mut app, &ctx, click(library));
+        assert!(!app.return_to_library);
+        assert!(
+            app.command_search,
+            "the disabled entry leaves the search open"
+        );
+    }
+
+    #[test]
+    fn escape_waits_while_a_menu_open_runs() {
+        use super::workbench::MenuSection;
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        assert!(crate::app::inter(&ctx));
+        on_the_menu(&mut app);
+        app.from_library = true;
+        app.menu_section = MenuSection::Open;
+        app.menu_models.hold_open();
+        assert!(app.menu_busy());
+        let labels = app_frame(&mut app, &ctx, escape());
+        assert!(app.menu_open);
+        assert_eq!(app.menu_section, MenuSection::Open);
+        let back = labels.iter().find(|(l, _)| l == "Back to model").unwrap().1;
+        app_frame(&mut app, &ctx, click(back));
+        assert!(
+            app.menu_open,
+            "Back to model is disabled while an open runs"
+        );
+        assert_eq!(app.menu_section, MenuSection::Open);
+    }
+
+    #[test]
+    fn a_created_model_requests_the_switch() {
+        use super::workbench::MenuSection;
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        assert!(crate::app::inter(&ctx));
+        on_the_menu(&mut app);
+        app.from_library = true;
+        app.menu_section = MenuSection::New;
+        app.menu_new.hold_create();
+        app.menu_new.deliver_created(crate::start::ProjectView {
+            name: "x".into(),
+            path: "x".into(),
+            state: "ready".into(),
+            created_ms: Some(0),
+            modified_ms: Some(0),
+        });
+        app_frame(&mut app, &ctx, vec![]);
+        assert_eq!(app.open_request, Some(std::path::PathBuf::from("x")));
+        // The menu stays open: Shell either replaces the window or reports why it could not.
+        assert!(app.menu_open);
+        assert_eq!(app.menu_section, MenuSection::New);
+        assert!(!app.menu_busy());
+    }
+
+    #[test]
+    fn back_to_model_resets_the_new_page() {
+        use super::workbench::MenuSection;
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        assert!(crate::app::inter(&ctx));
+        on_the_menu(&mut app);
+        app.from_library = true;
+        let labels = app_frame(&mut app, &ctx, vec![]);
+        let new = labels.iter().find(|(l, _)| l == "New").unwrap().1;
+        app_frame(&mut app, &ctx, click(new));
+        assert_eq!(app.menu_section, MenuSection::New);
+        let labels = app_frame(&mut app, &ctx, vec![]);
+        let back = labels.iter().find(|(l, _)| l == "Back to model").unwrap().1;
+        app_frame(&mut app, &ctx, click(back));
+        assert!(!app.menu_open);
+        app.menu_open = true;
+        let labels = app_frame(&mut app, &ctx, vec![]);
+        assert_eq!(app.menu_section, MenuSection::Catalogs);
+        assert!(
+            labels
+                .iter()
+                .any(|(l, _)| l == "Profiles, materials and components")
+        );
+        assert!(!labels.iter().any(|(l, _)| l == "Create and open"));
+    }
+
+    #[test]
+    fn new_and_open_are_disabled_without_the_library() {
+        use super::workbench::MenuSection;
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        assert!(crate::app::inter(&ctx));
+        on_the_menu(&mut app);
+        app.from_library = false;
+        for entry in ["New", "Open"] {
+            let labels = app_frame(&mut app, &ctx, vec![]);
+            let pos = labels.iter().find(|(l, _)| l == entry).unwrap().1;
+            app_frame(&mut app, &ctx, click(pos));
+            assert_eq!(app.menu_section, MenuSection::Catalogs, "{entry}");
+            assert_eq!(app.open_request, None, "{entry}");
+            assert!(app.menu_open && !app.return_to_library, "{entry}");
+        }
+    }
+
+    #[test]
+    fn open_lists_recent_models_and_disables_the_open_one() {
+        use super::workbench::MenuSection;
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        assert!(crate::app::inter(&ctx));
+        // A scratch configuration, so the remember below never touches the user's settings.
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let config =
+            std::env::temp_dir().join(format!("bc-menu-open-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&config).unwrap();
+        app.source.config_dir = Some(config.clone());
+        on_the_menu(&mut app);
+        app.from_library = true;
+        // Set directly: the Open row would start a refresh of the list.
+        app.menu_section = MenuSection::Open;
+        let row = |name: &str, path: &std::path::Path| crate::start::ProjectView {
+            name: name.into(),
+            path: path.to_string_lossy().into_owned(),
+            state: "ready".into(),
+            created_ms: Some(0),
+            modified_ms: Some(0),
+        };
+        let current = app.source.store.clone();
+        app.menu_models.set_recent(vec![
+            row("Current model", &current),
+            row("Other model", &config.join("Other model")),
         ]);
-        frame(vec![egui::Event::PointerButton {
-            pos,
-            button: egui::PointerButton::Primary,
-            pressed: false,
-            modifiers: egui::Modifiers::NONE,
-        }]);
-        assert!(app.return_to_library && app.return_to_create);
+        let labels = app_frame(&mut app, &ctx, vec![]);
+        for name in ["Recent models", "Current model", "Other model", "Browse…"] {
+            assert!(labels.iter().any(|(l, _)| l == name), "missing {name}");
+        }
+        assert_eq!(labels.iter().filter(|(l, _)| l == "Open now").count(), 1);
+        // The open model's row is disabled.
+        let current_row = labels.iter().find(|(l, _)| l == "Current model").unwrap().1;
+        app_frame(&mut app, &ctx, click(current_row));
+        assert!(!app.menu_models.opening());
+        let other = labels.iter().find(|(l, _)| l == "Other model").unwrap().1;
+        app_frame(&mut app, &ctx, click(other));
+        assert!(app.menu_models.opening());
+        assert!(app.menu_busy());
+        // The remember is refused (no such model) and only reported on the page.
+        for _ in 0..250 {
+            app_frame(&mut app, &ctx, vec![]);
+            if !app.menu_models.busy() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(!app.menu_models.busy());
+        assert_eq!(app.open_request, None);
+        assert!(app.menu_open);
+        let _ = std::fs::remove_dir_all(&config);
     }
 
     /// One real `App::ui` frame with `events`; the centre of every text drawn.

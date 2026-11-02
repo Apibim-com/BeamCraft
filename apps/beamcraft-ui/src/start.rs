@@ -251,6 +251,12 @@ fn recent_views(dir: &Path) -> Result<Vec<ProjectView>, ToolError> {
     Ok(recent.iter().map(|r| project_view(&r.project)).collect())
 }
 
+/// The recent projects of the configuration directory, newest first. Projects whose folder has
+/// gone are dropped from the settings file on the way.
+pub(crate) fn load_recent(config_dir: Option<&Path>) -> Result<Vec<ProjectView>, ToolError> {
+    recent_views(&resolve_config_dir(config_dir)?)
+}
+
 /// Everything the page shows at start: the settings, the environments and the recent projects.
 fn load_state(
     config_dir: Option<&Path>,
@@ -302,7 +308,7 @@ fn list_folder_projects(
 }
 
 /// Remembers the project at `path` as opened now and returns it.
-fn remember(config_dir: Option<&Path>, path: &str) -> Result<ProjectView, ToolError> {
+pub(crate) fn remember(config_dir: Option<&Path>, path: &str) -> Result<ProjectView, ToolError> {
     let dir = resolve_config_dir(config_dir)?;
     let info = remember_project(&dir, Path::new(path), now_ms()).map_err(recent_failure)?;
     Ok(project_view(&info))
@@ -415,6 +421,7 @@ enum Reply {
     Saved(Result<(SettingsView, Vec<ProjectView>), ToolError>),
     Listed(Result<Vec<ProjectView>, ToolError>),
     Opened(Result<ProjectView, ToolError>),
+    Recent(Result<Vec<ProjectView>, ToolError>),
 }
 
 struct PreviewJob {
@@ -581,7 +588,7 @@ impl StartPage {
         }
     }
 
-    pub(crate) fn show_create(&mut self) {
+    fn show_create(&mut self) {
         self.note = None;
         self.tab = Tab::Create;
         self.selected = None;
@@ -659,8 +666,9 @@ impl StartPage {
                 self.all = projects;
             }
             Reply::Opened(Ok(project)) => self.opened(project),
+            Reply::Recent(Ok(recent)) => self.recent = recent,
             Reply::Loaded(Err(e)) | Reply::Saved(Err(e)) => self.note = Some(Err(e.to_string())),
-            Reply::Listed(Err(e)) | Reply::Opened(Err(e)) => {
+            Reply::Listed(Err(e)) | Reply::Opened(Err(e)) | Reply::Recent(Err(e)) => {
                 self.note = Some(Err(e.to_string()));
             }
         }
@@ -711,7 +719,9 @@ impl StartPage {
         self.open.take()
     }
 
-    /// Returns to the model library without asking for the author again.
+    /// Returns to the model library without asking for the author again. The recent list is read
+    /// again, so models opened from a model window's menu are listed; a reply still pending is
+    /// never replaced, and the settings and the start window are not loaded again.
     pub(crate) fn return_to_models(&mut self) {
         self.previews.clear();
         if let Some(job) = &mut self.preview_job {
@@ -721,6 +731,10 @@ impl StartPage {
         self.search.clear();
         self.selected = None;
         self.small_window = None;
+        if self.job.is_none() {
+            let config = self.config_dir.clone();
+            self.run_worker(move || Reply::Recent(load_recent(config.as_deref())));
+        }
     }
 
     pub(crate) fn busy(&self) -> bool {
@@ -1552,7 +1566,8 @@ fn parent_of(path: &str) -> String {
         .to_owned()
 }
 
-fn now_ms() -> u64 {
+/// The current time, Unix milliseconds; 0 before 1970.
+pub(crate) fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
@@ -1757,6 +1772,56 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn returning_to_models_refreshes_the_recent_list() {
+        let config = std::env::temp_dir().join(format!(
+            "ui-start-return-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        std::fs::create_dir_all(&config).unwrap();
+        let mut page = StartPage::new(
+            PathBuf::from("missing-test-cli"),
+            Some(config.clone()),
+            Arc::new(Stats::default()),
+        );
+        // The load started by `new` answers first.
+        for _ in 0..250 {
+            page.poll();
+            if page.job.is_none() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(page.job.is_none(), "the start load answers");
+        let model = |name: &str| ProjectView {
+            name: name.into(),
+            path: format!("/m/{name}"),
+            state: "ready".into(),
+            created_ms: Some(0),
+            modified_ms: Some(0),
+        };
+
+        page.return_to_models();
+        assert!(page.job.is_some(), "returning reads the recent list");
+        // The reply of that read replaces the list.
+        let (tx, rx) = std::sync::mpsc::channel();
+        page.job = Some(rx);
+        tx.send(Reply::Recent(Ok(vec![model("Switched")]))).unwrap();
+        page.poll();
+        assert_eq!(page.recent, vec![model("Switched")]);
+        assert!(page.job.is_none());
+
+        // A reply still pending is kept: returning starts no read over it.
+        let (tx, rx) = std::sync::mpsc::channel();
+        page.job = Some(rx);
+        page.return_to_models();
+        tx.send(Reply::Recent(Ok(vec![model("Pending")]))).unwrap();
+        page.poll();
+        assert_eq!(page.recent, vec![model("Pending")]);
+        let _ = std::fs::remove_dir_all(&config);
     }
 
     #[test]

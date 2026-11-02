@@ -91,6 +91,8 @@ pub(crate) enum RibbonTab {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum MenuSection {
+    New,
+    Open,
     Import,
     Export,
     Settings,
@@ -123,6 +125,8 @@ impl MenuSection {
 
     fn heading(self) -> (&'static str, &'static str) {
         match self {
+            Self::New => ("New model", "Create a model from a template and open it"),
+            Self::Open => ("Open model", "Recent models, or any model folder"),
             Self::Import => ("Import", "Bring model data into the workspace"),
             Self::Export => ("Export", "Export model data"),
             Self::Settings => ("Settings", "Application and workspace preferences"),
@@ -166,7 +170,7 @@ impl MenuSection {
                 "Custom component editor",
             ],
             Self::Help => &["Help", "About BeamCraft"],
-            Self::Profiles | Self::Materials | Self::About => &[],
+            Self::New | Self::Open | Self::Profiles | Self::Materials | Self::About => &[],
         }
     }
 }
@@ -1004,14 +1008,22 @@ impl App {
             "Publish",
             "Model library",
         ] {
+            // A running menu create or open must finish in this window: leaving it would lose
+            // the model it opens, and an edit would be dropped by the switch that follows.
             let enabled = match label {
-                "Undo" | "Redo" => self.source.workspace.is_some() && !self.other_command_running(),
+                "Undo" | "Redo" => {
+                    self.source.workspace.is_some()
+                        && !self.other_command_running()
+                        && !self.menu_busy()
+                }
                 "Publish" => {
                     self.publisher.target().is_ok()
                         && !self.other_command_running()
                         && self.publisher.phase() == Phase::Idle
                 }
-                "Model library" => self.from_library && !self.other_command_running(),
+                "Model library" => {
+                    self.from_library && !self.other_command_running() && !self.menu_busy()
+                }
                 _ => true,
             };
             if label.to_lowercase().contains(&query)
@@ -1042,20 +1054,73 @@ impl App {
         false
     }
 
+    /// Whether a menu page runs a job that opens a model: a `create-project` on New, or a
+    /// remember on Open. The menu waits for it; the name suggestion and the recent-list read are
+    /// background reads and do not count.
+    pub(crate) fn menu_busy(&self) -> bool {
+        self.menu_new.creating() || self.menu_models.opening()
+    }
+
     /// Esc and "‹ Back" in the menu: a sub-page returns to its section, a top-level page closes
-    /// the menu and shows the model again.
+    /// the menu and shows the model again. Nothing happens while `menu_busy`.
     pub(crate) fn menu_back(&mut self) {
+        if self.menu_busy() {
+            return;
+        }
         match self.menu_section.parent() {
             Some(parent) => self.menu_section = parent,
             None => self.close_menu(),
         }
     }
 
-    /// Closes the menu. Every way out goes through here (Esc, "Back to model", Project
-    /// properties), so page resets belong here and a reopened menu never shows a stale form.
+    /// Closes the menu. Every way out goes through here (Esc, Cancel, "Back to model", Project
+    /// properties), so page resets belong here and a reopened menu never shows a stale form: the
+    /// New and Open pages give way to the default page. Nothing happens while `menu_busy`.
     pub(crate) fn close_menu(&mut self) {
+        if self.menu_busy() {
+            return;
+        }
+        if matches!(self.menu_section, MenuSection::New | MenuSection::Open) {
+            self.menu_section = MenuSection::default();
+        }
         self.menu_open = false;
         self.menu_note = None;
+    }
+
+    /// The menu's New page: the new-model form. A created model becomes the window's
+    /// `open_request`; the menu stays open until the window has switched or reported why not.
+    fn menu_new_page(&mut self, ui: &mut Ui) {
+        let outer_busy = self.other_command_running();
+        let host = crate::library::Host {
+            cli: &self.source.cli,
+            config_dir: self.source.config_dir.as_deref(),
+            actor: self.source.actor.as_deref(),
+            environment: self.source.environment.as_deref(),
+            stats: &self.stats,
+        };
+        match self.menu_new.ui(ui, &host, outer_busy) {
+            Some(crate::library::FormEvent::Created(project)) => {
+                self.open_request = Some(std::path::PathBuf::from(project.path));
+            }
+            Some(crate::library::FormEvent::Cancelled) => self.menu_back(),
+            None => {}
+        }
+    }
+
+    /// The menu's Open page: the recent models and "Browse…". A chosen model becomes the
+    /// window's `open_request`, as on the New page.
+    fn menu_open_page(&mut self, ui: &mut Ui) {
+        let outer_busy = self.other_command_running();
+        match self.menu_models.ui(
+            ui,
+            self.source.config_dir.as_deref(),
+            &self.source.store,
+            outer_busy,
+        ) {
+            Some(crate::library::PickEvent::Opened(path)) => self.open_request = Some(path),
+            Some(crate::library::PickEvent::Cancelled) => self.menu_back(),
+            None => {}
+        }
     }
 
     /// Full native application menu, using the same real actions as the ribbon.
@@ -1081,7 +1146,9 @@ impl App {
                     .max_height((ui.available_height() - 84.0).max(0.0))
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = 1.0;
-                        if menu_navigation(ui, Icon::Back, "Back to model", false, true).clicked() {
+                        // While a page opens a model, the menu waits for it.
+                        let idle = !self.menu_busy();
+                        if menu_navigation(ui, Icon::Back, "Back to model", false, idle).clicked() {
                             self.close_menu();
                         }
                         ui.add_space(14.0);
@@ -1090,16 +1157,34 @@ impl App {
                             ui.label(theme::bold("Menu", 23.0).color(palette.side_text()));
                         });
                         ui.add_space(14.0);
-                        let free = self.from_library && !self.other_command_running();
-                        if menu_navigation(ui, Icon::Plus, "New", false, free).clicked() {
-                            self.return_to_create = true;
-                            self.return_to_library = true;
+                        let free = idle && self.from_library && !self.other_command_running();
+                        let new = MenuSection::New;
+                        if menu_navigation(ui, Icon::Plus, "New", self.menu_section == new, free)
+                            .clicked()
+                        {
+                            self.menu_section = new;
+                            if let Some(parent) =
+                                self.source.store.parent().and_then(|p| p.to_str())
+                            {
+                                self.menu_new.seed_parent(parent);
+                            }
+                            self.menu_new.show();
                         }
-                        if menu_navigation(ui, Icon::Folder, "Open", false, free).clicked() {
-                            self.return_to_library = true;
+                        let open = MenuSection::Open;
+                        if menu_navigation(
+                            ui,
+                            Icon::Folder,
+                            "Open",
+                            self.menu_section == open,
+                            free,
+                        )
+                        .clicked()
+                        {
+                            self.menu_section = open;
+                            self.menu_models.refresh(self.source.config_dir.as_deref());
                         }
                         menu_navigation(ui, Icon::Copy, "Save as", false, false);
-                        if menu_navigation(ui, Icon::Folder, "Open model folder", false, true)
+                        if menu_navigation(ui, Icon::Folder, "Open model folder", false, idle)
                             .clicked()
                         {
                             self.menu_note = crate::dialog::open_folder(&self.source.store)
@@ -1110,13 +1195,13 @@ impl App {
                             (MenuSection::Import, Icon::Back, "Import"),
                             (MenuSection::Export, Icon::Shared, "Export"),
                         ] {
-                            if menu_navigation(ui, icon, label, self.menu_section == section, true)
+                            if menu_navigation(ui, icon, label, self.menu_section == section, idle)
                                 .clicked()
                             {
                                 self.menu_section = section;
                             }
                         }
-                        if menu_navigation(ui, Icon::Block, "Project properties", false, true)
+                        if menu_navigation(ui, Icon::Block, "Project properties", false, idle)
                             .clicked()
                         {
                             self.details = true;
@@ -1128,7 +1213,7 @@ impl App {
                             (MenuSection::Editors, Icon::Plate, "Editors"),
                         ] {
                             let active = self.menu_section.top() == section;
-                            if menu_navigation(ui, icon, label, active, true).clicked() {
+                            if menu_navigation(ui, icon, label, active, idle).clicked() {
                                 self.menu_section = section;
                             }
                         }
@@ -1139,7 +1224,7 @@ impl App {
                             Icon::Recent,
                             "Help",
                             self.menu_section.top() == help,
-                            true,
+                            idle,
                         )
                         .clicked()
                         {
@@ -1177,7 +1262,7 @@ impl App {
                 let (title, description) = self.menu_section.heading();
                 ui.horizontal(|ui| {
                     if self.menu_section.parent().is_some()
-                        && theme::button(ui, Kind::Secondary, "‹ Back", true).clicked()
+                        && theme::button(ui, Kind::Secondary, "‹ Back", !self.menu_busy()).clicked()
                     {
                         self.menu_back();
                     }
@@ -1197,9 +1282,26 @@ impl App {
                 }
                 ui.add_space(30.0);
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    ui.set_width(ui.available_width().min(620.0));
+                    // The New page is wider, so the template cards fit side by side.
+                    let width = if self.menu_section == MenuSection::New {
+                        800.0
+                    } else {
+                        620.0
+                    };
+                    ui.set_width(ui.available_width().min(width));
                     ui.separator();
                     ui.add_space(15.0);
+                    match self.menu_section {
+                        MenuSection::New => {
+                            self.menu_new_page(ui);
+                            return;
+                        }
+                        MenuSection::Open => {
+                            self.menu_open_page(ui);
+                            return;
+                        }
+                        _ => {}
+                    }
                     ui.spacing_mut().item_spacing.y = 0.0;
                     for label in self.menu_section.commands() {
                         let enabled = matches!(

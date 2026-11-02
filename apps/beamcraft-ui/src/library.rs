@@ -8,14 +8,23 @@
 //! it; the host draws the frame and the header around it. The next free name in the location is
 //! read with `session::project::next_project_name` on a worker thread; creating a project runs
 //! `create-project` in a separate process, read with `crate::start::parse_project`.
+//!
+//! `ModelPicker` is the menu's Open page: the recent models and "Browse…". The recent list is
+//! read, and a chosen model remembered as opened, with the `session` crate on a worker thread.
+//!
+//! Each piece runs one job at a time and knows what kind of job it is, so a host can wait for the
+//! jobs that open a model (a create, a remember) without waiting for the background reads.
 
 use crate::command;
-use crate::start::{DEADLINE, MAX_FIELD, ProjectView, parse_project, project_create_args, refusal};
+use crate::start::{
+    DEADLINE, MAX_FIELD, ProjectView, format_when, load_recent, now_ms, parse_project,
+    project_create_args, refusal, remember,
+};
 use crate::stats::Stats;
-use crate::theme::{self, Kind, Palette};
+use crate::theme::{self, Icon, Kind, Palette};
 use crate::tools::ToolError;
 use session::project::next_project_name;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Duration;
@@ -80,14 +89,23 @@ enum FormReply {
     Created(Result<ProjectView, ToolError>),
 }
 
+/// What the form's running job does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FormKind {
+    /// Reads the next free name in the location.
+    Suggesting,
+    /// Runs `create-project`.
+    Creating,
+}
+
 /// The new-model form: name, location, template, and the create command.
 pub(crate) struct NewModelForm {
     name: String,
     suggested: String,
     parent: String,
     note: Option<Result<String, String>>,
-    job: Option<Receiver<FormReply>>,
-    /// The sending end of a job a test installed with `hold_job`.
+    job: Option<(FormKind, Receiver<FormReply>)>,
+    /// The sending end of a job a test installed with `hold_job` or `hold_create`.
     #[cfg(test)]
     sender: Option<std::sync::mpsc::Sender<FormReply>>,
 }
@@ -123,6 +141,11 @@ impl NewModelForm {
         self.job.is_some()
     }
 
+    /// Whether a create command is running; a name suggestion does not count.
+    pub(crate) fn creating(&self) -> bool {
+        matches!(self.job, Some((FormKind::Creating, _)))
+    }
+
     /// Prepares the form to be shown: clears its note and suggests a name.
     pub(crate) fn show(&mut self) {
         self.note = None;
@@ -137,7 +160,7 @@ impl NewModelForm {
         }
         let parent = self.parent.trim().to_owned();
         let previous = self.name.clone();
-        self.run_worker(move || {
+        self.run_worker(FormKind::Suggesting, move || {
             let name = next_project_name(Path::new(&parent), DEFAULT_MODEL_NAME).map_err(refusal);
             FormReply::Suggested {
                 parent,
@@ -171,7 +194,7 @@ impl NewModelForm {
         );
         let cli = host.cli.to_path_buf();
         let stats = Arc::clone(host.stats);
-        self.run_worker(move || {
+        self.run_worker(FormKind::Creating, move || {
             FormReply::Created(
                 command::run(&cli, &args, DEADLINE, &stats)
                     .and_then(|out| parse_project(out.code, &out.stdout, "project_created")),
@@ -182,7 +205,7 @@ impl NewModelForm {
     /// Reads the reply of the running job, if it has arrived: a created project is the event,
     /// a suggestion or a failure only changes the form.
     pub(crate) fn poll(&mut self) -> Option<FormEvent> {
-        let rx = self.job.as_ref()?;
+        let (_, rx) = self.job.as_ref()?;
         let reply = match rx.try_recv() {
             Ok(reply) => reply,
             Err(TryRecvError::Empty) => return None,
@@ -306,8 +329,9 @@ impl NewModelForm {
         event
     }
 
-    /// Runs `work` on a worker thread; the form polls for its reply.
-    fn run_worker(&mut self, work: impl FnOnce() -> FormReply + Send + 'static) {
+    /// Runs `work` of `kind` on a worker thread; the form polls for its reply. A thread that
+    /// cannot start installs no job, so the form is never left busy.
+    fn run_worker(&mut self, kind: FormKind, work: impl FnOnce() -> FormReply + Send + 'static) {
         let (tx, rx) = std::sync::mpsc::channel();
         let spawned = std::thread::Builder::new()
             .name("beamcraft-start".into())
@@ -315,22 +339,34 @@ impl NewModelForm {
                 let _ = tx.send(work());
             });
         if spawned.is_ok() {
-            self.job = Some(rx);
+            self.job = Some((kind, rx));
             self.note = None;
         } else {
             self.note = Some(Err("the command thread could not be started".into()));
         }
     }
 
-    /// Installs a pending job whose reply the test delivers.
+    /// Installs a pending job of `kind` whose reply the test delivers.
     #[cfg(test)]
-    pub(crate) fn hold_job(&mut self) {
+    fn hold(&mut self, kind: FormKind) {
         let (tx, rx) = std::sync::mpsc::channel();
-        self.job = Some(rx);
+        self.job = Some((kind, rx));
         self.sender = Some(tx);
     }
 
-    /// Delivers a created project to the job installed with `hold_job`.
+    /// Installs a pending name suggestion whose reply the test delivers.
+    #[cfg(test)]
+    pub(crate) fn hold_job(&mut self) {
+        self.hold(FormKind::Suggesting);
+    }
+
+    /// Installs a pending create command whose reply the test delivers.
+    #[cfg(test)]
+    pub(crate) fn hold_create(&mut self) {
+        self.hold(FormKind::Creating);
+    }
+
+    /// Delivers a created project to the job installed with `hold_job` or `hold_create`.
     #[cfg(test)]
     pub(crate) fn deliver_created(&mut self, project: ProjectView) {
         if let Some(tx) = &self.sender {
@@ -360,6 +396,306 @@ impl NewModelForm {
     pub(crate) fn disconnect(&mut self) {
         self.sender = None;
     }
+}
+
+/// What the user did with the picker.
+#[derive(Debug)]
+pub(crate) enum PickEvent {
+    /// Cancel was pressed.
+    Cancelled,
+    /// This model was chosen and remembered as opened now.
+    Opened(PathBuf),
+}
+
+enum PickReply {
+    Listed(Result<Vec<ProjectView>, ToolError>),
+    Opened(Result<ProjectView, ToolError>),
+}
+
+/// What the picker's running job does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PickKind {
+    /// Reads the recent list.
+    Listing,
+    /// Remembers the chosen model as opened now.
+    Opening,
+}
+
+/// The menu's Open page: the recent models and "Browse…", read and remembered on a worker.
+pub(crate) struct ModelPicker {
+    recent: Option<Result<Vec<ProjectView>, String>>,
+    note: Option<String>,
+    job: Option<(PickKind, Receiver<PickReply>)>,
+    /// The sending end of a job a test installed with `hold_open`.
+    #[cfg(test)]
+    sender: Option<std::sync::mpsc::Sender<PickReply>>,
+}
+
+impl ModelPicker {
+    /// A picker that has not read the recent list yet.
+    pub(crate) fn new() -> Self {
+        Self {
+            recent: None,
+            note: None,
+            job: None,
+            #[cfg(test)]
+            sender: None,
+        }
+    }
+
+    /// Whether the recent list is being read or a model is being remembered.
+    pub(crate) fn busy(&self) -> bool {
+        self.job.is_some()
+    }
+
+    /// Whether a chosen model is being remembered; reading the recent list does not count.
+    pub(crate) fn opening(&self) -> bool {
+        matches!(self.job, Some((PickKind::Opening, _)))
+    }
+
+    /// Reads the recent list again, as the page is entered. Nothing happens while a job runs,
+    /// so a pending remember is never replaced. Reading the list may rewrite the settings file:
+    /// it drops models whose folder has gone.
+    pub(crate) fn refresh(&mut self, config_dir: Option<&Path>) {
+        if self.job.is_some() {
+            return;
+        }
+        let config = config_dir.map(Path::to_path_buf);
+        self.run_worker(PickKind::Listing, move || {
+            PickReply::Listed(load_recent(config.as_deref()))
+        });
+    }
+
+    /// Remembers the model at `path` as opened now; its reply is the event.
+    fn open(&mut self, config_dir: Option<&Path>, path: String) {
+        if self.job.is_some() {
+            return;
+        }
+        let config = config_dir.map(Path::to_path_buf);
+        self.run_worker(PickKind::Opening, move || {
+            PickReply::Opened(remember(config.as_deref(), &path))
+        });
+    }
+
+    /// Reads the reply of the running job, if it has arrived: a remembered model is the event, a
+    /// list or a refusal only changes the page.
+    pub(crate) fn poll(&mut self) -> Option<PickEvent> {
+        let (_, rx) = self.job.as_ref()?;
+        let reply = match rx.try_recv() {
+            Ok(reply) => reply,
+            Err(TryRecvError::Empty) => return None,
+            Err(TryRecvError::Disconnected) => {
+                self.job = None;
+                self.note = Some("the command thread ended without an answer".into());
+                return None;
+            }
+        };
+        self.job = None;
+        match reply {
+            PickReply::Listed(listed) => {
+                self.recent = Some(listed.map_err(|e| e.to_string()));
+                None
+            }
+            PickReply::Opened(Ok(project)) => Some(PickEvent::Opened(PathBuf::from(project.path))),
+            PickReply::Opened(Err(e)) => {
+                self.note = Some(e.to_string());
+                None
+            }
+        }
+    }
+
+    /// Draws the recent models, "Browse…" and Cancel. `current` is the open model, shown as
+    /// "Open now"; `outer_busy` disables the page while the host runs a command of its own.
+    pub(crate) fn ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        config_dir: Option<&Path>,
+        current: &Path,
+        outer_busy: bool,
+    ) -> Option<PickEvent> {
+        let mut event = self.poll();
+        if self.busy() {
+            ui.ctx().request_repaint_after(Duration::from_millis(50));
+        }
+        let busy = self.busy() || outer_busy;
+        let palette = Palette::current(ui);
+        let now = now_ms();
+        ui.label(theme::bold("Recent models", 14.0));
+        ui.add_space(8.0);
+        let mut chosen = None;
+        match &self.recent {
+            Some(Ok(projects)) if projects.is_empty() => {
+                ui.label(egui::RichText::new("No recent models.").color(palette.muted));
+            }
+            Some(Ok(projects)) => {
+                egui::ScrollArea::vertical()
+                    .id_salt("menu-recent-models")
+                    .max_height(360.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 2.0;
+                        for project in projects {
+                            let open_now = Path::new(&project.path) == current;
+                            let enabled = project.ready() && !open_now && !busy;
+                            if model_row(ui, project, open_now, enabled, now, palette).clicked() {
+                                chosen = Some(project.path.clone());
+                            }
+                        }
+                    });
+            }
+            Some(Err(error)) => {
+                ui.label(egui::RichText::new(error).color(palette.error));
+            }
+            None => {}
+        }
+        if let Some(path) = chosen {
+            self.open(config_dir, path);
+        }
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            if theme::icon_text_button(ui, Icon::Folder, "Browse…", !busy, 140.0).clicked() {
+                let start = current
+                    .parent()
+                    .and_then(Path::to_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                match browse_folder("Open a BeamCraft model folder", &start) {
+                    Ok(Some(dir)) => self.open(config_dir, dir),
+                    Ok(None) => {}
+                    Err(e) => self.note = Some(e),
+                }
+            }
+            if theme::button(ui, Kind::Secondary, "Cancel", !busy).clicked() && event.is_none() {
+                event = Some(PickEvent::Cancelled);
+            }
+            if self.busy() {
+                ui.spinner();
+            }
+        });
+        if let Some(note) = &self.note {
+            ui.label(egui::RichText::new(note).color(palette.error).strong());
+        }
+        event
+    }
+
+    /// Runs `work` of `kind` on a worker thread; the picker polls for its reply. A thread that
+    /// cannot start installs no job, so the picker is never left busy.
+    fn run_worker(&mut self, kind: PickKind, work: impl FnOnce() -> PickReply + Send + 'static) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name("beamcraft-start".into())
+            .spawn(move || {
+                let _ = tx.send(work());
+            });
+        if spawned.is_ok() {
+            self.job = Some((kind, rx));
+            self.note = None;
+        } else {
+            self.note = Some("the command thread could not be started".into());
+        }
+    }
+
+    /// Shows `projects` as the recent list, with no job pending.
+    #[cfg(test)]
+    pub(crate) fn set_recent(&mut self, projects: Vec<ProjectView>) {
+        self.recent = Some(Ok(projects));
+        self.job = None;
+        self.sender = None;
+    }
+
+    /// Installs a pending remember whose reply the test delivers.
+    #[cfg(test)]
+    pub(crate) fn hold_open(&mut self) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.job = Some((PickKind::Opening, rx));
+        self.sender = Some(tx);
+    }
+
+    /// Delivers the answer of the remember installed with `hold_open`.
+    #[cfg(test)]
+    pub(crate) fn deliver_opened(&mut self, project: Result<ProjectView, ToolError>) {
+        if let Some(tx) = &self.sender {
+            let _ = tx.send(PickReply::Opened(project));
+        }
+    }
+}
+
+/// One recent model as a full-width row: its name, its folder below and when it changed (or
+/// "Open now" for the open model) on the right.
+fn model_row(
+    ui: &mut egui::Ui,
+    project: &ProjectView,
+    open_now: bool,
+    enabled: bool,
+    now: u64,
+    palette: Palette,
+) -> egui::Response {
+    let response = ui.add_enabled(
+        enabled,
+        egui::Button::new("").min_size(egui::vec2(ui.available_width(), 54.0)),
+    );
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::Role::Button, enabled, project.name.as_str())
+    });
+    let rect = response.rect;
+    let painter = ui.painter();
+    let right = if open_now {
+        "Open now".to_owned()
+    } else {
+        project
+            .modified_ms
+            .map(|ms| format!("Changed {}", format_when(ms, now)))
+            .unwrap_or_default()
+    };
+    let side = painter.layout_no_wrap(right, egui::FontId::proportional(11.0), palette.muted);
+    let side_width = side.size().x;
+    painter.galley(
+        egui::pos2(
+            rect.right() - 12.0 - side_width,
+            rect.center().y - side.size().y / 2.0,
+        ),
+        side,
+        palette.muted,
+    );
+    // Name and folder stop before the text on the right.
+    let names = painter.with_clip_rect(egui::Rect::from_x_y_ranges(
+        rect.left()..=(rect.right() - 24.0 - side_width).max(rect.left()),
+        rect.y_range(),
+    ));
+    names.text(
+        egui::pos2(rect.left() + 12.0, rect.center().y - 9.0),
+        egui::Align2::LEFT_CENTER,
+        &project.name,
+        egui::FontId::new(13.0, theme::bold_family()),
+        if enabled || open_now {
+            palette.text
+        } else {
+            palette.muted
+        },
+    );
+    let (meta, color) = if project.ready() {
+        (
+            Path::new(&project.path)
+                .parent()
+                .and_then(Path::to_str)
+                .unwrap_or_default()
+                .to_owned(),
+            palette.muted,
+        )
+    } else {
+        (
+            format!("cannot be opened: {}", project.state),
+            palette.error,
+        )
+    };
+    names.text(
+        egui::pos2(rect.left() + 12.0, rect.center().y + 11.0),
+        egui::Align2::LEFT_CENTER,
+        meta,
+        egui::FontId::proportional(11.0),
+        color,
+    );
+    response
 }
 
 fn template_card(ui: &mut egui::Ui, title: &str, text: &str, available: bool) {
@@ -460,6 +796,92 @@ mod tests {
         assert!(form.job.is_none());
         let note = form.note.clone().unwrap().unwrap_err();
         assert!(note.contains("does not exist"), "{note}");
+    }
+
+    #[test]
+    fn create_marks_the_form_as_creating() {
+        let (cli, stats) = host_parts();
+        let host = Host {
+            cli: &cli,
+            config_dir: None,
+            actor: None,
+            environment: None,
+            stats: &stats,
+        };
+        let parent =
+            std::env::temp_dir().join(format!("beamcraft-library-creating-{}", std::process::id()));
+        std::fs::create_dir_all(&parent).unwrap();
+        let mut form = NewModelForm::new();
+        form.parent = parent.to_string_lossy().into_owned();
+        assert!(!form.creating());
+        form.create(&host);
+        // The missing CLI fails at once, but the job is installed before any reply is read.
+        assert!(form.creating());
+        for _ in 0..250 {
+            if form.poll().is_some() || !form.busy() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(!form.creating());
+        assert!(matches!(form.note, Some(Err(_))), "{:?}", form.note);
+        let _ = std::fs::remove_dir_all(&parent);
+    }
+
+    #[test]
+    fn a_suggestion_is_not_a_create() {
+        let mut form = NewModelForm::new();
+        form.hold_job();
+        assert!(form.busy() && !form.creating());
+        form.hold_create();
+        assert!(form.busy() && form.creating());
+    }
+
+    #[test]
+    fn an_opened_reply_reports_the_path() {
+        let mut picker = ModelPicker::new();
+        picker.hold_open();
+        assert!(picker.opening());
+        picker.deliver_opened(Ok(ProjectView {
+            name: "Nave 1".into(),
+            path: "/m/Nave 1".into(),
+            state: "ready".into(),
+            created_ms: Some(0),
+            modified_ms: Some(0),
+        }));
+        assert!(
+            matches!(picker.poll(), Some(PickEvent::Opened(path)) if path == Path::new("/m/Nave 1"))
+        );
+        assert!(!picker.busy());
+        assert_eq!(picker.note, None);
+    }
+
+    #[test]
+    fn a_refused_open_is_a_note() {
+        let mut picker = ModelPicker::new();
+        picker.hold_open();
+        picker.deliver_opened(Err(ToolError::local(
+            "NOT_FOUND",
+            "the folder is not a project with a readable head",
+        )));
+        assert!(picker.poll().is_none());
+        assert!(!picker.opening());
+        assert_eq!(
+            picker.note.as_deref(),
+            Some("the folder is not a project with a readable head")
+        );
+    }
+
+    #[test]
+    fn a_refresh_never_replaces_a_pending_open() {
+        let mut picker = ModelPicker::new();
+        picker.hold_open();
+        let scratch = std::env::temp_dir().join(format!(
+            "beamcraft-library-picker-config-{}",
+            std::process::id()
+        ));
+        picker.refresh(Some(&scratch));
+        assert!(picker.opening());
     }
 
     #[test]
