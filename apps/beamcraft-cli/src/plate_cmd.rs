@@ -4115,8 +4115,24 @@ pub(crate) fn definitions_json(
                 environment_profiles_json(inspection, options)?,
             ),
             ("environment_presets", environment_presets_json(options)?),
+            ("levels", level_choices_json(inspection)?),
         ]))
     })
+}
+
+/// The levels of the model as pickers need them: identity, name and elevation.
+fn level_choices_json(inspection: &Inspection) -> Run<Json> {
+    beamcraft_commands::level::views(&inspection.levels)
+        .iter()
+        .map(|level| {
+            Ok(Json::object([
+                ("id", Json::text(level.id.to_string())),
+                ("name", Json::text(level.name.clone())),
+                ("elevation_mm", num(level.elevation_mm)?),
+            ]))
+        })
+        .collect::<Run<Vec<_>>>()
+        .map(Json::Array)
 }
 
 /// The part presets of the project's environment (`steel:preset:*`), for pickers and defaults.

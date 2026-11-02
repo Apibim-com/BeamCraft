@@ -44,6 +44,11 @@ saved setting.
   preset (name, class, material, profile or thickness) and the Preset drop-down switches to
   another; every field stays editable. A refused entry is skipped, not fatal. Saving a preset
   from the window is not done yet.
+* Placing beams and columns (2026-11-02): the pointer snaps (endpoint, midpoint, axis, grid and
+  so on, as for plates) and the marker is drawn before the first click too. A column is one click:
+  the base point, with the top set by the form's height or by a chosen level (`definitions` lists
+  the model's `levels`; the top is straight up in world Z to the level's elevation, refused when
+  the level is not above the base).
 * Default materials: `Steel_Undefined` (density 0) and `Steel` (7850 kg/m3, no grade).
 
 ## Zero density

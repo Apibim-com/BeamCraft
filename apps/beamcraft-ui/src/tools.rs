@@ -127,7 +127,14 @@ pub struct MemberForm {
     pub roll: String,
     /// `--orientation-xyzw X,Y,Z,W`, optional (empty means the flag is absent).
     pub orientation: String,
+    /// Column height above its base point, in mm, when no top level is chosen.
+    pub height: String,
+    /// The level (identity) a column reaches instead of a height.
+    pub top_level: Option<String>,
 }
+
+/// The column height the form starts with, in millimetres.
+pub const DEFAULT_COLUMN_HEIGHT: &str = "3000";
 
 impl Default for MemberForm {
     fn default() -> Self {
@@ -144,6 +151,8 @@ impl Default for MemberForm {
             class: String::new(),
             roll: String::new(),
             orientation: String::new(),
+            height: DEFAULT_COLUMN_HEIGHT.into(),
+            top_level: None,
         }
     }
 }
@@ -310,6 +319,40 @@ impl PlateForm {
 }
 
 impl MemberForm {
+    /// The top of a column whose base is `base` (world millimetres): straight up to the chosen
+    /// level, or by the typed height. A level at or below the base is refused.
+    pub fn column_end(
+        &self,
+        base: [f64; 3],
+        levels: &[LevelChoice],
+    ) -> Result<[f64; 3], FormError> {
+        let [x, y, z] = base;
+        if let Some(id) = &self.top_level {
+            let level = levels.iter().find(|l| &l.id == id).ok_or(FormError {
+                field: "Top level",
+                message: "the level no longer exists".into(),
+            })?;
+            if level.elevation_mm <= z {
+                return Err(FormError {
+                    field: "Top level",
+                    message: "the level must be above the base point".into(),
+                });
+            }
+            return Ok([x, y, level.elevation_mm]);
+        }
+        let height = self
+            .height
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .filter(|h| h.is_finite() && *h > 0.0 && *h <= MAX_COLUMN_HEIGHT_MM)
+            .ok_or(FormError {
+                field: "Height",
+                message: "enter a positive height in millimetres".into(),
+            })?;
+        Ok([x, y, z + height])
+    }
+
     /// The `create-member` command in global coordinates.
     pub fn prepare(&self, store: &Path) -> Result<Prepared, FormError> {
         self.prepare_in_plane(store, None)
@@ -625,6 +668,20 @@ pub fn preset_kind(tool: ToolKind, member: MemberKind) -> &'static str {
     }
 }
 
+/// A level of the model: the top a column can reach.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LevelChoice {
+    /// The level's identity.
+    pub id: String,
+    /// Its label.
+    pub name: String,
+    /// Its elevation in millimetres.
+    pub elevation_mm: f64,
+}
+
+/// The tallest column the form builds from a height, in millimetres.
+pub const MAX_COLUMN_HEIGHT_MM: f64 = 1_000_000.0;
+
 /// The profile and material definitions of the accepted revision.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Definitions {
@@ -634,6 +691,8 @@ pub struct Definitions {
     pub materials: Vec<Choice>,
     /// The part presets of the project's environment, defaults first within a kind.
     pub presets: Vec<PartPreset>,
+    /// The levels of the model, for a column's top.
+    pub levels: Vec<LevelChoice>,
     /// The revision the listing was read from: the store's head at that moment.
     pub head: Option<RevisionStamp>,
 }
@@ -717,6 +776,22 @@ pub fn parse_definitions(exit_code: Option<i32>, stdout: &[u8]) -> Result<Defini
                         profile: text(entry, "profile"),
                         thickness_mm: dimension(entry, "thickness_mm")
                             .and_then(|t| t.parse::<f64>().ok()),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    out.levels = reply
+        .get("levels")
+        .and_then(Json::array)
+        .map(|list| {
+            list.iter()
+                .take(MAX_CHOICES)
+                .filter_map(|entry| {
+                    Some(LevelChoice {
+                        id: text(entry, "id")?,
+                        name: text(entry, "name")?,
+                        elevation_mm: dimension(entry, "elevation_mm")?.parse().ok()?,
                     })
                 })
                 .collect()
@@ -849,6 +924,14 @@ impl Tools {
         }
         if !known(&definitions.materials, &self.plate.material) {
             self.plate.material = None;
+        }
+        if self
+            .member
+            .top_level
+            .as_ref()
+            .is_some_and(|id| !definitions.levels.iter().any(|l| &l.id == id))
+        {
+            self.member.top_level = None;
         }
         self.definitions = definitions;
         if let Some(kind) = self.pending_preset.take() {
@@ -1261,6 +1344,50 @@ mod tests {
         };
         assert_eq!(tools.apply_definitions(Ok(defined)), None);
         assert_eq!(tools.member.profile.as_deref(), Some(DIGEST));
+    }
+
+    #[test]
+    fn a_column_top_follows_the_level_or_the_height() {
+        let reply = br#"{"definition_count":0,"definitions":[],"levels":[{"id":"L1","name":"Roof","elevation_mm":6000},{"id":"L0","name":"Floor","elevation_mm":0}],"outcome":"definitions"}"#;
+        let definitions = parse_definitions(Some(0), reply).unwrap();
+        assert_eq!(definitions.levels.len(), 2);
+        let mut form = MemberForm {
+            kind: MemberKind::Column,
+            ..MemberForm::default()
+        };
+        // By height: straight up from the base.
+        form.height = "2500".into();
+        assert_eq!(
+            form.column_end([10.0, 20.0, 100.0], &definitions.levels),
+            Ok([10.0, 20.0, 2600.0])
+        );
+        for bad in ["", "0", "-5", "abc", "1e9", "NaN"] {
+            form.height = bad.into();
+            assert_eq!(
+                form.column_end([0.0; 3], &definitions.levels)
+                    .unwrap_err()
+                    .field,
+                "Height",
+                "{bad}"
+            );
+        }
+        // By level: the top is the level's elevation, which must lie above the base.
+        form.top_level = Some("L1".into());
+        assert_eq!(
+            form.column_end([10.0, 20.0, 100.0], &definitions.levels),
+            Ok([10.0, 20.0, 6000.0])
+        );
+        assert_eq!(
+            form.column_end([0.0, 0.0, 6000.0], &definitions.levels)
+                .unwrap_err()
+                .field,
+            "Top level"
+        );
+        // A level that is gone from the model is dropped on refresh.
+        let mut tools = Tools::default();
+        tools.member.top_level = Some("gone".into());
+        assert_eq!(tools.apply_definitions(Ok(definitions)), None);
+        assert_eq!(tools.member.top_level, None);
     }
 
     #[test]

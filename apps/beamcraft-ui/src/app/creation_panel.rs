@@ -52,6 +52,31 @@ fn preset_combo(ui: &mut egui::Ui, tools: &mut crate::tools::Tools) {
     }
 }
 
+/// The marker and caption of the snap the pointer resolved to, shared by plate and member placement.
+fn paint_snap_marker(
+    painter: &egui::Painter,
+    pos: egui::Pos2,
+    kind: SnapKind,
+    color: egui::Color32,
+) {
+    let rect = egui::Rect::from_center_size(pos, egui::vec2(16.0, 16.0));
+    let label = match kind {
+        SnapKind::Midpoint => "Midpoint",
+        SnapKind::Center => "Axis center",
+        SnapKind::GridIntersection => "Grid intersection",
+        SnapKind::Edge | SnapKind::Axis | SnapKind::GridLine => "On line",
+        _ => "Endpoint",
+    };
+    super::switches::snap_marker(painter, rect, kind, color);
+    painter.text(
+        pos + egui::vec2(12.0, -14.0),
+        egui::Align2::LEFT_BOTTOM,
+        label,
+        egui::FontId::proportional(12.0),
+        color,
+    );
+}
+
 impl App {
     pub(super) fn finish_creation_gesture(
         &mut self,
@@ -589,23 +614,7 @@ impl App {
             && let Some(pos) = project(hover)
             && let Some(kind) = self.snap_hover
         {
-            let color = crate::theme::Palette::current(ui).link;
-            let rect = egui::Rect::from_center_size(pos, egui::vec2(16.0, 16.0));
-            let label = match kind {
-                SnapKind::Midpoint => "Midpoint",
-                SnapKind::Center => "Axis center",
-                SnapKind::GridIntersection => "Grid intersection",
-                SnapKind::Edge | SnapKind::Axis | SnapKind::GridLine => "On line",
-                _ => "Endpoint",
-            };
-            super::switches::snap_marker(&painter, rect, kind, color);
-            painter.text(
-                pos + egui::vec2(12.0, -14.0),
-                egui::Align2::LEFT_BOTTOM,
-                label,
-                egui::FontId::proportional(12.0),
-                color,
-            );
+            paint_snap_marker(&painter, pos, kind, crate::theme::Palette::current(ui).link);
         }
         if let Some(hover) = self.plate_hover
             && let Some(last) = self.plate_draft.points().last()
@@ -625,9 +634,6 @@ impl App {
 
     pub(super) fn paint_member_draft(&self, ui: &egui::Ui, rect: egui::Rect, view: &View) {
         self.paint_distance_entry(ui, rect);
-        let (Some(start), Some(end)) = (self.beam.start(), self.beam_hover) else {
-            return;
-        };
         let origin = self
             .loaded
             .as_ref()
@@ -650,9 +656,17 @@ impl App {
                 )
             })
         };
-        if let (Some(a), Some(b)) = (project(start), project(end)) {
+        let color = crate::theme::Palette::current(ui).link;
+        if let Some(cursor) = self.member_cursor
+            && let Some(pos) = project(cursor)
+            && let Some(kind) = self.snap_hover
+        {
+            paint_snap_marker(&ui.painter_at(rect), pos, kind, color);
+        }
+        if let (Some(start), Some(end)) = (self.beam.start(), self.beam_hover)
+            && let (Some(a), Some(b)) = (project(start), project(end))
+        {
             let painter = ui.painter_at(rect);
-            let color = crate::theme::Palette::current(ui).link;
             painter.line_segment([a, b], egui::Stroke::new(2.0, color));
             painter.circle_filled(a, 4.0, color);
             painter.circle_filled(b, 4.0, color);
@@ -722,8 +736,18 @@ impl App {
                     field(ui, "Class", &mut self.tools.member.class, 80.0);
                     choice_combo(ui, "member-profile", "Profile", &mut self.tools.member.profile, &self.tools.definitions.profiles, true);
                     choice_combo(ui, "member-material", "Material", &mut self.tools.member.material, &self.tools.definitions.materials, false);
+                    let column = self.bench == Bench::Column;
+                    if column {
+                        let levels: Vec<crate::tools::Choice> = self.tools.definitions.levels.iter().map(|l| crate::tools::Choice {
+                            label: format!("{} · {} mm", l.name, l.elevation_mm),
+                            digest: l.id.clone(),
+                            rect_mm: None,
+                        }).collect();
+                        field(ui, "Height (mm)", &mut self.tools.member.height, 80.0);
+                        choice_combo(ui, "column-top-level", "Top level", &mut self.tools.member.top_level, &levels, false);
+                    }
                     ui.separator();
-                    ui.label(if self.beam.start().is_some() { "Aim, type a length in mm and press Enter, or pick the end point. O toggles orthogonal X/Y/Z." } else { "Pick the start point, then the end point in the model view." });
+                    ui.label(if column && self.beam.start().is_none() { "Click the base point. The top follows the chosen level, or the height when no level is chosen." } else if self.beam.start().is_some() { "Aim, type a length in mm and press Enter, or pick the end point. O toggles orthogonal X/Y/Z." } else { "Pick the start point, then the end point in the model view." });
                     if ui.button("Pick new points").clicked() {
                         self.beam.reset(); self.beam_mode = true; self.beam_hover = None;
                         self.distance_input.clear(); self.distance_aim = None;

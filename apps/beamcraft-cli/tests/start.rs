@@ -263,6 +263,22 @@ fn a_project_created_from_the_blank_environment_places_members_at_once() {
         framed.contains("environment_presets"),
         "presets missing from the frame"
     );
+    // A level of the model reaches the window's definitions, for a column's top.
+    let level = f.raw(&[
+        "create-level",
+        "--store",
+        &store,
+        "--name",
+        "Roof",
+        "--elevation",
+        "6000",
+    ]);
+    assert_eq!(level.0, 0, "{:?}", level.1);
+    let listing = f.raw(&["definitions", "--store", &store]).1;
+    let levels = list(&listing, "levels");
+    assert_eq!(levels.len(), 1);
+    assert_eq!(text(&levels[0], "name"), "Roof");
+    assert_eq!(at(&levels[0], &["elevation_mm"]).float().unwrap(), 6000.0);
     let place = |kind: &str, end: &str, profile: &str, material: &str| {
         let (code, body) = f.raw(&[
             "create-member",
