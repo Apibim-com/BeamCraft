@@ -268,7 +268,34 @@ fn tool_button(
     active: bool,
     enabled: bool,
 ) -> egui::Response {
+    tool_button_inner(ui, icon, label, active, enabled, false)
+}
+
+/// A ribbon button that opens `items` in a popup under it; no default action.
+fn dropdown_button(
+    ui: &mut Ui,
+    icon: Icon,
+    label: &str,
+    enabled: bool,
+    items: impl FnOnce(&mut Ui),
+) -> egui::Response {
+    let response = tool_button_inner(ui, icon, label, false, enabled, true);
+    egui::Popup::menu(&response).show(items);
+    response
+}
+
+/// The ribbon button behind [`tool_button`] and [`dropdown_button`]; `chevron` adds a small
+/// down-pointing triangle right of the caption.
+fn tool_button_inner(
+    ui: &mut Ui,
+    icon: Icon,
+    label: &str,
+    active: bool,
+    enabled: bool,
+    chevron: bool,
+) -> egui::Response {
     let palette = Palette::current(ui);
+    let extra = if chevron { 12.0 } else { 0.0 };
     let label_width = ui
         .painter()
         .layout_no_wrap(
@@ -281,7 +308,7 @@ fn tool_button(
     let response = ui.add_enabled(
         enabled,
         egui::Button::new("")
-            .min_size(vec2((label_width + 12.0).max(54.0), 64.0))
+            .min_size(vec2((label_width + 12.0).max(54.0) + extra, 64.0))
             .fill(if active {
                 palette.select
             } else {
@@ -310,13 +337,27 @@ fn tool_button(
     faint.multiply_opacity(alpha);
     theme::paint_icon(&faint, icon_rect, icon, line);
     let text = palette.text;
+    // With a chevron the caption shifts left by half its width, so the two stay centred.
+    let caption_at = rect.center_bottom() - vec2(extra / 2.0, 13.0);
     faint.text(
-        rect.center_bottom() - vec2(0.0, 13.0),
+        caption_at,
         egui::Align2::CENTER_CENTER,
         label,
         egui::FontId::proportional(11.0),
         text,
     );
+    if chevron {
+        let left = caption_at.x + label_width / 2.0 + 4.0;
+        faint.add(egui::Shape::convex_polygon(
+            vec![
+                egui::pos2(left, caption_at.y - 2.0),
+                egui::pos2(left + 6.0, caption_at.y - 2.0),
+                egui::pos2(left + 3.0, caption_at.y + 2.0),
+            ],
+            line,
+            Stroke::NONE,
+        ));
+    }
     if enabled {
         response.on_hover_cursor(egui::CursorIcon::PointingHand)
     } else {
@@ -630,7 +671,7 @@ impl App {
                     }
                     if self.ribbon_tab == RibbonTab::View {
                     group(ui, "Views", &mut |ui| {
-                        ui.menu_button("Create view", |ui| {
+                        dropdown_button(ui, Icon::NewView, "Create view", true, |ui| {
                             for (construction, label) in crate::views::Construction::ALL {
                                 if ui.button(label).clicked() {
                                     self.begin_view(construction);
@@ -644,7 +685,11 @@ impl App {
                                 None => self.views.editing = !self.views.editing,
                             }
                         }
-                        if tool_button(ui, Icon::Fit, "3D / plane (Ctrl+P)", self.views.toggled.is_some(), true).clicked() {
+                        let shortcut = ui.ctx().format_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::P));
+                        if tool_button(ui, Icon::Fit, "3D / plane", self.views.toggled.is_some(), true)
+                            .on_hover_text(format!("Look straight at the view plane and back ({shortcut})"))
+                            .clicked()
+                        {
                             self.toggle_view_plane();
                         }
                         ui.menu_button("Direction", |ui| {

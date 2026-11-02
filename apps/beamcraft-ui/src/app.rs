@@ -6084,6 +6084,63 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn the_view_tab_offers_a_create_view_dropdown_without_shortcut_captions() {
+        use crate::views::Construction;
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        let mut labels = Vec::new();
+        let mut rects = Vec::new();
+        views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        let tab = labels
+            .iter()
+            .find(|(text, _)| text == "View")
+            .map(|(_, pos)| *pos)
+            .unwrap_or_else(|| panic!("the View tab was not drawn"));
+        labels.clear();
+        views_frame(&mut app, &ctx, click(tab), &mut labels, &mut rects);
+        assert!(
+            !labels.iter().any(|(text, _)| text.contains("Ctrl+P")),
+            "a caption still names the shortcut: {labels:?}"
+        );
+        let button = labels
+            .iter()
+            .find(|(text, _)| text == "Create view")
+            .map(|(_, pos)| *pos)
+            .unwrap_or_else(|| panic!("no Create view button: {labels:?}"));
+
+        // The dropdown lists every construction; the popup needs a sizing frame first.
+        app.views.form.construction = Construction::CurrentCamera;
+        labels.clear();
+        views_frame(&mut app, &ctx, click(button), &mut labels, &mut rects);
+        let listed = |labels: &[(String, egui::Pos2)]| {
+            Construction::ALL
+                .iter()
+                .all(|(_, label)| labels.iter().any(|(text, _)| text == label))
+        };
+        for _ in 0..3 {
+            if listed(&labels) {
+                break;
+            }
+            labels.clear();
+            views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        }
+        assert!(
+            listed(&labels),
+            "the constructions were not listed: {labels:?}"
+        );
+        let plan = labels
+            .iter()
+            .find(|(text, _)| text == "Plan (XY plane)")
+            .map(|(_, pos)| *pos)
+            .unwrap_or_else(|| panic!("no Plan item: {labels:?}"));
+        views_frame(&mut app, &ctx, click(plan), &mut labels, &mut rects);
+        assert_eq!(app.views.form.construction, Construction::PlanXy);
+        assert!(app.views.editing, "choosing a construction opens the form");
+    }
+
+    #[test]
     fn a_view_by_three_picked_points_and_windows_capped_at_eight() {
         use crate::views::Construction;
         let Some(mut app) = headless() else { return };

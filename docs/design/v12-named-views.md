@@ -57,7 +57,8 @@ previews need no agent and have no command.
   menu (open, open in a new window, properties, favourite, duplicate, cut, copy, close, delete
   with confirmation), new and empty-folder deletion, and drag to a folder. `{3D}` is the free
   view.
-* The View tab: Create view (every construction), View properties, 3D / plane (Ctrl+P),
+* The View tab: Create view (an icon dropdown of every construction), View properties,
+  3D / plane (Ctrl+P, shown in its tooltip),
   Direction (top, bottom, front, back, left, right: the camera turns, the input plane stays),
   New view window, Tile windows, and Redraw views. The command palette lists the same.
 * Creating by picking: two points, three points, a face, or a face and an edge are picked in

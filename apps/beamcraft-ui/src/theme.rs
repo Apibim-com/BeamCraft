@@ -498,6 +498,8 @@ pub enum Icon {
     Nearest,
     /// A leader callout: a dot at the feature, an angled line and a small text box.
     Callout,
+    /// A view frame with a section line and a plus: create a view.
+    NewView,
 }
 
 #[derive(Clone, Copy)]
@@ -767,6 +769,18 @@ pub fn paint_icon(painter: &Painter, rect: Rect, icon: Icon, line: Color32) {
                 [15.0, 16.0],
                 [15.0, 8.0],
             ]);
+        }
+        Icon::NewView => {
+            polyline(&[
+                [3.0, 4.0],
+                [17.0, 4.0],
+                [17.0, 16.0],
+                [3.0, 16.0],
+                [3.0, 4.0],
+            ]);
+            polyline(&[[6.0, 13.0], [14.0, 7.0]]);
+            polyline(&[[19.0, 15.0], [19.0, 21.0]]);
+            polyline(&[[16.0, 18.0], [22.0, 18.0]]);
         }
         Icon::Wire => {
             painter.add(egui::Shape::closed_line(
