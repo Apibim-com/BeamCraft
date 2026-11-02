@@ -202,8 +202,7 @@ impl App {
             form.mode = self.mode;
             form.grids = self.grids_visible;
         }
-        let taken = self.views.book.views().len() + 1;
-        form.name = self.views.book.unique_name(&format!("View {taken}"), &[]);
+        form.name = self.views.book.next_default_name();
         if matches!(construction, Construction::GridAxes | Construction::Level) {
             form.name = match construction {
                 Construction::Level => "Plan".into(),

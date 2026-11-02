@@ -6068,6 +6068,22 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn the_new_view_form_takes_the_lowest_free_name() {
+        use crate::views::Construction;
+        use beamcraft_engine::views::ModelView;
+        use beamcraft_engine::work_plane::WorkPlane;
+        use beamcraft_model::id::Uuid7;
+        let Some(mut app) = headless() else { return };
+        for (n, name) in [(1_u64, "View 2"), (2, "View 3")] {
+            let id = Uuid7::parse(&format!("019a7bf0-0000-7000-8000-{n:012}")).unwrap();
+            let view = ModelView::new(id, name, WorkPlane::default(), 5000.0);
+            app.views.book.insert(view).unwrap();
+        }
+        app.begin_view(Construction::PlanXy);
+        assert_eq!(app.views.form.name, "View 1");
+    }
+
+    #[test]
     fn a_view_by_three_picked_points_and_windows_capped_at_eight() {
         use crate::views::Construction;
         let Some(mut app) = headless() else { return };

@@ -44,7 +44,9 @@ the model never fails over views.
 Headlessly the same file is served by `list-views`, `save-view`, `update-view`, `remove-view`
 and `apply-view` (`--file`). `save-view` builds a view from exactly one plane option and takes
 every display property as an option; grids, levels, parts, assemblies and faces are read from a
-read-only `--store`. Batches suffix repeated names. `apply-view` returns the view, its camera
+read-only `--store`. Without `--name` a single view is named `View N` (the lowest free number)
+and a batch by its labels alone; the window's new-view form starts with the same name. Batches
+suffix repeated names. `apply-view` returns the view, its camera
 frame and its clip planes and touches no store. Folders, favourites in the browser, windows and
 previews need no agent and have no command.
 
