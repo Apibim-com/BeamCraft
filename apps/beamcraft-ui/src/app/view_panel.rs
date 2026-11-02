@@ -834,6 +834,7 @@ impl App {
         ui.horizontal(|ui| {
             ui.checkbox(&mut self.views.quick_access, "Quick access");
             ui.checkbox(&mut self.views.favorites_only, "Favourites");
+            ui.checkbox(&mut self.views.previews_on, "Previews");
         });
         if self.views.new_folder {
             text(ui, "Folder", &mut self.views.destination);
@@ -895,6 +896,7 @@ impl App {
             .map(|(f, v)| (f, v.into_iter().cloned().collect()))
             .collect();
         let mut actions: Vec<BrowserAction> = Vec::new();
+        let mut budget = true;
         egui::ScrollArea::vertical()
             .id_salt("view-browser")
             .max_height(360.0)
@@ -924,6 +926,16 @@ impl App {
                             });
                         }
                         for view in list {
+                            if self.views.previews_on {
+                                match self.view_preview(view, &mut budget) {
+                                    Some(texture) => {
+                                        ui.image((texture, egui::vec2(160.0, 100.0)));
+                                    }
+                                    None => {
+                                        ui.small("Preparing the preview…");
+                                    }
+                                }
+                            }
                             let selected = self.views.selected.contains(&view.id)
                                 || self.views.active == Some(view.id);
                             let label = format!(
@@ -1130,6 +1142,95 @@ impl App {
         self.views.windows.retain(|w| w.view != Some(id));
         self.views.cameras.remove(&id);
         self.views.open.retain(|v| *v != id);
+    }
+
+    /// The preview of `view`: drawn off screen with the view's own camera, cut, tint and hidden
+    /// kinds, kept until the snapshot or the view changes. At most one preview is drawn per
+    /// frame (`budget`), and at most [`crate::views::MAX_PREVIEWS`] are kept.
+    fn view_preview(&mut self, view: &ModelView, budget: &mut bool) -> Option<egui::TextureId> {
+        let loaded = self.loaded.as_ref()?;
+        let key = crate::views::preview_key(loaded.snapshot.token().as_str(), view);
+        if let Some((drawn, window)) = self.views.previews.get(&view.id)
+            && *drawn == key
+        {
+            return window.texture();
+        }
+        if !std::mem::take(budget) {
+            return self
+                .views
+                .previews
+                .get(&view.id)
+                .and_then(|(_, w)| w.texture());
+        }
+        let origin = loaded.summary.origin_mm;
+        let extent = self.view_extent();
+        let camera = Camera::from_view(view, origin, extent).ok()?;
+        if !self.views.previews.contains_key(&view.id)
+            && self.views.previews.len() >= crate::views::MAX_PREVIEWS
+            && let Some(oldest) = self.views.previews.keys().next().copied()
+            && let Some((_, mut gone)) = self.views.previews.remove(&oldest)
+        {
+            gone.release(&self.state);
+        }
+        let (_, window) = self
+            .views
+            .previews
+            .entry(view.id)
+            .or_insert_with(|| (0, ViewWindow::new(Some(view), camera, 0)));
+        window.camera = camera;
+        let [width, height] = crate::views::PREVIEW_SIZE;
+        let aspect = window
+            .resize(&self.state, width, height, Some(1), &self.stats)
+            .ok()?;
+        let hidden = view.hidden_kinds;
+        let filtered = if hidden == self.views.shown {
+            None
+        } else {
+            let overlay = self.colour.as_ref().map(|(_, o)| std::sync::Arc::clone(o));
+            crate::scene::Scene::from_snapshot_showing(
+                &loaded.snapshot,
+                beamcraft_engine::Representation::Full,
+                &loaded.uploaded.resident(),
+                overlay.as_deref(),
+                hidden,
+            )
+            .and_then(|scene| {
+                crate::render::Uploaded::upload(
+                    &self.state.device,
+                    &self.state.queue,
+                    &scene,
+                    Some(&loaded.uploaded),
+                )
+            })
+            .ok()
+        };
+        let mut camera_view = window.camera.view(aspect).ok()?;
+        camera_view.tint = crate::views::tint_of(Some(view));
+        let clip = match crate::views::display_clip(None, Some(view)) {
+            Some(cut) => crate::cut_plane::ClipGpu::of(&cut, origin),
+            None => crate::cut_plane::ClipGpu::none(),
+        };
+        let mode = if view.render_mode == RenderMode::SelectedOnly {
+            RenderMode::Shaded
+        } else {
+            view.render_mode
+        };
+        window.renderer()?.draw(
+            &self.state.device,
+            &self.state.queue,
+            filtered.as_ref().unwrap_or(&loaded.uploaded),
+            camera_view,
+            &self.stats,
+            mode,
+            &clip,
+        );
+        if let Some((drawn, _)) = self.views.previews.get_mut(&view.id) {
+            *drawn = key;
+        }
+        self.views
+            .previews
+            .get(&view.id)
+            .and_then(|(_, w)| w.texture())
     }
 
     /// The view-properties window: the name, folder and marks, how a new view is built, and

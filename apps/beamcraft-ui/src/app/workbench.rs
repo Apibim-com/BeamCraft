@@ -943,6 +943,47 @@ impl App {
                 return true;
             }
         }
+        // The model views (V12): every way to create one, and the view commands.
+        for (construction, label) in crate::views::Construction::ALL {
+            let label = format!("Create view: {label}");
+            if label.to_lowercase().contains(&query)
+                && ui
+                    .add(egui::Button::new(&label).min_size(vec2(ui.available_width(), 34.0)))
+                    .clicked()
+            {
+                self.begin_view(construction);
+                return true;
+            }
+        }
+        for label in [
+            "View properties",
+            "3D / plane view",
+            "New view window",
+            "Tile view windows",
+            "Next open view",
+        ] {
+            if label.to_lowercase().contains(&query)
+                && ui
+                    .add(egui::Button::new(label).min_size(vec2(ui.available_width(), 34.0)))
+                    .clicked()
+            {
+                match label {
+                    "View properties" => match self.views.active {
+                        Some(id) => self.edit_view(id),
+                        None => self.views.editing = true,
+                    },
+                    "3D / plane view" => self.toggle_view_plane(),
+                    "New view window" => self.open_view_window(self.views.active),
+                    "Tile view windows" => self.views.tile = true,
+                    _ => {
+                        if let Some(next) = self.views.next_open() {
+                            self.activate_view(Some(next));
+                        }
+                    }
+                }
+                return true;
+            }
+        }
         for label in [
             "Undo",
             "Redo",

@@ -481,10 +481,28 @@ pub struct Views {
     pub shown: KindFilter,
     /// The last key handed to a view window.
     pub window_serial: u64,
+    /// Whether the browser shows previews.
+    pub previews_on: bool,
+    /// The rendered previews: the key they were drawn for (snapshot and definition) and the
+    /// offscreen target, at most [`MAX_PREVIEWS`].
+    pub previews: BTreeMap<Uuid7, (u64, ViewWindow)>,
 }
 
 /// Most windows besides the main viewport.
 pub const MAX_WINDOWS: usize = 8;
+/// Most previews kept rendered.
+pub const MAX_PREVIEWS: usize = 64;
+/// Preview size in pixels.
+pub const PREVIEW_SIZE: [u32; 2] = [160, 100];
+
+/// The key a preview is drawn for: the snapshot token and every field of the view.
+pub fn preview_key(token: &str, view: &ModelView) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    token.hash(&mut hasher);
+    format!("{view:?}").hash(&mut hasher);
+    hasher.finish()
+}
 
 impl Views {
     /// The active view.
