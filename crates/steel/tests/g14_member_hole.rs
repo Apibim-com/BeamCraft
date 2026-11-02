@@ -4,6 +4,8 @@
 //! G14.1 member-hole tests: exact `A * t` wall volumes, genus per crossed wall, feature
 //! ids of the amendment and every refusal of the first slice (blind, tangent, margin,
 //! edge-touching footprint, parallel-wall breach, sloped and curved walls, ordinal clash).
+//! The G14.2 slice-1 tests cover the directed oblique cutters: `A * t / |n . d|` volumes on
+//! flat walls at any angle, the byte-exact `new` special case and the refusals that stay.
 
 #![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 
@@ -101,13 +103,15 @@ fn hollow_body() -> Body {
 }
 
 fn tube_body() -> Body {
+    // A solid 48-sided section: every band is its own face, so a hole crosses bands of
+    // one strip each (the curve-approximated cavity wall is the merge-walk slice).
     let outer: Vec<Point2> = (0..N)
         .map(|i| {
             let a = 2.0 * PI * f64::from(i) / f64::from(N);
             Point2::new(B / 2.0 * a.cos(), B / 2.0 * a.sin())
         })
         .collect();
-    x_extruded(&outer, &[circle(0.0, 0.0, B / 2.0 - TW)])
+    x_extruded(&outer, &[])
 }
 
 fn tapered_body() -> Body {
@@ -312,18 +316,131 @@ fn footprint_over_a_parallel_wall_is_refused() {
     assert_eq!(err.code, OpCode::ContourInvalid);
 }
 
+// G14.2 slice 2: holes through faceted walls (a tube) with the strip registry.
+
 #[test]
-fn hole_in_a_tube_is_refused() {
+fn a_small_hole_cuts_a_tube_through_four_chains() {
     let body = tube_body();
-    let err = refused(
+    let before = volume(&body);
+    // A round hole of radius 4 spans two bands on each side of the section; the opening
+    // touches every band's lower boundary edge only (a 48-sided band is about 9.8 mm
+    // wide, the hole is 8 mm).
+    let res = drill(
+        &body,
+        circle(L / 2.0, 0.0, 4.0),
+        -H / 2.0 - 1.0,
+        H / 2.0 + 1.0,
+        7,
+    );
+    assert_sealed(&res);
+    assert_eq!(res.kind(), OpKind::MemberThroughHole);
+    // The solid section is genus 0; the through hole adds one more.
+    assert_eq!(genus(&res), 1);
+    let removed = before - volume(res.body());
+    let expected = tube_removed_volume(4.0, H);
+    assert!(
+        (removed - expected).abs() < 1e-4 * expected,
+        "{removed} vs {expected}"
+    );
+    let analytic = res.analytic_volume_mm3().unwrap();
+    let expect_result = before - expected;
+    assert!(analytic.lo <= expect_result && expect_result <= analytic.hi);
+    assert!(res.face_table().iter().any(|id| id == "cut:f.h7.w0.s0"));
+}
+
+/// The removed volume of a through hole across a solid `N`-band section: the flat prism
+/// over the cavity's own approximation polygon minus the inclined-member term
+/// `2·tan(γ)·∬|b|` (each band chord tilts by `γ = π/N` against the cutter axis). The
+/// polygon is taken at the cavity's own radius: the CurveSpec segment count depends on
+/// the radius (48 sides at r=4, 72 at R=10), so a far polygon's area does not scale as
+/// `r²` — the old `polygon_area_of` base was that 72-side area.
+fn tube_removed_volume(r: f64, height: f64) -> f64 {
+    let pts: Vec<(f64, f64)> = circle(0.0, 0.0, r)
+        .points()
+        .iter()
+        .map(|p| (p.x, p.y))
+        .collect();
+    let mut area2 = 0.0;
+    let mut moment = 0.0;
+    for (p, q) in pts.iter().zip(pts.iter().cycle().skip(1)) {
+        let cross = p.0 * q.1 - q.0 * p.1;
+        area2 += cross;
+        moment += cross.abs() * (p.1 + q.1).abs() / 6.0;
+    }
+    let area = area2.abs() / 2.0;
+    let gamma = PI / f64::from(N);
+    area * height - 2.0 * gamma.tan() * moment
+}
+
+#[test]
+fn a_tube_hole_repeats_byte_for_byte() {
+    let body = tube_body();
+    let cutter = MemberHoleCutter::new(circle(L / 2.0, 0.0, 4.0), -H / 2.0 - 1.0, H / 2.0 + 1.0, 7);
+    let first = member_through_hole(&body, &cutter).unwrap();
+    let second = member_through_hole(&body, &cutter).unwrap();
+    assert_eq!(first.blob(), second.blob());
+    assert_eq!(first.mesh_digest(), second.mesh_digest());
+}
+
+#[test]
+#[ignore = "a hole wider than one band awaits the merge-walk band boundary decision (issue #492)"]
+fn a_hole_wider_than_a_facet_band_cuts_each_band_in_two() {
+    let body = tube_body();
+    let before = volume(&body);
+    // A round hole of radius 10 is wider than a band: each crossed band is cut in two,
+    // and the pieces are assembled around the opening's arcs.
+    let res = drill(
         &body,
         circle(L / 2.0, 0.0, R),
         -H / 2.0 - 1.0,
         H / 2.0 + 1.0,
+        9,
     );
-    assert_eq!(err.code, OpCode::OpUnsupported);
-    assert_eq!(err.defect, OpDefect::BodyWallUnsupported);
-    assert_eq!(err.field, OpField::Body);
+    assert_sealed(&res);
+    assert_eq!(genus(&res), 1);
+    let removed = before - volume(res.body());
+    let expected = polygon_area() * H;
+    assert!(
+        (removed - expected).abs() < 1e-4 * expected,
+        "{removed} vs {expected}"
+    );
+}
+
+#[test]
+fn a_non_convex_hole_in_a_tube_is_refused_or_cut_without_crashing() {
+    let body = tube_body();
+    // A non-convex footprint on a multi-strip chain is refused unchanged (the per-strip
+    // clip relies on convex footprints), never a crash.
+    let l_shape = vec![
+        Point2::new(-6.0, -6.0),
+        Point2::new(6.0, -6.0),
+        Point2::new(6.0, -2.0),
+        Point2::new(2.0, -2.0),
+        Point2::new(2.0, 6.0),
+        Point2::new(-6.0, 6.0),
+    ];
+    let cavity = Cavity::polygon(l_shape);
+    let cut = member_through_hole(
+        &body,
+        &MemberHoleCutter::new(cavity, -H / 2.0 - 1.0, H / 2.0 + 1.0, 8),
+    );
+    if let Ok(res) = cut {
+        assert_sealed(&res);
+    }
+}
+
+#[test]
+fn degenerate_faceted_inputs_never_crash() {
+    let body = tube_body();
+    // A tiny range, an inverted one, a sub-floor tangent on the tube wall.
+    let _ = refused(&body, circle(L / 2.0, 0.0, 4.0), -H / 2.0, H / 2.0 - 0.0);
+    let _ = refused(&body, circle(L / 2.0, 0.0, 4.0), -H / 2.0, H / 2.0 - 5e-4);
+    let _ = refused(
+        &body,
+        circle(L / 2.0, 0.0, 4.0),
+        H / 2.0 + 2.0,
+        H / 2.0 + 3.0,
+    );
 }
 
 #[test]
@@ -396,4 +513,174 @@ fn a_second_hole_keeps_the_first_intact() {
     assert_eq!(genus(&second), 2);
     assert!(second.face_table().iter().any(|id| id == "cut:f.h1.w0.s0"));
     assert!(second.face_table().iter().any(|id| id == "cut:f.h2.w0.s0"));
+}
+
+// G14.2 slice 1: directed oblique cutters through flat walls.
+
+fn drill_directed(
+    body: &Body,
+    cavity: Cavity,
+    axis: (f64, f64),
+    from: f64,
+    to: f64,
+    ordinal: u16,
+) -> OpResult {
+    member_through_hole(
+        body,
+        &MemberHoleCutter::directed(cavity, axis.0, axis.1, from, to, ordinal),
+    )
+    .unwrap()
+}
+
+fn refused_directed(
+    body: &Body,
+    cavity: Cavity,
+    axis: (f64, f64),
+    from: f64,
+    to: f64,
+) -> beamcraft_kernel::ops::OpFailure {
+    member_through_hole(
+        body,
+        &MemberHoleCutter::directed(cavity, axis.0, axis.1, from, to, 9),
+    )
+    .unwrap_err()
+}
+
+#[test]
+fn oblique_web_hole_removes_area_times_thickness_over_cosine() {
+    let body = i_body(true);
+    let before = volume(&body);
+    let dz = 4.0 / 5.0;
+    let res = drill_directed(&body, circle(L / 2.0, 0.0, R), (3.0, 4.0), -15.0, 15.0, 5);
+    assert_sealed(&res);
+    assert_eq!(res.kind(), OpKind::MemberThroughHole);
+    assert_eq!(genus(&res), 1);
+    let removed = before - volume(res.body());
+    let expected = polygon_area() * TW / dz;
+    assert!(
+        (removed - expected).abs() < 1e-6 * expected,
+        "{removed} vs {expected}"
+    );
+    let analytic = res.analytic_volume_mm3().unwrap();
+    let expect_result = before - expected;
+    assert!(analytic.lo <= expect_result && expect_result <= analytic.hi);
+    assert!(res.face_table().iter().any(|id| id == "cut:f.h5.w0.s0"));
+}
+
+#[test]
+fn oblique_flange_pair_removes_both_walls_over_cosine() {
+    let body = i_body(false);
+    let before = volume(&body);
+    let dz = 20.0 / (1.0f64 + 400.0f64).sqrt();
+    let res = drill_directed(
+        &body,
+        circle(L / 2.0, B / 4.0, R),
+        (1.0, 20.0),
+        -80.0,
+        80.0,
+        8,
+    );
+    assert_sealed(&res);
+    assert_eq!(genus(&res), 2);
+    let removed = before - volume(res.body());
+    let expected = 2.0 * polygon_area() * TF / dz;
+    assert!(
+        (removed - expected).abs() < 1e-6 * expected,
+        "{removed} vs {expected}"
+    );
+}
+
+#[test]
+fn horizontal_hole_through_a_hollow_section_crosses_the_side_walls() {
+    let body = hollow_body();
+    let before = volume(&body);
+    let res = drill_directed(&body, circle(L / 2.0, 0.0, R), (1.0, 0.0), -80.0, 80.0, 6);
+    assert_sealed(&res);
+    // The hollow section itself is genus 1; two crossed walls add two more.
+    assert_eq!(genus(&res), 3);
+    let removed = before - volume(res.body());
+    let expected = 2.0 * polygon_area() * 10.0;
+    assert!(
+        (removed - expected).abs() < 1e-6 * expected,
+        "{removed} vs {expected}"
+    );
+}
+
+#[test]
+fn the_unit_direction_reproduces_new_bit_for_bit() {
+    let body = i_body(true);
+    let plain = member_through_hole(
+        &body,
+        &MemberHoleCutter::new(circle(L / 2.0, 0.0, R), -TW / 2.0 - 1.0, TW / 2.0 + 1.0, 7),
+    )
+    .unwrap();
+    let unit = member_through_hole(
+        &body,
+        &MemberHoleCutter::directed(
+            circle(L / 2.0, 0.0, R),
+            0.0,
+            1.0,
+            -TW / 2.0 - 1.0,
+            TW / 2.0 + 1.0,
+            7,
+        ),
+    )
+    .unwrap();
+    assert_eq!(plain.blob(), unit.blob());
+    assert_eq!(plain.mesh_digest(), unit.mesh_digest());
+}
+
+#[test]
+fn an_oblique_range_ending_inside_a_wall_is_refused() {
+    let body = i_body(true);
+    let err = refused_directed(&body, circle(L / 2.0, 0.0, R), (3.0, 4.0), -15.0, 0.0);
+    assert_eq!(err.code, OpCode::OpUnsupported);
+    assert_eq!(err.defect, OpDefect::CutterNotThrough);
+}
+
+#[test]
+fn a_horizontal_footprint_over_a_parallel_face_is_refused() {
+    let body = hollow_body();
+    let err = refused_directed(&body, circle(L / 2.0, -60.0, R), (1.0, 0.0), -80.0, 80.0);
+    assert_eq!(err.code, OpCode::ContourInvalid);
+    assert_eq!(err.field, OpField::Cutter);
+}
+
+#[test]
+fn degenerate_directions_are_refused() {
+    let body = i_body(true);
+    let err = refused_directed(&body, circle(L / 2.0, 0.0, R), (0.0, 0.0), -6.0, 6.0);
+    assert_eq!(err.code, OpCode::ContourInvalid);
+    let err = refused_directed(&body, circle(L / 2.0, 0.0, R), (1e-320, 0.0), -6.0, 6.0);
+    assert_eq!(err.code, OpCode::ContourInvalid);
+    let err = refused_directed(&body, circle(L / 2.0, 0.0, R), (f64::NAN, 1.0), -6.0, 6.0);
+    assert_eq!(err.code, OpCode::NonFinite);
+    let err = refused_directed(&body, circle(L / 2.0, 0.0, R), (1e300, 1.0), -6.0, 6.0);
+    assert_eq!(err.code, OpCode::AboveLimit);
+}
+
+#[test]
+fn an_oblique_hole_in_a_tapered_body_is_refused() {
+    let body = tapered_body();
+    let err = refused_directed(&body, circle(L / 2.0, 0.0, R), (3.0, 4.0), -80.0, 80.0);
+    assert_eq!(err.code, OpCode::OpUnsupported);
+    assert_eq!(err.defect, OpDefect::BodyWallUnsupported);
+}
+
+#[test]
+fn a_perpendicular_hole_after_an_oblique_one_is_refused() {
+    let body = i_body(true);
+    let first = drill_directed(&body, circle(L / 2.0, 0.0, R), (3.0, 4.0), -15.0, 15.0, 1);
+    assert_sealed(&first);
+    // An oblique cutter leaves band walls that are parallel to no coordinate axis, so the
+    // body no longer satisfies this operation's X-extrusion contract; the strip registry of
+    // the later slices owns the re-merge.
+    let err = refused(
+        first.body(),
+        circle(L / 4.0, 30.0, 5.0),
+        -TW / 2.0 - 1.0,
+        TW / 2.0 + 1.0,
+    );
+    assert_eq!(err.code, OpCode::OpUnsupported);
+    assert_eq!(err.defect, OpDefect::BodyNotPrism);
 }
