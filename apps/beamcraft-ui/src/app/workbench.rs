@@ -361,14 +361,19 @@ impl App {
         self.plane_pick = false;
         self.bench = bench;
         match bench {
-            Bench::Plate => self.tools.active = ToolKind::Plate,
+            Bench::Plate => {
+                self.tools.active = ToolKind::Plate;
+                self.tools.use_preset("plate", None);
+            }
             Bench::Beam => {
                 self.tools.active = ToolKind::Member;
                 self.tools.member.kind = MemberKind::Beam;
+                self.tools.use_preset("beam", None);
             }
             Bench::Column => {
                 self.tools.active = ToolKind::Member;
                 self.tools.member.kind = MemberKind::Column;
+                self.tools.use_preset("column", None);
             }
             Bench::Move | Bench::Copy | Bench::Delete => {
                 if let Some(kind) = bench.edit() {

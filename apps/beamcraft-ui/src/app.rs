@@ -120,6 +120,8 @@ pub struct App {
     plate_draft: crate::creation::ContourDraft,
     plate_hover: Option<[f64; 3]>,
     snap_hover: Option<beamcraft_engine::query::pick::SnapKind>,
+    /// Where the pointer resolves while placing a beam or column, snapped when a snap applies.
+    member_cursor: Option<[f64; 3]>,
     viewport_height: f32,
     distance_input: String,
     distance_aim: Option<[f64; 3]>,
@@ -873,6 +875,7 @@ impl App {
             plate_draft: crate::creation::ContourDraft::default(),
             plate_hover: None,
             snap_hover: None,
+            member_cursor: None,
             viewport_height: 800.0,
             distance_input: String::new(),
             distance_aim: None,
@@ -2544,6 +2547,24 @@ impl App {
         self.distance_input.clear();
         self.distance_aim = None;
         self.beam_hover = None;
+        // A column is one click: the base point, and the top follows from the height or level.
+        let column_base = (self.tools.member.kind == crate::tools::MemberKind::Column
+            && self.beam.start().is_none())
+        .then_some(point);
+        if let Some(base) = column_base {
+            match self
+                .tools
+                .member
+                .column_end(base, &self.tools.definitions.levels)
+            {
+                Ok(top) => self.commit_member_points(base, top),
+                Err(error) => {
+                    self.clear_member_preview();
+                    self.tool_note = Some(Err(error.to_string()));
+                }
+            }
+            return;
+        }
         match self.beam.click(point) {
             None => {
                 self.clear_member_preview();
@@ -2552,29 +2573,32 @@ impl App {
                     PointText(point)
                 )));
             }
-            Some((start, end)) => {
-                let points = self.tools.plane.map(|plane| {
-                    plane
-                        .to_local(start)
-                        .and_then(|start| plane.to_local(end).map(|end| (start, end)))
-                });
-                let (start, end) = match points {
-                    Some(Ok(pair)) => pair,
-                    Some(Err(e)) => {
-                        self.clear_member_preview();
-                        self.tool_note = Some(Err(e.to_string()));
-                        return;
-                    }
-                    None => (start, end),
-                };
-                self.tools.member.set_endpoints(start, end);
-                self.beam_mode = false;
-                self.ghost_end = None;
-                self.renderer
-                    .set_ghost(&self.state.device, &self.state.queue, None);
-                self.create_from_form();
-            }
+            Some((start, end)) => self.commit_member_points(start, end),
         }
+    }
+
+    /// Fills the member form from two world points and creates the member.
+    fn commit_member_points(&mut self, start: [f64; 3], end: [f64; 3]) {
+        let points = self.tools.plane.map(|plane| {
+            plane
+                .to_local(start)
+                .and_then(|start| plane.to_local(end).map(|end| (start, end)))
+        });
+        let (start, end) = match points {
+            Some(Ok(pair)) => pair,
+            Some(Err(e)) => {
+                self.clear_member_preview();
+                self.tool_note = Some(Err(e.to_string()));
+                return;
+            }
+            None => (start, end),
+        };
+        self.tools.member.set_endpoints(start, end);
+        self.beam_mode = false;
+        self.ghost_end = None;
+        self.renderer
+            .set_ghost(&self.state.device, &self.state.queue, None);
+        self.create_from_form();
     }
 
     /// Rebuilds the ghost preview for the pointer's hover point: the engine's own body mesh for
@@ -2588,31 +2612,56 @@ impl App {
             .set_ghost(&self.state.device, &self.state.queue, None);
     }
 
+    /// Follows the pointer while a beam or column is placed: the snapped cursor (its marker is
+    /// painted by `paint_member_draft`) and the ghost. A beam shows a ghost once its start is
+    /// armed; a column shows one from the cursor at once, as its base is the only click.
     fn update_ghost(&mut self, view: &View, ndc: [f32; 2]) {
-        let Some(start) = self.beam.start() else {
-            return;
-        };
         let origin_mm = self
             .loaded
             .as_ref()
             .map_or([0.0; 3], |l| l.summary.origin_mm);
         let Some(ray) = ray_through(view, ndc, origin_mm) else {
+            self.member_cursor = None;
+            self.snap_hover = None;
             self.clear_member_preview();
             return;
         };
-        let Ok(end) = self.creation_point(ray, false) else {
+        let Ok((end, snap)) = self.creation_hit(ray, false) else {
+            self.member_cursor = None;
+            self.snap_hover = None;
             self.clear_member_preview();
             return;
         };
-        let constrained = match self.tools.plane {
-            Some(plane) => plane.constrain_world(start, end, self.tools.member.axis_lock),
-            None => self.tools.member.axis_lock.constrain(start, end),
+        self.member_cursor = Some(end);
+        self.snap_hover = snap;
+        let (start, end) = match self.beam.start() {
+            Some(start) => {
+                let constrained = match self.tools.plane {
+                    Some(plane) => plane.constrain_world(start, end, self.tools.member.axis_lock),
+                    None => self.tools.member.axis_lock.constrain(start, end),
+                };
+                let Ok(end) = constrained else {
+                    self.clear_member_preview();
+                    return;
+                };
+                self.beam_hover = Some(end);
+                (start, end)
+            }
+            None if self.tools.member.kind == crate::tools::MemberKind::Column => {
+                match self
+                    .tools
+                    .member
+                    .column_end(end, &self.tools.definitions.levels)
+                {
+                    Ok(top) => (end, top),
+                    Err(_) => {
+                        self.clear_member_preview();
+                        return;
+                    }
+                }
+            }
+            None => return,
         };
-        let Ok(end) = constrained else {
-            self.clear_member_preview();
-            return;
-        };
-        self.beam_hover = Some(end);
         let key = end.map(|v| v.round() as i64);
         if self.ghost_end == Some(key) {
             return;
@@ -3134,16 +3183,23 @@ impl eframe::App for App {
                     }
                     // The ghost preview follows the pointer on the plane through the armed
                     // start, parallel to the view; the committed endpoint comes from the click.
-                    if self.beam_mode
-                        && let Some(pos) = response.hover_pos()
-                        && let Some(ndc) = ndc_of(
-                            [pos.x, pos.y],
-                            [response.rect.min.x, response.rect.min.y],
-                            [response.rect.width(), response.rect.height()],
-                        )
-                    {
-                        self.update_ghost(&view, ndc);
-                        self.paint_member_draft(ui, response.rect, &view);
+                    if self.beam_mode {
+                        match response.hover_pos().and_then(|pos| {
+                            ndc_of(
+                                [pos.x, pos.y],
+                                [response.rect.min.x, response.rect.min.y],
+                                [response.rect.width(), response.rect.height()],
+                            )
+                        }) {
+                            Some(ndc) => {
+                                self.update_ghost(&view, ndc);
+                                self.paint_member_draft(ui, response.rect, &view);
+                            }
+                            None => {
+                                self.member_cursor = None;
+                                self.snap_hover = None;
+                            }
+                        }
                     }
                     if self.views.picking.is_some() {
                         let hover = response.hover_pos().and_then(|pos| {
