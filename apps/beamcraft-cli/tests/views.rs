@@ -314,6 +314,30 @@ fn properties_update_apply_and_remove() {
 }
 
 #[test]
+fn the_default_view_moves_but_is_never_removed_or_unmarked() {
+    let v = Views::new();
+    v.view(
+        "save-view",
+        &["--name", "3D View", "--parallel", "xy", "--default", "true"],
+    );
+    v.view("save-view", &["--name", "Plan", "--parallel", "xy"]);
+    let marked = |v: &Views| -> Vec<String> {
+        list(&v.view("list-views", &[]), "views")
+            .iter()
+            .filter(|j| at(j, &["default"]).boolean().unwrap())
+            .map(|j| text(j, "name"))
+            .collect()
+    };
+    assert_eq!(marked(&v), ["3D View"]);
+    v.refuse("remove-view", &["--view", "3D View"]);
+    v.refuse("update-view", &["--view", "3D View", "--default", "false"]);
+    v.view("update-view", &["--view", "Plan", "--default", "true"]);
+    assert_eq!(marked(&v), ["Plan"], "the mark moves");
+    v.view("remove-view", &["--view", "3D View"]);
+    v.refuse("remove-view", &["--view", "Plan"]);
+}
+
+#[test]
 fn save_view_names_views_by_default() {
     let v = Views::new();
     for (name, elevation) in [("Ground", "0"), ("First", "4000")] {

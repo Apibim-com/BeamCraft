@@ -1100,7 +1100,8 @@ save-view --file FILE [--name TEXT] [--new-id UUID] [--store ROOT] [--target X,Y
     [--depth none|ABOVE,BELOW] [--rotation Z_DEG,X_DEG]
     [--render-mode wireframe|transparent|grey|shaded|selected] [--grids true|false]
     [--hidden-kinds none|KIND,...] [--work-area none|MM,MM,MM,MM,MM,MM] [--color default|R,G,B]
-    [--opacity 0..1] [--folder PATH] [--favorite true|false] [--copy-from VIEW]
+    [--opacity 0..1] [--folder PATH] [--favorite true|false] [--default true|false]
+    [--copy-from VIEW]
 ```
 
 ### update-view
@@ -1117,7 +1118,8 @@ update-view --file FILE --view ID|NAME [--name TEXT] [--store ROOT] [--target X,
     [--span MM] [--depth none|ABOVE,BELOW] [--rotation Z_DEG,X_DEG]
     [--render-mode wireframe|transparent|grey|shaded|selected] [--grids true|false]
     [--hidden-kinds none|KIND,...] [--work-area none|MM,MM,MM,MM,MM,MM] [--color default|R,G,B]
-    [--opacity 0..1] [--folder PATH] [--favorite true|false] [--copy-from VIEW]
+    [--opacity 0..1] [--folder PATH] [--favorite true|false] [--default true|false]
+    [--copy-from VIEW]
 ```
 
 ### remove-view
