@@ -365,3 +365,78 @@ fn save_view_names_views_by_default() {
     // An explicit empty name is refused, not replaced by a default.
     v.refuse("save-view", &["--name", "  ", "--parallel", "xy"]);
 }
+
+#[test]
+fn filters_overrides_and_presets_live_in_the_view_file() {
+    let v = Views::new();
+    let saved = v.view(
+        "save-view-filter",
+        &["--name", "Beams", "--conditions", "type eq beam;class ge 2"],
+    );
+    assert_eq!(text(&saved, "outcome"), "view_filter_saved");
+    let filter = &list(&saved, "filters")[0];
+    assert_eq!(list(filter, "conditions").len(), 2);
+    v.view(
+        "save-view",
+        &[
+            "--name",
+            "Plan",
+            "--parallel",
+            "xy",
+            "--overrides",
+            "Beams|hide|-|0",
+        ],
+    );
+    v.refuse(
+        "save-view",
+        &[
+            "--name",
+            "Other",
+            "--parallel",
+            "xy",
+            "--overrides",
+            "Plates",
+        ],
+    );
+    v.refuse(
+        "save-view-filter",
+        &["--name", "Bad", "--conditions", "type eq girder"],
+    );
+    let preset = v.view(
+        "save-view-preset",
+        &["--name", "Beams hidden", "--from-view", "Plan"],
+    );
+    assert_eq!(list(&preset, "presets").len(), 1);
+    v.view(
+        "save-view",
+        &[
+            "--name",
+            "Copy",
+            "--parallel",
+            "xz",
+            "--preset",
+            "Beams hidden",
+        ],
+    );
+    let listed_views = v.view("list-views", &[]);
+    let copy = list(&listed_views, "views")
+        .iter()
+        .find(|view| text(view, "name") == "Copy")
+        .unwrap();
+    assert_eq!(list(copy, "overrides").len(), 1);
+    // A rename follows into every view and preset; a removal drops the overrides.
+    v.view(
+        "save-view-filter",
+        &["--name", "Girders", "--rename-from", "Beams"],
+    );
+    let listed = v.view("list-view-filters", &[]);
+    let names: Vec<String> = list(&listed, "filters")
+        .iter()
+        .map(|f| text(f, "name"))
+        .collect();
+    assert_eq!(names, ["Girders"]);
+    let removed = v.view("remove-view-filter", &["--name", "Girders"]);
+    assert_eq!(at(&removed, &["views_changed"]).unsigned().unwrap(), 2);
+    v.view("remove-view-preset", &["--name", "Beams hidden"]);
+    assert!(list(&v.view("list-view-filters", &[]), "presets").is_empty());
+}

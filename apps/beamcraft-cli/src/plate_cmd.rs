@@ -4075,6 +4075,7 @@ pub(crate) fn definitions_json(
     let total = matching.len();
     let available = total.saturating_sub(offset);
     let users = plate_users(&inspection.plates);
+    let presets = environment_presets(options)?;
     fit_page(available, limit, |count| {
         let definitions = matching
             .iter()
@@ -4114,7 +4115,32 @@ pub(crate) fn definitions_json(
                 "environment_profiles",
                 environment_profiles_json(inspection, options)?,
             ),
-            ("environment_presets", environment_presets_json(options)?),
+            ("environment_presets", environment_presets_json(&presets)?),
+            (
+                "environment_view_filters",
+                Json::Array(
+                    presets
+                        .filters
+                        .iter()
+                        .map(beamcraft_host::views::filter_to_json)
+                        .collect(),
+                ),
+            ),
+            (
+                "environment_view_presets",
+                Json::Array(
+                    presets
+                        .views
+                        .iter()
+                        .map(beamcraft_host::views::preset_to_json)
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|e| Refusal {
+                            rule_id: None,
+                            code: e.code,
+                            message: "a view preset of the environment does not encode",
+                        })?,
+                ),
+            ),
             ("levels", level_choices_json(inspection)?),
         ]))
     })
@@ -4135,12 +4161,18 @@ fn level_choices_json(inspection: &Inspection) -> Run<Json> {
         .map(Json::Array)
 }
 
-/// The part presets of the project's environment (`steel:preset:*`), for pickers and defaults.
-fn environment_presets_json(options: &BTreeMap<&str, &str>) -> Run<Json> {
-    let Some(store) = options.get("--store") else {
-        return Ok(Json::Array(Vec::new()));
-    };
-    let loaded = beamcraft_commands::preset::load_project(std::path::Path::new(store))?;
+/// The presets of the project's environment (`steel:preset:*`): none without a `--store`.
+fn environment_presets(options: &BTreeMap<&str, &str>) -> Run<beamcraft_commands::preset::Presets> {
+    match options.get("--store") {
+        Some(store) => Ok(beamcraft_commands::preset::load_project(
+            std::path::Path::new(store),
+        )?),
+        None => Ok(beamcraft_commands::preset::Presets::default()),
+    }
+}
+
+/// The part presets of the project's environment, for pickers and defaults.
+fn environment_presets_json(loaded: &beamcraft_commands::preset::Presets) -> Run<Json> {
     let listed = loaded
         .presets
         .iter()
