@@ -882,6 +882,8 @@ impl App {
                 }
                 if self.bench == Bench::View {
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                    // The panel keeps its width: a row never grows it.
+                    ui.set_max_width(ui.available_width());
                     self.view_panel(ui);
                     return;
                 }

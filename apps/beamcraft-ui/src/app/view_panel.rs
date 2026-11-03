@@ -26,15 +26,40 @@ fn fresh_id() -> Result<Uuid7, String> {
         .map_err(|_| "no view identity could be made".to_owned())
 }
 
+/// A labelled text field: the label has a fixed width so the fields of a panel line up, and
+/// the field takes the rest of the row.
 fn text(ui: &mut egui::Ui, label: &str, value: &mut String) {
     ui.horizontal(|ui| {
-        ui.label(label);
+        ui.add_sized([FIELD_LABEL, 20.0], egui::Label::new(label).truncate());
         ui.add(
             egui::TextEdit::singleline(value)
-                .desired_width(110.0)
+                .desired_width((ui.available_width() - FIT).max(40.0))
                 .char_limit(crate::views::FIELD),
         );
     });
+}
+
+/// Width of the label column of the view panel's rows.
+const FIELD_LABEL: f32 = 92.0;
+
+/// Slack left at the end of a row that fills the panel: a row sized to the exact available
+/// width can come out a pixel wider, and the resizable panel would follow it wider every frame.
+const FIT: f32 = 6.0;
+
+/// A label with its control on the same row, aligned with [`text`].
+fn row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
+    ui.horizontal(|ui| {
+        ui.add_sized([FIELD_LABEL, 20.0], egui::Label::new(label).truncate());
+        add(ui);
+    });
+}
+
+/// A collapsible group of the view panel with a quiet bold title.
+fn section(ui: &mut egui::Ui, title: &str, open: bool, add: impl FnOnce(&mut egui::Ui)) {
+    egui::CollapsingHeader::new(egui::RichText::new(title).strong().size(12.0))
+        .id_salt(("view-section", title))
+        .default_open(open)
+        .show(ui, add);
 }
 
 /// One tab of the project browser: its icon, and its name beside the icon while it is the
@@ -1183,7 +1208,7 @@ impl App {
                 egui::TextEdit::singleline(&mut self.views.search)
                     .hint_text("Search views")
                     .char_limit(128)
-                    .desired_width(ui.available_width()),
+                    .desired_width((ui.available_width() - FIT).max(40.0)),
             );
         });
         ui.horizontal(|ui| {
@@ -1259,7 +1284,7 @@ impl App {
                     egui::TextEdit::singleline(&mut self.views.destination)
                         .hint_text("Folder, e.g. Plans/Level 1")
                         .char_limit(crate::views::FIELD)
-                        .desired_width(ui.available_width() - 60.0),
+                        .desired_width((ui.available_width() - 60.0 - FIT).max(40.0)),
                 );
                 let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 if theme::icon_toggle(ui, theme::Icon::Check, "Create the folder", false).clicked()
@@ -1299,7 +1324,7 @@ impl App {
                         } else {
                             "Copy to folder"
                         })
-                        .desired_width(ui.available_width() - 60.0)
+                        .desired_width((ui.available_width() - 60.0 - FIT).max(40.0))
                         .char_limit(crate::views::FIELD),
                 );
                 if theme::icon_toggle(ui, theme::Icon::Paste, "Paste here", false).clicked() {
@@ -1827,26 +1852,42 @@ impl App {
                 ui.add_enabled_ui(!busy, |ui| {
                     let form = &mut self.views.form;
                     ui.horizontal(|ui| {
-                        ui.label("Name");
+                        ui.add_sized([FIELD_LABEL, 20.0], egui::Label::new("Name"));
+                        let toggles = 2.0 * 26.0 + 3.0 * 8.0;
                         ui.add(
                             egui::TextEdit::singleline(&mut form.name)
-                                .hint_text("none: temporary view")
-                                .desired_width(110.0)
+                                .hint_text("Unnamed: temporary")
+                                .desired_width((ui.available_width() - toggles - FIT).max(60.0))
                                 .char_limit(crate::views::FIELD),
                         )
                         .on_hover_text("A view without a name is temporary: it is not saved");
+                        if theme::icon_toggle_filled(
+                            ui,
+                            theme::Icon::Star,
+                            "Favourite: listed in quick access",
+                            form.favorite,
+                        )
+                        .clicked()
+                        {
+                            form.favorite = !form.favorite;
+                        }
+                        let home = ui.add_enabled_ui(!default_locked, |ui| {
+                            theme::icon_toggle(
+                                ui,
+                                theme::Icon::Home,
+                                if default_locked {
+                                    "The default view: mark another view to move it"
+                                } else {
+                                    "Make this the default view the model opens on"
+                                },
+                                form.default,
+                            )
+                        });
+                        if home.inner.clicked() && !default_locked {
+                            form.default = !form.default;
+                        }
                     });
                     text(ui, "Folder", &mut form.folder);
-                    ui.checkbox(&mut form.favorite, "Favourite");
-                    ui.add_enabled(
-                        !default_locked,
-                        egui::Checkbox::new(&mut form.default, "Default view"),
-                    )
-                    .on_hover_text(if default_locked {
-                        "A model always has a default view: mark another view to move it"
-                    } else {
-                        "The view the model opens on; it cannot be deleted or temporary"
-                    });
                     if form.id.is_none() {
                         ui.separator();
                         ui.label(egui::RichText::new(form.construction.label()).strong());
@@ -2001,95 +2042,127 @@ impl App {
                                 }
                             });
                     } else {
-                        ui.horizontal(|ui| {
-                            if ui
-                                .button("Re-pick the plane")
-                                .on_hover_text("Pick three points for a new view plane")
-                                .clicked()
-                            {
-                                restart_pick = true;
-                                form.construction = Construction::ThreePoints;
-                            }
-                            save_camera = ui
-                                .button("Take the current camera")
-                                .on_hover_text("The view plane and height become the camera's")
-                                .clicked();
-                        });
-                    }
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        ui.label("Projection");
-                        ui.selectable_value(
-                            &mut form.projection,
-                            Projection::Orthographic,
-                            "Orthographic",
-                        );
-                        ui.selectable_value(
-                            &mut form.projection,
-                            Projection::Perspective,
-                            "Perspective",
-                        );
-                    });
-                    text(ui, "Visible height (mm)", &mut form.span);
-                    ui.label("Camera rotation (degrees)");
-                    ui.horizontal(|ui| {
-                        let [z, x] = &mut form.rotation;
-                        ui.label("about Z");
-                        ui.add(egui::TextEdit::singleline(z).desired_width(50.0));
-                        ui.label("about X");
-                        ui.add(egui::TextEdit::singleline(x).desired_width(50.0));
-                    });
-                    ui.checkbox(&mut form.depth_on, "Limit the view depth");
-                    if form.depth_on {
-                        let [above, below] = &mut form.depth;
-                        text(ui, "Towards the viewer (mm)", above);
-                        text(ui, "Behind the plane (mm)", below);
-                    }
-                    ui.horizontal(|ui| {
-                        ui.label(match form.area {
-                            Some(_) => "Work area: box",
-                            None => "Work area: whole model",
-                        });
-                        let mut area = None;
-                        if ui
-                            .add_enabled(model_bounds.is_some(), egui::Button::new("Model"))
-                            .clicked()
-                        {
-                            area = model_bounds;
-                        }
-                        if ui
-                            .add_enabled(selection_bounds.is_some(), egui::Button::new("Selection"))
-                            .clicked()
-                        {
-                            area = selection_bounds;
-                        }
-                        if let Some(b) = area {
-                            form.area = beamcraft_engine::views::WorkArea::new(b.min, b.max).ok();
-                        }
-                        if ui.button("Clear").clicked() {
-                            form.area = None;
-                        }
-                    });
-                    egui::ComboBox::from_id_salt("view-render-mode")
-                        .selected_text(form.mode.as_token())
-                        .show_ui(ui, |ui| {
-                            for mode in RenderMode::ALL {
-                                ui.selectable_value(&mut form.mode, mode, mode.as_token());
-                            }
-                        });
-                    ui.checkbox(&mut form.grids, "Show grids");
-                    ui.horizontal(|ui| {
-                        ui.checkbox(&mut form.color_on, "Colour");
-                        if form.color_on {
-                            ui.color_edit_button_rgb(&mut form.color);
-                        }
-                    });
-                    ui.add(egui::Slider::new(&mut form.opacity, 0.0..=1.0).text("Opacity"));
-                    all_appearance = form.id.is_some()
-                        && ui
-                            .small_button("Apply colour and opacity to every view")
+                        save_camera = ui
+                            .button("Take the current camera")
+                            .on_hover_text("The view plane and height become the camera's")
                             .clicked();
-                    ui.collapsing("Object visibility", |ui| {
+                    }
+                    ui.add_space(4.0);
+                    section(ui, "Camera", true, |ui| {
+                        row(ui, "Projection", |ui| {
+                            ui.selectable_value(
+                                &mut form.projection,
+                                Projection::Orthographic,
+                                "Orthographic",
+                            );
+                            ui.selectable_value(
+                                &mut form.projection,
+                                Projection::Perspective,
+                                "Perspective",
+                            );
+                        });
+                        text(ui, "Height, mm", &mut form.span);
+                        row(ui, "Rotation, °", |ui| {
+                            let [z, x] = &mut form.rotation;
+                            let half = ((ui.available_width() - 8.0 - FIT) / 2.0).max(30.0);
+                            ui.add(
+                                egui::TextEdit::singleline(z)
+                                    .hint_text("about Z")
+                                    .desired_width(half),
+                            );
+                            ui.add(
+                                egui::TextEdit::singleline(x)
+                                    .hint_text("about X")
+                                    .desired_width(half),
+                            );
+                        });
+                    });
+                    section(ui, "Extents", true, |ui| {
+                        row(ui, "Depth", |ui| {
+                            let label = if form.depth_on {
+                                "Limited"
+                            } else {
+                                "Unlimited"
+                            };
+                            egui::ComboBox::from_id_salt("view-depth")
+                                .selected_text(label)
+                                .width((ui.available_width() - FIT).max(40.0))
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut form.depth_on, false, "Unlimited");
+                                    ui.selectable_value(&mut form.depth_on, true, "Limited");
+                                });
+                        });
+                        if form.depth_on {
+                            let [above, below] = &mut form.depth;
+                            text(ui, "Towards, mm", above);
+                            text(ui, "Behind, mm", below);
+                        }
+                        row(ui, "Work area", |ui| {
+                            let label = if form.area.is_some() {
+                                "Box"
+                            } else {
+                                "Whole model"
+                            };
+                            let mut area = None;
+                            egui::ComboBox::from_id_salt("view-area")
+                                .selected_text(label)
+                                .width((ui.available_width() - FIT).max(40.0))
+                                .show_ui(ui, |ui| {
+                                    if ui
+                                        .selectable_label(form.area.is_none(), "Whole model")
+                                        .clicked()
+                                    {
+                                        form.area = None;
+                                    }
+                                    if ui
+                                        .add_enabled(
+                                            model_bounds.is_some(),
+                                            egui::Button::selectable(false, "Bounds of the model"),
+                                        )
+                                        .clicked()
+                                    {
+                                        area = model_bounds;
+                                    }
+                                    if ui
+                                        .add_enabled(
+                                            selection_bounds.is_some(),
+                                            egui::Button::selectable(
+                                                false,
+                                                "Bounds of the selection",
+                                            ),
+                                        )
+                                        .clicked()
+                                    {
+                                        area = selection_bounds;
+                                    }
+                                });
+                            if let Some(b) = area {
+                                form.area =
+                                    beamcraft_engine::views::WorkArea::new(b.min, b.max).ok();
+                            }
+                        });
+                    });
+                    section(ui, "Appearance", true, |ui| {
+                        row(ui, "Colour", |ui| {
+                            ui.checkbox(&mut form.color_on, "Override");
+                            if form.color_on {
+                                ui.color_edit_button_rgb(&mut form.color);
+                            }
+                        });
+                        row(ui, "Opacity", |ui| {
+                            ui.add(
+                                egui::Slider::new(&mut form.opacity, 0.0..=1.0).fixed_decimals(2),
+                            );
+                        });
+                        if form.id.is_some()
+                            && ui
+                                .small_button("Use this colour and opacity in every view")
+                                .clicked()
+                        {
+                            all_appearance = true;
+                        }
+                    });
+                    section(ui, "Object visibility", false, |ui| {
                         for kind in crate::views::listed_kinds() {
                             let mut visible = form.hidden.is_visible(kind);
                             if ui.checkbox(&mut visible, kind.as_token()).changed() {
@@ -2105,6 +2178,13 @@ impl App {
             });
         ui.add_space(8.0);
         let mut cancel = false;
+        // A saved view changes only on Apply; the buttons wake up with the first edit.
+        let dirty = self
+            .views
+            .form
+            .id
+            .and_then(|id| self.views.book.get(&id))
+            .is_none_or(|v| self.views.form != crate::views::Form::from_view(v));
         ui.horizontal(|ui| {
             let waiting = self
                 .views
@@ -2115,7 +2195,7 @@ impl App {
                 ui,
                 theme::Kind::Primary,
                 if free { "Save as view" } else { "Apply" },
-                !busy && !waiting,
+                !busy && !waiting && dirty,
             );
             submit = if self.views.form.id.is_none() {
                 apply.on_hover_text(if free {
@@ -2128,8 +2208,8 @@ impl App {
             }
             .clicked();
             reset = self.views.form.id.is_some()
-                && theme::button(ui, theme::Kind::Secondary, "Reset", !busy).clicked();
-            cancel = theme::button(ui, theme::Kind::Secondary, "Cancel", true).clicked();
+                && theme::button(ui, theme::Kind::Secondary, "Reset", !busy && dirty).clicked();
+            cancel = theme::button(ui, theme::Kind::Secondary, "Close", true).clicked();
             if busy {
                 ui.spinner();
             }

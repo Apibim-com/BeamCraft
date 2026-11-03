@@ -6049,6 +6049,28 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn the_view_panel_keeps_its_width_from_frame_to_frame() {
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        app.show_view_properties();
+        let at = |labels: &[(String, egui::Pos2)]| {
+            labels
+                .iter()
+                .find(|(t, _)| t == "Folder")
+                .map(|(_, p)| *p)
+                .unwrap_or_else(|| panic!("no Folder row: {labels:?}"))
+        };
+        let first = at(&app_frame(&mut app, &ctx, vec![]));
+        let mut last = first;
+        for _ in 0..12 {
+            last = at(&app_frame(&mut app, &ctx, vec![]));
+        }
+        assert_eq!(first, last, "the panel grew or shrank while idle");
+    }
+
+    #[test]
     fn the_default_view_is_a_view_like_the_others_that_stays_and_can_move() {
         use super::view_panel::BrowserAction;
         use beamcraft_engine::views::ModelView;
