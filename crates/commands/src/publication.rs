@@ -4,6 +4,7 @@
 //! Shared prepared-layer publication and verified revision commit boundary.
 
 use session::Refusal;
+use session::draft::{self, Admitted};
 use session::pipeline::{DERIVED_LAYER, ROOT_LAYER, host_uuid, integrity};
 use std::collections::BTreeMap;
 
@@ -11,7 +12,7 @@ use crate::plate::{PlateVerifier, check_footprint};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{
     CommitHook, CommitOutcome, Committed, ExpectedBase, LayerEntry, LayerRole, RevisionDraft,
-    RevisionStore, Uuid7,
+    RevisionInfo, RevisionStore, Uuid7,
 };
 use beamcraft_layer_engine::authored::{Author, Change, Prepare, Prepared, SchemaIdentity};
 use beamcraft_layer_engine::{Control, Opened};
@@ -55,11 +56,19 @@ pub(crate) struct PublishRequest<'a> {
 
 /// Stores the layer blobs of a prepared candidate and commits them as the next revision through
 /// U06/U07, with the model content verifier.
+///
+/// While a draft batch is open nothing is published: the prepared layer set is admitted into
+/// the draft, and the returned outcome previews the revision this command would create —
+/// the batch's single commit later publishes the accumulated state as one revision with the
+/// batch operation's own identity.
 pub(crate) fn publish_revision(
     store: &RevisionStore,
     request: &PublishRequest<'_>,
     hook: &mut dyn CommitHook,
 ) -> Result<Committed, Refusal> {
+    if draft::is_open() {
+        return draft_admit(request);
+    }
     let generation = request.base_generation.checked_add(1).ok_or(Refusal::new(
         ErrorCode::LimitExceeded,
         "generation exhausted",
@@ -103,13 +112,75 @@ pub(crate) fn publish_revision(
     // U11: the persisted evidence carries the immutable geometry assets the batch's mesh
     // transfers pin, so a later rebase can admit the shared asset prims' deltas.
     let evidence = crate::plate::with_transfer_assets(request.footprint, request.prepared)?;
-    let pin = crate::command_evidence::store(store, &request.op, request.fingerprint, &evidence)?;
+    let pin =
+        crate::command_evidence::store(store, &request.op, request.fingerprint, &evidence, &[])?;
     Ok(store.commit_with_evidence(
         &draft,
         request.expected,
         Some(pin),
         Some(&PlateVerifier),
         hook,
+    )?)
+}
+
+/// Admits one prepared candidate into the open draft batch and previews the revision it
+/// would create: the manifest is assembled exactly as the batch's commit will assemble the
+/// accumulated state, with this command's own operation, revision id and sequence. No blob,
+/// no manifest and no ledger record is written.
+fn draft_admit(request: &PublishRequest<'_>) -> Result<Committed, Refusal> {
+    // U11: the drafted command's declared footprint is augmented with its own mesh-transfer
+    // assets exactly as a committed publication would be, so the batch's union evidence
+    // carries them and a later rebase can admit the shared asset prims' deltas.
+    let footprint = crate::plate::with_transfer_assets(request.footprint, request.prepared)?;
+    let admitted = draft::with(|state| {
+        state.admit(
+            &request.prepared.layers,
+            &request.prepared.retained,
+            request.op.as_str(),
+            request.fingerprint,
+            &footprint,
+        )
+    })
+    .ok_or_else(|| integrity("a draft batch vanished while a command ran"))??;
+    let info = preview_of(request, &admitted)?;
+    Ok(Committed {
+        outcome: CommitOutcome::Drafted,
+        info,
+    })
+}
+
+/// Assembles the preview manifest of one drafted command: the layer entries the batch commit
+/// will carry, at the command's own generation and sequence, over the batch's pinned base.
+fn preview_of(request: &PublishRequest<'_>, admitted: &Admitted) -> Result<RevisionInfo, Refusal> {
+    let mut entries = Vec::new();
+    for layer in &request.prepared.layers {
+        entries.push(LayerEntry::from_bytes(
+            &layer.name,
+            role_of(&layer.name),
+            &layer.bytes,
+        )?);
+    }
+    for layer in &request.prepared.retained {
+        entries.push(LayerEntry::from_bytes(
+            &layer.name,
+            LayerRole::External,
+            &layer.bytes,
+        )?);
+    }
+    let draft = RevisionDraft {
+        project: host_uuid(request.project)?,
+        workspace: host_uuid(request.workspace)?,
+        revision: host_uuid(&request.revision_id.to_string())?,
+        op: request.op.clone(),
+        workspace_generation: admitted.generation,
+        schema: request.schema.digest,
+        root_layer: ROOT_LAYER.into(),
+        entries,
+    };
+    Ok(RevisionInfo::preview(
+        &draft,
+        admitted.sequence,
+        admitted.base.clone(),
     )?)
 }
 
@@ -198,5 +269,88 @@ pub(crate) fn commit_verified_with_evidence(
     evidence: Option<beamcraft_host::revision::EvidencePin>,
     hook: &mut dyn CommitHook,
 ) -> Result<Committed, Refusal> {
+    // Belt for the draft batch's admission rules: the direct materializer funnel (forking,
+    // publishing, undo/redo, compensation) must not write the store behind an open batch's
+    // back, whatever word reached it. The batch's own commit ends the draft before it calls
+    // here, so it is never refused by this.
+    if session::draft::is_open() {
+        return Err(Refusal::new(
+            ErrorCode::InvalidArgument,
+            "this command commits directly and may not run inside a draft batch",
+        ));
+    }
     Ok(store.commit_with_evidence(draft, expected, evidence, Some(&PlateVerifier), hook)?)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+
+    use super::*;
+    use beamcraft_host::ids::IdSource;
+    use beamcraft_host::revision::RevisionStore as Store;
+    use beamcraft_host::revision::{ExpectedBase, NoFault};
+    use beamcraft_host::storage::BlobStore;
+    use std::collections::BTreeSet;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    static NEXT: AtomicU32 = AtomicU32::new(0);
+
+    /// The direct materializer funnel refuses while a draft batch is open, and the refusal
+    /// is the guard's own: once the batch ends, the same call gets past it (to whatever the
+    /// commit itself makes of the draft on an empty store).
+    #[test]
+    fn the_direct_funnel_refuses_under_an_open_draft() {
+        let root = std::env::temp_dir().join(format!(
+            "beamcraft-funnel-guard-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = Store::new(BlobStore::new(root).unwrap());
+        let mut ids = IdSource::system();
+        let mut fresh = || ids.next_id().unwrap().to_string();
+        let base = session::pipeline::Base {
+            project: fresh(),
+            workspace: fresh(),
+            digest: session::pipeline::digest_of(b"funnel-guard-base").unwrap(),
+            generation: 1,
+            assets: Vec::new(),
+            external: BTreeSet::new(),
+            expected: ExpectedBase::Initial,
+        };
+        let guard = session::draft::hold(base, 1).unwrap();
+        let draft = RevisionDraft {
+            project: session::pipeline::host_uuid(&fresh()).unwrap(),
+            workspace: session::pipeline::host_uuid(&fresh()).unwrap(),
+            revision: session::pipeline::host_uuid(&fresh()).unwrap(),
+            op: session::pipeline::host_uuid(&fresh()).unwrap(),
+            workspace_generation: 2,
+            schema: session::pipeline::digest_of(b"schema").unwrap(),
+            root_layer: session::pipeline::ROOT_LAYER.into(),
+            entries: vec![
+                LayerEntry::from_bytes(
+                    "authored.usda",
+                    LayerRole::Authored,
+                    session::pipeline::EMPTY_LAYER.as_bytes(),
+                )
+                .unwrap(),
+            ],
+        };
+        let expected = ExpectedBase::Initial;
+        let refused = commit_verified(&store, &draft, &expected, &mut NoFault).unwrap_err();
+        assert_eq!(refused.code, ErrorCode::InvalidArgument);
+        assert_eq!(
+            refused.message,
+            "this command commits directly and may not run inside a draft batch"
+        );
+        // The batch's own commit ends the draft first, so the funnel opens for it.
+        drop(session::draft::take());
+        let error = commit_verified(&store, &draft, &expected, &mut NoFault).unwrap_err();
+        assert_ne!(
+            error.message,
+            "this command commits directly and may not run inside a draft batch"
+        );
+        drop(guard);
+    }
 }
