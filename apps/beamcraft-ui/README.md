@@ -69,13 +69,19 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   CLI; Cancel does not write. The pinned snapshot includes grid axes for display and framing.
   Upstream grid selection, properties, local-line editing, intersection snapping and deletion
   remain available in the inspector. Grid guides can be toggled from View.
-- Model views (V12): View > Create view builds plan, elevation, section, grid, level, part,
-  assembly, face and camera views, by picking points or a face in the model where needed; each
-  view has its own plane, projection, visible height, depth, work area, render mode, grids,
-  hidden kinds, colour and opacity. The project browser lists them by folder with search, quick
-  access, previews and a context menu; Ctrl+P toggles 3D and the view plane, Ctrl+Tab cycles the
-  open views, and up to eight view windows tile and dock. Views are display state beside the
-  store and never change the model. See [model views](../../docs/design/v12-named-views.md).
+- Model views (V12): View > Create view (an icon dropdown of every construction) builds plan,
+  elevation, section, grid, level, part, assembly, face and camera views, by picking points or a
+  face in the model where needed (the picks fill the plane, Apply creates the view); each view has
+  its own plane, projection, visible height, depth, work area, render mode, grids, hidden kinds,
+  colour and opacity. The view properties are in the right panel: clicking empty space in the
+  viewport shows them, and the free 3D view offers "Save as view". The project browser lists them
+  by folder with search, quick access, previews and a context menu; 3D / plane (Ctrl+P, shown in
+  its tooltip) toggles 3D and the view plane, and Ctrl+Tab cycles the open views. The work area
+  holds up to eight equal view windows inside it; the active one is highlighted and takes
+  selection, picking, snapping and tools; each moves, resizes, maximizes and closes, and the
+  last one may be closed. Arrange: Cascade, Tile horizontal, Tile vertical, Maximize / restore.
+  Views are display state beside the store and never change the model.
+  See [model views](../../docs/design/v12-named-views.md).
 - View retains all five render modes (Wireframe, Transparent, Grey, Shaded, Selected only)
   and the upstream remappable Ctrl+1 through Ctrl+5 shortcuts. Mode changes never reload the
   model. See [render modes](../../docs/design/v16-render-modes.md).

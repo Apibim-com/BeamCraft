@@ -176,10 +176,16 @@ impl App {
         } else {
             self.tools.plane
         };
-        let view = self
+        // The active pane is where the pointer picks: its camera and its image height.
+        let pane = self
+            .views
+            .active_pane()
+            .ok_or_else(|| ToolError::local("INVALID_ARGUMENT", "Open a view to pick in."))?;
+        let view = pane
             .camera
-            .view(self.aspect())
+            .view(pane.target.aspect())
             .map_err(|e| ToolError::local("INVALID_ARGUMENT", e.to_string()))?;
+        let viewport_height = pane.body.height().max(1.0);
         let scene_origin = self
             .loaded
             .as_ref()
@@ -200,7 +206,7 @@ impl App {
         } else {
             depth * f64::from(tan)
         };
-        let mm_per_pixel = 2.0 * scale / f64::from(self.viewport_height.max(1.0));
+        let mm_per_pixel = 2.0 * scale / f64::from(viewport_height);
         let slope = plane
             .map_or(1.0, |plane| {
                 plane
@@ -248,7 +254,7 @@ impl App {
             }
             Some(
                 ((f64::from(x) - nx) * f64::from(aspect)).hypot(f64::from(y) - ny)
-                    * f64::from(self.viewport_height)
+                    * f64::from(viewport_height)
                     * 0.5,
             )
         };
@@ -264,12 +270,12 @@ impl App {
         if !kinds.is_empty()
             && let Some(loaded) = &self.loaded
         {
-            let grids = if self.grids_visible {
+            let grids = if self.grids_shown() {
                 self.grid_scene.query_grids.as_slice()
             } else {
                 &[]
             };
-            let aperture = (20.0 * f64::from(tan) / f64::from(self.viewport_height)).min(0.1);
+            let aperture = (20.0 * f64::from(tan) / f64::from(viewport_height)).min(0.1);
             let cursor = if orthographic {
                 SnapCursor::orthographic(
                     ray.origin,
@@ -751,7 +757,7 @@ impl App {
                     if ui.button("Pick new points").clicked() {
                         self.beam.reset(); self.beam_mode = true; self.beam_hover = None;
                         self.distance_input.clear(); self.distance_aim = None;
-                        self.renderer.set_ghost(&self.state.device, &self.state.queue, None);
+                        self.clear_ghost();
                     }
                     ui.label("Right-click or wheel-click ends this tool.");
                     if self.tools.definitions.profiles.is_empty() { ui.label("Add a profile to the model catalogue before creating a member."); }

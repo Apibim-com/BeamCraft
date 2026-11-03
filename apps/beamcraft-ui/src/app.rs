@@ -12,12 +12,13 @@ mod creation_panel;
 mod grid_panel;
 mod switches;
 mod view_panel;
+mod work_area;
 mod workbench;
 
 use crate::camera::{Camera, View};
 use crate::command::Selected;
 use crate::edit::{
-    EditKind, Edited, Editor, Epoch, Target, ground_point, ndc_of, pick_point_in, ray_through,
+    EditKind, Edited, Editor, Epoch, Target, ground_point, pick_point_in, ray_through,
 };
 use crate::perf::{Observed, PerfRun, Phase as PerfPhase, RefreshTiming, Request};
 use crate::props::{Properties, State};
@@ -28,7 +29,6 @@ use crate::source::{Known, Refreshed, Reloaded};
 use crate::stats::Stats;
 use crate::tools::{BeamPlace, Choice, Created, MAX_TEXT, ToolError, ToolKind, Tools};
 use crate::{Error, check_font, command, json_string, source};
-use beamcraft_engine::RenderMode;
 use beamcraft_engine::ViewSnapshot;
 use beamcraft_engine::element::ElementId;
 use beamcraft_model::command::Placement;
@@ -87,12 +87,9 @@ pub struct App {
     pub(crate) return_to_library: bool,
     state: eframe::egui_wgpu::RenderState,
     source: Source,
-    renderer: Renderer,
-    texture: egui::TextureId,
     /// The counters of the work this window does, shared with its worker threads (see
     /// [`crate::stats`]). One per window, so tests never count into each other.
     stats: Arc<Stats>,
-    camera: Camera,
     loaded: Option<Loaded>,
     error: Option<String>,
     text: bool,
@@ -122,7 +119,6 @@ pub struct App {
     snap_hover: Option<beamcraft_engine::query::pick::SnapKind>,
     /// Where the pointer resolves while placing a beam or column, snapped when a snap applies.
     member_cursor: Option<[f64; 3]>,
-    viewport_height: f32,
     distance_input: String,
     distance_aim: Option<[f64; 3]>,
     plate_input: [String; 2],
@@ -134,9 +130,6 @@ pub struct App {
     beam_hover: Option<[f64; 3]>,
     /// Why the last definitions refresh failed; kept apart from `tool_note` so neither hides the other.
     refresh_error: Option<String>,
-    /// The scene framing the camera was last fitted to (centre, extent, aspect): a reload that
-    /// reports the same framing keeps the user's view instead of fitting again.
-    framed: Option<([f32; 3], f32, f32)>,
     editor: Editor,
     edit_job: Option<Receiver<Result<Edited, ToolError>>>,
     select_job: Option<SelectJob>,
@@ -180,7 +173,6 @@ pub struct App {
     grid_scene: crate::grid::GridScene,
     grid_job: Option<Receiver<Result<crate::grid::CreatedGrid, ToolError>>>,
     grid_note: Option<Result<String, String>>,
-    grids_visible: bool,
     grid_edit: Option<grid_panel::GridEdit>,
     grid_refresh_edit: bool,
     /// D06 annotations: placement tool, listed rows and their jobs.
@@ -214,24 +206,18 @@ pub struct App {
     pending_fit: bool,
     logo: Option<egui::TextureHandle>,
     logo_tried: bool,
-    /// The active render mode (V16); [`beamcraft_engine::RenderMode::Shaded`] is the default and
-    /// switching never reloads the scene.
-    mode: beamcraft_engine::RenderMode,
     /// The render-mode shortcuts: the user's file or the defaults.
     shortcuts: crate::shortcuts::Shortcuts,
     /// Why the shortcuts file was not used, when it was not.
     shortcuts_note: Option<String>,
-    /// The selected-only draw and the (selected id, scene origin) it was built for, so the one
-    /// engine query runs on a selection or reload change, not per frame.
-    selected_only: ((String, [f64; 3]), Option<crate::scene::SelectedDraw>),
     /// Actual world boundary segments, cached by selected identity and snapshot token.
     selection_edges: ((String, String), Vec<[[f64; 3]; 2]>),
     /// The uncommitted cut-plane form (V15); applying it fills `cut`.
     cut_form: crate::cut_plane::Form,
     /// The window's applied display cut; `None` shows the whole model.
     cut: Option<beamcraft_engine::view_clipping::Clipping>,
-    /// The model views of this model (V12): the book, the browser and properties state, the
-    /// active view and the extra view windows.
+    /// The model views of this model (V12): the book, the browser and properties state and the
+    /// panes of the work area (the last one is active).
     views: crate::views::Views,
     /// The work plane the free 3D view had before a view installed its own.
     views_input: Option<Option<beamcraft_engine::work_plane::WorkPlane>>,
@@ -833,6 +819,16 @@ impl App {
             Ok(book) => views.book = book,
             Err(note) => views.note = Some(Err(note)),
         }
+        // The main viewport is the first pane: the free 3D view, shaded, grid guides on, on the
+        // target built above.
+        views.pane_serial = views.pane_serial.saturating_add(1);
+        let mut first = crate::panes::ViewPane::new(
+            None,
+            Camera::new([0.0; 3], 1000.0, 1.6)?,
+            views.pane_serial,
+        );
+        first.target = crate::panes::RenderTarget::adopt(renderer, texture);
+        views.panes.push(first);
         let mut app = Self {
             appearance: None,
             from_library: false,
@@ -843,7 +839,6 @@ impl App {
             grid_scene: crate::grid::GridScene::default(),
             grid_job: None,
             grid_note: None,
-            grids_visible: true,
             annotation: annotation_panel::Panel::empty(),
             menu_section: workbench::MenuSection::default(),
             menu_note: None,
@@ -858,10 +853,7 @@ impl App {
             browser_search: String::new(),
             state,
             source,
-            renderer,
-            texture,
             stats,
-            camera: Camera::new([0.0; 3], 1000.0, 1.6)?,
             loaded: None,
             error: None,
             text,
@@ -876,7 +868,6 @@ impl App {
             plate_hover: None,
             snap_hover: None,
             member_cursor: None,
-            viewport_height: 800.0,
             distance_input: String::new(),
             distance_aim: None,
             plate_input: ["0".into(), "0".into()],
@@ -891,7 +882,6 @@ impl App {
             store_watch_shutdown,
             tool_note: None,
             refresh_error: None,
-            framed: None,
             editor: Editor::default(),
             edit_job: None,
             select_job: None,
@@ -923,12 +913,10 @@ impl App {
             pending_fit: false,
             logo: None,
             logo_tried: false,
-            mode: beamcraft_engine::RenderMode::default(),
             cut_form: crate::cut_plane::Form::default(),
             cut: None,
             shortcuts,
             shortcuts_note,
-            selected_only: ((String::new(), [0.0; 3]), None),
             selection_edges: Default::default(),
             views,
             views_input: None,
@@ -975,22 +963,21 @@ impl App {
         self.menu_note = Some(Err(why));
     }
 
-    /// Frees the egui textures of this window (the viewport and every view window and preview)
-    /// before it is dropped. Freeing twice is harmless.
+    /// Frees the egui textures of this window (every pane and preview) before it is dropped.
+    /// Freeing twice is harmless.
     pub(crate) fn release(&mut self) {
-        self.state.renderer.write().free_texture(&self.texture);
-        for window in &mut self.views.windows {
-            window.release(&self.state);
+        for pane in &mut self.views.panes {
+            pane.target.release(&self.state);
         }
-        for (_, window) in self.views.previews.values_mut() {
-            window.release(&self.state);
+        for (_, target) in self.views.previews.values_mut() {
+            target.release(&self.state);
         }
     }
 
-    /// The egui texture of the main viewport.
+    /// The egui texture of the active pane, once its target is built.
     #[cfg(test)]
-    pub(crate) fn texture_id(&self) -> egui::TextureId {
-        self.texture
+    pub(crate) fn texture_id(&self) -> Option<egui::TextureId> {
+        self.views.active_pane().and_then(|p| p.target.texture())
     }
 
     /// The render state the window draws with.
@@ -1100,18 +1087,17 @@ impl App {
                 {
                     let aspect = self.aspect();
                     // An active model view keeps its own camera (V12).
-                    if self.views.active.is_none()
-                        && needs_refit(self.framed, target, extent, aspect)
-                    {
-                        match self.camera.fit(target, extent, aspect) {
-                            Ok(()) => {
-                                self.framed = Some((target, extent, aspect));
-                                self.error = None;
+                    match self.views.active_pane_mut().filter(|p| p.view.is_none()) {
+                        Some(pane) if needs_refit(pane.framed, target, extent, aspect) => {
+                            match pane.camera.fit(target, extent, aspect) {
+                                Ok(()) => {
+                                    pane.framed = Some((target, extent, aspect));
+                                    self.error = None;
+                                }
+                                Err(e) => self.error = Some(e.to_string()),
                             }
-                            Err(e) => self.error = Some(e.to_string()),
                         }
-                    } else {
-                        self.error = None;
+                        _ => self.error = None,
                     }
                 }
             }
@@ -1120,7 +1106,7 @@ impl App {
                     self.grid_note = Some(Err(error.to_string()));
                     crate::grid::GridScene::default()
                 });
-                let (target, extent) = if self.grids_visible {
+                let (target, extent) = if self.grids_shown() {
                     next_grids.framing(&loaded.summary)
                 } else {
                     loaded.summary.framing()
@@ -1128,18 +1114,20 @@ impl App {
                 let aspect = self.aspect();
                 // A scene the camera cannot frame keeps the previous scene and shows why. An
                 // unchanged framing keeps the user's camera.
-                if self.views.active.is_none() && needs_refit(self.framed, target, extent, aspect) {
-                    match self.camera.fit(target, extent, aspect) {
-                        Ok(()) => {
-                            self.framed = Some((target, extent, aspect));
-                            self.grid_scene = next_grids;
-                            self.show(loaded);
-                        }
-                        Err(e) => self.error = Some(e.to_string()),
+                let fitted = match self.views.active_pane_mut().filter(|p| p.view.is_none()) {
+                    Some(pane) if needs_refit(pane.framed, target, extent, aspect) => Some(
+                        pane.camera
+                            .fit(target, extent, aspect)
+                            .map(|()| pane.framed = Some((target, extent, aspect))),
+                    ),
+                    _ => None,
+                };
+                match fitted {
+                    Some(Err(e)) => self.error = Some(e.to_string()),
+                    Some(Ok(())) | None => {
+                        self.grid_scene = next_grids;
+                        self.show(loaded);
                     }
-                } else {
-                    self.grid_scene = next_grids;
-                    self.show(loaded);
                 }
             }
             // A store with no revision yet is a normal state, not an error: the definitions
@@ -1147,7 +1135,9 @@ impl App {
             Err(e) if source::is_no_revision(&e) => {
                 self.grid_scene = crate::grid::GridScene::default();
                 self.loaded = None;
-                self.framed = None;
+                if let Some(pane) = self.views.active_pane_mut() {
+                    pane.framed = None;
+                }
                 self.error = None;
             }
             Err(e) => self.error = Some(e.to_string()),
@@ -1177,55 +1167,33 @@ impl App {
     fn show(&mut self, loaded: Loaded) {
         note_loaded(&self.stats, &loaded);
         // A new scene may centre on another origin: the cameras of the views keep their framing
-        // in model space (V12). The main camera follows only while a view holds it.
+        // in model space (V12). Only the active free pane does not follow: the reload refits it
+        // against its own aspect.
         let previous = self.loaded.as_ref().map(|l| l.summary.origin_mm);
         let next = loaded.summary.origin_mm;
         if let Some(previous) = previous.filter(|p| *p != next) {
-            if self.views.active.is_some() {
-                self.camera.rebase(previous, next);
+            let active = self.views.active_pane().map(|p| p.key);
+            for pane in &mut self.views.panes {
+                if pane.view.is_some() || Some(pane.key) != active {
+                    pane.camera.rebase(previous, next);
+                }
+                if let Some((camera, _, _)) = &mut pane.spatial {
+                    camera.rebase(previous, next);
+                }
             }
             for camera in self.views.cameras.values_mut() {
                 camera.rebase(previous, next);
-            }
-            if let Some((camera, _, _)) = &mut self.views.spatial {
-                camera.rebase(previous, next);
-            }
-            for window in &mut self.views.windows {
-                window.camera.rebase(previous, next);
             }
         }
         self.views.shown = beamcraft_engine::KindFilter::SHOW_ALL;
         self.loaded = Some(loaded);
         // A new revision may have moved or replaced the selected element: the selected-only
-        // draw is rebuilt against this scene.
-        self.selected_only = ((String::new(), [0.0; 3]), None);
+        // draw of every pane is rebuilt against this scene.
+        for pane in &mut self.views.panes {
+            pane.selected_only = ((String::new(), [0.0; 3]), None);
+        }
         self.selection_edges = Default::default();
         self.error = None;
-    }
-
-    fn aspect(&self) -> f32 {
-        (self.renderer.width as f32 / self.renderer.height as f32).clamp(0.05, 20.0)
-    }
-
-    fn resize(&mut self, width: u32, height: u32) -> Result<(), Error> {
-        if width == self.renderer.width && height == self.renderer.height {
-            return Ok(());
-        }
-        let started = Instant::now();
-        // Only the targets follow the size; the shader and the pipeline stay.
-        self.renderer
-            .resize(&self.state.device, width, height, &self.stats)?;
-        self.state
-            .renderer
-            .write()
-            .update_egui_texture_from_wgpu_texture(
-                &self.state.device,
-                &self.renderer.view,
-                wgpu::FilterMode::Linear,
-                self.texture,
-            );
-        self.stats.resize_ns.add_duration(started.elapsed());
-        Ok(())
     }
 
     /// Registers a lookup under a new epoch; returns the flag that gives it up.
@@ -1251,6 +1219,8 @@ impl App {
         }
         // The pick runs on the snapshot on screen, so a click selects what the user sees.
         let Some(snapshot) = self.loaded.as_ref().map(|l| Arc::clone(&l.snapshot)) else {
+            // Nothing to hit: the click lands on empty space.
+            self.empty_click();
             return;
         };
         let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
@@ -1320,8 +1290,16 @@ impl App {
                 self.editor.deselect();
                 self.props.clear();
                 self.edit_note = None;
+                self.empty_click();
             }
             Ok(Some(Selected { id, info, details })) => {
+                // A part picked from the free 3D view's panel shows its own properties; a new
+                // view's form and a saved view's properties stay, so no edit is thrown away.
+                if self.bench == workbench::Bench::View
+                    && matches!(self.views.subject, crate::views::Subject::FreeView(_))
+                {
+                    self.set_bench(workbench::Bench::Select);
+                }
                 match info {
                     Ok(info) => {
                         self.editor.select(info);
@@ -1338,6 +1316,18 @@ impl App {
                 self.props.load(&id, details);
             }
             Err(e) => self.edit_note = Some(Err(e.to_string())),
+        }
+    }
+
+    /// A click that selected nothing shows the active pane's view in the panel, unless a new
+    /// view's form is open there.
+    fn empty_click(&mut self) {
+        if matches!(
+            self.bench,
+            workbench::Bench::Select | workbench::Bench::View
+        ) && self.views.subject != crate::views::Subject::NewView
+        {
+            self.show_view_properties();
         }
     }
 
@@ -1412,7 +1402,7 @@ impl App {
         }
         let pressed = ctx.input(|input| self.shortcuts.pressed(input));
         if let Some(mode) = pressed {
-            self.mode = mode;
+            self.set_active_mode(mode);
         }
     }
 
@@ -2301,8 +2291,7 @@ impl App {
         self.beam_mode = false;
         self.beam.reset();
         self.ghost_end = None;
-        self.renderer
-            .set_ghost(&self.state.device, &self.state.queue, None);
+        self.clear_ghost();
         let cli = self.source.cli.clone();
         let (tx, rx) = std::sync::mpsc::channel();
         self.job = Some(rx);
@@ -2431,7 +2420,11 @@ impl App {
             last_commit_ok: self.last_commit_ok,
             selects_finished: self.selects_finished,
             select_busy: self.select_job.is_some(),
-            target: [self.renderer.width, self.renderer.height],
+            target: self
+                .views
+                .active_pane()
+                .and_then(|p| p.target.size())
+                .unwrap_or([0, 0]),
             frame_cpu,
             stats: self.stats.sample(),
             refresh_timings: &self.refresh_timings,
@@ -2460,14 +2453,15 @@ impl App {
             }
         }
         if request.orbit
-            && let Err(e) = self.camera.navigate([0.01, 0.0], [0.0; 2], 0.0)
+            && let Some(pane) = self.views.active_pane_mut()
+            && let Err(e) = pane.camera.navigate([0.01, 0.0], [0.0; 2], 0.0)
         {
             self.error = Some(e.to_string());
         }
         // A mode phase measures its mode: the drawing style follows the driver, as a key press
         // would.
         if let Some(mode) = request.mode {
-            self.mode = mode;
+            self.set_active_mode(mode);
         }
         if let Some([width, height]) = request.resize {
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(width, height)));
@@ -2503,8 +2497,7 @@ impl App {
         self.beam.reset();
         self.beam_hover = None;
         self.ghost_end = None;
-        self.renderer
-            .set_ghost(&self.state.device, &self.state.queue, None);
+        self.clear_ghost();
         self.tool_note = Some(Ok(
             "Work plane updated for this session; the model is unchanged.".into(),
         ));
@@ -2596,8 +2589,7 @@ impl App {
         self.tools.member.set_endpoints(start, end);
         self.beam_mode = false;
         self.ghost_end = None;
-        self.renderer
-            .set_ghost(&self.state.device, &self.state.queue, None);
+        self.clear_ghost();
         self.create_from_form();
     }
 
@@ -2608,8 +2600,7 @@ impl App {
     fn clear_member_preview(&mut self) {
         self.beam_hover = None;
         self.ghost_end = None;
-        self.renderer
-            .set_ghost(&self.state.device, &self.state.queue, None);
+        self.clear_ghost();
     }
 
     /// Follows the pointer while a beam or column is placed: the snapped cursor (its marker is
@@ -2668,8 +2659,7 @@ impl App {
         }
         self.ghost_end = Some(key);
         let ghost = self.build_ghost(start, end, origin_mm);
-        self.renderer
-            .set_ghost(&self.state.device, &self.state.queue, ghost.as_ref());
+        self.set_active_ghost(ghost.as_ref());
     }
 
     /// The engine's body mesh for the staged axis, when a rectangle profile is chosen and the
@@ -2751,8 +2741,10 @@ impl App {
     fn info(&mut self, ui: &mut egui::Ui) {
         ui.label(format!("{:.0} FPS", self.fps));
         ui.label(&self.adapter);
-        ui.label(format!("{}x MSAA", self.renderer.samples));
-        ui.label(format!("Render mode: {}", self.mode.as_token()));
+        if let Some(renderer) = self.views.active_pane().and_then(|p| p.target.renderer()) {
+            ui.label(format!("{}x MSAA", renderer.samples));
+        }
+        ui.label(format!("Render mode: {}", self.active_mode().as_token()));
         if let Some(note) = &self.shortcuts_note {
             ui.label(format!("Shortcuts: {note}"));
         }
@@ -2880,7 +2872,10 @@ impl eframe::App for App {
         let fit = fit || std::mem::take(&mut self.pending_fit);
         if fit && let Some(l) = &self.loaded {
             let (target, extent) = self.grid_framing(&l.summary);
-            if let Err(e) = self.camera.fit(target, extent, self.aspect()) {
+            let aspect = self.aspect();
+            if let Some(pane) = self.views.active_pane_mut()
+                && let Err(e) = pane.camera.fit(target, extent, aspect)
+            {
                 self.error = Some(e.to_string());
             }
         }
@@ -2900,8 +2895,6 @@ impl eframe::App for App {
             self.project_browser(ui);
             self.details_window(&ctx);
             self.publish_dialog(&ctx);
-            self.view_properties_window(&ctx);
-            self.draw_view_windows(&ctx);
             self.sheet_editor.window(
                 &ctx,
                 &self.source.cli,
@@ -2910,348 +2903,7 @@ impl eframe::App for App {
             );
         }
         egui::CentralPanel::default().show(ui, |ui| {
-            let size = ui.available_size();
-            self.viewport_height = size.y.max(1.0);
-            let scale = ui.ctx().pixels_per_point();
-            let [width, height] = target_size([size.x, size.y], scale);
-            if let Err(e) = self.resize(width, height) {
-                self.error = Some(e.to_string());
-            }
-            let response = ui.add(egui::Image::new((self.texture, size)).sense(viewport_sense()));
-            let hovered = response.hovered();
-            let (delta, shift, ctrl, scroll_y, pinch) = ui.input(|i| {
-                (
-                    i.pointer.delta(),
-                    i.modifiers.shift,
-                    i.modifiers.ctrl,
-                    if hovered {
-                        i.smooth_scroll_delta.y
-                    } else {
-                        0.0
-                    },
-                    if hovered { i.zoom_delta() } else { 1.0 },
-                )
-            });
-            let (orbit, pan, zoom) = navigation(
-                self.preset,
-                delta,
-                response.dragged_by(egui::PointerButton::Primary),
-                response.dragged_by(egui::PointerButton::Secondary),
-                response.dragged_by(egui::PointerButton::Middle),
-                ctrl,
-                shift,
-                self.camera.distance(),
-                hovered,
-                scroll_y,
-                pinch,
-                zoom_in,
-                zoom_out,
-                self.invert_zoom,
-            );
-            let aspect = self.aspect();
-            // Zoom toward the cursor: keep the point under the pointer still while zooming. A
-            // hostile cursor or an extreme distance falls back to the view centre.
-            let pan = if zoom == 0.0 {
-                pan
-            } else {
-                // hover_pos (not interact_pointer_pos): egui fills the latter only while a
-                // button is down on this widget, so wheel and pinch zoom need the hover point.
-                let ndc = response.hover_pos().and_then(|pos| {
-                    ndc_of(
-                        [pos.x, pos.y],
-                        [response.rect.min.x, response.rect.min.y],
-                        [response.rect.width(), response.rect.height()],
-                    )
-                });
-                match ndc.map(|n| self.camera.cursor_zoom_pan(n, aspect, zoom)) {
-                    Some(Ok(extra)) => [pan[0] + extra[0], pan[1] + extra[1]],
-                    _ => pan,
-                }
-            };
-            let mut picked = None;
-            let mut picked_grid = None;
-            match self
-                .camera
-                .navigate(orbit, pan, zoom)
-                .and_then(|()| self.camera.view(aspect))
-            {
-                Ok(mut view) => {
-                    // The active model view tints the model (V12); the free 3D view does not.
-                    view.tint = self.views.tint();
-                    let rgb = if ui.ctx().theme() == egui::Theme::Dark {
-                        [0x17, 0x21, 0x2B]
-                    } else {
-                        [0xED, 0xF1, 0xF4]
-                    };
-                    let [r, g, b] = rgb.map(|c: u8| f64::from(c) / 255.0);
-                    self.renderer.background = wgpu::Color { r, g, b, a: 1.0 };
-                    if let Some(l) = &self.loaded {
-                        // The display cut is uniform state: the scene and its snapshot never
-                        // change. Planes are model millimetres; the uniform is scene-centred.
-                        // The active view adds its depth slab and work area to the cut (V12).
-                        let clip = match crate::views::display_clip(
-                            self.cut.as_ref(),
-                            self.views.active_view(),
-                        ) {
-                            Some(cut) => crate::cut_plane::ClipGpu::of(&cut, l.summary.origin_mm),
-                            None => crate::cut_plane::ClipGpu::none(),
-                        };
-                        // One loaded scene, five drawing styles: the mode picks the pipeline and
-                        // never rewrites the snapshot or its token.
-                        if self.mode == RenderMode::SelectedOnly {
-                            // The one engine query runs on a selection or reload change, not
-                            // per frame; the fields are disjoint, so the cache updates while
-                            // the scene is borrowed.
-                            let key = (
-                                self.editor
-                                    .selected()
-                                    .map(|s| s.id.clone())
-                                    .unwrap_or_default(),
-                                l.summary.origin_mm,
-                            );
-                            if self.selected_only.0 != key {
-                                let draw = self
-                                    .editor
-                                    .selected()
-                                    .and_then(|s| beamcraft_engine::ElementId::parse(&s.id).ok())
-                                    .and_then(|id| {
-                                        crate::scene::SelectedDraw::of(
-                                            &l.snapshot,
-                                            &id,
-                                            l.summary.origin_mm,
-                                        )
-                                    });
-                                self.selected_only = (key, draw);
-                            }
-                        }
-                        match self.mode {
-                            RenderMode::SelectedOnly => match &self.selected_only.1 {
-                                Some(selected) => {
-                                    self.renderer.draw_one(
-                                        &self.state.device,
-                                        &self.state.queue,
-                                        &l.uploaded,
-                                        view,
-                                        &self.stats,
-                                        &selected.digest,
-                                        &selected.instance,
-                                        &clip,
-                                    );
-                                }
-                                // Nothing selected: an empty view, not the whole model.
-                                None => {
-                                    self.renderer.draw(
-                                        &self.state.device,
-                                        &self.state.queue,
-                                        &l.uploaded,
-                                        view,
-                                        &self.stats,
-                                        RenderMode::SelectedOnly,
-                                        &clip,
-                                    );
-                                }
-                            },
-                            mode => {
-                                self.renderer.draw(
-                                    &self.state.device,
-                                    &self.state.queue,
-                                    &l.uploaded,
-                                    view,
-                                    &self.stats,
-                                    mode,
-                                    &clip,
-                                );
-                            }
-                        }
-                    }
-                    if let Some(l) = &self.loaded {
-                        if self.grids_visible {
-                            self.grid_scene.paint(
-                                ui,
-                                response.rect,
-                                &view,
-                                l.summary.origin_mm,
-                                self.grid_edit.as_ref().map(|edit| edit.id.as_str()),
-                            );
-                        }
-                        if let Ok(rows) = self.annotation.rows.as_deref()
-                            && !rows.is_empty()
-                        {
-                            annotation_panel::paint(
-                                ui,
-                                response.rect,
-                                &view,
-                                l.summary.origin_mm,
-                                rows,
-                            );
-                        }
-                        if let Some(selected) = self.editor.selected() {
-                            let key = (selected.id.clone(), l.snapshot.token().as_str().to_owned());
-                            if self.selection_edges.0 != key {
-                                let edges = beamcraft_engine::ElementId::parse(&selected.id)
-                                    .ok()
-                                    .and_then(|id| {
-                                        beamcraft_engine::query::feature::element_edges(
-                                            &l.snapshot,
-                                            &id,
-                                        )
-                                        .ok()
-                                    })
-                                    .unwrap_or_default();
-                                self.selection_edges = (key, edges);
-                            }
-                            let painter = ui.painter_at(response.rect);
-                            draw_selection(
-                                &painter,
-                                response.rect,
-                                &view,
-                                l.summary.origin_mm,
-                                &self.selection_edges.1,
-                            );
-                        } else {
-                            self.selection_edges = Default::default();
-                        }
-                    }
-                    let finished_creation = self.finish_creation_gesture(&response, &view);
-                    // A closure gesture consumes the click before it can append another point.
-                    if !finished_creation
-                        && response.clicked_by(egui::PointerButton::Primary)
-                        && let Some(pos) = response.interact_pointer_pos()
-                        && let Some(ndc) = ndc_of(
-                            [pos.x, pos.y],
-                            [response.rect.min.x, response.rect.min.y],
-                            [response.rect.width(), response.rect.height()],
-                        )
-                        && let Some(ray) = ray_through(
-                            &view,
-                            ndc,
-                            self.loaded
-                                .as_ref()
-                                .map_or([0.0; 3], |l| l.summary.origin_mm),
-                        )
-                    {
-                        // The grids switch (V11) takes grids out of picking; the display
-                        // switch stays `grids_visible`.
-                        if !self.beam_mode
-                            && !self.plate_mode
-                            && self.views.picking.is_none()
-                            && self.grid_line.click.is_none()
-                            && self.grids_visible
-                            && self
-                                .selection
-                                .is_on(beamcraft_engine::query::pick::SelectionClass::Grids)
-                        {
-                            picked_grid = self
-                                .grid_scene
-                                .hit_test(
-                                    response.rect,
-                                    &view,
-                                    self.loaded
-                                        .as_ref()
-                                        .map_or([0.0; 3], |l| l.summary.origin_mm),
-                                    pos,
-                                )
-                                .map(|grid| grid.id.clone());
-                        }
-                        if picked_grid.is_none() {
-                            picked = Some(ray);
-                        }
-                    }
-                    if self.plate_mode {
-                        let resolved = response
-                            .hover_pos()
-                            .and_then(|pos| {
-                                ndc_of(
-                                    [pos.x, pos.y],
-                                    [response.rect.min.x, response.rect.min.y],
-                                    [response.rect.width(), response.rect.height()],
-                                )
-                            })
-                            .and_then(|ndc| {
-                                ray_through(
-                                    &view,
-                                    ndc,
-                                    self.loaded
-                                        .as_ref()
-                                        .map_or([0.0; 3], |l| l.summary.origin_mm),
-                                )
-                            })
-                            .and_then(|ray| self.creation_hit(ray, true).ok());
-                        self.plate_hover = resolved.map(|(point, _)| point);
-                        self.snap_hover = resolved.and_then(|(_, kind)| kind);
-                        self.paint_plate_draft(ui, response.rect, &view);
-                    }
-                    // The ghost preview follows the pointer on the plane through the armed
-                    // start, parallel to the view; the committed endpoint comes from the click.
-                    if self.beam_mode {
-                        match response.hover_pos().and_then(|pos| {
-                            ndc_of(
-                                [pos.x, pos.y],
-                                [response.rect.min.x, response.rect.min.y],
-                                [response.rect.width(), response.rect.height()],
-                            )
-                        }) {
-                            Some(ndc) => {
-                                self.update_ghost(&view, ndc);
-                                self.paint_member_draft(ui, response.rect, &view);
-                            }
-                            None => {
-                                self.member_cursor = None;
-                                self.snap_hover = None;
-                            }
-                        }
-                    }
-                    if self.views.picking.is_some() {
-                        let hover = response.hover_pos().and_then(|pos| {
-                            ndc_of(
-                                [pos.x, pos.y],
-                                [response.rect.min.x, response.rect.min.y],
-                                [response.rect.width(), response.rect.height()],
-                            )
-                            .and_then(|ndc| ray_through(&view, ndc, self.view_origin()))
-                        });
-                        self.paint_view_picking(ui, response.rect, &view, hover);
-                    }
-                }
-                Err(e) => self.error = Some(e.to_string()),
-            }
-            if let Some(id) = picked_grid {
-                if !self.other_command_running() {
-                    self.select_grid(&id);
-                }
-            } else if let Some(ray) = picked {
-                if self.views.picking.is_some() {
-                    self.view_click(ray);
-                } else if self.plane_pick {
-                    if let Some(loaded) = &self.loaded {
-                        match beamcraft_engine::work_plane::pick_work_plane(
-                            &loaded.snapshot,
-                            ray.origin,
-                            ray.direction,
-                        ) {
-                            Ok(Some(plane)) => {
-                                self.plane_form.set(plane);
-                                self.install_plane(Some(plane));
-                            }
-                            Ok(None) => {
-                                self.tool_note =
-                                    Some(Err("No face was hit; pick a model face.".into()))
-                            }
-                            Err(e) => self.tool_note = Some(Err(e.to_string())),
-                        }
-                    }
-                } else if self.grid_line.click.is_some() {
-                    self.place_grid_line(ray);
-                } else if self.plate_mode {
-                    self.place_plate(ray);
-                } else if self.beam_mode {
-                    self.place_beam(ray);
-                } else if self.bench == workbench::Bench::Annotations {
-                    self.annotation_click(ray);
-                } else if !self.other_command_running() {
-                    self.start_select(ray);
-                }
-            }
+            self.work_area(ui, zoom_in, zoom_out);
         });
         ui.ctx().request_repaint();
     }
@@ -4078,24 +3730,51 @@ pub(crate) mod tests {
     #[test]
     fn release_frees_the_viewport_and_view_window_textures() {
         let Some(mut app) = headless() else { return };
-        let camera = crate::camera::Camera::new([0.0; 3], 1000.0, 1.6).unwrap();
-        let mut window = crate::views::ViewWindow::new(None, camera, 0);
-        window.resize(&app.state, 64, 64, None, &app.stats).unwrap();
-        let window_texture = window.texture().unwrap();
-        app.views.windows.push(window);
-        let texture = app.texture_id();
+        let texture = app.texture_id().unwrap();
+        app.open_pane(None);
+        assert_eq!(app.views.panes.len(), 2);
+        for pane in &mut app.views.panes {
+            pane.target
+                .resize(&app.state, 64, 64, None, &app.stats)
+                .unwrap();
+        }
+        let textures: Vec<egui::TextureId> = app
+            .views
+            .panes
+            .iter()
+            .map(|p| p.target.texture().unwrap())
+            .collect();
+        assert!(textures.contains(&texture));
         {
             let renderer = app.state.renderer.read();
-            assert!(renderer.texture(&texture).is_some());
-            assert!(renderer.texture(&window_texture).is_some());
+            assert!(textures.iter().all(|t| renderer.texture(t).is_some()));
         }
         app.release();
         {
             let renderer = app.state.renderer.read();
-            assert!(renderer.texture(&texture).is_none());
-            assert!(renderer.texture(&window_texture).is_none());
+            assert!(textures.iter().all(|t| renderer.texture(t).is_none()));
         }
         // A second release finds nothing left to free.
+        app.release();
+        assert!(app.state.renderer.read().texture(&texture).is_none());
+    }
+
+    #[test]
+    fn the_main_viewport_is_the_only_pane() {
+        let Some(mut app) = headless() else { return };
+        assert_eq!(app.views.panes.len(), 1);
+        let pane = app.views.active_pane().unwrap();
+        assert_eq!(pane.view, None);
+        assert_eq!(pane.title, "3D view");
+        assert_eq!(pane.mode, RenderMode::Shaded);
+        assert!(pane.grids);
+        assert_eq!(pane.target.size(), Some([1280, 800]));
+        let texture = app.texture_id().unwrap();
+        assert!(app.state.renderer.read().texture(&texture).is_some());
+        app.release();
+        assert!(app.state.renderer.read().texture(&texture).is_none());
+        assert_eq!(app.texture_id(), None);
+        // A second release is harmless.
         app.release();
         assert!(app.state.renderer.read().texture(&texture).is_none());
     }
@@ -4714,15 +4393,34 @@ pub(crate) mod tests {
         app.selection.snap_nearest = false;
         let origin = app.loaded.as_ref().unwrap().summary.origin_mm;
         let local = std::array::from_fn(|i| ([500., 0., 0.][i] - origin[i]) as f32);
-        app.camera.fit(local, 2000., app.aspect()).unwrap();
+        let aspect = app.aspect();
+        app.views
+            .active_pane_mut()
+            .unwrap()
+            .camera
+            .fit(local, 2000., aspect)
+            .unwrap();
         for orthographic in [false, true] {
-            app.camera.set_projection(orthographic);
+            app.views
+                .active_pane_mut()
+                .unwrap()
+                .camera
+                .set_projection(orthographic);
             app.plate_draft.clear();
-            let view = app.camera.view(app.aspect()).unwrap();
+            let view = app
+                .views
+                .active_pane()
+                .unwrap()
+                .camera
+                .view(app.aspect())
+                .unwrap();
             let [x, y, _] = view.project(local);
             let ray = crate::edit::ray_through(
                 &view,
-                [x + 4. / (app.viewport_height * app.aspect()), y],
+                [
+                    x + 4. / (app.views.active_pane().unwrap().body.height() * app.aspect()),
+                    y,
+                ],
                 origin,
             )
             .unwrap();
@@ -4885,14 +4583,28 @@ pub(crate) mod tests {
         let ray_at = |app: &App, point: [f64; 3], pixels: f32| {
             let origin = app.loaded.as_ref().unwrap().summary.origin_mm;
             let local = std::array::from_fn(|i| (point[i] - origin[i]) as f32);
-            let view = app.camera.view(app.aspect()).unwrap();
+            let view = app
+                .views
+                .active_pane()
+                .unwrap()
+                .camera
+                .view(app.aspect())
+                .unwrap();
             let [x, y, _] = view.project(local);
-            let ndc = [x + pixels * 2.0 / (app.viewport_height * app.aspect()), y];
+            let ndc = [
+                x + pixels * 2.0 / (app.views.active_pane().unwrap().body.height() * app.aspect()),
+                y,
+            ];
             crate::edit::ray_through(&view, ndc, origin).unwrap()
         };
         // All defaults enabled: a closer grid line must not steal the crossing.
         for zoom in [0.0, 0.7, -0.7] {
-            app.camera.navigate([0.0; 2], [0.0; 2], zoom).unwrap();
+            app.views
+                .active_pane_mut()
+                .unwrap()
+                .camera
+                .navigate([0.0; 2], [0.0; 2], zoom)
+                .unwrap();
             let ray = ray_at(&app, [1000.0, 2000.0, 0.0], 3.0);
             assert_eq!(
                 app.creation_hit(ray, true).unwrap(),
@@ -4905,18 +4617,24 @@ pub(crate) mod tests {
         app.plate_draft.clear();
         only(&mut app, SnapKind::GridIntersection);
         let ray = ray_at(&app, [1000., 2000., 0.], 3.0);
-        app.grids_visible = false;
+        app.set_grids_shown(false);
         assert!(app.creation_hit(ray, true).unwrap().1.is_none());
-        app.grids_visible = true;
+        app.set_grids_shown(true);
         app.selection.snapping_enabled = false;
         assert!(app.creation_hit(ray, true).unwrap().1.is_none());
         app.selection.snapping_enabled = true;
         // Source switches do not enable a point kind. In particular, grid ON cannot
         // resurrect nearest points when the hourglass switch is OFF.
-        let previous_camera = app.camera;
+        let previous_camera = app.views.active_pane().unwrap().camera;
         let origin = app.loaded.as_ref().unwrap().summary.origin_mm;
         let target = std::array::from_fn(|i| ([0., 611., 0.][i] - origin[i]) as f32);
-        app.camera.fit(target, 1500., app.aspect()).unwrap();
+        let aspect = app.aspect();
+        app.views
+            .active_pane_mut()
+            .unwrap()
+            .camera
+            .fit(target, 1500., aspect)
+            .unwrap();
         for k in SnapKind::ALL {
             app.selection.set_snap(k, true);
         }
@@ -4956,7 +4674,7 @@ pub(crate) mod tests {
                 }
             }
         }
-        app.camera = previous_camera;
+        app.views.active_pane_mut().unwrap().camera = previous_camera;
         app.grid_line.click = None;
         app.selection.snap_reference = true;
         app.selection.snap_geometry = true;
@@ -5272,7 +4990,7 @@ pub(crate) mod tests {
         app.place_grid_line(ray);
         assert_eq!(app.grid_line.points[0], ["1500", "2000"]);
         assert_eq!(app.grid_line.click, Some(true));
-        app.grids_visible = false;
+        app.set_grids_shown(false);
         app.place_grid_line(ray);
         assert_eq!(app.grid_line.points[1], ["1503", "2002"]);
         assert_eq!(app.grid_line.click, None);
@@ -5357,7 +5075,7 @@ pub(crate) mod tests {
         assert_eq!(app.bench, super::workbench::Bench::Select);
         assert!(app.grid_job.is_none());
         assert!(!app.beam_mode && app.beam.start().is_none() && app.ghost_end.is_none());
-        assert!(app.grids_visible);
+        assert!(app.grids_shown());
         assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
     }
 
@@ -5534,7 +5252,7 @@ pub(crate) mod tests {
         };
         // A bare digit never switches a mode; Ctrl+1 to Ctrl+5 do, in order.
         draw(&mut app, press(egui::Key::Num1, false));
-        assert_eq!(app.mode, RenderMode::Shaded);
+        assert_eq!(app.active_mode(), RenderMode::Shaded);
         for (key, expected) in [
             (egui::Key::Num1, RenderMode::Wireframe),
             (egui::Key::Num2, RenderMode::Transparent),
@@ -5543,7 +5261,7 @@ pub(crate) mod tests {
             (egui::Key::Num5, RenderMode::SelectedOnly),
         ] {
             draw(&mut app, press(key, true));
-            assert_eq!(app.mode, expected, "{key:?}");
+            assert_eq!(app.active_mode(), expected, "{key:?}");
         }
         assert_eq!(
             app.loaded.as_ref().unwrap().snapshot.token(),
@@ -5558,15 +5276,15 @@ pub(crate) mod tests {
             )
             .unwrap();
         draw(&mut app, press(egui::Key::Num1, true));
-        assert_eq!(app.mode, RenderMode::SelectedOnly);
+        assert_eq!(app.active_mode(), RenderMode::SelectedOnly);
         draw(&mut app, press(egui::Key::Num7, true));
-        assert_eq!(app.mode, RenderMode::Wireframe);
+        assert_eq!(app.active_mode(), RenderMode::Wireframe);
         // The View tab's DISPLAY buttons set the same state a key press does.
         let first = draw(&mut app, Vec::new());
         draw(&mut app, click(position(&first, "View")));
         let view_tab = draw(&mut app, Vec::new());
         draw(&mut app, click(position(&view_tab, "Transparent")));
-        assert_eq!(app.mode, RenderMode::Transparent);
+        assert_eq!(app.active_mode(), RenderMode::Transparent);
     }
 
     #[test]
@@ -5853,12 +5571,12 @@ pub(crate) mod tests {
         let Some(mut app) = headless() else { return };
         deliver(&mut app, refreshed(2));
         assert!(app.loaded.is_some());
-        let framed = app.framed;
+        let framed = app.views.active_pane().unwrap().framed;
         let swaps = app.stats.reloads_applied.get();
         // The same bounds again, as after an edit inside them: the camera stays where the user
         // left it, and the new scene still replaces the old one.
         deliver(&mut app, refreshed(2));
-        assert_eq!(app.framed, framed);
+        assert_eq!(app.views.active_pane().unwrap().framed, framed);
         assert_eq!(
             app.stats.reloads_applied.get(),
             swaps + 1,
@@ -5909,15 +5627,30 @@ pub(crate) mod tests {
         assert_eq!(fallback.rgba.len(), 32 * 32 * 4);
     }
 
-    /// A frame that draws the workspace panels and the saved-views window, returning the
-    /// centre of every drawn text label and every filled rectangle (for the view-window
-    /// frame, whose close button sits at its right edge).
+    /// A frame that draws the workspace panels, the inspector (with the view panel) and the work
+    /// area, returning the centre of every drawn text label and every drawn rectangle with its
+    /// stroke colour (the active pane's frame is stroked with the link colour).
     fn views_frame(
         app: &mut App,
         ctx: &egui::Context,
         events: Vec<egui::Event>,
         labels: &mut Vec<(String, egui::Pos2)>,
-        rects: &mut Vec<egui::Rect>,
+        rects: &mut Vec<(egui::Rect, egui::Color32)>,
+    ) {
+        views_frame_with(app, ctx, events, labels, rects, true, |_| {});
+    }
+
+    /// [`views_frame`] with `over` drawn too, for areas lying over the work area, and the
+    /// project browser only when `browser` is set (without it the work area reaches the left
+    /// edge, under the ribbon's popups).
+    fn views_frame_with(
+        app: &mut App,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        labels: &mut Vec<(String, egui::Pos2)>,
+        rects: &mut Vec<(egui::Rect, egui::Color32)>,
+        browser: bool,
+        mut over: impl FnMut(&egui::Context),
     ) {
         let output = ctx.run_ui(
             egui::RawInput {
@@ -5930,10 +5663,12 @@ pub(crate) mod tests {
             },
             |ui| {
                 app.ribbon(ui);
-                app.project_browser(ui);
-                app.view_properties_window(ui.ctx());
-                app.draw_view_windows(ui.ctx());
-                egui::CentralPanel::default().show(ui, |_| {});
+                if browser {
+                    app.project_browser(ui);
+                }
+                app.inspector(ui);
+                over(ui.ctx());
+                egui::CentralPanel::default().show(ui, |ui| app.work_area(ui, false, false));
             },
         );
         for shape in &output.shapes {
@@ -5942,9 +5677,7 @@ pub(crate) mod tests {
                     text.galley.text().to_owned(),
                     text.pos + text.galley.size() / 2.0,
                 )),
-                egui::Shape::Rect(rect) if rect.fill != egui::Color32::TRANSPARENT => {
-                    rects.push(rect.rect)
-                }
+                egui::Shape::Rect(rect) => rects.push((rect.rect, rect.stroke.color)),
                 _ => {}
             }
         }
@@ -5978,7 +5711,13 @@ pub(crate) mod tests {
         app.source.store = dir.clone();
         deliver(&mut app, refreshed(2));
         let token = app.loaded.as_ref().unwrap().snapshot.token().clone();
-        let spatial = app.camera.frame(app.view_origin()).unwrap();
+        let spatial = app
+            .views
+            .active_pane()
+            .unwrap()
+            .camera
+            .frame(app.view_origin())
+            .unwrap();
         let ctx = egui::Context::default();
         super::inter(&ctx);
         crate::theme::install(&ctx);
@@ -5997,7 +5736,7 @@ pub(crate) mod tests {
             "the Views group was not drawn: {labels:?}"
         );
 
-        // A plan 3 m up: the properties window's own Create button builds it.
+        // A plan 3 m up: the view panel's own Apply button builds it.
         app.begin_view(Construction::PlanXy);
         app.views.form.name = "Plan +3000".into();
         app.views.form.offset = "3000".into();
@@ -6007,23 +5746,23 @@ pub(crate) mod tests {
             views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
             create = labels
                 .iter()
-                .find(|(text, _)| text == "Create")
+                .find(|(text, _)| text == "Apply")
                 .map(|(_, pos)| *pos);
             if create.is_some() {
                 break;
             }
         }
-        let create = create.unwrap_or_else(|| panic!("no Create button: {labels:?}"));
+        let create = create.unwrap_or_else(|| panic!("no Apply button: {labels:?}"));
         views_frame(&mut app, &ctx, click(create), &mut labels, &mut rects);
-        assert_eq!(
-            app.views.book.len(),
-            1,
-            "the Create button did not dispatch"
-        );
+        assert_eq!(app.views.book.len(), 1, "the Apply button did not dispatch");
         let plan = app.views.book.views()[0].clone();
         assert_eq!(plan.plane.origin(), [0.0, 0.0, 3000.0]);
-        assert_eq!(app.views.active, Some(plan.id));
-        assert!(app.camera.is_aligned() && app.camera.is_orthographic());
+        assert_eq!(app.views.active(), Some(plan.id));
+        // The panel moves on to the created view's properties.
+        assert_eq!(app.bench, super::workbench::Bench::View);
+        assert_eq!(app.views.subject, crate::views::Subject::SavedView(plan.id));
+        let camera = app.views.active_pane().unwrap().camera;
+        assert!(camera.is_aligned() && camera.is_orthographic());
         assert_eq!(
             app.tools.plane,
             Some(plan.plane),
@@ -6032,12 +5771,34 @@ pub(crate) mod tests {
         assert!(crate::views::session_path(&dir).is_file());
 
         // Ctrl+P looks at the plane and back; the free 3D view comes back as it was.
-        let before = app.camera.frame(app.view_origin()).unwrap();
+        let before = app
+            .views
+            .active_pane()
+            .unwrap()
+            .camera
+            .frame(app.view_origin())
+            .unwrap();
         app.toggle_view_plane();
         app.toggle_view_plane();
-        assert_eq!(app.camera.frame(app.view_origin()).unwrap(), before);
+        assert_eq!(
+            app.views
+                .active_pane()
+                .unwrap()
+                .camera
+                .frame(app.view_origin())
+                .unwrap(),
+            before
+        );
         app.activate_view(None);
-        assert_eq!(app.camera.frame(app.view_origin()).unwrap(), spatial);
+        assert_eq!(
+            app.views
+                .active_pane()
+                .unwrap()
+                .camera
+                .frame(app.view_origin())
+                .unwrap(),
+            spatial
+        );
         assert_eq!(app.tools.plane, None);
         app.activate_view(Some(plan.id));
 
@@ -6061,9 +5822,186 @@ pub(crate) mod tests {
         // The book round-trips through the sidecar, and a confirmed delete persists.
         assert_eq!(crate::views::load(&dir).unwrap().len(), 1);
         app.browser_action(super::view_panel::BrowserAction::ConfirmDelete(plan.id));
-        assert!(app.views.active.is_none());
+        assert!(app.views.active().is_none());
         assert!(crate::views::load(&dir).unwrap().is_empty());
         assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_new_view_form_takes_the_lowest_free_name() {
+        use crate::views::Construction;
+        use beamcraft_engine::views::ModelView;
+        use beamcraft_engine::work_plane::WorkPlane;
+        use beamcraft_model::id::Uuid7;
+        let Some(mut app) = headless() else { return };
+        for (n, name) in [(1_u64, "View 2"), (2, "View 3")] {
+            let id = Uuid7::parse(&format!("019a7bf0-0000-7000-8000-{n:012}")).unwrap();
+            let view = ModelView::new(id, name, WorkPlane::default(), 5000.0);
+            app.views.book.insert(view).unwrap();
+        }
+        app.begin_view(Construction::PlanXy);
+        assert_eq!(app.views.form.name, "View 1");
+    }
+
+    #[test]
+    fn the_view_tab_offers_a_create_view_dropdown_without_shortcut_captions() {
+        use crate::views::Construction;
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        let mut labels = Vec::new();
+        let mut rects = Vec::new();
+        views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        let tab = labels
+            .iter()
+            .find(|(text, _)| text == "View")
+            .map(|(_, pos)| *pos)
+            .unwrap_or_else(|| panic!("the View tab was not drawn"));
+        labels.clear();
+        views_frame(&mut app, &ctx, click(tab), &mut labels, &mut rects);
+        assert!(
+            !labels.iter().any(|(text, _)| text.contains("Ctrl+P")),
+            "a caption still names the shortcut: {labels:?}"
+        );
+        let button = labels
+            .iter()
+            .find(|(text, _)| text == "Create view")
+            .map(|(_, pos)| *pos)
+            .unwrap_or_else(|| panic!("no Create view button: {labels:?}"));
+
+        // The dropdown lists every construction; the popup needs a sizing frame first.
+        app.views.form.construction = Construction::CurrentCamera;
+        labels.clear();
+        views_frame(&mut app, &ctx, click(button), &mut labels, &mut rects);
+        let listed = |labels: &[(String, egui::Pos2)]| {
+            Construction::ALL
+                .iter()
+                .all(|(_, label)| labels.iter().any(|(text, _)| text == label))
+        };
+        for _ in 0..3 {
+            if listed(&labels) {
+                break;
+            }
+            labels.clear();
+            views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        }
+        assert!(
+            listed(&labels),
+            "the constructions were not listed: {labels:?}"
+        );
+        let plan = labels
+            .iter()
+            .find(|(text, _)| text == "Plan (XY plane)")
+            .map(|(_, pos)| *pos)
+            .unwrap_or_else(|| panic!("no Plan item: {labels:?}"));
+        views_frame(&mut app, &ctx, click(plan), &mut labels, &mut rects);
+        assert_eq!(app.views.form.construction, Construction::PlanXy);
+        assert_eq!(
+            app.bench,
+            super::workbench::Bench::View,
+            "choosing a construction opens the form in the panel"
+        );
+        assert_eq!(app.views.subject, crate::views::Subject::NewView);
+    }
+
+    /// Hands `app` a finished click lookup, as the pick worker would.
+    fn answer_select(app: &mut App, result: Result<Option<crate::command::Selected>, ToolError>) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.begin_select(rx);
+        tx.send(result).unwrap();
+        app.poll_select();
+    }
+
+    /// A lookup that hit a part whose details could not be read.
+    fn a_part() -> Result<Option<crate::command::Selected>, ToolError> {
+        Ok(Some(crate::command::Selected {
+            id: "x".into(),
+            info: Err(ToolError::local("NOT_FOUND", "no details")),
+            details: Err(ToolError::local("NOT_FOUND", "no details")),
+        }))
+    }
+
+    #[test]
+    fn an_empty_click_shows_the_view_properties_in_the_panel() {
+        use super::workbench::Bench;
+        use crate::views::Subject;
+        use beamcraft_engine::views::ModelView;
+        use beamcraft_engine::work_plane::WorkPlane;
+        use beamcraft_model::id::Uuid7;
+        let Some(mut app) = headless() else { return };
+        let key = app.views.active_pane().unwrap().key;
+        // The free 3D view: its display and a default name for "Save as view".
+        answer_select(&mut app, Ok(None));
+        assert_eq!(app.bench, Bench::View);
+        assert_eq!(app.views.subject, Subject::FreeView(Some(key)));
+        assert_eq!(app.views.form.name, "View 1");
+        app.views.form.name = "Draft".into();
+        answer_select(&mut app, Ok(None));
+        assert_eq!(
+            app.views.form.name, "Draft",
+            "the same free pane keeps its form"
+        );
+
+        // A saved view: its properties, and an unsaved edit survives another empty click.
+        let id = Uuid7::parse("019a7bf0-0000-7000-8000-000000000001").unwrap();
+        let plan = ModelView::new(id, "Plan", WorkPlane::default(), 5000.0);
+        app.views.book.insert(plan).unwrap();
+        app.activate_view(Some(id));
+        answer_select(&mut app, Ok(None));
+        assert_eq!(app.views.subject, Subject::SavedView(id));
+        app.views.form.span = "1234".into();
+        answer_select(&mut app, Ok(None));
+        assert_eq!(app.views.form.span, "1234");
+
+        // A part picked with a saved view's properties open keeps them; from the free view's
+        // panel it shows its own properties.
+        answer_select(&mut app, a_part());
+        assert_eq!(app.bench, Bench::View);
+        assert_eq!(app.views.subject, Subject::SavedView(id));
+        app.activate_view(None);
+        answer_select(&mut app, Ok(None));
+        assert_eq!(app.views.subject, Subject::FreeView(Some(key)));
+        answer_select(&mut app, a_part());
+        assert_eq!(app.bench, Bench::Select);
+
+        // A new view's form stays through a miss.
+        app.begin_view(crate::views::Construction::PlanXy);
+        answer_select(&mut app, Ok(None));
+        assert_eq!(app.views.subject, Subject::NewView);
+        assert_eq!(app.bench, Bench::View);
+
+        // Leaving the bench resets the subject; Esc closes the panel.
+        app.set_bench(Bench::Select);
+        assert_eq!(app.views.subject, Subject::FreeView(None));
+        app.show_view_properties();
+        assert_eq!(app.bench, Bench::View);
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        app_frame(&mut app, &ctx, escape());
+        assert_eq!(app.bench, Bench::Select);
+    }
+
+    #[test]
+    fn save_as_view_turns_the_free_view_into_a_saved_view() {
+        let Some(mut app) = headless() else { return };
+        let dir =
+            std::env::temp_dir().join(format!("beamcraft-v12-save-as-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        app.source.store = dir.clone();
+        deliver(&mut app, refreshed(2));
+        app.show_view_properties();
+        assert_eq!(
+            app.views.subject,
+            crate::views::Subject::FreeView(app.views.active_pane().map(|p| p.key))
+        );
+        app.submit_view();
+        let view = app.views.book.find("View 1").unwrap().clone();
+        assert_eq!(app.views.active(), Some(view.id));
+        assert_eq!(app.views.active_pane().unwrap().title, "View 1");
+        assert_eq!(app.views.subject, crate::views::Subject::SavedView(view.id));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -6092,53 +6030,428 @@ pub(crate) mod tests {
         assert_eq!(app.views.picking.as_ref().map(|p| p.points.len()), Some(2));
         assert!(matches!(app.views.note, Some(Err(_))));
         app.view_click(down(500_000.0, 501_000.0));
+        // The last pick fills the plane and waits for Apply.
         assert!(app.views.picking.is_none());
+        assert!(app.views.form.picked);
+        assert!(
+            app.views.book.find("Inclined").is_none(),
+            "nothing is created yet"
+        );
+        assert!(
+            matches!(app.views.note, Some(Ok(_))),
+            "{:?}",
+            app.views.note
+        );
+        app.submit_view();
         let view = app.views.book.find("Inclined").unwrap().clone();
         assert!((view.plane.normal()[2] - 1.0).abs() < 1e-9);
         assert_eq!(view.plane.origin(), [500_000.0, 500_000.0, -50_000.0]);
 
-        // Extra windows are display-only and bounded.
+        // Esc mid-pick cancels it; Apply then refuses instead of using a default plane.
+        let before = app.views.book.len();
+        app.begin_view(Construction::ThreePoints);
+        app.view_click(down(600_000.0, 600_000.0));
+        app.view_click(down(601_000.0, 600_000.0));
+        app.views.picking = None;
+        app.submit_view();
+        assert_eq!(
+            app.views.note,
+            Some(Err("Pick the points in the model first.".into()))
+        );
+        assert_eq!(app.views.book.len(), before);
+
+        // Panes are display-only and bounded; before any work-area frame none is placed.
         for _ in 0..10 {
-            app.open_view_window(None);
+            app.open_pane(None);
         }
-        assert_eq!(app.views.windows.len(), crate::views::MAX_WINDOWS);
-        app.views.tile = true;
+        assert_eq!(app.views.panes.len(), crate::views::MAX_WINDOWS);
+        assert!(app.views.panes.iter().all(|p| !p.placed));
+        assert!(
+            matches!(app.views.note, Some(Err(_))),
+            "the cap is reported"
+        );
         let ctx = egui::Context::default();
         super::inter(&ctx);
         crate::theme::install(&ctx);
         let mut labels = Vec::new();
         let mut rects = Vec::new();
-        let mut title = None;
-        for _ in 0..3 {
-            labels.clear();
-            rects.clear();
-            views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
-            title = labels
-                .iter()
-                .find(|(text, _)| text == "3D view 2")
-                .map(|(_, pos)| *pos);
-            if title.is_some() {
-                break;
-            }
-        }
-        let title = title.unwrap_or_else(|| panic!("the view window did not draw: {labels:?}"));
-        // The close button sits at the right edge of the window's own frame, the smallest
-        // filled rectangle around the title that is wide enough to be a window.
-        let frame = rects
-            .iter()
-            .filter(|r| r.contains(title) && r.width() > 200.0)
-            .min_by(|a, b| a.area().total_cmp(&b.area()))
-            .copied()
-            .unwrap_or_else(|| panic!("no window frame around {title:?} in {rects:?}"));
-        let close = egui::pos2(frame.right() - 11.0, title.y);
+        // The first work-area frame places every pane inside, the first one maximized.
+        views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        let area = app.views.area.unwrap();
+        assert!(app.views.panes.iter().all(|p| p.placed));
+        assert!(app.views.panes.iter().all(|p| area.contains_rect(p.rect)));
+        assert!(app.views.panes[0].maximized);
+        assert_eq!(app.views.panes[0].rect, area);
+        // Tiled, every pane leaves the maximized state.
+        app.arrange(super::work_area::Arrange::TileVertical);
+        views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        assert!(app.views.panes.iter().all(|p| !p.maximized));
+        assert!(app.views.panes.iter().all(|p| area.contains_rect(p.rect)));
+        // The active pane's close glyph closes it.
+        let close = crate::panes::chrome(app.views.active_pane().unwrap().rect)
+            .close
+            .center();
         views_frame(&mut app, &ctx, click(close), &mut labels, &mut rects);
         views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
         assert_eq!(
-            app.views.windows.len(),
+            app.views.panes.len(),
             crate::views::MAX_WINDOWS - 1,
-            "the close button did not release the window"
+            "the close button did not close the pane"
         );
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A press and, in a later frame, the release of the primary button at `pos`.
+    fn press(pos: egui::Pos2) -> Vec<egui::Event> {
+        vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]
+    }
+
+    /// The release of the primary button at `pos`.
+    fn release(pos: egui::Pos2) -> Vec<egui::Event> {
+        vec![egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }]
+    }
+
+    /// A context with the window's fonts and theme.
+    fn views_context() -> egui::Context {
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        ctx
+    }
+
+    #[test]
+    fn a_click_activates_the_topmost_pane_under_the_pointer() {
+        let Some(mut app) = headless() else { return };
+        app.open_pane(None);
+        app.open_pane(None);
+        assert_eq!(app.views.panes.len(), 3);
+        let ctx = views_context();
+        let (mut labels, mut rects) = (Vec::new(), Vec::new());
+        views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        app.arrange(super::work_area::Arrange::TileVertical);
+        views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        // A click in the bottom pane's body raises it.
+        let first = app.views.panes[0].key;
+        let rect = app.views.panes[0].rect;
+        let inside = crate::panes::chrome(rect).body.center();
+        views_frame(&mut app, &ctx, click(inside), &mut labels, &mut rects);
+        assert_eq!(app.views.active_pane().unwrap().key, first);
+        // The focus is applied after the drawing: the next frame strokes its frame as active.
+        rects.clear();
+        views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        let link = crate::theme::Palette::of(ctx.theme()).link;
+        assert!(
+            rects.iter().any(|(r, c)| *r == rect && *c == link),
+            "no active frame around {rect:?}: {rects:?}"
+        );
+        // Overlapping panes: a click in the overlap goes to the upper one, which stays active.
+        let area = app.views.area.unwrap();
+        let lower = egui::Rect::from_min_size(area.min, egui::vec2(500.0, 400.0));
+        let upper = lower.translate(egui::vec2(200.0, 150.0));
+        app.views.panes[1].rect = lower;
+        app.views.panes[2].rect = upper;
+        let top = app.views.panes[2].key;
+        app.focus_pane(top);
+        views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        let overlap = lower.intersect(upper).center();
+        views_frame(&mut app, &ctx, click(overlap), &mut labels, &mut rects);
+        assert_eq!(app.views.active_pane().unwrap().key, top);
+    }
+
+    #[test]
+    fn the_focusing_click_is_swallowed_until_its_release() {
+        let Some(mut app) = headless() else { return };
+        app.open_pane(None);
+        let ctx = views_context();
+        let (mut labels, mut rects) = (Vec::new(), Vec::new());
+        views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        app.arrange(super::work_area::Arrange::TileVertical);
+        views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        app.set_bench(super::workbench::Bench::Beam);
+        let lower = app.views.panes[0].key;
+        let at = crate::panes::chrome(app.views.panes[0].rect).body.center();
+        // The press focuses the lower pane and is remembered.
+        views_frame(&mut app, &ctx, press(at), &mut labels, &mut rects);
+        assert_eq!(app.views.active_pane().unwrap().key, lower);
+        assert_eq!(app.views.focus_press, Some(lower));
+        // Its release places no point.
+        views_frame(&mut app, &ctx, release(at), &mut labels, &mut rects);
+        assert!(app.beam.start().is_none(), "{:?}", app.tool_note);
+        assert_eq!(app.views.focus_press, None);
+        // The next click in the active pane places one.
+        views_frame(&mut app, &ctx, click(at), &mut labels, &mut rects);
+        assert!(app.beam.start().is_some(), "{:?}", app.tool_note);
+
+        // With the Select tool the focusing click also selects.
+        app.set_bench(super::workbench::Bench::Select);
+        deliver(&mut app, refreshed(2));
+        let other = app.views.panes[0].key;
+        let at = crate::panes::chrome(app.views.panes[0].rect).body.center();
+        views_frame(&mut app, &ctx, press(at), &mut labels, &mut rects);
+        assert_eq!(app.views.active_pane().unwrap().key, other);
+        assert!(app.select_job.is_none());
+        views_frame(&mut app, &ctx, release(at), &mut labels, &mut rects);
+        assert!(app.select_job.is_some(), "the focusing click selects");
+    }
+
+    #[test]
+    fn a_press_on_a_popup_over_the_work_area_does_not_focus_a_pane() {
+        let Some(mut app) = headless() else { return };
+        app.open_pane(None);
+        let ctx = views_context();
+        let (mut labels, mut rects) = (Vec::new(), Vec::new());
+        // Without the project browser the work area reaches the left edge, under the ribbon.
+        let mut frame = |app: &mut App,
+                         events: Vec<egui::Event>,
+                         labels: &mut Vec<(String, egui::Pos2)>,
+                         over: &dyn Fn(&egui::Context)| {
+            views_frame_with(app, &ctx, events, labels, &mut rects, false, over);
+        };
+        let none = |_: &egui::Context| {};
+        frame(&mut app, vec![], &mut labels, &none);
+        // Side by side; the tiles start with the active pane on the left, so the right one is
+        // focused to leave the lower pane on the left, under the ribbon's popups.
+        app.arrange(super::work_area::Arrange::TileVertical);
+        let right = app.views.panes[0].key;
+        app.focus_pane(right);
+        frame(&mut app, vec![], &mut labels, &none);
+        let active = app.views.active_pane().unwrap().key;
+        assert_eq!(active, right);
+        let at = crate::panes::chrome(app.views.panes[0].rect).body.center();
+        // An area lying over the lower pane: `layer_id_at` reads last frame's layer rects.
+        let over = |ctx: &egui::Context| {
+            egui::Area::new(egui::Id::unique("over"))
+                .order(egui::Order::Foreground)
+                .fixed_pos(at - egui::vec2(40.0, 12.0))
+                .show(ctx, |ui| {
+                    let _ = ui.button("Over the pane");
+                });
+        };
+        for _ in 0..2 {
+            frame(&mut app, vec![], &mut labels, &over);
+        }
+        frame(&mut app, click(at), &mut labels, &over);
+        assert_eq!(app.views.active_pane().unwrap().key, active);
+
+        // The same with the ribbon's Create view popup: choosing an entry over a pane focuses
+        // nothing.
+        labels.clear();
+        frame(&mut app, vec![], &mut labels, &none);
+        let tab = labels.iter().find(|(t, _)| t == "View").unwrap().1;
+        frame(&mut app, click(tab), &mut labels, &none);
+        labels.clear();
+        frame(&mut app, vec![], &mut labels, &none);
+        let button = labels.iter().find(|(t, _)| t == "Create view").unwrap().1;
+        frame(&mut app, click(button), &mut labels, &none);
+        let entry = "From the current camera";
+        let mut at = None;
+        for _ in 0..3 {
+            labels.clear();
+            frame(&mut app, vec![], &mut labels, &none);
+            at = labels.iter().find(|(t, _)| t == entry).map(|(_, p)| *p);
+            if at.is_some() {
+                break;
+            }
+        }
+        let at = at.unwrap_or_else(|| panic!("the popup did not open: {labels:?}"));
+        let area = app.views.area.unwrap();
+        assert!(area.contains(at), "the entry lies over the work area");
+        let under = crate::panes::topmost_at(&app.views.panes, at);
+        assert!(under.is_some() && under != Some(active), "{under:?}");
+        frame(&mut app, click(at), &mut labels, &none);
+        assert_eq!(app.views.active_pane().unwrap().key, active);
+        assert_eq!(
+            app.views.form.construction,
+            crate::views::Construction::CurrentCamera
+        );
+    }
+
+    #[test]
+    fn arrange_lays_the_panes_out_inside_the_work_area() {
+        use super::work_area::Arrange;
+        let Some(mut app) = headless() else { return };
+        for _ in 0..3 {
+            app.open_pane(None);
+        }
+        assert_eq!(app.views.panes.len(), 4);
+        let ctx = views_context();
+        let (mut labels, mut rects) = (Vec::new(), Vec::new());
+        // Without the project browser the work area is wide enough for four columns of at
+        // least the minimum width.
+        let mut frame = |app: &mut App, events: Vec<egui::Event>, labels: &mut Vec<_>| {
+            views_frame_with(app, &ctx, events, labels, &mut rects, false, |_| {});
+        };
+        frame(&mut app, vec![], &mut labels);
+        let find = |labels: &[(String, egui::Pos2)], text: &str| {
+            labels.iter().find(|(t, _)| t == text).map(|(_, p)| *p)
+        };
+        let tab = find(&labels, "View").unwrap();
+        labels.clear();
+        frame(&mut app, click(tab), &mut labels);
+        let button = find(&labels, "Arrange").unwrap_or_else(|| panic!("no Arrange: {labels:?}"));
+        labels.clear();
+        frame(&mut app, click(button), &mut labels);
+        let mut entry = find(&labels, "Tile vertical");
+        for _ in 0..3 {
+            if entry.is_some() {
+                break;
+            }
+            labels.clear();
+            frame(&mut app, vec![], &mut labels);
+            entry = find(&labels, "Tile vertical");
+        }
+        let entry = entry.unwrap_or_else(|| panic!("the Arrange popup did not open: {labels:?}"));
+        for item in ["Cascade", "Tile horizontal", "Maximize / restore"] {
+            assert!(find(&labels, item).is_some(), "no {item}: {labels:?}");
+        }
+        let active = app.views.active_pane().unwrap().key;
+        frame(&mut app, click(entry), &mut labels);
+        // Four columns side by side, the active pane leftmost; the z-order is unchanged.
+        let area = app.views.area.unwrap();
+        assert_eq!(app.views.active_pane().unwrap().key, active);
+        let mut columns: Vec<egui::Rect> = app.views.panes.iter().map(|p| p.rect).collect();
+        assert!(app.views.panes.iter().all(|p| !p.maximized));
+        assert!(
+            columns.iter().all(|r| area.contains_rect(*r)),
+            "{columns:?}"
+        );
+        assert!(
+            columns
+                .iter()
+                .all(|r| (r.min.y, r.max.y) == (area.min.y, area.max.y)),
+            "not full height in {area:?}: {columns:?}"
+        );
+        assert_eq!(app.views.active_pane().unwrap().rect.min.x, area.min.x);
+        columns.sort_by(|a, b| a.min.x.total_cmp(&b.min.x));
+        for (r, next) in columns.iter().zip(columns.iter().skip(1)) {
+            assert_eq!(r.max.x, next.min.x, "{columns:?}");
+        }
+        // Cascade keeps the active pane on top.
+        app.arrange(Arrange::Cascade);
+        assert_eq!(app.views.active_pane().unwrap().key, active);
+        assert!(
+            app.views
+                .panes
+                .iter()
+                .all(|p| area.contains_rect(p.rect) && !p.maximized)
+        );
+        // Maximize, then restore.
+        let before = app.views.active_pane().unwrap().rect;
+        app.arrange(Arrange::ToggleMaximize);
+        let pane = app.views.active_pane().unwrap();
+        assert!(pane.maximized);
+        assert_eq!(pane.rect, area);
+        app.arrange(Arrange::ToggleMaximize);
+        let pane = app.views.active_pane().unwrap();
+        assert!(!pane.maximized);
+        assert_eq!(pane.rect, before);
+        // Before any work-area frame there is nothing to lay out over.
+        app.views.area = None;
+        app.arrange(Arrange::TileHorizontal);
+        assert_eq!(app.views.active_pane().unwrap().rect, before);
+    }
+
+    #[test]
+    fn the_work_area_may_be_empty_and_nothing_targets_it() {
+        use beamcraft_engine::views::ModelView;
+        use beamcraft_engine::work_plane::WorkPlane;
+        use beamcraft_model::id::Uuid7;
+        let Some(mut app) = headless() else { return };
+        let keys: Vec<u64> = app.views.panes.iter().map(|p| p.key).collect();
+        for key in keys {
+            app.close_pane(key);
+        }
+        assert!(app.views.panes.is_empty());
+        app.set_bench(super::workbench::Bench::Beam);
+        let ctx = views_context();
+        let (mut labels, mut rects) = (Vec::new(), Vec::new());
+        views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        assert!(labels.iter().any(|(t, _)| t == "No view is open."));
+        assert!(labels.iter().any(|(t, _)| t == "Open the 3D view"));
+        // A click, F and Ctrl+P on an empty work area: nothing to act on, and no panic.
+        let key = |key, modifiers| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        // Below the hint's button, which sits in the middle.
+        let mut events = click(egui::pos2(640.0, 600.0));
+        events.push(key(egui::Key::F, egui::Modifiers::NONE));
+        events.push(key(egui::Key::P, egui::Modifiers::COMMAND));
+        app_frame(&mut app, &ctx, events);
+        assert!(app.views.panes.is_empty());
+        let ray = crate::edit::Ray {
+            origin: [0.0, 0.0, 1000.0],
+            direction: [0.0, 0.0, -1.0],
+        };
+        assert!(app.creation_hit(ray, false).is_err());
+        // The hint's button opens the free 3D view (laid out again after the full frame).
+        labels.clear();
+        views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        let open = labels
+            .iter()
+            .find(|(t, _)| t == "Open the 3D view")
+            .map(|(_, p)| *p)
+            .unwrap_or_else(|| panic!("no open button: {labels:?}"));
+        views_frame(&mut app, &ctx, click(open), &mut labels, &mut rects);
+        assert_eq!(app.views.panes.len(), 1);
+        assert_eq!(app.views.active_pane().unwrap().title, "3D view");
+        // Opening a view from the browser on an empty work area opens a pane on it.
+        app.close_pane(app.views.active_pane().unwrap().key);
+        let id = Uuid7::parse("019a7bf0-0000-7000-8000-000000000001").unwrap();
+        app.views
+            .book
+            .insert(ModelView::new(id, "Plan", WorkPlane::default(), 5000.0))
+            .unwrap();
+        app.browser_action(super::view_panel::BrowserAction::Activate(id));
+        assert_eq!(app.views.panes.len(), 1);
+        assert_eq!(app.views.active_pane().unwrap().title, "Plan");
+    }
+
+    #[test]
+    fn focusing_a_pane_installs_its_view_plane() {
+        use beamcraft_engine::views::ModelView;
+        use beamcraft_engine::work_plane::WorkPlane;
+        use beamcraft_model::id::Uuid7;
+        let Some(mut app) = headless() else { return };
+        let free = WorkPlane::parallel("xy", -250.0).unwrap();
+        app.install_plane(Some(free));
+        let id = Uuid7::parse("019a7bf0-0000-7000-8000-000000000001").unwrap();
+        let plane = WorkPlane::parallel("xz", 1200.0).unwrap();
+        app.views
+            .book
+            .insert(ModelView::new(id, "Elevation", plane, 5000.0))
+            .unwrap();
+        let free_pane = app.views.active_pane().unwrap().key;
+        app.open_pane(Some(id));
+        let plan_pane = app.views.active_pane().unwrap().key;
+        assert_eq!(app.tools.plane, Some(plane));
+        app.focus_pane(free_pane);
+        assert_eq!(
+            app.tools.plane,
+            Some(free),
+            "the free work plane comes back"
+        );
+        app.focus_pane(plan_pane);
+        assert_eq!(app.tools.plane, Some(plane));
+        // Closing the view's pane gives the free pane its work plane back.
+        app.close_pane(plan_pane);
+        assert_eq!(app.tools.plane, Some(free));
     }
 }
 
