@@ -285,10 +285,7 @@ impl Overlay {
     /// The overlay of a view's filter overrides in order, over `base` (the colour set shown in
     /// the window, if any): an element takes the first override whose filter matched it, a
     /// `None` tint hides it, and an element no override matched keeps its `base` colour.
-    pub fn from_overrides(
-        matches: Vec<OverrideMatch>,
-        base: Option<&Self>,
-    ) -> Self {
+    pub fn from_overrides(matches: Vec<OverrideMatch>, base: Option<&Self>) -> Self {
         let mut map = BTreeMap::new();
         let mut hidden = BTreeSet::new();
         for (ids, tint) in matches {

@@ -66,6 +66,11 @@ fn main() -> std::process::ExitCode {
         help::print();
         return std::process::ExitCode::SUCCESS;
     }
+    // `--screenshot FILE` (with the window's own options) is the window's: the CLI has no
+    // window, so it runs `beamcraft-ui` beside it with the same arguments and passes its reply on.
+    if args.first().is_some_and(|a| a == "--screenshot") {
+        return screenshot(&args);
+    }
     let route = args.first().and_then(|c| registry::route(c));
     match route {
         Some(Route::Commands) => return list_commands(args.get(1..).unwrap_or_default()),
@@ -316,6 +321,30 @@ fn list_commands(tail: &[std::ffi::OsString]) -> std::process::ExitCode {
                 ("diagnostics", Json::Array(vec![])),
             ]);
             print_json(&json, error.exit_code())
+        }
+    }
+}
+
+/// Runs the window program beside this one with `args` (`--screenshot FILE` and the window's
+/// options) and returns its exit status; its reply is printed by the window program itself.
+fn screenshot(args: &[std::ffi::OsString]) -> std::process::ExitCode {
+    let window = std::env::current_exe().ok().and_then(|exe| {
+        exe.parent()
+            .map(|dir| dir.join(format!("beamcraft-ui{}", std::env::consts::EXE_SUFFIX)))
+    });
+    let status = window.map(|ui| std::process::Command::new(ui).args(args).status());
+    match status {
+        Some(Ok(status)) => std::process::ExitCode::from(
+            status
+                .code()
+                .and_then(|c| u8::try_from(c).ok())
+                .unwrap_or(1),
+        ),
+        _ => {
+            println!(
+                "{{\"outcome\":\"rejected\",\"code\":\"BACKEND_UNAVAILABLE\",\"message\":\"the window program beamcraft-ui was not found beside the CLI\"}}"
+            );
+            std::process::ExitCode::from(3)
         }
     }
 }

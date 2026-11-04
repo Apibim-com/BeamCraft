@@ -35,7 +35,7 @@ use std::sync::Arc;
 
 fn usage() -> Error {
     Error::Input(
-        "usage: beamcraft-ui [--cli PATH] [--config-dir DIR] [--samples 1|4] (start page) | beamcraft-ui (--store ROOT | --workspace DIR [--published ROOT]) [--actor-id UUID] [--cli PATH] [--config-dir DIR] [--samples 1|4] [--metrics FRAMES [--width W] [--height H] | --perf-run PLAN] | --synthetic COUNT --metrics FRAMES [--samples 1|4]",
+        "usage: beamcraft-ui [--cli PATH] [--config-dir DIR] [--samples 1|4] (start page) | beamcraft-ui (--store ROOT | --workspace DIR [--published ROOT]) [--actor-id UUID] [--cli PATH] [--config-dir DIR] [--samples 1|4] [--metrics FRAMES [--width W] [--height H] | --perf-run PLAN | --screenshot FILE.png] | --synthetic COUNT --metrics FRAMES [--samples 1|4]",
     )
 }
 
@@ -67,6 +67,7 @@ fn options() -> Result<BTreeMap<String, String>, Error> {
                 | "--samples"
                 | "--config-dir"
                 | "--actor-id"
+                | "--screenshot"
         );
         if !known || value.len() > 4096 || map.insert(key.clone(), value.clone()).is_some() {
             return Err(usage());
@@ -83,6 +84,15 @@ fn number(map: &BTreeMap<String, String>, key: &str, default: u32) -> Result<u32
 /// What a run printed and its exit status, or `None` for a window that just closed.
 fn run() -> Result<Option<(String, u8)>, Error> {
     let map = options()?;
+    if let Some(path) = map.get("--screenshot") {
+        if map.contains_key("--metrics") || map.contains_key("--perf-run") {
+            return Err(usage());
+        }
+        let _ = SHOT.set((
+            PathBuf::from(path),
+            std::sync::Arc::new(std::sync::Mutex::new(None)),
+        ));
+    }
     // One window, one set of counters; shared with its worker threads (see beamcraft_ui::stats).
     let stats = Arc::new(Stats::default());
     let samples = map
@@ -140,12 +150,13 @@ fn run() -> Result<Option<(String, u8)>, Error> {
                 && !map.contains_key("--perf-run")
                 && !map.contains_key("--actor-id") =>
         {
-            return start_page(
+            start_page(
                 cli,
                 map.get("--config-dir").map(PathBuf::from),
                 samples,
                 stats,
-            );
+            )?;
+            return shot_reply();
         }
         _ => return Err(usage()),
     };
@@ -187,7 +198,7 @@ fn run() -> Result<Option<(String, u8)>, Error> {
         }),
     )?;
     if !perf_run {
-        return Ok(None);
+        return shot_reply();
     }
     match reports.try_recv() {
         Ok((json, ok)) => Ok(Some((json, if ok { 0 } else { 1 }))),
@@ -211,8 +222,46 @@ fn start_page(
     Ok(None)
 }
 
+/// The `--screenshot FILE` of this run: the file and where its outcome lands.
+static SHOT: std::sync::OnceLock<(PathBuf, beamcraft_ui::capture::Outcome)> =
+    std::sync::OnceLock::new();
+
+/// The reply of a `--screenshot` run once its window closed.
+fn shot_reply() -> Result<Option<(String, u8)>, Error> {
+    let Some((path, outcome)) = SHOT.get() else {
+        return Ok(None);
+    };
+    let result = outcome.lock().ok().and_then(|mut o| o.take());
+    match result {
+        Some(Ok(())) => Ok(Some((
+            format!(
+                "{{\"outcome\":\"screenshot_saved\",\"path\":{},\"frames\":{}}}",
+                json_string(&path.to_string_lossy()),
+                beamcraft_ui::capture::FRAMES
+            ),
+            0,
+        ))),
+        Some(Err(message)) => Err(Error::Graphics(message)),
+        None => Err(Error::Graphics(
+            "the window closed before its picture was taken".into(),
+        )),
+    }
+}
+
 /// Runs one native window until it closes.
 fn window(size: egui::Vec2, create: eframe::AppCreator<'_>) -> Result<(), Error> {
+    let create: eframe::AppCreator<'_> = match SHOT.get() {
+        Some((path, outcome)) => {
+            let (path, outcome) = (path.clone(), std::sync::Arc::clone(outcome));
+            Box::new(move |cc| {
+                let inner = create(cc)?;
+                Ok(Box::new(beamcraft_ui::capture::Capture::new(
+                    inner, path, outcome,
+                )))
+            })
+        }
+        None => create,
+    };
     let mut setup = eframe::egui_wgpu::WgpuSetupCreateNew::without_display_handle();
     setup.instance_descriptor.backends =
         wgpu::Backends::DX12 | wgpu::Backends::VULKAN | wgpu::Backends::METAL;
