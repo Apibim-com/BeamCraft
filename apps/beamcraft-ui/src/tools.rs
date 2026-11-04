@@ -691,6 +691,10 @@ pub struct Definitions {
     pub materials: Vec<Choice>,
     /// The part presets of the project's environment, defaults first within a kind.
     pub presets: Vec<PartPreset>,
+    /// The view filters the project's environment declares.
+    pub view_filters: Vec<beamcraft_engine::views::ViewFilter>,
+    /// The view presets the project's environment declares; their overrides name its filters.
+    pub view_presets: Vec<beamcraft_engine::views::ViewPreset>,
     /// The levels of the model, for a column's top.
     pub levels: Vec<LevelChoice>,
     /// The revision the listing was read from: the store's head at that moment.
@@ -781,6 +785,22 @@ pub fn parse_definitions(exit_code: Option<i32>, stdout: &[u8]) -> Result<Defini
                 .collect()
         })
         .unwrap_or_default();
+    // An entry that does not read is skipped: the environment's presets are offers, not state.
+    let listed = |key: &str| -> Vec<Json> {
+        reply
+            .get(key)
+            .and_then(Json::array)
+            .map(|list| list.iter().take(MAX_CHOICES).cloned().collect())
+            .unwrap_or_default()
+    };
+    out.view_filters = listed("environment_view_filters")
+        .iter()
+        .filter_map(|j| beamcraft_host::views::filter_from_json(j).ok())
+        .collect();
+    out.view_presets = listed("environment_view_presets")
+        .iter()
+        .filter_map(|j| beamcraft_host::views::preset_from_json(j).ok())
+        .collect();
     out.levels = reply
         .get("levels")
         .and_then(Json::array)

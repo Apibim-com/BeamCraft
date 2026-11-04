@@ -73,13 +73,19 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   elevation, section, grid, level, part, assembly, face and camera views, by picking points or a
   face in the model where needed (the picks fill the plane, Apply creates the view); each view has
   its own plane, projection, visible height, depth, work area, render mode, grids, hidden kinds,
-  colour and opacity. The view properties are in the right panel: clicking empty space in the
-  viewport shows them, and the free 3D view offers "Save as view". The project browser lists them
-  by folder with search, quick access, previews and a context menu; 3D / plane (Ctrl+P, shown in
-  its tooltip) toggles 3D and the view plane, and Ctrl+Tab cycles the open views. The work area
-  holds up to eight equal view windows inside it; the active one is highlighted and takes
-  selection, picking, snapping and tools; each moves, resizes, maximizes and closes, and the
-  last one may be closed. Arrange: Cascade, Tile horizontal, Tile vertical, Maximize / restore.
+  colour, opacity and filter overrides (each filter shown or hidden, coloured and made
+  transparent; the first matching filter decides). The view properties are in the right panel
+  as a properties grid with a view preset picker and the filters table: clicking empty space in
+  the viewport or a view in the browser shows them, and the free 3D view offers "Save as view".
+  View > Filters edits the filters (rows of field, operator and value). The project browser is a
+  tree by view type (3D views, Plans, Elevations, Sections) with folders inside, search, quick
+  access, previews, drag to a folder or into the work area, and a context menu; a double click
+  opens a view. 3D / plane (Ctrl+P, shown in its tooltip) toggles 3D and the view plane, and
+  Ctrl+Tab cycles the open views. Views open as tabs in tab groups that split the work area: a
+  tab dragged onto a group's edge splits it, dividers resize the groups, and the active tab takes
+  selection, picking, snapping and tools. Windows: Open beside, Close inactive, Tab views, Tile
+  views, Arrange (Tabs, Tile, Tile horizontal, Tile vertical, Maximize / restore). Filters and
+  view presets also come from the environment's presets file, like the part presets.
   Views are display state beside the store and never change the model.
   See [model views](../../docs/design/v12-named-views.md).
 - View retains all five render modes (Wireframe, Transparent, Grey, Shaded, Selected only)

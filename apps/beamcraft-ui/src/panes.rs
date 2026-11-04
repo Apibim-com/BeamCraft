@@ -9,14 +9,12 @@ use crate::camera::Camera;
 use beamcraft_engine::views::ModelView;
 use beamcraft_engine::{KindFilter, RenderMode};
 use beamcraft_model::id::Uuid7;
-use egui::{Rect, Vec2, pos2, vec2};
+use egui::{Rect, pos2, vec2};
 
 /// Height of a pane's title bar, points.
-pub const TITLE_HEIGHT: f32 = 24.0;
-/// Width of a pane's resize handles along its edges, points.
+pub const TITLE_HEIGHT: f32 = crate::dock::TAB_STRIP;
+/// Width of the edge bands of a pane's chrome, points.
 pub const HANDLE: f32 = 6.0;
-/// The smallest pane a move or resize leaves.
-pub const MIN_PANE: Vec2 = vec2(220.0, 160.0);
 
 /// A render target that is made on first use: the offscreen renderer and the egui texture that
 /// shows it.
@@ -163,13 +161,13 @@ pub struct ViewPane {
     pub(crate) rect: Rect,
     /// False until a work-area frame has given the pane its rect.
     pub(crate) placed: bool,
-    /// Whether the pane fills the work area.
+    /// Whether the pane's tab group fills the work area.
     pub(crate) maximized: bool,
-    /// The rect a maximized pane returns to.
-    pub(crate) restore: Option<Rect>,
+    /// Whether the pane is the tab its group shows; a tab behind it is not drawn.
+    pub(crate) shown: bool,
     /// The scene of this pane's hidden kinds when they differ from the loaded scene's, keyed by
-    /// the snapshot token and the kinds it was built for.
-    pub(crate) filtered: Option<(String, KindFilter, crate::render::Uploaded)>,
+    /// the snapshot token, the kinds and the filter overlay (its key) it was built for.
+    pub(crate) filtered: Option<(String, KindFilter, u64, crate::render::Uploaded)>,
 }
 
 impl ViewPane {
@@ -192,7 +190,7 @@ impl ViewPane {
             rect: Rect::NOTHING,
             placed: false,
             maximized: false,
-            restore: None,
+            shown: false,
             filtered: None,
         };
         pane.set_view(view);
@@ -262,237 +260,13 @@ pub fn chrome(rect: Rect) -> Chrome {
     }
 }
 
-/// Which edge a resize drag holds; part of the handle's egui id, hence `Hash`.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Edge {
-    /// The left edge.
-    Left,
-    /// The right edge.
-    Right,
-    /// The top edge.
-    Top,
-    /// The bottom edge.
-    Bottom,
-    /// The bottom-right corner: both the right and the bottom edge.
-    Corner,
-}
-
-/// `rect` kept fully inside `area` and at least [`MIN_PANE`] (or `area` when it is smaller).
-/// Non-finite input returns `area`.
-pub fn clamp_into(area: Rect, rect: Rect) -> Rect {
-    if !area.is_finite() || !rect.is_finite() {
-        return area;
-    }
-    let width = rect.width().max(MIN_PANE.x).min(area.width());
-    let height = rect.height().max(MIN_PANE.y).min(area.height());
-    // `min` before `max`: an area narrower than the pane keeps the pane at its left edge.
-    let x = rect.min.x.min(area.max.x - width).max(area.min.x);
-    let y = rect.min.y.min(area.max.y - height).max(area.min.y);
-    Rect::from_min_size(pos2(x, y), vec2(width, height))
-}
-
-/// `rect` moved by `delta`, then kept inside `area`.
-pub fn moved(area: Rect, rect: Rect, delta: Vec2) -> Rect {
-    if !delta.is_finite() {
-        return clamp_into(area, rect);
-    }
-    clamp_into(area, rect.translate(delta))
-}
-
-/// `rect` with `edge` dragged by `delta`; the opposite edge stays and [`MIN_PANE`] is kept.
-pub fn resized(area: Rect, rect: Rect, edge: Edge, delta: Vec2) -> Rect {
-    if !delta.is_finite() {
-        return clamp_into(area, rect);
-    }
-    let mut r = rect;
-    if matches!(edge, Edge::Left) {
-        r.min.x = (r.min.x + delta.x)
-            .min(r.max.x - MIN_PANE.x)
-            .max(area.min.x);
-    }
-    if matches!(edge, Edge::Right | Edge::Corner) {
-        r.max.x = (r.max.x + delta.x)
-            .max(r.min.x + MIN_PANE.x)
-            .min(area.max.x);
-    }
-    if matches!(edge, Edge::Top) {
-        r.min.y = (r.min.y + delta.y)
-            .min(r.max.y - MIN_PANE.y)
-            .max(area.min.y);
-    }
-    if matches!(edge, Edge::Bottom | Edge::Corner) {
-        r.max.y = (r.max.y + delta.y)
-            .max(r.min.y + MIN_PANE.y)
-            .min(area.max.y);
-    }
-    clamp_into(area, r)
-}
-
-/// Where the `open`-th pane opens: 2/3 of the area, offset by `TITLE_HEIGHT + 4` per pane
-/// already open, wrapping before a step would leave the area.
-pub fn opening_rect(area: Rect, open: usize) -> Rect {
-    if !area.is_finite() {
-        return area;
-    }
-    let size = vec2(
-        (area.width() * 2.0 / 3.0).max(MIN_PANE.x).min(area.width()),
-        (area.height() * 2.0 / 3.0)
-            .max(MIN_PANE.y)
-            .min(area.height()),
-    );
-    let step = TITLE_HEIGHT + 4.0;
-    let room = (area.width() - size.x).min(area.height() - size.y).max(0.0);
-    // Room for `steps` offsets (the first at the corner); at least one, at most a few hundred.
-    let steps = ((room / step).floor() as usize)
-        .saturating_add(1)
-        .clamp(1, 512);
-    let offset = (open % steps) as f32 * step;
-    clamp_into(
-        area,
-        Rect::from_min_size(area.min + vec2(offset, offset), size),
-    )
-}
-
 /// The key of the last pane in z-order whose rect contains `pos`.
 pub fn topmost_at(panes: &[ViewPane], pos: egui::Pos2) -> Option<u64> {
     panes
         .iter()
         .rev()
-        .find(|p| p.placed && p.rect.contains(pos))
+        .find(|p| p.placed && p.shown && p.rect.contains(pos))
         .map(|p| p.key)
-}
-
-/// Whether `area` can be laid out: finite and of non-zero size.
-fn usable(area: Rect) -> bool {
-    area.is_finite() && area.width() > 0.0 && area.height() > 0.0
-}
-
-/// The `k`-th of `n` equal divisions of `lo..hi`; the last one is `hi` itself, so neighbours
-/// share their edge exactly and the parts add up to the whole.
-fn split(lo: f32, hi: f32, k: usize, n: usize) -> f32 {
-    if k >= n {
-        hi
-    } else {
-        lo + (hi - lo) * k as f32 / n.max(1) as f32
-    }
-}
-
-/// The rects of `count` panes cascaded over `area` in z-order (bottom first, so the active pane
-/// ends up front-most): each 70% of the area (at least [`MIN_PANE`], at most the area), stepped
-/// by `TITLE_HEIGHT + 4` down and right, wrapping to the corner when a step would leave the area.
-pub fn cascade(area: Rect, count: usize) -> Vec<Rect> {
-    if !usable(area) {
-        return vec![area; count];
-    }
-    let size = vec2(
-        (area.width() * 0.7).max(MIN_PANE.x).min(area.width()),
-        (area.height() * 0.7).max(MIN_PANE.y).min(area.height()),
-    );
-    let step = TITLE_HEIGHT + 4.0;
-    let room = (area.width() - size.x).min(area.height() - size.y).max(0.0);
-    // Room for `steps` offsets (the first at the corner); at least one, at most a few hundred.
-    let steps = ((room / step).floor() as usize)
-        .saturating_add(1)
-        .clamp(1, 512);
-    (0..count)
-        .map(|index| {
-            let offset = (index % steps) as f32 * step;
-            Rect::from_min_size(area.min + vec2(offset, offset), size).intersect(area)
-        })
-        .collect()
-}
-
-/// Stacked full-width strips; when a strip would be lower than `MIN_PANE.y` the panes form a
-/// grid of `rows = floor(h / MIN_PANE.y).max(1)` rows filled column by column, the last
-/// column's panes sharing its height. The rects partition the area exactly.
-pub fn tile_horizontal(area: Rect, count: usize) -> Vec<Rect> {
-    if !usable(area) {
-        return vec![area; count];
-    }
-    let fits = area.height() / count.max(1) as f32 >= MIN_PANE.y;
-    let rows = if fits {
-        count.max(1)
-    } else {
-        ((area.height() / MIN_PANE.y).floor() as usize).clamp(1, count.max(1))
-    };
-    let columns = count.div_ceil(rows).max(1);
-    (0..count)
-        .map(|index| {
-            let column = index / rows;
-            let row = index % rows;
-            // The last column holds what is left over and shares its height among those.
-            let in_column = count.saturating_sub(column * rows).min(rows).max(1);
-            Rect::from_min_max(
-                pos2(
-                    split(area.min.x, area.max.x, column, columns),
-                    split(area.min.y, area.max.y, row, in_column),
-                ),
-                pos2(
-                    split(area.min.x, area.max.x, column + 1, columns),
-                    split(area.min.y, area.max.y, row + 1, in_column),
-                ),
-            )
-        })
-        .collect()
-}
-
-/// Side-by-side full-height columns; when a column would be narrower than `MIN_PANE.x`, a grid
-/// of `columns = floor(w / MIN_PANE.x).max(1)` filled row by row, the last row's panes sharing
-/// its width. The rects partition the area exactly.
-pub fn tile_vertical(area: Rect, count: usize) -> Vec<Rect> {
-    if !usable(area) {
-        return vec![area; count];
-    }
-    let fits = area.width() / count.max(1) as f32 >= MIN_PANE.x;
-    let columns = if fits {
-        count.max(1)
-    } else {
-        ((area.width() / MIN_PANE.x).floor() as usize).clamp(1, count.max(1))
-    };
-    fill_rows(area, count, columns)
-}
-
-/// A square-ish grid: `ceil(sqrt(count))` columns (so four panes form 2 x 2), fewer when a
-/// column would be narrower than `MIN_PANE.x`. Filled row by row; the last row's panes share
-/// its width. The rects partition the area exactly.
-pub fn tile_grid(area: Rect, count: usize) -> Vec<Rect> {
-    if !usable(area) {
-        return vec![area; count];
-    }
-    let mut columns = 1;
-    while columns * columns < count {
-        columns += 1;
-    }
-    let room = ((area.width() / MIN_PANE.x).floor() as usize).max(1);
-    fill_rows(area, count, columns.min(room).clamp(1, count.max(1)))
-}
-
-/// `count` panes in rows of `columns`, filled row by row; the last row's panes share its width.
-fn fill_rows(area: Rect, count: usize, columns: usize) -> Vec<Rect> {
-    let rows = count.div_ceil(columns).max(1);
-    (0..count)
-        .map(|index| {
-            let row = index / columns;
-            let column = index % columns;
-            // The last row holds what is left over and shares its width among those.
-            let in_row = count.saturating_sub(row * columns).min(columns).max(1);
-            Rect::from_min_max(
-                pos2(
-                    split(area.min.x, area.max.x, column, in_row),
-                    split(area.min.y, area.max.y, row, rows),
-                ),
-                pos2(
-                    split(area.min.x, area.max.x, column + 1, in_row),
-                    split(area.min.y, area.max.y, row + 1, rows),
-                ),
-            )
-        })
-        .collect()
-}
-
-/// The whole area.
-pub fn maximized(area: Rect) -> Rect {
-    area
 }
 
 #[cfg(test)]
@@ -500,15 +274,12 @@ pub fn maximized(area: Rect) -> Rect {
 mod tests {
     use super::*;
 
-    fn area() -> Rect {
-        Rect::from_min_size(pos2(200.0, 150.0), vec2(1000.0, 600.0))
-    }
-
     fn pane(key: u64, rect: Rect) -> ViewPane {
         let camera = Camera::new([0.0; 3], 1000.0, 1.6).unwrap();
         let mut pane = ViewPane::new(None, camera, key);
         pane.rect = rect;
         pane.placed = true;
+        pane.shown = true;
         pane
     }
 
@@ -531,90 +302,6 @@ mod tests {
     }
 
     #[test]
-    fn clamped_panes_stay_inside_and_keep_the_minimum_size() {
-        let area = area();
-        for rect in [
-            Rect::from_min_size(pos2(-500.0, -500.0), vec2(100.0, 50.0)),
-            Rect::from_min_size(pos2(1100.0, 700.0), vec2(600.0, 400.0)),
-            Rect::from_min_size(pos2(0.0, 0.0), vec2(5000.0, 5000.0)),
-            Rect::from_min_size(pos2(300.0, 200.0), vec2(400.0, 300.0)),
-        ] {
-            let clamped = clamp_into(area, rect);
-            assert!(area.contains_rect(clamped), "{rect:?} -> {clamped:?}");
-            assert!(clamped.width() >= MIN_PANE.x && clamped.height() >= MIN_PANE.y);
-        }
-        let nan = Rect::from_min_size(pos2(f32::NAN, 0.0), vec2(100.0, 100.0));
-        assert_eq!(clamp_into(area, nan), area);
-        let infinite = Rect::from_min_max(pos2(0.0, 0.0), pos2(f32::INFINITY, 10.0));
-        assert_eq!(clamp_into(area, infinite), area);
-        // An area smaller than the minimum gives the whole area.
-        let small = Rect::from_min_size(pos2(0.0, 0.0), vec2(100.0, 80.0));
-        assert_eq!(clamp_into(small, area), small);
-        // A move keeps the size and stays inside.
-        let moved = moved(
-            area,
-            Rect::from_min_size(area.min, MIN_PANE),
-            vec2(5000.0, -90.0),
-        );
-        assert!(area.contains_rect(moved));
-        assert_eq!(moved.size(), MIN_PANE);
-        assert_eq!(moved.max.x, area.max.x);
-    }
-
-    #[test]
-    fn resizing_never_goes_below_the_minimum() {
-        let area = area();
-        let rect = Rect::from_min_size(pos2(400.0, 300.0), vec2(400.0, 300.0));
-        for edge in [
-            Edge::Left,
-            Edge::Right,
-            Edge::Top,
-            Edge::Bottom,
-            Edge::Corner,
-        ] {
-            for delta in [
-                vec2(-5000.0, -5000.0),
-                vec2(5000.0, 5000.0),
-                vec2(-150.0, 150.0),
-                vec2(f32::NAN, 0.0),
-            ] {
-                let r = resized(area, rect, edge, delta);
-                assert!(
-                    r.width() >= MIN_PANE.x && r.height() >= MIN_PANE.y,
-                    "{edge:?} {delta:?} -> {r:?}"
-                );
-                assert!(area.contains_rect(r), "{edge:?} {delta:?} -> {r:?}");
-            }
-        }
-        // The opposite edge stays.
-        let wider = resized(area, rect, Edge::Right, vec2(50.0, 0.0));
-        assert_eq!((wider.min, wider.max.x), (rect.min, rect.max.x + 50.0));
-        let taller = resized(area, rect, Edge::Top, vec2(0.0, -40.0));
-        assert_eq!((taller.max, taller.min.y), (rect.max, rect.min.y - 40.0));
-    }
-
-    #[test]
-    fn opening_rects_stay_inside_the_area() {
-        for area in [
-            area(),
-            Rect::from_min_size(pos2(0.0, 0.0), vec2(300.0, 200.0)),
-            Rect::from_min_size(pos2(0.0, 0.0), vec2(100.0, 100.0)),
-        ] {
-            for open in 0..=8 {
-                let r = opening_rect(area, open);
-                assert!(area.contains_rect(r), "{area:?} {open} -> {r:?}");
-            }
-        }
-        let area = area();
-        let first = opening_rect(area, 0);
-        assert_eq!(first.min, area.min);
-        assert_eq!(
-            opening_rect(area, 1).min,
-            area.min + vec2(TITLE_HEIGHT + 4.0, TITLE_HEIGHT + 4.0)
-        );
-    }
-
-    #[test]
     fn the_chrome_sits_inside_the_window_with_the_body_under_the_title() {
         let rect = Rect::from_min_size(pos2(100.0, 50.0), vec2(480.0, 320.0));
         let c = chrome(rect);
@@ -628,135 +315,5 @@ mod tests {
         assert_eq!(c.body.max, rect.max);
         assert!(c.title.contains_rect(c.close) && c.title.contains_rect(c.maximize));
         assert!(c.maximize.max.x <= c.close.min.x);
-    }
-
-    /// The two areas every layout is checked on.
-    fn layout_areas() -> [Rect; 2] {
-        [
-            Rect::from_min_size(pos2(200.0, 150.0), vec2(1200.0, 700.0)),
-            Rect::from_min_size(pos2(10.0, 20.0), vec2(300.0, 200.0)),
-        ]
-    }
-
-    /// Asserts that `rects` lie inside `area`, do not overlap and cover it exactly.
-    fn assert_partition(area: Rect, rects: &[Rect], what: &str) {
-        for r in rects {
-            assert!(area.contains_rect(*r), "{what}: {r:?} outside {area:?}");
-        }
-        for (i, a) in rects.iter().enumerate() {
-            for b in rects.iter().skip(i + 1) {
-                let both = a.intersect(*b);
-                let overlap = both.width().max(0.0) * both.height().max(0.0);
-                assert!(overlap < 1e-3, "{what}: {a:?} overlaps {b:?}");
-            }
-        }
-        let sum: f64 = rects
-            .iter()
-            .map(|r| f64::from(r.width()) * f64::from(r.height()))
-            .sum();
-        let whole = f64::from(area.width()) * f64::from(area.height());
-        assert!((sum - whole).abs() < 1e-3, "{what}: {sum} != {whole}");
-    }
-
-    #[test]
-    fn tiles_partition_the_area_for_every_count() {
-        for area in layout_areas() {
-            for count in 1..=8 {
-                let horizontal = tile_horizontal(area, count);
-                let vertical = tile_vertical(area, count);
-                assert_eq!((horizontal.len(), vertical.len()), (count, count));
-                assert_partition(area, &horizontal, &format!("horizontal {count} {area:?}"));
-                assert_partition(area, &vertical, &format!("vertical {count} {area:?}"));
-            }
-        }
-        // Three strips stacked in y, three columns side by side in x.
-        let area = layout_areas()[0];
-        let strips = tile_horizontal(area, 3);
-        for (r, next) in strips.iter().zip(strips.iter().skip(1)) {
-            assert_eq!((r.min.x, r.max.x), (area.min.x, area.max.x));
-            assert_eq!(r.max.y, next.min.y);
-        }
-        let columns = tile_vertical(area, 3);
-        for (r, next) in columns.iter().zip(columns.iter().skip(1)) {
-            assert_eq!((r.min.y, r.max.y), (area.min.y, area.max.y));
-            assert_eq!(r.max.x, next.min.x);
-        }
-        // Too narrow for two columns: one column of full-width panes.
-        let small = layout_areas()[1];
-        for r in tile_vertical(small, 8) {
-            assert_eq!((r.min.x, r.max.x), (small.min.x, small.max.x));
-        }
-        // Too low for eight strips: a grid whose panes keep the minimum height.
-        let grid = tile_horizontal(area, 8);
-        assert!(grid.iter().all(|r| r.height() >= MIN_PANE.y), "{grid:?}");
-    }
-
-    #[test]
-    fn the_grid_tiles_four_panes_as_two_by_two() {
-        let area = layout_areas()[0];
-        for count in 1..=9 {
-            assert_partition(area, &tile_grid(area, count), &format!("grid {count}"));
-        }
-        let four = tile_grid(area, 4);
-        let columns: std::collections::BTreeSet<_> =
-            four.iter().map(|r| r.min.x.to_bits()).collect();
-        let rows: std::collections::BTreeSet<_> = four.iter().map(|r| r.min.y.to_bits()).collect();
-        assert_eq!((columns.len(), rows.len()), (2, 2), "{four:?}");
-        // Three panes: two on top, the last one spans the bottom row.
-        let three = tile_grid(area, 3);
-        assert_eq!(three[2].width(), area.width());
-        assert_eq!(three[0].width(), area.width() / 2.0);
-    }
-
-    #[test]
-    fn cascaded_panes_step_down_and_right_and_wrap() {
-        let step = TITLE_HEIGHT + 4.0;
-        for area in layout_areas() {
-            for count in 1..=8 {
-                let rects = cascade(area, count);
-                assert_eq!(rects.len(), count);
-                for r in &rects {
-                    assert!(area.contains_rect(*r), "{count} {area:?}: {r:?}");
-                    assert!(r.width() >= MIN_PANE.x.min(area.width()));
-                    assert!(r.height() >= MIN_PANE.y.min(area.height()));
-                }
-                assert_eq!(rects[0].min, area.min);
-            }
-            let rects = cascade(area, 30);
-            // Each pane steps from the one before, or wraps back to the corner.
-            for (r, next) in rects.iter().zip(rects.iter().skip(1)) {
-                let stepped = next.min == r.min + vec2(step, step);
-                assert!(stepped || next.min == area.min, "{r:?} -> {next:?}");
-            }
-            assert!(
-                rects.iter().skip(1).any(|r| r.min == area.min),
-                "30 panes wrap in {area:?}"
-            );
-        }
-        // On 1200 x 700 eight panes fit without wrapping.
-        let area = layout_areas()[0];
-        let rects = cascade(area, 8);
-        assert_eq!(rects[7].min, area.min + vec2(7.0 * step, 7.0 * step));
-    }
-
-    #[test]
-    fn layouts_of_nothing_or_an_unusable_area() {
-        let area = layout_areas()[0];
-        assert!(cascade(area, 0).is_empty());
-        assert!(tile_horizontal(area, 0).is_empty());
-        assert!(tile_vertical(area, 0).is_empty());
-        assert_eq!(maximized(area), area);
-        let flat = Rect::from_min_size(pos2(0.0, 0.0), vec2(500.0, 0.0));
-        let nan = Rect::from_min_size(pos2(f32::NAN, 0.0), vec2(100.0, 100.0));
-        for bad in [flat, nan] {
-            for rects in [
-                cascade(bad, 3),
-                tile_horizontal(bad, 3),
-                tile_vertical(bad, 3),
-            ] {
-                assert_eq!(rects.len(), 3);
-                assert!(rects.iter().all(|r| r.min.x.is_nan() || *r == bad));
-            }
-        }
     }
 }

@@ -297,16 +297,18 @@ pub fn select(
     stats: &Stats,
     selection: SelectionFilter,
     view: Option<&beamcraft_engine::views::ModelView>,
+    hidden: Option<&std::collections::BTreeSet<beamcraft_engine::ElementId>>,
 ) -> Result<Option<Selected>, ToolError> {
     // With an active model view only what it shows can be picked: geometry clipped by its depth
     // or work area, or of a hidden kind, never masks a visible part behind it (V12).
     let picked = match view {
-        Some(view) => beamcraft_engine::views::pick_visible(
+        Some(view) => beamcraft_engine::views::pick_visible_except(
             snapshot,
             view,
             ray.origin,
             ray.direction,
             selection,
+            hidden.unwrap_or(&std::collections::BTreeSet::new()),
         )
         .map_err(|e| ToolError::local("PICK_REFUSED", e.to_string()))?
         .map(|hit| hit.element_id.to_string()),

@@ -1243,6 +1243,11 @@ impl App {
         let selection = self.selection.filter();
         // With an active model view only what it shows can be picked (V12).
         let view = self.views.active_view().cloned();
+        // What its filter overrides hide cannot be picked either.
+        let overlay = view
+            .as_ref()
+            .and_then(|v| self.views.overlays.get(&v.id))
+            .map(|o| Arc::clone(&o.overlay));
         let spawned = std::thread::Builder::new()
             .name("beamcraft-pick".into())
             .spawn(move || {
@@ -1255,6 +1260,7 @@ impl App {
                     &stats,
                     selection,
                     view.as_ref(),
+                    overlay.as_ref().map(|o| o.hidden()),
                 ));
             });
         if spawned.is_err() {
@@ -2853,6 +2859,7 @@ impl eframe::App for App {
         self.render_mode_shortcuts(ui.ctx());
         self.view_shortcuts(ui.ctx());
         self.poll_view_job();
+        self.poll_filter_overlays();
         self.perf_step(ui.ctx(), frame.info().cpu_usage);
         self.construction_keyboard(ui.ctx());
         if self.menu_open {
@@ -6040,12 +6047,38 @@ pub(crate) mod tests {
         ] {
             assert!(!shown.contains(&gone), "{gone} is gone");
         }
-        // By folder, the folder replaces the kind groups.
-        app.views.by_folder = true;
+        // A folder made under a kind is listed inside it, without the kind in its name.
+        app.views
+            .book
+            .create_folder(&crate::views::new_folder_path(
+                crate::views::ViewKind::Plan,
+                "",
+                "Level 2",
+            ))
+            .unwrap();
         let labels = app_frame(&mut app, &ctx, vec![]);
         let shown: Vec<&str> = labels.iter().map(|(t, _)| t.as_str()).collect();
-        assert!(shown.contains(&"Plans"), "{shown:?}");
-        assert!(!shown.contains(&"3D views"), "{shown:?}");
+        assert!(shown.contains(&"Level 2"), "{shown:?}");
+        assert!(!shown.contains(&"Plans/Level 2"), "{shown:?}");
+        // A click on a view shows its properties without opening it; a double click opens it.
+        let id = Uuid7::parse("019a7bf0-0000-7000-8000-000000000011").unwrap();
+        let open = app.views.panes.len();
+        app.browser_action(super::view_panel::BrowserAction::Click(
+            id,
+            false,
+            false,
+            vec![id],
+        ));
+        assert_eq!(app.views.subject, crate::views::Subject::SavedView(id));
+        assert_eq!(app.views.panes.len(), open);
+        app.browser_action(super::view_panel::BrowserAction::Activate(id));
+        assert_eq!(app.views.active(), Some(id));
+        // A view dropped on a folder moves into it.
+        app.browser_action(super::view_panel::BrowserAction::Move(
+            id,
+            "Plans/Level 2".into(),
+        ));
+        assert_eq!(app.views.book.get(&id).unwrap().folder, "Plans/Level 2");
     }
 
     #[test]
@@ -6183,7 +6216,7 @@ pub(crate) mod tests {
         assert_eq!(app.views.book.len(), before);
 
         // Panes are display-only and bounded; before any work-area frame none is placed.
-        for _ in 0..10 {
+        for _ in 0..(crate::views::MAX_WINDOWS + 2) {
             app.open_pane(None);
         }
         assert_eq!(app.views.panes.len(), crate::views::MAX_WINDOWS);
@@ -6197,21 +6230,28 @@ pub(crate) mod tests {
         crate::theme::install(&ctx);
         let mut labels = Vec::new();
         let mut rects = Vec::new();
-        // The first work-area frame places every pane inside, the first one maximized.
+        // The first work-area frame opens every pane as a tab of one group over the whole area,
+        // the active one shown.
         views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
         let area = app.views.area.unwrap();
-        assert!(app.views.panes.iter().all(|p| p.placed));
-        assert!(app.views.panes.iter().all(|p| area.contains_rect(p.rect)));
-        assert!(app.views.panes[0].maximized);
-        assert_eq!(app.views.panes[0].rect, area);
-        // Tiled, every pane leaves the maximized state.
+        assert!(app.views.panes.iter().all(|p| p.placed && p.rect == area));
+        assert_eq!(app.views.panes.iter().filter(|p| p.shown).count(), 1);
+        assert!(app.views.active_pane().unwrap().shown);
+        // Tiled, the panes get groups of their own inside the area.
         app.arrange(super::work_area::Arrange::TileVertical);
         views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        assert_eq!(app.views.dock.groups().len(), crate::dock::MAX_GROUPS);
         assert!(app.views.panes.iter().all(|p| !p.maximized));
         assert!(app.views.panes.iter().all(|p| area.contains_rect(p.rect)));
-        // The active pane's close glyph closes it.
-        let close = crate::panes::chrome(app.views.active_pane().unwrap().rect)
-            .close
+        // The active tab's close glyph closes it.
+        let active = app.views.active_pane().unwrap().key;
+        let close = app
+            .views
+            .tabs_drawn
+            .iter()
+            .find(|(k, _, _)| *k == active)
+            .unwrap()
+            .2
             .center();
         views_frame(&mut app, &ctx, click(close), &mut labels, &mut rects);
         views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
@@ -6279,18 +6319,30 @@ pub(crate) mod tests {
             rects.iter().any(|(r, c)| *r == rect && *c == link),
             "no active frame around {rect:?}: {rects:?}"
         );
-        // Overlapping panes: a click in the overlap goes to the upper one, which stays active.
-        let area = app.views.area.unwrap();
-        let lower = egui::Rect::from_min_size(area.min, egui::vec2(500.0, 400.0));
-        let upper = lower.translate(egui::vec2(200.0, 150.0));
-        app.views.panes[1].rect = lower;
-        app.views.panes[2].rect = upper;
-        let top = app.views.panes[2].key;
-        app.focus_pane(top);
+        // As tabs of one group only the shown tab takes a click in the body; a click on another
+        // tab shows it and makes it active.
+        app.arrange(super::work_area::Arrange::Tabs);
         views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
-        let overlap = lower.intersect(upper).center();
-        views_frame(&mut app, &ctx, click(overlap), &mut labels, &mut rects);
-        assert_eq!(app.views.active_pane().unwrap().key, top);
+        let shown = app.views.active_pane().unwrap().key;
+        let body = crate::panes::chrome(app.views.area.unwrap()).body.center();
+        views_frame(&mut app, &ctx, click(body), &mut labels, &mut rects);
+        assert_eq!(app.views.active_pane().unwrap().key, shown);
+        let (other, tab, _) = *app
+            .views
+            .tabs_drawn
+            .iter()
+            .find(|(k, _, _)| *k != shown)
+            .unwrap();
+        views_frame(
+            &mut app,
+            &ctx,
+            click(tab.left_center() + egui::vec2(10.0, 0.0)),
+            &mut labels,
+            &mut rects,
+        );
+        assert_eq!(app.views.active_pane().unwrap().key, other);
+        views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        assert!(app.views.dock.is_shown(other) && !app.views.dock.is_shown(shown));
     }
 
     #[test]
@@ -6471,7 +6523,7 @@ pub(crate) mod tests {
             entry = find(&labels, "Tile vertical");
         }
         let entry = entry.unwrap_or_else(|| panic!("the Arrange popup did not open: {labels:?}"));
-        for item in ["Cascade", "Tile horizontal", "Maximize / restore"] {
+        for item in ["Tabs", "Tile horizontal", "Maximize / restore"] {
             assert!(find(&labels, item).is_some(), "no {item}: {labels:?}");
         }
         let active = app.views.active_pane().unwrap().key;
@@ -6496,16 +6548,7 @@ pub(crate) mod tests {
         for (r, next) in columns.iter().zip(columns.iter().skip(1)) {
             assert_eq!(r.max.x, next.min.x, "{columns:?}");
         }
-        // Cascade keeps the active pane on top.
-        app.arrange(Arrange::Cascade);
-        assert_eq!(app.views.active_pane().unwrap().key, active);
-        assert!(
-            app.views
-                .panes
-                .iter()
-                .all(|p| area.contains_rect(p.rect) && !p.maximized)
-        );
-        // Maximize, then restore.
+        // Maximize the active column, then restore.
         let before = app.views.active_pane().unwrap().rect;
         app.arrange(Arrange::ToggleMaximize);
         let pane = app.views.active_pane().unwrap();
@@ -6515,10 +6558,193 @@ pub(crate) mod tests {
         let pane = app.views.active_pane().unwrap();
         assert!(!pane.maximized);
         assert_eq!(pane.rect, before);
+        // Tabs put every view in one group over the whole area, the active one shown.
+        app.arrange(Arrange::Tabs);
+        assert_eq!(app.views.active_pane().unwrap().key, active);
+        assert!(
+            app.views
+                .panes
+                .iter()
+                .all(|p| p.rect == area && !p.maximized)
+        );
+        assert_eq!(app.views.panes.iter().filter(|p| p.shown).count(), 1);
         // Before any work-area frame there is nothing to lay out over.
         app.views.area = None;
         app.arrange(Arrange::TileHorizontal);
-        assert_eq!(app.views.active_pane().unwrap().rect, before);
+        assert_eq!(app.views.active_pane().unwrap().rect, area);
+    }
+
+    #[test]
+    fn a_double_click_in_the_browser_opens_the_view_as_a_tab() {
+        use beamcraft_engine::views::ModelView;
+        use beamcraft_engine::work_plane::WorkPlane;
+        use beamcraft_model::id::Uuid7;
+        let Some(mut app) = headless() else { return };
+        let ctx = views_context();
+        let id = Uuid7::parse("019a7bf0-0000-7000-8000-000000000031").unwrap();
+        app.views
+            .book
+            .insert(ModelView::new(id, "Plan A", WorkPlane::default(), 5000.0))
+            .unwrap();
+        let labels = app_frame(&mut app, &ctx, vec![]);
+        let at = labels.iter().find(|(t, _)| t == "Plan A").unwrap().1;
+        let tabs = app.views.panes.len();
+        app_frame(&mut app, &ctx, click(at));
+        assert_eq!(app.views.panes.len(), tabs, "a single click only selects");
+        assert_eq!(app.views.subject, crate::views::Subject::SavedView(id));
+        let mut both = click(at);
+        both.extend(click(at));
+        app_frame(&mut app, &ctx, both);
+        app_frame(&mut app, &ctx, vec![]);
+        assert_eq!(app.views.active(), Some(id), "the double click opens it");
+        assert_eq!(app.views.panes.len(), tabs + 1);
+    }
+
+    #[test]
+    fn a_view_takes_environment_filters_presets_and_new_filters() {
+        use beamcraft_engine::filter::Operator;
+        use beamcraft_engine::views::{
+            FilterCondition, FilterField, FilterOverride, ModelView, ViewFilter,
+        };
+        use beamcraft_engine::work_plane::WorkPlane;
+        use beamcraft_model::id::Uuid7;
+        let Some(mut app) = headless() else { return };
+        let dir = std::env::temp_dir().join(format!("beamcraft-vf-ui-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        app.source.store = dir.join("store");
+        // The environment offers a filter and a preset that uses it.
+        let columns = ViewFilter::new(
+            "Columns",
+            vec![FilterCondition::new(
+                FilterField::Type,
+                Operator::Eq,
+                "column",
+            )],
+        );
+        let mut faded = ModelView::new(
+            Uuid7::parse("019a7bf0-0000-7000-8000-000000000099").unwrap(),
+            "x",
+            WorkPlane::default(),
+            8000.0,
+        );
+        faded.overrides = vec![FilterOverride::parse_spec("Columns|show|0.5,0.5,0.5|0.7").unwrap()];
+        app.tools.definitions.view_filters = vec![columns];
+        app.tools.definitions.view_presets = vec![faded.to_preset("Columns faded")];
+        let id = Uuid7::parse("019a7bf0-0000-7000-8000-000000000021").unwrap();
+        app.views
+            .book
+            .insert(ModelView::new(id, "Plan 1", WorkPlane::default(), 5000.0))
+            .unwrap();
+        assert_eq!(app.filter_choices().len(), 1);
+        assert_eq!(app.preset_choices().len(), 1);
+        // Filling the form from the preset and applying brings the filter into the model.
+        app.edit_view(id);
+        let preset = app.preset_choices().remove(0);
+        app.views.form.copy_preset(&preset);
+        assert_eq!(app.views.form.overrides.len(), 1);
+        app.submit_view();
+        assert!(
+            app.views.book.filter("Columns").is_some(),
+            "{:?}",
+            app.views.note
+        );
+        let view = app.views.book.get(&id).unwrap();
+        assert_eq!(view.overrides[0].transparency, 0.7);
+        assert_eq!(view.span_mm, 8000.0);
+        // A new filter from the editor joins the view's form; Apply keeps it.
+        app.open_filter_editor(None);
+        let (mut filter, previous) = app.views.filter_edit.clone().unwrap();
+        assert!(previous.is_none());
+        filter.name = "Main beams".into();
+        app.views.filter_edit = Some((filter.clone(), None));
+        app.views.book.save_filter(filter.clone(), None).unwrap();
+        app.views.filter_edit = None;
+        app.views
+            .form
+            .overrides
+            .push(FilterOverride::parse_spec("Main beams|hide").unwrap());
+        app.submit_view();
+        assert_eq!(app.views.book.get(&id).unwrap().overrides.len(), 2);
+        // The overlay waits for the matches, then hides and colours by the first override.
+        app.save_preset_from_form("Two filters");
+        assert!(app.views.book.preset("Two filters").is_some());
+        // A view preset applied from the browser fills the view at once.
+        app.browser_action(super::view_panel::BrowserAction::ApplyPreset(
+            id,
+            "Columns faded".into(),
+        ));
+        assert_eq!(app.views.book.get(&id).unwrap().overrides.len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_dragged_tab_splits_the_group_it_is_dropped_on() {
+        let Some(mut app) = headless() else { return };
+        app.open_pane(None);
+        let ctx = views_context();
+        let (mut labels, mut rects) = (Vec::new(), Vec::new());
+        views_frame_with(
+            &mut app,
+            &ctx,
+            vec![],
+            &mut labels,
+            &mut rects,
+            false,
+            |_| {},
+        );
+        assert_eq!(app.views.dock.groups().len(), 1);
+        let area = app.views.area.unwrap();
+        let (key, tab, _) = app.views.tabs_drawn[0];
+        let from = tab.center() - egui::vec2(10.0, 0.0);
+        let to = egui::pos2(area.max.x - 20.0, area.center().y);
+        let mv = |pos| vec![egui::Event::PointerMoved(pos)];
+        views_frame_with(
+            &mut app,
+            &ctx,
+            press(from),
+            &mut labels,
+            &mut rects,
+            false,
+            |_| {},
+        );
+        for step in 1..=4 {
+            let pos = from + (to - from) * (step as f32 / 4.0);
+            views_frame_with(
+                &mut app,
+                &ctx,
+                mv(pos),
+                &mut labels,
+                &mut rects,
+                false,
+                |_| {},
+            );
+        }
+        views_frame_with(
+            &mut app,
+            &ctx,
+            release(to),
+            &mut labels,
+            &mut rects,
+            false,
+            |_| {},
+        );
+        views_frame_with(
+            &mut app,
+            &ctx,
+            vec![],
+            &mut labels,
+            &mut rects,
+            false,
+            |_| {},
+        );
+        assert_eq!(
+            app.views.dock.groups().len(),
+            2,
+            "the drop on the right edge splits"
+        );
+        let pane = app.views.panes.iter().find(|p| p.key == key).unwrap();
+        assert!(pane.rect.min.x > area.center().x - 1.0, "{:?}", pane.rect);
+        assert_eq!(app.views.active_pane().unwrap().key, key);
     }
 
     #[test]

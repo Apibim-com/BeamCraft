@@ -1295,6 +1295,26 @@ pub fn pick_visible(
     direction: [f64; 3],
     selection: SelectionFilter,
 ) -> Result<Option<Hit>, CommandError> {
+    pick_visible_except(
+        snapshot,
+        view,
+        origin,
+        direction,
+        selection,
+        &BTreeSet::new(),
+    )
+}
+
+/// [`pick_visible`] that also passes through the elements in `hidden`: the ones a view's
+/// filter overrides hide, which the window evaluates.
+pub fn pick_visible_except(
+    snapshot: &ViewSnapshot,
+    view: &ModelView,
+    origin: [f64; 3],
+    direction: [f64; 3],
+    selection: SelectionFilter,
+    hidden: &BTreeSet<ElementId>,
+) -> Result<Option<Hit>, CommandError> {
     use crate::query::feature::FeatureKind;
     use crate::query::pick::{MAX_HITS, PickQuery, RayPick, pick};
     view.validate()?;
@@ -1305,6 +1325,7 @@ pub fn pick_visible(
         .map_err(|e| CommandError::new(e.f04_code(), "views.pick", "the view pick failed"))?;
     if let Some(hit) = hits.hits.into_iter().find(|hit| {
         view.contains(hit.point_world_mm)
+            && !hidden.contains(&hit.element_id)
             && snapshot
                 .element(&hit.element_id)
                 .is_some_and(|e| view.shows_kind(e.kind))

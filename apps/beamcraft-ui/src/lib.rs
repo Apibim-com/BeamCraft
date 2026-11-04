@@ -33,6 +33,7 @@ pub mod command;
 pub mod creation;
 pub mod cut_plane;
 pub mod dialog;
+pub mod dock;
 pub mod edit;
 pub mod grid;
 pub mod library;
@@ -53,6 +54,7 @@ pub mod start;
 pub mod stats;
 pub mod theme;
 pub mod tools;
+pub mod view_overlay;
 pub mod views;
 pub mod work_plane;
 

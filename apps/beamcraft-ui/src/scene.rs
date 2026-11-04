@@ -436,7 +436,8 @@ impl Scene {
         let mut total = 0usize;
         let mut triangles = 0u64;
         for element in snapshot.elements() {
-            if !shown.is_visible(element.kind) {
+            // A view's filter overrides may hide an element; it is left out like a hidden kind.
+            if !shown.is_visible(element.kind) || overlay.is_some_and(|o| o.hides(element.id)) {
                 continue;
             }
             let reference = element.representation(representation);
