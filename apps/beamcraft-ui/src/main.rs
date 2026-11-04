@@ -35,7 +35,7 @@ use std::sync::Arc;
 
 fn usage() -> Error {
     Error::Input(
-        "usage: beamcraft-ui [--cli PATH] [--config-dir DIR] [--samples 1|4] (start page) | beamcraft-ui (--store ROOT | --workspace DIR [--published ROOT]) [--actor-id UUID] [--cli PATH] [--config-dir DIR] [--samples 1|4] [--metrics FRAMES [--width W] [--height H] | --perf-run PLAN | --screenshot FILE.png] | --synthetic COUNT --metrics FRAMES [--samples 1|4]",
+        "usage: beamcraft-ui [--cli PATH] [--config-dir DIR] [--samples 1|4] (start page) | beamcraft-ui (--store ROOT | --workspace DIR [--published ROOT]) [--actor-id UUID] [--cli PATH] [--config-dir DIR] [--samples 1|4] [--metrics FRAMES [--width W] [--height H] | --perf-run PLAN | --screenshot FILE.png] | --self-test FILE.json | --synthetic COUNT --metrics FRAMES [--samples 1|4]",
     )
 }
 
@@ -68,6 +68,7 @@ fn options() -> Result<BTreeMap<String, String>, Error> {
                 | "--config-dir"
                 | "--actor-id"
                 | "--screenshot"
+                | "--self-test"
         );
         if !known || value.len() > 4096 || map.insert(key.clone(), value.clone()).is_some() {
             return Err(usage());
@@ -84,6 +85,26 @@ fn number(map: &BTreeMap<String, String>, key: &str, default: u32) -> Result<u32
 /// What a run printed and its exit status, or `None` for a window that just closed.
 fn run() -> Result<Option<(String, u8)>, Error> {
     let map = options()?;
+    // The scripted check of the view workflow runs on the window's state alone, without a window.
+    if let Some(path) = map.get("--self-test") {
+        if map.len() != 1 {
+            return Err(usage());
+        }
+        let report = beamcraft_ui::selftest::run();
+        let bytes = report
+            .encode(&beamcraft_json::Limits::DEFAULT)
+            .map_err(|_| Error::Input("the self-test report does not encode"))?;
+        let path = PathBuf::from(path);
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent).map_err(Error::Io)?;
+        }
+        std::fs::write(&path, &bytes).map_err(Error::Io)?;
+        let passed = !String::from_utf8_lossy(&bytes).contains("\"passed\":false");
+        return Ok(Some((
+            String::from_utf8_lossy(&bytes).into_owned(),
+            if passed { 0 } else { 1 },
+        )));
+    }
     if let Some(path) = map.get("--screenshot") {
         if map.contains_key("--metrics") || map.contains_key("--perf-run") {
             return Err(usage());

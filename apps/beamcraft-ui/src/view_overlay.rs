@@ -87,6 +87,13 @@ impl FilterMatches {
         self.generation = self.generation.wrapping_add(1);
     }
 
+    /// Records what the rule keyed `key` matched, evaluated elsewhere (the self-test's own
+    /// model, which has no store to query).
+    pub fn insert(&mut self, key: String, matched: Matched) {
+        self.found.insert(key, matched);
+        self.generation = self.generation.wrapping_add(1);
+    }
+
     /// What the rule keyed `key` matched, once evaluated.
     pub fn get(&self, key: &str) -> Option<&Matched> {
         self.found.get(key)

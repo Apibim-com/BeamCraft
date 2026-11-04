@@ -47,6 +47,7 @@ pub mod publish;
 pub mod render;
 pub mod scene;
 pub mod selection;
+pub mod selftest;
 pub mod sheet;
 pub mod shell;
 pub mod shortcuts;

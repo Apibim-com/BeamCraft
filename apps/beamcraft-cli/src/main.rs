@@ -66,9 +66,12 @@ fn main() -> std::process::ExitCode {
         help::print();
         return std::process::ExitCode::SUCCESS;
     }
-    // `--screenshot FILE` (with the window's own options) is the window's: the CLI has no
+    // `--screenshot FILE` and `--self-test FILE` (with the window's own options) are the window's: the CLI has no
     // window, so it runs `beamcraft-ui` beside it with the same arguments and passes its reply on.
-    if args.first().is_some_and(|a| a == "--screenshot") {
+    if args
+        .first()
+        .is_some_and(|a| a == "--screenshot" || a == "--self-test")
+    {
         return screenshot(&args);
     }
     let route = args.first().and_then(|c| registry::route(c));
