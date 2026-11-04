@@ -296,7 +296,7 @@ impl Fixture {
         fs::create_dir_all(&base).unwrap();
         let root = base.join(format!(
             "e2e-{}-{}",
-            std::process::id(),
+            crate::support::boot_nonce(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&root).unwrap();
@@ -1410,25 +1410,21 @@ fn a_source_above_the_blob_cap_is_refused_without_changing_the_revision() {
 
 #[test]
 fn the_stage_budget_limits_how_many_distinct_sources_a_revision_can_hold() {
-    // Eight layers in all: root, authored, derived and five distinct foreign layers.
+    // The stage layer budget follows the U15 element-layer scale (70,000 at the engine's
+    // element view cap; the boundary itself is the layer engine's `Budgets` test), so a
+    // CLI-scale attach batch no longer approaches it: many foreign sources attach and read.
     let f = Fixture::new();
-    for n in 0..5 {
+    for n in 0..13 {
         let source = f.source(
             &format!("site-{n}.usda"),
             SITE.replace("declared by the source", &format!("source number {n}")),
         );
         f.attach(&source, &[]);
     }
-    let before = f.listing();
-    let sixth = f.source(
-        "site-5.usda",
-        SITE.replace("declared by the source", "number five"),
+    let fourteenth = f.source(
+        "site-13.usda",
+        SITE.replace("declared by the source", "number thirteen"),
     );
-    let (code, body) = f.run("attach-reference", &["--source", &sixth]);
-    assert_eq!(
-        (code, text(&body, "code")),
-        (2, "LIMIT_EXCEEDED".to_owned())
-    );
-    assert_eq!(f.listing(), before, "the refused attach stored nothing");
-    assert_eq!(at(&f.inspect(), &["references"]).array().unwrap().len(), 5);
+    f.attach(&fourteenth, &[]);
+    assert_eq!(at(&f.inspect(), &["references"]).array().unwrap().len(), 14);
 }

@@ -30,6 +30,14 @@ use beamcraft_json::{Json, Limits};
 /// The owned layers, strongest first, exactly as the writer composes a revision.
 const OWNED_STACK: [&str; 3] = ["root.usda", "authored.usda", "derived.usda"];
 
+/// Whether one derived-stack entry names a U15 per-element derived layer.
+fn entry_layer_shape(entry: &str) -> bool {
+    entry
+        .strip_prefix("derived/")
+        .and_then(|rest| rest.strip_suffix(".usda"))
+        .is_some_and(|hex| hex.len() == 32 && hex.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
 /// Bounded text limits for one layer file.
 const MAX_LAYER_BYTES: usize = 8 * 1024 * 1024;
 const MAX_DEPTH: usize = 32;
@@ -386,8 +394,10 @@ struct Spec {
     type_name: Option<String>,
     kind: Option<String>,
     display_name: Option<String>,
-    /// The reference arc: (asset path, target prim name).
+    /// The reference arc: (asset path, target prim path). An empty asset path is the U11
+    /// internal arc to a prim of the same layer.
     reference: Option<(String, String)>,
+    instanceable: bool,
     attributes: Vec<(String, Value)>,
     /// The prim had a body in this layer.
     has_body: bool,
@@ -548,6 +558,20 @@ impl Parser {
             Some(b'"') => self.quoted().map(Value::Text),
             Some(b'(') => self.bracketed(b')', depth).map(Value::Tuple),
             Some(b'[') => self.bracketed(b']', depth).map(Value::List),
+            // The USD booleans are the bare words `true` and `false`; the reader stores them as
+            // 1.0 and 0.0 and no check reads one back as a number today.
+            Some(b't') | Some(b'f') => {
+                let saved = self.pos;
+                let word = self.word();
+                match word.as_str() {
+                    "true" => Ok(Value::Num(1.0)),
+                    "false" => Ok(Value::Num(0.0)),
+                    _ => {
+                        self.pos = saved;
+                        self.number().map(Value::Num)
+                    }
+                }
+            }
             Some(_) => self.number().map(Value::Num),
             None => Err(self.error("expected a value")),
         }
@@ -751,6 +775,15 @@ impl Parser {
     fn prim_metadata(&mut self, spec: &mut Spec) -> Result<(), String> {
         if self.literal("prepend") {
             self.skip_space();
+            if self.literal("apiSchemas") {
+                // The applied API schemas of a prim (U08 applies MaterialBindingAPI on a
+                // classed part). Inert to this reader: parse the quoted list and move on.
+                self.skip_space();
+                self.expect(b'=')?;
+                self.skip_space();
+                self.bracketed(b']', 1)?;
+                return Ok(());
+            }
             if !self.literal("references") {
                 return Err(self.error("only references may be prepended"));
             }
@@ -758,12 +791,7 @@ impl Parser {
             self.expect(b'=')?;
             self.skip_space();
             let asset = self.asset()?;
-            self.skip_space();
-            self.expect(b'<')?;
-            // The target is a prim path: `</Site>`, leading slash included.
-            self.expect(b'/')?;
-            let target = self.word();
-            self.expect(b'>')?;
+            let target = self.prim_path_ref()?;
             if spec.reference.is_some() {
                 return Err(self.error("more than one reference arc"));
             }
@@ -783,8 +811,50 @@ impl Parser {
                 spec.display_name = Some(self.quoted()?);
                 Ok(())
             }
+            // U11: an instanceable prim references a shared asset. The U15 form names the
+            // asset layer explicitly (`@geometry.usda@`), composing it from the referencing
+            // file's directory; the arc still composes from the owned stack.
+            "references" => {
+                let asset = if self.peek() == Some(b'@') {
+                    self.asset()?
+                } else {
+                    String::new()
+                };
+                let target = self.prim_path_ref()?;
+                if spec.reference.is_some() {
+                    return Err(self.error("more than one reference arc"));
+                }
+                spec.reference = Some((asset, target));
+                Ok(())
+            }
+            "instanceable" => {
+                let value = if self.literal("true") {
+                    true
+                } else if self.literal("false") {
+                    false
+                } else {
+                    return Err(self.error("instanceable is not a boolean"));
+                };
+                spec.instanceable = value;
+                Ok(())
+            }
             other => Err(self.error(&format!("unexpected prim metadata {other:?}"))),
         }
+    }
+
+    /// `</path/segments>`: a prim path reference target, captured whole with its leading slash.
+    fn prim_path_ref(&mut self) -> Result<String, String> {
+        self.skip_space();
+        self.expect(b'<')?;
+        self.expect(b'/')?;
+        let start = self.pos;
+        while self.peek().is_some_and(|b| b != b'>') {
+            self.pos += 1;
+        }
+        let target =
+            String::from_utf8_lossy(self.bytes.get(start..self.pos).unwrap_or(&[])).into_owned();
+        self.expect(b'>')?;
+        Ok(format!("/{target}"))
     }
 
     /// Parses the body of `spec`: child prims, attributes and relationships. Children go
@@ -824,6 +894,10 @@ impl Parser {
         if self.literal("custom") {
             self.skip_space();
         }
+        // A uniform attribute such as the U08 primvar or a shader input.
+        if self.peek() == Some(b'u') && self.literal("uniform") {
+            self.skip_space();
+        }
         if self.peek() == Some(b'r') && self.literal("rel") {
             self.skip_space();
             let name = self.word();
@@ -849,6 +923,7 @@ impl Parser {
         const TYPES: &[&str] = &[
             "string",
             "token",
+            "bool",
             "double",
             "int",
             "double3",
@@ -859,6 +934,8 @@ impl Parser {
             "float3[]",
             "point3f[]",
             "normal3f[]",
+            "color3f",
+            "color3f[]",
         ];
         if !TYPES.contains(&type_name.as_str()) {
             return Err(self.error(&format!("unexpected attribute type {type_name:?}")));
@@ -866,8 +943,28 @@ impl Parser {
         self.skip_space();
         let name = self.word();
         self.skip_space();
+        if self.peek() != Some(b'=') {
+            // A valueless output such as `uniform token outputs:surface` declares no default;
+            // the reader records the name and nothing else.
+            return spec.push_attr(name, Value::Text(String::new()));
+        }
         self.expect(b'=')?;
-        let value = self.value(0)?;
+        self.skip_space();
+        // A connection target such as `token outputs:surface.connect = </World/...>`
+        // (the U08 look) reads as its path text, like a relationship.
+        let value = if self.peek() == Some(b'<') {
+            self.expect(b'<')?;
+            let start = self.pos;
+            while self.peek().is_some_and(|b| b != b'>') {
+                self.pos += 1;
+            }
+            let target = String::from_utf8_lossy(self.bytes.get(start..self.pos).unwrap_or(&[]))
+                .into_owned();
+            self.expect(b'>')?;
+            Value::Text(target)
+        } else {
+            self.value(0)?
+        };
         self.skip_space();
         if self.peek() == Some(b'(') {
             self.bump();
@@ -968,7 +1065,44 @@ impl Stage {
         }
         for sub in sublayers.iter().take(OWNED_STACK.len() - 1) {
             let layer = stage.load(sub, false);
+            // U15: the derived stack lists one file per element, `derived/<32 hex>.usda`,
+            // composed weaker than the derived layer itself.
+            if sub == OWNED_STACK[2] {
+                let mut problems = stage.problems.borrow_mut();
+                if layer.sublayers.len() > 70_000 {
+                    problems.push(format!(
+                        "derived.usda lists {} element layers",
+                        layer.sublayers.len()
+                    ));
+                }
+                for entry in layer.sublayers.iter().take(70_000) {
+                    // The stack carries the referenced asset layer and one file per element,
+                    // all named from the stage root (`derived/...`).
+                    let ok = entry == "derived/geometry.usda" || entry_layer_shape(entry);
+                    if !ok {
+                        problems.push(format!(
+                            "derived.usda names {entry:?}, expected derived/<32 hex>.usda or derived/geometry.usda"
+                        ));
+                    }
+                }
+            }
             stage.layers.borrow_mut().push((sub.clone(), layer, false));
+        }
+        {
+            let derived = stage
+                .layers
+                .borrow()
+                .iter()
+                .find(|(name, _, _)| name == OWNED_STACK[2])
+                .map(|(_, l, _)| l.clone())
+                .unwrap_or_default();
+            for entry in derived.sublayers.iter().take(70_000) {
+                let layer = stage.load(entry, false);
+                stage
+                    .layers
+                    .borrow_mut()
+                    .push((entry.clone(), layer, false));
+            }
         }
         stage.resolve_arcs();
         stage
@@ -1024,12 +1158,27 @@ impl Stage {
 
     /// A composed prim: local opinions, then the foreign subtree baked by [`Self::resolve_arcs`].
     fn prim(&self, path: &str) -> Option<Prim> {
+        let specs = self.owned_specs(path);
         let mut prim = Prim {
             path: path.to_owned(),
             ..Prim::default()
         };
-        for spec in &self.owned_specs(path) {
+        for spec in &specs {
             prim.absorb(spec);
+        }
+        // U11: an instanceable reference composes the shared asset's opinions under the prim's
+        // own; type and kind keep their local answers, the buffers come from the asset. The
+        // U15 external form (`@geometry.usda@`) targets the asset layer sublayered into the
+        // owned stack, so the target still resolves from the owned specs.
+        if let Some((_, target)) = specs.iter().find_map(|s| {
+            s.reference
+                .as_ref()
+                .filter(|(asset, _)| asset.is_empty() || asset == "geometry.usda")
+        }) {
+            match self.owned_specs(target).into_iter().next() {
+                Some(asset) => prim.absorb(&asset),
+                None => self.problem(format!("{path}: the internal arc lacks {target:?}")),
+            }
         }
         let foreign = self.foreign_specs.borrow().get(path).cloned();
         if let Some(foreign_spec) = foreign {
@@ -1046,7 +1195,9 @@ impl Stage {
 
     /// Resolves every reference arc the owned layers author: at most one foreign layer, whose
     /// subtree is keyed by its composed path. Order-independent, so lookups below the arc
-    /// holder compose the same way whenever they happen.
+    /// holder compose the same way whenever they happen. The U11 internal arcs compose inside
+    /// the owned stack (see [`Self::prim`]); the U15 element-file arcs name the asset layer
+    /// relative to the referencing file's own directory and are skipped here.
     fn resolve_arcs(&self) {
         let arcs: Vec<(String, String, String)> = self
             .layers
@@ -1055,9 +1206,13 @@ impl Stage {
             .filter(|(_, _, foreign)| !foreign)
             .flat_map(|(_, layer, _)| {
                 layer.specs.iter().filter_map(|s| {
-                    s.reference
-                        .clone()
-                        .map(|(asset, target)| (s.path.clone(), asset, target))
+                    s.reference.clone().and_then(|(asset, target)| {
+                        // Only an external asset path that leaves the owned stack (the R01
+                        // wrapper form) is baked as a foreign layer; element-file arcs
+                        // (`geometry.usda`) compose from owned layers in `prim`.
+                        (!asset.is_empty() && !asset.starts_with("geometry"))
+                            .then(|| (s.path.clone(), asset, target))
+                    })
                 })
             })
             .collect();
@@ -1072,7 +1227,7 @@ impl Stage {
                 None => (),
             }
             let foreign = self.load(&asset, true);
-            let foreign_path = format!("/{target}");
+            let foreign_path = target.clone();
             let mut subtree = self.foreign_specs.borrow_mut();
             for spec in &foreign.specs {
                 if let Some(rest) = spec.path.strip_prefix(&foreign_path) {
@@ -1451,6 +1606,20 @@ fn check_element(stage: &Stage, entry: &Json, findings: &mut Findings) -> Option
     findings.check(
         mesh.kind.as_deref() == Some("subcomponent"),
         format!("{geometry_path}: kind is {:?}", mesh.kind),
+    );
+    // U11: the body is an instanceable reference to one shared immutable geometry asset.
+    let geometry_specs = stage.owned_specs(&geometry_path);
+    findings.check(
+        geometry_specs.iter().any(|s| s.instanceable),
+        format!("{geometry_path}: the prim is not instanceable"),
+    );
+    findings.check(
+        geometry_specs.iter().any(|s| {
+            matches!(&s.reference, Some((asset, target))
+                if (asset.is_empty() || asset == "geometry.usda")
+                    && target.starts_with("/World/Definitions/Geometry/GEO_"))
+        }),
+        format!("{geometry_path}: no reference to a shared geometry asset"),
     );
     let points = mesh.v3s("points");
     let counts = mesh.nums("faceVertexCounts");

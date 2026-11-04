@@ -29,9 +29,7 @@ use crate::plate::{decode_polygon, decode_polygons};
 use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
-use beamcraft_layer_engine::authored::{
-    Author, Definition, EditTargets, Prepare, Resource, schema_identity,
-};
+use beamcraft_layer_engine::authored::{Definition, Prepare, Resource, schema_identity};
 use beamcraft_layer_engine::{Prim, Reader, Value};
 use beamcraft_model::command::{CommandError, label_is_valid};
 use beamcraft_model::definition::MaterialSpec;
@@ -700,6 +698,9 @@ pub fn define(
     hook: &mut dyn CommitHook,
 ) -> Result<Defined, Refusal> {
     let control = control();
+    // A definition is store-wide shared data (U19): on a sectioned store it is refused before
+    // anything is written, whatever workspace scope the caller holds.
+    crate::scope::refuse_definitions(store)?;
     let resource = request.definition.resource()?;
     let digest = resource.digest;
     let (head, base) = load_base(store, &request.project, &request.workspace)?;
@@ -708,7 +709,15 @@ pub fn define(
     let opened = reader.open(base_request.clone(), &control)?;
     let decoded = decode(&reader, &opened, &control)?;
     if decoded.definitions.contains_key(&digest) {
-        let head = head.ok_or_else(|| integrity("definitions exist without a revision"))?;
+        // Inside a draft batch the base has no head revision of its own; the definition
+        // already lives in the committed store, and a batch is only open on a store that
+        // has one, so the committed head answers for the already-held definition.
+        let head = match head {
+            Some(head) => head,
+            None => store
+                .open()
+                .map_err(|_| integrity("definitions exist without a revision"))?,
+        };
         return Ok(Defined {
             already_defined: true,
             digest,
@@ -724,15 +733,8 @@ pub fn define(
         ..
     } = base;
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        base_request,
-        EditTargets {
-            authored: session::pipeline::AUTHORED_LAYER.into(),
-            derived: session::pipeline::DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, base_request, false, schema, &control)?;
     let prepared = author.prepare(
         Prepare {
             context: opened.context.clone(),
@@ -799,6 +801,7 @@ mod tests {
             active: true,
             kind: None,
             display_name: None,
+            instanceable: false,
             properties: properties
                 .into_iter()
                 .map(|(name, type_name, value)| Property {

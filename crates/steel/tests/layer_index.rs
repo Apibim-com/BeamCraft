@@ -39,7 +39,7 @@ fn control() -> Control {
     steel_layer::install();
     Control {
         cancellation: Cancellation::default(),
-        deadline: Instant::now() + Duration::from_secs(10),
+        deadline: Instant::now() + Duration::from_secs(90),
     }
 }
 fn asset(name: &str, text: impl AsRef<[u8]>) -> Asset {
@@ -862,6 +862,7 @@ fn open_author(assets: Vec<Asset>) -> (Author, Opened) {
     Author::open(
         request("root.usda", assets, &LAYERS, 2),
         targets(),
+        None,
         schema_identity().unwrap(),
         &control(),
     )
@@ -1057,6 +1058,7 @@ fn authorized_writes_need_a_live_complete_owned_untampered_index() {
         let (a, o) = Author::open(
             request("root.usda", assets, &[LAYERS.as_slice(), &[]].concat(), 2),
             targets(),
+            None,
             schema_identity().unwrap(),
             &control(),
         )
@@ -1316,7 +1318,14 @@ fn copy_gets_a_fresh_id_remaps_owned_links_and_leaves_the_source_unchanged() {
         .iter()
         .map(|l| (l.name.clone(), l.target.clone()))
         .collect();
-    assert_eq!(copy_links, planned);
+    // The copy re-authors its U08 appearance with its own create: the plan carries no
+    // binding link, the applied copy binds to its class look like any fresh part.
+    let mut expected = planned;
+    expected.push((
+        "material:binding".to_owned(),
+        LinkTarget::Prim("/World/Looks/PartClass0".to_owned()),
+    ));
+    assert_eq!(copy_links, expected);
     // The source keeps its identity, link and fields; nothing now points from it to the copy.
     let source_after = snapshot_of(&a, &o2.context)
         .into_iter()

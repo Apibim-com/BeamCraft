@@ -15,6 +15,7 @@ mod bom;
 mod changeset;
 mod commands;
 mod construction;
+mod coordination;
 mod coordinator;
 mod copy;
 mod definitions;
@@ -35,6 +36,7 @@ mod rebase;
 mod reference;
 mod revision;
 mod schedules;
+mod session;
 mod start;
 mod store;
 mod view;
@@ -65,6 +67,7 @@ const SECTIONS: &[&str] = &[
     weld::HELP,
     bolt::HELP,
     level::HELP,
+    coordination::HELP,
     attribute::HELP,
     filters::HELP,
     grid::HELP,
@@ -90,6 +93,7 @@ const SECTIONS: &[&str] = &[
     schedules::HELP,
     store::HELP,
     drawing::DOCUMENTS,
+    session::HELP,
 ];
 
 /// Write the same help for no arguments, `--help` and `-h`.

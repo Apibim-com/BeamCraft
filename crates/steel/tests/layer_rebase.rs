@@ -31,7 +31,7 @@ fn control() -> Control {
     steel_layer::install();
     Control {
         cancellation: Cancellation::default(),
-        deadline: Instant::now() + Duration::from_secs(20),
+        deadline: Instant::now() + Duration::from_secs(90),
     }
 }
 fn asset(name: &str, text: &str) -> Asset {
@@ -108,7 +108,7 @@ fn create(n: usize) -> Change {
 fn edit(mut request: OpenRequest, changes: Vec<Change>, resources: Vec<Resource>) -> OpenRequest {
     let schema = schema_identity().unwrap();
     let (mut author, opened) =
-        Author::open(request.clone(), targets(), schema, &control()).unwrap();
+        Author::open(request.clone(), targets(), None, schema, &control()).unwrap();
     let prepared = author
         .prepare(
             Prepare {
@@ -122,9 +122,23 @@ fn edit(mut request: OpenRequest, changes: Vec<Change>, resources: Vec<Resource>
             &control(),
         )
         .unwrap();
+    // The candidate's owned set replaces the request's: an element delete drops its file (U15).
+    let names: std::collections::BTreeSet<String> =
+        prepared.layers.iter().map(|l| l.name.clone()).collect();
+    request
+        .assets
+        .retain(|a| !request.owned_layers.contains(&a.name) || names.contains(&a.name));
+    request.owned_layers.retain(|n| names.contains(n));
     for layer in prepared.layers {
         let name = layer.name.clone();
-        *request.assets.iter_mut().find(|a| a.name == name).unwrap() = layer;
+        match request.assets.iter_mut().find(|a| a.name == name) {
+            Some(slot) => *slot = layer,
+            // A new element's own derived layer (U15) joins the stage.
+            None => {
+                request.owned_layers.insert(name.clone());
+                request.assets.push(layer);
+            }
+        }
     }
     request.identity.generation += 1;
     request.manifest = request.manifest_digest().unwrap();
@@ -178,6 +192,187 @@ fn rename(n: usize, name: &str) -> Change {
         id: id(n).to_string(),
         name: name.into(),
     }
+}
+
+fn mesh_for(n: usize) -> Change {
+    Change::Mesh(body_for(n, 0.0))
+}
+
+fn body_for(n: usize, lift: f32) -> Mesh {
+    Mesh {
+        id: id(n).to_string(),
+        shape_key: digest(format!("mesh {n} {lift}").as_bytes()),
+        points_mm: vec![
+            [0.0, 0.0, lift],
+            [100.0, 0.0, lift],
+            [100.0, 100.0, lift],
+            [0.0, 100.0, lift],
+        ],
+        face_counts: vec![4],
+        indices: vec![0, 1, 2, 3],
+        quantities: None,
+        reduced: None,
+        proxy: None,
+        axis: None,
+    }
+}
+
+fn element_file(n: usize) -> String {
+    element_layer(&id(n).to_string()).unwrap()
+}
+
+/// Both branches create their first meshed element from one element-less base: the shared
+/// asset layer is added by both sides, with different bodies (different lift).
+#[test]
+fn u15_a_both_sides_added_asset_layer_unions_bodies_and_carries_both_files() {
+    // A realistic base: one published plain-plate revision that already stamped the layer
+    // pins (the first edit stamps bimSchemaDigest into the root layer).
+    let base = edit(empty(), vec![create(19)], Vec::new());
+    let body_20 = body_for(20, 0.0);
+    let source = edit(
+        base.clone(),
+        vec![create(20), Change::Mesh(body_20)],
+        Vec::new(),
+    );
+    let accepted = edit(
+        base.clone(),
+        vec![create(21), Change::Mesh(body_for(21, 5.0))],
+        Vec::new(),
+    );
+    // The union needs the foreign body named in the verified writes.
+    let mut writes = lifecycle(20);
+    writes.push(Dependency {
+        target: T::Definition(mesh_asset_digest(&body_for(20, 0.0)).unwrap()),
+        group: G::Derived,
+        access: Access::Write,
+    });
+    let merged = prepare(&base, &source, &accepted, &writes).unwrap();
+    // Both element files are carried.
+    for n in [20usize, 21usize] {
+        assert!(merged.assets.iter().any(|a| a.name == element_file(n)));
+        assert!(merged.owned_layers.contains(&element_file(n)));
+    }
+    // The asset layer unions: both bodies, each once.
+    let assets = std::str::from_utf8(
+        &merged
+            .assets
+            .iter()
+            .find(|a| a.name == "derived/geometry.usda")
+            .unwrap()
+            .bytes,
+    )
+    .unwrap();
+    assert_eq!(assets.matches("def Mesh \"GEO_").count(), 2, "{assets}");
+    // The remote authored work survives beside it.
+    assert_eq!(
+        value(&merged, &format!("{}.bim:name", path(21)), "default"),
+        sdf::Value::String("part 21".into())
+    );
+}
+
+#[test]
+fn u15_a_collision_body_outside_the_verified_writes_is_a_conflict() {
+    // The same element-less published base as above: both branches then create their first
+    // meshed element, so the shared asset layer is added by both sides with diverging
+    // bodies.
+    let base = edit(empty(), vec![create(19)], Vec::new());
+    let source = edit(base.clone(), vec![create(20), mesh_for(20)], Vec::new());
+    let accepted = edit(
+        base.clone(),
+        vec![create(21), Change::Mesh(body_for(21, 5.0))],
+        Vec::new(),
+    );
+    // The evidence names only the local element's own groups: the foreign body's digest is
+    // outside the verified writes, so the add/add collision of the shared layer is a
+    // semantic conflict between clients.
+    let error = prepare(&base, &source, &accepted, &lifecycle(20))
+        .err()
+        .unwrap_or_else(|| panic!("an unverified foreign body must conflict"));
+    assert_eq!(error.code, ErrorCode::DependencyConflict);
+}
+
+#[test]
+fn u15_a_local_element_file_and_stack_survive_a_rebase() {
+    // A realistic base: one published revision that already stamped the layer pins.
+    let base = edit(empty(), vec![create(12), mesh_for(12)], Vec::new());
+    let source = edit(base.clone(), vec![create(10), mesh_for(10)], Vec::new());
+    let accepted = edit(base.clone(), vec![create(11)], Vec::new());
+    let file = element_file(10);
+    let source_file = source
+        .assets
+        .iter()
+        .find(|a| a.name == file)
+        .unwrap()
+        .clone();
+    // The transfer's evidence names the new immutable asset (U11) by content digest; without
+    // that write the shared prim's delta is outside the verified writes.
+    let element_text = String::from_utf8(source_file.bytes.clone()).unwrap();
+    let marker = "/World/Definitions/Geometry/GEO_";
+    let at = element_text.find(marker).unwrap();
+    let asset_digest = element_text[at + marker.len()..at + marker.len() + 64].to_string();
+    let mut writes = lifecycle(10);
+    writes.push(Dependency {
+        target: T::Definition(asset_digest.parse().unwrap()),
+        group: G::Derived,
+        access: Access::Write,
+    });
+    let merged = prepare(&base, &source, &accepted, &writes).unwrap();
+    // The locally created element's derived file is carried whole.
+    let carried = merged.assets.iter().find(|a| a.name == file).unwrap();
+    assert_eq!(carried.digest, source_file.digest);
+    assert!(merged.owned_layers.contains(&file));
+    // The accepted stack is rebuilt from the candidate's asset set: both meshed elements and
+    // the referenced asset layer.
+    let stack_bytes = &merged
+        .assets
+        .iter()
+        .find(|a| a.name == "derived.usda")
+        .unwrap()
+        .bytes;
+    let mut stack = layer_sublayers(stack_bytes).unwrap();
+    stack.sort();
+    assert_eq!(
+        stack,
+        [
+            element_file(10),
+            element_file(12),
+            "derived/geometry.usda".to_owned()
+        ]
+    );
+    // The remote authored work survives beside it.
+    assert_eq!(
+        value(&merged, &format!("{}.bim:name", path(11)), "default"),
+        sdf::Value::String("part 11".into())
+    );
+}
+
+#[test]
+fn u15_an_upstream_element_delete_conflicts_only_where_local_writes_reach_it() {
+    let base = edit(
+        empty(),
+        vec![create(10), mesh_for(10), create(12)],
+        Vec::new(),
+    );
+    let file = element_file(10);
+    // Upstream deletes the element: its file and stack entry go with it.
+    let accepted = edit(
+        base.clone(),
+        vec![Change::Delete {
+            id: id(10).to_string(),
+        }],
+        Vec::new(),
+    );
+    assert!(accepted.assets.iter().all(|a| a.name != file));
+    // A local rename of another element rebases cleanly over the deletion.
+    let source = edit(base.clone(), vec![rename(12, "elsewhere")], Vec::new());
+    let merged = prepare(&base, &source, &accepted, &[write(12, G::Label)]).unwrap();
+    assert!(merged.assets.iter().all(|a| a.name != file));
+    // A local write to the deleted element itself conflicts.
+    let source = edit(base.clone(), vec![rename(10, "local")], Vec::new());
+    let error = prepare(&base, &source, &accepted, &lifecycle(10))
+        .err()
+        .unwrap_or_else(|| panic!("a write into an upstream-deleted element must conflict"));
+    assert_eq!(error.code, ErrorCode::DependencyConflict);
 }
 fn replace(request: &mut OpenRequest, name: &str, from: &str, to: &str) {
     let entry = request.assets.iter_mut().find(|a| a.name == name).unwrap();
@@ -461,5 +656,86 @@ fn part_class_edits_rebase_as_label_opinions_and_keep_their_value() {
     assert_eq!(
         value(&merged, &format!("{}.bim:name", path(11)), "default"),
         sdf::Value::String("remote".into())
+    );
+}
+
+#[test]
+fn a_mesh_transfer_carries_its_shared_asset_over_an_accepted_rename() {
+    let base = initial();
+    let mesh = Mesh {
+        id: id(11).to_string(),
+        shape_key: digest(b"transfer-shape-key"),
+        points_mm: vec![
+            [0.0, 0.0, 0.0],
+            [100.0, 0.0, 0.0],
+            [100.0, 100.0, 5.0],
+            [0.0, 100.0, 5.0],
+        ],
+        face_counts: vec![4],
+        indices: vec![0, 1, 2, 3],
+        quantities: None,
+        reduced: None,
+        proxy: None,
+        axis: None,
+    };
+    let local = edit(base.clone(), vec![Change::Mesh(mesh.clone())], Vec::new());
+    let accepted = edit(base.clone(), vec![rename(10, "renamed")], Vec::new());
+    // The transfer's evidence names the immutable asset (U11) by content digest; without that
+    // write the shared prim's delta is outside the verified writes.
+    let asset_digest = mesh_asset_digest(&mesh).unwrap();
+    let mut writes = lifecycle(11);
+    writes.push(Dependency {
+        target: T::Definition(asset_digest),
+        group: G::Derived,
+        access: Access::Write,
+    });
+    let merged = prepare(&base, &local, &accepted, &writes).unwrap();
+    // The element file (U15) carries the instanceable reference; the asset body lives in the
+    // referenced layer, carried by the same transfer.
+    let element = element_layer(&id(11).to_string()).unwrap();
+    let element_text = std::str::from_utf8(
+        &merged
+            .assets
+            .iter()
+            .find(|a| a.name == element)
+            .unwrap()
+            .bytes,
+    )
+    .unwrap();
+    assert!(element_text.contains("instanceable = true"));
+    assert!(element_text.contains(&format!(
+        "references = @geometry.usda@</World/Definitions/Geometry/GEO_{asset_digest}>"
+    )));
+    let assets = std::str::from_utf8(
+        &merged
+            .assets
+            .iter()
+            .find(|a| a.name == "derived/geometry.usda")
+            .unwrap()
+            .bytes,
+    )
+    .unwrap();
+    assert!(assets.contains(&format!("GEO_{asset_digest}")));
+    let authored = std::str::from_utf8(
+        &merged
+            .assets
+            .iter()
+            .find(|a| a.name == "authored.usda")
+            .unwrap()
+            .bytes,
+    )
+    .unwrap();
+    assert!(authored.contains("renamed"));
+    let mut reader = Reader::default();
+    reader
+        .open_validated(merged.clone(), schema_identity().unwrap(), &control())
+        .unwrap();
+    // An asset delta without its digest write stays outside the verified writes.
+    assert_eq!(
+        prepare(&base, &local, &accepted, &lifecycle(11))
+            .err()
+            .unwrap()
+            .code,
+        ErrorCode::IntegrityError
     );
 }

@@ -38,7 +38,7 @@ impl Fixture {
     fn new() -> Self {
         let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!(
             "publication-evidence-{}-{}",
-            std::process::id(),
+            crate::support::boot_nonce(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&root).unwrap();
@@ -155,6 +155,7 @@ impl Fixture {
                     op_id: OpId::parse(op.as_str()).unwrap(),
                     fingerprint: Sha256::digest(b"synthetic raw input").unwrap(),
                     footprint,
+                    bindings: Vec::new(),
                 }
                 .encode()
                 .unwrap()
@@ -262,9 +263,24 @@ fn changeset_publication_carries_copy_source_reads_without_unrelated_model_reads
         .unwrap()
         .unwrap();
     assert_eq!(proof.fingerprint, digest);
-    assert_eq!(
-        proof.footprint,
-        Footprint::for_copy(element(1), element(3), None, None).unwrap()
+    // U11: the copy's evidence carries exactly one extra write — the immutable geometry asset
+    // the copied body pins, by content digest.
+    let declared = Footprint::for_copy(element(1), element(3), None, None).unwrap();
+    assert_eq!(proof.footprint.reads(), declared.reads());
+    let extra: Vec<_> = proof
+        .footprint
+        .writes()
+        .iter()
+        .filter(|entry| !declared.writes().contains(entry))
+        .collect();
+    assert_eq!(extra.len(), 1, "only the transfer asset write: {extra:?}");
+    assert_eq!(extra[0].group, Group::Derived);
+    assert!(matches!(extra[0].target, Target::Definition(_)));
+    assert!(
+        declared
+            .writes()
+            .iter()
+            .all(|entry| proof.footprint.writes().contains(entry))
     );
 }
 

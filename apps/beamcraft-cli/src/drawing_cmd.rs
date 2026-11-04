@@ -187,6 +187,7 @@ fn document_options(args: &[OsString]) -> Run<DocumentOptions<'_>> {
                     | "--anchor-a"
                     | "--anchor-b"
                     | "--name"
+                    | "--view-title"
                     | "--plane"
                     | "--scale"
                     | "--origin"
@@ -308,25 +309,26 @@ fn layer_specs(values: &[&str]) -> Run<Vec<LayerSpec>> {
         .collect()
 }
 
-/// Parses repeatable `--placed-view UUID:plane:scale:x,y` values into placed views. Engine
-/// admission still owns every bound; this only builds the typed values.
+/// Parses repeatable `--placed-view UUID:plane:scale:x,y[:title]` values into placed views;
+/// the title is the whole remainder, so it may contain colons, and an empty segment is the
+/// unannotated default. Engine admission still owns every bound; this only builds the values.
 fn placed_view_specs(values: &[&str]) -> Run<Vec<ViewSpec>> {
     values
         .iter()
         .map(|value| {
-            let mut parts = value.splitn(4, ':');
+            let mut parts = value.splitn(5, ':');
             let id = parts
                 .next()
-                .ok_or_else(|| invalid("placed view requires UUID:plane:scale:x,y"))?;
+                .ok_or_else(|| invalid("placed view requires UUID:plane:scale:x,y[:title]"))?;
             let plane = parts
                 .next()
-                .ok_or_else(|| invalid("placed view requires UUID:plane:scale:x,y"))?;
+                .ok_or_else(|| invalid("placed view requires UUID:plane:scale:x,y[:title]"))?;
             let scale = parts
                 .next()
-                .ok_or_else(|| invalid("placed view requires UUID:plane:scale:x,y"))?;
+                .ok_or_else(|| invalid("placed view requires UUID:plane:scale:x,y[:title]"))?;
             let origin = parts
                 .next()
-                .ok_or_else(|| invalid("placed view requires UUID:plane:scale:x,y"))?;
+                .ok_or_else(|| invalid("placed view requires UUID:plane:scale:x,y[:title]"))?;
             Ok(ViewSpec {
                 id: DrawingViewId::parse(id)
                     .map_err(|_| invalid("placed view identity must be a full canonical UUIDv7"))?,
@@ -336,19 +338,31 @@ fn placed_view_specs(values: &[&str]) -> Run<Vec<ViewSpec>> {
                     .parse::<f64>()
                     .map_err(|_| invalid("invalid placed view scale"))?,
                 paper_origin_mm: parse_origin(origin)?,
+                title: optional_title(parts.next())?,
             })
         })
         .collect()
 }
 
-/// Parses repeatable `--placed-section UUID:plane:cut:side:scale:x,y` values into section
-/// views. Engine admission still owns every bound; this only builds the typed values.
+/// The optional title segment of one placed-view spec: absent or empty is the unannotated
+/// default; anything else passes through engine admission.
+fn optional_title(segment: Option<&str>) -> Run<Option<String>> {
+    match segment {
+        None => Ok(None),
+        Some("") => Ok(None),
+        Some(title) => Ok(Some(title.to_owned())),
+    }
+}
+
+/// Parses repeatable `--placed-section UUID:plane:cut:side:scale:x,y[:title]` values into
+/// section views; the title is the whole remainder and an empty segment is the unannotated
+/// default. Engine admission still owns every bound; this only builds the typed values.
 fn placed_section_specs(values: &[&str]) -> Run<Vec<SectionSpec>> {
     values
         .iter()
         .map(|value| {
-            let mut parts = value.splitn(6, ':');
-            let fail = || invalid("placed section requires UUID:plane:cut:side:scale:x,y");
+            let mut parts = value.splitn(7, ':');
+            let fail = || invalid("placed section requires UUID:plane:cut:side:scale:x,y[:title]");
             let id = parts.next().ok_or_else(fail)?;
             let plane = parts.next().ok_or_else(fail)?;
             let cut = parts.next().ok_or_else(fail)?;
@@ -370,20 +384,22 @@ fn placed_section_specs(values: &[&str]) -> Run<Vec<SectionSpec>> {
                     .parse::<f64>()
                     .map_err(|_| invalid("invalid placed section scale"))?,
                 paper_origin_mm: parse_origin(origin)?,
+                title: optional_title(parts.next())?,
             })
         })
         .collect()
 }
 
-/// Parses repeatable `--placed-detail UUID:parent:center:radius:scale:x,y` values into detail
-/// views, where center is `x,y` in the parent's paper millimetres. Engine admission still owns
-/// every bound; this only builds the typed values.
+/// Parses repeatable `--placed-detail UUID:parent:x,y:radius:scale:x,y[:title]` values into
+/// detail views, where center is `x,y` in the parent's paper millimetres and the title is
+/// the whole remainder. Engine admission still owns every bound; this only builds values.
 fn placed_detail_specs(values: &[&str]) -> Run<Vec<DetailSpec>> {
     values
         .iter()
         .map(|value| {
-            let mut parts = value.splitn(6, ':');
-            let fail = || invalid("placed detail requires UUID:parent:x,y:radius:scale:x,y");
+            let mut parts = value.splitn(7, ':');
+            let fail =
+                || invalid("placed detail requires UUID:parent:x,y:radius:scale:x,y[:title]");
             let id = parts.next().ok_or_else(fail)?;
             let parent = parts.next().ok_or_else(fail)?;
             let center = parts.next().ok_or_else(fail)?;
@@ -404,6 +420,7 @@ fn placed_detail_specs(values: &[&str]) -> Run<Vec<DetailSpec>> {
                     .parse::<f64>()
                     .map_err(|_| invalid("invalid placed detail scale"))?,
                 paper_origin_mm: parse_origin(origin)?,
+                title: optional_title(parts.next())?,
             })
         })
         .collect()
@@ -484,6 +501,7 @@ fn document_drawing(options: &BTreeMap<&str, &str>, source: SourceModelPin) -> R
                 .ok_or_else(|| invalid("plane must be front, top or right"))?,
             scale_denominator: number("--scale", DEFAULT_SCALE_DENOMINATOR)?,
             paper_origin_mm: origin,
+            title: options.get("--view-title").map(|title| (*title).to_owned()),
         },
         dimension: DimensionSpec {
             id: dimension_id,
@@ -503,6 +521,14 @@ fn document_drawing(options: &BTreeMap<&str, &str>, source: SourceModelPin) -> R
         layers: Vec::new(),
     })
     .map_err(Into::into)
+}
+
+/// One view's optional title as inspect JSON: a string or null.
+fn title_json(title: &Option<String>) -> Json {
+    match title {
+        Some(title) => Json::text(title.clone()),
+        None => Json::Null,
+    }
 }
 
 fn document_json(revision: &beamcraft_commands::drawing::document::DocumentRevision) -> Run<Json> {
@@ -536,6 +562,7 @@ fn document_json(revision: &beamcraft_commands::drawing::document::DocumentRevis
                     "paper_origin_mm",
                     point(revision.drawing.spec().view.paper_origin_mm)?,
                 ),
+                ("title", title_json(&revision.drawing.spec().view.title)),
             ]),
         ),
         (
@@ -591,6 +618,7 @@ fn document_json(revision: &beamcraft_commands::drawing::document::DocumentRevis
                             ("plane", Json::text(view.plane.as_str())),
                             ("scale_denominator", num(view.scale_denominator)?),
                             ("paper_origin_mm", point(view.paper_origin_mm)?),
+                            ("title", title_json(&view.title)),
                         ]))
                     })
                     .collect::<Run<Vec<_>>>()?,
@@ -611,6 +639,7 @@ fn document_json(revision: &beamcraft_commands::drawing::document::DocumentRevis
                             ("side", Json::text(section.side.as_str())),
                             ("scale_denominator", num(section.scale_denominator)?),
                             ("paper_origin_mm", point(section.paper_origin_mm)?),
+                            ("title", title_json(&section.title)),
                         ]))
                     })
                     .collect::<Run<Vec<_>>>()?,
@@ -631,6 +660,7 @@ fn document_json(revision: &beamcraft_commands::drawing::document::DocumentRevis
                             ("radius_mm", num(detail.radius_mm)?),
                             ("scale_denominator", num(detail.scale_denominator)?),
                             ("paper_origin_mm", point(detail.paper_origin_mm)?),
+                            ("title", title_json(&detail.title)),
                         ]))
                     })
                     .collect::<Run<Vec<_>>>()?,
@@ -1044,7 +1074,30 @@ fn run_document(args: &[OsString]) -> Run<Json> {
                                 &snapshot,
                             )?);
                         }
-                        sheet::export_svg(&published.drawing, version, &projection, &bodies)?
+                        let mut sections = Vec::with_capacity(published.drawing.sections().len());
+                        for section in published.drawing.sections() {
+                            sections.push(projection::resolve_section(
+                                &published.drawing,
+                                section,
+                                &snapshot,
+                            )?);
+                        }
+                        let mut details = Vec::with_capacity(published.drawing.details().len());
+                        for detail in published.drawing.details() {
+                            details.push(projection::resolve_detail(
+                                &published.drawing,
+                                detail,
+                                &snapshot,
+                            )?);
+                        }
+                        sheet::export_svg(
+                            &published.drawing,
+                            version,
+                            &projection,
+                            &bodies,
+                            &sections,
+                            &details,
+                        )?
                     }
                     None => svg::export(&published.drawing, version, &projection)?,
                 },
@@ -1229,6 +1282,8 @@ fn run(args: &[OsString]) -> Run<Json> {
             .ok_or_else(|| invalid("plane must be front, top or right"))?,
         scale_denominator: number("--scale", DEFAULT_SCALE_DENOMINATOR)?,
         paper_origin_mm: origin,
+        // The single-view preview is unannotated: view titles are sheet annotations.
+        title: None,
     };
     let dimension = DimensionSpec {
         id: dimension_id,

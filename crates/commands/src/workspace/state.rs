@@ -16,7 +16,7 @@ fn changed() -> Refusal {
     Refusal::new(ErrorCode::BaseRevisionMismatch, "workspace metadata moved")
 }
 
-fn read(dir: &Path) -> Result<Option<WorkspaceMeta>, Refusal> {
+pub(super) fn read(dir: &Path) -> Result<Option<WorkspaceMeta>, Refusal> {
     let path = meta_path(dir);
     let metadata = match fs::symlink_metadata(&path) {
         Ok(metadata) => metadata,

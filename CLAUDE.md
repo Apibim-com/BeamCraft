@@ -31,21 +31,22 @@ their code or assets. Targets desktop-only use on Windows, Linux and macOS.
 ## Commands
 
 ```sh
-cargo fmt --all
-cargo clippy --workspace --all-targets -- -D warnings
-cargo nextest run --workspace
-cargo test --workspace --doc
-cargo run -p beamcraft-cli -- --version
+cargo run --locked -p beamcraft-test-gate -- check --scope full
 ```
 
-`cargo nextest` is the local test runner, matching CI; install it once with
-`cargo install cargo-nextest --locked`. nextest never runs doctests, so they stay a separate
-line. `cargo test --workspace` runs the same full set in one command.
+The recorded gate runs unfiltered nextest 0.9.149 **and mandatory doctests**, format validation,
+Clippy and documentation with warnings denied. It enforces execution budgets, serializes heavy
+checks across worktrees and requires the committed source to stay unchanged. Independent
+CLI-only changes may use `--scope cli --ui-independent-reason "..."` when no shared code,
+dependencies, build settings or UI-consumed commands/options/JSON change. CI then tests the
+whole workspace on the two other operating systems; missing or stale local evidence fails CI.
+Publish the report explicitly with the runner's `publish --report PATH --pr NUMBER` command.
+New head/base snapshots require a new report. See the `tools/test-gate/README.md`
+guide; this supersedes the literal-Cargo rule.
 
-CI (`.github/workflows/ci.yml`) runs the same on Windows and Linux, plus a wasm32 check of the
-three pure crates (`beamcraft-geom`, `beamcraft-model`, `beamcraft-kernel`) and `cargo deny`.
-A change is not done until these pass. The full list, with tools and PowerShell notes, is in
-`docs/development.md`.
+Targeted Cargo/nextest commands remain iteration tools. A quick smoke after a build:
+`cargo run -p beamcraft-cli -- --version`. CI also checks WASM compatibility, dependencies,
+fixtures and module boundaries. Release packaging is unchanged.
 
 ## Conventions
 

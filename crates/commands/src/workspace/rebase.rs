@@ -11,6 +11,7 @@ use super::{
 use crate::{
     command_evidence as evidence,
     plate::{self},
+    publication::role_of,
 };
 use beamcraft_engine::rebase::{Conflict, Decision, plan};
 use beamcraft_host::{
@@ -22,7 +23,7 @@ use beamcraft_host::{
 };
 use beamcraft_layer_engine::{
     Reader,
-    authored::{EditTargets, rebase as materializer, schema_identity},
+    authored::{rebase as materializer, schema_identity},
 };
 use beamcraft_model::{
     digest::{ContentDigest, Sha256},
@@ -285,10 +286,7 @@ pub fn rebase_workspace(
             &opened(&draft)?,
             &opened(&accepted)?,
             &evidence::dependencies(&footprint),
-            &EditTargets {
-                authored: session::pipeline::AUTHORED_LAYER.into(),
-                derived: session::pipeline::DERIVED_LAYER.into(),
-            },
+            &crate::scope::materializer_targets(&meta.scope)?,
             &session::pipeline::control(),
         )?;
         let mut reader = Reader::default();
@@ -311,8 +309,8 @@ pub fn rebase_workspace(
                     .entries()
                     .iter()
                     .find(|e| e.name() == asset.name)
-                    .ok_or_else(|| integrity("candidate layer has no accepted role"))?
-                    .role();
+                    .map(|e| e.role())
+                    .unwrap_or_else(|| role_of(&asset.name));
                 entries.push(LayerEntry::from_bytes(&asset.name, role, &asset.bytes)?);
             }
         }

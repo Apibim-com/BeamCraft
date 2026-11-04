@@ -29,16 +29,13 @@
 
 use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
-    check_footprint, decode, evaluate_decoded, member_record, mesh_change, plate_record,
-    prior_op_with, replay_summary,
+    check_footprint, decode, evaluate_decoded, part_mesh_change, prior_op_with, replay_summary,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
-use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, Element, Placement, Prepare, schema_identity,
-};
+use beamcraft_layer_engine::authored::{Change, Element, Placement, Prepare, schema_identity};
 use beamcraft_layer_engine::index::ElementId as LayerElementId;
 use beamcraft_model::command::CommandError;
 use beamcraft_model::digest::ContentDigest;
@@ -46,8 +43,8 @@ use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use session::Refusal;
 use session::pipeline::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, digest_of, host_uuid, integrity,
-    load_base, open_base, summarize,
+    Base, RevisionSummary, control, digest_of, host_uuid, integrity, load_base, open_base,
+    summarize,
 };
 use std::collections::BTreeMap;
 use steel::engine::command::evaluate_plate;
@@ -455,18 +452,11 @@ fn apply_cut(
     }
     let id_text = canonical.to_string();
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        base_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, base_request, false, schema, &control)?;
     let record = |element: &CutElement| match element {
-        CutElement::Plate(r) => mesh_change(&r.authored.id, &r.body.solid, &plate_record(r)),
-        CutElement::Member(r) => mesh_change(&r.authored.id, &r.body.solid, &member_record(r)),
+        CutElement::Plate(r) => part_mesh_change(r),
+        CutElement::Member(r) => part_mesh_change(r),
     };
     let mut changes = vec![
         steel_layer::cuts(id_text, element.cuts().to_vec()),
@@ -1281,15 +1271,8 @@ pub fn a13_record(
     }
 
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        base_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, base_request, false, schema, &control)?;
     if let Some(consumed) = deleted {
         let index = author.element_index(&opened.context, &control)?;
         author.check_delete(
@@ -1349,8 +1332,8 @@ pub fn a13_record(
 /// The mesh change of one element, for either kind.
 fn mesh_change_of(element: &CutElement) -> Result<Change, Refusal> {
     match element {
-        CutElement::Plate(r) => mesh_change(&r.authored.id, &r.body.solid, &plate_record(r)),
-        CutElement::Member(r) => mesh_change(&r.authored.id, &r.body.solid, &member_record(r)),
+        CutElement::Plate(r) => part_mesh_change(r),
+        CutElement::Member(r) => part_mesh_change(r),
     }
 }
 

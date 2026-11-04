@@ -38,6 +38,7 @@ fn initial() -> WorkspaceMeta {
         base_manifest: Sha256::digest(b"synthetic accepted pin").unwrap(),
         synced_sequence: 1,
         rebase_sequence: 0,
+        scope: None,
     }
 }
 fn next(old: &WorkspaceMeta, n: usize) -> WorkspaceMeta {
@@ -52,7 +53,7 @@ impl Fixture {
     fn new() -> Self {
         let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!(
             "workspace-state-{}-{}",
-            std::process::id(),
+            crate::support::boot_nonce(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&dir).unwrap();

@@ -11,28 +11,78 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo run -p beamcraft-cli -- --version
 ```
 
-[cargo nextest](https://nexte.st) is the local test runner — the same runner and version CI
-uses — for its parallel scheduling and per-test timings. Install it once with
-`cargo install cargo-nextest --locked`.
+### The full gate
+
+The recorded gate supersedes the literal-Cargo rule.
+Commit the source, fetch the integration base, and run:
 
 ```sh
-# Inner loop: workspace libs and the quick CLI suites (~1 min warm on the reference Apple M5).
-cargo nextest run --profile fast
-
-# Full pre-merge gate: every test (~2.6 min warm) plus the doctests, which nextest never runs.
-cargo nextest run --workspace
-cargo test --workspace --doc
+cargo run --locked -p beamcraft-test-gate -- check --scope full
+# Independent CLI-only changes, with unchanged UI-consumed commands/options/JSON:
+cargo run --locked -p beamcraft-test-gate -- check --scope cli --ui-independent-reason "..."
 ```
 
-`cargo test --workspace` runs the same full set including doctests in one command. The `fast`
-profile (`.config/nextest.toml`) skips only the integration suites that each measure at least
-~40 s of serial time on the reference Apple M5 (baseline 2026-10-25): in
-`beamcraft-cli` `export_ifc`, `numbering_approval`, `numbering`, `libraries`, `environments`
-and `pick`; in `beamcraft-host` `recovery`, `revision` and `compaction`; in `beamcraft-kernel`
-`g09_budget_fuzz` and `g05_profile_extrusion`. The render/viewport suites in `beamcraft-ui`
-measured fast enough to stay in the inner loop. Nothing is removed or permanently skipped: the
-unfiltered `default` profile and CI always run everything, and an explicit command-line filter
-overrides the profile's `default-filter`.
+The runner performs non-mutating format validation, Clippy, an unfiltered nextest 0.9.149 run,
+mandatory doctests and documentation with `RUSTDOCFLAGS="-D warnings"`. CLI-only checks select
+all CLI targets without compiling the UI. Shared crates, UI, dependency manifests/lockfiles,
+build settings and shared contracts require `full`; uncertain changes use `full` as well.
+
+The source must be committed and unchanged throughout verification. One native file lock
+serializes heavy local gates across worktrees; do not launch other manual heavy builds beside
+a gate. Logs and the versioned report are retained under ignored build output, with original
+exit statuses and fresh inventory/JUnit evidence. Ordinary-test failures do not suppress
+doctests when preparation succeeded. A later success never erases an earlier failure.
+
+Execution budgets are 120 s per test, 180 s per CI partition, 300 s per local CLI run, 600 s per
+local workspace run and 120 s for the doctest command. Nextest timing excludes compilation,
+downloads, archive extraction and runner wait. Doctests include compilation of examples after
+dependency preparation. Timeouts fail and terminate descendants; no automatic retries or
+budget increases. See [the runner guide](../tools/test-gate/README.md) for installation,
+publication, sync and diagnostics.
+
+Publish the successful report explicitly:
+
+```sh
+cargo run --locked -p beamcraft-test-gate -- publish --report target/test-gate/RUN/report.json --pr NUMBER
+```
+
+CI validates the current head/base/tree and checks the whole workspace on the two other OSes.
+A CLI-only receipt explicitly means UI was omitted locally. Missing/stale reports fail the
+aggregate `CI verdict`. Integration reuses a PR result only for the identical source tree;
+upstream sync binds its full native gate to the merge tree. Release packaging is unchanged.
+
+### Iteration runs
+
+[cargo nextest](https://nexte.st) runs ordinary tests both in the recorded gate and during
+iteration. Install the pinned version with `cargo install cargo-nextest --version 0.9.149 --locked`.
+A standalone nextest invocation does not include doctests or produce the gate receipt.
+
+```sh
+# Inner loop: workspace libs and the quick CLI suites (~80 s warm on the reference Apple M5).
+cargo nextest run --profile fast
+
+# One crate, suite or test while working on it.
+cargo nextest run -p beamcraft-cli -E 'test(/^numbering::/)'
+```
+
+Use `--no-fail-fast` for whole-workspace iteration sweeps. Use the recorded runner for the
+final result, including doctests and source identity.
+
+The `fast`
+profile (`.config/nextest.toml`) skips the IO-heavy integration suites that keep the inner
+loop's remaining serial mass near ~800 s — about 80 s of wall clock warm on the reference
+Apple M5 (re-measured 2026-11-01 with interleaved A/B runs): in `beamcraft-cli`
+`export_ifc`, `numbering_approval`, `numbering`, `libraries`, `environments` and `pick`; in
+`beamcraft-host` `recovery`, `revision` and `compaction`. `environments` stays out for its
+30-64 s tail even at a ~38 s median. The kernel's `g09_budget_fuzz` and `g05_profile_extrusion`
+fell to 12-16 s of serial time after the one-binary consolidation and run in the inner loop
+again. Longer cli suites such as `alpha_scenario_expanded`, `offline_clients`, `reference`,
+`bolt_groups` and `rebase` measured wall-neutral in the loop — they fill parallel slack — so
+excluding them would buy no time and lose signal; cutting the wall further needs less serial
+work, not a longer exclusion list. Wall clock degrades to 110-140 s under unrelated machine
+load, not under suite growth. Nothing is removed or permanently skipped: the unfiltered
+`default` profile and CI always run everything, and an explicit command-line filter overrides
+the profile's `default-filter`.
 
 Each crate's integration suites build into one test binary, one module per suite file, so they
 link once and `cargo test` runs all their cases on one thread pool: `cli` (`beamcraft-cli`),
@@ -51,29 +101,65 @@ can provide it; a physical GPU or display server is not required. The Vulkan loa
 to find the driver and its ICD configuration. Build `beamcraft-cli` before running the UI's
 real-binary grid integration tests, which also fail when that executable is missing.
 
+### What each layer tests
+
+- **Unit tests** sit as `#[cfg(test)]` modules next to the code and pin engine invariants:
+  millimetres and radians inside the engine, right-handed coordinates with Z up, conversion
+  only at the UI and IO edge.
+- **Integration tests** live in a crate's `tests/` directory and drive its public API only.
+- **CLI end-to-end tests** drive `beamcraft-cli` (headless first, `AGENTS.md` §3): a feature an
+  agent or a script needs is asserted through a real command — stdout, stderr, exit code and
+  the store it writes; window-only interactive assistance has no CLI command and is covered by
+  the UI screenshot tests.
+- **UI tests** are screenshot tests through `run_ui` and the `egui_wgpu` readback; kittest is
+  not used because it pulls in accesskit, which is disabled by owner decision.
+- **Doc tests** keep the `///` examples of the public API compiling.
+- **Schema stability:** a new `ElementKind` must also update `SCHEMA_DESCRIPTOR` and pass the
+  strips screenshot tests in `beamcraft-ui`. The kind registry is closed: adding or removing a
+  kind needs a new vocabulary version ([F10 vocabulary
+  contract](contracts/f10-domain-vocabulary-v0.1.md), section 2.1).
+
+### Acceptance first
+
+The acceptance criteria of a feature or a fix are formulated before the implementation: the
+observable fact that proves the work, and a method proportionate to it — a visual change by a
+real screenshot, an interactive element by a real click, a CLI change by the command's stdout,
+stderr and exit code, business logic by a behavioural test of the new effect. Tests cover
+behaviour and refusals, not a getter beside its setter; invalid input produces an error, never
+a panic, and the tests assert that. Fixtures stay deterministic: seed the RNG before creating
+the workspace, keep temporary names unique per process (the fixture-name collision fix);
+never wait with sleeps — wait on the condition.
+
 ## Faster test execution
 
-The test profile optimizes only `beamcraft-geom`, `beamcraft-model`, `beamcraft-kernel` and
-`openusd` at level 1. These libraries handle the repeated geometry certification, blob hashing
-and USD parsing in the integration tests. Other workspace packages, GUI dependencies and host
+The test profile optimizes only `beamcraft-geom`, `beamcraft-model`, `beamcraft-kernel`,
+`steel` and `openusd`. These libraries handle the repeated geometry certification, blob hashing
+and USD parsing in the integration tests; the first four sit at level 1, while `openusd` sits
+at level 3 because every CLI/store command re-parses the whole revision layer stack and the
+per-element cost of that parse (SDF path validation and friends) dominated the write-path
+profile — ~16 ms per stored element per command at level 1 against ~3.7 ms at level 3, which
+took the full unfiltered workspace run from ~200 s to ~115–130 s warm on the reference Apple
+M5 (measured 2026-11-01). Other workspace
+packages, GUI dependencies and host
 build tools keep Cargo's default optimization settings. Debug assertions and overflow
 checks remain enabled, and the test cases, fuzz seeds, iteration counts and independent oracles
 are unchanged. The first test build recompiles the selected libraries and their dependants;
 subsequent runs reuse those artifacts. Development and release profiles are unaffected.
 `cargo test --workspace` remains supported and uses the same optimized test libraries.
-CI's test archives and every partition (eight on Linux and Windows, five on macOS) use this test
-profile automatically; no partition or platform is excluded.
+CI's test archives and every selected platform partition use this test profile automatically;
+no partition or platform is excluded.
 
 Compare runtime on the same machine and toolchain after building both variants with
 `cargo test --workspace --no-run --locked`. Time the subsequent `cargo test --workspace --locked`
 commands separately from compilation. To reproduce the unoptimized baseline without editing
-the manifest, pass all four overrides to **both** the build and timed commands:
+the manifest, pass all five overrides to **both** the build and timed commands:
 
 ```sh
 cargo test --workspace --locked \
   --config 'profile.test.package.beamcraft-geom.opt-level=0' \
   --config 'profile.test.package.beamcraft-model.opt-level=0' \
   --config 'profile.test.package.beamcraft-kernel.opt-level=0' \
+  --config 'profile.test.package.steel.opt-level=0' \
   --config 'profile.test.package.openusd.opt-level=0'
 ```
 
@@ -162,10 +248,11 @@ Apple M5 run described above.
 
 ## Everything CI checks
 
-CI (`.github/workflows/ci.yml`) runs on every pull request and every push to `master`. Pull
-requests run on Linux and macOS; the Windows quality and test jobs run on pushes to `master` and on
-manual runs only (owner decision 2026-10-24, #180). For a change to Windows-specific code, start the
-workflow by hand on the branch (`gh workflow run ci.yml --ref <branch>`) before merging. To run the
+CI (`.github/workflows/ci.yml`) runs on pull requests, pushes to `master` and manual dispatches.
+A fresh local report chooses the two other operating systems; both test the whole workspace.
+The first selected quality lane runs format/docs checks, with WASM, licences, fixtures and
+boundaries retained. New commits/base snapshots need a new local report. The commands below
+show the component checks; use the recorded runner for an eligible final result. To run the
 same checks locally:
 
 ```sh
@@ -189,22 +276,6 @@ cargo deny check
   needs `cargo install cargo-deny --locked`. A check that could not run is not a passed check.
 - **Offline.** Add `--offline --locked` to Cargo commands to work without downloads; never update
   `Cargo.lock` as a side effect.
-- **Completeness gate.** `ci-ok` is the one job to require on `master`. It fails unless every
-  other job succeeded (pull requests may skip the Windows jobs) and, on each platform that ran,
-  the test shards together ran every test that `cargo nextest list --profile ci` lists exactly
-  once, with nothing filtered out. The shards run nextest's `ci` profile, which adds a JUnit
-  report to the `default` profile and nothing else. A test is ignored only by naming it in
-  `.config/ci-ignored.txt`, so `#[ignore]` on a test is a visible change to that file. The checks
-  live in `tools/ci-gate.py` (Python 3 standard library); test it with
-  `python3 tools/test-ci-gate.py`.
-- **Prose-only pull requests.** The `changes` job lists a pull request's files. When every one is
-  Markdown that no program reads, the Rust builds and tests are skipped and `docs-checks` runs the
-  three checks whose inputs are documents (boundaries, fixtures, the command reference)
-  instead, on Linux, without the macOS runners. A file counts as
-  read when a string literal in a `.rs` or `.toml` file names it or a directory above it
-  (`tools/ci-changes.py`, tested by `python3 tools/test-ci-changes.py`), so the F08 table, the
-  fixture documents and `COMMANDS.md` always run the full CI. Pushes to `master` always run
-  everything, including Windows.
 
 The independent-reader gate runs in every `cargo test`: run
 `cargo test -p beamcraft-cli --test cli -- independent_reader:: reference_reader:: --nocapture`.
@@ -215,21 +286,31 @@ deviations are in [K1 acceptance evidence](design/k1-contract-acceptance.md).
 
 ## CI wall time and Windows runner queues
 
-CI wall time on `master` was about 15 minutes (14–17 minutes across the runs of 2026-10-22), with
-the Windows test path as the critical path; pull requests skip the Windows jobs and finish sooner.
-By 2026-10-31 a pull request run took about 4 minutes (median of five runs) and a `master` run
-about 4.6 minutes; the macOS path was the critical path of every pull request.
+Recent successful `ci.yml` runs
+give the following wall times. The sample is every successful run created between
+2026-10-30T00:00Z and 2026-11-01T00:00Z, measured from `run_started_at` to `updated_at`
+(sample taken 2026-10-31):
 
-The account runs at most five macOS jobs at once, across all of its workflows. The macOS tests
-therefore run in five partitions, not six: a sixth partition always waited 30–80 s for another to
-finish. They use nextest's `count:` partitioning, which deals the tests out in list order and
-spreads the slow suites of one test binary over the partitions; on the measured test durations it
-gives a shorter longest partition than `hash:`. Linux and Windows keep eight `hash:` partitions,
-where `count:` measured no better.
+| Run | Successful runs | Median | Observed range |
+| --- | --- | --- | --- |
+| Full `master` CI (push): Linux, macOS, Windows and cold release builds | 16 | 6 min 24 s | 5 min 15 s–9 min 33 s |
+| Pull request CI: Linux and macOS, without Windows or cold release builds | 59 of 62 | 5 min 30 s | 1 min 45 s–51 min 33 s |
 
-Each job carries an explicit `timeout-minutes` sized at about three times the longest
-observed runtime of that job, so a hung job fails within the hour instead of at GitHub's 6-hour
-per-job default, while a cold-cache rebuild is not killed and re-queued onto scarce runners.
+Cancelled and failed runs are excluded. Three further successful PR runs
+finished in 9–63 s — too short to include any real check — and are excluded from the PR row.
+The slow tail is runner queueing, not work: on the evening of 2026-10-30, two runs (37 min
+and 52 min) waited out a starved hosted-runner queue. These are observed timings,
+not a guarantee for cold caches or busy runner queues. Budget about 10 minutes
+for a full run, plus any additional runner wait. The earlier 14–17 minute measurement from
+2026-10-22 is historical. A green PR does not establish that the Windows checks pass.
+
+Under the recorded gate policy a run covers the two operating systems
+other than the locally verified one, so a run's wall time also depends on that pair and on
+queue conditions. These are observations, not execution-budget thresholds: the recorded gate
+enforces runner-only test budgets separately from compilation and queue wait.
+
+Each job carries an explicit `timeout-minutes` (5–45 minutes depending on the job), so a hung job
+fails sooner than GitHub's 6-hour per-job default. These limits bound execution, not runner wait.
 
 Windows jobs queue for runners that the account shares across all of its repositories and
 workflows, and hosted Windows runners are the scarcest standard tier: each Windows minute is

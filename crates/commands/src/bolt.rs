@@ -25,15 +25,15 @@
 use crate::assembly::read_prims;
 use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
-    check_footprint, decode, evaluate_decoded, mesh_change, number, plate_record, prior_op_with,
-    property, replay_summary, text,
+    check_footprint, decode, evaluate_decoded, number, part_mesh_change, prior_op_with, property,
+    replay_summary, text,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, Element, Placement as LayerPlacement, Prepare, Resource,
-    schema_identity, validate_layers,
+    Change, Element, Placement as LayerPlacement, Prepare, Resource, schema_identity,
+    validate_layers,
 };
 use beamcraft_layer_engine::{Control, OpenRequest, Reader, Value};
 use beamcraft_model::command::CommandError;
@@ -42,8 +42,8 @@ use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use session::Refusal;
 use session::pipeline::{
-    AUTHORED_LAYER, DERIVED_LAYER, RevisionSummary, base_of, control, digest_of, host_uuid,
-    integrity, load_base, open_base, summarize,
+    RevisionSummary, base_of, control, digest_of, host_uuid, integrity, load_base, open_base,
+    summarize,
 };
 use std::collections::BTreeMap;
 use steel::engine::bolt::Bounds;
@@ -705,7 +705,7 @@ fn hole_changes(
             part.to_string(),
             next.hole_records.clone(),
         ));
-        changes.push(mesh_change(&part, &body.solid, &plate_record(&record))?);
+        changes.push(part_mesh_change(&record)?);
         footprint = footprint.union(Footprint::for_update(
             part, false, false, true, false, None,
         )?)?;
@@ -913,15 +913,8 @@ pub fn create_bolt_group(
     if !model.definitions.contains_key(&resource.digest) {
         resources.push(resource);
     }
-    let (mut author, opened) = Author::open(
-        base_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, base_request, false, schema, &control)?;
     let mut changes = vec![Change::Create(Element {
         id: command.new_id.to_string(),
         name: command.name.clone(),
@@ -1084,15 +1077,10 @@ pub fn update_bolt_group(
     if !model.definitions.contains_key(&resource.digest) {
         resources.push(resource);
     }
-    let (mut author, opened) = Author::open(
-        base_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    // The scoped author routes this write through the workspace's authorized section/zone
+    // layers (U19), the same way creation does; the classic targets are the unscoped shape.
+    let (mut author, opened) =
+        crate::scope::open_author(store, base_request, false, schema, &control)?;
     let mut changes = vec![steel_layer::replace_bolt_group(
         command.target_id.to_string(),
         layer_group(&command.inputs, &placed),
@@ -1202,15 +1190,8 @@ pub fn create_bolt(
     }
     let footprint = model.parts.create_bolt(command, &model.bounds)?;
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        base_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, base_request, false, schema, &control)?;
     let prepared = author.prepare(
         Prepare {
             context: opened.context.clone(),

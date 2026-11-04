@@ -35,8 +35,8 @@ use beamcraft_engine::numbering_approval::{
 };
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, MARK_BASIS, MARK_NUMBER, MARK_SERIES, Mark as LayerMark, Prepare,
-    schema_identity, validate_layers,
+    Change, MARK_BASIS, MARK_NUMBER, MARK_SERIES, Mark as LayerMark, Prepare, schema_identity,
+    validate_layers,
 };
 use beamcraft_layer_engine::{Control, OpenRequest, Reader, Value};
 use beamcraft_model::command::CommandError;
@@ -44,8 +44,8 @@ use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use session::Refusal;
 use session::pipeline::{
-    AUTHORED_LAYER, DERIVED_LAYER, RevisionSummary, base_of, control, digest_of, host_uuid,
-    integrity, load_base, open_base, summarize,
+    RevisionSummary, base_of, control, digest_of, host_uuid, integrity, load_base, open_base,
+    summarize,
 };
 use std::collections::BTreeMap;
 use steel::engine::transaction::PriorOp;
@@ -366,15 +366,8 @@ pub fn approve_numbering(
         .collect::<Result<Vec<_>, _>>()?;
     let base_request = open_base(&base)?;
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        base_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, base_request, false, schema, &control)?;
     let prepared = author.prepare(
         Prepare {
             context: opened.context.clone(),
