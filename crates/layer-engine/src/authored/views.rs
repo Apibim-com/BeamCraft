@@ -10,8 +10,8 @@
 //! This module is the closed profile of the views layer:
 //! [`VIEWS_SCHEMA_DESCRIPTOR`](crate::authored::views::VIEWS_SCHEMA_DESCRIPTOR) fixes the
 //! field/type mappings and bounds, [`bytes()`](crate::authored::views::bytes) produces its
-//! canonical layer text and [`read_views()`](crate::authored::views::read_views) reads the
-//! camera prims back. The layer's mapping identity is its own
+//! canonical layer text and [`read_layer()`](crate::authored::views::read_layer) reads the
+//! camera prims and the empty-folder record back. The layer's mapping identity is its own
 //! [`views_schema_identity()`](crate::authored::views::views_schema_identity), separate from
 //! the element profile's `schema_identity`.
 
@@ -29,8 +29,10 @@ pub const VIEWS_SCHEMA_DESCRIPTOR: &str = concat!(
     "xformOp:translate=double3;xformOp:orient=quatd;xformOpOrder=token[](translate,orient);projection=token(orthographic|perspective)\n",
     "bim:view:id=string(uuid7);bim:view:spanMm=double(0,2e7];bim:view:depthMm=double[](exactly 2,(0,2e7] each);\n",
     "bim:view:renderMode=token(<=64 bytes);bim:view:grids=bool;bim:view:hiddenKinds=token[](<=16);bim:view:folder=string(<=512 bytes);\n",
-    "bim:view:favorite=bool;bim:view:workAreaMm=double3[](exactly 2 entries,min then max,optional,finite,abs<=1e9);\n",
+    "bim:view:favorite=bool;bim:view:default=bool;bim:view:workAreaMm=double3[](exactly 2 entries,min then max,optional,finite,abs<=1e9);\n",
     "bim:view:rotationRad=double[](exactly 2,finite);bim:view:colorRgb=double3(optional,0..=1 each);bim:view:opacity=double(0..=1)\n",
+    "bim:view:folders=string[](on the views scope,exactly the folders no view uses,sorted unique,each at most 512 bytes,\n",
+    "at most 8 nonempty segments without controls,outer spaces or dot names,at most 512 entries,optional)\n",
     "provenance(W01)=bim:view:author=string(1..=128,no controls,trimmed);bim:view:savedAtMs=uint64(unix milliseconds);\n",
     "bim:view:comment=string(<=512,no controls);bim:view:modelRevision=string(uuid7);all four or none\n",
     "a saved view is display state,not model data: no element identity,no model keys,no numbering\n",
@@ -165,6 +167,9 @@ pub struct SavedView {
     pub folder: String,
     /// Listed in quick access.
     pub favorite: bool,
+    /// Whether this view is the book's default view; at most one view of a book carries the
+    /// mark, which the engine's book enforces, not this profile.
+    pub default: bool,
     /// Optional world-space box the view shows, `[min, max]` in millimetres.
     pub work_area_mm: Option<[[f64; 3]; 2]>,
     /// Camera rotations about the view's local Z, then X, in radians.
@@ -198,6 +203,7 @@ impl SavedView {
             hidden_kinds: Vec::new(),
             folder: String::new(),
             favorite: false,
+            default: false,
             work_area_mm: None,
             rotation_rad: [0.0; 2],
             color_rgb: None,
@@ -304,6 +310,7 @@ pub const FIELDS: &[(&str, &str)] = &[
     ("bim:view:hiddenKinds", "token[]"),
     ("bim:view:folder", "string"),
     ("bim:view:favorite", "bool"),
+    ("bim:view:default", "bool"),
     ("bim:view:workAreaMm", "double3[]"),
     ("bim:view:rotationRad", "double[]"),
     ("bim:view:colorRgb", "double3"),
@@ -317,6 +324,22 @@ pub const FIELDS: &[(&str, &str)] = &[
 /// The prim path of one saved view.
 fn view_path(id: &Uuid7) -> String {
     format!("{VIEWS_FOLDER}/VIE_{}", id.hex32())
+}
+
+/// Admits one folder path: at most 512 bytes and 8 segments, no controls, no outer spaces per
+/// segment, no empty or dot segment; the root (empty) folder is not a record.
+fn validate_folder(folder: &str) -> Result<(), Diagnostic> {
+    if folder.is_empty()
+        || folder.len() > 512
+        || folder.chars().any(char::is_control)
+        || folder.split('/').count() > 8
+        || folder
+            .split('/')
+            .any(|s| s.trim() != s || s.is_empty() || matches!(s, "." | ".."))
+    {
+        return Err(invalid());
+    }
+    Ok(())
 }
 
 /// Authors the layer header: units, up axis and the pinned views mapping digest.
@@ -340,11 +363,10 @@ fn header(data: &mut sdf::Data, schema: &ViewsSchemaIdentity) -> Result<(), Diag
     )
 }
 
-/// Authors one camera prim: a standard placed camera, then the `bim:view:*` record.
+/// Authors one camera prim: a standard placed camera, then the `bim:view:*` record. The layer
+/// containers and the views scope already exist (`bytes` authors them before the cameras).
 fn author(data: &mut sdf::Data, view: &SavedView) -> Result<(), Diagnostic> {
     let p = view_path(&view.id);
-    edit::container(data, "/World", "Xform", None)?;
-    edit::container(data, VIEWS_FOLDER, "Scope", Some("group"))?;
     edit::prim(data, &p, Some("Camera"), true)?;
     edit::field(
         data,
@@ -422,6 +444,13 @@ fn author(data: &mut sdf::Data, view: &SavedView) -> Result<(), Diagnostic> {
         "bool",
         sdf::Value::Bool(view.favorite),
     )?;
+    edit::attr(
+        data,
+        &p,
+        "bim:view:default",
+        "bool",
+        sdf::Value::Bool(view.default),
+    )?;
     if let Some([min, max]) = view.work_area_mm {
         edit::attr(
             data,
@@ -487,18 +516,32 @@ fn author(data: &mut sdf::Data, view: &SavedView) -> Result<(), Diagnostic> {
     Ok(())
 }
 
+/// The whole content of a views layer: the camera prims and the folders no view uses. A folder
+/// that at least one view names lives on those views' own `bim:view:folder` attribute; this
+/// record keeps the explicitly created empty ones, so a restored book keeps its tree.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ViewsLayer {
+    /// The saved views, in any order; the layer text stores them in identity order.
+    pub views: Vec<SavedView>,
+    /// The folders no view uses, in any order; the layer text stores them sorted and unique.
+    pub empty_folders: Vec<String>,
+}
+
 /// Produces the canonical views layer text: the header, the views folder and one camera prim per
 /// view, in identity order. Duplicate identities, an over-full book or a view that breaks its
 /// bounds are refused; the result is deterministic, so its SHA-256 commits the content.
-pub fn bytes(views: &[SavedView]) -> Result<Vec<u8>, Diagnostic> {
-    if views.len() > MAX_VIEWS {
+pub fn bytes(layer: &ViewsLayer) -> Result<Vec<u8>, Diagnostic> {
+    if layer.views.len() > MAX_VIEWS || layer.empty_folders.len() > 512 {
         return Err(limit());
     }
-    for view in views {
+    for view in &layer.views {
         view.validate()?;
     }
+    for folder in &layer.empty_folders {
+        validate_folder(folder)?;
+    }
     let schema = views_schema_identity()?;
-    let mut ordered = views.to_vec();
+    let mut ordered = layer.views.clone();
     ordered.sort_by_key(|view| view.id);
     if ordered
         .iter()
@@ -507,8 +550,22 @@ pub fn bytes(views: &[SavedView]) -> Result<Vec<u8>, Diagnostic> {
     {
         return Err(fail(ErrorCode::InvalidId, "duplicate saved-view identity"));
     }
+    let mut folders = layer.empty_folders.clone();
+    folders.sort();
+    folders.dedup();
     let mut data = sdf::Data::new();
     header(&mut data, &schema)?;
+    edit::container(&mut data, "/World", "Xform", None)?;
+    edit::container(&mut data, VIEWS_FOLDER, "Scope", Some("group"))?;
+    if !folders.is_empty() {
+        edit::attr(
+            &mut data,
+            VIEWS_FOLDER,
+            "bim:view:folders",
+            "string[]",
+            sdf::Value::StringVec(folders),
+        )?;
+    }
     for view in &ordered {
         author(&mut data, view)?;
     }
@@ -585,13 +642,14 @@ fn tokens(p: &Prim, name: &str) -> Result<Vec<String>, Diagnostic> {
         .collect()
 }
 
-/// Reads an optional attribute through its reader. Presence is by name alone: a property
-/// declared with another USD type is invalid, never silently absent (`validate::optional`).
+/// Reads an optional attribute through its reader; an absent property is `None`.
 fn optional<T>(
     p: &Prim,
     name: &str,
     read: impl Fn(&Prim) -> Result<T, Diagnostic>,
 ) -> Result<Option<T>, Diagnostic> {
+    // Presence is by name alone: a property declared with another USD type is invalid, never
+    // silently absent (`validate::optional`).
     if p.properties.iter().any(|v| v.name == name) {
         Ok(Some(read(p)?))
     } else {
@@ -631,6 +689,10 @@ pub fn read(p: &Prim) -> Result<SavedView, Diagnostic> {
         hidden_kinds: tokens(p, "bim:view:hiddenKinds")?,
         folder: text(p, "bim:view:folder", "string")?.to_owned(),
         favorite: boolean(p, "bim:view:favorite")?,
+        // The mark predates the layer form, so its absence is the unmarked default, while a
+        // present property of another USD type still refuses the prim (`optional`).
+        default: optional(p, "bim:view:default", |p| boolean(p, "bim:view:default"))?
+            .unwrap_or(false),
         work_area_mm: optional(p, "bim:view:workAreaMm", |p| {
             let Value::Array(entries) = property(p, "bim:view:workAreaMm", "double3[]")? else {
                 return Err(invalid());
@@ -679,23 +741,46 @@ pub fn read(p: &Prim) -> Result<SavedView, Diagnostic> {
     Ok(view)
 }
 
-/// Reads the owned camera prims of a composed snapshot, in identity order; validates the
-/// project-wide count. Foreign cameras are displayed sources and are never read.
-pub fn read_views(prims: &[Prim]) -> Result<Vec<SavedView>, Diagnostic> {
+/// Reads the owned content of a composed snapshot: the camera prims in identity order and the
+/// folders no view uses. Foreign cameras are displayed sources and are never read; the
+/// project-wide caps bind.
+pub fn read_layer(prims: &[Prim]) -> Result<ViewsLayer, Diagnostic> {
     let scope = format!("{VIEWS_FOLDER}/");
-    let mut out = Vec::new();
+    let mut layer = ViewsLayer::default();
     for p in prims
         .iter()
         .filter(|p| !p.sources.is_empty() && p.sources.iter().all(|s| s.owned))
     {
-        if p.type_name.as_deref() != Some("Camera") || !p.path.starts_with(&scope) {
-            continue;
+        match p.type_name.as_deref() {
+            Some("Camera") if p.path.starts_with(&scope) => {
+                if layer.views.len() >= MAX_VIEWS {
+                    return Err(limit());
+                }
+                layer.views.push(read(p)?);
+            }
+            // Presence is by name alone: a `bim:view:folders` of another USD type, or one
+            // whose parsed value is not an array, refuses the prim, never silently absent
+            // (the same rule the optional record attributes follow).
+            _ if p.path == VIEWS_FOLDER
+                && p.properties.iter().any(|v| v.name == "bim:view:folders") =>
+            {
+                let Value::Array(entries) = property(p, "bim:view:folders", "string[]")? else {
+                    return Err(invalid());
+                };
+                if entries.len() > 512 {
+                    return Err(limit());
+                }
+                for entry in entries {
+                    let Value::Text(folder) = entry else {
+                        return Err(invalid());
+                    };
+                    validate_folder(folder)?;
+                    layer.empty_folders.push(folder.clone());
+                }
+            }
+            _ => (),
         }
-        if out.len() >= MAX_VIEWS {
-            return Err(limit());
-        }
-        out.push(read(p)?);
     }
-    out.sort_by_key(|v| v.id);
-    Ok(out)
+    layer.views.sort_by_key(|v| v.id);
+    Ok(layer)
 }
