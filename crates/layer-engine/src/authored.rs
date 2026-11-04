@@ -5,10 +5,15 @@
 //! This is a library boundary, not an F04 command validator or acceptance ledger.
 
 pub mod annotation;
+/// The U08 portable appearance: class looks, bindings and the display-colour fallback.
+mod appearance;
 pub mod construction;
+pub mod coordination;
 /// Persistent cut ordinal and retired-record identities.
 pub mod cut_history;
 mod derive;
+/// The F12 project descriptor record of the root layer (descriptor, registries, pins).
+pub mod descriptor;
 pub mod disciplines;
 mod edit;
 pub mod grid;
@@ -20,8 +25,11 @@ mod reference;
 /// The surface a discipline crate's hooks use to author and validate through this platform.
 pub mod seam;
 mod validate;
+/// W01 saved views: the camera prims of a views layer and their provenance.
+pub mod views;
 
 pub use disciplines::{Discipline, is_part_kind};
+pub use edit::{GEOMETRY_ASSETS, mesh_asset_digest};
 pub use guard::WriteGrant;
 pub use hook::{
     AuthorCx, ChangeAuthorCx, ChangeHook, ChangeValidateCx, DefinitionHook, HookedChange,
@@ -31,6 +39,11 @@ pub use reference::{
     ForeignPrim, Reference, ReferenceView, SourceFormat, SourcePin, UnitsInterpretation, UpAxis,
     read_references,
 };
+/// Reads the `subLayers` list of a USDA layer's bytes; U19 publication compares the root
+/// composition between revisions with it (`DV-SCOPE-003`).
+pub fn layer_sublayers(bytes: &[u8]) -> Result<Vec<String>, Diagnostic> {
+    edit::layer_sublayers(bytes)
+}
 
 use crate::*;
 use beamcraft_model::prim::{DefinitionCategory, ElementCategory};
@@ -150,13 +163,22 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "element values=bim:attr:<name>=string|double|int|bool on any element;a value may outlive its",
     "definition and is then an unknown attribute: shown, never dropped\n",
     "definition displayName=prim metadata string(optional,any definition kind;part of the definition content)\n",
-    "derived=<element>/Geometry:Mesh;points=point3f[];faceVertexCounts=int[];faceVertexIndices=int[];",
+    "geometry asset=/World/Definitions/Geometry/GEO_<sha256-64 of the canonical buffers>:Mesh;no bim:id,",
+    "no model kind, no quantities;points=point3f[];faceVertexCounts=int[];faceVertexIndices=int[];",
     "subdivisionScheme=token(none);orientation=token(rightHanded);",
     "extent=float3[](min,max of points);normals=normal3f[](uniform,one unit Newell normal per face);",
-    "bim:shapeKey=string(sha256);",
+    "bim:shapeKey=string(sha256);immutable: never rewritten, stays after its last referent is deleted\n",
+    "derived=<element>/Geometry:Mesh;instanceable=true;references=</World/Definitions/Geometry/GEO_<sha256>>;",
+    "the mesh buffers compose from the asset;local opinions=purpose=token(render,guide on a grid guide mesh);",
     "quantities(optional,all or none)=bim:volumeMm3=double;bim:volumeStatus=token;bim:massKg=double(optional);",
     "bim:massStatus=token;bim:shapeSignature=string(sha256);bim:massSignature=string(sha256);",
-    "bim:quantityAlgorithm=string\n",
+    "bim:quantityAlgorithm=string;kind=subcomponent\n",
+    "representations(U12,each only where its body differs from the full one,never quantities)=",
+    "<part>/Reduced:Mesh(cuts kept,holes dropped;purpose=default);<part>/Proxy:Mesh(no cuts,no holes;purpose=proxy);",
+    "<part>/Axis:BasisCurves(member axis points;element-local;type=token(linear,uniform);wrap=token(nonperiodic,uniform);",
+    "curveVertexCounts=int[](one polyline);purpose=token(guide));",
+    "every representation carries bim:exact=bool(false) and no bim:shapeKey record beyond its own body's;",
+    "a plate authors no Axis;a part without holes and cuts authors no level prims\n",
     "reference=/World/References/REF_<uuid7-32>;type=Xform;kind=group;bim:elementKind=reference;bim:geometryMode=reference;",
     "bim:reference:sourceDigest=string(sha256);bim:reference:sourceBytes=int;bim:reference:sourceFormat=token(usda|usdc);",
     "bim:reference:sourceVersion=int;bim:reference:sourceLabel=string;bim:reference:sourceDefaultPrim=string;",
@@ -165,13 +187,18 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "bim:reference:correctionSourceDigest=string(sha256);xformOp:rotateX:bimUpAxis=double(degrees,Y up only);",
     "xformOp:scale:bimUnits=double3(metersPerUnit*1000);xformOpOrder=token[](rotateX,scale;empty without correction)\n",
     "reference/Correction/Source=def without type;references=@external/<sha256>.<usda|usdc>@</defaultPrim>;nothing else owned at or below\n",
+    "appearance=U08;colour comes from presentation (steel:class through the P15 class palette),never from the engineering material;\n",
+    "classed part=prepend apiSchemas=[MaterialBindingAPI];rel material:binding=/World/Looks/PartClass<i> (one target);",
+    "color3f[] primvars:displayColor=[one linear sRGB->linear palette triple];i=unsigned|class| mod 8;both properties replaced together with steel:class\n",
+    "looks=/World/Looks=Scope;PartClass0..7=Material;outputs:surface=token connected to the child shader;child=Shader PreviewSurface;",
+    "info:id=token(UsdPreviewSurface);inputs:diffuseColor=color3f(palette entry,linear);outputs:surface=token;no other owned prim under /World/Looks\n",
     "changes=Create|Label|Contour|Thickness|ThicknessSide|Corners|Bends|Axis|Roll|Profile|Material|Placement|Mesh|AttachReference|ReferenceUnits|PartOf|MainPart|Level|Mark|Cuts|HoleRecords|Delete;",
     "opinion=Absent|Block|Value|Remove;relationship=Targets|Empty|Remove\n",
     "snapshot=Prim(path,element_id,type_name,active,properties,relationships,sources);",
     "property=(name,type_name,optional-value);relationship=(name,ordered-targets)\n",
     "prepare=(context,op_id,actor,schema,resources,changes);resource=(digest,definition);",
     "element=(id,name,shape,placement,optional-material);placement=(translation_mm[3],orientation_xyzw[4]);",
-    "mesh=(id,shape_key,points_mm,face_counts,indices);",
+    "mesh=(id,shape_key,points_mm,face_counts,indices,reduced?,proxy?,axis?);",
     "authored-item=(element_id,attribute,type_name,opinion);install=(context,token,op_id,Accepted);",
     "discard=(context,token,op_id,Undecided|Rejected);unknown=OUTCOME_UNKNOWN\n",
 );
@@ -408,6 +435,18 @@ pub struct Mesh {
     pub indices: Vec<i32>,
     /// Optional stored quantity records of this body. A rewrite replaces them as a whole.
     pub quantities: Option<StoredQuantities>,
+    /// The U12 reduced level: cuts kept, holes dropped. Authored as `<part>/Reduced`
+    /// (`purpose = default`, `bim:exact = false`) when its body differs from the full one.
+    /// Never carries quantities: engineering reads the full mesh only.
+    pub reduced: Option<Box<Mesh>>,
+    /// The U12 simplified level: no cuts and no holes. Authored as `<part>/Proxy`
+    /// (`purpose = proxy`, `bim:exact = false`) when its body differs from the full and the
+    /// reduced one. Never carries quantities.
+    pub proxy: Option<Box<Mesh>>,
+    /// The U12 axis level of a member: the element-local axis points, authored as
+    /// `<part>/Axis` (linear `BasisCurves`, `purpose = guide`, `bim:exact = false`).
+    /// A plate has no axis data in storage and authors none.
+    pub axis: Option<Vec<[f64; 3]>>,
 }
 
 /// Closed batch items, produced by a trusted engine, never raw USD setters.
@@ -603,6 +642,19 @@ pub struct Prepare {
     /// Closed changes, at most the smaller of 4096 and the stage value budget.
     pub changes: Vec<Change>,
 }
+/// The host-authorized write scope of one batch, derived from the workspace's trusted scope
+/// state, never from client claims (U19). Layer names are authored layer names of the store.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditScope {
+    /// The authored layer new elements are created in (the active section/zone scope).
+    pub write_layer: String,
+    /// Authored layers whose existing elements this batch may edit, including `write_layer`.
+    pub allowed: BTreeSet<String>,
+    /// Common-data layers (grids/levels): edits only with `shared_authorized` (`DV-SCOPE-004`).
+    pub shared: BTreeSet<String>,
+    /// Whether this batch is an explicitly authorized shared command.
+    pub shared_authorized: bool,
+}
 /// Host-selected edit targets; ownership must also be proved from composition provenance.
 #[derive(Debug, Clone)]
 pub struct EditTargets {
@@ -684,13 +736,19 @@ pub struct Author {
     reader: Reader,
     request: OpenRequest,
     targets: EditTargets,
+    /// The authorized section/zone write scope of this authoring session (U19, F10 0.2
+    /// `DV-SCOPE-001..004`), or `None` for the unscoped 0.1 behaviour.
+    scope: Option<EditScope>,
     pending: Option<Pending>,
 }
 impl Author {
     /// Opens verified bytes and checks edit-target participation/ownership and schema compatibility.
+    /// `scope` is the host-authorized write scope; when present, the edit target must name
+    /// its write layer and every admission check of [`Self::prepare`] becomes scope-aware.
     pub fn open(
         request: OpenRequest,
         targets: EditTargets,
+        scope: Option<EditScope>,
         schema: SchemaIdentity,
         control: &Control,
     ) -> Result<(Self, Opened), Diagnostic> {
@@ -707,6 +765,7 @@ impl Author {
                 reader,
                 request,
                 targets,
+                scope,
                 pending: None,
             },
             opened,
@@ -729,6 +788,14 @@ impl Author {
     ) -> Result<Prepared, Diagnostic> {
         control.check()?;
         validate::schema(input.schema)?;
+        if let Some(scope) = &self.scope
+            && scope.write_layer != self.targets.authored
+        {
+            return Err(fail(
+                ErrorCode::InvalidArgument,
+                "the edit target is not the authorized write layer",
+            ));
+        }
         let live = self.reader.pinned(&input.context)?;
         if self.pending.is_some() {
             return Err(fail(
@@ -761,7 +828,7 @@ impl Author {
                 "duplicate normalized change key",
             ));
         }
-        let (reads, writes) = validate::changes(&input, &live.prims, b)?;
+        let (reads, writes) = validate::changes(&input, self.scope.as_ref(), &live.prims, b)?;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let (mut request, opinions) =
                 edit::apply(&self.request, &self.targets, &input, &live.prims, control)?;
@@ -936,6 +1003,41 @@ impl Reader {
         let opened = self.install(candidate, control)?;
         Ok((opened, validation))
     }
+}
+
+/// The derived layer of one element (U15): the manifest name of the owned USDA file whose
+/// sublayer carries exactly this element's `/Geometry` result prims. The engine creates the
+/// file on the element's first mesh write and drops it with the element; every other edit of
+/// the element rewrites this file alone, so unchanged elements are never re-serialized. The
+/// instanceable reference composes the shared U11 body asset from the sibling
+/// [`GEOMETRY_ASSET_LAYER`] with an explicit external target.
+pub fn element_layer(id: &str) -> Result<String, Diagnostic> {
+    let uuid = beamcraft_model::id::ElementId::parse(id)
+        .map_err(|_| fail(ErrorCode::InvalidId, "invalid full element identity"))?;
+    Ok(format!("derived/{}.usda", uuid.uuid().hex32()))
+}
+
+/// The owned layer holding the immutable U11 geometry assets of a project (U15): the bodies
+/// live here once per distinct body, and every element file composes them by explicit
+/// external reference. Referenced, never sublayered: the composition stays acyclic.
+pub const GEOMETRY_ASSET_LAYER: &str = "derived/geometry.usda";
+
+/// Whether `name` is an [`element_layer`] file, and the canonical hyphenated id of the element
+/// it belongs to. The reversed seam the host, the rebase and the publication use to classify
+/// per-element derived layers.
+pub fn element_layer_id(name: &str) -> Option<String> {
+    let hex = name.strip_prefix("derived/")?.strip_suffix(".usda")?;
+    if hex.len() != 32 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(format!(
+        "{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..]
+    ))
 }
 
 /// The authored prim path of an element identity in a category; the seam a discipline hook

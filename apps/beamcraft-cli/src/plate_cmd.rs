@@ -17,7 +17,7 @@ use beamcraft_commands::definition::{
     head_definitions, resolve_name,
 };
 use beamcraft_commands::delete::{DeleteRequest, DeletedKind, delete_element};
-use beamcraft_commands::edit::{UpdateRequest, update_element};
+use beamcraft_commands::edit::{UpdateRequest, UpdatedPart, update_element};
 use beamcraft_commands::history::{Direction, Step, step, timeline};
 use beamcraft_commands::hole::{AddHoleRequest, add_hole_command};
 use beamcraft_commands::library::{Lookup, open_lookup};
@@ -63,8 +63,8 @@ use steel::model::command::{
     SectionPlanePosition, SplitPart,
 };
 use steel::model::command::{
-    ArrayElements, ArrayStep, CopyElement, ElementMirror, ElementPatch, ElementRotate,
-    UpdateElement,
+    ArrayElements, ArrayStep, CopyElement, ElementMirror, ElementPatch, ElementRotate, MemberPatch,
+    PlatePatch, UpdateElement,
 };
 use steel::model::definition::SectionProperties;
 use steel::model::section::{CustomSection, ParametricSection, SectionFamily, SectionShape};
@@ -388,6 +388,7 @@ const UPDATE_OPTIONS: &[&str] = &[
     "--material-digest",
     "--thickness",
     "--corners",
+    "--contour",
     "--thickness-side",
     "--axis-point",
     "--translation",
@@ -480,6 +481,20 @@ const WORKSPACE_OPTIONS: &[&str] = &[
     "--op-id",
 ];
 
+/// `create-workspace` also authorizes the U19 section/zone scope once, here.
+const CREATE_WORKSPACE_OPTIONS: &[&str] = &[
+    "--store",
+    "--workspace-dir",
+    "--workspace-id",
+    "--user-id",
+    "--revision-id",
+    "--op-id",
+    "--scope-code",
+    "--scope-section",
+    "--scope-zone",
+    "--scope-shared",
+];
+
 const HISTORY_OPTIONS: &[&str] = &["--workspace-dir", "--revision-id", "--op-id"];
 
 fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
@@ -522,7 +537,8 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "combine-parts" => A13_COMBINE_OPTIONS_ALL,
         "bend-plate" => BEND_OPTIONS_ALL,
         "remove-cut" => REMOVE_CUT_OPTIONS,
-        "create-workspace" | "inspect-workspace" | "publish-workspace" => WORKSPACE_OPTIONS,
+        "create-workspace" => CREATE_WORKSPACE_OPTIONS,
+        "inspect-workspace" | "publish-workspace" => WORKSPACE_OPTIONS,
         "undo-workspace" | "redo-workspace" => HISTORY_OPTIONS,
         "inspect-workspace-history" => &["--workspace-dir"],
         "define-material" => DEFINE_MATERIAL_OPTIONS,
@@ -1419,12 +1435,6 @@ fn update_command(
         }
     }
     let patch = ElementPatch {
-        corners: if given("--corners").is_some() {
-            Some(corner_treatments(options)?)
-        } else {
-            None
-        },
-        contour_points_mm: None,
         class: given("--class")
             .map(|v| {
                 v.parse::<i32>()
@@ -1437,13 +1447,6 @@ fn update_command(
             Some("none") => Some(None),
             Some(text) => Some(Some(digest_option(text)?)),
         },
-        thickness_mm: given("--thickness")
-            .map(|text| {
-                text.parse::<f64>()
-                    .map_err(|_| invalid("a number is malformed"))
-            })
-            .transpose()?,
-        thickness_side: thickness_side(options)?,
         translation_mm: given("--translation").map(translation).transpose()?,
         orientation_xyzw: match given("--orientation-xyzw") {
             None => None,
@@ -1459,17 +1462,37 @@ fn update_command(
                 other => ElementId::parse(other).map(Some).map_err(id_error),
             })
             .transpose()?,
-        axis_points_mm: given("--axis-point").map(path_points).transpose()?,
-        // A member's new section: a digest, or a name looked up in the model and then in the
-        // environment of the project, exactly as when a member is created.
-        profile: selected(
-            store,
-            options,
-            ("--profile-digest", "--profile"),
-            true,
-            None,
-            candidates,
-        )?,
+        plate: PlatePatch {
+            corners: if given("--corners").is_some() {
+                Some(corner_treatments(options)?)
+            } else {
+                None
+            },
+            // A whole-contour replacement: the repair path of a degenerate or unsupported
+            // plate (P-Degenerate) and a shape edit of an evaluated one. Corner treatments
+            // arriving with it are validated against the new contour.
+            contour_points_mm: given("--contour").map(contour_points).transpose()?,
+            thickness_mm: given("--thickness")
+                .map(|text| {
+                    text.parse::<f64>()
+                        .map_err(|_| invalid("a number is malformed"))
+                })
+                .transpose()?,
+            thickness_side: thickness_side(options)?,
+        },
+        member: MemberPatch {
+            axis_points_mm: given("--axis-point").map(path_points).transpose()?,
+            // A member's new section: a digest, or a name looked up in the model and then in
+            // the environment of the project, exactly as when a member is created.
+            profile: selected(
+                store,
+                options,
+                ("--profile-digest", "--profile"),
+                true,
+                None,
+                candidates,
+            )?,
+        },
     };
     let updated = update_element(
         store,
@@ -1484,8 +1507,10 @@ fn update_command(
         &mut NoFault,
     )?;
     let element = match &updated.element {
-        PartRecord::Plate(record) => plate_json(record)?,
-        PartRecord::Member(record) => member_json(record)?,
+        UpdatedPart::Evaluated(PartRecord::Plate(record)) => plate_json(record)?,
+        UpdatedPart::Evaluated(PartRecord::Member(record)) => member_json(record)?,
+        // The element stays without evaluated geometry; its authored inputs are the result.
+        UpdatedPart::AuthoredOnly(record) => unsupported_plate_json(record)?,
     };
     Ok(Json::object([
         (
@@ -1586,45 +1611,39 @@ fn contour_edit_command(
         None => WorkspaceId::from_uuid(fresh()?),
     };
     // The head plate as the caller saw it: the edit names vertices and edges of this contour by
-    // position, and a stale naming is refused by the commit's base-revision rule.
+    // position, and a stale naming is refused by the commit's base-revision rule. A degenerate
+    // or unsupported plate is edited through the same authored inputs (P-Degenerate); the
+    // update reclassifies the result, so a vertex move can also repair the contour.
     let inspection = inspect(store)?;
-    let record = match inspection
+    let authored = if let Some(record) = inspection
         .plates
         .iter()
         .find(|p| p.authored.id == target_id)
     {
-        Some(record) => record,
-        None if inspection
-            .unsupported_plates
-            .iter()
-            .any(|p| p.authored.id == target_id) =>
-        {
-            return Err(Refusal {
-                rule_id: None,
-                code: ErrorCode::DependencyUnavailable,
-                message: "editing an unsupported plate is not implemented",
-            });
-        }
-        None if inspection
-            .members
-            .iter()
-            .any(|m| m.authored.id == target_id) =>
-        {
-            return Err(Refusal {
-                rule_id: None,
-                code: ErrorCode::UnsupportedProperty,
-                message: "only plates have a contour",
-            });
-        }
-        None => {
-            return Err(Refusal {
-                rule_id: None,
-                code: ErrorCode::NotFound,
-                message: "the element is not in the head revision",
-            });
-        }
+        &record.authored
+    } else if let Some(record) = inspection
+        .unsupported_plates
+        .iter()
+        .find(|p| p.authored.id == target_id)
+    {
+        &record.authored
+    } else if inspection
+        .members
+        .iter()
+        .any(|m| m.authored.id == target_id)
+    {
+        return Err(Refusal {
+            rule_id: None,
+            code: ErrorCode::UnsupportedProperty,
+            message: "only plates have a contour",
+        });
+    } else {
+        return Err(Refusal {
+            rule_id: None,
+            code: ErrorCode::NotFound,
+            message: "the element is not in the head revision",
+        });
     };
-    let authored = &record.authored;
     let (points, corners) = match command {
         "move-plate-vertex" => steel::engine::contour_edit::move_vertex(
             &authored.contour_points_mm,
@@ -1673,22 +1692,29 @@ fn contour_edit_command(
             command: UpdateElement {
                 target_id,
                 patch: ElementPatch {
-                    contour_points_mm: Some(points),
-                    corners: Some(corners),
-                    ..Default::default()
+                    plate: PlatePatch {
+                        contour_points_mm: Some(points),
+                        corners: Some(corners),
+                        ..PlatePatch::default()
+                    },
+                    ..ElementPatch::default()
                 },
             },
         },
         &mut NoFault,
     )?;
-    let PartRecord::Plate(edited) = &updated.element else {
-        return Err(Refusal {
-            rule_id: None,
-            code: ErrorCode::IntegrityError,
-            message: "a contour edit reported a non-plate element",
-        });
+    let element = match &updated.element {
+        UpdatedPart::Evaluated(PartRecord::Plate(edited)) => plate_json(edited)?,
+        // The edit left the plate authored-only; its inputs are the result.
+        UpdatedPart::AuthoredOnly(retained) => unsupported_plate_json(retained)?,
+        UpdatedPart::Evaluated(PartRecord::Member(_)) => {
+            return Err(Refusal {
+                rule_id: None,
+                code: ErrorCode::IntegrityError,
+                message: "a contour edit reported a non-plate element",
+            });
+        }
     };
-    let element = plate_json(edited)?;
     let outcome = if updated.replayed {
         "contour_edit_replayed"
     } else {
@@ -3088,6 +3114,34 @@ fn workspace_command(
     };
     match command {
         "create-workspace" => {
+            let scope = match (given("--scope-code"), given("--scope-section")) {
+                (None, None) => None,
+                (Some(code), Some(section)) => {
+                    let mut zones = std::collections::BTreeSet::new();
+                    for zone in given("--scope-zone").unwrap_or_default().split(',') {
+                        if !zone.is_empty() {
+                            zones.insert(zone.to_owned());
+                        }
+                    }
+                    let shared = match given("--scope-shared") {
+                        None => false,
+                        Some("true") => true,
+                        Some("false") => false,
+                        Some(_) => return Err(invalid("--scope-shared is true or false")),
+                    };
+                    Some(beamcraft_engine::scope::WorkspaceScope {
+                        code: code.to_owned(),
+                        section: section.to_owned(),
+                        zones,
+                        shared,
+                    })
+                }
+                _ => {
+                    return Err(invalid(
+                        "--scope-code and --scope-section name the authorized scope together",
+                    ));
+                }
+            };
             let created = create_workspace(
                 store,
                 &workspace,
@@ -3097,6 +3151,7 @@ fn workspace_command(
                     user_id: uuid("--user-id", &mut fresh)?,
                     revision_id: uuid("--revision-id", &mut fresh)?,
                     op_id: uuid("--op-id", &mut fresh)?,
+                    scope,
                 },
                 &mut NoFault,
             )?;
@@ -4165,10 +4220,17 @@ fn environment_presets_json(options: &BTreeMap<&str, &str>) -> Run<Json> {
 
 fn unsupported_plate_json(record: &UnsupportedPlate) -> Run<Json> {
     let authored = &record.authored;
+    // A degenerate record carries wrongly built authored geometry (A-2 D-7): the refusal code
+    // of its class is `INVALID_ARGUMENT`, and the label says so instead of claiming validity.
+    let (validity, status, code) = if record.degenerate {
+        ("degenerate", "degenerate", "INVALID_ARGUMENT")
+    } else {
+        ("valid", "unsupported", "UNSUPPORTED_GEOMETRY")
+    };
     let quantity = |unit| {
         Json::object([
             (unit, Json::Null),
-            ("status", Json::text("unsupported")),
+            ("status", Json::text(status)),
             ("reason", Json::text(record.reason)),
             ("input_signature", Json::Null),
             ("algorithm", Json::Null),
@@ -4186,9 +4248,9 @@ fn unsupported_plate_json(record: &UnsupportedPlate) -> Run<Json> {
         ),
         ("kind", Json::text("plate")),
         ("name", Json::text(&authored.name)),
-        ("validity", Json::text("valid")),
-        ("geometry_status", Json::text("unsupported")),
-        ("geometry_code", Json::text("UNSUPPORTED_GEOMETRY")),
+        ("validity", Json::text(validity)),
+        ("geometry_status", Json::text(status)),
+        ("geometry_code", Json::text(code)),
         ("geometry_reason", Json::text(record.reason)),
         (
             "material_digest",

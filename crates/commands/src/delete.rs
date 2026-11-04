@@ -7,7 +7,8 @@
 //! The delete removes the whole element, its authored prim and its result prims, and nothing else:
 //! the other elements, the unknown content and the immutable definitions it pinned stay. Before any
 //! layer is touched the layer engine's element index decides whether something still links to the
-//! element ([`Author::check_delete`]): an incoming relationship is `DEPENDENCY_CONFLICT`, an index
+//! element (`beamcraft_layer_engine::authored::Author::check_delete`): an incoming relationship is
+//! `DEPENDENCY_CONFLICT`, an index
 //! that cannot prove the links complete is `DEPENDENCY_UNAVAILABLE`, and there is no cascade and no
 //! dangling link. The layer engine's write set is checked against the footprint the engine declares.
 //!
@@ -19,22 +20,19 @@
 //! engine, as in `plate`.
 
 use crate::definition::material_lookup;
-use crate::plate::{
-    decode, evaluate_decoded, mesh_change, plate_record, prior_op_with, replay_summary,
-};
+use crate::plate::{decode, evaluate_decoded, part_mesh_change, prior_op_with, replay_summary};
 use crate::publication::{PublicationTail, prepare_and_publish};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
-use beamcraft_layer_engine::authored::{Author, Change, EditTargets, schema_identity};
+use beamcraft_layer_engine::authored::{Change, schema_identity};
 use beamcraft_layer_engine::index::ElementId as LayerElementId;
 use beamcraft_model::command::{CommandError, DeleteElement};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
 use session::Refusal;
 use session::pipeline::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, digest_of, host_uuid, load_base,
-    open_base, summarize,
+    Base, RevisionSummary, control, digest_of, host_uuid, load_base, open_base, summarize,
 };
 use steel::engine::transaction::PriorOp;
 use steel::layer as steel_layer;
@@ -199,8 +197,20 @@ pub fn delete_element(
         PriorOp::Unseen => {}
     }
     let Some(kind) = kind else {
+        // A pinned coordination grid is foreign bytes: the refusal precedes the local miss,
+        // because no authority of this store can reach another project's content (PC-OWN-002).
+        if crate::coordination::pinned_owns_element(store, &command.target_id)? {
+            return Err(Refusal {
+                rule_id: Some("PC-OWN-002"),
+                code: ErrorCode::ForeignReadOnly,
+                message: "the element belongs to a pinned coordination project and is read-only",
+            });
+        }
         return Err(not_found());
     };
+    // Grids and levels are shared data (T01 §9): their delete answers to the shared grids/
+    // levels scope, exactly like create and edit, not to the element scope.
+    let shared = matches!(kind, DeletedKind::Grid | DeletedKind::Level);
     // A16.1: a main part cannot leave its assembly through a delete, exactly as a detach of it
     // is refused; another main part is named first.
     if crate::assembly::is_main_part(&base_request, &command.target_id, &control)? {
@@ -251,21 +261,14 @@ pub fn delete_element(
                 next.id.to_string(),
                 next.hole_records.clone(),
             ));
-            changes.push(mesh_change(&next.id, &body.solid, &plate_record(&record))?);
+            changes.push(part_mesh_change(&record)?);
             footprint = footprint.union(Footprint::for_update(
                 next.id, false, false, true, false, None,
             )?)?;
         }
     }
-    let (mut author, opened) = Author::open(
-        base_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, base_request, shared, schema, &control)?;
     let index = author.element_index(&opened.context, &control)?;
     author.check_delete(&index, &LayerElementId::parse(&id_text)?, &control)?;
     let (committed, changed_layers) = prepare_and_publish(

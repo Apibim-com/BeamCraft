@@ -47,8 +47,8 @@ use beamcraft_host::revision::{
 };
 use beamcraft_layer_engine::Property;
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, Element, Group as LayerGroup, Placement as LayerPlacement,
-    Prepare, Prepared, StoredQuantities, project_record, schema_identity,
+    Change, Element, Group as LayerGroup, Placement as LayerPlacement, Prepare, Prepared,
+    StoredQuantities, project_record, schema_identity,
 };
 use beamcraft_layer_engine::index::Completeness;
 use beamcraft_layer_engine::{Asset, Control, Opened, Prim, Reader, Value};
@@ -57,8 +57,8 @@ use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use session::Refusal;
 use session::pipeline::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, base_of, control, digest_of, host_uuid,
-    initial_pin, integrity, load_base, open_base, open_request, summarize, summarize_manifest,
+    Base, RevisionSummary, base_of, control, digest_of, host_uuid, initial_pin, integrity,
+    load_base, open_base, open_request, summarize, summarize_manifest,
 };
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -1828,7 +1828,20 @@ pub(crate) fn prior_op_with(
                 Some((revision.as_str().to_owned(), sequence, manifest)),
             ))
         }
-        Outcome::Aborted { .. } | Outcome::NotFound => Ok((PriorOp::Unseen, None)),
+        // A command carried by a batch has no ledger record of its own; its acceptance and
+        // request fingerprint come from the batch revision's evidence bindings.
+        Outcome::NotFound => match crate::command_evidence::carried(store, op)? {
+            Some((fingerprint, info)) => Ok((
+                PriorOp::Accepted { fingerprint },
+                Some((
+                    info.revision().to_string(),
+                    info.sequence(),
+                    info.manifest_digest(),
+                )),
+            )),
+            None => Ok((PriorOp::Unseen, None)),
+        },
+        Outcome::Aborted { .. } => Ok((PriorOp::Unseen, None)),
         Outcome::Unknown => Err(Refusal::new(
             ErrorCode::OutcomeUnknown,
             "the operation id may or may not have been committed; run recover-revision",
@@ -1917,9 +1930,142 @@ pub(crate) fn replay_summary(
     }
 }
 
-/// The U02 mesh change of a steel part: its body and the quantity record of its kind.
-pub(crate) fn part_mesh_change(part: &steel::engine::part::PartRecord) -> Result<Change, Refusal> {
-    mesh_change(&part.id(), part.solid(), &part.quantity_record())
+/// The evaluated record a U12 mesh change draws its full body and levels from. Borrowed, so a
+/// command never clones a body to describe its own mesh.
+pub(crate) enum PartSource<'a> {
+    /// A plate.
+    Plate(&'a PlateRecord),
+    /// A beam or a column.
+    Member(&'a MemberRecord),
+}
+
+impl<'a> From<&'a steel::engine::part::PartRecord> for PartSource<'a> {
+    fn from(part: &'a steel::engine::part::PartRecord) -> Self {
+        match part {
+            steel::engine::part::PartRecord::Plate(r) => Self::Plate(r),
+            steel::engine::part::PartRecord::Member(r) => Self::Member(r),
+        }
+    }
+}
+
+impl<'a> From<&'a PlateRecord> for PartSource<'a> {
+    fn from(r: &'a PlateRecord) -> Self {
+        Self::Plate(r)
+    }
+}
+
+impl<'a> From<&'a Box<PlateRecord>> for PartSource<'a> {
+    fn from(r: &'a Box<PlateRecord>) -> Self {
+        Self::Plate(r)
+    }
+}
+
+impl<'a> From<&'a Box<MemberRecord>> for PartSource<'a> {
+    fn from(r: &'a Box<MemberRecord>) -> Self {
+        Self::Member(r)
+    }
+}
+
+impl<'a> From<&'a MemberRecord> for PartSource<'a> {
+    fn from(r: &'a MemberRecord) -> Self {
+        Self::Member(r)
+    }
+}
+
+/// The U12 mesh change of a steel part (U02): its body, the quantity record of its kind, and the
+/// representation levels that differ from the body (axis, simplified, reduced; the full body
+/// itself is the render level through the purpose the storage layer authors). Each level is one
+/// more bounded kernel evaluation of the same record with the display-only operations cleared;
+/// a level the kernel refuses, or one whose body repeats another level, is not authored.
+pub(crate) fn part_mesh_change<'a>(part: impl Into<PartSource<'a>>) -> Result<Change, Refusal> {
+    let part = part.into();
+    let (id, solid, record, axis) = match &part {
+        PartSource::Plate(r) => (&r.authored.id, &r.body.solid, plate_record(r), None),
+        PartSource::Member(r) => (
+            &r.authored.id,
+            &r.body.solid,
+            member_record(r),
+            Some(r.authored.axis_points_mm.clone()),
+        ),
+    };
+    let full = solid.digest();
+    let (reduced, proxy) = match &part {
+        PartSource::Plate(r) => {
+            let mut reduced_inputs = r.authored.clone();
+            reduced_inputs.holes_mm = Vec::new();
+            reduced_inputs.hole_records = Vec::new();
+            let mut proxy_inputs = reduced_inputs.clone();
+            proxy_inputs.cuts = Vec::new();
+            let reduced = steel::engine::command::evaluate_plate(&reduced_inputs)
+                .ok()
+                .and_then(|b| level_mesh(&r.authored.id, &b.solid, full));
+            let proxy = steel::engine::command::evaluate_plate(&proxy_inputs)
+                .ok()
+                .and_then(|b| level_mesh(&r.authored.id, &b.solid, full));
+            (reduced, proxy)
+        }
+        PartSource::Member(r) => {
+            let mut reduced_inputs = r.authored.clone();
+            reduced_inputs.hole_records = Vec::new();
+            let mut proxy_inputs = reduced_inputs.clone();
+            proxy_inputs.cuts = Vec::new();
+            let reduced =
+                steel::engine::member::evaluate_member(&reduced_inputs, r.body.profile.clone())
+                    .ok()
+                    .and_then(|b| level_mesh(&r.authored.id, &b.solid, full));
+            let proxy =
+                steel::engine::member::evaluate_member(&proxy_inputs, r.body.profile.clone())
+                    .ok()
+                    .and_then(|b| level_mesh(&r.authored.id, &b.solid, full));
+            (reduced, proxy)
+        }
+    };
+    // The proxy level repeats the reduced one exactly when no cut separates the two bodies; one
+    // prim per distinct body keeps the layer bytes inside the recorded budgets.
+    let proxy = match (&reduced, proxy) {
+        (Some(r), Some(p)) if r.shape_key == p.shape_key => None,
+        (_, proxy) => proxy,
+    };
+    mesh_change(id, solid, &record, reduced, proxy, axis)
+}
+
+/// One U12 level body, or `None` when the body repeats the full one (`full`) or cannot be built.
+fn level_mesh(
+    id: &ElementId,
+    solid: &SolidMesh,
+    full: ContentDigest,
+) -> Option<Box<beamcraft_layer_engine::authored::Mesh>> {
+    if solid.digest() == full {
+        return None;
+    }
+    let mesh = kernel_mesh(solid).ok()?;
+    let indices = mesh
+        .indices
+        .iter()
+        .map(|i| i32::try_from(*i))
+        .collect::<Result<_, _>>()
+        .ok()?;
+    Some(Box::new(beamcraft_layer_engine::authored::Mesh {
+        id: id.to_string(),
+        shape_key: solid.digest(),
+        quantities: None,
+        points_mm: mesh.points,
+        face_counts: vec![3; mesh.counts.len()],
+        indices,
+        reduced: None,
+        proxy: None,
+        axis: None,
+    }))
+}
+
+/// The U02 mesh change of a body with no U12 levels: a lofted plate (A11), whose authored record
+/// is not a re-evaluable plate shape this slice.
+pub(crate) fn plain_mesh_change(
+    id: &ElementId,
+    solid: &SolidMesh,
+    record: &QuantityRecord,
+) -> Result<Change, Refusal> {
+    mesh_change(id, solid, record, None, None, None)
 }
 
 /// The U02 mesh change of a kernel body.
@@ -1927,6 +2073,9 @@ pub(crate) fn mesh_change(
     id: &ElementId,
     solid: &SolidMesh,
     record: &QuantityRecord,
+    reduced: Option<Box<beamcraft_layer_engine::authored::Mesh>>,
+    proxy: Option<Box<beamcraft_layer_engine::authored::Mesh>>,
+    axis: Option<Vec<[f64; 3]>>,
 ) -> Result<Change, Refusal> {
     let mesh = kernel_mesh(solid)?;
     Ok(Change::Mesh(beamcraft_layer_engine::authored::Mesh {
@@ -1941,23 +2090,52 @@ pub(crate) fn mesh_change(
             .map(|i| i32::try_from(*i))
             .collect::<Result<_, _>>()
             .map_err(|_| integrity("mesh index does not fit"))?,
+        reduced,
+        proxy,
+        axis,
     }))
 }
 
-/// The layer engine's own write set must lie inside the footprint the engine declared.
+/// The layer engine's own write set must lie inside the footprint the engine declared. U11: a
+/// geometry asset's content identity is an engine-completed transfer write, derived
+/// mechanically from the batch's own mesh buffers; it never narrows a caller claim, and
+/// `publish_revision` carries the same entries into the persisted evidence.
 pub(crate) fn check_footprint(prepared: &Prepared, declared: &Footprint) -> Result<(), Refusal> {
-    let observed: BTreeSet<Entry> = prepared
-        .writes
-        .iter()
-        .map(layer_entry)
-        .collect::<Option<_>>()
-        .ok_or_else(|| integrity("layer engine footprint names an unknown target"))?;
+    let mut observed = std::collections::BTreeSet::new();
+    for item in &prepared.writes {
+        let Some(entry) = layer_entry(item) else {
+            return Err(integrity("layer engine footprint names an unknown target"));
+        };
+        if matches!(entry.target, Target::Definition(_)) && entry.group == Group::Derived {
+            continue;
+        }
+        observed.insert(entry);
+    }
     if !declared.covers_writes(&observed) {
         return Err(integrity(
             "layer engine writes more than the engine footprint declares",
         ));
     }
     Ok(())
+}
+
+/// Completes a declared footprint with the immutable geometry assets (U11) the prepared batch
+/// transfers: one `Definition` derived-group write per distinct body. The declared set is only
+/// ever widened, and the 4096-entry bound still applies.
+pub(crate) fn with_transfer_assets(
+    declared: &Footprint,
+    prepared: &Prepared,
+) -> Result<Footprint, Refusal> {
+    let entries: Vec<Entry> = prepared
+        .writes
+        .iter()
+        .filter_map(|item| {
+            layer_entry(item).filter(|entry| {
+                matches!(entry.target, Target::Definition(_)) && entry.group == Group::Derived
+            })
+        })
+        .collect();
+    declared.plus(&entries).map_err(Refusal::from)
 }
 
 fn layer_group(group: LayerGroup) -> Group {
@@ -2051,15 +2229,8 @@ pub fn create_plate(
         quantities: outcome.quantities,
     };
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        base_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, base_request, false, schema, &control)?;
     let id_text = outcome.authored.id.to_string();
     let placement = outcome.authored.placement;
     let [qx, qy, qz, qw] = placement.orientation_xyzw;
@@ -2100,11 +2271,7 @@ pub fn create_plate(
                     },
                     material: outcome.authored.material,
                 }),
-                mesh_change(
-                    &outcome.authored.id,
-                    &record.body.solid,
-                    &plate_record(&record),
-                )?,
+                part_mesh_change(&record)?,
             ],
         },
         &control,
@@ -2321,6 +2488,7 @@ mod tests {
             active: true,
             kind: None,
             display_name: None,
+            instanceable: false,
             properties,
             relationships: Vec::new(),
             sources: Vec::new(),

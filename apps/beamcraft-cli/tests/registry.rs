@@ -41,7 +41,10 @@ fn run(args: &[&str]) -> (Option<i32>, String) {
 /// A scratch store directory: with `--store` the generic blob and revision path reaches its command
 /// check, so an undispatched word answers `UNSUPPORTED_COMMAND` instead of an argument refusal.
 fn scratch_store() -> String {
-    let dir = std::env::temp_dir().join(format!("beamcraft-registry-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "beamcraft-registry-{}",
+        crate::support::boot_nonce()
+    ));
     std::fs::create_dir_all(&dir).expect("scratch store");
     dir.to_str().expect("utf-8 path").to_owned()
 }

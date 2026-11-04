@@ -13,7 +13,7 @@
 
 use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
-    Recorded, check_footprint, decode, evaluate_decoded, member_record, mesh_change, prior_op_with,
+    Recorded, check_footprint, decode, evaluate_decoded, part_mesh_change, prior_op_with,
     replay_summary,
 };
 use crate::publication::{PublishRequest, publish_revision};
@@ -24,14 +24,13 @@ use beamcraft_host::revision::{
 use beamcraft_layer_engine::OpenRequest;
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, Element, Placement as LayerPlacement, Prepare, schema_identity,
+    Change, Element, Placement as LayerPlacement, Prepare, schema_identity,
 };
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use session::Refusal;
 use session::pipeline::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, digest_of, host_uuid, load_base,
-    open_base, summarize,
+    Base, RevisionSummary, control, digest_of, host_uuid, load_base, open_base, summarize,
 };
 use steel::engine::committed::{MemberRecord, ids};
 use steel::engine::member::{
@@ -361,7 +360,42 @@ pub fn create_curved_beam(
                 )
                 .into())
             }
-            _ => Ok(None),
+            // A command carried by a batch has no ledger record of its own: the batch
+            // revision's evidence bindings answer for it, and a different request under this
+            // id is reuse exactly as for a standalone operation.
+            beamcraft_host::ledger::Outcome::NotFound => {
+                match crate::command_evidence::carried(store, &op_host)? {
+                    Some((bound, info)) => {
+                        if bound != fingerprint {
+                            return Err(beamcraft_model::command::CommandError::new(
+                                beamcraft_model::error::ErrorCode::OpIdReuse,
+                                "op_id",
+                                "operation was accepted with different arguments",
+                            )
+                            .into());
+                        }
+                        let revision = store.open_at(info.sequence())?;
+                        let old = crate::plate::inspect_revision(&revision)?;
+                        let member = old
+                            .members
+                            .into_iter()
+                            .find(|m| m.authored.id == request.command.member.new_id)
+                            .ok_or_else(|| {
+                                session::pipeline::integrity(
+                                    "carried member is absent from its batch revision",
+                                )
+                            })?;
+                        Ok(Some(CreatedMember {
+                            replayed: true,
+                            member,
+                            revision: old.revision,
+                            footprint: None,
+                        }))
+                    }
+                    None => Ok(None),
+                }
+            }
+            beamcraft_host::ledger::Outcome::Aborted { .. } => Ok(None),
         }
     };
     if let Some(accepted) = replay()? {
@@ -447,15 +481,8 @@ fn finish_member(
         quantities: outcome.quantities,
     };
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        member_base.base_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control(),
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, member_base.base_request, false, schema, &control())?;
     let placement = outcome.authored.placement;
     let [qx, qy, qz, qw] = placement.orientation_xyzw;
     let prepared = author.prepare(
@@ -491,11 +518,7 @@ fn finish_member(
                     },
                     material: outcome.authored.material,
                 }),
-                mesh_change(
-                    &outcome.authored.id,
-                    &record.body.solid,
-                    &member_record(&record),
-                )?,
+                part_mesh_change(&record)?,
             ],
         },
         &control(),

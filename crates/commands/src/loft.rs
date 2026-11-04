@@ -6,22 +6,21 @@
 
 use crate::definition::material_lookup;
 use crate::plate::{
-    DerivedMesh, check_footprint, decode, mesh_change, prior_op_with, replay_summary,
+    DerivedMesh, check_footprint, decode, plain_mesh_change, prior_op_with, replay_summary,
 };
 use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, Element, Placement as LayerPlacement, Prepare, schema_identity,
+    Change, Element, Placement as LayerPlacement, Prepare, schema_identity,
 };
 use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use session::Refusal;
 use session::pipeline::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, control, digest_of, host_uuid, integrity, load_base,
-    open_base, summarize,
+    Base, control, digest_of, host_uuid, integrity, load_base, open_base, summarize,
 };
 use steel::engine::loft_plate::{AuthoredLoftedPlate, LOFT_VOLUME_ALGORITHM, create_lofted_plate};
 use steel::engine::quantity::{StoredRecord, lofted_plate_record};
@@ -146,15 +145,8 @@ pub fn create_lofted(
         &outcome.quantities,
     );
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        open_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, open_request, false, schema, &control)?;
     let placement = outcome.authored.placement;
     let prepared = author.prepare(
         Prepare {
@@ -181,7 +173,7 @@ pub fn create_lofted(
                     },
                     material: outcome.authored.material,
                 }),
-                mesh_change(&outcome.authored.id, &outcome.body.solid, &record)?,
+                plain_mesh_change(&outcome.authored.id, &outcome.body.solid, &record)?,
             ],
         },
         &control,

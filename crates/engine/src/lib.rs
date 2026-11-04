@@ -18,7 +18,8 @@ pub mod annotation;
 pub mod assembly;
 pub mod attribute;
 pub mod bom;
-pub mod class_palette;
+/// The P15 palette moved to the model crate with U08; the engine path stays for its readers.
+pub use beamcraft_model::class_palette;
 pub mod construction;
 pub mod coordinate;
 pub mod drawing;
@@ -41,6 +42,7 @@ pub mod query;
 pub mod rebase;
 pub mod reference;
 pub mod scene;
+pub mod scope;
 pub mod solid;
 pub mod synthetic;
 pub mod view_clipping;

@@ -11,13 +11,10 @@ use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore};
 use beamcraft_layer_engine::Reader;
-use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, Element, Placement, Prepare, schema_identity,
-};
+use beamcraft_layer_engine::authored::{Change, Element, Placement, Prepare, schema_identity};
 use session::Refusal;
 use session::pipeline::{
-    AUTHORED_LAYER, DERIVED_LAYER, RevisionSummary, control, digest_of, host_uuid, integrity,
-    load_base, open_base, summarize,
+    RevisionSummary, control, digest_of, host_uuid, integrity, load_base, open_base, summarize,
 };
 use steel::engine::plate_draft::{
     DraftAdmission, PlateDraft, UnsupportedPlate, admit_create_plate_draft,
@@ -122,15 +119,8 @@ pub fn create_plate_draft(
         plate::inspect_revision(head)?;
     }
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        open_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, open_request, false, schema, &control)?;
     let authored = &plate.authored;
     let prepared = author.prepare(
         Prepare {

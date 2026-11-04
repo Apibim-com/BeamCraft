@@ -76,7 +76,7 @@ impl Fixture {
         fs::create_dir_all(&base).unwrap();
         let root = base.join(format!(
             "e2e-{}-{}",
-            std::process::id(),
+            crate::support::boot_nonce(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&root).unwrap();
@@ -552,12 +552,16 @@ fn two_offline_workspaces_publish_independent_elements_and_lose_nothing() {
         .unwrap()
     {
         let digest = text(entry, "digest");
+        let target = layers.join(text(entry, "name"));
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
         fs::copy(
             f.path("published")
                 .join("blobs")
                 .join(&digest[..2])
                 .join(digest),
-            layers.join(text(entry, "name")),
+            &target,
         )
         .unwrap();
     }
@@ -1017,14 +1021,16 @@ fn bounded_failures_refuse_without_writing() {
     assert_eq!(f.blobs("published"), blobs_before);
     f.rewrite_workspace_blob(&digest, &untouched);
 
-    // A payload beyond the decode cap is refused before anything is read into a model.
-    let oversized = f.plant_workspace_bytes(&[b'x'; 1_048_577]);
+    // A payload beyond the decode cap is refused before anything is read into a model. The
+    // cap follows the manifest scale (U15), so the probe plants one byte past 16 MiB.
+    let oversized = f.plant_workspace_bytes(&[b'x'; 16_777_217]);
     let (code, too_big) = f.deliver(&oversized);
     assert_eq!(code, 2, "{too_big:?}");
     assert_eq!(text(&too_big, "code"), "LIMIT_EXCEEDED");
     assert_eq!(f.head("published").revision(), head.revision());
 
-    // A future payload version is refused, never guessed.
+    // A payload past the old cap but inside the decode bound still reaches the version
+    // check: a future version is refused, never guessed.
     let mut future = untouched.clone();
     future[0] = future[0].wrapping_add(1);
     let planted = f.plant_workspace_bytes(&future);

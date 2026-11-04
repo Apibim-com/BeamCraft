@@ -8,9 +8,12 @@
 //! `cargo test -p beamcraft-layer-engine --test layer_engine -- --exact <suite>::<case>`. A new suite file is listed
 //! here.
 
+mod coordination;
 mod displayed_source;
+mod instancing;
 mod read;
 mod reference;
+mod views;
 
 /// With `autotests = false` a suite file missing from the list above would never build or run,
 /// so every `tests/*.rs` file must be one of its modules.

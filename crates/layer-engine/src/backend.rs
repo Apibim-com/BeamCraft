@@ -509,6 +509,10 @@ fn open_on_stack(request: OpenRequest, control: &Control) -> Result<Candidate, D
             active: prim.is_active().map_err(|_| corrupt())?,
             kind,
             display_name,
+            instanceable: matches!(
+                prim.get_metadata::<sdf::Value>("instanceable"),
+                Ok(Some(sdf::Value::Bool(true)))
+            ),
             properties,
             relationships,
             sources,
@@ -642,12 +646,18 @@ pub(crate) fn load_asset(
                 | "variantSetNames"
                 | "variantChildren"
                 | "relocates"
-                | "instanceable"
                 | "clips"
                 | "timeSamples"
                 | "expressionVariables" => {
                     if !foreign {
                         return Err(unsupported());
+                    }
+                }
+                // U11 instancing metadata: an owned layer may mark a prim instanceable, which
+                // changes prototype sharing in ordinary USD tools, never composition results.
+                "instanceable" => {
+                    if !foreign && !matches!(value.as_ref(), sdf::Value::Bool(_)) {
+                        return Err(corrupt());
                     }
                 }
                 "subLayerOffsets" => {
@@ -681,7 +691,7 @@ pub(crate) fn load_asset(
                     let sdf::Value::ReferenceListOp(list) = value.as_ref() else {
                         return Err(corrupt());
                     };
-                    // No deleted/reordered references or internal arcs in this read profile.
+                    // No deleted/reordered references in this read profile.
                     if (!list.deleted_items.is_empty() || !list.ordered_items.is_empty())
                         && !foreign
                     {
@@ -700,6 +710,19 @@ pub(crate) fn load_asset(
                             && !foreign
                         {
                             return Err(unsupported());
+                        }
+                        if reference.asset_path.is_empty() {
+                            // U11: an internal arc targets a prim of the same layer. It adds no
+                            // external dependency; the target must compose, and a dangling one
+                            // fails in the composer like any other unresolvable owned opinion.
+                            let text = reference.prim_path.to_string();
+                            if !foreign
+                                && (text.len() > 1024
+                                    || text.split('/').filter(|p| !p.is_empty()).count() > b.depth)
+                            {
+                                return Err(limit());
+                            }
+                            continue;
                         }
                         match preflight::anchored(&reference.asset_path, name) {
                             Ok(dependency) => dependencies.push(dependency),
@@ -810,6 +833,35 @@ fn validate_as(value: &sdf::Value, b: Budgets, depth: usize, max: f64) -> Result
                 .chain(&list.ordered_items)
             {
                 if path.to_string().len() > 1024 {
+                    return Err(limit());
+                }
+            }
+            Ok(())
+        }
+        // A token list op is bounded prim metadata such as `apiSchemas` (U08 applies the
+        // MaterialBindingAPI of a classed part); its items are text-bounded.
+        sdf::Value::TokenListOp(list) => {
+            let count = list
+                .explicit_items
+                .len()
+                .saturating_add(list.added_items.len())
+                .saturating_add(list.prepended_items.len())
+                .saturating_add(list.appended_items.len())
+                .saturating_add(list.deleted_items.len())
+                .saturating_add(list.ordered_items.len());
+            if count > b.array_items {
+                return Err(limit());
+            }
+            for token in list
+                .explicit_items
+                .iter()
+                .chain(&list.added_items)
+                .chain(&list.prepended_items)
+                .chain(&list.appended_items)
+                .chain(&list.deleted_items)
+                .chain(&list.ordered_items)
+            {
+                if token.as_str().len() > b.text_bytes {
                     return Err(limit());
                 }
             }

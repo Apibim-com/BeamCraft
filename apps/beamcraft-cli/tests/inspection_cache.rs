@@ -18,7 +18,7 @@ use beamcraft_host::{
 };
 
 use beamcraft_json::Json;
-use beamcraft_model::{error::ErrorCode, id::ElementId, prim::ElementCategory};
+use beamcraft_model::error::ErrorCode;
 
 const PLATE: &str = "019a7bf0-0000-7000-8000-000000000010";
 const PLATE_COPY: &str = "019a7bf0-0000-7000-8000-000000000011";
@@ -259,22 +259,90 @@ fn a_warm_cache_still_refuses_a_tampered_derived_mesh() {
     let store = f.store();
     // Warm this thread's cache with the shape both plates share.
     inspect(&store).unwrap();
-    // The copy's stored box is stretched from 10 to 12 mm while its authored inputs stay those
-    // of the source. Points and extent change together and an axis-aligned box keeps its face
-    // normals, so the layer passes every structural rule: only the kernel comparison can tell.
-    let path = ElementId::parse(PLATE_COPY)
+    // The relabel pair is computed up front: the asset layer carries the body, and the tamper
+    // must relabel the asset and every per-element reference in one pass, in manifest order.
+    let head = store.open().unwrap();
+    let asset_text = String::from_utf8(head.layer_bytes("derived/geometry.usda").unwrap()).unwrap();
+    let block = asset_text.find("def Mesh \"GEO_").unwrap();
+    let label_at = block + "def Mesh \"GEO_".len();
+    let old = asset_text[label_at..label_at + 64].to_owned();
+    let parse_line = |marker: &str| -> String {
+        let at = asset_text.find(marker).unwrap();
+        let end = at + asset_text[at..].find('\n').unwrap();
+        asset_text[at..end].to_owned()
+    };
+    let mut points = Vec::new();
+    for triple in parse_line("point3f[] points = [")
+        .trim_start_matches("point3f[] points = [")
+        .trim_end_matches(']')
+        .split("), (")
+    {
+        let clean = triple.replace(['(', ')', ' '], "");
+        let mut xyz: [f32; 3] = {
+            let parts: Vec<f32> = clean
+                .split(',')
+                .map(|v| v.parse::<f32>().unwrap())
+                .collect();
+            [parts[0], parts[1], parts[2]]
+        };
+        // The textual tamper stretches the thickness coordinate, 10 -> 12.
+        if xyz[2] == 10.0 {
+            xyz[2] = 12.0;
+        }
+        points.push(xyz);
+    }
+    let face_counts: Vec<i32> = parse_line("int[] faceVertexCounts = [")
+        .trim_start_matches("int[] faceVertexCounts = [")
+        .trim_end_matches(']')
+        .split(',')
+        .map(|c| c.trim().parse::<i32>().unwrap())
+        .collect();
+    let indices: Vec<i32> = parse_line("int[] faceVertexIndices = [")
+        .trim_start_matches("int[] faceVertexIndices = [")
+        .trim_end_matches(']')
+        .split(',')
+        .map(|c| c.trim().parse::<i32>().unwrap())
+        .collect();
+    let shape_key = parse_line("custom string bim:shapeKey = \"")
+        .split_once("bim:shapeKey = \"")
         .unwrap()
-        .prim_path(ElementCategory::Part);
-    let marker = format!("\"{}\"", path.rsplit('/').next().unwrap());
+        .1
+        .trim_end_matches('"')
+        .to_owned();
+    let tampered_mesh = beamcraft_layer_engine::authored::Mesh {
+        id: String::new(),
+        shape_key: shape_key.parse().unwrap(),
+        points_mm: points,
+        face_counts,
+        indices,
+        quantities: None,
+        reduced: None,
+        proxy: None,
+        axis: None,
+    };
+    let fresh = beamcraft_layer_engine::authored::mesh_asset_digest(&tampered_mesh)
+        .unwrap()
+        .to_string();
+    // The stored box of the shared body asset is stretched (points shifted) while the authored
+    // inputs stay unchanged. Points and extent change together and an axis-aligned box keeps
+    // its face normals, and the asset's content digest is relabelled to match (U11), so the
+    // layer passes every structural rule: only the kernel comparison can tell. The body lives
+    // in the referenced asset layer (U15); every per-element reference is relabelled with it,
+    // so the naming still recomposes and the kernel comparison is what refuses.
     f.tamper(|name, mut text| {
-        if name == "derived.usda" {
-            let block = text.find(&marker).unwrap();
+        let is_asset_layer = name == "derived/geometry.usda";
+        let is_element_layer = beamcraft_layer_engine::authored::element_layer_id(name).is_some();
+        if is_asset_layer {
+            let block = text.find("def Mesh \"GEO_").unwrap();
             for attribute in ["point3f[] points = [", "float3[] extent = ["] {
                 let start = block + text[block..].find(attribute).unwrap();
                 let end = start + text[start..].find('\n').unwrap();
                 let line = text[start..end].replace(", 10.0)", ", 12.0)");
                 text.replace_range(start..end, &line);
             }
+            text = text.replace(&format!("GEO_{old}"), &format!("GEO_{fresh}"));
+        } else if is_element_layer {
+            text = text.replace(&format!("GEO_{old}"), &format!("GEO_{fresh}"));
         }
         text
     });

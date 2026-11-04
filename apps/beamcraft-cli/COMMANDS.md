@@ -504,7 +504,8 @@ write.
 
 ```text
 create-workspace --store ROOT --workspace-dir DIR [--workspace-id UUID] [--user-id UUID]
-    [--revision-id UUID] [--op-id UUID]
+    [--revision-id UUID] [--op-id UUID] [--scope-code CODE] [--scope-section CODE]
+    [--scope-zone CODE] [--scope-shared true|false]
 ```
 
 ### inspect-workspace
@@ -774,6 +775,85 @@ read.
 levels --store ROOT
 ```
 
+## coordination
+
+### set-project-metadata
+
+write.
+
+```text
+set-project-metadata --store ROOT [--code CODE] [--name TEXT] [--organization TEXT] [--op-id UUID]
+    [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
+```
+
+### define-section
+
+write.
+
+```text
+define-section --store ROOT --code CODE --module TOKENS [--section-id UUID] [--label TEXT]
+    [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID]
+    [--workspace-id UUID]
+```
+
+### define-zone
+
+write.
+
+```text
+define-zone --store ROOT --code CODE [--zone-id UUID] [--label TEXT] [--op-id UUID]
+    [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
+```
+
+### show-project
+
+read.
+
+```text
+show-project --store ROOT [--op-id UUID] [--revision-id UUID] [--actor-id UUID]
+    [--project-id UUID] [--workspace-id UUID]
+```
+
+### connect-project
+
+write.
+
+```text
+connect-project --store ROOT --source-store ROOT --source-project UUID --source-revision UUID
+    --label TEXT [--scope whole|CODE] [--connection-id UUID] [--translation X,Y,Z]
+    [--orientation X,Y,Z,W] [--op-id UUID] [--revision-id UUID] [--actor-id UUID]
+    [--project-id UUID] [--workspace-id UUID]
+```
+
+### update-connection
+
+write.
+
+```text
+update-connection --store ROOT --connection UUID --expected-revision UUID --source-store ROOT
+    --source-project UUID --source-revision UUID [--scope whole|CODE] [--label TEXT]
+    [--translation X,Y,Z] [--orientation X,Y,Z,W] [--op-id UUID] [--revision-id UUID]
+    [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
+```
+
+### remove-connection
+
+write.
+
+```text
+remove-connection --store ROOT --connection UUID [--op-id UUID] [--revision-id UUID]
+    [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
+```
+
+### resolve-connection
+
+read.
+
+```text
+resolve-connection --store ROOT --connection UUID [--op-id UUID] [--revision-id UUID]
+    [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
+```
+
 ## attribute
 
 ### attribute-define
@@ -874,7 +954,7 @@ update-grid --store ROOT --id UUID [--name TEXT] [--origin X,Y] [--rotation DEG]
 read.
 
 ```text
-list-grids --store ROOT
+list-grids --store ROOT [--connection UUID]
 ```
 
 ### resolve-grid-point
@@ -882,7 +962,7 @@ list-grids --store ROOT
 read.
 
 ```text
-resolve-grid-point --store ROOT --grid UUID|TEXT --labels U,V
+resolve-grid-point --store ROOT --grid UUID|TEXT|CONN:UUID --labels U,V
 ```
 
 ### resolve-grid-plane
@@ -1089,15 +1169,15 @@ list-views --file FILE [--store ROOT]
 write.
 
 ```text
-save-view --file FILE [--name TEXT] [--new-id UUID] [--store ROOT] [--target X,Y,Z] [--yaw RAD]
-    [--pitch RAD] [--parallel xy|xz|yz] [--offset MM] [--plane OX,OY,OZ,XX,XY,XZ,YX,YY,YZ]
-    [--two-points X,Y,Z;X,Y,Z] [--work-plane OX,OY,OZ,XX,XY,XZ,YX,YY,YZ]
-    [--three-points X,Y,Z;X,Y,Z;X,Y,Z] [--grid SELECTOR] [--axis LABEL|ID]
-    [--u-axes none|first|last|all] [--v-axes none|first|last|all] [--u-prefix TEXT]
-    [--v-prefix TEXT] [--level NAME|ID] [--levels first|last|all] [--element ID] [--assembly ID]
-    [--side front|back|top|bottom|end|3d|four] [--ray-origin X,Y,Z] [--ray-direction X,Y,Z]
-    [--edge X,Y,Z;X,Y,Z] [--projection orthographic|perspective] [--span MM]
-    [--depth none|ABOVE,BELOW] [--rotation Z_DEG,X_DEG]
+save-view --file FILE [--name TEXT] [--new-id UUID] [--author TEXT] [--comment TEXT]
+    [--store ROOT] [--target X,Y,Z] [--yaw RAD] [--pitch RAD] [--parallel xy|xz|yz] [--offset MM]
+    [--plane OX,OY,OZ,XX,XY,XZ,YX,YY,YZ] [--two-points X,Y,Z;X,Y,Z]
+    [--work-plane OX,OY,OZ,XX,XY,XZ,YX,YY,YZ] [--three-points X,Y,Z;X,Y,Z;X,Y,Z] [--grid SELECTOR]
+    [--axis LABEL|ID] [--u-axes none|first|last|all] [--v-axes none|first|last|all]
+    [--u-prefix TEXT] [--v-prefix TEXT] [--level NAME|ID] [--levels first|last|all] [--element ID]
+    [--assembly ID] [--side front|back|top|bottom|end|3d|four] [--ray-origin X,Y,Z]
+    [--ray-direction X,Y,Z] [--edge X,Y,Z;X,Y,Z] [--projection orthographic|perspective]
+    [--span MM] [--depth none|ABOVE,BELOW] [--rotation Z_DEG,X_DEG]
     [--render-mode wireframe|transparent|grey|shaded|selected] [--grids true|false]
     [--hidden-kinds none|KIND,...] [--work-area none|MM,MM,MM,MM,MM,MM] [--color default|R,G,B]
     [--opacity 0..1] [--folder PATH] [--favorite true|false] [--default true|false]
@@ -1210,6 +1290,28 @@ clip-view --plates N [--cut X,Y,Z,X,Y,Z;...] [--area MM,MM,MM,MM,MM,MM]
 
 ## pick
 
+### pick
+
+read.
+
+```text
+pick --store ROOT --targets face,edge,vertex [--origin X,Y,Z] [--direction X,Y,Z] [--t-max MM]
+    [--include-backfaces true|false] [--point X,Y,Z] [--radius MM] [--max-hits N]
+    [--exclude KIND,...]
+```
+
+### snap
+
+read.
+
+```text
+snap --store ROOT --point X,Y,Z [--radius MM] [--kinds KIND,...] [--max-hits N]
+    [--plane OX,OY,OZ,XX,XY,XZ,YX,YY,YZ] [--origin X,Y,Z] [--direction X,Y,Z] [--aperture F]
+    [--cursor-radius MM] [--reference-snaps true|false] [--geometry-snaps true|false]
+    [--grid-snaps true|false] [--construction-snaps true|false] [--grids UUID,...]
+    [--nearest true|false]
+```
+
 ### lookup-feature
 
 read.
@@ -1284,8 +1386,8 @@ write.
 ```text
 create-drawing --store ROOT --document-dir DIR --op-id UUID --revision-id UUID --actor-id UUID
     --id UUID --drawing-id UUID --view-id UUID --dimension-id UUID --anchor-a FEATURE_ID
-    --anchor-b FEATURE_ID [--name TEXT] [--plane front|top|right] [--scale N] [--origin X,Y]
-    [--offset MM] [--decimals 0..255]
+    --anchor-b FEATURE_ID [--name TEXT] [--view-title TEXT] [--plane front|top|right] [--scale N]
+    [--origin X,Y] [--offset MM] [--decimals 0..255]
 ```
 
 ### refresh-drawing
@@ -1296,7 +1398,8 @@ write.
 refresh-drawing --store ROOT --document-dir DIR --expected-head UUID --op-id UUID
     --revision-id UUID --actor-id UUID --id UUID --drawing-id UUID --view-id UUID
     --dimension-id UUID --anchor-a FEATURE_ID --anchor-b FEATURE_ID [--name TEXT]
-    [--plane front|top|right] [--scale N] [--origin X,Y] [--offset MM] [--decimals 0..255]
+    [--view-title TEXT] [--plane front|top|right] [--scale N] [--origin X,Y] [--offset MM]
+    [--decimals 0..255]
 ```
 
 ### edit-drafting
@@ -1314,7 +1417,7 @@ write.
 
 ```text
 edit-views --document-dir DIR --expected-head UUID --op-id UUID --revision-id UUID --actor-id UUID
-    --placed-view SPEC
+    --placed-view SPEC [--placed-section SPEC] [--placed-detail SPEC]
 ```
 
 ### edit-sheet
@@ -1369,8 +1472,8 @@ write.
 
 ```text
 create-project --parent DIR --name TEXT [--unique-name true|false] [--config-dir DIR]
-    [--environment ID] [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID]
-    [--workspace-id UUID]
+    [--environment ID] [--code CODE] [--sections LIST] [--op-id UUID] [--revision-id UUID]
+    [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
 ```
 
 ### list-project
@@ -1389,4 +1492,38 @@ read.
 
 ```text
 commands
+```
+
+## session
+
+### session
+
+read.
+
+```text
+session --store ROOT
+```
+
+### batch-open
+
+read.
+
+```text
+batch-open
+```
+
+### batch-commit
+
+write.
+
+```text
+batch-commit [--op-id UUID] [--revision-id UUID] [--timeout-ms MS] [--cancel-after-ms MS]
+```
+
+### batch-abort
+
+read.
+
+```text
+batch-abort
 ```

@@ -31,7 +31,9 @@ pub const AUTHORED_LAYER: &str = "authored.usda";
 /// Virtual name of the derived (geometry) layer.
 pub const DERIVED_LAYER: &str = "derived.usda";
 
-const EMPTY_LAYER: &str = "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n)\n";
+/// The empty authored or derived layer of a first revision: a USD header with millimetre
+/// units and Z up, no prims. The CLI's first-revision writer reads it from here.
+pub const EMPTY_LAYER: &str = "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n)\n";
 
 /// The root layer of the first revision of a project. It records the ProjectId (D1) in its
 /// `customLayerData`, once: later revisions keep it, because the layer engine preserves the other
@@ -191,6 +193,7 @@ pub fn summarize_manifest(manifest: &Manifest, digest: ContentDigest) -> Revisio
 }
 
 /// The layers a new revision is authored over: the verified head, or the empty initial model.
+#[derive(Debug, Clone)]
 pub struct Base {
     /// The project the layers belong to.
     pub project: String,
@@ -250,6 +253,14 @@ pub fn load_base(
     workspace: &WorkspaceId,
 ) -> Result<(Option<Revision>, Base), Refusal> {
     let claim = CLAIMED_PROJECT.with(Cell::get);
+    // While a draft batch is open the base comes from the draft's accumulated layers, not
+    // from the store: nothing between the brackets touches the disk, and the batch's commit
+    // later checks the pinned base at the root exactly as this function would.
+    if crate::draft::is_open() {
+        let base = crate::draft::with(|draft| draft.base_for(claim))
+            .ok_or_else(|| integrity("a draft batch vanished while a command ran"))??;
+        return Ok((None, base));
+    }
     let head = match store.open() {
         Ok(revision) => Some(revision),
         Err(RevisionError::NoRevision) => None,
