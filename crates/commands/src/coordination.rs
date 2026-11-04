@@ -46,9 +46,13 @@ use std::path::{Path, PathBuf};
 /// Prefix of the pinned source layer entries of one coordination revision.
 pub const PIN_PREFIX: &str = "pins/";
 
-/// The role of a first-revision owned layer: only the derived layer is derived.
+/// The role of a first-revision owned layer: the derived stack, the referenced geometry-asset
+/// layer and, since U15, every per-element derived layer are derived.
 fn role_of(name: &str) -> LayerRole {
-    if name == "derived.usda" {
+    if name == "derived.usda"
+        || name == beamcraft_layer_engine::authored::GEOMETRY_ASSET_LAYER
+        || beamcraft_layer_engine::authored::element_layer_id(name).is_some()
+    {
         LayerRole::Derived
     } else {
         LayerRole::Authored

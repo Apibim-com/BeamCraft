@@ -30,6 +30,14 @@ use beamcraft_json::{Json, Limits};
 /// The owned layers, strongest first, exactly as the writer composes a revision.
 const OWNED_STACK: [&str; 3] = ["root.usda", "authored.usda", "derived.usda"];
 
+/// Whether one derived-stack entry names a U15 per-element derived layer.
+fn entry_layer_shape(entry: &str) -> bool {
+    entry
+        .strip_prefix("derived/")
+        .and_then(|rest| rest.strip_suffix(".usda"))
+        .is_some_and(|hex| hex.len() == 32 && hex.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
 /// Bounded text limits for one layer file.
 const MAX_LAYER_BYTES: usize = 8 * 1024 * 1024;
 const MAX_DEPTH: usize = 32;
@@ -803,13 +811,20 @@ impl Parser {
                 spec.display_name = Some(self.quoted()?);
                 Ok(())
             }
-            // U11: an instanceable prim references a shared asset of the same layer.
+            // U11: an instanceable prim references a shared asset. The U15 form names the
+            // asset layer explicitly (`@geometry.usda@`), composing it from the referencing
+            // file's directory; the arc still composes from the owned stack.
             "references" => {
+                let asset = if self.peek() == Some(b'@') {
+                    self.asset()?
+                } else {
+                    String::new()
+                };
                 let target = self.prim_path_ref()?;
                 if spec.reference.is_some() {
                     return Err(self.error("more than one reference arc"));
                 }
-                spec.reference = Some((String::new(), target));
+                spec.reference = Some((asset, target));
                 Ok(())
             }
             "instanceable" => {
@@ -1050,7 +1065,44 @@ impl Stage {
         }
         for sub in sublayers.iter().take(OWNED_STACK.len() - 1) {
             let layer = stage.load(sub, false);
+            // U15: the derived stack lists one file per element, `derived/<32 hex>.usda`,
+            // composed weaker than the derived layer itself.
+            if sub == OWNED_STACK[2] {
+                let mut problems = stage.problems.borrow_mut();
+                if layer.sublayers.len() > 70_000 {
+                    problems.push(format!(
+                        "derived.usda lists {} element layers",
+                        layer.sublayers.len()
+                    ));
+                }
+                for entry in layer.sublayers.iter().take(70_000) {
+                    // The stack carries the referenced asset layer and one file per element,
+                    // all named from the stage root (`derived/...`).
+                    let ok = entry == "derived/geometry.usda" || entry_layer_shape(entry);
+                    if !ok {
+                        problems.push(format!(
+                            "derived.usda names {entry:?}, expected derived/<32 hex>.usda or derived/geometry.usda"
+                        ));
+                    }
+                }
+            }
             stage.layers.borrow_mut().push((sub.clone(), layer, false));
+        }
+        {
+            let derived = stage
+                .layers
+                .borrow()
+                .iter()
+                .find(|(name, _, _)| name == OWNED_STACK[2])
+                .map(|(_, l, _)| l.clone())
+                .unwrap_or_default();
+            for entry in derived.sublayers.iter().take(70_000) {
+                let layer = stage.load(entry, false);
+                stage
+                    .layers
+                    .borrow_mut()
+                    .push((entry.clone(), layer, false));
+            }
         }
         stage.resolve_arcs();
         stage
@@ -1114,12 +1166,15 @@ impl Stage {
         for spec in &specs {
             prim.absorb(spec);
         }
-        // U11: an internal reference composes the shared asset's opinions under the prim's own;
-        // type and kind keep their local answers, the buffers come from the asset.
-        if let Some((_, target)) = specs
-            .iter()
-            .find_map(|s| s.reference.as_ref().filter(|(asset, _)| asset.is_empty()))
-        {
+        // U11: an instanceable reference composes the shared asset's opinions under the prim's
+        // own; type and kind keep their local answers, the buffers come from the asset. The
+        // U15 external form (`@geometry.usda@`) targets the asset layer sublayered into the
+        // owned stack, so the target still resolves from the owned specs.
+        if let Some((_, target)) = specs.iter().find_map(|s| {
+            s.reference
+                .as_ref()
+                .filter(|(asset, _)| asset.is_empty() || asset == "geometry.usda")
+        }) {
             match self.owned_specs(target).into_iter().next() {
                 Some(asset) => prim.absorb(&asset),
                 None => self.problem(format!("{path}: the internal arc lacks {target:?}")),
@@ -1140,7 +1195,9 @@ impl Stage {
 
     /// Resolves every reference arc the owned layers author: at most one foreign layer, whose
     /// subtree is keyed by its composed path. Order-independent, so lookups below the arc
-    /// holder compose the same way whenever they happen.
+    /// holder compose the same way whenever they happen. The U11 internal arcs compose inside
+    /// the owned stack (see [`Self::prim`]); the U15 element-file arcs name the asset layer
+    /// relative to the referencing file's own directory and are skipped here.
     fn resolve_arcs(&self) {
         let arcs: Vec<(String, String, String)> = self
             .layers
@@ -1149,10 +1206,12 @@ impl Stage {
             .filter(|(_, _, foreign)| !foreign)
             .flat_map(|(_, layer, _)| {
                 layer.specs.iter().filter_map(|s| {
-                    // U11 internal arcs compose inside the owned stack; only an external asset
-                    // is baked as a foreign layer here.
                     s.reference.clone().and_then(|(asset, target)| {
-                        (!asset.is_empty()).then(|| (s.path.clone(), asset, target))
+                        // Only an external asset path that leaves the owned stack (the R01
+                        // wrapper form) is baked as a foreign layer; element-file arcs
+                        // (`geometry.usda`) compose from owned layers in `prim`.
+                        (!asset.is_empty() && !asset.starts_with("geometry"))
+                            .then(|| (s.path.clone(), asset, target))
                     })
                 })
             })
@@ -1557,9 +1616,10 @@ fn check_element(stage: &Stage, entry: &Json, findings: &mut Findings) -> Option
     findings.check(
         geometry_specs.iter().any(|s| {
             matches!(&s.reference, Some((asset, target))
-                if asset.is_empty() && target.starts_with("/World/Definitions/Geometry/GEO_"))
+                if (asset.is_empty() || asset == "geometry.usda")
+                    && target.starts_with("/World/Definitions/Geometry/GEO_"))
         }),
-        format!("{geometry_path}: no internal reference to a shared geometry asset"),
+        format!("{geometry_path}: no reference to a shared geometry asset"),
     );
     let points = mesh.v3s("points");
     let counts = mesh.nums("faceVertexCounts");
