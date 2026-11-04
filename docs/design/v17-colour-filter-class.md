@@ -11,7 +11,7 @@ built-in **Part classes** preset (one opaque rule per `DEFAULT_CLASS_PALETTE` en
 0 to 7, P15) plus the user's own sets. *Show colours* evaluates the picked set against the
 store head and colours every matching element; *Hide colours* clears the overlay. A legend
 lists the applied set's rules with their colour swatch, field/operator/value line and
-transparency. Colours multiply the shaded base colour (also in wireframe, which shares the
+transparency. Colours replace the shaded base colour (keeping a little of the face shading so the shape reads; a white tint keeps the model colour exactly) (also in wireframe, which shares the
 fragment entry); a rule's transparency scales the transparent mode's opacity. Grey mode stays
 neutral by design, and the selected-only draw and the ghost preview are never tinted.
 

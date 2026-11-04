@@ -87,4 +87,67 @@ def Scope "Presets"
         string steel:preset:material = "Steel"
         double steel:preset:thicknessMm = 6
     }
+
+    def Scope "Filter_Beams"
+    {
+        token steel:preset:kind = "filter"
+        string steel:preset:name = "Beams"
+        string[] steel:preset:conditions = ["type eq beam"]
+    }
+
+    def Scope "Filter_Columns"
+    {
+        token steel:preset:kind = "filter"
+        string steel:preset:name = "Columns"
+        string[] steel:preset:conditions = ["type eq column"]
+    }
+
+    def Scope "Filter_Plates"
+    {
+        token steel:preset:kind = "filter"
+        string steel:preset:name = "Plates"
+        string[] steel:preset:conditions = ["type eq plate"]
+    }
+
+    def Scope "Filter_Steel_parts"
+    {
+        token steel:preset:kind = "filter"
+        string steel:preset:name = "Steel parts"
+        token steel:preset:match = "any"
+        string[] steel:preset:conditions = ["type eq beam", "type eq column", "type eq plate"]
+    }
+
+    def Scope "View_3D_by_type"
+    {
+        token steel:preset:kind = "view"
+        string steel:preset:name = "3D by part type"
+        token steel:preset:projection = "perspective"
+        token steel:preset:renderMode = "shaded"
+        string[] steel:preset:overrides = ["Columns|show|0.85,0.45,0.2|0", "Beams|show|0.25,0.55,0.85|0", "Plates|show|0.55,0.7,0.35|0"]
+    }
+
+    def Scope "View_Plan"
+    {
+        token steel:preset:kind = "view"
+        string steel:preset:name = "Plan"
+        double[] steel:preset:depthMm = [1000, 1000]
+        token steel:preset:renderMode = "shaded"
+    }
+
+    def Scope "View_Plan_columns_faded"
+    {
+        token steel:preset:kind = "view"
+        string steel:preset:name = "Plan, columns faded"
+        double[] steel:preset:depthMm = [1000, 1000]
+        token steel:preset:renderMode = "transparent"
+        string[] steel:preset:overrides = ["Columns|show|0.6,0.6,0.6|0.7"]
+    }
+
+    def Scope "View_Section"
+    {
+        token steel:preset:kind = "view"
+        string steel:preset:name = "Section"
+        double[] steel:preset:depthMm = [500, 500]
+        token steel:preset:renderMode = "shaded"
+    }
 }

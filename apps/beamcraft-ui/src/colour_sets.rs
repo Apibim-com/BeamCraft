@@ -259,9 +259,13 @@ fn limits() -> Limits {
     }
 }
 
-/// The display colour of everything a set matched: element id to tint, first rule wins.
+/// The display colour of everything a set matched: element id to tint, first rule wins. A
+/// view's filter overrides also hide elements: those are not drawn at all.
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct Overlay(BTreeMap<ElementId, [f32; 4]>);
+pub struct Overlay(BTreeMap<ElementId, [f32; 4]>, BTreeSet<ElementId>);
+
+/// The elements one filter matched and the tint it gives them (`None` hides them).
+pub type OverrideMatch = (std::sync::Arc<BTreeSet<ElementId>>, Option<[f32; 4]>);
 
 /// The neutral tint: no overlay at all, the pipeline's own colours.
 pub const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
@@ -275,7 +279,38 @@ impl Overlay {
                 map.entry(id).or_insert(tint);
             }
         }
-        Self(map)
+        Self(map, BTreeSet::new())
+    }
+
+    /// The overlay of a view's filter overrides in order, over `base` (the colour set shown in
+    /// the window, if any): an element takes the first override whose filter matched it, a
+    /// `None` tint hides it, and an element no override matched keeps its `base` colour.
+    pub fn from_overrides(matches: Vec<OverrideMatch>, base: Option<&Self>) -> Self {
+        let mut map = BTreeMap::new();
+        let mut hidden = BTreeSet::new();
+        for (ids, tint) in matches {
+            for id in ids.iter() {
+                if map.contains_key(id) || hidden.contains(id) {
+                    continue;
+                }
+                match tint {
+                    Some(tint) => {
+                        map.insert(*id, tint);
+                    }
+                    None => {
+                        hidden.insert(*id);
+                    }
+                }
+            }
+        }
+        if let Some(base) = base {
+            for (id, tint) in &base.0 {
+                if !hidden.contains(id) {
+                    map.entry(*id).or_insert(*tint);
+                }
+            }
+        }
+        Self(map, hidden)
     }
 
     /// The tint of `id`: the matching rule's colour, or [`WHITE`].
@@ -283,14 +318,24 @@ impl Overlay {
         self.0.get(&id).copied().unwrap_or(WHITE)
     }
 
+    /// Whether `id` is hidden by a view's filter override.
+    pub fn hides(&self, id: ElementId) -> bool {
+        self.1.contains(&id)
+    }
+
+    /// The elements hidden by a view's filter overrides.
+    pub fn hidden(&self) -> &BTreeSet<ElementId> {
+        &self.1
+    }
+
     /// How many elements carry a colour.
     pub fn len(&self) -> usize {
         self.0.len()
     }
 
-    /// Whether nothing is coloured.
+    /// Whether nothing is coloured or hidden.
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.0.is_empty() && self.1.is_empty()
     }
 }
 
@@ -339,6 +384,33 @@ pub fn evaluate(
     }
     let _ = std::fs::remove_dir_all(&dir);
     Ok(Overlay::from_rules(matches))
+}
+
+/// Every element one V14 rule matches on the store head: the same paged `query-elements` a
+/// set's rule runs, its rule file in a directory of its own that is removed again.
+pub fn matching_ids(
+    cli: &Path,
+    store: &Path,
+    rule: &Json,
+    cancel: &AtomicBool,
+    stats: &Stats,
+) -> Result<Vec<ElementId>, String> {
+    let evaluation = EVALUATIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir =
+        std::env::temp_dir().join(format!("beamcraft-vf-{}-{evaluation}", std::process::id()));
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("the rule directory could not be created ({e})"))?;
+    let path = dir.join("rule.json");
+    let result = rule
+        .encode(&limits())
+        .map_err(|e| format!("the filter rule does not encode ({e:?})"))
+        .and_then(|bytes| {
+            std::fs::write(&path, bytes)
+                .map_err(|e| format!("the rule file could not be written ({e})"))
+        })
+        .and_then(|()| query_all(cli, store, &path, cancel, stats));
+    let _ = std::fs::remove_dir_all(&dir);
+    result
 }
 
 /// Counting the evaluations of this process, so two jobs never share one rule directory.

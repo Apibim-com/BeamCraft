@@ -280,6 +280,7 @@ fn a_click_selects_what_is_on_screen_with_one_element_lookup() {
         &stats,
         SelectionFilter::ALL,
         None,
+        None,
     )
     .unwrap()
     .unwrap();
@@ -302,6 +303,7 @@ fn a_click_selects_what_is_on_screen_with_one_element_lookup() {
             &cancel,
             &stats,
             SelectionFilter::ALL,
+            None,
             None,
         )
         .unwrap()

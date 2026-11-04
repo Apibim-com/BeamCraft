@@ -710,12 +710,21 @@ impl App {
                         });
                     });
                     group(ui, "Windows", &mut |ui| {
-                        if tool_button(ui, Icon::Copy, "New view window", false, self.views.panes.len() < crate::views::MAX_WINDOWS).clicked() {
-                            self.open_pane(self.views.active());
+                        if tool_button(ui, Icon::Copy, "Open beside", false, has_pane && self.views.panes.len() < crate::views::MAX_WINDOWS).on_hover_text("Open the active view again in a new group on the right").clicked() {
+                            self.open_beside(self.views.active());
+                        }
+                        if tool_button(ui, Icon::Close, "Close inactive", false, self.views.panes.len() > 1).on_hover_text("Close every view tab but the active one").clicked() {
+                            self.close_inactive();
+                        }
+                        if tool_button(ui, Icon::ViewFrame, "Tab views", false, has_pane).on_hover_text("Every open view as a tab of one group").clicked() {
+                            self.arrange(Arrange::Tabs);
+                        }
+                        if tool_button(ui, Icon::Arrange, "Tile views", false, self.views.panes.len() > 1).on_hover_text("Every open view side by side in a grid").clicked() {
+                            self.arrange(Arrange::Tile);
                         }
                         dropdown_button(ui, Icon::Arrange, "Arrange", has_pane, |ui| {
                             for (how, label) in [
-                                (Arrange::Cascade, "Cascade"),
+                                (Arrange::Tabs, "Tabs"),
                                 (Arrange::Tile, "Tile"),
                                 (Arrange::TileHorizontal, "Tile horizontal"),
                                 (Arrange::TileVertical, "Tile vertical"),
@@ -751,6 +760,13 @@ impl App {
                         }
                     });
                     group(ui, "Colour", &mut |ui| {
+                        if tool_button(ui, Icon::Select, "Filters", self.views.filter_edit.is_some(), true)
+                            .on_hover_text("Make and edit the filters a view shows, colours or hides")
+                            .clicked()
+                        {
+                            let first = self.filter_choices().first().map(|f| f.name.clone());
+                            self.open_filter_editor(first);
+                        }
                         if tool_button(ui, Icon::Block, "Colour", self.bench == Bench::Colour, true)
                             .clicked()
                         {
@@ -1069,12 +1085,13 @@ impl App {
         for label in [
             "View properties",
             "3D / plane view",
-            "New view window",
-            "Cascade view windows",
-            "Tile view windows",
-            "Tile view windows horizontally",
-            "Tile view windows vertically",
-            "Maximize or restore the view window",
+            "Open the view beside",
+            "Close inactive views",
+            "Tab views",
+            "Tile views",
+            "Tile views horizontally",
+            "Tile views vertically",
+            "Maximize or restore the view group",
             "Next open view",
         ] {
             if label.to_lowercase().contains(&query)
@@ -1085,12 +1102,13 @@ impl App {
                 match label {
                     "View properties" => self.show_view_properties(),
                     "3D / plane view" => self.toggle_view_plane(),
-                    "New view window" => self.open_pane(self.views.active()),
-                    "Cascade view windows" => self.arrange(Arrange::Cascade),
-                    "Tile view windows" => self.arrange(Arrange::Tile),
-                    "Tile view windows horizontally" => self.arrange(Arrange::TileHorizontal),
-                    "Tile view windows vertically" => self.arrange(Arrange::TileVertical),
-                    "Maximize or restore the view window" => self.arrange(Arrange::ToggleMaximize),
+                    "Open the view beside" => self.open_beside(self.views.active()),
+                    "Close inactive views" => self.close_inactive(),
+                    "Tab views" => self.arrange(Arrange::Tabs),
+                    "Tile views" => self.arrange(Arrange::Tile),
+                    "Tile views horizontally" => self.arrange(Arrange::TileHorizontal),
+                    "Tile views vertically" => self.arrange(Arrange::TileVertical),
+                    "Maximize or restore the view group" => self.arrange(Arrange::ToggleMaximize),
                     _ => {
                         if let Some(next) = self.views.next_open() {
                             self.activate_view(Some(next));

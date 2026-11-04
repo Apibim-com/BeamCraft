@@ -44,6 +44,7 @@ pub mod scene;
 pub mod solid;
 pub mod synthetic;
 pub mod view_clipping;
+pub mod view_filter;
 pub mod views;
 pub mod work_plane;
 

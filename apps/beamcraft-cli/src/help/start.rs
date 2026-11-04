@@ -14,7 +14,7 @@ pub(super) const HELP: &str = concat!(
     "the project folder (environment/), so a later --profile NAME resolves against it without any ",
     "option and defines the profile in the model on first use (definitions lists the rest as ",
     "environment_profiles; environment_presets lists the part presets the environment declares, ",
-    "the default name, class, material, profile or thickness of a new beam, column or plate), and publishes the default materials Steel_Undefined (density 0, a known ",
+    "the default name, class, material, profile or thickness of a new beam, column or plate; environment_view_filters and environment_view_presets list the view filters and view presets it declares, which a view can be filled from), and publishes the default materials Steel_Undefined (density 0, a known ",
     "zero mass for auxiliary parts) and Steel (7850 kg/m3); an unknown or unreadable environment is ",
     "refused and the folder is removed again); list-project --dir DIR (the store folders ",
     "directly inside DIR by name, read-only; created_ms is the ProjectId timestamp, ",

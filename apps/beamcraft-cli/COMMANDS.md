@@ -1101,7 +1101,7 @@ save-view --file FILE [--name TEXT] [--new-id UUID] [--store ROOT] [--target X,Y
     [--render-mode wireframe|transparent|grey|shaded|selected] [--grids true|false]
     [--hidden-kinds none|KIND,...] [--work-area none|MM,MM,MM,MM,MM,MM] [--color default|R,G,B]
     [--opacity 0..1] [--folder PATH] [--favorite true|false] [--default true|false]
-    [--copy-from VIEW]
+    [--copy-from VIEW] [--preset NAME] [--overrides none|SPEC;...]
 ```
 
 ### update-view
@@ -1119,7 +1119,7 @@ update-view --file FILE --view ID|NAME [--name TEXT] [--store ROOT] [--target X,
     [--render-mode wireframe|transparent|grey|shaded|selected] [--grids true|false]
     [--hidden-kinds none|KIND,...] [--work-area none|MM,MM,MM,MM,MM,MM] [--color default|R,G,B]
     [--opacity 0..1] [--folder PATH] [--favorite true|false] [--default true|false]
-    [--copy-from VIEW]
+    [--copy-from VIEW] [--preset NAME] [--overrides none|SPEC;...]
 ```
 
 ### remove-view
@@ -1136,6 +1136,47 @@ read.
 
 ```text
 apply-view --file FILE --view ID|NAME [--store ROOT]
+```
+
+### list-view-filters
+
+read.
+
+```text
+list-view-filters --file FILE [--store ROOT]
+```
+
+### save-view-filter
+
+write.
+
+```text
+save-view-filter --file FILE --name TEXT [--store ROOT] [--rename-from NAME] [--match all|any]
+    [--conditions none|ROW;...]
+```
+
+### remove-view-filter
+
+write.
+
+```text
+remove-view-filter --file FILE --name NAME [--store ROOT]
+```
+
+### save-view-preset
+
+write.
+
+```text
+save-view-preset --file FILE --name TEXT --from-view ID|NAME [--store ROOT]
+```
+
+### remove-view-preset
+
+write.
+
+```text
+remove-view-preset --file FILE --name NAME [--store ROOT]
 ```
 
 ## annotation
