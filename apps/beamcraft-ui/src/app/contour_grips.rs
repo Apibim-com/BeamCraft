@@ -1,17 +1,22 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! V18 slice 1: contour grips on the selected flat plate. The selected plate's authored
+//! V18: the contour edit handles of the selected flat plate. The selected plate's authored
 //! contour ([`PlateContour`], read from the same `inspect-elements` reply as the rest of the
-//! panel) draws a vertex grip on every vertex and a grip on the middle of every edge; dragging
-//! a vertex grip moves that vertex, dragging an edge grip inserts a sharp vertex there, and an
-//! Alt-click on a vertex grip deletes it. Every grip commits the same A12.3 command a user
-//! types ([`ContourEdit`]), so the drag is one CLI command, one revision and one undo unit, and
-//! the saved result is the CLI's by construction.
+//! panel) draws a vertex grip on every vertex — hollow once a corner treatment is authored
+//! there — a grip on the middle of every edge, and the edges themselves take a drag. The
+//! gestures: dragging a vertex grip moves that vertex, dragging an edge's middle grip inserts
+//! a sharp vertex there, an Alt-click on a vertex grip deletes it, a confirming click on a
+//! vertex grip opens the corner treatment editor, and dragging the edge line translates the
+//! whole edge. Every gesture commits the same A12.3 command a user types ([`ContourEdit`]), so
+//! one gesture is one CLI command, one revision and one undo unit, and the saved result is the
+//! CLI's by construction.
 //!
 //! The preview during a drag is the same point arithmetic the CLI edit performs; the commit
 //! happens once, on release. A drag that never leaves the grip (a confirming click) commits
-//! nothing. Corner treatments are not drawn or edited here; the corner editor is a later slice.
+//! nothing; a confirming click on a vertex opens the corner editor instead. The grips and the
+//! corner editor are dormant outside the Select bench and while a creation tool or a view pick
+//! owns the pointer, so no other picker loses its clicks.
 
 use super::{App, field, workbench};
 use crate::command;
@@ -32,8 +37,11 @@ use steel::model::command::CornerTreatment;
 struct Drag {
     /// The grip the drag began on.
     grip: Grip,
-    /// The drag's in-plane point, plate-local millimetres.
+    /// The drag's in-plane point, plate-local millimetres; for an edge-line drag the delta
+    /// `to - from` is what the release commits.
     to: [f64; 2],
+    /// The in-plane point the grab named; an edge-line drag moves by the difference.
+    from: [f64; 2],
 }
 
 /// A press over a grip that has not yet become a drag: a confirming click commits nothing.
@@ -50,8 +58,11 @@ struct Pending {
 enum Grip {
     /// The contour vertex at this position.
     Vertex(usize),
-    /// The edge at this position (it joins vertices `i` and `i + 1`).
+    /// The edge at this position (it joins vertices `i` and `i + 1`), by its middle grip.
     Edge(usize),
+    /// The edge at this position, by its drawn line: the drag translates both of its end
+    /// vertices (`move-plate-edge`).
+    EdgeLine(usize),
 }
 
 /// What the corner editor authors on one vertex.
@@ -166,6 +177,10 @@ fn editor_treatment(editor: &CornerEditor) -> Result<Option<CornerTreatment>, St
 /// A screen hit radius in points: a press within this distance of a grip takes the grip.
 const GRIP_RADIUS: f32 = 8.0;
 
+/// A hit radius in points for the edge line itself, narrower than a grip's: the line takes the
+/// press only where no grip does.
+const EDGE_LINE_RADIUS: f32 = 6.0;
+
 /// A press becomes a drag once the pointer moves this far, so a confirming click never runs a
 /// command.
 const PROMOTE_DISTANCE: f32 = 4.0;
@@ -260,7 +275,12 @@ fn project(
 
 /// The grip under `pos`, if any: the nearest grip inside the radius wins, and a vertex grip
 /// wins over an edge middle at the same spot, so a short edge's grips never fight.
-fn grip_at(vertices: &[(usize, Pos2)], edges: &[(usize, Pos2)], pos: Pos2) -> Option<Grip> {
+fn grip_at(
+    vertices: &[(usize, Pos2)],
+    edges: &[(usize, Pos2)],
+    count: usize,
+    pos: Pos2,
+) -> Option<Grip> {
     let nearest = |points: &[(usize, Pos2)]| {
         points
             .iter()
@@ -271,7 +291,37 @@ fn grip_at(vertices: &[(usize, Pos2)], edges: &[(usize, Pos2)], pos: Pos2) -> Op
     if let Some(vertex) = nearest(vertices) {
         return Some(Grip::Vertex(vertex));
     }
-    nearest(edges).map(Grip::Edge)
+    if let Some(edge) = nearest(edges) {
+        return Some(Grip::Edge(edge));
+    }
+    // No grip under the press: the edge line itself takes it, where it runs within its own
+    // (narrower) radius, so dragging the line moves the edge.
+    let at = |index: usize| vertices.iter().find(|(i, _)| *i == index).map(|(_, p)| *p);
+    let mut line: Option<(usize, f32)> = None;
+    for (i, a) in vertices {
+        let b = at((i + 1) % count);
+        if let Some(b) = b {
+            let distance = segment_distance(*a, b, pos);
+            if distance <= EDGE_LINE_RADIUS && line.is_none_or(|(_, best)| distance < best) {
+                line = Some((*i, distance));
+            }
+        }
+    }
+    line.map(|(i, _)| Grip::EdgeLine(i))
+}
+
+/// The distance from `pos` to the segment `a`–`b` in points; beyond the segment's ends the
+/// distance to the nearer end counts, so a press near a vertex grip never takes the line.
+fn segment_distance(a: Pos2, b: Pos2, pos: Pos2) -> f32 {
+    let along_x = b.x - a.x;
+    let along_y = b.y - a.y;
+    let length_squared = along_x * along_x + along_y * along_y;
+    if length_squared <= f32::EPSILON {
+        return a.distance(pos);
+    }
+    let t = (((pos.x - a.x) * along_x + (pos.y - a.y) * along_y) / length_squared).clamp(0.0, 1.0);
+    let foot = Pos2::new(a.x + t * along_x, a.y + t * along_y);
+    foot.distance(pos)
 }
 
 /// Where `ray` crosses the plate's plane (the placement translation with the placement's local
@@ -318,7 +368,8 @@ fn drag_point(
 }
 
 /// The contour a drag preview shows: the authored points with the drag's edit applied, the same
-/// arithmetic the CLI edit runs. The corner list is not part of this slice and stays untouched.
+/// arithmetic the CLI edit runs. The corner list stays untouched by the preview: the evaluated
+/// body shows the treatments after the commit's reload.
 fn preview_points(contour: &PlateContour, drag: &Drag) -> PlateContour {
     let mut preview = contour.clone();
     let count = preview.points.len();
@@ -334,6 +385,17 @@ fn preview_points(contour: &PlateContour, drag: &Drag) -> PlateContour {
             preview
                 .points
                 .insert((i + 1).min(count), [drag.to[0], drag.to[1], z]);
+        }
+        // The edge line drag translates both of its end vertices by the pointer's in-plane
+        // travel, the same delta `move-plate-edge` commits.
+        Grip::EdgeLine(i) => {
+            let delta = [drag.to[0] - drag.from[0], drag.to[1] - drag.from[1]];
+            for index in [i, (i + 1) % count] {
+                if let Some(point) = preview.points.get_mut(index) {
+                    point[0] += delta[0];
+                    point[1] += delta[1];
+                }
+            }
         }
     }
     preview
@@ -455,6 +517,10 @@ impl App {
                         edge: i,
                         at: drag.to,
                     },
+                    Grip::EdgeLine(i) => ContourEdit::MoveEdge {
+                        edge: i,
+                        delta: [drag.to[0] - drag.from[0], drag.to[1] - drag.from[1]],
+                    },
                 };
                 self.contour.drag = None;
                 self.start_contour_commit(edit);
@@ -481,9 +547,19 @@ impl App {
             if moved && let Some(pos) = pointer {
                 self.contour.pending = None;
                 if let Some(to) = drag_point(&contour, view, rect, origin, pos) {
+                    // The edge line moves by the pointer's in-plane travel: the grab's own
+                    // in-plane point is the zero of that delta. A grab that names none (a view
+                    // parallel to the plate) is no drag.
+                    let from = match pending.grip {
+                        Grip::EdgeLine(_) => {
+                            drag_point(&contour, view, rect, origin, pending.at).unwrap_or(to)
+                        }
+                        _ => to,
+                    };
                     self.contour.drag = Some(Drag {
                         grip: pending.grip,
                         to,
+                        from,
                     });
                     return true;
                 }
@@ -508,7 +584,7 @@ impl App {
             return false;
         };
         if response.drag_started_by(egui::PointerButton::Primary) {
-            match grip_at(&vertices, &edges, pos) {
+            match grip_at(&vertices, &edges, contour.points.len(), pos) {
                 Some(Grip::Vertex(i)) if alt => {
                     self.start_contour_commit(ContourEdit::DeleteVertex { vertex: i });
                     return true;
@@ -697,11 +773,42 @@ mod tests {
             &Drag {
                 grip: Grip::Vertex(1),
                 to: [40.0, 5.0],
+                from: [40.0, 5.0],
             },
         );
         assert_eq!(preview.points.len(), 4);
         assert_eq!(preview.points.get(1), Some(&[40.0, 5.0, 0.0]));
         assert_eq!(preview.points.first(), Some(&[0.0, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn preview_translates_both_ends_of_the_dragged_edge_line() {
+        let contour = square();
+        let preview = preview_points(
+            &contour,
+            &Drag {
+                grip: Grip::EdgeLine(1),
+                to: [120.0, 40.0],
+                from: [100.0, 0.0],
+            },
+        );
+        assert_eq!(
+            preview.points.len(),
+            4,
+            "the edge moves, no vertex is added"
+        );
+        assert_eq!(
+            preview.points.get(1),
+            Some(&[120.0, 40.0, 0.0]),
+            "the edge's first end follows the delta"
+        );
+        assert_eq!(
+            preview.points.get(2),
+            Some(&[120.0, 140.0, 0.0]),
+            "the edge's second end follows the same delta"
+        );
+        assert_eq!(preview.points.first(), Some(&[0.0, 0.0, 0.0]));
+        assert_eq!(preview.points.last(), Some(&[0.0, 100.0, 0.0]));
     }
 
     #[test]
@@ -712,6 +819,7 @@ mod tests {
             &Drag {
                 grip: Grip::Edge(2),
                 to: [50.0, 100.0],
+                from: [50.0, 100.0],
             },
         );
         assert_eq!(preview.points.len(), 5);
@@ -743,14 +851,48 @@ mod tests {
         let spot = Pos2::new(100.0, 100.0);
         let vertices = vec![(2, spot)];
         let edges = vec![(1, spot)];
-        assert_eq!(grip_at(&vertices, &edges, spot), Some(Grip::Vertex(2)));
+        assert_eq!(grip_at(&vertices, &edges, 4, spot), Some(Grip::Vertex(2)));
         let only_edge = (vec![], edges.clone());
         assert_eq!(
-            grip_at(&only_edge.0, &only_edge.1, spot),
+            grip_at(&only_edge.0, &only_edge.1, 4, spot),
             Some(Grip::Edge(1))
         );
         let far = Pos2::new(100.0 + GRIP_RADIUS + 1.0, 100.0);
-        assert_eq!(grip_at(&vertices, &edges, far), None);
+        assert_eq!(grip_at(&vertices, &edges, 4, far), None);
+    }
+
+    #[test]
+    fn the_edge_line_takes_a_press_the_grips_do_not_claim() {
+        // A long horizontal segment from (100,100) to (400,100); only its ends are grips.
+        let vertices = vec![(0, Pos2::new(100.0, 100.0)), (1, Pos2::new(400.0, 100.0))];
+        let middle = Pos2::new(250.0, 100.0);
+        // No middle grip in the list: the line takes the press on its body.
+        assert_eq!(grip_at(&vertices, &[], 2, middle), Some(Grip::EdgeLine(0)));
+        // Just outside the line's radius, nothing answers.
+        let off = Pos2::new(250.0, 100.0 + EDGE_LINE_RADIUS + 1.0);
+        assert_eq!(grip_at(&vertices, &[], 2, off), None);
+        // A middle grip on the line claims the press before the line does.
+        let mid_grip = vec![(0, middle)];
+        assert_eq!(
+            grip_at(&vertices, &mid_grip, 2, middle),
+            Some(Grip::Edge(0))
+        );
+        // The vertex grip wins where the line runs into it.
+        let near_end = Pos2::new(104.0, 100.0);
+        assert_eq!(
+            grip_at(&vertices, &mid_grip, 2, near_end),
+            Some(Grip::Vertex(0))
+        );
+    }
+
+    #[test]
+    fn the_segment_distance_counts_beyond_the_segment_ends() {
+        let a = Pos2::new(100.0, 100.0);
+        let b = Pos2::new(400.0, 100.0);
+        // Directly past the left end: the distance is to the end itself.
+        assert_eq!(segment_distance(a, b, Pos2::new(90.0, 100.0)), 10.0);
+        // Off the side, halfway: the perpendicular distance.
+        assert_eq!(segment_distance(a, b, Pos2::new(250.0, 108.0)), 8.0);
     }
 
     #[test]
@@ -866,6 +1008,24 @@ mod tests {
         assert_eq!(
             symmetric.args(store, "id-1").last(),
             Some(&"chamfer:100.0".to_owned())
+        );
+        let edge = ContourEdit::MoveEdge {
+            edge: 3,
+            delta: [12.0, -7.5],
+        };
+        assert_eq!(
+            edge.args(store, "id-1"),
+            vec![
+                "move-plate-edge",
+                "--store",
+                "/tmp/store",
+                "--id",
+                "id-1",
+                "--edge",
+                "3",
+                "--delta",
+                "12.0,-7.5"
+            ]
         );
     }
 
