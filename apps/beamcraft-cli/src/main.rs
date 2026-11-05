@@ -34,6 +34,7 @@ mod fastener_cmd;
 mod filters_cmd;
 mod grid_cmd;
 mod history_cmd;
+mod ifc_cmd;
 mod level_cmd;
 mod library_cmd;
 mod numbering_cmd;
@@ -114,6 +115,23 @@ fn main() -> std::process::ExitCode {
         }
         _ => {}
     }
+    // `command --help` answers with that command's own help instead of a JSON refusal
+    // (visual audit finding 11); a `-h` in a value position stays a value. Help needs no
+    // store and holds no coordinator lease.
+    if let Some(word) = args.first().and_then(|w| w.to_str())
+        && let Some(command) = registry::COMMANDS.iter().find(|entry| entry.name == word)
+        && args
+            .get(1..)
+            .unwrap_or_default()
+            .iter()
+            .enumerate()
+            .any(|(position, arg)| {
+                position % 2 == 0 && arg.to_str().is_some_and(|s| s == "--help" || s == "-h")
+            })
+    {
+        println!("{}", help::for_family(command.family));
+        return std::process::ExitCode::SUCCESS;
+    }
     // A serving coordinator holds its store for as long as it runs, so a compaction cannot start
     // under it (U14).
     let _serving = match history_cmd::coordinator_lease(&args) {
@@ -136,6 +154,7 @@ fn dispatch(route: Option<Route>, args: &[std::ffi::OsString]) -> (Json, u8) {
         Some(Route::Annotation) => annotation_cmd::execute(args),
         Some(Route::History) => history_cmd::execute(args),
         Some(Route::Reference) => reference_cmd::execute(args),
+        Some(Route::Ifc) => ifc_cmd::execute(args),
         Some(Route::Assembly) => assembly_cmd::execute(args),
         Some(Route::Rebase) => rebase_cmd::execute(args),
         Some(Route::Resolve) => resolve_cmd::execute(args),
