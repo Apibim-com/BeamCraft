@@ -2,9 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! The eframe window: a side panel with the revision, counts, units and adapter, and the viewport
-//! navigated through one of two input presets: `Mouse` (the default: wheel-button drag pans,
+//! navigated through one of two input presets: `Mouse` (wheel-button drag pans,
 //! Ctrl + wheel-button drag orbits, the left button stays free for selection) or `Trackpad`
-//! (primary drag orbits, Shift + primary drag pans, pinch zooms). In both the wheel zooms toward
+//! (primary drag orbits, Shift + primary drag pans, pinch zooms); the start preset follows the
+//! platform (`Trackpad` on macOS, `Mouse` elsewhere). In both the wheel zooms toward
 //! the cursor, F fits and R reloads.
 
 mod annotation_panel;
@@ -141,7 +142,8 @@ pub struct App {
     edit_note: Option<Result<String, String>>,
     /// Flips the scroll zoom direction (macOS natural scrolling inverts it); pinch and keys keep theirs.
     invert_zoom: bool,
-    /// The active viewport input binding preset; `Mouse` is the default.
+    /// The active viewport input binding preset; the start value follows the platform
+    /// (`Trackpad` on macOS, `Mouse` elsewhere).
     preset: Preset,
     props: Properties,
     props_job: Option<Receiver<Result<Edited, ToolError>>>,
@@ -282,14 +284,27 @@ struct ColourJob {
 /// The viewport input binding preset. `Mouse` keeps the left button free for selection: the
 /// camera moves with the wheel button only. `Trackpad` is the laptop mapping for users without
 /// a wheel: primary drag orbits, Shift + primary drag or secondary drag pans, pinch zooms.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Preset {
-    /// Default mouse bindings: wheel zooms toward the cursor, wheel-button drag pans,
+    /// Mouse bindings: wheel zooms toward the cursor, wheel-button drag pans,
     /// Ctrl + wheel-button drag orbits, and the left button never moves the camera.
-    #[default]
     Mouse,
-    /// Trackpad (macOS) bindings, selected in the side panel.
+    /// Trackpad (macOS) bindings: the start preset on macOS, selectable in the side panel
+    /// everywhere.
     Trackpad,
+}
+
+impl Default for Preset {
+    /// The bindings a fresh viewport starts on. A macOS laptop usually has no wheel button,
+    /// so macOS starts on the trackpad mapping; every other platform starts on the mouse
+    /// mapping. An explicit side-panel choice keeps winning over this start value.
+    fn default() -> Self {
+        if cfg!(target_os = "macos") {
+            Self::Trackpad
+        } else {
+            Self::Mouse
+        }
+    }
 }
 
 /// One frame of viewport navigation in `Camera::navigate` argument space: orbit radians, a
@@ -8044,6 +8059,18 @@ mod navigation_tests {
             );
             assert_eq!((orbit, pan, zoom), ([0.0; 2], [0.0; 2], 0.0));
         }
+    }
+
+    #[test]
+    fn a_fresh_start_picks_the_preset_of_its_platform() {
+        // The default is compile-time platform knowledge: this lane pins the macOS arm,
+        // the Windows and Linux lanes pin the mouse arm.
+        let expected = if cfg!(target_os = "macos") {
+            Preset::Trackpad
+        } else {
+            Preset::Mouse
+        };
+        assert_eq!(Preset::default(), expected);
     }
 
     #[test]
